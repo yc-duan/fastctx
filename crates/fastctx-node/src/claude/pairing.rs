@@ -96,7 +96,7 @@ pub(crate) async fn directory(
         // A session resumed once its records were gathered into its
         // conversation's room finds this path an alias of the room
         // (`gather::claude_room`), which is private already.
-        let aliased = std::fs::symlink_metadata(&source)
+        let aliased = fastctx_platform::disk::symlink_metadata(&source)
             .is_ok_and(|metadata| fastctx_platform::owned_directory::is_link(&metadata));
         if !aliased {
             fastctx_platform::ensure_private_dir(&source)?;
@@ -117,7 +117,7 @@ pub(crate) async fn directory(
             Some(id) => {
                 crate::gather::claude_room(&node.world, &id, &registration.session)?;
                 let path = source.join("resident.json");
-                match std::fs::read(&path) {
+                match fastctx_platform::disk::read(&path) {
                     Ok(bytes) if serde_json::from_slice::<ResidentId>(&bytes).map_err(io::Error::other)? != id => {
                         return Err(io::Error::other("the Claude session belongs to another conversation"));
                     }
@@ -152,7 +152,7 @@ pub(crate) async fn directory(
             state.sessions.insert(registration.session.clone(), super::Session { registration, resident: Some(id) });
         }
         drop(state);
-        let directory = crate::world::native(&std::fs::canonicalize(&source)?);
+        let directory = crate::world::native(&fastctx_platform::disk::canonicalize(&source)?);
         super::process::observe(node, observing);
         node.claude.changed.notify_waiters();
         Ok(directory)
@@ -194,7 +194,7 @@ pub(super) fn resident(
         if node.residents.records_for_session(&current.session) > 1 {
             return Err(io::Error::other(format!("more than one resident names Claude session {}", current.session)));
         }
-        match std::fs::read(directory.join("resident.json")) {
+        match fastctx_platform::disk::read(directory.join("resident.json")) {
             Ok(bytes) => {
                 let id: ResidentId = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
                 if node.residents.about(&id).is_none_or(|(about, _)| about.host.agent.as_str() != "claude") {
@@ -223,7 +223,7 @@ pub(super) fn resident(
             if node.residents.records_for_session(short) > 1 {
                 return Err(io::Error::other(format!("more than one resident names background id {short}")));
             }
-            for entry in std::fs::read_dir(&root)? {
+            for entry in fastctx_platform::disk::read_dir(&root)? {
                 let entry = entry?;
                 let name = entry.file_name();
                 if name.to_str().is_some_and(|name| name != current.session && name.starts_with(short))
@@ -299,7 +299,7 @@ pub(super) fn resident(
     for registration in chain.iter().rev() {
         crate::gather::claude_room(&node.world, &id, &registration.session)?;
         let path = root.join(&registration.session).join("resident.json");
-        match std::fs::read(&path) {
+        match fastctx_platform::disk::read(&path) {
             Ok(bytes) => {
                 let held: ResidentId = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
                 if held != id {
@@ -313,7 +313,8 @@ pub(super) fn resident(
         match publish_new(&path, &bytes, Permissions::Private) {
             Ok(()) => {}
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-                let held: ResidentId = serde_json::from_slice(&std::fs::read(&path)?).map_err(io::Error::other)?;
+                let held: ResidentId =
+                    serde_json::from_slice(&fastctx_platform::disk::read(&path)?).map_err(io::Error::other)?;
                 if held != id {
                     return Err(io::Error::other(format!("{} already belongs to {held}", registration.session)));
                 }
@@ -341,7 +342,7 @@ pub(super) fn present(node: &Node, registration: &Registration) -> io::Result<bo
     if let Some(instance) = &registration.instance {
         validate_session(instance)?;
         let closed = exchange::sessions(node.world.path()).join(&registration.session).join("closed").join(instance);
-        if closed.try_exists()? {
+        if fastctx_platform::disk::exists(&closed)? {
             return Ok(false);
         }
     }

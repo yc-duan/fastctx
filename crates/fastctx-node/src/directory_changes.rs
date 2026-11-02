@@ -43,7 +43,7 @@ impl Changes {
             state.running = true;
         }
         let (changes, node) = (self.clone(), node.clone());
-        tokio::spawn(async move {
+        fastctx_platform::task::spawn(async move {
             let mut again = crate::again::Again::default();
             let mut previous = None;
             loop {
@@ -92,7 +92,7 @@ pub(crate) fn cleanup(node: &Arc<Node>, link: &Arc<Link>) {
         node.log.line(format_args!("withdrawing document replicas: {error}"));
     }
     let (node, link) = (node.clone(), link.clone());
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         if node.link_of(link.hub()).is_some_and(|current| Arc::ptr_eq(&current, &link)) {
             crate::ledger::letgo::let_go(&node, &link).await;
         }

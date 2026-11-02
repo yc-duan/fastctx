@@ -52,7 +52,7 @@ pub(crate) fn hand_to_current(node: &Node, id: &ResidentId) -> io::Result<()> {
     crate::context::refresh_local_now(node, id)?;
     let Some(session) = about.session.filter(|_| about.host.agent.as_str() == "claude") else { return Ok(()) };
     let directory = fastctx_hosts::claude::exchange::sessions(node.world.path()).join(session);
-    if directory.is_dir() {
+    if fastctx_platform::disk::is_dir(&directory) {
         hand_to_session(node, id, &directory)?;
     }
     Ok(())

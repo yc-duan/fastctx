@@ -83,7 +83,7 @@ pub(crate) fn run(root: &Path) -> std::result::Result<(), Box<dyn std::error::Er
     _migration.start()?;
     resume(&database)?;
     assert!(with_live_files(&directory, || fastctx_platform::disk::create_dir_all(directory.path())).is_err());
-    assert!(!directory.path().exists());
+    assert!(!fastctx_platform::disk::is_there(directory.path()));
     assert_eq!(purge(&database, "codex-aabbcc")?, bytes);
     Ok(())
 }

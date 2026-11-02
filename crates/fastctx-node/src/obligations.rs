@@ -45,8 +45,8 @@ pub(crate) fn finish(node: &Node, path: &Path, bytes: &[u8], outcome: Outcome, r
         reason: reason.into(),
     };
     fastctx_install::renewal::write_json(&path.with_extension("done"), &done)?;
-    match std::fs::read(path) {
-        Ok(current) if current == bytes => std::fs::remove_file(path)?,
+    match fastctx_platform::disk::read(path) {
+        Ok(current) if current == bytes => fastctx_platform::disk::remove_file(path)?,
         Ok(_) => return Ok(false),
         Err(error) if error.kind() == io::ErrorKind::NotFound => {}
         Err(error) => return Err(error),
@@ -54,7 +54,7 @@ pub(crate) fn finish(node: &Node, path: &Path, bytes: &[u8], outcome: Outcome, r
     if matches!(outcome, Outcome::Impossible) {
         node.log.line(format_args!("delivery ended for {}: {reason}", path.display()));
     }
-    match std::fs::remove_file(path.with_extension("retry")) {
+    match fastctx_platform::disk::remove_file(path.with_extension("retry")) {
         Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
         _ => {}
     }
@@ -160,7 +160,7 @@ pub(crate) fn retry(node: &Node, path: &Path, reason: &str) -> io::Result<()> {
         std::sync::LazyLock::new(Default::default);
     let marker = path.with_extension("retry");
     let written = (|| -> io::Result<bool> {
-        match std::fs::read_to_string(&marker) {
+        match fastctx_platform::disk::read_to_string(&marker) {
             Ok(previous) if previous == reason => return Ok(false),
             Ok(_) => {}
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
@@ -230,13 +230,13 @@ pub(crate) fn hub_left(node: &Node, hub: &HubId) -> io::Result<bool> {
         Err(error) if error.kind() == io::ErrorKind::NotFound => {}
         Err(error) => return Err(error),
     }
-    if net.join("membership.json").try_exists()? {
+    if fastctx_platform::disk::exists(net.join("membership.json"))? {
         return Ok(false);
     }
     let prefix = format!("net-left-{hub}-");
     Ok(crate::retention::entries(node.world.path())?.iter().any(|path| {
         path.file_name().is_some_and(|name| name.to_string_lossy().starts_with(&prefix))
-            && path.join("membership.json").is_file()
+            && fastctx_platform::disk::is_file(path.join("membership.json"))
     }))
 }
 
@@ -303,26 +303,31 @@ pub(crate) fn collect(node: &Node) -> io::Result<()> {
                 let terminal =
                     matches!(path.extension().and_then(|ext| ext.to_str()), Some("done" | "taken" | "stopped"))
                         || book == "run-receipts";
-                if terminal && path.metadata()?.modified()?.elapsed().is_ok_and(|elapsed| elapsed >= age) {
-                    std::fs::remove_file(path)?;
+                if terminal
+                    && fastctx_platform::disk::metadata(&path)?
+                        .modified()?
+                        .elapsed()
+                        .is_ok_and(|elapsed| elapsed >= age)
+                {
+                    fastctx_platform::disk::remove_file(path)?;
                 }
             }
         }
     }
     for path in crate::retention::entries(&node.world.path().join("forget-outcomes"))? {
         if path.extension().is_some_and(|extension| extension == "done")
-            && path.metadata()?.modified()?.elapsed().is_ok_and(|elapsed| elapsed >= age)
+            && fastctx_platform::disk::metadata(&path)?.modified()?.elapsed().is_ok_and(|elapsed| elapsed >= age)
         {
-            std::fs::remove_file(path)?;
+            fastctx_platform::disk::remove_file(path)?;
         }
     }
     for kept in node.world.kept()? {
         for path in crate::retention::entries(&kept.directory.outbox())? {
             if matches!(path.extension().and_then(|extension| extension.to_str()), Some("done" | "attempt" | "retry"))
-                && !path.with_extension("json").try_exists()?
-                && path.metadata()?.modified()?.elapsed().is_ok_and(|elapsed| elapsed >= age)
+                && !fastctx_platform::disk::exists(path.with_extension("json"))?
+                && fastctx_platform::disk::metadata(&path)?.modified()?.elapsed().is_ok_and(|elapsed| elapsed >= age)
             {
-                std::fs::remove_file(path)?;
+                fastctx_platform::disk::remove_file(path)?;
             }
         }
     }

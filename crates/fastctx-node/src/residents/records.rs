@@ -118,7 +118,7 @@ pub fn last_action_before(
 }
 
 fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> io::Result<T> {
-    parse(path, &std::fs::read(path)?)
+    parse(path, &fastctx_platform::disk::read(path)?)
 }
 
 fn parse<T: serde::de::DeserializeOwned>(path: &Path, bytes: &[u8]) -> io::Result<T> {

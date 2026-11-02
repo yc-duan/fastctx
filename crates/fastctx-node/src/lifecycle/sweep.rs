@@ -55,7 +55,7 @@ async fn consider(node: &Arc<Node>, about: &About, scan: &mut crate::claude::lif
 
 pub(super) fn start(node: &Arc<Node>) {
     let node = node.clone();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         node.ready().await;
         let mut timer = tokio::time::interval(Duration::from_secs(60));
         timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);

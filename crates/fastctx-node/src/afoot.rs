@@ -20,7 +20,7 @@ pub(crate) fn start(node: &Arc<Node>) {
     let mut jobs = node.jobs.subscribe();
     let mut views = node.views.subscribe();
     let node = Arc::downgrade(node);
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         loop {
             {
                 let Some(node) = node.upgrade() else { return };

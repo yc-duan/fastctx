@@ -3,7 +3,7 @@
 pub fn run(root: &std::path::Path, family: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
     let _role = fastctx_platform::roles::scoped(fastctx_platform::roles::Role::Blocking);
     let violations = fastctx_platform::doing::violations();
-    if !root.is_absolute() || root.exists() {
+    if !root.is_absolute() || fastctx_platform::disk::is_there(root) {
         return Err("the drill needs an absolute, absent root".into());
     }
     if family.is_some_and(|family| !matches!(family, "handovers" | "executor" | "facts" | "records")) {
@@ -37,7 +37,7 @@ pub fn run(root: &std::path::Path, family: Option<&str>) -> Result<(), Box<dyn s
 
 /// Runs only migration admission, source verification and event-order checks.
 pub fn migration(root: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
-    if !root.is_absolute() || root.exists() {
+    if !root.is_absolute() || fastctx_platform::disk::is_there(root) {
         return Err("the drill needs an absolute, absent root".into());
     }
     crate::run_facts::migration_drill::run(&root.join("call-migration"))?;
@@ -51,7 +51,7 @@ pub fn migration(root: &std::path::Path) -> Result<(), Box<dyn std::error::Error
 
 /// Runs the whole-conversation transport proof in a fresh private world.
 pub fn transfer(root: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
-    if !root.is_absolute() || root.exists() {
+    if !root.is_absolute() || fastctx_platform::disk::is_there(root) {
         return Err("the drill needs an absolute, absent root".into());
     }
     crate::conversation_store::transfer_drill::run(root)

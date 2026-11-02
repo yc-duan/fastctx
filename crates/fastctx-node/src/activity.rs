@@ -18,7 +18,7 @@ pub fn last_turn(directory: &ConversationDir) -> io::Result<Option<Timestamp>> {
 }
 
 pub(crate) fn entries(path: &Path) -> io::Result<Vec<std::path::PathBuf>> {
-    match std::fs::read_dir(path) {
+    match fastctx_platform::disk::read_dir(path) {
         Ok(entries) => entries.map(|entry| entry.map(|entry| entry.path())).collect(),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Vec::new()),
         Err(error) => Err(error),
@@ -26,7 +26,7 @@ pub(crate) fn entries(path: &Path) -> io::Result<Vec<std::path::PathBuf>> {
 }
 
 pub(crate) fn read<T: serde::de::DeserializeOwned>(path: &Path) -> io::Result<T> {
-    serde_json::from_slice(&std::fs::read(path)?)
+    serde_json::from_slice(&fastctx_platform::disk::read(path)?)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("{}: {error}", path.display())))
 }
 
@@ -36,7 +36,7 @@ fn recorded(world: &WorldDir) -> io::Result<(Vec<crate::residents::OnRecord>, Ve
     for kept in world.kept()? {
         let fastctx_types::layout::Kind::Home(id) = &kept.kind else { continue };
         let directory = &kept.directory;
-        if !directory.about().exists() {
+        if !fastctx_platform::disk::is_there(directory.about()) {
             continue;
         }
         let about: fastctx_types::residents::About = read(&directory.about())?;

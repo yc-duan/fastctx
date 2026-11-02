@@ -51,7 +51,7 @@ pub(crate) fn watch(node: &Arc<Node>) -> tokio::sync::watch::Receiver<Option<Arc
     let watching = node.world_shown.told.subscribe();
     if !node.world_shown.started.swap(true, Ordering::AcqRel) {
         let node = node.clone();
-        tokio::spawn(async move { publish(node).await });
+        fastctx_platform::task::spawn(async move { publish(node).await });
     }
     node.world_shown.watched.notify_one();
     watching

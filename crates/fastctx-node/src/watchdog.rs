@@ -42,7 +42,7 @@ impl Watchdog {
         // beating, nothing scheduled there runs, whatever the control loop
         // on the main thread still answers.
         let beating = progress.clone();
-        tokio::spawn(async move {
+        fastctx_platform::task::spawn(async move {
             let mut every = tokio::time::interval(BEAT);
             every.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
             loop {

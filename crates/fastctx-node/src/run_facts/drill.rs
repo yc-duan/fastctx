@@ -11,10 +11,10 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 pub fn run(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    if !root.is_absolute() || root.exists() {
+    if !root.is_absolute() || fastctx_platform::disk::is_there(root) {
         return Err("the drill needs an absolute, absent root".into());
     }
-    std::fs::create_dir_all(root)?;
+    fastctx_platform::disk::create_dir_all(root)?;
     let database = Database::open_initialized(
         &root.join("node.sqlite3"),
         &format!("{}{}{}", sql::SCHEMA, crate::record_payloads::SCHEMA, crate::records::SCHEMA),

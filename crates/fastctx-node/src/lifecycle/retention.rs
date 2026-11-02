@@ -99,7 +99,7 @@ async fn consider(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {
 pub(crate) fn start(node: &Arc<Node>) {
     super::sweep::start(node);
     let node = node.clone();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let running = Arc::new(Mutex::new(HashSet::new()));
 
         let mut timer = tokio::time::interval(SWEEP);
@@ -115,7 +115,7 @@ pub(crate) fn start(node: &Arc<Node>) {
                     continue;
                 }
                 let (node, running) = (node.clone(), running.clone());
-                tokio::spawn(async move {
+                fastctx_platform::task::spawn(async move {
                     if let Err(error) = consider(&node, &resident.id).await {
                         node.log.line(format_args!("lifecycle {}: retaining host; {error}", resident.id));
                     }

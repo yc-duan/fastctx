@@ -87,28 +87,31 @@ fn exercise() -> anyhow::Result<()> {
         Some(bash) => PathBuf::from(bash),
         None => shell::bash()?,
     };
-    anyhow::ensure!(bash.is_absolute() && bash.is_file());
+    anyhow::ensure!(bash.is_absolute() && fastctx_platform::disk::is_file(&bash));
     let base = std::env::var_os("FASTCTX_TEST_ROOT").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
-    anyhow::ensure!(base.is_absolute() && base.is_dir());
+    anyhow::ensure!(base.is_absolute() && fastctx_platform::disk::is_dir(&base));
     let root = base.join(format!("fastctx-own-lifetime-{}", std::process::id()));
-    fs::create_dir(&root)?;
-    fs::write(root.join(".bash_profile"), "export PATH=/usr/bin:/bin\nexport FASTCTX_TEST_PROFILE=yes\n")?;
+    fastctx_platform::disk::create_dir(&root)?;
+    fastctx_platform::disk::write(
+        root.join(".bash_profile"),
+        "export PATH=/usr/bin:/bin\nexport FASTCTX_TEST_PROFILE=yes\n",
+    )?;
     let world = WorldDir::under(&root);
     ensure_private_dir(world.path())?;
     let executable = std::env::current_exe()?;
     let cache = root.join("npm-cache");
-    fs::create_dir(&cache)?;
+    fastctx_platform::disk::create_dir(&cache)?;
     let cached = cache.join(if cfg!(windows) { "fastctx.exe" } else { "fastctx" });
-    fs::copy(&executable, &cached)?;
+    fastctx_platform::disk::copy(&executable, &cached)?;
     let old = pin(&cached, &world, &root, &bash)?;
-    fs::remove_file(&cached)?;
-    fs::remove_dir(&cache)?;
+    fastctx_platform::disk::remove_file(&cached)?;
+    fastctx_platform::disk::remove_dir(&cache)?;
     let old_program = PathBuf::from(old["copy"].as_str().expect("old copy"));
     let new_program = root.join(if cfg!(windows) { "successor.exe" } else { "successor" });
-    fs::copy(&executable, &new_program)?;
+    fastctx_platform::disk::copy(&executable, &new_program)?;
     // Both PE and ELF permit a trailing overlay. It gives the successor a
     // different content identity without substituting the lifecycle code.
-    fs::OpenOptions::new().append(true).open(&new_program)?.write_all(b"successor")?;
+    fastctx_platform::disk::open_with(fs::OpenOptions::new().append(true), &new_program)?.write_all(b"successor")?;
     let new_hash = hash(&new_program)?;
 
     let gate = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))?;
@@ -116,7 +119,7 @@ fn exercise() -> anyhow::Result<()> {
     let delayed = root.join("delayed.sh");
     let output = root.join("descendant.log");
     let status = root.join("descendant.status");
-    fs::write(
+    fastctx_platform::disk::write(
         &delayed,
         format!(
             "fastctx wait '{address}'\nfastctx --version || exit\nprintf 'bundled-ripgrep\\n' | rg '^bundled-ripgrep$'\nresult=$?\nprintf '%s\\n' \"$result\" > '{}'\nexit \"$result\"\n",
@@ -203,11 +206,11 @@ fn exercise() -> anyhow::Result<()> {
     while is_alive(supervisor)? {
         thread::sleep(Duration::from_millis(10));
     }
-    let text = fs::read_to_string(&output)?;
+    let text = fastctx_platform::disk::read_to_string(&output)?;
     anyhow::ensure!(text.replace('\r', "") == format!("program {new_hash}\nbundled-ripgrep\n"), "{text}");
-    anyhow::ensure!(fs::read_to_string(status)?.trim() == "0");
+    anyhow::ensure!(fastctx_platform::disk::read_to_string(status)?.trim() == "0");
     let cleaned = pin(&new_program, &world, &root, &bash)?;
-    anyhow::ensure!(old_program.is_file());
+    anyhow::ensure!(fastctx_platform::disk::is_file(&old_program));
     println!(
         "{}",
         serde_json::json!({
@@ -215,11 +218,14 @@ fn exercise() -> anyhow::Result<()> {
         "during_use": next, "after_use": cleaned, "descendant_output": text, "descendant_exit": 0
         })
     );
-    anyhow::ensure!(root.canonicalize()?.parent() == Some(base.canonicalize()?.as_path()));
+    anyhow::ensure!(
+        fastctx_platform::disk::canonicalize(&root)?.parent()
+            == Some(fastctx_platform::disk::canonicalize(&base)?.as_path())
+    );
     // Windows lets go of a program a moment after it exits; the test is done
     // by then, and only its own folder waits to go.
     let mut attempts = 0;
-    while let Err(error) = fs::remove_dir_all(&root) {
+    while let Err(error) = fastctx_platform::disk::remove_dir_all(&root) {
         attempts += 1;
         if attempts == 50 || error.kind() != std::io::ErrorKind::PermissionDenied && error.raw_os_error() != Some(32) {
             return Err(error.into());
@@ -271,6 +277,6 @@ fn script_path(path: &Path) -> OsString {
 }
 
 fn hash(path: &Path) -> io::Result<String> {
-    let bytes = fs::read(path)?;
+    let bytes = fastctx_platform::disk::read(path)?;
     Ok(format!("{:x}", Sha256::digest(bytes)))
 }

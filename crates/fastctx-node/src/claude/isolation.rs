@@ -45,7 +45,7 @@ pub(super) fn source(node: &Node, id: &ResidentId) -> Result<Option<String>, Fai
 }
 
 fn finished(node: &Node, id: &ResidentId) -> Result<(), Failure> {
-    match std::fs::remove_file(path(node, id)) {
+    match fastctx_platform::disk::remove_file(path(node, id)) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(Failure::new(format!("finishing host isolation: {error}"))),

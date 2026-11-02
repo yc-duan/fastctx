@@ -18,7 +18,7 @@ pub(crate) async fn pinned_at(
     directory: &fastctx_types::layout::ConversationDir,
 ) -> Result<Option<HubAccount>, Failure> {
     let directory = directory.clone();
-    tokio::task::spawn_blocking(move || pinned_at_now(&directory))
+    fastctx_platform::task::spawn_blocking(move || pinned_at_now(&directory))
         .await
         .map_err(|error| Failure::new(error.to_string()))?
 }
@@ -95,7 +95,9 @@ pub(crate) async fn keep_at(
     account: &HubAccount,
 ) -> std::io::Result<()> {
     let (directory, account) = (directory.clone(), account.clone());
-    tokio::task::spawn_blocking(move || keep_at_now(&directory, &account)).await.map_err(std::io::Error::other)?
+    fastctx_platform::task::spawn_blocking(move || keep_at_now(&directory, &account))
+        .await
+        .map_err(std::io::Error::other)?
 }
 
 fn keep_at_now(directory: &fastctx_types::layout::ConversationDir, account: &HubAccount) -> std::io::Result<()> {

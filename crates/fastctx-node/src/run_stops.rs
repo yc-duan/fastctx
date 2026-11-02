@@ -424,7 +424,7 @@ pub(crate) fn collect(node: &Node, age: std::time::Duration) -> io::Result<()> {
             }
             if let Some(known) = read::<Incoming>(&path.with_extension("json"))? {
                 let conversation = directory.parent().and_then(Path::parent).expect("conversation books");
-                if conversation.join("jobs").join(format!("{}.json", known.job)).try_exists()? {
+                if fastctx_platform::disk::exists(conversation.join("jobs").join(format!("{}.json", known.job)))? {
                     continue;
                 }
             }

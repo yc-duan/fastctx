@@ -91,7 +91,7 @@ impl Records for AccountRecords {
                 .map_err(Error::Unavailable)?;
             let (sender, receiver) = broadcast::channel(64);
             // Ending closes the receiver, and the sentinel subscribes and lists again.
-            tokio::spawn(async move {
+            fastctx_platform::task::spawn(async move {
                 loop {
                     let next = tokio::select! {
                         next = watch.next() => next,

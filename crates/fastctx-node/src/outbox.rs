@@ -44,7 +44,7 @@ fn retry(node: &Arc<Node>, id: &ResidentId, directory: &ConversationDir) {
     let state = Arc::new(Retry::default());
     retries.insert(id.clone(), state.clone());
     let (node, id, directory) = (node.clone(), id.clone(), directory.clone());
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let mut again = crate::again::Again::default();
         let mut ways = node.ways.subscribe();
         loop {
@@ -91,10 +91,11 @@ fn pay_once<'a>(
             let answer = {
                 let _paying = paying.lock().await;
                 let (reading, cursor) = (directory.clone(), after.clone());
-                let next = tokio::task::spawn_blocking(move || crate::inbox::answers::next(&reading, &cursor))
-                    .await
-                    .map_err(std::io::Error::other)
-                    .and_then(|result| result);
+                let next =
+                    fastctx_platform::task::spawn_blocking(move || crate::inbox::answers::next(&reading, &cursor))
+                        .await
+                        .map_err(std::io::Error::other)
+                        .and_then(|result| result);
                 match next {
                     Ok(Some((cursor, answer))) => {
                         after = cursor;
@@ -190,14 +191,15 @@ fn pay_once<'a>(
             }
             if landed.is_err() || matches!(landed, Ok(fastctx_types::residents::Landed::Uncertain { .. })) {
                 if landed.is_err() && node.is_me(&answer.to.machine) && !node.residents.knows(&answer.to.resident) {
-                    match node.world.conversation(&answer.to.resident).about().try_exists() {
+                    match fastctx_platform::disk::exists(node.world.conversation(&answer.to.resident).about()) {
                         Ok(false) => {
                             let (settling, answer) = (directory.clone(), answer.clone());
-                            if let Err(error) =
-                                tokio::task::spawn_blocking(move || crate::inbox::without_reader(&settling, &answer))
-                                    .await
-                                    .map_err(std::io::Error::other)
-                                    .and_then(|result| result)
+                            if let Err(error) = fastctx_platform::task::spawn_blocking(move || {
+                                crate::inbox::without_reader(&settling, &answer)
+                            })
+                            .await
+                            .map_err(std::io::Error::other)
+                            .and_then(|result| result)
                             {
                                 node.log.line(format_args!("settling the answer without a local recipient: {error}"));
                                 pending = true;
@@ -210,7 +212,7 @@ fn pay_once<'a>(
                 continue;
             }
             let (settling, key) = (directory.clone(), answer.delivery.id.clone());
-            if let Err(error) = tokio::task::spawn_blocking(move || crate::inbox::paid(&settling, &key))
+            if let Err(error) = fastctx_platform::task::spawn_blocking(move || crate::inbox::paid(&settling, &key))
                 .await
                 .map_err(std::io::Error::other)
                 .and_then(|result| result)

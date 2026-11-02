@@ -167,7 +167,7 @@ pub(crate) async fn reopen_blocked(
         .join(format!("{}.json", fastctx_hands::files::content_hash(delivery.as_str().as_bytes())));
     let address = Address { machine: node.machine(), resident: resident.clone() };
     let reading = path.clone();
-    let prior = tokio::task::spawn_blocking(move || crate::records::metadata::get::<Receipt>(&reading))
+    let prior = fastctx_platform::task::spawn_blocking(move || crate::records::metadata::get::<Receipt>(&reading))
         .await
         .map_err(failure)?
         .map_err(failure)?;
@@ -246,7 +246,7 @@ pub(crate) async fn reopen_blocked(
 
 async fn keep(path: &std::path::Path, receipt: &Receipt) -> Result<Receipt, Failure> {
     let (path, bytes) = (path.to_path_buf(), serde_json::to_vec(receipt).map_err(failure)?);
-    tokio::task::spawn_blocking(move || {
+    fastctx_platform::task::spawn_blocking(move || {
         let receipt: Receipt = serde_json::from_slice(&bytes)?;
         crate::records::metadata::change(&path, bytes.len(), move |rows, family| {
             if let Some(prior) = rows.get::<Receipt>(family, "value")? {

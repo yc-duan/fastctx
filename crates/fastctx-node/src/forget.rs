@@ -235,7 +235,7 @@ pub(crate) fn start(node: &Arc<Node>) {
     let weak = Arc::downgrade(node);
     let mut views = node.views.subscribe();
     let wake = node.forget_asks.wake.clone();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let mut again = crate::again::Again::default();
         loop {
             let woken = wake.notified();
@@ -330,7 +330,7 @@ async fn elsewhere(node: &Arc<Node>, hub: &HubId, account: &AccountName, convers
     }
     let world = node.world.clone();
     let wanted = (conversation.resident.clone(), machines.clone());
-    let rooms: Vec<(String, Address)> = tokio::task::spawn_blocking(move || -> std::io::Result<_> {
+    let rooms: Vec<(String, Address)> = fastctx_platform::task::spawn_blocking(move || -> std::io::Result<_> {
         let (resident, machines) = wanted;
         Ok(world
             .kept()?
@@ -346,7 +346,7 @@ async fn elsewhere(node: &Arc<Node>, hub: &HubId, account: &AccountName, convers
     .map_err(|error| format!("finding its rooms here: {error}"))?;
     // What its commands did here goes too, whether or not a room of it is left.
     let (sealing, resident, names) = (node.clone(), conversation.resident.clone(), machines.clone());
-    tokio::task::spawn_blocking(move || crate::activity_book::seal_elsewhere(&sealing, &resident, &names))
+    fastctx_platform::task::spawn_blocking(move || crate::activity_book::seal_elsewhere(&sealing, &resident, &names))
         .await
         .map_err(|error| error.to_string())?
         .map_err(|error| format!("sealing its activity here: {error}"))?;
@@ -366,10 +366,10 @@ async fn elsewhere(node: &Arc<Node>, hub: &HubId, account: &AccountName, convers
 /// Stops every command of `owner` still running here.
 async fn stop_jobs(node: &Arc<Node>, owner: &Address) -> Result<(), String> {
     let (world, names, owner) = (node.world.clone(), node.names(), owner.clone());
-    let running: Vec<PathBuf> = tokio::task::spawn_blocking(move || -> std::io::Result<Vec<PathBuf>> {
+    let running: Vec<PathBuf> = fastctx_platform::task::spawn_blocking(move || -> std::io::Result<Vec<PathBuf>> {
         let mut running = Vec::new();
         for directory in world.job_directories(&names, &owner)? {
-            let records = match std::fs::read_dir(&directory) {
+            let records = match fastctx_platform::disk::read_dir(&directory) {
                 Ok(entries) => {
                     entries.map(|entry| entry.map(|entry| entry.path())).collect::<std::io::Result<Vec<_>>>()?
                 }
@@ -402,7 +402,7 @@ async fn stop_jobs(node: &Arc<Node>, owner: &Address) -> Result<(), String> {
 /// from showing it, under any name its machine had.
 async fn forget_copies(node: &Arc<Node>, resident: &ResidentId, machines: Vec<MachineName>) -> Result<(), String> {
     let (root, resident) = (node.root.clone(), resident.clone());
-    tokio::task::spawn_blocking(move || -> std::io::Result<()> {
+    fastctx_platform::task::spawn_blocking(move || -> std::io::Result<()> {
         let cache = fastctx_client::cache::Cache::under(&root)?;
         for machine in machines {
             cache.forget(&Address { machine, resident: resident.clone() })?;
@@ -422,7 +422,7 @@ fn kept_file(node: &Node) -> PathBuf {
 async fn keep(node: &Arc<Node>, asks: Vec<Ask>) -> std::io::Result<()> {
     let _file = node.forget_asks.file.lock().await;
     let path = kept_file(node);
-    tokio::task::spawn_blocking(move || {
+    fastctx_platform::task::spawn_blocking(move || {
         let mut kept = read(&path)?;
         for ask in asks {
             if !kept.contains(&ask) {
@@ -441,7 +441,7 @@ async fn send_kept(node: &Arc<Node>) -> bool {
     let _file = node.forget_asks.file.lock().await;
     let path = kept_file(node);
     let reading = path.clone();
-    let kept = match tokio::task::spawn_blocking(move || read(&reading)).await {
+    let kept = match fastctx_platform::task::spawn_blocking(move || read(&reading)).await {
         Ok(Ok(kept)) => kept,
         Ok(Err(error)) => {
             node.log.line(format_args!("reading the deletions to ask the hubs: {error}"));
@@ -513,7 +513,7 @@ async fn send_kept(node: &Arc<Node>) -> bool {
     }
     // New deletions may have arrived while the hubs were being asked.
     let _file = node.forget_asks.file.lock().await;
-    match tokio::task::spawn_blocking(move || -> std::io::Result<bool> {
+    match fastctx_platform::task::spawn_blocking(move || -> std::io::Result<bool> {
         let mut current = read(&path)?;
         current.retain(|ask| !kept.contains(ask) || left.contains(ask));
         write(&path, &current)?;
@@ -535,7 +535,7 @@ async fn send_kept(node: &Arc<Node>) -> bool {
 }
 
 fn read(path: &std::path::Path) -> std::io::Result<Vec<Ask>> {
-    match std::fs::read(path) {
+    match fastctx_platform::disk::read(path) {
         Ok(bytes) => serde_json::from_slice(&bytes).map_err(std::io::Error::other),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
         Err(error) => Err(error),
@@ -544,7 +544,7 @@ fn read(path: &std::path::Path) -> std::io::Result<Vec<Ask>> {
 
 fn write(path: &std::path::Path, asks: &[Ask]) -> std::io::Result<()> {
     if asks.is_empty() {
-        return match std::fs::remove_file(path) {
+        return match fastctx_platform::disk::remove_file(path) {
             Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error),
             _ => Ok(()),
         };

@@ -133,8 +133,8 @@ pub async fn fork(
         .await?;
         let settings = directory.claude_settings();
         let instructions = directory.claude_instructions();
-        std::fs::write(&settings, super::settings_json(&id))
-            .and_then(|()| std::fs::write(&instructions, words))
+        fastctx_platform::disk::write(&settings, super::settings_json(&id))
+            .and_then(|()| fastctx_platform::disk::write(&instructions, words))
             .map_err(failure)?;
         let mcp = crate::profile::session::load_claude(node, &id, true).await?;
         let plugin = claude::plugin_dir(node.world.path());
@@ -230,8 +230,9 @@ pub async fn fork(
             )
             .await?;
             if let Some(snapshot) = snapshot {
-                std::fs::remove_file(&snapshot).map_err(failure)?;
-                std::fs::remove_dir(snapshot.parent().expect("fork source directory")).map_err(failure)?;
+                fastctx_platform::disk::remove_file(&snapshot).map_err(failure)?;
+                fastctx_platform::disk::remove_dir(snapshot.parent().expect("fork source directory"))
+                    .map_err(failure)?;
             }
             Ok::<_, Failure>(())
         }

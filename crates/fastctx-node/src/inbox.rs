@@ -287,7 +287,8 @@ fn parse_pending(directory: &ConversationDir, path: &Path, bytes: &[u8]) -> io::
         }
         _ => (Vec::new(), true),
     };
-    let about: fastctx_types::residents::About = parse(&directory.about(), &std::fs::read(directory.about())?)?;
+    let about: fastctx_types::residents::About =
+        parse(&directory.about(), &fastctx_platform::disk::read(directory.about())?)?;
     // Old Codex inbox entries were written after any send error, including
     // an unanswered accepted request. They cannot safely be sent again.
     let state = if about.world_started && about.host.agent.as_str() == "codex" {
@@ -392,7 +393,9 @@ fn prepare_job_end(node: &Arc<Node>, record_path: &Path, record: &JobRecord) -> 
         .as_ref()
         .and_then(|on| on.request.as_ref())
         .map(|request| {
-            record_path.parent().expect("jobs directory").join(format!("request-{request}.stopped")).try_exists()
+            fastctx_platform::disk::exists(
+                record_path.parent().expect("jobs directory").join(format!("request-{request}.stopped")),
+            )
         })
         .transpose()?
         .unwrap_or(false);
@@ -598,7 +601,7 @@ pub(crate) fn retry_job(node: &Arc<Node>, path: &Path) {
 }
 
 fn entries(directory: &Path) -> io::Result<Vec<std::path::PathBuf>> {
-    match std::fs::read_dir(directory) {
+    match fastctx_platform::disk::read_dir(directory) {
         Ok(entries) => entries.map(|entry| entry.map(|entry| entry.path())).collect(),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Vec::new()),
         Err(error) => Err(error),

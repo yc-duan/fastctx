@@ -369,7 +369,9 @@ fn accept(
             let request = origin.request.as_ref().ok_or_else(|| Failure::new("a stop needs a job or a request id"))?;
             let mut found = None;
             let mut unreadable = false;
-            for entry in std::fs::read_dir(directory.jobs()).map_err(|error| Failure::new(error.to_string()))? {
+            for entry in
+                fastctx_platform::disk::read_dir(directory.jobs()).map_err(|error| Failure::new(error.to_string()))?
+            {
                 let path = match entry {
                     Ok(entry) => entry.path(),
                     Err(error) => {
@@ -472,7 +474,7 @@ fn stopped(record: &fastctx_types::run::JobRecord) -> Result<(), Failure> {
 fn resume_local_stops(node: &Arc<Node>) -> std::io::Result<()> {
     let mut problems = Vec::new();
     for parent in node.world.job_parents()? {
-        let owners = match std::fs::read_dir(&parent) {
+        let owners = match fastctx_platform::disk::read_dir(&parent) {
             Ok(entries) => entries,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
             Err(error) => {
@@ -489,7 +491,7 @@ fn resume_local_stops(node: &Arc<Node>) -> std::io::Result<()> {
                 }
             };
             let jobs_path = owner.path().join("jobs");
-            let jobs = match std::fs::read_dir(&jobs_path) {
+            let jobs = match fastctx_platform::disk::read_dir(&jobs_path) {
                 Ok(entries) => entries,
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
                 Err(error) => {
@@ -522,7 +524,9 @@ fn resume_local_stop(node: &Arc<Node>, path: &Path) -> std::io::Result<()> {
         }
         let record = fastctx_hands::run::record::read(path)?;
         if let Some(request) = record.on.as_ref().and_then(|on| on.request.as_ref())
-            && path.parent().expect("jobs directory").join(format!("request-{request}.stopped")).try_exists()?
+            && fastctx_platform::disk::exists(
+                path.parent().expect("jobs directory").join(format!("request-{request}.stopped")),
+            )?
             && record.end.is_none()
         {
             stop_worker(

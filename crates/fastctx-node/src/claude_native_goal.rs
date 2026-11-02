@@ -2,7 +2,6 @@
 
 use fastctx_hosts::claude::exchange;
 use serde_json::{Value, json};
-use std::fs::File;
 use std::io::{self, BufRead, BufReader, Seek, SeekFrom};
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -14,7 +13,7 @@ pub fn run(world: &Path, session: &str, after: Option<u64>) -> io::Result<()> {
     let mut offset = after.unwrap_or(0);
     loop {
         if let Some(path) = exchange::transcript(&directory)? {
-            let file = match File::open(path) {
+            let file = match fastctx_platform::disk::open(path) {
                 Ok(file) => Some(file),
                 Err(error) if error.kind() == io::ErrorKind::NotFound => None,
                 Err(error) => return Err(error),

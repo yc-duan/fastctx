@@ -30,9 +30,9 @@ static GATES: LazyLock<crate::record_gates::Gates> = LazyLock::new(|| {
 
 pub(crate) fn prepare(world: &WorldDir, id: &ResidentId) -> io::Result<ConversationDir> {
     let directory = world.conversation(id);
-    if world.deleted().join(format!("{id}.json")).try_exists()?
-        || directory.path().join("deleting").try_exists()?
-        || !directory.path().try_exists()?
+    if fastctx_platform::disk::exists(world.deleted().join(format!("{id}.json")))?
+        || fastctx_platform::disk::exists(directory.path().join("deleting"))?
+        || !fastctx_platform::disk::exists(directory.path())?
     {
         return Err(io::Error::new(io::ErrorKind::NotFound, "the conversation is unavailable"));
     }

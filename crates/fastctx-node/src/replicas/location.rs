@@ -71,11 +71,12 @@ pub(crate) async fn prepare(
         Some((about, _)) => about.focus,
         None => crate::focus::opening(&room).await?.map(|opening| opening.focus).unwrap_or_default(),
     };
-    let speaking: Option<fastctx_types::MachineName> = match std::fs::read(room.path().join("working-from.json")) {
-        Ok(bytes) => Some(serde_json::from_slice(&bytes).map_err(failure)?),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-        Err(error) => return Err(failure(error)),
-    };
+    let speaking: Option<fastctx_types::MachineName> =
+        match fastctx_platform::disk::read(room.path().join("working-from.json")) {
+            Ok(bytes) => Some(serde_json::from_slice(&bytes).map_err(failure)?),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(failure(error)),
+        };
     let mut ranked = Vec::new();
     let mut add = |machine: &fastctx_types::MachineName| {
         if let Some(candidate) = candidates.iter().find(|candidate| view.same(&candidate.name, machine))

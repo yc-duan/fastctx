@@ -113,12 +113,12 @@ fn wake(node: &Arc<Node>, owner: &Address) {
     let wake = Arc::new(Notify::new());
     workers.insert(owner.clone(), Worker { wake: wake.clone(), dirty: false });
     let (node, owner) = (node.clone(), owner.clone());
-    tokio::spawn(async move { drain(node, owner, wake).await });
+    fastctx_platform::task::spawn(async move { drain(node, owner, wake).await });
 }
 
 pub(crate) fn resume(node: &Arc<Node>) {
     let node = node.clone();
-    tokio::task::spawn_blocking(move || {
+    fastctx_platform::task::spawn_blocking(move || {
         let result = (|| -> io::Result<()> {
             for folder in node.world.book_directories("received-controls")? {
                 for path in items::entries(&folder, Some("json"))? {
@@ -137,7 +137,7 @@ pub(crate) fn resume(node: &Arc<Node>) {
     });
 }
 async fn local<T: Send + 'static>(work: impl FnOnce() -> io::Result<T> + Send + 'static) -> io::Result<T> {
-    tokio::task::spawn_blocking(work).await.map_err(io::Error::other)?
+    fastctx_platform::task::spawn_blocking(work).await.map_err(io::Error::other)?
 }
 async fn save(path: &Path, entry: &Entry) -> io::Result<()> {
     let (path, entry) = (path.to_path_buf(), entry.clone());
@@ -173,7 +173,7 @@ async fn drain(node: Arc<Node>, owner: Address, wake: Arc<Notify>) {
         }
         if after.is_empty() {
             let folder = directory(&node, &owner);
-            match tokio::task::spawn_blocking(move || items::queue_end(&folder)).await {
+            match fastctx_platform::task::spawn_blocking(move || items::queue_end(&folder)).await {
                 Ok(Ok(end)) => through = end,
                 other => {
                     node.log.line(format_args!("reading queue boundary: {other:?}"));

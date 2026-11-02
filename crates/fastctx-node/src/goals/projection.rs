@@ -37,7 +37,7 @@ fn project_live(node: &Node, id: &ResidentId, exchange: Option<&Path>) -> io::Re
     loop {
         let (version, bridge) = local::projection(&directory)?;
         if let (Some(exchange), Some(bridge)) = (exchange, bridge)
-            && exchange.try_exists()?
+            && fastctx_platform::disk::exists(exchange)?
         {
             let exchange = fastctx_platform::disk::canonicalize(exchange)?;
             fastctx_hosts::claude::control::write(&exchange.join("goal.json"), &bridge)?;

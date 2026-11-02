@@ -48,7 +48,7 @@ pub(crate) fn unfinished(directory: &fastctx_types::layout::ConversationDir) -> 
 
 pub(crate) async fn hold(node: &Arc<Node>, id: &ResidentId) -> std::io::Result<Option<Hold>> {
     let directory = node.world.conversation(id);
-    tokio::task::spawn_blocking(move || {
+    fastctx_platform::task::spawn_blocking(move || {
         super::local::prepare_hold(&directory)?;
         crate::records::read(&directory, super::local::hold)
     })
@@ -58,7 +58,7 @@ pub(crate) async fn hold(node: &Arc<Node>, id: &ResidentId) -> std::io::Result<O
 
 pub(crate) fn start(node: &Arc<Node>) {
     let node = node.clone();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let mut residents = node.residents.changes();
         let mut views = node.views.subscribe();
         let mut goals = node.goals.changed.subscribe();
@@ -78,7 +78,7 @@ pub(crate) fn start(node: &Arc<Node>) {
                     continue;
                 }
                 let node = node.clone();
-                tokio::spawn(async move {
+                fastctx_platform::task::spawn(async move {
                     if let Err(error) = reconcile(&node, &id).await {
                         node.log.line(format_args!("reconciling {id}'s goal lifecycle: {}", error.message));
                     }
@@ -119,7 +119,7 @@ async fn reconcile(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {
         view
     };
     let (directory, checking) = (node.world.conversation(id), view.clone());
-    held = tokio::task::spawn_blocking(move || {
+    held = fastctx_platform::task::spawn_blocking(move || {
         crate::records::write_at(&directory, fastctx_storage::Priority::Interactive, 1024, move |rows| {
             let held = super::local::hold(rows)?;
             if held.as_ref().is_some_and(|held| held.superseded(&checking)) {
@@ -224,7 +224,7 @@ async fn reconcile(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {
     let next = Hold { goal: goal.id, operation: hold_operation, reason, base, at, kind: hold_kind };
     let saving = intent.clone();
     let committed = intents::committed(node, &intent);
-    tokio::task::spawn_blocking(move || -> std::io::Result<()> {
+    fastctx_platform::task::spawn_blocking(move || -> std::io::Result<()> {
         super::local::prepare_hold(&directory)?;
         intents::prepare(&directory)?;
         let bytes = serde_json::to_vec(&saving)?.len() + serde_json::to_vec(&next)?.len();

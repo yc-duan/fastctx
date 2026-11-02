@@ -57,7 +57,7 @@ impl Stops {
 /// Stop delivery is independent of the report consumer and never blocks it.
 pub(crate) fn deliver(node: &Arc<Node>, resident: &ResidentId, turn: &str, inputs: Vec<NoticeId>) {
     let (node, resident, turn) = (node.clone(), resident.clone(), turn.to_string());
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let mut problem = None;
         loop {
             if node.residents.about(&resident).is_none() {
@@ -84,14 +84,14 @@ async fn apply(node: &Arc<Node>, resident: &ResidentId, turn: &str, inputs: &[No
     let directory = node.world.conversation(resident);
     crate::turn_evidence::remember(node, resident, turn, source).await.map_err(failure)?;
     let (reading, requested) = (directory.clone(), turn.to_string());
-    let ended = tokio::task::spawn_blocking(move || crate::delivery::terminal(&reading, &requested))
+    let ended = fastctx_platform::task::spawn_blocking(move || crate::delivery::terminal(&reading, &requested))
         .await
         .map_err(failure)?
         .map_err(failure)?;
     if let Some(finished) = ended {
         if source == StopSource::User {
             let (node, resident, turn) = (node.clone(), resident.clone(), turn.to_string());
-            tokio::task::spawn_blocking(move || settled::user(&node, &resident, &turn, &finished))
+            fastctx_platform::task::spawn_blocking(move || settled::user(&node, &resident, &turn, &finished))
                 .await
                 .map_err(failure)?
                 .map_err(failure)?;
@@ -113,7 +113,7 @@ async fn apply(node: &Arc<Node>, resident: &ResidentId, turn: &str, inputs: &[No
             "claude" => {
                 let exchange = fastctx_hosts::claude::exchange::sessions(node.world.path()).join(session);
                 let turn = turn.to_string();
-                tokio::task::spawn_blocking(move || fastctx_hosts::claude::exchange::stop(&exchange, &turn))
+                fastctx_platform::task::spawn_blocking(move || fastctx_hosts::claude::exchange::stop(&exchange, &turn))
                     .await
                     .map_err(failure)?
                     .map_err(failure)?;

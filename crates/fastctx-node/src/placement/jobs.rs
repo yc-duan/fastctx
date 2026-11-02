@@ -10,7 +10,7 @@ pub(crate) fn busy(node: &Node, owners: &[Address]) -> Result<bool, Failure> {
             aliases.push(owner.machine.clone());
         }
         for directory in node.world.job_directories(&names, owner).map_err(|error| Failure::new(error.to_string()))? {
-            let entries = match std::fs::read_dir(directory) {
+            let entries = match fastctx_platform::disk::read_dir(directory) {
                 Ok(entries) => entries,
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
                 Err(error) => return Err(Failure::new(error.to_string())),

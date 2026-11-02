@@ -199,7 +199,7 @@ pub(crate) fn hand_to_session(node: &Node, id: &ResidentId, session: &Path) -> i
         "memory": true,
     }))
     .map_err(io::Error::other)?;
-    match std::fs::read(&path) {
+    match fastctx_platform::disk::read(&path) {
         Ok(kept) if kept == bytes => return Ok(()),
         Ok(_) => {}
         Err(error) if error.kind() == io::ErrorKind::NotFound => {}
@@ -229,7 +229,7 @@ pub(crate) fn plugin_heard(node: &Node, id: &ResidentId) -> io::Result<()> {
     }
     let Some(session) = about.session else { return Ok(()) };
     let path = fastctx_hosts::claude::exchange::sessions(node.world.path()).join(session).join("context-heard.json");
-    let heard: PluginHeard = match std::fs::read(path) {
+    let heard: PluginHeard = match fastctx_platform::disk::read(path) {
         Ok(bytes) => serde_json::from_slice(&bytes).map_err(io::Error::other)?,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
         Err(error) => return Err(error),

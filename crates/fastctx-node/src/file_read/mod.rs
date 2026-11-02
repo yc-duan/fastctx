@@ -24,7 +24,7 @@ fn start(node: Arc<Node>, acting: Acting, machine: Option<Written>, request: Rea
     // At most one data-message payload waits between the file/network and
     // IPC. Slow interfaces therefore stop the producer instead of buffering.
     let (sender, receiver) = mpsc::channel(1);
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         tokio::select! {
             () = sender.closed() => {},
             result = async {
@@ -75,7 +75,7 @@ pub(crate) fn attachment_for(
     range: FileRange,
 ) -> mpsc::Receiver<Result<Part, Failure>> {
     let (sender, receiver) = mpsc::channel(1);
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let cancel = Cancel(Arc::new(std::sync::atomic::AtomicBool::new(false)));
         tokio::select! {
             () = sender.closed() => {},

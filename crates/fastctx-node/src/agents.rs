@@ -62,7 +62,7 @@ fn facts(agent: &str, login: &Login) -> AgentFacts {
     let program = Fact::known(login.launcher.as_ref().map(|launcher| AgentProgram {
         path: launcher.path.clone(),
         source: if launcher.desktop_app { ProgramSource::DesktopApp } else { ProgramSource::Path },
-        exists: launcher.path.is_file(),
+        exists: fastctx_platform::disk::is_file(&launcher.path),
     }));
     let version = match login.launcher.as_ref().and_then(|launcher| launcher.version.clone()) {
         Some(version) => Fact::known(version),

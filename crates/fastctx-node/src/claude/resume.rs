@@ -98,9 +98,7 @@ fn ready_activation(node: &Node, id: &ResidentId) -> Result<bool, Failure> {
     // host.done identifies the activation before its asynchronous catalog and
     // control scanner are initialized. Wait for the latter's committed receipt.
     let receipt = if host.handoff_contract == Some(1) { "ready" } else { "catalog" };
-    Ok(directory
-        .join(format!("{receipt}-{}.done", host.instance))
-        .try_exists()
+    Ok(fastctx_platform::disk::exists(directory.join(format!("{receipt}-{}.done", host.instance)))
         .map_err(|error| Failure::new(error.to_string()))?
         && files::active(&directory, &host).map_err(|error| Failure::new(error.to_string()))?)
 }

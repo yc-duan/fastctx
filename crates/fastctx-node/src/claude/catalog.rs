@@ -44,7 +44,7 @@ pub(super) fn get(node: &Node, resident: &ResidentId, session: Option<&str>) -> 
                 return Ok(saved.expect("checked catalog").offers);
             }
             let path = directory.join(format!("catalog-{}.json", host.instance));
-            if path.with_extension("done").try_exists().map_err(failure)? {
+            if fastctx_platform::disk::exists(path.with_extension("done")).map_err(failure)? {
                 let value = files::read_message(&path).map_err(failure)?;
                 let offers = serde_json::from_value(value).map_err(|error| Failure::new(error.to_string()))?;
                 keep(node, resident, &offers)?;

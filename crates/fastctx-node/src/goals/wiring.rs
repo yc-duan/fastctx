@@ -125,7 +125,7 @@ impl Context for NamedContext {
         Box::pin(async move {
             let node = self.node.upgrade().ok_or_else(|| Failure::new("the node has gone"))?;
             let (resident, name, text, fact) = (resident.clone(), name.to_string(), text.to_string(), fact.to_string());
-            tokio::task::spawn_blocking(move || {
+            fastctx_platform::task::spawn_blocking(move || {
                 let change = crate::context::Change { by: None, version: "", fact: &fact, full: true };
                 // An archived conversation still has its goal block taken down.
                 if text.is_empty() {

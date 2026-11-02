@@ -120,7 +120,7 @@ fn changed(node: &Arc<Node>) {
     }
     if of(node, &Acting::Here) == Layer::Workbench {
         let node = node.clone();
-        tokio::spawn(async move {
+        fastctx_platform::task::spawn(async move {
             if let Err(failure) = crate::logins::scan::scan(&node, false).await {
                 node.log.line(format_args!("asking the logins again for the workbench: {}", failure.message));
             }

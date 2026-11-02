@@ -328,7 +328,7 @@ async fn blocking<T: Send + 'static>(
     read: fn(&fastctx_types::layout::WorldDir, &TownName) -> std::io::Result<T>,
 ) -> Result<T, Failure> {
     let (world, name) = (node.world.clone(), town.clone());
-    tokio::task::spawn_blocking(move || read(&world, &name))
+    fastctx_platform::task::spawn_blocking(move || read(&world, &name))
         .await
         .map_err(|error| Failure::new(format!("reading {town}'s ledger: {error}")))?
         .map_err(|error| Failure::new(format!("reading {town}'s ledger: {error}")))

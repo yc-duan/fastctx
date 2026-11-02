@@ -73,7 +73,7 @@ fn request(node: &Arc<Node>, id: &ResidentId, plan: bool) {
         pending.working = true;
     }
     let (node, id) = (node.clone(), id.clone());
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         // Named in what the node reports of a lock held too long.
         let _doing = fastctx_platform::doing::doing(format!("refreshing {id}'s context"));
         let mut again = crate::again::Again::default();
@@ -129,7 +129,7 @@ fn request_each(node: &Arc<Node>, plan: bool) {
 pub(crate) fn start(node: &Arc<Node>) {
     super::records::start(node);
     let node = node.clone();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let mut views = node.views.subscribe();
         let mut ways = node.ways.subscribe();
         let mut memory = node.memory_changes.subscribe();

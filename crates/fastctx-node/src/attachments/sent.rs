@@ -82,7 +82,7 @@ pub(crate) async fn reserve(
             match read_json::<Draft>(&room.draft()) {
                 Ok(kept) if kept == draft => {}
                 Ok(_) => return Err(failure("that upload operation belongs to a different draft")),
-                Err(_) if !room.draft().exists() => write_new(&room.draft(), &draft)?,
+                Err(_) if !fastctx_platform::disk::is_there(room.draft()) => write_new(&room.draft(), &draft)?,
                 Err(error) => return Err(error),
             }
             (resident, town.clone())
@@ -117,7 +117,7 @@ pub(crate) async fn reserve(
     let reservation =
         Reservation { from: from.clone(), acting: Some(acting.clone()), target, operation, composer, attachment };
     let path = directory.join("reservation.json");
-    if path.exists() {
+    if fastctx_platform::disk::is_there(&path) {
         let kept: Reservation = read_json(&path)?;
         if kept != reservation {
             return Err(failure("the upload operation was reused for different content"));
@@ -266,7 +266,7 @@ async fn prepare_sent(
             .map_err(failure)?
             .ok_or_else(|| Failure::unanswered("this upload is still arriving; retry the same operation"))?;
         let receipt = directory.join("receipt.json");
-        let (attachment, arriving) = if receipt.exists() {
+        let (attachment, arriving) = if fastctx_platform::disk::is_there(&receipt) {
             let kept: Attachment = read_json(&receipt)?;
             if kept.owner != attachment.owner
                 || kept.conversation != attachment.conversation

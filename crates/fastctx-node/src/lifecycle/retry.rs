@@ -211,7 +211,7 @@ pub(crate) fn kick(node: &Arc<Node>, id: &ResidentId) {
         signal
     };
     let (node, id) = (node.clone(), id.clone());
-    tokio::spawn(run(node, id, signal));
+    fastctx_platform::task::spawn(run(node, id, signal));
 }
 
 /// Host readiness and consuming-turn receipts release waiting arrivals

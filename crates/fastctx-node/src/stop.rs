@@ -88,7 +88,7 @@ pub async fn stop(
 /// Stops `job` on this machine, if it has one by that id.
 pub async fn here_(node: &Arc<Node>, job: &JobId, by: &str) -> Result<Option<JobRecord>, Failure> {
     let (world, wanted) = (node.world.clone(), job.clone());
-    let path = tokio::task::spawn_blocking(move || find(&world, &wanted))
+    let path = fastctx_platform::task::spawn_blocking(move || find(&world, &wanted))
         .await
         .map_err(|error| Failure::new(error.to_string()))?
         .map_err(|error| Failure::new(format!("looking for {job}: {error}")))?;
@@ -101,14 +101,14 @@ pub async fn here_(node: &Arc<Node>, job: &JobId, by: &str) -> Result<Option<Job
 /// The record of the job `job` on this machine.
 pub(crate) fn find(world: &WorldDir, job: &JobId) -> io::Result<Option<PathBuf>> {
     for parent in world.job_parents()? {
-        let entries = match std::fs::read_dir(&parent) {
+        let entries = match fastctx_platform::disk::read_dir(&parent) {
             Ok(entries) => entries,
             Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
             Err(error) => return Err(error),
         };
         for resident in entries {
             let path = resident?.path().join("jobs").join(format!("{job}.json"));
-            if path.exists() {
+            if fastctx_platform::disk::is_there(&path) {
                 return Ok(Some(path));
             }
         }

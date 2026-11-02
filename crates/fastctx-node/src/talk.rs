@@ -121,7 +121,7 @@ pub async fn watch(
         };
         let Opening { pieces, mut events, slim } = opened;
         let node = node.clone();
-        tokio::spawn(async move {
+        fastctx_platform::task::spawn(async move {
             let _lease = lease;
             let mut views = node.views.subscribe();
             for piece in pieces.into_iter().chain(told.first()) {
@@ -182,7 +182,7 @@ pub async fn watch(
     let Some(mut watching) = watching else {
         return Err(refused.expect("a speaker was tried"));
     };
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         loop {
             let piece = tokio::select! { piece = watching.next() => piece, () = sender.closed() => return };
             match piece {
@@ -656,7 +656,7 @@ pub async fn serve_watch(
                 // runtime's threads, which serve everything else here.
                 let bytes = match piece.watched {
                     Watched::Live { .. } => fastctx_net::history::pack(&piece),
-                    _ => tokio::task::spawn_blocking(move || fastctx_net::history::pack(&piece))
+                    _ => fastctx_platform::task::spawn_blocking(move || fastctx_net::history::pack(&piece))
                         .await
                         .map_err(|error| Failure::new(format!("packing the history: {error}")))?,
                 };
@@ -1066,7 +1066,7 @@ pub(crate) async fn stop_here_as(
     // keeps no stop for the turn someone starts later.
     let directory = node.world.conversation(resident);
     let reading = directory.clone();
-    let coming = tokio::task::spawn_blocking(move || crate::inbox::pending(&reading))
+    let coming = fastctx_platform::task::spawn_blocking(move || crate::inbox::pending(&reading))
         .await
         .map_err(|error| Failure::new(error.to_string()))?
         .map_err(|error| Failure::new(format!("reading what is on its way: {error}")))?;
@@ -1095,7 +1095,7 @@ pub(crate) async fn stop_here_as(
         // words that came later is not stopped by it.
         (None, Some(turn)) => {
             let (looking, taken) = (turn.clone(), coming);
-            let took = tokio::task::spawn_blocking(move || -> std::io::Result<bool> {
+            let took = fastctx_platform::task::spawn_blocking(move || -> std::io::Result<bool> {
                 for id in &taken {
                     if crate::delivery::input_turn(&directory, id)?.as_deref() == Some(looking.as_str()) {
                         return Ok(true);

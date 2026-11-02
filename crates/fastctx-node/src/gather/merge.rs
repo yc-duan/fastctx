@@ -39,7 +39,7 @@ pub(super) fn existing(world: &WorldDir, name: &str, directories: &[PathBuf]) ->
         let legacy = aliases.get(directory).expect("persisted alias");
         for file in JOB_FILES.iter().chain(LAUNCH_FILES) {
             let path = directory.join(file);
-            if path.exists() {
+            if fastctx_platform::disk::is_there(&path) {
                 move_one(&path, &legacy.join(file))?;
             }
         }
@@ -47,7 +47,7 @@ pub(super) fn existing(world: &WorldDir, name: &str, directories: &[PathBuf]) ->
             fastctx_platform::owned_directory::delete(&entry)?;
         }
         remove_dir(directory)?;
-        if legacy.exists() {
+        if fastctx_platform::disk::is_there(legacy) {
             fastctx_platform::directory_alias::create(legacy, directory)?;
         }
     }

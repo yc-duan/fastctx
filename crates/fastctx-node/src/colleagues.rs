@@ -665,7 +665,7 @@ pub async fn message(
 async fn locate(node: &Arc<Node>, from: &ResidentId, to: &ResidentId) -> Result<Written, Failure> {
     let here = node.machine();
     let actions = node.world.conversation(from).actions();
-    let asked = tokio::task::spawn_blocking({
+    let asked = fastctx_platform::task::spawn_blocking({
         let to = to.to_string();
         move || asked_on(&actions, &to)
     })
@@ -727,7 +727,7 @@ pub async fn find_for(node: &Arc<Node>, acting: &Acting, to: &ResidentId) -> Res
 /// ends; machines it asked colleagues on are told by letter.
 pub fn left(node: &Arc<Node>, resident: ResidentId) {
     let node = node.clone();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let address = Address { machine: node.machine(), resident: resident.clone() };
         if let Err(error) = node.residents.sleep_colleagues(&node.world, &address) {
             node.log.line(format_args!("putting {address}'s idle colleagues to sleep: {error}"));
@@ -735,7 +735,8 @@ pub fn left(node: &Arc<Node>, resident: ResidentId) {
         let Some((about, _)) = node.residents.about(&resident) else { return };
         let acting = about.acting;
         let actions = node.world.conversation(&resident).actions();
-        let machines = tokio::task::spawn_blocking(move || asked_machines(&actions)).await.unwrap_or_default();
+        let machines =
+            fastctx_platform::task::spawn_blocking(move || asked_machines(&actions)).await.unwrap_or_default();
         for machine in machines.into_iter().filter(|machine| *machine != address.machine) {
             let id = speech::fixed_id("left", &[resident.as_str(), &Timestamp::now().as_millisecond().to_string()]);
             let letter = Letter::Left { resident: resident.clone() };
@@ -769,7 +770,8 @@ fn asked_on(actions: &std::path::Path, to: &str) -> Option<MachineName> {
 async fn record(node: &Arc<Node>, resident: &ResidentId, action: Action) {
     let (world, resident) = (node.world.clone(), resident.clone());
     let recorded =
-        tokio::task::spawn_blocking(move || crate::residents::record_action(&world, &resident, &action)).await;
+        fastctx_platform::task::spawn_blocking(move || crate::residents::record_action(&world, &resident, &action))
+            .await;
     if let Ok(Err(error)) | Err(error) = recorded.map_err(std::io::Error::other) {
         node.log.line(format_args!("recording an action: {error}"));
     }

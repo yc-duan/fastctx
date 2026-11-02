@@ -28,7 +28,7 @@ impl Departures {
     pub fn load(world: &WorldDir) -> io::Result<Self> {
         let departures = Self { root: world.departed() };
         fastctx_platform::ensure_private_dir(&departures.root)?;
-        let entries = match std::fs::read_dir(world.path().join("resident-cache").join("departed")) {
+        let entries = match fastctx_platform::disk::read_dir(world.path().join("resident-cache").join("departed")) {
             Ok(entries) => entries,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(departures),
             Err(error) => return Err(error),
@@ -98,7 +98,7 @@ impl Departures {
 }
 
 fn read<T: DeserializeOwned>(path: &Path) -> io::Result<Option<T>> {
-    match std::fs::read(path) {
+    match fastctx_platform::disk::read(path) {
         Ok(bytes) => serde_json::from_slice(&bytes).map(Some).map_err(|error| {
             io::Error::new(io::ErrorKind::InvalidData, format!("reading departure {}: {error}", path.display()))
         }),

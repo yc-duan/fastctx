@@ -152,8 +152,9 @@ pub(crate) fn delete_folder(world: &fastctx_types::layout::WorldDir, folder: &Fo
 
 pub(crate) fn delete(world: &fastctx_types::layout::WorldDir, copy: &Route) -> io::Result<()> {
     super::files::withdraw(&copy.path)?;
-    match std::fs::remove_file(root(world).join("copies").join(format!("{}.json", identity(&copy.account, &copy.head))))
-    {
+    match fastctx_platform::disk::remove_file(
+        root(world).join("copies").join(format!("{}.json", identity(&copy.account, &copy.head))),
+    ) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(error),
@@ -168,12 +169,12 @@ impl State {
         }
         let read = |path: &Path| -> io::Result<Vec<Vec<u8>>> {
             let mut bytes = Vec::new();
-            match std::fs::read_dir(path) {
+            match fastctx_platform::disk::read_dir(path) {
                 Ok(entries) => {
                     for entry in entries {
                         let path = entry?.path();
                         if path.extension().is_some_and(|extension| extension == "json") {
-                            bytes.push(std::fs::read(path)?);
+                            bytes.push(fastctx_platform::disk::read(path)?);
                         }
                     }
                 }

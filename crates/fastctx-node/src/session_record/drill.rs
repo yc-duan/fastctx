@@ -71,20 +71,20 @@ pub(crate) fn run(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
 
     let legacy_id: ResidentId = "codex-d4e5f6".parse()?;
     let legacy = world.conversation(&legacy_id);
-    std::fs::create_dir_all(legacy.session_events())?;
+    fastctx_platform::disk::create_dir_all(legacy.session_events())?;
     let mut expected = Vec::new();
     for index in 0..257u64 {
         let mut event = event(index);
         event.at = event.at.checked_add(jiff::SignedDuration::from_nanos((257 - index) as i64))?;
         let sequence = (index >= 100).then_some(index * 10);
         let key = format!("legacy-{index}");
-        std::fs::write(
+        fastctx_platform::disk::write(
             legacy.session_events().join(format!("{key}.json")),
             serde_json::to_vec(&Recorded { sequence, event: event.clone() })?,
         )?;
         expected.push((sequence, event.at, key, event));
     }
-    std::fs::write(legacy.session_sequence(), b"5000")?;
+    fastctx_platform::disk::write(legacy.session_sequence(), b"5000")?;
     expected.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2)));
     let actual = history(&legacy)?;
     assert_eq!(

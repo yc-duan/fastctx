@@ -80,9 +80,11 @@ fn inherits_now(node: &Node, resident: &ResidentId) -> io::Result<bool> {
 
 pub(crate) async fn remember(node: &std::sync::Arc<Node>, resident: &ResidentId, view: &View) -> io::Result<()> {
     let (node, resident, view) = (node.clone(), resident.clone(), view.clone());
-    tokio::task::spawn_blocking(move || remember_now(&node, &resident, &view)).await.map_err(io::Error::other)?
+    fastctx_platform::task::spawn_blocking(move || remember_now(&node, &resident, &view))
+        .await
+        .map_err(io::Error::other)?
 }
 pub(crate) async fn inherits(node: &std::sync::Arc<Node>, resident: &ResidentId) -> io::Result<bool> {
     let (node, resident) = (node.clone(), resident.clone());
-    tokio::task::spawn_blocking(move || inherits_now(&node, &resident)).await.map_err(io::Error::other)?
+    fastctx_platform::task::spawn_blocking(move || inherits_now(&node, &resident)).await.map_err(io::Error::other)?
 }

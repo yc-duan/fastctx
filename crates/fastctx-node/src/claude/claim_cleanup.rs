@@ -16,14 +16,14 @@ const SETTLED: Duration = Duration::from_secs(60 * 60);
 
 pub(crate) fn start(node: &Arc<Node>) {
     let weak = Arc::downgrade(node);
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let mut previous = String::new();
         loop {
             let Some(node) = weak.upgrade() else { return };
             let started = Instant::now();
             let collecting = node.clone();
             let mut pause = Duration::from_secs(60);
-            match tokio::task::spawn_blocking(move || collect(&collecting.world)).await {
+            match fastctx_platform::task::spawn_blocking(move || collect(&collecting.world)).await {
                 Ok(Ok((count, busy))) => {
                     previous.clear();
                     pause = if count > 0 {
@@ -81,7 +81,7 @@ fn collect(world: &fastctx_types::layout::WorldDir) -> io::Result<(usize, usize)
 }
 
 fn entries(path: &Path) -> io::Result<Option<std::fs::ReadDir>> {
-    match std::fs::read_dir(path) {
+    match fastctx_platform::disk::read_dir(path) {
         Ok(entries) => Ok(Some(entries)),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(error),
@@ -123,7 +123,7 @@ fn retire(control: &Path, batch: &[PathBuf], busy: &mut usize) -> io::Result<usi
             Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
             Err(error) => return Err(error),
         };
-        let metadata = match std::fs::symlink_metadata(path) {
+        let metadata = match fastctx_platform::disk::symlink_metadata(path) {
             Ok(metadata) => metadata,
             Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
             Err(error) => return Err(error),
@@ -135,11 +135,11 @@ fn retire(control: &Path, batch: &[PathBuf], busy: &mut usize) -> io::Result<usi
         let mut asked = false;
         for side in ["inbox", "replies", "retained", "started"] {
             for extension in ["json", "done"] {
-                asked |= control.join(side).join(key).with_extension(extension).try_exists()?;
+                asked |= fastctx_platform::disk::exists(control.join(side).join(key).with_extension(extension))?;
             }
         }
         if !asked {
-            match std::fs::remove_file(path) {
+            match fastctx_platform::disk::remove_file(path) {
                 Ok(()) => count += 1,
                 Err(error) if error.kind() == io::ErrorKind::NotFound => {}
                 Err(error) => return Err(error),

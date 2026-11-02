@@ -119,7 +119,7 @@ fn places(script: &str, home: &Path) -> Vec<PathBuf> {
         } else {
             home.join(target)
         };
-        if path.is_dir() && !places.contains(&path) {
+        if fastctx_platform::disk::is_dir(&path) && !places.contains(&path) {
             places.push(path);
         }
         if places.len() >= 4 {

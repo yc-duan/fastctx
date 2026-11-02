@@ -132,7 +132,7 @@ impl Seen {
 }
 
 fn changed(path: &Path) -> Result<Option<SystemTime>, String> {
-    match std::fs::metadata(path) {
+    match fastctx_platform::disk::metadata(path) {
         Ok(metadata) => metadata.modified().map(Some).map_err(|error| error.to_string()),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(error.to_string()),
@@ -140,7 +140,7 @@ fn changed(path: &Path) -> Result<Option<SystemTime>, String> {
 }
 
 fn stood(path: &Path) -> Result<Option<(u64, SystemTime)>, String> {
-    match std::fs::symlink_metadata(path) {
+    match fastctx_platform::disk::symlink_metadata(path) {
         Ok(metadata) if metadata.file_type().is_file() => {
             Ok(Some((metadata.len(), metadata.modified().map_err(|error| error.to_string())?)))
         }
@@ -202,7 +202,7 @@ impl Shelf {
         // The documents there, when one may have come or gone.
         if !self.seen.holds(now) {
             let mut names = BTreeSet::new();
-            for entry in std::fs::read_dir(records).map_err(|error| error.to_string())? {
+            for entry in fastctx_platform::disk::read_dir(records).map_err(|error| error.to_string())? {
                 let entry = entry.map_err(|error| error.to_string())?;
                 if entry.file_type().map_err(|error| error.to_string())?.is_dir() {
                     names.insert(entry.file_name().to_string_lossy().to_string());
@@ -233,7 +233,7 @@ impl Shelf {
     fn read_versions(&mut self, folder: &Path, name: &str) -> Result<(), String> {
         fastctx_types::history::markdown::check_name(name)?;
         let mut listed = BTreeMap::new();
-        for file in std::fs::read_dir(folder).map_err(|error| error.to_string())? {
+        for file in fastctx_platform::disk::read_dir(folder).map_err(|error| error.to_string())? {
             let path = file.map_err(|error| error.to_string())?.path();
             if path.extension().is_some_and(|extension| extension == "json")
                 && let Some(version) =
@@ -346,7 +346,7 @@ impl Shelf {
             let untouched = copy.is_some_and(|copy| copy.stood.is_some() && copy.stood == now);
             let text = (!latest.retired).then(|| self.stored(place, &name, latest.version)).transpose()?;
             let previous = match (&text, untouched) {
-                (Some(_), true) => std::fs::read_to_string(&path).ok(),
+                (Some(_), true) => fastctx_platform::disk::read_to_string(&path).ok(),
                 (Some(text), false) => Some(text.text.clone()),
                 (None, _) => None,
             };
@@ -382,7 +382,7 @@ impl Shelf {
 }
 
 fn read_stored(path: &Path) -> Result<Stored, String> {
-    let bytes = std::fs::read(path).map_err(|error| format!("{}: {error}", path.display()))?;
+    let bytes = fastctx_platform::disk::read(path).map_err(|error| format!("{}: {error}", path.display()))?;
     let stored: Stored = serde_json::from_slice(&bytes).map_err(|error| format!("{}: {error}", path.display()))?;
     stored.validate()?;
     Ok(stored)

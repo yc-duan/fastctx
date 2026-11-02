@@ -30,7 +30,7 @@ pub async fn wait(
     let mut changes = node.jobs.subscribe();
     let registering = node.clone();
     let wanted = jobs.clone();
-    let (paths, readers) = tokio::task::spawn_blocking(move || {
+    let (paths, readers) = fastctx_platform::task::spawn_blocking(move || {
         let _gate = registering.disk.lock();
         let mut paths = Vec::new();
         let mut readers = Vec::new();
@@ -134,7 +134,7 @@ async fn ended_or_gone(path: &std::path::Path) -> Result<JobRecord, Failure> {
     let gone = match record.supervisor.clone() {
         // A supervisor that cannot be checked is not taken for gone.
         Some(identity) => {
-            tokio::task::spawn_blocking(move || !is_alive(&identity).unwrap_or(true)).await.unwrap_or(false)
+            fastctx_platform::task::spawn_blocking(move || !is_alive(&identity).unwrap_or(true)).await.unwrap_or(false)
         }
         None => false,
     };

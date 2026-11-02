@@ -67,8 +67,8 @@ pub(super) fn gather(world: &WorldDir, failed: &BTreeSet<String>, gathered: &mut
                 for extension in ["json", "taken", "stopped", "retry", "done", "posted", "reply", "answer"] {
                     let source = path.with_extension(extension);
                     let destination = target.with_extension(extension);
-                    if source.exists()
-                        && destination.exists()
+                    if fastctx_platform::disk::is_there(&source)
+                        && fastctx_platform::disk::is_there(&destination)
                         && fastctx_platform::disk::read(&source)? != fastctx_platform::disk::read(&destination)?
                     {
                         retain_conflict(&room, name, &path)?;
@@ -93,7 +93,7 @@ pub(super) fn gather(world: &WorldDir, failed: &BTreeSet<String>, gathered: &mut
                 publish(&origin_file, &json(&origins)?, Permissions::Private)?;
                 for extension in ["taken", "stopped", "retry", "done", "posted", "reply", "answer"] {
                     let auxiliary = path.with_extension(extension);
-                    if auxiliary.exists() {
+                    if fastctx_platform::disk::is_there(&auxiliary) {
                         move_one(&auxiliary, &target.with_extension(extension))?;
                         remove_file(&auxiliary)?;
                     }
@@ -147,7 +147,7 @@ fn retain_conflict(room: &ConversationDir, queue: &str, source: &Path) -> io::Re
     // The envelope moves last, so a restart still finds an unfinished group.
     for extension in ["taken", "stopped", "retry", "done", "posted", "reply", "answer", "json"] {
         let path = source.with_extension(extension);
-        if path.exists() {
+        if fastctx_platform::disk::is_there(&path) {
             move_one(&path, &recovered.join(path.file_name().expect("queue filename")))?;
             remove_file(&path)?;
         }

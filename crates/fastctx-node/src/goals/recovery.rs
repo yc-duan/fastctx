@@ -7,11 +7,11 @@ use std::sync::Arc;
 
 pub(crate) fn start(node: &Arc<Node>) {
     let node = node.clone();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let mut again = crate::again::Again::default();
         loop {
             let reading = node.clone();
-            let loaded = tokio::task::spawn_blocking(move || -> std::io::Result<_> {
+            let loaded = fastctx_platform::task::spawn_blocking(move || -> std::io::Result<_> {
                 let mut owners = Vec::new();
                 for kept in reading.world.kept()? {
                     for intent in intents::pending(&kept.directory)? {
@@ -42,7 +42,7 @@ pub(crate) fn schedule(node: &Arc<Node>, resident: Address) {
         return;
     }
     let node = node.clone();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let mut again = crate::again::Again::default();
         let mut previous = None;
         loop {
@@ -93,7 +93,7 @@ async fn settle(node: &Arc<Node>, resident: &Address) -> Result<(), fastctx_type
     }
     loop {
         let reading = directory.clone();
-        let pending = tokio::task::spawn_blocking(move || intents::pending(&reading))
+        let pending = fastctx_platform::task::spawn_blocking(move || intents::pending(&reading))
             .await
             .map_err(|e| fastctx_types::ipc::Failure::new(e.to_string()))?
             .map_err(|e| fastctx_types::ipc::Failure::new(e.to_string()))?;

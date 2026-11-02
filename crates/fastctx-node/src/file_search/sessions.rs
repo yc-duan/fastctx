@@ -85,7 +85,7 @@ impl Session {
 
     fn close(self: Arc<Self>) -> tokio::task::JoinHandle<()> {
         self.closed.send_replace(true);
-        tokio::task::spawn_blocking(move || {
+        fastctx_platform::task::spawn_blocking(move || {
             self.state.lock().expect("search session poisoned").index.close();
             drop(self);
         })
@@ -150,7 +150,7 @@ impl Lease {
             let Some(entry) = sessions.get_mut(key) else { return };
             entry.expires = Some(expires);
         }
-        tokio::spawn(expire(self.sessions.clone(), key.clone(), self.ended.clone(), expires));
+        fastctx_platform::task::spawn(expire(self.sessions.clone(), key.clone(), self.ended.clone(), expires));
         self.key = None;
     }
 }

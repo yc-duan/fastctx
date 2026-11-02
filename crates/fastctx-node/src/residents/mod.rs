@@ -282,12 +282,12 @@ impl Residents {
             let directory = &kept.directory;
             // Files attached for a conversation not opened yet have a home
             // and no resident.
-            if !directory.about().try_exists()? {
+            if !fastctx_platform::disk::exists(directory.about())? {
                 continue;
             }
             // A deletion that began before the node stopped is finished,
             // and it takes nothing new until then.
-            if directory.path().join(crate::data::delete::INTENT).try_exists()? {
+            if fastctx_platform::disk::exists(directory.path().join(crate::data::delete::INTENT))? {
                 state.condemned.insert(id.clone());
             }
             let about = match records::read_about(directory) {
@@ -590,7 +590,7 @@ impl Residents {
         let places = Places::born(town, about.born_at);
         records::create(&directory, &about, &places)?;
         // Files attached before it was opened are its own now.
-        match std::fs::remove_file(directory.draft()) {
+        match fastctx_platform::disk::remove_file(directory.draft()) {
             Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
             _ => {}
         }
@@ -1213,6 +1213,6 @@ mod lifetime_tests {
         assert_eq!(restored.everyone().count(), 512);
         assert!(restored.arrive(&world, &machine, host, hints(0)).is_err());
         drop(restored);
-        std::fs::remove_dir_all(root).unwrap();
+        fastctx_platform::disk::remove_dir_all(root).unwrap();
     }
 }

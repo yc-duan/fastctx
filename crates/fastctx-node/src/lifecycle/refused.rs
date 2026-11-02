@@ -41,7 +41,7 @@ pub(crate) async fn reject(
     error: Failure,
 ) -> Result<Landed, Failure> {
     let (saving, recipient, key, offered) = (node.clone(), id.clone(), input.clone(), error.clone());
-    let kept = tokio::task::spawn_blocking(move || -> io::Result<Option<Refused>> {
+    let kept = fastctx_platform::task::spawn_blocking(move || -> io::Result<Option<Refused>> {
         let directory = saving.world.conversation(&recipient);
         prepare(&directory)?;
         crate::inbox::storage::initialize(&directory)?;
@@ -79,7 +79,7 @@ pub(crate) async fn reject(
     let Some(refused) = kept else { return Err(error) };
     crate::composer::rejected(node, id, input, &refused.failure.message).await?;
     let (saving, recipient, key, result) = (node.clone(), id.clone(), input.clone(), refused.clone());
-    tokio::task::spawn_blocking(move || -> io::Result<()> {
+    fastctx_platform::task::spawn_blocking(move || -> io::Result<()> {
         let text = format!("{} {key}: {}", super::words::NOT_SENT, result.failure.message);
         saving.residents.change_now(&saving.world, &recipient, |now| {
             now.trouble = Some(fastctx_types::residents::Trouble { at: result.at, text });

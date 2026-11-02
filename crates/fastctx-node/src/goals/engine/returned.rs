@@ -77,5 +77,7 @@ pub(super) async fn decision(
     new_turn: bool,
 ) -> Result<Option<policy::Decision>, Failure> {
     let (node, goal, turn, handles) = (node.clone(), goal.clone(), facts.turn.clone(), facts.waiting.clone());
-    tokio::task::spawn_blocking(move || decide(&node, &goal, &turn, &handles, new_turn)).await.map_err(failure)?
+    fastctx_platform::task::spawn_blocking(move || decide(&node, &goal, &turn, &handles, new_turn))
+        .await
+        .map_err(failure)?
 }

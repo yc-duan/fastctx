@@ -24,7 +24,7 @@ pub(super) async fn needed(node: &Node, id: &ResidentId) -> Result<bool, Failure
                 .optional()?;
             let bytes = match stored {
                 Some(bytes) => bytes,
-                None => match std::fs::read(file) {
+                None => match fastctx_platform::disk::read(file) {
                     Ok(bytes) => bytes,
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
                     Err(error) => return Err(error.into()),

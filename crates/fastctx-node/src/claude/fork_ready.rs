@@ -66,7 +66,7 @@ pub(super) fn failed(node: &Arc<Node>, resident: &ResidentId, why: &str) -> Resu
 }
 
 pub(super) async fn finish(node: &Arc<Node>, resident: &ResidentId) -> Result<(), Failure> {
-    std::fs::remove_file(path(node, resident)).map_err(failure)?;
+    fastctx_platform::disk::remove_file(path(node, resident)).map_err(failure)?;
     node.residents
         .change_now(&node.world, resident, |now| {
             if now.turn.is_none() {
@@ -114,7 +114,10 @@ pub(super) async fn wait(node: &Arc<Node>, resident: &ResidentId, saved: bool) -
             let host = control::host(&directory.join("control")).map_err(failure)?;
             if registered(node, resident).map_err(failure)?
                 && host.as_ref().is_some_and(|host| control::active(&directory.join("control"), host).unwrap_or(false))
-                && (!saved || exchange::transcript(&directory).map_err(failure)?.is_some_and(|path| path.is_file()))
+                && (!saved
+                    || exchange::transcript(&directory)
+                        .map_err(failure)?
+                        .is_some_and(|path| fastctx_platform::disk::is_file(&path)))
             {
                 return Ok(());
             }

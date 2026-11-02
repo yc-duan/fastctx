@@ -221,7 +221,7 @@ async fn branch(node: &Arc<Node>, id: &ResidentId, acting: &Acting, deadline: In
 
 async fn targets(node: &Arc<Node>, owner: &Address, acting: &Acting) -> Result<BTreeMap<Address, String>, Failure> {
     let path = node.world.conversation(&owner.resident).actions();
-    let actions = tokio::task::spawn_blocking(move || crate::residents::activity::asked(&path, None))
+    let actions = fastctx_platform::task::spawn_blocking(move || crate::residents::activity::asked(&path, None))
         .await
         .map_err(|error| Failure::new(error.to_string()))?
         .map_err(|error| Failure::new(error.to_string()))?;

@@ -109,7 +109,7 @@ impl Watchers {
         self.changed.notify_one();
         let changed = self.changed.clone();
         let (registry, id) = (Arc::downgrade(&self.watching), id.clone());
-        tokio::spawn(async move {
+        fastctx_platform::task::spawn(async move {
             sender.closed().await;
             changed.notify_one();
             {

@@ -101,7 +101,7 @@ pub(super) async fn build(
             matches!(decision.kind.as_str(), "review_sound" | "review_advice" | "review_obsolete" | "review_failed")
         })
         .collect();
-    let (judgments_file, previous_judgments) = tokio::task::spawn_blocking(move || {
+    let (judgments_file, previous_judgments) = fastctx_platform::task::spawn_blocking(move || {
         let file = File::text("previous-judgments.json", &serde_json::to_string(&judgments).map_err(failure)?);
         let words = judgments
             .iter()
@@ -170,13 +170,15 @@ pub(super) async fn build(
         let (seen, evidence) = {
             let node = node.clone();
             let resident = goal.resident.resident.clone();
-            tokio::task::spawn_blocking(move || crate::turn_evidence::review::collect(&node, &resident, &previous))
-                .await
-                .map_err(failure)?
-                .map_err(failure)?
+            fastctx_platform::task::spawn_blocking(move || {
+                crate::turn_evidence::review::collect(&node, &resident, &previous)
+            })
+            .await
+            .map_err(failure)?
+            .map_err(failure)?
         };
         let full_path = place.file(&key, "world-facts.json")?;
-        let (summary, evidence_file, full_path) = tokio::task::spawn_blocking(move || {
+        let (summary, evidence_file, full_path) = fastctx_platform::task::spawn_blocking(move || {
             let summary = evidence.summary(&full_path);
             let file = File::text("world-facts.json", &serde_json::to_string(&evidence).map_err(failure)?);
             Ok::<_, Failure>((summary, file, full_path))
@@ -203,7 +205,7 @@ pub(super) async fn build(
                 facts.end.and_then(|end| end.last_message).map(|text| text.chars().take(1200).collect());
         }
     }
-    let (full, result) = tokio::task::spawn_blocking(move || {
+    let (full, result) = fastctx_platform::task::spawn_blocking(move || {
         let full = File::text("full-materials.json", &serde_json::to_string(&result).map_err(failure)?);
         Ok::<_, Failure>((full, super::material_size::freeze(result)?))
     })
@@ -216,5 +218,5 @@ pub(super) async fn build(
 
 pub(super) async fn recent_owner(node: &Arc<Node>, goal: &Goal) -> Result<Vec<(String, OwnerWords)>, Failure> {
     let (node, goal) = (node.clone(), goal.clone());
-    tokio::task::spawn_blocking(move || recent_owner_now(&node, &goal)).await.map_err(failure)?
+    fastctx_platform::task::spawn_blocking(move || recent_owner_now(&node, &goal)).await.map_err(failure)?
 }

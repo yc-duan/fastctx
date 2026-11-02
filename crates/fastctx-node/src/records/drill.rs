@@ -49,7 +49,7 @@ pub(crate) fn run(root: &Path) -> std::result::Result<(), Box<dyn std::error::Er
     _migration.start()?;
     let id: ResidentId = "codex-a1b2c3".parse()?;
     let directory = world.conversation(&id);
-    std::fs::create_dir_all(directory.path())?;
+    fastctx_platform::disk::create_dir_all(directory.path())?;
     let mut first = pending(0);
     let mut later = pending(1);
     first.delivery.at = "2026-01-01T00:00:00Z".parse()?;
@@ -119,15 +119,15 @@ pub(crate) fn run(root: &Path) -> std::result::Result<(), Box<dyn std::error::Er
     assert_eq!(crate::residents::activity::lines::<MessageLine>(&directory.messages())?.len(), 1);
 
     let legacy = world.conversation(&"codex-abc123".parse()?);
-    std::fs::create_dir_all(legacy.books())?;
-    std::fs::write(legacy.delivered(), b"input-000007\n")?;
+    fastctx_platform::disk::create_dir_all(legacy.books())?;
+    fastctx_platform::disk::write(legacy.delivered(), b"input-000007\n")?;
     assert!(crate::inbox::delivered_here(&legacy, &pending(7).delivery.id)?);
     assert!(
         crate::inbox::heard_at(&legacy, &pending(7).delivery.id)?.is_none(),
         "old duplicate marker became consumption proof"
     );
     let file = root.join("seen-file.txt");
-    std::fs::write(&file, b"one")?;
+    fastctx_platform::disk::write(&file, b"one")?;
     let mut seen = Seen {
         path: file.to_string_lossy().into_owned(),
         at: first.delivery.at,
@@ -142,7 +142,7 @@ pub(crate) fn run(root: &Path) -> std::result::Result<(), Box<dyn std::error::Er
     seen.sha256 = Some("new".into());
     bytes.extend(serde_json::to_vec(&seen)?);
     bytes.push(b'\n');
-    std::fs::write(legacy.seen(), bytes)?;
+    fastctx_platform::disk::write(legacy.seen(), bytes)?;
     assert_eq!(
         crate::residents::activity::get_seen(&legacy, &file)?.and_then(|row| row.sha256).as_deref(),
         Some("new")
@@ -164,14 +164,14 @@ fn queues_and_jobs(
     directory: &ConversationDir,
 ) -> std::result::Result<(), Box<dyn std::error::Error>> {
     let folder = directory.book("received");
-    std::fs::create_dir_all(&folder)?;
+    fastctx_platform::disk::create_dir_all(&folder)?;
     fastctx_platform::disk::write(
         folder.join("first.json"),
         serde_json::to_vec(
             &serde_json::json!({"order":5,"to":"codex-a1b2c3","delivery":pending(5).delivery,"owed":crate::speech::Owed::Nobody}),
         )?,
     )?;
-    std::fs::write(folder.join("sequence"), b"6")?;
+    fastctx_platform::disk::write(folder.join("sequence"), b"6")?;
     assert!(matches!(items::enqueue(&folder.join("second.json"), b"{}".to_vec(), None)?, items::Enqueued::Inserted));
     let queued = items::queued(&folder, &[], "", &items::queue_end(&folder)?)?;
     assert_eq!(queued.len(), 2);
@@ -190,13 +190,13 @@ fn queues_and_jobs(
     })?;
     assert!(expires.is_some());
     let path = directory.path().join("jobs/j-abc123.json");
-    std::fs::create_dir_all(path.parent().unwrap())?;
+    fastctx_platform::disk::create_dir_all(path.parent().unwrap())?;
     let record: fastctx_types::run::JobRecord = serde_json::from_value(serde_json::json!({
         "id":"j-abc123","machine":"worker","owner":{"machine":"worker","resident":"codex-a1b2c3"},
         "script":"true","cwd":directory.path(),"output":directory.path().join("out/j-abc123.log"),
         "started_at":"2026-01-01T00:00:00.000000001Z","ends_with_node":false
     }))?;
-    std::fs::write(&path, serde_json::to_vec(&record)?)?;
+    fastctx_platform::disk::write(&path, serde_json::to_vec(&record)?)?;
     let fact = |index| fastctx_types::run_facts::WriteFact {
         turn: None,
         id: format!("{index:08x}"),
@@ -209,8 +209,8 @@ fn queues_and_jobs(
         diff: None,
         note: None,
     };
-    std::fs::create_dir_all(path.with_extension("writes"))?;
-    std::fs::write(path.with_extension("writes").join("00000000.json"), serde_json::to_vec(&fact(0))?)?;
+    fastctx_platform::disk::create_dir_all(path.with_extension("writes"))?;
+    fastctx_platform::disk::write(path.with_extension("writes").join("00000000.json"), serde_json::to_vec(&fact(0))?)?;
     for index in 1..260 {
         crate::run_facts::write(&path.with_extension("writes"), &fact(index))?;
     }

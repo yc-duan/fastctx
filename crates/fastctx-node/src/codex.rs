@@ -43,7 +43,7 @@ pub async fn adopt(node: &Arc<Node>, residents: &[crate::residents::OnRecord]) {
         return;
     }
     let node = Arc::downgrade(node);
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         for _ in 0..60 {
             tokio::time::sleep(std::time::Duration::from_secs(60)).await;
             let Some(node) = node.upgrade() else { return };
@@ -164,7 +164,7 @@ pub(crate) async fn deleted(
     let _persisting = gate.lock().await;
     let (directory, thread) = (directory.clone(), thread.to_string());
     let deleting = thread.clone();
-    tokio::task::spawn_blocking(move || report_store::delete(&directory, &deleting))
+    fastctx_platform::task::spawn_blocking(move || report_store::delete(&directory, &deleting))
         .await
         .map_err(std::io::Error::other)??;
     node.unclaimed.state.lock().expect("host reports").queues.remove(&thread);
@@ -185,8 +185,8 @@ pub(crate) fn pending(
     if report_store::pending(directory)? {
         return Ok(true);
     }
-    Ok(directory.books().join("host-reports.json").try_exists()?
-        || directory.books().join("host-reports.jsonl").try_exists()?)
+    Ok(fastctx_platform::disk::exists(directory.books().join("host-reports.json"))?
+        || fastctx_platform::disk::exists(directory.books().join("host-reports.jsonl"))?)
 }
 
 /// A thread the World is starting or forking, until it is claimed or the
@@ -242,11 +242,11 @@ fn enqueue(node: &Arc<Node>, thread: String, event: HostEvent) -> std::io::Resul
 fn plain(node: &Arc<Node>, thread: String, event: HostEvent) -> std::io::Result<()> {
     let (flush, drain) = reports::push(node, thread.clone(), event);
     if flush {
-        tokio::spawn(reports::persist(node.clone(), thread.clone()));
+        fastctx_platform::task::spawn(reports::persist(node.clone(), thread.clone()));
     }
     if drain {
         let node = node.clone();
-        tokio::spawn(async move {
+        fastctx_platform::task::spawn(async move {
             self::drain(&node, &thread).await;
         });
     }
@@ -393,24 +393,26 @@ pub fn listen(node: Arc<Node>, mut events: mpsc::UnboundedReceiver<HostEvent>) {
         .collect();
     for thread in threads {
         let node = node.clone();
-        tokio::spawn(async move {
+        fastctx_platform::task::spawn(async move {
             drain(&node, &thread).await;
         });
     }
     let cleaning = node.clone();
-    tokio::task::spawn_blocking(move || {
+    fastctx_platform::task::spawn_blocking(move || {
         if let Err(error) = report_store::discard_legacy(&cleaning) {
             cleaning.log.line(format_args!("removing reports of threads nobody claimed: {error}"));
         }
     });
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         while let Some(event) = events.recv().await {
             let reports = match event {
                 HostEvent::Synchronized { thread, done } => {
                     // In a task of its own: what goes wrong with one thread
                     // stays with it, and listening goes on.
                     let (draining, drained) = (node.clone(), thread.clone());
-                    if let Err(error) = tokio::spawn(async move { drain(&draining, &drained).await }).await {
+                    if let Err(error) =
+                        fastctx_platform::task::spawn(async move { drain(&draining, &drained).await }).await
+                    {
                         node.log.line(format_args!("applying what {thread} reported: {error}"));
                     }
                     let applied = match reports::empty(&node, &thread).await {

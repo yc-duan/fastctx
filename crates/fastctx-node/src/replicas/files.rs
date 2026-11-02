@@ -3,27 +3,27 @@
 use std::{io, path::Path};
 
 fn writable(path: &Path) -> io::Result<()> {
-    let mut permissions = std::fs::metadata(path)?.permissions();
+    let mut permissions = fastctx_platform::disk::metadata(path)?.permissions();
     #[allow(clippy::permissions_set_readonly_false)]
     permissions.set_readonly(false);
     std::fs::set_permissions(path, permissions)
 }
 
 pub(crate) fn delete(path: &Path) -> io::Result<()> {
-    match std::fs::symlink_metadata(path) {
+    match fastctx_platform::disk::symlink_metadata(path) {
         Ok(metadata) => {
             if metadata.file_type().is_file() {
                 writable(path)?;
             }
             if metadata.file_type().is_dir() {
-                for entry in std::fs::read_dir(path)? {
+                for entry in fastctx_platform::disk::read_dir(path)? {
                     delete(&entry?.path())?;
                 }
-                std::fs::remove_dir(path)
-            } else if cfg!(windows) && metadata.file_type().is_symlink() && path.is_dir() {
-                std::fs::remove_dir(path)
+                fastctx_platform::disk::remove_dir(path)
+            } else if cfg!(windows) && metadata.file_type().is_symlink() && fastctx_platform::disk::is_dir(path) {
+                fastctx_platform::disk::remove_dir(path)
             } else {
-                std::fs::remove_file(path)
+                fastctx_platform::disk::remove_file(path)
             }
         }
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
@@ -32,7 +32,7 @@ pub(crate) fn delete(path: &Path) -> io::Result<()> {
 }
 
 fn directory(path: &Path) -> io::Result<()> {
-    match std::fs::symlink_metadata(path) {
+    match fastctx_platform::disk::symlink_metadata(path) {
         Ok(metadata) if !metadata.file_type().is_dir() => {
             return Err(io::Error::other("the replica directory was redirected"));
         }
@@ -46,9 +46,9 @@ fn directory(path: &Path) -> io::Result<()> {
 pub(crate) fn publish(path: &Path, text: &str, previous: Option<&str>) -> io::Result<()> {
     let parent = path.parent().ok_or_else(|| io::Error::other("a replica has no parent directory"))?;
     directory(parent)?;
-    match std::fs::symlink_metadata(path) {
+    match fastctx_platform::disk::symlink_metadata(path) {
         Ok(metadata) => {
-            let bytes = if metadata.file_type().is_file() { Some(std::fs::read(path)?) } else { None };
+            let bytes = if metadata.file_type().is_file() { Some(fastctx_platform::disk::read(path)?) } else { None };
             if bytes.as_deref() == Some(text.as_bytes()) {
                 return readonly(path);
             }
@@ -63,7 +63,7 @@ pub(crate) fn publish(path: &Path, text: &str, previous: Option<&str>) -> io::Re
                     path.file_name().ok_or_else(|| io::Error::other("a replica has no filename"))?.to_string_lossy();
                 let archive = parent.join("tampering");
                 directory(&archive)?;
-                std::fs::rename(path, archive.join(format!("{name}.{suffix}")))?;
+                fastctx_platform::disk::rename(path, archive.join(format!("{name}.{suffix}")))?;
             }
         }
         Err(error) if error.kind() == io::ErrorKind::NotFound => {}
@@ -80,10 +80,10 @@ pub(crate) fn withdraw(path: &Path) -> io::Result<()> {
     let Some(name) = path.file_name() else { return Ok(()) };
     let prefix = format!("{}.", name.to_string_lossy());
     let archive = parent.join("tampering");
-    if std::fs::symlink_metadata(&archive).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
+    if fastctx_platform::disk::symlink_metadata(&archive).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
         return delete(&archive);
     }
-    match std::fs::read_dir(archive) {
+    match fastctx_platform::disk::read_dir(archive) {
         Ok(entries) => {
             for entry in entries {
                 let entry = entry?;
@@ -99,7 +99,7 @@ pub(crate) fn withdraw(path: &Path) -> io::Result<()> {
 }
 
 fn readonly(path: &Path) -> io::Result<()> {
-    let mut permissions = std::fs::metadata(path)?.permissions();
+    let mut permissions = fastctx_platform::disk::metadata(path)?.permissions();
     if !permissions.readonly() {
         permissions.set_readonly(true);
         std::fs::set_permissions(path, permissions)?;

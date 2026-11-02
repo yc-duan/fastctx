@@ -117,7 +117,7 @@ pub(crate) struct FileStamp {
 
 impl FileStamp {
     pub fn of(path: &Path) -> Option<Self> {
-        let metadata = std::fs::metadata(path).ok()?;
+        let metadata = fastctx_platform::disk::metadata(path).ok()?;
         let modified = metadata.modified().ok().and_then(|modified| Timestamp::try_from(modified).ok());
         Some(Self { len: metadata.len(), modified })
     }
@@ -139,7 +139,7 @@ fn path(node: &Node) -> PathBuf {
 
 /// The record as last kept.
 pub(super) fn read(node: &Node) -> io::Result<Kept> {
-    let kept: Kept = match std::fs::read(path(node)) {
+    let kept: Kept = match fastctx_platform::disk::read(path(node)) {
         Ok(bytes) => serde_json::from_slice(&bytes)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("agent-scan.json: {error}")))?,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Kept::default()),
@@ -227,7 +227,7 @@ fn added_path(node: &Node) -> PathBuf {
 }
 
 pub(super) fn chosen(node: &Node) -> io::Result<Added> {
-    match std::fs::read(added_path(node)) {
+    match fastctx_platform::disk::read(added_path(node)) {
         Ok(bytes) => serde_json::from_slice::<Added>(&bytes)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("agent-homes.json: {error}"))),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Added::default()),

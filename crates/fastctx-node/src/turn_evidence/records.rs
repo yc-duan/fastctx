@@ -16,7 +16,7 @@ pub(super) fn jobs(node: &Node, resident: &ResidentId) -> io::Result<Vec<JobEvid
     let _disk = node.disk.lock();
     let mut result = Vec::new();
     for directory in node.world.job_directories(&names, &owner)? {
-        let entries = match std::fs::read_dir(directory) {
+        let entries = match fastctx_platform::disk::read_dir(directory) {
             Ok(entries) => entries,
             Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
             Err(error) => return Err(error),

@@ -97,7 +97,7 @@ pub fn gather(world: &WorldDir) -> io::Result<Gathered> {
         let town = earlier.town_of(&parent);
         for path in entries(&parent)? {
             let Some(name) = path.file_name().and_then(|name| name.to_str()) else { continue };
-            if !path.is_dir()
+            if !fastctx_platform::disk::is_dir(&path)
                 || fastctx_platform::owned_directory::is_link(&fastctx_platform::disk::symlink_metadata(&path)?)
             {
                 continue;
@@ -118,19 +118,19 @@ pub fn gather(world: &WorldDir) -> io::Result<Gathered> {
         if let Some(name) = name.strip_prefix('.').and_then(|name| name.strip_suffix(".gathering")) {
             // A node that stopped before its plan was written moved nothing
             // yet: it is planned again below.
-            if path.join(PLAN).exists() {
+            if fastctx_platform::disk::is_there(path.join(PLAN)) {
                 pending.insert(name.to_string());
             } else if let Err(error) = fastctx_platform::owned_directory::delete(&path) {
                 gathered.problems.push((path.clone(), error));
             }
-        } else if path.join(PLAN).exists() {
+        } else if fastctx_platform::disk::is_there(path.join(PLAN)) {
             pending.insert(name.to_string());
         }
     }
     let mut failed = BTreeSet::new();
     let mut placed: BTreeMap<ResidentId, Vec<PathBuf>> = BTreeMap::new();
     for (id, directories) in homes {
-        if !pending.contains(id.as_str()) && conversations.join(id.as_str()).exists() {
+        if !pending.contains(id.as_str()) && fastctx_platform::disk::is_there(conversations.join(id.as_str())) {
             let directories: Vec<PathBuf> = directories.into_iter().map(|(_, path)| path).collect();
             if let Err(error) = merge::existing(world, id.as_str(), &directories) {
                 gathered.problems.push((conversations.join(id.as_str()), error));
@@ -170,7 +170,7 @@ pub fn gather(world: &WorldDir) -> io::Result<Gathered> {
     }
     for (owner, directories) in guests {
         let name = owner.key();
-        if !pending.contains(&name) && conversations.join(&name).exists() {
+        if !pending.contains(&name) && fastctx_platform::disk::is_there(conversations.join(&name)) {
             if let Err(error) = merge::existing(world, &name, &directories) {
                 gathered.problems.push((conversations.join(&name), error));
             }
@@ -227,8 +227,8 @@ pub fn gather(world: &WorldDir) -> io::Result<Gathered> {
             }
         };
         for (alias, destination) in aliases {
-            if destination.is_dir()
-                && !alias.exists()
+            if fastctx_platform::disk::is_dir(&destination)
+                && !fastctx_platform::disk::is_there(&alias)
                 && let Err(error) = fastctx_platform::directory_alias::create(&destination, &alias)
             {
                 gathered.problems.push((alias, error));
@@ -253,7 +253,7 @@ fn gather_session(world: &WorldDir, session: &Path) -> io::Result<()> {
         return Ok(());
     }
     if let Some(id) = read_optional::<ResidentId>(&session.join("resident.json"))?
-        && world.conversation(&id).about().exists()
+        && fastctx_platform::disk::is_there(world.conversation(&id).about())
         && let Some(name) = session.file_name().and_then(|name| name.to_str())
     {
         claude_room(world, &id, name)?;
@@ -267,7 +267,7 @@ pub(crate) fn claude_room(world: &WorldDir, id: &ResidentId, session: &str) -> i
     crate::claude::pairing::validate_session(session)?;
     let home = world.conversation(id);
     let source = fastctx_hosts::claude::exchange::sessions(world.path()).join(session);
-    if source.exists()
+    if fastctx_platform::disk::is_there(&source)
         && fastctx_platform::owned_directory::is_link(&fastctx_platform::disk::symlink_metadata(&source)?)
     {
         return fastctx_platform::directory_alias::create(&home.claude_exchange(session), &source);
@@ -302,13 +302,13 @@ pub(crate) fn claude_room(world: &WorldDir, id: &ResidentId, session: &str) -> i
     let mut aliases = read_optional::<BTreeMap<PathBuf, PathBuf>>(&home.aliases())?.unwrap_or_default();
     aliases.insert(source.clone(), target.clone());
     publish(&home.aliases(), &json(&aliases)?, Permissions::Private)?;
-    if !target.exists() {
+    if !fastctx_platform::disk::is_there(&target) {
         fastctx_platform::owned_directory::move_to(&source, &target)?;
-    } else if source.exists() {
+    } else if fastctx_platform::disk::is_there(&source) {
         move_record(&source, &target, &home.path().join("recovered").join("claude").join(session))?;
         fastctx_platform::owned_directory::delete(&source)?;
     }
-    if !source.exists() {
+    if !fastctx_platform::disk::is_there(&source) {
         fastctx_platform::directory_alias::create(&target, &source)?;
     }
     Ok(())
@@ -325,10 +325,11 @@ fn home_plan(directories: &[(Option<TownName>, PathBuf)], removed: Option<Timest
     let mut found = Vec::new();
     for (town, directory) in directories {
         let archived = directory.join("archive");
-        let records = if archived.join("about").exists() { archived } else { directory.clone() };
+        let records =
+            if fastctx_platform::disk::is_there(archived.join("about")) { archived } else { directory.clone() };
         let about = read_optional::<About>(&records.join("about"))?;
         let moved = read_optional::<Moved>(&records.join("moved"))?;
-        let draft = records.join("attachment-draft.json").exists();
+        let draft = fastctx_platform::disk::is_there(records.join("attachment-draft.json"));
         found.push(Found {
             town: town.clone(),
             source: Source { directory: directory.clone(), records },
@@ -394,7 +395,7 @@ fn home_plan(directories: &[(Option<TownName>, PathBuf)], removed: Option<Timest
         if source.records != source.directory {
             // An interrupted removal can leave half its records unarchived.
             sources.push(Source { records: source.directory.clone(), directory: source.directory });
-        } else if source.directory.join("archive").is_dir() {
+        } else if fastctx_platform::disk::is_dir(source.directory.join("archive")) {
             sources.push(Source { records: source.directory.join("archive"), directory: source.directory });
         }
     }
@@ -428,7 +429,7 @@ fn gather_one(world: &WorldDir, name: &str, plan: Plan) -> io::Result<()> {
     let conversations = world.conversations();
     let target = conversations.join(name);
     let staging = conversations.join(format!(".{name}.gathering"));
-    if target.exists() {
+    if fastctx_platform::disk::is_there(&target) {
         return Err(io::Error::other(format!(
             "{} exists already; the earlier records of {name} were left where they are",
             target.display()
@@ -442,7 +443,7 @@ fn gather_one(world: &WorldDir, name: &str, plan: Plan) -> io::Result<()> {
 /// Finishes the plan a node that stopped left for `name`.
 fn resume(world: &WorldDir, name: &str) -> io::Result<()> {
     let staging = world.conversations().join(format!(".{name}.gathering"));
-    if staging.join(PLAN).exists() {
+    if fastctx_platform::disk::is_there(staging.join(PLAN)) {
         return fill(world, name);
     }
     clean(world, name)
@@ -486,12 +487,12 @@ fn fill(world: &WorldDir, name: &str) -> io::Result<()> {
         let legacy = staging.join("legacy").join(index.to_string());
         for file in JOB_FILES.iter().chain(LAUNCH_FILES) {
             let path = source.directory.join(file);
-            if path.exists() && !live_jobs(&source.directory)? {
+            if fastctx_platform::disk::is_there(&path) && !live_jobs(&source.directory)? {
                 move_one(&path, &legacy.join(file))?;
             }
         }
         // A restart after a rename still knows which old paths need aliases.
-        if legacy.exists() {
+        if fastctx_platform::disk::is_there(&legacy) {
             aliases.insert(source.directory.clone(), conversations.join(name).join("legacy").join(index.to_string()));
         }
     }
@@ -506,7 +507,7 @@ fn clean(world: &WorldDir, name: &str) -> io::Result<()> {
     let target = world.conversations().join(name);
     let plan: Plan = read_json(&target.join(PLAN))?;
     for source in &plan.sources {
-        if source.directory.exists()
+        if fastctx_platform::disk::is_there(&source.directory)
             && !fastctx_platform::owned_directory::is_link(&fastctx_platform::disk::symlink_metadata(
                 &source.directory,
             )?)
@@ -518,7 +519,7 @@ fn clean(world: &WorldDir, name: &str) -> io::Result<()> {
     let into = ConversationDir::at(&target);
     let mut sources = vec![Source { directory: target.clone(), records: target.clone() }];
     for (index, source) in plan.sources.iter().enumerate() {
-        if source.directory.exists()
+        if fastctx_platform::disk::is_there(&source.directory)
             && !fastctx_platform::owned_directory::is_link(&fastctx_platform::disk::symlink_metadata(
                 &source.directory,
             )?)
@@ -532,7 +533,7 @@ fn clean(world: &WorldDir, name: &str) -> io::Result<()> {
     // released the record lock; the next node start finishes this plan.
     let mut aliases: BTreeMap<PathBuf, PathBuf> = read_json(&target.join("aliases.json"))?;
     for (index, source) in plan.sources.iter().enumerate() {
-        if source.directory.exists()
+        if fastctx_platform::disk::is_there(&source.directory)
             && !fastctx_platform::owned_directory::is_link(&fastctx_platform::disk::symlink_metadata(
                 &source.directory,
             )?)
@@ -540,18 +541,18 @@ fn clean(world: &WorldDir, name: &str) -> io::Result<()> {
             let legacy = target.join("legacy").join(index.to_string());
             for file in JOB_FILES.iter().chain(LAUNCH_FILES) {
                 let path = source.directory.join(file);
-                if path.exists() {
+                if fastctx_platform::disk::is_there(&path) {
                     move_one(&path, &legacy.join(file))?;
                 }
             }
-            if legacy.exists() {
+            if fastctx_platform::disk::is_there(&legacy) {
                 aliases.entry(source.directory.clone()).or_insert(legacy);
             }
         }
     }
     publish(&target.join("aliases.json"), &json(&aliases)?, Permissions::Private)?;
     for source in &plan.sources {
-        if source.directory.exists()
+        if fastctx_platform::disk::is_there(&source.directory)
             && fastctx_platform::owned_directory::is_link(&fastctx_platform::disk::symlink_metadata(&source.directory)?)
         {
             continue;
@@ -602,7 +603,7 @@ fn preserve_paths(from: &Path, to: &Path) -> io::Result<()> {
         for child in entries(from)? {
             preserve_paths(&child, &to.join(child.file_name().expect("named")))?;
         }
-    } else if !to.exists() {
+    } else if !fastctx_platform::disk::is_there(to) {
         ensure_private_dir(to.parent().expect("attachment parent"))?;
         fastctx_platform::disk::hard_link(from, to)?;
     }
@@ -623,7 +624,8 @@ fn move_records(source: &Source, into: &ConversationDir, index: usize, keeps_lau
             continue;
         }
         let destination = destination(into, &name);
-        if destination.exists() && matches!(name.as_str(), "about" | "now" | "composer.json") {
+        if fastctx_platform::disk::is_there(&destination) && matches!(name.as_str(), "about" | "now" | "composer.json")
+        {
             if fastctx_platform::disk::read(&entry)? != fastctx_platform::disk::read(&destination)? {
                 move_one(&entry, &into.path().join("recovered").join(index.to_string()).join(&name))?;
             }
@@ -647,7 +649,7 @@ fn move_records(source: &Source, into: &ConversationDir, index: usize, keeps_lau
                     )?,
                 }
             }
-        } else if entry.is_dir()
+        } else if fastctx_platform::disk::is_dir(&entry)
             && !fastctx_platform::owned_directory::is_link(&fastctx_platform::disk::symlink_metadata(&entry)?)
         {
             for child in entries(&entry)? {
@@ -668,7 +670,7 @@ fn move_records(source: &Source, into: &ConversationDir, index: usize, keeps_lau
 /// Merges directories and keeps a differing older file at its source-relative
 /// recovery path. An existing recovery record must match before cleanup.
 fn move_record(from: &Path, to: &Path, recovered: &Path) -> io::Result<()> {
-    if !to.exists() {
+    if !fastctx_platform::disk::is_there(to) {
         return move_one(from, to);
     }
     let source = fastctx_platform::disk::symlink_metadata(from)?;
@@ -708,7 +710,7 @@ fn destination(into: &ConversationDir, name: &str) -> PathBuf {
 /// first: then `from` is a copy a move between projects made earlier, and
 /// it stays to be removed with the rest of its directory.
 fn move_one(from: &Path, to: &Path) -> io::Result<()> {
-    if to.exists() {
+    if fastctx_platform::disk::is_there(to) {
         let source = fastctx_platform::disk::symlink_metadata(from)?;
         let target = fastctx_platform::disk::symlink_metadata(to)?;
         if source.is_dir()
@@ -862,7 +864,7 @@ fn place_copies(world: &WorldDir, id: &ResidentId, directories: &[PathBuf]) -> i
             // The same file placed under two projects keeps both copies.
             let mut destination = room.attachments().join(&slot_name);
             let mut n = 2;
-            while destination.exists() {
+            while fastctx_platform::disk::is_there(&destination) {
                 destination = room.attachments().join(format!("{slot_name}-{n}"));
                 n += 1;
             }
@@ -1013,7 +1015,7 @@ fn gather_books(world: &WorldDir, failed: &BTreeSet<String>, gathered: &mut Gath
         let gathered_removal = tombstone
             .file_stem()
             .and_then(|stem| stem.to_str())
-            .is_some_and(|id| world.conversations().join(id).join("removed").exists());
+            .is_some_and(|id| fastctx_platform::disk::is_there(world.conversations().join(id).join("removed")));
         if gathered_removal {
             remove_file(&tombstone)?;
         } else {
@@ -1034,7 +1036,7 @@ pub fn sweep(world: &WorldDir) -> io::Result<()> {
     let earlier = world.earlier();
     for parent in earlier.parents()? {
         for directory in entries(&parent)? {
-            if directory.is_dir()
+            if fastctx_platform::disk::is_dir(&directory)
                 && !fastctx_platform::owned_directory::is_link(&fastctx_platform::disk::symlink_metadata(&directory)?)
                 && holds_no_file(&directory)?
             {

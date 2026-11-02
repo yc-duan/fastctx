@@ -24,7 +24,7 @@ pub(super) fn verify(projection: Option<&CapturedNotes>, expected: Option<&str>)
 
 pub(super) fn revision(record: Option<&Path>) -> Result<Revision, String> {
     let Some(record) = record else { return Ok(None) };
-    match std::fs::metadata(record.with_extension("writes.jsonl")) {
+    match fastctx_platform::disk::metadata(record.with_extension("writes.jsonl")) {
         Ok(metadata) => Ok(Some((metadata.len(), metadata.modified().map_err(|error| error.to_string())?))),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(error.to_string()),

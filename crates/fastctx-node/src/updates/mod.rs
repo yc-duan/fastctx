@@ -95,7 +95,7 @@ fn dir(node: &Node) -> PathBuf {
 /// Keeps `value` as `name` in the updates' directory.
 fn keep(node: &Node, name: &str, value: &impl serde::Serialize) -> std::io::Result<()> {
     let dir = dir(node);
-    std::fs::create_dir_all(&dir)?;
+    fastctx_platform::disk::create_dir_all(&dir)?;
     write_json(&dir.join(name), value)
 }
 
@@ -151,7 +151,7 @@ pub(crate) fn start(node: &Arc<Node>) {
     }
     doctor::start(node);
     let node = node.clone();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let settled = tokio::time::Instant::now() + Duration::from_secs(90);
         loop {
             let due = fastctx_update::github::wait(&node.updates.held.lock().expect("never poisoned").looked).is_zero();
@@ -178,7 +178,7 @@ fn look(node: &Arc<Node>) {
     };
     report(node);
     let node = node.clone();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let running = application(&node).unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string());
         let looked =
             fastctx_update::github::look_after(Some(&running), &previous, Some(&dir(&node).join("github-list.json")))
@@ -309,7 +309,7 @@ pub(crate) fn report(node: &Node) {
     let mut holds = cache.held();
     if let (Some(app), Some(carried)) = (&held.app, &held.carried) {
         for triple in ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"] {
-            if carried.join(format!("fastctx-{triple}.tar.gz")).is_file() {
+            if fastctx_platform::disk::is_file(carried.join(format!("fastctx-{triple}.tar.gz"))) {
                 holds.push(fastctx_types::update::Held {
                     version: app.version.clone(),
                     target: format!("fastctx-{triple}"),
@@ -375,7 +375,8 @@ pub(crate) async fn call(node: &Arc<Node>, call: UpdateCall) -> Result<State, St
             // failed update is, and not tried again before its time, the
             // interface opened again or not.
             if let Stage::Failed { version, problem } = &stage {
-                let target = node.updates.held.lock().expect("never poisoned").app.as_ref().map(|app| app.target.clone());
+                let target =
+                    node.updates.held.lock().expect("never poisoned").app.as_ref().map(|app| app.target.clone());
                 if let Some(target) = target {
                     let failure = Failed {
                         version: version.clone(),
@@ -414,10 +415,18 @@ pub(crate) async fn call(node: &Arc<Node>, call: UpdateCall) -> Result<State, St
         }
         UpdateCall::App { app, carried, program, executable } => {
             application::took(node, &app.version);
-            let file =
-                AppFile { app: app.clone(), carried: carried.map(PathBuf::from), program: program.map(PathBuf::from), executable: executable.map(PathBuf::from) };
+            let file = AppFile {
+                app: app.clone(),
+                carried: carried.map(PathBuf::from),
+                program: program.map(PathBuf::from),
+                executable: executable.map(PathBuf::from),
+            };
             let mut held = node.updates.held.lock().expect("never poisoned");
-            if held.app.as_ref() != Some(&app) || held.carried != file.carried || held.program != file.program || held.app_executable != file.executable {
+            if held.app.as_ref() != Some(&app)
+                || held.carried != file.carried
+                || held.program != file.program
+                || held.app_executable != file.executable
+            {
                 keep(node, "app.json", &file).map_err(|error| error.to_string())?;
                 held.app = Some(file.app);
                 held.activity = None;
@@ -467,7 +476,7 @@ fn fetch(node: &Arc<Node>, version: String, target: String) -> Result<(), String
         });
     }
     let node = node.clone();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let outcome = match manifest_of(&node, &version).await {
             Ok(manifest) => bring(&node, &manifest, &target).await,
             Err(why) => Err(why.into()),
@@ -509,7 +518,7 @@ async fn bring(node: &Arc<Node>, manifest: &Manifest, target: &str) -> Result<Pa
             .as_ref()
             .filter(|_| held.app.as_ref().is_some_and(|app| app.version == manifest.version))
             .map(|dir| dir.join(format!("{target}.tar.gz")))
-            .filter(|path| path.is_file());
+            .filter(|path| fastctx_platform::disk::is_file(path));
         (held.looked.clone(), carried)
     };
     let network_now = looked.github == Some(false) && looked.github_at <= looked.at;
@@ -705,12 +714,12 @@ async fn take(
             keep(node, "asked.json", &file).map_err(|error| format!("keeping who asked for the update: {error}"))?;
         }
         None => {
-            let _ = std::fs::remove_file(&asked);
+            let _ = fastctx_platform::disk::remove_file(&asked);
         }
     }
     let root = node.root.clone();
     let unpacking = dir(node).join("unpacked");
-    tokio::task::spawn_blocking(move || stage_with_its_own_program(&root, &archive, &unpacking))
+    fastctx_platform::task::spawn_blocking(move || stage_with_its_own_program(&root, &archive, &unpacking))
         .await
         .map_err(|error| error.to_string())??;
     node.log.line(format_args!("staged fastctx {} to take over once the turns under way end", offer.version));
@@ -729,8 +738,8 @@ const STAGING: Duration = Duration::from_secs(10 * 60);
 /// goes beside the program. Where the program does not start here at all,
 /// this release stages it, and says why it cannot be taken.
 fn stage_with_its_own_program(root: &Path, archive: &Path, unpacking: &Path) -> Result<(), String> {
-    let _ = std::fs::remove_dir_all(unpacking);
-    std::fs::create_dir_all(unpacking).map_err(|error| format!("{}: {error}", unpacking.display()))?;
+    let _ = fastctx_platform::disk::remove_dir_all(unpacking);
+    fastctx_platform::disk::create_dir_all(unpacking).map_err(|error| format!("{}: {error}", unpacking.display()))?;
     let staged = (|| {
         let program = fastctx_update::kernel::unpack(archive, unpacking)?;
         let mut command = std::process::Command::new(&program);
@@ -746,7 +755,11 @@ fn stage_with_its_own_program(root: &Path, archive: &Path, unpacking: &Path) -> 
             Ok(output) => {
                 let said = String::from_utf8_lossy(&output.stderr);
                 let said = said.trim();
-                Err(if said.is_empty() { format!("the new release did not stage: {}", output.status) } else { said.to_string() })
+                Err(if said.is_empty() {
+                    format!("the new release did not stage: {}", output.status)
+                } else {
+                    said.to_string()
+                })
             }
             Err(error) if error.kind() == std::io::ErrorKind::TimedOut => Err(error.to_string()),
             Err(_) => {
@@ -759,7 +772,7 @@ fn stage_with_its_own_program(root: &Path, archive: &Path, unpacking: &Path) -> 
             }
         }
     })();
-    let _ = std::fs::remove_dir_all(unpacking);
+    let _ = fastctx_platform::disk::remove_dir_all(unpacking);
     staged
 }
 
@@ -782,7 +795,11 @@ pub(crate) async fn machine(
     }
     if matches!(update, UpdateCall::Repair { .. }) {
         let current = Box::pin(self::machine(node, acting, machine.clone(), UpdateCall::State)).await?;
-        if !current.repair_supported { return Err(Failure::new(format!("{machine} runs a version too old to accept repair; arrange repair through a newer hub"))); }
+        if !current.repair_supported {
+            return Err(Failure::new(format!(
+                "{machine} runs a version too old to accept repair; arrange repair through a newer hub"
+            )));
+        }
         if !node.locate(&machine)?.iter().any(|link| link.versions().is_some_and(|n| n.repair_supported)) {
             return Err(Failure::new("the hub is too old to route repair; update it first"));
         }
@@ -915,10 +932,14 @@ fn auto(node: &Arc<Node>) {
         return;
     }
     repair::scheduled(node);
-    if repair::drive(node) { return; }
+    if repair::drive(node) {
+        return;
+    }
     schedule::reconcile(node);
     let state = state(node);
-    if state.fetching.is_some() || application::busy() || (state.take.is_some() && (application::open() || !cfg!(windows)))
+    if state.fetching.is_some()
+        || application::busy()
+        || (state.take.is_some() && (application::open() || !cfg!(windows)))
     {
         return;
     }
@@ -984,7 +1005,7 @@ fn auto(node: &Arc<Node>) {
     }
     let Some(attempt) = retry::begin(node, &version) else { return };
     let node = node.clone();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let result = match asker {
             Some(asker) => {
                 remote(&node, asker, Some(UpdateCall::Kernel { version: Some(version.clone()) })).await.map(|_| ())

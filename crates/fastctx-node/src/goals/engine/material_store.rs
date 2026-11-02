@@ -25,10 +25,11 @@ fn decode(values: maps::Values) -> io::Result<Seen> {
 
 pub(super) async fn stage(directory: &ConversationDir, seen: Seen) -> Result<maps::Staged, Failure> {
     let (database, scope) = records::locate(directory).map_err(failure)?;
-    let values =
-        tokio::task::spawn_blocking(move || seen.0.into_iter().map(|(key, value)| (key, value.into_bytes())).collect())
-            .await
-            .map_err(failure)?;
+    let values = fastctx_platform::task::spawn_blocking(move || {
+        seen.0.into_iter().map(|(key, value)| (key, value.into_bytes())).collect()
+    })
+    .await
+    .map_err(failure)?;
     maps::stage(database, scope, MAP.into(), values, Priority::Background, |_| Ok(()), |_, staged| Ok(staged.clone()))
         .await
         .map(|(staged, ())| staged)
@@ -38,11 +39,12 @@ pub(super) async fn stage(directory: &ConversationDir, seen: Seen) -> Result<map
 pub(super) async fn observations(directory: ConversationDir, owner: String) -> Result<Seen, Failure> {
     let reading = directory.clone();
     let key = owner.clone();
-    let (seen, imported) = tokio::task::spawn_blocking(move || -> io::Result<_> {
+    let (seen, imported) = fastctx_platform::task::spawn_blocking(move || -> io::Result<_> {
         if let Some(values) = maps::load(&reading, MAP, &key)? {
             return Ok((decode(values)?, true));
         }
-        let bytes = std::fs::read(reading.books().join("goal-reviews").join(&key).join("observations.json"))?;
+        let bytes =
+            fastctx_platform::disk::read(reading.books().join("goal-reviews").join(&key).join("observations.json"))?;
         Ok((serde_json::from_slice(&bytes)?, false))
     })
     .await
@@ -54,7 +56,7 @@ pub(super) async fn observations(directory: ConversationDir, owner: String) -> R
     let staged = stage(&directory, seen).await?;
     let reading = directory.clone();
     let key = owner.clone();
-    tokio::task::spawn_blocking(move || {
+    fastctx_platform::task::spawn_blocking(move || {
         let pin = staged.clone();
         records::write_then_at(
             &reading,
@@ -72,7 +74,7 @@ pub(super) async fn observations(directory: ConversationDir, owner: String) -> R
     .await
     .map_err(failure)?
     .map_err(failure)?;
-    tokio::task::spawn_blocking(move || {
+    fastctx_platform::task::spawn_blocking(move || {
         maps::load(&directory, MAP, &owner)?
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "the imported observation root is missing"))
             .and_then(decode)
@@ -85,7 +87,7 @@ pub(super) async fn observations(directory: ConversationDir, owner: String) -> R
 pub(super) async fn cached(directory: ConversationDir, work: String) -> Result<Option<Materials>, Failure> {
     let reading = directory.clone();
     let key = work.clone();
-    let (cached, legacy) = tokio::task::spawn_blocking(move || -> Result<_, Failure> {
+    let (cached, legacy) = fastctx_platform::task::spawn_blocking(move || -> Result<_, Failure> {
         if let Some(materials) = records::read(&reading, |rows| {
             let materials: Option<Materials> = rows.get(FAMILY, &key)?;
             if materials.as_ref().is_some_and(needs_observations) && !maps::exists(rows, MAP, &key)? {
@@ -97,7 +99,7 @@ pub(super) async fn cached(directory: ConversationDir, work: String) -> Result<O
         {
             return Ok((Some(materials), false));
         }
-        match std::fs::read(reading.books().join("goal-reviews").join(&key).join("materials.json")) {
+        match fastctx_platform::disk::read(reading.books().join("goal-reviews").join(&key).join("materials.json")) {
             Ok(bytes) => {
                 Ok((Some(super::material_size::cached(serde_json::from_slice(&bytes).map_err(failure)?)?), true))
             }
@@ -116,8 +118,8 @@ pub(super) async fn cached(directory: ConversationDir, work: String) -> Result<O
     let staged = if needs_observations(&materials) {
         let reading = directory.clone();
         let key = work.clone();
-        let seen = tokio::task::spawn_blocking(move || -> io::Result<Seen> {
-            Ok(serde_json::from_slice(&std::fs::read(
+        let seen = fastctx_platform::task::spawn_blocking(move || -> io::Result<Seen> {
+            Ok(serde_json::from_slice(&fastctx_platform::disk::read(
                 reading.books().join("goal-reviews").join(key).join("observations.json"),
             )?)?)
         })
@@ -141,7 +143,7 @@ pub(super) async fn install(
     materials: Materials,
     staged: Option<maps::Staged>,
 ) -> Result<Materials, Failure> {
-    tokio::task::spawn_blocking(move || {
+    fastctx_platform::task::spawn_blocking(move || {
         let bytes = records::encode(&materials).map_err(io::Error::other)?;
         if bytes.len() > super::material_size::MAX_BYTES {
             return Err(io::Error::other("a frozen review exceeds its projection budget"));

@@ -98,7 +98,7 @@ fn keep_now(node: &Arc<Node>, goal: &Goal, runtime: tokio::runtime::Handle) -> R
             crate::inbox::owe_in(rows, &owing(&saving, &goal, frozen))
         },
         move |_| {
-            runtime.spawn(async move {
+            fastctx_platform::task::spawn_on(&runtime, async move {
                 crate::turns::pay(&notify, &recipient, &paying).await;
             });
         },
@@ -138,7 +138,7 @@ fn owing(node: &Node, goal: &Goal, frozen: Frozen) -> Owing {
 
 pub(crate) async fn keep(node: &Arc<Node>, goal: &Goal) -> Result<(), Failure> {
     let (node, goal, runtime) = (node.clone(), goal.clone(), tokio::runtime::Handle::current());
-    tokio::task::spawn_blocking(move || keep_now(&node, &goal, runtime)).await.map_err(failure)?
+    fastctx_platform::task::spawn_blocking(move || keep_now(&node, &goal, runtime)).await.map_err(failure)?
 }
 
 fn failure(error: impl std::fmt::Display) -> Failure {

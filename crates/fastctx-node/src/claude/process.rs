@@ -37,7 +37,7 @@ pub(super) fn observe(node: &Arc<Node>, process: Option<fastctx_types::ProcessId
         return;
     }
     let node = node.clone();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let exited = wait(&node, &process);
         tokio::pin!(exited);
         loop {

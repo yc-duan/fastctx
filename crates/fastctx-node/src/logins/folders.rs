@@ -70,8 +70,8 @@ async fn choose(node: &Arc<Node>, dir: PathBuf) -> Result<MachineLogins, Failure
     let agents = {
         let dir = dir.clone();
         let machine = node.machine();
-        tokio::task::spawn_blocking(move || {
-            if !dir.is_dir() {
+        fastctx_platform::task::spawn_blocking(move || {
+            if !fastctx_platform::disk::is_dir(&dir) {
                 return Err(Failure::not_run(format!("{} is not a folder on {machine}", dir.display())));
             }
             Ok(logins_of(&dir))
@@ -88,7 +88,7 @@ async fn choose(node: &Arc<Node>, dir: PathBuf) -> Result<MachineLogins, Failure
     }
     {
         let (node, dir) = (node.clone(), dir.clone());
-        tokio::task::spawn_blocking(move || kept::add_folder(&node, &dir))
+        fastctx_platform::task::spawn_blocking(move || kept::add_folder(&node, &dir))
             .await
             .map_err(|error| Failure::new(error.to_string()))?
             .map_err(|error| Failure::new(format!("keeping the folder: {error}")))?;
@@ -104,7 +104,7 @@ async fn forget(node: &Arc<Node>, dir: PathBuf) -> Result<MachineLogins, Failure
     }
     {
         let (node, dir) = (node.clone(), dir.clone());
-        tokio::task::spawn_blocking(move || {
+        fastctx_platform::task::spawn_blocking(move || {
             kept::remove_folder(&node, &dir)?;
             kept::change(&node, |kept| kept.folders.retain(|one| !crate::homes::same_dir(&one.dir, &dir)))
         })
@@ -134,7 +134,7 @@ pub(super) fn stop_all(node: &Node) {
 /// The agents `dir` is a login of: named and kept like the agent's own, or
 /// holding what holds a login wherever it is (`traces`).
 fn logins_of(dir: &Path) -> Vec<&'static str> {
-    let Ok(read) = std::fs::read_dir(dir) else { return Vec::new() };
+    let Ok(read) = fastctx_platform::disk::read_dir(dir) else { return Vec::new() };
     let entries: Vec<traces::Entry> = read
         .flatten()
         .map(|entry| {

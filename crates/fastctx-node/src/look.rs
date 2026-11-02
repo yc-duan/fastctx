@@ -70,7 +70,7 @@ pub async fn look_here(
         .and_then(|parsed| node.residents.on_record(&parsed));
     let tools = record.as_ref().map(|r| node.watchers.tools(&r.id)).unwrap_or_default();
     let (world, id) = (node.world.clone(), id.to_string());
-    tokio::task::spawn_blocking(move || {
+    fastctx_platform::task::spawn_blocking(move || {
         Ok::<_, io::Error>((read_here(&world, &id, record.as_ref(), tools)?, jobs_for(&world, &id)?))
     })
     .await
@@ -90,7 +90,7 @@ pub(crate) fn read_here(
         for parent in world.job_parents()? {
             for resident in entries(&parent)? {
                 let path = resident.join("jobs").join(format!("{job}.json"));
-                if path.exists() {
+                if fastctx_platform::disk::is_there(&path) {
                     return Ok(Some(Looked::Job { source: None, record: Box::new(record::read(&path)?) }));
                 }
             }

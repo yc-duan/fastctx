@@ -34,11 +34,11 @@ pub(super) fn mark(directory: &ConversationDir) -> std::io::Result<()> {
 }
 
 pub(super) fn marked(directory: &ConversationDir) -> bool {
-    directory.path().join(MARK).is_file()
+    fastctx_platform::disk::is_file(directory.path().join(MARK))
 }
 
 fn unmark(directory: &ConversationDir) -> std::io::Result<()> {
-    match std::fs::remove_file(directory.path().join(MARK)) {
+    match fastctx_platform::disk::remove_file(directory.path().join(MARK)) {
         Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error),
         _ => Ok(()),
     }

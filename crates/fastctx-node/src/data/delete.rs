@@ -175,8 +175,9 @@ async fn delete_inner(node: &Arc<Node>, name: &str) -> Result<Gone, Stop> {
         return Ok(Gone { bytes: bytes.saturating_sub(retained).saturating_add(database_bytes), finishing: None });
     };
     let directory = node.world.conversation(id);
-    let _draft = if directory.draft().try_exists().map_err(|error| Stop::Failed(error.to_string()))?
-        || directory.draft_lock().try_exists().map_err(|error| Stop::Failed(error.to_string()))?
+    let _draft = if fastctx_platform::disk::exists(directory.draft())
+        .map_err(|error| Stop::Failed(error.to_string()))?
+        || fastctx_platform::disk::exists(directory.draft_lock()).map_err(|error| Stop::Failed(error.to_string()))?
     {
         Some(
             fastctx_platform::FileLock::try_acquire(&directory.draft_lock())
@@ -190,8 +191,9 @@ async fn delete_inner(node: &Arc<Node>, name: &str) -> Result<Gone, Stop> {
         crate::goals::lifecycle::prepare_delete(node, id).await.map_err(|error| Stop::Failed(error.message))?;
         crate::goals::lifecycle::delete(node, id).await.map_err(|error| Stop::Failed(error.message))?;
         let directory = node.world.conversation(id);
-        if directory.about().try_exists().map_err(|error| Stop::Failed(error.to_string()))?
-            && !directory.path().join("host-deleted").try_exists().map_err(|error| Stop::Failed(error.to_string()))?
+        if fastctx_platform::disk::exists(directory.about()).map_err(|error| Stop::Failed(error.to_string()))?
+            && !fastctx_platform::disk::exists(directory.path().join("host-deleted"))
+                .map_err(|error| Stop::Failed(error.to_string()))?
         {
             return Err(Stop::Refused(
                 "its identity record cannot be read; its host record cannot be identified".into(),
@@ -293,7 +295,7 @@ async fn host_record(
 ) -> Result<u64, Stop> {
     let directory = node.world.conversation(id);
     let completed = directory.path().join("host-deleted");
-    if completed.try_exists().map_err(|error| Stop::Failed(error.to_string()))? {
+    if fastctx_platform::disk::exists(&completed).map_err(|error| Stop::Failed(error.to_string()))? {
         return Ok(0);
     }
     if resident.about.host.agent.as_str() == "codex"
@@ -424,7 +426,9 @@ async fn finish_on_worker(node: &Arc<Node>) -> usize {
                         return Ok(None);
                     }
                     let path = entry.path();
-                    if path.join(INTENT).try_exists()? || path.join("host-deleted").try_exists()? {
+                    if fastctx_platform::disk::exists(path.join(INTENT))?
+                        || fastctx_platform::disk::exists(path.join("host-deleted"))?
+                    {
                         Ok(Some(name))
                     } else {
                         Ok(None)
@@ -674,7 +678,7 @@ async fn remove_places(node: &Arc<Node>, measured: &Measured) -> Result<(u64, u6
                 Ok(_) => {
                     let retained = crate::attachments::lifetime::remove(&node, &place, &remote)
                         .map_err(std::io::Error::other)?
-                        || place.join(crate::forks::RETAINED_HOST).try_exists()?;
+                        || fastctx_platform::disk::exists(place.join(crate::forks::RETAINED_HOST))?;
                     directories.push((place, retained));
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}

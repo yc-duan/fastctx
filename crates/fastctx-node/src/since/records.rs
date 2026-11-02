@@ -283,7 +283,7 @@ impl Scan<'_> {
     }
 
     fn dirs(&mut self, directory: &Path) -> Vec<PathBuf> {
-        self.files(directory).into_iter().filter(|path| path.is_dir()).collect()
+        self.files(directory).into_iter().filter(|path| fastctx_platform::disk::is_dir(path)).collect()
     }
 
     fn json_files(&mut self, directory: &Path) -> Vec<PathBuf> {
@@ -707,11 +707,11 @@ fn ledger_fact(_town: &TownName, path: &str, bytes: &[u8]) -> io::Result<Option<
 
 /// When `path` was last written; none where that cannot be told.
 fn modified(path: &Path) -> Option<SystemTime> {
-    std::fs::metadata(path).and_then(|meta| meta.modified()).ok()
+    fastctx_platform::disk::metadata(path).and_then(|meta| meta.modified()).ok()
 }
 
 fn paths(directory: &Path) -> io::Result<Vec<PathBuf>> {
-    match std::fs::read_dir(directory) {
+    match fastctx_platform::disk::read_dir(directory) {
         Ok(entries) => {
             let mut paths = entries.map(|entry| entry.map(|entry| entry.path())).collect::<io::Result<Vec<_>>>()?;
             paths.sort();
@@ -723,5 +723,6 @@ fn paths(directory: &Path) -> io::Result<Vec<PathBuf>> {
 }
 
 fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> io::Result<T> {
-    serde_json::from_slice(&std::fs::read(path)?).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+    serde_json::from_slice(&fastctx_platform::disk::read(path)?)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
 }

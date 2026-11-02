@@ -529,7 +529,7 @@ pub(crate) fn retain_scratch(path: &Path, delivered: Timestamp) -> std::io::Resu
     };
     let out = Path::new(&job.output).parent().ok_or_else(|| std::io::Error::other("job output has no directory"))?;
     let scratch = out.join(format!("{}.tmp", job.id));
-    if !scratch.try_exists()? {
+    if !fastctx_platform::disk::exists(&scratch)? {
         return Ok(());
     }
     if fastctx_platform::owned_directory::is_link(&fastctx_platform::disk::symlink_metadata(&scratch)?) {

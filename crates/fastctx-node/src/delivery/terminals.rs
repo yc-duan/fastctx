@@ -128,7 +128,7 @@ pub(crate) async fn publish(
     readers: Vec<Address>,
     committed: impl FnOnce() + Send + 'static,
 ) -> io::Result<Published> {
-    tokio::task::spawn_blocking(move || {
+    fastctx_platform::task::spawn_blocking(move || {
         let (database, scope) = records::locate(&directory)?;
         let order = Order::acquire(&database, &scope, &turn);
         publish_now(directory, database, scope, turn, initial, readers, order, committed)

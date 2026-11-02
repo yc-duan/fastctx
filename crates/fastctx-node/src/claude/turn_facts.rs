@@ -17,7 +17,7 @@ pub async fn observe(directory: &ConversationDir, event: SessionEvent) -> io::Re
         return Ok(event);
     }
     let directory = directory.clone();
-    tokio::task::spawn_blocking(move || {
+    fastctx_platform::task::spawn_blocking(move || {
         let Happened::Changed { turn: Some(turn), change } = &event.happened else { unreachable!() };
         let (kind, step, bytes) = match change {
             SessionChange::ModelRequest { step, effort, .. } => ("effort", *step, serde_json::to_vec(effort)?),
@@ -35,7 +35,7 @@ pub async fn observe(directory: &ConversationDir, event: SessionEvent) -> io::Re
 
 pub async fn finish(directory: &ConversationDir, turn: &str) -> io::Result<Option<TurnFacts>> {
     let (directory, turn) = (directory.clone(), turn.to_string());
-    tokio::task::spawn_blocking(move || {
+    fastctx_platform::task::spawn_blocking(move || {
         storage::read(&directory, &turn, |rows, family| {
             let mut facts = TurnFacts::default();
             let mut after = String::new();
@@ -96,5 +96,5 @@ pub async fn finish(directory: &ConversationDir, turn: &str) -> io::Result<Optio
 
 pub async fn settled(directory: &ConversationDir, turn: &str) -> io::Result<()> {
     let (directory, turn) = (directory.clone(), turn.to_string());
-    tokio::task::spawn_blocking(move || storage::close(&directory, &turn)).await.map_err(io::Error::other)?
+    fastctx_platform::task::spawn_blocking(move || storage::close(&directory, &turn)).await.map_err(io::Error::other)?
 }

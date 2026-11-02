@@ -11,7 +11,7 @@ async fn work<T: Send + 'static>(
     action: impl FnOnce(&Node) -> io::Result<T> + Send + 'static,
 ) -> io::Result<T> {
     let node = node.clone();
-    tokio::task::spawn_blocking(move || action(&node)).await.map_err(io::Error::other)?
+    fastctx_platform::task::spawn_blocking(move || action(&node)).await.map_err(io::Error::other)?
 }
 
 pub(crate) async fn begin_for(

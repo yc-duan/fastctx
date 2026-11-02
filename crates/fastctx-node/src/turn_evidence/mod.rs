@@ -69,7 +69,7 @@ pub(crate) async fn snapshot_locked(
     let mut turn = requested.or_else(|| now.as_ref().and_then(|now| now.turn.clone().or(now.last_turn.clone())));
     let directory = node.world.conversation(resident);
     let (reading, subject, path) = (node.clone(), resident.clone(), directory.clone());
-    let (turn, actions) = tokio::task::spawn_blocking(move || -> std::io::Result<_> {
+    let (turn, actions) = fastctx_platform::task::spawn_blocking(move || -> std::io::Result<_> {
         if turn.is_none() {
             turn = crate::delivery::terminals(&path)?
                 .into_iter()
@@ -140,7 +140,7 @@ pub(crate) async fn snapshot_locked(
             quota: None,
         })
     };
-    let mut evidence = tokio::task::spawn_blocking(read)
+    let mut evidence = fastctx_platform::task::spawn_blocking(read)
         .await
         .map_err(|error| Failure::new(error.to_string()))?
         .map_err(|error| Failure::new(error.to_string()))?;

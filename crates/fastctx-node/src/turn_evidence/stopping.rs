@@ -42,7 +42,7 @@ pub(crate) async fn remember(
 ) -> io::Result<()> {
     let path = path(node, resident, turn);
     let turn = turn.to_string();
-    tokio::task::spawn_blocking(move || {
+    fastctx_platform::task::spawn_blocking(move || {
         let entry = crate::records::metadata::prepare(&path)?;
         crate::records::write_at(&entry.directory, fastctx_storage::Priority::Control, turn.len() + 256, move |rows| {
             if let Some(previous) = rows.get::<Requested>(&entry.family, "value")? {

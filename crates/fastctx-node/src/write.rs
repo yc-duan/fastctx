@@ -51,7 +51,7 @@ pub(crate) fn write_job(
     let job_directory =
         record_path.as_ref().and_then(|path| path.parent()?.parent()).map(fastctx_types::layout::ConversationDir::at);
     if let (Some(job), Some(path), Some(job_directory)) = (job, &record_path, &job_directory) {
-        let record: fastctx_types::run::JobRecord = serde_json::from_slice(&std::fs::read(path)?)?;
+        let record: fastctx_types::run::JobRecord = serde_json::from_slice(&fastctx_platform::disk::read(path)?)?;
         if record.owner.resident() != Some(owner) || record.end.is_some() {
             return Err(io::Error::new(io::ErrorKind::PermissionDenied, "write does not belong to an active job"));
         }
@@ -130,7 +130,7 @@ fn seen_version(seen: &Seen) -> Option<SeenFile> {
 fn seen_after(change: &FileChange) -> io::Result<Option<Seen>> {
     let Some(sha256) = change.after_hash.clone() else { return Ok(None) };
     let path = canonical_path(&change.path)?;
-    let size = match std::fs::metadata(&path) {
+    let size = match fastctx_platform::disk::metadata(&path) {
         Ok(metadata) => metadata.len(),
         // A later part of the same patch may have deleted this path.
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),

@@ -23,7 +23,7 @@ pub(super) async fn observe(node: &Node, resident: &ResidentId, event: SessionEv
         return Err(io::Error::other("failure report belongs to another turn"));
     }
     let path = path(node, resident, turn);
-    tokio::task::spawn_blocking(move || {
+    fastctx_platform::task::spawn_blocking(move || {
         let Happened::Changed { change: SessionChange::Metadata { metadata }, .. } = &event.happened else {
             unreachable!()
         };

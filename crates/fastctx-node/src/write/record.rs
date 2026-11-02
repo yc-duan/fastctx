@@ -18,7 +18,8 @@ pub(crate) fn record(
 ) -> std::io::Result<WriteResult> {
     if let Some(job) = job {
         let record_path = world.job_record(here, town, &owner.clone().into(), job);
-        let record: fastctx_types::run::JobRecord = serde_json::from_slice(&std::fs::read(&record_path)?)?;
+        let record: fastctx_types::run::JobRecord =
+            serde_json::from_slice(&fastctx_platform::disk::read(&record_path)?)?;
         if record.call_id.is_some() {
             let dir = record_path.parent().and_then(Path::parent).expect("job has a conversation");
             let diffs = fastctx_types::layout::ConversationDir::at(dir).job_scratch(job).join("diffs");

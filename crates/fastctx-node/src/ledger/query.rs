@@ -53,7 +53,7 @@ pub(crate) async fn available(node: &Node, town: Option<&TownName>) -> Result<BT
     let mut hubs: Vec<_> = node.links().iter().map(|link| link.membership().id.clone()).collect();
     hubs.push(super::alone(&world).map_err(|error| format!("reading this computer's own id: {error}"))?);
     let town = town.cloned();
-    tokio::task::spawn_blocking(move || {
+    fastctx_platform::task::spawn_blocking(move || {
         let names = match town {
             Some(town) => vec![town],
             None => world.towns()?,
@@ -88,7 +88,7 @@ pub async fn list_for(node: &Arc<Node>, acting: &Acting) -> Result<Vec<TownSumma
     let towns = list(node).await?;
     let world = node.world.clone();
     let names: Vec<TownName> = towns.iter().map(|summary| summary.town.clone()).collect();
-    let places = tokio::task::spawn_blocking(move || {
+    let places = fastctx_platform::task::spawn_blocking(move || {
         names.iter().map(|town| super::names::place(&world, town)).collect::<std::io::Result<Vec<_>>>()
     })
     .await
@@ -183,7 +183,7 @@ pub async fn held(node: &Arc<Node>) -> Result<Vec<TownSummary>, Failure> {
     let towns: Vec<TownName> = available(node, None).await.map_err(Failure::new)?.into_keys().collect();
     let world = node.world.clone();
     let names = towns.clone();
-    let places = tokio::task::spawn_blocking(move || {
+    let places = fastctx_platform::task::spawn_blocking(move || {
         names.iter().map(|town| super::names::place(&world, town)).collect::<std::io::Result<Vec<_>>>()
     })
     .await
@@ -224,7 +224,7 @@ pub async fn held(node: &Arc<Node>) -> Result<Vec<TownSummary>, Failure> {
 
 async fn summaries(node: &Arc<Node>, towns: Vec<TownName>) -> Result<Vec<TownSummary>, Failure> {
     let world = node.world.clone();
-    tokio::task::spawn_blocking(move || {
+    fastctx_platform::task::spawn_blocking(move || {
         let mut listed = Vec::new();
         for town in towns {
             let record = read::latest(&world, &town)?

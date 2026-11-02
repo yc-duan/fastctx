@@ -30,7 +30,7 @@ const AGAIN: Duration = Duration::from_secs(30);
 pub(crate) async fn all(node: &Arc<Node>) {
     let _changing = node.logins.changing.lock().await;
     let refreshing = node.clone();
-    match tokio::task::spawn_blocking(move || every(&refreshing)).await {
+    match fastctx_platform::task::spawn_blocking(move || every(&refreshing)).await {
         Ok(Some((waiting, again))) => {
             *node.logins.drift.lock().expect("never poisoned") = waiting;
             if again {
@@ -53,7 +53,7 @@ pub(crate) async fn replaced(node: &Arc<Node>) {
 
 /// Tries again once the World program is likely in place.
 fn later(node: Weak<Node>) {
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         tokio::time::sleep(AGAIN).await;
         if let Some(node) = node.upgrade() {
             all(&node).await;

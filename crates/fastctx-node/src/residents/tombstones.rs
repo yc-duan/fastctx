@@ -49,7 +49,7 @@ impl Tombstones {
     /// that cannot be read is reported and left as it is.
     pub(super) fn load(world: &WorldDir, problems: &mut Vec<(PathBuf, io::Error)>) -> io::Result<Self> {
         let mut tombstones = Self::default();
-        let entries = match std::fs::read_dir(world.deleted()) {
+        let entries = match fastctx_platform::disk::read_dir(world.deleted()) {
             Ok(entries) => entries,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(tombstones),
             Err(error) => return Err(error),
@@ -65,7 +65,7 @@ impl Tombstones {
             else {
                 continue;
             };
-            let tombstone = match std::fs::read(&path)
+            let tombstone = match fastctx_platform::disk::read(&path)
                 .and_then(|bytes| serde_json::from_slice::<Tombstone>(&bytes).map_err(io::Error::other))
             {
                 Ok(tombstone) => tombstone,
@@ -76,7 +76,7 @@ impl Tombstones {
             };
             if now.duration_since(tombstone.at) > KEPT {
                 match remains(world, &id, &tombstone) {
-                    Ok(false) => match std::fs::remove_file(&path) {
+                    Ok(false) => match fastctx_platform::disk::remove_file(&path) {
                         Ok(()) => continue,
                         Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
                         Err(error) => problems.push((path, error)),
@@ -177,7 +177,7 @@ fn remains(world: &WorldDir, id: &ResidentId, tombstone: &Tombstone) -> io::Resu
             .map(|session| sessions.join(session)),
     );
     for path in paths {
-        match std::fs::symlink_metadata(&path) {
+        match fastctx_platform::disk::symlink_metadata(&path) {
             Ok(_) => return Ok(true),
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
             Err(error) => return Err(error),

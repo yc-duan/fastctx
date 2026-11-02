@@ -26,7 +26,7 @@ struct Boundary {
 
 pub(super) async fn started(node: &Node, id: &ResidentId, work: &Work) -> Result<bool, Failure> {
     let path = path(node, id, work);
-    tokio::task::spawn_blocking(move || crate::records::metadata::exists(&path))
+    fastctx_platform::task::spawn_blocking(move || crate::records::metadata::exists(&path))
         .await
         .map_err(failure)?
         .map_err(failure)
@@ -39,7 +39,7 @@ fn path(node: &Node, id: &ResidentId, work: &Work) -> std::path::PathBuf {
 pub(super) async fn run(node: &Arc<Node>, id: &ResidentId, work: &Work) -> Result<Compacted, Failure> {
     let path = path(node, id, work);
     let reading = path.clone();
-    let prior = tokio::task::spawn_blocking(move || crate::records::metadata::get::<Attempt>(&reading))
+    let prior = fastctx_platform::task::spawn_blocking(move || crate::records::metadata::get::<Attempt>(&reading))
         .await
         .map_err(failure)?
         .map_err(failure)?;
@@ -112,7 +112,7 @@ async fn completed(node: &Arc<Node>, id: &ResidentId, boundary: &Boundary) -> Re
 async fn save(path: &std::path::Path, attempt: &Attempt) -> Result<Attempt, Failure> {
     let (path, mut attempt) = (path.to_path_buf(), attempt.clone());
     let bytes = serde_json::to_vec(&attempt).map_err(failure)?.len();
-    tokio::task::spawn_blocking(move || {
+    fastctx_platform::task::spawn_blocking(move || {
         crate::records::metadata::change(&path, bytes, move |rows, family| {
             if let Some(prior) = rows.get::<Attempt>(family, "value")? {
                 if prior.codex != attempt.codex {

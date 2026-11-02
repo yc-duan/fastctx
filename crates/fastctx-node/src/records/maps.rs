@@ -107,7 +107,7 @@ pub(crate) async fn stage<T: Send + 'static, R: Send + 'static>(
     });
     let permit = Arc::clone(&lease).lock_owned().await;
     let order = Arc::new(Order { _lease: lease, _permit: permit });
-    tokio::task::spawn_blocking(move || {
+    fastctx_platform::task::spawn_blocking(move || {
         stage_now(&database, conversation, name, values, priority, order, describe, install)
     })
     .await

@@ -50,10 +50,10 @@ pub(super) fn state_path(world: &WorldDir, id: &ResidentId) -> PathBuf {
 
 fn exists(world: &WorldDir, id: &ResidentId) -> io::Result<()> {
     let home = world.conversation(id);
-    if world.deleted().join(format!("{id}.json")).try_exists()?
-        || home.path().join("deleting").try_exists()?
-        || home.path().join("removed").try_exists()?
-        || !home.path().try_exists()?
+    if fastctx_platform::disk::exists(world.deleted().join(format!("{id}.json")))?
+        || fastctx_platform::disk::exists(home.path().join("deleting"))?
+        || fastctx_platform::disk::exists(home.path().join("removed"))?
+        || !fastctx_platform::disk::exists(home.path())?
     {
         return Err(io::Error::new(io::ErrorKind::NotFound, words::UNAVAILABLE));
     }

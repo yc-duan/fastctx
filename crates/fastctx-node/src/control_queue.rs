@@ -135,7 +135,7 @@ async fn defer_host(node: &Arc<Node>, id: &ResidentId, row: &PendingControl, why
 pub(crate) async fn waiting_for_host(node: &Arc<Node>, id: &ResidentId) -> Result<bool, Failure> {
     let rows = pending(node, id).await?;
     let (node, id) = (node.clone(), id.clone());
-    tokio::task::spawn_blocking(move || {
+    fastctx_platform::task::spawn_blocking(move || {
         for row in rows {
             if row.state == ControlState::Waiting
                 && crate::lifecycle::retry::progress(&node, &id, &control_key(&row)?).map_err(failure)?.is_some()
@@ -192,7 +192,7 @@ fn compacts_later(node: &Node, id: &ResidentId, control: &Control, done: &Contro
 /// Tells the compaction a control started once its turn has ended: done
 /// where it compacted, failed where it did not.
 fn after_compaction(node: Arc<Node>, id: ResidentId, mut row: PendingControl) {
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let began = std::time::Instant::now();
         let mut seen = false;
         loop {
@@ -424,7 +424,7 @@ pub(crate) fn schedule(node: &Arc<Node>, id: &ResidentId) {
         }
     }
     let (node, id) = (node.clone(), id.clone());
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let mut scheduled = Scheduled { node: node.clone(), id: id.clone(), released: false };
         node.ready_for(&id).await;
         let (mut again, mut said) = (crate::again::Again::default(), String::new());
@@ -463,7 +463,7 @@ pub(crate) fn schedule(node: &Arc<Node>, id: &ResidentId) {
 /// been taken into a turn yet: a control waits for that turn.
 async fn words_ahead(node: &Node, id: &ResidentId, before: Option<jiff::Timestamp>) -> Result<bool, Failure> {
     let directory = node.world.conversation(id);
-    tokio::task::spawn_blocking(move || {
+    fastctx_platform::task::spawn_blocking(move || {
         for words in crate::inbox::pending(&directory).map_err(failure)? {
             if words.delivery.notice.along().is_none()
                 && before.is_none_or(|before| words.delivery.at < before)

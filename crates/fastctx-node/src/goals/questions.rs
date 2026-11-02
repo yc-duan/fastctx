@@ -65,7 +65,7 @@ pub(crate) async fn route(node: &Arc<Node>, id: &ResidentId, item: &Item, at: Ti
     };
     let directory = node.world.conversation(id);
     let (node, id, runtime) = (node.clone(), id.clone(), tokio::runtime::Handle::current());
-    tokio::task::spawn_blocking(move || -> io::Result<()> {
+    fastctx_platform::task::spawn_blocking(move || -> io::Result<()> {
         crate::inbox::storage::initialize(&directory)?;
         let bytes = serde_json::to_vec(&owing)?.len();
         let paying = directory.clone();
@@ -75,7 +75,7 @@ pub(crate) async fn route(node: &Arc<Node>, id: &ResidentId, item: &Item, at: Ti
             bytes,
             move |rows| crate::inbox::owe_in(rows, &owing),
             move |_| {
-                runtime.spawn(async move {
+                fastctx_platform::task::spawn_on(&runtime, async move {
                     crate::turns::pay(&node, &id, &paying).await;
                 });
             },

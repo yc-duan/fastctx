@@ -306,10 +306,12 @@ async fn arrival(
         Prior::Again(attachment, mut guard) => {
             let directory = Path::new(&attachment.path).parent().map(Path::to_path_buf);
             let arriving = match directory {
-                Some(directory) => tokio::task::spawn_blocking(move || arriving_in(&directory, *attachment, resume))
-                    .await
-                    .map_err(failure)
-                    .and_then(|arriving| arriving),
+                Some(directory) => {
+                    fastctx_platform::task::spawn_blocking(move || arriving_in(&directory, *attachment, resume))
+                        .await
+                        .map_err(failure)
+                        .and_then(|arriving| arriving)
+                }
                 None => Err(failure("the upload's receipt names no directory")),
             };
             match arriving {
@@ -591,7 +593,7 @@ async fn prepare(
                 format!("{agent}-{:032x}", u128::from_be_bytes(identity)).parse().map_err(failure)?;
             crate::record_migration::born(node, &resident);
             let directory = node.world.conversation(&resident);
-            std::fs::create_dir_all(directory.path()).map_err(failure)?;
+            fastctx_platform::disk::create_dir_all(directory.path()).map_err(failure)?;
             write_new(
                 &directory.draft(),
                 &Draft { agent, town: town.clone(), from: Some(from.clone()), acting: Some(acting.clone()) },
@@ -614,10 +616,10 @@ async fn prepare(
     };
     // No resident storage lock may be held while network bytes arrive.
     let directory = node.world.conversation(&resident).attachments();
-    std::fs::create_dir_all(&directory).map_err(failure)?;
+    fastctx_platform::disk::create_dir_all(&directory).map_err(failure)?;
     let id = crate::speech::new_id("attachment");
     let directory = directory.join(id.as_str());
-    std::fs::create_dir(&directory).map_err(failure)?;
+    fastctx_platform::disk::create_dir(&directory).map_err(failure)?;
     let owner = Address { machine: node.machine(), resident };
     arriving_in(&directory, Attachment { id, owner, conversation: None, town, path: String::new(), file }, false)
 }
@@ -629,19 +631,21 @@ fn arriving_in(directory: &Path, mut attachment: Attachment, resume: bool) -> Re
     let room = ConversationDir::at(
         directory.parent().and_then(Path::parent).ok_or_else(|| failure("attachment has no room"))?,
     );
-    let directory = std::fs::canonicalize(directory).map_err(failure)?;
+    let directory = fastctx_platform::disk::canonicalize(directory).map_err(failure)?;
     let temporary = directory.join("upload.part");
     let kept = if resume { held(&temporary, attachment.file.size)? } else { None };
     let (output, received, hash) = match kept {
         Some(kept) => kept,
         None => {
             // A try that stopped before its end may have left its part.
-            if let Err(error) = std::fs::remove_file(&temporary)
+            if let Err(error) = fastctx_platform::disk::remove_file(&temporary)
                 && error.kind() != std::io::ErrorKind::NotFound
             {
                 return Err(failure(error));
             }
-            let output = std::fs::OpenOptions::new().write(true).create_new(true).open(&temporary).map_err(failure)?;
+            let output =
+                fastctx_platform::disk::open_with(std::fs::OpenOptions::new().write(true).create_new(true), &temporary)
+                    .map_err(failure)?;
             (output, 0, Sha256::new())
         }
     };
@@ -675,7 +679,7 @@ fn arriving_in(directory: &Path, mut attachment: Attachment, resume: bool) -> Re
     let image_prefix = if attachment.is_image() && received == 0 { Some(Vec::new()) } else { None };
     if attachment.is_image() && received > 0 {
         let mut header = Vec::new();
-        std::fs::File::open(&temporary)
+        fastctx_platform::disk::open(&temporary)
             .map_err(failure)?
             .take(image_header_size(&attachment.file))
             .read_to_end(&mut header)
@@ -701,11 +705,12 @@ fn arriving_in(directory: &Path, mut attachment: Attachment, resume: bool) -> Re
 /// its length and the digest of its bytes; none when there is none or it
 /// is longer than the file.
 fn held(temporary: &Path, size: u64) -> Result<Option<(std::fs::File, u64, Sha256)>, Failure> {
-    let mut part = match std::fs::OpenOptions::new().read(true).append(true).open(temporary) {
-        Ok(part) => part,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(failure(error)),
-    };
+    let mut part =
+        match fastctx_platform::disk::open_with(std::fs::OpenOptions::new().read(true).append(true), temporary) {
+            Ok(part) => part,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(failure(error)),
+        };
     let length = part.metadata().map_err(failure)?.len();
     if length > size {
         return Ok(None);
@@ -813,15 +818,15 @@ impl Arriving {
         }
         index::prepare(&self.room).map_err(failure)?;
         self.output.take().expect("upload is open").sync_all().map_err(failure)?;
-        if self.path.exists() {
+        if fastctx_platform::disk::is_there(&self.path) {
             // A crash can publish the bytes before their receipt.
             // Recover only those exact bytes; never replace a changed original.
             if !holds(&self.attachment, &mut vec![0; UPLOAD_CHUNK])? {
                 return Err(failure("the original at this upload's location has changed"));
             }
-            std::fs::remove_file(&self.temporary).map_err(failure)?;
+            fastctx_platform::disk::remove_file(&self.temporary).map_err(failure)?;
         } else {
-            std::fs::rename(&self.temporary, &self.path).map_err(failure)?;
+            fastctx_platform::disk::rename(&self.temporary, &self.path).map_err(failure)?;
             self.unpublished = true;
         }
         let receipt = self.path.parent().expect("attachment directory").join("receipt.json");
@@ -857,12 +862,12 @@ impl Drop for Arriving {
     fn drop(&mut self) {
         drop(self.output.take());
         if self.unpublished
-            && let Err(error) = std::fs::remove_file(&self.path)
+            && let Err(error) = fastctx_platform::disk::remove_file(&self.path)
         {
             eprintln!("removing unpublished upload {}: {error}", self.path.display());
         }
         if !self.keep
-            && let Err(error) = std::fs::remove_file(&self.temporary)
+            && let Err(error) = fastctx_platform::disk::remove_file(&self.temporary)
             && error.kind() != std::io::ErrorKind::NotFound
         {
             eprintln!("removing incomplete upload {}: {error}", self.temporary.display());
@@ -877,10 +882,10 @@ pub fn forsake(node: &Node, resident: &ResidentId, uploads: &[fastctx_types::Not
     let attachments = node.world.conversation(resident).attachments();
     for upload in uploads {
         let directory = attachments.join(upload.as_str());
-        let removed = match std::fs::remove_file(directory.join("upload.part")) {
+        let removed = match fastctx_platform::disk::remove_file(directory.join("upload.part")) {
             Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error),
-            _ => match std::fs::read_dir(&directory).map(|mut entries| entries.next().is_none()) {
-                Ok(true) => std::fs::remove_dir(&directory),
+            _ => match fastctx_platform::disk::read_dir(&directory).map(|mut entries| entries.next().is_none()) {
+                Ok(true) => fastctx_platform::disk::remove_dir(&directory),
                 _ => Ok(()),
             },
         };
@@ -900,7 +905,7 @@ fn write_new(path: &std::path::Path, value: &impl Serialize) -> Result<(), Failu
 }
 
 fn read_json<T: serde::de::DeserializeOwned>(path: &std::path::Path) -> Result<T, Failure> {
-    serde_json::from_slice(&std::fs::read(path).map_err(failure)?).map_err(failure)
+    serde_json::from_slice(&fastctx_platform::disk::read(path).map_err(failure)?).map_err(failure)
 }
 
 /// Resolves only server-written receipts and checks the bytes again before
@@ -910,7 +915,7 @@ pub async fn resolve(node: &Arc<Node>, resident: &ResidentId, attachments: &[Att
         return Ok(());
     }
     let (node, resident, attachments) = (node.clone(), resident.clone(), attachments.to_vec());
-    tokio::task::spawn_blocking(move || {
+    fastctx_platform::task::spawn_blocking(move || {
         let mut buffer = vec![0u8; UPLOAD_CHUNK];
         for attachment in attachments {
             if references::reference(&node, &resident, &attachment)?.is_some() {
@@ -947,7 +952,7 @@ fn kept_here(node: &Node, resident: &ResidentId, attachment: &Attachment) -> Res
     // still authenticates the whole receipt before any bytes are opened.
     let slot = if placed { attachment.id.as_str() } else { slot_name(attachment).unwrap_or(attachment.id.as_str()) };
     let load = |room: &ConversationDir| -> Result<Option<Attachment>, Failure> {
-        match std::fs::read(room.attachments().join(slot).join("receipt.json")) {
+        match fastctx_platform::disk::read(room.attachments().join(slot).join("receipt.json")) {
             Ok(bytes) => serde_json::from_slice::<Attachment>(&bytes).map(Some).map_err(failure),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(error) => Err(failure(error)),
@@ -1054,7 +1059,7 @@ pub(crate) fn verified_original(
 
 /// Whether the file `kept` names still holds the bytes it was kept with.
 fn holds(kept: &Attachment, buffer: &mut [u8]) -> Result<bool, Failure> {
-    let mut file = std::fs::File::open(&kept.path).map_err(failure)?;
+    let mut file = fastctx_platform::disk::open(&kept.path).map_err(failure)?;
     let mut hash = Sha256::new();
     let mut size = 0u64;
     loop {
@@ -1212,7 +1217,7 @@ pub async fn take_placed(
         let wanted = wanted.clone();
         // Looking for the very file is work toward the answer the sender waits for.
         let looking = stream.settling();
-        tokio::task::spawn_blocking(move || {
+        fastctx_platform::task::spawn_blocking(move || {
             let _looking = looking;
             slot(&base, &wanted)
         })
@@ -1243,7 +1248,7 @@ pub async fn take_placed(
         return Err(failure("the sender did not end the file"));
     }
     let settling = stream.settling();
-    let placed = tokio::task::spawn_blocking(move || {
+    let placed = fastctx_platform::task::spawn_blocking(move || {
         let _settling = settling;
         arriving.finish()
     })
@@ -1257,12 +1262,12 @@ pub async fn take_placed(
 /// first one after it, `<id>-2` and on, that is free, left from a try that
 /// did not finish, or holds that very file, which is then given.
 fn slot(base: &Path, wanted: &Attachment) -> Result<(PathBuf, Option<Attachment>), Failure> {
-    std::fs::create_dir_all(base).map_err(failure)?;
+    fastctx_platform::disk::create_dir_all(base).map_err(failure)?;
     let mut buffer = vec![0u8; UPLOAD_CHUNK];
     for n in 1u32.. {
         let name = if n == 1 { wanted.id.as_str().to_string() } else { format!("{}-{n}", wanted.id.as_str()) };
         let directory = base.join(name);
-        match std::fs::create_dir(&directory) {
+        match fastctx_platform::disk::create_dir(&directory) {
             Ok(()) => return Ok((directory, None)),
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
             Err(error) => return Err(failure(error)),
@@ -1276,7 +1281,9 @@ fn slot(base: &Path, wanted: &Attachment) -> Result<(PathBuf, Option<Attachment>
                 }
             }
             Ok(_) => {}
-            Err(_) if !directory.join("receipt.json").exists() => return Ok((directory, None)),
+            Err(_) if !fastctx_platform::disk::is_there(directory.join("receipt.json")) => {
+                return Ok((directory, None));
+            }
             Err(_) => {}
         }
     }
@@ -1294,8 +1301,8 @@ impl Drop for Opening {
     fn drop(&mut self) {
         drop(self.lock.take());
         if let Some(directory) = &self.directory
-            && directory.about().exists()
-            && let Err(error) = std::fs::remove_file(directory.draft_lock())
+            && fastctx_platform::disk::is_there(directory.about())
+            && let Err(error) = fastctx_platform::disk::remove_file(directory.draft_lock())
             && error.kind() != std::io::ErrorKind::NotFound
         {
             eprintln!("removing {}: {error}", directory.draft_lock().display());

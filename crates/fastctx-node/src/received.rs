@@ -81,7 +81,7 @@ pub(crate) fn wake(node: &Arc<Node>, to: &ResidentId) {
     let wake = Arc::new(Notify::new());
     workers.insert(to.clone(), Worker { wake: wake.clone(), dirty: false });
     let (node, to) = (node.clone(), to.clone());
-    tokio::spawn(async move { drain(node, to, wake).await });
+    fastctx_platform::task::spawn(async move { drain(node, to, wake).await });
 }
 
 pub(crate) fn resume(node: &Arc<Node>) {
@@ -117,7 +117,7 @@ async fn drain(node: Arc<Node>, to: ResidentId, wake: Arc<Notify>) {
         }
         if after.is_empty() {
             let folder = directory(&node, &to);
-            match tokio::task::spawn_blocking(move || items::queue_end(&folder)).await {
+            match fastctx_platform::task::spawn_blocking(move || items::queue_end(&folder)).await {
                 Ok(Ok(end)) => through = end,
                 other => {
                     node.log.line(format_args!("reading queue boundary: {other:?}"));
@@ -128,7 +128,7 @@ async fn drain(node: Arc<Node>, to: ResidentId, wake: Arc<Notify>) {
         }
         let upper = through.clone();
         let (folder, cursor, last) = (directory(&node, &to), after.clone(), key.clone());
-        let loaded = tokio::task::spawn_blocking(move || {
+        let loaded = fastctx_platform::task::spawn_blocking(move || {
             items::queued(&folder, &cursor, &last, &upper).map(|rows| {
                 rows.into_iter()
                     .map(|row| {
@@ -160,7 +160,7 @@ async fn drain(node: Arc<Node>, to: ResidentId, wake: Arc<Notify>) {
                     let due = entry.decision.due;
                     let waiting = matches!(result, Ok(Handover::Waiting));
                     let (working, record) = (node.clone(), path.clone());
-                    let saved = tokio::task::spawn_blocking(move || -> io::Result<()> {
+                    let saved = fastctx_platform::task::spawn_blocking(move || -> io::Result<()> {
                         match result {
                             Ok(Handover::Done) => items::delete_if_exists(&record),
                             Ok(Handover::Waiting) => items::keep(&record, &entry),
@@ -209,10 +209,11 @@ async fn drain(node: Arc<Node>, to: ResidentId, wake: Arc<Notify>) {
         after.clear();
         key.clear();
         let folder = directory(&node, &to);
-        let empty =
-            tokio::task::spawn_blocking(move || items::page(&folder, Some("json"), "", 1).map(|rows| rows.is_empty()))
-                .await
-                .is_ok_and(|result| result.is_ok_and(|empty| empty));
+        let empty = fastctx_platform::task::spawn_blocking(move || {
+            items::page(&folder, Some("json"), "", 1).map(|rows| rows.is_empty())
+        })
+        .await
+        .is_ok_and(|result| result.is_ok_and(|empty| empty));
         let dirty = {
             let mut workers = node.received.workers.lock().expect("received workers");
             let dirty = workers.get(&to).is_some_and(|worker| worker.dirty);
@@ -257,7 +258,7 @@ async fn deliver(node: &Arc<Node>, entry: &mut Entry) -> io::Result<Handover> {
     }
     let result = if let Notice::JobEnded { consumed, .. } = &entry.delivery.notice {
         let (directory, consumed) = (node.world.conversation(&entry.to), consumed.clone());
-        tokio::task::spawn_blocking(move || crate::job_receipts::apply_consumed(&directory, &consumed))
+        fastctx_platform::task::spawn_blocking(move || crate::job_receipts::apply_consumed(&directory, &consumed))
             .await
             .map_err(io::Error::other)??;
         if entry.released.is_none() {

@@ -57,14 +57,14 @@ pub(super) fn measure(node: &Node) -> io::Result<Space> {
     let mut measured = conversations(node)?;
     let mut kinds = Kinds::default();
     let root = &node.root;
-    let canonical_root = std::fs::canonicalize(root)?;
+    let canonical_root = fastctx_platform::disk::canonicalize(root)?;
     let mut owned = Vec::new();
     for one in measured.values() {
         for path in &one.places {
             owned.push(path.clone());
         }
         for path in &one.host_files {
-            if std::fs::canonicalize(path)?.starts_with(&canonical_root) {
+            if fastctx_platform::disk::canonicalize(path)?.starts_with(&canonical_root) {
                 owned.push(path.clone());
             } else {
                 kinds.host_records += tally(path)?.bytes;
@@ -141,7 +141,7 @@ fn measure_conversations(node: &Node, wanted: Option<&str>) -> io::Result<BTreeM
         }
         let one = measured.entry(kept.name.clone()).or_default();
         one.places.push(kept.directory.path().to_path_buf());
-        let aliases = match std::fs::read(kept.directory.aliases()) {
+        let aliases = match fastctx_platform::disk::read(kept.directory.aliases()) {
             Ok(bytes) => Some(bytes),
             Err(error) if error.kind() == io::ErrorKind::NotFound => None,
             Err(error) => return Err(error),
@@ -149,7 +149,7 @@ fn measure_conversations(node: &Node, wanted: Option<&str>) -> io::Result<BTreeM
         if let Some(bytes) = aliases {
             let aliases: BTreeMap<PathBuf, PathBuf> = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
             for alias in aliases.into_keys() {
-                match std::fs::symlink_metadata(&alias) {
+                match fastctx_platform::disk::symlink_metadata(&alias) {
                     Ok(_) => one.places.push(alias),
                     Err(error) if error.kind() == io::ErrorKind::NotFound => {}
                     Err(error) => return Err(error),
@@ -165,14 +165,17 @@ fn measure_conversations(node: &Node, wanted: Option<&str>) -> io::Result<BTreeM
             let Some(name) = directory.file_name().and_then(|name| name.to_str()).map(str::to_string) else {
                 continue;
             };
-            if wanted.is_some_and(|wanted| name != wanted) || Kind::of(&name).is_none() || !directory.is_dir() {
+            if wanted.is_some_and(|wanted| name != wanted)
+                || Kind::of(&name).is_none()
+                || !fastctx_platform::disk::is_dir(&directory)
+            {
                 continue;
             }
             let one = measured.entry(name).or_default();
             if !one.places.contains(&directory) {
                 one.places.push(directory.clone());
             }
-            if !fastctx_platform::owned_directory::is_link(&std::fs::symlink_metadata(&directory)?) {
+            if !fastctx_platform::owned_directory::is_link(&fastctx_platform::disk::symlink_metadata(&directory)?) {
                 add_directory(one, &directory, &node.log)?;
             }
         }
@@ -194,7 +197,7 @@ fn measure_conversations(node: &Node, wanted: Option<&str>) -> io::Result<BTreeM
             if !one.places.contains(exchange) {
                 one.places.push(exchange.clone());
             }
-            if !fastctx_platform::owned_directory::is_link(&std::fs::symlink_metadata(exchange)?) {
+            if !fastctx_platform::owned_directory::is_link(&fastctx_platform::disk::symlink_metadata(exchange)?) {
                 one.records.add(tally(exchange)?);
             }
         }
@@ -331,7 +334,7 @@ fn add_directory(one: &mut Measured, directory: &Path, log: &crate::log::Log) ->
         at: Option<Timestamp>,
     }
     for name in ["actions", "messages"] {
-        let file = match std::fs::File::open(directory.join(name)) {
+        let file = match fastctx_platform::disk::open(directory.join(name)) {
             Ok(file) => file,
             Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
             Err(error) => return Err(error),
@@ -462,7 +465,7 @@ fn describe(
             }
             // Files attached for a conversation never opened.
             None => {
-                if directory.about().exists() {
+                if fastctx_platform::disk::is_there(directory.about()) {
                     let about = crate::residents::read_about(&directory)?;
                     let now = crate::residents::read_now(&directory)?;
                     let places = crate::residents::read_places(&directory, &about)?;
@@ -484,11 +487,11 @@ fn describe(
                         held: running,
                     });
                 }
-                let town = std::fs::read(directory.draft())
+                let town = fastctx_platform::disk::read(directory.draft())
                     .ok()
                     .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
                     .and_then(|draft| draft.get("town")?.as_str()?.parse().ok());
-                let held = if directory.draft_lock().try_exists()?
+                let held = if fastctx_platform::disk::exists(directory.draft_lock())?
                     && fastctx_platform::FileLock::try_acquire(&directory.draft_lock())?.is_none()
                 {
                     Some("it is being opened; wait for it to finish".into())
@@ -540,7 +543,7 @@ fn claude_logins(measured: &BTreeMap<String, Measured>) -> io::Result<Vec<Claude
     let environment = crate::claude::environment().map_err(|failure| io::Error::other(failure.message))?;
     let default = crate::homes::claude_default(&environment, &user_home);
     let mut logins: Vec<(PathBuf, bool)> = Vec::new();
-    if default.is_dir() {
+    if fastctx_platform::disk::is_dir(&default) {
         logins.push((default.clone(), true));
     }
     for one in measured.values() {
@@ -567,7 +570,7 @@ pub(super) fn tally(path: &Path) -> io::Result<Size> {
 }
 
 pub(super) fn entries(path: &Path) -> io::Result<Vec<PathBuf>> {
-    match std::fs::read_dir(path) {
+    match fastctx_platform::disk::read_dir(path) {
         Ok(entries) => entries.map(|entry| entry.map(|entry| entry.path())).collect(),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Vec::new()),
         Err(error) => Err(error),

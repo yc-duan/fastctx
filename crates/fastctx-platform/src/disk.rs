@@ -43,6 +43,14 @@ pub fn create_dir_all(path: impl AsRef<Path>) -> io::Result<()> {
     fs::create_dir_all(path)
 }
 
+/// Makes the one directory `path`, failing when it is there already: for a
+/// name that must be new.
+#[track_caller]
+pub fn create_dir(path: impl AsRef<Path>) -> io::Result<()> {
+    blocks();
+    fs::create_dir(path)
+}
+
 #[track_caller]
 pub fn remove_file(path: impl AsRef<Path>) -> io::Result<()> {
     blocks();

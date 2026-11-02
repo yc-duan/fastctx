@@ -50,7 +50,7 @@ fn restore_now(node: &Node, goal: &mut Goal) -> Result<bool, Failure> {
 
 pub(super) async fn restore(node: &std::sync::Arc<Node>, goal: &mut Goal) -> Result<bool, Failure> {
     let (node, mut restored) = (node.clone(), goal.clone());
-    let (restored, restarted) = tokio::task::spawn_blocking(move || {
+    let (restored, restarted) = fastctx_platform::task::spawn_blocking(move || {
         let restarted = restore_now(&node, &mut restored)?;
         Ok::<_, Failure>((restored, restarted))
     })

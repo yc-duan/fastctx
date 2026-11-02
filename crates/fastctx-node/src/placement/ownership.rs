@@ -38,7 +38,8 @@ fn checked(
             Err(error) => return Err(failure(error)),
         }
     }
-    let kept: Binding = serde_json::from_slice(&std::fs::read(&path).map_err(failure)?).map_err(failure)?;
+    let kept: Binding =
+        serde_json::from_slice(&fastctx_platform::disk::read(&path).map_err(failure)?).map_err(failure)?;
     if kept.account != *scope
         || kept.opened != opened
         || kept.owner.resident != owner.resident

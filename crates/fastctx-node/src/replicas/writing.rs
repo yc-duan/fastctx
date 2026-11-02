@@ -248,7 +248,7 @@ pub(crate) async fn intercept(
     let result = if let Caller::Resident(owner) = caller {
         let (world, names, owner, job, town) =
             (node.world.clone(), node.names(), owner.clone(), job.cloned(), town.cloned());
-        tokio::task::spawn_blocking(move || {
+        fastctx_platform::task::spawn_blocking(move || {
             crate::write::record::record(
                 &world,
                 &names,
@@ -379,7 +379,7 @@ pub(crate) async fn saw(
         let hash = fastctx_hands::files::content_hash(copy.effective().as_bytes());
         let same = seen.sha256.as_ref().map_or_else(
             || {
-                std::fs::metadata(&copy.path).ok().is_some_and(|metadata| {
+                fastctx_platform::disk::metadata(&copy.path).ok().is_some_and(|metadata| {
                     metadata.len() == seen.size
                         && metadata.modified().ok().and_then(|time| jiff::Timestamp::try_from(time).ok())
                             == seen.modified

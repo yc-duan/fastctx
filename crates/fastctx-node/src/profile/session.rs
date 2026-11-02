@@ -178,7 +178,7 @@ pub(crate) fn claude(node: &Node, id: &ResidentId, creating: bool) -> Result<std
     }
     write_session_file(&directory.claude_settings(), &serde_json::to_vec_pretty(&settings).unwrap())
         .map_err(|e| Failure::new(e.to_string()))?;
-    if creating || mcp.is_file() {
+    if creating || fastctx_platform::disk::is_file(&mcp) {
         let mut servers = servers(node, id, &about.acting, &options.mcp_off, false);
         if assisting {
             // Strict mode excludes login and plugin servers; include the
@@ -200,7 +200,7 @@ pub(crate) fn claude(node: &Node, id: &ResidentId, creating: bool) -> Result<std
     // A session Claude Code never paired has no directory to bring up to date.
     if let Some(session) = &about.session {
         let directory = fastctx_hosts::claude::exchange::sessions(node.world.path()).join(session);
-        if directory.is_dir() {
+        if fastctx_platform::disk::is_dir(&directory) {
             hand_to_session(node, id, &directory).map_err(|e| Failure::new(e.to_string()))?;
         }
     }

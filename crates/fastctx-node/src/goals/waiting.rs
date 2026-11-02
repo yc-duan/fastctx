@@ -164,7 +164,7 @@ pub(crate) async fn pending_reports(
     resident: &ResidentId,
 ) -> Result<BTreeMap<NoticeId, Vec<ReportDelivery>>, Failure> {
     let (node, resident) = (node.clone(), resident.clone());
-    tokio::task::spawn_blocking(move || pending_reports_now(&node, &resident)).await.map_err(fail)?
+    fastctx_platform::task::spawn_blocking(move || pending_reports_now(&node, &resident)).await.map_err(fail)?
 }
 
 /// Read exactly the promised report after taking the pending-input snapshot.
@@ -175,7 +175,7 @@ pub(crate) async fn report(
 ) -> Result<Vec<ReportDelivery>, Failure> {
     let directory = node.world.conversation(resident);
     let id = id.to_string();
-    tokio::task::spawn_blocking(move || {
+    fastctx_platform::task::spawn_blocking(move || {
         let mut reports = Vec::new();
         for (_, event) in crate::session_record::search::all(&directory, "report", &id).map_err(fail)? {
             if let Happened::Heard { notice: Some(notice), .. } = event.happened

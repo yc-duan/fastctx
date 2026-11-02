@@ -136,7 +136,7 @@ pub(crate) async fn timing(node: &Node, id: &ResidentId, view: &View) -> Result<
 
 pub(crate) fn start(node: &Arc<Node>) {
     let node = node.clone();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let mut changed = node.goals.changed.subscribe();
         let mut residents = node.residents.changes();
         let mut tick = tokio::time::interval(Duration::from_secs(30));
@@ -179,7 +179,7 @@ fn schedule(node: &Arc<Node>, id: ResidentId) {
         workers.insert(id.clone(), false);
     }
     let node = node.clone();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         loop {
             let result = driver::reconcile(&node, &id).await;
             {

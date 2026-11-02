@@ -67,11 +67,14 @@ pub(crate) fn run(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
     )?;
     let gathered = gather(&world)?;
     assert!(gathered.problems.is_empty(), "{:?}", gathered.problems);
-    assert!(!old.join("drill-map.json").exists());
+    assert!(!fastctx_platform::disk::is_there(old.join("drill-map.json")));
     let artifact = room.path().join("out/conversations/user-folder");
     fastctx_platform::disk::create_dir_all(&artifact)?;
     records::moving(&artifact.join("piece.txt"))?;
-    assert!(!artifact.join(".record-generation").exists(), "an artifact name was mistaken for a conversation root");
+    assert!(
+        !fastctx_platform::disk::is_there(artifact.join(".record-generation")),
+        "an artifact name was mistaken for a conversation root"
+    );
     let database = crate::storage_drill::reopen(&world)?;
     let service = crate::record_database::register(&world, &database)?;
     assert!(
@@ -154,9 +157,12 @@ pub(crate) fn run(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let mut conflict_result = Gathered::default();
     queues::gather(&world, &BTreeSet::new(), &mut conflict_result)?;
     assert_eq!(conflict_result.problems.len(), 1);
-    assert!(!conflict.exists() && !conflict.with_extension("retry").exists());
-    assert!(home.path().join("recovered/queues/received-controls").is_dir());
-    assert!(!home.book("received-controls").join("conflict.retry").exists());
+    assert!(
+        !fastctx_platform::disk::is_there(&conflict)
+            && !fastctx_platform::disk::is_there(conflict.with_extension("retry"))
+    );
+    assert!(fastctx_platform::disk::is_dir(home.path().join("recovered/queues/received-controls")));
+    assert!(!fastctx_platform::disk::is_there(home.book("received-controls").join("conflict.retry")));
     let database = crate::storage_drill::reopen(&world)?;
     let service = crate::record_database::register(&world, &database)?;
     service.start()?;

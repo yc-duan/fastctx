@@ -7,8 +7,8 @@ use std::sync::Arc;
 pub async fn view(node: &Arc<Node>, town: &TownName, acting: &Acting) -> Result<MapView, Failure> {
     super::access::ready(node, acting, town).await?;
     let (world, name) = (node.world.clone(), town.clone());
-    let (records, pages) = tokio::task::spawn_blocking(move || {
-        let pages = if !world.town(&name).signed().is_dir() {
+    let (records, pages) = fastctx_platform::task::spawn_blocking(move || {
+        let pages = if !fastctx_platform::disk::is_dir(world.town(&name).signed()) {
             crate::ledger::metadata::read(&world, &name)?.map(|index| index.pages).unwrap_or_default()
         } else {
             crate::pages::read::summaries(&world, &name)?

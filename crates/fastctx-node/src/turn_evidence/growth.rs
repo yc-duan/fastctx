@@ -6,7 +6,7 @@ use std::{collections::BTreeMap, io};
 
 pub(super) async fn measure(directory: ConversationDir, handles: Vec<WaitHandle>) -> io::Result<Vec<WaitHandle>> {
     let (database, scope) = records::locate(&directory)?;
-    let (mut handles, values) = tokio::task::spawn_blocking(move || {
+    let (mut handles, values) = fastctx_platform::task::spawn_blocking(move || {
         let values = handles
             .iter()
             .filter_map(|handle| {
@@ -28,7 +28,7 @@ pub(super) async fn measure(directory: ConversationDir, handles: Vec<WaitHandle>
             let previous = match previous {
                 Some(previous) => previous,
                 None => {
-                    legacy = match std::fs::read(directory.books().join("waiting-output.json")) {
+                    legacy = match fastctx_platform::disk::read(directory.books().join("waiting-output.json")) {
                         Ok(bytes) => serde_json::from_slice::<BTreeMap<String, u64>>(&bytes)
                             .map_err(|error| Error::with_kind(ErrorKind::Corrupt, error.to_string()))?
                             .into_iter()

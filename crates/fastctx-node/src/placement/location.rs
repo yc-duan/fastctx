@@ -65,7 +65,7 @@ pub(crate) fn speaking(node: &Node, id: &ResidentId, machine: &MachineName) -> R
 }
 
 fn read<T: serde::de::DeserializeOwned>(path: &std::path::Path) -> Result<Option<T>, Failure> {
-    match std::fs::read(path) {
+    match fastctx_platform::disk::read(path) {
         Ok(bytes) => serde_json::from_slice(&bytes).map(Some).map_err(failure),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(failure(error)),

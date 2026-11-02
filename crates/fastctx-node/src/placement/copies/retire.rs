@@ -16,7 +16,7 @@ pub(super) async fn finish(
 ) -> Result<(), Failure> {
     let stage = staged(slot);
     if read(&stage)?.is_none() {
-        match std::fs::rename(&slot.path, &stage) {
+        match fastctx_platform::disk::rename(&slot.path, &stage) {
             Ok(()) => {}
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
             Err(error) => return Err(failure(error)),
@@ -51,7 +51,7 @@ pub(super) async fn finish(
     if read(&stage)?.as_deref() != Some(&text) {
         return Err(failure("the detached plan changed while its final edit was submitted"));
     }
-    std::fs::remove_file(stage).map_err(failure)?;
+    fastctx_platform::disk::remove_file(stage).map_err(failure)?;
     state.text.clear();
     keep(node, &slot.key, state)?;
     link.follow_record(&state.account.account, fastctx_types::plan::KIND, state.owner.resident.as_str(), false)

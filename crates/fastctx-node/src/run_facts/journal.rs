@@ -101,7 +101,7 @@ fn prune(record: &Path, index: &mut Index, next: Option<u64>, sent: u64) -> io::
         }
     }
     let directory = record.with_extension("steps");
-    if directory.try_exists()? {
+    if fastctx_platform::disk::exists(&directory)? {
         for entry in fastctx_platform::disk::read_dir(directory)? {
             let file = entry?.path();
             let number =
@@ -125,7 +125,7 @@ pub(super) fn read_since(
     }
     loop {
         let file = path(record, *segment);
-        if !file.try_exists()? && (*offset > 0 || index.current > 0) {
+        if !fastctx_platform::disk::exists(&file)? && (*offset > 0 || index.current > 0) {
             return Err(io::Error::other("a retained step journal segment is missing"));
         }
         log::repair(&file)?;

@@ -491,11 +491,11 @@ fn legacy(node: &Node) {
 /// This node took the World: the successor it said it was is not waiting
 /// any more, unless another said so since.
 fn no_longer_waiting(world: &WorldDir) {
-    let named = std::fs::read(world.node_successor())
+    let named = fastctx_platform::disk::read(world.node_successor())
         .ok()
         .and_then(|bytes| serde_json::from_slice::<fastctx_types::ProcessIdentity>(&bytes).ok());
     if named.is_some_and(|named| fastctx_platform::current_identity().is_ok_and(|me| me == named)) {
-        let _ = std::fs::remove_file(world.node_successor());
+        let _ = fastctx_platform::disk::remove_file(world.node_successor());
     }
 }
 
@@ -543,7 +543,7 @@ pub async fn run_prepared(
     startup_gate: Option<FileLock>,
 ) -> anyhow::Result<()> {
     anyhow::ensure!(
-        !fastctx_root.join("uninstalled.json").try_exists()?,
+        !fastctx_platform::disk::exists(fastctx_root.join("uninstalled.json"))?,
         "this World was uninstalled; reinstall it before starting a node"
     );
     if let Some(coordinator) = coordinator {

@@ -34,7 +34,7 @@ pub(crate) async fn write(
     let world = node.world.clone();
     let record_path = job.as_ref().map(|job| node.world.job_record(&here, town.as_ref(), &owner.clone().into(), job));
     let action_record = record_path.clone();
-    let result = tokio::task::spawn_blocking(move || {
+    let result = fastctx_platform::task::spawn_blocking(move || {
         let at = jiff::Timestamp::now();
         let turn =
             action_record.as_deref().map(fastctx_hands::run::record::read).transpose()?.and_then(|record| record.turn);
@@ -53,7 +53,7 @@ pub(crate) async fn write(
     let (outcome, recorded) = result;
     if let Some(path) = record_path {
         let emitting = node.clone();
-        let record = tokio::task::spawn_blocking(move || {
+        let record = fastctx_platform::task::spawn_blocking(move || {
             crate::run_facts::update_job(&emitting, &path)?;
             fastctx_hands::run::record::read(&path)
         })

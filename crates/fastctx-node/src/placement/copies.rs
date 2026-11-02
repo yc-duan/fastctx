@@ -89,7 +89,7 @@ fn file(node: &Node, owner: &Address) -> PathBuf {
     node.world.owner(&node.names(), owner).path().join("plan.md")
 }
 fn read(path: &Path) -> Result<Option<String>, Failure> {
-    match std::fs::read_to_string(path) {
+    match fastctx_platform::disk::read_to_string(path) {
         Ok(text) => {
             fastctx_types::plan::validate(&text).map_err(failure)?;
             Ok(Some(text))
@@ -323,7 +323,7 @@ async fn had(
 
 fn discard(node: &Node, slot: &Slot) -> Result<(), Failure> {
     for path in [&slot.path, &retire::staged(slot), &directory(node).join(format!("{}.json", slot.key))] {
-        match std::fs::remove_file(path) {
+        match fastctx_platform::disk::remove_file(path) {
             Ok(()) => {}
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => return Err(failure(error)),
@@ -340,7 +340,7 @@ fn request(node: &Arc<Node>, slot: Arc<Slot>) {
         return;
     }
     let weak = Arc::downgrade(node);
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let mut retry = crate::again::Again::default();
         let mut previous = String::new();
         loop {
@@ -449,7 +449,7 @@ fn watch_legacy(node: &Arc<Node>) {
 pub(crate) fn start(node: &Arc<Node>) {
     watch_legacy(node);
     let restored = (|| -> Result<(), Failure> {
-        let entries = match std::fs::read_dir(directory(node)) {
+        let entries = match fastctx_platform::disk::read_dir(directory(node)) {
             Ok(entries) => entries,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
             Err(error) => return Err(failure(error)),
@@ -460,7 +460,7 @@ pub(crate) fn start(node: &Arc<Node>) {
                 continue;
             }
             // One copy that cannot be restored leaves the others theirs.
-            let restored = std::fs::read(&path)
+            let restored = fastctx_platform::disk::read(&path)
                 .map_err(failure)
                 .and_then(|bytes| serde_json::from_slice::<State>(&bytes).map_err(failure))
                 .and_then(|state| register(node, state));

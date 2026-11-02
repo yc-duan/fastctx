@@ -49,7 +49,9 @@ fn hash(text: &str) -> u64 {
 }
 
 fn stamp(path: &std::path::Path) -> Option<(SystemTime, u64)> {
-    std::fs::metadata(path).ok().map(|meta| (meta.modified().unwrap_or(SystemTime::UNIX_EPOCH), meta.len()))
+    fastctx_platform::disk::metadata(path)
+        .ok()
+        .map(|meta| (meta.modified().unwrap_or(SystemTime::UNIX_EPOCH), meta.len()))
 }
 
 fn watch_legacy(node: &Arc<Node>) {
@@ -226,7 +228,7 @@ async fn look(node: &Arc<Node>, wanted: &ResidentId) {
             continue;
         }
         let text = match &now {
-            Some(_) => match std::fs::read(&path) {
+            Some(_) => match fastctx_platform::disk::read(&path) {
                 Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
                 // Unreadable for now (held open, permissions): looked at
                 // again in a while rather than at once.
@@ -279,7 +281,7 @@ pub(crate) fn pulled(node: &Node, id: &ResidentId, page: &Page) {
     let path = path(node, id);
     let markdown = page.body.as_ref().map(|body| body.markdown.as_str()).unwrap_or_default();
     let mut files = node.plan_files.0.lock().expect("never poisoned");
-    let on_disk = std::fs::read(&path).ok().map(|bytes| String::from_utf8_lossy(&bytes).into_owned());
+    let on_disk = fastctx_platform::disk::read(&path).ok().map(|bytes| String::from_utf8_lossy(&bytes).into_owned());
     let pending = match (files.get(id), &on_disk) {
         // Changed since last taken, or never taken: the file wins and is
         // taken next.

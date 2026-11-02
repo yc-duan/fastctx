@@ -49,7 +49,7 @@ pub(super) fn run(node: &Node, plugin: &Path) {
         }
     };
     let record = plugin.with_file_name(CHECKED);
-    if std::fs::read_to_string(&record).is_ok_and(|kept| kept.trim() == fingerprint) {
+    if fastctx_platform::disk::read_to_string(&record).is_ok_and(|kept| kept.trim() == fingerprint) {
         return;
     }
     let Ok(Command { program, cwd, env }) = command(node, Some(home)) else { return };
@@ -74,9 +74,9 @@ fn fingerprint(plugin: &Path) -> std::io::Result<String> {
     let mut files = Vec::new();
     let mut pending = vec![plugin.to_path_buf()];
     while let Some(directory) = pending.pop() {
-        for entry in std::fs::read_dir(&directory)? {
+        for entry in fastctx_platform::disk::read_dir(&directory)? {
             let path = entry?.path();
-            if path.is_dir() {
+            if fastctx_platform::disk::is_dir(&path) {
                 pending.push(path);
             } else {
                 files.push(path);
@@ -89,7 +89,7 @@ fn fingerprint(plugin: &Path) -> std::io::Result<String> {
         let relative = file.strip_prefix(plugin).unwrap_or(&file);
         hash.update(relative.to_string_lossy().as_bytes());
         hash.update([0]);
-        hash.update(std::fs::read(&file)?);
+        hash.update(fastctx_platform::disk::read(&file)?);
         hash.update([0]);
     }
     Ok(format!("{:x}", hash.finalize()))

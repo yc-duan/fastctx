@@ -184,7 +184,7 @@ pub fn start(node: &Arc<Node>) -> std::io::Result<()> {
     calls::sweep(node);
     let plugin = claude::write_plugin(node.world.path())?;
     let checking = node.clone();
-    tokio::task::spawn_blocking(move || plugin_check::run(&checking, &plugin));
+    fastctx_platform::task::spawn_blocking(move || plugin_check::run(&checking, &plugin));
     let sessions = exchange::sessions(node.world.path());
     fastctx_platform::ensure_private_dir(&sessions)?;
     let (changed, mut changes) = mpsc::unbounded_channel::<PathBuf>();
@@ -232,7 +232,7 @@ pub fn start(node: &Arc<Node>) -> std::io::Result<()> {
         })
         .map_err(std::io::Error::other)?;
     let node = node.clone();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         // Kept for as long as the node watches.
         let _watcher = watcher;
         look_all(&node, &sessions).await;
@@ -305,7 +305,7 @@ fn look_soon(node: &Arc<Node>, directory: PathBuf) {
         looking.insert(directory.clone(), false);
     }
     let node = node.clone();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let mut wait = AGAIN_FIRST;
         loop {
             let settled = {
@@ -416,7 +416,7 @@ pub(crate) fn recover_startups(node: &Arc<Node>, record: &crate::residents::OnRe
 /// is known; the mod's rewind and fork read the transcript themselves.
 async fn policy(node: &Arc<Node>, resident: &ResidentId, directory: &Path) -> std::io::Result<()> {
     let (working, id, path) = (node.clone(), resident.clone(), directory.to_path_buf());
-    let bytes = tokio::task::spawn_blocking(move || prepare_policy(&working, &id, &path))
+    let bytes = fastctx_platform::task::spawn_blocking(move || prepare_policy(&working, &id, &path))
         .await
         .map_err(std::io::Error::other)??;
     let Some(bytes) = bytes else { return Ok(()) };
@@ -424,7 +424,7 @@ async fn policy(node: &Arc<Node>, resident: &ResidentId, directory: &Path) -> st
         .await
         .map_err(|error| std::io::Error::other(error.message))?;
     let path = directory.join("policy.json");
-    tokio::task::spawn_blocking(move || {
+    fastctx_platform::task::spawn_blocking(move || {
         fastctx_platform::publish(&path, &bytes, fastctx_platform::Permissions::Private)
     })
     .await
@@ -476,7 +476,7 @@ async fn look_all(node: &Arc<Node>, sessions: &Path) {
 
 /// The sessions' directories under `sessions`.
 fn session_directories(node: &Node, sessions: &Path) -> Vec<PathBuf> {
-    let entries = match std::fs::read_dir(sessions) {
+    let entries = match fastctx_platform::disk::read_dir(sessions) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Vec::new(),
         Err(error) => {
@@ -488,7 +488,7 @@ fn session_directories(node: &Node, sessions: &Path) -> Vec<PathBuf> {
     for entry in entries {
         let directory = entry.and_then(|entry| {
             let path = entry.path();
-            std::fs::metadata(&path).map(|metadata| metadata.is_dir().then_some(path))
+            fastctx_platform::disk::metadata(&path).map(|metadata| metadata.is_dir().then_some(path))
         });
         match directory {
             Ok(Some(directory)) => directories.push(directory),
@@ -579,7 +579,7 @@ async fn look(node: &Arc<Node>, directory: &Path) -> bool {
     }
     let harvested = {
         let directory = directory.to_path_buf();
-        tokio::task::spawn_blocking(move || exchange::harvest(&directory)).await
+        fastctx_platform::task::spawn_blocking(move || exchange::harvest(&directory)).await
     };
     let (reported, problems) = match harvested {
         Ok(Ok(harvested)) => harvested,
@@ -1141,7 +1141,7 @@ pub async fn identify(node: &Arc<Node>, tool_use_id: &str) -> Result<fastctx_typ
         .keys()
         .map(|session| exchange::sessions(&world).join(session))
         .collect();
-    let proof = tokio::task::spawn_blocking(move || claude::calls::take_from(&world, &id, sessions))
+    let proof = fastctx_platform::task::spawn_blocking(move || claude::calls::take_from(&world, &id, sessions))
         .await
         .map_err(|error| Failure::new(format!("reading Claude call evidence: {error}")))?
         .map_err(|error| Failure::new(format!("pairing Claude call {tool_use_id}: {error}")))?;
@@ -1155,7 +1155,7 @@ pub async fn identify(node: &Arc<Node>, tool_use_id: &str) -> Result<fastctx_typ
     crate::blocking::on(async move { look(&looking, &path).await }).await;
     let alias = exchange::sessions(node.world.path()).join(&session).join("resident.json");
     let resident: ResidentId =
-        serde_json::from_slice(&std::fs::read(alias).map_err(|error| Failure::new(error.to_string()))?)
+        serde_json::from_slice(&fastctx_platform::disk::read(alias).map_err(|error| Failure::new(error.to_string()))?)
             .map_err(|error| Failure::new(error.to_string()))?;
     node.residents.active(&resident)?;
     let town =
@@ -1258,7 +1258,7 @@ async fn pair(node: &Arc<Node>, session: &str) {
     let directory = node.world.conversation(&resident);
     let waiting = {
         let directory = directory.clone();
-        tokio::task::spawn_blocking(move || crate::inbox::pending(&directory)).await
+        fastctx_platform::task::spawn_blocking(move || crate::inbox::pending(&directory)).await
     };
     match waiting {
         Ok(Ok(kept)) => {
@@ -1287,7 +1287,7 @@ async fn pair(node: &Arc<Node>, session: &str) {
                     .any(|pending| pending.state == PendingState::Waiting && pending.delivery.notice.along().is_some())
             {
                 let (node, resident) = (node.clone(), resident.clone());
-                tokio::spawn(async move { crate::speech::along(&node, &resident).await });
+                fastctx_platform::task::spawn(async move { crate::speech::along(&node, &resident).await });
             }
         }
         Ok(Err(error)) => node.log.line(format_args!("reading what waits for {resident}: {error}")),
@@ -1600,7 +1600,7 @@ async fn alive(node: &Arc<Node>, home: Option<&Path>, session: &str) -> Result<b
 async fn resting(node: &Arc<Node>, home: Option<&Path>, session: &str) -> Result<bool, Failure> {
     let Command { program, cwd, env } = command(node, home)?;
     let session = session.to_string();
-    tokio::task::spawn_blocking(fastctx_platform::doing::carried(move || {
+    fastctx_platform::task::spawn_blocking(fastctx_platform::doing::carried(move || {
         let args: Vec<OsString> = vec!["agents".into(), "--json".into(), "--all".into()];
         let listed = background::claude(&program, &args, &cwd, &env)?;
         background::resting(&listed, &session)
@@ -1615,7 +1615,7 @@ async fn resting(node: &Arc<Node>, home: Option<&Path>, session: &str) -> Result
 async fn running(node: &Arc<Node>, home: Option<&Path>, session: &str) -> Result<bool, Failure> {
     let Command { program, cwd, env } = command(node, home)?;
     let session = session.to_string();
-    tokio::task::spawn_blocking(fastctx_platform::doing::carried(move || {
+    fastctx_platform::task::spawn_blocking(fastctx_platform::doing::carried(move || {
         let args: Vec<OsString> = vec!["agents".into(), "--json".into(), "--all".into()];
         let listed = background::claude(&program, &args, &cwd, &env)?;
         background::running(&listed, &session)
@@ -1669,7 +1669,7 @@ pub(crate) async fn wake(
     let (launch_node, launch_resident, launch_id) = (node.clone(), resident.clone(), id.clone());
     // A session that reports while this runs waits to learn whether it is a copy.
     let waking = node.claude.copies.waking();
-    let printed = tokio::task::spawn_blocking(fastctx_platform::doing::carried(move || {
+    let printed = fastctx_platform::task::spawn_blocking(fastctx_platform::doing::carried(move || {
         use crate::lifecycle::wake::WakeFailure;
         trust(&[cwd.as_path()], &env).map_err(Failure::new)?;
         crate::lifecycle::retry::attempting(&launch_node, &launch_resident, &launch_id)?;
@@ -1746,7 +1746,7 @@ pub(crate) fn resume_dir(node: &Node, session: &str) -> PathBuf {
         .flatten()
         .and_then(|registration| registration.cwd)
         .map(PathBuf::from)
-        .filter(|directory| directory.is_dir());
+        .filter(|directory| fastctx_platform::disk::is_dir(directory));
     let home = fastctx_platform::user_home().ok();
     match opened {
         Some(directory) if home.as_deref().is_none_or(|home| !crate::homes::same_dir(&directory, home)) => directory,
@@ -1886,7 +1886,8 @@ pub async fn open_here(
     let directory = node.world.conversation(&id);
     let settings = directory.claude_settings();
     let instructions = directory.claude_instructions();
-    let written = std::fs::write(&settings, settings_json(&id)).and_then(|()| std::fs::write(&instructions, words));
+    let written = fastctx_platform::disk::write(&settings, settings_json(&id))
+        .and_then(|()| fastctx_platform::disk::write(&instructions, words));
     written.map_err(|error| Failure::new(format!("writing the session's settings: {error}")))?;
     // Its files other than images go where the user chose, as later words'
     // do.
@@ -1979,7 +1980,7 @@ pub(super) async fn begin_launch(node: &Arc<Node>, id: &ResidentId, prepared: Pr
     // Until the World knows which session this is, a Claude session's MCP
     // connection it cannot place waits, rather than becoming someone new.
     let _birth = node.claude.births.read().await;
-    let started = tokio::task::spawn_blocking(fastctx_platform::doing::carried(move || {
+    let started = fastctx_platform::task::spawn_blocking(fastctx_platform::doing::carried(move || {
         let start = background::Start {
             plugin: &plugin,
             settings: &settings,

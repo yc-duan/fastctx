@@ -374,9 +374,9 @@ fn collect_records(
                 else {
                     continue;
                 };
-                if !scratch.is_dir()
+                if !fastctx_platform::disk::is_dir(&scratch)
                     || fastctx_platform::owned_directory::is_link(&fs::symlink_metadata(&scratch)?)
-                    || directory.join("jobs").join(format!("{job}.json")).try_exists()?
+                    || fastctx_platform::disk::exists(directory.join("jobs").join(format!("{job}.json")))?
                 {
                     continue;
                 }
@@ -410,7 +410,8 @@ fn retired_owner(world: &fastctx_types::layout::WorldDir, directory: &Path) -> i
     let Some(name) = directory.file_name().and_then(|name| name.to_str()) else { return Ok(false) };
     let Some(fastctx_types::layout::Kind::Home(id)) = fastctx_types::layout::Kind::of(name) else { return Ok(false) };
     let home = world.conversation(&id);
-    Ok(crate::residents::read_removed(&home)?.is_some() && home.path().join("books-retired").try_exists()?)
+    Ok(crate::residents::read_removed(&home)?.is_some()
+        && fastctx_platform::disk::exists(home.path().join("books-retired"))?)
 }
 
 /// Since when the end of `job` can reach no reader: the job ran here for a

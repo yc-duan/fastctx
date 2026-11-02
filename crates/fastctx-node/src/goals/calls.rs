@@ -110,7 +110,7 @@ pub(crate) async fn command(
     let (selected, turn) = if let Some(job) = job {
         let directory = node.world.owner(&node.names(), &address);
         let path = directory.job_record(&job);
-        let record = tokio::task::spawn_blocking(move || fastctx_hands::run::record::read(&path))
+        let record = fastctx_platform::task::spawn_blocking(move || fastctx_hands::run::record::read(&path))
             .await
             .map_err(failure)?
             .map_err(failure)?;
@@ -126,7 +126,7 @@ pub(crate) async fn command(
     let selected = choose(node, &address, hub.as_ref(), account.as_ref(), selected.as_ref())?;
     if !node.is_me(&address.machine) {
         let (checking, owner, selected) = (node.clone(), address.clone(), selected.clone());
-        let running = tokio::task::spawn_blocking(move || {
+        let running = fastctx_platform::task::spawn_blocking(move || {
             selected.as_ref().is_some_and(|selected| {
                 crate::jobs::running_for(&checking.world, &checking.names(), &owner).contains(selected)
             })

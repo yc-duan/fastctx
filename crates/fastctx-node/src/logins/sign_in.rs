@@ -53,7 +53,7 @@ pub(super) async fn ask_changed(node: &Arc<Node>) {
         return;
     }
     let asking = node.clone();
-    let asking = tokio::spawn(async move { again(&asking).await });
+    let asking = fastctx_platform::task::spawn(async move { again(&asking).await });
     let _ = tokio::time::timeout(WITHIN, asking).await;
 }
 
@@ -72,7 +72,7 @@ async fn again(node: &Arc<Node>) {
     // finds nothing changed.
     let _asking = node.logins.asking.lock().await;
     let finding = node.clone();
-    let (changed, claude_programs) = match tokio::task::spawn_blocking(move || changed(&finding)).await {
+    let (changed, claude_programs) = match fastctx_platform::task::spawn_blocking(move || changed(&finding)).await {
         Ok(Ok(found)) => found,
         Ok(Err(failure)) => return node.log.line(format_args!("asking changed logins again: {}", failure.message)),
         Err(error) => return node.log.line(format_args!("asking changed logins again: {error}")),
@@ -86,12 +86,12 @@ async fn again(node: &Arc<Node>) {
         ));
         let node = node.clone();
         let programs = claude_programs.clone();
-        asking.push(tokio::spawn(async move {
+        asking.push(fastctx_platform::task::spawn(async move {
             let asked = if login.agent == "codex" {
                 identify::codex(&node, &login.dir, false).await
             } else {
                 let (dir, default) = (login.dir.clone(), login.default);
-                match tokio::task::spawn_blocking(move || identify::claude(&dir, default, &programs)).await {
+                match fastctx_platform::task::spawn_blocking(move || identify::claude(&dir, default, &programs)).await {
                     Ok(Ok(asked)) => asked,
                     Ok(Err(failure)) => identify::failed(jiff::Timestamp::now(), failure.message),
                     Err(error) => identify::failed(jiff::Timestamp::now(), error.to_string()),
@@ -111,7 +111,7 @@ async fn again(node: &Arc<Node>) {
         return;
     }
     let keeping = node.clone();
-    let kept = tokio::task::spawn_blocking(move || {
+    let kept = fastctx_platform::task::spawn_blocking(move || {
         kept::change(&keeping, |record| {
             for (login, asked) in answers {
                 let logins = &mut record.of_mut(login.agent).logins;

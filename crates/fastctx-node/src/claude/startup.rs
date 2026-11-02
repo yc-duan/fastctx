@@ -66,7 +66,7 @@ pub(super) fn observe(node: &Arc<Node>, resident: &ResidentId, id: NoticeId, wak
     }
     let node = node.clone();
     let resident = resident.clone();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         // Tried again after waits that double up to a minute, told once for
         // each new reason.
         let (mut again, mut told) = (crate::again::Again::default(), None);
@@ -102,7 +102,7 @@ pub(super) fn unknown(node: &Arc<Node>, resident: &ResidentId, id: &NoticeId, wh
         return;
     }
     let (node, resident, id) = (node.clone(), resident.clone(), id.clone());
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let mut again = crate::again::Again::default();
         tokio::time::sleep(fastctx_hosts::claude::MOD_LOOK).await;
         loop {
@@ -147,7 +147,7 @@ pub(super) fn recover(node: &Arc<Node>, records: &[crate::residents::OnRecord]) 
         };
         for input in kept.iter().filter(|input| input.state == PendingState::Handed) {
             let (node, about, input) = (node.clone(), about.clone(), input.clone());
-            tokio::spawn(async move {
+            fastctx_platform::task::spawn(async move {
                 node.ready_for(&about.id).await;
                 let Some(session) = about.session.as_deref() else { return };
                 let actions = crate::control_queue::gate(&node, &about.id);
@@ -217,7 +217,7 @@ pub(super) fn recover(node: &Arc<Node>, records: &[crate::residents::OnRecord]) 
         }
         if about.session.is_none() {
             let node = node.clone();
-            tokio::spawn(async move {
+            fastctx_platform::task::spawn(async move {
                 let (mut again, mut told) = (crate::again::Again::default(), None);
                 loop {
                     let result = async {
@@ -251,7 +251,7 @@ pub(super) fn recover(node: &Arc<Node>, records: &[crate::residents::OnRecord]) 
 
 pub(super) async fn run(command: &super::Command, args: Vec<OsString>) -> Result<String, String> {
     let command = command.clone();
-    tokio::task::spawn_blocking(fastctx_platform::doing::carried(move || {
+    fastctx_platform::task::spawn_blocking(fastctx_platform::doing::carried(move || {
         background::claude(&command.program, &args, &command.cwd, &command.env)
     }))
     .await
@@ -283,7 +283,7 @@ fn daemon_said(command: &super::Command, short: &str) -> Option<String> {
         Some((_, dir)) => std::path::PathBuf::from(dir),
         None => fastctx_platform::user_home().ok()?.join(".claude"),
     };
-    let mut log = std::fs::File::open(login.join("daemon.log")).ok()?;
+    let mut log = fastctx_platform::disk::open(login.join("daemon.log")).ok()?;
     let length = log.metadata().ok()?.len();
     log.seek(std::io::SeekFrom::Start(length.saturating_sub(DAEMON_TAIL))).ok()?;
     let mut tail = Vec::new();
@@ -321,7 +321,7 @@ pub(super) fn untaken(
         return Ok(false);
     };
     let host_directory = exchange::sessions(node.world.path()).join(session);
-    if host_directory.join("receipts").join(id.as_str()).try_exists()? {
+    if fastctx_platform::disk::exists(host_directory.join("receipts").join(id.as_str()))? {
         return Ok(false);
     }
     let Ok(Some(transcript)) = exchange::transcript(&host_directory) else {
@@ -341,7 +341,7 @@ pub(super) fn retry_untaken(
 ) -> std::io::Result<()> {
     let directory = exchange::sessions(node.world.path()).join(session);
     for path in [directory.join("inbox").join(format!("{id}.json")), directory.join("attempts").join(id.as_str())] {
-        match std::fs::remove_file(path) {
+        match fastctx_platform::disk::remove_file(path) {
             Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error),
             _ => {}
         }
@@ -362,7 +362,7 @@ fn submitted_since(path: &std::path::Path, since: jiff::Timestamp) -> std::io::R
     use std::io::BufRead as _;
     let since = since.as_millisecond();
     let mut unreadable = false;
-    for line in std::io::BufReader::new(std::fs::File::open(path)?).split(b'\n') {
+    for line in std::io::BufReader::new(fastctx_platform::disk::open(path)?).split(b'\n') {
         let line = line?;
         if line.iter().all(u8::is_ascii_whitespace) {
             continue;

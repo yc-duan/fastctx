@@ -37,7 +37,7 @@ pub(super) fn codex_rollouts(home: &Path) -> io::Result<HashMap<String, Vec<Path
 
 fn collect_rollouts(directory: &Path, rollouts: &mut HashMap<String, Vec<PathBuf>>) -> io::Result<()> {
     for path in super::space::entries(directory)? {
-        let metadata = std::fs::symlink_metadata(&path)?;
+        let metadata = fastctx_platform::disk::symlink_metadata(&path)?;
         if metadata.is_dir() {
             collect_rollouts(&path, rollouts)?;
             continue;
@@ -65,7 +65,7 @@ pub(super) fn claude_sessions(world: &WorldDir) -> io::Result<HashMap<ResidentId
         let Some(session) = directory.file_name().and_then(|name| name.to_str()).map(str::to_string) else {
             continue;
         };
-        let resident = match std::fs::read(directory.join("resident.json")) {
+        let resident = match fastctx_platform::disk::read(directory.join("resident.json")) {
             Ok(bytes) => serde_json::from_slice::<ResidentId>(&bytes).map_err(io::Error::other)?,
             Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
             Err(error) => return Err(error),
@@ -133,28 +133,28 @@ pub(super) fn claude_session_files(
     }
     let mut files = Vec::new();
     for transcript in transcripts {
-        if transcript.exists() {
+        if fastctx_platform::disk::is_there(&transcript) {
             files.push(transcript.clone());
         }
         let beside = transcript.with_extension("");
-        if beside.file_name().is_some_and(|name| name == session) && beside.is_dir() {
+        if beside.file_name().is_some_and(|name| name == session) && fastctx_platform::disk::is_dir(&beside) {
             files.push(beside);
         }
     }
     for name in CLAUDE_SESSION_DIRECTORIES {
         let directory = home.join(name).join(session);
-        if directory.exists() {
+        if fastctx_platform::disk::is_there(&directory) {
             files.push(directory);
         }
     }
     let debug = home.join("debug").join(format!("{session}.txt"));
-    if debug.try_exists()? {
+    if fastctx_platform::disk::exists(&debug)? {
         files.push(debug);
     }
     let temporary = std::env::var_os("CLAUDE_CODE_TMPDIR").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
     for project in super::space::entries(&temporary.join("claude"))? {
         let images = project.join(session);
-        if images.try_exists()? {
+        if fastctx_platform::disk::exists(&images)? {
             files.push(images);
         }
     }
@@ -168,7 +168,7 @@ pub(super) fn claude_session_files(
 pub(super) fn claude_own_project(home: &Path, directory: &Path) -> io::Result<Option<PathBuf>> {
     use fastctx_hosts::claude::projects;
     let folder = home.join("projects").join(projects::slug(&projects::cwd_text(directory)?));
-    Ok(folder.is_dir().then_some(folder))
+    Ok(fastctx_platform::disk::is_dir(&folder).then_some(folder))
 }
 
 pub(super) fn claude_home(fallback: &Path, exchange: Option<&Path>) -> io::Result<PathBuf> {
@@ -201,7 +201,7 @@ pub(super) fn claude_keeping(home: &Path, default: bool) -> ClaudeKeeping {
         Ok(Some(days))
     }
     let shown = (!default).then(|| crate::world::native(home));
-    match std::fs::File::open(home.join("settings.json")) {
+    match fastctx_platform::disk::open(home.join("settings.json")) {
         Ok(file) => match serde_json::from_reader::<_, Settings>(file) {
             Ok(Settings { days: Some(days) }) => {
                 ClaudeKeeping { home: shown, days: Some(days), set: true, unreadable: None }

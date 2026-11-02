@@ -9,7 +9,7 @@ use std::io;
 
 pub(crate) fn collect(node: &Node) -> io::Result<()> {
     let root = super::root(node);
-    let ledgers = match std::fs::read_dir(root) {
+    let ledgers = match fastctx_platform::disk::read_dir(root) {
         Ok(read) => read,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
         Err(e) => return Err(e),
@@ -20,7 +20,7 @@ pub(crate) fn collect(node: &Node) -> io::Result<()> {
     let fold_before = detail_since.strftime("%Y-%m-%d").to_string();
     for path in ledgers {
         let path = path?.path();
-        if !path.is_dir() {
+        if !fastctx_platform::disk::is_dir(&path) {
             continue;
         }
         super::with_book(node, &path, |book| {
@@ -43,7 +43,7 @@ pub(crate) fn collect(node: &Node) -> io::Result<()> {
             for day in ledger::days(&path, Timestamp::MIN)? {
                 let date = day.file_stem().and_then(|s| s.to_str()).unwrap_or_default();
                 if date < oldest.as_str() && !ledger::read(&day)?.iter().any(|row| pending_receipt(row, &pending)) {
-                    std::fs::remove_file(&day)?;
+                    fastctx_platform::disk::remove_file(&day)?;
                     continue;
                 }
                 if date > fold_before.as_str() {
@@ -55,7 +55,7 @@ pub(crate) fn collect(node: &Node) -> io::Result<()> {
                 rows.append(&mut recent);
                 rows.sort_by_key(Entry::at);
                 let bytes = encode(&rows)?;
-                if std::fs::read(&day)? != bytes {
+                if fastctx_platform::disk::read(&day)? != bytes {
                     fastctx_platform::publish(&day, &bytes, fastctx_platform::Permissions::Private)?;
                 }
             }

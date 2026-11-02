@@ -57,7 +57,7 @@ pub(crate) async fn observe(node: &Arc<Node>, id: &ResidentId) -> Result<(), Fai
     };
     let observer = node.native_context.0.lock().expect("never poisoned").remove(id);
     let (node_read, id_read) = (node.clone(), id.clone());
-    let result = tokio::task::spawn_blocking(move || -> io::Result<Observer> {
+    let result = fastctx_platform::task::spawn_blocking(move || -> io::Result<Observer> {
         let directory = node_read.world.conversation(&id_read);
         prepare(&directory)?;
         let previous: Option<Observed> =

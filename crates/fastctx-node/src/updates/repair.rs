@@ -214,7 +214,7 @@ fn drive_checked(node: &Arc<Node>) -> Result<bool, String> {
                 if !cleanup(node, request)? {
                     return Ok(true);
                 }
-                std::fs::remove_file(path(node)).map_err(|e| e.to_string())?;
+                fastctx_platform::disk::remove_file(path(node)).map_err(|e| e.to_string())?;
                 if let Some(app) =
                     read_json::<super::AppFile>(&super::dir(node).join("app.json")).map_err(|e| e.to_string())?
                 {
@@ -325,7 +325,7 @@ fn launch(node: &Arc<Node>, pending: Pending) {
         return;
     }
     let node = node.clone();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let outcome = prepare(&node, &pending).await;
         if let Err(why) = outcome {
             let result = (|| -> anyhow::Result<()> {
@@ -400,10 +400,11 @@ async fn prepare(node: &Arc<Node>, pending: &Pending) -> Result<(), String> {
             manifest.package(&target).ok_or_else(|| format!("{} has no package for {target}", manifest.version))?;
         if let Some(path) = super::cache(node).get(&pending.version, &target) {
             let (checked, signature, version) = (path.clone(), package.signature.clone(), pending.version.clone());
-            let valid =
-                tokio::task::spawn_blocking(move || fastctx_update::verify::file(&checked, &signature, &version))
-                    .await
-                    .map_err(|e| e.to_string())?;
+            let valid = fastctx_platform::task::spawn_blocking(move || {
+                fastctx_update::verify::file(&checked, &signature, &version)
+            })
+            .await
+            .map_err(|e| e.to_string())?;
             if let Err(why) = valid {
                 fastctx_install::repair::note(
                     &node.root,
@@ -412,7 +413,7 @@ async fn prepare(node: &Arc<Node>, pending: &Pending) -> Result<(), String> {
                 )
                 .map_err(|e| format!("{e:#}"))?;
                 node.log.line(format_args!("repair: deleting invalid package {}: {why}", path.display()));
-                std::fs::remove_file(&path).map_err(|e| format!("deleting {}: {e}", path.display()))?;
+                fastctx_platform::disk::remove_file(&path).map_err(|e| format!("deleting {}: {e}", path.display()))?;
             }
         }
         {
@@ -451,13 +452,14 @@ async fn prepare(node: &Arc<Node>, pending: &Pending) -> Result<(), String> {
     let archive = archive.ok_or("repair acquired no command-line package")?;
     let root = node.root.clone();
     let pending = pending.clone();
-    tokio::task::spawn_blocking(move || -> Result<(), String> {
+    fastctx_platform::task::spawn_blocking(move || -> Result<(), String> {
         let directory = root.join("updates/repair-program").join(format!(
             "{}-{}",
             std::process::id(),
             jiff::Timestamp::now().as_nanosecond()
         ));
-        std::fs::create_dir_all(&directory).map_err(|e| format!("creating {}: {e}", directory.display()))?;
+        fastctx_platform::disk::create_dir_all(&directory)
+            .map_err(|e| format!("creating {}: {e}", directory.display()))?;
         let program = fastctx_update::kernel::unpack(&archive, &directory)?;
         let build = fastctx_install::program::inspect(&program).map_err(|e| format!("{e:#}"))?;
         if build.version != pending.version {
@@ -535,7 +537,7 @@ fn overtaken(node: &Node, report: &Report) -> bool {
 }
 
 fn remove(path: &std::path::Path) -> Result<(), String> {
-    match std::fs::remove_file(path) {
+    match fastctx_platform::disk::remove_file(path) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(format!("deleting {}: {error}", path.display())),
@@ -553,7 +555,7 @@ fn cleanup(node: &Node, request: &Pending) -> Result<bool, String> {
         if directory.parent() != Some(super::dir(node).join("repair-program").as_path()) {
             return Err("repair program is outside the owned staging directory".into());
         }
-        match std::fs::remove_dir_all(directory) {
+        match fastctx_platform::disk::remove_dir_all(directory) {
             Ok(()) => {}
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => return Err(format!("deleting {}: {error}", directory.display())),

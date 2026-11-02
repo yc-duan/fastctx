@@ -1022,7 +1022,9 @@ fn handled<'a>(
 }
 
 pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<Reply, Failure> {
-    if node.root.join("uninstalled.json").exists() && !matches!(call, Call::UninstallPrepare | Call::HandOver) {
+    if fastctx_platform::disk::is_there(node.root.join("uninstalled.json"))
+        && !matches!(call, Call::UninstallPrepare | Call::HandOver)
+    {
         return Err(Failure::not_run("this World is being uninstalled"));
     }
     active_caller(node, peer)?;
@@ -1338,7 +1340,7 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
         }
         Call::DoctorReadings => {
             users_voice(node, peer)?;
-            let scenes = tokio::task::spawn_blocking(fastctx_platform::scene::kept)
+            let scenes = fastctx_platform::task::spawn_blocking(fastctx_platform::scene::kept)
                 .await
                 .map_err(|error| Failure::new(error.to_string()))?;
             Ok(Reply::DoctorReadings {

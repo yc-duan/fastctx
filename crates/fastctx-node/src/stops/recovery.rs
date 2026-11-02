@@ -18,7 +18,7 @@ pub(super) fn schedule(runtime: &tokio::runtime::Handle, node: &Arc<Node>, resid
         recovering.insert(resident.clone(), false);
     }
     let (node, resident) = (node.clone(), resident.clone());
-    runtime.spawn(async move {
+    fastctx_platform::task::spawn_on(runtime, async move {
         let mut problem = None;
         loop {
             if node.residents.about(&resident).is_none() {

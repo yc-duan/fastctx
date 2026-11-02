@@ -23,7 +23,7 @@ fn file(world: &WorldDir) -> PathBuf {
 
 /// The proxy kept for this World, if one is.
 pub fn kept(world: &WorldDir) -> io::Result<Option<String>> {
-    match std::fs::read(file(world)) {
+    match fastctx_platform::disk::read(file(world)) {
         Ok(bytes) => Ok(Some(serde_json::from_slice::<Kept>(&bytes).map_err(io::Error::other)?.url)),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(error),
@@ -49,14 +49,14 @@ pub async fn set(node: &Arc<Node>, url: Option<String>) -> Result<Option<String>
     }
     let world = node.world.clone();
     let keeping = url.clone();
-    tokio::task::spawn_blocking(move || -> io::Result<()> {
+    fastctx_platform::task::spawn_blocking(move || -> io::Result<()> {
         match keeping {
             Some(url) => {
                 fastctx_platform::ensure_private_dir(&world.net())?;
                 let bytes = serde_json::to_vec_pretty(&Kept { url }).map_err(io::Error::other)?;
                 fastctx_platform::atomic::publish(&file(&world), &bytes, fastctx_platform::Permissions::Private)
             }
-            None => match std::fs::remove_file(file(&world)) {
+            None => match fastctx_platform::disk::remove_file(file(&world)) {
                 Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
                 _ => Ok(()),
             },

@@ -127,9 +127,9 @@ const COPY: [&str; 7] = ["ledger", "attachments", "journals", "specs", "pages", 
 /// Whether this computer still keeps any of what `remove_copy` takes of `town`.
 fn holds_copy(node: &Node, town: &TownName) -> bool {
     let directory = node.world.town(town);
-    directory.signed().exists()
-        || directory.path().join("refused.json").exists()
-        || COPY.iter().any(|folder| directory.path().join(folder).exists())
+    fastctx_platform::disk::is_there(directory.signed())
+        || fastctx_platform::disk::is_there(directory.path().join("refused.json"))
+        || COPY.iter().any(|folder| fastctx_platform::disk::is_there(directory.path().join(folder)))
 }
 
 /// Removes what this computer kept of `town`: its ledger, its signed
@@ -138,12 +138,12 @@ fn holds_copy(node: &Node, town: &TownName) -> bool {
 pub(super) async fn remove_copy(node: &Arc<Node>, town: &TownName) -> io::Result<()> {
     let _syncing = node.syncing.lock().await;
     let directory = node.world.town(town);
-    tokio::task::spawn_blocking(move || {
+    fastctx_platform::task::spawn_blocking(move || {
         super::remove(&directory.signed())?;
         for folder in COPY {
             super::remove(&directory.path().join(folder))?;
         }
-        match std::fs::remove_file(directory.path().join("refused.json")) {
+        match fastctx_platform::disk::remove_file(directory.path().join("refused.json")) {
             Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
             _ => {}
         }
@@ -156,7 +156,7 @@ pub(super) async fn remove_copy(node: &Arc<Node>, town: &TownName) -> io::Result
 pub(super) async fn remove(node: &Arc<Node>, town: &TownName) -> io::Result<()> {
     let _syncing = node.syncing.lock().await;
     let directory = node.world.town(town);
-    tokio::task::spawn_blocking(move || {
+    fastctx_platform::task::spawn_blocking(move || {
         // The signed entries go first: without them the folder is no
         // project any more, and the guard puts nothing back.
         super::remove(&directory.signed())?;
@@ -166,12 +166,12 @@ pub(super) async fn remove(node: &Arc<Node>, town: &TownName) -> io::Result<()> 
             super::remove(&directory.path().join(folder))?;
         }
         for file in ["project.json", "refused.json", "index.json", "projection-through.json"] {
-            match std::fs::remove_file(directory.path().join(file)) {
+            match fastctx_platform::disk::remove_file(directory.path().join(file)) {
                 Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
                 _ => {}
             }
         }
-        let _ = std::fs::remove_dir(directory.path());
+        let _ = fastctx_platform::disk::remove_dir(directory.path());
         Ok(())
     })
     .await

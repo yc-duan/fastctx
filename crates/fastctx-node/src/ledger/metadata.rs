@@ -50,7 +50,7 @@ pub(crate) async fn refresh(node: &Arc<Node>, link: &Arc<Link>, wanted: Option<&
             continue;
         }
         let town = super::local_name(node, link, &id)?;
-        match std::fs::remove_file(node.world.town(&town).path().join("index.json")) {
+        match fastctx_platform::disk::remove_file(node.world.town(&town).path().join("index.json")) {
             Ok(()) => {}
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
             Err(error) => return Err(error.to_string()),
@@ -63,7 +63,7 @@ pub(crate) async fn refresh(node: &Arc<Node>, link: &Arc<Link>, wanted: Option<&
             continue;
         }
         let (node, world) = (node.clone(), node.world.clone());
-        tokio::task::spawn_blocking(move || {
+        fastctx_platform::task::spawn_blocking(move || {
             INDICES.lock().expect("never poisoned").insert(world.town(&town).path().to_path_buf(), index);
             crate::town::instructions::refresh(&node, &town);
             node.memory_changed();

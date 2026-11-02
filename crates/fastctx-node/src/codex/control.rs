@@ -54,7 +54,7 @@ pub async fn offers(node: &Arc<Node>, resident: &ResidentId) -> Result<Offers, F
     let dir = codex.config_home().to_path_buf();
     let kept = {
         let node = node.clone();
-        tokio::task::spawn_blocking(move || crate::logins::limits::kept_of(&node, &dir))
+        fastctx_platform::task::spawn_blocking(move || crate::logins::limits::kept_of(&node, &dir))
             .await
             .map_err(|error| Failure::new(error.to_string()))?
             .map_err(|error| Failure::new(format!("reading Codex's limits: {error}")))?

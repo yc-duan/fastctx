@@ -186,7 +186,7 @@ pub(crate) fn remove(node: &Node, place: &Path, remote: &[PathBuf]) -> Result<bo
         fastctx_platform::disk::remove_dir(base).map_err(failed)?;
         Ok(false)
     } else {
-        if !place.join(RETAINED).try_exists().map_err(failed)? {
+        if !fastctx_platform::disk::exists(place.join(RETAINED)).map_err(failed)? {
             keep_marker(place, &Acting::Here)?;
         }
         Ok(true)
@@ -205,7 +205,8 @@ fn releasing_now(node: &Node, id: &ResidentId) -> Result<Vec<Address>, Failure> 
         let owner = file.conversation();
         if owner.resident != *id
             && node.is_me(&owner.machine)
-            && node.world.conversation(&owner.resident).path().join(RETAINED).try_exists().map_err(failed)?
+            && fastctx_platform::disk::exists(node.world.conversation(&owner.resident).path().join(RETAINED))
+                .map_err(failed)?
             && !owners.contains(owner)
         {
             owners.push(owner.clone());

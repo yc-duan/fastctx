@@ -44,7 +44,7 @@ async fn on_shelf<R: Send + 'static>(
     work: impl FnOnce(&mut Shelf, &Place) -> Result<R, String> + Send + 'static,
 ) -> Result<(R, Place), Failure> {
     let mut taken = std::mem::take(shelf);
-    let (taken, result, place) = tokio::task::spawn_blocking(move || {
+    let (taken, result, place) = fastctx_platform::task::spawn_blocking(move || {
         let result = work(&mut taken, &place);
         (taken, result, place)
     })
@@ -135,7 +135,7 @@ pub(crate) async fn call(
             let folder = directory(node, &scope);
             let stored = Stored { revision: revision.clone(), text: text.clone(), submission: None };
             let _gate = node.syncing.lock().await;
-            tokio::task::spawn_blocking(move || {
+            fastctx_platform::task::spawn_blocking(move || {
                 let path = folder.join(&stored.revision.name).join(format!("{}.json", stored.revision.version));
                 fastctx_platform::ensure_private_dir(path.parent().expect("revision parent"))
                     .map_err(|error| error.to_string())?;

@@ -1333,7 +1333,7 @@ pub fn resume(node: &Arc<Node>, runtime: &tokio::runtime::Handle) {
             continue;
         }
         let node = node.clone();
-        runtime.spawn(async move {
+        fastctx_platform::task::spawn_on(runtime, async move {
             let Some(_answering) = node.handoff.call() else { return };
             let directory = node.world.conversation(&resident.id);
             let result = async {

@@ -95,7 +95,7 @@ fn persisting(node: &Node, thread: &str) -> crate::leases::Lease<String, tokio::
     node.unclaimed.persisting.get_or_insert_with(&thread.to_string(), || tokio::sync::Mutex::new(()))
 }
 async fn local<T: Send + 'static>(action: impl FnOnce() -> io::Result<T> + Send + 'static) -> io::Result<T> {
-    tokio::task::spawn_blocking(action).await.map_err(io::Error::other)?
+    fastctx_platform::task::spawn_blocking(action).await.map_err(io::Error::other)?
 }
 /// Flush only the finite prefix present on entry, so a continuous host cannot
 /// keep an already committed report waiting for the incoming stream to stop.

@@ -154,7 +154,7 @@ async fn write_for(
                 ));
             }
             let writer = node.clone();
-            tokio::task::spawn_blocking(move || {
+            fastctx_platform::task::spawn_blocking(move || {
                 alone::write(&writer.alone_ledgers, &world, &here, &town, &place, files, machines)
             })
             .await
@@ -491,9 +491,9 @@ async fn carry_town(
 /// Removes a directory of ledger files, read-only as they are.
 fn remove(directory: &Path) -> io::Result<()> {
     fn writable(path: &Path) -> io::Result<()> {
-        let metadata = std::fs::symlink_metadata(path)?;
+        let metadata = fastctx_platform::disk::symlink_metadata(path)?;
         if metadata.is_dir() {
-            for entry in std::fs::read_dir(path)? {
+            for entry in fastctx_platform::disk::read_dir(path)? {
                 writable(&entry?.path())?;
             }
         } else if metadata.permissions().readonly() {
@@ -508,7 +508,7 @@ fn remove(directory: &Path) -> io::Result<()> {
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
         other => other?,
     }
-    std::fs::remove_dir_all(directory)
+    fastctx_platform::disk::remove_dir_all(directory)
 }
 
 /// Takes entry `seq` of `town`: its signed form, then its files.
@@ -554,7 +554,7 @@ pub fn finish(world: &WorldDir) -> io::Result<Vec<String>> {
 /// The number of the latest entry this machine has of `town`; 0 when none.
 pub fn seq(world: &WorldDir, town: &TownName) -> io::Result<u64> {
     let directory = world.town(town);
-    if !directory.signed().is_dir()
+    if !fastctx_platform::disk::is_dir(directory.signed())
         && let Some(index) = metadata::read(world, town)?
     {
         return Ok(index.seq);
@@ -566,7 +566,7 @@ pub fn seq(world: &WorldDir, town: &TownName) -> io::Result<u64> {
 pub(crate) fn entry(world: &WorldDir, town: &TownName, seq: u64) -> io::Result<Option<Entry>> {
     let directory = world.town(town).signed();
     let path = directory.join(format!("{seq:020}.json"));
-    let path = match path.try_exists()? {
+    let path = match fastctx_platform::disk::exists(&path)? {
         true => path,
         false => match numbered(&directory)?.into_iter().find(|(number, _)| *number == seq) {
             Some((_, path)) => path,
@@ -623,7 +623,8 @@ fn read_all(world: &WorldDir, directory: &TownDir) -> io::Result<Vec<(u64, Entry
 
 fn read_entry(world: &WorldDir, path: &Path) -> io::Result<(Entry, Signed)> {
     let invalid = |error: String| io::Error::new(io::ErrorKind::InvalidData, format!("{}: {error}", path.display()));
-    let signed: Signed = serde_json::from_slice(&std::fs::read(path)?).map_err(|error| invalid(error.to_string()))?;
+    let signed: Signed =
+        serde_json::from_slice(&fastctx_platform::disk::read(path)?).map_err(|error| invalid(error.to_string()))?;
     let claimed: Entry = signed.claim().map_err(|error| invalid(error.to_string()))?;
     let town = path
         .parent()
@@ -659,7 +660,7 @@ fn read_entry(world: &WorldDir, path: &Path) -> io::Result<(Entry, Signed)> {
 fn same_or_new(path: &Path, bytes: &[u8]) -> io::Result<()> {
     match publish_new(path, bytes, Permissions::Private) {
         Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-            if std::fs::read(path)? == bytes {
+            if fastctx_platform::disk::read(path)? == bytes {
                 Ok(())
             } else {
                 Err(io::Error::new(
@@ -675,7 +676,7 @@ fn same_or_new(path: &Path, bytes: &[u8]) -> io::Result<()> {
 /// A ledger's files are copies to read; they are changed only by taking
 /// another entry, which never touches them.
 fn read_only(path: &Path) -> io::Result<()> {
-    let mut permissions = std::fs::metadata(path)?.permissions();
+    let mut permissions = fastctx_platform::disk::metadata(path)?.permissions();
     if !permissions.readonly() {
         permissions.set_readonly(true);
         std::fs::set_permissions(path, permissions)?;
@@ -698,7 +699,7 @@ pub fn own_key(world: &WorldDir) -> io::Result<SecretKey> {
 /// The id a computer on no hub keeps its own projects under, chosen once.
 pub(crate) fn alone(world: &WorldDir) -> io::Result<HubId> {
     let path = world.path().join("alone.json");
-    match std::fs::read(&path) {
+    match fastctx_platform::disk::read(&path) {
         Ok(bytes) => serde_json::from_slice(&bytes).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error)),
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             let id = fastctx_net::ids::new_hub_id()?;
@@ -711,7 +712,7 @@ pub(crate) fn alone(world: &WorldDir) -> io::Result<HubId> {
 
 fn numbered(directory: &Path) -> io::Result<Vec<(u64, PathBuf)>> {
     let mut found = Vec::new();
-    let entries = match std::fs::read_dir(directory) {
+    let entries = match fastctx_platform::disk::read_dir(directory) {
         Ok(entries) => entries,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(found),
         Err(error) => return Err(error),

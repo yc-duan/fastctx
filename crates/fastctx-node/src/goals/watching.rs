@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 pub(crate) fn start(node: &Arc<Node>) {
     let node = node.clone();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let mut views = node.views.subscribe();
         let mut residents = node.residents.changes();
         loop {
@@ -29,7 +29,7 @@ pub(crate) fn start(node: &Arc<Node>) {
                 if node.goals.watching.lock().expect("goal watches").insert(account.clone()) {
                     let node = node.clone();
                     super::archive::start(&node, &account);
-                    tokio::spawn(async move { follow(node, account).await });
+                    fastctx_platform::task::spawn(async move { follow(node, account).await });
                 }
             }
             tokio::select! {
@@ -90,7 +90,7 @@ fn retry(node: &Arc<Node>, account: &HubAccount, key: String) {
         return;
     }
     let (node, account) = (node.clone(), account.clone());
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let mut again = crate::again::Again::default();
         let mut told = None;
         loop {

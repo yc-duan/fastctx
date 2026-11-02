@@ -12,7 +12,7 @@ fn failure(error: impl std::fmt::Display) -> Failure {
     Failure::new(error.to_string())
 }
 async fn work<T: Send + 'static>(action: impl FnOnce() -> io::Result<T> + Send + 'static) -> Result<T, Failure> {
-    tokio::task::spawn_blocking(action).await.map_err(failure)?.map_err(failure)
+    fastctx_platform::task::spawn_blocking(action).await.map_err(failure)?.map_err(failure)
 }
 fn prepare(
     node: &Node,
@@ -179,7 +179,7 @@ pub(crate) async fn stop(node: &Arc<Node>, id: &ResidentId, turn: Option<String>
                     operations::publish(&committed, &shown, view);
                     committed.goals.projection_changed.notify_one();
                     let (node, resident) = (committed.clone(), resident.clone());
-                    runtime.spawn(async move {
+                    fastctx_platform::task::spawn_on(&runtime, async move {
                         super::recovery::schedule(&node, resident);
                     });
                 }

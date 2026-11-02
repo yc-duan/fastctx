@@ -55,7 +55,7 @@ pub(crate) fn hub_dir(world: &WorldDir, hub: &HubId) -> std::path::PathBuf {
 pub fn load(world: &WorldDir) -> io::Result<Vec<Membership>> {
     migrate(world)?;
     let mut memberships = Vec::new();
-    let entries = match std::fs::read_dir(hubs(world)) {
+    let entries = match fastctx_platform::disk::read_dir(hubs(world)) {
         Ok(entries) => entries,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(memberships),
         Err(error) => return Err(error),
@@ -70,9 +70,9 @@ pub fn load(world: &WorldDir) -> io::Result<Vec<Membership>> {
         // A computer that began to leave this network and stopped before
         // it was done leaves it now: what it told the hub was the last word
         // (`specs/world-concurrency.md`, 多步的事).
-        if path.join(LEAVING).exists() {
+        if fastctx_platform::disk::is_there(path.join(LEAVING)) {
             let aside = world.path().join(format!("net-left-{}-{}", id, Timestamp::now().strftime("%Y%m%dT%H%M%SZ")));
-            std::fs::rename(&path, &aside)?;
+            fastctx_platform::disk::rename(&path, &aside)?;
             continue;
         }
         match fastctx_net::link::state::read::<Membership>(&path.join("membership.json")) {
@@ -112,8 +112,8 @@ fn migrate(world: &WorldDir) -> io::Result<()> {
     fastctx_platform::ensure_private_dir(&target)?;
     for name in ["counter.json", "letters.json", "outbox", "received", "failures"] {
         let from = net.join(name);
-        if from.exists() {
-            std::fs::rename(&from, target.join(name))?;
+        if fastctx_platform::disk::is_there(&from) {
+            fastctx_platform::disk::rename(&from, target.join(name))?;
         }
     }
     // What the third version kept of the members, its calls taken and its
@@ -122,8 +122,8 @@ fn migrate(world: &WorldDir) -> io::Result<()> {
     fastctx_platform::ensure_private_dir(&aside)?;
     for name in ["members.json", "calls.json"] {
         let from = net.join(name);
-        if from.exists() {
-            std::fs::rename(&from, aside.join(name))?;
+        if fastctx_platform::disk::is_there(&from) {
+            fastctx_platform::disk::rename(&from, aside.join(name))?;
         }
     }
     let fourth = Membership {
@@ -137,7 +137,7 @@ fn migrate(world: &WorldDir) -> io::Result<()> {
         relays: Vec::new(),
     };
     fastctx_net::link::state::write(&target.join("membership.json"), &fourth)?;
-    std::fs::rename(&old, aside.join("membership.json"))
+    fastctx_platform::disk::rename(&old, aside.join("membership.json"))
 }
 
 /// This computer's key, made now if it has none.
@@ -167,7 +167,7 @@ pub fn start(node: &Arc<Node>, membership: Membership) -> io::Result<Arc<Link>> 
     crate::updates::report(node);
     if dissolved {
         let node = node.clone();
-        tokio::spawn(async move {
+        fastctx_platform::task::spawn(async move {
             if let Err(failure) = left_dissolved(&node, &hub).await {
                 node.log.line(format_args!("leaving the dissolved network: {failure}"));
             }
@@ -246,7 +246,7 @@ pub async fn open_account(
 
 async fn own_key(node: &Node) -> Result<SecretKey, Failure> {
     let world = node.world.clone();
-    tokio::task::spawn_blocking(move || key(&world))
+    fastctx_platform::task::spawn_blocking(move || key(&world))
         .await
         .map_err(|error| Failure::new(format!("making this computer's key: {error}")))?
         .map_err(|error| Failure::new(format!("making this computer's key: {error}")))
@@ -312,7 +312,7 @@ async fn logged_in(node: &Arc<Node>, joined: Joined) -> Result<Reply, Failure> {
             start(node, membership).map_err(|error| Failure::new(format!("starting the link to the hub: {error}")))?;
             crate::ledger::joined(node, &hub);
             let (carrying, at) = (node.clone(), hub.clone());
-            tokio::spawn(async move { crate::own_collab::carry(&carrying, &at).await });
+            fastctx_platform::task::spawn(async move { crate::own_collab::carry(&carrying, &at).await });
         }
     }
     node.log.line(format_args!("logged in to {account} on {hub_name} as {name}"));
@@ -337,7 +337,7 @@ pub(crate) fn follow_rename(node: &Arc<Node>, hub: &HubId, from: &MachineName, t
     node.ways_changed();
     for link in node.links().into_iter().filter(|link| link.hub() != hub) {
         let node = node.clone();
-        tokio::spawn(async move { same_name(&node, &link).await });
+        fastctx_platform::task::spawn(async move { same_name(&node, &link).await });
     }
 }
 
@@ -476,7 +476,7 @@ async fn log_out(node: &Arc<Node>, link: &Arc<Link>, account: &AccountName) -> R
     // that cannot be reached is not told, and the computer leaves it all
     // the same: there it stays a machine away until it is removed.
     if answer.is_err() && matches!(link.status(), Status::Online { .. }) {
-        let _ = std::fs::remove_file(hub_dir(&node.world, &link.membership().id).join(LEAVING));
+        let _ = fastctx_platform::disk::remove_file(hub_dir(&node.world, &link.membership().id).join(LEAVING));
         answer.map_err(Failure::new)?;
     }
     let aside = put_aside(node, link).await?;
@@ -507,7 +507,7 @@ async fn left_dissolved(node: &Arc<Node>, hub: &fastctx_types::access::HubId) ->
 
 /// The networks said dissolved were seen: no interface says so again.
 pub fn seen_dissolved(node: &Node) -> Result<(), Failure> {
-    match std::fs::remove_file(node.world.dissolved()) {
+    match fastctx_platform::disk::remove_file(node.world.dissolved()) {
         Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(Failure::new(error.to_string())),
         _ => {}
     }
@@ -536,14 +536,14 @@ async fn put_aside(node: &Arc<Node>, link: &Arc<Link>) -> Result<std::path::Path
     // What the firewall let in for direct connections on that hub goes with
     // the membership.
     let closing = hub.clone();
-    match tokio::task::spawn_blocking(move || crate::firewall::open(&closing, &Default::default())).await {
+    match fastctx_platform::task::spawn_blocking(move || crate::firewall::open(&closing, &Default::default())).await {
         Ok(Ok(_)) => {}
         Ok(Err(why)) => node.log.line(format_args!("closing the firewall for direct connections: {why}")),
         Err(error) => node.log.line(format_args!("closing the firewall for direct connections: {error}")),
     }
     let net = net_dir(&node.world, &hub);
     let aside = node.world.path().join(format!("net-left-{}-{}", hub, Timestamp::now().strftime("%Y%m%dT%H%M%SZ")));
-    std::fs::rename(net.path(), &aside)
+    fastctx_platform::disk::rename(net.path(), &aside)
         .map_err(|error| Failure::new(format!("putting {} aside: {error}", net.path().display())))?;
     Ok(aside)
 }
@@ -649,7 +649,7 @@ fn shell() -> String {
 /// Windows with forward slashes. Windows hands out some paths, such as the
 /// temporary directory, in their short 8.3 form, which resolving undoes.
 pub(crate) fn native(path: &std::path::Path) -> String {
-    let resolved = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let resolved = fastctx_platform::disk::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     let mut text = resolved.to_string_lossy().into_owned();
     if cfg!(windows) {
         if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
@@ -1173,10 +1173,12 @@ impl fastctx_net::link::Node for Handler {
                     {
                         return Err(Failure::not_run("the attachments name another conversation home"));
                     }
-                    tokio::task::spawn_blocking(move || crate::attachments::lifetime::referenced(&node, &attachments))
-                        .await
-                        .map_err(|error| Failure::new(error.to_string()))?
-                        .map(|used| RemoteReply::AttachmentReferences { used })
+                    fastctx_platform::task::spawn_blocking(move || {
+                        crate::attachments::lifetime::referenced(&node, &attachments)
+                    })
+                    .await
+                    .map_err(|error| Failure::new(error.to_string()))?
+                    .map(|used| RemoteReply::AttachmentReferences { used })
                 }
                 RemoteCall::UpdateWorld | RemoteCall::Updates { .. } => {
                     let update = match call {
@@ -1454,7 +1456,7 @@ impl fastctx_net::link::Node for Handler {
         }
         node.views_changed();
         if dissolved {
-            tokio::spawn(async move {
+            fastctx_platform::task::spawn(async move {
                 if let Err(failure) = left_dissolved(&node, &hub).await {
                     node.log.line(format_args!("leaving the dissolved network: {failure}"));
                 }
@@ -1463,7 +1465,7 @@ impl fastctx_net::link::Node for Handler {
         }
         let Some(then) = then else { return };
         let Some(membership) = node.link_of(&hub).map(|link| link.dir().to_path_buf()) else { return };
-        tokio::spawn(async move { crate::removed::uninstall(&node, &membership, then).await });
+        fastctx_platform::task::spawn(async move { crate::removed::uninstall(&node, &membership, then).await });
     }
 
     /// Connected again: a hub that calls this computer otherwise than the
@@ -1478,7 +1480,7 @@ impl fastctx_net::link::Node for Handler {
         let Some(link) = node.link_of(&self.hub) else { return };
         // A previous cleanup may have failed after consuming this same view.
         crate::directory_changes::cleanup(&node, &link);
-        tokio::spawn(async move { same_name(&node, &link).await });
+        fastctx_platform::task::spawn(async move { same_name(&node, &link).await });
     }
 
     /// Someone may have logged in to an account this computer is logged in
@@ -1532,7 +1534,7 @@ impl fastctx_net::link::Node for Handler {
         crate::hub_arrival::check(&node, &self.hub);
         node.views_changed();
         let contexts = node.clone();
-        tokio::spawn(async move { crate::focus::refresh_all(&contexts).await });
+        fastctx_platform::task::spawn(async move { crate::focus::refresh_all(&contexts).await });
         self.changes.reconcile(&node, link);
     }
 

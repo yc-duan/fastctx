@@ -49,7 +49,7 @@ fn program(command: &str, env: &[(OsString, OsString)], cwd: &Path) -> Result<Pa
         std::env::split_paths(&variable(env, "PATH").unwrap_or_default()).map(|p| p.join(command)).collect()
     };
     for candidate in candidates {
-        if candidate.is_file() {
+        if fastctx_platform::disk::is_file(&candidate) {
             return Ok(candidate);
         }
         if candidate.extension().is_none() {
@@ -57,7 +57,7 @@ fn program(command: &str, env: &[(OsString, OsString)], cwd: &Path) -> Result<Pa
                 let mut name = candidate.as_os_str().to_os_string();
                 name.push(ext);
                 let path = PathBuf::from(name);
-                if path.is_file() {
+                if fastctx_platform::disk::is_file(&path) {
                     return Ok(path);
                 }
             }

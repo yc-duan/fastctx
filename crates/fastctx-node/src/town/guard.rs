@@ -277,7 +277,7 @@ fn set_right(
             for (path, deep) in paths {
                 record |= path.starts_with("project/") || path == "project";
                 let file = path.split('/').fold(ledger.clone(), |file, name| file.join(name));
-                match std::fs::symlink_metadata(&file) {
+                match fastctx_platform::disk::symlink_metadata(&file) {
                     Ok(kind) if kind.is_dir() => {
                         if *deep {
                             walk(&ledger, &file, &mut present)?;
@@ -305,7 +305,7 @@ fn set_right(
     for (path, file) in &present {
         looked.insert(path.clone());
         // A file gone since it was listed is as one that was never there.
-        let now = match std::fs::read(file) {
+        let now = match fastctx_platform::disk::read(file) {
             Ok(now) => now,
             Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
             Err(error) => return Err(at_path(path, error)),
@@ -326,7 +326,7 @@ fn set_right(
             }
             None => {
                 let kept = keep_found(&record_dir, path, &now)?;
-                match writable(file).and_then(|()| std::fs::remove_file(file)) {
+                match writable(file).and_then(|()| fastctx_platform::disk::remove_file(file)) {
                     Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(at_path(path, error)),
                     _ => {}
                 }
@@ -361,7 +361,7 @@ fn set_right(
 
 /// Every file under the ledger, by its path in the ledger.
 fn walk(root: &Path, directory: &Path, files: &mut Vec<(String, PathBuf)>) -> io::Result<()> {
-    let entries = match std::fs::read_dir(directory) {
+    let entries = match fastctx_platform::disk::read_dir(directory) {
         Ok(entries) => entries,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
         Err(error) => return Err(error),
@@ -369,7 +369,7 @@ fn walk(root: &Path, directory: &Path, files: &mut Vec<(String, PathBuf)>) -> io
     for entry in entries {
         let path = entry?.path();
         // One gone since it was listed is passed over.
-        let kind = match std::fs::symlink_metadata(&path) {
+        let kind = match fastctx_platform::disk::symlink_metadata(&path) {
             Ok(kind) => kind,
             Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
             Err(error) => return Err(error),
@@ -393,7 +393,7 @@ fn keep_found(record: &Path, path: &str, found: &[u8]) -> io::Result<String> {
     if let Some(parent) = target.parent() {
         ensure_private_dir(parent)?;
     }
-    std::fs::write(&target, found)?;
+    fastctx_platform::disk::write(&target, found)?;
     Ok(kept)
 }
 
@@ -403,18 +403,18 @@ fn at_path(path: &str, error: io::Error) -> io::Error {
 
 /// Writes a ledger file's bytes again, read-only as it was.
 fn rewrite(file: &Path, bytes: &[u8]) -> io::Result<()> {
-    if file.exists() {
+    if fastctx_platform::disk::is_there(file) {
         writable(file)?;
-        std::fs::remove_file(file)?;
+        fastctx_platform::disk::remove_file(file)?;
     }
     publish_new(file, bytes, Permissions::Private)?;
-    let mut permissions = std::fs::metadata(file)?.permissions();
+    let mut permissions = fastctx_platform::disk::metadata(file)?.permissions();
     permissions.set_readonly(true);
     std::fs::set_permissions(file, permissions)
 }
 
 fn writable(file: &Path) -> io::Result<()> {
-    let mut permissions = std::fs::metadata(file)?.permissions();
+    let mut permissions = fastctx_platform::disk::metadata(file)?.permissions();
     if permissions.readonly() {
         #[allow(clippy::permissions_set_readonly_false)]
         permissions.set_readonly(false);
