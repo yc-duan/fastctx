@@ -1,11 +1,12 @@
 # This crate keeps to its threads' roles (`specs/world-engine.md`, 线程的三种角色):
 # it reaches files through `fastctx_platform::disk` and starts tasks through
-# `fastctx_platform::task`, so that blocking a thread that must not block, and
-# a task's slow slice, are noted where they happen. The same list is in
+# `fastctx_platform::task`, so that a task thread waits on the disk in place,
+# a thread that keeps lines alive is noted where it would block, and a task's
+# slow slice is noted where it happens. The same list is in
 # `fastctx-net/clippy.toml`.
 
 disallowed-methods = [
-  { path = "std::fs::read", reason = "use fastctx_platform::disk::read, which notes a thread that must not block" },
+  { path = "std::fs::read", reason = "use fastctx_platform::disk::read, which blocks a task thread in place and notes a line thread" },
   { path = "std::fs::read_to_string", reason = "use fastctx_platform::disk::read_to_string" },
   { path = "std::fs::write", reason = "use fastctx_platform::disk::write" },
   { path = "std::fs::read_dir", reason = "use fastctx_platform::disk::read_dir" },

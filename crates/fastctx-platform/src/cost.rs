@@ -18,8 +18,9 @@ use std::time::{Duration, Instant};
 
 use crate::readings::{self, Counter};
 
-/// Accounts kept; past it, the rest share `other`.
-const ACCOUNTS: usize = 512;
+/// Accounts kept, enough for every kind of call from every machine of a
+/// large network; past it, the rest share `other`.
+const ACCOUNTS: usize = 4096;
 
 pub struct Account {
     task: &'static Counter,
