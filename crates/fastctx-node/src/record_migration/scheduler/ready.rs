@@ -29,7 +29,10 @@ struct Scopes {
 }
 impl Scopes {
     fn contains(&self, key: &Key) -> bool {
-        self.scopes.get(&key.0).is_some_and(|families| families.contains(&key.1))
+        self.has(&key.0, &key.1)
+    }
+    fn has(&self, conversation: &str, family: &str) -> bool {
+        self.scopes.get(conversation).is_some_and(|families| families.contains(family))
     }
     fn insert(&mut self, key: Key) -> bool {
         let bytes = key.1.len() + 128 + if self.scopes.contains_key(&key.0) { 0 } else { key.0.len() + 128 };
@@ -77,6 +80,9 @@ pub(super) struct Ready {
 impl Ready {
     pub(super) fn contains(&self, key: &Key) -> bool {
         self.unread.contains(key) || self.cached.contains(key)
+    }
+    pub(super) fn has(&self, conversation: &str, family: &str) -> bool {
+        self.unread.has(conversation, family) || self.cached.has(conversation, family)
     }
     pub(super) fn insert(&mut self, key: Key) {
         if self.contains(&key) {

@@ -189,6 +189,16 @@ pub(crate) fn born(world: &Path, conversation: &str) {
     }
 }
 
+/// Whether `family` of `conversation` is known to have moved, without a
+/// read of its marker.
+pub(crate) fn known(world: &Path, conversation: &str, family: &str) -> bool {
+    let Some(engine) = ENGINES.lock().expect("migration registry").get(world).and_then(Weak::upgrade) else {
+        return false;
+    };
+    let queue = engine.queue.lock().expect("migration queue");
+    queue.ready.has(conversation, family) || queue.born.contains(conversation)
+}
+
 /// A blocking reader has already checked the durable completion marker.
 pub(crate) fn ready(world: &Path, conversation: &str, family: &str) {
     if let Some(engine) = ENGINES.lock().expect("migration registry").get(world).and_then(Weak::upgrade) {

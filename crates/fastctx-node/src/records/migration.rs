@@ -16,7 +16,10 @@ pub(crate) fn ensure_each(
     let world = migration::world(directory)?;
     let context =
         Context { database, world: world.clone(), conversation: conversation.clone(), family: family.to_string() };
-    if fastctx_platform::roles::current().may_block() && imported(&context)? {
+    if scheduler::known(&world, &conversation, family) {
+        return Ok(());
+    }
+    if imported(&context)? {
         scheduler::ready(&world, &conversation, family);
         return Ok(());
     }

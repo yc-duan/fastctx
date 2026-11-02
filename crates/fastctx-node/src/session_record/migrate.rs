@@ -13,12 +13,14 @@ use std::io;
 
 pub(super) fn ensure(directory: &ConversationDir, database: &Database, conversation: &str) -> io::Result<()> {
     let world = crate::record_migration::world(directory)?;
-    if fastctx_platform::roles::current().may_block()
-        && database
-            .read_background_now(|db| {
-                Ok(crate::conversation_store::deleted(db, conversation)? || sql::head(db, conversation)?.2)
-            })
-            .map_err(io::Error::other)?
+    if scheduler::known(&world, conversation, "session-events") {
+        return Ok(());
+    }
+    if database
+        .read_background_now(|db| {
+            Ok(crate::conversation_store::deleted(db, conversation)? || sql::head(db, conversation)?.2)
+        })
+        .map_err(io::Error::other)?
     {
         scheduler::ready(&world, conversation, "session-events");
         return Ok(());
