@@ -22,6 +22,7 @@ mod plan;
 mod qwen;
 mod roo;
 mod spec;
+mod trae;
 mod vscode_copilot;
 mod zed;
 
@@ -43,6 +44,7 @@ static AGENTS: &[&Agent] = &[
     &roo::AGENT,
     &claude_desktop::AGENT,
     &vscode_copilot::AGENT,
+    &trae::AGENT,
     &gemini::AGENT,
 ];
 
