@@ -30,6 +30,13 @@ pub(super) struct Block {
     pub full: bool,
 }
 
+impl Block {
+    /// Whether `old` already says what this one would.
+    fn same_as(&self, old: &Block) -> bool {
+        old.source == self.source && old.version == self.version && old.transient == self.transient
+    }
+}
+
 #[derive(Default, Serialize, Deserialize)]
 pub(super) struct State {
     epoch: u64,
@@ -150,6 +157,22 @@ fn set_mode(
     let key = name.to_string();
     let withdraw = bodies.is_some() || (text.is_empty() && matches!(name, "project" | "map" | "history"));
     let empty = text.is_empty() && change.version.is_empty();
+    // What is written already is not written again: a refresh that finds
+    // nothing changed opens no transaction and projects nothing. A body kept
+    // only in memory is put back, as after the node started again.
+    let (unchanged, looking) = (incoming.clone(), key.clone());
+    let directory = super::records::prepare(world, id)?;
+    let written = crate::records::read(&directory, move |rows| {
+        let old = rows.get::<Block>(super::records::BLOCKS, &looking)?;
+        Ok(old.as_ref().is_some_and(|old| unchanged.same_as(old)) || (old.is_none() && empty))
+    })?;
+    if written {
+        if let Some(bodies) = bodies {
+            bodies.put(id, name, &source, &text);
+            bodies.put(id, &format!("{name}-fact"), &source, &fact);
+        }
+        return Ok(());
+    }
     super::records::commit(
         world,
         id,
@@ -177,10 +200,7 @@ fn set_block(
 ) -> fastctx_storage::Result<()> {
     let state: State = rows.get(super::records::STATE, "current")?.unwrap_or_default();
     let old = rows.get::<Block>(super::records::BLOCKS, key)?;
-    if old.as_ref().is_some_and(|old| {
-        old.source == incoming.source && old.version == incoming.version && old.transient == incoming.transient
-    }) || (old.is_none() && empty)
-    {
+    if old.as_ref().is_some_and(|old| incoming.same_as(old)) || (old.is_none() && empty) {
         return Ok(());
     }
     if old.is_none() && super::records::blocks(rows)?.len() >= BLOCK_COUNT {

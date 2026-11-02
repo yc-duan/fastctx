@@ -168,25 +168,54 @@ pub(crate) fn start(node: &Arc<Node>) {
         let mut ways = node.ways.subscribe();
         let mut memory = node.memory_changes.subscribe();
         let mut plan = true;
+        let mut seen = presence(&node);
         loop {
             let working = node.clone();
             if let Err(error) = fastctx_platform::task::spawn_blocking(move || request_each(&working, plan)).await {
                 node.log.line(format_args!("refreshing conversation contexts: {error}"));
             }
-            // Connectivity changes the authorized focus and memory paths, but
-            // never the plan. Plan records and reconnects invalidate it
-            // separately; a refresh that fails is tried again on its own.
-            plan = tokio::select! {
-                _ = views.changed() => true,
-                _ = ways.changed() => false,
-                _ = memory.changed() => false,
+            plan = loop {
+                // Connectivity changes the authorized focus and memory paths,
+                // but never the plan. Plan records and reconnects invalidate
+                // it separately; a refresh that fails is tried again on its own.
+                let (viewed, remembered) = tokio::select! {
+                    _ = views.changed() => (true, false),
+                    _ = ways.changed() => (false, false),
+                    _ = memory.changed() => (false, true),
+                };
+                tokio::time::sleep(SETTLE).await;
+                // What changed meanwhile is in this refresh, and is not seen again.
+                let viewed = viewed || views.has_changed().unwrap_or(false);
+                let remembered = remembered || memory.has_changed().unwrap_or(false);
+                views.mark_unchanged();
+                ways.mark_unchanged();
+                memory.mark_unchanged();
+                // A phone coming and going, a path or a strain, moves nothing a
+                // context reads: the contexts are left as they are.
+                let now = presence(&node);
+                let moved = now != seen;
+                seen = now;
+                if viewed || remembered || moved {
+                    break viewed;
+                }
             };
-            tokio::time::sleep(SETTLE).await;
-            // What changed meanwhile is in this refresh, and is not seen again.
-            plan |= views.has_changed().unwrap_or(false);
-            views.mark_unchanged();
-            ways.mark_unchanged();
-            memory.mark_unchanged();
         }
     });
+}
+
+/// What a context reads of the hubs' presence, as one number: whether each
+/// line is up with a current view, and which registered computers are
+/// online, since when.
+fn presence(node: &Node) -> u64 {
+    use std::hash::{Hash as _, Hasher as _};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    for link in node.links() {
+        link.membership().id.to_string().hash(&mut hasher);
+        (matches!(link.status(), fastctx_net::link::Status::Online { .. }) && link.view_current()).hash(&mut hasher);
+        let view = link.view();
+        let mut machines: Vec<_> = view.machines().map(|member| (&member.name, member.online, member.since)).collect();
+        machines.sort_unstable();
+        machines.hash(&mut hasher);
+    }
+    hasher.finish()
 }
