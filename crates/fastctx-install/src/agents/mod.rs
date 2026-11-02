@@ -8,6 +8,7 @@
 //! receipt in a record file of its own (`apply::agent_apply_expecting`).
 
 mod antigravity;
+mod auggie;
 mod cline;
 mod copilot;
 mod cursor;
@@ -33,6 +34,7 @@ static AGENTS: &[&Agent] = &[
     &cline::AGENT,
     &zed::AGENT,
     &kiro::AGENT,
+    &auggie::AGENT,
     &gemini::AGENT,
 ];
 
