@@ -32,6 +32,9 @@ pub(super) struct Cache {
     /// A resident was put in, taken out or handed out to be changed since
     /// this was last asked (`take_touched`).
     touched: bool,
+    /// Why the last residents that could not be put aside stayed in
+    /// memory, told once until it changes.
+    unwritten: Option<String>,
 }
 
 /// How many residents put aside are kept read in memory, so the node's
@@ -77,7 +80,15 @@ impl Cache {
                 on_disk.insert(id);
             }
         }
-        Ok(Self { root, entries: HashMap::new(), on_disk, dirty: HashSet::new(), cold: HashSet::new(), touched: false })
+        Ok(Self {
+            root,
+            entries: HashMap::new(),
+            on_disk,
+            dirty: HashSet::new(),
+            cold: HashSet::new(),
+            touched: false,
+            unwritten: None,
+        })
     }
 
     fn path(&self, id: &ResidentId) -> PathBuf {
@@ -159,15 +170,23 @@ impl Cache {
 
     /// Writes down those changed since the last release that are no longer
     /// at work, and keeps them read; those still at work stay in memory
-    /// alone. Past `KEPT`, the oldest kept copies are let go.
-    pub fn release(&mut self) -> io::Result<()> {
+    /// alone. Past `KEPT`, the oldest kept copies are let go. One that cannot
+    /// be written, as on a full disk, stays in memory and is written again
+    /// as it changes: the copy is only a projection, never worth the node.
+    /// Says why, the first time it is so.
+    pub fn release(&mut self) -> Option<String> {
+        let mut unwritten = None;
         for id in std::mem::take(&mut self.dirty) {
             let Some(live) = self.entries.get(&id) else { continue };
             if !ended(live) {
                 continue;
             }
-            let bytes = serde_json::to_vec(live).map_err(io::Error::other)?;
-            put(&self.path(&id), &bytes)?;
+            if let Err(error) =
+                serde_json::to_vec(live).map_err(io::Error::other).and_then(|bytes| put(&self.path(&id), &bytes))
+            {
+                unwritten.get_or_insert_with(|| format!("putting resident state aside for {id}: {error}"));
+                continue;
+            }
             self.on_disk.insert(id.clone());
             self.cold.insert(id);
         }
@@ -178,7 +197,9 @@ impl Cache {
                 self.entries.remove(&id);
             }
         }
-        Ok(())
+        let told = unwritten.is_some() && unwritten != self.unwritten;
+        self.unwritten = unwritten;
+        if told { self.unwritten.clone() } else { None }
     }
 }
 

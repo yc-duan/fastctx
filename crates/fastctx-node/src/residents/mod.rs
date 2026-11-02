@@ -139,9 +139,9 @@ impl std::ops::DerefMut for StateGuard<'_> {
 impl Drop for StateGuard<'_> {
     fn drop(&mut self) {
         if !std::thread::panicking()
-            && let Err(error) = self.0.live.release()
+            && let Some(problem) = self.0.live.release()
         {
-            cache::failed("spilling inactive resident state", error);
+            eprintln!("fastctx node: {problem}; it stays in memory");
         }
         if self.0.live.take_touched() {
             self.1.send_modify(|changes| *changes = changes.wrapping_add(1));
@@ -347,9 +347,13 @@ impl Residents {
             let mut live = Live::new(about, places, now);
             live.removed = removed;
             state.admit(live);
-            state.live.release()?;
+            if let Some(problem) = state.live.release() {
+                problems.push((root.clone(), io::Error::other(problem)));
+            }
         }
-        state.live.release()?;
+        if let Some(problem) = state.live.release() {
+            problems.push((root.clone(), io::Error::other(problem)));
+        }
         Ok((
             Self {
                 state: Mutex::new(state),
