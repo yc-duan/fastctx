@@ -338,10 +338,7 @@ fn look_soon(node: &Arc<Node>, directory: PathBuf) {
 /// it took everything the session left.
 async fn look_alone(node: &Arc<Node>, directory: PathBuf) -> bool {
     let (looking, path) = (node.clone(), directory.clone());
-    // Reading and applying what it reported reaches records and files
-    // throughout, which only a thread that may block waits for.
-    let runtime = tokio::runtime::Handle::current();
-    match fastctx_platform::task::spawn_blocking(move || runtime.block_on(Box::pin(look(&looking, &path)))).await {
+    match fastctx_platform::task::spawn(async move { look(&looking, &path).await }).await {
         Ok(settled) => settled,
         Err(error) => {
             node.log.line(format_args!("looking at the Claude session {}: {error}", directory.display()));

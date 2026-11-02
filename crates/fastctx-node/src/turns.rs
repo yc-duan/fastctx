@@ -46,13 +46,12 @@ pub async fn apply(node: &Arc<Node>, id: &ResidentId, event: SessionEvent) -> st
         Arc::new(tokio::sync::Semaphore::new(std::thread::available_parallelism().map_or(2, usize::from).clamp(2, 8)))
     });
     let permit = WORKERS.clone().acquire_owned().await.map_err(std::io::Error::other)?;
-    let (node, id, runtime) = (node.clone(), id.clone(), tokio::runtime::Handle::current());
-    fastctx_platform::task::spawn_blocking(move || {
+    let (node, id) = (node.clone(), id.clone());
+    crate::to_end::run(async move {
         let _permit = permit;
-        runtime.block_on(Box::pin(apply_inner(&node, &id, event)))
+        apply_inner(&node, &id, event).await
     })
     .await
-    .map_err(std::io::Error::other)?
 }
 
 async fn apply_inner(node: &Arc<Node>, id: &ResidentId, mut event: SessionEvent) -> std::io::Result<()> {
