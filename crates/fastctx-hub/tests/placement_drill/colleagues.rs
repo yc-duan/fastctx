@@ -1,9 +1,12 @@
 //! A delegated conversation keeps a plan of its own, and it and the conversation that asked it
-//! read each other's.
+//! read each other's. The asker's collaboration, followed from a phone, tells the colleague as it
+//! is asked and as it settles.
 use super::*;
 use fastctx_types::{
     Address, Call, ResidentId,
     collab::{AgentLogin, Callee, Collab},
+    collaboration::Tree,
+    residents::Activity,
 };
 
 pub(super) async fn exercise(
@@ -48,6 +51,12 @@ pub(super) async fn exercise(
         pause().await;
     }
     anyhow::ensure!(configured, "the collaboration configuration did not reach its host");
+    let (mut following, first) = world.watch_collaboration(parent.clone(), Some("host".parse()?)).await?;
+    record(
+        "a conversation's collaboration is followed from a phone, from its own branch",
+        first.conversation.address.resident == *parent,
+        json!(first.colleagues.iter().map(|branch| branch.address.clone()).collect::<Vec<_>>()),
+    );
     // The colleague reads the requester's plan from a job on another machine,
     // so the request travels back to its home with the plan it names.
     let read = working.join("colleague-read.txt");
@@ -55,7 +64,25 @@ pub(super) async fn exercise(
         format!("COLLEAGUE_CASE [[run: on alice-two <<'READ'\nfastctx plan {parent} > '{}'\nREAD]]", read.display());
     let reply=ask(host,json!({"call":"ask","resident":parent,"label":"placement colleague","prompt":prompt,"callee":"helper","login":null})).await?;
     let address: Address = serde_json::from_value(reply["colleague"].clone()).context("colleague address")?;
+    let told = told_until(&mut following, |tree| tree.colleagues.iter().any(|branch| branch.address == address)).await;
+    record(
+        "the followed collaboration tells the colleague it asked",
+        told.is_some(),
+        json!(told.map(|tree| tree.colleagues.iter().map(|branch| branch.address.clone()).collect::<Vec<_>>())),
+    );
     anyhow::ensure!(idle_after(host, address.resident.as_str(), None).await, "the colleague did not settle");
+    let settled = told_until(&mut following, |tree| {
+        tree.colleagues.iter().any(|branch| {
+            branch.address == address && branch.now.as_ref().is_some_and(|now| now.activity == Activity::Idle)
+        })
+    })
+    .await;
+    record(
+        "and tells the colleague settled once it is",
+        settled.is_some(),
+        json!(settled.map(|tree| serde_json::to_value(&tree.colleagues).unwrap_or_default())),
+    );
+    drop(following);
     let path = plan_file(host, address.resident.as_str())?;
     record("a colleague inherits the requester's usable working computer", path.starts_with(working), json!(path));
     let guide = block(host, address.resident.as_str(), "plan-guide");
@@ -118,4 +145,21 @@ pub(super) async fn exercise(
         json!(format!("{asked:?}").chars().take(400).collect::<String>()),
     );
     Ok(address.resident)
+}
+
+/// The first tree the followed collaboration tells that `wanted` holds of,
+/// within two minutes.
+async fn told_until(
+    following: &mut fastctx_client::CollaborationWatch,
+    wanted: impl Fn(&Tree) -> bool,
+) -> Option<Tree> {
+    let waiting = async {
+        while let Ok(Some(tree)) = following.next().await {
+            if wanted(&tree) {
+                return Some(tree);
+            }
+        }
+        None
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(120), waiting).await.ok().flatten()
 }

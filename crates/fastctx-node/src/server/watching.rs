@@ -171,12 +171,25 @@ async fn run(
     super::users_voice(node, peer)?;
     let held = request.held.take();
     crate::admission::local::admit(node, peer, &request.call())?;
-    let mut watching = tokio::time::timeout(
-        watch_ipc::TIMEOUT,
-        crate::talk::watch(node, request.resident, request.machine, request.composer, held, request.now, request.goal),
-    )
-    .await
-    .map_err(|_| Failure::new("opening the local watch did not finish within 30 s"))??;
+    let opening = async {
+        if request.collaboration {
+            crate::colleagues::live::watch(node, request.resident, request.machine).await
+        } else {
+            crate::talk::watch(
+                node,
+                request.resident,
+                request.machine,
+                request.composer,
+                held,
+                request.now,
+                request.goal,
+            )
+            .await
+        }
+    };
+    let mut watching = tokio::time::timeout(watch_ipc::TIMEOUT, opening)
+        .await
+        .map_err(|_| Failure::new("opening the local watch did not finish within 30 s"))??;
     drop(memory);
     let mut flow = Flow::default();
     loop {

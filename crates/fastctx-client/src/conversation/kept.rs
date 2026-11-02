@@ -200,6 +200,9 @@ impl Keeping {
         self.current = !matches!(watched, Watched::Segments { complete: false, .. });
         match watched {
             Watched::Documents { .. } => Err(Error::Unexpected("document packets are not conversation history".into())),
+            Watched::Collaboration { .. } => {
+                Err(Error::Unexpected("a collaboration is not conversation history".into()))
+            }
             // Nothing held and nothing changed: the history is empty.
             Watched::Unchanged { version } if self.index.is_none() => {
                 self.keep(Some(version), Vec::new(), HashMap::new()).await

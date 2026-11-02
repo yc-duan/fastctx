@@ -9,6 +9,7 @@
 //! recorded as one of the asker's actions: where the colleague lives, and
 //! its id; speaking to it later starts from that record.
 
+pub(crate) mod live;
 mod native;
 pub(crate) mod plan;
 pub(crate) mod stopping;

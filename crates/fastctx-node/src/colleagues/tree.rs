@@ -63,7 +63,7 @@ async fn read_now(node: &Arc<Node>, id: ResidentId, machine: Option<Written>) ->
     remote(node, &acting, &machine, id, true).await
 }
 
-async fn remote(
+pub(super) async fn remote(
     node: &Arc<Node>,
     acting: &Acting,
     machine: &Written,
@@ -107,7 +107,7 @@ async fn remote(
     Ok(*tree)
 }
 
-fn visible(node: &Node, acting: &Acting, id: &ResidentId) -> Result<(), Failure> {
+pub(super) fn visible(node: &Node, acting: &Acting, id: &ResidentId) -> Result<(), Failure> {
     if crate::admission::seen::resident(node, crate::admission::seen::Looker::Here(acting), id) {
         Ok(())
     } else {
@@ -220,6 +220,18 @@ async fn branch(node: &Arc<Node>, id: &ResidentId, acting: &Acting, deadline: In
 }
 
 async fn targets(node: &Arc<Node>, owner: &Address, acting: &Acting) -> Result<BTreeMap<Address, String>, Failure> {
+    let mut found = asked(node, owner, acting).await?;
+    found.extend(born_here(node, owner, acting));
+    Ok(found)
+}
+
+/// The colleagues `owner` asked that `acting` may see, as its actions recorded
+/// them, with what each was asked to do.
+pub(super) async fn asked(
+    node: &Arc<Node>,
+    owner: &Address,
+    acting: &Acting,
+) -> Result<BTreeMap<Address, String>, Failure> {
     let path = node.world.conversation(&owner.resident).actions();
     let actions = fastctx_platform::task::spawn_blocking(move || crate::residents::activity::asked(&path, None))
         .await
@@ -243,6 +255,12 @@ async fn targets(node: &Arc<Node>, owner: &Address, acting: &Acting) -> Result<B
         }
         found.insert(address, action.what);
     }
+    Ok(found)
+}
+
+/// The colleagues of `owner` that live on this machine and `acting` may see.
+pub(super) fn born_here(node: &Node, owner: &Address, acting: &Acting) -> BTreeMap<Address, String> {
+    let mut found = BTreeMap::new();
     for resident in node.residents.everyone() {
         if let Origin::Colleague { asked_by, label } = &resident.about.origin
             && asked_by.resident == owner.resident
@@ -252,5 +270,5 @@ async fn targets(node: &Arc<Node>, owner: &Address, acting: &Acting) -> Result<B
             found.insert(Address { machine: node.machine(), resident: resident.id }, label.clone());
         }
     }
-    Ok(found)
+    found
 }

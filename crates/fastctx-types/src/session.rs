@@ -221,6 +221,13 @@ pub enum Watched {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         kept: Vec<KeptWords>,
     },
+    /// For a viewer that follows the conversation's collaboration instead of
+    /// its history (the `collaboration` of its watch): the whole of it as it
+    /// is, then again each time it changes, with a higher `version`.
+    Collaboration {
+        version: u64,
+        tree: Box<crate::collaboration::Tree>,
+    },
 }
 
 /// Words a conversation's machine keeps that no turn has taken yet, and how

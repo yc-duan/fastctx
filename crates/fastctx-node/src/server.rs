@@ -70,6 +70,7 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
         account_records: true,
         conversation_plans: true,
         scratch_locations: true,
+        collaboration_watch: true,
         machine: node.machine(),
         version: env!("CARGO_PKG_VERSION").to_string(),
         node_lifetime: Some(Box::new(node.lifetime.clone())),
@@ -132,7 +133,7 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
             }
             return watching::serve(node.clone(), hello.peer, reader, writer).await;
         }
-        if let Call::Watch { resident, machine, composer, held, now, goal } = call.clone() {
+        if let Call::Watch { resident, machine, composer, held, now, goal, collaboration } = call.clone() {
             // Watching a conversation anywhere is the user's, with this
             // computer's logins.
             if let Err(failure) = users_voice(node, &hello.peer) {
@@ -144,8 +145,15 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
             // nothing more of it, as with `WatchMany`.
             let mut views = node.views.subscribe();
             // A watch keeps the connection until one end leaves.
+            let opening = async {
+                if collaboration {
+                    crate::colleagues::live::watch(node, resident, machine).await
+                } else {
+                    crate::talk::watch(node, resident, machine, composer, held, now, goal).await
+                }
+            };
             let opening = tokio::select! {
-                result = crate::talk::watch(node, resident, machine, composer, held, now, goal) => result,
+                result = opening => result,
                 _ = reader.recv() => return Ok(()),
             };
             let ended = match opening {

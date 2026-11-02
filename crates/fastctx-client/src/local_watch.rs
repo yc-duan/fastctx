@@ -54,6 +54,9 @@ impl Pool {
         if request.goal.is_some() && !client.goal_runtime {
             return Err(Error::Call(older_goal()));
         }
+        if request.collaboration && !client.collaboration_watch {
+            return Err(Error::Call(older_collaboration()));
+        }
         client.next += 1;
         client
             .connection
@@ -66,6 +69,7 @@ impl Pool {
             commands,
             wake: Notify::new(),
             goal_runtime: client.goal_runtime,
+            collaboration_watch: client.collaboration_watch,
         });
         let watching = shared.subscribe(request)?;
         *slot = Arc::downgrade(&shared);
@@ -79,6 +83,9 @@ fn watching(watching: Watching) -> crate::Watching {
 }
 fn older_goal() -> CallError {
     CallError::Failed(Failure::not_run(fastctx_types::goals::words::OLDER_NODE))
+}
+pub(crate) fn older_collaboration() -> CallError {
+    CallError::Failed(Failure::not_run(fastctx_types::collab_prompt::WATCH_NODE_OLD))
 }
 
 struct Slot {
@@ -97,6 +104,7 @@ struct Shared {
     commands: mpsc::Sender<PendingCommand>,
     wake: Notify,
     goal_runtime: bool,
+    collaboration_watch: bool,
 }
 impl Shared {
     fn closed(&self) -> bool {
@@ -110,6 +118,9 @@ impl Shared {
     fn subscribe(self: &Arc<Self>, request: Subscription) -> Result<Watching, CallError> {
         if request.goal.is_some() && !self.goal_runtime {
             return Err(older_goal());
+        }
+        if request.collaboration && !self.collaboration_watch {
+            return Err(older_collaboration());
         }
         let mut state = self.state.lock().expect("local watch state");
         if state.closed {

@@ -37,7 +37,13 @@ impl World {
                 .watch(
                     self,
                     fastctx_types::watching::local::Subscription {
-                        resident, machine, composer: None, held: None, now: false, goal: Some(account.clone()),
+                        resident,
+                        machine,
+                        composer: None,
+                        held: None,
+                        now: false,
+                        goal: Some(account.clone()),
+                        collaboration: false,
                     },
                 )
                 .await?

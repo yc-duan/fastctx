@@ -55,6 +55,7 @@ pub mod world_now;
 
 pub use address::hub_addresses;
 pub use again::{Again, Interruption};
+pub use collaboration::CollaborationWatch;
 pub use conversation::{Conversation, Following, Moment, Next, Update};
 pub use file_read::Reading;
 pub use town::TownView;
@@ -131,6 +132,7 @@ pub struct Client {
     pub scratch_locations: bool,
     pub sentinels: bool,
     pub goal_commands: bool,
+    pub collaboration_watch: bool,
     /// The connected node's facts, including when another starter won.
     pub node_lifetime: Option<Box<fastctx_types::node_lifetime::NodeLifetime>>,
 }
@@ -183,6 +185,7 @@ impl Client {
                 scratch_locations,
                 sentinels,
                 goal_commands,
+                collaboration_watch,
             } => Ok(Self {
                 connection,
                 next: 0,
@@ -197,6 +200,7 @@ impl Client {
                 scratch_locations,
                 sentinels,
                 goal_commands,
+                collaboration_watch,
             }),
             Welcome::Refused { reason, mismatch } => {
                 let mismatch = mismatch.or_else(|| renewal::legacy_mismatch(&reason));
@@ -416,6 +420,9 @@ impl Client {
     pub async fn watch(mut self, call: Call) -> Result<Watching, CallError> {
         if !self.goal_runtime && matches!(call, Call::Watch { goal: Some(_), .. }) {
             return Err(CallError::Failed(Failure::not_run(fastctx_types::goals::words::OLDER_NODE)));
+        }
+        if !self.collaboration_watch && matches!(call, Call::Watch { collaboration: true, .. }) {
+            return Err(local_watch::older_collaboration());
         }
         self.next += 1;
         let id = self.next;

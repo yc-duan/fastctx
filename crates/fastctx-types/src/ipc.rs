@@ -111,6 +111,10 @@ pub enum Welcome {
         conversation_plans: bool,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         scratch_locations: bool,
+        /// Follows a conversation's collaboration on a watch
+        /// (`Call::Watch::collaboration`).
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        collaboration_watch: bool,
         /// An older node says nothing of sentinels, and keeps none.
         #[serde(default)]
         sentinels: bool,

@@ -126,6 +126,11 @@ pub fn started(id: &crate::ResidentId, elsewhere: Option<&crate::MachineName>, w
 pub const TREE_ACCOUNT: &str = "no account may read this conversation's collaboration tree";
 pub const TREE_CAPABILITIES: &str = "the conversation's machine did not return its capabilities";
 pub const TREE_MACHINE_OLD: &str = "update the conversation's machine to read its collaboration tree";
+/// A node, or a conversation's machine, from before collaboration watches:
+/// whoever asked reads the tree again a moment after each read instead.
+pub const WATCH_NODE_OLD: &str = "this node cannot follow a collaboration";
+pub const WATCH_MACHINE_OLD: &str = "the conversation's machine cannot follow its collaboration";
+pub const WATCH_ENDED: &str = "the watch of the collaboration ended";
 pub const TREE_UNANSWERED: &str = "the conversation's machine did not return its collaboration tree";
 pub const TREE_INVISIBLE: &str = "the conversation is not visible to this account";
 pub const TREE_DEADLINE: &str = "the collaboration query deadline was reached";

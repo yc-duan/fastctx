@@ -696,7 +696,15 @@ impl World {
         self.local_watches
             .watch(
                 self,
-                fastctx_types::watching::local::Subscription { resident, machine, composer, held, now, goal: None },
+                fastctx_types::watching::local::Subscription {
+                    resident,
+                    machine,
+                    composer,
+                    held,
+                    now,
+                    goal: None,
+                    collaboration: false,
+                },
             )
             .await
     }

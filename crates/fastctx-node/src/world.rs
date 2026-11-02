@@ -604,6 +604,7 @@ pub fn facts(node: &Node) -> MachineFacts {
         plan_copies: true,
         replicated_records: true,
         collaboration_tree: true,
+        collaboration_watch: true,
         shell: shell(),
         form: Some(form()),
         node_lifetime: Some(Box::new(node.lifetime.clone())),
@@ -906,7 +907,17 @@ impl fastctx_net::link::Node for Handler {
                         .await
                         .map(|landed| RemoteReply::Said { landed })
                 }
-                RemoteCall::Watch { resident, watch, composer, documents, held, now, goal, multiplex } => {
+                RemoteCall::Watch {
+                    resident,
+                    watch,
+                    composer,
+                    documents,
+                    held,
+                    now,
+                    goal,
+                    collaboration,
+                    multiplex,
+                } => {
                     let stream = stream
                         .ok_or_else(|| Failure::new("a watch comes with a data connection, and this one had none"))?;
                     if multiplex {
@@ -914,11 +925,22 @@ impl fastctx_net::link::Node for Handler {
                             node.clone(),
                             link.clone(),
                             caller.clone(),
-                            fastctx_types::watching::Subscription { resident, composer, documents, held, now, goal },
+                            fastctx_types::watching::Subscription {
+                                resident,
+                                composer,
+                                documents,
+                                held,
+                                now,
+                                goal,
+                                collaboration,
+                            },
                             watch,
                             stream,
                         )
                         .await
+                    } else if let Some(follow) = collaboration {
+                        crate::colleagues::live::serve(&node, &asker, &link, &from, resident, watch, follow, stream)
+                            .await
                     } else {
                         crate::talk::serve_watch(
                             &node, &asker, &link, &from, resident, watch, composer, held, now, goal, stream,

@@ -272,6 +272,33 @@ async fn run(
     .await?;
     let permit = crate::intake::take(node, link.hub().clone(), admission).await?;
     permit.started();
+    if let Some(follow) = request.collaboration {
+        let acting = fastctx_types::access::Acting::one(asker.hub.clone(), asker.account.clone());
+        let mut following = crate::colleagues::live::follow(node, &request.resident, None, follow, &acting);
+        drop(memory);
+        // The opening holds its slot until the first tree is told.
+        let mut permit = Some(permit);
+        loop {
+            let (version, tree) = match crate::colleagues::live::next(&mut following).await {
+                Some(told) => told?,
+                None => return Ok(()),
+            };
+            drop(permit.take());
+            let watched = fastctx_types::session::Watched::Collaboration { version, tree: Box::new(tree) };
+            flow.deliver(
+                link,
+                output,
+                Packet {
+                    watch,
+                    subscription: id,
+                    number: next.fetch_add(1, Ordering::Relaxed),
+                    event: Event::Piece { watched },
+                },
+                consumed,
+            )
+            .await?;
+        }
+    }
     if let Some(subscription) = request.documents.take() {
         if request.goal {
             return Err(Failure::not_run("goal observations do not accept document updates"));

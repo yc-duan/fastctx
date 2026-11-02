@@ -454,6 +454,11 @@ pub enum RemoteCall {
         /// it reads past this and sends none.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         now: bool,
+        /// Follows the conversation's collaboration instead of its history
+        /// (`session::Watched::Collaboration`); said only to a machine whose
+        /// facts say `collaboration_watch`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        collaboration: Option<crate::collaboration::Follow>,
     },
     /// Open a session there for the user, as `Call::Open`.
     Open {

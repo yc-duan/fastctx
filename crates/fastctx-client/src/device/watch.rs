@@ -19,7 +19,18 @@ impl Device {
         now: bool,
         goal: Option<fastctx_types::access::HubAccount>,
     ) -> Result<Watching, Error> {
-        self.open_watch(resident, machine, composer, held, now, goal, None).await.map(Watching)
+        self.open_watch(resident, machine, composer, held, now, goal, None, None).await.map(Watching)
+    }
+
+    /// Follows a conversation's collaboration on its machine, when that
+    /// machine says it can (`MachineFacts::collaboration_watch`).
+    pub(crate) async fn watch_collaboration(
+        &self,
+        resident: ResidentId,
+        machine: Option<Written>,
+    ) -> Result<Watching, Error> {
+        let follow = Some(fastctx_types::collaboration::Follow::Tree);
+        self.open_watch(resident, machine, None, None, false, None, None, follow).await.map(Watching)
     }
 
     /// Requests native documents on the same account/machine observation stream.
@@ -32,7 +43,7 @@ impl Device {
         name: String,
         subscription: fastctx_types::composer::sync::Subscription,
     ) -> Result<fastctx_net::link::Watching, Error> {
-        self.open_watch(resident, machine, Some(name), None, false, None, Some(subscription)).await
+        self.open_watch(resident, machine, Some(name), None, false, None, Some(subscription), None).await
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -45,6 +56,7 @@ impl Device {
         now: bool,
         goal: Option<fastctx_types::access::HubAccount>,
         documents: Option<fastctx_types::composer::sync::Subscription>,
+        collaboration: Option<fastctx_types::collaboration::Follow>,
     ) -> Result<fastctx_net::link::Watching, Error> {
         let machine = self.find(&resident, machine).await?;
         let session = self.reaching(&machine)?;
@@ -69,7 +81,31 @@ impl Device {
             }
             None => session.account_for(&machine, fastctx_types::access::Purpose::Agents)?,
         };
-        let request = fastctx_types::watching::Subscription { resident, composer, documents, held, now, goal: scoped };
+        if collaboration.is_some() {
+            let facts = session
+                .link
+                .call(
+                    &machine,
+                    &account,
+                    fastctx_types::access::Purpose::Look,
+                    fastctx_types::remote::RemoteCall::Facts,
+                )
+                .await
+                .map_err(|error| CallError::Failed(Failure::new(error.to_string())))?
+                .map_err(CallError::Failed)?;
+            if !matches!(facts, fastctx_types::remote::RemoteReply::Facts(facts) if facts.collaboration_watch) {
+                return Err(CallError::Failed(Failure::not_run(fastctx_types::collab_prompt::WATCH_MACHINE_OLD)).into());
+            }
+        }
+        let request = fastctx_types::watching::Subscription {
+            resident,
+            composer,
+            documents,
+            held,
+            now,
+            goal: scoped,
+            collaboration,
+        };
         session
             .link
             .watch_shared(&machine, &account, request)

@@ -9,8 +9,6 @@
 //! it records what happened while it was away, such as jobs whose
 //! supervisor did not survive a restart of the machine.
 
-#[cfg(test)]
-mod future_sizes;
 mod account_records;
 pub mod activity;
 mod activity_book;
@@ -55,6 +53,8 @@ mod desk;
 mod devices;
 mod directory_changes;
 mod ending;
+#[cfg(test)]
+mod future_sizes;
 pub use ending::flush_log;
 mod conversation_store;
 mod facts;
@@ -237,6 +237,7 @@ pub(crate) struct Node {
     /// The latest read of each conversation's collaboration asked for here
     /// (`colleagues::tree::Reads`).
     collaboration_reads: colleagues::tree::Reads,
+    collaboration_followed: colleagues::live::Followed,
     plan_reads: plan_reads::Reads,
     skill_copies: skills::copies::Copies,
     skill_index: skills::cache::Cache,
@@ -766,6 +767,7 @@ pub async fn run_prepared(
                 alone_ledgers: Default::default(),
                 registered: Default::default(),
                 collaboration_reads: Default::default(),
+                collaboration_followed: Default::default(),
                 plan_reads: Default::default(),
                 skill_copies: Default::default(),
                 skill_index: Default::default(),

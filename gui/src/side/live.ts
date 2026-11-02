@@ -13,7 +13,7 @@ import type { PlanWords } from "../plan/words";
 import { unwatch, type WorldNow } from "../world/bridge";
 import { planRead, planWrite, watchPlan, type PlanAccount, type PlanPage } from "../world/plan";
 import { goalPast, goalShown, goalUpdate, watchGoal, type GoalChange, type GoalView } from "../world/goal";
-import { collaborationTree, type Branch, type NativeAgent, type Tree } from "../world/collab-tree";
+import { watchCollaboration, type Branch, type NativeAgent, type Tree } from "../world/collab-tree";
 import type { Address } from "../world/wire";
 import type { GoalStatus } from "./types";
 import { goalSamples, pastSamples, teamSample } from "./samples";
@@ -343,57 +343,73 @@ export function liveSide(options: LiveSide): SideSeams {
     colleagues: (show) => {
       let alive = true;
       let detail = false;
-      let inflight = false;
-      let again = false;
-      // The colleagues as the tree last told them, while a page shows them.
-      let told: CollabNode[] | null = null;
+      // The collaboration as the World last told it, followed while a page
+      // shows it; the colleagues drawn from it, or why they no longer stand
+      // as they did.
+      let tree: Tree | null = null;
+      let broken: string | null = null;
+      let watching: number | null = null;
+      // Which following a told piece belongs to: one let go says no more.
+      let following = 0;
       const draw = () => {
         const now = Date.now();
-        const colleagues = told ?? worldColleagues(options.store, options.address, now);
+        const told = tree ? treeNodes(tree, options.store, now) : null;
+        const colleagues = told
+          ? broken === null ? told : told.map((node) => ({ ...node, state: "unknown" as const, why: broken }))
+          : worldColleagues(options.store, options.address, now);
         show([...colleagues, ...sideNodes(options.store, options.address, options.words, now)]);
       };
-      const refresh = () => {
-        if (!detail) return;
-        if (inflight) {
-          again = true;
-          return;
-        }
-        inflight = true;
-        again = false;
-        collaborationTree(owner, options.address.machine)
-          .then((tree) => {
-            if (!alive || !detail) return;
-            told = treeNodes(tree, options.store, Date.now());
+      const follow = () => {
+        const mine = ++following;
+        const current = () => alive && detail && mine === following;
+        watchCollaboration(owner, options.address.machine, (piece) => {
+          if (!current()) return;
+          if (piece.kind === "tree") {
+            tree = piece.tree;
+            broken = null;
+          } else broken = piece.error;
+          draw();
+        })
+          .then(({ id, tree: first }) => {
+            if (!current()) {
+              void unwatch(id);
+              return;
+            }
+            watching = id;
+            tree = first;
+            broken = null;
             draw();
           })
           .catch((error: unknown) => {
-            // What was known stays, no longer said to stand as it did.
-            const why = error instanceof Error ? error.message : String(error);
-            if (!alive || !detail || !told) return;
-            told = told.map((node) => ({ ...node, state: "unknown", why }));
+            if (!current()) return;
+            broken = error instanceof Error ? error.message : String(error);
             draw();
-          })
-          .finally(() => {
-            inflight = false;
-            if (alive && again) refresh();
           });
       };
+      const letGo = () => {
+        following++;
+        if (watching != null) void unwatch(watching);
+        watching = null;
+        tree = null;
+        broken = null;
+      };
+      // The World's changes redraw the colleagues from what was last told.
       const stop = effect(() => {
         options.store.world.get();
         draw();
-        refresh();
       });
       return {
         stop: () => {
           alive = false;
+          letGo();
           stop();
         },
         detail: (shown) => {
           if (shown === detail) return;
           detail = shown;
-          if (shown) refresh();
+          if (shown) follow();
           else {
-            told = null;
+            letGo();
             draw();
           }
         },

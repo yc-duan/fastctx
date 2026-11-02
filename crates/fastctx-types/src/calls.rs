@@ -648,6 +648,11 @@ pub enum Call {
         /// The viewer reads `session::Watched::Now`.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         now: bool,
+        /// Follows the conversation's collaboration instead of its history
+        /// (`session::Watched::Collaboration`); said only to a node whose
+        /// welcome says `collaboration_watch`.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        collaboration: bool,
     },
     /// Opens a session for the user: a resident of `agent` started on this
     /// machine or on `node`, in `town`, with the user's words as its first.

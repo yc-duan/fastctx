@@ -1259,6 +1259,7 @@ pub fn run() {
             collab::collab_read,
             collab::collab_write,
             collaboration::collaboration_tree,
+            collaboration::collaboration_watch,
             history::history_list,
             history::history_read,
             history::history_save,

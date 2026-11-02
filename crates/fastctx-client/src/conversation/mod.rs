@@ -146,6 +146,9 @@ impl Conversation {
                 Some(Watched::Documents { .. }) => {
                     return Err(Error::Unexpected("document packets are not conversation history".into()));
                 }
+                Some(Watched::Collaboration { .. }) => {
+                    return Err(Error::Unexpected("a collaboration is not conversation history".into()));
+                }
                 Some(Watched::History { events }) => events,
                 Some(Watched::Live { event }) => vec![event],
                 Some(Watched::Now { busy, turn, kept }) => {
@@ -574,6 +577,9 @@ impl Conversation {
                 Some(Ok(Some(Watched::Now { .. }))) => {}
                 Some(Ok(Some(Watched::Documents { .. }))) => {
                     return Err(Error::Unexpected("document packets are not conversation history".into()));
+                }
+                Some(Ok(Some(Watched::Collaboration { .. }))) => {
+                    return Err(Error::Unexpected("a collaboration is not conversation history".into()));
                 }
                 Some(Ok(None)) | None => return Ok(Next::Interrupted(self.broke("the watch ended".into()))),
                 Some(Err(error)) if error.is_deleted() || error.is_refused() => return Err(error),

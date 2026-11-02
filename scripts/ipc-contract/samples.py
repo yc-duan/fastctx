@@ -264,6 +264,9 @@ def samples(root, shipped):
             if lifetime is not None:
                 welcome["node_lifetime"] = lifetime
             yield {"mode": "welcome", "protocol": protocol, "value": welcome}
+        # A node that follows collaborations says so; a client before it reads past that.
+        yield {"mode": "welcome", "protocol": protocol,
+               "value": {"kind": "accepted", "machine": "desktop", "version": "1.0.0", "collaboration_watch": True}}
         for reply in replies(fixtures):
             if protocol == 5 and reply["reply"] == "server_invitation":
                 continue
@@ -315,6 +318,8 @@ def samples(root, shipped):
             if lifetime is not None:
                 welcome["node_lifetime"] = lifetime
             yield {"mode": "welcome", "protocol": 13, "reader": reader, "value": welcome}
+        yield {"mode": "welcome", "protocol": 13, "reader": reader,
+               "value": {"kind": "accepted", "machine": "desktop", "version": "1.0.0", "collaboration_watch": True}}
         for reply in replies(fixtures):
             notice = reply["notices"][0]["notice"] if reply["reply"] == "notices" else {}
             yield {"mode": "reply", "protocol": 13, "reader": reader, "value": frame(reply),

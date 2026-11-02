@@ -115,6 +115,10 @@ pub struct MachineFacts {
     /// Reads collaboration trees, including native child-agent histories.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub collaboration_tree: bool,
+    /// Follows a conversation's collaboration on a watch
+    /// (`RemoteCall::Watch::collaboration`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub collaboration_watch: bool,
     /// The bash `run` uses there, such as `bash 5.2.37 (Git for Windows,
     /// MSYS)`: on MSYS, arguments shaped like Unix paths are rewritten
     /// before a Windows program sees them (`world-run.md`). Empty when the

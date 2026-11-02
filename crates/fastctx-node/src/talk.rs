@@ -35,10 +35,10 @@ use crate::speech::{self, Owed};
 
 /// One piece of a watch from another machine, as that machine signs it.
 #[derive(Serialize, Deserialize)]
-struct Piece {
-    watch: u64,
-    n: u64,
-    watched: Watched,
+pub(crate) struct Piece {
+    pub(crate) watch: u64,
+    pub(crate) n: u64,
+    pub(crate) watched: Watched,
 }
 
 /// The user's words, typed on this machine, to a resident on any machine.
@@ -165,8 +165,15 @@ pub async fn watch(
     {
         return Err(Failure::refused(fastctx_types::goals::words::WATCH_ACCOUNT));
     }
-    let request =
-        fastctx_types::watching::Subscription { resident, composer, documents: None, held, now, goal: goal.is_some() };
+    let request = fastctx_types::watching::Subscription {
+        resident,
+        composer,
+        documents: None,
+        held,
+        now,
+        goal: goal.is_some(),
+        collaboration: None,
+    };
     let mut watching = None;
     let mut refused = None;
     for (link, account) in node.speakers(&acting, &machine, Purpose::Agents).map_err(|e| Failure::new(e.to_string()))? {
@@ -1150,7 +1157,7 @@ pub async fn stop_and_wait(node: &Arc<Node>, id: &ResidentId) -> Result<(), Fail
 
 /// Which machine the resident `id` lives on: this one when it lives here,
 /// otherwise whichever says it does.
-async fn locate(node: &Arc<Node>, id: &ResidentId) -> Result<Written, Failure> {
+pub(crate) async fn locate(node: &Arc<Node>, id: &ResidentId) -> Result<Written, Failure> {
     if node.residents.about(id).is_some() {
         return Ok(node.machine().into());
     }
