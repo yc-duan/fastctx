@@ -9,6 +9,7 @@
 
 mod antigravity;
 mod auggie;
+mod claude_desktop;
 mod cline;
 mod copilot;
 mod cursor;
@@ -39,6 +40,7 @@ static AGENTS: &[&Agent] = &[
     &auggie::AGENT,
     &devin::AGENT,
     &roo::AGENT,
+    &claude_desktop::AGENT,
     &gemini::AGENT,
 ];
 

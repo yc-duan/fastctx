@@ -1,0 +1,5 @@
+{
+  "mcpServers": {
+    "lab-existing": {"command": "node", "args": ["echo-server.js"]}
+  }
+}
