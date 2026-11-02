@@ -105,6 +105,27 @@ async fn settled(
 /// Tells how a control ended again, later each time, until it is told; the
 /// queue behind it then moves on. Its row stays running meanwhile, which
 /// keeps the controls after it waiting rather than done out of turn.
+/// Ends a control that cannot be done, as `end` ends it: whether how it
+/// ended was written now.
+async fn refused(node: &Arc<Node>, id: &ResidentId, row: PendingControl, error: Failure) -> bool {
+    let (node, id) = (node.clone(), id.clone());
+    crate::to_end::run(async move {
+        let result = Err(error);
+        match settled(&node, &id, &row, &result).await {
+            Ok(()) => true,
+            Err(failure) => {
+                node.log.line(format_args!(
+                    "telling how {id}'s control {} ended, told again later: {}",
+                    row.id, failure.message
+                ));
+                settle_later(node.clone(), id.clone(), row, result);
+                false
+            }
+        }
+    })
+    .await
+}
+
 fn settle_later(node: Arc<Node>, id: ResidentId, row: PendingControl, result: Result<Controlled, Failure>) {
     fastctx_platform::task::spawn(async move {
         let mut again = crate::again::Again::default();
@@ -409,8 +430,13 @@ fn drain_now<'a>(
                 // on; one that may be done later keeps its place and is
                 // asked again.
                 if crate::obligations::permanent(&error) {
-                    let _ = end(node, id, first.clone(), Err(error)).await;
-                    continue;
+                    // When how it ended cannot be written now, the queue
+                    // waits for that (`settle_later` drains it again) rather
+                    // than meet the same control again at once.
+                    if refused(node, id, first.clone(), error).await {
+                        continue;
+                    }
+                    return Ok(());
                 }
                 defer_host(node, id, first, &error.message).await?;
                 return Ok(());
