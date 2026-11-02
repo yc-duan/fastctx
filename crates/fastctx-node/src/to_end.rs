@@ -18,10 +18,14 @@ where
     F::Output: Send + 'static,
 {
     let (deadline, access) = (crate::gate_waits::carried(), crate::record_access::carried());
+    // What the asker said it does is said by the task doing it.
+    let label = fastctx_platform::doing::label();
     // Boxed before it is wrapped, so each wrapper holds a pointer.
     let work = Box::pin(work);
-    let task =
-        fastctx_platform::task::spawn(crate::record_access::carry(access, crate::gate_waits::carry(deadline, work)));
+    let task = fastctx_platform::task::spawn(async move {
+        let _doing = fastctx_platform::doing::doing(label);
+        crate::record_access::carry(access, crate::gate_waits::carry(deadline, work)).await
+    });
     async move {
         match task.await {
             Ok(value) => value,
