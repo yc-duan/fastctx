@@ -42,6 +42,12 @@ pub(super) async fn apply(
             fastctx_storage::Priority::Interactive,
             serde_json::to_vec(&view)?.len(),
             move |rows| {
+                // A view read before the one kept here is not taken: what the
+                // account decided since stays, and is applied again.
+                let view = match rows.get::<local::Local>(local::LOCAL, "current")?.map(|local| local.view) {
+                    Some(kept) if local::newer(&kept, &view) => kept,
+                    _ => view,
+                };
                 let held = local::hold(rows)?;
                 let holds = held.as_ref().is_some_and(|held| !held.superseded(&view));
                 let text = if holds || working.residents.removed(&resident).is_some() {

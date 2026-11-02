@@ -147,6 +147,12 @@ pub(super) fn fallback(directory: &ConversationDir, exchange: Option<&Path>) -> 
         .map(|bridge| PreparedBridge::prepare(directory, bridge))
         .transpose()
 }
+/// Whether `kept` is a later record of the same account's goal than `view`:
+/// one the account changed after `view` was read.
+pub(super) fn newer(kept: &View, view: &View) -> bool {
+    kept.account == view.account && matches!((kept.version, view.version), (Some(kept), Some(view)) if kept > view)
+}
+
 pub(super) fn get(directory: &ConversationDir) -> io::Result<Option<View>> {
     prepare(directory)?;
     records::read(directory, |rows| Ok(rows.get::<Local>(LOCAL, "current")?.map(|local| local.view)))

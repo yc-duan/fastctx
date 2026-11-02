@@ -10,10 +10,7 @@ pub(super) async fn measure(directory: ConversationDir, handles: Vec<WaitHandle>
         let values = handles
             .iter()
             .filter_map(|handle| {
-                handle
-                    .output
-                    .as_ref()
-                    .map(|output| (format!("{}:{}", handle.machine, handle.id), output.bytes.to_be_bytes().to_vec()))
+                handle.output.as_ref().map(|output| (key(handle), output.bytes.to_be_bytes().to_vec()))
             })
             .collect();
         (handles, values)
@@ -45,9 +42,8 @@ pub(super) async fn measure(directory: ConversationDir, handles: Vec<WaitHandle>
             };
             for handle in &mut handles {
                 if let Some(output) = &handle.output {
-                    let key = format!("{}:{}", handle.machine, handle.id);
                     handle.output_growth = previous
-                        .get(&key)
+                        .get(&key(handle))
                         .map(|bytes| {
                             let bytes: [u8; 8] = bytes
                                 .as_slice()
@@ -68,4 +64,19 @@ pub(super) async fn measure(directory: ConversationDir, handles: Vec<WaitHandle>
     .await
     .map_err(io::Error::other)?;
     Ok(handles)
+}
+
+/// What a wait's output count is kept under. A job's short id is given again
+/// once its files are gone: its completion, when it began or where its log is
+/// tells one run from the next, so a later job does not take an earlier one's
+/// count as its own.
+fn key(handle: &WaitHandle) -> String {
+    let run = handle
+        .completion
+        .as_ref()
+        .map(ToString::to_string)
+        .or_else(|| handle.since.map(|since| since.to_string()))
+        .or_else(|| handle.output.as_ref().map(|output| output.path.clone()))
+        .unwrap_or_default();
+    format!("{}:{}:{run}", handle.machine, handle.id)
 }

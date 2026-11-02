@@ -23,7 +23,16 @@ const FAMILY: &str = "timers";
 #[derive(Default, Clone)]
 struct Claims {
     active: HashMap<String, NoticeId>,
+    /// Firings put off after their persistence failed, until when: only
+    /// while that is still ahead, and only for a timer's current firing.
     delayed: HashMap<(String, NoticeId), Timestamp>,
+}
+
+impl Claims {
+    /// Forgets the timer `id`'s firings put off: it fires anew, or no more.
+    fn settled(&mut self, id: &str) {
+        self.delayed.retain(|(timer, _), _| timer != id);
+    }
 }
 pub struct Store {
     directory: ConversationDir,
@@ -106,6 +115,7 @@ impl Store {
                     Ok(timer)
                 },
             )?;
+            store.claims.lock().expect("timer claims").settled(&result.id);
             store.changed.notify_one();
             Ok(result)
         })
@@ -165,6 +175,7 @@ impl Store {
                     return Ok(None);
                 }
                 let mut claims = store.claims.lock().expect("timer claims");
+                claims.delayed.retain(|_, until| *until > now);
                 if claims.active.contains_key(&timer.id) {
                     continue;
                 }
@@ -239,7 +250,7 @@ impl Store {
         self.unclaim(timer);
     }
     pub async fn complete(self: &Arc<Self>, timer: &Timer) -> io::Result<bool> {
-        let (id, delivery) = (timer.id.clone(), timer.delivery.clone());
+        let (id, delivery, timer_id) = (timer.id.clone(), timer.delivery.clone(), timer.id.clone());
         self.work(move |store| {
             let removed = records::write_at(&store.directory, Priority::Interactive, 128, move |rows| {
                 if get_timer(rows, &id)?.is_none_or(|row| row.delivery != delivery) {
@@ -247,6 +258,9 @@ impl Store {
                 }
                 delete_timer(rows, &id)
             })?;
+            if removed {
+                store.claims.lock().expect("timer claims").settled(&timer_id);
+            }
             store.changed.notify_one();
             Ok(removed)
         })
@@ -255,8 +269,10 @@ impl Store {
     pub async fn cancel(self: &Arc<Self>, id: &str) -> io::Result<bool> {
         let id = id.to_string();
         self.work(move |store| {
+            let cancelled = id.clone();
             let removed =
                 records::write_at(&store.directory, Priority::Control, 128, move |rows| delete_timer(rows, &id))?;
+            store.claims.lock().expect("timer claims").settled(&cancelled);
             store.changed.notify_one();
             Ok(removed)
         })
