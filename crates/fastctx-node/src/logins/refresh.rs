@@ -99,9 +99,18 @@ fn every(node: &Node) -> Option<(Waiting, bool)> {
             return None;
         }
     };
+    // The other agents' homes, each as its own record says
+    // (`super::others`).
+    let others = match apply::agent_integrations(&context.places) {
+        Ok(others) => others,
+        Err(error) => {
+            node.log.line(format_args!("bringing the World's tools up to date: reading the agents' records: {error}"));
+            Vec::new()
+        }
+    };
     let mut waiting = Vec::new();
     let mut again = false;
-    for integration in integrations {
+    let hosts = integrations.into_iter().map(|integration| {
         let agent = AgentName::try_from(match integration.host {
             Host::Codex => "codex",
             Host::Claude => "claude",
@@ -112,6 +121,15 @@ fn every(node: &Node) -> Option<(Waiting, bool)> {
             .places
             .at_home(integration.host, &integration.home)
             .and_then(|places| apply::refresh(&places, integration.host));
+        (agent, dir, refreshed)
+    });
+    let others = others.into_iter().filter_map(|(name, home)| {
+        let other = fastctx_install::agents::find(&name)?;
+        let agent = AgentName::try_from(other.name).ok()?;
+        let refreshed = apply::agent_refresh(&context.places, other, &home);
+        Some((agent, fastctx_hosts::inventory::plain(&home), refreshed))
+    });
+    for (agent, dir, refreshed) in hosts.chain(others) {
         let shown = dir.display();
         match refreshed {
             Ok(Refresh::Out | Refresh::Current) => {}

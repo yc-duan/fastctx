@@ -60,6 +60,19 @@ fn watch(node: &Node, changed: mpsc::Sender<()>) -> Option<fastctx_watch::Watche
     };
     let mut watched: BTreeSet<PathBuf> = BTreeSet::new();
     let mut folders = Vec::new();
+    // The other agents: each file their connecting writes, in the folder it
+    // is in (`fastctx_install::agents`).
+    let others = apply::agent_integrations(&places).unwrap_or_default();
+    for (name, home) in others {
+        let Some(agent) = fastctx_install::agents::find(&name) else { continue };
+        for file in agent.files() {
+            let path = home.join(file);
+            let (Some(folder), Some(name)) = (path.parent(), path.file_name()) else { continue };
+            let Ok(named) = crate::file_events::named(folder) else { continue };
+            watched.insert(named.join(name));
+            folders.push(folder.to_path_buf());
+        }
+    }
     for integration in integrations {
         let names: &[&str] = match integration.host {
             Host::Codex => &["config.toml", "AGENTS.md"],

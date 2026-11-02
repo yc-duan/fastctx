@@ -44,7 +44,10 @@ mod refresh;
 mod settle;
 mod tools;
 mod withdrawn;
-pub use agents::{agent_apply_expecting, agent_connected, agent_fingerprint, agent_integrations, agent_preview, agent_unapply_expecting};
+pub use agents::{
+    agent_apply_expecting, agent_connected, agent_fingerprint, agent_integrations, agent_preview, agent_refresh,
+    agent_unapply_expecting,
+};
 pub use homes::Host;
 pub use identity::forward_login_identity;
 pub use preview::{fingerprint, preview};

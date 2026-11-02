@@ -76,8 +76,9 @@ fn asked(dir: PathBuf, found: Found, agent: &Agent) -> KeptLogin {
 }
 
 /// The agent's logins as the interface lists them: connected ones listed,
-/// the rest candidates.
+/// the rest candidates, and what a connected one waits for the user for.
 pub(super) fn side(
+    node: &crate::Node,
     context: &Context,
     kept: &Kept,
     agent: &Agent,
@@ -105,7 +106,7 @@ pub(super) fn side(
             launcher: None,
             models: Vec::new(),
             change: change_of(changes, agent, &dir),
-            drift: None,
+            drift: if connected { super::refresh::of(node, agent.name, &dir) } else { None },
             dir,
         };
         if connected {

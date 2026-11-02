@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::progress::{self, Progress};
-use super::{Error, Places, Report, change, homes, io, placing, recovery, tell, text};
+use super::{Error, Places, Refresh, Report, change, homes, io, placing, recovery, tell, text};
 use crate::agents::{self, Agent, Files, Planned, Receipt, Server};
 use crate::transaction::{CreatedDirectory, FileChange, Snapshot, Transaction};
 
@@ -180,6 +180,46 @@ pub fn agent_integrations(places: &Places) -> Result<Vec<(String, PathBuf)>, Err
     }
     found.sort();
     Ok(found)
+}
+
+/// Brings what Fastctx wrote for `agent` in `home` up to what this fastctx
+/// writes (`world-agent-logins.md`, 接入跟着版本走): what this version
+/// writes otherwise is written, and what someone else changed of it taken
+/// back, the files kept as they were before that. What cannot be worked
+/// out, a file no longer in the agent's format among it, waits for the user.
+pub fn agent_refresh(places: &Places, agent: &Agent, home: &Path) -> Result<Refresh, Error> {
+    let read = read(places, agent, home)?;
+    if !read.record.as_ref().is_some_and(|record| record.receipt.holds()) {
+        return Ok(Refresh::Out);
+    }
+    // Worked out keeping everyone else's changes, it conflicts where one of
+    // them is to Fastctx's own and would be taken back.
+    let taken = match plan(places, agent, &read, true, false) {
+        Ok(_) => false,
+        Err(Error::Edit(crate::Error::Conflict { .. })) => true,
+        Err(error) => return Err(error),
+    };
+    let planned = match plan(places, agent, &read, true, true) {
+        Ok(Some(planned)) => planned,
+        Ok(None) => return Ok(Refresh::Current),
+        Err(Error::Edit(crate::Error::Conflict { location, reason })) => {
+            return Ok(Refresh::Changed { location, reason });
+        }
+        Err(error) => return Err(error),
+    };
+    let files: Vec<PathBuf> = read
+        .snapshots
+        .iter()
+        .filter(|(name, snapshot)| planned.files.get(name).and_then(Option::as_deref) != snapshot.bytes())
+        .map(|(_, snapshot)| snapshot.path().to_path_buf())
+        .collect();
+    if files.is_empty() {
+        return Ok(Refresh::Current);
+    }
+    let kept = if taken { Some(super::refresh::keep(places, agent.name, &files)?) } else { None };
+    // Worked out again under the apply lock, from the files as they are then.
+    made(places, agent, home, true, true, None, None)?;
+    Ok(Refresh::Refreshed { files, commands: Vec::new(), kept })
 }
 
 /// Connects `agent` in `home`, made only while the files are as they were

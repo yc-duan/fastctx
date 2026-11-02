@@ -54,19 +54,20 @@ pub fn refresh(places: &Places, host: Host) -> Result<Refresh, Error> {
         return Ok(Refresh::Current);
     }
     let files: Vec<PathBuf> = preview.files.iter().map(|file| file.path.clone()).collect();
-    let kept = if taken { Some(keep(places, host, &files)?) } else { None };
+    let agent = match host {
+        Host::Codex => "codex",
+        Host::Claude => "claude",
+    };
+    let kept = if taken { Some(keep(places, agent, &files)?) } else { None };
     apply_reporting(places, host.only(), Approval::RaiseOutputLimit, Edits::TakeBack, None)?;
     Ok(Refresh::Refreshed { files, commands: preview.commands, kept })
 }
 
 /// Copies of `files` as they are now, in a folder of their own under
 /// fastctx's directory named for the moment and the agent.
-fn keep(places: &Places, host: Host, files: &[PathBuf]) -> Result<PathBuf, Error> {
-    let agent = match host {
-        Host::Codex => "codex",
-        Host::Claude => "claude",
-    };
-    let folder = places.root.join("kept").join(format!("{}-{agent}", jiff::Timestamp::now().strftime("%Y-%m-%d-%H%M%S")));
+pub(super) fn keep(places: &Places, agent: &str, files: &[PathBuf]) -> Result<PathBuf, Error> {
+    let folder =
+        places.root.join("kept").join(format!("{}-{agent}", jiff::Timestamp::now().strftime("%Y-%m-%d-%H%M%S")));
     std::fs::create_dir_all(&folder).map_err(io("keeping the files taken back"))?;
     for file in files {
         let Some(name) = file.file_name() else { continue };

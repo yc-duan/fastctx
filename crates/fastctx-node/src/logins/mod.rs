@@ -269,7 +269,7 @@ fn assemble(node: &Node) -> Result<MachineLogins, Failure> {
     }
     for agent in fastctx_install::agents::all() {
         let Ok(name) = AgentName::try_from(agent.name) else { continue };
-        let side = others::side(&context, &kept, agent, &changes)?;
+        let side = others::side(node, &context, &kept, agent, &changes)?;
         if side.listed.is_empty() && side.candidates.is_empty() {
             continue;
         }
