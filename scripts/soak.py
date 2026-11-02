@@ -178,9 +178,13 @@ def main():
             for unit in (NODE_SLICE, REST_SLICE):
                 subprocess.run(["systemctl", "stop", unit], check=False, capture_output=True)
                 subprocess.run(["systemctl", "revert", unit], check=False, capture_output=True)
-            for name in ("soak-result.json",):
-                if (base / name).exists():
-                    shutil.copy2(base / name, root / name)
+            # Beside the rest, readable by whoever collects them after the root that wrote them.
+            for kept, name in ((base / "soak-result.json", "soak-result.json"), (base / "hub" / "hub.log", "hub.log")):
+                if kept.exists():
+                    shutil.copy2(kept, root / name)
+            for name in ("soak-result.json", "hub.log", "node.log", "drill.err"):
+                if (root / name).exists():
+                    os.chmod(root / name, 0o644)
             mock.close()
             print("ARTIFACTS", root, flush=True)
 

@@ -75,7 +75,15 @@ fn command(root: &Path, bin: &Path) -> Command {
         .env("LANG", "C.UTF-8")
         .current_dir(base.join("user"))
         .stdin(Stdio::null());
+    strictly(&mut c);
     c
+}
+/// A development kernel run strictly, as the drill was, stops at the first
+/// rule of its threads broken.
+fn strictly(command: &mut Command) {
+    if let Some(strict) = std::env::var_os("FASTCTX_STRICT_ROLES") {
+        command.env("FASTCTX_STRICT_ROLES", strict);
+    }
 }
 async fn device(
     base: &Path,
@@ -221,7 +229,8 @@ async fn working(host: &Path, resident: &str) -> bool {
 /// The hub as its own process, as it runs: stopping it ends every connection to it.
 fn serve(base: &Path) -> Result<Child> {
     let output = std::fs::OpenOptions::new().create(true).append(true).open(base.join("hub.log"))?;
-    Ok(Command::new(KERNEL.get().expect("kernel path"))
+    let mut command = Command::new(KERNEL.get().expect("kernel path"));
+    command
         .env_clear()
         .env("PATH", "/usr/bin:/bin")
         .env("HOME", base.join("user"))
@@ -231,8 +240,9 @@ fn serve(base: &Path) -> Result<Child> {
         .arg(base.join("hub"))
         .stdin(Stdio::null())
         .stdout(output.try_clone()?)
-        .stderr(output)
-        .spawn()?)
+        .stderr(output);
+    strictly(&mut command);
+    Ok(command.spawn()?)
 }
 
 fn focused(name: &str) -> Focus {

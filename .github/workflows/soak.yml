@@ -82,5 +82,5 @@ jobs:
             ${{ runner.temp }}/soak/soak-result.json
             ${{ runner.temp }}/soak/node.log
             ${{ runner.temp }}/soak/drill.err
-            ${{ runner.temp }}/soak/drill/hub/hub.log
+            ${{ runner.temp }}/soak/hub.log
           if-no-files-found: ignore

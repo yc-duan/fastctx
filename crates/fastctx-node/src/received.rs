@@ -117,10 +117,17 @@ async fn drain(node: Arc<Node>, to: ResidentId, wake: Arc<Notify>) {
         }
         if after.is_empty() {
             let folder = directory(&node, &to);
-            match fastctx_platform::task::spawn_blocking(move || items::queue_end(&folder)).await {
-                Ok(Ok(end)) => through = end,
-                other => {
-                    node.log.line(format_args!("reading queue boundary: {other:?}"));
+            match fastctx_platform::task::spawn_blocking(move || items::queue_end(&folder))
+                .await
+                .map_err(io::Error::other)
+                .and_then(|end| end)
+            {
+                Ok(end) => through = end,
+                Err(error) => {
+                    // Records still moving in are read again as they come.
+                    if error.kind() != io::ErrorKind::WouldBlock {
+                        node.log.line(format_args!("reading where {to}'s queue ends: {error}"));
+                    }
                     tokio::time::sleep(again.next()).await;
                     continue;
                 }
