@@ -16,3 +16,6 @@ httpdate = "1"
 serde.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["time"] }
+
+[lints]
+workspace = true

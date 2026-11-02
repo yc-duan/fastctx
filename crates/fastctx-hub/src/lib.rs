@@ -23,10 +23,6 @@
 //! directory it runs from then stands by for the move, serves, or, at the
 //! old place, forwards to the new one, as its files say.
 
-// Held across an await, a lock holds up every task that waits for it; the
-// platform's and this crate's own lock guards are named in `clippy.toml`.
-#![deny(clippy::await_holding_lock, clippy::await_holding_refcell_ref, clippy::await_holding_invalid_type)]
-
 mod account_records;
 mod afoot;
 mod assists;

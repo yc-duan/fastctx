@@ -3,6 +3,13 @@ resolver = "3"
 members = ["crates/*"]
 exclude = ["vendor/pdf_oxide", "vendor/yrs"]
 
+# Held across an await, a lock holds up every task that waits for it; a
+# crate's own lock guards are named in its `clippy.toml`.
+[workspace.lints.clippy]
+await_holding_lock = "deny"
+await_holding_refcell_ref = "deny"
+await_holding_invalid_type = "deny"
+
 [patch.crates-io]
 pdf_oxide = { path = "vendor/pdf_oxide" }
 

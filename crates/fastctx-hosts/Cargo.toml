@@ -26,3 +26,6 @@ tokio-tungstenite = { version = "0.30.0", default-features = false, features = [
 toml = "0.9"
 unicode-normalization = "0.1"
 roxmltree = "0.21"
+
+[lints]
+workspace = true

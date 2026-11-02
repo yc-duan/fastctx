@@ -71,3 +71,6 @@ windows-sys = { version = "0.61", features = [
 
 [dev-dependencies]
 tempfile = "3"
+
+[lints]
+workspace = true

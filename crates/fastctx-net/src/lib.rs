@@ -10,10 +10,6 @@
 //! and its judgments, the frames on the wire, and each machine's side of
 //! its connections.
 
-// Held across an await, a lock holds up every task that waits for it; the
-// platform's and this crate's own lock guards are named in `clippy.toml`.
-#![deny(clippy::await_holding_lock, clippy::await_holding_refcell_ref, clippy::await_holding_invalid_type)]
-
 pub mod afoot;
 pub mod again;
 #[cfg(target_os = "android")]

@@ -71,3 +71,6 @@ windows-sys = { version = "0.61", features = [
 name = "letter_drill"
 path = "tests/letter_drill/main.rs"
 harness = false
+
+[lints]
+workspace = true
