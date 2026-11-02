@@ -75,6 +75,9 @@ struct State {
     /// Residents being deleted, with how many deletions of each are under
     /// way: they take nothing new while their turn and commands stop.
     deleting: HashMap<ResidentId, usize>,
+    /// Residents whose deletion went past what can be undone and is being
+    /// finished: they take nothing new until it is.
+    condemned: std::collections::HashSet<ResidentId>,
     tombstones: tombstones::Tombstones,
 }
 
@@ -266,6 +269,7 @@ impl Residents {
             inboxes: cache::Index::new(root.join("inboxes"))?,
             colleagues: HashMap::new(),
             deleting: HashMap::new(),
+            condemned: std::collections::HashSet::new(),
             tombstones: tombstones::Tombstones::load(world, &mut problems)?,
         };
         for kept in world.kept()? {
@@ -280,6 +284,11 @@ impl Residents {
             // and no resident.
             if !directory.about().try_exists()? {
                 continue;
+            }
+            // A deletion that began before the node stopped is finished,
+            // and it takes nothing new until then.
+            if directory.path().join(crate::data::delete::INTENT).try_exists()? {
+                state.condemned.insert(id.clone());
             }
             let about = match records::read_about(directory) {
                 Ok(about) if about.id == *id => about,

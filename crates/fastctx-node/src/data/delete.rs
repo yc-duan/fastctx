@@ -16,8 +16,13 @@
 //! command (`Residents::deleting`). Before its records go, what its Claude
 //! sessions reported and is being read is let finish, and a tombstone is
 //! written (`residents::Tombstone`): what they report afterwards is
-//! dropped, and a session of it never comes back as a new conversation. A
-//! node stopped after that finishes the deletion when it starts again.
+//! dropped, and a session of it never comes back as a new conversation.
+//!
+//! Once its host's record is gone it is deleted, whatever fails after: the
+//! answer says so, with what is still to clear, it takes nothing new, and
+//! the node finishes the rest by itself, as it does for a node stopped
+//! halfway (`finish_interrupted`). A failure before that cancels the
+//! deletion: it stays listed and can be deleted again.
 //!
 //! A guest room goes alone; the conversation's home on its own machine is
 //! not touched. One with a command still running here is not touched.
@@ -52,13 +57,16 @@ pub(super) async fn delete(node: &Arc<Node>, names: Vec<String>) -> Vec<Deletion
     let mut deletions = Vec::with_capacity(names.len());
     for name in names {
         let outcome = match delete_one(node, &name).await {
-            Ok(bytes) => DeletionOutcome::Deleted { bytes },
+            Ok(Gone { bytes, finishing }) => {
+                match &finishing {
+                    None => node.log.line(format_args!("deleted {name} from this machine, {bytes} bytes")),
+                    Some(why) => node.log.line(format_args!("deleted {name} from this machine, finishing: {why}")),
+                }
+                DeletionOutcome::Deleted { bytes, finishing }
+            }
             Err(Stop::Nothing(why) | Stop::Refused(why)) => DeletionOutcome::Refused { why },
             Err(Stop::Failed(why)) => DeletionOutcome::Failed { why },
         };
-        if let DeletionOutcome::Deleted { bytes } = &outcome {
-            node.log.line(format_args!("deleted {name} from this machine, {bytes} bytes"));
-        }
         deletions.push(Deletion { name, outcome });
     }
     deletions
@@ -66,11 +74,17 @@ pub(super) async fn delete(node: &Arc<Node>, names: Vec<String>) -> Vec<Deletion
 
 /// The file that says a conversation is being deleted, written before
 /// anything outside is done for it.
-const INTENT: &str = "deleting";
+pub(crate) const INTENT: &str = "deleting";
+
+/// What a deletion freed, and why some of it is still being cleared.
+pub(crate) struct Gone {
+    pub(crate) bytes: u64,
+    pub(crate) finishing: Option<String>,
+}
 
 /// Deletes everything of the conversation kept here under the name `name`,
 /// as the listing gives it; says how many bytes went.
-pub(crate) async fn delete_one(node: &Arc<Node>, name: &str) -> Result<u64, Stop> {
+pub(crate) async fn delete_one(node: &Arc<Node>, name: &str) -> Result<Gone, Stop> {
     static SLOTS: std::sync::LazyLock<Arc<tokio::sync::Semaphore>> = std::sync::LazyLock::new(|| {
         let slots = std::thread::available_parallelism().map_or(2, |cores| cores.get().clamp(2, 8));
         Arc::new(tokio::sync::Semaphore::new(slots))
@@ -88,7 +102,7 @@ pub(crate) async fn delete_one(node: &Arc<Node>, name: &str) -> Result<u64, Stop
     .map_err(|error| Stop::Failed(error.to_string()))?
 }
 
-async fn delete_on_worker(node: &Arc<Node>, name: &str) -> Result<u64, Stop> {
+async fn delete_on_worker(node: &Arc<Node>, name: &str) -> Result<Gone, Stop> {
     let mut releases = match Kind::of(name) {
         Some(Kind::Home(id)) => crate::forget::release_attachments(node, &id).await.map_err(Stop::Failed)?,
         _ => Vec::new(),
@@ -98,7 +112,7 @@ async fn delete_on_worker(node: &Arc<Node>, name: &str) -> Result<u64, Stop> {
     {
         releases.push(parent);
     }
-    let mut bytes = delete_inner(node, name).await?;
+    let mut gone = delete_inner(node, name).await?;
     let mut seen = std::collections::HashSet::new();
     while let Some(owner) = releases.pop() {
         if !seen.insert(owner.clone()) {
@@ -110,16 +124,19 @@ async fn delete_on_worker(node: &Arc<Node>, name: &str) -> Result<u64, Stop> {
             releases.push(parent);
         }
         match delete_inner(node, owner.resident.as_str()).await {
-            Ok(freed) => bytes += freed,
+            Ok(freed) => {
+                gone.bytes += freed.bytes;
+                gone.finishing = gone.finishing.or(freed.finishing);
+            }
             Err(Stop::Nothing(_)) => {}
             Err(error) => return Err(error),
         }
     }
     crate::forget::wake(node);
-    Ok(bytes)
+    Ok(gone)
 }
 
-async fn delete_inner(node: &Arc<Node>, name: &str) -> Result<u64, Stop> {
+async fn delete_inner(node: &Arc<Node>, name: &str) -> Result<Gone, Stop> {
     let _doing = fastctx_platform::doing::doing(format!("deleting {name}"));
     let kind = Kind::of(name).ok_or_else(|| Stop::Refused(format!("{name} is not the name of a conversation")))?;
     let actions = match &kind {
@@ -155,7 +172,7 @@ async fn delete_inner(node: &Arc<Node>, name: &str) -> Result<u64, Stop> {
         crate::activity_book::seal(node, name)
             .map_err(|error| Stop::Failed(format!("sealing its activity: {error}")))?;
         let (retained, database_bytes) = remove_places(node, &measured).await?;
-        return Ok(bytes.saturating_sub(retained).saturating_add(database_bytes));
+        return Ok(Gone { bytes: bytes.saturating_sub(retained).saturating_add(database_bytes), finishing: None });
     };
     let directory = node.world.conversation(id);
     let _draft = if directory.draft().try_exists().map_err(|error| Stop::Failed(error.to_string()))?
@@ -193,7 +210,10 @@ async fn delete_inner(node: &Arc<Node>, name: &str) -> Result<u64, Stop> {
         crate::activity_book::seal(node, name)
             .map_err(|error| Stop::Failed(format!("sealing its activity: {error}")))?;
         let (retained, database_bytes) = remove_places(node, &measured).await?;
-        return Ok(bytes.saturating_sub(retained + host_kept).saturating_add(database_bytes));
+        return Ok(Gone {
+            bytes: bytes.saturating_sub(retained + host_kept).saturating_add(database_bytes),
+            finishing: None,
+        });
     };
     let gate = node.residents.management(id).map_err(|failure| Stop::Failed(failure.message))?;
     let _exclusive =
@@ -241,29 +261,73 @@ async fn delete_inner(node: &Arc<Node>, name: &str) -> Result<u64, Stop> {
         fastctx_platform::Permissions::Private,
     )
     .map_err(|error| Stop::Failed(format!("recording that it is being deleted: {error}")))?;
+    let host_kept = match host_record(node, id, &resident, &measured).await {
+        Ok(kept) => kept,
+        Err(stop) => {
+            // Nothing that cannot be undone was done: it stays as it was,
+            // and the node does not finish this deletion later.
+            if let Err(error) = fastctx_platform::disk::remove_file(directory.path().join(INTENT)) {
+                node.log.line(format_args!("cancelling the deletion of {id}: {error}"));
+            }
+            return Err(stop);
+        }
+    };
+    // From here it is deleted: what fails now is finished by the node.
+    node.residents.condemn(id);
+    match records(node, id, name, &resident, &measured).await {
+        Ok((retained, database_bytes)) => Ok(Gone {
+            bytes: bytes.saturating_sub(retained + host_kept).saturating_add(database_bytes),
+            finishing: None,
+        }),
+        Err(stop) => Ok(Gone { bytes: bytes.saturating_sub(host_kept), finishing: Some(stop.why()) }),
+    }
+}
+
+/// Deletes the record its host keeps of it, unless a fork still needs it;
+/// says how many bytes of it are kept.
+async fn host_record(
+    node: &Arc<Node>,
+    id: &fastctx_types::ResidentId,
+    resident: &crate::residents::OnRecord,
+    measured: &Measured,
+) -> Result<u64, Stop> {
+    let directory = node.world.conversation(id);
+    let completed = directory.path().join("host-deleted");
+    if completed.try_exists().map_err(|error| Stop::Failed(error.to_string()))? {
+        return Ok(0);
+    }
+    if resident.about.host.agent.as_str() == "codex"
+        && crate::forks::has_dependents(node, id).map_err(|error| Stop::Failed(error.to_string()))?
+    {
+        crate::forks::keep(node, &resident.about).map_err(|error| Stop::Failed(error.to_string()))?;
+        if resident.about.session.is_some() {
+            crate::lifecycle::release_locked(node, &resident.about, crate::lifecycle::ReleaseReason::Archive, None)
+                .await
+                .map_err(|error| Stop::Failed(error.message))?;
+        }
+        return Ok(measured.host.bytes);
+    }
+    host(node, &resident.about, measured).await?;
+    fastctx_platform::owned_directory::delete(&directory.path().join(crate::forks::RETAINED_HOST))
+        .map_err(|error| Stop::Failed(error.to_string()))?;
+    fastctx_platform::publish(&completed, b"", fastctx_platform::Permissions::Private)
+        .map_err(|error| Stop::Failed(format!("recording host deletion: {error}")))?;
+    Ok(0)
+}
+
+/// Everything else of a conversation whose host's record is gone: its
+/// listing, plan, goals, records and places; says how many bytes of its
+/// places are kept, and how many of its records went.
+async fn records(
+    node: &Arc<Node>,
+    id: &fastctx_types::ResidentId,
+    name: &str,
+    resident: &crate::residents::OnRecord,
+    measured: &Measured,
+) -> Result<(u64, u64), Stop> {
+    let directory = node.world.conversation(id);
     // Its activity here goes with it, and nothing told of it later is taken.
     crate::activity_book::seal(node, name).map_err(|error| Stop::Failed(format!("sealing its activity: {error}")))?;
-    let completed = node.world.conversation(id).path().join("host-deleted");
-    let mut host_kept = 0;
-    if !completed.try_exists().map_err(|error| Stop::Failed(error.to_string()))? {
-        if resident.about.host.agent.as_str() == "codex"
-            && crate::forks::has_dependents(node, id).map_err(|error| Stop::Failed(error.to_string()))?
-        {
-            crate::forks::keep(node, &resident.about).map_err(|error| Stop::Failed(error.to_string()))?;
-            if resident.about.session.is_some() {
-                crate::lifecycle::release_locked(node, &resident.about, crate::lifecycle::ReleaseReason::Archive, None)
-                    .await
-                    .map_err(|error| Stop::Failed(error.message))?;
-            }
-            host_kept = measured.host.bytes;
-        } else {
-            host(node, &resident.about, &measured).await?;
-            fastctx_platform::owned_directory::delete(&directory.path().join(crate::forks::RETAINED_HOST))
-                .map_err(|error| Stop::Failed(error.to_string()))?;
-            fastctx_platform::publish(&completed, b"", fastctx_platform::Permissions::Private)
-                .map_err(|error| Stop::Failed(format!("recording host deletion: {error}")))?;
-        }
-    }
     node.residents
         .remove(&node.world, id)
         .map_err(|error| Stop::Failed(format!("recording deletion in progress: {error}")))?;
@@ -318,9 +382,9 @@ async fn delete_inner(node: &Arc<Node>, name: &str) -> Result<u64, Stop> {
             .await
             .map_err(|error| Stop::Failed(error.to_string()))?;
     }
-    let (retained, database_bytes) = remove_places(node, &measured).await?;
+    let result = remove_places(node, measured).await?;
     node.tools_changed(Some(id));
-    Ok(bytes.saturating_sub(retained + host_kept).saturating_add(database_bytes))
+    Ok(result)
 }
 
 /// Finishes the deletions a node stopped halfway: what is left of a

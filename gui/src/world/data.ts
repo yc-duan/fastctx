@@ -73,7 +73,8 @@ export interface ClaudeKeeping {
 
 export interface Deletion {
   name: string;
-  outcome: { outcome: "deleted"; bytes: number } | { outcome: "refused"; why: string } | { outcome: "failed"; why: string };
+  /** `finishing` says why some of a deleted one is still being cleared, which its machine goes on with by itself. */
+  outcome: { outcome: "deleted"; bytes: number; finishing?: string } | { outcome: "refused"; why: string } | { outcome: "failed"; why: string };
 }
 
 /** Asks this machine's node about the data it keeps. */

@@ -49,7 +49,7 @@ impl Residents {
     /// command, a call of its session. What it refuses was not done.
     pub fn active(&self, id: &ResidentId) -> Result<(), Failure> {
         self.stoppable(id)?;
-        if self.lock().deleting.contains_key(id) {
+        if self.is_deleting(id) {
             return Err(Failure::not_run(format!("{id} is being deleted")));
         }
         Ok(())
@@ -75,7 +75,14 @@ impl Residents {
     }
 
     pub fn is_deleting(&self, id: &ResidentId) -> bool {
-        self.lock().deleting.contains_key(id)
+        let state = self.lock();
+        state.deleting.contains_key(id) || state.condemned.contains(id)
+    }
+
+    /// Marks `id` as deleted for good: its deletion went past what can be
+    /// undone, and it takes nothing new until the node has finished it.
+    pub(crate) fn condemn(&self, id: &ResidentId) {
+        self.lock().condemned.insert(id.clone());
     }
 
     /// When the conversation of `id` was deleted from this machine, if it
@@ -177,6 +184,7 @@ impl Residents {
             sessions.push(session.clone());
         }
         state.tombstones.bury(world, id, super::Tombstone { at: Timestamp::now(), sessions })?;
+        state.condemned.remove(id);
         if let Some(session) = &session {
             if state.threads.get::<ResidentId>(session).as_ref() == Some(id) {
                 state.threads.remove(session);
