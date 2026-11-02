@@ -115,6 +115,7 @@ pub fn in_place<R>(what: &'static str, work: impl FnOnce() -> R) -> R {
         let took = began.elapsed();
         IN_PLACE.with(|so_far| so_far.set(so_far.get() + took));
         IN_PLACE_TOOK.record(took);
+        crate::cost::blocked(took);
         return done;
     }
     crate::conduct::blocked(role, what, Location::caller());

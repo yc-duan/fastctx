@@ -36,7 +36,7 @@ where
     F: Future + Send + 'static,
     F::Output: Send + 'static,
 {
-    tokio::spawn(Timed { future: Box::pin(future), started_at: Location::caller() })
+    tokio::spawn(Timed { future: Box::pin(future), started_at: Location::caller(), account: crate::cost::current() })
 }
 
 /// Starts `future` on the runtime `handle` names, timed as `spawn` times it.
@@ -46,14 +46,14 @@ where
     F: Future + Send + 'static,
     F::Output: Send + 'static,
 {
-    handle.spawn(Timed { future: Box::pin(future), started_at: Location::caller() })
+    handle.spawn(Timed { future: Box::pin(future), started_at: Location::caller(), account: crate::cost::current() })
 }
 
 /// `future`, timed as `spawn` times a task, for a set of tasks to start
 /// (`tokio::task::JoinSet::spawn`).
 #[track_caller]
 pub fn timed<F: Future>(future: F) -> impl Future<Output = F::Output> {
-    Timed { future: Box::pin(future), started_at: Location::caller() }
+    Timed { future: Box::pin(future), started_at: Location::caller(), account: crate::cost::current() }
 }
 
 /// Runs `work` on the runtime's blocking pool, as doing what the current
@@ -63,10 +63,20 @@ where
     F: FnOnce() -> R + Send + 'static,
     R: Send + 'static,
 {
+    let account = crate::cost::current();
     tokio::task::spawn_blocking(crate::doing::carried(move || {
         let _role = roles::scoped(Role::Blocking);
-        work()
+        charged_blocking(account, work)
     }))
+}
+
+/// Runs `work`, charging how long it takes to `account`.
+fn charged_blocking<R>(account: Option<&'static crate::cost::Account>, work: impl FnOnce() -> R) -> R {
+    let _entered = crate::cost::enter(account);
+    let began = Instant::now();
+    let done = work();
+    crate::cost::blocked(began.elapsed());
+    done
 }
 
 /// What `work` returns, done on the blocking pool as `spawn_blocking` does
@@ -119,15 +129,19 @@ where
     F: FnOnce() -> R + Send + 'static,
     R: Send + 'static,
 {
+    let account = crate::cost::current();
     handle.spawn_blocking(crate::doing::carried(move || {
         let _role = roles::scoped(Role::Blocking);
-        work()
+        charged_blocking(account, work)
     }))
 }
 
 struct Timed<F: Future> {
     future: Pin<Box<F>>,
     started_at: &'static Location<'static>,
+    /// What its slices are charged to: what started it was charged to, or,
+    /// from its first slice, where it was started.
+    account: Option<&'static crate::cost::Account>,
 }
 
 impl<F: Future> Future for Timed<F> {
@@ -135,11 +149,20 @@ impl<F: Future> Future for Timed<F> {
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<F::Output> {
         roles::running_tasks();
+        let account = match self.account {
+            Some(account) => account,
+            None => {
+                let at = self.started_at;
+                *self.account.insert(crate::cost::started_at(at))
+            }
+        };
+        let _entered = crate::cost::enter(Some(account));
         let started = Instant::now();
-        let blocked = roles::in_place_so_far();
+        let (blocked, elsewhere) = (roles::in_place_so_far(), crate::cost::elsewhere_so_far());
         let polled = self.future.as_mut().poll(cx);
         // What blocked in place held no other task up.
         let took = started.elapsed().saturating_sub(roles::in_place_so_far().saturating_sub(blocked));
+        crate::cost::slice(account, took.saturating_sub(crate::cost::elsewhere_so_far().saturating_sub(elsewhere)));
         POLLS.record(took);
         if took >= SLOW_POLL {
             let task = match crate::doing::said_label() {

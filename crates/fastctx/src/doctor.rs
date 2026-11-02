@@ -126,6 +126,41 @@ fn calls_out(calls: Vec<fastctx_types::stats::CallWork>, json: bool) -> anyhow::
     Ok(())
 }
 
+/// What work cost since the node started, the costliest first: the time its
+/// tasks held a thread, the time it blocked, and the bytes it read.
+fn costs_out(readings: &fastctx_types::readings::Readings) {
+    const SHOWN: usize = 20;
+    let mut costs: std::collections::BTreeMap<&str, [u64; 3]> = std::collections::BTreeMap::new();
+    for count in &readings.counts {
+        let Some(named) = count.name.strip_prefix("cost.") else { continue };
+        let Some((what, measure)) = named.rsplit_once('.') else { continue };
+        let slot = match measure {
+            "task_us" => 0,
+            "blocking_us" => 1,
+            "read_bytes" => 2,
+            _ => continue,
+        };
+        costs.entry(what).or_default()[slot] = count.value;
+    }
+    if costs.is_empty() {
+        return;
+    }
+    let mut costs: Vec<_> = costs.into_iter().collect();
+    costs.sort_by_key(|(_, [task, blocking, _])| std::cmp::Reverse(task + blocking));
+    println!("What work cost, the costliest first (on task threads, blocking, read):");
+    for (what, [task, blocking, read]) in costs.iter().take(SHOWN) {
+        println!(
+            "  {what}: {:.1} s, {:.1} s, {:.1} MiB",
+            *task as f64 / 1e6,
+            *blocking as f64 / 1e6,
+            *read as f64 / (1024.0 * 1024.0)
+        );
+    }
+    if costs.len() > SHOWN {
+        println!("  and {} more (--json lists them all)", costs.len() - SHOWN);
+    }
+}
+
 fn readings_out(
     readings: &fastctx_types::readings::Readings,
     health: &fastctx_types::health::Health,
@@ -173,9 +208,10 @@ fn readings_out(
             );
         }
     }
+    costs_out(readings);
     if !readings.counts.is_empty() || !readings.levels.is_empty() {
         println!("Counts and levels:");
-        for count in &readings.counts {
+        for count in readings.counts.iter().filter(|count| !count.name.starts_with("cost.")) {
             println!("  {}: {}", count.name, count.value);
         }
         for level in &readings.levels {

@@ -617,8 +617,11 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
             continue;
         }
         let arriving = matches!(&call, Call::Arrive { host, hints } if host.agent.as_str() != "claude" && hints.tool_use_id.is_none());
-        // From the door to the answer written, under the call's kind.
-        let timed = fastctx_platform::readings::timing_of("call", &crate::labels::kind_of(&call));
+        // From the door to the answer written, under the call's kind; what
+        // answering it costs, under its kind and who asked.
+        let kind = crate::labels::kind_of(&call);
+        let timed = fastctx_platform::readings::timing_of("call", &kind);
+        let account = fastctx_platform::cost::account(&format!("{kind} by {}", asking(&hello.peer)));
         // What only reads or waits stops once its client is gone; a change
         // is done whole (`Call::on_leaving`). A copy goes on through every
         // break while its caller waits for it, and stops once it is gone.
@@ -661,6 +664,7 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
                 }
             }
         };
+        let answer = fastctx_platform::cost::charged(account, answer);
         let mut reply = if cancellable {
             tokio::select! { reply = answer => reply, _ = reader.recv() => return Ok(()) }
         } else {
@@ -2393,6 +2397,18 @@ async fn blocking<T: Send + 'static>(
 }
 
 /// Who is on the other end of a connection, as a task answering it says.
+/// Who asked for a call here, in kinds few enough to sum what calls cost by.
+fn asking(peer: &Peer) -> &'static str {
+    match peer {
+        Peer::Page { .. } => "a page",
+        Peer::Command { resident: Some(_), .. } => "an agent's command",
+        Peer::Command { session: Some(_), .. } => "an agent's shell",
+        Peer::Command { .. } => "this machine",
+        Peer::Supervisor { .. } => "a job's supervisor",
+        Peer::Session { .. } => "an agent's tools",
+    }
+}
+
 fn calling(peer: &Peer) -> String {
     match peer {
         Peer::Page { .. } => "a page's job".to_string(),

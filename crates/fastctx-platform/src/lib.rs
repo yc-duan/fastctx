@@ -13,6 +13,7 @@ pub mod bounded;
 #[cfg(any(target_os = "linux", target_os = "macos", windows))]
 pub mod child;
 pub mod conduct;
+pub mod cost;
 pub mod cpu_share;
 #[cfg(target_os = "macos")]
 pub mod darwin_proc;
