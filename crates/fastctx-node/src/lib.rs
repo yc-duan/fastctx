@@ -548,16 +548,26 @@ pub async fn run_prepared(
     coordinator: Option<&fastctx_types::ProcessIdentity>,
     startup_gate: Option<FileLock>,
 ) -> anyhow::Result<()> {
-    anyhow::ensure!(
-        !fastctx_platform::disk::exists(fastctx_root.join("uninstalled.json"))?,
-        "this World was uninstalled; reinstall it before starting a node"
-    );
-    if let Some(coordinator) = coordinator {
-        replacement::validate(
-            fastctx_root,
-            successor.ok_or_else(|| anyhow!("prepared node has no successor digest"))?,
-            coordinator,
-        )?;
+    // The main thread runs the node's accepting loop: what it reads and
+    // writes before it takes the World goes where that may block.
+    {
+        let (root, successor, coordinator) =
+            (fastctx_root.to_path_buf(), successor.map(str::to_owned), coordinator.cloned());
+        fastctx_platform::task::blocking(move || -> anyhow::Result<()> {
+            anyhow::ensure!(
+                !fastctx_platform::disk::exists(root.join("uninstalled.json"))?,
+                "this World was uninstalled; reinstall it before starting a node"
+            );
+            if let Some(coordinator) = &coordinator {
+                replacement::validate(
+                    &root,
+                    successor.as_deref().ok_or_else(|| anyhow!("prepared node has no successor digest"))?,
+                    coordinator,
+                )?;
+            }
+            Ok(())
+        })
+        .await?;
     }
     let world = WorldDir::under(fastctx_root);
     let mut renewal = renewal::Startup::prepare(fastctx_root, successor, coordinator.is_some()).await?;
@@ -566,10 +576,14 @@ pub async fn run_prepared(
     // that comes then waits for this one rather than giving up.
     let waits = supervision.is_some() || renewal.successor;
     if waits {
-        ensure_private_dir(world.path()).with_context(|| format!("preparing {}", world.path().display()))?;
-        let me = serde_json::to_vec(&fastctx_platform::current_identity()?).expect("identities serialize");
-        fastctx_platform::publish(&world.node_successor(), &me, fastctx_platform::Permissions::Private)
-            .context("saying this node waits to take the World")?;
+        let waiting = world.clone();
+        fastctx_platform::task::blocking(move || -> anyhow::Result<()> {
+            ensure_private_dir(waiting.path()).with_context(|| format!("preparing {}", waiting.path().display()))?;
+            let me = serde_json::to_vec(&fastctx_platform::current_identity()?).expect("identities serialize");
+            fastctx_platform::publish(&waiting.node_successor(), &me, fastctx_platform::Permissions::Private)
+                .context("saying this node waits to take the World")
+        })
+        .await?;
     }
     let supervision = match supervision {
         Some(supervision) => Some(
@@ -581,7 +595,13 @@ pub async fn run_prepared(
         ),
         None => None,
     };
-    ensure_private_dir(world.path()).with_context(|| format!("preparing {}", world.path().display()))?;
+    {
+        let preparing = world.clone();
+        fastctx_platform::task::blocking(move || {
+            ensure_private_dir(preparing.path()).with_context(|| format!("preparing {}", preparing.path().display()))
+        })
+        .await?;
+    }
     let _lock = match waits {
         // A successor prepares, then waits to be let in, then waits for the
         // node before it to let the World go.
@@ -597,7 +617,8 @@ pub async fn run_prepared(
             let lock = world.node_lock();
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
             loop {
-                if let Some(lock) = FileLock::try_acquire(&lock)? {
+                let trying = lock.clone();
+                if let Some(lock) = fastctx_platform::task::blocking(move || FileLock::try_acquire(&trying)).await? {
                     break lock;
                 }
                 if std::time::Instant::now() >= deadline {
@@ -606,11 +627,19 @@ pub async fn run_prepared(
                 tokio::time::sleep(std::time::Duration::from_millis(250)).await;
             }
         }
-        false => FileLock::try_acquire(&world.node_lock())?.ok_or_else(|| AlreadyServed(world.path().to_path_buf()))?,
+        false => {
+            let lock = world.node_lock();
+            fastctx_platform::task::blocking(move || FileLock::try_acquire(&lock))
+                .await?
+                .ok_or_else(|| AlreadyServed(world.path().to_path_buf()))?
+        }
     };
-    if renewal.successor
-        && fastctx_install::renewal::read(fastctx_root)?.is_some_and(|plan| plan.candidate.build != renewal.build)
-    {
+    if renewal.successor && {
+        let root = fastctx_root.to_path_buf();
+        fastctx_platform::task::blocking(move || fastctx_install::renewal::read(&root))
+            .await?
+            .is_some_and(|plan| plan.candidate.build != renewal.build)
+    } {
         return Ok(());
     }
     renewal.acquired();

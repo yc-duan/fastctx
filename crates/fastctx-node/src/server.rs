@@ -1029,10 +1029,40 @@ fn handled<'a>(
     Box::pin(handle(node, peer, call))
 }
 
+/// What was last seen of a World's uninstall marker, and when.
+struct Looked {
+    uninstalling: bool,
+    at: std::time::Instant,
+    looking: bool,
+}
+
+/// Whether this World is being uninstalled, as the marker its uninstaller
+/// writes says: looked at where that may block, at most once a second, a
+/// call meanwhile taking the last answer, so that none waits on the disk for
+/// it. A node does not start in a World being uninstalled.
+fn uninstalling(node: &Node) -> bool {
+    static LOOKED: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<std::path::PathBuf, Looked>>> =
+        std::sync::LazyLock::new(Default::default);
+    let mut looked = LOOKED.lock().expect("never poisoned");
+    let seen = looked.entry(node.root.clone()).or_insert_with(|| Looked {
+        uninstalling: false,
+        at: std::time::Instant::now(),
+        looking: false,
+    });
+    if !seen.looking && seen.at.elapsed() >= std::time::Duration::from_secs(1) {
+        seen.looking = true;
+        let root = node.root.clone();
+        fastctx_platform::task::spawn_blocking(move || {
+            let uninstalling = fastctx_platform::disk::is_there(root.join("uninstalled.json"));
+            let mut looked = LOOKED.lock().expect("never poisoned");
+            looked.insert(root, Looked { uninstalling, at: std::time::Instant::now(), looking: false });
+        });
+    }
+    seen.uninstalling
+}
+
 pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<Reply, Failure> {
-    if fastctx_platform::disk::is_there(node.root.join("uninstalled.json"))
-        && !matches!(call, Call::UninstallPrepare | Call::HandOver)
-    {
+    if uninstalling(node) && !matches!(call, Call::UninstallPrepare | Call::HandOver) {
         return Err(Failure::not_run("this World is being uninstalled"));
     }
     active_caller(node, peer)?;
