@@ -458,13 +458,15 @@ pub async fn thread_spec(
         ("FASTCTX_RESIDENT".to_string(), address.tag()),
         ("FASTCTX_AGENT_HOME".to_string(), home.map(|home| home.to_string_lossy().into_owned()).unwrap_or_default()),
     ];
-    let mut tools = vec!["run"];
+    // Every session the World starts speaks with message_user, a colleague
+    // to the agent that asked it; only one the user opened asks colleagues.
+    let mut tools = vec!["run", fastctx_types::voice::TOOL];
     // A colleague's thread is listed under its task; a session the user
     // opens is named by whichever client shows it first, as Codex does.
     let name = match origin {
         Origin::Colleague { label, .. } => Some(label.clone()).filter(|label| !label.trim().is_empty()),
         Origin::User => {
-            tools.extend(["ask_colleague", "message_colleague", fastctx_types::voice::TOOL]);
+            tools.extend(["ask_colleague", "message_colleague"]);
             None
         }
     };
