@@ -254,13 +254,17 @@ fn plain(node: &Arc<Node>, thread: String, event: HostEvent) -> std::io::Result<
 }
 
 async fn drain(node: &Arc<Node>, thread: &str) {
+    // A thread whose conversation is not found now keeps what it reported,
+    // in memory and on disk: the next report or the next start drains it.
     if node.residents.resident_of_thread(thread).is_none() {
+        reports::failed(node, thread);
         return;
     }
     let _doing = fastctx_platform::doing::doing(format!("reading the reports of Codex thread {thread}"));
     let worker = working(node, thread);
     let _worker = worker.lock().await;
     if node.residents.resident_of_thread(thread).is_none() {
+        reports::failed(node, thread);
         return;
     }
     loop {
@@ -280,7 +284,10 @@ async fn drain(node: &Arc<Node>, thread: &str) {
             }
         };
         let event = selected.event.clone();
-        let Some(id) = node.residents.resident_of_thread(thread) else { return };
+        let Some(id) = node.residents.resident_of_thread(thread) else {
+            reports::failed(node, thread);
+            return;
+        };
         let result =
             if selected.applied {
                 Ok(())
