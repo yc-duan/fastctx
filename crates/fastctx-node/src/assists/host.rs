@@ -14,10 +14,13 @@ use crate::Node;
 /// to have none before its directory is looked at again.
 const ABSENT_FOR: Duration = Duration::from_secs(10);
 
+/// A conversation's host mode as read, and when.
+type Read = (Option<bool>, Instant);
+
 /// Each conversation's host mode as last read or recorded, by its record's
 /// path: fixed at its birth and asked for whenever its host is found, it is
 /// read from its disk once.
-static KEPT: LazyLock<Mutex<HashMap<PathBuf, (Option<bool>, Instant)>>> = LazyLock::new(Default::default);
+static KEPT: LazyLock<Mutex<HashMap<PathBuf, Read>>> = LazyLock::new(Default::default);
 
 fn path(node: &Node, resident: &ResidentId) -> PathBuf {
     node.world.conversation(resident).path().join("host-isolation.json")
