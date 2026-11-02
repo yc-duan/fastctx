@@ -47,6 +47,7 @@ mod control_long;
 mod control_posts;
 mod control_queue;
 mod copy;
+mod cut_history;
 mod data;
 mod delivery;
 mod desk;
@@ -238,6 +239,7 @@ pub(crate) struct Node {
     /// (`colleagues::tree::Reads`).
     collaboration_reads: colleagues::tree::Reads,
     collaboration_followed: colleagues::live::Followed,
+    cut_histories: cut_history::CutHistories,
     plan_reads: plan_reads::Reads,
     skill_copies: skills::copies::Copies,
     skill_index: skills::cache::Cache,
@@ -768,6 +770,7 @@ pub async fn run_prepared(
                 registered: Default::default(),
                 collaboration_reads: Default::default(),
                 collaboration_followed: Default::default(),
+                cut_histories: Default::default(),
                 plan_reads: Default::default(),
                 skill_copies: Default::default(),
                 skill_index: Default::default(),

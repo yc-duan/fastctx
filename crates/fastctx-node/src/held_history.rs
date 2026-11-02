@@ -1,9 +1,12 @@
 //! A watch for a viewer that keeps the history on its own disk
-//! (`fastctx_types::session::held`; `world-gui.md`, 对话). This machine keeps
-//! nothing for it: it reads the history again, slims it to what an interface
-//! draws, cuts it into segments and sends the ones the viewer lacks. Where
-//! the records the history is read from are as they were when the viewer
-//! last read it, it says so without reading them whole.
+//! (`fastctx_types::session::held`; `world-gui.md`, 对话). A viewer that
+//! comes back with the mark of the last event it took is sent the events
+//! after it, while they are all kept. One that holds nothing yet is sent the
+//! segments the history was last cut into (`crate::cut_history`) and the
+//! events told since. Otherwise the history is read again, slimmed to what an
+//! interface draws, cut into segments, and the ones the viewer lacks are
+//! sent; where the records the history is read from are as they were when the
+//! viewer last read it, it says so without reading them whole.
 
 use std::sync::Arc;
 
@@ -26,6 +29,38 @@ const FORM: &str = "fastctx history segments: turn boundaries, artifact identiti
 /// `held`, and the events after them, slimmed.
 pub(crate) async fn opening(node: &Arc<Node>, resident: &ResidentId, held: &Held) -> Result<Opening, Failure> {
     let owner = Address { machine: node.machine(), resident: resident.clone() };
+    if let Some(since) = held.since {
+        let followed = node.watchers.follow(resident, Some(since));
+        if let Some(replay) = followed.replay.filter(|_| !followed.reset) {
+            let (events, _) = crate::talk::requested(node, resident, followed.events)?;
+            let mut pieces = vec![Watched::Resumed];
+            pieces.extend(told(replay, &owner));
+            return Ok(Opening { pieces, events, slim: Some(owner) });
+        }
+    }
+    // A viewer that holds anything may hold some of the events told after
+    // the cut, which would come to it twice.
+    if held.marks
+        && held.version.is_none()
+        && held.segments.is_empty()
+        && let Some(kept) = node.cut_histories.get(resident)
+    {
+        let followed = node.watchers.follow(resident, Some(kept.at));
+        if let Some(replay) = followed.replay.filter(|_| !followed.reset) {
+            let (events, pending) = crate::talk::requested(node, resident, followed.events)?;
+            let (cutting, held_now) = (kept.clone(), held.clone());
+            let mut pieces = fastctx_platform::task::spawn_blocking(move || {
+                history::pieces(&cutting.cut, &held_now, cutting.version.clone())
+            })
+            .await
+            .map_err(|error| Failure::new(format!("sending the segments kept: {error}")))?;
+            pieces.extend(live(pending, &owner));
+            pieces.extend(told(kept.snapshots.clone(), &owner));
+            pieces.extend(told(replay, &owner));
+            return Ok(Opening { pieces, events, slim: Some(owner) });
+        }
+        node.cut_histories.forget(resident, &kept);
+    }
     // Subscribe before checking a held version: a rewrite between the check
     // and subscription must still reach the viewer that gets "unchanged".
     let subscribed = held.version.as_ref().map(|_| crate::talk::subscribe(node, resident)).transpose()?;
@@ -39,7 +74,7 @@ pub(crate) async fn opening(node: &Arc<Node>, resident: &ResidentId, held: &Held
         return Ok(Opening { pieces, events, slim: Some(owner) });
     }
     drop(subscribed);
-    let read = crate::talk::history_here(node, resident).await?;
+    let read = crate::talk::history_apart(node, resident).await?;
     // Never repeated: a viewer that holds it is sent the history next time.
     // So is a reading some record was missing from, which is read again
     // once it can be.
@@ -57,12 +92,31 @@ pub(crate) async fn opening(node: &Arc<Node>, resident: &ResidentId, held: &Held
     .await
     .map_err(|error| Failure::new(format!("cutting the history into segments: {error}")))?;
     picture_fingerprints(node, &mut history).await?;
-    let mut pieces =
-        fastctx_platform::task::spawn_blocking(move || history::pieces(history::cut(history), &held_now, version))
-            .await
-            .map_err(|error| Failure::new(format!("cutting the history into segments: {error}")))?;
+    let (mut pieces, cut) = fastctx_platform::task::spawn_blocking(move || {
+        let cut = history::cut(history);
+        (history::pieces(&cut, &held_now, version.clone()), (cut, version))
+    })
+    .await
+    .map_err(|error| Failure::new(format!("cutting the history into segments: {error}")))?;
+    // Kept for the viewers that come next, unless some record was missing.
+    if let Some(at) = read.at
+        && !read.unread
+    {
+        let (cut, version) = cut;
+        node.cut_histories
+            .keep(resident, crate::cut_history::CutHistory::new(at, version, cut, read.snapshots.clone()));
+    }
     pieces.extend(live(read.pending, &owner));
+    pieces.extend(told(read.snapshots, &owner));
     Ok(Opening { pieces, events: read.events, slim: Some(owner) })
+}
+
+/// Events as the watchers told them, each with its mark, slimmed.
+fn told(events: Vec<Arc<crate::watch::Marked>>, owner: &Address) -> impl Iterator<Item = Watched> + '_ {
+    events.into_iter().filter_map(|marked| {
+        let marked = Arc::unwrap_or_clone(marked);
+        crate::talk::live(marked.event, Some(owner)).map(|event| Watched::Live { event, mark: marked.mark })
+    })
 }
 
 pub(crate) async fn picture_fingerprints(node: &Arc<Node>, events: &mut [SessionEvent]) -> Result<(), Failure> {
@@ -99,7 +153,9 @@ pub(crate) async fn picture_fingerprints(node: &Arc<Node>, events: &mut [Session
 /// What the resident's host waits on someone to answer now, sent as it
 /// happens rather than kept with the history, which outlives it.
 fn live(pending: Vec<SessionEvent>, owner: &Address) -> impl Iterator<Item = Watched> + '_ {
-    pending.into_iter().filter_map(|event| crate::talk::live(event, Some(owner)).map(|event| Watched::Live { event }))
+    pending
+        .into_iter()
+        .filter_map(|event| crate::talk::live(event, Some(owner)).map(|event| Watched::Live { event, mark: None }))
 }
 
 /// A version of the resident's history, from what it is read from: equal

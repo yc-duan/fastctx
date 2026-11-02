@@ -12,6 +12,7 @@ mod goals;
 mod history;
 mod lifecycle;
 mod release_colleague;
+mod resume;
 mod scale;
 mod shared_controls;
 mod sharing;
@@ -691,6 +692,7 @@ async fn main() -> Result<()> {
     );
     attachments::exercise(&wa, &host, &moved, &sa.to.resident).await?;
     controls::exercise(&wa, &host, &alice_two, &sa.to.resident, &moved).await?;
+    resume::exercise(&wa, &host, &sa.to.resident).await?;
     let colleague = colleagues::exercise(&wa, &host, &alice_two, &sa.to.resident, &home).await?;
     std::fs::write(base.join("colleague.json"), serde_json::to_vec(&colleague)?)?;
     let release_colleague = release_colleague::exercise(&base, &wo, listen, &mock_configuration, &agent).await?;

@@ -66,7 +66,7 @@ pub struct GoalWatch {
 impl GoalWatch {
     pub async fn next(&mut self) -> Result<Option<View>, Error> {
         while let Some(piece) = self.watching.next().await? {
-            let Watched::Live { event } = piece else { continue };
+            let Watched::Live { event, .. } = piece else { continue };
             let Happened::Changed { change: SessionChange::Goal { goal }, .. } = event.happened else { continue };
             if goal["world"] != true {
                 continue;

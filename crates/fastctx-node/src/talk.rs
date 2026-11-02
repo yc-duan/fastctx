@@ -12,10 +12,11 @@
 
 use std::sync::Arc;
 
+use crate::watch::Events;
 use fastctx_net::data::Stream;
 use fastctx_net::link::Link;
 use fastctx_net::sign::Domain;
-use fastctx_net::watch_queue::{self, Events};
+use fastctx_net::watch_queue;
 use fastctx_types::access::{Acting, Purpose, Written};
 use fastctx_types::agents::Choices;
 use fastctx_types::attachments::Attachment;
@@ -143,8 +144,9 @@ pub async fn watch(
                         Ok(Some(event)) => {
                             if goal.is_some() && !crate::goals::watch::is_goal(&event) { continue; }
                             if !crate::goals::visible(&node, crate::admission::seen::Looker::Here(&Acting::Here), &resident, &event) { continue; }
-                            let Some(event) = live(Arc::unwrap_or_clone(event), slim.as_ref()) else { continue };
-                            if sender.send(Ok(Watched::Live { event })).is_err() { return }
+                            let marked = Arc::unwrap_or_clone(event);
+                            let Some(event) = live(marked.event, slim.as_ref()) else { continue };
+                            if sender.send(Ok(Watched::Live { event, mark: marked.mark })).is_err() { return }
                         }
                         Ok(None) => return,
                         Err(_) => { sender.lag(); return; },
@@ -278,17 +280,41 @@ pub(crate) struct HistoryRead {
     /// Some record the history is read from could not be read now: this is
     /// not the history as its files hold it, and is not to be kept as such.
     pub unread: bool,
+    /// For a read heard apart (`history_apart`): what was under way as its
+    /// events began, and the mark of the last event told before them.
+    pub snapshots: Vec<Arc<crate::watch::Marked>>,
+    pub at: Option<fastctx_types::session::Mark>,
+}
+
+/// How a read of a resident's history hears its events from then on.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Hearing {
+    /// As a viewer, what is under way first among them.
+    Viewer,
+    /// As a viewer, what is under way apart, with where the events begin.
+    Apart,
+    /// Without viewing it.
+    Quiet,
 }
 
 /// Starts watching a resident of this machine, without reading its history:
 /// the events from now on, and the requests its host waits on someone to
 /// answer now.
 pub(crate) fn subscribe(node: &Arc<Node>, resident: &ResidentId) -> Result<(Events, Vec<SessionEvent>), Failure> {
+    requested(node, resident, node.watchers.watch(resident))
+}
+
+/// `events` of a resident of this machine, its host's requests among them
+/// passed on only while they wait, and the requests that wait now.
+pub(crate) fn requested(
+    node: &Arc<Node>,
+    resident: &ResidentId,
+    events: Events,
+) -> Result<(Events, Vec<SessionEvent>), Failure> {
     let (about, _) = node
         .residents
         .about(resident)
         .ok_or_else(|| Failure::new(format!("no resident {resident} lives on {}", node.machine())))?;
-    let events = node.watchers.watch(resident);
     match &about.session {
         Some(thread) if about.host.agent.as_str() == "codex" => {
             let codex = node.codex.of(node, &about)?;
@@ -302,13 +328,19 @@ pub(crate) fn subscribe(node: &Arc<Node>, resident: &ResidentId) -> Result<(Even
 /// Starts watching a resident of this machine, then reads its history: what
 /// the World kept of it, merged with what its host keeps.
 pub(crate) async fn history_here(node: &Arc<Node>, resident: &ResidentId) -> Result<HistoryRead, Failure> {
-    read_here(node, resident, false).await.map_err(|failure| as_deleted(node, resident, failure))
+    read_here(node, resident, Hearing::Viewer).await.map_err(|failure| as_deleted(node, resident, failure))
 }
 
 /// A resident's history and its events from then on, read for something
 /// other than a viewer, so its host is not kept awake for the reading.
 pub(crate) async fn history_quietly(node: &Arc<Node>, resident: &ResidentId) -> Result<HistoryRead, Failure> {
-    read_here(node, resident, true).await.map_err(|failure| as_deleted(node, resident, failure))
+    read_here(node, resident, Hearing::Quiet).await.map_err(|failure| as_deleted(node, resident, failure))
+}
+
+/// A resident's history for a viewer, its events from then on heard apart
+/// from what is under way, with where they begin.
+pub(crate) async fn history_apart(node: &Arc<Node>, resident: &ResidentId) -> Result<HistoryRead, Failure> {
+    read_here(node, resident, Hearing::Apart).await.map_err(|failure| as_deleted(node, resident, failure))
 }
 
 /// A read that failed as the conversation was being deleted, or once it is
@@ -323,14 +355,21 @@ fn as_deleted(node: &Node, resident: &ResidentId, failure: Failure) -> Failure {
     }
 }
 
-async fn read_here(node: &Arc<Node>, resident: &ResidentId, quiet: bool) -> Result<HistoryRead, Failure> {
+async fn read_here(node: &Arc<Node>, resident: &ResidentId, hearing: Hearing) -> Result<HistoryRead, Failure> {
     let (about, _) = node.residents.about(resident).ok_or_else(|| crate::forget::gone(node, resident))?;
     // A session the user opened on their own is theirs to read, in their
     // own program (`world-layers.md`).
     if !about.world_managed() {
         return Err(Failure::refused(crate::speech::OWN_SESSION));
     }
-    let mut events = if quiet { node.watchers.watch_quietly(resident) } else { node.watchers.watch(resident) };
+    let (mut events, snapshots, at) = match hearing {
+        Hearing::Viewer => (node.watchers.watch(resident), Vec::new(), None),
+        Hearing::Quiet => (node.watchers.watch_quietly(resident), Vec::new(), None),
+        Hearing::Apart => {
+            let followed = node.watchers.follow(resident, None);
+            (followed.events, followed.snapshots, Some(followed.at))
+        }
+    };
     let directory = node.world.conversation(resident);
     let preparing = directory.clone();
     fastctx_platform::task::spawn_blocking(move || crate::session_record::prepare(&preparing))
@@ -423,7 +462,7 @@ async fn read_here(node: &Arc<Node>, resident: &ResidentId, quiet: bool) -> Resu
         }
         _ => Vec::new(),
     };
-    Ok(HistoryRead { history, pending, events, unread })
+    Ok(HistoryRead { history, pending, events, unread, snapshots, at })
 }
 
 /// A session's history: what the World kept of it, and what its host keeps
@@ -696,7 +735,8 @@ pub async fn serve_watch(
             event = events.recv() => match event {
                 Ok(Some(event)) => {
                     if (!goal || crate::goals::watch::is_goal(&event)) && crate::goals::visible(node, crate::admission::seen::Looker::Asker(asker), &resident, &event) {
-                        next.extend(live(Arc::unwrap_or_clone(event), slim.as_ref()).map(|event| Watched::Live { event }));
+                        let marked = Arc::unwrap_or_clone(event);
+                        next.extend(live(marked.event, slim.as_ref()).map(|event| Watched::Live { event, mark: marked.mark }));
                     }
                 },
                 Ok(None) => return ended("this machine stopped telling its events"),

@@ -72,7 +72,7 @@ fn main() {
                     protocol as u32 == fastctx_types::ipc::PROTOCOL || compat::enabled(protocol as u32, &peer);
                 json!({"admitted": accepted && compat::peer(&peer) && compat::call(protocol as u32, &peer, &call)})
             }
-            "decode" => json!({"read": decode(reader, value, false)}),
+            "decode" | "watched" => json!({"read": decode(reader, value, false)}),
             "world" => {
                 let mut now: fastctx_types::world::WorldNow = serde_json::from_value(value).unwrap();
                 compat::world(case["shapes"].as_u64().unwrap() as u32, &mut now);

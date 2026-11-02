@@ -4,8 +4,8 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
+use crate::watch::Events;
 use fastctx_hosts::codex::CodexHost;
-use fastctx_net::watch_queue::{self, Events};
 use fastctx_types::session::{Happened, SessionChange, SessionEvent};
 
 pub fn recorded(recorded: Vec<SessionEvent>, hosted: &[SessionEvent]) -> Vec<SessionEvent> {
@@ -35,7 +35,7 @@ pub fn recorded(recorded: Vec<SessionEvent>, hosted: &[SessionEvent]) -> Vec<Ses
 }
 
 pub fn requests(host: Arc<CodexHost>, thread: String, mut events: Events) -> Events {
-    let (sender, receiver) = watch_queue::events();
+    let (sender, receiver) = crate::watch::events();
     fastctx_platform::task::spawn(async move {
         loop {
             tokio::select! {

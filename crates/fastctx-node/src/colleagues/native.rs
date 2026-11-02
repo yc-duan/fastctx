@@ -181,7 +181,7 @@ pub(super) async fn read(node: &Arc<Node>, id: &ResidentId, deadline: Instant) -
 pub(super) struct Read {
     pub(super) fold: Fold,
     pub(super) unavailable: Vec<String>,
-    pub(super) events: Option<fastctx_net::watch_queue::Events>,
+    pub(super) events: Option<crate::watch::Events>,
 }
 
 pub(super) async fn open(node: &Arc<Node>, id: &ResidentId, deadline: Instant) -> Read {

@@ -18,6 +18,10 @@ SENTINEL = {"sentinel": "s-0123456789abcdef", "generation": 1, "machine": "deskt
                  "exit_code": None, "full_path": None}]}}
 # The World's facts after the five protocol 13 shipped with.
 LATER_FACTS = ["delivery_failed", "woke"]
+# A live piece as a node now tells it, with where it stands in its telling.
+MARKED_LIVE = {"kind": "watched", "id": 37, "watched": {
+    "kind": "live", "event": {"at": AT, "event": "turn_started", "turn": "turn-1"},
+    "mark": {"epoch": 7, "sequence": 3}}}
 # The protocol each kind of host control's result came with; the rest came with 13.
 CONTROLLED_SINCE = {"done": 5, "forked": 5, "reported": 10, "refused": 10, "model_menu": 10}
 
@@ -267,6 +271,7 @@ def samples(root, shipped):
         # A node that follows collaborations says so; a client before it reads past that.
         yield {"mode": "welcome", "protocol": protocol,
                "value": {"kind": "accepted", "machine": "desktop", "version": "1.0.0", "collaboration_watch": True}}
+        yield {"mode": "watched", "protocol": protocol, "value": MARKED_LIVE}
         for reply in replies(fixtures):
             if protocol == 5 and reply["reply"] == "server_invitation":
                 continue
@@ -320,6 +325,7 @@ def samples(root, shipped):
             yield {"mode": "welcome", "protocol": 13, "reader": reader, "value": welcome}
         yield {"mode": "welcome", "protocol": 13, "reader": reader,
                "value": {"kind": "accepted", "machine": "desktop", "version": "1.0.0", "collaboration_watch": True}}
+        yield {"mode": "watched", "protocol": 13, "reader": reader, "value": MARKED_LIVE}
         for reply in replies(fixtures):
             notice = reply["notices"][0]["notice"] if reply["reply"] == "notices" else {}
             yield {"mode": "reply", "protocol": 13, "reader": reader, "value": frame(reply),

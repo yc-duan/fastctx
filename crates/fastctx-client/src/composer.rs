@@ -55,7 +55,7 @@ impl World {
                     () = sender.closed() => return,
                     piece = watching.next() => {
                         match piece {
-                            Ok(Some(Watched::Live { event })) => {
+                            Ok(Some(Watched::Live { event, .. })) => {
                                 if let Happened::Changed { change: SessionChange::ComposerFailed { error }, .. } = &event.happened {
                                     let _ = sender.send(Err(crate::CallError::Failed(fastctx_types::ipc::Failure::new(error.clone())).into()));
                                     return;
@@ -64,7 +64,7 @@ impl World {
                                     && sender.send(Ok(*composer)).is_err() { return; }
                             }
                             // A composer has no history; nothing of one is asked for.
-                            Ok(Some(Watched::History { .. } | Watched::Unchanged { .. } | Watched::Segments { .. } | Watched::Now { .. } | Watched::Collaboration { .. })) => {},
+                            Ok(Some(Watched::History { .. } | Watched::Unchanged { .. } | Watched::Segments { .. } | Watched::Resumed | Watched::Now { .. } | Watched::Collaboration { .. })) => {},
                             Ok(Some(Watched::Documents { .. })) => {
                                 let _ = sender.send(Err(Error::Unexpected("document packets arrived on a legacy composer watch".into())));
                                 return;

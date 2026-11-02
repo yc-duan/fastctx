@@ -33,7 +33,7 @@ pub fn watched_size(watched: &Watched) -> (usize, Option<String>) {
     match watched {
         Watched::Now { .. } => (size(watched), Some("now".into())),
         Watched::Collaboration { .. } => (size(watched), Some("collaboration".into())),
-        Watched::Live { event } => event_size(event),
+        Watched::Live { event, .. } => event_size(event),
         _ => (size(watched), None),
     }
 }

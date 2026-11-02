@@ -28,7 +28,7 @@ pub(crate) async fn opening(
             change: SessionChange::Goal { goal: serde_json::json!({"world":true,"view":view}) },
         },
     };
-    Ok(crate::talk::Opening { pieces: vec![Watched::Live { event }], events, slim: None })
+    Ok(crate::talk::Opening { pieces: vec![Watched::Live { event, mark: None }], events, slim: None })
 }
 
 pub(crate) fn is_goal(event: &SessionEvent) -> bool {

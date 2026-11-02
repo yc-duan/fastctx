@@ -153,6 +153,10 @@ def verify(reader):
     for case, answer in zip(corpus, answers):
         if case["mode"] in ("request", "current_request"):
             assert answer["admitted"] == case["admitted"], (case, answer)
+        elif case["mode"] == "watched":
+            # A viewer of that release reads the event a live piece carries,
+            # whatever else the piece says of it.
+            assert answer["read"]["watched"]["event"] == case["value"]["watched"]["event"], (case, answer)
         elif case["mode"] == "world":
             # An interface of that release reads the whole World it is sent.
             assert answer["read"]["world"]["here"] == case["value"]["here"], (case, answer)

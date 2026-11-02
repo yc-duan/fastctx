@@ -586,7 +586,7 @@ pub fn fixtures() -> Fixtures {
     let watched = vec![
         Watched::History { events: vec![] },
         Watched::History { events: vec![events[0].clone()] },
-        Watched::Live { event: events[1].clone() },
+        Watched::Live { event: events[1].clone(), mark: None },
         Watched::Unchanged { version: "version-1".into() },
         Watched::Segments {
             version: "version-2".into(),

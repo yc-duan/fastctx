@@ -4,7 +4,8 @@
 
 use super::{Following, SETTLE, Sender, Told, stopping, tell};
 use crate::Node;
-use fastctx_net::watch_queue::{Events, TryRecvError};
+use crate::watch::Events;
+use fastctx_net::watch_queue::TryRecvError;
 use fastctx_types::collab_prompt::TREE_DEADLINE;
 use fastctx_types::{
     Address, ResidentId,
@@ -41,7 +42,8 @@ pub(super) async fn keep(node: &Arc<Node>, id: &ResidentId, acting: &Acting, tol
     let mut asked: Option<BTreeMap<Address, String>> = None;
     let mut conversation: Option<Branch> = None;
     loop {
-        match super::unseen(&mut own) {
+        let latest = own.borrow_and_update().clone();
+        match latest {
             Some(Told::Tree { tree, .. }) => conversation = Some(tree.conversation.clone()),
             Some(Told::Ended(failure)) => return failure,
             None => {}

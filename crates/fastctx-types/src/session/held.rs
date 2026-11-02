@@ -8,9 +8,11 @@
 //! segments it keeps; only the others come. A host that rewrote its history
 //! (a rollback, a compaction, a fork) makes new segments where the old ones
 //! no longer match, and only those are sent again. The machine the session
-//! lives on keeps nothing for its viewers: it reads its records again each
-//! time, and a version it names lets it answer that nothing changed without
-//! reading them whole.
+//! lives on keeps, for a while, the segments it cut last and the live events
+//! it told since: a viewer that comes back is sent only the events it
+//! missed, and one that comes new those segments and the events after them.
+//! Where neither will do, it reads its records again, and a version it names
+//! lets it answer that nothing changed without reading them whole.
 
 use serde::{Deserialize, Serialize};
 
@@ -76,6 +78,16 @@ pub struct Held {
     /// after it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub latest_first: bool,
+    /// The mark of the last live event it took: when the session's machine
+    /// still has every event after it, only those come
+    /// (`super::Watched::Resumed`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub since: Option<super::Mark>,
+    /// It takes live events by their marks, passing over one it took
+    /// already: the session's machine may answer with segments it cut a
+    /// while ago and the events told since then.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub marks: bool,
 }
 
 /// One segment's events, in order.

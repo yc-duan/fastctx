@@ -70,7 +70,8 @@ impl Key {
 
 /// Follows `id`'s collaboration as `acting` sees it, on `machine` when it
 /// lives elsewhere: what is told comes on the returned receiver, nothing
-/// until the first tree is worked out. What was told already is new to it.
+/// until the first tree is worked out. What was told already counts as a
+/// change, so its first `changed` returns at once.
 pub(crate) fn follow(
     node: &Arc<Node>,
     id: &ResidentId,
@@ -96,20 +97,28 @@ pub(crate) fn follow(
     following
 }
 
-/// What `following` was told since it last looked, if anything.
-fn unseen(following: &mut Following) -> Option<Told> {
-    let told = following.borrow_and_update();
-    if told.has_changed() { told.clone() } else { None }
-}
-
 /// Keeps a collaboration for as long as one follows it, or until it can no
 /// longer be followed.
 async fn keep(node: Arc<Node>, key: Key, name: String, told: Sender) {
+    let what = match (&key.machine, key.follow) {
+        (None, Follow::Tree) => format!("{}'s collaboration", key.id),
+        (None, Follow::Branch) => format!("{}'s own collaboration", key.id),
+        (Some(machine), _) => format!("{}'s collaboration on {machine}", key.id),
+    };
+    let started = std::time::Instant::now();
+    node.log.line(format_args!("following {what}"));
     loop {
         let ended = tokio::select! {
             failure = work(&node, &key, &told) => Some(failure),
             () = told.closed() => None,
         };
+        let lasted = crate::talk::lasted(started);
+        match &ended {
+            Some(failure) => {
+                node.log.line(format_args!("stopped following {what} after {lasted}: {}", failure.message))
+            }
+            None => node.log.line(format_args!("stopped following {what} after {lasted}: no one follows it")),
+        }
         let mut kept = node.collaboration_followed.kept.lock().expect("never poisoned");
         match ended {
             Some(failure) => {
@@ -174,7 +183,12 @@ pub(crate) async fn watch(
     });
     fastctx_platform::task::spawn(async move {
         loop {
-            match unseen(&mut following) {
+            tokio::select! {
+                changed = following.changed() => if changed.is_err() { return },
+                () = sender.closed() => return,
+            }
+            let told = following.borrow_and_update().clone();
+            match told {
                 Some(Told::Tree { version, tree }) => {
                     let tree = Box::new(Arc::unwrap_or_clone(tree));
                     if sender.send(Ok(Watched::Collaboration { version, tree })).is_err() {
@@ -187,10 +201,6 @@ pub(crate) async fn watch(
                 }
                 None => {}
             }
-            tokio::select! {
-                changed = following.changed() => if changed.is_err() { return },
-                () = sender.closed() => return,
-            }
         }
     });
     Ok(receiver)
@@ -201,12 +211,13 @@ pub(crate) async fn watch(
 /// with the node.
 pub(crate) async fn next(following: &mut Following) -> Option<Result<(u64, Tree), Failure>> {
     loop {
-        match unseen(following) {
+        following.changed().await.ok()?;
+        let told = following.borrow_and_update().clone();
+        match told {
             Some(Told::Tree { version, tree }) => return Some(Ok((version, Arc::unwrap_or_clone(tree)))),
             Some(Told::Ended(failure)) => return Some(Err(failure)),
             None => {}
         }
-        following.changed().await.ok()?;
     }
 }
 

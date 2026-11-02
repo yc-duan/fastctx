@@ -5,7 +5,8 @@
 use super::{SETTLE, Sender, stopping, tell};
 use crate::Node;
 use crate::colleagues::native;
-use fastctx_net::watch_queue::{Events, TryRecvError};
+use crate::watch::Events;
+use fastctx_net::watch_queue::TryRecvError;
 use fastctx_types::{
     Address, ResidentId,
     access::Acting,
@@ -39,7 +40,12 @@ pub(super) async fn keep(node: &Arc<Node>, id: &ResidentId, acting: &Acting, tol
         Origin::Colleague { label, .. } => Some(label.clone()),
         Origin::User => None,
     };
+    let reading = std::time::Instant::now();
     let mut native = Native::open(node, id).await;
+    if reading.elapsed() > std::time::Duration::from_secs(2) {
+        node.log
+            .line(format_args!("reading {id}'s agents for its collaboration took {}", crate::talk::lasted(reading)));
+    }
     let mut goal = goal(node, id, label.is_some()).await;
     loop {
         if node.residents.about(id).is_none() {

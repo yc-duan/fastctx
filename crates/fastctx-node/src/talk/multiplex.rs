@@ -374,7 +374,7 @@ async fn run(
                 Ok(Some(event)) => {
                     if request.goal && !crate::goals::watch::is_goal(&event) { continue; }
                     if !crate::goals::visible(node, crate::admission::seen::Looker::Asker(&asker), &request.resident, &event) { continue; }
-                    live(Arc::unwrap_or_clone(event), slim.as_ref()).map(|event| fastctx_types::session::Watched::Live { event })
+                    { let marked = Arc::unwrap_or_clone(event); live(marked.event, slim.as_ref()).map(|event| fastctx_types::session::Watched::Live { event, mark: marked.mark }) }
                 }
                 Ok(None) => return Ok(()),
                 Err(error) => return Err(Failure::new(error.to_string())),
