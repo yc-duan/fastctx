@@ -95,7 +95,10 @@ pub(crate) async fn tell_at(
         }
         notice => Letter::Notice { to: to.resident.clone(), notice: Box::new(notice) },
     };
-    crate::letters::send(node, acting, machine, id, letter)
+    // Posting writes the letter to the hub's outbox.
+    let (sending, acting, machine) = (node.clone(), acting.clone(), machine.clone());
+    fastctx_platform::task::blocking(move || crate::letters::send(&sending, &acting, &machine, id, letter))
+        .await
         .map_err(|error| Failure::new(format!("sending to {}: {error}", to.machine)))?;
     Ok(Landed::Sent)
 }

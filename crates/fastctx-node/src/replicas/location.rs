@@ -171,6 +171,7 @@ pub(crate) async fn prepare_here(
                         path: path.clone(),
                     },
                 )
+                .await
                 .map_err(failure)?;
                 super::sync::project(node, &link, &project.town).await.map_err(failure)?;
             }

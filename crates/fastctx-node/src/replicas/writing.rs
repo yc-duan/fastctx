@@ -157,7 +157,7 @@ pub(crate) async fn intercept(
         return Ok(Some(Err("this document was retired; restore it in the app before editing".to_string().into())));
     }
     let previous = copy.effective().to_string();
-    super::publication::repair(node, &copy).map_err(failure)?;
+    super::publication::repair(node, &copy).await.map_err(failure)?;
     let link = node.link_of(&copy.account.hub).ok_or_else(|| failure("the replica's hub is unavailable"))?;
     let offline = !matches!(link.status(), fastctx_net::link::Status::Online { .. }) || !link.view_current();
     let mut base = copy.head.version;
@@ -203,21 +203,21 @@ pub(crate) async fn intercept(
     }
     let id = fastctx_net::sign::random::<32>().map_err(failure)?.iter().map(|byte| format!("{byte:02x}")).collect();
     copy.pending.push(Pending { id, base, before, text, operation: operation.clone(), author, offline });
-    super::publication::save(node, &copy, false, None).map_err(failure)?;
+    super::publication::save(node, &copy, false, None).await.map_err(failure)?;
     let mut submitted = if offline { Ok(()) } else { flush(node, &link, &mut copy).await };
     if submitted.is_err() {
         for pending in &mut copy.pending {
             pending.offline = true;
         }
-        super::publication::save(node, &copy, false, None).map_err(failure)?;
+        super::publication::save(node, &copy, false, None).await.map_err(failure)?;
     }
     let after = copy.effective().to_string();
-    super::publication::save(node, &copy, true, Some(&previous)).map_err(failure)?;
+    super::publication::save(node, &copy, true, Some(&previous)).await.map_err(failure)?;
     if let Caller::Resident(owner) = caller {
         let observed =
             Observed { version: copy.head.version, hash: Some(fastctx_hands::files::content_hash(after.as_bytes())) };
         copy.observed.insert(owner.key(), observed);
-        super::publication::save(node, &copy, false, None).map_err(failure)?;
+        super::publication::save(node, &copy, false, None).await.map_err(failure)?;
     }
     let pending = !copy.pending.is_empty();
     if pending && !link.view_current() {
@@ -279,7 +279,7 @@ pub(crate) async fn flush(node: &Arc<Node>, link: &fastctx_net::link::Link, copy
         sync::permitted(node, copy)?;
         if super::backend::accepted(link, copy, &pending).await? {
             copy.pending.remove(0);
-            super::publication::save(node, copy, false, None)?;
+            super::publication::save(node, copy, false, None).await?;
             sync::refresh(node, link, copy).await?;
             continue;
         }
@@ -307,10 +307,10 @@ pub(crate) async fn flush(node: &Arc<Node>, link: &fastctx_net::link::Link, copy
             sync::refresh(node, link, copy).await?;
         }
         if copy.head.retired && !pending.offline {
-            return reject(node, copy, "the document was retired; restore it in the app before editing");
+            return reject(node, copy, "the document was retired; restore it in the app before editing").await;
         }
         if matches!(copy.head.document, Document::Plan { .. }) && copy.head.retired {
-            return reject(node, copy, "this conversation's plan was deleted");
+            return reject(node, copy, "this conversation's plan was deleted").await;
         }
         let merged = if matches!(pending.operation, WriteOp::Write(_)) {
             if pending.base.is_none()
@@ -335,7 +335,8 @@ pub(crate) async fn flush(node: &Arc<Node>, link: &fastctx_net::link::Link, copy
                     node,
                     copy,
                     "the document changed elsewhere and these edits conflict; read the latest copy before editing again",
-                );
+                )
+                .await;
             }
         };
         let valid = match &copy.head.document {
@@ -346,14 +347,14 @@ pub(crate) async fn flush(node: &Arc<Node>, link: &fastctx_net::link::Link, copy
             if pending.offline {
                 text = pending.text.clone();
             } else {
-                return reject(node, copy, &error);
+                return reject(node, copy, &error).await;
             }
         }
         sync::permitted(node, copy)?;
         let projected = copy.effective().to_string();
         if super::backend::submit(link, copy, &pending, text).await? {
             copy.pending.remove(0);
-            super::publication::save(node, copy, true, Some(&projected))?;
+            super::publication::save(node, copy, true, Some(&projected)).await?;
         } else if tokio::time::Instant::now() >= deadline {
             return Err("the document keeps changing; this edit remains pending".into());
         }
@@ -361,9 +362,9 @@ pub(crate) async fn flush(node: &Arc<Node>, link: &fastctx_net::link::Link, copy
     Ok(())
 }
 
-fn reject(node: &Node, copy: &mut Copy, reason: &str) -> Result<(), String> {
+async fn reject(node: &Arc<Node>, copy: &mut Copy, reason: &str) -> Result<(), String> {
     copy.pending.remove(0);
-    super::publication::save(node, copy, false, None)?;
+    super::publication::save(node, copy, false, None).await?;
     Err(reason.into())
 }
 
@@ -389,7 +390,7 @@ pub(crate) async fn saw(
         );
         let observed = Observed { version: copy.head.version, hash: same.then_some(hash) };
         copy.observed.insert(owner.key(), observed);
-        super::publication::save(node, &copy, false, None).map_err(failure)?;
+        super::publication::save(node, &copy, false, None).await.map_err(failure)?;
     }
     Ok(())
 }

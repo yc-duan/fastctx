@@ -1,43 +1,37 @@
-//! Inactive resident projections live on disk. The canonical conversation
-//! records rebuild this per-node cache at startup; it is never a second
-//! durable authority.
+//! Resident projections, held in memory; past a bound, those no longer at
+//! work are put aside on disk, never under the residents' lock
+//! (`fastctx_platform::aside`). The canonical conversation records rebuild
+//! this per-node cache at startup; it is never a second durable authority,
+//! and nothing it does ends the node.
 
 use super::{Live, here};
+use fastctx_platform::aside::Aside;
 use fastctx_types::ResidentId;
 use serde::{Serialize, de::DeserializeOwned};
 use std::collections::{HashMap, HashSet};
 use std::io;
 use std::path::{Path, PathBuf};
 
-pub(super) fn failed(operation: &str, error: impl std::fmt::Display) -> ! {
-    eprintln!("fastctx node: {operation}: {error}; runtime state cannot be trusted, stopping the node");
-    crate::ending::exit(1)
-}
-
-fn required<T>(result: Result<T, impl std::fmt::Display>, operation: &str) -> T {
-    result.unwrap_or_else(|error| failed(operation, error))
-}
-
 pub(super) struct Cache {
     root: PathBuf,
     entries: HashMap<ResidentId, Live>,
-    /// Those with a copy on disk, written when they last ended.
+    /// Those with a copy on disk, or on its way there.
     on_disk: HashSet<ResidentId>,
     /// Put in, or handed out to be changed, since the last release.
     dirty: HashSet<ResidentId>,
-    /// Those held only as an unchanged copy of the one on disk: the ones let
-    /// go first when too many are held.
+    /// No longer at work: the ones put aside first when too many are held.
     cold: HashSet<ResidentId>,
+    /// Of those, the ones changed since their copy was last put aside.
+    changed: HashSet<ResidentId>,
     /// A resident was put in, taken out or handed out to be changed since
     /// this was last asked (`take_touched`).
     touched: bool,
-    /// Why the last residents that could not be put aside stayed in
-    /// memory, told once until it changes.
-    unwritten: Option<String>,
+    putting: Aside,
 }
 
-/// How many residents put aside are kept read in memory, so the node's
-/// rounds over everyone read them from disk once rather than every time.
+/// How many residents no longer at work are held in memory before the
+/// oldest are put aside on disk: all of them on all but the largest
+/// machines, so that the node's rounds over everyone never read the disk.
 const KEPT: usize = 4096;
 
 /// A resident no longer at work: not here, or here with nothing open and
@@ -47,18 +41,6 @@ fn ended(live: &Live) -> bool {
         || (live.connections == 0
             && !live.host_present
             && live.now.as_ref().is_none_or(|now| now.activity != fastctx_types::residents::Activity::Busy))
-}
-
-/// Writes a cached projection in place. The cache is rebuilt from the
-/// conversation records at every start and touched only under the state
-/// lock, so neither a flush to disk nor a staged copy would buy anything.
-fn put(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    use std::io::Write as _;
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create(true).truncate(true);
-    #[cfg(unix)]
-    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
-    fastctx_platform::disk::open_with(&options, path)?.write_all(bytes)
 }
 
 impl Cache {
@@ -85,8 +67,9 @@ impl Cache {
             on_disk,
             dirty: HashSet::new(),
             cold: HashSet::new(),
+            changed: HashSet::new(),
             touched: false,
-            unwritten: None,
+            putting: Aside::new("resident-cache", "a resident's state"),
         })
     }
 
@@ -119,7 +102,9 @@ impl Cache {
         self.entries.get_mut(id)
     }
 
-    /// Whether `id` is on record, read into memory when it was put aside.
+    /// Whether `id` is on record, read into memory when it was put aside:
+    /// only past `KEPT` does that read the disk. One that cannot be read
+    /// back now is said and taken as not here, and read again next time.
     fn load(&mut self, id: &ResidentId) -> bool {
         if self.entries.contains_key(id) {
             return true;
@@ -127,15 +112,25 @@ impl Cache {
         if !self.on_disk.contains(id) {
             return false;
         }
-        let bytes = match fastctx_platform::disk::read(self.path(id)) {
+        let path = self.path(id);
+        let bytes = match self.putting.on_its_way(&path).map_or_else(|| fastctx_platform::disk::read(&path), Ok) {
             Ok(bytes) => bytes,
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
                 self.on_disk.remove(id);
                 return false;
             }
-            Err(error) => failed(&format!("reading resident cache for {id}"), error),
+            Err(error) => {
+                eprintln!("fastctx node: reading resident cache for {id}: {error}; it is tried again when asked");
+                return false;
+            }
         };
-        let live = required(serde_json::from_slice(&bytes), "decoding resident cache");
+        let live = match serde_json::from_slice(&bytes) {
+            Ok(live) => live,
+            Err(error) => {
+                eprintln!("fastctx node: decoding resident cache for {id}: {error}; it is tried again when asked");
+                return false;
+            }
+        };
         self.entries.insert(id.clone(), live);
         self.cold.insert(id.clone());
         true
@@ -152,12 +147,9 @@ impl Cache {
         self.entries.remove(id);
         self.dirty.remove(id);
         self.cold.remove(id);
+        self.changed.remove(id);
         if self.on_disk.remove(id) {
-            match fastctx_platform::disk::remove_file(self.path(id)) {
-                Ok(()) => {}
-                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-                Err(error) => failed(&format!("removing resident cache for {id}"), error),
-            }
+            self.putting.remove(self.path(id));
         }
     }
 
@@ -167,38 +159,34 @@ impl Cache {
         Box::new(ids.into_iter())
     }
 
-    /// Writes down those changed since the last release that are no longer
-    /// at work, and keeps them read; those still at work stay in memory
-    /// alone. Past `KEPT`, the oldest kept copies are let go. One that cannot
-    /// be written, as on a full disk, stays in memory and is written again
-    /// as it changes: the copy is only a projection, never worth the node.
-    /// Says why, the first time it is so.
-    pub fn release(&mut self) -> Option<String> {
-        let mut unwritten = None;
+    /// Takes those changed since the last release that are no longer at
+    /// work as cold; those still at work stay in memory alone. Past `KEPT`
+    /// cold, the oldest are put aside on disk, those changed since they
+    /// were last put aside written again, behind this lock and in memory
+    /// until written. The disk is never waited for here.
+    pub fn release(&mut self) {
         for id in std::mem::take(&mut self.dirty) {
             let Some(live) = self.entries.get(&id) else { continue };
             if !ended(live) {
                 continue;
             }
-            if let Err(error) =
-                serde_json::to_vec(live).map_err(io::Error::other).and_then(|bytes| put(&self.path(&id), &bytes))
-            {
-                unwritten.get_or_insert_with(|| format!("putting resident state aside for {id}: {error}"));
-                continue;
-            }
-            self.on_disk.insert(id.clone());
+            self.changed.insert(id.clone());
             self.cold.insert(id);
         }
         if self.cold.len() > KEPT {
             let gone: Vec<_> = self.cold.iter().take(self.cold.len() - KEPT).cloned().collect();
             for id in gone {
+                if self.changed.contains(&id) || !self.on_disk.contains(&id) {
+                    let Some(live) = self.entries.get(&id) else { continue };
+                    let Ok(bytes) = serde_json::to_vec(live) else { continue };
+                    self.putting.put(self.path(&id), bytes);
+                    self.on_disk.insert(id.clone());
+                    self.changed.remove(&id);
+                }
                 self.cold.remove(&id);
                 self.entries.remove(&id);
             }
         }
-        let told = unwritten.is_some() && unwritten != self.unwritten;
-        self.unwritten = unwritten;
-        if told { self.unwritten.clone() } else { None }
     }
 }
 
@@ -224,7 +212,7 @@ impl Index {
     pub fn get<V: DeserializeOwned>(&self, key: &(impl Serialize + ?Sized)) -> Option<V> {
         let entries = self.entries.lock().expect("never poisoned");
         let bytes = entries.get(&Self::key(key))?;
-        Some(required(serde_json::from_slice(bytes), "decoding resident index"))
+        Some(serde_json::from_slice(bytes).expect("index values decode as they were encoded"))
     }
 
     pub fn contains(&self, key: &(impl Serialize + ?Sized)) -> bool {

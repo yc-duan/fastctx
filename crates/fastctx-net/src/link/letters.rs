@@ -21,6 +21,7 @@ use crate::envelope::Envelope;
 use crate::sign::Digest;
 
 /// Letters not yet held by the hub, one file each, named by number.
+#[derive(Clone)]
 pub struct Outbox {
     dir: PathBuf,
 }
@@ -97,7 +98,6 @@ pub struct Receipt {
     pub digest: Digest,
     pub at: Timestamp,
 }
-
 
 /// A letter that could not be delivered or opened, kept with the reason.
 #[derive(Clone, Debug, Serialize, Deserialize)]

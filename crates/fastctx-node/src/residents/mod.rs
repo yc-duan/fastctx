@@ -52,6 +52,11 @@ pub struct Residents {
     /// living on, whatever the machine was called when it was born.
     here: std::sync::RwLock<Option<fastctx_types::MachineName>>,
     speaking: crate::leases::Registry<ResidentId, speaking::Speaking>,
+    /// Remote requesters' departures and returns, kept outside the cache.
+    departed: departures::Departures,
+    /// Held while a resident's records are written, one change after
+    /// another: never the residents' lock, which no disk is waited for under.
+    writing: crate::leases::Registry<ResidentId, Mutex<()>>,
     paying: crate::leases::Registry<ResidentId, fastctx_platform::doing::Mutex<()>>,
     management: crate::leases::Registry<ResidentId, fastctx_platform::doing::RwLock<()>>,
     /// Whether some conversation's records could not be read when the node
@@ -64,8 +69,6 @@ struct State {
     /// Codex thread id to the resident it is.
     threads: cache::Index,
     current_sessions: cache::Index,
-    /// Remote requesters' departures and returns, kept outside the cache.
-    departed: departures::Departures,
     inboxes: cache::Index,
     /// The colleagues each asker started, kept as residents are admitted:
     /// a resident's origin never changes, and finding them by walking every
@@ -79,6 +82,9 @@ struct State {
     /// finished: they take nothing new until it is.
     condemned: std::collections::HashSet<ResidentId>,
     tombstones: tombstones::Tombstones,
+    /// Ids given to residents whose records are being written: no other
+    /// is given them meanwhile.
+    born: std::collections::HashSet<ResidentId>,
 }
 
 impl State {
@@ -138,10 +144,8 @@ impl std::ops::DerefMut for StateGuard<'_> {
 
 impl Drop for StateGuard<'_> {
     fn drop(&mut self) {
-        if !std::thread::panicking()
-            && let Some(problem) = self.0.live.release()
-        {
-            eprintln!("fastctx node: {problem}; it stays in memory");
+        if !std::thread::panicking() {
+            self.0.live.release();
         }
         if self.0.live.take_touched() {
             self.1.send_modify(|changes| *changes = changes.wrapping_add(1));
@@ -265,12 +269,12 @@ impl Residents {
             live: cache::Cache::new(root.join("residents"))?,
             threads: cache::Index::default(),
             current_sessions: cache::Index::default(),
-            departed,
             inboxes: cache::Index::default(),
             colleagues: HashMap::new(),
             deleting: HashMap::new(),
             condemned: std::collections::HashSet::new(),
             tombstones: tombstones::Tombstones::load(world, &mut problems)?,
+            born: std::collections::HashSet::new(),
         };
         for kept in world.kept()? {
             let fastctx_types::layout::Kind::Home(id) = &kept.kind else { continue };
@@ -336,7 +340,7 @@ impl Residents {
                 if removed.is_none()
                     && now.activity == Activity::Idle
                     && let Origin::Colleague { asked_by, .. } = &about.origin
-                    && state.departed.get(asked_by)?
+                    && departed.get(asked_by)
                 {
                     now.activity = Activity::Asleep;
                     records::write_now(directory, now)?;
@@ -347,12 +351,7 @@ impl Residents {
             let mut live = Live::new(about, places, now);
             live.removed = removed;
             state.admit(live);
-            if let Some(problem) = state.live.release() {
-                problems.push((root.clone(), io::Error::other(problem)));
-            }
-        }
-        if let Some(problem) = state.live.release() {
-            problems.push((root.clone(), io::Error::other(problem)));
+            state.live.release();
         }
         Ok((
             Self {
@@ -360,6 +359,8 @@ impl Residents {
                 changed: tokio::sync::watch::channel(0).0,
                 here: Default::default(),
                 speaking: Default::default(),
+                departed,
+                writing: Default::default(),
                 paying: Default::default(),
                 management: Default::default(),
                 unread: !problems.is_empty(),
@@ -388,30 +389,39 @@ impl Residents {
 
     /// Changes only project membership, including that of an archived conversation.
     pub(crate) fn relocate_kept(&self, world: &WorldDir, id: &ResidentId, town: Option<&TownName>) -> io::Result<bool> {
-        let mut state = self.lock();
-        let Some(live) = state.live.get_mut(id) else {
-            return Err(io::Error::new(io::ErrorKind::NotFound, format!("no resident {id} lives here")));
+        let writing = self.writing(id);
+        let _written = writing.lock().expect("never poisoned");
+        let mut places = {
+            let mut state = self.lock();
+            let Some(live) = state.live.get(id) else {
+                return Err(io::Error::new(io::ErrorKind::NotFound, format!("no resident {id} lives here")));
+            };
+            live.places.clone()
         };
-        let mut places = live.places.clone();
         if !places.enter(town.cloned(), Timestamp::now()) {
             return Ok(false);
         }
         let directory = world.conversation(id);
         let bytes = serde_json::to_vec_pretty(&places).map_err(io::Error::other)?;
-        if let Err(failure) = fastctx_platform::atomic::publish_checked(
+        let published = fastctx_platform::atomic::publish_checked(
             &directory.town(),
             &bytes,
             fastctx_platform::Permissions::Private,
             true,
             || Ok(()),
-        ) {
-            if failure.published {
+        );
+        if published.as_ref().is_ok() || published.as_ref().is_err_and(|failure| failure.published) {
+            let mut state = self.lock();
+            if let Some(live) = state.live.get_mut(id) {
                 live.places = places;
             }
-            return Err(failure.error);
         }
-        live.places = places;
-        Ok(true)
+        published.map(|()| true).map_err(|failure| failure.error)
+    }
+
+    /// Held while `id`'s records are written (`writing`).
+    fn writing(&self, id: &ResidentId) -> crate::leases::Lease<ResidentId, Mutex<()>> {
+        self.writing.get_or_insert_with(id, || Mutex::new(()))
     }
 
     /// Where residents lived before they moved.
@@ -537,6 +547,8 @@ impl Residents {
             return Ok(Whereabouts { resident, town: live.town(), machine: None, subagent: false });
         }
         let resident = new_id(&host.agent, &state)?;
+        state.born.insert(resident.clone());
+        drop(state);
         let about = About {
             side: false,
             forked_from: None,
@@ -556,8 +568,10 @@ impl Residents {
             callee: None,
         };
         let places = Places::born(None, about.born_at);
-        records::create(&world.conversation(&resident), &about, &places)
-            .map_err(|error| Failure::new(format!("recording a new resident: {error}")))?;
+        let created = records::create(&world.conversation(&resident), &about, &places);
+        let mut state = self.lock();
+        state.born.remove(&resident);
+        created.map_err(|error| Failure::new(format!("recording a new resident: {error}")))?;
         if let Some(thread) = hints.thread {
             state.record_session(None, &thread);
             state.threads.insert(thread, resident.clone());
@@ -651,61 +665,82 @@ impl Residents {
         model: Option<String>,
         version: Option<String>,
     ) -> io::Result<()> {
-        let mut state = self.lock();
-        let Some(live) = state.live.get_mut(id) else {
-            return Ok(());
-        };
-        if live.removed.is_some() {
+        if !self.knows(id) {
             return Ok(());
         }
-        let mut about = live.about.clone();
-        let prior_session = about.session.clone();
-        about.session = Some(session.to_string());
-        if model.is_some() {
-            about.model = model;
+        let prior_session = std::cell::Cell::new(None);
+        let changed = self.change_about(world, id, |about| {
+            if about.removed {
+                return false;
+            }
+            prior_session.set(about.about.session.clone());
+            about.about.session = Some(session.to_string());
+            if model.is_some() {
+                about.about.model = model;
+            }
+            if let Some(version) = version {
+                about.about.host.version = version;
+            }
+            true
+        })?;
+        if changed {
+            let state = self.lock();
+            state.record_session(prior_session.take().as_deref(), session);
+            state.threads.insert(session.to_string(), id.clone());
         }
-        if let Some(version) = version {
-            about.host.version = version;
-        }
-        if about == live.about {
-            return Ok(());
-        }
-        records::write_about(&world.conversation(id), &about)?;
-        live.about = about;
-        state.record_session(prior_session.as_deref(), session);
-        state.threads.insert(session.to_string(), id.clone());
         Ok(())
+    }
+
+    /// Changes `id`'s `about` as `change` says, when it says it may: the
+    /// record written first, outside the residents' lock, then kept. Whether
+    /// it changed.
+    fn change_about(
+        &self,
+        world: &WorldDir,
+        id: &ResidentId,
+        change: impl FnOnce(&mut Changing) -> bool,
+    ) -> io::Result<bool> {
+        let writing = self.writing(id);
+        let _written = writing.lock().expect("never poisoned");
+        let mut changing = {
+            let mut state = self.lock();
+            let Some(live) = state.live.get(id) else { return Err(io::Error::other("unknown conversation")) };
+            Changing { about: live.about.clone(), removed: live.removed.is_some() }
+        };
+        let before = changing.about.clone();
+        if !change(&mut changing) || changing.about == before {
+            return Ok(false);
+        }
+        records::write_about(&world.conversation(id), &changing.about)?;
+        let mut state = self.lock();
+        if let Some(live) = state.live.get_mut(id) {
+            live.about = changing.about;
+        }
+        Ok(true)
     }
 
     /// Persists the restoration contract before the first native resumption.
     pub(crate) fn set_native_resumed(&self, world: &WorldDir, id: &ResidentId) -> io::Result<()> {
-        let mut state = self.lock();
-        let live = state.live.get_mut(id).ok_or_else(|| io::Error::other("unknown conversation"))?;
-        if live.about.native_resumed {
-            return Ok(());
-        }
-        let mut about = live.about.clone();
-        about.native_resumed = true;
-        records::write_about(&world.conversation(id), &about)?;
-        live.about = about;
-        Ok(())
+        self.change_about(world, id, |changing| {
+            changing.about.native_resumed = true;
+            true
+        })
+        .map(|_| ())
     }
 
     /// The machines and folders the user points the resident `id` to from
     /// now on; whether they changed.
     pub fn set_focus(&self, world: &WorldDir, id: &ResidentId, focus: Focus) -> io::Result<bool> {
-        let mut state = self.lock();
-        let Some(live) = state.live.get_mut(id) else {
-            return Ok(false);
-        };
-        if live.removed.is_some() || live.about.focus == focus {
+        if !self.knows(id) {
             return Ok(false);
         }
-        let mut about = live.about.clone();
-        about.focus = focus;
-        records::write_about(&world.conversation(id), &about)?;
-        live.about = about;
-        Ok(true)
+        self.change_about(world, id, |changing| {
+            if changing.removed {
+                return false;
+            }
+            changing.about.focus = focus;
+            true
+        })
     }
 
     pub fn set_mcp_off(
@@ -714,13 +749,11 @@ impl Residents {
         id: &ResidentId,
         off: std::collections::BTreeSet<String>,
     ) -> io::Result<()> {
-        let mut state = self.lock();
-        let live = state.live.get_mut(id).ok_or_else(|| io::Error::other("unknown conversation"))?;
-        let mut about = live.about.clone();
-        about.mcp_off = off;
-        records::write_about(&world.conversation(id), &about)?;
-        live.about = about;
-        Ok(())
+        self.change_about(world, id, |changing| {
+            changing.about.mcp_off = off;
+            true
+        })
+        .map(|_| ())
     }
 
     /// A new id for a resident of `agent`, unused on this machine.
@@ -858,9 +891,8 @@ impl Residents {
         departed: bool,
         letter: Option<(&str, &crate::letters::Identity)>,
     ) -> io::Result<()> {
-        let mut state = self.lock();
-        if state.departed.set(asker, departed, letter)? {
-            state.sleep_colleagues(world, asker)?;
+        if self.departed.set(asker, departed, letter)? {
+            self.sleep_colleagues(world, asker)?;
         }
         Ok(())
     }
@@ -868,24 +900,32 @@ impl Residents {
     /// Puts only idle colleagues to sleep, under the same lock that starts
     /// and ends their turns.
     pub fn sleep_colleagues(&self, world: &WorldDir, asker: &Address) -> io::Result<()> {
-        self.lock().sleep_colleagues(world, asker)
+        // Each decided under its own writing: one ending its turn now is
+        // idle by the time it is looked at here.
+        let colleagues = self.lock().colleagues.get(asker).cloned().unwrap_or_default();
+        let mut failures = Vec::new();
+        for colleague in colleagues {
+            let slept = self.change_live(
+                world,
+                &colleague,
+                |_, now| {
+                    if now.activity == Activity::Idle {
+                        now.activity = Activity::Asleep;
+                    }
+                },
+                false,
+            );
+            if let Err(error) = slept {
+                failures.push(format!("recording that {colleague} sleeps: {error}"));
+            }
+        }
+        if failures.is_empty() { Ok(()) } else { Err(io::Error::other(failures.join("; "))) }
     }
 
     /// Changes a resident's `now` and writes it through. One with no `now`
     /// yet starts idle.
     pub fn change_now(&self, world: &WorldDir, id: &ResidentId, change: impl FnOnce(&mut Now)) -> io::Result<()> {
-        let mut state = self.lock();
-        let Some(live) = state.live.get_mut(id) else {
-            return Ok(());
-        };
-        if live.removed.is_some() {
-            return Ok(());
-        }
-        let mut now = live.now.clone().unwrap_or_else(|| idle(Timestamp::now()));
-        change(&mut now);
-        records::write_now(&world.conversation(id), &now)?;
-        live.now = Some(now);
-        Ok(())
+        self.change_live(world, id, |_, now| change(now), false)
     }
 
     /// The session runs `turn`: what was told about an earlier one is not
@@ -958,24 +998,29 @@ impl Residents {
         trouble: Option<Trouble>,
         heard_user: bool,
     ) -> io::Result<Vec<Address>> {
-        let mut state = self.lock();
-        let Some(origin) = state.live.get(id).map(|live| live.about.origin.clone()) else {
-            return Ok(Vec::new());
+        let origin = {
+            let mut state = self.lock();
+            let Some(origin) = state.live.get(id).map(|live| live.about.origin.clone()) else {
+                return Ok(Vec::new());
+            };
+            origin
         };
-        // Presence and the turn's final activity are decided in one
-        // transaction with departures and returns.
-        let requester_here = match origin {
+        let mut readers = Vec::new();
+        // Presence and the turn's final activity are decided together under
+        // this resident's writing, as a departure puts its colleagues to
+        // sleep under theirs (`sleep_colleagues`).
+        let requester_here = |state: &mut State| match &origin {
             Origin::Colleague { asked_by, .. } if asked_by.machine == *here_machine => {
                 state.live.get(&asked_by.resident).is_some_and(here)
             }
-            Origin::Colleague { asked_by, .. } => !state.departed.get(&asked_by)?,
+            Origin::Colleague { asked_by, .. } => !self.departed.get(asked_by),
             Origin::User => true,
         };
-        let mut readers = Vec::new();
-        state.change_live(
+        self.change_live_with(
             world,
             id,
-            |live, now| {
+            requester_here,
+            |live, now, requester_here| {
                 let current = now.turn.as_deref() == Some(turn)
                     || (now.turn.is_none() && now.activity == Activity::Busy && turn.is_empty());
                 readers = live.owed.remove(turn).unwrap_or_default().into_iter().collect();
@@ -1018,6 +1063,10 @@ impl Residents {
         self.change_live(world, id, change, true)
     }
 
+    /// Changes `id` as `change` says, its `now` written outside the
+    /// residents' lock, one change after another: kept in memory once
+    /// written. One whose `now` cannot be written keeps nothing of the
+    /// change but what `proven` work already made authoritative.
     fn change_live(
         &self,
         world: &WorldDir,
@@ -1025,63 +1074,58 @@ impl Residents {
         change: impl FnOnce(&mut Live, &mut Now),
         proven: bool,
     ) -> io::Result<()> {
-        self.lock().change_live(world, id, change, proven)
+        self.change_live_with(world, id, |_| (), |live, now, ()| change(live, now), proven)
+    }
+
+    /// `change_live`, with what `decide` finds under the residents' lock as
+    /// the change is made. Nothing is written when nothing changed.
+    fn change_live_with<T>(
+        &self,
+        world: &WorldDir,
+        id: &ResidentId,
+        decide: impl FnOnce(&mut State) -> T,
+        change: impl FnOnce(&mut Live, &mut Now, T),
+        proven: bool,
+    ) -> io::Result<()> {
+        let writing = self.writing(id);
+        let _written = writing.lock().expect("never poisoned");
+        let (now, previous_owed) = {
+            let mut state = self.lock();
+            let decided = decide(&mut state);
+            let Some(live) = state.live.get_mut(id) else {
+                return Ok(());
+            };
+            if live.removed.is_some() {
+                return Ok(());
+            }
+            let before = live.now.clone();
+            let mut now = before.clone().unwrap_or_else(|| idle(Timestamp::now()));
+            let previous_owed = live.owed.clone();
+            change(live, &mut now, decided);
+            if before.as_ref() == Some(&now) && live.owed == previous_owed {
+                return Ok(());
+            }
+            (now, previous_owed)
+        };
+        let written = records::write_now(&world.conversation(id), &now);
+        let mut state = self.lock();
+        if let Some(live) = state.live.get_mut(id) {
+            match &written {
+                Ok(()) => live.now = Some(now),
+                // A receipt or terminal record is authoritative even while
+                // its replaceable now projection cannot be written.
+                Err(_) if proven => live.now = Some(now),
+                Err(_) => live.owed = previous_owed,
+            }
+        }
+        written
     }
 }
 
-impl State {
-    fn sleep_colleagues(&mut self, world: &WorldDir, asker: &Address) -> io::Result<()> {
-        let colleagues = self.colleagues.get(asker).cloned().unwrap_or_default();
-        let mut failures = Vec::new();
-        for colleague in colleagues {
-            let idle = self.live.get(&colleague).is_some_and(|live| {
-                live.removed.is_none() && live.now.as_ref().is_some_and(|now| now.activity == Activity::Idle)
-            });
-            if idle
-                && let Err(error) = self.change_live(
-                    world,
-                    &colleague,
-                    |_, now| {
-                        now.activity = Activity::Asleep;
-                    },
-                    false,
-                )
-            {
-                failures.push(format!("recording that {colleague} sleeps: {error}"));
-            }
-        }
-        if failures.is_empty() { Ok(()) } else { Err(io::Error::other(failures.join("; "))) }
-    }
-
-    fn change_live(
-        &mut self,
-        world: &WorldDir,
-        id: &ResidentId,
-        change: impl FnOnce(&mut Live, &mut Now),
-        proven: bool,
-    ) -> io::Result<()> {
-        let Some(live) = self.live.get_mut(id) else {
-            return Ok(());
-        };
-        if live.removed.is_some() {
-            return Ok(());
-        }
-        let mut now = live.now.clone().unwrap_or_else(|| idle(Timestamp::now()));
-        let previous_owed = live.owed.clone();
-        change(live, &mut now);
-        if let Err(error) = records::write_now(&world.conversation(id), &now) {
-            // A receipt or terminal record is authoritative even while its
-            // replaceable now projection cannot be written.
-            if proven {
-                live.now = Some(now);
-            } else {
-                live.owed = previous_owed;
-            }
-            return Err(error);
-        }
-        live.now = Some(now);
-        Ok(())
-    }
+/// An `about` being changed, and whether its resident was removed.
+pub(crate) struct Changing {
+    pub about: About,
+    pub removed: bool,
 }
 
 fn here(live: &Live) -> bool {
@@ -1150,7 +1194,7 @@ fn new_id(agent: &AgentName, state: &State) -> Result<ResidentId, Failure> {
         getrandom::fill(&mut bytes).map_err(|error| Failure::new(format!("choosing a resident id: {error}")))?;
         let digits: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
         let id = ResidentId::try_from(format!("{agent}-{digits}")).expect("an agent name and eight hex digits");
-        if !state.live.contains_key(&id) && state.tombstones.free(&id) {
+        if !state.live.contains_key(&id) && !state.born.contains(&id) && state.tombstones.free(&id) {
             return Ok(id);
         }
     }

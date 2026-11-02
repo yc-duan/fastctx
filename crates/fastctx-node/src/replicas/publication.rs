@@ -3,6 +3,7 @@
 use super::state::{self, Copy, Folder, Route};
 use crate::Node;
 use fastctx_types::replicas::{Document, Scope};
+use std::sync::Arc;
 
 fn scope_allowed(node: &Node, folder: &Folder) -> bool {
     let Some(link) = node.link_of(&folder.account.hub) else { return false };
@@ -45,9 +46,15 @@ pub(crate) fn permitted(node: &Node, route: &Route) -> Result<(), String> {
     if allowed { Ok(()) } else { Err("this computer no longer keeps this record".into()) }
 }
 
+/// `save_now`, where writing the disk may block.
+pub(crate) async fn save(node: &Arc<Node>, copy: &Copy, publish: bool, previous: Option<&str>) -> Result<(), String> {
+    let (node, copy, previous) = (node.clone(), copy.clone(), previous.map(str::to_owned));
+    fastctx_platform::task::blocking(move || save_now(&node, &copy, publish, previous.as_deref())).await
+}
+
 /// Checks again inside the same local transaction used by revocation.
-pub(crate) fn save(node: &Node, copy: &Copy, publish: bool, previous: Option<&str>) -> Result<(), String> {
-    let _publication = node.replicas.state.publication.lock().expect("never poisoned");
+pub(crate) fn save_now(node: &Node, copy: &Copy, publish: bool, previous: Option<&str>) -> Result<(), String> {
+    let _publication = node.replicas.state.publication.read().expect("never poisoned");
     let route = Route::from(copy);
     permitted(node, &route)?;
     if node
@@ -83,17 +90,29 @@ fn project(copy: &Copy, previous: Option<&str>) -> Result<(), String> {
     .map_err(|error| error.to_string())
 }
 
-pub(crate) fn repair(node: &Node, copy: &Copy) -> Result<(), String> {
+/// `repair_now`, where writing the disk may block.
+pub(crate) async fn repair(node: &Arc<Node>, copy: &Copy) -> Result<(), String> {
+    let (node, copy) = (node.clone(), copy.clone());
+    fastctx_platform::task::blocking(move || repair_now(&node, &copy)).await
+}
+
+pub(crate) fn repair_now(node: &Node, copy: &Copy) -> Result<(), String> {
     if node.link_of(&copy.account.hub).is_some_and(|link| !link.view().shared_records) {
         return Ok(());
     }
-    let _publication = node.replicas.state.publication.lock().expect("never poisoned");
+    let _publication = node.replicas.state.publication.read().expect("never poisoned");
     permitted(node, &Route::from(copy))?;
     project(copy, Some(copy.effective()))
 }
 
-pub(crate) fn folder(node: &Node, folder: Folder) -> Result<(), String> {
-    let _publication = node.replicas.state.publication.lock().expect("never poisoned");
+/// `folder_now`, where writing the disk may block.
+pub(crate) async fn folder(node: &Arc<Node>, folder: Folder) -> Result<(), String> {
+    let node = node.clone();
+    fastctx_platform::task::blocking(move || folder_now(&node, folder)).await
+}
+
+pub(crate) fn folder_now(node: &Node, folder: Folder) -> Result<(), String> {
+    let _publication = node.replicas.state.publication.write().expect("never poisoned");
     if !scope_allowed(node, &folder) {
         return Err("this computer no longer keeps this history".into());
     }
@@ -112,8 +131,14 @@ pub(crate) fn folder(node: &Node, folder: Folder) -> Result<(), String> {
     Ok(())
 }
 
+/// `prune_now`, where reading and writing the disk may block.
+pub(crate) async fn prune(node: &Arc<Node>) -> Result<(), String> {
+    let node = node.clone();
+    fastctx_platform::task::blocking(move || prune_now(&node)).await
+}
+
 /// An absent current view is unknown, not a revocation. A removed membership is final.
-pub(crate) fn prune(node: &Node) -> Result<(), String> {
+pub(crate) fn prune_now(node: &Node) -> Result<(), String> {
     node.replicas.state.load(&node.world).map_err(|error| error.to_string())?;
     let routes: Vec<_> = node
         .replicas
@@ -125,7 +150,7 @@ pub(crate) fn prune(node: &Node) -> Result<(), String> {
         .map(|(id, route)| (id.clone(), route.clone()))
         .collect();
     for (id, route) in routes {
-        let _publication = node.replicas.state.publication.lock().expect("never poisoned");
+        let _publication = node.replicas.state.publication.write().expect("never poisoned");
         if node.link_of(&route.account.hub).is_some_and(|link| !link.view_current()) {
             continue;
         }
@@ -136,7 +161,7 @@ pub(crate) fn prune(node: &Node) -> Result<(), String> {
     }
     let folders: Vec<_> = node.replicas.state.folders.lock().expect("never poisoned").values().cloned().collect();
     for folder in folders {
-        let _publication = node.replicas.state.publication.lock().expect("never poisoned");
+        let _publication = node.replicas.state.publication.write().expect("never poisoned");
         if node.link_of(&folder.account.hub).is_some_and(|link| !link.view_current()) {
             continue;
         }
@@ -148,8 +173,20 @@ pub(crate) fn prune(node: &Node) -> Result<(), String> {
     Ok(())
 }
 
+/// `catalog_now`, where writing the disk may block.
+pub(crate) async fn catalog(
+    node: &Arc<Node>,
+    hub: fastctx_types::access::HubId,
+    catalog: fastctx_types::replicas::Catalog,
+    known: Vec<(String, Route)>,
+    folders: Vec<Folder>,
+) -> Result<(), String> {
+    let node = node.clone();
+    fastctx_platform::task::blocking(move || catalog_now(&node, &hub, &catalog, known, folders)).await
+}
+
 /// Removes records absent from an authoritative catalog, without confusing a concurrent new topic with deletion.
-pub(crate) fn catalog(
+pub(crate) fn catalog_now(
     node: &Node,
     hub: &fastctx_types::access::HubId,
     catalog: &fastctx_types::replicas::Catalog,
@@ -165,7 +202,7 @@ pub(crate) fn catalog(
         if &route.account.hub != hub || contains(&route) {
             continue;
         }
-        let _publication = node.replicas.state.publication.lock().expect("never poisoned");
+        let _publication = node.replicas.state.publication.write().expect("never poisoned");
         if node
             .replicas
             .state
@@ -183,7 +220,7 @@ pub(crate) fn catalog(
         if &folder.account.hub != hub || scopes.contains(&state::scope_key(&folder.scope)) {
             continue;
         }
-        let _publication = node.replicas.state.publication.lock().expect("never poisoned");
+        let _publication = node.replicas.state.publication.write().expect("never poisoned");
         state::delete_folder(&node.world, &folder).map_err(|error| error.to_string())?;
         node.replicas.state.folders.lock().expect("never poisoned").remove(&folder.path);
     }

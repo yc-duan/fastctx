@@ -22,7 +22,10 @@ use crate::Node;
 /// line it cannot make out reads the same each time, and is no such failure.
 pub async fn hosted(node: &Arc<Node>, resident: &ResidentId, recorded: &[SessionEvent]) -> (Vec<SessionEvent>, bool) {
     let root = exchange::sessions(node.world.path());
-    let (sessions, problems) = sessions(node, resident);
+    let (sessions, problems) = {
+        let (reading, whose) = (node.clone(), resident.clone());
+        fastctx_platform::task::blocking(move || sessions(&reading, &whose)).await
+    };
     // A session that could not be told for a failed read may be one of its
     // own, missing from this reading.
     let mut unread = !problems.is_empty();
@@ -130,9 +133,9 @@ struct Session {
     kept: Option<String>,
 }
 
-/// The sessions the resident has been, the oldest first.
+/// The sessions the resident has been, the oldest first: found on disk
+/// without the Claude state, which is asked only what its mod last saw.
 fn sessions(node: &Node, resident: &ResidentId) -> (Vec<Session>, Vec<String>) {
-    let state = node.claude.state.lock().expect("never poisoned");
     let mut sessions = Vec::new();
     let mut problems = Vec::new();
     let scanned = (|| -> std::io::Result<()> {
@@ -155,7 +158,7 @@ fn sessions(node: &Node, resident: &ResidentId) -> (Vec<Session>, Vec<String>) {
                 }
                 if let Some(registration) = exchange::registration(&directory)? {
                     return Ok(Some(Session {
-                        kept: state.stored.get(&registration.session),
+                        kept: None,
                         id: registration.session,
                         began: registration.at.unwrap_or_default(),
                         process: registration.process,
@@ -174,6 +177,11 @@ fn sessions(node: &Node, resident: &ResidentId) -> (Vec<Session>, Vec<String>) {
     if let Err(error) = scanned {
         problems.push(format!("reading {resident}'s Claude sessions: {error}"));
     }
+    let state = node.claude.state.lock().expect("never poisoned");
+    for session in &mut sessions {
+        session.kept = state.stored.get(&session.id);
+    }
+    drop(state);
     sessions.sort_by_key(|session| session.began);
     (sessions, problems)
 }
@@ -189,10 +197,17 @@ async fn read_whole(
     process: Option<ProcessIdentity>,
     earlier: HashSet<String>,
 ) -> Result<transcript::Transcript, String> {
-    let cuts = super::rewind::cuts(&directory).map_err(|error| error.to_string())?;
-    let path = exchange::transcript(&directory)
-        .map_err(|error| format!("where it is kept could not be read: {error}"))?
-        .ok_or("the World's plugin never said where Claude Code keeps it")?;
+    let (cuts, path) = {
+        let directory = directory.clone();
+        fastctx_platform::task::blocking(move || {
+            let cuts = super::rewind::cuts(&directory).map_err(|error| error.to_string())?;
+            let path = exchange::transcript(&directory)
+                .map_err(|error| format!("where it is kept could not be read: {error}"))?
+                .ok_or("the World's plugin never said where Claude Code keeps it")?;
+            Ok::<_, String>((cuts, path))
+        })
+        .await?
+    };
     let Some(kept) = kept else { return read_now(path, cuts, earlier).await };
     // Watched before it is read, so no change between the two goes unseen.
     // The record is on disk whether or not its folder can be watched: one

@@ -6,6 +6,7 @@
 //! World uses the one implementation here, and the differences between
 //! platforms appear in this crate only.
 
+pub mod aside;
 pub mod atomic;
 pub mod awake;
 pub mod bounded;

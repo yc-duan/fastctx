@@ -23,7 +23,11 @@ use fastctx_types::residents::Notice;
 
 use crate::Node;
 
-static SENDING: Mutex<()> = Mutex::new(());
+/// Held while one letter is posted to a machine through a hub, its parts
+/// one after another: a later letter to it never lands between them, and
+/// letters to other machines never wait for it.
+static SENDING: std::sync::LazyLock<crate::leases::Registry<String, Mutex<()>>> =
+    std::sync::LazyLock::new(Default::default);
 
 /// What a letter is sent for: words, or news of the sending machine
 /// (`admission::letters`, which checks the same on the other side).
@@ -94,8 +98,9 @@ pub(crate) fn post(node: &Node, acting: &Acting, to: &Written, id: NoticeId, mut
         *accounts = node.accounts_on(&link, acting).into_iter().filter(|other| *other != account).collect();
     }
     let to = &to.name;
-    let _sending = SENDING.lock().expect("never poisoned");
+    let sending = SENDING.get_or_insert_with(&format!("{}/{to}", link.membership().id), || Mutex::new(()));
     if link.letter_size(to, &account, &letter) <= fastctx_net::wire::MAX_CONTROL_FRAME {
+        let _sending = sending.lock().expect("never poisoned");
         let part =
             link.post_letter(to, &account, purpose, LetterId::try_from(id.to_string()).expect("notice id"), letter)?;
         return Ok(Posted { hub: link.membership().id.clone(), parts: vec![part] });
@@ -138,6 +143,7 @@ pub(crate) fn post(node: &Node, acting: &Acting, to: &Written, id: NoticeId, mut
         return Err(io::Error::other(format!("the letter needs more than {} fragments", receiving::MAX_PARTS)));
     }
     let mut posted = Vec::new();
+    let _sending = sending.lock().expect("never poisoned");
     for (index, text) in parts.into_iter().enumerate() {
         let part = crate::speech::fixed_id("part", &[id.as_str(), &index.to_string()]);
         posted.push(link.post_letter(

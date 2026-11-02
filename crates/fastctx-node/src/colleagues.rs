@@ -770,7 +770,11 @@ pub fn left(node: &Arc<Node>, resident: ResidentId) {
         for machine in machines.into_iter().filter(|machine| *machine != address.machine) {
             let id = speech::fixed_id("left", &[resident.as_str(), &Timestamp::now().as_millisecond().to_string()]);
             let letter = Letter::Left { resident: resident.clone() };
-            if let Err(error) = crate::letters::send(&node, &acting, &Written::from(&machine), id, letter) {
+            let (sending, acting, to) = (node.clone(), acting.clone(), Written::from(&machine));
+            let sent =
+                fastctx_platform::task::blocking(move || crate::letters::send(&sending, &acting, &to, id, letter))
+                    .await;
+            if let Err(error) = sent {
                 node.log.line(format_args!("telling {machine} that {resident} left: {error}"));
             }
         }

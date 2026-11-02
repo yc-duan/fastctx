@@ -1539,14 +1539,19 @@ impl fastctx_net::link::Node for Handler {
     fn directory_changed(&self) {
         let Some(node) = self.node.upgrade() else { return };
         let Some(link) = node.link_of(&self.hub) else { return };
-        crate::admitted::notice(&node, &self.hub);
+        // Who came in, and the MCP commands given up, are kept on disk.
+        let swept = self.changes.changed(link.view());
+        let (keeping, hub) = (node.clone(), self.hub.clone());
+        fastctx_platform::task::spawn_blocking(move || {
+            crate::admitted::notice(&keeping, &hub);
+            if swept && let Err(error) = crate::mcp::store::sweep(&keeping, &hub) {
+                keeping.log.line(format_args!("collecting removed MCP commands: {error}"));
+            }
+        });
         node.tools_changed(None);
         node.shown_changed();
-        if !self.changes.changed(link.view()) {
+        if !swept {
             return;
-        }
-        if let Err(error) = crate::mcp::store::sweep(&node, &self.hub) {
-            node.log.line(format_args!("collecting removed MCP commands: {error}"));
         }
         crate::hub_arrival::check(&node, &self.hub);
         node.views_changed();

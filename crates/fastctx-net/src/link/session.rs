@@ -1010,7 +1010,12 @@ async fn flush(inner: Arc<Inner>, up: Outgoing, sent: u64, failed: oneshot::Send
         window.skip_through(held);
         while window.sent() + 1 < next && window.room() {
             let seq = window.sent() + 1;
-            match outbox.get_sized(seq) {
+            // The outbox is on disk, read where reading may block.
+            let reading = outbox.clone();
+            let read = fastctx_platform::task::spawn_blocking(move || reading.get_sized(seq))
+                .await
+                .unwrap_or_else(|error| Err(std::io::Error::other(error)));
+            match read {
                 Ok(Some((message, size))) => {
                     if up.send(Up::Send { seq, message }).is_err() {
                         return;

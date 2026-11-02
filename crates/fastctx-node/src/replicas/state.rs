@@ -83,9 +83,22 @@ pub(crate) struct State {
     pub copies: Mutex<BTreeMap<String, Slot>>,
     pub folders: Mutex<BTreeMap<PathBuf, Folder>>,
     pub routes: Mutex<BTreeMap<String, Route>>,
-    pub publication: Mutex<()>,
+    /// Taken shared by a document's write and alone by what withdraws
+    /// documents and folders: a write never lands after its withdrawal.
+    pub publication: std::sync::RwLock<()>,
     paths: Mutex<BTreeMap<String, String>>,
     loaded: Mutex<bool>,
+    /// Whether the copies kept on disk were read in, asked without waiting.
+    read_in: std::sync::atomic::AtomicBool,
+}
+
+/// `State::load`, where reading the disk may block; nothing once read.
+pub(crate) async fn loaded(node: &Arc<crate::Node>) -> io::Result<()> {
+    if node.replicas.state.read_in.load(std::sync::atomic::Ordering::Acquire) {
+        return Ok(());
+    }
+    let node = node.clone();
+    fastctx_platform::task::blocking(move || node.replicas.state.load(&node.world)).await
 }
 
 pub(crate) fn identity(account: &HubAccount, head: &Head) -> String {
@@ -198,6 +211,7 @@ impl State {
             self.folders.lock().expect("never poisoned").insert(folder.path.clone(), folder);
         }
         *loaded = true;
+        self.read_in.store(true, std::sync::atomic::Ordering::Release);
         Ok(())
     }
 

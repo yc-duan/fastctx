@@ -43,7 +43,7 @@ pub(crate) async fn all(node: &Arc<Node>, link: &Arc<Link>) -> Result<(), String
     if !link.view().shared_records {
         return Ok(());
     }
-    node.replicas.state.load(&node.world).map_err(failure)?;
+    super::state::loaded(node).await.map_err(failure)?;
     let view = crate::authorization::current_view(link).map_err(failure)?;
     let Some(account) = view
         .me()
@@ -51,7 +51,7 @@ pub(crate) async fn all(node: &Arc<Node>, link: &Arc<Link>) -> Result<(), String
         .and_then(|member| member.home.as_ref().filter(|home| member.logins.contains(home)))
         .cloned()
     else {
-        return super::publication::prune(node);
+        return super::publication::prune(node).await;
     };
     for resident in node.residents.everyone().filter(|resident| resident.removed.is_none()) {
         if let Err(error) = crate::record_ownership::register(node, &resident.id, &resident.about.acting).await {
@@ -72,26 +72,29 @@ pub(crate) async fn all(node: &Arc<Node>, link: &Arc<Link>) -> Result<(), String
         return Err("the hub did not return the replica catalog".into());
     };
     let account = HubAccount { hub: link.membership().id, account };
-    super::publication::prune(node)?;
+    super::publication::prune(node).await?;
     for scope in catalog.scopes.iter().cloned() {
         let path = folder(node, link, &scope)?;
         if let Scope::Conversation { conversation } = &scope {
             let owner = HubAccount { hub: account.hub.clone(), account: conversation.account.clone() };
-            crate::placement::ownership::bind_registered(
-                node,
-                path.parent().ok_or("history has no conversation directory")?,
-                &owner,
-                conversation,
-            )
+            let (binding, place, conversation) = (
+                node.clone(),
+                path.parent().ok_or("history has no conversation directory")?.to_path_buf(),
+                conversation.clone(),
+            );
+            fastctx_platform::task::blocking(move || {
+                crate::placement::ownership::bind_registered(&binding, &place, &owner, &conversation)
+            })
+            .await
             .map_err(failure)?;
         }
-        super::publication::folder(node, Folder { account: account.clone(), scope, path })?;
+        super::publication::folder(node, Folder { account: account.clone(), scope, path }).await?;
     }
     for head in catalog.documents.iter().cloned() {
         apply(node, link, &account, head).await?;
     }
-    super::publication::catalog(node, &account.hub, &catalog, known, known_folders)?;
-    super::publication::prune(node)?;
+    super::publication::catalog(node, account.hub.clone(), catalog, known, known_folders).await?;
+    super::publication::prune(node).await?;
     node.memory_changed();
     Ok(())
 }
@@ -117,7 +120,7 @@ pub(crate) async fn apply(node: &Arc<Node>, link: &Arc<Link>, account: &HubAccou
     });
     let mut copy = slot.lock().await;
     if known && copy.path == path && copy.head == head && copy.pending.is_empty() {
-        return super::publication::repair(node, &copy);
+        return super::publication::repair(node, &copy).await;
     }
     let old_path = copy.path.clone();
     copy.path = path;
@@ -137,9 +140,9 @@ pub(crate) async fn apply(node: &Arc<Node>, link: &Arc<Link>, account: &HubAccou
     if copy.head.retired && copy.pending.is_empty() {
         copy.text.clear();
     }
-    super::publication::save(node, &copy, true, Some(copy.effective()))?;
+    super::publication::save(node, &copy, true, Some(copy.effective())).await?;
     if old_path != copy.path {
-        super::files::withdraw(&old_path).map_err(failure)?;
+        fastctx_platform::task::blocking(move || super::files::withdraw(&old_path)).await.map_err(failure)?;
     }
     Ok(())
 }
@@ -176,7 +179,7 @@ pub(crate) async fn refresh(node: &Arc<Node>, link: &Link, copy: &mut Copy) -> R
     copy.head.version = version;
     copy.head.retired = retired;
     copy.head.history = history;
-    super::publication::save(node, copy, true, Some(&previous))?;
+    super::publication::save(node, copy, true, Some(&previous)).await?;
     Ok(())
 }
 
@@ -189,12 +192,12 @@ async fn repair_now(node: Arc<Node>) -> Result<(), String> {
         crate::history::local_copy::repair(&node).await.map_err(|error| error.message)?;
     }
     fastctx_platform::task::spawn_blocking(move || {
-        super::publication::prune(&node)?;
+        super::publication::prune_now(&node)?;
         for slot in node.replicas.state.slots() {
             // A writer repairs its own projection before returning; other documents never wait for it.
             let Ok(copy) = slot.try_lock() else { continue };
             if permitted(&node, &copy).is_ok() {
-                super::publication::repair(&node, &copy)?;
+                super::publication::repair_now(&node, &copy)?;
             }
         }
         Ok(())
@@ -211,7 +214,7 @@ pub(crate) async fn project(
     if !link.view().shared_records {
         return Ok(());
     }
-    node.replicas.state.load(&node.world).map_err(failure)?;
+    super::state::loaded(node).await.map_err(failure)?;
     let folders: Vec<_> = node
         .replicas
         .state
@@ -261,7 +264,7 @@ pub(crate) async fn record(
     if !link.view().shared_records {
         return Ok(());
     }
-    node.replicas.state.load(&node.world).map_err(failure)?;
+    super::state::loaded(node).await.map_err(failure)?;
     let resident = if change.metadata.kind == fastctx_types::plan::KIND {
         change.metadata.key.as_str()
     } else {
@@ -302,7 +305,7 @@ pub(crate) async fn repair_paths(node: &Arc<Node>, paths: &[PathBuf]) -> Result<
     if node.links().is_empty() {
         crate::history::local_copy::repair(node).await.map_err(|error| error.message)?;
     }
-    node.replicas.state.load(&node.world).map_err(failure)?;
+    super::state::loaded(node).await.map_err(failure)?;
     for path in paths {
         let native = fastctx_platform::local_path(path).map_err(failure)?;
         let actual = fastctx_hands::files::canonical_path(&native).map_err(failure)?;
@@ -311,7 +314,7 @@ pub(crate) async fn repair_paths(node: &Arc<Node>, paths: &[PathBuf]) -> Result<
         // the copy as it stands rather than waiting with it (the writer
         // repairs and publishes its own projection when it is done).
         let Ok(copy) = tokio::time::timeout(READ_WAIT, slot.lock()).await else { continue };
-        super::publication::repair(node, &copy)?;
+        super::publication::repair(node, &copy).await?;
     }
     Ok(())
 }
@@ -326,7 +329,7 @@ pub(crate) async fn conversation(
     link: &Arc<Link>,
     conversation: fastctx_types::owned_records::Conversation,
 ) -> Result<(), String> {
-    node.replicas.state.load(&node.world).map_err(failure)?;
+    super::state::loaded(node).await.map_err(failure)?;
     let view = crate::authorization::current_view(link).map_err(failure)?;
     let account = HubAccount {
         hub: link.membership().id,
@@ -342,7 +345,7 @@ pub(crate) async fn conversation(
         &conversation,
     )
     .map_err(failure)?;
-    super::publication::folder(node, Folder { account: account.clone(), scope: scope.clone(), path })?;
+    super::publication::folder(node, Folder { account: account.clone(), scope: scope.clone(), path }).await?;
     let page = link.owned_plan_read(&account.account, &conversation.address).await?;
     apply(
         node,

@@ -198,10 +198,26 @@ async fn stamp(node: &Arc<Node>, resident: &ResidentId) -> Result<Option<String>
         // would not change.
         ("codex", Some(_)) if !about.world_managed() => return Ok(None),
         ("codex", Some(thread)) => {
-            let codex = node.codex.of(node, &about)?;
+            let codex = {
+                // Finding its host may read its host mode from its disk.
+                let (finding, host) = (node.clone(), about.clone());
+                fastctx_platform::task::blocking(move || finding.codex.of(&finding, &host)).await?
+            };
             take(codex.stamp(thread).await.map_err(Failure::new)?.as_bytes());
         }
-        ("claude", _) => crate::claude::history::stamp(node, resident, &mut take),
+        ("claude", _) => {
+            // Its sessions' records are looked at on disk.
+            let (reading, whose) = (node.clone(), resident.clone());
+            let stamped = fastctx_platform::task::blocking(move || {
+                let mut stamped = Vec::new();
+                crate::claude::history::stamp(&reading, &whose, &mut |bytes: &[u8]| stamped.push(bytes.to_vec()));
+                stamped
+            })
+            .await;
+            for bytes in stamped {
+                take(&bytes);
+            }
+        }
         _ => {}
     }
     Ok(Some(digest.finalize().iter().map(|byte| format!("{byte:02x}")).collect()))
