@@ -126,9 +126,11 @@ def inside(args):
                        "FASTCTX_HOME": str(base / "driver-world"), "FASTCTX_PREVIEW": "1"}
         if args.earlier:
             environment["FASTCTX_DRILL_EARLIER"] = str(args.earlier)
-        # A development kernel run strictly stops at the first rule of its threads broken.
-        if os.environ.get("FASTCTX_STRICT_ROLES"):
-            environment["FASTCTX_STRICT_ROLES"] = os.environ["FASTCTX_STRICT_ROLES"]
+        # A development kernel run strictly stops at the first rule of its threads broken; one
+        # tracing them tells the first at each place and runs on.
+        for name in ("FASTCTX_STRICT_ROLES", "FASTCTX_TRACE_ROLES"):
+            if os.environ.get(name):
+                environment[name] = os.environ[name]
         subprocess.run([str(args.drill), str(base), str(args.kernel), goal.endpoint] + (["--scale"] if args.scale else []), check=True, timeout=1800 if args.scale else 900,
                        env=environment)
         if args.scale:

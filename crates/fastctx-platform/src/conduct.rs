@@ -58,7 +58,16 @@ fn strict() -> bool {
     *STRICT.get_or_init(|| cfg!(debug_assertions) && std::env::var_os("FASTCTX_STRICT_ROLES").is_some_and(|v| v == "1"))
 }
 
-fn note(kind: Kind, place: String, doing: String, took: Duration) {
+/// Whether the first violation at each place is told on stderr with how its
+/// thread came to it, for a drill that runs on past them
+/// (`FASTCTX_TRACE_ROLES=1`).
+fn traced() -> bool {
+    static TRACED: OnceLock<bool> = OnceLock::new();
+    *TRACED.get_or_init(|| std::env::var_os("FASTCTX_TRACE_ROLES").is_some_and(|v| v == "1"))
+}
+
+/// Counts a violation; whether it is the first at its place.
+fn note(kind: Kind, place: String, doing: String, took: Duration) -> bool {
     TOTAL.fetch_add(1, Ordering::Relaxed);
     let mut seen = SEEN.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let full = seen.len() >= PLACES;
@@ -69,11 +78,13 @@ fn note(kind: Kind, place: String, doing: String, took: Duration) {
             entry.doing = doing;
             entry.worst = entry.worst.max(took);
             entry.last = now;
+            false
         }
         None if !full => {
             seen.insert((kind, place), Seen { count: 1, doing, worst: took, last: now });
+            true
         }
-        None => {}
+        None => false,
     }
 }
 
@@ -87,7 +98,16 @@ pub(crate) fn blocked(role: Role, what: &'static str, at: &Location<'_>) {
     if strict() {
         panic!("{place}, while {doing}: this thread must not block (specs/world-engine.md)");
     }
-    note(Kind::Blocking, place, doing, Duration::ZERO);
+    let told = traced().then(|| format!("first blocking at {place}, while {doing}"));
+    if note(Kind::Blocking, place, doing, Duration::ZERO)
+        && let Some(told) = told
+    {
+        eprintln!(
+            "{told}:
+{}",
+            std::backtrace::Backtrace::force_capture()
+        );
+    }
 }
 
 /// A task kept its thread for `took` at once.

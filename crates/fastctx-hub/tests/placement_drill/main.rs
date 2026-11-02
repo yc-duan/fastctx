@@ -78,11 +78,15 @@ fn command(root: &Path, bin: &Path) -> Command {
     strictly(&mut c);
     c
 }
-/// A development kernel run strictly, as the drill was, stops at the first
-/// rule of its threads broken.
+/// A kernel run as the drill was: a development one run strictly stops at
+/// the first rule of its threads broken and says how it got there; one
+/// tracing tells the first at each place and runs on.
 fn strictly(command: &mut Command) {
     if let Some(strict) = std::env::var_os("FASTCTX_STRICT_ROLES") {
-        command.env("FASTCTX_STRICT_ROLES", strict);
+        command.env("FASTCTX_STRICT_ROLES", strict).env("RUST_BACKTRACE", "1");
+    }
+    if let Some(traced) = std::env::var_os("FASTCTX_TRACE_ROLES") {
+        command.env("FASTCTX_TRACE_ROLES", traced);
     }
 }
 async fn device(

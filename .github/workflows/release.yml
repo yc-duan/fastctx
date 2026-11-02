@@ -490,6 +490,7 @@ jobs:
             ${{ runner.temp }}/soak/node.log
             ${{ runner.temp }}/soak/drill.err
             ${{ runner.temp }}/soak/hub.log
+            ${{ runner.temp }}/soak/soak-node.out
           if-no-files-found: ignore
 
   # The node's storage held to the constitution's numbers where its engine and its records are: a

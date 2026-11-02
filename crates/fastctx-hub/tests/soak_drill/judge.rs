@@ -418,7 +418,7 @@ fn judge_readings(whole: &Readings, calm: &Readings, checks: &mut Checks) {
     checks.check(
         "no violation of the threads' rules all through",
         whole.violations_total == 0,
-        json!({"total": whole.violations_total, "violations": whole.violations.iter().take(12).collect::<Vec<_>>()}),
+        json!({"total": whole.violations_total, "violations": whole.violations}),
     );
     for runtime in ["node", "link", "data"] {
         let name = format!("runtime.{runtime}.waited");

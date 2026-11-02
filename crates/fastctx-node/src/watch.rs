@@ -12,8 +12,13 @@ use fastctx_types::session::{Mark, SessionEvent};
 use std::collections::{HashMap, VecDeque};
 use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, LazyLock, Mutex, RwLock};
 use std::time::{Duration, Instant};
+
+/// The bytes of the events kept for viewers that come back, all
+/// conversations together.
+static KEPT: LazyLock<&'static fastctx_platform::readings::Gauge> =
+    LazyLock::new(|| fastctx_platform::readings::gauge("watch.kept_bytes"));
 
 const SHARDS: usize = 64;
 type Sessions = HashMap<ResidentId, Arc<Mutex<Watching>>>;
@@ -133,6 +138,7 @@ impl Telling {
         self.kept.push_back((self.sequence, marked.clone(), bytes));
         self.bytes += bytes;
         all.fetch_add(bytes, Ordering::Relaxed);
+        KEPT.add(bytes as i64);
         while self.kept.len() > KEPT_EVENTS
             || self.bytes > KEPT_BYTES
             || (all.load(Ordering::Relaxed) > KEPT_ALL && self.kept.len() > 1)
@@ -140,6 +146,7 @@ impl Telling {
             let Some((sequence, _, gone)) = self.kept.pop_front() else { break };
             self.bytes -= gone;
             all.fetch_sub(gone, Ordering::Relaxed);
+            KEPT.add(-(gone as i64));
             self.whole_from = sequence + 1;
         }
         marked
@@ -160,6 +167,7 @@ impl Telling {
 
     fn forget(&mut self, all: &AtomicUsize) {
         all.fetch_sub(self.bytes, Ordering::Relaxed);
+        KEPT.add(-(self.bytes as i64));
         self.kept.clear();
         self.bytes = 0;
         self.whole_from = self.sequence + 1;

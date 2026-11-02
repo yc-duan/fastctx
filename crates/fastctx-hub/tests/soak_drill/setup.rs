@@ -114,6 +114,11 @@ fn command(config: &Config, root: &Path, program: &Path, home: &Path) -> Command
         .env("FASTCTX_UPDATE_RELEASES", "http://127.0.0.1:9/releases")
         .current_dir(config.base.join("user"))
         .stdin(Stdio::null());
+    // A soak that traces the rules of the threads has its nodes tell the
+    // first violation at each place, with how their thread came to it.
+    if let Some(traced) = std::env::var_os("FASTCTX_TRACE_ROLES") {
+        command.env("FASTCTX_TRACE_ROLES", traced);
+    }
     command
 }
 

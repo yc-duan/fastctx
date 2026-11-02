@@ -179,10 +179,11 @@ def main():
                 subprocess.run(["systemctl", "stop", unit], check=False, capture_output=True)
                 subprocess.run(["systemctl", "revert", unit], check=False, capture_output=True)
             # Beside the rest, readable by whoever collects them after the root that wrote them.
-            for kept, name in ((base / "soak-result.json", "soak-result.json"), (base / "hub" / "hub.log", "hub.log")):
+            for kept, name in ((base / "soak-result.json", "soak-result.json"), (base / "hub" / "hub.log", "hub.log"),
+                               (base / "soak-node.out", "soak-node.out")):
                 if kept.exists():
                     shutil.copy2(kept, root / name)
-            for name in ("soak-result.json", "hub.log", "node.log", "drill.err"):
+            for name in ("soak-result.json", "hub.log", "node.log", "drill.err", "soak-node.out"):
                 if (root / name).exists():
                     os.chmod(root / name, 0o644)
             mock.close()

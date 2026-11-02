@@ -6,7 +6,7 @@
 //! bound, the one least lately sent first.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 
 use fastctx_net::history::Cut;
 use fastctx_types::ResidentId;
@@ -14,6 +14,10 @@ use fastctx_types::session::Mark;
 
 /// The bytes the cuts of every conversation may hold together.
 const KEPT_BYTES: usize = 128 << 20;
+
+/// The bytes the cuts hold now, every conversation's together.
+static HELD: LazyLock<&'static fastctx_platform::readings::Gauge> =
+    LazyLock::new(|| fastctx_platform::readings::gauge("history.cut_bytes"));
 
 /// One conversation's history as it was cut.
 pub(crate) struct CutHistory {
@@ -78,6 +82,7 @@ impl CutHistories {
         let sent = kept.sent;
         kept.bytes += cut.bytes;
         kept.cuts.insert(id.clone(), (Arc::new(cut), sent));
+        HELD.set(kept.bytes as i64);
     }
 
     /// Lets `id`'s cut go, when it is still `cut`.
@@ -88,5 +93,6 @@ impl CutHistories {
         {
             kept.bytes -= gone.bytes;
         }
+        HELD.set(kept.bytes as i64);
     }
 }
