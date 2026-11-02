@@ -91,22 +91,25 @@ where
 /// briefly. Work that may wait long keeps its thread meanwhile; it reaches
 /// storage through `blocking` instead. On such a thread already, it runs
 /// where it is.
-pub async fn on_blocking<F>(work: F) -> F::Output
+///
+/// The work is put on the heap as this is called, and what is returned holds
+/// only a pointer to it. Held by value, by the future awaiting it or by
+/// `block_on` on its thread's stack, each such step nested in another adds
+/// the whole of the inner one to the outer, until one future takes a
+/// thread's whole stack.
+pub fn on_blocking<F>(work: F) -> impl Future<Output = F::Output> + Send + 'static
 where
     F: Future + Send + 'static,
     F::Output: Send + 'static,
 {
-    // Its state is kept on the heap. Held where it runs, as `block_on` holds
-    // what it is given on its thread's stack, or inside the work awaiting
-    // it, a deep chain of calls grows with every such step it nests, until
-    // it takes a thread's whole stack, and each thread that ran one keeps
-    // the pages it touched.
     let work = Box::pin(work);
-    if roles::current().may_block() {
-        return work.await;
+    async move {
+        if roles::current().may_block() {
+            return work.await;
+        }
+        let runtime = tokio::runtime::Handle::current();
+        blocking(move || runtime.block_on(work)).await
     }
-    let runtime = tokio::runtime::Handle::current();
-    blocking(move || runtime.block_on(work)).await
 }
 
 /// Runs `work` on the blocking pool of the runtime `handle` names, as

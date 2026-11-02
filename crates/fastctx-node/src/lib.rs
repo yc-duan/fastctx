@@ -9,6 +9,8 @@
 //! it records what happened while it was away, such as jobs whose
 //! supervisor did not survive a restart of the machine.
 
+#[cfg(test)]
+mod future_sizes;
 mod account_records;
 pub mod activity;
 mod activity_book;
