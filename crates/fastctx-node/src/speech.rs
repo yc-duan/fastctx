@@ -73,7 +73,8 @@ pub(crate) async fn tell_at(
 ) -> Result<Landed, Failure> {
     if node.is_here(machine) {
         let delivery = Delivery { id, at: Timestamp::now(), notice };
-        if crate::on_delivery::park(node, &to.resident, &delivery)
+        if parked(node, &to.resident, &delivery)
+            .await
             .map_err(|error| Failure::new(format!("keeping the on completion: {error}")))?
         {
             return Ok(Landed::Waiting { why: None, answered: false });
@@ -102,10 +103,9 @@ pub(crate) async fn tell_at(
 /// Tells a resident of this machine something: kept first, then handed over
 /// the way its host lets the World in.
 pub async fn tell_here(node: &Arc<Node>, to: &ResidentId, delivery: Delivery, owed: Owed) -> Result<Landed, Failure> {
-    // Keeping and handing over reach records that may still be moving in,
-    // which only a thread that may block waits for; so does the rest.
+    // Keeping and handing over go on to their end if the teller goes away.
     let (node, to) = (node.clone(), to.clone());
-    crate::blocking::on(async move { tell_here_now(&node, &to, delivery, owed).await }).await
+    crate::to_end::run(async move { tell_here_now(&node, &to, delivery, owed).await }).await
 }
 
 async fn tell_here_now(node: &Arc<Node>, to: &ResidentId, delivery: Delivery, owed: Owed) -> Result<Landed, Failure> {
@@ -143,7 +143,7 @@ pub(crate) async fn tell_here_locked(
     owed: Owed,
 ) -> Result<Landed, Failure> {
     let (node, to) = (node.clone(), to.clone());
-    crate::blocking::on(async move { tell_here_locked_now(&node, &to, delivery, owed).await }).await
+    crate::to_end::run(async move { tell_here_locked_now(&node, &to, delivery, owed).await }).await
 }
 
 async fn tell_here_locked_now(
@@ -152,19 +152,27 @@ async fn tell_here_locked_now(
     delivery: Delivery,
     owed: Owed,
 ) -> Result<Landed, Failure> {
-    if crate::on_delivery::park(node, to, &delivery)
-        .map_err(|error| Failure::new(format!("keeping the completion: {error}")))?
-    {
+    if parked(node, to, &delivery).await.map_err(|error| Failure::new(format!("keeping the completion: {error}")))? {
         return Ok(Landed::Waiting { why: None, answered: false });
     }
     receive_here_locked(node, to, delivery, owed).await
+}
+
+/// Holds the end of a job for an `on` that waits for it (`on_delivery::park`),
+/// where holding it may block; nothing else is held there.
+async fn parked(node: &Arc<Node>, to: &ResidentId, delivery: &Delivery) -> std::io::Result<bool> {
+    if !matches!(delivery.notice, Notice::JobEnded { .. }) {
+        return Ok(false);
+    }
+    let (node, to, delivery) = (node.clone(), to.clone(), delivery.clone());
+    fastctx_platform::task::blocking(move || crate::on_delivery::park(&node, &to, &delivery)).await
 }
 
 /// Delivers a completion whose follower decision is already settled. The
 /// caller retains its durable copy until this handover has taken custody.
 pub(crate) async fn tell_completion(node: &Arc<Node>, to: &ResidentId, delivery: Delivery) -> Result<Landed, Failure> {
     let (node, to) = (node.clone(), to.clone());
-    crate::blocking::on(async move { tell_completion_now(&node, &to, delivery).await }).await
+    crate::to_end::run(async move { tell_completion_now(&node, &to, delivery).await }).await
 }
 
 async fn tell_completion_now(node: &Arc<Node>, to: &ResidentId, delivery: Delivery) -> Result<Landed, Failure> {
@@ -236,15 +244,22 @@ async fn receive_here_locked(
                 .map_err(|error| Failure::new(error.to_string()))?
                 .map_err(|error| Failure::new(format!("reading what waits: {error}")))?
         };
-        for kept in earlier {
-            if kept.state == PendingState::Waiting
-                && kept.delivery.id != delivery.id
-                && kept.delivery.notice.along() == Some(kind)
-                && kept.delivery.at <= delivery.at
-            {
-                crate::inbox::withdraw(&directory, &kept.delivery.id)
-                    .map_err(|error| Failure::new(format!("replacing what waits: {error}")))?;
-            }
+        let replaced: Vec<NoticeId> = earlier
+            .into_iter()
+            .filter(|kept| {
+                kept.state == PendingState::Waiting
+                    && kept.delivery.id != delivery.id
+                    && kept.delivery.notice.along() == Some(kind)
+                    && kept.delivery.at <= delivery.at
+            })
+            .map(|kept| kept.delivery.id)
+            .collect();
+        if !replaced.is_empty() {
+            crate::delivery::local(&directory, move |directory| {
+                replaced.iter().try_for_each(|id| crate::inbox::withdraw(directory, id))
+            })
+            .await
+            .map_err(|error| Failure::new(format!("replacing what waits: {error}")))?;
         }
     }
     let pending = Pending { delivery, readers, state: PendingState::Waiting, working, session: None, since: None };
@@ -268,14 +283,11 @@ async fn receive_here_locked(
         return Ok(Landed::Waiting { why: Some(why.into()), answered: false });
     }
     if !kept {
-        if let Some(why) = crate::delivery::input_uncertainty(&directory, &pending.delivery.id)
-            .map_err(|error| Failure::new(error.to_string()))?
-        {
+        if let Some(why) = uncertainty(&directory, &pending.delivery.id).await? {
             return Ok(Landed::Uncertain { why });
         }
         if matches!(pending.delivery.notice, Notice::Sentinel { .. })
-            && let Some(current) =
-                crate::inbox::read(&directory, &pending.delivery.id).map_err(|e| Failure::new(e.to_string()))?
+            && let Some(current) = read(&directory, &pending.delivery.id).await?
             && current.state == PendingState::Waiting
         {
             return hand_over_locked(node, to, &about, &directory, current).await;
@@ -331,7 +343,61 @@ pub async fn hand_over(
     pending: Pending,
 ) -> Result<Landed, Failure> {
     let (node, to, about, directory) = (node.clone(), to.clone(), about.clone(), directory.clone());
-    crate::blocking::on(async move { hand_over_now(&node, &to, &about, &directory, pending).await }).await
+    crate::to_end::run(async move { hand_over_now(&node, &to, &about, &directory, pending).await }).await
+}
+
+/// What waits as `id` in `directory`, read where reading may block.
+async fn read(directory: &ConversationDir, id: &NoticeId) -> Result<Option<Pending>, Failure> {
+    let id = id.clone();
+    crate::delivery::local(directory, move |directory| crate::inbox::read(directory, &id))
+        .await
+        .map_err(|error| Failure::new(error.to_string()))
+}
+
+/// What waits in `directory`, read where reading may block.
+async fn waiting(directory: &ConversationDir) -> Result<Vec<Pending>, Failure> {
+    crate::delivery::local(directory, crate::inbox::pending).await.map_err(|error| Failure::new(error.to_string()))
+}
+
+/// Why it is not known whether `id` went in, if it is not, read where
+/// reading may block.
+async fn uncertainty(directory: &ConversationDir, id: &NoticeId) -> Result<Option<String>, Failure> {
+    let id = id.clone();
+    crate::delivery::local(directory, move |directory| crate::delivery::input_uncertainty(directory, &id))
+        .await
+        .map_err(|error| Failure::new(error.to_string()))
+}
+
+/// The turn `id` went into, if it went into one, read where reading may block.
+async fn input_turn(directory: &ConversationDir, id: &NoticeId) -> Result<Option<String>, Failure> {
+    let id = id.clone();
+    crate::delivery::local(directory, move |directory| crate::delivery::input_turn(directory, &id))
+        .await
+        .map_err(|error| Failure::new(error.to_string()))
+}
+
+/// Keeps `pending` in `directory`, where writing may block: whether it was
+/// new there.
+async fn keep(directory: &ConversationDir, pending: &Pending) -> Result<bool, Failure> {
+    let pending = pending.clone();
+    crate::delivery::local(directory, move |directory| crate::inbox::keep(directory, &pending))
+        .await
+        .map_err(|error| Failure::new(error.to_string()))
+}
+
+/// Takes back what waits as `id`, where writing may block.
+async fn withdraw(directory: &ConversationDir, id: &NoticeId) -> Result<(), Failure> {
+    let id = id.clone();
+    crate::delivery::local(directory, move |directory| crate::inbox::withdraw(directory, &id))
+        .await
+        .map_err(|error| Failure::new(error.to_string()))
+}
+
+/// Whether the World holds `about`'s native thread now, as a delivery asks
+/// (`codex::native::requested`), where asking may block.
+async fn native_requested(node: &Arc<Node>, about: &About) -> Result<bool, Failure> {
+    let (node, about) = (node.clone(), about.clone());
+    fastctx_platform::task::blocking(move || crate::codex::native::requested(&node, &about)).await
 }
 
 async fn hand_over_now(
@@ -346,9 +412,7 @@ async fn hand_over_now(
     // nothing waits for it holding the gate.
     node.ready_for(to).await;
     if crate::composer::restore_before_delivery(node, to).await?
-        && crate::inbox::read(directory, &pending.delivery.id)
-            .map_err(|error| Failure::new(error.to_string()))?
-            .is_none()
+        && read(directory, &pending.delivery.id).await?.is_none()
     {
         return Ok(Landed::Waiting { why: None, answered: true });
     }
@@ -367,7 +431,7 @@ pub(crate) fn ready_for_delivery(node: &Node, about: &About, pending: &Pending) 
         || pending.delivery.notice.wakes_closed()
         || node.residents.host_present(&about.id)
         || matches!(pending.delivery.notice, Notice::Words { from: Speaker::User { .. }, .. } | Notice::Attached { .. })
-        || crate::lifecycle::retry::progress(node, &about.id, &pending.delivery.id)
+        || crate::lifecycle::retry::progress_now(node, &about.id, &pending.delivery.id)
             .map_or(true, |progress| progress.is_some())
 }
 
@@ -394,9 +458,7 @@ async fn hand_over_locked(
         });
     }
     if matches!(pending.delivery.notice, Notice::Sentinel { .. })
-        && crate::inbox::read(directory, &pending.delivery.id)
-            .map_err(|e| Failure::new(e.to_string()))?
-            .is_none_or(|current| current.state != PendingState::Waiting)
+        && read(directory, &pending.delivery.id).await?.is_none_or(|current| current.state != PendingState::Waiting)
     {
         return Ok(Landed::Waiting { why: None, answered: answered(node, to, about) });
     }
@@ -406,9 +468,13 @@ async fn hand_over_locked(
     {
         return Ok(Landed::Waiting { why: None, answered: true });
     }
-    if let Some(error) = crate::lifecycle::refused::get(node, to, &pending.delivery.id)
-        .map_err(|error| Failure::new(error.to_string()))?
-    {
+    let refusal = {
+        let (reading, recipient, input) = (node.clone(), to.clone(), pending.delivery.id.clone());
+        fastctx_platform::task::blocking(move || crate::lifecycle::refused::get(&reading, &recipient, &input))
+            .await
+            .map_err(|error| Failure::new(error.to_string()))?
+    };
+    if let Some(error) = refusal {
         return crate::lifecycle::refused::reject(node, to, &pending.delivery.id, error).await;
     }
     if let Err(error) = crate::lifecycle::wake::check(node, to, about).await {
@@ -423,24 +489,27 @@ async fn hand_over_locked(
             crate::lifecycle::retry::kick(node, to);
             return Ok(Landed::Waiting { why: None, answered: answered(node, to, about) });
         }
-        let waiting = crate::inbox::pending(directory).map_err(|error| Failure::new(error.to_string()))?;
+        let waiting = waiting(directory).await?;
         // The CLI's resume prompt has not reached a consuming turn yet.
         // A ready plugin can submit a later envelope ahead of that prompt.
         if waiting.iter().any(|row| row.state == PendingState::Waking && row.delivery.id != pending.delivery.id) {
             crate::lifecycle::retry::kick(node, to);
             return Ok(Landed::Waiting { why: None, answered: answered(node, to, about) });
         }
-        if let Some(first) = waiting.iter().find(|row| {
-            row.state == PendingState::Waiting
-                && row.delivery.notice.along().is_none()
-                && ready_for_delivery(node, about, row)
-        }) {
-            let (reading, recipient, input) = (node.clone(), to.clone(), first.delivery.id.clone());
-            let progress = fastctx_platform::task::spawn_blocking(move || {
-                crate::lifecycle::retry::progress(&reading, &recipient, &input)
-            })
-            .await
-            .map_err(|error| Failure::new(error.to_string()))?;
+        // The first that may go in now, and how far its host got with it,
+        // read where reading may block.
+        let (reading, recipient, host) = (node.clone(), to.clone(), about.clone());
+        let first = fastctx_platform::task::blocking(move || {
+            let first = waiting.into_iter().find(|row| {
+                row.state == PendingState::Waiting
+                    && row.delivery.notice.along().is_none()
+                    && ready_for_delivery(&reading, &host, row)
+            })?;
+            let progress = crate::lifecycle::retry::progress_now(&reading, &recipient, &first.delivery.id);
+            Some((first, progress))
+        })
+        .await;
+        if let Some((first, progress)) = first {
             let progress = match progress {
                 Ok(progress) => progress,
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
@@ -458,9 +527,18 @@ async fn hand_over_locked(
     }
     crate::goals::colleagues::incoming(node, to, about, &pending).await?;
     if let Err(error) = crate::focus::refresh(node, to).await {
-        return crate::lifecycle::retry::defer(node, to, &pending.delivery.id, &error.message);
+        return crate::lifecycle::retry::defer(node, to, &pending.delivery.id, &error.message).await;
     }
-    if let Some(landed) = crate::claude::deliver(node, to, about, directory, &pending).await {
+    // Claude's delivery reaches its session's files throughout, where that
+    // may block.
+    let (delivering, recipient, host, place, claimed) =
+        (node.clone(), to.clone(), about.clone(), directory.clone(), pending.clone());
+    if let Some(landed) =
+        crate::blocking::on(
+            async move { crate::claude::deliver(&delivering, &recipient, &host, &place, &claimed).await },
+        )
+        .await
+    {
         return landed;
     }
     let why = None;
@@ -469,7 +547,7 @@ async fn hand_over_locked(
         && about.host.agent.as_str() == "codex"
         && let Some(thread) = &about.session
     {
-        if !about.world_started && !crate::codex::native::requested(node, about)? {
+        if !about.world_started && !native_requested(node, about).await? {
             return Ok(Landed::Waiting {
                 why: Some("the native host still runs; this message waits at its next World tool boundary".into()),
                 answered: false,
@@ -486,10 +564,8 @@ async fn hand_over_locked(
                 if sentinel {
                     crate::sentinels::report(node, &format!("delivery {to}"), Some(failure.message.clone()));
                 }
-                if crate::inbox::read(directory, &pending.delivery.id)
-                    .is_ok_and(|row| row.is_some_and(|row| row.state == PendingState::Waiting))
-                {
-                    return crate::lifecycle::retry::defer(node, to, &pending.delivery.id, &failure.message);
+                if crate::lifecycle::retry::still_waiting(directory, &pending.delivery.id).await {
+                    return crate::lifecycle::retry::defer(node, to, &pending.delivery.id, &failure.message).await;
                 }
                 return Err(failure);
             }
@@ -544,7 +620,7 @@ pub async fn send_composer(
     if about.world_managed()
         && about.host.agent.as_str() == "codex"
         && let Some(thread) = &about.session
-        && (about.world_started || crate::codex::native::requested(node, &about)?)
+        && (about.world_started || native_requested(node, &about).await?)
     {
         let Some(_answering) = node.handoff.call() else {
             return Err(Failure::new(crate::handoff::WAITING));
@@ -557,7 +633,7 @@ pub async fn send_composer(
             session: None,
             since: None,
         };
-        if crate::inbox::keep(&directory, &pending).map_err(|error| Failure::new(error.to_string()))? {
+        if keep(&directory, &pending).await? {
             node.idle_probes.touched(id);
             crate::goals::engine::input_changed(node, id);
         }
@@ -580,9 +656,16 @@ async fn submit_thread(
 ) -> Result<Option<Landed>, Failure> {
     // Its home's app-server holds its thread.
     let (about, _) = node.residents.about(id).ok_or_else(|| Failure::new(format!("{id} has no record here")))?;
-    let codex = match node.codex.of(node, &about) {
+    let finding = {
+        // Finding its host may read its host mode from its disk.
+        let (node, about) = (node.clone(), about.clone());
+        fastctx_platform::task::blocking(move || node.codex.of(&node, &about)).await
+    };
+    let codex = match finding {
         Ok(host) => host,
-        Err(error) => return crate::lifecycle::retry::defer(node, id, &pending.delivery.id, &error.message).map(Some),
+        Err(error) => {
+            return crate::lifecycle::retry::defer(node, id, &pending.delivery.id, &error.message).await.map(Some);
+        }
     };
     // Its tools start before the words go in, outside the lock others' words
     // and its turns' ends wait on.
@@ -590,10 +673,10 @@ async fn submit_thread(
         if idle_only
             && (node.residents.now(id).is_some_and(|now| now.turn.is_some()) || codex.running_turn(thread).is_some())
         {
-            crate::inbox::withdraw(directory, &pending.delivery.id).map_err(|error| Failure::new(error.to_string()))?;
+            withdraw(directory, &pending.delivery.id).await?;
             return Ok(None);
         }
-        if crate::inbox::keep(directory, &pending).map_err(|error| Failure::new(error.to_string()))? {
+        if keep(directory, &pending).await? {
             node.idle_probes.touched(id);
             crate::goals::engine::input_changed(node, id);
         }
@@ -628,7 +711,7 @@ async fn submit_thread(
         && (node.residents.now(id).is_some_and(|now| now.activity == fastctx_types::residents::Activity::Busy)
             || codex.running_turn(thread).is_some())
     {
-        crate::inbox::withdraw(directory, &pending.delivery.id).map_err(|error| Failure::new(error.to_string()))?;
+        withdraw(directory, &pending.delivery.id).await?;
         return Ok(None);
     }
     // A node handing the World on starts no turn; the words wait for its
@@ -639,7 +722,7 @@ async fn submit_thread(
         }
         return Ok(Some(Landed::Waiting { why: Some(crate::handoff::Handoff::waiting_why(node)), answered: true }));
     };
-    if single && crate::inbox::keep(directory, &pending).map_err(|error| Failure::new(error.to_string()))? {
+    if single && keep(directory, &pending).await? {
         crate::goals::engine::input_changed(node, id);
     }
     let (mut batch, accepted) = crate::delivery::local(directory, |directory| {
@@ -658,14 +741,10 @@ async fn submit_thread(
         });
     }
     if !batch.iter().any(|kept| kept.delivery.id == pending.delivery.id) {
-        if let Some(why) = crate::delivery::input_uncertainty(directory, &pending.delivery.id)
-            .map_err(|error| Failure::new(error.to_string()))?
-        {
+        if let Some(why) = uncertainty(directory, &pending.delivery.id).await? {
             return Ok(Some(Landed::Uncertain { why }));
         }
-        return match crate::delivery::input_turn(directory, &pending.delivery.id)
-            .map_err(|error| Failure::new(error.to_string()))?
-        {
+        return match input_turn(directory, &pending.delivery.id).await? {
             Some(turn) => Ok(Some(Landed::JoinedTurn { turn })),
             None => Ok(Some(Landed::Waiting {
                 why: Some("this delivery is already recorded; it was not submitted again".to_string()),
@@ -693,7 +772,11 @@ async fn submit_thread(
         }
     }
     let (current, _) = node.residents.about(id).ok_or_else(crate::authorization::no_subject)?;
-    crate::homes::available(node, &current)?;
+    {
+        // Whether its home is still there is read from the disk.
+        let (node, current) = (node.clone(), current.clone());
+        fastctx_platform::task::blocking(move || crate::homes::available(&node, &current)).await?;
+    }
     crate::assists::may_turn(node, id, &current).await?;
     let along_only = batch.iter().all(|input| input.delivery.notice.along().is_some());
     let opening = !along_only
@@ -792,7 +875,7 @@ async fn submit_thread(
             })
             .await
             .map_err(|error| Failure::new(error.to_string()))?;
-            return crate::lifecycle::retry::defer(node, id, &pending.delivery.id, &why).map(Some);
+            return crate::lifecycle::retry::defer(node, id, &pending.delivery.id, &why).await.map(Some);
         }
         Err(SendError::Unknown(why)) => {
             // Whether they went in is not known, and a turn they went into
@@ -804,8 +887,7 @@ async fn submit_thread(
         }
     };
     if let Err(error) = bind(node, id, directory, &mut handover, &sent.turn).await {
-        let accepted = crate::delivery::input_turn(directory, &pending.delivery.id)
-            .map_err(|error| Failure::new(error.to_string()))?;
+        let accepted = input_turn(directory, &pending.delivery.id).await?;
         if accepted.as_deref() != Some(&sent.turn) {
             return Err(error);
         }
@@ -816,7 +898,9 @@ async fn submit_thread(
     }
     if let Some(missing) = missing {
         let health = Health { kind: HealthKind::ToolsMissing, text: missing };
-        crate::turns::health(node, id, Some(sent.turn.clone()), health)
+        let (node, id, turn) = (node.clone(), id.clone(), sent.turn.clone());
+        fastctx_platform::task::blocking(move || crate::turns::health(&node, &id, Some(turn), health))
+            .await
             .map_err(|error| Failure::new(error.to_string()))?;
     }
 
@@ -930,7 +1014,7 @@ pub async fn bind(
             let _held = held;
             heard(&working, &resident, &delivery, &turn)?;
             crate::inbox::settle(&working, directory, &delivery.id)?;
-            crate::lifecycle::retry::clear(&working, &resident, &delivery.id)
+            crate::lifecycle::retry::clear_now(&working, &resident, &delivery.id)
         })
         .await
         .map_err(|error| Failure::new(error.to_string()))?;

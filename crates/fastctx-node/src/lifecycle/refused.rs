@@ -86,7 +86,7 @@ pub(crate) async fn reject(
         saving.residents.change_now(&saving.world, &recipient, |now| {
             now.trouble = Some(fastctx_types::residents::Trouble { at: result.at, text });
         })?;
-        super::retry::clear(&saving, &recipient, &key)
+        super::retry::clear_now(&saving, &recipient, &key)
     })
     .await
     .map_err(failure)?

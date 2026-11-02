@@ -773,7 +773,7 @@ impl Told {
     /// The next telling: waits for a change of any resident, and is `Some`
     /// once this one's state is not what was told last. Never ready when
     /// the viewer did not ask.
-    async fn changed(&mut self, node: &Node) -> Option<Watched> {
+    async fn changed(&mut self, node: &Arc<Node>) -> Option<Watched> {
         let Some(changes) = &mut self.changes else { return std::future::pending().await };
         if self.last.is_some() {
             // A change of words kept moves no resident: while some are kept
@@ -789,7 +789,8 @@ impl Told {
         let (busy, turn) = node.residents.now(&self.resident).map_or((false, None), |now| {
             (now.activity == fastctx_types::residents::Activity::Busy || now.turn.is_some(), now.turn)
         });
-        let kept = kept(node, &self.resident);
+        let (reading, resident) = (node.clone(), self.resident.clone());
+        let kept = fastctx_platform::task::blocking(move || kept(&reading, &resident)).await;
         let state = (busy, turn, kept);
         if self.last.as_ref() == Some(&state) {
             return None;
@@ -825,7 +826,7 @@ fn kept(node: &Node, resident: &ResidentId) -> Vec<fastctx_types::session::KeptW
         .map(|pending| {
             let first = pending.delivery.notice.along().is_none()
                 && (pending.state == PendingState::Waiting || waits && pending.state == PendingState::Waking);
-            let progress = crate::lifecycle::retry::progress(node, resident, &pending.delivery.id).ok().flatten();
+            let progress = crate::lifecycle::retry::progress_now(node, resident, &pending.delivery.id).ok().flatten();
             let retrying = progress.is_some();
             let host_retry = progress
                 .filter(|progress| Timestamp::now().as_second().saturating_sub(progress.began.as_second()) >= 60)

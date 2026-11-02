@@ -488,10 +488,9 @@ pub async fn unsettled(
     how: TurnHow,
     why: String,
 ) {
-    // Settling them writes their records, which only a thread that may
-    // block waits for.
+    // Settling them goes on to its end if whoever asked goes away.
     let (node, id, directory) = (node.clone(), id.clone(), directory.clone());
-    crate::blocking::on(async move { unsettled_now(&node, &id, &directory, pending, how, why).await }).await
+    crate::to_end::run(async move { unsettled_now(&node, &id, &directory, pending, how, why).await }).await
 }
 
 async fn unsettled_now(
@@ -576,12 +575,17 @@ pub async fn unresolved(
                 why: handover.unresolved.as_ref().and_then(|end| end.reason.clone()).unwrap_or_default(),
             },
         };
-        if crate::delivery::event(directory, &format!("uncertain:{}", pending.delivery.id), &event)? {
+        let told = {
+            let (key, told) = (format!("uncertain:{}", pending.delivery.id), event.clone());
+            crate::delivery::local(directory, move |directory| crate::delivery::event(directory, &key, &told)).await?
+        };
+        if told {
             node.watchers.publish(id, &event);
         }
         let why = handover.unresolved.as_ref().and_then(|end| end.reason.as_deref()).unwrap_or_default();
         crate::composer::uncertain(node, id, &pending.delivery.id, why).await.map_err(std::io::Error::other)?;
-        crate::inbox::retain_uncertain(directory, pending)?;
+        let kept = pending.clone();
+        crate::delivery::local(directory, move |directory| crate::inbox::retain_uncertain(directory, &kept)).await?;
     }
     // The handover retains the exact payload and the uncertainty even when
     // no resident is owed an answer, as with a delivery to a user's session.
@@ -589,13 +593,17 @@ pub async fn unresolved(
         at: Timestamp::now(),
         text: handover.unresolved.as_ref().and_then(|end| end.reason.clone()).unwrap_or_default(),
     };
-    node.residents.change_now(&node.world, id, |now| {
-        now.trouble = Some(trouble);
-        if now.turn.is_none() {
-            now.activity = fastctx_types::residents::Activity::Idle;
-            now.since = Timestamp::now();
-        }
-    })?;
+    let (changing, resident) = (node.clone(), id.clone());
+    fastctx_platform::task::blocking(move || {
+        changing.residents.change_now(&changing.world, &resident, |now| {
+            now.trouble = Some(trouble);
+            if now.turn.is_none() {
+                now.activity = fastctx_types::residents::Activity::Idle;
+                now.since = Timestamp::now();
+            }
+        })
+    })
+    .await?;
     let key = handover.id.clone();
     crate::delivery::local(directory, move |directory| crate::delivery::handovers::complete(directory, &key)).await?;
     let (node, id, directory) = (node.clone(), id.clone(), directory.clone());

@@ -956,7 +956,7 @@ async fn uncertain_inputs(
     for input in pending {
         if matches!(input.state, PendingState::Waking | PendingState::Handed)
             && (input.state == PendingState::Handed
-                || crate::lifecycle::retry::progress(node, resident, &input.delivery.id)?
+                || crate::lifecycle::retry::progress_now(node, resident, &input.delivery.id)?
                     .is_none_or(|progress| progress.accepted))
             && startup::untaken(node, session, &directory, &input.delivery.id)?
         {
@@ -1135,10 +1135,7 @@ pub async fn identify(node: &Arc<Node>, tool_use_id: &str) -> Result<fastctx_typ
     crate::blocking::on(async move { identify_now(&node, &tool_use_id).await }).await
 }
 
-async fn identify_now(
-    node: &Arc<Node>,
-    tool_use_id: &str,
-) -> Result<fastctx_types::residents::Whereabouts, Failure> {
+async fn identify_now(node: &Arc<Node>, tool_use_id: &str) -> Result<fastctx_types::residents::Whereabouts, Failure> {
     let world = node.world.path().to_path_buf();
     let id = tool_use_id.to_string();
     let sessions: Vec<_> = node
@@ -1345,7 +1342,7 @@ pub async fn deliver(
     }
     let alive = match alive(node, about.home.as_deref(), &session).await {
         Ok(alive) => alive,
-        Err(error) => return Some(crate::lifecycle::retry::defer(node, to, &pending.delivery.id, &error.message)),
+        Err(error) => return Some(crate::lifecycle::retry::defer_now(node, to, &pending.delivery.id, &error.message)),
     };
     let stopped_background = if !about.world_started && !alive {
         match management::background_session(node, about.home.as_deref(), &session).await {
@@ -1364,7 +1361,7 @@ pub async fn deliver(
     }
     let alive = match isolation::prepare(node, to, alive).await {
         Ok(alive) => alive,
-        Err(error) => return Some(crate::lifecycle::retry::defer(node, to, &pending.delivery.id, &error.message)),
+        Err(error) => return Some(crate::lifecycle::retry::defer_now(node, to, &pending.delivery.id, &error.message)),
     };
     let user_action =
         matches!(pending.delivery.notice, Notice::Words { from: Speaker::User { .. }, .. } | Notice::Attached { .. });
@@ -1477,7 +1474,7 @@ async fn failed_wake(
     let _speaking = speaking.lock().await;
     if let Some(turn) = crate::delivery::input_turn(directory, id).map_err(|error| Failure::new(error.to_string()))? {
         node.log.line(format_args!("the Claude command failed after its turn was identified: {error}"));
-        crate::lifecycle::retry::clear(node, resident, id).map_err(|error| Failure::new(error.to_string()))?;
+        crate::lifecycle::retry::clear_now(node, resident, id).map_err(|error| Failure::new(error.to_string()))?;
         return Ok(Landed::NewTurn { turn });
     }
     let why = format!("the Claude command failed before identifying a consuming turn: {error}");

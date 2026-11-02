@@ -82,7 +82,7 @@ pub(crate) async fn run(
                 current_model: None,
             });
         }
-        if crate::control_queue::busy(node, resident)? {
+        if crate::control_queue::busy(node, resident).await? {
             return Err(Failure::not_run("goal compaction is waiting for the current turn"));
         }
         {

@@ -75,10 +75,10 @@ pub async fn offers(
 /// Does `control` to a resident of this machine, through its host. Sessions
 /// the World does not hold (the user's own Codex in an app) take nothing.
 pub async fn control_here(node: &Arc<Node>, resident: &ResidentId, control: Control) -> Result<Controlled, Failure> {
-    // Its queue, its retries and what it tells are records, reached where
-    // that may block; a long control goes on in a task of its own.
+    // Its queue, its retries and what it tells go on to their end if whoever
+    // asked goes away; a long control goes on in a task of its own.
     let (node, resident) = (node.clone(), resident.clone());
-    crate::blocking::on(async move { control_here_now(&node, &resident, control).await }).await
+    crate::to_end::run(async move { control_here_now(&node, &resident, control).await }).await
 }
 
 async fn control_here_now(node: &Arc<Node>, resident: &ResidentId, control: Control) -> Result<Controlled, Failure> {
@@ -89,7 +89,12 @@ async fn control_here_now(node: &Arc<Node>, resident: &ResidentId, control: Cont
     // Each control is told in its conversation as it begins and ends
     // (`world-gui.md`, 对话); one refused here is told as it is refused.
     let told = crate::control_queue::told(&control);
-    if let Err(failure) = allowed(node, resident, &about, host, &control) {
+    let permitted = {
+        // An assisting agent's host mode is read from its conversation's disk.
+        let (node, resident, about, control) = (node.clone(), resident.clone(), about.clone(), control.clone());
+        fastctx_platform::task::blocking(move || allowed(&node, &resident, &about, host, &control)).await
+    };
+    if let Err(failure) = permitted {
         if !told {
             return Err(failure);
         }
@@ -169,7 +174,12 @@ pub(crate) async fn execute(node: &Arc<Node>, resident: &ResidentId, control: Co
     node.residents.active(resident)?;
     match host {
         "Codex" => crate::codex::control::control(node, resident, control).await,
-        "Claude" => crate::claude::control::control(node, resident, control).await,
+        "Claude" => {
+            // Claude's controls reach its session's files throughout, where
+            // that may block.
+            let (node, resident) = (node.clone(), resident.clone());
+            crate::blocking::on(async move { crate::claude::control::control(&node, &resident, control).await }).await
+        }
         _ => Err(Failure::new(format!("{host} sessions take nothing but words yet"))),
     }
 }

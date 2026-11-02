@@ -58,9 +58,9 @@ pub(crate) async fn end(
     row: PendingControl,
     result: Result<Controlled, Failure>,
 ) -> Result<Controlled, Failure> {
-    // Its row and the retries it settles are records, reached where that may block.
+    // Its row and the retries it settles are written to their end.
     let (node, id) = (node.clone(), id.clone());
-    crate::blocking::on(async move { end_now(&node, &id, row, result).await }).await
+    crate::to_end::run(async move { end_now(&node, &id, row, result).await }).await
 }
 
 async fn end_now(
@@ -77,7 +77,7 @@ async fn end_now(
     }
     settle(node, id, row.clone(), &result).await?;
     crate::composer::forget_command(node, id, &row.id).await?;
-    crate::lifecycle::retry::clear(node, id, &control_key(&row)?).map_err(failure)?;
+    crate::lifecycle::retry::clear(node, id, &control_key(&row)?).await.map_err(failure)?;
     node.watchers.changed.notify_one();
     result.map_err(|mut failure| {
         failure.code.get_or_insert(FailureCode::Told);
@@ -102,6 +102,7 @@ pub(crate) async fn prepare(node: &Arc<Node>, id: &ResidentId, row: &PendingCont
 async fn ready(node: &Arc<Node>, id: &ResidentId, row: &PendingControl) -> Result<(), Failure> {
     let key = control_key(row)?;
     if crate::lifecycle::retry::progress(node, id, &key)
+        .await
         .map_err(failure)?
         .is_some_and(|progress| progress.next > jiff::Timestamp::now())
     {
@@ -124,9 +125,9 @@ async fn defer_host(node: &Arc<Node>, id: &ResidentId, row: &PendingControl, why
     // One waiting for a turn of its login asks again soon, to keep its
     // place in line; a host that is not there is asked less and less often.
     if why == crate::turn_slots::FULL {
-        crate::lifecycle::retry::queued(node, id, &key, why)?;
+        crate::lifecycle::retry::queued(node, id, &key, why).await?;
     } else {
-        crate::lifecycle::retry::failed(node, id, &key, why)?;
+        crate::lifecycle::retry::failed(node, id, &key, why).await?;
     }
     crate::lifecycle::retry::kick(node, id);
     Ok(())
@@ -138,7 +139,7 @@ pub(crate) async fn waiting_for_host(node: &Arc<Node>, id: &ResidentId) -> Resul
     fastctx_platform::task::spawn_blocking(move || {
         for row in rows {
             if row.state == ControlState::Waiting
-                && crate::lifecycle::retry::progress(&node, &id, &control_key(&row)?).map_err(failure)?.is_some()
+                && crate::lifecycle::retry::progress_now(&node, &id, &control_key(&row)?).map_err(failure)?.is_some()
             {
                 return Ok(true);
             }
@@ -240,7 +241,13 @@ pub(crate) fn between_turns(control: &Control) -> bool {
             if matches!(name.as_str(), "compact" | "review" | "code-review" | "fork" | "rename"))
 }
 
-pub(crate) fn busy(node: &Node, id: &ResidentId) -> Result<bool, Failure> {
+/// `busy_now`, asked where finding the conversation's host may block.
+pub(crate) async fn busy(node: &Arc<Node>, id: &ResidentId) -> Result<bool, Failure> {
+    let (node, id) = (node.clone(), id.clone());
+    fastctx_platform::task::blocking(move || busy_now(&node, &id)).await
+}
+
+pub(crate) fn busy_now(node: &Node, id: &ResidentId) -> Result<bool, Failure> {
     if node.residents.now(id).is_some_and(|now| now.turn.is_some()) || node.long_controls.of(id) {
         return Ok(true);
     }
@@ -276,7 +283,7 @@ pub(crate) async fn enqueue_if_busy(
     }
     // Ones still waiting behind queued words keep their place ahead of it;
     // words handed over whose turn has not begun yet are a turn under way.
-    if !busy(node, id)? && pending(node, id).await?.is_empty() && !words_ahead(node, id, None).await? {
+    if !busy(node, id).await? && pending(node, id).await?.is_empty() && !words_ahead(node, id, None).await? {
         return Ok(None);
     }
     let row = PendingControl {
@@ -314,9 +321,9 @@ pub(crate) fn drain<'a>(
     node: &'a Arc<Node>,
     id: &'a ResidentId,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), Failure>> + Send + 'a>> {
-    // The queue and the retries it reads are records, reached where that may block.
+    // The queue goes on to its end if the action that drains it goes away.
     let (node, id) = (node.clone(), id.clone());
-    Box::pin(crate::blocking::on(async move { drain_now(&node, &id).await }))
+    Box::pin(crate::to_end::run(async move { drain_now(&node, &id).await }))
 }
 
 fn drain_now<'a>(
@@ -326,7 +333,7 @@ fn drain_now<'a>(
     Box::pin(crate::gate_waits::internal(Box::pin(async move {
         loop {
             node.residents.active(id)?;
-            if busy(node, id)? {
+            if busy(node, id).await? {
                 return Ok(());
             }
             let rows = pending(node, id).await?;
@@ -355,6 +362,7 @@ fn drain_now<'a>(
             }
             let key = control_key(first)?;
             if crate::lifecycle::retry::progress(node, id, &key)
+                .await
                 .map_err(failure)?
                 .is_some_and(|progress| progress.next > jiff::Timestamp::now())
             {

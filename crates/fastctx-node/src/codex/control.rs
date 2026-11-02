@@ -15,8 +15,14 @@ use fastctx_hosts::codex::CodexHost;
 
 use crate::Node;
 
-/// The resident's thread, and the app-server of its home that holds it.
-fn thread(node: &Node, resident: &ResidentId) -> Result<(Arc<CodexHost>, String), Failure> {
+/// The resident's thread, and the app-server of its home that holds it,
+/// found where finding its home may block.
+async fn thread(node: &Arc<Node>, resident: &ResidentId) -> Result<(Arc<CodexHost>, String), Failure> {
+    let (node, resident) = (node.clone(), resident.clone());
+    fastctx_platform::task::blocking(move || thread_now(&node, &resident)).await
+}
+
+fn thread_now(node: &Node, resident: &ResidentId) -> Result<(Arc<CodexHost>, String), Failure> {
     let (about, _) = node.residents.about(resident).ok_or_else(|| Failure::new(format!("{resident} is not here")))?;
     crate::homes::available(node, &about)?;
     let host = node.codex.of(node, &about)?;
@@ -33,7 +39,7 @@ pub(super) fn reported(node: &Node, resident: &ResidentId, thread: &str, event: 
 }
 
 pub async fn offers(node: &Arc<Node>, resident: &ResidentId) -> Result<Offers, Failure> {
-    let (codex, thread) = thread(node, resident)?;
+    let (codex, thread) = thread(node, resident).await?;
     let mut offers = codex.offers(&thread).await.map_err(Failure::new)?;
     let (about, _) = node.residents.about(resident).ok_or_else(|| Failure::new("unknown conversation"))?;
     if crate::assists::assisting(node, &about.acting) {
@@ -83,10 +89,11 @@ fn limits(kept: &AgentLimits) -> Vec<Limit> {
 }
 
 pub async fn control(node: &Arc<Node>, resident: &ResidentId, mut control: Control) -> Result<Controlled, Failure> {
-    let (codex, thread) = thread(node, resident)?;
+    let (codex, thread) = thread(node, resident).await?;
     let (about, _) = node.residents.about(resident).ok_or_else(|| Failure::new("unknown conversation"))?;
     if crate::assists::assisting(node, &about.acting) {
-        crate::assists::host::require(node, resident)?;
+        let (node, resident) = (node.clone(), resident.clone());
+        fastctx_platform::task::blocking(move || crate::assists::host::require(&node, &resident)).await?;
     }
     if crate::assists::assisting(node, &about.acting)
         && let Control::Command { name, path, .. } = &control

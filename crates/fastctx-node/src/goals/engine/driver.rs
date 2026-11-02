@@ -16,7 +16,7 @@ const UNSETTLED: std::time::Duration = std::time::Duration::from_secs(5 * 60);
 
 async fn busy(node: &Arc<Node>, id: &ResidentId) -> Result<bool, Failure> {
     let (node, id) = (node.clone(), id.clone());
-    fastctx_platform::task::spawn_blocking(move || crate::control_queue::busy(&node, &id)).await.map_err(failure)?
+    fastctx_platform::task::spawn_blocking(move || crate::control_queue::busy_now(&node, &id)).await.map_err(failure)?
 }
 
 pub(super) async fn quiet(node: &Arc<Node>, id: &ResidentId) -> Result<bool, Failure> {

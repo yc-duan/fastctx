@@ -41,7 +41,7 @@ pub(super) fn takes_wake(
     if activation.is_some_and(|activation| current != Some(activation)) {
         return Ok(false);
     }
-    let prior = crate::lifecycle::retry::progress(node, resident, &pending.delivery.id)?
+    let prior = crate::lifecycle::retry::progress_now(node, resident, &pending.delivery.id)?
         .and_then(|progress| progress.after_activation);
     Ok(match (activation, prior.as_deref()) {
         (Some(activation), Some(prior)) => activation != prior,
@@ -188,9 +188,9 @@ pub(super) fn recover(node: &Arc<Node>, records: &[crate::residents::OnRecord]) 
             }
             continue;
         };
-        match crate::lifecycle::retry::progress(node, &about.id, &first.delivery.id) {
+        match crate::lifecycle::retry::progress_now(node, &about.id, &first.delivery.id) {
             Ok(Some(progress)) if !progress.attempted => {
-                if let Err(error) = crate::lifecycle::retry::defer(
+                if let Err(error) = crate::lifecycle::retry::defer_now(
                     node,
                     &about.id,
                     &first.delivery.id,
@@ -346,7 +346,7 @@ pub(super) fn retry_untaken(
             _ => {}
         }
     }
-    crate::lifecycle::retry::defer(node, resident, id, "the host ended before taking the input")
+    crate::lifecycle::retry::defer_now(node, resident, id, "the host ended before taking the input")
         .map(|_| ())
         .map_err(std::io::Error::other)
 }
