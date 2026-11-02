@@ -13,40 +13,69 @@ use std::{collections::BTreeMap, sync::Arc, time::Duration};
 use tokio::time::Instant;
 
 /// How long one read of a conversation's collaboration answers every ask
-/// for it: a page asks whenever the World changes, many times a second
-/// while work goes on, and each read goes through every colleague's record.
+/// for it, at least: a page asks whenever the World changes, many times a
+/// second while work goes on, and each read goes through every colleague's
+/// record. A read that took long answers four times as long as it took, so
+/// however often it is asked, reading it takes at most a fifth of the time.
 const FRESH: Duration = Duration::from_secs(1);
 
 /// How long a read no one asked again for is kept.
 const KEPT: Duration = Duration::from_secs(60);
 
-type Read = Arc<tokio::sync::Mutex<Option<(Instant, Result<Tree, Failure>)>>>;
+/// When a read was done, how long it took, and what it found.
+type Read = Arc<tokio::sync::Mutex<Option<(Instant, Duration, Result<Tree, Failure>)>>>;
 
-/// The latest read of each conversation's collaboration asked for here, by
-/// conversation and machine: asks that come together share one read.
+/// The latest read of each conversation's collaboration asked for, here or
+/// from another machine, by conversation and by who asks: asks that come
+/// together share one read.
 #[derive(Default)]
 pub(crate) struct Reads(std::sync::Mutex<std::collections::HashMap<String, Read>>);
 
-/// The collaboration of `id` as the user here sees it, read once for the
-/// asks that come within `FRESH` of each other.
+/// The collaboration of `id` as the user here sees it, shared as `shared`
+/// shares it.
 pub(crate) async fn query(node: &Arc<Node>, id: ResidentId, machine: Option<Written>) -> Result<Tree, Failure> {
     let key = serde_json::to_string(&(&id, &machine)).map_err(|error| Failure::new(error.to_string()))?;
-    let read = {
+    shared(node, key, read_now(node, id, machine)).await
+}
+
+/// The collaboration of `id` here as `acting` on another machine sees it,
+/// shared as `shared` shares it: an interface of any version asks for it
+/// whole, as often as it likes.
+pub(crate) async fn here_shared(
+    node: &Arc<Node>,
+    id: ResidentId,
+    acting: Acting,
+    colleagues: bool,
+) -> Result<Tree, Failure> {
+    let key =
+        serde_json::to_string(&("asked", &id, &acting, colleagues)).map_err(|error| Failure::new(error.to_string()))?;
+    shared(node, key, async move { here(node, &id, &acting, colleagues).await }).await
+}
+
+/// What `read` finds, read once for the asks of `key` that come while it is
+/// fresh.
+async fn shared(
+    node: &Arc<Node>,
+    key: String,
+    read: impl std::future::Future<Output = Result<Tree, Failure>>,
+) -> Result<Tree, Failure> {
+    let kept = {
         let mut reads = node.collaboration_reads.0.lock().expect("never poisoned");
-        reads.retain(|_, read| {
-            Arc::strong_count(read) > 1
-                || read.try_lock().is_ok_and(|held| held.as_ref().is_some_and(|(at, _)| at.elapsed() < KEPT))
+        reads.retain(|_, kept| {
+            Arc::strong_count(kept) > 1
+                || kept.try_lock().is_ok_and(|held| held.as_ref().is_some_and(|(at, _, _)| at.elapsed() < KEPT))
         });
         reads.entry(key).or_default().clone()
     };
-    let mut held = read.lock().await;
-    if let Some((at, result)) = held.as_ref()
-        && at.elapsed() < FRESH
+    let mut held = kept.lock().await;
+    if let Some((at, took, result)) = held.as_ref()
+        && at.elapsed() < FRESH.max(*took * 4)
     {
         return result.clone();
     }
-    let result = read_now(node, id, machine).await;
-    *held = Some((Instant::now(), result.clone()));
+    let began = Instant::now();
+    let result = read.await;
+    *held = Some((Instant::now(), began.elapsed(), result.clone()));
     result
 }
 

@@ -124,6 +124,7 @@ mod proxy_setting;
 mod ranked;
 mod reach;
 mod received;
+mod said;
 mod record_access;
 mod record_database;
 mod record_gates;
@@ -245,6 +246,8 @@ pub(crate) struct Node {
     skill_copies: skills::copies::Copies,
     skill_index: skills::cache::Cache,
     locations: placement::location::Locations,
+    /// What failing background work has told already.
+    said: said::Said,
     disk: ranked::Disk,
     /// Each conversation's place here, deleted alone (`data::places`).
     places: data::places::Places,
@@ -805,6 +808,7 @@ pub async fn run_prepared(
                 skill_copies: Default::default(),
                 skill_index: Default::default(),
                 locations: Default::default(),
+                said: Default::default(),
                 contexts: Default::default(),
                 context_deliveries: Default::default(),
                 scratch_deliveries: Default::default(),

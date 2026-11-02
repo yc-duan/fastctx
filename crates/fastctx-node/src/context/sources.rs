@@ -92,10 +92,17 @@ pub(crate) async fn prepare(
         .map_err(crate::record_migration::failure)?;
     // Skills are the account's; one whose hub cannot be asked now keeps what
     // it was told, and the conversation goes on without waiting for it.
-    if let Err(failure) = skills(node, id, acting).await {
+    // What keeps failing the same way at each refresh is told once.
+    let told = skills(node, id, acting).await;
+    if node.said.changed(id, "skills", told.as_ref().err().map(|failure| failure.message.as_str()))
+        && let Err(failure) = told
+    {
         node.log.line(format_args!("telling {id} its skills: {}", failure.message));
     }
-    if let Err(failure) = crate::record_ownership::register(node, id, acting).await {
+    let registered = crate::record_ownership::register(node, id, acting).await;
+    if node.said.changed(id, "records", registered.as_ref().err().map(|failure| failure.message.as_str()))
+        && let Err(failure) = registered
+    {
         node.log.line(format_args!("registering the records of {id}: {}", failure.message));
     }
     plan_guide(node, id, origin, acting).await.map_err(|error| Failure::new(error.to_string()))?;

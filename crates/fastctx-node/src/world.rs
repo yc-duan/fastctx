@@ -1200,7 +1200,7 @@ impl fastctx_net::link::Node for Handler {
                 }
                 RemoteCall::Collaboration { resident, colleagues } => {
                     let acting = Acting::one(asker.hub.clone(), asker.account.clone());
-                    crate::colleagues::tree::here(&node, &resident, &acting, colleagues)
+                    crate::colleagues::tree::here_shared(&node, resident, acting, colleagues)
                         .await
                         .map(|tree| RemoteReply::Collaboration(Box::new(tree)))
                 }
