@@ -26,30 +26,9 @@ pub const DOCUMENT_TOO_LARGE: &str = "the memory document exceeds 8 MiB";
 pub const HEADER_ATTRIBUTION: &str = "the memory header does not match its World attribution";
 pub const VERSION_EXHAUSTED: &str = "the memory version is exhausted";
 pub const INACTIVE_JOB: &str = "memory write does not belong to an active job";
-pub const MISSING_JOURNAL: &str = "evidence needs an existing journal";
-pub const EVIDENCE_WRITE: &str = "journal evidence can only be created with write";
-pub const OTHER_DOCUMENT: &str = "this name belongs to a different memory document";
-pub const MISSING_SIGNED_TEXT: &str = "the signed memory text is missing";
-pub const UTF8_REQUIRED: &str = "memory Markdown must be UTF-8";
-pub const STALE_SPEC: &str = "this spec changed since you viewed it; read its latest version before saving";
 pub const WRITER_GONE: &str = "the writing conversation no longer exists";
 pub const WRITER_UNANSWERED: &str = "the conversation's machine did not identify its writer";
 pub const WRITER_INVISIBLE: &str = "the remote writing conversation is not visible";
-pub const HUB_GONE: &str = "the project's hub is no longer connected";
-pub const OWN_COMPUTER_PATHS: &str = "memory paths must come from the account's own computer";
-pub const REPLICA_NOT_READY: &str = "this computer has not synchronized the project's replica yet";
-pub const MISSING_IDENTITY: &str = "the project has no ledger identity";
-pub const MISSING_ACCOUNT: &str = "the project has no account";
-pub const COMPUTER_UNANSWERED: &str = "the computer did not return its capabilities";
-pub const MISSING_NETWORK_NAME: &str = "the project has no network name";
-pub const PATHS_UNANSWERED: &str = "the computer did not return memory paths";
-pub const PATH_ACCESS_ENDED: &str = "access to the memory computer ended while its paths were read";
-pub const OFFLINE_COMPUTERS: &str =
-    "none of this account's own computers are online; journal and spec bodies cannot be opened or written";
-pub const UNKNOWN_CONVERSATION: &str = "unknown conversation";
-pub const MISSING_PROJECT_RECORD: &str = "the project record is unavailable";
-pub const PROJECT_UNLISTED: &str = "the hub no longer lists the project";
-pub const NO_PROJECT_WRITER: &str = "no caller account may write this project";
 pub const REDIRECTED_PATH: &str = "a project-memory path was redirected outside its replica";
 pub const MARKDOWN_EXTENSION: &str = "memory documents have the .md extension";
 pub const WRITE_TARGET: &str = "write a Markdown document or a file in a journal's evidence folder";
@@ -73,18 +52,9 @@ pub const READ_DEADLINE: &str = "reading project memory exceeded 55 seconds";
 pub const MISSING_RECORD: &str = "the project record is missing";
 pub const INDEX_ACCESS_ENDED: &str = "project access ended while its index was read";
 pub const LEGACY: &str = "This journal interface was retired; use the history files listed in your context.";
-pub const CATALOG_UNANSWERED: &str = "the World did not return a memory catalog";
-pub const WORLD_DOCUMENT_UNANSWERED: &str = "the World did not return a memory document";
-pub const SAVE_UNCONFIRMED: &str = "the World did not confirm the memory revision";
 
-pub const SHOW_HELP: &str = "A project's attributes and enabled memory index.";
 
 pub const HEADER_QUOTE: &str = "a quoted header field needs its closing quote";
-pub const RETAINED_BYTES: &str = "retained evidence has different bytes";
-pub const REVISION_NO_MARKDOWN: &str = "a memory revision has no Markdown";
-pub const EVIDENCE_MISSING: &str = "journal evidence is missing";
-pub const EVIDENCE_NOT_FILE: &str = "the retained evidence is not a regular file";
-pub const EVIDENCE_CHANGED: &str = "the retained evidence differs from its ledger digest";
 
 pub fn header_value(key: &str) -> String {
     format!("{key} must be nonempty and on one line")

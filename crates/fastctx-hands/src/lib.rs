@@ -10,7 +10,6 @@ pub mod folders;
 pub mod history;
 pub mod image;
 pub mod lines;
-pub mod memory_path;
 pub mod outline;
 pub mod pages;
 pub mod run;
