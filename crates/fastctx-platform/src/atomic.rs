@@ -33,6 +33,17 @@ pub fn publish(path: &Path, bytes: &[u8], permissions: Permissions) -> io::Resul
         .map_err(|failure| failure.error)
 }
 
+/// `publish`, unless `path` holds `bytes` already: a record written again
+/// as it was costs a read, not two syncs. Whether it was written.
+#[track_caller]
+pub fn publish_changed(path: &Path, bytes: &[u8], permissions: Permissions) -> io::Result<bool> {
+    match crate::disk::read(path) {
+        Ok(current) if current == bytes => Ok(false),
+        Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
+        _ => publish(path, bytes, permissions).map(|()| true),
+    }
+}
+
 /// Creates `path` with `bytes`, failing with `AlreadyExists` if something is
 /// there already: for records that are written once and never change.
 #[track_caller]

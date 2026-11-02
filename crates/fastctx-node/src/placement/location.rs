@@ -167,8 +167,9 @@ pub(crate) async fn prepare(
         )
         .await?;
         let bytes = serde_json::to_vec(&location).map_err(failure)?;
+        // Asked again as each turn begins, and the same nearly always.
         fastctx_platform::task::blocking(move || {
-            fastctx_platform::publish(&receipt, &bytes, fastctx_platform::Permissions::Private)
+            fastctx_platform::publish_changed(&receipt, &bytes, fastctx_platform::Permissions::Private)
         })
         .await
         .map_err(failure)?;
@@ -261,7 +262,7 @@ pub(crate) async fn prepare(
     } else {
         None
     };
-    fastctx_platform::publish(
+    fastctx_platform::publish_changed(
         &receipt,
         &serde_json::to_vec(&location).map_err(failure)?,
         fastctx_platform::Permissions::Private,

@@ -77,6 +77,7 @@ pub(super) fn reset(world: &Path, database: &Database, conversation: &str, gener
         db.execute("DELETE FROM session_migration_state WHERE conversation=?1 AND EXISTS(SELECT 1 FROM session_heads WHERE conversation=?1 AND imported=1)",[&scope])?;
         db.execute("UPDATE session_heads SET imported=0 WHERE conversation=?1",[&scope])?;
         db.execute("UPDATE run_imported SET checked=0 WHERE conversation=?1",[&scope])?;
+        db.execute("DELETE FROM migration_born WHERE name=?1",[&scope])?;
         db.execute("UPDATE conversation_record_gathering SET complete=1 WHERE conversation=?1",[scope])?;
         Ok(())
     }).map_err(io::Error::other)

@@ -15,6 +15,7 @@ pub(super) const MACHINE_TABLES: &[&str] = &[
     "node_conversation_arrivals",
     "node_conversation_releases",
     "node_record_state",
+    "migration_born",
     "book_deeds",
     "book_touches",
     "book_hour",

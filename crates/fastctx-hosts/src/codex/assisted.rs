@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use base64::Engine as _;
-use fastctx_platform::{Permissions, ensure_private_dir, publish};
+use fastctx_platform::{Permissions, ensure_private_dir, publish_changed};
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
@@ -96,7 +96,9 @@ impl Assisted {
         let table: toml::Table = serde_json::from_value(config).map_err(|_| "invalid assisted Codex configuration")?;
         let bytes = toml::to_string(&table).map_err(|_| "serializing assisted Codex configuration")?;
         let config = self.home.join("config.toml");
-        fastctx_platform::task::blocking(move || publish(&config, bytes.as_bytes(), Permissions::Private))
+        // Worked out each time the app-server is asked for, and the same
+        // nearly always: written only when it changed.
+        fastctx_platform::task::blocking(move || publish_changed(&config, bytes.as_bytes(), Permissions::Private))
             .await
             .map_err(|error| format!("writing assisted Codex configuration: {error}"))?;
         launch.args = vec!["app-server".into()];

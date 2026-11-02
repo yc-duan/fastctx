@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS migration_files (
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS migration_files_owner ON migration_files(conversation,family,path);
 CREATE INDEX IF NOT EXISTS migration_files_archived ON migration_files(family,path,conversation) WHERE archived=1;
+CREATE TABLE IF NOT EXISTS migration_born(name TEXT PRIMARY KEY NOT NULL,generation INTEGER NOT NULL) WITHOUT ROWID;
 ";
 
 pub(crate) fn world(directory: &fastctx_types::layout::ConversationDir) -> std::io::Result<std::path::PathBuf> {
@@ -34,9 +35,24 @@ pub(crate) fn world(directory: &fastctx_types::layout::ConversationDir) -> std::
         .ok_or_else(|| std::io::Error::other("conversation has no world"))
 }
 
-/// Notes a conversation this release is creating, before anything is kept for it.
+/// Notes a conversation this release is creating, before anything is kept
+/// for it, and keeps the note: a restart does not take it for one holding
+/// earlier records. A note not kept only has it looked at as one might be.
 pub(crate) fn born(node: &crate::Node, id: &fastctx_types::ResidentId) {
     scheduler::born(node.world.path(), id.as_str());
+    let (database, log, name) = (node.database.clone(), node.log.clone(), id.to_string());
+    fastctx_platform::task::spawn_blocking(move || {
+        let kept = database.write_relaxed_now_at(fastctx_storage::Priority::Background, name.len() + 32, move |db| {
+            db.execute(
+                "INSERT OR REPLACE INTO migration_born(name,generation) VALUES(?1,?2)",
+                (&name, scheduler::BORN),
+            )?;
+            Ok(())
+        });
+        if let Err(error) = kept {
+            log.line(format_args!("keeping a new conversation as born: {error}"));
+        }
+    });
 }
 
 /// A derived step that reads a legacy file nothing else uses sets a malformed

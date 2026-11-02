@@ -31,6 +31,7 @@ pub(crate) fn begin_with_account(
             )?;
             db.execute("DELETE FROM node_conversation_transfer_progress WHERE name=?1", [&conversation])?;
             db.execute("DELETE FROM node_conversation_transfers WHERE name=?1", [&conversation])?;
+            db.execute("DELETE FROM migration_born WHERE name=?1", [&conversation])?;
             Ok(())
         })
         .map_err(io::Error::other)?;

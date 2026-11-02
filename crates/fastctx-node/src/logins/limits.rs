@@ -45,11 +45,16 @@ pub(super) fn keep(node: &Node, report: LimitsReport) -> std::io::Result<bool> {
     } else {
         crate::usage::accounts::at(node, "codex", &home, *observed)?
     };
+    let found = |limits: &[KeptLimits]| {
+        limits.iter().position(|known| crate::homes::same_dir(&known.dir, &home) && known.account == account)
+    };
+    let prior = found(&kept.codex.limits).map(|index| {
+        let known = &kept.codex.limits[index];
+        (known.buckets.clone(), known.at)
+    });
     {
         let limits = &mut kept.codex.limits;
-        let index = limits
-            .iter()
-            .position(|known| crate::homes::same_dir(&known.dir, &report.home) && known.account == account);
+        let index = found(limits);
         if index.is_some_and(|index| limits[index].at > at) {
             return Ok(false);
         }
@@ -80,13 +85,22 @@ pub(super) fn keep(node: &Node, report: LimitsReport) -> std::io::Result<bool> {
             }
         }
     }
+    // Codex pushes the windows with each turn, nearly always as they were:
+    // a push that only says when they were seen is kept at most once a
+    // minute.
+    let seen_only = prior.is_some_and(|(buckets, then)| {
+        found(&kept.codex.limits).is_some_and(|index| kept.codex.limits[index].buckets == buckets)
+            && at.duration_since(then) < jiff::SignedDuration::from_secs(60)
+    });
     // Publish credits only after the matching windows are committed,
     // so a reader of the new snapshot cannot see the previous quota period.
     let changed = match raw_for(&kept, &home, &account) {
         Fact::Known { value } => crate::usage::codex_reading(node, &home, value.windows, at, account)?,
         _ => false,
     };
-    kept::write(node, &kept)?;
+    if !seen_only {
+        kept::write(node, &kept)?;
+    }
     Ok(changed)
 }
 

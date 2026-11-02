@@ -82,7 +82,6 @@ pub(super) fn initialize(db: &Connection) -> Result<()> {
 
 /// Only discovers bundles and installs admission fences; it imports no data.
 pub(crate) fn prepare(db: &Connection, world: &WorldDir) -> Result<()> {
-    db.execute("DELETE FROM node_record_state WHERE name='legacy-discovery-complete'", [])?;
     for kept in world.kept().map_err(|error| Error::new(error.to_string()))? {
         // A room that cannot be looked into now is looked at on the next open;
         // it never makes the whole database unavailable.
@@ -112,7 +111,13 @@ pub(crate) fn prepare(db: &Connection, world: &WorldDir) -> Result<()> {
         }
         pending.insert(name);
     }
+    // An import may bring earlier records: discovery looks again, and what
+    // was kept as born under its name is so no more.
+    if !pending.is_empty() {
+        db.execute("DELETE FROM node_record_state WHERE name='legacy-discovery-complete'", [])?;
+    }
     for conversation in &pending {
+        db.execute("DELETE FROM migration_born WHERE name=?1", [conversation])?;
         scheduler::invalidate(world.path(), conversation);
     }
     PENDING.lock().expect("conversation transfers").insert(world.path().to_path_buf(), pending);

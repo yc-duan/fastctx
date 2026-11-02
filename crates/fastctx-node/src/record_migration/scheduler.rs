@@ -209,9 +209,15 @@ fn engine(world: &Path) -> Option<Arc<Engine>> {
     ENGINES.lock().expect("migration registry").get(world).and_then(Weak::upgrade)
 }
 
+/// The generation a conversation this release creates is kept as born at
+/// (`born`). Raise it whenever a migration is added for records this release
+/// writes: the conversations born before then are looked at again.
+pub(crate) const BORN: i64 = 1;
+
 /// A conversation this release creates has no earlier records, so none of
-/// its families waits for a migration, on any thread. After a restart the
-/// discovery marks them ready as it finds them.
+/// its families waits for a migration, on any thread. It is kept as born
+/// (`record_migration::born`) until a gather or an import changes what it
+/// holds.
 pub(crate) fn born(world: &Path, conversation: &str) {
     if let Some(engine) = ENGINES.lock().expect("migration registry").get(world).and_then(Weak::upgrade) {
         engine.queue.lock().expect("migration queue").born.insert(conversation.to_string());
@@ -252,8 +258,15 @@ pub(crate) fn hydrate(
     scope: Option<&str>,
 ) -> io::Result<()> {
     let ready = database.read_background_now(|db| ready::load(db, excluded, scope)).map_err(io::Error::other)?;
+    // Those born here before the node last stopped, as the node opens.
+    let born = match scope {
+        None => database.read_background_now(|db| ready::born(db, excluded)).map_err(io::Error::other)?,
+        Some(_) => Vec::new(),
+    };
     if let Some(engine) = ENGINES.lock().expect("migration registry").get(world).and_then(Weak::upgrade) {
-        engine.queue.lock().expect("migration queue").ready.extend(ready);
+        let mut queue = engine.queue.lock().expect("migration queue");
+        queue.ready.extend(ready);
+        queue.born.extend(born);
     }
     Ok(())
 }

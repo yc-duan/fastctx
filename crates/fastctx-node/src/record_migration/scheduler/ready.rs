@@ -124,6 +124,29 @@ impl Ready {
     }
 }
 
+/// The conversations kept as born at this release's generation, but those
+/// `excluded`.
+pub(super) fn born(db: &Connection, excluded: &HashSet<String>) -> Result<Vec<String>> {
+    let exists: bool = db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name='migration_born')",
+        [],
+        |row| row.get(0),
+    )?;
+    if !exists {
+        return Ok(Vec::new());
+    }
+    let mut query = db.prepare("SELECT name FROM migration_born WHERE generation=?1")?;
+    let names = query.query_map([super::BORN], |row| row.get::<_, String>(0))?;
+    let mut born = Vec::new();
+    for name in names {
+        let name = name?;
+        if !excluded.contains(&name) {
+            born.push(name);
+        }
+    }
+    Ok(born)
+}
+
 /// The gathered layouts complete when the node opens, or those of `scope`.
 pub(super) fn load(db: &Connection, excluded: &HashSet<String>, scope: Option<&str>) -> Result<Ready> {
     let mut ready = Ready::default();
