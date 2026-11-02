@@ -143,8 +143,13 @@ fn raw_for(kept: &kept::Kept, dir: &Path, account: &Option<String>) -> Fact<Agen
 
 /// Reads a login's limits afresh: Codex's through its app-server, the
 /// running one or one started for the reading; Claude Code reads its own
-/// only in a session at work, so nothing can be asked of it.
+/// only in a session at work, so nothing can be asked of it. Only on the
+/// workbench: in Connect no agent is started and nothing is asked of its
+/// maker (`world-layers.md`), whoever asks and from wherever.
 pub(crate) async fn read(node: &Arc<Node>, agent: &AgentName, dir: &Path) -> Result<(), Failure> {
+    if crate::layers::of(node, &fastctx_types::access::Acting::Here) == fastctx_types::layers::Layer::Connect {
+        return Err(Failure::refused(fastctx_types::layers::CONNECT_ONLY));
+    }
     {
         let (node, agent, dir) = (node.clone(), agent.clone(), dir.to_path_buf());
         fastctx_platform::task::spawn_blocking(move || super::known(&node, &agent, &dir))

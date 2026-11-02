@@ -35,6 +35,7 @@ mod image_position;
 mod items;
 pub mod launch;
 mod lifetime;
+pub mod login_files;
 mod management;
 mod notifications;
 mod offers;

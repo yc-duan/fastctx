@@ -396,16 +396,19 @@ pub(crate) async fn query(
 }
 
 /// Takes up `dir` as a candidate login of `agent`: a folder the user chose
-/// that is a login, or one a folder's search found. The agent is asked who
-/// is logged in there, not its limits; the directory is kept among those
-/// the user took up.
+/// that is a login, or one a folder's search found. Who is logged in there
+/// is read (`identify::asked`), never its limits; the directory is kept
+/// among those the user took up.
 pub(crate) async fn take_up(node: &Arc<Node>, agent: AgentName, dir: PathBuf) -> Result<MachineLogins, Failure> {
-    host(agent.as_str())?;
+    let agent: &'static str = match host(agent.as_str())? {
+        Host::Codex => "codex",
+        Host::Claude => "claude",
+    };
     if !dir.is_absolute() {
         return Err(Failure::not_run(format!("{} is not an absolute path", dir.display())));
     }
-    let (found, default, programs, signed) = {
-        let (node, agent, dir) = (node.clone(), agent.clone(), dir.clone());
+    let (found, default, programs, signed, env) = {
+        let (node, dir) = (node.clone(), dir.clone());
         fastctx_platform::task::spawn_blocking(move || {
             if !fastctx_platform::disk::is_dir(&dir) {
                 return Err(Failure::not_run(format!("{} is not a directory on {}", dir.display(), node.machine())));
@@ -415,9 +418,9 @@ pub(crate) async fn take_up(node: &Arc<Node>, agent: AgentName, dir: PathBuf) ->
                 kept::read(&node).map_err(|error| Failure::new(format!("reading the agents' logins: {error}")))?;
             let chosen =
                 kept::folders(&node).map_err(|error| Failure::new(format!("reading the chosen folders: {error}")))?;
-            kept::add(&node, &agent, &dir)
-                .map_err(|error| Failure::new(format!("keeping the added login: {error}")))?;
-            let default = crate::homes::same_dir(&dir, context.default_of(agent.as_str()));
+            let name = AgentName::try_from(agent).expect("an agent's name");
+            kept::add(&node, &name, &dir).map_err(|error| Failure::new(format!("keeping the added login: {error}")))?;
+            let default = crate::homes::same_dir(&dir, context.default_of(agent));
             let found = if default {
                 Found::Default
             } else if in_folder(&chosen, &dir) {
@@ -425,25 +428,18 @@ pub(crate) async fn take_up(node: &Arc<Node>, agent: AgentName, dir: PathBuf) ->
             } else {
                 Found::Added
             };
-            let signed = sign_in::now(&context, agent.as_str(), &dir);
-            Ok::<_, Failure>((found, default, kept.claude.programs.clone(), signed))
+            let signed = sign_in::now(&context, agent, &dir);
+            Ok::<_, Failure>((found, default, kept.of(agent).programs.clone(), signed, context.env))
         })
         .await
         .map_err(|error| Failure::new(error.to_string()))??
     };
-    let asked = if agent.as_str() == "codex" {
-        identify::codex(node, &dir, false).await
-    } else {
-        let path = dir.clone();
-        fastctx_platform::task::spawn_blocking(move || identify::claude(&path, default, &programs))
-            .await
-            .map_err(|error| Failure::new(error.to_string()))??
-    };
+    let asked = identify::asked(node, agent, &dir, default, programs, env).await;
     {
-        let (node, agent, dir) = (node.clone(), agent.clone(), dir.clone());
+        let (node, dir) = (node.clone(), dir.clone());
         fastctx_platform::task::spawn_blocking(move || {
             kept::change(&node, |kept| {
-                let logins = &mut kept.of_mut(agent.as_str()).logins;
+                let logins = &mut kept.of_mut(agent).logins;
                 logins.retain(|known| !crate::homes::same_dir(&known.dir, &dir));
                 logins.push(kept::KeptLogin::asked(dir, found, asked, signed));
             })

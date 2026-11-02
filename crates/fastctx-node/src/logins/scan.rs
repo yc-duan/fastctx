@@ -1,16 +1,15 @@
 //! A scan of this machine for its agents, only when the user asks
 //! (`world-agent-logins.md`, 世界怎样找到它们): the usual places, the
-//! agents' programs where their installers put them and each login there
-//! asked who it is, which takes seconds; then every folder the user chose
-//! is searched again in the background (`folders`). With `stop`, those
-//! searches stop.
+//! agents' programs where their installers put them and who each login
+//! there is, as its files say, which takes seconds; then every folder the
+//! user chose is searched again in the background (`folders`). With
+//! `stop`, those searches stop.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
 use fastctx_hosts::inventory::{self, traces};
-use fastctx_types::agents::Fact;
 use fastctx_types::ipc::Failure;
 use fastctx_types::logins::{Found, MachineLogins, Scan, Stage};
 use jiff::Timestamp;
@@ -21,10 +20,11 @@ use crate::Node;
 
 /// Scans this machine, answering once the usual places are done while the
 /// chosen folders are searched; with `stop`, stops those searches. Asked
-/// while a scan runs, it answers how that one is going. It asks each login
-/// who it is, never its limits: those come as its sessions work, or when
-/// the user asks for them (`limits::read`). The scan goes on to its end
-/// even when whoever asked for it is gone.
+/// while a scan runs, it answers how that one is going. It reads who each
+/// login is (`identify::asked`), never its limits: those come as its
+/// sessions work on the workbench, or when the user asks for them there
+/// (`limits::read`). The scan goes on to its end even when whoever asked
+/// for it is gone.
 pub(crate) async fn scan(node: &Arc<Node>, stop: bool) -> Result<MachineLogins, Failure> {
     if stop {
         super::folders::stop_all(node);
@@ -83,7 +83,7 @@ async fn blocking<T: Send + 'static>(
 
 /// The usual places: each agent's default login, the directories directly
 /// in the user's home named and kept like the agent's, those the user took
-/// up and those the World's tools are in, each asked who it is; and the
+/// up and those the World's tools are in, with who each one is; and the
 /// agents' programs.
 async fn usual(node: &Arc<Node>, started_at: Timestamp) -> Result<(), Failure> {
     let (context, programs, candidates, others) = blocking(node, move |node| {
@@ -121,29 +121,18 @@ async fn usual(node: &Arc<Node>, started_at: Timestamp) -> Result<(), Failure> {
         Ok((context, programs, candidates, others))
     })
     .await?;
-    // Each login is asked at once: a slow one does not hold the others.
+    // Each login at once: a slow one, on the workbench, does not hold the
+    // others.
     let mut asking = Vec::new();
     for (agent, dirs) in candidates {
         for (dir, found) in dirs {
             let node = node.clone();
-            let claude_programs = programs.claude.clone();
+            let agent_programs = if agent == "codex" { programs.codex.clone() } else { programs.claude.clone() };
+            let env = context.env.clone();
             let default = crate::homes::same_dir(&dir, context.default_of(agent));
             let signed = super::sign_in::now(&context, agent, &dir);
             asking.push(fastctx_platform::task::spawn(async move {
-                let asked = if agent == "codex" {
-                    identify::codex(&node, &dir, false).await
-                } else {
-                    let path = dir.clone();
-                    match fastctx_platform::task::spawn_blocking(move || {
-                        identify::claude(&path, default, &claude_programs)
-                    })
-                    .await
-                    {
-                        Ok(Ok(asked)) => asked,
-                        Ok(Err(failure)) => failed(failure.message),
-                        Err(error) => failed(error.to_string()),
-                    }
-                };
+                let asked = identify::asked(&node, agent, &dir, default, agent_programs, env).await;
                 (agent, dir, found, asked, signed)
             }));
         }
@@ -174,15 +163,6 @@ async fn usual(node: &Arc<Node>, started_at: Timestamp) -> Result<(), Failure> {
         .map_err(|error| Failure::new(format!("keeping the scan: {error}")))
     })
     .await
-}
-
-fn failed(reason: String) -> identify::Asked {
-    identify::Asked {
-        identified: fastctx_types::logins::Identified { at: Timestamp::now(), who: Fact::failed(reason) },
-        launcher: None,
-        models: Vec::new(),
-        limits: None,
-    }
 }
 
 /// Whether `dir`, found in the user's home before, may be there still: it

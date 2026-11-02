@@ -82,6 +82,13 @@ pub fn ensure_trusted(directory: &Path, config_dir: Option<&std::ffi::OsStr>) ->
     }
 }
 
+/// Where Claude Code keeps its global state for the home `configured` names,
+/// the value of `CLAUDE_CONFIG_DIR` its sessions start with (`None` is
+/// unset): `.claude.json`, or the legacy `.config.json` where that is there.
+pub(crate) fn state_file(configured: Option<&std::ffi::OsStr>) -> io::Result<PathBuf> {
+    Ok(StatePaths::resolve(configured)?.file)
+}
+
 struct StatePaths {
     file: PathBuf,
     backups: PathBuf,

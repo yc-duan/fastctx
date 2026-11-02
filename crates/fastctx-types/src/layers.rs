@@ -20,8 +20,7 @@ impl crate::tolerant::Tolerant for Layer {
     const UNKNOWN: Self = Self::Connect;
 }
 
-/// The layer an account chose; none until it chooses, which the first
-/// interface opened asks.
+/// The layer an account chose; none until it chooses.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Chosen {
     #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::tolerant::read_option")]
@@ -29,10 +28,12 @@ pub struct Chosen {
 }
 
 impl Chosen {
-    /// What the World works by: an account that has not chosen keeps the
-    /// workbench it had before there were layers.
-    pub fn effective(&self) -> Layer {
-        self.layer.unwrap_or(Layer::Workbench)
+    /// What the World works by: the layer chosen. An account that never
+    /// chose is in Connect, unless `held` says Fastctx holds conversations
+    /// of its own for it from before there were layers: those keep the
+    /// workbench they had.
+    pub fn effective(&self, held: bool) -> Layer {
+        self.layer.unwrap_or(if held { Layer::Workbench } else { Layer::Connect })
     }
 }
 

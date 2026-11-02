@@ -55,24 +55,37 @@ pub(crate) async fn call(
 
 /// The layer for whom `acting` works for: the workbench where any of its
 /// accounts is on it, or where none of them can be read here, as an
-/// account another lets its agent assist.
+/// account another lets its agent assist. An account that never chose is
+/// in Connect, unless this node holds conversations of Fastctx's own for it.
 pub(crate) fn of(node: &Node, acting: &Acting) -> Layer {
     let links = node.links();
     if links.is_empty() {
-        return local(node).effective();
+        let chosen = local(node);
+        return chosen.effective(chosen.layer.is_none() && holds(node, |_| true));
     }
     let mut read = false;
     for link in &links {
         for account in node.accounts_on(link, acting) {
             if let Ok(chosen) = link.layer(&account) {
                 read = true;
-                if chosen.effective() == Layer::Workbench {
+                let held =
+                    chosen.layer.is_none() && holds(node, |acting| node.accounts_on(link, acting).contains(&account));
+                if chosen.effective(held) == Layer::Workbench {
                     return Layer::Workbench;
                 }
             }
         }
     }
     if read { Layer::Connect } else { Layer::Workbench }
+}
+
+/// Whether this node holds a conversation of Fastctx's own working for
+/// whom `works_for` picks: one started before there were layers, since in
+/// Connect none is started.
+fn holds(node: &Node, works_for: impl Fn(&Acting) -> bool) -> bool {
+    node.residents
+        .everyone()
+        .any(|held| held.removed.is_none() && held.about.world_managed() && works_for(&held.about.acting))
 }
 
 /// Refuses to start a conversation for `acting` in Connect.

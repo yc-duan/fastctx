@@ -1,11 +1,11 @@
-//! A login's sign-in files, and asking a login again once they change
-//! (`world-agent-logins.md`, 世界怎样找到它们). When a login is asked who
-//! it is, how its sign-in files stood is kept with the answer, by their size
-//! and time alone, never what is in them; whenever the logins are looked
-//! at, each login whose files no longer stand so is asked again, the others
-//! not at all. A login made or ended in the agent's own program so shows as
-//! it is, with nothing started while nothing changes. A sign-in kept in the
-//! system's keyring changes no file, and waits for the user's next scan.
+//! A login's sign-in files, and reading again who a login is once they
+//! change (`world-agent-logins.md`, 世界怎样找到它们). When who a login is
+//! is read, how its sign-in files stood is kept with it, by their size and
+//! time alone; whenever the logins are looked at, each login whose files no
+//! longer stand so is read again (`identify::asked`), the others not at all.
+//! A login made or ended in the agent's own program so shows as it is. A
+//! sign-in kept in the system's keyring changes no file, and waits for the
+//! user's next scan.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -13,14 +13,14 @@ use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use fastctx_types::ipc::Failure;
-use fastctx_types::logins::Found;
+use fastctx_types::logins::{Found, FoundProgram};
 
 use super::kept::{self, FileStamp, KeptLogin};
 use super::{AGENTS, Context, identify};
 use crate::Node;
 
-/// How long a look waits for the logins asked again; the asking goes on
-/// past it and keeps what it hears.
+/// How long a look waits for the logins read again; the reading goes on
+/// past it and keeps what it finds.
 const WITHIN: Duration = Duration::from_secs(4);
 
 /// How the sign-in files of `agent`'s login `dir` stand now.
@@ -37,17 +37,19 @@ fn files(context: &Context, agent: &str, dir: &Path) -> Vec<PathBuf> {
     if agent == "codex" {
         return vec![dir.join("auth.json")];
     }
-    let secure = context
-        .env
-        .iter()
-        .find(|(name, value)| name.eq_ignore_ascii_case("CLAUDE_SECURESTORAGE_CONFIG_DIR") && !value.is_empty())
-        .map(|(_, value)| PathBuf::from(value))
-        .unwrap_or_else(|| dir.to_path_buf());
+    // As Claude Code places them: an empty value is its default directory.
+    let secure = match context.env.iter().find(|(name, _)| name.eq_ignore_ascii_case("CLAUDE_SECURESTORAGE_CONFIG_DIR"))
+    {
+        Some((_, value)) if !value.is_empty() => PathBuf::from(value),
+        Some(_) => context.user_home.join(".claude"),
+        None => dir.to_path_buf(),
+    };
     vec![secure.join(".credentials.json"), dir.join("settings.json")]
 }
 
-/// Asks again each login whose sign-in files changed since it was asked,
-/// waiting `WITHIN` for the answers. Not while a scan runs: it asks them all.
+/// Reads again each login whose sign-in files changed since it was read,
+/// waiting `WITHIN` for the answers. Not while a scan runs: it reads them
+/// all.
 pub(super) async fn ask_changed(node: &Arc<Node>) {
     if node.logins.scanning.load(Ordering::Acquire) {
         return;
@@ -57,8 +59,8 @@ pub(super) async fn ask_changed(node: &Arc<Node>) {
     let _ = tokio::time::timeout(WITHIN, asking).await;
 }
 
-/// One login to ask again: its agent, directory, how the World knows of it,
-/// whether it is the agent's default, and how its sign-in files stand.
+/// One login to read again: its agent, directory, how the World knows of
+/// it, whether it is the agent's default, and how its sign-in files stand.
 struct Changed {
     agent: &'static str,
     dir: PathBuf,
@@ -72,31 +74,25 @@ async fn again(node: &Arc<Node>) {
     // finds nothing changed.
     let _asking = node.logins.asking.lock().await;
     let finding = node.clone();
-    let (changed, claude_programs) = match fastctx_platform::task::spawn_blocking(move || changed(&finding)).await {
+    let ToRead { changed, codex, claude, env } = match fastctx_platform::task::spawn_blocking(move || changed(&finding))
+        .await
+    {
         Ok(Ok(found)) => found,
-        Ok(Err(failure)) => return node.log.line(format_args!("asking changed logins again: {}", failure.message)),
-        Err(error) => return node.log.line(format_args!("asking changed logins again: {error}")),
+        Ok(Err(failure)) => return node.log.line(format_args!("reading changed logins again: {}", failure.message)),
+        Err(error) => return node.log.line(format_args!("reading changed logins again: {error}")),
     };
     let mut asking = Vec::new();
     for login in changed {
         node.log.line(format_args!(
-            "asking the {} login {} again: its sign-in changed",
+            "reading the {} login {} again: its sign-in changed",
             login.agent,
             login.dir.display()
         ));
         let node = node.clone();
-        let programs = claude_programs.clone();
+        let programs = if login.agent == "codex" { codex.clone() } else { claude.clone() };
+        let env = env.clone();
         asking.push(fastctx_platform::task::spawn(async move {
-            let asked = if login.agent == "codex" {
-                identify::codex(&node, &login.dir, false).await
-            } else {
-                let (dir, default) = (login.dir.clone(), login.default);
-                match fastctx_platform::task::spawn_blocking(move || identify::claude(&dir, default, &programs)).await {
-                    Ok(Ok(asked)) => asked,
-                    Ok(Err(failure)) => identify::failed(jiff::Timestamp::now(), failure.message),
-                    Err(error) => identify::failed(jiff::Timestamp::now(), error.to_string()),
-                }
-            };
+            let asked = identify::asked(&node, login.agent, &login.dir, login.default, programs, env).await;
             (login, asked)
         }));
     }
@@ -104,7 +100,7 @@ async fn again(node: &Arc<Node>) {
     for asking in asking {
         match asking.await {
             Ok(answer) => answers.push(answer),
-            Err(error) => node.log.line(format_args!("asking a login again: {error}")),
+            Err(error) => node.log.line(format_args!("reading a login again: {error}")),
         }
     }
     if answers.is_empty() {
@@ -127,14 +123,22 @@ async fn again(node: &Arc<Node>) {
     .await;
     match kept {
         Ok(Ok(())) => {}
-        Ok(Err(error)) => node.log.line(format_args!("keeping the logins asked again: {error}")),
-        Err(error) => node.log.line(format_args!("keeping the logins asked again: {error}")),
+        Ok(Err(error)) => node.log.line(format_args!("keeping the logins read again: {error}")),
+        Err(error) => node.log.line(format_args!("keeping the logins read again: {error}")),
     }
 }
 
-/// The logins asked before whose sign-in files have changed since, and the
-/// Claude programs found here, whose records say Claude Code's version.
-fn changed(node: &Node) -> Result<(Vec<Changed>, Vec<fastctx_types::logins::FoundProgram>), Failure> {
+/// What reading changed logins again needs: the logins read before whose
+/// sign-in files have changed since, each agent's programs found here,
+/// whose records say their versions, and the user's environment.
+struct ToRead {
+    changed: Vec<Changed>,
+    codex: Vec<FoundProgram>,
+    claude: Vec<FoundProgram>,
+    env: Vec<(std::ffi::OsString, std::ffi::OsString)>,
+}
+
+fn changed(node: &Node) -> Result<ToRead, Failure> {
     let context = Context::of(node)?;
     let record = kept::read(node).map_err(|error| Failure::new(format!("reading the agents' logins: {error}")))?;
     let mut changed = Vec::new();
@@ -154,5 +158,10 @@ fn changed(node: &Node) -> Result<(Vec<Changed>, Vec<fastctx_types::logins::Foun
             }
         }
     }
-    Ok((changed, record.claude.programs.clone()))
+    Ok(ToRead {
+        changed,
+        codex: record.codex.programs.clone(),
+        claude: record.claude.programs.clone(),
+        env: context.env,
+    })
 }
