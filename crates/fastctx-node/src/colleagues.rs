@@ -360,7 +360,10 @@ pub async fn ask_here(
                 told: None,
             },
         },
-        readers: Vec::new(),
+        // Working toward a goal, the colleague hands back its conclusion,
+        // and the turns it goes on with on its own wake no one; without
+        // one, the end of the turn these words start is its answer.
+        readers: if goal { Vec::new() } else { vec![asker.clone()] },
         state: PendingState::Waiting,
         working: false,
         session: None,

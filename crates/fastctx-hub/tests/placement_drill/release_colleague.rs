@@ -95,6 +95,11 @@ pub(super) async fn exercise(
     let colleague: fastctx_types::Address =
         serde_json::from_value(reply["colleague"].clone()).context("the release colleague's address")?;
     let id = colleague.resident.to_string();
+    // Its request is kept before the asker hears of it: the asker waits for
+    // it from then on.
+    let evidence =
+        ask(&root, json!({"call":"turn_evidence","resident":parent,"turn":null,"refresh_limits":false})).await?;
+    let waited = evidence["evidence"]["waiting"].to_string().contains(&id);
     anyhow::ensure!(idle_after(&root, &id, None).await, "the release colleague did not settle");
     record(
         "in a release, a colleague opens no goal",
@@ -118,9 +123,9 @@ pub(super) async fn exercise(
         pause().await;
     }
     record(
-        "in a release, the conversation that asked waits for its colleague no more once the colleague's turn ended",
-        settled,
-        waiting,
+        "in a release, the conversation that asked waits for its colleague until the colleague's turn ended, and no more",
+        waited && settled,
+        json!({"waited": waited, "after": waiting}),
     );
     one_at_a_time(owner, &root, &mut child, &parent).await?;
     let _ = child.kill();
