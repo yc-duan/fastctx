@@ -1606,7 +1606,9 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
         }
         Call::Accounts => {
             users_voice(node, peer)?;
-            Ok(Reply::Accounts(crate::world::accounts(node)))
+            // The networks this computer dissolved are read from disk.
+            let listing = node.clone();
+            Ok(Reply::Accounts(fastctx_platform::task::blocking(move || crate::world::accounts(&listing)).await))
         }
         Call::RenameHere { to } => {
             users_voice(node, peer)?;

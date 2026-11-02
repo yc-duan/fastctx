@@ -40,8 +40,18 @@ pub(crate) fn kept(node: &Node, resident: &ResidentId) -> Result<Option<bool>, F
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
         Err(error) => return Err(Failure::new(format!("reading conversation host isolation: {error}"))),
     };
-    KEPT.lock().expect("never poisoned").insert(path, (kept, Instant::now()));
+    remember(path, kept);
     Ok(kept)
+}
+
+/// Keeps what was read or recorded of a conversation's host mode. A guard
+/// against conversations come and gone: past it, all are read again.
+fn remember(path: PathBuf, kept: Option<bool>) {
+    let mut remembered = KEPT.lock().expect("never poisoned");
+    if remembered.len() >= 1 << 16 {
+        remembered.clear();
+    }
+    remembered.insert(path, (kept, Instant::now()));
 }
 
 fn record(node: &Node, resident: &ResidentId, assisted: bool) -> std::io::Result<()> {
@@ -52,7 +62,7 @@ fn record(node: &Node, resident: &ResidentId, assisted: bool) -> std::io::Result
         if assisted { b"true" } else { b"false" },
         fastctx_platform::Permissions::Private,
     )?;
-    KEPT.lock().expect("never poisoned").insert(path, (Some(assisted), Instant::now()));
+    remember(path, Some(assisted));
     Ok(())
 }
 

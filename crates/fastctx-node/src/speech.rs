@@ -1430,7 +1430,8 @@ pub fn resume(node: &Arc<Node>, runtime: &tokio::runtime::Handle) {
             let result = async {
                 let Some(speaking) = node.residents.speaking(&resident.id) else { return Ok(()) };
                 let guard = speaking.lock().await;
-                let waiting = crate::inbox::pending(&directory)?
+                let waiting = crate::delivery::local(&directory, crate::inbox::pending)
+                    .await?
                     .into_iter()
                     .filter(|input| input.state == PendingState::Waiting)
                     .min_by_key(|input| input.delivery.notice.along().is_some());

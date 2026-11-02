@@ -428,8 +428,12 @@ pub async fn rename_here(node: &Arc<Node>, to: MachineName) -> Result<(), Failur
     let links = node.links();
     if links.is_empty() {
         let names = crate::machine::renamed(&node.machine_names(), &to);
-        crate::machine::keep(&node.world, &names)
-            .map_err(|error| Failure::new(format!("renaming this computer to {to}: {error}")))?;
+        {
+            let (world, kept) = (node.world.clone(), names.clone());
+            fastctx_platform::task::blocking(move || crate::machine::keep(&world, &kept))
+                .await
+                .map_err(|error| Failure::new(format!("renaming this computer to {to}: {error}")))?;
+        }
         node.set_names(names);
         node.log.line(format_args!("this computer is {to} now, no longer {from}"));
         node.tools_changed(None);
@@ -460,11 +464,11 @@ async fn log_out(node: &Arc<Node>, link: &Arc<Link>, account: &AccountName) -> R
     // Leaving for good is written down before the hub is told: a computer
     // stopped in between finishes leaving when it starts (`load`).
     if last {
-        fastctx_platform::publish(
-            &hub_dir(&node.world, &link.membership().id).join(LEAVING),
-            account.as_str().as_bytes(),
-            fastctx_platform::Permissions::Private,
-        )
+        let (leaving, account) = (hub_dir(&node.world, &link.membership().id).join(LEAVING), account.clone());
+        fastctx_platform::task::blocking(move || {
+            fastctx_platform::publish(&leaving, account.as_str().as_bytes(), fastctx_platform::Permissions::Private)
+        })
+        .await
         .map_err(|error| Failure::new(format!("recording that this computer leaves: {error}")))?;
     }
     let answer = link.manage(account, Change::Logout).await;
@@ -476,7 +480,8 @@ async fn log_out(node: &Arc<Node>, link: &Arc<Link>, account: &AccountName) -> R
     // that cannot be reached is not told, and the computer leaves it all
     // the same: there it stays a machine away until it is removed.
     if answer.is_err() && matches!(link.status(), Status::Online { .. }) {
-        let _ = fastctx_platform::disk::remove_file(hub_dir(&node.world, &link.membership().id).join(LEAVING));
+        let leaving = hub_dir(&node.world, &link.membership().id).join(LEAVING);
+        let _ = fastctx_platform::task::blocking(move || fastctx_platform::disk::remove_file(leaving)).await;
         answer.map_err(Failure::new)?;
     }
     let aside = put_aside(node, link).await?;
@@ -543,8 +548,12 @@ async fn put_aside(node: &Arc<Node>, link: &Arc<Link>) -> Result<std::path::Path
     }
     let net = net_dir(&node.world, &hub);
     let aside = node.world.path().join(format!("net-left-{}-{}", hub, Timestamp::now().strftime("%Y%m%dT%H%M%SZ")));
-    fastctx_platform::disk::rename(net.path(), &aside)
-        .map_err(|error| Failure::new(format!("putting {} aside: {error}", net.path().display())))?;
+    {
+        let (from, to) = (net.path().to_path_buf(), aside.clone());
+        fastctx_platform::task::blocking(move || fastctx_platform::disk::rename(&from, &to))
+            .await
+            .map_err(|error| Failure::new(format!("putting {} aside: {error}", net.path().display())))?;
+    }
     Ok(aside)
 }
 

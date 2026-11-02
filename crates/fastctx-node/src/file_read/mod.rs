@@ -108,7 +108,7 @@ pub(crate) fn attachment_for(
                     return Err(refused.expect("speakers names at least one account"));
                 }
                 let file = crate::attachment_files::resolve(&node, attachment, cancel.0.clone()).await?;
-                let request = ReadFileRequest { path: crate::world::native(&file.path), range };
+                let request = ReadFileRequest { path: { let path = file.path.clone(); fastctx_platform::task::blocking(move || crate::world::native(&path)).await }, range };
                 Ok(local::read_attachment(node.machine(), request, Some(file.description.clone()), Some(file.snapshot.clone()), file.version.clone(), &sender).await)
             } => { let _ = sender.send(result.map(Part::Finished)).await; }
         }

@@ -139,10 +139,10 @@ impl Telling {
         self.bytes += bytes;
         all.fetch_add(bytes, Ordering::Relaxed);
         KEPT.add(bytes as i64);
-        while self.kept.len() > KEPT_EVENTS
-            || self.bytes > KEPT_BYTES
-            || (all.load(Ordering::Relaxed) > KEPT_ALL && self.kept.len() > 1)
-        {
+        // Past what all conversations keep together, this one lets go of
+        // its own oldest, the event just told too: a viewer coming back
+        // then reads the history again, and no bound is passed.
+        while self.kept.len() > KEPT_EVENTS || self.bytes > KEPT_BYTES || all.load(Ordering::Relaxed) > KEPT_ALL {
             let Some((sequence, _, gone)) = self.kept.pop_front() else { break };
             self.bytes -= gone;
             all.fetch_sub(gone, Ordering::Relaxed);

@@ -188,7 +188,12 @@ pub(crate) async fn execute(node: &Arc<Node>, resident: &ResidentId, control: Co
 pub async fn offers_here(node: &Arc<Node>, resident: &ResidentId) -> Result<Offers, Failure> {
     let mut offers = match host_of(node, resident)? {
         "Codex" => crate::codex::control::offers(node, resident).await?,
-        "Claude" => crate::claude::control::offers(node, resident).await?,
+        "Claude" => {
+            // Claude's offers are read and written through its session's
+            // files, where that may block.
+            let (node, resident) = (node.clone(), resident.clone());
+            crate::blocking::on(async move { crate::claude::control::offers(&node, &resident).await }).await?
+        }
         _ => Offers::default(),
     };
     offers.pending_controls = crate::control_queue::pending(node, resident).await?;

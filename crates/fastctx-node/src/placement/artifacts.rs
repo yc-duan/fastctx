@@ -120,14 +120,21 @@ pub(crate) async fn put(
 ) -> Result<Location, Failure> {
     validate_key(&key)?;
     let size = fastctx_types::skill_files::validate_files(&files).map_err(failure)?;
-    let maximum = (fastctx_platform::memory::physical().map_err(failure)? / 128)
-        .min(fastctx_platform::space::available(&directory).map_err(failure)? / 128);
+    // The room left on its disk, and the path as the World writes it, are asked of the disk.
+    let (available, written) = {
+        let (measuring, target) = (directory.clone(), directory.join("artifacts").join(&key));
+        fastctx_platform::task::blocking(move || {
+            (fastctx_platform::space::available(&measuring), crate::world::native(&target))
+        })
+        .await
+    };
+    let maximum = (fastctx_platform::memory::physical().map_err(failure)? / 128).min(available.map_err(failure)? / 128);
     if size > maximum {
         return Err(failure(format!("the evidence folder exceeds this computer's {maximum}-byte allowance")));
     }
     let target = directory.join("artifacts").join(&key);
     let gate = node.places.using(&format!("artifact-{}-{key}", directory.to_string_lossy())).await;
-    let location = Location { machine: node.machine(), path: crate::world::native(&target) };
+    let location = Location { machine: node.machine(), path: written };
     fastctx_platform::task::spawn_blocking(move || {
         if fastctx_platform::disk::is_there(&target) {
             if super::files::complete(&target, &files).map_err(failure)? {

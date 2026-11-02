@@ -71,8 +71,9 @@ pub(crate) async fn prepare(
         Some((about, _)) => about.focus,
         None => crate::focus::opening(&room).await?.map(|opening| opening.focus).unwrap_or_default(),
     };
+    let working_from = room.path().join("working-from.json");
     let speaking: Option<fastctx_types::MachineName> =
-        match fastctx_platform::disk::read(room.path().join("working-from.json")) {
+        match fastctx_platform::task::blocking(move || fastctx_platform::disk::read(working_from)).await {
             Ok(bytes) => Some(serde_json::from_slice(&bytes).map_err(failure)?),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
             Err(error) => return Err(failure(error)),
@@ -212,5 +213,6 @@ pub(crate) async fn prepare_here(
             }
         }
     };
-    Ok(Location { machine: node.machine(), path: crate::world::native(&path) })
+    let path = fastctx_platform::task::blocking(move || crate::world::native(&path)).await;
+    Ok(Location { machine: node.machine(), path })
 }

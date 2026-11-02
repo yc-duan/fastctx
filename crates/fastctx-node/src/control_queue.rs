@@ -75,14 +75,50 @@ async fn end_now(
         defer_host(node, id, &row, &error.message).await?;
         return Ok(Controlled::Reported { said: None, queued: Some(row.id) });
     }
-    settle(node, id, row.clone(), &result).await?;
-    crate::composer::forget_command(node, id, &row.id).await?;
-    crate::lifecycle::retry::clear(node, id, &control_key(&row)?).await.map_err(failure)?;
-    node.watchers.changed.notify_one();
+    // What the host did stands: when how it ended cannot be written now,
+    // only the telling is tried again, never the control.
+    if let Err(error) = settled(node, id, &row, &result).await {
+        node.log.line(format_args!("telling how {id}'s control {} ended, told again later: {}", row.id, error.message));
+        settle_later(node.clone(), id.clone(), row, result.clone());
+    }
     result.map_err(|mut failure| {
         failure.code.get_or_insert(FailureCode::Told);
         failure
     })
+}
+
+/// Tells how a control ended in its conversation and lets go of what it
+/// held: its place among the words, its retries.
+async fn settled(
+    node: &Arc<Node>,
+    id: &ResidentId,
+    row: &PendingControl,
+    result: &Result<Controlled, Failure>,
+) -> Result<(), Failure> {
+    settle(node, id, row.clone(), result).await?;
+    crate::composer::forget_command(node, id, &row.id).await?;
+    crate::lifecycle::retry::clear(node, id, &control_key(row)?).await.map_err(failure)?;
+    node.watchers.changed.notify_one();
+    Ok(())
+}
+
+/// Tells how a control ended again, later each time, until it is told; the
+/// queue behind it then moves on. Its row stays running meanwhile, which
+/// keeps the controls after it waiting rather than done out of turn.
+fn settle_later(node: Arc<Node>, id: ResidentId, row: PendingControl, result: Result<Controlled, Failure>) {
+    fastctx_platform::task::spawn(async move {
+        let mut again = crate::again::Again::default();
+        loop {
+            tokio::time::sleep(again.next()).await;
+            if node.residents.active(&id).is_err() {
+                return;
+            }
+            if settled(&node, &id, &row, &result).await.is_ok() {
+                schedule(&node, &id);
+                return;
+            }
+        }
+    });
 }
 
 fn control_key(row: &PendingControl) -> Result<fastctx_types::NoticeId, Failure> {

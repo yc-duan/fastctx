@@ -131,7 +131,12 @@ fn pay_once<'a>(
                 .map(|account| fastctx_types::access::Acting::one(account.hub.clone(), account.account.clone()));
             let posting_account = account.as_ref().unwrap_or(&acting);
             let path = directory.outbox().join(format!("{}.json", answer.delivery.id));
-            match crate::obligations::impossible(node, posting_account, &(&answer.to.machine).into()) {
+            let impossible = {
+                let (asking, posting, to) =
+                    (node.clone(), posting_account.clone(), fastctx_types::access::Written::from(&answer.to.machine));
+                fastctx_platform::task::blocking(move || crate::obligations::impossible(&asking, &posting, &to)).await
+            };
+            match impossible {
                 Ok(Some(reason)) => {
                     if let Err(error) = crate::inbox::outgoing::abandon(node, directory, &answer, &reason).await {
                         pending = true;
@@ -185,7 +190,8 @@ fn pay_once<'a>(
             }
             if landed.is_err() || matches!(landed, Ok(fastctx_types::residents::Landed::Uncertain { .. })) {
                 if landed.is_err() && node.is_me(&answer.to.machine) && !node.residents.knows(&answer.to.resident) {
-                    match fastctx_platform::disk::exists(node.world.conversation(&answer.to.resident).about()) {
+                    let about = node.world.conversation(&answer.to.resident).about();
+                    match fastctx_platform::task::blocking(move || fastctx_platform::disk::exists(about)).await {
                         Ok(false) => {
                             let (settling, answer) = (directory.clone(), answer.clone());
                             if let Err(error) = fastctx_platform::task::spawn_blocking(move || {

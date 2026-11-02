@@ -63,19 +63,27 @@ impl CutHistories {
     /// Keeps `cut` as `id`'s, in place of any before it, letting the least
     /// lately sent go past the bound. One larger than the bound is not kept.
     pub fn keep(&self, id: &ResidentId, cut: CutHistory) {
+        // What is let go is dropped after the lock, which every viewer of
+        // every conversation takes: a cut may be the history of a long one.
+        let mut gone = Vec::new();
         let mut kept = self.0.lock().expect("never poisoned");
-        if let Some((gone, _)) = kept.cuts.remove(id) {
-            kept.bytes -= gone.bytes;
+        if let Some((old, _)) = kept.cuts.remove(id) {
+            kept.bytes -= old.bytes;
+            gone.push(old);
         }
         if cut.bytes > KEPT_BYTES {
+            HELD.set(kept.bytes as i64);
+            drop(kept);
+            drop(gone);
             return;
         }
         while kept.bytes + cut.bytes > KEPT_BYTES {
             let Some(oldest) = kept.cuts.iter().min_by_key(|(_, (_, used))| *used).map(|(id, _)| id.clone()) else {
                 break;
             };
-            if let Some((gone, _)) = kept.cuts.remove(&oldest) {
-                kept.bytes -= gone.bytes;
+            if let Some((old, _)) = kept.cuts.remove(&oldest) {
+                kept.bytes -= old.bytes;
+                gone.push(old);
             }
         }
         kept.sent += 1;
@@ -83,6 +91,8 @@ impl CutHistories {
         kept.bytes += cut.bytes;
         kept.cuts.insert(id.clone(), (Arc::new(cut), sent));
         HELD.set(kept.bytes as i64);
+        drop(kept);
+        drop(gone);
     }
 
     /// Lets `id`'s cut go, when it is still `cut`.
