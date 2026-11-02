@@ -34,7 +34,7 @@ import { AgentChangeSheet, type AgentChangeTarget, type AgentChangeWords } from 
 import { foldersSection, foundOf, freshness, searching } from "./agent-folders";
 import { CLAUDE_OLDEST, claudeTooOld, dirName, loginRow, planName, programLine } from "./agent-login-row";
 import type { AgentLoginsWords } from "./agent-logins-words";
-import { chosen, pickButton, pickMenu, pickables, type Pickable } from "./agent-machines";
+import { chosen, keepMachine, keptMachine, pickButton, pickMenu, pickables, type Pickable } from "./agent-machines";
 import { keepTab } from "./agent-sections";
 import { AssistSheet, assistChange, assistancesIn, fiveHourWindow, namesOn, type Assistance } from "./assist-sheet";
 import type { Confirm } from "./confirm";
@@ -107,7 +107,6 @@ interface Shown extends Pickable {
   mine: boolean;
 }
 
-const MACHINE = "agents.machine";
 /** While a scan, a search or a change runs, its record is read again this
  *  often: reading is a file the node keeps, and a search's count moves on
  *  as it goes. */
@@ -908,22 +907,6 @@ export class AgentLoginsPage implements Page {
 /** The head's name of the agent shown: its mark, then its name. */
 function titleHtml(agent: Agent, title: string): string {
   return `<span class="logins-title-mark">${glyph(agent, 20)}</span><span class="logins-title-name">${escape(title)}</span>`;
-}
-
-function keptMachine(): string | null {
-  try {
-    return localStorage.getItem(MACHINE);
-  } catch {
-    return null;
-  }
-}
-
-function keepMachine(machine: string): void {
-  try {
-    localStorage.setItem(MACHINE, machine);
-  } catch {
-    // Not kept: this computer shows first next time.
-  }
 }
 
 /** Whether two paths a machine wrote name the same directory: a Windows

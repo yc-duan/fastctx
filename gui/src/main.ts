@@ -68,6 +68,8 @@ import { keepLoginsFor, keptRecord } from "./app/usage/kept";
 import { ActsMenu } from "./app/acts-menu";
 import { specimenUsage } from "./specimen/usage";
 import { specimenCalls } from "./specimen/calls";
+import { AgentsOverview } from "./app/agents-overview";
+import { enAgentsOverview, zhAgentsOverview } from "./app/agents-overview-words";
 import { enAgentLogins, zhAgentLogins } from "./app/agent-logins-words";
 import { enProfile, zhProfile } from "./app/profile-words";
 import { isHost, keepSection, sectionOf, tabOf } from "./app/agent-sections";
@@ -481,6 +483,9 @@ let place: Place = { kind: "home" };
 
 /** The places that are the workbench's: in Connect they open the activity. */
 const WORKBENCH_PLACES: Place["kind"][] = ["home", "new", "project", "talk", "talks", "archived", "history", "talk-history", "page", "feature"];
+  // In Connect an agent's own page is a step in from the agents' overview;
+  // the sidebar names it only on the workbench.
+  if (at.kind === "agents" && (at.section === "claude" || at.section === "codex") && !accountLayer.workbench.peek()) return true;
 
 /** The pages one comes into from another, which have a way back in their
  *  head (`world-gui.md`, 界面的结构); the sidebar's own pages have none. */
@@ -488,6 +493,8 @@ function inner(at: Place): boolean {
   return ["feature", "data", "history", "talk-history", "page", "file", "login", "talks", "archived", "machine", "usage", "subagents", "sentinel", "sentinels"].includes(at.kind);
 }
 
+    case "agents":
+      return { kind: "agents", machine: at.machine };
 /** Where a page's back goes when it was not come into from another page,
  *  as when the window opened on it. */
 function parentOf(at: Place): Place {
@@ -2811,7 +2818,7 @@ function bookMachines(world: WorldNow | null): { written: string | null; name: s
 function show(next: Place): void {
   // The front page belongs to the workbench: without it, the interface opens on
   // the agents (`world-gui.md`, 界面的结构).
-  if (!accountLayer.workbench.peek() && WORKBENCH_PLACES.includes(next.kind)) next = { kind: "activity" };
+  if (!accountLayer.workbench.peek() && WORKBENCH_PLACES.includes(next.kind)) next = { kind: "agents", machine: null };
   // A computer in no network has no machine details: the machines page
   // tells what a network is (`world-gui.md`, 机器的详情).
   if (next.kind === "machine" && inNoNetwork(store.world.peek())) {
@@ -2893,6 +2900,32 @@ function show(next: Place): void {
         log: live ? machineLog : specimenMachineLog,
         renameHere: async (to) => {
           if (live) return renameHere(to);
+      // A machine's agents all at once, unless one of them is named.
+      if (!next.section && next.tab !== "prefs") {
+        const agentsPlace = next;
+        page = new AgentsOverview({
+          store,
+          words: english ? enAgentsOverview : zhAgentsOverview,
+          logins: english ? enAgentLogins : zhAgentLogins,
+          changeWords: english ? enAgentChange : zhAgentChange,
+          head,
+          machine: agentsPlace.machine,
+          workbench: accountLayer.workbench,
+          read: (machine) => (live ? agentLogins(machine) : specimenLoginsRead(machine)),
+          scan: (machine, stop) => (live ? scanAgents(machine, stop) : specimenScan(machine, stop, specimen.now)),
+          preview: (machine, agent, dir, into, takeBack) => (live ? previewAgentChange(machine, agent, dir, into, takeBack) : specimenPreview(machine, agent, dir, into)),
+          change: (machine, agent, dir, into, raise, takeBack, expected) => (live ? changeAgentLogin(machine, agent, dir, into, raise, takeBack, expected) : specimenLoginChange(machine, agent, dir, into)),
+          showing: (machine) => {
+            const place: Place = { kind: "agents", machine };
+            history.replaceState(history.state, "", link(place));
+            shell.mark(place);
+          },
+          // Until the workbench opens on a login of its own (`world-layers.md`),
+          // it opens on the account.
+          workbenchOn: () => (accountLayer.workbench.peek() ? show({ kind: "home" }) : accountLayer.choose("workbench")),
+        });
+        break;
+      }
           const renamed = specimenRenameHere(store.world.peek(), to);
           if (renamed) store.world.set(renamed);
         },
@@ -3137,7 +3170,7 @@ function show(next: Place): void {
         film: (english ? enFeatures : zhFeatures).conversations.film,
         head,
         confirm: accountConfirm,
-        chosen: (layer) => show(layer === "workbench" ? { kind: "home" } : { kind: "activity" }),
+        chosen: (layer) => show(layer === "workbench" ? { kind: "home" } : { kind: "agents", machine: null }),
       });
       break;
     case "feature":
@@ -3208,7 +3241,7 @@ function show(next: Place): void {
         },
         enter() {
           welcomed.now();
-          replacePlace(link(accountLayer.chosen.peek() === null ? { kind: "mode" } : { kind: "home" }));
+          replacePlace(link({ kind: "home" }));
         },
       });
       break;
@@ -3599,7 +3632,6 @@ if (live) {
       )
       .then((before) => {
         if (before) return accountLayer.choose("workbench").catch((error: unknown) => console.error("keeping the workbench this device had", error));
-        if (accountLayer.chosen.peek() === null && (place.kind === "home" || place.kind === "activity")) show({ kind: "mode" });
       });
   });
 }

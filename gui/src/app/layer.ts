@@ -2,9 +2,9 @@
 // agents `run` and shows what they did; the workbench adds Fastctx's own
 // conversations. It is kept with the account, on its hub, and a computer
 // in no network keeps its own; this window keeps the last value read so its
-// first frame is already right. An account that never chose is asked once,
-// unless its device had the workbench on before there were layers, and
-// meanwhile has the workbench.
+// first frame is already right. An account that never chose has Connect
+// (`world-layers.md`, 用户 2026-11-02), unless its device had the workbench
+// on before there were layers.
 
 import { invoke } from "@tauri-apps/api/core";
 import { signal, type Signal } from "./signals";
@@ -45,9 +45,8 @@ export function liveLayer(scope: () => { hub: string; account: string } | null):
 class AccountLayer {
   /** None until the account chooses. */
   readonly chosen: Signal<LayerName | null> = signal(kept());
-  /** Whether Fastctx's own conversations are shown: the workbench chosen,
-   *  or nothing chosen yet. */
-  readonly workbench: Signal<boolean> = signal(this.chosen.peek() !== "connect");
+  /** Whether Fastctx's own conversations are shown: the workbench chosen. */
+  readonly workbench: Signal<boolean> = signal(this.chosen.peek() === "workbench");
   /** Whether the layer was read at least once from where it is kept. */
   readonly known: Signal<boolean> = signal(false);
   /** Whose layer was read last (`LayerSeam.scope`): one read before the
@@ -81,7 +80,7 @@ class AccountLayer {
 
   private set(layer: LayerName | null): void {
     this.chosen.set(layer);
-    this.workbench.set(layer !== "connect");
+    this.workbench.set(layer === "workbench");
     try {
       if (layer) localStorage.setItem(KEPT, layer);
       else localStorage.removeItem(KEPT);

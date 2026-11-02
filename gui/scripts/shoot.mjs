@@ -513,6 +513,10 @@ for (const session of sessions) {
           expression: "new Promise(r => { location.hash = '#/agents/claude'; setTimeout(r, 900); }).then(() => { document.querySelector('.logins-more')?.click(); return new Promise(r => setTimeout(r, 300)); }).then(() => { document.querySelector('[data-act=\"assist\"]')?.click(); return new Promise(r => setTimeout(r, 700)); }).then(() => { const w = document.querySelector('.assist-new [name=weekly]'); if (w) { w.value = '100'; w.dispatchEvent(new Event('input', { bubbles: true })); } return new Promise(r => setTimeout(r, 200)); })",
         });
       }
+      if (session.startsWith("agents-")) {
+        // An agent's own page, as the overview's 「管理」 opens it.
+        await send("Runtime.evaluate", { awaitPromise: true, expression: `new Promise(r => { location.hash = '#/agents/${session.slice("agents-".length)}'; setTimeout(r, 1200); })` });
+      }
       if (session.startsWith("connect-")) {
         // The window before connecting an agent: Claude Code's candidate on
         // this computer connected, or a Codex login removed from its menu;

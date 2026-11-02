@@ -3,9 +3,9 @@
 // network shown, by its server's name (this computer's own name while it is
 // in none); pressed, every network this device is in, the way to make a new
 // one or join one, and each one's management. Then the places, each a line
-// with its mark: the activity, the agents and the machines in Connect; on
-// the workbench (`world-layers.md`) the front page and a new conversation
-// as well, the agents named its kernels, and below are each
+// with its mark: the agents first, the activity and the machines. While the
+// workbench is open (`world-layers.md`), its places follow as a group of
+// their own: a new conversation, the front page and the projects, then each
 // project, its name a way to its overview and its folder opening and closing
 // on its conversations (the rest from its "⋯"), and the conversations in
 // no project, most recent first; a conversation is listed as long as it is not archived,
@@ -167,6 +167,9 @@ export class Sidebar {
       if (target.closest("a")) this.popover.hide();
     });
     this.element.querySelector(".new-talk")!.addEventListener("click", () => options.newTalk());
+    this.list.addEventListener("click", (event) => {
+      if ((event.target as HTMLElement).closest("[data-new-talk]")) options.newTalk();
+    });
     const updates = options.updates;
     if (updates) {
       const bar = this.element.querySelector<HTMLElement>(".sidebar-update")!;
@@ -270,15 +273,13 @@ export class Sidebar {
     const world = store.world.peek();
     const place = this.options.place();
     const now = store.clock.peek();
-    // The new conversation outside any project is a place of its own.
+    // The new conversation outside any project is a place of the
+    // workbench's, among its others.
     const talking = accountLayer.workbench.peek();
     this.drawSwitcher();
     const begin = this.element.querySelector<HTMLElement>(".new-talk");
-    if (begin) begin.hidden = !talking;
+    if (begin) begin.hidden = true;
     const beginning = place.kind === "new" && place.town === null;
-    begin?.classList.toggle("current", beginning);
-    if (beginning) begin?.setAttribute("aria-current", "page");
-    else begin?.removeAttribute("aria-current");
     const { listed: talks } = talksOf(world, this.options.acts);
     this.talkList.drawing(talks);
     const facts = factsByMachine(world);
@@ -291,23 +292,33 @@ export class Sidebar {
     const at = (kinds: Place["kind"][]) => (kinds.includes(place.kind) ? " current" : "");
     const top = (href: string, current: string, mark: string, name: string, extra = "") =>
       `<a class="place home${current}" href="${href}"${current.includes("current") ? ' aria-current="page"' : ""}><span class="place-mark">${mark}</span><span class="place-name">${escape(name)}</span>${extra}</a>`;
-    // While one of the agents' sections is open they stand under it, and
-    // it is the section that is current; they slide in once as they come.
+    // On the workbench, while one of the agents' sections is open they
+    // stand under it, and it is the section that is current; they slide in
+    // once as they come. The agents of a machine all at once are the agents'
+    // place itself.
     const inCollab = place.kind === "feature" && place.feature === "collaboration";
-    const section = sectionOf(place) ?? (inCollab && talking ? keptSection() : null);
+    const overview = place.kind === "agents" && !place.section && place.tab !== "prefs";
+    const section = !talking || overview ? null : (sectionOf(place) ?? (inCollab ? keptSection() : null));
+    const agentsAt = section !== null ? " open" : at(["agents", "usage", "subagents"]);
     if (section === null) this.sectionsSince = null;
     else this.sectionsSince ??= performance.now();
     const opening = this.sectionsSince !== null && performance.now() - this.sectionsSince < FOLDING_MS ? " opening" : "";
     const sections = section === null ? "" : `<div class="asec-fold${opening}"><div class="asec-inner">${sectionRows(inCollab ? null : section, loggedIn, this.options.sections, talking && loggedIn ? { name: words.collaboration, current: inCollab } : null)}</div></div>`;
-    // The agents come first: they are what the interface is for on a
-    // computer of its own.
+    // The agents come first: connecting them is what the interface is for
+    // (`world-gui.md`, 界面的结构).
+    const bench = talking
+      ? `<section class="sidebar-group side-bench"><h2 class="side-group-title">${escape(words.workbench)}</h2><div class="side-places">
+          <button class="place home side-begin${beginning ? " current" : ""}" type="button" data-new-talk${beginning ? ' aria-current="page"' : ""}><span class="place-mark">${glyph("plus", 18)}</span><span class="place-name">${escape(words.newTalk)}</span></button>
+          ${top(link({ kind: "home" }), at(["home"]), knotMark(), words.world, waiting ? `<span class="count waiting"><span class="spoken">${escape(words.waiting)}</span>${waiting}</span>` : "")}
+          ${top(link({ kind: "projects" }), at(["projects"]), glyph("folder", 18), words.projects)}
+        </div></section>`
+      : "";
     const places = `<div class="side-places">
-        ${talking ? top(link({ kind: "home" }), at(["home"]), knotMark(), words.world, waiting ? `<span class="count waiting"><span class="spoken">${escape(words.waiting)}</span>${waiting}</span>` : "") : ""}
+        ${machines || assisted || !talking ? top(link({ kind: "agents", machine: null }), agentsAt, glyph("agents", 18), words.agents) + sections : ""}
         ${top(link({ kind: "activity" }), at(["activity"]), glyph("history", 18), words.activity)}
-        ${machines || assisted || !talking ? top(link({ kind: "agents", machine: null }), section === null ? "" : " open", glyph("agents", 18), talking ? words.kernels : words.agents) + sections : ""}
         ${machines ? top(link({ kind: "machines" }), at(["machines", "machine"]), glyph("machine", 18), words.machines) : ""}
-        ${talking ? top(link({ kind: "projects" }), at(["projects"]), glyph("folder", 18), words.projects) : ""}
       </div>
+      ${bench}
       ${store.trouble.peek() ? `<p class="sidebar-trouble" title="${escape(store.trouble.peek() ?? "")}">${escape(words.unreachable)}</p>` : ""}
       ${store.unanswered.peek() >= SLOW ? `<p class="sidebar-trouble" role="status">${escape(words.unanswered(store.unanswered.peek()))}</p>` : ""}`;
 

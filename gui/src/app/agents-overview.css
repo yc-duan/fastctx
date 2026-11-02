@@ -1,0 +1,195 @@
+/* The agents' overview (`agents-overview.ts`): a paper card for each agent
+   found on the machine shown, its logins as quiet lines under a ruled line;
+   whether a login is connected is drawn by its plug, ink or faint. */
+
+.ao-body {
+  padding: var(--space-2) var(--gutter) var(--space-8);
+}
+
+/* One column in the middle of the page, an agent's paper after another,
+   read as a list rather than a board. */
+.ao-cards,
+.ao-missing {
+  max-width: 680px;
+  margin-inline: auto;
+}
+
+.ao-cards {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding-top: var(--space-4);
+}
+
+.ao-card {
+  padding: var(--space-4) var(--space-5) var(--space-3);
+  border-radius: var(--radius-l);
+  background: var(--fill);
+}
+
+.ao-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.ao-mark {
+  flex: none;
+  display: inline-flex;
+  color: var(--text);
+}
+
+.ao-name {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-family: var(--font-emphasis);
+  font-weight: 400;
+  font-size: var(--size-h3);
+  color: var(--text-strong);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ao-manage {
+  flex: none;
+  color: var(--text-3);
+}
+
+/* The logins, set off from the agent's name by a ruled line. */
+.ao-logins,
+.ao-none {
+  position: relative;
+  margin: var(--space-3) 0 0;
+  padding: var(--space-2) 0 0;
+}
+
+.ao-logins::before,
+.ao-none::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -4px;
+  height: 8px;
+  background: var(--pen-rule);
+  opacity: 0.7;
+  -webkit-mask: var(--pen-rule-1) 0 50% / 100% 100% no-repeat;
+  mask: var(--pen-rule-1) 0 50% / 100% 100% no-repeat;
+}
+
+.ao-logins {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+}
+
+.ao-none {
+  color: var(--text-3);
+  font-size: var(--size-text);
+  line-height: 32px;
+}
+
+.ao-login {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 36px;
+  font-size: var(--size-text);
+}
+
+/* Connected, the plug and the name are ink; found and not yet connected,
+   faint; asking to be renewed, the plug is clay. */
+.ao-plug {
+  flex: none;
+  display: inline-flex;
+  color: var(--text);
+}
+
+.ao-who {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+.ao-login[data-standing="found"] .ao-plug,
+.ao-login[data-standing="busy"] .ao-plug {
+  color: var(--text-3);
+}
+
+.ao-login[data-standing="found"] .ao-who {
+  color: var(--text-2);
+}
+
+.ao-login[data-standing="renew"] .ao-plug {
+  color: var(--accent);
+}
+
+.ao-tag {
+  flex: none;
+  color: var(--text-3);
+  font-size: var(--size-fine);
+  white-space: nowrap;
+}
+
+.ao-tag.ao-warn {
+  color: var(--accent);
+}
+
+.ao-act {
+  flex: none;
+  margin-left: auto;
+  display: inline-flex;
+}
+
+/* Connecting is the page's one main deed: its word stands in clay. */
+.ao-go {
+  color: var(--accent);
+}
+
+.ao-bench {
+  color: var(--text-2);
+}
+
+.ao-busy,
+.ao-scanning {
+  color: var(--text-3);
+  font-size: var(--size-text);
+}
+
+.ao-missing,
+.ao-quiet {
+  margin-top: var(--space-5);
+  color: var(--text-3);
+  font-size: var(--size-text);
+}
+
+/* Never scanned: the agents' marks and the way to look, in the middle. */
+.ao-first {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-5);
+  padding: var(--space-10) 0;
+}
+
+.ao-first-marks {
+  display: inline-flex;
+  gap: var(--space-4);
+  color: var(--text-3);
+}
+
+@media (pointer: coarse) {
+  .ao-login {
+    min-height: 44px;
+  }
+}
+
+@media (max-width: 760px) {
+  .ao-card {
+    padding: var(--space-3) var(--space-4) var(--space-2);
+  }
+}

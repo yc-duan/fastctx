@@ -297,6 +297,13 @@ html.gripping-y * {
   margin-top: var(--space-5);
 }
 
+/* The workbench's new conversation is one of its lines, as wide as the
+   others. */
+.side-begin {
+  width: 100%;
+  text-align: left;
+}
+
 .side-group-title {
   margin: 0 0 var(--space-1);
   padding: 0 var(--space-3);

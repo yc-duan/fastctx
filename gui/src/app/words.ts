@@ -29,8 +29,8 @@ export interface ShellWords {
   outside: string;
   machines: string;
   agents: string;
-  /** The agents as the workbench names them: its kernels (`world-layers.md`). */
-  kernels: string;
+  /** The workbench's places, a group of their own (`world-layers.md`). */
+  workbench: string;
   /** What the agents did with run (`world-layers.md`). */
   activity: string;
   /** Model collaboration's settings, among the kernels'. */
@@ -1707,7 +1707,7 @@ export const zhShell: ShellWords = {
   outside: "对话",
   machines: "机器",
   agents: "智能体",
-  kernels: "内核",
+  workbench: "工作台",
   activity: "活动",
   collaboration: "模型协作",
   features: "功能",
@@ -1765,7 +1765,7 @@ export const enShell: ShellWords = {
   outside: "Conversations",
   machines: "Machines",
   agents: "Agents",
-  kernels: "Kernels",
+  workbench: "Workbench",
   activity: "Activity",
   collaboration: "Model collaboration",
   features: "Features",
