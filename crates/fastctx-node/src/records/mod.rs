@@ -68,10 +68,12 @@ pub(crate) fn locate(directory: &ConversationDir) -> io::Result<(Database, Strin
     crate::record_database::get(directory)
 }
 
+#[track_caller]
 pub(crate) fn read<T>(directory: &ConversationDir, action: impl FnOnce(&Rows<'_>) -> Result<T>) -> io::Result<T> {
     read_using(directory, false, action)
 }
 
+#[track_caller]
 pub(crate) fn read_background<T>(
     directory: &ConversationDir,
     action: impl FnOnce(&Rows<'_>) -> Result<T>,
@@ -79,6 +81,7 @@ pub(crate) fn read_background<T>(
     read_using(directory, true, action)
 }
 
+#[track_caller]
 fn read_using<T>(
     directory: &ConversationDir,
     background: bool,
@@ -94,6 +97,7 @@ fn read_using<T>(
     if background { database.read_background_now(read) } else { database.read_now(read) }.map_err(io::Error::other)
 }
 
+#[track_caller]
 pub(crate) fn write_at<T: Send + 'static>(
     directory: &ConversationDir,
     priority: Priority,
@@ -103,6 +107,7 @@ pub(crate) fn write_at<T: Send + 'static>(
     write_then_at(directory, priority, bytes, action, |_| {})
 }
 
+#[track_caller]
 pub(crate) fn write_then_at<T: Send + 'static>(
     directory: &ConversationDir,
     priority: Priority,
