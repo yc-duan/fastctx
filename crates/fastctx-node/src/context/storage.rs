@@ -158,22 +158,25 @@ fn set_mode(
     let withdraw = bodies.is_some() || (text.is_empty() && matches!(name, "project" | "map" | "history"));
     let empty = text.is_empty() && change.version.is_empty();
     // What is written already is not written again: a refresh that finds
-    // nothing changed opens no transaction and projects nothing. A body kept
-    // only in memory is put back, as after the node started again.
+    // nothing changed opens no transaction and projects nothing, once the
+    // block's migration originals, if it withdraws them, are withdrawn. A body
+    // kept only in memory is put back, as after the node started again.
+    let withdrawal = (directory(world, id), key.clone());
+    let withdrawn = !withdraw || WITHDRAWN.lock().expect("never poisoned").contains(&withdrawal);
     let (unchanged, looking) = (incoming.clone(), key.clone());
-    let directory = super::records::prepare(world, id)?;
-    let written = crate::records::read(&directory, move |rows| {
+    let records = super::records::prepare(world, id)?;
+    let written = crate::records::read(&records, move |rows| {
         let old = rows.get::<Block>(super::records::BLOCKS, &looking)?;
         Ok(old.as_ref().is_some_and(|old| unchanged.same_as(old)) || (old.is_none() && empty))
     })?;
-    if written {
+    if written && withdrawn {
         if let Some(bodies) = bodies {
             bodies.put(id, name, &source, &text);
             bodies.put(id, &format!("{name}-fact"), &source, &fact);
         }
         return Ok(());
     }
-    super::records::commit(
+    let committed = super::records::commit(
         world,
         id,
         text.len() + fact.len() + 1024,
@@ -189,8 +192,25 @@ fn set_mode(
             }
             set_block(rows, &key, incoming, empty)
         },
-    )
+    );
+    if committed.is_ok() && withdraw {
+        let mut withdrawn = WITHDRAWN.lock().expect("never poisoned");
+        if withdrawn.len() >= WITHDRAWN_KEPT {
+            withdrawn.clear();
+        }
+        withdrawn.insert(withdrawal);
+    }
+    committed
 }
+
+/// Blocks whose migration originals this process has withdrawn already. The
+/// originals are made only as a conversation's records move in, before any of
+/// its blocks is written, so a block withdraws them once and needs it no more.
+static WITHDRAWN: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<(std::path::PathBuf, String)>>> =
+    std::sync::LazyLock::new(Default::default);
+
+/// Blocks remembered as withdrawn; past it, each withdraws once more.
+const WITHDRAWN_KEPT: usize = 1 << 16;
 
 fn set_block(
     rows: &crate::records::Rows<'_>,
