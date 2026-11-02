@@ -187,7 +187,7 @@ pub(super) struct Read {
 pub(super) async fn open(node: &Arc<Node>, id: &ResidentId, deadline: Instant) -> Read {
     let mut fold = Fold::default();
     let mut unavailable = Vec::new();
-    let events = match tokio::time::timeout_at(deadline, crate::talk::history_here(node, id)).await {
+    let events = match tokio::time::timeout_at(deadline, crate::talk::history_quietly(node, id)).await {
         Ok(Ok(mut history)) => {
             fold.events(&history.history, None);
             let mut lagged = false;

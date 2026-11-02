@@ -24,6 +24,9 @@ impl Default for Watchers {
 #[derive(Default)]
 struct Watching {
     senders: Vec<Sender<Arc<SessionEvent>>>,
+    /// Those that hear what is told without viewing the conversation, as a
+    /// collaboration's keeper does: no host is kept awake for them.
+    quiet: Vec<Sender<Arc<SessionEvent>>>,
     live: crate::session_live::Live,
 }
 fn shard(id: &ResidentId) -> usize {
@@ -84,7 +87,17 @@ impl Watchers {
         self.subscribe(id, true)
     }
 
+    /// Hears what is told of `id`'s conversation without viewing it: no
+    /// host is kept awake for it.
+    pub(crate) fn watch_quietly(&self, id: &ResidentId) -> Events {
+        self.open(id, false, true)
+    }
+
     fn subscribe(&self, id: &ResidentId, composer: bool) -> Events {
+        self.open(id, composer, false)
+    }
+
+    fn open(&self, id: &ResidentId, composer: bool, quiet: bool) -> Events {
         let (sender, receiver) = watch_queue::events();
         let cell = self.session(id);
         let mut session = cell.lock().expect("never poisoned");
@@ -104,7 +117,11 @@ impl Watchers {
                 break;
             }
         }
-        session.senders.push(sender.clone());
+        if quiet {
+            session.quiet.push(sender.clone());
+        } else {
+            session.senders.push(sender.clone());
+        }
         drop(session);
         self.changed.notify_one();
         let changed = self.changed.clone();
@@ -114,6 +131,7 @@ impl Watchers {
             changed.notify_one();
             {
                 let mut session = cell.lock().expect("never poisoned");
+                session.quiet.retain(|held| !held.same_channel(&sender));
                 session.senders.retain(|held| !held.same_channel(&sender));
                 if session.senders.is_empty() {
                     session.live.unwatched();
@@ -132,16 +150,18 @@ impl Watchers {
         let measured = watch_queue::event_size(event);
         let empty = {
             let mut session = cell.lock().expect("never poisoned");
-            if session.live.observe(event) && !session.senders.is_empty() {
+            if session.live.observe(event) && !(session.senders.is_empty() && session.quiet.is_empty()) {
                 let event = Arc::new(event.clone());
-                session
-                    .senders
-                    .retain(|sender| sender.send_measured(event.clone(), measured.0, measured.1.clone()).is_ok());
+                let watching = &mut *session;
+                for senders in [&mut watching.senders, &mut watching.quiet] {
+                    senders
+                        .retain(|sender| sender.send_measured(event.clone(), measured.0, measured.1.clone()).is_ok());
+                }
             }
             if session.senders.is_empty() {
                 session.live.unwatched();
             }
-            session.senders.is_empty() && session.live.snapshots().next().is_none()
+            session.senders.is_empty() && session.quiet.is_empty() && session.live.snapshots().next().is_none()
         };
         drop(cell);
         if empty {
@@ -160,7 +180,7 @@ fn retire(registry: &[RwLock<Sessions>; SHARDS], id: &ResidentId) {
             return false;
         }
         let session = cell.lock().expect("never poisoned");
-        session.senders.is_empty() && session.live.snapshots().next().is_none()
+        session.senders.is_empty() && session.quiet.is_empty() && session.live.snapshots().next().is_none()
     });
     if empty {
         shard.remove(id);

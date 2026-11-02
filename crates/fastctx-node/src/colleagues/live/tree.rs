@@ -32,7 +32,7 @@ const AGAIN: Duration = Duration::from_secs(30);
 pub(super) async fn keep(node: &Arc<Node>, id: &ResidentId, acting: &Acting, told: &Sender) -> Failure {
     let owner = Address { machine: node.machine(), resident: id.clone() };
     let mut own = super::follow(node, id, None, Follow::Branch, acting);
-    let mut events = node.watchers.watch(id);
+    let mut events = node.watchers.watch_quietly(id);
     let mut residents = node.residents.changes();
     let changed = Arc::new(Notify::new());
     let mut colleagues: BTreeMap<Address, Colleague> = BTreeMap::new();
@@ -87,7 +87,7 @@ pub(super) async fn keep(node: &Arc<Node>, id: &ResidentId, acting: &Acting, tol
             event = events.recv() => match event {
                 Ok(Some(event)) => may_have_asked(&event),
                 Ok(None) | Err(_) => {
-                    events = node.watchers.watch(id);
+                    events = node.watchers.watch_quietly(id);
                     true
                 }
             },
@@ -121,7 +121,7 @@ fn drain(node: &Node, id: &ResidentId, events: &mut Events) -> bool {
             Ok(event) => asks |= may_have_asked(&event),
             Err(TryRecvError::Empty) => return asks,
             Err(TryRecvError::Lagged | TryRecvError::Disconnected) => {
-                *events = node.watchers.watch(id);
+                *events = node.watchers.watch_quietly(id);
                 return true;
             }
         }

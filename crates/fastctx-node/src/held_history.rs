@@ -198,7 +198,7 @@ pub(crate) async fn item_detail_here(
     item: &str,
 ) -> Result<Option<serde_json::Value>, Failure> {
     use fastctx_types::session::Happened;
-    let read = crate::talk::history_here(node, resident).await?;
+    let read = crate::talk::history_quietly(node, resident).await?;
     let found = read.history.into_iter().rev().find_map(|event| match event.happened {
         Happened::Finished { turn: at, item: found } | Happened::Updated { turn: at, item: found }
             if turn.is_none_or(|turn| turn == at) && found.id == item =>

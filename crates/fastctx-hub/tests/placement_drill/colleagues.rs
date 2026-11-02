@@ -51,7 +51,12 @@ pub(super) async fn exercise(
         pause().await;
     }
     anyhow::ensure!(configured, "the collaboration configuration did not reach its host");
-    let (mut following, first) = world.watch_collaboration(parent.clone(), Some("host".parse()?)).await?;
+    let (mut following, first) = tokio::time::timeout(
+        std::time::Duration::from_secs(150),
+        world.watch_collaboration(parent.clone(), Some("host".parse()?)),
+    )
+    .await
+    .context("the collaboration watch told no tree within 150 s")??;
     record(
         "a conversation's collaboration is followed from a phone, from its own branch",
         first.conversation.address.resident == *parent,

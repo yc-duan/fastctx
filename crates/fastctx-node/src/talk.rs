@@ -302,7 +302,13 @@ pub(crate) fn subscribe(node: &Arc<Node>, resident: &ResidentId) -> Result<(Even
 /// Starts watching a resident of this machine, then reads its history: what
 /// the World kept of it, merged with what its host keeps.
 pub(crate) async fn history_here(node: &Arc<Node>, resident: &ResidentId) -> Result<HistoryRead, Failure> {
-    read_here(node, resident).await.map_err(|failure| as_deleted(node, resident, failure))
+    read_here(node, resident, false).await.map_err(|failure| as_deleted(node, resident, failure))
+}
+
+/// A resident's history and its events from then on, read for something
+/// other than a viewer, so its host is not kept awake for the reading.
+pub(crate) async fn history_quietly(node: &Arc<Node>, resident: &ResidentId) -> Result<HistoryRead, Failure> {
+    read_here(node, resident, true).await.map_err(|failure| as_deleted(node, resident, failure))
 }
 
 /// A read that failed as the conversation was being deleted, or once it is
@@ -317,14 +323,14 @@ fn as_deleted(node: &Node, resident: &ResidentId, failure: Failure) -> Failure {
     }
 }
 
-async fn read_here(node: &Arc<Node>, resident: &ResidentId) -> Result<HistoryRead, Failure> {
+async fn read_here(node: &Arc<Node>, resident: &ResidentId, quiet: bool) -> Result<HistoryRead, Failure> {
     let (about, _) = node.residents.about(resident).ok_or_else(|| crate::forget::gone(node, resident))?;
     // A session the user opened on their own is theirs to read, in their
     // own program (`world-layers.md`).
     if !about.world_managed() {
         return Err(Failure::refused(crate::speech::OWN_SESSION));
     }
-    let mut events = node.watchers.watch(resident);
+    let mut events = if quiet { node.watchers.watch_quietly(resident) } else { node.watchers.watch(resident) };
     let directory = node.world.conversation(resident);
     let preparing = directory.clone();
     fastctx_platform::task::spawn_blocking(move || crate::session_record::prepare(&preparing))
