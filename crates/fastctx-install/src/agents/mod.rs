@@ -7,6 +7,7 @@
 //! `AGENTS`; nothing else changes. The engine keeps each connected home's
 //! receipt in a record file of its own (`apply::agent_apply_expecting`).
 
+mod antigravity;
 mod gemini;
 pub(crate) mod json;
 mod plan;
@@ -16,7 +17,7 @@ pub use plan::{Files, Planned, Receipt, connect, disconnect};
 pub use spec::{Agent, Edit, Format, Home, Mcp, Program, Server};
 
 /// Every agent connected this way, in the order the interface lists them.
-static AGENTS: &[&Agent] = &[&gemini::AGENT];
+static AGENTS: &[&Agent] = &[&antigravity::AGENT, &gemini::AGENT];
 
 pub fn all() -> &'static [&'static Agent] {
     AGENTS
