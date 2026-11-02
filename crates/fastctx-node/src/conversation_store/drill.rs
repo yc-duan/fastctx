@@ -18,7 +18,8 @@ pub(crate) fn run(root: &Path) -> std::result::Result<(), Box<dyn std::error::Er
         crate::inbox::presence::SCHEMA,
         crate::goals::SCHEMA
     );
-    let database = Database::open_initialized(&world.path().join("node.sqlite3"), &schema, schema::initialize)?;
+    let database =
+        Database::open_guarded(&world.path().join("node.sqlite3"), &schema, fences::guard, schema::initialize)?;
     let _migration = crate::record_database::register(&world, &database)?;
     _migration.start()?;
     let directory = world.conversation(&"codex-aabbcc".parse()?);

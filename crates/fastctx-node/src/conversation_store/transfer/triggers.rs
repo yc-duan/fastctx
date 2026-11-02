@@ -1,5 +1,6 @@
-//! Import writes preserve stored revisions without replaying derived triggers.
-//! The connection setting is restored before the writer can accept another job,
+//! Import writes preserve stored revisions without replaying derived triggers,
+//! and write the conversation the writer's guard fences for them. The
+//! connection setting is restored before the writer can accept another job,
 //! including while unwinding a failed batch.
 use fastctx_storage::{
     Result,
@@ -9,13 +10,14 @@ use fastctx_storage::{
 pub(crate) struct SuspendedTriggers<'a> {
     connection: &'a Connection,
     enabled: bool,
+    _guard: fastctx_storage::guard::Suspended,
 }
 
 impl<'a> SuspendedTriggers<'a> {
     pub(crate) fn new(connection: &'a Connection) -> Result<Self> {
         let enabled = connection.db_config(DbConfig::SQLITE_DBCONFIG_ENABLE_TRIGGER)?;
         connection.set_db_config(DbConfig::SQLITE_DBCONFIG_ENABLE_TRIGGER, false)?;
-        Ok(Self { connection, enabled })
+        Ok(Self { connection, enabled, _guard: fastctx_storage::guard::suspend() })
     }
 }
 

@@ -20,9 +20,10 @@ fn event(index: u64) -> SessionEvent {
 
 pub(crate) fn run(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let world = WorldDir::under(root);
-    let database = Database::open_initialized(
+    let database = Database::open_guarded(
         &world.path().join("node.sqlite3"),
         SCHEMA,
+        crate::conversation_store::fences::guard,
         crate::conversation_store::schema::initialize,
     )?;
     let _migration = crate::record_database::register(&world, &database)?;

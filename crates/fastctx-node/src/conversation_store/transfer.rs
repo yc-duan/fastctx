@@ -192,21 +192,6 @@ fn path(world: &Path, conversation: &str) -> Result<std::path::PathBuf> {
     Ok(world.join("conversations").join(conversation).join(bundle::FILE))
 }
 
-pub(super) fn install_fences(db: &Connection, table: &schema::Table) -> Result<()> {
-    for operation in ["INSERT", "UPDATE", "DELETE"] {
-        let scope = if operation == "DELETE" { "OLD.conversation" } else { "NEW.conversation" };
-        let old = if operation == "UPDATE" { " OR name=OLD.conversation" } else { "" };
-        db.execute_batch(&format!(
-            "DROP TRIGGER IF EXISTS {trigger}; CREATE TRIGGER {trigger} BEFORE {operation} ON {table}
-            WHEN EXISTS(SELECT 1 FROM node_conversation_transfers WHERE rejected=0 AND (name={scope}{old}))
-            BEGIN SELECT RAISE(ABORT,'the conversation is being imported'); END;",
-            trigger = schema::quote(&format!("{}_pending_import_{}", table.name, operation.to_lowercase())),
-            table = schema::quote(&table.name)
-        ))?;
-    }
-    Ok(())
-}
-
 pub(super) fn directory(world: &Path, conversation: &str) -> Result<ConversationDir> {
     Ok(ConversationDir::at(path(world, conversation)?.parent().expect("bundle parent")))
 }

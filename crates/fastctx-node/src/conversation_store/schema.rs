@@ -123,8 +123,26 @@ pub(crate) fn initialize(db: &Connection) -> Result<()> {
             ))?;
         }
     }
+    // Writes are fenced by the writer's guard (`fences`), not by triggers: a
+    // database an older node opened last still has a trigger per fence on
+    // every table, and those go.
+    let triggers = db
+        .prepare("SELECT name FROM sqlite_schema WHERE type='trigger'")?
+        .query_map([], |row| row.get::<_, String>(0))?
+        .collect::<std::result::Result<std::collections::HashSet<_>, _>>()?;
     for table in tables(db)? {
-        super::transfer::install_fences(db, &table)?;
+        for fence in [
+            "reject_deleted_insert",
+            "reject_deleted_update",
+            "pending_import_insert",
+            "pending_import_update",
+            "pending_import_delete",
+        ] {
+            let trigger = format!("{}_{fence}", table.name);
+            if triggers.contains(&trigger) {
+                db.execute_batch(&format!("DROP TRIGGER {}", quote(&trigger)))?;
+            }
+        }
         let name = quote(&table.name);
         let indexed: bool = db.query_row(
             "SELECT EXISTS(SELECT 1 FROM pragma_index_list(?1) i JOIN pragma_index_info(i.name) c WHERE c.seqno=0 AND c.name='conversation')",
@@ -134,15 +152,6 @@ pub(crate) fn initialize(db: &Connection) -> Result<()> {
             db.execute_batch(&format!(
                 "CREATE INDEX IF NOT EXISTS {} ON {name}(conversation)",
                 quote(&format!("{}_conversation", table.name))
-            ))?;
-        }
-        for operation in ["INSERT", "UPDATE"] {
-            let old = if operation == "UPDATE" { " OR name=OLD.conversation" } else { "" };
-            db.execute_batch(&format!(
-                "CREATE TRIGGER IF NOT EXISTS {} BEFORE {operation} ON {name}
-                WHEN EXISTS(SELECT 1 FROM node_conversation_deletions WHERE name=NEW.conversation{old})
-                BEGIN SELECT RAISE(ABORT,'the conversation was deleted'); END;",
-                quote(&format!("{}_reject_deleted_{}", table.name, operation.to_lowercase()))
             ))?;
         }
     }

@@ -5,6 +5,7 @@
 mod blocking;
 pub mod documents;
 mod error;
+pub mod guard;
 mod integrity;
 mod keeper;
 mod metrics;
@@ -18,6 +19,7 @@ pub mod versions;
 mod writer;
 
 pub use error::{Error, ErrorKind};
+pub use guard::Guard;
 pub use metrics::Statistics;
 pub use queue::Priority;
 pub use rusqlite;
@@ -42,6 +44,9 @@ const QUEUE_WAIT: Duration = Duration::from_secs(30);
 const READERS: usize = 16;
 /// Those of them background reads leave to the reads someone waits for.
 const INTERACTIVE_READERS: usize = 2;
+
+/// What makes a database's guard from the opened database, if it has one.
+type Maker<'a> = Option<&'a dyn Fn(&rusqlite::Connection) -> Result<Box<dyn Guard>>>;
 
 #[derive(Clone)]
 pub struct Database(Arc<Inner>);
@@ -135,6 +140,28 @@ impl Database {
         schema: &str,
         initialize: impl Fn(&rusqlite::Connection) -> Result<()>,
     ) -> Result<Self> {
+        Self::open_kept(path, schema, &initialize, None)
+    }
+
+    /// Opens as `open_initialized`, the writer keeping the rules of `guard`,
+    /// made from the opened database, on every row it changes.
+    #[track_caller]
+    pub fn open_guarded(
+        path: &Path,
+        schema: &str,
+        guard: impl Fn(&rusqlite::Connection) -> Result<Box<dyn Guard>>,
+        initialize: impl Fn(&rusqlite::Connection) -> Result<()>,
+    ) -> Result<Self> {
+        Self::open_kept(path, schema, &initialize, Some(&guard))
+    }
+
+    #[track_caller]
+    fn open_kept(
+        path: &Path,
+        schema: &str,
+        initialize: &dyn Fn(&rusqlite::Connection) -> Result<()>,
+        guard: Maker<'_>,
+    ) -> Result<Self> {
         fastctx_platform::roles::in_place("opening a database", || {
             let parent = path.parent().ok_or_else(|| Error::new("the database has no parent directory"))?;
             // Existing directories keep their owner's ACL: a system service must
@@ -143,13 +170,13 @@ impl Database {
                 fastctx_platform::ensure_private_dir(parent)?;
             }
             let kept = keeper::keep(path)?;
-            match Self::open_once(path, schema, &initialize, &kept) {
+            match Self::open_once(path, schema, initialize, guard, &kept) {
                 // Damage the cheap checks did not see is set aside and salvaged
                 // as theirs is, and the salvage opened instead; only when no
                 // other connection to it is open.
                 Err(error) if error.is_database_damage() && kept.sole => {
                     recovery::mark_damaged(path, &error.to_string())?;
-                    Self::open_once(path, schema, &initialize, &kept)
+                    Self::open_once(path, schema, initialize, guard, &kept)
                 }
                 opened => opened,
             }
@@ -159,7 +186,8 @@ impl Database {
     fn open_once(
         path: &Path,
         schema: &str,
-        initialize: &impl Fn(&rusqlite::Connection) -> Result<()>,
+        initialize: &dyn Fn(&rusqlite::Connection) -> Result<()>,
+        guard: Maker<'_>,
         kept: &keeper::Kept,
     ) -> Result<Self> {
         let readings = readings::Readings::of(path);
@@ -184,6 +212,10 @@ impl Database {
         transaction.execute_batch(schema)?;
         initialize(&transaction)?;
         transaction.commit()?;
+        let guard: Option<guard::Shared> = match guard {
+            Some(make) => Some(Arc::new(Mutex::new(make(&connection)?))),
+            None => None,
+        };
         let count = READERS;
         let mut readers = Vec::with_capacity(count);
         for _ in 0..count {
@@ -208,7 +240,7 @@ impl Database {
             unsettled.clone(),
         );
         std::thread::Builder::new().name("sqlite-writer".into()).spawn(move || {
-            writer::run(connection, queue, measurements, noticed, file, relaxed);
+            writer::run(connection, queue, measurements, noticed, file, relaxed, guard);
             // The connection, and with it the last checkpoint, is done.
             drop(held);
         })?;
@@ -240,7 +272,22 @@ impl Database {
         schema: &str,
         initialize: impl Fn(&rusqlite::Connection) -> Result<()>,
     ) -> Self {
-        match Self::open_initialized(path, schema, initialize) {
+        Self::or_unavailable(path, Self::open_kept(path, schema, &initialize, None))
+    }
+
+    /// Opens as `open_or_unavailable`, the writer keeping `guard`'s rules.
+    #[track_caller]
+    pub fn open_guarded_or_unavailable(
+        path: &Path,
+        schema: &str,
+        guard: impl Fn(&rusqlite::Connection) -> Result<Box<dyn Guard>>,
+        initialize: impl Fn(&rusqlite::Connection) -> Result<()>,
+    ) -> Self {
+        Self::or_unavailable(path, Self::open_kept(path, schema, &initialize, Some(&guard)))
+    }
+
+    fn or_unavailable(path: &Path, opened: Result<Self>) -> Self {
+        match opened {
             Ok(database) => database,
             Err(fault) => {
                 let writes = Arc::new(queue::Queue::new());

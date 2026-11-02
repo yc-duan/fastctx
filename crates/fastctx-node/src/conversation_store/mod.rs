@@ -1,9 +1,11 @@
-//! Whole-conversation storage lifecycle. SQL fences writes; a per-conversation
-//! gate also fences file projections before any directory can be recreated.
+//! Whole-conversation storage lifecycle. The writer's guard fences writes; a
+//! per-conversation gate also fences file projections before any directory
+//! can be recreated.
 mod bundle;
 mod deletion;
 #[cfg(feature = "storage-drill")]
 pub(crate) mod drill;
+pub(crate) mod fences;
 #[cfg(feature = "storage-drill")]
 mod move_drill;
 pub(crate) mod schema;

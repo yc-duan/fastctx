@@ -15,9 +15,10 @@ pub fn run(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
         return Err("the drill needs an absolute, absent root".into());
     }
     fastctx_platform::disk::create_dir_all(root)?;
-    let database = Database::open_initialized(
+    let database = Database::open_guarded(
         &root.join("node.sqlite3"),
         &format!("{}{}{}", sql::SCHEMA, crate::record_payloads::SCHEMA, crate::records::SCHEMA),
+        crate::conversation_store::fences::guard,
         crate::conversation_store::schema::initialize,
     )?;
     let machine: MachineName = "executor".parse()?;
@@ -81,6 +82,13 @@ pub fn run(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
         super::acceptance::receive(&database, "conversation", &update, |_| {})?;
         costs.push(before.elapsed());
     }
+    // Each phase's writes over budget are told on their own, before any is
+    // judged: what was slow, and whether it grew with what was kept.
+    let folded = database.statistics();
+    println!(
+        "1000 commits of 100 steps: SQL operations {}, over 2 ms {}",
+        folded.operations, folded.writes_over_budget
+    );
     let mut reads = Vec::new();
     for _ in 0..200 {
         let start = Instant::now();
@@ -176,9 +184,18 @@ pub fn run(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
         }
     })?;
     assert_eq!(Some(shown), ended.state, "member notification consumed the terminal metadata sequence");
+    let before_mixed = database.statistics();
     super::drill_mixed::run(&database, &ended)?;
     let stats = database.statistics();
+    println!(
+        "mixed call: SQL operations {}, over 2 ms {}",
+        stats.operations - before_mixed.operations,
+        stats.writes_over_budget - before_mixed.writes_over_budget
+    );
     println!("SQL operations {}, over 2 ms {}", stats.operations, stats.writes_over_budget);
+    let first = costs[..100].iter().map(Duration::as_micros).sum::<u128>() / 100;
+    let last = costs[900..].iter().map(Duration::as_micros).sum::<u128>() / 100;
+    println!("100-step commit mean: first {first} us, last {last} us");
     // The writer's budget is a property of the optimized program, which CI
     // drills; a debug build's unoptimized code only reports its count.
     if !cfg!(debug_assertions) {
@@ -192,9 +209,7 @@ pub fn run(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
         Ok(db.query_row("SELECT length(body) FROM run_calls WHERE call='call'", [], |row| row.get::<_, i64>(0))?)
     })?;
     assert!(head_size < 4096, "stable script or collections leaked into the mutable head");
-    let first = costs[..100].iter().map(Duration::as_micros).sum::<u128>() / 100;
-    let last = costs[900..].iter().map(Duration::as_micros).sum::<u128>() / 100;
-    println!("100-step commit mean: first {} us, last {} us; mutable head {} bytes", first, last, head_size);
+    println!("mutable head {head_size} bytes");
     super::retirement::drill(&database, &ended)?;
     database.write_now(64, |db| {
         db.execute("INSERT INTO node_conversation_deletions(name,started) VALUES('conversation',0)", [])?;

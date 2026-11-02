@@ -6,8 +6,12 @@ use std::{
 };
 
 pub(crate) fn run(root: &Path) -> std::result::Result<(), Box<dyn std::error::Error>> {
-    let database =
-        Database::open_initialized(&root.join("node.sqlite3"), SCHEMA, crate::conversation_store::schema::initialize)?;
+    let database = Database::open_guarded(
+        &root.join("node.sqlite3"),
+        SCHEMA,
+        crate::conversation_store::fences::guard,
+        crate::conversation_store::schema::initialize,
+    )?;
     let mut garbage = Vec::new();
     for index in 0..96u64 {
         let mut body = vec![b'x'; PIECE];

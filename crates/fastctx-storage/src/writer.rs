@@ -2,6 +2,7 @@
 
 use super::{Error, ErrorKind, Result};
 use crate::{
+    guard,
     integrity::Damage,
     metrics::Metrics,
     queue::{Admission, Queue},
@@ -18,6 +19,8 @@ pub(super) trait Work: Send {
     fn apply(&mut self, connection: &Connection) -> bool;
     /// Why the operation failed, once applied.
     fn failure(&self) -> Option<&Error>;
+    /// Fails the applied operation with why its changes were refused.
+    fn refuse(&mut self, why: Error);
     /// Whether its commit reaches the disk before it is answered. A relaxed
     /// one is committed and seen at once, and reaches the disk with the next
     /// durable commit (`Database::settle_now`).
@@ -73,6 +76,9 @@ where
     fn failure(&self) -> Option<&Error> {
         self.result.as_ref().and_then(|result| result.as_ref().err())
     }
+    fn refuse(&mut self, why: Error) {
+        self.result = Some(Err(why));
+    }
     fn durable(&self) -> bool {
         self.durable
     }
@@ -103,9 +109,12 @@ pub(super) fn run(
     damage: Arc<Damage>,
     path: PathBuf,
     unsettled: Arc<AtomicBool>,
+    guard: Option<guard::Shared>,
 ) {
     fastctx_platform::roles::set(fastctx_platform::roles::Role::Blocking);
     WRITER.with(|writer| writer.set(true));
+    // Off again as the writer ends, before its connection closes.
+    let _hooked = guard.as_ref().map(|guard| guard::install(&connection, guard.clone()));
     // The writer waits on the disk: one pass the disk keeps longer than a
     // caller waits for its answer is stuck work of this process, told with
     // the rest (`fastctx_platform::doing`).
@@ -138,8 +147,12 @@ pub(super) fn run(
         let durable = first.durable();
         let mut batch = vec![first];
         let waiting = fastctx_platform::doing::waiting_outside(disk.clone(), super::ANSWER);
-        let result = synchronous(&connection, &mut full, durable)
-            .and_then(|()| commit(&mut connection, &queue, &metrics, &damage, &mut batch, full, &mut carried));
+        let result = synchronous(&connection, &mut full, durable).and_then(|()| {
+            commit(&mut connection, &queue, &metrics, &damage, &mut batch, full, &mut carried, guard.as_ref())
+        });
+        if let Some(guard) = &guard {
+            guard::lock(guard).committed(result.is_ok());
+        }
         drop(waiting);
         dirty = true;
         match &result {
@@ -171,6 +184,7 @@ fn synchronous(connection: &Connection, full: &mut bool, durable: bool) -> Resul
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn commit(
     connection: &mut Connection,
     queue: &Queue,
@@ -179,6 +193,7 @@ fn commit(
     batch: &mut Vec<Job>,
     full: bool,
     carried: &mut Option<Job>,
+    guard: Option<&guard::Shared>,
 ) -> Result<()> {
     let mut transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let started = Instant::now();
@@ -186,7 +201,12 @@ fn commit(
         let job = batch.last_mut().expect("a nonempty batch");
         let mut savepoint = transaction.savepoint()?;
         let operation = Instant::now();
-        let success = job.apply(&savepoint);
+        guard::begin();
+        let mut success = job.apply(&savepoint);
+        if let Some(why) = guard::refused() {
+            job.refuse(why);
+            success = false;
+        }
         if success {
             savepoint.commit()?;
         } else {
@@ -194,6 +214,9 @@ fn commit(
                 damage.notice(error);
             }
             savepoint.rollback()?;
+        }
+        if let Some(guard) = guard {
+            guard::lock(guard).ended(success);
         }
         metrics.operation(operation.elapsed(), !success);
         if batch.len() >= 32 || started.elapsed() >= Duration::from_millis(2) {
