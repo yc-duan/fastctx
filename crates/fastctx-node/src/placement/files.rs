@@ -115,7 +115,7 @@ pub(crate) fn complete(directory: &Path, files: &[File]) -> io::Result<bool> {
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt as _;
-                if (std::fs::metadata(path)?.permissions().mode() & 0o111 != 0) != file.executable {
+                if (fastctx_platform::disk::metadata(path)?.permissions().mode() & 0o111 != 0) != file.executable {
                     return Ok(false);
                 }
             }

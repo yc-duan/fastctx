@@ -4,7 +4,7 @@
 //! A kernel without it is asked plainly: each step is small, and one that
 //! moves too little into swap, file cache taken instead, rests the keeper.
 
-use std::fs;
+use fastctx_platform::disk;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -47,7 +47,7 @@ impl Keeper {
         }
         let page = page as u64;
         let group = service_group()?;
-        let (unavailable, plain) = match fs::write(group.join("memory.reclaim"), "0 swappiness=max") {
+        let (unavailable, plain) = match disk::write(group.join("memory.reclaim"), "0 swappiness=max") {
             Ok(()) => (None, false),
             Err(error) if error.kind() == io::ErrorKind::InvalidInput => (None, true),
             Err(error) => (
@@ -59,7 +59,7 @@ impl Keeper {
                 false,
             ),
         };
-        let standing = fs::write("/proc/self/oom_score_adj", "-500").is_ok();
+        let standing = disk::write("/proc/self/oom_score_adj", "-500").is_ok();
         Ok(Self {
             group,
             unavailable,
@@ -146,7 +146,7 @@ impl Keeper {
         }
         let before = number(&self.group.join("memory.swap.current"))?;
         let asked = if self.plain { format!("{amount}") } else { format!("{amount} swappiness=max") };
-        match fs::write(self.group.join("memory.reclaim"), asked) {
+        match disk::write(self.group.join("memory.reclaim"), asked) {
             Ok(()) => {}
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
             Err(error) => return Err(error),
@@ -172,7 +172,7 @@ impl Keeper {
 }
 
 fn service_group() -> io::Result<PathBuf> {
-    let text = fs::read_to_string("/proc/self/cgroup")?;
+    let text = disk::kernel_text("/proc/self/cgroup")?;
     let own = text
         .lines()
         .find_map(|line| line.strip_prefix("0::"))
@@ -193,7 +193,7 @@ struct Memory {
     swap_free: u64,
 }
 fn memory() -> io::Result<Memory> {
-    let text = fs::read_to_string("/proc/meminfo")?;
+    let text = disk::kernel_text("/proc/meminfo")?;
     Ok(Memory {
         total: kib(&text, "MemTotal:")?,
         available: kib(&text, "MemAvailable:")?,
@@ -201,7 +201,7 @@ fn memory() -> io::Result<Memory> {
     })
 }
 fn memory_read(name: &str) -> io::Result<u64> {
-    kib(&fs::read_to_string("/proc/meminfo")?, name)
+    kib(&disk::kernel_text("/proc/meminfo")?, name)
 }
 fn kib(text: &str, name: &str) -> io::Result<u64> {
     text.lines()
@@ -211,14 +211,14 @@ fn kib(text: &str, name: &str) -> io::Result<u64> {
         .ok_or_else(|| io::Error::other(format!("missing or invalid {name} in meminfo")))
 }
 fn number(path: &Path) -> io::Result<u64> {
-    fs::read_to_string(path)?.trim().parse().map_err(io::Error::other)
+    disk::kernel_text(path)?.trim().parse().map_err(io::Error::other)
 }
 struct Stat {
     anon: u64,
     refaults: u64,
 }
 fn stat(group: &Path) -> io::Result<Stat> {
-    let text = fs::read_to_string(group.join("memory.stat"))?;
+    let text = disk::kernel_text(group.join("memory.stat"))?;
     let field = |name| {
         text.lines()
             .find_map(|line| {
@@ -232,7 +232,7 @@ fn stat(group: &Path) -> io::Result<Stat> {
 fn swap_free(group: &Path, system: u64) -> io::Result<u64> {
     let mut free = system;
     for ancestor in group.ancestors().take_while(|at| *at != Path::new("/sys/fs/cgroup")) {
-        let text = fs::read_to_string(ancestor.join("memory.swap.max"))?;
+        let text = disk::kernel_text(ancestor.join("memory.swap.max"))?;
         if text.trim() != "max" {
             let max: u64 = text.trim().parse().map_err(io::Error::other)?;
             free = free.min(max.saturating_sub(number(&ancestor.join("memory.swap.current"))?));
@@ -242,7 +242,7 @@ fn swap_free(group: &Path, system: u64) -> io::Result<u64> {
 }
 fn pressure(group: &Path) -> io::Result<f64> {
     let path = if group == Path::new("/proc/pressure") { group.join("memory") } else { group.join("memory.pressure") };
-    let text = fs::read_to_string(path)?;
+    let text = disk::kernel_text(path)?;
     text.lines()
         .find_map(|line| line.strip_prefix("full "))
         .and_then(|rest| rest.split_whitespace().find_map(|field| field.strip_prefix("avg10=")))
@@ -253,14 +253,14 @@ fn rank_work(group: &Path) -> io::Result<()> {
     let mut groups = vec![group.to_path_buf()];
     let me = std::process::id();
     while let Some(at) = groups.pop() {
-        let text = match fs::read_to_string(at.join("cgroup.procs")) {
+        let text = match disk::kernel_text(at.join("cgroup.procs")) {
             Ok(text) => text,
             Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
             Err(error) => return Err(error),
         };
         for pid in text.lines().filter_map(|pid| pid.parse::<u32>().ok()).filter(|pid| *pid != me) {
             let path = PathBuf::from(format!("/proc/{pid}/oom_score_adj"));
-            if fs::read_to_string(&path)
+            if disk::kernel_text(&path)
                 .ok()
                 .and_then(|value| value.trim().parse::<i32>().ok())
                 .is_some_and(|score| score < 300)
@@ -268,7 +268,7 @@ fn rank_work(group: &Path) -> io::Result<()> {
                 // One gone meanwhile, or one this account may not rank (another
                 // user's, or one that is not dumpable), is passed over: it
                 // holds back neither the rest nor the reclaiming after them.
-                match fs::write(path, "300") {
+                match disk::write(path, "300") {
                     Ok(()) => {}
                     Err(error)
                         if matches!(error.kind(), io::ErrorKind::NotFound | io::ErrorKind::PermissionDenied)
@@ -277,7 +277,7 @@ fn rank_work(group: &Path) -> io::Result<()> {
                 }
             }
         }
-        let entries = match fs::read_dir(&at) {
+        let entries = match disk::read_dir(&at) {
             Ok(entries) => entries,
             Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
             Err(error) => return Err(error),
