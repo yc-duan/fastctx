@@ -36,6 +36,11 @@ pub(crate) fn paying(id: &impl Display) -> Mutex<()> {
     Mutex::new(Rank::PAYING, "paying", id.to_string(), ())
 }
 
+/// Refreshing a conversation's context.
+pub(crate) fn refreshing(id: &impl Display) -> Mutex<()> {
+    Mutex::new(Rank::REFRESHING, "refreshing", id.to_string(), ())
+}
+
 /// A conversation's shared input.
 pub(crate) fn composer<T>(id: &impl Display) -> Mutex<Option<T>> {
     Mutex::new(Rank::COMPOSER, "composer", id.to_string(), None)

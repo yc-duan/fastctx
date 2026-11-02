@@ -8,6 +8,9 @@ use std::sync::Arc;
 /// The caller holds the management read gate and the speech lock, and has
 /// confirmed that neither the node nor the native host has a running turn.
 pub(crate) async fn prepare(node: &Arc<Node>, id: &ResidentId) -> Result<(Vec<String>, super::Receipt), Failure> {
+    // No refresh in the background writes its blocks meanwhile.
+    let refreshing = node.contexts.refreshing(id);
+    let _refreshing = refreshing.lock().await;
     let (about, town) = node.residents.about(id).ok_or_else(|| Failure::new("the conversation is unavailable"))?;
     super::blocking::with(node, id, super::refresh_local_now).await.map_err(crate::record_migration::failure)?;
     super::sources::plan_guide(node, id, &about.origin, &about.acting)

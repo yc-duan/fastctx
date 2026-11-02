@@ -1,5 +1,9 @@
-//! Coalesced projection refreshes. Each conversation waits only at its own
-//! management gate; account invalidations carry no context bodies.
+//! Coalesced projection refreshes. A refresh holds its conversation's
+//! management gate shared, so what the user does there never waits for it,
+//! and the conversation's own refresh lock, so two refreshes, or a refresh
+//! and a turn's preparation, never write its blocks at once. Only a few
+//! refreshes run in the background at a time; account invalidations carry no
+//! context bodies.
 
 use crate::Node;
 use fastctx_types::{ResidentId, ipc::Failure};
@@ -14,8 +18,35 @@ use std::{
 /// conversation here again.
 const SETTLE: std::time::Duration = std::time::Duration::from_secs(3);
 
-#[derive(Default)]
-pub(crate) struct Updates(Mutex<BTreeMap<ResidentId, Pending>>);
+/// How many conversations' contexts are refreshed in the background at once:
+/// the rest wait their turn, holding nothing.
+const BACKGROUND: usize = 2;
+
+pub(crate) struct Updates {
+    pending: Mutex<BTreeMap<ResidentId, Pending>>,
+    refreshing: crate::leases::Registry<ResidentId, fastctx_platform::doing::Mutex<()>>,
+    background: tokio::sync::Semaphore,
+}
+
+impl Default for Updates {
+    fn default() -> Self {
+        Self {
+            pending: Mutex::default(),
+            refreshing: crate::leases::Registry::default(),
+            background: tokio::sync::Semaphore::new(BACKGROUND),
+        }
+    }
+}
+
+impl Updates {
+    /// Held through one refresh of `id`'s context.
+    pub(crate) fn refreshing(
+        &self,
+        id: &ResidentId,
+    ) -> crate::leases::Lease<ResidentId, fastctx_platform::doing::Mutex<()>> {
+        self.refreshing.get_or_insert_with(id, || crate::ranked::refreshing(id))
+    }
+}
 
 struct Pending {
     revision: u64,
@@ -30,10 +61,12 @@ impl Default for Pending {
     }
 }
 
-/// Called while the conversation's exclusive management gate is held.
+/// Called while the conversation's management gate is held, shared or alone.
 pub(crate) async fn refresh(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {
+    let refreshing = node.contexts.refreshing(id);
+    let _refreshing = refreshing.lock().await;
     let (revision, plan_revision, read_plan) = {
-        let mut pending = node.contexts.0.lock().expect("never poisoned");
+        let mut pending = node.contexts.pending.lock().expect("never poisoned");
         let pending = pending.entry(id.clone()).or_default();
         if pending.loaded == pending.revision {
             return Ok(());
@@ -52,7 +85,7 @@ pub(crate) async fn refresh(node: &Arc<Node>, id: &ResidentId) -> Result<(), Fai
     }
     super::sources::skills(node, id, &about.acting).await?;
     super::map(node, id, town.as_ref(), &about.origin, &about.acting).await?;
-    let mut contexts = node.contexts.0.lock().expect("never poisoned");
+    let mut contexts = node.contexts.pending.lock().expect("never poisoned");
     let pending = contexts.entry(id.clone()).or_default();
     pending.loaded = revision;
     pending.plan_loaded = plan_revision;
@@ -61,7 +94,7 @@ pub(crate) async fn refresh(node: &Arc<Node>, id: &ResidentId) -> Result<(), Fai
 
 fn request(node: &Arc<Node>, id: &ResidentId, plan: bool) {
     {
-        let mut pending = node.contexts.0.lock().expect("never poisoned");
+        let mut pending = node.contexts.pending.lock().expect("never poisoned");
         let pending = pending.entry(id.clone()).or_default();
         pending.revision = pending.revision.wrapping_add(1);
         if plan {
@@ -79,8 +112,9 @@ fn request(node: &Arc<Node>, id: &ResidentId, plan: bool) {
         let mut again = crate::again::Again::default();
         loop {
             let result = async {
+                let _turn = node.contexts.background.acquire().await.expect("never closed");
                 let gate = node.residents.management(&id)?;
-                let _one = gate.write().await;
+                let _using = gate.read().await;
                 refresh(&node, &id).await
             }
             .await;
@@ -91,7 +125,7 @@ fn request(node: &Arc<Node>, id: &ResidentId, plan: bool) {
                 node.log.line(format_args!("refreshing {id}'s context: {error}"));
             }
             {
-                let mut pending = node.contexts.0.lock().expect("never poisoned");
+                let mut pending = node.contexts.pending.lock().expect("never poisoned");
                 if node.residents.active(&id).is_err() {
                     pending.remove(&id);
                     break;

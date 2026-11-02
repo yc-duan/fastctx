@@ -85,6 +85,8 @@ impl Rank {
     pub const SPEAKING: Rank = Rank(300);
     /// Paying out its answers.
     pub const PAYING: Rank = Rank(320);
+    /// Refreshing its context: one refresh at a time, whoever asks.
+    pub const REFRESHING: Rank = Rank(350);
     /// Its shared input.
     pub const COMPOSER: Rank = Rank(400);
 
