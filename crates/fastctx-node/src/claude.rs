@@ -118,17 +118,16 @@ struct Session {
 }
 
 impl Claude {
-    pub fn new(world: &fastctx_types::layout::WorldDir) -> std::io::Result<Self> {
-        let root = world.path().join("resident-cache");
-        Ok(Self {
+    pub fn new() -> Self {
+        Self {
             title_files: Default::default(),
             thoughts: Default::default(),
             state: Mutex::new(State {
                 sessions: HashMap::new(),
                 starting: HashSet::new(),
                 observed: HashSet::new(),
-                paired: crate::residents::cache::Index::new(root.join("claude-paired"))?,
-                stored: crate::residents::cache::Index::new(root.join("claude-stored"))?,
+                paired: crate::residents::cache::Index::default(),
+                stored: crate::residents::cache::Index::default(),
             }),
             bridge: Default::default(),
             births: Default::default(),
@@ -142,7 +141,7 @@ impl Claude {
             settling: Default::default(),
             looking: Default::default(),
             looks: Arc::new(tokio::sync::Semaphore::new(LOOKS)),
-        })
+        }
     }
 
     /// The user's words `text` go to `resident`'s session as the user's.

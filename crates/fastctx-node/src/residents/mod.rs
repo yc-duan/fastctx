@@ -263,10 +263,10 @@ impl Residents {
         let mut problems = Vec::new();
         let mut state = State {
             live: cache::Cache::new(root.join("residents"))?,
-            threads: cache::Index::new(root.join("threads"))?,
-            current_sessions: cache::Index::new(root.join("current-sessions"))?,
+            threads: cache::Index::default(),
+            current_sessions: cache::Index::default(),
             departed,
-            inboxes: cache::Index::new(root.join("inboxes"))?,
+            inboxes: cache::Index::default(),
             colleagues: HashMap::new(),
             deleting: HashMap::new(),
             condemned: std::collections::HashSet::new(),

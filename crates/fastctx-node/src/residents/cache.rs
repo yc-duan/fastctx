@@ -5,7 +5,6 @@
 use super::{Live, here};
 use fastctx_types::ResidentId;
 use serde::{Serialize, de::DeserializeOwned};
-use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::io;
 use std::path::{Path, PathBuf};
@@ -203,46 +202,37 @@ impl Cache {
     }
 }
 
+/// A lookup the residents keep for this run, by keys and values as JSON: a
+/// session's resident, a resident's inbox. Asked for under the state lock
+/// with every host report, it is held in memory, rebuilt from the
+/// conversation records at every start as the rest of this cache is.
+#[derive(Default)]
 pub(crate) struct Index {
-    root: PathBuf,
+    entries: std::sync::Mutex<HashMap<Vec<u8>, Vec<u8>>>,
 }
 
 impl Index {
-    pub fn new(root: PathBuf) -> io::Result<Self> {
-        fastctx_platform::ensure_private_dir(&root)?;
-        Ok(Self { root })
-    }
-
-    fn path(&self, key: &(impl Serialize + ?Sized)) -> PathBuf {
-        let bytes = serde_json::to_vec(key).expect("index key serializes");
-        self.root.join(format!("{:x}.json", Sha256::digest(bytes)))
+    fn key(key: &(impl Serialize + ?Sized)) -> Vec<u8> {
+        serde_json::to_vec(key).expect("index key serializes")
     }
 
     pub fn insert(&self, key: impl Serialize, value: impl Serialize) {
-        required(
-            put(&self.path(&key), &serde_json::to_vec(&value).expect("index value serializes")),
-            "writing resident index",
-        );
+        let value = serde_json::to_vec(&value).expect("index value serializes");
+        self.entries.lock().expect("never poisoned").insert(Self::key(&key), value);
     }
 
     pub fn get<V: DeserializeOwned>(&self, key: &(impl Serialize + ?Sized)) -> Option<V> {
-        match fastctx_platform::disk::read(self.path(key)) {
-            Ok(bytes) => Some(required(serde_json::from_slice(&bytes), "decoding resident index")),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
-            Err(error) => failed("reading resident index", error),
-        }
+        let entries = self.entries.lock().expect("never poisoned");
+        let bytes = entries.get(&Self::key(key))?;
+        Some(required(serde_json::from_slice(bytes), "decoding resident index"))
     }
 
     pub fn contains(&self, key: &(impl Serialize + ?Sized)) -> bool {
-        required(fastctx_platform::disk::exists(self.path(key)), "reading resident index")
+        self.entries.lock().expect("never poisoned").contains_key(&Self::key(key))
     }
 
     pub fn remove(&self, key: &impl Serialize) {
-        match fastctx_platform::disk::remove_file(self.path(key)) {
-            Ok(()) => {}
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => failed("removing resident index", error),
-        }
+        self.entries.lock().expect("never poisoned").remove(&Self::key(key));
     }
 }
 

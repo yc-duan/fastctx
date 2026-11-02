@@ -701,7 +701,7 @@ pub async fn run_prepared(
                 environment,
                 Arc::new(move |line| codex_log.line(line)),
             );
-            let claude = claude::Claude::new(&world)?;
+            let claude = claude::Claude::new();
             let memory_room = memory_room::Room::new(&world);
             let database = record_database::open(&world);
             if let Some(error) = database.fault() {
