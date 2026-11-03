@@ -85,8 +85,11 @@ export class SidePane {
     this.element.hidden = true;
     this.element.setAttribute("aria-label", words.panel);
     this.element.innerHTML = `<div class="sp-sheet"><div class="sp-margin" aria-hidden="true"></div><header class="sp-head"><div class="sp-line"><div class="sp-where"></div><div class="sp-acts"><button class="icon-button sp-shut" type="button" aria-label="${escape(words.shut)}" title="${escape(words.shut)}">${glyph("close", 18)}</button></div></div></header><div class="sp-back" hidden></div><div class="sp-body"></div></div>`;
+    // Where the side stands is the side's own to choose: its "⋯" is there
+    // while the side is.
     this.more = document.createElement("div");
     this.more.className = "sp-dock";
+    this.more.hidden = true;
     this.more.innerHTML = `<button class="icon-button sp-more" type="button" aria-haspopup="menu" aria-expanded="false" aria-label="${escape(words.more)}" title="${escape(words.more)}">${glyph("more", 18)}</button><div class="sp-menu" role="menu" hidden>${(["right", "bottom", "left"] as const)
       .map((dock) => `<button class="sp-menu-row" type="button" role="menuitemradio" aria-checked="false" data-dock="${dock}">${glyph(`dock-${dock}`, 16)}<span>${escape(words.docks[dock])}</span></button>`)
       .join("")}</div>`;
@@ -165,6 +168,7 @@ export class SidePane {
       this.shutting = 0;
     }
     this.element.hidden = false;
+    this.more.hidden = false;
     if (part && this.set?.parts.some((one) => one.id === part)) this.select(part);
     else {
       this.drawShown();
@@ -176,6 +180,8 @@ export class SidePane {
   /** Shuts it: it goes as `--sp-open` goes back, then is no longer drawn. */
   close(): void {
     if (!this.open) return;
+    this.openMenu(false);
+    this.more.hidden = true;
     const ms = reducedMotion() ? 0 : msOf(getComputedStyle(this.element).getPropertyValue("--glide"));
     this.shutting = window.setTimeout(() => {
       this.shutting = 0;
