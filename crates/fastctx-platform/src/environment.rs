@@ -18,26 +18,48 @@ use std::io;
 /// login PATH from `/etc/login.defs` when those files give none, and the
 /// per-user runtime directory and session bus when they exist. A login
 /// shell started with it reads the profile itself.
+///
+/// A development build given a home of its own (`crate::home::user_home`)
+/// has its profile, `HOME` and the two application data folders in it.
 pub fn user_environment() -> io::Result<Vec<(OsString, OsString)>> {
     let mut env = imp::user_environment()?;
-    for (name, value) in crate::system_home::variables()? {
+    for (name, value) in crate::system_home::variables()?.into_iter().chain(sandboxed()?) {
         env.retain(|(held, _)| !held.eq_ignore_ascii_case(&name));
         env.push((name, value));
     }
     Ok(env)
 }
 
+/// The variables that point a development build's processes at the home it
+/// was given with `FASTCTX_USER_HOME`; none for a release, or without it.
+fn sandboxed() -> io::Result<Vec<(OsString, OsString)>> {
+    if crate::home::RELEASED || std::env::var_os("FASTCTX_USER_HOME").is_none_or(|home| home.is_empty()) {
+        return Ok(Vec::new());
+    }
+    let home = crate::home::user_home()?;
+    let mut variables = vec![("HOME", home.clone())];
+    if cfg!(windows) {
+        variables.extend([
+            ("USERPROFILE", home.clone()),
+            ("APPDATA", home.join("AppData").join("Roaming")),
+            ("LOCALAPPDATA", home.join("AppData").join("Local")),
+        ]);
+    }
+    Ok(variables.into_iter().map(|(name, value)| (name.into(), value.into_os_string())).collect())
+}
+
 /// The environment for a fastctx process the World starts on its own (a
 /// node, a supervisor): the user's, plus what of this process's says which
 /// World it is, so the new process belongs to the same one: `FASTCTX_HOME`,
 /// and `FASTCTX_UPDATE_RELEASES`, where a drill's World looks for releases.
-/// A development build also carries which agents' homes it was given: one
-/// runs in a sandbox of its own, and a node a command of it starts must
-/// never fall back to the user's own Codex or Claude Code login
-/// (`crate::home::RELEASED`).
+/// A development build also carries which agents' homes and which user's
+/// home it was given: one runs in a sandbox of its own, and a node a command
+/// of it starts must never fall back to the user's own Codex or Claude Code
+/// login, nor find the user's other agents (`crate::home::RELEASED`).
 pub fn world_process_environment() -> io::Result<Vec<(OsString, OsString)>> {
     let mut env = user_environment()?;
-    let sandboxed: &[&str] = if crate::home::RELEASED { &[] } else { &["CODEX_HOME", "CLAUDE_CONFIG_DIR"] };
+    let sandboxed: &[&str] =
+        if crate::home::RELEASED { &[] } else { &["CODEX_HOME", "CLAUDE_CONFIG_DIR", "FASTCTX_USER_HOME"] };
     for carried in ["FASTCTX_HOME", "FASTCTX_UPDATE_RELEASES"].iter().chain(sandboxed) {
         let carried = *carried;
         if let Some(value) = std::env::var_os(carried) {
