@@ -21,6 +21,15 @@ interface Bounds {
 
 type Delivery = { kind: "message"; value: unknown } | { kind: "failed"; value: string };
 
+/** Whether pages can be shown here: the platform module is built for
+ * Windows and Android, and a browser preview keeps the browser's sandbox,
+ * unless it is drawn as another system's window (`?frame`). */
+export function pagesShownHere(): boolean {
+  const frame = document.documentElement.dataset.frame;
+  if (frame === "macos" || frame === "linux") return false;
+  return !inShell() || /Windows|Android/.test(navigator.userAgent);
+}
+
 /** Browser previews retain the browser sandbox. Packaged applications use
  * the platform module; a mount failure never falls back to a Tauri iframe. */
 export function mountFrame(into: HTMLElement, html: string, title: string): PageFrame {

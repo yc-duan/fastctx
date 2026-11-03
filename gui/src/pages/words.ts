@@ -21,6 +21,8 @@ export interface PageWords {
   reload: string;
   /** The page navigated its own frame somewhere else. */
   wentAway: string;
+  /** Where this system cannot show pages. */
+  unsupported: string;
   withdraw: string;
   /** What a version may do. */
   run(machine: string): string;
@@ -73,6 +75,7 @@ export const zhPages: PageWords = {
   versions: "版本",
   reload: "重新载入",
   wentAway: "页面已跳转到其他内容并被关闭，重新载入可恢复",
+  unsupported: "此系统暂不支持打开页面",
   withdraw: "撤下",
   run: (machine) => `在 ${machine} 上运行`,
   say: (who) => `向 ${who} 发消息`,
@@ -120,6 +123,7 @@ export const enPages: PageWords = {
   versions: "Versions",
   reload: "Reload",
   wentAway: "The page navigated away and was closed; reload to restore it",
+  unsupported: "Pages are not yet supported on this system",
   withdraw: "Take down",
   run: (machine) => `Run on ${machine}`,
   say: (who) => `Message ${who}`,
