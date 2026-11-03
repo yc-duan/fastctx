@@ -333,6 +333,22 @@ fn kept(db: &rusqlite::Connection, deed: &str) -> fastctx_storage::Result<bool> 
 
 /// Starts moving the book's earlier rows in, and seals the conversations
 /// deleted while it could not be told (`sealing::reconcile`).
+/// Opens the book, or a handle that says why it did not open
+/// (`fastctx_storage::Database::open_or_unavailable`).
+pub(crate) fn open(world: &fastctx_types::layout::WorldDir) -> fastctx_storage::Database {
+    fastctx_storage::Database::open_or_unavailable(&world.path().join("book.sqlite3"), "", |db| {
+        fastctx_storage::versions::apply(
+            db,
+            "node.activity-book",
+            &[
+                fastctx_storage::versions::Migration { version: 1, sql: SCHEMA },
+                fastctx_storage::versions::Migration { version: 2, sql: SEALS },
+                fastctx_storage::versions::Migration { version: 3, sql: SEALED_ACCOUNTS },
+            ],
+        )
+    })
+}
+
 pub(crate) fn start(node: &std::sync::Arc<Node>) {
     migrate::start(node);
     let sealing = node.clone();

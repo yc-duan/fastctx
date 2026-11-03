@@ -136,6 +136,7 @@ mod record_value;
 mod records;
 mod recovery;
 mod removed;
+mod reopen;
 mod renewal;
 mod renewal_legacy;
 pub mod replacement;
@@ -757,18 +758,7 @@ pub async fn run_prepared(
             if let Err(error) = residents.seal(&database) {
                 log.line(format_args!("reading the conversations deleted before: {error}"));
             }
-            let book_database =
-                fastctx_storage::Database::open_or_unavailable(&world.path().join("book.sqlite3"), "", |db| {
-                    fastctx_storage::versions::apply(
-                        db,
-                        "node.activity-book",
-                        &[
-                            fastctx_storage::versions::Migration { version: 1, sql: activity_book::SCHEMA },
-                            fastctx_storage::versions::Migration { version: 2, sql: activity_book::SEALS },
-                            fastctx_storage::versions::Migration { version: 3, sql: activity_book::SEALED_ACCOUNTS },
-                        ],
-                    )
-                });
+            let book_database = activity_book::open(&world);
             if let Some(error) = book_database.fault() {
                 log.line(format_args!("activity book storage unavailable: {error}"));
             }
@@ -1034,6 +1024,7 @@ pub async fn run_prepared(
 
     ending::start(node.log.clone()).context("starting node stop diagnostics")?;
     stuck::start(&node);
+    reopen::start(&node);
     memory_room::start(&node);
     limits::start(&node);
     let watchdog = watchdog::Watchdog::start().context("starting the control-loop watchdog")?;
