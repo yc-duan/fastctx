@@ -26,6 +26,21 @@ export interface DiscloseWords {
   raised(current: number, requested: number): string;
   /** What connecting never does, on a card of its own. */
   never: ChangeWords;
+  /** Opening the workbench in a login and closing it: the window's head,
+   *  what the workbench does, what closing it leaves, the deed, the way
+   *  back and the stamp. */
+  benchOpen(agent: string): string;
+  benchClose(agent: string): string;
+  /** The tools card of opening (`open`) or closing the workbench: Codex's
+   *  colleague tools, Claude Code's `run` from the plugin or the entry. */
+  benchTools(agent: string, open: boolean): ChangeWords;
+  bench: ChangeWords;
+  benchClosed: ChangeWords;
+  benchGo: string;
+  benchStop: string;
+  benchUndo: string;
+  benchUndone: string;
+  benchStamp(open: boolean): string;
   /** A change that finds nothing to change. */
   same: string;
   /** Under the cards: sessions already open, and the World's lines the
@@ -72,6 +87,23 @@ export const zhDisclose: DiscloseWords = {
   },
   raised: (current, requested) => `你设定的上限 ${current.toLocaleString("zh-CN")} 将调至 ${requested.toLocaleString("zh-CN")}；此上限由所有工具共用。`,
   never: { title: "边界", line: "Fastctx 不唤醒它，不代它向厂商发出请求，也不读取它的对话。" },
+  benchOpen: (agent) => `打开 ${agent} 的工作台`,
+  benchClose: (agent) => `关闭 ${agent} 的工作台`,
+  benchTools: (agent, open) =>
+    agent === "codex"
+      ? open
+        ? { title: "放宽协作工具的输出上限", line: "对话之间相互请托时，结果完整送达。" }
+        : { title: "还原协作工具的输出上限", line: "移除为协作工具写入的上限。" }
+      : open
+        ? { title: "run 改由插件提供", line: "撤下 .claude.json 中的登记，以免重复。" }
+        : { title: "run 改由登记提供", line: "在 .claude.json 中登记 Fastctx 的工具。" },
+  bench: { title: "工作台", line: "Fastctx 以此登录开启对话，在其等待之事发生时唤醒它；读取额度与用量，并为对话命名。你自行开启的会话不受影响。" },
+  benchClosed: { title: "关闭之后", line: "不再开启新对话，已有对话在本轮结束后暂停；记录与数据均保留。" },
+  benchGo: "打开",
+  benchStop: "关闭",
+  benchUndo: "可随时关闭。",
+  benchUndone: "可随时再次打开。",
+  benchStamp: (open) => (open ? "已打开" : "已关闭"),
   same: "无需改动。",
   sessions: (agent, name, into) =>
     into
@@ -115,6 +147,23 @@ export const enDisclose: DiscloseWords = {
   },
   raised: (current, requested) => `Your limit of ${current.toLocaleString("en")} is raised to ${requested.toLocaleString("en")}; every tool shares this limit.`,
   never: { title: "Boundaries", line: "Fastctx does not wake it, sends no request to its vendor on its behalf, and does not read its conversations." },
+  benchOpen: (agent) => `Open the workbench in ${agent}`,
+  benchClose: (agent) => `Close the workbench in ${agent}`,
+  benchTools: (agent, open) =>
+    agent === "codex"
+      ? open
+        ? { title: "Raise the colleague tools' output limits", line: "When conversations ask each other, the answers arrive whole." }
+        : { title: "Restore the colleague tools' output limits", line: "The limits written for the colleague tools are taken out." }
+      : open
+        ? { title: "run comes from the plugin", line: "The entry in .claude.json is taken out, so that it is not there twice." }
+        : { title: "run comes from an entry", line: "Fastctx's tools are entered in .claude.json." },
+  bench: { title: "Workbench", line: "Fastctx starts conversations with this login and wakes it when what it waits for happens; it reads its limits and usage and names its conversations. Sessions you open yourself stay as they are." },
+  benchClosed: { title: "After closing", line: "No new conversations start, and those under way pause once their turn ends; their record and data are kept." },
+  benchGo: "Open",
+  benchStop: "Close",
+  benchUndo: "You can close it at any time.",
+  benchUndone: "You can open it again at any time.",
+  benchStamp: (open) => (open ? "Opened" : "Closed"),
   same: "No changes needed.",
   sessions: (agent, name, into) =>
     into

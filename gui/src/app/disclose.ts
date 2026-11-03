@@ -40,10 +40,12 @@ const key = (card: number, file: number) => `${card}:${file}`;
 
 /** The cards, and what connecting never does after them. `open` holds the
  *  files unfolded; `also` a line more for a kind, said of this login. */
-export function discloseCards(preview: ChangePreview, words: DiscloseWords, open: ReadonlySet<string>, also: Partial<Record<Change, string>> = {}): string {
+/** `bench`: the workbench opened (`true`) or closed in the login, told on
+ *  a card of its own in place of what connecting never does. */
+export function discloseCards(preview: ChangePreview, words: DiscloseWords, open: ReadonlySet<string>, also: Partial<Record<Change, string>> = {}, bench?: boolean): string {
   const told = preview.into ? words.into : words.out;
   const cards = toldCards(preview).map((card, index) => {
-    const said = told[card.change];
+    const said = bench !== undefined && card.change === "tools" ? words.benchTools(preview.agent, bench) : told[card.change];
     const more = also[card.change];
     const files = card.files.map((file, at) => fileLine(file, index, at, words, open.has(key(index, at)))).join("");
     const commands = card.commands?.length
@@ -55,11 +57,12 @@ export function discloseCards(preview: ChangePreview, words: DiscloseWords, open
       <div class="dc-text"><h3 class="dc-title">${escape(said.title)}</h3><p class="dc-line">${escape(said.line)}</p>${more ? `<p class="dc-line">${escape(more)}</p>` : ""}${folded}</div>
     </li>`;
   });
-  const same = cards.length ? "" : `<li class="dc-same">${escape(words.same)}</li>`;
-  const never = preview.into
+  const same = cards.length || bench !== undefined ? "" : `<li class="dc-same">${escape(words.same)}</li>`;
+  const last = bench === undefined ? (preview.into ? { said: words.never, mark: "shield" as const } : null) : { said: bench ? words.bench : words.benchClosed, mark: bench ? ("home" as const) : ("pause" as const) };
+  const never = last
     ? `<li class="dc-card dc-never">
-        <span class="dc-mark" aria-hidden="true">${glyph("shield", 18)}</span>
-        <div class="dc-text"><h3 class="dc-title">${escape(words.never.title)}</h3><p class="dc-line">${escape(words.never.line)}</p></div>
+        <span class="dc-mark" aria-hidden="true">${glyph(last.mark, 18)}</span>
+        <div class="dc-text"><h3 class="dc-title">${escape(last.said.title)}</h3><p class="dc-line">${escape(last.said.line)}</p></div>
       </li>`
     : "";
   return `<ol class="dc-cards">${cards.join("")}${same}${never}</ol>`;

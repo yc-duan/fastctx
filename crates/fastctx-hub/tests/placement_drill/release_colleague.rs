@@ -33,8 +33,9 @@ pub(super) async fn exercise(
     std::fs::create_dir_all(&home)?;
     std::fs::write(home.join("config.toml"), mock_configuration)?;
     owner.add_agent_login(pc.clone().into(), agent.clone(), home.clone()).await?;
-    let installed =
-        owner.change_agent_login(pc.clone().into(), agent.clone(), home.clone(), true, true, true, None).await?;
+    let installed = owner
+        .change_agent_login(pc.clone().into(), agent.clone(), home.clone(), true, true, true, None, Some(true))
+        .await?;
     anyhow::ensure!(
         matches!(installed.end, Some(fastctx_types::logins::ChangeEnd::Done { .. })),
         "installing the release machine's mock tools failed: {installed:?}"

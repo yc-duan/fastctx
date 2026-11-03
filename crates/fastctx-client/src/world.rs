@@ -353,8 +353,9 @@ impl World {
         dir: std::path::PathBuf,
         into: bool,
         take_back: bool,
+        workbench: Option<bool>,
     ) -> Result<fastctx_types::logins::ChangePreview, Error> {
-        match self.ask(Call::PreviewAgentChange { machine, agent, dir, into, take_back }).await? {
+        match self.ask(Call::PreviewAgentChange { machine, agent, dir, into, take_back, workbench }).await? {
             Reply::AgentChangePreview(preview) => Ok(*preview),
             other => Err(unexpected(other)),
         }
@@ -373,9 +374,19 @@ impl World {
         raise_output_limit: bool,
         take_back: bool,
         expected: Option<String>,
+        workbench: Option<bool>,
     ) -> Result<fastctx_types::logins::LoginChange, Error> {
         match self
-            .ask(Call::ChangeAgentLogin { machine, agent, dir, into, raise_output_limit, take_back, expected })
+            .ask(Call::ChangeAgentLogin {
+                machine,
+                agent,
+                dir,
+                into,
+                raise_output_limit,
+                take_back,
+                expected,
+                workbench,
+            })
             .await?
         {
             Reply::AgentLoginChanged(change) => Ok(*change),

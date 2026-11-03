@@ -26,6 +26,9 @@ export interface MachineLogins {
   scan?: Scan;
   codex: AgentLogins;
   claude: AgentLogins;
+  /** Whether its node keeps the workbench by login (`Login.workbench`);
+   *  an earlier one keeps it by account alone. */
+  by_login?: boolean;
   /** The other agents found there, connected through their configuration
    *  alone (`world-layers.md`, 支持尽可能多的智能体), by name. */
   others?: Record<string, AgentLogins>;
@@ -79,6 +82,9 @@ export interface Login {
   /** What bringing the World's tools in it up to date waits for: none
    *  when they are as this fastctx writes them. */
   drift?: Drift;
+  /** The workbench is open in it (`world-layers.md`, 工作台：在一个登录上
+   *  打开). */
+  workbench?: boolean;
 }
 
 /** Why the World's tools in a listed login were not brought up to date by

@@ -19924,7 +19924,8 @@
                       "step": "model/list",
                       "elapsed_ms": 0
                     }
-                  ]
+                  ],
+                  "workbench": true
                 },
                 {
                   "agent": "claude",
@@ -20035,7 +20036,8 @@
                       "step": "model/list",
                       "elapsed_ms": 0
                     }
-                  ]
+                  ],
+                  "workbench": true
                 },
                 {
                   "agent": "codex",
@@ -20115,7 +20117,8 @@
                       "step": "model/list",
                       "elapsed_ms": 0
                     }
-                  ]
+                  ],
+                  "workbench": true
                 },
                 {
                   "agent": "claude",
@@ -20166,7 +20169,8 @@
                   },
                   "timings": []
                 }
-              ]
+              ],
+              "by_login": true
             }
           },
           {
@@ -20339,7 +20343,8 @@
                 "step": "model/list",
                 "elapsed_ms": 0
               }
-            ]
+            ],
+            "workbench": true
           },
           {
             "agent": "claude",
@@ -20450,7 +20455,8 @@
                 "step": "model/list",
                 "elapsed_ms": 0
               }
-            ]
+            ],
+            "workbench": true
           },
           {
             "agent": "codex",
@@ -20530,7 +20536,8 @@
                 "step": "model/list",
                 "elapsed_ms": 0
               }
-            ]
+            ],
+            "workbench": true
           },
           {
             "agent": "claude",
@@ -20581,7 +20588,8 @@
             },
             "timings": []
           }
-        ]
+        ],
+        "by_login": true
       },
       {
         "reply": "set"
@@ -20634,7 +20642,8 @@
         "agent": "claude",
         "dir": "/home/me/.claude-work",
         "into": true,
-        "take_back": true
+        "take_back": true,
+        "workbench": true
       },
       {
         "call": "change_agent_login",
@@ -20644,7 +20653,8 @@
         "into": true,
         "raise_output_limit": true,
         "take_back": true,
-        "expected": "5f0c2a9e41d7b3c86e1f0a2b9c4d7e13"
+        "expected": "5f0c2a9e41d7b3c86e1f0a2b9c4d7e13",
+        "workbench": true
       },
       {
         "call": "read_agent_limits",
@@ -20803,7 +20813,8 @@
                       "kind": "changed",
                       "location": "C:/Users/me/.codex/AGENTS.md",
                       "reason": "the fastctx block differs from the recorded bytes"
-                    }
+                    },
+                    "workbench": true
                   }
                 ],
                 "candidates": [
@@ -20902,6 +20913,7 @@
                 ],
                 "elsewhere": []
               },
+              "by_login": true,
               "others": {
                 "antigravity": {
                   "title": "Antigravity",
@@ -21174,7 +21186,8 @@
                 "kind": "changed",
                 "location": "C:/Users/me/.codex/AGENTS.md",
                 "reason": "the fastctx block differs from the recorded bytes"
-              }
+              },
+              "workbench": true
             }
           ],
           "candidates": [
@@ -21273,6 +21286,7 @@
           ],
           "elsewhere": []
         },
+        "by_login": true,
         "others": {
           "antigravity": {
             "title": "Antigravity",
@@ -21515,7 +21529,8 @@
         "call": "change_agent_login",
         "agent": "claude",
         "dir": "/home/me/.claude-work",
-        "into": false
+        "into": false,
+        "workbench": false
       },
       {
         "call": "read_agent_limits",
@@ -21668,7 +21683,8 @@
                 "kind": "changed",
                 "location": "C:/Users/me/.codex/AGENTS.md",
                 "reason": "the fastctx block differs from the recorded bytes"
-              }
+              },
+              "workbench": true
             }
           ],
           "candidates": [
@@ -21767,6 +21783,7 @@
           ],
           "elsewhere": []
         },
+        "by_login": true,
         "others": {
           "antigravity": {
             "title": "Antigravity",

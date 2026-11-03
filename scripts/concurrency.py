@@ -773,7 +773,7 @@ def main():
             lab.faults = faults
         if not lab.start_node():
             raise RuntimeError("this lab's node did not take its World")
-        code, out = lab.run("apply", "--target", "codex", "--home", str(lab.codex_home), timeout=180)
+        code, out = lab.run("apply", "--target", "codex", "--home", str(lab.codex_home), "--workbench", timeout=180)
         if not check("the Codex login gets the World's tools", code == 0, out):
             return 1
         drill = Drill(lab, rng)

@@ -73,6 +73,8 @@ let scanUntil = 0;
 /** Codex logins the specimen does not name conversations in, as the
  *  toggle sets: naming is on unless turned off. */
 const untitled = new Set<string>();
+/** The logins the workbench is open in, as opening and closing it set. */
+const benches = new Set<string>(["C:\\Users\\me\\.codex"]);
 /** When the laptop was scanned, finding nothing; never, at first. */
 let laptopScanned: number | null = null;
 
@@ -106,6 +108,12 @@ function candidate(agent: "codex" | "claude", dir: string): Login {
 const drifting = new URLSearchParams(location.search).has("drift");
 
 function desktop(now: number): MachineLogins {
+  const record = desktopAsIs(now);
+  for (const side of [record.codex, record.claude]) side.listed = side.listed.map((login) => (benches.has(login.dir) ? { ...login, workbench: true } : login));
+  return { ...record, by_login: true };
+}
+
+function desktopAsIs(now: number): MachineLogins {
   const scanning = now < scanUntil - 4000;
   return {
     machine: "desktop",
@@ -292,6 +300,70 @@ function undone(lines: DiffLine[]): DiffLine[] {
   return out;
 }
 
+/** Opening the workbench in a login (`open`), or closing it, as the node
+ *  works it out: Claude Code gets the World's plugin and the permission to
+ *  work unattended, Codex the limits of the colleagues' tools. */
+function benchPreview(agent: string, dir: string, open: boolean): ChangePreview {
+  const way = (lines: DiffLine[]) => (open ? lines : undone(lines));
+  const card = (change: ChangeCard["change"], path: string, lines: DiffLine[], extra: Partial<ChangeCard> = {}): ChangeCard => ({
+    change,
+    files: [{ path, how: "changed", lines: way(lines) }],
+    ...extra,
+  });
+  const cards: ChangeCard[] =
+    agent === "codex"
+      ? [
+          card(
+            "tools",
+            `${dir}\\config.toml`,
+            told(15, 15, [
+              ctx("[mcp_servers.fastctx.tools.run]"),
+              ctx("output_token_limit = 41708"),
+              add(""),
+              add("[mcp_servers.fastctx.tools.ask_colleague]"),
+              add("output_token_limit = 41708"),
+              add(""),
+              add("[mcp_servers.fastctx.tools.message_colleague]"),
+              add("output_token_limit = 41708"),
+            ]),
+          ),
+        ]
+      : [
+          {
+            change: "plugin",
+            files: [],
+            commands: open
+              ? ["claude plugin marketplace add C:\\Users\\me\\.fastctx\\world\\claude-plugin", "claude plugin install fastctx-world@fastctx"]
+              : ["claude plugin uninstall fastctx-world@fastctx", "claude plugin marketplace remove fastctx"],
+          },
+          card("consent", `${dir}\\settings.json`, told(1, 1, [ctx("{"), add('  "skipDangerousModePermissionPrompt": true,'), ctx('  "permissions": {')])),
+          // The plugin brings `run` with the workbench; without it, the
+          // entry in Claude Code's state does.
+          {
+            change: "tools",
+            files: [
+              {
+                path: "C:\\Users\\me\\.claude.json",
+                how: "changed",
+                lines: (open ? undone : (lines: DiffLine[]) => lines)(
+                  told(41, 41, [
+                    ctx('  "mcpServers": {'),
+                    add('    "fastctx": {'),
+                    add('      "type": "stdio",'),
+                    add('      "command": "C:\\\\Users\\\\me\\\\.fastctx\\\\bin\\\\fastctx.exe",'),
+                    add('      "args": ["serve"],'),
+                    add('      "env": { "FASTCTX_HOME": "C:\\\\Users\\\\me\\\\.fastctx", "FASTCTX_AGENT_HOME": "" }'),
+                    add("    }"),
+                    ctx("  },"),
+                  ]),
+                ),
+              },
+            ],
+          },
+        ];
+  return { agent, dir, into: true, files: [], fingerprint: "7a1d3c5e9b2f4a6c8e0d1b3f5a7c9e2d", cards };
+}
+
 /** The World's passage in an agent's instructions, as `briefing.rs` writes it. */
 const passage = (codex: boolean): string[] => [
   "<!-- fastctx:begin -->",
@@ -426,8 +498,9 @@ function disclosed(agent: string, dir: string, into: boolean): Pick<ChangePrevie
   };
 }
 
-export function specimenPreview(machine: string, agent: string, dir: string, into: boolean): Promise<ChangePreview> {
+export function specimenPreview(machine: string, agent: string, dir: string, into: boolean, workbench?: boolean): Promise<ChangePreview> {
   void machine;
+  if (workbench !== undefined) return Promise.resolve(benchPreview(agent, dir, workbench));
   // As the node gives them: the World's own values, any other key named
   // with its values withheld, and the World's section of the guidance file.
   const way = (value: string) => (into ? { after: value } : { before: value });
@@ -475,10 +548,11 @@ export function specimenPreview(machine: string, agent: string, dir: string, int
   return Promise.resolve({ ...made, ...disclosed(agent, dir, into) });
 }
 
-export function specimenChange(machine: string, agent: string, dir: string, into: boolean): Promise<LoginChange> {
+export function specimenChange(machine: string, agent: string, dir: string, into: boolean, workbench?: boolean): Promise<LoginChange> {
   void machine;
   void agent;
-  void dir;
+  if (workbench === true && into) benches.add(dir);
+  else if (workbench === false || !into) benches.delete(dir);
   return new Promise((done) =>
     setTimeout(
       () => done({ into, started_at: ago(0), steps: [{ step: { step: "program" }, state: { state: "done" } }, { step: { step: "files" }, state: { state: "done" } }, { step: { step: "check", scope: "user" }, state: { state: "done" } }], end: { end: "done", at: ago(0) } }),

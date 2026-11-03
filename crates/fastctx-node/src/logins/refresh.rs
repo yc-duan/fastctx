@@ -92,6 +92,7 @@ fn every(node: &Node) -> Option<(Waiting, bool)> {
             return None;
         }
     };
+    super::workbench::seed(node, &context);
     let integrations = match apply::integrations(&context.places) {
         Ok(integrations) => integrations,
         Err(error) => {
@@ -108,6 +109,17 @@ fn every(node: &Node) -> Option<(Waiting, bool)> {
             Vec::new()
         }
     };
+    let connected: Vec<(&str, PathBuf)> = integrations
+        .iter()
+        .map(|integration| {
+            let agent = match integration.host {
+                Host::Codex => "codex",
+                Host::Claude => "claude",
+            };
+            (agent, fastctx_hosts::inventory::plain(&integration.home))
+        })
+        .collect();
+    super::workbench::prune(node, &connected);
     let mut waiting = Vec::new();
     let mut again = false;
     let hosts = integrations.into_iter().map(|integration| {

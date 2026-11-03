@@ -109,6 +109,7 @@ fn empty(program: Fact<Option<AgentProgram>>) -> AgentFacts {
         unattended: Fact::known(true),
         timings: Vec::new(),
         drift: None,
+        workbench: false,
     }
 }
 

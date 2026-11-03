@@ -28,14 +28,16 @@ fn places(node: &Node, agent: &AgentName, dir: &Path) -> Result<(Places, apply::
 
 /// What putting the World's tools into the login (`into`), taking back what
 /// the user changed of them with `take_back`, or taking them out, would
-/// change.
+/// change; with `workbench`, opening or closing the workbench in it too.
 pub(crate) async fn preview(
     node: &Arc<Node>,
     agent: AgentName,
     dir: PathBuf,
     into: bool,
     take_back: bool,
+    workbench: Option<bool>,
 ) -> Result<ChangePreview, Failure> {
+    let _ = workbench;
     let node = node.clone();
     fastctx_platform::task::spawn_blocking(move || {
         super::known(&node, &agent, &dir)?;
@@ -62,7 +64,10 @@ pub(crate) async fn preview(
 /// Puts the World's tools into the login, or takes them out, telling the
 /// record each step; answered with the change once it ended. With
 /// `expected`, the fingerprint of the change the user was shown, nothing is
-/// changed when the files moved on since.
+/// changed when the files moved on since. With `workbench`, the workbench
+/// in it is opened or closed once the change is made; taking a login out
+/// closes it.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn change(
     node: &Arc<Node>,
     agent: AgentName,
@@ -71,6 +76,7 @@ pub(crate) async fn change(
     raise_output_limit: bool,
     take_back: bool,
     expected: Option<String>,
+    workbench: Option<bool>,
 ) -> Result<LoginChange, Failure> {
     let _changing = node.logins.changing.lock().await;
     {
@@ -121,6 +127,17 @@ pub(crate) async fn change(
             let word = if into { "put the World's tools into" } else { "took the World's tools out of" };
             node.log.line(format_args!("the user {word} the {agent} login {}", dir.display()));
             super::refresh::settled(node, &agent, &dir);
+            let open = if into { workbench } else { Some(false) };
+            if let Some(open) = open.filter(|_| matches!(agent.as_str(), "codex" | "claude")) {
+                match super::workbench::set(node, agent.as_str(), &dir, open) {
+                    Ok(()) => {
+                        let word = if open { "opened" } else { "closed" };
+                        node.log.line(format_args!("the workbench is {word} in the {agent} login {}", dir.display()));
+                        super::workbench::changed(node);
+                    }
+                    Err(error) => node.log.line(format_args!("keeping where the workbench is open: {error}")),
+                }
+            }
             ChangeEnd::Done {
                 at,
                 kept: report

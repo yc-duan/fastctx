@@ -13,7 +13,6 @@ use std::sync::Arc;
 use fastctx_hosts::codex::LimitsHow;
 use fastctx_types::access::Acting;
 use fastctx_types::agents::{AgentModel, Fact, ProgramSource};
-use fastctx_types::layers::Layer;
 use fastctx_types::logins::{FoundProgram, Identified, Launcher};
 use jiff::Timestamp;
 
@@ -44,7 +43,7 @@ pub(super) async fn asked(
     let (finding, path) = (node.clone(), dir.to_path_buf());
     let read =
         fastctx_platform::task::blocking(move || on_disk(&finding, agent, &path, default, &programs, &env)).await;
-    if agent != "codex" || crate::layers::of(node, &Acting::Here) != Layer::Workbench {
+    if agent != "codex" || !super::workbench::is_open(node, &Acting::Here, agent, Some(dir)) {
         return read;
     }
     let said = codex(node, dir, false).await;

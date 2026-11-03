@@ -100,8 +100,6 @@ import { specimenChange as specimenLoginChange, specimenFolder, specimenLogins, 
 import { TalksPage, enTalks, zhTalks } from "./app/talks";
 import { FeaturesPage } from "./app/features";
 import { accountLayer, liveLayer } from "./app/layer";
-import { ModePage } from "./app/mode-page";
-import { enMode, zhMode } from "./app/mode-words";
 import { ActivityPage } from "./activity/page";
 import { enActivity, zhActivity } from "./activity/words";
 import { specimenBook, specimenBookMachines } from "./specimen/activity";
@@ -254,7 +252,7 @@ import { enPages, zhPages } from "./pages/words";
 import { act as pageAct, consent as pageConsent, pageHistory, readPage, restore as restorePage, withdraw as withdrawPage } from "./world/pages";
 import { specimenPageTools, specimenPageWorld } from "./specimen/pages";
 import type { Address, SessionEvent } from "./world/events";
-import type { MachineLogins } from "./world/logins";
+import type { MachineLogins, WorldLogins } from "./world/logins";
 import { ownerResident, type ResidentNow, type WorldWho } from "./world/world";
 import { agentName, titleOf } from "./world/names";
 import { liveSide, specimenSide } from "./side/live";
@@ -531,7 +529,7 @@ function placeName(at: Place): string {
     case "activity":
       return shellWords.activity;
     case "mode":
-      return (english ? enMode : zhMode).title;
+      return shellWords.agents;
     case "agents":
       return at.section === "claude" || at.section === "codex" ? (english ? enProfile : zhProfile).sections[at.section] : shellWords.agents;
     case "usage":
@@ -598,6 +596,40 @@ if (live && onComputer()) {
 const consent = new ClaudeConsent(english ? enConsent : zhConsent, (machine, accept, home) =>
   live ? claudeConsent(machine, accept, home) : Promise.reject(new Error(english ? "this is a specimen" : "这是样例，没有连着世界")),
 );
+
+/** The workbench was opened or closed in a login (`world-layers.md`,
+ *  工作台：在一个登录上打开). */
+async function workbenchChanged(open: boolean): Promise<void> {
+  if (open) {
+    if (!accountLayer.workbench.peek()) await accountLayer.choose("workbench").catch((error: unknown) => console.error("opening the workbench", error));
+    return;
+  }
+  if (!live || !accountLayer.workbench.peek()) return;
+  const all = await agentLogins(null).catch(() => null);
+  if (all) workbenchSeen(all);
+}
+
+/** Every machine's logins were read: the interface shows the workbench's
+ *  places while a login anywhere has it open, and puts them away once every
+ *  machine answered that none of its logins has. A machine whose node keeps
+ *  the workbench by account keeps the places as the account has them. */
+function workbenchSeen(all: WorldLogins): void {
+  const answered = all.machines.flatMap((one) => (one.kind === "answered" ? [one.logins] : []));
+  const open = answered.some((logins) => logins.by_login && [logins.codex, logins.claude].some((side) => side.listed.some((login) => login.workbench)));
+  const byAccount = answered.some((logins) => !logins.by_login);
+  if (open && !accountLayer.workbench.peek()) void accountLayer.choose("workbench").catch((error: unknown) => console.error("showing the workbench", error));
+  else if (!open && !byAccount && answered.length === all.machines.length && accountLayer.workbench.peek())
+    void accountLayer.choose("connect").catch((error: unknown) => console.error("putting the workbench away", error));
+}
+
+/** Reads every machine's logins as the overview does, and follows them. */
+function readAllLogins(machine: string | null): Promise<WorldLogins> {
+  if (!live) return specimenLoginsRead(machine);
+  return agentLogins(machine).then((all) => {
+    if (machine === null) workbenchSeen(all);
+    return all;
+  });
+}
 
 /** What a machine's own programs say of its agents, or with null every
  *  machine's this computer reaches, as a live World or the specimen
@@ -2819,6 +2851,9 @@ function show(next: Place): void {
   // The front page belongs to the workbench: without it, the interface opens on
   // the agents (`world-gui.md`, 界面的结构).
   if (!accountLayer.workbench.peek() && WORKBENCH_PLACES.includes(next.kind)) next = { kind: "agents", machine: null };
+  // The workbench opens in a login now, not as the account's mode: the
+  // places that chose it lead to the agents.
+  if (next.kind === "mode" || next.kind === "features") next = { kind: "agents", machine: null };
   // A computer in no network has no machine details: the machines page
   // tells what a network is (`world-gui.md`, 机器的详情).
   if (next.kind === "machine" && inNoNetwork(store.world.peek())) {
@@ -2841,7 +2876,7 @@ function show(next: Place): void {
   // 受管机器上的界面); so has the mode while it is asked, the whole window
   // its question.
   const managed = !!managedOf(store.world.peek()?.accounts);
-  shell.alone(managed || (next.kind === "mode" && accountLayer.chosen.peek() === null));
+  shell.alone(managed);
   let page: Page;
   if (managed) page = managedPage();
   else switch (next.kind) {
@@ -3004,18 +3039,19 @@ function show(next: Place): void {
           head,
           machine: agentsPlace.machine,
           workbench: accountLayer.workbench,
-          read: (machine) => (live ? agentLogins(machine) : specimenLoginsRead(machine)),
+          read: readAllLogins,
           scan: (machine, stop) => (live ? scanAgents(machine, stop) : specimenScan(machine, stop, specimen.now)),
-          preview: (machine, agent, dir, into, takeBack) => (live ? previewAgentChange(machine, agent, dir, into, takeBack) : specimenPreview(machine, agent, dir, into)),
-          change: (machine, agent, dir, into, raise, takeBack, expected) => (live ? changeAgentLogin(machine, agent, dir, into, raise, takeBack, expected) : specimenLoginChange(machine, agent, dir, into)),
+          preview: (machine, agent, dir, into, takeBack, workbench) => (live ? previewAgentChange(machine, agent, dir, into, takeBack, workbench) : specimenPreview(machine, agent, dir, into, workbench)),
+          change: (machine, agent, dir, into, raise, takeBack, expected, workbench) => (live ? changeAgentLogin(machine, agent, dir, into, raise, takeBack, expected, workbench) : specimenLoginChange(machine, agent, dir, into, workbench)),
           showing: (machine) => {
             const place: Place = { kind: "agents", machine };
             history.replaceState(history.state, "", link(place));
             shell.mark(place);
           },
-          // Until the workbench opens on a login of its own (`world-layers.md`),
-          // it opens on the account.
+          // A node keeping the workbench by account opens it on the account.
           workbenchOn: () => (accountLayer.workbench.peek() ? show({ kind: "home" }) : accountLayer.choose("workbench")),
+          benched: (open) => void workbenchChanged(open),
+          talkOn: () => void workbenchChanged(true).then(() => show({ kind: "new", town: null })),
         });
         break;
       }
@@ -3084,7 +3120,7 @@ function show(next: Place): void {
         },
         when,
         workbench: accountLayer.workbench,
-        read: (machine) => (live ? agentLogins(machine) : specimenLoginsRead(machine)),
+        read: readAllLogins,
         scan: (machine, stop) => (live ? scanAgents(machine, stop) : specimenScan(machine, stop, specimen.now)),
         add: (machine, agent, dir) => (live ? addAgentLogin(machine, agent, dir) : specimenTakeUp(machine, agent, dir, specimen.now)),
         folder: (machine, dir, change) => (live ? agentFolder(machine, dir, change) : specimenFolder(machine, dir, change, specimen.now)),
@@ -3092,8 +3128,9 @@ function show(next: Place): void {
         // specimen's folders.
         pick: live && onComputer() ? pickFolder : null,
         folders: (machine, path) => (live ? foldersOf(machine, path) : specimenFolders(machine, path)),
-        preview: (machine, agent, dir, into, takeBack) => (live ? previewAgentChange(machine, agent, dir, into, takeBack) : specimenPreview(machine, agent, dir, into)),
-        change: (machine, agent, dir, into, raise, takeBack, expected) => (live ? changeAgentLogin(machine, agent, dir, into, raise, takeBack, expected) : specimenLoginChange(machine, agent, dir, into)),
+        preview: (machine, agent, dir, into, takeBack, workbench) => (live ? previewAgentChange(machine, agent, dir, into, takeBack, workbench) : specimenPreview(machine, agent, dir, into, workbench)),
+        change: (machine, agent, dir, into, raise, takeBack, expected, workbench) => (live ? changeAgentLogin(machine, agent, dir, into, raise, takeBack, expected, workbench) : specimenLoginChange(machine, agent, dir, into, workbench)),
+        benched: (open) => void workbenchChanged(open),
         limits: (machine, agent, dir) => (live ? readAgentLimits(machine, agent, dir) : notLive()),
         setTitle: (machine, agent, dir, on) => (live ? setAgentTitle(machine, agent, dir, on) : specimenSetTitle(machine, agent, dir, on, specimen.now)),
         usageOf: (machine, agent, dir) => (live ? agentUsage(machine, agent, dir) : specimenUsage(machine, agent, dir, specimen.now)),
@@ -3127,7 +3164,7 @@ function show(next: Place): void {
         agent: next.agent,
         dir: next.dir,
         workbench: accountLayer.workbench,
-        read: (machine) => (live ? agentLogins(machine) : specimenLoginsRead(machine)),
+        read: readAllLogins,
         usage: (machine, agent, dir) => (live ? agentUsage(machine, agent, dir) : specimenUsage(machine, agent, dir, specimen.now)),
         when,
         talk: (machine, agent, home) => beginTalk(null, loginKey(machine, agent, home), machine),
@@ -3161,16 +3198,6 @@ function show(next: Place): void {
         menu: talkMenu,
         menuWords: talkMenuWords,
         confirm: accountConfirm,
-      });
-      break;
-    case "features":
-    case "mode":
-      page = new ModePage({
-        words: english ? enMode : zhMode,
-        film: (english ? enFeatures : zhFeatures).conversations.film,
-        head,
-        confirm: accountConfirm,
-        chosen: (layer) => show(layer === "workbench" ? { kind: "home" } : { kind: "agents", machine: null }),
       });
       break;
     case "feature":
@@ -3297,18 +3324,12 @@ function show(next: Place): void {
         words: english ? enSettings : zhSettings,
         account: () => {
           const settingsWords = english ? enSettings : zhSettings;
-          const mode = english ? enMode : zhMode;
           const features = english ? enFeatures : zhFeatures;
-          const chosen = accountLayer.chosen.peek();
           const row = (label: string, href: string, value: string) =>
             `<dt>${escapeText(label)}</dt><dd><a class="settings-link" href="${href}"><span>${escapeText(value)}</span>${glyph("chevron", 14)}</a></dd>`;
-          const name = chosen === "connect" ? mode.connect.name : chosen === "workbench" ? mode.workbench.name : mode.ask;
-          return (
-            row(mode.title, link({ kind: "mode" }), name) +
-            (accountLayer.workbench.peek() && PREVIEW
-              ? row(features.sentinels.name, link({ kind: "feature", feature: "sentinels" }), settingsWords.dataOpen)
-              : "")
-          );
+          return accountLayer.workbench.peek() && PREVIEW
+            ? row(features.sentinels.name, link({ kind: "feature", feature: "sentinels" }), settingsWords.dataOpen)
+            : "";
         },
         removalWords: english ? enRemoval : zhRemoval,
         head,

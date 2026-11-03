@@ -10,6 +10,8 @@ export interface AgentsOverviewWords {
   /** A connected login's way into the workbench, and what it is. */
   workbench: string;
   workbenchSaid: string;
+  /** A login the workbench is open in: a conversation started with it. */
+  talk: string;
   /** A login whose connection was changed since, or asks for more. */
   renew: string;
   /** An agent whose program is here, with no login yet. */
@@ -26,6 +28,7 @@ export const zhAgentsOverview: AgentsOverviewWords = {
   manageSaid: "全部登录、搜索的文件夹与扫描",
   workbench: "工作台",
   workbenchSaid: "在 Fastctx 中与它对话；开启前先说明将做的改动",
+  talk: "新对话",
   renew: "更新接入",
   noLogin: "已安装，尚无登录",
   missing: (names, here) => `${here ? "这台电脑" : "这台机器"}上未找到 ${names.join("、")}`,
@@ -38,6 +41,7 @@ export const enAgentsOverview: AgentsOverviewWords = {
   manageSaid: "Every login, the folders searched, and scans",
   workbench: "Workbench",
   workbenchSaid: "Talk to it in Fastctx; what opening it changes is shown first",
+  talk: "New conversation",
   renew: "Update connection",
   noLogin: "Installed, no login yet",
   missing: (names, here) => `${names.join(", ")} not found on this ${here ? "computer" : "machine"}`,

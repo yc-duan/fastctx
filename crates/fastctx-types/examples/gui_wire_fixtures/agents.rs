@@ -67,6 +67,7 @@ pub fn fixtures() -> Fixtures {
         unattended: Fact::known(true),
         timings: vec![ProbeTime { step: "model/list".into(), elapsed_ms: 0 }],
         drift: None,
+        workbench: true,
     };
     let claude = AgentFacts {
         agent: "claude".parse().unwrap(),
@@ -100,6 +101,7 @@ pub fn fixtures() -> Fixtures {
         unattended: Fact::known(false),
         timings: vec![],
         drift: None,
+        workbench: false,
     };
     let mut missing = codex.clone();
     // What a machine that knew one home per agent answers.
@@ -137,6 +139,7 @@ pub fn fixtures() -> Fixtures {
         checked_at,
         elapsed_ms: 420,
         agents: vec![codex, claude, missing, broken, unknown],
+        by_login: true,
     };
     Fixtures {
         calls: vec![

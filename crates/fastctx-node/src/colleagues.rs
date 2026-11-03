@@ -273,7 +273,7 @@ pub async fn ask_here(
         node.log.line(format_args!("starting {id} where its requester works: {}", error.message));
     }
     let origin = Origin::Colleague { asked_by: asker.clone(), label };
-    crate::layers::may_start(node, &acting)?;
+    crate::logins::workbench::may_start(node, &acting, "codex", home.as_deref())?;
     let _birth = crate::here::born(node, &id, acting.clone());
     let (spec, heard) = thread_spec(node, &id, &origin, town.as_ref(), &acting, home.as_deref()).await?;
     // Until it is claimed below, reports of threads nobody claims are kept.

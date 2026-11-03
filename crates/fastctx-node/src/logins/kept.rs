@@ -36,6 +36,10 @@ pub(super) struct Kept {
     /// Each chosen folder's search, running or the last one.
     #[serde(default)]
     pub folders: Vec<KeptSearch>,
+    /// Whether the logins the workbench was open in by account, before it
+    /// was kept by login, were worked out (`super::workbench::seed`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub workbench_seeded: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -78,6 +82,10 @@ pub(super) struct KeptAgent {
     /// the login list, which a rescan rebuilds.
     #[serde(default)]
     pub untitled: Vec<PathBuf>,
+    /// Login directories the workbench is open in (`super::workbench`),
+    /// kept apart from the login list as well.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub workbench: Vec<PathBuf>,
 }
 
 /// What a login's agent said when last asked. Which program the login

@@ -343,7 +343,7 @@ async fn main() -> Result<()> {
     let home = base.join("codex");
     let agent: AgentName = "codex".parse()?;
     wo.add_agent_login("host".parse()?, agent.clone(), home.clone()).await.context("adding the mock Codex login")?;
-    wo.change_agent_login("host".parse()?, agent.clone(), home.clone(), true, true, true, None)
+    wo.change_agent_login("host".parse()?, agent.clone(), home.clone(), true, true, true, None, Some(true))
         .await
         .context("enabling the mock Codex login")?;
     for account in ["alice", "bob", "mobile"] {
@@ -555,8 +555,9 @@ async fn main() -> Result<()> {
     std::fs::create_dir_all(&local_home)?;
     std::fs::write(local_home.join("config.toml"), &mock_configuration)?;
     wa.add_agent_login("alice-pc".parse()?, agent.clone(), local_home.clone()).await?;
-    let installed =
-        wa.change_agent_login("alice-pc".parse()?, agent.clone(), local_home.clone(), true, true, true, None).await?;
+    let installed = wa
+        .change_agent_login("alice-pc".parse()?, agent.clone(), local_home.clone(), true, true, true, None, Some(true))
+        .await?;
     anyhow::ensure!(
         matches!(installed.end, Some(fastctx_types::logins::ChangeEnd::Done { .. })),
         "installing the local mock tools failed: {installed:?}"

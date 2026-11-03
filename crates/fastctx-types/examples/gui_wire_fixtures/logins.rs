@@ -86,6 +86,7 @@ pub fn fixtures() -> Fixtures {
             location: "C:/Users/me/.codex/AGENTS.md".into(),
             reason: "the fastctx block differs from the recorded bytes".into(),
         }),
+        workbench: true,
     };
     let candidate = Login {
         dir: "/home/me/.claude-work".into(),
@@ -112,6 +113,7 @@ pub fn fixtures() -> Fixtures {
             end: None,
         }),
         drift: None,
+        workbench: false,
     };
     let never = Login {
         dir: "C:/Users/me/CodexHomes/b".into(),
@@ -138,9 +140,11 @@ pub fn fixtures() -> Fixtures {
         drift: Some(Drift::Asks {
             limit: OutputLimit { location: "config.toml".into(), current: 1000, requested: 26000 },
         }),
+        workbench: false,
     };
     let record = MachineLogins {
         machine: machine.clone(),
+        by_login: true,
         scan: Some(Scan {
             started_at: at,
             usual: Stage::Done { at },
@@ -217,6 +221,7 @@ pub fn fixtures() -> Fixtures {
                     models: vec![],
                     change: None,
                     drift: None,
+                    workbench: false,
                 }],
                 candidates: vec![],
                 elsewhere: vec![],
@@ -265,6 +270,7 @@ pub fn fixtures() -> Fixtures {
         }),
         codex: AgentLogins::default(),
         claude: AgentLogins::default(),
+        by_login: false,
         others: BTreeMap::new(),
         folders: vec![],
     };
@@ -399,6 +405,7 @@ pub fn fixtures() -> Fixtures {
                 dir: "/home/me/.claude-work".into(),
                 into: true,
                 take_back: true,
+                workbench: Some(true),
             },
             Call::ChangeAgentLogin {
                 machine: machine.clone().into(),
@@ -408,6 +415,7 @@ pub fn fixtures() -> Fixtures {
                 raise_output_limit: true,
                 take_back: true,
                 expected: Some("5f0c2a9e41d7b3c86e1f0a2b9c4d7e13".into()),
+                workbench: Some(true),
             },
             Call::ReadAgentLimits {
                 machine: machine.clone().into(),
@@ -444,6 +452,7 @@ pub fn fixtures() -> Fixtures {
                 dir: "/home/me/.claude-work".into(),
                 into: false,
                 take_back: false,
+                workbench: None,
             },
             RemoteCall::ChangeAgentLogin {
                 agent: claude,
@@ -452,6 +461,7 @@ pub fn fixtures() -> Fixtures {
                 raise_output_limit: false,
                 take_back: false,
                 expected: None,
+                workbench: Some(false),
             },
             RemoteCall::ReadAgentLimits { agent: codex, dir: "C:/Users/me/.codex".into() },
         ],

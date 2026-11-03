@@ -1364,21 +1364,31 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                 .await
                 .map(|logins| Reply::MachineAgentLogins(Box::new(logins)))
         }
-        Call::PreviewAgentChange { machine, agent, dir, into, take_back } => {
+        Call::PreviewAgentChange { machine, agent, dir, into, take_back, workbench } => {
             users_voice(node, peer)?;
             crate::managed::refuse(node)?;
 
-            crate::logins::remote::preview(node, machine, agent, dir, into, take_back)
+            crate::logins::remote::preview(node, machine, agent, dir, into, take_back, workbench)
                 .await
                 .map(|preview| Reply::AgentChangePreview(Box::new(preview)))
         }
-        Call::ChangeAgentLogin { machine, agent, dir, into, raise_output_limit, take_back, expected } => {
+        Call::ChangeAgentLogin { machine, agent, dir, into, raise_output_limit, take_back, expected, workbench } => {
             users_voice(node, peer)?;
             crate::managed::refuse(node)?;
 
-            crate::logins::remote::change(node, machine, agent, dir, into, raise_output_limit, take_back, expected)
-                .await
-                .map(|change| Reply::AgentLoginChanged(Box::new(change)))
+            crate::logins::remote::change(
+                node,
+                machine,
+                agent,
+                dir,
+                into,
+                raise_output_limit,
+                take_back,
+                expected,
+                workbench,
+            )
+            .await
+            .map(|change| Reply::AgentLoginChanged(Box::new(change)))
         }
         Call::ReadAgentLimits { machine, agent, dir } => {
             users_voice(node, peer)?;

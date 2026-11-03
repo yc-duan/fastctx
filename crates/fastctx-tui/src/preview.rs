@@ -364,6 +364,7 @@ fn agents(now: Timestamp) -> fastctx_types::agents::AgentsReply {
         checked_at: now,
         elapsed_ms: 900,
         agents: vec![codex, claude, work, personal],
+        by_login: true,
     }
 }
 

@@ -77,9 +77,13 @@ export interface AgentLoginsOptions {
   /** The tab shown changed: the address follows. */
   tabbed(tab: AgentTab, agent: Agent): void;
   when(at: Date, now: Date): string;
-  /** Whether this device's workbench is on: the limits and the usage
-   *  belong to it, and without it they are neither read nor shown. */
+  /** Whether the account's workbench is on: on a node that keeps it by
+   *  account, the limits and the usage belong to it, and without it they
+   *  are neither read nor shown; a node that keeps it by login says it of
+   *  each login (`Login.workbench`). */
   workbench: Signal<boolean>;
+  /** The workbench was opened or closed in a login. */
+  benched(open: boolean): void;
   read(machine: string | null): Promise<WorldLogins>;
   scan(machine: string, stop: boolean): Promise<MachineLogins>;
   add(machine: string, agent: Agent, dir: string): Promise<MachineLogins>;
@@ -89,9 +93,10 @@ export interface AgentLoginsOptions {
   /** A machine's folders, walked by its node, where its picker is out of
    *  reach. */
   folders(machine: string, path: string | null): Promise<Folders>;
-  preview(machine: string, agent: Agent, dir: string, into: boolean, takeBack: boolean): Promise<ChangePreview>;
-  /** `expected`: the fingerprint of the change the user was shown. */
-  change(machine: string, agent: Agent, dir: string, into: boolean, raise: boolean, takeBack: boolean, expected?: string): Promise<LoginChange>;
+  preview(machine: string, agent: Agent, dir: string, into: boolean, takeBack: boolean, workbench?: boolean): Promise<ChangePreview>;
+  /** `expected`: the fingerprint of the change the user was shown;
+   *  `workbench`: the workbench opened or closed in the login with it. */
+  change(machine: string, agent: Agent, dir: string, into: boolean, raise: boolean, takeBack: boolean, expected?: string, workbench?: boolean): Promise<LoginChange>;
   limits(machine: string, agent: Agent, dir: string): Promise<MachineLogins>;
   /** Codex only: turns naming new conversations in a login on or off. */
   setTitle(machine: string, agent: Agent, dir: string, on: boolean): Promise<MachineLogins>;
@@ -178,8 +183,8 @@ export class AgentLoginsPage implements Page {
       add: (machine, agent, dir) => options.add(as(machine), agent, dir),
       folder: (machine, dir, change) => options.folder(as(machine), dir, change),
       folders: (machine, path) => options.folders(as(machine), path),
-      preview: (machine, agent, dir, into, takeBack) => options.preview(as(machine), agent, dir, into, takeBack),
-      change: (machine, agent, dir, into, raise, takeBack, expected) => options.change(as(machine), agent, dir, into, raise, takeBack, expected),
+      preview: (machine, agent, dir, into, takeBack, workbench) => options.preview(as(machine), agent, dir, into, takeBack, workbench),
+      change: (machine, agent, dir, into, raise, takeBack, expected, workbench) => options.change(as(machine), agent, dir, into, raise, takeBack, expected, workbench),
       limits: (machine, agent, dir) => options.limits(as(machine), agent, dir),
       setTitle: (machine, agent, dir, on) => options.setTitle(as(machine), agent, dir, on),
       usageOf: (machine, agent, dir) => options.usageOf(as(machine), agent, dir),
@@ -209,8 +214,9 @@ export class AgentLoginsPage implements Page {
     });
     this.assistSheet = new AssistSheet(options.access);
     this.sheet = new AgentChangeSheet(options.changeWords, {
-      preview: (target) => this.calls.preview(target.machine, this.agent, target.dir, target.into, !!target.takeBack),
-      change: (target, raise, expected) => this.calls.change(target.machine, this.agent, target.dir, target.into, raise, !!target.takeBack, expected),
+      preview: (target) => this.calls.preview(target.machine, this.agent, target.dir, target.into, !!target.takeBack, target.workbench),
+      change: (target, raise, expected) => this.calls.change(target.machine, this.agent, target.dir, target.into, raise, !!target.takeBack, expected, target.workbench),
+      benched: (open) => options.benched(open),
       progress: async (target) => {
         const record = await this.calls.read(target.machine);
         const machine = record.machines.find((one) => one.kind === "answered" && one.logins.machine === target.machine);
@@ -377,10 +383,10 @@ export class AgentLoginsPage implements Page {
    *  read for a while; each row fills in as its own comes. */
   private async readUsage(): Promise<void> {
     const record = this.record;
-    if (!record || !this.options.workbench.peek()) return;
+    if (!record) return;
     const agent = this.agent;
     await Promise.allSettled(
-      record[agent].listed.map(async (login) => {
+      record[agent].listed.filter((login) => this.benched(record, login)).map(async (login) => {
         const key = reportKey(record.machine, agent, login.dir);
         const kept = keptReport(key);
         if (kept && Date.now() - kept.at < USAGE_STALE_MS) return;
@@ -512,9 +518,9 @@ export class AgentLoginsPage implements Page {
     const scanning = scan?.usual.state === "running";
     // On the workbench a listed login is a row of its own with its usage;
     // otherwise every login is a line on one paper, as on the overview.
-    const workbench = this.options.workbench.peek();
-    const listed = agent.listed.map((login) => (workbench ? this.row(machine, login, agent, world, now) : this.line(machine, login, agent, world, true))).join("");
-    const candidates = machine.mine ? agent.candidates.map((login) => this.line(machine, login, agent, world, false)).join("") : "";
+    const rows = agent.listed.filter((login) => this.benched(record, login)).map((login) => this.row(machine, login, agent, world, now)).join("");
+    const listed = agent.listed.filter((login) => !this.benched(record, login)).map((login) => this.line(machine, record, login, agent, world, true)).join("");
+    const candidates = machine.mine ? agent.candidates.map((login) => this.line(machine, record, login, agent, world, false)).join("") : "";
     const folders = record.folders ?? [];
     const searched = machine.mine
       ? foldersSection({
@@ -534,12 +540,14 @@ export class AgentLoginsPage implements Page {
       : "";
     const none = machine.hold === "assist" ? words.noneForYou(this.agent) : words.noneFound;
     const empty = !agent.listed.length && !candidates && !(machine.mine && foundOf(folders, this.agent)) && !scanning ? `<p class="feature-quiet logins-none">${escape(none)}</p>` : "";
-    const lines = workbench
-      ? `${listed ? `<ul class="logins-rows" aria-label="${escape(words.listed)}">${listed}</ul>` : ""}${candidates ? `<section class="logins-card"><h2 class="logins-card-title">${escape(words.candidates)}</h2><ul class="logins-lines ruled">${candidates}</ul></section>` : ""}`
-      : listed || candidates
-        ? `<section class="logins-card"><ul class="logins-lines" aria-label="${escape(words.listed)}">${listed}${candidates}</ul></section>`
-        : "";
-    return `<div class="logins-paper${workbench ? " wide" : ""}">${note ? `<p class="feature-note" title="${escape(note.detail)}">${escape(note.text)}</p>` : ""}${lines}${empty}${searched}</div>`;
+    const lines = `${rows ? `<ul class="logins-rows" aria-label="${escape(words.listed)}">${rows}</ul>` : ""}${listed || candidates ? `<section class="logins-card"><ul class="logins-lines"${rows ? "" : ` aria-label="${escape(words.listed)}"`}>${listed}${candidates}</ul></section>` : ""}`;
+    return `<div class="logins-paper${rows ? " wide" : ""}">${note ? `<p class="feature-note" title="${escape(note.detail)}">${escape(note.text)}</p>` : ""}${lines}${empty}${searched}</div>`;
+  }
+
+  /** Whether the workbench is open in a listed login: as its node keeps it
+   *  by login, or as an earlier node keeps it, by account. */
+  private benched(record: MachineLogins, login: Login): boolean {
+    return record.by_login ? !!login.workbench : this.options.workbench.peek();
   }
 
   /** The agent's programs on the machine, as one quiet chip with the list
@@ -554,7 +562,7 @@ export class AgentLoginsPage implements Page {
   /** A login as a line (`login-line.ts`): one the World lists with its
    *  menu, and the way to update it where it asks; one found with the way to
    *  connect it. */
-  private line(machine: Shown, login: Login, agent: AgentLogins, world: WorldNow | null, listed: boolean): string {
+  private line(machine: Shown, record: MachineLogins, login: Login, agent: AgentLogins, world: WorldNow | null, listed: boolean): string {
     const { words } = this.options;
     const identity = login.identity?.who.kind === "known" ? login.identity.who.value : null;
     const changing = !!login.change && !login.change.end;
@@ -575,11 +583,17 @@ export class AgentLoginsPage implements Page {
     const at = `data-machine="${escape(machine.name)}" data-dir="${escape(login.dir)}"`;
     const renew = listed && !changing && (!!login.drift || login.integration === "old");
     const standing: Standing = changing ? "busy" : !listed ? "found" : renew ? "renew" : "in";
+    // The workbench opens on a connected Codex or Claude Code login of a
+    // node that keeps it by login.
+    const bench =
+      listed && !renew && machine.mine && record.by_login && (this.agent === "codex" || this.agent === "claude")
+        ? `<button class="text-button ll-quiet" type="button" data-act="bench-open" ${at}>${escape(words.bench)}</button>`
+        : "";
     const menu = `<button class="icon-button logins-more" type="button" data-act="menu" ${at} data-menu-key="${escape(JSON.stringify([machine.name, login.dir]))}" aria-haspopup="menu" aria-label="${escape(words.more)}" title="${escape(words.more)}">${glyph("more", 16)}</button>`;
     const act = changing
       ? `<span class="ll-busy">${escape(login.change!.into ? words.applying : words.removing)}</span>`
       : listed
-        ? `${renew && login.drift ? `<button class="text-button ll-go" type="button" data-act="drift" ${at} title="${escape(login.drift.kind === "changed" ? `${login.drift.location}\n${login.drift.reason}` : words.driftAsks)}">${escape(words.renew)}</button>` : ""}${menu}`
+        ? `${renew && login.drift ? `<button class="text-button ll-go" type="button" data-act="drift" ${at} title="${escape(login.drift.kind === "changed" ? `${login.drift.location}\n${login.drift.reason}` : words.driftAsks)}">${escape(words.renew)}</button>` : ""}${bench}${menu}`
         : `<button class="text-button ll-go" type="button" data-act="apply" ${at}>${escape(words.apply)}</button>`;
     const note = listed ? this.notes.get(`s:${machine.name}:${login.dir}`) : undefined;
     return loginLine({
@@ -713,6 +727,11 @@ export class AgentLoginsPage implements Page {
         this.sheet.open(target);
         return;
       }
+      case "bench-open": {
+        const target = this.target(machine, dir, true);
+        if (target) this.sheet.open({ ...target, workbench: true });
+        return;
+      }
       // A listed login whose tools wait for the user: put in again, what
       // they changed of them taken back where that is what holds them.
       case "drift": {
@@ -759,7 +778,9 @@ export class AgentLoginsPage implements Page {
     // 一个中枢，几个账号).
     if (owner && !isVisitor(world, owner)) entries.push({ act: "assist", icon: "person", label: words.assist });
     // The windows of a login that only assists the reader are its owner's.
-    if (this.options.workbench.peek() && found.machine.hold !== "assist") entries.push({ act: "limits", icon: "reread", label: words.rereadLimits });
+    const record = found.machine.heard.kind === "answered" ? found.machine.heard.logins : null;
+    const benched = !!record && this.benched(record, login);
+    if (benched && found.machine.hold !== "assist") entries.push({ act: "limits", icon: "reread", label: words.rereadLimits });
     entries.push({ act: "copy", icon: "folder", label: words.copyDir });
     // Codex names its own conversations when the login's owner asks it to;
     // Claude Code does its own. Only a login the World's tools are in hosts
@@ -776,6 +797,7 @@ export class AgentLoginsPage implements Page {
         ...plans.map((plan) => ({ act: `plan:${plan ?? ""}`, label: plan ? planName(plan) : words.planNone, checked: current === plan })),
       );
     }
+    if (benched && record?.by_login && found.machine.mine) entries.push({ rule: true }, { act: "bench-close", icon: "pause", label: words.benchClose });
     if (found.machine.mine) entries.push({ rule: true }, { act: "remove", icon: "archive", label: words.remove, danger: true });
     this.menu.open(anchor, identity?.email ?? dirName(login.dir), entries, (act) => {
       if (act.startsWith("plan:")) void this.menuAct("plan", act.slice("plan:".length), machineName, dir);
@@ -792,6 +814,11 @@ export class AgentLoginsPage implements Page {
       case "remove": {
         const target = this.target(machineName, dir, false);
         if (target) this.sheet.open(target);
+        return;
+      }
+      case "bench-close": {
+        const target = this.target(machineName, dir, true);
+        if (target) this.sheet.open({ ...target, workbench: false });
         return;
       }
       case "assist":

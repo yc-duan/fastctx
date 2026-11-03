@@ -63,12 +63,16 @@ export interface AgentsOverviewOptions {
   workbench: Signal<boolean>;
   read(machine: string | null): Promise<WorldLogins>;
   scan(machine: string, stop: boolean): Promise<MachineLogins>;
-  preview(machine: string, agent: Agent, dir: string, into: boolean, takeBack: boolean): Promise<ChangePreview>;
-  change(machine: string, agent: Agent, dir: string, into: boolean, raise: boolean, takeBack: boolean, expected?: string): Promise<LoginChange>;
+  preview(machine: string, agent: Agent, dir: string, into: boolean, takeBack: boolean, workbench?: boolean): Promise<ChangePreview>;
+  change(machine: string, agent: Agent, dir: string, into: boolean, raise: boolean, takeBack: boolean, expected?: string, workbench?: boolean): Promise<LoginChange>;
   /** The machine shown changed: the address follows. */
   showing(machine: string): void;
-  /** Opens the workbench on a connected login. */
+  /** Opens the workbench on a machine whose node keeps it by account. */
   workbenchOn(machine: string, agent: Agent, dir: string): void;
+  /** The workbench was opened or closed in a login. */
+  benched(open: boolean): void;
+  /** Starts a conversation with a login the workbench is open in. */
+  talkOn(machine: string, agent: Agent, dir: string): void;
 }
 
 export class AgentsOverview implements Page {
@@ -99,8 +103,8 @@ export class AgentsOverview implements Page {
     this.body = this.element.querySelector<HTMLElement>(".ao-body")!;
     this.pick = this.element.querySelector<HTMLElement>(".agents-pick-place")!;
     this.sheet = new AgentChangeSheet(options.changeWords, {
-      preview: (target) => options.preview(target.machine, target.agent, target.dir, target.into, !!target.takeBack),
-      change: (target, raise, expected) => options.change(target.machine, target.agent, target.dir, target.into, raise, !!target.takeBack, expected),
+      preview: (target) => options.preview(target.machine, target.agent, target.dir, target.into, !!target.takeBack, target.workbench),
+      change: (target, raise, expected) => options.change(target.machine, target.agent, target.dir, target.into, raise, !!target.takeBack, expected, target.workbench),
       progress: async (target) => {
         const record = await options.read(target.machine);
         const machine = record.machines.find((one) => one.kind === "answered" && one.logins.machine === target.machine);
@@ -109,6 +113,7 @@ export class AgentsOverview implements Page {
         return agent ? ([...agent.listed, ...agent.candidates].find((login) => login.dir === target.dir)?.change ?? null) : null;
       },
       ended: () => void this.read(),
+      benched: (open) => options.benched(open),
     });
     this.pick.addEventListener("click", (event) => {
       const target = event.target as HTMLElement;
@@ -281,7 +286,7 @@ export class AgentsOverview implements Page {
     const { logins, words } = this.options;
     const side = sideOf(record, agent) ?? { programs: [], listed: [], candidates: [], elsewhere: [] };
     const programs = side.programs.map((program) => programLine(program, logins)).join("\n\n");
-    const lines = [...side.listed, ...(this.mine(machine) ? side.candidates : [])].map((login) => this.line(machine, side, agent, login)).join("");
+    const lines = [...side.listed, ...(this.mine(machine) ? side.candidates : [])].map((login) => this.line(machine, side, agent, login, !!record.by_login)).join("");
     // Only Codex and Claude Code have a page of their own, for their
     // folders, scans and each login's menu.
     const manage = isHost(agent)
@@ -299,7 +304,7 @@ export class AgentsOverview implements Page {
 
   /** A login's line: whether it is connected, drawn; who it is; its plan
    *  and what to know of it; and what can be done to it. */
-  private line(machine: Pickable, side: AgentLogins, agent: Agent, login: Login): string {
+  private line(machine: Pickable, side: AgentLogins, agent: Agent, login: Login, byLogin: boolean): string {
     const { logins, words } = this.options;
     const listed = side.listed.includes(login);
     const busy = !!login.change && !login.change.end;
@@ -312,6 +317,7 @@ export class AgentsOverview implements Page {
       identity?.method === "oauth_token" ? { text: logins.token, said: logins.tokenSaid } : null,
       identity && !identity.logged_in ? { text: logins.loggedOut } : null,
       old ? { text: logins.tooOld, said: logins.tooOldSaid(old, CLAUDE_OLDEST), warn: true } : null,
+      byLogin && login.workbench ? { text: words.workbench } : null,
     ].filter((tag): tag is LineTag => !!tag);
     const at = `data-machine="${escape(machine.name)}" data-agent="${escape(agent)}" data-dir="${escape(login.dir)}"`;
     const act =
@@ -323,9 +329,11 @@ export class AgentsOverview implements Page {
             ? `<button class="text-button ll-go" type="button" data-ao="connect" ${at}>${escape(logins.apply)}</button>`
             : standing === "renew"
               ? `<button class="text-button ll-go" type="button" data-ao="renew" ${at} title="${escape(login.drift?.kind === "changed" ? login.drift.reason : logins.driftAsks)}">${escape(words.renew)}</button>`
-              : isHost(agent)
-                ? `<button class="text-button ll-quiet" type="button" data-ao="workbench" ${at} title="${escape(words.workbenchSaid)}">${escape(words.workbench)}</button>`
-                : "";
+              : !isHost(agent)
+                ? ""
+                : byLogin && login.workbench
+                  ? `<button class="text-button ll-quiet" type="button" data-ao="talk" ${at}>${escape(words.talk)}</button>`
+                  : `<button class="text-button ll-quiet" type="button" data-ao="workbench" ${at} title="${escape(words.workbenchSaid)}">${escape(words.workbench)}</button>`;
     return loginLine({ standing, who: identity?.email ?? dirName(login.dir), whoSaid: login.dir, tags, act });
   }
 
@@ -424,8 +432,18 @@ export class AgentsOverview implements Page {
         if (target) this.sheet.open(target);
         return;
       }
-      case "workbench":
-        if (agent) this.options.workbenchOn(machine.name, agent, dir);
+      case "workbench": {
+        if (!agent) return;
+        // A node keeping the workbench by login opens it there, after its
+        // window; an earlier one keeps it by account.
+        const record = this.record?.machine === machine.name ? this.record : null;
+        const target = record?.by_login ? this.target(machine, agent, dir, true) : null;
+        if (target) this.sheet.open({ ...target, workbench: true });
+        else this.options.workbenchOn(machine.name, agent, dir);
+        return;
+      }
+      case "talk":
+        if (agent) this.options.talkOn(machine.name, agent, dir);
         return;
     }
   }

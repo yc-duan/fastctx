@@ -54,10 +54,10 @@ impl WakeFailure {
 }
 
 fn check_now(node: &Node, id: &ResidentId, about: &fastctx_types::residents::About) -> Result<(), WakeFailure> {
-    // A conversation the World holds is not driven while its account is in
-    // Connect (`world-layers.md`): what comes for it waits.
-    if !crate::layers::drives(node, about) {
-        return Err(Failure::host_unavailable(fastctx_types::layers::CONNECT_ONLY).into());
+    // A conversation the World holds is not driven while the workbench is
+    // closed in its login (`world-layers.md`): what comes for it waits.
+    if !crate::logins::workbench::drives(node, about) {
+        return Err(Failure::host_unavailable(crate::logins::workbench::CLOSED).into());
     }
     crate::homes::available(node, about)?;
     crate::assists::check_turn(node, id, about)?;

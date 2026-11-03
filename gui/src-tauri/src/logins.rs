@@ -79,10 +79,18 @@ pub(crate) async fn preview_agent_change(
     dir: PathBuf,
     into: bool,
     take_back: Option<bool>,
+    workbench: Option<bool>,
 ) -> Result<ChangePreview, String> {
     shell
         .world()
-        .preview_agent_change(machine(machine_name)?, agent(agent_name)?, dir, into, take_back.unwrap_or(false))
+        .preview_agent_change(
+            machine(machine_name)?,
+            agent(agent_name)?,
+            dir,
+            into,
+            take_back.unwrap_or(false),
+            workbench,
+        )
         .await
         .map_err(|error| error.to_string())
 }
@@ -101,6 +109,7 @@ pub(crate) async fn change_agent_login(
     raise_output_limit: bool,
     take_back: Option<bool>,
     expected: Option<String>,
+    workbench: Option<bool>,
 ) -> Result<LoginChange, String> {
     shell
         .world()
@@ -112,6 +121,7 @@ pub(crate) async fn change_agent_login(
             raise_output_limit,
             take_back.unwrap_or(false),
             expected,
+            workbench,
         )
         .await
         .map_err(|error| error.to_string())

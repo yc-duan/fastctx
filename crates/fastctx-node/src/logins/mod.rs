@@ -26,6 +26,7 @@ pub(crate) mod remote;
 pub(crate) mod scan;
 mod sign_in;
 pub(crate) mod watch;
+pub(crate) mod workbench;
 
 use fastctx_types::access::Written;
 use std::collections::HashSet;
@@ -65,6 +66,8 @@ pub(crate) struct Logins {
     /// Asking again the logins whose sign-in changed, one round at a time
     /// (`sign_in`).
     asking: crate::ranked::LoginAsking,
+    /// The logins the workbench is open in, as last read (`workbench`).
+    workbench: Mutex<workbench::Open>,
 }
 
 /// The agents that keep logins.
@@ -181,6 +184,7 @@ fn standing(context: &Context, host: Host, dir: &Path) -> Result<Integration, St
 
 fn assemble(node: &Node) -> Result<MachineLogins, Failure> {
     let context = Context::of(node)?;
+    workbench::seed(node, &context);
     let kept = kept::read(node).map_err(|error| Failure::new(format!("reading the agents' logins: {error}")))?;
     let mut scan = kept.scan.clone();
     // A scan the record says runs, with none running here, was cut short
@@ -199,6 +203,7 @@ fn assemble(node: &Node) -> Result<MachineLogins, Failure> {
         scan,
         codex: AgentLogins::default(),
         claude: AgentLogins::default(),
+        by_login: true,
         others: std::collections::BTreeMap::new(),
         folders: Vec::new(),
     };
@@ -258,6 +263,8 @@ fn assemble(node: &Node) -> Result<MachineLogins, Failure> {
                 models,
                 change,
                 drift: if listed { refresh::of(node, agent, dir) } else { None },
+                workbench: listed
+                    && workbench::is_open(node, &fastctx_types::access::Acting::Here, agent, Some(dir.as_path())),
             };
             if listed {
                 side.listed.push(login);

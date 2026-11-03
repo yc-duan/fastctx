@@ -988,7 +988,6 @@ pub async fn open_here(
     // The login it is born in must be in this machine's agent list, the
     // default one too (`world-agent-logins.md`); the default one is recorded
     // as none, so that it follows the user's environment.
-    crate::layers::may_start(node, &acting)?;
     let mut options = options;
     options.mcp_off = choices.mcp_off;
     let home = {
@@ -997,6 +996,7 @@ pub async fn open_here(
         fastctx_platform::task::blocking(move || crate::homes::listed(&listing, agent.as_str(), chosen.as_deref()))
             .await?
     };
+    crate::logins::workbench::may_start(node, &acting, agent.as_str(), home.as_deref())?;
     let opened = Opened { acting, focus: choices.focus, home, files_on: choices.files_on };
     match agent.as_str() {
         "codex" => {}

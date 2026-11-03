@@ -37,9 +37,5 @@ impl Chosen {
     }
 }
 
-/// Said when the World is asked to start or drive a conversation for an
-/// account in Connect.
-pub const CONNECT_ONLY: &str = "this account uses Fastctx to connect its own agents only; conversations in Fastctx need the workbench, chosen in Settings";
-
 /// Said when an account's hub is too old to keep a layer.
 pub const HUB_TOO_OLD: &str = "the hub is too old to keep the account's layer; update the hub's machine";

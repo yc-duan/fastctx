@@ -37,7 +37,7 @@ pub(crate) fn reply(logins: MachineLogins) -> AgentsReply {
             agents.push(facts(agent, login));
         }
     }
-    AgentsReply { machine: logins.machine, checked_at, elapsed_ms: 0, agents }
+    AgentsReply { machine: logins.machine, checked_at, elapsed_ms: 0, agents, by_login: logins.by_login }
 }
 
 fn facts(agent: &str, login: &Login) -> AgentFacts {
@@ -94,6 +94,7 @@ fn facts(agent: &str, login: &Login) -> AgentFacts {
         },
         timings: Vec::new(),
         drift: login.drift.clone(),
+        workbench: login.workbench,
     }
 }
 

@@ -75,6 +75,9 @@ export interface AgentLoginsWords extends MachinePickWords {
   apply: string;
   more: string;
   remove: string;
+  /** Opening the workbench in a connected login, and closing it. */
+  bench: string;
+  benchClose: string;
   assist: string;
   rereadLimits: string;
   copyDir: string;
@@ -183,6 +186,8 @@ export const zhAgentLogins: AgentLoginsWords = {
   apply: "接入",
   more: "更多",
   remove: "移除",
+  bench: "工作台",
+  benchClose: "关闭工作台",
   assist: "协助…",
   rereadLimits: "重读额度",
   copyDir: "复制目录",
@@ -280,6 +285,8 @@ export const enAgentLogins: AgentLoginsWords = {
   apply: "Hook up",
   more: "More",
   remove: "Remove",
+  bench: "Workbench",
+  benchClose: "Close the workbench",
   assist: "Assist…",
   rereadLimits: "Read limits again",
   copyDir: "Copy directory",

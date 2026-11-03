@@ -107,6 +107,7 @@ pub(super) fn side(
             models: Vec::new(),
             change: change_of(changes, agent, &dir),
             drift: if connected { super::refresh::of(node, agent.name, &dir) } else { None },
+            workbench: false,
             dir,
         };
         if connected {

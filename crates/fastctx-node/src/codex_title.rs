@@ -29,7 +29,10 @@ pub(crate) fn maybe(node: &Arc<Node>, id: &ResidentId, about: &About) {
     if node.residents.now(id).is_some_and(|now| now.title.is_some()) {
         return;
     }
-    if !crate::logins::codex_auto_title(node, about.home.as_deref()) {
+    // Naming asks OpenAI: only with the workbench open in the login.
+    if !crate::logins::codex_auto_title(node, about.home.as_deref())
+        || !crate::logins::workbench::is_open(node, &about.acting, "codex", about.home.as_deref())
+    {
         return;
     }
     {

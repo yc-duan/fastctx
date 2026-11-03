@@ -189,6 +189,8 @@ export interface AgentChangeTarget {
   into: boolean;
   /** What the user changed of the World's tools in it is rewritten. */
   takeBack?: boolean;
+  /** The workbench in it opened (`true`) or closed with the change. */
+  workbench?: boolean;
 }
 
 export interface AgentChangeSeams {
@@ -200,6 +202,8 @@ export interface AgentChangeSeams {
   progress(target: AgentChangeTarget): Promise<LoginChange | null>;
   /** The change ended (done or not): the page reads the record again. */
   ended(): void;
+  /** The workbench was opened or closed in the login. */
+  benched?(open: boolean): void;
 }
 
 interface Asking {
@@ -325,6 +329,7 @@ export class AgentChangeSheet {
     try {
       const change = await this.seams.change(target, raise, told?.fingerprint);
       this.state = { at: "ended", planned, change, problem: change.end?.end === "failed" ? change.end.reason : null, told };
+      if (change.end?.end === "done" && target.workbench !== undefined) this.seams.benched?.(target.workbench);
     } catch (error) {
       this.state = { at: "ended", planned, change: null, problem: detailOf(error), told };
     } finally {
@@ -349,14 +354,16 @@ export class AgentChangeSheet {
     const cards = this.carded();
     const said = words.disclose;
     const title = cards
-      ? (target.into ? said.connect : said.remove)(agentName(target))
+      ? target.workbench !== undefined
+        ? (target.workbench ? said.benchOpen : said.benchClose)(agentName(target))
+        : (target.into ? said.connect : said.remove)(agentName(target))
       : target.into
         ? words.applyTitle(target.who, target.machine)
         : words.removeTitle(target.who, target.machine);
     const what = `<button class="icon-button dc-what" type="button" data-change="dc-what" aria-pressed="${this.about}" aria-label="${escape(said.what)}" title="${escape(said.what)}">${glyph("help", 18)}</button>`;
     const head =
       cards && state.at === "asking"
-        ? `<header class="sheet-head"><h2 class="sheet-title">${escape(title)}</h2><div class="sheet-head-end">${what}<button class="icon-button sheet-close" type="button" aria-label="${escape(words.close)}">${glyph("close", 18)}</button></div></header>`
+        ? `<header class="sheet-head"><h2 class="sheet-title">${escape(title)}</h2><div class="sheet-head-end">${target.workbench === undefined ? what : ""}<button class="icon-button sheet-close" type="button" aria-label="${escape(words.close)}">${glyph("close", 18)}</button></div></header>`
         : this.sheet.head(title, words.close);
     this.sheet.body.innerHTML = `${head}<div class="agent-change">${this.body(target)}</div>`;
     this.drawDetails();
@@ -402,8 +409,8 @@ export class AgentChangeSheet {
     const limit = target.into ? preview.output_limit : undefined;
     const also: Partial<Record<Change, string>> = {};
     if (limit) also.limits = said.raised(limit.current, limit.requested);
-    const notes = [...(target.takeBack ? [said.takeBack] : []), said.sessions(target.agent, agentName(target), target.into)];
-    return `${discloseCards(preview, said, this.unfolded, also)}<ul class="dc-notes">${notes.map((line) => `<li>${escape(line)}</li>`).join("")}</ul>`;
+    const notes = target.workbench !== undefined ? [] : [...(target.takeBack ? [said.takeBack] : []), said.sessions(target.agent, agentName(target), target.into)];
+    return `${discloseCards(preview, said, this.unfolded, also, target.workbench)}${notes.length ? `<ul class="dc-notes">${notes.map((line) => `<li>${escape(line)}</li>`).join("")}</ul>` : ""}`;
   }
 
   /** The window as cards: which login, what connecting is when asked, a
@@ -423,9 +430,9 @@ export class AgentChangeSheet {
       ${state.moved ? `<p class="dc-moved">${escape(said.moved)}</p>` : ""}
       ${middle}
       <div class="dc-foot">
-        <span class="dc-undo">${preview ? escape(target.into ? said.undo : said.undone) : ""}</span>
+        <span class="dc-undo">${preview ? escape(target.workbench !== undefined ? (target.workbench ? said.benchUndo : said.benchUndone) : target.into ? said.undo : said.undone) : ""}</span>
         <button class="text-button" type="button" data-change="cancel">${escape(words.cancel)}</button>
-        <button class="${target.into ? "sheet-go" : "removal-button"}" type="button" data-change="go"${preview ? "" : " disabled"}>${escape(target.into ? said.apply : said.take)}</button>
+        <button class="${target.into ? "sheet-go" : "removal-button"}" type="button" data-change="go"${preview ? "" : " disabled"}>${escape(target.workbench !== undefined ? (target.workbench ? said.benchGo : said.benchStop) : target.into ? said.apply : said.take)}</button>
       </div>
     </div>`;
   }
@@ -447,7 +454,7 @@ export class AgentChangeSheet {
       ${ended?.problem ? `<p class="removal-said removal-wrong" title="${escape(ended.problem)}">${escape(words.failed(ended.problem))}</p>` : ""}
       <div class="dc-foot">
         <ol class="removal-list agent-change-steps dc-steps">${this.steps(state.planned, steps)}</ol>
-        ${done ? `<p class="agent-change-stamp dc-stamp">${stampDrawing()}<span>${escape(target.into ? words.done : words.removedDone)}</span></p>` : ""}
+        ${done ? `<p class="agent-change-stamp dc-stamp">${stampDrawing()}<span>${escape(target.workbench !== undefined ? words.disclose.benchStamp(target.workbench) : target.into ? words.done : words.removedDone)}</span></p>` : ""}
         ${ended ? `<button class="sheet-go" type="button" data-change="close">${escape(words.close)}</button>` : ""}
       </div>
     </div>`;

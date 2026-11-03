@@ -67,6 +67,8 @@ export interface ProblemWords {
   viewPending: string;
   /** Something busy with it for a moment. */
   busyNow: string;
+  /** A conversation asked of a login the workbench is not open in. */
+  workbenchClosed: string;
 }
 
 export const zhProblems: ProblemWords = {
@@ -112,6 +114,7 @@ export const zhProblems: ProblemWords = {
   sentElsewhere: "草稿已在另一台设备上发出",
   viewPending: "还在等中枢的确认，稍后再试",
   busyNow: "正忙，稍后再试",
+  workbenchClosed: "这个登录没有打开工作台",
 };
 
 export const enProblems: ProblemWords = {
@@ -157,6 +160,7 @@ export const enProblems: ProblemWords = {
   sentElsewhere: "The draft was sent from another device",
   viewPending: "Still waiting for the hub. Try again in a moment",
   busyNow: "Busy right now. Try again in a moment",
+  workbenchClosed: "The workbench isn't open in this login",
 };
 
 const KNOWN: [RegExp, keyof ProblemWords][] = [
@@ -169,6 +173,7 @@ const KNOWN: [RegExp, keyof ProblemWords][] = [
   [/unavailable in an assisted conversation/, "assistedCommand"],
   [/did not say a version the World can read/, "claudeVersionUnknown"],
   [/Claude Code is not installed on/, "claudeMissing"],
+  [/the workbench is not open in this login/, "workbenchClosed"],
   [/Codex is not installed on this machine/, "codexMissing"],
   [/fork is incomplete|Claude fork incomplete|stopped before finishing this fork/, "forkIncomplete"],
   [/waiting for Claude to finish copying the fork/, "forkPreparing"],

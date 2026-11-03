@@ -199,7 +199,9 @@ const markOf = (agent: string) => (agent === "claude" ? "claude" : "codex");
 const coarse = () => matchMedia("(pointer: coarse)").matches;
 
 /** What is known of the agents on one machine. */
-type Asked = { state: "asking" } | { state: "known"; facts: AgentFacts[] } | { state: "unknown"; why: string } | { state: "offline" };
+/** `byLogin`: the machine's node keeps the workbench by login, and only the
+ *  logins it is open in begin conversations there. */
+type Asked = { state: "asking" } | { state: "known"; facts: AgentFacts[]; byLogin: boolean } | { state: "unknown"; why: string } | { state: "offline" };
 
 function remembered(key: string): string | null {
   try {
@@ -596,7 +598,7 @@ export class NewTalk {
       .agents(null)
       .then((world) => {
         for (const answer of world.machines) {
-          if (answer.kind === "answered") this.asked.set(answer.reply.machine, { state: "known", facts: answer.reply.agents });
+          if (answer.kind === "answered") this.asked.set(answer.reply.machine, { state: "known", facts: answer.reply.agents, byLogin: !!answer.reply.by_login });
           else if (answer.kind === "offline") this.asked.set(answer.machine, { state: "offline" });
           else this.asked.set(answer.machine, { state: "unknown", why: answer.reason });
         }
@@ -624,11 +626,14 @@ export class NewTalk {
       const owner = mine ? null : (logins.map((login) => ownerOf(machine, login)).find(Boolean) ?? null);
       const shared = !mine && logins.some((login) => world?.accounts.hubs.some((hub) => hub.hub === login.hub && hub.shares.some((share) => share.machine === machine.name && share.account === login.account)));
       const facts = this.known(machine.name);
+      const asked = this.asked.get(machine.name);
+      const byLogin = asked?.state === "known" && asked.byLogin;
       const options = facts
         ? agentsKnown.flatMap((agent) =>
             homesOf(facts, agent)
-              // The World uses only the logins in a machine's agent list.
-              .filter((home) => installed(home) && listed(home))
+              // The World uses only the logins in a machine's agent list,
+              // and of those only the ones the workbench is open in.
+              .filter((home) => installed(home) && listed(home) && (!byLogin || !!home.workbench))
               .map((home) => this.option(machine.name, machine.written, agent, homeChoice(home), null)),
           )
         : agentsKnown.map((agent) => this.option(machine.name, machine.written, agent, null, null));

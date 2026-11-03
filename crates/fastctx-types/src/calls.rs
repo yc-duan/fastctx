@@ -553,6 +553,10 @@ pub enum Call {
         into: bool,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         take_back: bool,
+        /// The workbench in the login opened (`true`) or closed, the change
+        /// of its own; none leaves it as it is (`logins::Login::workbench`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        workbench: Option<bool>,
     },
     /// Puts the World's tools into a login on `machine`, listing it, or
     /// takes them out, removing it from the list; done by that machine's
@@ -573,6 +577,10 @@ pub enum Call {
         /// is worked out from moved on since.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         expected: Option<String>,
+        /// The workbench in the login opened (`true`) or closed, the change
+        /// of its own; none leaves it as it is (`logins::Login::workbench`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        workbench: Option<bool>,
     },
     /// Reads a login's usage limits afresh on its machine.
     ReadAgentLimits {

@@ -29,6 +29,11 @@ pub struct ApplyArgs {
     /// AGENTS.md or CLAUDE.md; the rest of each file stays as it is.
     #[arg(long)]
     take_back: bool,
+    /// Open the workbench in the login too, by this machine's node: Fastctx
+    /// then starts and drives conversations with it, reads its limits and
+    /// asks its models.
+    #[arg(long)]
+    workbench: bool,
 }
 
 #[derive(Args)]
@@ -37,15 +42,56 @@ pub struct UnapplyArgs {
     homes: homes::Homes,
 }
 
+/// Opens the workbench in each of `homes` by this machine's node, which
+/// writes what it needs there and keeps it open.
+fn open_workbench(
+    homes: &[(&str, std::path::PathBuf)],
+    raise_output_limit: bool,
+    take_back: bool,
+) -> anyhow::Result<()> {
+    use fastctx_types::logins::ChangeEnd;
+    use fastctx_types::{Call, Reply};
+    let (_, machine) = crate::ask::call(Call::AgentLogins { machine: None })?;
+    let machine = fastctx_types::access::Written { name: machine, hub: None };
+    for (agent, dir) in homes {
+        let call = Call::ChangeAgentLogin {
+            machine: machine.clone(),
+            agent: (*agent).parse()?,
+            dir: dir.clone(),
+            into: true,
+            raise_output_limit,
+            take_back,
+            expected: None,
+            workbench: Some(true),
+        };
+        match crate::ask::call(call)?.0 {
+            Reply::AgentLoginChanged(change) => match change.end {
+                Some(ChangeEnd::Done { .. }) => println!("The workbench is open in {}.", shown(dir)),
+                Some(ChangeEnd::Failed { reason, .. }) => bail!("opening the workbench in {}: {reason}", shown(dir)),
+                None => bail!("opening the workbench in {}: the node did not say how it ended", shown(dir)),
+            },
+            other => bail!("opening the workbench in {}: the node answered {other:?}", shown(dir)),
+        }
+    }
+    Ok(())
+}
+
 pub fn apply(args: ApplyArgs) -> anyhow::Result<()> {
     let places = Places::here()?;
     let approval = if args.raise_output_limit { Approval::RaiseOutputLimit } else { Approval::Require };
     let edits = if args.take_back { apply::Edits::TakeBack } else { apply::Edits::Keep };
     let mut errors = Vec::new();
     let mut applied = Hosts { codex: false, claude: false };
+    let mut homes = Vec::new();
     for (places, hosts) in args.homes.places(&places, true)? {
         applied.codex |= hosts.codex;
         applied.claude |= hosts.claude;
+        if hosts.codex {
+            homes.push(("codex", places.codex_home.clone()));
+        }
+        if hosts.claude {
+            homes.push(("claude", places.claude_home.clone()));
+        }
         let report = match apply::apply_reporting(&places, hosts, approval, edits, None) {
             Ok(report) => report,
             Err(apply::Error::Edit(fastctx_install::Error::TokenLimitApproval { location, current, requested })) => {
@@ -71,6 +117,9 @@ pub fn apply(args: ApplyArgs) -> anyhow::Result<()> {
     }
     if !errors.is_empty() {
         bail!("{}", errors.join("\n"));
+    }
+    if args.workbench {
+        open_workbench(&homes, args.raise_output_limit, args.take_back)?;
     }
     // Codex reads its configuration when a session starts. Claude Code
     // rereads its permissions at once, but loads plugins only at the start.

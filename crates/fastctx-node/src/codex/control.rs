@@ -284,7 +284,7 @@ async fn fork(
 ) -> Result<Controlled, Failure> {
     node.residents.active(parent)?;
     let (source, town) = node.residents.about(parent).ok_or_else(|| Failure::new("unknown source resident"))?;
-    crate::layers::may_start(node, &source.acting)?;
+    crate::logins::workbench::may_start(node, &source.acting, source.host.agent.as_str(), source.home.as_deref())?;
     let id = node.residents.new_id(&source.host.agent)?;
     crate::record_migration::born(node, &id);
     let target_place = Arc::new(node.places.using(id.as_str()).await);

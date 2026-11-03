@@ -57,6 +57,10 @@ pub struct MachineLogins {
     pub scan: Option<Scan>,
     pub codex: AgentLogins,
     pub claude: AgentLogins,
+    /// Whether this machine's node keeps the workbench by login
+    /// (`Login::workbench`); an earlier one keeps it by account alone.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub by_login: bool,
     /// The other agents found here, connected through their configuration
     /// alone (`world-layers.md`, 支持尽可能多的智能体), by name.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -155,6 +159,11 @@ pub struct Login {
     /// it writes them (`world-agent-logins.md`, 接入跟着版本走).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub drift: Option<Drift>,
+    /// The workbench is open in it (`world-layers.md`, 工作台：在一个登录上
+    /// 打开): the World starts and drives conversations with it, reads its
+    /// limits and asks its models. Only a listed Codex or Claude Code login.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub workbench: bool,
 }
 
 /// Why the World's tools in a login were not brought up to date by

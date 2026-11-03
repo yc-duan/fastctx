@@ -321,6 +321,10 @@ pub enum RemoteCall {
         into: bool,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         take_back: bool,
+        /// The workbench in the login opened (`true`) or closed, the change
+        /// of its own; none leaves it as it is (`logins::Login::workbench`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        workbench: Option<bool>,
     },
     /// Put the World's tools into a login there, or take them out; only for
     /// the machine's owner.
@@ -337,6 +341,10 @@ pub enum RemoteCall {
         /// is worked out from moved on since.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         expected: Option<String>,
+        /// The workbench in the login opened (`true`) or closed, the change
+        /// of its own; none leaves it as it is (`logins::Login::workbench`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        workbench: Option<bool>,
     },
     /// Read a login's limits there afresh.
     ReadAgentLimits {

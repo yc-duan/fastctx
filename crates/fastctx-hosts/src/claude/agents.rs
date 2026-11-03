@@ -30,6 +30,7 @@ pub fn probe(cwd: &Path, env: &[(OsString, OsString)], path: Option<&OsString>) 
         unattended: Fact::unavailable("the node supplies the user's consent"),
         timings,
         drift: None,
+        workbench: false,
     };
     if let Some(program) = program {
         // These official commands are independent and create no sessions.

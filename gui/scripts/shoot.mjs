@@ -147,7 +147,7 @@ for (const session of sessions) {
       const loaded = once("Page.loadEventFired");
       const two = session.endsWith("-2");
       const named = two ? session.slice(0, -2) : session;
-      const shown = named === "strain" || named === "strain-list" || named.startsWith("alerts") || named.startsWith("rollout") ? "machines" : named === "strain-machine" || named === "health" ? "machine" : named.startsWith("patrol") ? "trips" : named.startsWith("invite-") ? "invite" : named === "stop" || named === "program" || named === "read-card" || named === "late" ? "claude" : named === "late-straight" ? "voice" : named === "drawer" || named === "palette" ? "home" : named === "service" || named.startsWith("remove-") ? "settings" : named === "slash" || named === "mention" || named === "find" || named === "attach" || named === "rewind" || named === "usage" ? "codex" : named.startsWith("asks") ? "asks" : named === "new-codex" || named === "new-attach" || named === "new-lent" || named === "new-pick" ? "new" : named === "manage" ? "about" : named === "welcome" || named === "create" || named === "created" ? "login" : named === "share" || named === "relays" ? "machines" : named === "lend" || named.startsWith("ledger") ? "home" : named === "queue" ? "codex" : named.startsWith("page") ? "page" : named.startsWith("panel") && named !== "panel-agent" ? "claude" : named.startsWith("team") || named === "panel-agent" ? "stream" : named.startsWith("repair-") ? "home" : named === "updates-repair" ? "machines" : named === "journal-edit" || named === "journal-versions" ? "journal" : named === "project-write" || named === "project-history" ? "project" : named === "features" || named.startsWith("feature-") || named.startsWith("prefs-") || named.startsWith("activity") || named === "mode" || named === "sidebar-drag" ? "home" : named;
+      const shown = named === "strain" || named === "strain-list" || named.startsWith("alerts") || named.startsWith("rollout") ? "machines" : named === "strain-machine" || named === "health" ? "machine" : named.startsWith("patrol") ? "trips" : named.startsWith("invite-") ? "invite" : named === "stop" || named === "program" || named === "read-card" || named === "late" ? "claude" : named === "late-straight" ? "voice" : named === "drawer" || named === "palette" ? "home" : named === "service" || named.startsWith("remove-") ? "settings" : named === "slash" || named === "mention" || named === "find" || named === "attach" || named === "rewind" || named === "usage" ? "codex" : named.startsWith("asks") ? "asks" : named === "new-codex" || named === "new-attach" || named === "new-lent" || named === "new-pick" ? "new" : named === "manage" ? "about" : named === "welcome" || named === "create" || named === "created" ? "login" : named === "share" || named === "relays" ? "machines" : named === "lend" || named.startsWith("ledger") ? "home" : named === "queue" ? "codex" : named.startsWith("page") ? "page" : named.startsWith("panel") && named !== "panel-agent" ? "claude" : named.startsWith("team") || named === "panel-agent" ? "stream" : named.startsWith("repair-") ? "home" : named === "updates-repair" ? "machines" : named === "journal-edit" || named === "journal-versions" ? "journal" : named === "project-write" || named === "project-history" ? "project" : named.startsWith("feature-") || named.startsWith("prefs-") || named.startsWith("activity") || named === "sidebar-drag" ? "home" : named;
       // `welcome` and `create` are a computer's first open, in no World yet.
       const alone = named === "welcome" || named === "create" || named === "created";
       const ask = (named.startsWith("strain") ? `&strain${named === "strain-machine" ? "&m=server" : ""}` : "") + (named === "alerts-none" ? "&troubles=0" : "") + (named === "health" ? "&health=strained" : "") + (named === "rollout" || named === "rollout-page" ? "&rollout=stopped" : "") + (session.startsWith("asks-") ? `&ask=${session.slice(5)}` : "") + (named === "late" || named === "late-straight" ? "&slow=200,6000,999999&late=1500" : "") + (two ? "&accounts=2" : "") + (alone ? "&accounts=0" : "") + (named.startsWith("team") || named === "panel-agent" ? "&start=agents" : "") + (named.startsWith("repair-") ? `&repair=${named === "repair-broken" ? "broken" : "failed"}` : "") + (named.startsWith("panel-goal-") ? `&goal=${named.slice("panel-goal-".length)}` : "") + (named.startsWith("panel-goalpage-") ? `&goal=${named.slice("panel-goalpage-".length).replace(/-typed$/, "")}` : "") + (named.startsWith("panel-plan-") ? `&plan=${named.slice("panel-plan-".length)}` : "");
@@ -186,11 +186,10 @@ for (const session of sessions) {
           })`,
         });
       }
-      // `features` is the features' cards; `feature-memory` and the like one
-      // feature's page.
-      // `prefs-claude` and `prefs-codex` are an agent's preferences.
-      if (named === "features" || named.startsWith("feature-") || named.startsWith("prefs-")) {
-        const where = named === "features" ? "#/features" : named.startsWith("prefs-") ? `#/agents/prefs/${named.slice("prefs-".length)}` : `#/feature/${named.slice("feature-".length)}`;
+      // `feature-memory` and the like are one feature's page; `prefs-claude`
+      // and `prefs-codex` an agent's preferences.
+      if (named.startsWith("feature-") || named.startsWith("prefs-")) {
+        const where = named.startsWith("prefs-") ? `#/agents/prefs/${named.slice("prefs-".length)}` : `#/feature/${named.slice("feature-".length)}`;
         await send("Runtime.evaluate", { awaitPromise: true, expression: `new Promise((r) => { location.hash = ${JSON.stringify(where)}; setTimeout(r, 2600); })` });
       }
       // `sidebar-drag` is a conversation being dragged over the sidebar's
@@ -209,12 +208,10 @@ for (const session of sessions) {
           }, 900))`,
         });
       }
-      // `activity-<view>` is one view of the activity page; `mode` the page
-      // that chooses Connect or the workbench (`--query layer=connect` for
-      // Connect, nothing for an account that has not chosen).
-      if (named.startsWith("activity") || named === "mode") {
+      // `activity-<view>` is one view of the activity page.
+      if (named.startsWith("activity")) {
         const view = named.startsWith("activity-") ? named.slice("activity-".length) : null;
-        const where = named === "mode" ? "#/mode" : "#/activity";
+        const where = "#/activity";
         const keep = view ? `localStorage.setItem("activity.view", ${JSON.stringify(view)});` : "";
         await send("Runtime.evaluate", { awaitPromise: true, expression: `new Promise((r) => { ${keep} location.hash = ${JSON.stringify(where)}; setTimeout(r, 2400); })` });
       }
@@ -516,6 +513,14 @@ for (const session of sessions) {
       if (session.startsWith("agents-")) {
         // An agent's own page, as the overview's 「管理」 opens it.
         await send("Runtime.evaluate", { awaitPromise: true, expression: `new Promise(r => { location.hash = '#/agents/${session.slice("agents-".length)}'; setTimeout(r, 1200); })` });
+      }
+      if (session === "bench-open" || session === "bench-close") {
+        // The workbench opened in a connected login from the overview's line,
+        // or closed from the login's 「⋯」 on its agent's page.
+        const open = session === "bench-open"
+          ? "new Promise(r => { location.hash = '#/agents'; setTimeout(r, 900); }).then(() => { document.querySelector('[data-ao=workbench]')?.click(); return new Promise(r => setTimeout(r, 900)); })"
+          : "new Promise(r => { location.hash = '#/agents/codex'; setTimeout(r, 900); }).then(() => { document.querySelector('.logins-row .logins-more')?.click(); return new Promise(r => setTimeout(r, 300)); }).then(() => { [...document.querySelectorAll('[role=menuitem]')].find((b) => /关闭工作台|Close the workbench/.test(b.textContent))?.click(); return new Promise(r => setTimeout(r, 900)); })";
+        await send("Runtime.evaluate", { awaitPromise: true, expression: open });
       }
       if (session.startsWith("connect-")) {
         // The window before connecting an agent: Claude Code's candidate on
