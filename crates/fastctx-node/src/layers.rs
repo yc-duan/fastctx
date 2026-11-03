@@ -23,34 +23,24 @@ fn local(node: &Node) -> Chosen {
     fastctx_net::link::state::read_or(&local_path(node), Chosen::default()).unwrap_or_default()
 }
 
-/// The layer chosen, changed to `layer` when given: the account's, or this
-/// computer's own while it is in no network.
+/// The layer chosen: the account's, or this computer's own while it is in
+/// no network. Only an app from before the workbench opened in each login
+/// asks to change it, which this node would not follow (`crate::logins::
+/// workbench`): it is refused, rather than answered as done.
 pub(crate) async fn call(
     node: &Arc<Node>,
     hub: Option<HubName>,
     account: Option<AccountName>,
     layer: Option<Layer>,
 ) -> Result<Chosen, Failure> {
+    if layer.is_some() {
+        return Err(Failure::refused(fastctx_types::layers::MOVED));
+    }
     if node.links().is_empty() && hub.is_none() && account.is_none() {
-        let _writing = node.writing.lock().await;
-        let mut chosen = local(node);
-        if let Some(layer) = layer.filter(|layer| chosen.layer != Some(*layer)) {
-            chosen.layer = Some(layer);
-            fastctx_net::link::state::write(&local_path(node), &chosen)
-                .map_err(|error| Failure::new(error.to_string()))?;
-            changed(node);
-        }
-        return Ok(chosen);
+        return Ok(local(node));
     }
     let (link, account) = crate::profile::scope(node, &Caller::User, hub.as_ref(), account.as_ref())?;
-    match layer {
-        Some(layer) => {
-            let chosen = link.set_layer(&account, layer).await.map_err(Failure::new)?;
-            changed(node);
-            Ok(chosen)
-        }
-        None => link.layer(&account).map_err(Failure::new),
-    }
+    link.layer(&account).map_err(Failure::new)
 }
 
 /// The layer for whom `acting` works for: the workbench where any of its
@@ -136,22 +126,4 @@ pub(crate) fn bring_in(node: &Arc<Node>, resident: &ResidentId) -> Result<(), Fa
     node.residents.set_native_resumed(&node.world, resident).map_err(|error| Failure::new(error.to_string()))?;
     node.shown_changed();
     Ok(())
-}
-
-/// The layer changed here: interfaces read it again, and what waited for
-/// the workbench is tried at once. On the workbench each login is asked
-/// again, its models too.
-fn changed(node: &Arc<Node>) {
-    node.shown_changed();
-    for held in node.residents.everyone().filter(|held| held.about.world_managed()) {
-        crate::lifecycle::retry::changed(node, &held.id);
-    }
-    if of(node, &Acting::Here) == Layer::Workbench {
-        let node = node.clone();
-        fastctx_platform::task::spawn(async move {
-            if let Err(failure) = crate::logins::scan::scan(&node, false).await {
-                node.log.line(format_args!("asking the logins again for the workbench: {}", failure.message));
-            }
-        });
-    }
 }

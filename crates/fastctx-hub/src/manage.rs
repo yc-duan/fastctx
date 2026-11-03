@@ -280,6 +280,14 @@ fn apply(
             Ok(Told::ProfileWritten { version })
         }
         Change::Layer { version, layer } => {
+            // A phone asking is an app from before the workbench opened in
+            // each login: the machines that open it by login would not
+            // follow. A machine asking keeps it by account still, and
+            // gates by it.
+            if store.book.directory.member(asker).is_some_and(|member| member.kind == fastctx_net::directory::Kind::Phone)
+            {
+                return Err(fastctx_types::layers::MOVED.into());
+            }
             let found = store
                 .book
                 .directory

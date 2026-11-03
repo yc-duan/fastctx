@@ -325,8 +325,6 @@ pub(crate) struct Node {
     /// Held while the projects' ledgers are taken or written, one at a time.
     syncing: ranked::Syncing,
     ledger_updates: ledger::syncing::Updates,
-    /// Held while standalone settings are read and replaced.
-    writing: ranked::Writing,
     /// What went out with an answer of a World tool and is not yet known to
     /// have been taken: no other answer hands it over meanwhile.
     taking: std::sync::Mutex<std::collections::HashSet<(fastctx_types::ResidentId, fastctx_types::NoticeId)>>,
@@ -846,7 +844,6 @@ pub async fn run_prepared(
                 usage: usage::Usage::default(),
                 syncing: Default::default(),
                 ledger_updates: Default::default(),
-                writing: Default::default(),
                 taking: Default::default(),
                 stops: Default::default(),
                 following: Default::default(),

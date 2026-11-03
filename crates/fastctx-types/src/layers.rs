@@ -40,6 +40,12 @@ impl Chosen {
 /// Said when an account's hub is too old to keep a layer.
 pub const HUB_TOO_OLD: &str = "the hub is too old to keep the account's layer; update the hub's machine";
 
+/// Said to an app from before the workbench opened in each login, which
+/// still offers to turn it on or off for a whole account: no machine that
+/// opens it by login would follow the account's choice.
+pub const MOVED: &str =
+    "the workbench opens in each login now, from its switch on the agent's page; update this app to turn it on or off";
+
 /// Whether the workbench's places are shown, from what each computer that
 /// could have it open in a login told (`world-layers.md`): shown while one
 /// has it open, put away once every one told it has not; none while one has

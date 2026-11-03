@@ -125,10 +125,6 @@ machine_lock!(
     Syncing: Mutex = SYNCING, "syncing"
 );
 machine_lock!(
-    /// Writing a project's or a page's records.
-    Writing: Mutex = WRITING, "writing"
-);
-machine_lock!(
     /// Decoding a picture into a thumbnail.
     Decoding: Mutex = DECODING, "decoding"
 );
