@@ -42,7 +42,16 @@ pub(crate) fn begin_with_account(
 }
 
 pub(crate) fn purge(database: &Database, conversation: &str) -> Result<u64> {
-    let tables = database.read_background_now(schema::tables)?;
+    let tables = database.read_background_now(|db| {
+        let purged: bool = db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM node_conversation_deletions WHERE name=?1 AND purged=1)",
+            [conversation],
+            |row| row.get(0),
+        )?;
+        // The durable tombstone fences all conversation rows after the first
+        // purge. Transfer bookkeeping below can still arrive and must be cleared.
+        if purged { Ok(Vec::new()) } else { schema::tables(db) }
+    })?;
     // Children precede parents, so cascading deletes never turn a small batch
     // into an unbounded one, and every deleted value contributes to the count.
     let tables = ordered(database, tables)?;
