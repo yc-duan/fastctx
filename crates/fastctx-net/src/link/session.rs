@@ -410,7 +410,7 @@ async fn connected(
         }
         let _ = tokio::time::timeout(SILENCE, sink.close()).await;
     });
-    let (letter_failed, mut letters_failed) = oneshot::channel::<String>();
+    let (letters_taking, mut letters_stopped) = oneshot::channel::<()>();
     let (outbox_failed, mut outbox_failure) = oneshot::channel::<String>();
     let (frames_failed, mut frames_failure) = oneshot::channel::<String>();
     let (deliveries, delivered) = mpsc::channel(DELIVERIES);
@@ -424,7 +424,7 @@ async fn connected(
         writer,
         fastctx_platform::task::spawn(heartbeat(inner.clone(), up.clone(), pinged.clone(), pulse.clone())),
         inner.on_node(flush(inner.clone(), up.clone(), taken, outbox_failed)),
-        inner.on_node(take_letters(inner.clone(), up.clone(), hub_letters, delivered, view_current, letter_failed)),
+        inner.on_node(take_letters(inner.clone(), up.clone(), hub_letters, delivered, view_current, letters_taking)),
         inner.on_node(handle_frames(inner.clone(), generation, up.clone(), deliveries, arriving, frames_failed)),
     ]);
     let (returned, mut preferred_back) = oneshot::channel::<Upstream>();
@@ -535,7 +535,7 @@ async fn connected(
                 *inner.last_way.lock().expect("never poisoned") = Some(upstream.clone());
                 break Ended::Reroute(format!("{upstream} takes sessions again"));
             },
-            failed = &mut letters_failed => break Ended::Retry(failed.unwrap_or_else(|_| "taking letters stopped".to_string())),
+            _ = &mut letters_stopped => break Ended::Retry("taking letters stopped".to_string()),
             failed = &mut outbox_failure => break Ended::Retry(failed.unwrap_or_else(|_| "sending letters stopped".to_string())),
             failed = &mut frames_failure => break Ended::Retry(failed.unwrap_or_else(|_| "doing what the hub's frames say stopped".to_string())),
             next = stream.next() => next,
@@ -1039,18 +1039,19 @@ async fn flush(inner: Arc<Inner>, up: Outgoing, sent: u64, failed: oneshot::Send
 /// None is taken before this connection's view is current: admitting a
 /// letter needs it, and a letter refused for want of it would be set aside.
 /// Letters wait meanwhile in `delivered`, which holds more than the hub
-/// sends ahead.
+/// sends ahead. The connection ends once this stops, `_taking` with it.
 async fn take_letters(
     inner: Arc<Inner>,
     up: Outgoing,
     hub_letters: u64,
     mut delivered: mpsc::Receiver<(u64, Envelope)>,
     mut view_current: watch::Receiver<bool>,
-    failed: oneshot::Sender<String>,
+    _taking: oneshot::Sender<()>,
 ) {
     if view_current.wait_for(|current| *current).await.is_err() {
         return;
     }
+    let mut unsettled = String::new();
     while let Some(first) = delivered.recv().await {
         let mut run = vec![first];
         while run.len() < TAKEN_AT_ONCE {
@@ -1087,9 +1088,19 @@ async fn take_letters(
         if up.write_first(Up::Ack { seq }).await.is_err() {
             return;
         }
-        if let Err(error) = letters::acknowledge(&inner.dir, hub_letters, seq).await {
-            let _ = failed.send(format!("settling received letters: {error}"));
-            return;
+        // Settling is cumulative: one that fails, say on a disk too slow to
+        // answer in time, is done by the next, and the hub, which has the
+        // acknowledgement, sends none of these again. Ending the connection
+        // for it would take the machine off the network on a slow disk.
+        match letters::acknowledge(&inner.dir, hub_letters, seq).await {
+            Ok(()) => unsettled.clear(),
+            Err(error) => {
+                let error = error.to_string();
+                if error != unsettled {
+                    inner.node.log(format!("settling received letters failed, left to the next settling: {error}"));
+                    unsettled = error;
+                }
+            }
         }
     }
 }
