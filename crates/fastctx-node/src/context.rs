@@ -6,6 +6,7 @@ pub(crate) mod input;
 pub(crate) mod memory;
 #[cfg(feature = "storage-drill")]
 pub(crate) mod migration_drill;
+mod projection;
 pub(crate) mod records;
 pub(crate) mod sources;
 mod storage;
@@ -191,7 +192,6 @@ pub(crate) fn acknowledge(node: &Node, id: &ResidentId, heard: &mut crate::resid
 /// No body is copied to a second place that could lag after a failed refresh.
 pub(crate) fn hand_to_session(node: &Node, id: &ResidentId, session: &Path) -> io::Result<()> {
     storage::initialize(&node.world, id)?;
-    records::repair(&node.world, id)?;
     let path = session.join("context.json");
     let bytes = serde_json::to_vec(&serde_json::json!({
         "directory": storage::directory(&node.world, id),
@@ -205,6 +205,9 @@ pub(crate) fn hand_to_session(node: &Node, id: &ResidentId, session: &Path) -> i
         Err(error) if error.kind() == io::ErrorKind::NotFound => {}
         Err(error) => return Err(error),
     }
+    // Initialization repairs any durable dirty intent. A new pointer also
+    // checks the full projection before the plugin can use it.
+    records::repair(&node.world, id)?;
     fastctx_platform::publish(&path, &bytes, fastctx_platform::Permissions::Private)
 }
 
@@ -260,6 +263,7 @@ pub(crate) fn native_observed(
         &node.world,
         id,
         2048,
+        projection::Selection::State,
         |_| {
             if changed {
                 node.residents.restore_opening_heard(id);

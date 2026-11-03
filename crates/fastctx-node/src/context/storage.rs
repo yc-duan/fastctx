@@ -180,6 +180,7 @@ fn set_mode(
         world,
         id,
         text.len() + fact.len() + 1024,
+        super::projection::Selection::Block(key.clone()),
         |_| {
             if let Some(bodies) = bodies {
                 bodies.put(id, name, &source, &text);
@@ -387,6 +388,7 @@ pub(super) fn migrate(node: &crate::Node, id: &ResidentId) -> io::Result<()> {
         &node.world,
         id,
         4096,
+        super::projection::Selection::All,
         |bodies: &Vec<(String, Block)>| {
             for (name, block) in bodies {
                 node.context_bodies.put(id, name, &block.source, &block.text);

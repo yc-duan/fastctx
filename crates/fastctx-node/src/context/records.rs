@@ -7,7 +7,7 @@ use fastctx_types::{
     ResidentId,
     layout::{ConversationDir, WorldDir},
 };
-use std::{collections::BTreeMap, io, path::Path, sync::LazyLock};
+use std::{collections::BTreeMap, io, sync::LazyLock};
 
 pub(crate) const SCHEMA: &str = super::archived::SCHEMA;
 pub(super) const BLOCKS: &str = "context-blocks";
@@ -99,13 +99,19 @@ pub(super) fn commit<T: Send + 'static>(
     world: &WorldDir,
     id: &ResidentId,
     bytes: usize,
+    selection: super::projection::Selection,
     after: impl FnOnce(&T),
     action: impl FnOnce(&families::Rows<'_>) -> fastctx_storage::Result<T> + Send + 'static,
 ) -> io::Result<T> {
     let directory = prepare(world, id)?;
     crate::conversation_store::with_live_files(&directory, || {
-        let (result, dirty) =
+        let (result, dirty, recovering) =
             families::write_at(&directory, fastctx_storage::Priority::Interactive, bytes, move |rows| {
+                let recovering = rows.connection().query_row(
+                    "SELECT EXISTS(SELECT 1 FROM context_projection_dirty WHERE conversation=?1)",
+                    [rows.conversation()],
+                    |row| row.get::<_, bool>(0),
+                )?;
                 let before = rows.connection().total_changes();
                 let result = action(rows)?;
                 // Decide on the writer: a preceding write may still commit after
@@ -117,16 +123,11 @@ pub(super) fn commit<T: Send + 'static>(
                         [rows.conversation()],
                     )?;
                 }
-                let dirty = changed
-                    || rows.connection().query_row(
-                        "SELECT EXISTS(SELECT 1 FROM context_projection_dirty WHERE conversation=?1)",
-                        [rows.conversation()],
-                        |row| row.get::<_, bool>(0),
-                    )?;
-                Ok((result, dirty))
+                Ok((result, changed || recovering, recovering))
             })?;
         after(&result);
-        if dirty && project_live(world, id, &directory).is_err() {
+        let selection = if recovering { super::projection::Selection::All } else { selection };
+        if dirty && super::projection::project(world, id, &directory, selection).is_err() {
             notify(world);
         }
         Ok(result)
@@ -142,6 +143,7 @@ pub(super) fn state<T: Send + 'static>(
         world,
         id,
         4096,
+        super::projection::Selection::State,
         |_| {},
         move |rows| {
             let mut state = rows.get(STATE, "current")?.unwrap_or_default();
@@ -153,35 +155,9 @@ pub(super) fn state<T: Send + 'static>(
 }
 
 fn project(world: &WorldDir, id: &ResidentId, directory: &ConversationDir) -> io::Result<()> {
-    crate::conversation_store::with_live_files(directory, || project_live(world, id, directory))
-}
-
-fn project_live(world: &WorldDir, id: &ResidentId, directory: &ConversationDir) -> io::Result<()> {
-    let (state, blocks) = snapshot(directory)?;
-    fastctx_platform::ensure_private_dir(&super::storage::directory(world, id))?;
-    for (name, block) in blocks {
-        debug_assert!(!block.transient || (block.text.is_empty() && block.fact.is_empty()));
-        publish_changed(
-            &super::storage::directory(world, id).join(format!("{name}.json")),
-            &serde_json::to_vec(&block)?,
-        )?;
-    }
-    publish_changed(&super::storage::state_path(world, id), &serde_json::to_vec(&state)?)?;
-    super::archived::clear(world, id, directory)?;
-    families::write_at(directory, fastctx_storage::Priority::Background, 64, |rows| {
-        rows.connection()
-            .execute("DELETE FROM context_projection_dirty WHERE conversation=?1", [rows.conversation()])?;
-        Ok(())
+    crate::conversation_store::with_live_files(directory, || {
+        super::projection::project(world, id, directory, super::projection::Selection::All)
     })
-}
-fn publish_changed(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    match fastctx_platform::disk::read(path) {
-        Ok(previous) if previous == bytes => return Ok(()),
-        Ok(_) => {}
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-        Err(error) => return Err(error),
-    }
-    fastctx_platform::publish(path, bytes, fastctx_platform::Permissions::Private)
 }
 
 pub(super) fn initialized(world: &WorldDir, id: &ResidentId) -> io::Result<bool> {
