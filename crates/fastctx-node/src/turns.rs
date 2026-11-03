@@ -129,12 +129,14 @@ async fn apply_inner(node: &Arc<Node>, id: &ResidentId, mut event: SessionEvent)
             }
             if !waiting {
                 now.waiting_since = None;
+                if now.asked.as_ref().is_some_and(|asked| asked.waits) {
+                    now.asked = None;
+                }
             }
             now.waiting_for_user = *waiting;
         })?;
         if !waiting {
             crate::composer::changed(node, id);
-            crate::asked::settle(node, id, |asked| asked.waits)?;
         }
     }
     // What it asks the user, for whoever calls them about it.
@@ -174,7 +176,6 @@ async fn apply_inner(node: &Arc<Node>, id: &ResidentId, mut event: SessionEvent)
                 crate::context::compacted(node, id, &item.id)?;
             }
         }
-        Happened::TurnEnded { .. } => crate::asked::settle(node, id, |asked| asked.waits)?,
         _ => {}
     }
     if let Happened::Began { item, .. } | Happened::Updated { item, .. } = &event.happened
@@ -209,6 +210,9 @@ async fn apply_inner(node: &Arc<Node>, id: &ResidentId, mut event: SessionEvent)
             let said =
                 end.last_message.as_deref().map(|said| opening(said, LAST_SAID_CHARS)).filter(|said| !said.is_empty());
             node.residents.change_now(&node.world, id, |now| {
+                if now.asked.as_ref().is_some_and(|asked| asked.waits) {
+                    now.asked = None;
+                }
                 if said.is_some() {
                     now.last_compacted = false;
                 }
