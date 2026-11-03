@@ -143,6 +143,11 @@ pub struct Login {
     /// the official client does; off by default (`world-agent-logins.md`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub auto_title: bool,
+    /// For Codex and Claude Code: whether a week the vendor cleared before
+    /// its reset counts anew from then, for the account and those it
+    /// assists; off unless its owner turned it on (`world-usage.md`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub reset_in_place: bool,
     /// The program the World starts for this login, as it would start it
     /// now; none when there is none to start.
     #[serde(default, skip_serializing_if = "Option::is_none")]

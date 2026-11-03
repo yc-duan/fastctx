@@ -412,6 +412,9 @@ impl Device {
             Call::SetAgentTitle { machine, agent, dir, on } => {
                 (machine, RemoteCall::SetAgentTitle { agent, dir, on }, None)
             }
+            Call::SetAgentResetInPlace { machine, agent, dir, on } => {
+                (machine, RemoteCall::SetAgentResetInPlace { agent, dir, on }, None)
+            }
             Call::PreviewAgentChange { machine, agent, dir, into, take_back, workbench } => {
                 (machine, RemoteCall::PreviewAgentChange { agent, dir, into, take_back, workbench }, None)
             }
@@ -700,6 +703,7 @@ impl Device {
                 | RemoteCall::AddAgentLogin { .. }
                 | RemoteCall::AgentFolder { .. }
                 | RemoteCall::SetAgentTitle { .. }
+                | RemoteCall::SetAgentResetInPlace { .. }
                 | RemoteCall::ReadAgentLimits { .. },
                 RemoteReply::AgentLogins(logins),
             ) => Reply::MachineAgentLogins(logins),

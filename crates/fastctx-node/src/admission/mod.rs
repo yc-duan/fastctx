@@ -143,6 +143,7 @@ pub fn admit(node: &Arc<Node>, link: &Arc<Link>, caller: &Caller, call: &RemoteC
             | RemoteCall::AddAgentLogin { .. }
             | RemoteCall::AgentFolder { .. }
             | RemoteCall::SetAgentTitle { .. }
+            | RemoteCall::SetAgentResetInPlace { .. }
             | RemoteCall::PreviewAgentChange { .. }
             | RemoteCall::ChangeAgentLogin { .. }
             | RemoteCall::ClaudeConsent { .. }

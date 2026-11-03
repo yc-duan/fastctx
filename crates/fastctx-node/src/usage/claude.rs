@@ -89,7 +89,9 @@ pub(super) fn measured(
         let mut changed = false;
         if let Some(windows) = windows {
             let account = book.account_at(counted.as_ref().and_then(|c| c.account_at).unwrap_or(about.born_at));
-            changed |= super::readings::record(book, path, windows, at, account)?;
+            // Each session gives what the last answer to it carried.
+            let source = about.session.as_deref().unwrap_or(id.as_str());
+            changed |= super::readings::record(book, path, windows, at, account, source)?;
         }
         if counted.as_ref().is_some_and(|c| c.meter) {
             let c = counted.expect("meter report");

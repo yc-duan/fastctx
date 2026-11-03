@@ -58,6 +58,40 @@ fn ledger(node: &Node, agent: &str, dir: &Path) -> PathBuf {
     root(node).join(format!("{agent}-{}", crate::homes::key(dir)))
 }
 
+/// The file whose presence in a login's ledger says its owner chose to have
+/// a week the vendor cleared before its reset count anew from then, for the
+/// account and those it assists (`world-usage.md`); without it the week
+/// runs from its reset alone.
+const FOLLOW_CLEARINGS: &str = "follow-clearings";
+
+fn follows_clearings(path: &Path) -> bool {
+    fastctx_platform::disk::exists(path.join(FOLLOW_CLEARINGS)).unwrap_or(false)
+}
+
+/// Whether the login `dir` of `agent` counts a week anew when its vendor
+/// cleared it before its reset: off unless its owner turned it on.
+pub(crate) fn resets_in_place(node: &Node, agent: &str, dir: &Path) -> bool {
+    follows_clearings(&ledger(node, agent, dir))
+}
+
+/// Turns that on or off; the login's ledger is read again with it.
+pub(crate) fn set_resets_in_place(node: &Node, agent: &str, dir: &Path, on: bool) -> io::Result<()> {
+    let path = ledger(node, agent, dir);
+    let mark = path.join(FOLLOW_CLEARINGS);
+    if on {
+        fastctx_platform::disk::create_dir_all(&path)?;
+        fastctx_platform::disk::write(&mark, b"")?;
+    } else if let Err(error) = fastctx_platform::disk::remove_file(&mark)
+        && error.kind() != io::ErrorKind::NotFound
+    {
+        return Err(error);
+    }
+    with_book(node, &path, |book| {
+        book.invalidate();
+        Ok(())
+    })
+}
+
 fn with_book<T>(node: &Node, path: &Path, f: impl FnOnce(&mut Book) -> io::Result<T>) -> io::Result<T> {
     let book = node.usage.books.lock().expect("never poisoned").entry(path.to_path_buf()).or_default().clone();
     let mut book = book.lock().expect("never poisoned");

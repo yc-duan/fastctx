@@ -1363,6 +1363,14 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                 .await
                 .map(|logins| Reply::MachineAgentLogins(Box::new(logins)))
         }
+        Call::SetAgentResetInPlace { machine, agent, dir, on } => {
+            users_voice(node, peer)?;
+            crate::managed::refuse(node)?;
+
+            crate::logins::remote::set_resets_in_place(node, machine, agent, dir, on)
+                .await
+                .map(|logins| Reply::MachineAgentLogins(Box::new(logins)))
+        }
         Call::PreviewAgentChange { machine, agent, dir, into, take_back, workbench } => {
             users_voice(node, peer)?;
             crate::managed::refuse(node)?;

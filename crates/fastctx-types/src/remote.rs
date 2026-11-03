@@ -313,6 +313,13 @@ pub enum RemoteCall {
         dir: std::path::PathBuf,
         on: bool,
     },
+    /// Turn counting a week cleared before its reset anew in a login there
+    /// on or off; only for the machine's owner.
+    SetAgentResetInPlace {
+        agent: AgentName,
+        dir: std::path::PathBuf,
+        on: bool,
+    },
     /// What a change of a login there would do; only for the machine's
     /// owner.
     PreviewAgentChange {
@@ -674,6 +681,7 @@ impl RemoteCall {
             | RemoteCall::AddAgentLogin { .. }
             | RemoteCall::AgentFolder { .. }
             | RemoteCall::SetAgentTitle { .. }
+            | RemoteCall::SetAgentResetInPlace { .. }
             | RemoteCall::PreviewAgentChange { .. }
             | RemoteCall::ChangeAgentLogin { .. }
             | RemoteCall::UpdateWorld

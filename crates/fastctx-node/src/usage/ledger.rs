@@ -205,9 +205,12 @@ pub(super) struct Book {
     pub keys: HashSet<String>,
     pub reading: Option<Reading>,
     pub readings: HashMap<Option<String>, Reading>,
-    /// Of each account, weekly readings lower than the kept ones, waiting
-    /// for the next to say whether the week was cleared (`readings::merge`).
+    /// Of each account, what tells a weekly figure that came late from the
+    /// week cleared in place (`readings::merge`).
     pub lowered: HashMap<Option<String>, super::readings::Lowered>,
+    /// Whether the login's owner chose to have a week cleared in place count
+    /// anew from then (`super::resets_in_place`).
+    pub follow: bool,
     pub accounts: Vec<(Timestamp, String)>,
     pub recent: Vec<Charge>,
     pub history: super::history::History,
@@ -217,7 +220,7 @@ impl Book {
         if self.valid {
             return Ok(());
         }
-        *self = Self::default();
+        *self = Self { follow: super::follows_clearings(path), ..Self::default() };
         for file in days(path, Timestamp::MIN)? {
             let rows = read(&file)?;
             for row in &rows {
@@ -272,6 +275,9 @@ impl Book {
                     if let Some(legacy) = self.readings.remove(&None) {
                         self.readings.insert(Some(account.clone()), legacy);
                     }
+                    if let Some(legacy) = self.lowered.remove(&None) {
+                        self.lowered.insert(Some(account.clone()), legacy);
+                    }
                 }
                 self.accounts.push((*at, account.clone()));
                 self.accounts.sort_by_key(|(at, _)| *at);
@@ -282,7 +288,9 @@ impl Book {
                 let old = self.readings.get(&account);
                 let mut merged = old.map_or_else(Vec::new, |(_, windows)| windows.clone());
                 if old.is_none_or(|(seen, _)| *seen <= *at) {
-                    super::readings::merge(&mut merged, windows.clone(), *at, None);
+                    let lowered = self.lowered.entry(account.clone()).or_default();
+                    let source = super::readings::Source::Ledger;
+                    super::readings::merge(&mut merged, windows.clone(), *at, lowered, source, self.follow);
                     self.readings.insert(account, (*at, merged));
                 }
                 self.reading = self.readings.get(&self.account_at(Timestamp::MAX)).cloned();

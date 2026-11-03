@@ -165,6 +165,23 @@ pub(crate) async fn read_agent_limits(
         .map_err(|error| error.to_string())
 }
 
+/// Turns on or off whether a week cleared before its reset counts anew in a
+/// login.
+#[fastctx_gui_command::command]
+pub(crate) async fn set_agent_reset_in_place(
+    shell: tauri::State<'_, Shell>,
+    machine_name: String,
+    agent_name: String,
+    dir: PathBuf,
+    on: bool,
+) -> Result<MachineLogins, String> {
+    shell
+        .world()
+        .set_agent_reset_in_place(machine(machine_name)?, agent(agent_name)?, dir, on)
+        .await
+        .map_err(|error| error.to_string())
+}
+
 /// Turns naming new Codex conversations in a login on or off.
 #[fastctx_gui_command::command]
 pub(crate) async fn set_agent_title(

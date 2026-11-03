@@ -343,6 +343,18 @@ impl World {
         machine_logins(self.ask(Call::SetAgentTitle { machine, agent, dir, on }).await?)
     }
 
+    /// Turns on or off whether a week the vendor cleared before its reset
+    /// counts anew in a login.
+    pub async fn set_agent_reset_in_place(
+        &self,
+        machine: Written,
+        agent: fastctx_types::AgentName,
+        dir: std::path::PathBuf,
+        on: bool,
+    ) -> Result<fastctx_types::logins::MachineLogins, Error> {
+        machine_logins(self.ask(Call::SetAgentResetInPlace { machine, agent, dir, on }).await?)
+    }
+
     /// What putting the World's tools into a login (`into`), or taking them
     /// out, would change; with `take_back`, rewriting what the user changed
     /// of them too.

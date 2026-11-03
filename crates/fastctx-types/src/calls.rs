@@ -543,6 +543,16 @@ pub enum Call {
         dir: std::path::PathBuf,
         on: bool,
     },
+    /// Whether a week the vendor cleared before its reset counts anew from
+    /// then, for the account and those it assists, in the login `dir` on
+    /// `machine`; off by default, set by whoever may manage the login
+    /// (`world-usage.md`).
+    SetAgentResetInPlace {
+        machine: Written,
+        agent: AgentName,
+        dir: std::path::PathBuf,
+        on: bool,
+    },
     /// What putting the World's tools into a login on `machine` (`into`),
     /// or taking them out, would change, with nothing written; with
     /// `take_back`, what the user changed of them is rewritten too.

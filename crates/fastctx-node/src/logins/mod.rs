@@ -262,6 +262,7 @@ fn assemble(node: &Node) -> Result<MachineLogins, Failure> {
                 unattended,
                 auto_title: agent == "codex"
                     && !kept.codex.untitled.iter().any(|known| crate::homes::same_dir(known, dir)),
+                reset_in_place: crate::usage::resets_in_place(node, agent, dir),
                 launcher: program::now(node, agent, dir, known),
                 models,
                 change,
@@ -334,6 +335,18 @@ pub(crate) fn set_title(node: &Node, agent: &AgentName, dir: &Path, on: bool) ->
         }
     })
     .map_err(|error| Failure::new(format!("keeping the login's naming: {error}")))
+}
+
+/// Turns on or off whether a week the vendor cleared before its reset counts
+/// anew in the Codex or Claude Code login `dir` here, as its owner chooses;
+/// off by default (`world-usage.md`).
+pub(crate) fn set_resets_in_place(node: &Node, agent: &AgentName, dir: &Path, on: bool) -> Result<(), Failure> {
+    if !AGENTS.contains(&agent.as_str()) {
+        return Err(Failure::not_run("only Codex and Claude Code logins keep their usage"));
+    }
+    known(node, agent, dir)?;
+    crate::usage::set_resets_in_place(node, agent.as_str(), dir, on)
+        .map_err(|error| Failure::new(format!("keeping the login's weekly resets: {error}")))
 }
 
 /// Whether the Codex login `dir` (the default one when none) names its new

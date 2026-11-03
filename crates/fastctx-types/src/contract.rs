@@ -233,6 +233,7 @@ impl RemoteCall {
             | Self::AddAgentLogin { .. }
             | Self::AgentFolder { .. }
             | Self::SetAgentTitle { .. }
+            | Self::SetAgentResetInPlace { .. }
             | Self::ChangeAgentLogin { .. }
             | Self::MemoryRoom { bytes: Some(_) }
             | Self::Open { .. }
@@ -457,6 +458,7 @@ impl Call {
             | Self::AddAgentLogin { .. }
             | Self::AgentFolder { .. }
             | Self::SetAgentTitle { .. }
+            | Self::SetAgentResetInPlace { .. }
             | Self::ChangeAgentLogin { .. }
             | Self::Talk { .. }
             | Self::Upload { .. }

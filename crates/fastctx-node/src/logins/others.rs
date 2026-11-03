@@ -125,6 +125,7 @@ pub(super) fn side(
             integration: if connected { Integration::In } else { Integration::Absent },
             unattended: None,
             auto_title: false,
+            reset_in_place: false,
             launcher: None,
             models: Vec::new(),
             change: change_of(changes, agent, &dir),

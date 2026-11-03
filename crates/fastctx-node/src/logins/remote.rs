@@ -241,6 +241,27 @@ pub(crate) async fn read_limits(
     }
 }
 
+/// Turns on or off whether a week cleared before its reset counts anew in a
+/// login, here or on another of the user's machines; the holds of those it
+/// assists are looked at again.
+pub(crate) async fn set_resets_in_place(
+    node: &Arc<Node>,
+    machine: Written,
+    agent: AgentName,
+    dir: PathBuf,
+    on: bool,
+) -> Result<MachineLogins, Failure> {
+    if node.is_here(&machine) {
+        super::set_resets_in_place(node, &agent, &dir, on)?;
+        crate::usage::after_reading(node, agent.as_str(), &dir).await;
+        return super::here(node).await;
+    }
+    match ask(node, &machine, Purpose::Hands, RemoteCall::SetAgentResetInPlace { agent, dir, on }).await? {
+        RemoteReply::AgentLogins(logins) => Ok(*logins),
+        _ => Err(other(&machine)),
+    }
+}
+
 /// Turns automatic naming of Codex conversations in a login on or off,
 /// here or on another of the user's machines.
 pub(crate) async fn set_title(
@@ -345,6 +366,11 @@ pub(crate) async fn answer(
         RemoteCall::AgentFolder { dir, change } => super::folders::change(node, dir, change).await.map(logins),
         RemoteCall::SetAgentTitle { agent, dir, on } => {
             super::set_title(node, &agent, &dir, on)?;
+            super::here(node).await.map(logins)
+        }
+        RemoteCall::SetAgentResetInPlace { agent, dir, on } => {
+            super::set_resets_in_place(node, &agent, &dir, on)?;
+            crate::usage::after_reading(node, agent.as_str(), &dir).await;
             super::here(node).await.map(logins)
         }
         RemoteCall::PreviewAgentChange { agent, dir, into, take_back, workbench } => {
