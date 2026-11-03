@@ -55,7 +55,10 @@ pub(crate) fn is_open(node: &Node, acting: &Acting, agent: &str, home: Option<&P
     let Some(dir) =
         home.or_else(|| state.defaults.iter().find(|(name, _)| name == agent).map(|(_, dir)| dir.as_path()))
     else {
-        return false;
+        // The default login is not known: answered by account, as before
+        // the logins were worked out.
+        drop(state);
+        return crate::layers::of(node, acting) == Layer::Workbench;
     };
     state.dirs.iter().any(|(name, open)| name == agent && crate::homes::same_dir(open, dir))
 }
@@ -160,6 +163,16 @@ fn state(node: &Node) -> std::sync::MutexGuard<'_, Open> {
         }
     }
     state
+}
+
+/// Works out each agent's default login as the node starts, before a
+/// request asks whether the workbench is open in a conversation's; each
+/// later look at the logins keeps it as the environment names it.
+pub(crate) fn know_defaults(node: &Node) {
+    match Context::of(node) {
+        Ok(context) => defaults(node, &context),
+        Err(failure) => node.log.line(format_args!("finding the agents' default logins: {}", failure.message)),
+    }
 }
 
 /// Each agent's default login as the user's environment names it now, for

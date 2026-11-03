@@ -892,6 +892,7 @@ pub async fn run_prepared(
     let preparing = node.clone();
     fastctx_platform::task::spawn_blocking(move || {
         let node = preparing;
+        logins::workbench::know_defaults(&node);
         // The third version's projects are kept as this computer's own, to be
         // carried into its account at its hub.
         let (kept, problems) =
