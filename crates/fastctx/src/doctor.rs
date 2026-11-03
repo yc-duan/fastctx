@@ -110,10 +110,20 @@ fn calls_out(calls: Vec<fastctx_types::stats::CallWork>, json: bool) -> anyhow::
         println!("No calls in progress.");
     } else {
         for call in calls {
+            // A stream stays open by design, a watch for as long as its
+            // caller watches; any other call has a term, and one past it is
+            // said to be overdue.
+            let term = match call.within {
+                Some(within) if call.overdue => format!(", overdue past its {within} s"),
+                Some(within) => format!(" of its {within} s"),
+                None if call.pool == "stream" => ", a stream that stays open".to_string(),
+                None => String::new(),
+            };
             println!(
-                "{} {} for {} from {}: {}, {} s, {}{}",
+                "{} {} ({}) for {} from {}: {}, {} s{term}, {}{}",
                 call.id,
                 call.kind,
+                call.pool,
                 call.account,
                 call.machine,
                 call.phase,
