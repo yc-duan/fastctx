@@ -342,7 +342,7 @@ import { desktopAvailable } from "./world/desktop";
 import { notifying, startPresence } from "./app/presence";
 import { installAccess } from "./app/access";
 import { installBack, setPageBack } from "./app/back";
-import { installFrame } from "./app/frame";
+import { installFrame, previewSystem } from "./app/frame";
 import { nameCodeCopy } from "./conversation/prose";
 import { agentKind } from "./app/model-memory";
 import type { AgentModel } from "./world/agents";
@@ -3595,7 +3595,7 @@ installRules();
 installAccess();
 installBack();
 // A specimen shows the window's frame when asked, to be looked at.
-installFrame(shellWords.frame, !live && params.has("frame"));
+installFrame(shellWords.frame, !live && params.has("frame") ? previewSystem(params.get("frame")) : null);
 nameCodeCopy(words.copyCode);
 addEventListener("hashchange", () => show(placeOf(location.hash)));
 // A conversation pressed with Ctrl or ⌘ held, or with the middle button,

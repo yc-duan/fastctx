@@ -99,6 +99,8 @@ mod uploading;
 
 #[cfg(windows)]
 mod titlebar;
+#[cfg(target_os = "macos")]
+mod mac_window;
 
 mod conversation_watch;
 mod watch_delivery;
@@ -1107,6 +1109,14 @@ pub(crate) const WINDOW_KEPT: tauri_plugin_window_state::StateFlags = tauri_plug
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // WebKitGTK's DMA-BUF renderer leaves the window blank with many GPU
+    // drivers, NVIDIA's own among them; it is off unless the user says
+    // otherwise. Set before any thread starts.
+    #[cfg(target_os = "linux")]
+    if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
+        // SAFETY: nothing else runs yet that reads or writes the environment.
+        unsafe { std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1") };
+    }
     #[cfg(desktop)]
     {
         let args: Vec<_> = std::env::args_os().collect();
@@ -1399,6 +1409,8 @@ pub fn run() {
     let builder = builder.plugin(desktop_presence::plugin(desktop, desktop_error));
     #[cfg(windows)]
     let builder = builder.plugin(titlebar::plugin());
+    #[cfg(target_os = "macos")]
+    let builder = builder.plugin(mac_window::plugin());
     #[cfg(target_os = "android")]
     let builder = builder.plugin(android::plugin());
     if let Err(error) = builder.run(context) {

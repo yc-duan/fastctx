@@ -178,6 +178,12 @@
   --window-close-pressed: #b0271a;
   --on-window-close: #ffffff;
   --qr-paper: #ffffff;
+  /* macOS's three window buttons, drawn only where a page is looked at in
+     a plain browser, and the room they take at the window's top left. */
+  --mac-close: #ff5f57;
+  --mac-minimize: #febc2e;
+  --mac-zoom: #28c840;
+  --mac-lights: 82px;
 
   /* Android supplies the bars' heights before the page paints; browsers
      use their own safe areas. Content at an edge keeps clear by these. */
