@@ -1,0 +1,70 @@
+//! Auggie 0.36.0 user configuration. Its native command tool is launch-process.
+//! The standard ~/.augment home also contains its global rules; a custom cache alone does not.
+//! See https://docs.augmentcode.com/cli/settings.
+
+use serde_json::{Value, json};
+
+use super::spec::{Agent, Edit, Format, Guidance, Home, Mcp, Place, Program, Server, Slot, To};
+
+pub(super) const AGENT: Agent = Agent {
+    name: "auggie",
+    title: "Auggie",
+    home: Home { env: &[], default: ".augment" },
+    marks: &[],
+    programs: &[Program::Command("auggie"), Program::Npm("@augmentcode/auggie")],
+    mcp: Mcp {
+        to: To::One(Place { file: "settings.json", format: Format::Jsonc, at: &["mcpServers"] }),
+        slot: Slot::Named,
+        entry,
+    },
+    guidance: Some(Guidance { file: "rules/fastctx.md", head: None, most: None }),
+    shell: &[Edit::Add {
+        to: To::One(Place { file: "settings.json", format: Format::Jsonc, at: &["removedTools"] }),
+        item: || json!("launch-process"),
+    }],
+    limits: &[],
+    data: None,
+    identity,
+};
+
+fn entry(server: &Server<'_>) -> Value {
+    // Auggie joins command and args into a shell string before starting stdio.
+    let mut env: serde_json::Map<String, Value> =
+        server.env.iter().map(|(name, value)| (name.clone(), json!(value))).collect();
+    let (command, args) = if cfg!(windows) {
+        // Auggie 0.36 passes cmd /c through Node's argv quoting (2026-11-02).
+        // Expand quoted paths afterward so Node cannot escape their quotes.
+        env.insert("FASTCTX_STDIO_COMMAND".into(), json!(quote(server.command)));
+        let args: Vec<String> = server
+            .args
+            .iter()
+            .enumerate()
+            .map(|(index, arg)| {
+                let name = format!("FASTCTX_STDIO_ARGUMENT_{index}");
+                env.insert(name.clone(), json!(quote(arg)));
+                format!("%{name}%")
+            })
+            .collect();
+        ("%FASTCTX_STDIO_COMMAND%".to_owned(), args)
+    } else {
+        (quote(server.command), server.args.iter().map(|arg| quote(arg)).collect())
+    };
+    json!({ "type": "stdio", "command": command, "args": args, "env": env })
+}
+
+fn quote(value: &str) -> String {
+    if cfg!(windows) { format!("\"{value}\"") } else { format!("'{}'", value.replace('\'', "'\\''")) }
+}
+
+/// A saved session says it is logged in; it names no account and no plan.
+fn identity(home: &std::path::Path) -> Option<fastctx_types::logins::Identity> {
+    use fastctx_types::logins::Identity;
+    // Without the file nothing is known: AUGMENT_SESSION_AUTH may hold it.
+    let bytes = std::fs::read(home.join("session.json")).ok()?;
+    let session: Value = serde_json::from_slice(&bytes).ok()?;
+    let present = ["accessToken", "tenantURL"]
+        .into_iter()
+        .all(|key| session[key].as_str().is_some_and(|value| !value.is_empty()))
+        && session["scopes"].is_array();
+    Some(if present { Identity { logged_in: true, ..Identity::default() } } else { Identity::default() })
+}

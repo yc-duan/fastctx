@@ -18,10 +18,10 @@ use crate::Node;
 /// Keeps every report as it comes; one that changed the login's windows
 /// can stop a turn on it at an assistance's allowance.
 pub(crate) fn listen(node: Arc<Node>, mut reports: mpsc::UnboundedReceiver<LimitsReport>) {
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         while let Some(report) = reports.recv().await {
             let (keeping, home) = (node.clone(), report.home.clone());
-            let kept = tokio::task::spawn_blocking(move || keep(&keeping, report)).await;
+            let kept = fastctx_platform::task::spawn_blocking(move || keep(&keeping, report)).await;
             match kept {
                 Ok(Ok(true)) => crate::usage::after_reading(&node, "codex", &home).await,
                 Ok(Ok(false)) => {}
@@ -45,11 +45,16 @@ pub(super) fn keep(node: &Node, report: LimitsReport) -> std::io::Result<bool> {
     } else {
         crate::usage::accounts::at(node, "codex", &home, *observed)?
     };
+    let found = |limits: &[KeptLimits]| {
+        limits.iter().position(|known| crate::homes::same_dir(&known.dir, &home) && known.account == account)
+    };
+    let prior = found(&kept.codex.limits).map(|index| {
+        let known = &kept.codex.limits[index];
+        (known.buckets.clone(), known.at)
+    });
     {
         let limits = &mut kept.codex.limits;
-        let index = limits
-            .iter()
-            .position(|known| crate::homes::same_dir(&known.dir, &report.home) && known.account == account);
+        let index = found(limits);
         if index.is_some_and(|index| limits[index].at > at) {
             return Ok(false);
         }
@@ -80,13 +85,22 @@ pub(super) fn keep(node: &Node, report: LimitsReport) -> std::io::Result<bool> {
             }
         }
     }
-    // 2026-10-20: publish credits only after the matching windows are committed,
+    // Codex pushes the windows with each turn, nearly always as they were:
+    // a push that only says when they were seen is kept at most once a
+    // minute.
+    let seen_only = prior.is_some_and(|(buckets, then)| {
+        found(&kept.codex.limits).is_some_and(|index| kept.codex.limits[index].buckets == buckets)
+            && at.duration_since(then) < jiff::SignedDuration::from_secs(60)
+    });
+    // Publish credits only after the matching windows are committed,
     // so a reader of the new snapshot cannot see the previous quota period.
     let changed = match raw_for(&kept, &home, &account) {
         Fact::Known { value } => crate::usage::codex_reading(node, &home, value.windows, at, account)?,
         _ => false,
     };
-    kept::write(node, &kept)?;
+    if !seen_only {
+        kept::write(node, &kept)?;
+    }
     Ok(changed)
 }
 
@@ -129,11 +143,17 @@ fn raw_for(kept: &kept::Kept, dir: &Path, account: &Option<String>) -> Fact<Agen
 
 /// Reads a login's limits afresh: Codex's through its app-server, the
 /// running one or one started for the reading; Claude Code reads its own
-/// only in a session at work, so nothing can be asked of it.
+/// only in a session at work, so nothing can be asked of it. Only with
+/// the workbench open in the login: otherwise no agent is started and
+/// nothing is asked of its maker (`world-layers.md`), whoever asks and from
+/// wherever.
 pub(crate) async fn read(node: &Arc<Node>, agent: &AgentName, dir: &Path) -> Result<(), Failure> {
+    if !super::workbench::is_open(node, &fastctx_types::access::Acting::Here, agent.as_str(), Some(dir)) {
+        return Err(Failure::refused(super::workbench::CLOSED));
+    }
     {
         let (node, agent, dir) = (node.clone(), agent.clone(), dir.to_path_buf());
-        tokio::task::spawn_blocking(move || super::known(&node, &agent, &dir))
+        fastctx_platform::task::spawn_blocking(move || super::known(&node, &agent, &dir))
             .await
             .map_err(|error| Failure::new(error.to_string()))??;
     }
@@ -151,7 +171,7 @@ pub(crate) async fn read(node: &Arc<Node>, agent: &AgentName, dir: &Path) -> Res
         }));
     };
     let (keeping, home) = (node.clone(), dir.to_path_buf());
-    let changed = tokio::task::spawn_blocking(move || {
+    let changed = fastctx_platform::task::spawn_blocking(move || {
         let context = super::Context::of(&keeping).map_err(|error| std::io::Error::other(error.message))?;
         kept::change(&keeping, |record| {
             if let Some(login) = record.codex.logins.iter_mut().find(|login| crate::homes::same_dir(&login.dir, &home))

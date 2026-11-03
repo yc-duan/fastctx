@@ -33,16 +33,25 @@ impl Adapter {
         let session = about.session.as_deref().ok_or_else(|| Failure::new("the host session is unknown"))?;
         match self {
             Self::Claude => {
-                match prompt {
-                    Some((id, text)) => {
-                        crate::claude::wake(node, &about.id, about.home.as_deref(), session, text, id).await?;
+                // Claude's wake reaches its session's files throughout, where
+                // that may block.
+                let (node, about, session) = (node.clone(), about.clone(), session.to_string());
+                crate::blocking::on(async move {
+                    match prompt {
+                        Some((id, text)) => {
+                            crate::claude::wake(&node, &about.id, about.home.as_deref(), &session, text, id).await?;
+                        }
+                        None => crate::claude::resume::connect(&node, &about.id).await?,
                     }
-                    None => crate::claude::resume::connect(node, &about.id).await?,
-                }
-                Ok(None)
+                    Ok(None)
+                })
+                .await
             }
             Self::Codex => {
-                node.codex.of(node, about)?.prepare(session).await.map_err(|error| Failure::new(error).into())
+                // Finding its host may read its host mode from its disk.
+                let (finding, host) = (node.clone(), about.clone());
+                let codex = fastctx_platform::task::blocking(move || finding.codex.of(&finding, &host)).await?;
+                codex.prepare(session).await.map_err(|error| Failure::new(error).into())
             }
         }
     }
@@ -88,7 +97,7 @@ impl Adapter {
                 }
                 match reason {
                     ReleaseReason::Delete => {
-                        crate::claude::management::retire(node, about.home.as_deref(), &about.id, session).await?
+                        crate::claude::management::retire(node, about.home.as_deref(), session).await?
                     }
                     _ => {
                         crate::claude::management::stop(

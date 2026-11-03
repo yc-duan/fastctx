@@ -13,7 +13,7 @@ use crate::Hub;
 use crate::store::PackageTargets;
 
 pub(super) fn targets(hub: &Hub, name: &MachineName, report: &Report) {
-    let mut store = hub.store();
+    let mut store = hub.edit_store();
     let index = hub.index_of(&store);
     let directory = fastctx_net::directory_index::Indexed::new(&store.book.directory, &index);
     let Some(member) = directory.member(name) else { return };
@@ -277,9 +277,9 @@ pub(crate) fn prune(hub: &Hub) {
     drop(updates);
     drop(store);
     let log = hub.log.clone();
-    tokio::task::spawn_blocking(move || {
+    fastctx_platform::task::spawn_blocking(move || {
         for path in retired {
-            if let Err(error) = std::fs::remove_dir_all(&path) {
+            if let Err(error) = fastctx_platform::disk::remove_dir_all(&path) {
                 log.line(format_args!("deleting retired packages {}: {error}", path.display()));
             }
         }
@@ -344,7 +344,7 @@ pub(crate) fn prefetch(hub: &Arc<Hub>) {
         };
         if start && let Some(machine) = machine {
             let hub = hub.clone();
-            tokio::spawn(async move {
+            fastctx_platform::task::spawn(async move {
                 if hub.moving.frozen() {
                     return;
                 }
@@ -352,7 +352,7 @@ pub(crate) fn prefetch(hub: &Arc<Hub>) {
                     Ok(()) => false,
                     Err(why) => {
                         hub.log.line(format_args!("preparing {version} for {machine}: {why}"));
-                        super::view::problem(&hub, &version, None, Some(why));
+                        hub.blocking(move |hub| super::view::problem(&hub, &version, None, Some(why))).await;
                         true
                     }
                 };
@@ -399,7 +399,7 @@ pub(crate) fn prefetch(hub: &Arc<Hub>) {
     // One after another, each with the whole of the ceiling in its turn
     // (`super::obtain`); machines are told as each comes.
     let hub = hub.clone();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let mut failed = false;
         for (package, _) in wanted {
             if hub.moving.frozen() {
@@ -410,7 +410,7 @@ pub(crate) fn prefetch(hub: &Arc<Hub>) {
             let target = package.target.clone();
             let outcome = super::obtain::obtain(&hub, package, None).await;
             failed |= outcome.is_err();
-            super::view::problem(&hub, &version, Some(&target), outcome.err());
+            hub.blocking(move |hub| super::view::problem(&hub, &version, Some(&target), outcome.err())).await;
             super::tell(&hub, None);
         }
         if failed {
@@ -424,7 +424,7 @@ pub(crate) fn prefetch(hub: &Arc<Hub>) {
 /// nobody to ask for it again, and may reach nothing but the hub.
 async fn again(hub: Arc<Hub>) {
     tokio::time::sleep(PREFETCH_AGAIN).await;
-    prefetch(&hub);
+    hub.blocking(|hub| prefetch(&hub)).await;
 }
 
 const PREFETCH_AGAIN: Duration = Duration::from_secs(5 * 60);
@@ -464,9 +464,13 @@ pub(crate) async fn prepare_update(hub: &Arc<Hub>, name: &MachineName, version: 
             fastctx_update::github::manifest_of(&releases, version).await?
         }
     };
-    cache.keep_manifest(&manifest)?;
-    hub.updates.lock().expect("never poisoned").catalog.insert(manifest.version.clone(), manifest.clone());
-    keep_prepared_manifest(hub, &manifest)?;
+    let prepared = manifest.clone();
+    hub.blocking(move |hub| {
+        cache.keep_manifest(&prepared)?;
+        hub.updates.lock().expect("never poisoned").catalog.insert(prepared.version.clone(), prepared.clone());
+        keep_prepared_manifest(&hub, &prepared)
+    })
+    .await?;
     if !needs_network(hub, name) {
         return Ok(());
     }
@@ -477,9 +481,9 @@ pub(crate) async fn prepare_update(hub: &Arc<Hub>, name: &MachineName, version: 
 }
 
 fn keep_prepared_manifest(hub: &Hub, manifest: &Manifest) -> Result<(), String> {
-    let mut store = hub.store();
-    // A fetch begun before the move can finish after its final snapshot
-    // (2026-10-29). The store lock also orders this check with freeze's flush.
+    let mut store = hub.edit_store();
+    // A fetch begun before the move can finish after its final snapshot.
+    // The store lock also orders this check with freeze's flush.
     if hub.moving.frozen() {
         return Err("the hub is handing its records over; prepare this update at its new place".into());
     }

@@ -35,10 +35,13 @@ struct Shared {
     bound: usize,
     bound_bytes: usize,
     overflowed: Notify,
+    /// How much of the bounds is used, told in the machine's health.
+    used: &'static fastctx_platform::health::Bound,
 }
 
-/// A queue holding at most `bound` frames and `bound_bytes` bytes.
-pub(crate) fn bounded<T>(bound: usize, bound_bytes: usize) -> (Sender<T>, Receiver<T>) {
+/// A queue holding at most `bound` frames and `bound_bytes` bytes, whose
+/// use the machine's health tells as `name`.
+pub(crate) fn bounded<T>(bound: usize, bound_bytes: usize, name: &'static str) -> (Sender<T>, Receiver<T>) {
     let (sender, receiver) = mpsc::unbounded_channel();
     let shared = Arc::new(Shared {
         queued: AtomicUsize::new(0),
@@ -46,6 +49,7 @@ pub(crate) fn bounded<T>(bound: usize, bound_bytes: usize) -> (Sender<T>, Receiv
         bound,
         bound_bytes,
         overflowed: Notify::new(),
+        used: fastctx_platform::health::bound(name),
     });
     (Sender { sender, shared: shared.clone() }, Receiver { receiver, shared })
 }
@@ -59,9 +63,12 @@ impl<T> Sender<T> {
         if before >= self.shared.bound || (before > 0 && bytes + size > self.shared.bound_bytes) {
             self.shared.queued.fetch_sub(1, Ordering::AcqRel);
             self.shared.bytes.fetch_sub(size, Ordering::AcqRel);
+            self.shared.used.note(1, 1);
             self.shared.overflowed.notify_one();
             return Err(value);
         }
+        self.shared.used.note(before + 1, self.shared.bound);
+        self.shared.used.note(bytes + size, self.shared.bound_bytes);
         self.sender.send((value, size)).map_err(|refused| {
             self.shared.queued.fetch_sub(1, Ordering::AcqRel);
             self.shared.bytes.fetch_sub(size, Ordering::AcqRel);

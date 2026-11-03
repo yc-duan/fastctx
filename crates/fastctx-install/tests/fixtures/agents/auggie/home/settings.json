@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "lab-existing": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "--version"
+      ],
+      "env": {}
+    }
+  }
+}

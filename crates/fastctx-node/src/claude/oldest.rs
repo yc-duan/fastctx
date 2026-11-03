@@ -25,7 +25,7 @@ pub(super) async fn check(node: &Node, command: &super::Command) -> Result<(), F
         return Ok(());
     }
     let super::Command { program, cwd, env } = command.clone();
-    let said = tokio::task::spawn_blocking(move || fastctx_hosts::agents::version(&program, &cwd, &env))
+    let said = fastctx_platform::task::spawn_blocking(move || fastctx_hosts::agents::version(&program, &cwd, &env))
         .await
         .map_err(|error| Failure::new(format!("asking Claude Code its version: {error}")))?;
     // A program that cannot say its version fails to start a session as

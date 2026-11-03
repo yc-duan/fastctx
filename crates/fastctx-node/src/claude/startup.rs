@@ -41,7 +41,7 @@ pub(super) fn takes_wake(
     if activation.is_some_and(|activation| current != Some(activation)) {
         return Ok(false);
     }
-    let prior = crate::lifecycle::retry::progress(node, resident, &pending.delivery.id)?
+    let prior = crate::lifecycle::retry::progress_now(node, resident, &pending.delivery.id)?
         .and_then(|progress| progress.after_activation);
     Ok(match (activation, prior.as_deref()) {
         (Some(activation), Some(prior)) => activation != prior,
@@ -66,7 +66,7 @@ pub(super) fn observe(node: &Arc<Node>, resident: &ResidentId, id: NoticeId, wak
     }
     let node = node.clone();
     let resident = resident.clone();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         // Tried again after waits that double up to a minute, told once for
         // each new reason.
         let (mut again, mut told) = (crate::again::Again::default(), None);
@@ -102,7 +102,7 @@ pub(super) fn unknown(node: &Arc<Node>, resident: &ResidentId, id: &NoticeId, wh
         return;
     }
     let (node, resident, id) = (node.clone(), resident.clone(), id.clone());
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let mut again = crate::again::Again::default();
         tokio::time::sleep(fastctx_hosts::claude::MOD_LOOK).await;
         loop {
@@ -138,7 +138,10 @@ pub(super) fn recover(node: &Arc<Node>, records: &[crate::residents::OnRecord]) 
             continue;
         }
         let directory = node.world.conversation(&about.id);
-        let kept = match crate::inbox::pending(&directory) {
+        // What the mod holds, and the words that wake the session.
+        let kept = match crate::inbox::those(&directory, |input| {
+            matches!(input.state, PendingState::Handed | PendingState::Waking)
+        }) {
             Ok(pending) => pending,
             Err(error) => {
                 node.log.line(format_args!("recovering Claude startup observation: {error}"));
@@ -147,7 +150,7 @@ pub(super) fn recover(node: &Arc<Node>, records: &[crate::residents::OnRecord]) 
         };
         for input in kept.iter().filter(|input| input.state == PendingState::Handed) {
             let (node, about, input) = (node.clone(), about.clone(), input.clone());
-            tokio::spawn(async move {
+            fastctx_platform::task::spawn(async move {
                 node.ready_for(&about.id).await;
                 let Some(session) = about.session.as_deref() else { return };
                 let actions = crate::control_queue::gate(&node, &about.id);
@@ -188,9 +191,9 @@ pub(super) fn recover(node: &Arc<Node>, records: &[crate::residents::OnRecord]) 
             }
             continue;
         };
-        match crate::lifecycle::retry::progress(node, &about.id, &first.delivery.id) {
+        match crate::lifecycle::retry::progress_now(node, &about.id, &first.delivery.id) {
             Ok(Some(progress)) if !progress.attempted => {
-                if let Err(error) = crate::lifecycle::retry::defer(
+                if let Err(error) = crate::lifecycle::retry::defer_now(
                     node,
                     &about.id,
                     &first.delivery.id,
@@ -217,16 +220,18 @@ pub(super) fn recover(node: &Arc<Node>, records: &[crate::residents::OnRecord]) 
         }
         if about.session.is_none() {
             let node = node.clone();
-            tokio::spawn(async move {
+            fastctx_platform::task::spawn(async move {
                 let (mut again, mut told) = (crate::again::Again::default(), None);
                 loop {
                     let result = async {
-                        let _births = node.claude.births.write().await;
-                        if !pending(&node, &about.id, &first.delivery.id, false)? {
-                            return Ok(());
-                        }
+                        let decided = super::births_speaking(&node, &about.id, || {
+                            pending(&node, &about.id, &first.delivery.id, false)
+                        })
+                        .await?;
+                        let Some((births, held)) = decided else { return Ok(()) };
+                        drop(births);
                         let why = "the node restarted before recording Claude Code's background session ID; its startup outcome is unknown";
-                        super::failed_wake(&node, &about.id, &directory, &first.delivery.id, Failure::new(why))
+                        super::failed_wake_held(&node, &about.id, &directory, &first.delivery.id, Failure::new(why), held)
                             .await.map(|_| ()).map_err(std::io::Error::other)
                     }.await;
                     match result {
@@ -251,7 +256,7 @@ pub(super) fn recover(node: &Arc<Node>, records: &[crate::residents::OnRecord]) 
 
 pub(super) async fn run(command: &super::Command, args: Vec<OsString>) -> Result<String, String> {
     let command = command.clone();
-    tokio::task::spawn_blocking(fastctx_platform::doing::carried(move || {
+    fastctx_platform::task::spawn_blocking(fastctx_platform::doing::carried(move || {
         background::claude(&command.program, &args, &command.cwd, &command.env)
     }))
     .await
@@ -283,7 +288,7 @@ fn daemon_said(command: &super::Command, short: &str) -> Option<String> {
         Some((_, dir)) => std::path::PathBuf::from(dir),
         None => fastctx_platform::user_home().ok()?.join(".claude"),
     };
-    let mut log = std::fs::File::open(login.join("daemon.log")).ok()?;
+    let mut log = fastctx_platform::disk::open(login.join("daemon.log")).ok()?;
     let length = log.metadata().ok()?.len();
     log.seek(std::io::SeekFrom::Start(length.saturating_sub(DAEMON_TAIL))).ok()?;
     let mut tail = Vec::new();
@@ -321,7 +326,7 @@ pub(super) fn untaken(
         return Ok(false);
     };
     let host_directory = exchange::sessions(node.world.path()).join(session);
-    if host_directory.join("receipts").join(id.as_str()).try_exists()? {
+    if fastctx_platform::disk::exists(host_directory.join("receipts").join(id.as_str()))? {
         return Ok(false);
     }
     let Ok(Some(transcript)) = exchange::transcript(&host_directory) else {
@@ -341,12 +346,12 @@ pub(super) fn retry_untaken(
 ) -> std::io::Result<()> {
     let directory = exchange::sessions(node.world.path()).join(session);
     for path in [directory.join("inbox").join(format!("{id}.json")), directory.join("attempts").join(id.as_str())] {
-        match std::fs::remove_file(path) {
+        match fastctx_platform::disk::remove_file(path) {
             Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error),
             _ => {}
         }
     }
-    crate::lifecycle::retry::defer(node, resident, id, "the host ended before taking the input")
+    crate::lifecycle::retry::defer_now(node, resident, id, "the host ended before taking the input")
         .map(|_| ())
         .map_err(std::io::Error::other)
 }
@@ -362,7 +367,7 @@ fn submitted_since(path: &std::path::Path, since: jiff::Timestamp) -> std::io::R
     use std::io::BufRead as _;
     let since = since.as_millisecond();
     let mut unreadable = false;
-    for line in std::io::BufReader::new(std::fs::File::open(path)?).split(b'\n') {
+    for line in std::io::BufReader::new(fastctx_platform::disk::open(path)?).split(b'\n') {
         let line = line?;
         if line.iter().all(u8::is_ascii_whitespace) {
             continue;
@@ -384,17 +389,6 @@ fn submitted_since(path: &std::path::Path, since: jiff::Timestamp) -> std::io::R
         }
     }
     Ok(unreadable)
-}
-
-async fn failed(
-    node: &Arc<Node>,
-    resident: &ResidentId,
-    directory: &fastctx_types::layout::ConversationDir,
-    id: &NoticeId,
-    why: String,
-) -> std::io::Result<()> {
-    super::failed_wake(node, resident, directory, id, Failure::new(why)).await.map_err(std::io::Error::other)?;
-    Ok(())
 }
 
 fn pending(node: &Node, resident: &ResidentId, id: &NoticeId, waking: bool) -> std::io::Result<bool> {
@@ -542,13 +536,12 @@ async fn watch(
                     // A registration written before the host outcome wins,
                     // including one the filesystem watcher has not seen yet.
                     super::replay(node).await;
-                    let births = node.claude.births.write().await;
-                    if !pending(node, resident, id, waking)? {
-                        return Ok(());
-                    }
                     // Claude Code may go on listing a session its daemon
                     // settled long ago as blocked: that one has ended.
                     if job.ended() || settled(command, &short) {
+                        let decided =
+                            super::births_speaking(node, resident, || pending(node, resident, id, waking)).await?;
+                        let Some((births, held)) = decided else { return Ok(()) };
                         if node.residents.about(resident).is_none() {
                             return Ok(());
                         }
@@ -558,11 +551,19 @@ async fn watch(
                         // memory, retires the very worker it just claimed
                         // for them as one long idle.
                         if waking && untaken(node, &session, &directory, id)? {
-                            drop(births);
+                            drop((births, held));
                             retry_untaken(node, resident, &session, id)?;
                             return Ok(());
                         }
-                        return failed(node, resident, &directory, id, why).await;
+                        drop(births);
+                        super::failed_wake_held(node, resident, &directory, id, Failure::new(why), held)
+                            .await
+                            .map_err(std::io::Error::other)?;
+                        return Ok(());
+                    }
+                    let _births = super::births_after_pairing(node, resident).await;
+                    if !pending(node, resident, id, waking)? {
+                        return Ok(());
                     }
                     // The host's watchdog and a real setup dialog produce the
                     // same blocked state. Preserve the fact without declaring
@@ -579,7 +580,7 @@ async fn watch(
                     }
                     let why = diagnosis(command, &short, why).await;
                     super::replay(node).await;
-                    let _births = node.claude.births.write().await;
+                    let _births = super::births_after_pairing(node, resident).await;
                     if !pending(node, resident, id, waking)? {
                         return Ok(());
                     }
@@ -590,7 +591,7 @@ async fn watch(
                 last_problem = None;
             }
             Ok(None) => {
-                let _births = node.claude.births.write().await;
+                let _births = super::births_after_pairing(node, resident).await;
                 if !pending(node, resident, id, waking)? {
                     return Ok(());
                 }
@@ -602,7 +603,7 @@ async fn watch(
                 }
             }
             Err(error) => {
-                let _births = node.claude.births.write().await;
+                let _births = super::births_after_pairing(node, resident).await;
                 if !pending(node, resident, id, waking)? {
                     return Ok(());
                 }

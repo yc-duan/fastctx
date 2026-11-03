@@ -36,7 +36,7 @@ impl Pending {
 pub(crate) fn follow(node: &Arc<Node>) {
     let node = node.clone();
     let followed: Arc<Mutex<HashSet<HubId>>> = Arc::default();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         loop {
             for link in node.links() {
                 let hub = link.hub().clone();
@@ -45,7 +45,7 @@ pub(crate) fn follow(node: &Arc<Node>) {
                 }
                 let (node, followed) = (node.clone(), followed.clone());
                 let mut changes = link.record_changes();
-                tokio::spawn(async move {
+                fastctx_platform::task::spawn(async move {
                     let mut pending = Pending { all: true, ..Default::default() };
                     let mut again = crate::again::Again::default();
                     let mut errors = BTreeMap::new();
@@ -136,7 +136,7 @@ async fn tell(
         };
         let (writing, text) = (node.clone(), skills::context(&index));
         let acting = Acting::one(hub.clone(), account.clone());
-        let written = tokio::task::spawn_blocking(move || {
+        let written = fastctx_platform::task::spawn_blocking(move || {
             let mut failed = Vec::new();
             for id in residents {
                 if !writing.residents.about(&id).is_some_and(|(about, _)| about.acting == acting) {

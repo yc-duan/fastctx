@@ -41,6 +41,9 @@ pub struct Asker {
 /// The resident of this machine `call` is about, if it is about one.
 fn resident_of(call: &RemoteCall) -> Option<&ResidentId> {
     match call {
+        RemoteCall::SentinelControl {
+            request: fastctx_types::sentinel_control::Request::Conversation { owner, .. },
+        } => Some(&owner.resident),
         RemoteCall::GoalCommand { actor, request, .. } => Some(request.resident(actor)),
         RemoteCall::Plan { resident: who, .. }
         | RemoteCall::Goal { resident: who, .. }
@@ -140,6 +143,7 @@ pub fn admit(node: &Arc<Node>, link: &Arc<Link>, caller: &Caller, call: &RemoteC
             | RemoteCall::AddAgentLogin { .. }
             | RemoteCall::AgentFolder { .. }
             | RemoteCall::SetAgentTitle { .. }
+            | RemoteCall::SetAgentResetInPlace { .. }
             | RemoteCall::PreviewAgentChange { .. }
             | RemoteCall::ChangeAgentLogin { .. }
             | RemoteCall::ClaudeConsent { .. }
@@ -200,8 +204,7 @@ pub fn admit(node: &Arc<Node>, link: &Arc<Link>, caller: &Caller, call: &RemoteC
         if !node.residents.knows(resident) {
             return Err(crate::forget::gone(node, resident));
         }
-        let serves =
-            node.residents.about(resident).is_some_and(|(about, _)| node.serves(&about.acting, &hub, &caller.account));
+        let serves = crate::record_ownership::resident(node, resident, &hub, &caller.account);
         if !serves {
             return Err(refuse(format!("{resident} does not work for the account {}", caller.account)));
         }

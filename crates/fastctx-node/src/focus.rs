@@ -3,6 +3,8 @@
 //! recovery; these functions only maintain the current authorized selection.
 //! Unreadable machines or folders are described as such in that context.
 
+pub(crate) mod storage;
+use fastctx_platform::task;
 use fastctx_types::access::Written;
 use std::sync::Arc;
 use std::time::Duration;
@@ -59,7 +61,7 @@ pub(crate) async fn folders(
 }
 
 pub(crate) async fn folders_here(machine: MachineName, path: Option<String>) -> Result<Folders, Failure> {
-    tokio::task::spawn_blocking(move || fastctx_hands::folders::list(machine, path.as_deref()))
+    task::spawn_blocking(move || fastctx_hands::folders::list(machine, path.as_deref()))
         .await
         .map_err(|error| Failure::new(error.to_string()))?
 }
@@ -74,7 +76,7 @@ pub(crate) async fn outline_here(folders: Vec<String>, within: Duration) -> Vec<
         .iter()
         .map(|path| {
             let path = path.clone();
-            tokio::task::spawn_blocking(move || fastctx_hands::outline::outline(&path, deadline))
+            task::spawn_blocking(move || fastctx_hands::outline::outline(&path, deadline))
         })
         .collect();
     let mut outlined = Vec::with_capacity(folders.len());
@@ -194,83 +196,80 @@ pub(crate) async fn open(
     acting: &Acting,
     focus: &Focus,
 ) -> Result<(), Failure> {
-    fastctx_platform::ensure_private_dir(directory.path())
-        .map_err(|error| Failure::new(format!("making the conversation's directory: {error}")))?;
-    let note = note(node, acting, focus).await;
-    keep(directory, note.as_deref())?;
-    let opening = Opening { focus: allowed(node, acting, focus), note: note.unwrap_or_default() };
-    let bytes = serde_json::to_vec_pretty(&opening).map_err(|error| Failure::new(error.to_string()))?;
-    write(&directory.focus_opening(), &bytes)
+    // A refresh begun meanwhile (`refresh`) works the same focus out from
+    // the conversation's own and keeps it first; what is opened with is
+    // then worked out again, so the conversation never starts without it.
+    for _ in 0..3 {
+        let room = directory.clone();
+        let selection = allowed(node, acting, focus);
+        let generation =
+            task::spawn_blocking(move || storage::begin(&room, &selection)).await.map_err(failed)?.map_err(failed)?;
+        let note = note(node, acting, focus).await;
+        let visible = allowed(node, acting, focus);
+        let opening = Opening { focus: visible.clone(), note: note.clone().unwrap_or_default() };
+        let room = directory.clone();
+        let kept =
+            task::spawn_blocking(move || storage::keep(&room, generation, note.as_deref(), &visible, Some(&opening)))
+                .await
+                .map_err(failed)?
+                .map_err(failed)?;
+        if kept {
+            return Ok(());
+        }
+    }
+    Err(Failure::new("what the conversation is pointed at kept changing while it was opened"))
 }
 
-/// What a Codex thread's instructions say of its machines and folders,
-/// after the rest.
-pub(crate) fn opening(directory: &ConversationDir) -> Result<Option<Opening>, Failure> {
-    match std::fs::read(directory.focus_opening()) {
-        Ok(bytes) => serde_json::from_slice(&bytes).map(Some).map_err(|error| Failure::new(error.to_string())),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(Failure::new(format!("reading what the instructions say of its folders: {error}"))),
-    }
+fn failed(error: impl std::fmt::Display) -> Failure {
+    Failure::new(error.to_string())
+}
+
+/// The opening selection is read on a worker, including before resident creation.
+pub(crate) async fn opening(directory: &ConversationDir) -> Result<Option<Opening>, Failure> {
+    let directory = directory.clone();
+    task::spawn_blocking(move || storage::opening(&directory)).await.map_err(failed)?.map_err(failed)
+}
+
+pub(crate) fn text(directory: &ConversationDir) -> std::io::Result<String> {
+    storage::text(directory)
 }
 
 /// Replaces cached context when authority changes, without rewriting the user's selection.
 pub(crate) async fn refresh(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {
-    let Some((about, _)) = node.residents.about(id) else { return Ok(()) };
-    let directory = node.world.conversation(id);
-    let visible = allowed(node, &about.acting, &about.focus);
-    let marker = directory.path().join("focus-visible.json");
-    let previous: Option<Focus> = match std::fs::read(&marker) {
-        Ok(bytes) => Some(
-            serde_json::from_slice(&bytes)
-                .map_err(|error| Failure::new(format!("reading authorized focus: {error}")))?,
-        ),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => opening(&directory)?.map(|opening| opening.focus),
-        Err(error) => return Err(Failure::new(format!("reading authorized focus: {error}"))),
-    };
-    if previous.as_ref() == Some(&visible) {
-        return Ok(());
-    }
+    refresh_selection(node, id, false).await
+}
+
+async fn refresh_selection(node: &Arc<Node>, id: &ResidentId, force: bool) -> Result<(), Failure> {
+    let (working, resident) = (node.clone(), id.clone());
+    let pending = task::spawn_blocking(move || -> std::io::Result<_> {
+        let Some((about, _)) = working.residents.about(&resident) else { return Ok(None) };
+        let directory = working.world.conversation(&resident);
+        let visible = allowed(&working, &about.acting, &about.focus);
+        if !force && storage::visible(&directory)?.as_ref() == Some(&visible) {
+            return Ok(None);
+        }
+        let generation = storage::begin(&directory, &visible)?;
+        Ok(Some((about, visible, generation)))
+    })
+    .await
+    .map_err(failed)?
+    .map_err(failed)?;
+    let Some((about, visible, generation)) = pending else { return Ok(()) };
     let note = note(node, &about.acting, &visible).await;
-    keep(&directory, note.as_deref())?;
-    write(&marker, &serde_json::to_vec(&visible).map_err(|error| Failure::new(error.to_string()))?)?;
-    crate::context::refresh_local(node, id).map_err(|error| Failure::new(error.to_string()))?;
-    Ok(())
-}
-
-pub(crate) async fn refresh_all(node: &Arc<Node>) {
-    let ids: Vec<_> =
-        node.residents.everyone().filter(|resident| resident.removed.is_none()).map(|resident| resident.id).collect();
-    for id in ids {
-        let Ok(gate) = node.residents.management(&id) else { continue };
-        let _reading = gate.read().await;
-        if node.residents.active(&id).is_err() {
-            continue;
+    let (working, resident) = (node.clone(), id.clone());
+    task::spawn_blocking(move || -> std::io::Result<()> {
+        let Some((current, _)) = working.residents.about(&resident) else { return Ok(()) };
+        if allowed(&working, &current.acting, &current.focus) != visible {
+            return Ok(());
         }
-        if let Err(failure) = refresh(node, &id).await {
-            node.log.line(format_args!("updating {id}'s authorized folders: {failure}"));
+        if storage::keep(&working.world.conversation(&resident), generation, note.as_deref(), &visible, None)? {
+            crate::context::sources::refresh_part_now(&working, &resident, crate::context::parts::Part::Focus)?;
         }
-    }
-}
-
-/// Keeps what the model is told of the machines and folders now, where a
-/// Claude session's plugin reads it.
-fn keep(directory: &ConversationDir, note: Option<&str>) -> Result<(), Failure> {
-    match note {
-        Some(note) => write(&directory.focus(), note.as_bytes()),
-        None => match std::fs::remove_file(directory.focus()) {
-            Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
-                Err(Failure::new(format!("forgetting its folders: {error}")))
-            }
-            _ => Ok(()),
-        },
-    }
-}
-
-fn write(path: &std::path::Path, bytes: &[u8]) -> Result<(), Failure> {
-    let parent = path.parent().expect("a conversation's books");
-    fastctx_platform::ensure_private_dir(parent)
-        .and_then(|()| fastctx_platform::publish(path, bytes, fastctx_platform::Permissions::Private))
-        .map_err(|error| Failure::new(format!("keeping its folders: {error}")))
+        Ok(())
+    })
+    .await
+    .map_err(failed)?
+    .map_err(failed)
 }
 
 /// Whether the user may point this conversation at machines and folders:
@@ -286,20 +285,13 @@ pub(crate) fn pointable(about: &About) -> Result<(), Failure> {
 
 /// The user pointed the conversation at `focus`, which is now in its
 /// record: what it is told of them is kept, and the change told to it.
-pub(crate) async fn changed(node: &Arc<Node>, id: &ResidentId, about: &About, focus: &Focus) -> Result<(), Failure> {
-    let directory = node.world.conversation(id);
-    let visible = allowed(node, &about.acting, focus);
-    let note = note(node, &about.acting, &visible).await;
-    keep(&directory, note.as_deref())?;
-    write(
-        &directory.path().join("focus-visible.json"),
-        &serde_json::to_vec(&visible).map_err(|error| Failure::new(error.to_string()))?,
-    )?;
-    crate::context::refresh_local(node, id).map_err(|error| Failure::new(error.to_string()))
+pub(crate) async fn changed(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {
+    refresh_selection(node, id, true).await
 }
 
 /// A fork's inherited history may contain a different selection. Queue its
 /// current context for the next tool response without starting a turn.
 pub(crate) async fn forked(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {
-    crate::context::forked(node, id).map_err(|error| Failure::new(error.to_string()))
+    let (node, id) = (node.clone(), id.clone());
+    task::spawn_blocking(move || crate::context::forked(&node, &id)).await.map_err(failed)?.map_err(failed)
 }

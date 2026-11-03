@@ -57,8 +57,10 @@ import { numbered, parse } from "./diff";
 import { DiffLines, RemoteDiff, diffPaint, encodeRow, keptDiff, memoryDiff } from "./diff-lines";
 import { readRun } from "./deeds/read";
 import { scriptSaid } from "./deeds/script";
-import { drawDeeds, goingOn, type DeedTools } from "./deeds/draw";
-import type { Deed, PlainDeed } from "./deeds/types";
+import { drawDeeds, foldedCard, goingOn, type DeedTools } from "./deeds/draw";
+import type { Deed, FileDeed, PlainDeed } from "./deeds/types";
+import { numberedFile } from "./deeds/files";
+import { whyOf } from "../world/again";
 import { troubled } from "./deeds/fan";
 import { shortCommand } from "./deeds/rows";
 import { cardsOf, type Card } from "./cards/cards";
@@ -78,6 +80,7 @@ import { TurnLine, time, type LineSays } from "./turn-line";
 import { fly, type Departure } from "./flight";
 import { estimate } from "./estimate";
 import { Heights } from "./heights";
+import { RowsKept } from "./rows-kept";
 import { FindContent, displayedDiff, toolText } from "./find-content";
 import { clockSays, stretchSays, thoughtHeads, thoughtOnly, thoughtText, thoughtTook } from "./stretch-says";
 import { displayedText, htmlText as displayedTextHtml, type TextMatch } from "./find-text";
@@ -100,6 +103,9 @@ export interface Context {
   /** Opens one of the host's agents in the panel beside the conversation,
    *  rather than under the row that sent it; false where it cannot. */
   openAgent?: ((id: string) => boolean) | undefined;
+  /** Opens a file a row or a card names (`file-kind.ts`): one that reads as
+   *  text in the panel beside the conversation, a picture in the viewer. */
+  openFile?: ((machine: MachineName, path: string) => void) | undefined;
   /** The reader opened or closed something: the page stops keeping the
    *  newest in view, so nothing moves under their hand. */
   reading(): void;
@@ -163,6 +169,9 @@ const WRITE = "~";
 /** The most bytes of rows a change is read ahead in, not kept with the
  *  conversation: larger ones are read as they are opened. */
 const PREFETCH = 1024 * 1024;
+/** The characters of changes' rows a page keeps read whole (`RowsKept`):
+ *  the few latest changes of any size, or many small ones. */
+const ROWS_KEPT = 4 * 1024 * 1024;
 
 /** How far beyond what is in view blocks are drawn, in screens: one above,
  *  as a reader going up meets what was just there; two below, where the
@@ -279,8 +288,8 @@ export class ConversationView {
   private findRead = new Map<string, string>();
   private findRemoved = new Set<string>();
   /** The rows of changes read whole, by row: what finding and opening
-   *  them again draw from, with no request. */
-  private findWrites = new Map<string, { signature: string; lines: readonly string[] }>();
+   *  them again draw from, with no request, the latest used kept. */
+  private findWrites = new RowsKept(ROWS_KEPT);
   /** Reading in the background the changes that are not kept with the
    *  conversation but are small enough to read whole (`prefetch`). */
   private prefetching: AbortController | null = null;
@@ -1856,6 +1865,17 @@ export class ConversationView {
     }
   }
 
+  /** How words that did not go, or are not known to have, are sent again
+   *  or taken away, where the page can (`Fold.settler`). */
+  private settle(key: string | undefined): string {
+    const settler = key === undefined ? undefined : this.conversation.settler(key);
+    if (key === undefined || !settler) return "";
+    const { words } = this.context;
+    const button = (act: string, label: string) =>
+      `<button class="text-button" type="button" data-settle="${act}" data-key="${escape(key)}">${escape(label)}</button>`;
+    return `<span class="bubble-settle">${settler.again ? button("again", words.sendAgain) : ""}${button("remove", words.takeAway)}</span>`;
+  }
+
   private heard(from: Speaker | null, text: string, sending: SendState | null, key?: string): string {
     const { words } = this.context;
     if (!from || from.kind === "user") {
@@ -1865,14 +1885,19 @@ export class ConversationView {
         from && from.machine !== this.context.here ? `<div class="bubble-from">${escape(words.you(from.machine))}</div>` : "";
       const state = sending && sending.state !== "settled" ? ` ${sending.state}` : "";
       let note = "";
-      if (sending?.state === "failed") note = `<div class="bubble-note wrong" title="${escape(sending.why)}">${escape(words.notSent(sending.why))}</div>`;
+      if (sending?.state === "failed") {
+        note = `<div class="bubble-note wrong"><span title="${escape(sending.why)}">${escape(words.notSent(sending.why))}</span>${this.settle(key)}</div>`;
+      }
+      if (sending?.state === "unknown") {
+        note = `<div class="bubble-note"><span title="${escape(sending.why)}">${escape(words.notConfirmed)}</span>${this.settle(key)}</div>`;
+      }
       if (sending?.state === "waiting") note = `<div class="bubble-note" title="${escape(sending.why)}">${escape(words.waitingToSend)}</div>`;
       if (sending?.state === "landed") {
         note = `<div class="bubble-note"${sending.why ? ` title="${escape(sending.why)}"` : ""}>${escape(words.landed(sending.how, sending.machine, sending.why ?? null))}</div>`;
       }
       if (sending?.state === "queued") note = sending.memory
         ? `<div class="bubble-note" title="${escape(words.queuedMemoryWhy)}">${escape(words.queuedMemory(sending.ahead))}</div>`
-        : `<div class="bubble-note" title="${escape(words.queuedTurnWhy)}">${escape(words.queuedTurn(sending.ahead))}</div>`;
+        : `<div class="bubble-note" title="${escape(sending.callee ? words.queuedCalleeWhy : words.queuedTurnWhy)}">${escape(words.queuedTurn(sending.ahead))}</div>`;
       // Still on their way: their host has not started for a minute.
       if (sending?.state === "going" && sending.retry) {
         note = `<div class="bubble-note" title="${escape(words.hostRetryWhy(sending.retry))}">${escape(words.hostRetrying(this.context.agent))}</div>`;
@@ -2093,6 +2118,16 @@ export class ConversationView {
     const closers: (() => void)[] = [];
     this.longs.set(key, longs);
     this.closers.set(key, closers);
+    if (thing.kind === "read") {
+      this.fillRead(key, thing, content);
+      return;
+    }
+    if (thing.kind === "folded") {
+      const entry = this.conversation.get(thing.sources[0]?.entry ?? "");
+      const tool = entry?.kind === "tool" ? entry.tool : null;
+      content.append(foldedCard(tool?.run?.folded_steps ?? [], this.context.words.deeds, tool?.machine ?? this.context.residentMachine ?? null));
+      return;
+    }
     // The deeds read from one run are drawn together, under its own words.
     const deeds = new Map<string, number[]>();
     const order: (string | { write: string; entry: string } | { change: number; entry: string })[] = [];
@@ -2595,11 +2630,12 @@ export class ConversationView {
   }
 
   /** A change's card, the rows put in it once there are some: `shown`
-   *  has them put. */
+   *  has them put. Its file's name opens the file as it is now, unless the
+   *  change deleted it. */
   private changeCard(path: string, machine: string | null, kind: DiffKind): { card: DiffCard; shown: (long: LongText) => void } {
     const { words } = this.context;
     let held: LongText | null = null;
-    const card = diffCard(path, machine, { copy: words.copyDiff, copied: words.copied }, async (signal) => unifiedDiff(path, kind, held ? await held.all(signal) : []));
+    const card = diffCard(path, machine, { copy: words.copyDiff, copied: words.copied }, async (signal) => unifiedDiff(path, kind, held ? await held.all(signal) : []), kind === "deleted" ? undefined : this.opener(machine, path));
     return {
       card,
       shown: (long) => {
@@ -2608,6 +2644,102 @@ export class ConversationView {
         if (full) card.act(full);
       },
     };
+  }
+
+  /** The way a card's file name opens the file, where the page opens files. */
+  private opener(machine: string | null, path: string): (() => void) | undefined {
+    const open = this.context.openFile;
+    return open ? () => open(machine ?? this.context.residentMachine, path) : undefined;
+  }
+
+  /** A file read, in a card as a change is, with no words of the run under
+   *  it: the lines the read brought back, where its output holds them;
+   *  else the file as its machine has it now, its beginning where it is
+   *  long. A read that failed says so, the host's words on hover. */
+  private fillRead(key: string, card: Extract<Card, { kind: "read" }>, content: HTMLElement): void {
+    const { words } = this.context;
+    const machine = card.machine ?? this.context.residentMachine;
+    const entry = this.conversation.get(card.sources[0]?.entry ?? "");
+    const tool = entry?.kind === "tool" ? entry.tool : null;
+    const brought = card.deed?.rows.length ? card.deed : tool && tool.does.as !== "command" ? numberedFile(toolText(tool, words).output, machine, card.path) : null;
+    const note = document.createElement("p");
+    note.className = "io-note";
+    if (brought) {
+      const drawn = this.fileCard({ ...brought, machine: brought.machine ?? machine });
+      for (const long of drawn.longs) this.held(key, long);
+      content.append(drawn.element);
+      return;
+    }
+    if (card.failed || !card.path || !this.context.lines) {
+      note.textContent = words.output.readFailed;
+      if (tool) note.title = toolText(tool, words).output.trim();
+      content.append(note);
+      return;
+    }
+    note.textContent = words.output.reading;
+    content.append(note);
+    const lines = this.context.lines;
+    const request = new AbortController();
+    const closers = this.closers.get(key);
+    if (closers) closers.push(() => request.abort());
+    else this.closers.set(key, [() => request.abort()]);
+    const pending = (async () => {
+      let source: OpenedLines | null = null;
+      try {
+        source = await lines(machine, card.path, { kind: "file", encoding: null });
+        if (request.signal.aborted) return;
+        const length = source.extent.length;
+        const read = await source.read(0, Math.min(length, READ_LINES), request.signal);
+        if (request.signal.aborted) return;
+        // As many of its first lines as fit in a card; a line too long for
+        // one (minified code) is cut where the card's share runs out.
+        const rows: FileDeed["rows"] = [];
+        let left = READ_CHARS;
+        for (const [at, text] of read.entries()) {
+          if (left <= 0) break;
+          rows.push({ line: at + 1, text: text.length > left ? `${text.slice(0, left)}…` : text });
+          left -= text.length;
+        }
+        if (length > rows.length) rows.push({ skipped: length - rows.length });
+        const drawn = this.fileCard({ kind: "file", command: null, machine, path: card.path, rows, of: length });
+        this.arrive(note, () => {
+          note.replaceWith(drawn.element);
+          for (const long of drawn.longs) {
+            this.held(key, long);
+            long.settle();
+          }
+        });
+      } catch (error) {
+        if (request.signal.aborted) return;
+        this.arrive(note, () => {
+          note.textContent = gone(error) ? words.output.fileMissing : words.output.readFailed;
+          note.title = whyOf(error);
+        });
+      } finally {
+        if (source) void source.close().catch((error: unknown) => console.warn("a file's lines could not be let go", error));
+      }
+    })();
+    this.filling.set(key, pending);
+    void pending.finally(() => {
+      if (this.filling.get(key) === pending) this.filling.delete(key);
+    });
+  }
+
+  /** A file's lines in a card as a change's are: numbered where their
+   *  places are known, in its colours; the lines passed over left out, not
+   *  unchanged; wrapping, since a file read is not a change. */
+  private fileCard(deed: FileDeed): { element: HTMLElement; longs: LongText[] } {
+    const { words } = this.context;
+    const rows = deed.rows.map((row) =>
+      "text" in row ? encodeRow({ kind: "same", old: row.line, new: row.line, text: row.text }) : encodeRow({ kind: "gap", old: null, new: null, hidden: row.skipped, text: "" }),
+    );
+    const text = deed.rows.flatMap((row) => ("text" in row ? [row.text] : [])).join("\n");
+    const card = diffCard(deed.path, deed.machine, { copy: words.copy, copied: words.copied }, async () => text, this.opener(deed.machine, deed.path));
+    const long = this.diffText(rows, deed.path, deed.rows.some((row) => "line" in row && row.line !== null), (n) => words.deeds.skipped(n), true);
+    card.body.append(long.element);
+    const full = long.takeFull();
+    if (full) card.act(full);
+    return { element: card.element, longs: [long] };
   }
 
   /** What a write changed, read from the machine that keeps it, in its
@@ -2706,18 +2838,27 @@ export class ConversationView {
           const key = `${entry.key}${WRITE}${write.id}`;
           const diff = write.diff;
           if (diff && !diff.lines && diff.bytes !== undefined && diff.bytes <= PREFETCH && !this.readAhead.has(key)) {
-            this.readAhead.add(key);
             wanted.push([key, write, diff]);
           }
         }
       }
     }
-    if (!wanted.length) return;
+    // The latest first, the reader being at the end, and only as many as the
+    // rows kept hold: more would let the latest go again.
+    let room = this.findWrites.room;
+    const taken: typeof wanted = [];
+    for (const one of wanted.reverse()) {
+      const bytes = one[2].bytes ?? 0;
+      if (bytes > room) break;
+      room -= bytes;
+      this.readAhead.add(one[0]);
+      taken.push(one);
+    }
+    if (!taken.length) return;
     const request = new AbortController();
     this.prefetching = request;
     void (async () => {
-      // The latest first: the reader is at the end.
-      for (const [key, write, diff] of wanted.reverse()) {
+      for (const [key, write, diff] of taken) {
         let raw: OpenedLines | null = null;
         try {
           raw = await lines(diff.machine, diff.path, { kind: "file", encoding: "utf-8" });
@@ -2844,7 +2985,8 @@ export class ConversationView {
       later.push(...sides);
       return element;
     };
-    const cards = drawDeeds(drawn, this.deedTools(tool), printed, ending);
+    const folded = only ? [] : (tool.run?.folded_steps ?? []);
+    const cards = drawDeeds(drawn, this.deedTools(tool), printed, ending, folded, tool.machine ?? this.context.residentMachine ?? null);
     const raw = cards.element.querySelector<HTMLButtonElement>(".dd-raw");
     const opened = (side: number): OpenedText => ({
       get element() {
@@ -2993,20 +3135,7 @@ export class ConversationView {
         if (deed.page !== null || !/^image\/(png|jpeg|gif|webp)$/.test(deed.mime)) return "";
         return `<img class="io-image" data-picture data-path="${escape(deed.path)}"${deed.machine ? ` data-machine="${escape(deed.machine)}"` : ""} alt="${escape(deed.path.split(/[\\/]/).pop() ?? "")}">`;
       },
-      file: (deed) => {
-        const rows = deed.rows.map((row) =>
-          "text" in row ? encodeRow({ kind: "same", old: row.line, new: row.line, text: row.text }) : encodeRow({ kind: "gap", old: null, new: null, hidden: row.skipped, text: "" }),
-        );
-        const text = deed.rows.flatMap((row) => ("text" in row ? [row.text] : [])).join("\n");
-        const card = diffCard(deed.path, deed.machine, { copy: words.copy, copied: words.copied }, async () => text);
-        // Lines passed over in a file read are left out, not unchanged.
-        // A file read is not a change: its lines wrap.
-        const long = this.diffText(rows, deed.path, deed.rows.some((row) => "line" in row && row.line !== null), (n) => words.deeds.skipped(n), true);
-        card.body.append(long.element);
-        const full = long.takeFull();
-        if (full) card.act(full);
-        return { element: card.element, longs: [long] };
-      },
+      file: (deed) => this.fileCard(deed),
     };
   }
 
@@ -3195,6 +3324,21 @@ export class ConversationView {
       this.unfold(unfold);
       return;
     }
+    const settle = (event.target as HTMLElement).closest<HTMLElement>("[data-settle]");
+    if (settle) {
+      const settler = this.conversation.settler(settle.dataset.key!);
+      if (settle.dataset.settle === "again") settler?.again?.();
+      else settler?.remove();
+      return;
+    }
+    // A file's name on a row opens the file; the row stays as it is.
+    const name = (event.target as HTMLElement).closest<HTMLElement>("[data-name-path]");
+    if (name && this.context.openFile) {
+      event.preventDefault();
+      event.stopPropagation();
+      this.context.openFile(name.dataset.nameMachine ?? this.context.residentMachine, name.dataset.namePath!);
+      return;
+    }
     const target = (event.target as HTMLElement).closest<HTMLElement>(
       "[data-open], [data-fold], [data-gap], [data-earlier], [data-asked], .code-copy, .ask-option, [data-ask], [data-copy], [data-copy-turn], [data-turn-act], [data-turn-calls]",
     );
@@ -3354,9 +3498,14 @@ function stillGoing(state: RunFacts["state"]): boolean {
   return state.kind === "running" || (state.kind === "exited" && state.remaining > 0);
 }
 
+/** How many lines of a file read from its machine a read's card shows,
+ *  and how many characters of them at most; the whole is in the side. */
+const READ_LINES = 400;
+const READ_CHARS = 64 * 1024;
+
 /** Whether a machine said that what was asked for is no longer there, as
  *  the node's failure codes it. */
-function gone(error: unknown): boolean {
+export function gone(error: unknown): boolean {
   const code = typeof error === "object" && error !== null && "code" in error ? (error as { code?: unknown }).code : undefined;
   return code === "source_missing" || code === "original_gone" || code === "output_not_retained";
 }

@@ -20,7 +20,7 @@ fn witness(root: &Path, digest: &str) -> std::path::PathBuf {
 pub async fn prepare(root: &Path, digest: &str) -> anyhow::Result<()> {
     let root = root.to_owned();
     let digest = digest.to_owned();
-    tokio::task::spawn_blocking(move || {
+    fastctx_platform::task::spawn_blocking(move || {
         let build = store::build()?;
         ensure!(build.digest == digest, "prepared delivery differs from its plan");
         let node_entry = fastctx_install::placement::node_activation(&root)?;
@@ -29,7 +29,7 @@ pub async fn prepare(root: &Path, digest: &str) -> anyhow::Result<()> {
         store::write_json(&store::directory(&root).join(format!("prepared-{digest}.json")), &identity)?;
         let world = WorldDir::under(&root);
         ensure_private_dir(world.path())?;
-        let _service = if world.node_service().exists() {
+        let _service = if fastctx_platform::disk::is_there(world.node_service()) {
             Some(FileLock::acquire(&store::directory(&root).join("service-gate.lock"))?)
         } else {
             None
@@ -119,7 +119,8 @@ pub(crate) fn validate(root: &Path, digest: &str, parent: &ProcessIdentity) -> a
     let plan = store::read(root)?.context("replacement has no plan")?;
     ensure!(plan.candidate.build == store::build()?, "stable replacement differs from its plan");
     ensure!(
-        std::fs::canonicalize(std::env::current_exe()?)? == std::fs::canonicalize(store::installed(root))?,
+        fastctx_platform::disk::canonicalize(std::env::current_exe()?)?
+            == fastctx_platform::disk::canonicalize(store::installed(root))?,
         "replacement must start from the stable World program"
     );
     Ok(())

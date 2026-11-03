@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "lab_echo": {
+      "command": "/usr/bin/cat",
+      "disabled": false,
+      "env": {
+        "LAB_LABEL": "offline"
+      }
+    }
+  }
+}

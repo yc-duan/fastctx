@@ -9,6 +9,7 @@ import type { SaidWords } from "../conversation/said";
 import type { CommandWords } from "../conversation/commands";
 import type { FileWords } from "../conversation/mention";
 import type { PresenceWords } from "./presence";
+import { enTroubles, zhTroubles } from "./trouble-words";
 import type { ReaderWords } from "./reader";
 import { sizeOf, type AttachWords } from "../conversation/attach";
 import { enProblems, failure, zhProblems } from "./problem";
@@ -20,18 +21,22 @@ export interface ShellWords {
   someoneAssisting(agent: string, owner: string): string;
   /** A conversation forked from another. */
   forked: string;
+  /** Another account opened it, on a machine shared with the user. */
+  openedBy(account: string): string;
   app: string;
   world: string;
   projects: string;
   outside: string;
   machines: string;
   agents: string;
-  /** The agents as the workbench names them: its kernels (`world-layers.md`). */
-  kernels: string;
+  /** The workbench's places, a group of their own (`world-layers.md`). */
+  workbench: string;
   /** What the agents did with run (`world-layers.md`). */
   activity: string;
   /** Model collaboration's settings, among the kernels'. */
   collaboration: string;
+  /** The workbench's conversations' settings, a row of its group. */
+  talkSettings: string;
   features: string;
   /** The way to every conversation of a list. */
   all: string;
@@ -120,11 +125,6 @@ export interface FocusWords {
   picker: FolderPickerWords;
   /** How many more are chosen than the chip names. */
   more(count: number): string;
-  saving: string;
-  failed(why: string): string;
-  /** Every machine was taken off, and the way to put them back. */
-  cleared: string;
-  undo: string;
 }
 
 export const zhFolderPicker: FolderPickerWords = {
@@ -174,10 +174,6 @@ export const zhFocus: FocusWords = {
   done: "完成",
   picker: zhFolderPicker,
   more: (count) => `+${count}`,
-  saving: "保存中…",
-  failed: failure(zhProblems, "没改成"),
-  cleared: "已清空",
-  undo: "撤回",
 };
 
 export const enFocus: FocusWords = {
@@ -197,10 +193,6 @@ export const enFocus: FocusWords = {
   done: "Done",
   picker: enFolderPicker,
   more: (count) => `+${count}`,
-  saving: "Saving…",
-  failed: failure(enProblems, "Not changed"),
-  cleared: "Cleared",
-  undo: "Undo",
 };
 
 export interface NewTalkWords {
@@ -365,6 +357,7 @@ export const enNewTalk: NewTalkWords = {
 };
 
 export const zhPresence: PresenceWords = {
+  troubles: zhTroubles,
   asked: (who, what) =>
     `${who} ${{ answer: "问你", command: "想运行命令", change: "想改文件", tool: "想用工具", plan: "想按计划动手", form: "等你填写", other: "等你允许", waiting: "等你回复" }[what]}`,
   finished: (who) => `${who} 回复了`,
@@ -396,6 +389,7 @@ export const zhPresence: PresenceWords = {
 };
 
 export const enPresence: PresenceWords = {
+  troubles: enTroubles,
   asked: (who, what) =>
     `${who} ${{ answer: "asks", command: "wants to run a command", change: "wants to change files", tool: "wants to use a tool", plan: "wants to start on its plan", form: "needs a form filled in", other: "needs your OK", waiting: "is waiting for your reply" }[what]}`,
   finished: (who) => `${who} replied`,
@@ -545,7 +539,7 @@ export const zhSettings: SettingsWords = {
     ["Esc", "关闭菜单与查找"],
   ],
   notify: "通知",
-  notifyOn: "等待回复或回复完成时通知",
+  notifyOn: "开启",
   notifyOff: "关闭",
   retention: "命令输出保留",
   data: "本机数据",
@@ -667,7 +661,7 @@ export const enSettings: SettingsWords = {
     ["Esc", "Close menus and find"],
   ],
   notify: "Notifications",
-  notifyOn: "Notify when waiting or replied",
+  notifyOn: "On",
   notifyOff: "Off",
   retention: "Keep command output",
   data: "Data",
@@ -821,138 +815,6 @@ export const readerWords: ReaderWordsSet = {
     bytes: (count) => sizeOf(count, units.en),
     modified: (ago) => `modified ${ago}`,
   },
-};
-
-export interface DetailsWords {
-  open: string;
-  close: string;
-  model: string;
-  modelSelf: string;
-  machine: string;
-  host: string;
-  startedByWorld: string;
-  origin: string;
-  openedByYou: string;
-  askedBy(asker: string, label: string): string;
-  here: string;
-  since(ago: string): string;
-  state: string;
-  busy(lasted: string): string;
-  idle(ago: string): string;
-  removed(ago: string): string;
-  waiting: string;
-  trouble: string;
-  task: string;
-  colleagues: string;
-  /** An agent assisting the user: whose it is. */
-  assistFrom: string;
-  actingFor: string;
-  separator: string;
-  /** Which login of its agent it uses, where not the default one. */
-  login: string;
-  running: string;
-  actions(shown: number, total: number): string;
-  noActions: string;
-  answers: string;
-  records: string;
-  stop: string;
-  stopped: string;
-  notRunning: string;
-  exportMarkdown: string;
-  exported: string;
-  openOwn(agent: string): string;
-  openedOwn: string;
-  cannotLook(why: string): string;
-  notFound: string;
-  /** A stage of an act that was not done: where, how, and the World's
-   *  own account of it. */
-  unfinished(stage: string, outcome: "pending" | "unsupported" | "failed", detail: string): string;
-}
-
-export const zhDetails: DetailsWords = {
-  open: "详情",
-  close: "收起",
-  model: "模型",
-  modelSelf: "（自报）",
-  machine: "所在机器",
-  host: "程序",
-  startedByWorld: "后台会话",
-  origin: "来源",
-  openedByYou: "由你开启",
-  askedBy: (asker, label) => `${asker} 调用的模型：${label}`,
-  here: "加入",
-  since: (ago) => `${ago}前`,
-  state: "状态",
-  busy: (lasted) => `工作中　${lasted}`,
-  idle: (ago) => `空闲　${ago}前`,
-  removed: (ago) => `${ago}前已移除`,
-  waiting: "等待回复",
-  trouble: "异常",
-  task: "任务",
-  colleagues: "调用的模型",
-  assistFrom: "来自",
-  actingFor: "所属账号",
-  separator: "、",
-  login: "登录",
-  running: "运行中的命令",
-  actions: (shown, total) => (shown < total ? `最近动作 ${shown}/${total}` : "动作"),
-  noActions: "暂无动作",
-  answers: "已交回",
-  records: "记录",
-  stop: "停止",
-  stopped: "已请求停止",
-  notRunning: "当前没有运行",
-  exportMarkdown: "复制为 Markdown",
-  exported: "已复制",
-  openOwn: (agent) => `在 ${agent} 中打开`,
-  openedOwn: "已在新终端窗口中打开",
-  cannotLook: () => "无法获取详情",
-  notFound: "未找到该对话",
-  unfinished: (stage, outcome) =>
-    `${{ host: "宿主", records: "记录", tools: "工具", notification: "通知" }[stage] ?? stage}${{ pending: "等待中", unsupported: "不支持", failed: "失败" }[outcome]}`,
-};
-
-export const enDetails: DetailsWords = {
-  open: "Details",
-  close: "Close",
-  model: "Model",
-  modelSelf: " (self-reported)",
-  machine: "Machine",
-  host: "Program",
-  startedByWorld: "background session",
-  origin: "Origin",
-  openedByYou: "opened by you",
-  askedBy: (asker, label) => `called by ${asker}: ${label}`,
-  here: "Joined",
-  since: (ago) => `${ago} ago`,
-  state: "Status",
-  busy: (lasted) => `working, ${lasted}`,
-  idle: (ago) => `idle, ${ago} ago`,
-  removed: (ago) => `removed ${ago} ago`,
-  waiting: "waiting for your reply",
-  trouble: "Issues",
-  task: "Task",
-  colleagues: "Models it called",
-  assistFrom: "From",
-  actingFor: "Account",
-  separator: ", ",
-  login: "Login",
-  running: "Running jobs",
-  actions: (shown, total) => (shown < total ? `Recent actions ${shown}/${total}` : "Actions"),
-  noActions: "No actions yet",
-  answers: "Handed back",
-  records: "Records",
-  stop: "Stop",
-  stopped: "Stop requested",
-  notRunning: "Not running",
-  exportMarkdown: "Copy as Markdown",
-  exported: "Copied",
-  openOwn: (agent) => `Open in ${agent}`,
-  openedOwn: "Opened in a new terminal window",
-  cannotLook: () => "Couldn't load details",
-  notFound: "Conversation not found",
-  unfinished: (stage, outcome) =>
-    `${{ host: "host", records: "records", tools: "tools", notification: "notification" }[stage] ?? stage} ${{ pending: "pending", unsupported: "unsupported", failed: "failed" }[outcome]}`,
 };
 
 export interface ProjectFormWords {
@@ -1702,9 +1564,10 @@ export const zhShell: ShellWords = {
   outside: "对话",
   machines: "机器",
   agents: "智能体",
-  kernels: "内核",
+  workbench: "工作台",
   activity: "活动",
   collaboration: "模型协作",
+  talkSettings: "对话设置",
   features: "功能",
   all: "全部",
   device: (form) => ({ desktop: "台式机", laptop: "笔记本", server: "服务器" })[form],
@@ -1719,6 +1582,7 @@ export const zhShell: ShellWords = {
   someone: (agent, machine) => `${machine} 上的 ${agent}`,
   someoneAssisting: (agent, owner) => `${owner} 的 ${agent}`,
   forked: "分叉出来的对话",
+  openedBy: (account) => `${account} 开的`,
   colleagueFor: (asker) => `${asker} 调用的模型`,
   busy: (lasted) => `工作中　${lasted}`,
   idle: "空闲",
@@ -1759,9 +1623,10 @@ export const enShell: ShellWords = {
   outside: "Conversations",
   machines: "Machines",
   agents: "Agents",
-  kernels: "Kernels",
+  workbench: "Workbench",
   activity: "Activity",
   collaboration: "Model collaboration",
+  talkSettings: "Conversation settings",
   features: "Features",
   all: "All",
   device: (form) => form,
@@ -1776,6 +1641,7 @@ export const enShell: ShellWords = {
   someone: (agent, machine) => `${agent} on ${machine}`,
   someoneAssisting: (agent, owner) => `${owner}'s ${agent}`,
   forked: "Forked from another conversation",
+  openedBy: (account) => `Opened by ${account}`,
   colleagueFor: (asker) => `called by ${asker}`,
   busy: (lasted) => `working, ${lasted}`,
   idle: "idle",

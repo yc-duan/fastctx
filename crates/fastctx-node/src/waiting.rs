@@ -30,20 +30,27 @@ pub async fn wait(
     let mut changes = node.jobs.subscribe();
     let registering = node.clone();
     let wanted = jobs.clone();
-    let (paths, readers) = tokio::task::spawn_blocking(move || {
-        let _gate = registering.disk.lock();
+    let (paths, readers) = fastctx_platform::task::spawn_blocking(move || {
         let mut paths = Vec::new();
         let mut readers = Vec::new();
         for job in wanted {
+            let missing = || {
+                Failure::new(format!(
+                    "{here} has no job {job}; `fastctx w {job}` says where it runs, and `on` that machine waits there"
+                ))
+            };
             let path = crate::stop::find(&registering.world, &job)
                 .map_err(|error| Failure::new(format!("looking for {job}: {error}")))?
-                .ok_or_else(|| Failure::new(format!("{here} has no job {job}; `fastctx w {job}` says where it runs, and `on` that machine waits there")))?;
+                .ok_or_else(missing)?;
+            let reader = crate::job_reader::hold(&registering, &path).ok_or_else(missing)?;
             fastctx_hands::run::record::read(&path).map_err(|error| Failure::new(error.to_string()))?;
-            readers.push(crate::job_reader::hold(&registering, &path));
+            readers.push(reader);
             paths.push(path);
         }
         Ok::<_, Failure>((paths, readers))
-    }).await.map_err(|error| Failure::new(error.to_string()))??;
+    })
+    .await
+    .map_err(|error| Failure::new(error.to_string()))??;
     let mut held = Held { node: node.clone(), jobs: Vec::new(), followers: Vec::new(), _readers: readers, done: false };
     for (job, path) in jobs.iter().zip(&paths) {
         let _delivery = node.job_ends.lock(path).await;
@@ -69,15 +76,19 @@ pub async fn wait(
                 let gate = node.residents.management(&owner.resident)?;
                 let _claiming = gate.write().await;
                 let directory = node.world.conversation(&owner.resident);
-                for pending in crate::inbox::pending(&directory).map_err(|error| Failure::new(error.to_string()))? {
-                    if pending.delivery.id == crate::inbox::job_notice_id(&record)
+                let (parking, owner, notice) =
+                    (node.clone(), owner.resident.clone(), crate::inbox::job_notice_id(&record));
+                fastctx_platform::task::blocking(move || -> std::io::Result<()> {
+                    if let Some(pending) = crate::inbox::unsettled(&directory, &notice)?
                         && pending.state == fastctx_types::residents::PendingState::Waiting
                     {
-                        crate::on_delivery::park(node, &owner.resident, &pending.delivery)
-                            .and_then(|_| crate::inbox::withdraw(&directory, &pending.delivery.id))
-                            .map_err(|error| Failure::new(error.to_string()))?;
+                        crate::on_delivery::park(&parking, &owner, &pending.delivery)?;
+                        crate::inbox::withdraw(&directory, &pending.delivery.id)?;
                     }
-                }
+                    Ok(())
+                })
+                .await
+                .map_err(|error| Failure::new(error.to_string()))?;
             }
         }
     }
@@ -134,7 +145,7 @@ async fn ended_or_gone(path: &std::path::Path) -> Result<JobRecord, Failure> {
     let gone = match record.supervisor.clone() {
         // A supervisor that cannot be checked is not taken for gone.
         Some(identity) => {
-            tokio::task::spawn_blocking(move || !is_alive(&identity).unwrap_or(true)).await.unwrap_or(false)
+            fastctx_platform::task::spawn_blocking(move || !is_alive(&identity).unwrap_or(true)).await.unwrap_or(false)
         }
         None => false,
     };
@@ -180,10 +191,9 @@ impl Held {
             let cleared = async {
                 let _delivery = self.node.job_ends.lock(path).await;
                 let record = crate::jobs::read(path).await?;
-                fastctx_platform::publish(
+                crate::job_metadata::put_raw(
                     &path.with_extension("wait-taken"),
                     crate::inbox::job_notice_id(&record).as_str().as_bytes(),
-                    fastctx_platform::Permissions::Private,
                 )
                 .map_err(|error| Failure::new(error.to_string()))?;
                 for (followed, follower) in &self.followers {

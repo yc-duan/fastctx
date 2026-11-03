@@ -9,6 +9,7 @@ import { onShade, watchShade } from "./shade-press";
 import { Steady } from "./steady";
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
+import { within } from "../world/again";
 
 export class Sheet {
   readonly dialog: HTMLDialogElement;
@@ -121,8 +122,9 @@ export class Confirm {
       sheet.busy = true;
       button.disabled = true;
       button.textContent = words.working;
-      asked
-        .act()
+      // An answer that does not come in time ends the waiting: not known to
+      // be done, and the button is there to try again.
+      within(asked.act())
         .then(() => {
           sheet.busy = false;
           sheet.close();

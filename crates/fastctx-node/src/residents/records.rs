@@ -1,11 +1,11 @@
 //! A resident's records on this machine (`world-town.md`, 居民目录): who it
 //! is (`about`), which project it is in (`town`), what it is doing (`now`),
 //! what it did (`actions`), what it saw (`seen`), and for a colleague what it
-//! was told and answered (`messages`). Each line file grows by whole lines;
+//! was told and answered (`messages`). Activity uses indexed SQL rows;
 //! `about`, `town` and `now` are replaced whole, so a reader sees one
 //! version or the next.
 
-use std::io::{self, Read as _, Seek as _, SeekFrom, Write as _};
+use std::io;
 use std::path::Path;
 
 use fastctx_platform::{Permissions, ensure_private_dir, publish, publish_new};
@@ -85,116 +85,40 @@ pub fn write_now(directory: &ConversationDir, now: &Now) -> io::Result<()> {
 }
 
 pub fn append_message(directory: &ConversationDir, message: &MessageLine) -> io::Result<()> {
-    let _transaction = crate::resident_storage::lock();
-    append_lines(&directory.messages(), std::slice::from_ref(message))
+    super::activity::message(directory, message)
 }
-
-/// Appends one action to a resident's `actions`.
 pub fn record_action(world: &WorldDir, resident: &ResidentId, action: &Action) -> io::Result<()> {
-    let _transaction = crate::resident_storage::lock();
-    append_lines(&world.conversation(resident).actions(), std::slice::from_ref(action))
+    super::activity::action(&world.conversation(resident), action)
 }
-
-/// Appends what a resident saw on this machine to its `seen` record here,
-/// one line per file, all in one write so each call's lines stay together.
 pub fn record_seen(
     world: &WorldDir,
     here: &fastctx_types::layout::Names,
     owner: &Address,
     seen: &[Seen],
 ) -> io::Result<()> {
-    let _transaction = crate::resident_storage::lock();
-    let directory = world.owner(here, owner);
-    ensure_private_dir(&directory.books())?;
-    append_lines(&directory.seen(), seen)
+    super::activity::seen(&world.owner(here, owner), seen)
 }
-
-/// Records a shell write where it happened, including a visiting resident.
 pub fn record_owned_action(
     world: &WorldDir,
     here: &fastctx_types::layout::Names,
     owner: &Address,
     action: &Action,
 ) -> io::Result<()> {
-    let _transaction = crate::resident_storage::lock();
-    let directory = world.owner(here, owner);
-    ensure_private_dir(directory.path())?;
-    append_lines(&directory.actions(), std::slice::from_ref(action))
+    super::activity::action(&world.owner(here, owner), action)
 }
-
-/// A resident's latest action: the last line of its `actions`, read from
-/// the end, so a record of any length costs the same.
 pub fn last_action(world: &WorldDir, resident: &ResidentId) -> io::Result<Option<Action>> {
-    last_action_before(&world.conversation(resident).actions(), None, None)
+    super::activity::last_action(&world.conversation(resident).actions(), None, None)
 }
-
-/// The latest action in `actions` from `from` on and before `until`, read
-/// from the end until one is found or the lines are older than `from`.
 pub fn last_action_before(
     actions: &Path,
     from: Option<Timestamp>,
     until: Option<Timestamp>,
 ) -> io::Result<Option<Action>> {
-    let mut file = match std::fs::File::open(actions) {
-        Ok(file) => file,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error),
-    };
-    let mut end = file.metadata()?.len();
-    // Lines are read back from the end; each step reads what lies before
-    // the lines already looked at.
-    let mut carried = Vec::new();
-    loop {
-        let step = end.min(4096);
-        let start = end - step;
-        file.seek(SeekFrom::Start(start))?;
-        let mut chunk = vec![0u8; step as usize];
-        file.read_exact(&mut chunk)?;
-        chunk.extend_from_slice(&carried);
-        let mut body: &[u8] = &chunk;
-        // Whole lines in what is held: those after the first newline, or
-        // everything once the start of the file is reached.
-        loop {
-            let trimmed = body.strip_suffix(b"\n").unwrap_or(body);
-            let (rest, line) = match trimmed.iter().rposition(|&b| b == b'\n') {
-                Some(newline) => (&trimmed[..=newline], &trimmed[newline + 1..]),
-                None if start == 0 => (&trimmed[..0], trimmed),
-                None => break,
-            };
-            if !line.is_empty() {
-                let action: Action = parse(actions, line)?;
-                if from.is_some_and(|from| action.at < from) {
-                    return Ok(None);
-                }
-                if until.is_none_or(|until| action.at < until) {
-                    return Ok(Some(action));
-                }
-            }
-            body = rest;
-            if body.is_empty() {
-                break;
-            }
-        }
-        if start == 0 {
-            return Ok(None);
-        }
-        carried = body.to_vec();
-        end = start;
-    }
-}
-
-fn append_lines<T: serde::Serialize>(path: &Path, lines: &[T]) -> io::Result<()> {
-    let mut bytes = Vec::new();
-    for line in lines {
-        serde_json::to_writer(&mut bytes, line).map_err(io::Error::other)?;
-        bytes.push(b'\n');
-    }
-    let mut file = std::fs::OpenOptions::new().create(true).append(true).open(path)?;
-    file.write_all(&bytes)
+    super::activity::last_action(actions, from, until)
 }
 
 fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> io::Result<T> {
-    parse(path, &std::fs::read(path)?)
+    parse(path, &fastctx_platform::disk::read(path)?)
 }
 
 fn parse<T: serde::de::DeserializeOwned>(path: &Path, bytes: &[u8]) -> io::Result<T> {

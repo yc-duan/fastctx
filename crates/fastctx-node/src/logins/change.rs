@@ -19,29 +19,49 @@ use super::Context;
 use crate::Node;
 
 /// The places of an apply of the login `dir`, as this node sees them.
-fn places(node: &Node, agent: &AgentName, dir: &Path) -> Result<(Places, apply::Host), Failure> {
+/// The login's places, holding what the workbench needs where `workbench`
+/// opens it or it is open there, and only what connecting needs where
+/// `workbench` closes it or it is not.
+fn places(
+    node: &Node,
+    agent: &AgentName,
+    dir: &Path,
+    workbench: Option<bool>,
+) -> Result<(Places, apply::Host), Failure> {
     let host = super::host(agent.as_str())?;
     let context = Context::of(node)?;
-    let places = context.places.at_home(host, dir).map_err(|error| Failure::new(error.to_string()))?;
+    let mut places = context.places.at_home(host, dir).map_err(|error| Failure::new(error.to_string()))?;
+    places.workbench = workbench.or_else(|| super::workbench::known(node, agent.as_str(), dir));
     Ok((places, host))
 }
 
 /// What putting the World's tools into the login (`into`), taking back what
 /// the user changed of them with `take_back`, or taking them out, would
-/// change.
+/// change; with `workbench`, opening or closing the workbench in it too.
 pub(crate) async fn preview(
     node: &Arc<Node>,
     agent: AgentName,
     dir: PathBuf,
     into: bool,
     take_back: bool,
+    workbench: Option<bool>,
 ) -> Result<ChangePreview, Failure> {
     let node = node.clone();
-    tokio::task::spawn_blocking(move || {
+    fastctx_platform::task::spawn_blocking(move || {
         super::known(&node, &agent, &dir)?;
-        let (places, host) = places(&node, &agent, &dir)?;
-        let mut preview =
-            apply::preview(&places, host, into, edits(take_back)).map_err(|error| Failure::new(error.to_string()))?;
+        let mut preview = match fastctx_install::agents::find(agent.as_str()) {
+            // The other agents are connected through their configuration
+            // alone (`super::others`).
+            Some(other) => {
+                let context = super::Context::of(&node)?;
+                apply::agent_preview(&context.places, other, &dir, into, take_back)
+            }
+            None => {
+                let (places, host) = places(&node, &agent, &dir, workbench)?;
+                apply::preview(&places, host, into, edits(take_back))
+            }
+        }
+        .map_err(|error| Failure::new(error.to_string()))?;
         preview.dir = dir;
         Ok(preview)
     })
@@ -50,7 +70,12 @@ pub(crate) async fn preview(
 }
 
 /// Puts the World's tools into the login, or takes them out, telling the
-/// record each step; answered with the change once it ended.
+/// record each step; answered with the change once it ended. With
+/// `expected`, the fingerprint of the change the user was shown, nothing is
+/// changed when the files moved on since. With `workbench`, the workbench
+/// in it is opened or closed once the change is made; taking a login out
+/// closes it.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn change(
     node: &Arc<Node>,
     agent: AgentName,
@@ -58,49 +83,91 @@ pub(crate) async fn change(
     into: bool,
     raise_output_limit: bool,
     take_back: bool,
+    expected: Option<String>,
+    workbench: Option<bool>,
 ) -> Result<LoginChange, Failure> {
     let _changing = node.logins.changing.lock().await;
     {
         let node = node.clone();
         let (agent, dir) = (agent.clone(), dir.clone());
-        tokio::task::spawn_blocking(move || super::known(&node, &agent, &dir))
+        fastctx_platform::task::spawn_blocking(move || super::known(&node, &agent, &dir))
             .await
             .map_err(|error| Failure::new(error.to_string()))??;
     }
     let started = LoginChange { into, started_at: Timestamp::now(), steps: Vec::new(), end: None };
     set(node, &agent, &dir, |change| *change = started.clone());
+    // Closing the workbench is kept before the files change, so that nothing
+    // starts in the login once the user closed it; opening it, after they
+    // changed. The files follow what is kept (`super::refresh`), so a change
+    // broken off between the two comes right at the next look.
+    let after = if into { workbench } else { Some(false) }.filter(|_| matches!(agent.as_str(), "codex" | "claude"));
+    let closing = after == Some(false) && super::workbench::known(node, agent.as_str(), &dir) == Some(true);
+    if closing && let Err(error) = keep_workbench(node, &agent, &dir, false) {
+        let end = ChangeEnd::Failed {
+            at: Timestamp::now(),
+            reason: format!("keeping the workbench closed: {error}"),
+            output_limit: None,
+        };
+        return Ok(ended(node, &agent, &dir, end));
+    }
     let progress: apply::Progress = {
         let (node, agent, dir) = (node.clone(), agent.clone(), dir.clone());
         Arc::new(move |step: ChangeStep| set(&node, &agent, &dir, |change| told(&mut change.steps, step.clone())))
     };
     let ran = {
         let (node, agent, dir) = (node.clone(), agent.clone(), dir.clone());
-        tokio::task::spawn_blocking(move || {
-            let (places, host) = places(&node, &agent, &dir)?;
+        fastctx_platform::task::spawn_blocking(move || {
+            if let Some(other) = fastctx_install::agents::find(agent.as_str()) {
+                let context = super::Context::of(&node)?;
+                let progress = Some(progress);
+                let done = if into {
+                    apply::agent_apply_expecting(&context.places, other, &dir, take_back, progress, expected.as_deref())
+                } else {
+                    apply::agent_unapply_expecting(&context.places, other, &dir, progress, expected.as_deref())
+                };
+                return Ok::<_, Failure>(done);
+            }
+            let (places, host) = places(&node, &agent, &dir, workbench)?;
             let approval = if raise_output_limit { Approval::RaiseOutputLimit } else { Approval::Require };
-            let done = if into {
-                apply::apply_reporting(&places, host.only(), approval, edits(take_back), Some(progress))
-            } else {
-                apply::unapply_reporting(&places, host.only(), Some(progress))
+            let progress = Some(progress);
+            let done = match (into, expected.as_deref()) {
+                (true, Some(expected)) => {
+                    apply::apply_expecting(&places, host, approval, edits(take_back), progress, expected)
+                }
+                (true, None) => apply::apply_reporting(&places, host.only(), approval, edits(take_back), progress),
+                (false, Some(expected)) => apply::unapply_expecting(&places, host, progress, expected),
+                (false, None) => apply::unapply_reporting(&places, host.only(), progress),
             };
             Ok::<_, Failure>(done)
         })
         .await
         .map_err(|error| Failure::new(format!("changing the login: {error}")))?
     };
+    node.logins.rewatch.notify_one();
     let at = Timestamp::now();
     let end = match ran {
         Ok(Ok(report)) => {
             let word = if into { "put the World's tools into" } else { "took the World's tools out of" };
             node.log.line(format_args!("the user {word} the {agent} login {}", dir.display()));
             super::refresh::settled(node, &agent, &dir);
-            ChangeEnd::Done {
-                at,
-                kept: report
-                    .notices
-                    .into_iter()
-                    .map(|notice| Kept { location: notice.location, reason: notice.reason })
-                    .collect(),
+            let opened = match after {
+                Some(true) => keep_workbench(node, &agent, &dir, true),
+                _ => Ok(()),
+            };
+            match opened {
+                Ok(()) => ChangeEnd::Done {
+                    at,
+                    kept: report
+                        .notices
+                        .into_iter()
+                        .map(|notice| Kept { location: notice.location, reason: notice.reason })
+                        .collect(),
+                },
+                Err(error) => ChangeEnd::Failed {
+                    at,
+                    reason: format!("the login was changed, but keeping the workbench open in it failed: {error}"),
+                    output_limit: None,
+                },
             }
         }
         Ok(Err(apply::Error::Edit(fastctx_install::Error::TokenLimitApproval { location, current, requested }))) => {
@@ -115,8 +182,29 @@ pub(crate) async fn change(
         Ok(Err(error)) => ChangeEnd::Failed { at, reason: error.to_string(), output_limit: None },
         Err(failure) => ChangeEnd::Failed { at, reason: failure.message, output_limit: None },
     };
+    // A change that failed leaves the workbench as it found it.
+    if closing
+        && matches!(end, ChangeEnd::Failed { .. })
+        && let Err(error) = keep_workbench(node, &agent, &dir, true)
+    {
+        node.log.line(format_args!("opening the workbench again after a failed change: {error}"));
+    }
+    Ok(ended(node, &agent, &dir, end))
+}
+
+/// Opens or closes the workbench in the login, and tells what waited on it.
+fn keep_workbench(node: &Arc<Node>, agent: &AgentName, dir: &Path, open: bool) -> std::io::Result<()> {
+    super::workbench::set(node, agent.as_str(), dir, open)?;
+    let word = if open { "opened" } else { "closed" };
+    node.log.line(format_args!("the workbench is {word} in the {agent} login {}", dir.display()));
+    super::workbench::changed(node);
+    Ok(())
+}
+
+/// Ends the change running in the login with `end`, answered with it.
+fn ended(node: &Node, agent: &AgentName, dir: &Path, end: ChangeEnd) -> LoginChange {
     let mut ended = None;
-    set(node, &agent, &dir, |change| {
+    set(node, agent, dir, |change| {
         if let ChangeEnd::Failed { reason, .. } = &end {
             for step in &mut change.steps {
                 if step.state == StepState::Running {
@@ -127,7 +215,7 @@ pub(crate) async fn change(
         change.end = Some(end.clone());
         ended = Some(change.clone());
     });
-    Ok(ended.expect("the change was set"))
+    ended.expect("the change was set")
 }
 
 fn edits(take_back: bool) -> apply::Edits {

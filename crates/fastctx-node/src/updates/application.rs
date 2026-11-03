@@ -99,7 +99,7 @@ pub(super) fn ask(node: &Arc<Node>, manifest: Manifest, asker: Asker, app: &str)
     let Some(installing) = installing else { return Ok(()) };
     let node = node.clone();
     let target = app.to_string();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let _installing = installing;
         if let Err(why) = install(&node, &manifest, &target).await {
             node.log.line(format_args!("installing Fastctx {} while it was closed: {why}", manifest.version));
@@ -128,7 +128,7 @@ pub(super) fn took(node: &Node, version: &str) {
         held.take = None;
         held.origin = None;
         drop(held);
-        let _ = std::fs::remove_file(dir(node).join("take.json"));
+        let _ = fastctx_platform::disk::remove_file(dir(node).join("take.json"));
     }
 }
 
@@ -169,7 +169,7 @@ async fn install(node: &Arc<Node>, manifest: &Manifest, target: &str) -> Result<
     node.updates.held.lock().expect("never poisoned").activity = None;
     installed?;
     let inspecting = program.clone();
-    let build = tokio::task::spawn_blocking(move || fastctx_install::program::inspect(&inspecting))
+    let build = fastctx_platform::task::spawn_blocking(move || fastctx_install::program::inspect(&inspecting))
         .await
         .map_err(|e| e.to_string())?
         .map_err(|e| e.to_string())?;
@@ -182,7 +182,7 @@ async fn install(node: &Arc<Node>, manifest: &Manifest, target: &str) -> Result<
     // Keep the kernel handover before acknowledging the application's version.
     // If staging fails, the existing take remains eligible for another attempt.
     let (root, staged) = (node.root.clone(), program.clone());
-    let plan = tokio::task::spawn_blocking(move || fastctx_install::renewal::stage(&root, &staged, None))
+    let plan = fastctx_platform::task::spawn_blocking(move || fastctx_install::renewal::stage(&root, &staged, None))
         .await
         .map_err(|error| error.to_string())?
         .map_err(|error| error.to_string())?;
@@ -201,7 +201,7 @@ async fn install(node: &Arc<Node>, manifest: &Manifest, target: &str) -> Result<
     }
     if plan.phase != fastctx_types::renewal::Phase::Complete {
         let root = node.root.clone();
-        tokio::task::spawn_blocking(move || fastctx_install::renewal::request(&root, true))
+        fastctx_platform::task::spawn_blocking(move || fastctx_install::renewal::request(&root, true))
             .await
             .map_err(|error| error.to_string())?
             .map_err(|error| error.to_string())?;
@@ -233,7 +233,7 @@ async fn signed_in(
     {
         let mut waiting = false;
         loop {
-            let signed_in = tokio::task::spawn_blocking(fastctx_install::interactive::signed_in)
+            let signed_in = fastctx_platform::task::spawn_blocking(fastctx_install::interactive::signed_in)
                 .await
                 .map_err(|e| format!("joining the sign-in check: {e}"))?
                 .map_err(|e| Problem::new(FailureReason::Installer { code: None }, format!("{e:#}")))?;
@@ -267,7 +267,7 @@ async fn run_installer(installer: &Path, root: &Path, manifest: &Manifest, targe
     {
         let signature = manifest.package(target).ok_or("manifest has no application installer")?.signature.clone();
         let (root, installer, version) = (root.to_owned(), installer.to_owned(), manifest.version.clone());
-        tokio::task::spawn_blocking(move || {
+        fastctx_platform::task::spawn_blocking(move || {
             let _application = fastctx_install::repair::application::lock(&root)?;
             fastctx_install::interactive::install(&root, &installer, &signature, &version, false)
         })

@@ -71,8 +71,16 @@ pub async fn fork(
         }
         None => None,
     };
-    let inherited = super::fork_history::retained(node, resident, &session, through.as_deref())?;
+    let (reading, parent, history_session, retained_through) =
+        (node.clone(), resident.clone(), session.clone(), through.clone());
+    let inherited = fastctx_platform::task::spawn_blocking(move || {
+        super::fork_history::retained(&reading, &parent, &history_session, retained_through.as_deref())
+    })
+    .await
+    .map_err(|error| Failure::new(error.to_string()))??;
     let id = node.residents.new_id(&source.host.agent)?;
+    crate::record_migration::born(node, &id);
+    let target_place = Arc::new(node.places.using(id.as_str()).await);
     let launching = super::command(node, source.home.as_deref())?;
     super::oldest::check(node, &launching).await?;
     let super::Command { program, env, .. } = launching;
@@ -111,7 +119,7 @@ pub async fn fork(
     node.residents.create(&node.world, about, town.clone(), now).map_err(failure)?;
 
     let completion = async {
-        crate::context::instructed(node, &id, &heard).map_err(|error| Failure::new(error.to_string()))?;
+        crate::context::instructed(node, &id, &heard).await.map_err(|error| Failure::new(error.to_string()))?;
         node.residents.set_instructed(&id, heard);
         crate::session_options::keep(
             node,
@@ -121,13 +129,14 @@ pub async fn fork(
                 reasoning_effort: effort.clone(),
                 mcp_off: source.mcp_off.clone(),
             },
-        )?;
+        )
+        .await?;
         let settings = directory.claude_settings();
         let instructions = directory.claude_instructions();
-        std::fs::write(&settings, super::settings_json(&id))
-            .and_then(|()| std::fs::write(&instructions, words))
+        fastctx_platform::disk::write(&settings, super::settings_json(&id))
+            .and_then(|()| fastctx_platform::disk::write(&instructions, words))
             .map_err(failure)?;
-        let mcp = crate::profile::session::claude(node, &id, true)?;
+        let mcp = crate::profile::session::load_claude(node, &id, true).await?;
         let plugin = claude::plugin_dir(node.world.path());
         let world = node.world.path().to_path_buf();
         let snapshot = checkpoint
@@ -144,14 +153,25 @@ pub async fn fork(
         let selected_model = model.clone();
         let selected_effort = effort.clone();
 
-        let birth = node.claude.births.read().await;
+        // The source's gate is tried under the births gate, and when busy
+        // waited for outside it before the births gate is asked again: a
+        // launch holding births waits on no conversation (`world-concurrency.md`).
         let gate = node.residents.management(resident)?;
-        let source_guard = crate::gate_waits::shared(node, resident, &gate).await?;
+        let (birth, source_guard) = loop {
+            let birth = node.claude.births.read().await;
+            match gate.try_read_owned() {
+                Ok(source) => break (birth, std::sync::Arc::new(source)),
+                Err(_) => {
+                    drop(birth);
+                    drop(crate::gate_waits::shared_owned(node, resident, &gate).await?);
+                }
+            }
+        };
         node.residents.active(resident)?;
         if let Some(town) = &town {
             crate::town::access::check(node, &source.acting, town)?;
         }
-        let printed = tokio::task::spawn_blocking(fastctx_platform::doing::carried(move || {
+        let printed = fastctx_platform::task::spawn_blocking(fastctx_platform::doing::carried(move || {
             let start = background::Start {
                 plugin: &plugin,
                 settings: &settings,
@@ -181,7 +201,10 @@ pub async fn fork(
             super::fork_ready::wait(node, &id, false).await?;
             super::control::invoke(node, &id, json!({"do":"fork_prepare"})).await?;
             super::fork_ready::wait(node, &id, true).await?;
-            super::fork_history::seed(node, &id, &inherited)?;
+            let (seeding, child) = (node.clone(), id.clone());
+            fastctx_platform::task::spawn_blocking(move || super::fork_history::seed(&seeding, &child, &inherited))
+                .await
+                .map_err(|error| Failure::new(error.to_string()))??;
             crate::turns::apply(
                 node,
                 &id,
@@ -205,10 +228,22 @@ pub async fn fork(
                         .await;
                 imported?;
             }
-            super::fork_attachments::inherit(node, resident, &id, &expected_attachments).await?;
+            super::fork_attachments::inherit(
+                node,
+                resident,
+                &id,
+                &expected_attachments,
+                super::fork_attachments::Inheritance {
+                    _source_gate: gate.clone(),
+                    _source: source_guard.clone(),
+                    _target: target_place.clone(),
+                },
+            )
+            .await?;
             if let Some(snapshot) = snapshot {
-                std::fs::remove_file(&snapshot).map_err(failure)?;
-                std::fs::remove_dir(snapshot.parent().expect("fork source directory")).map_err(failure)?;
+                fastctx_platform::disk::remove_file(&snapshot).map_err(failure)?;
+                fastctx_platform::disk::remove_dir(snapshot.parent().expect("fork source directory"))
+                    .map_err(failure)?;
             }
             Ok::<_, Failure>(())
         }

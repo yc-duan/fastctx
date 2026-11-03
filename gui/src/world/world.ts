@@ -135,6 +135,12 @@ export interface ResidentNow {
   moved: Moved | null;
   /** Which computer of which hub answered for it, as `fastctx_types::observation::MachineSource`. */
   source?: MachineSource | null;
+  /** Another account opened it, on a machine shared whole with this one
+   *  (`world-network.md`, 共享机器与智能体协助); absent for one's own. */
+  openedBy?: { account: string } | null;
+  /** It rests in a login the workbench is closed in, no turn of it under
+   *  way: put away until the workbench opens there again. */
+  benched?: boolean;
 }
 
 /** A machine in one network, and how this computer writes it: `name.hub`
@@ -280,6 +286,10 @@ export interface NodesReply {
   /** What this computer is like; a device has nothing to say. */
   facts?: MachineFacts;
   hubs: HubNodes[];
+  /** Whether the workbench's places are shown, from this computer's logins
+   *  and what its accounts' other computers told (`world-layers.md`);
+   *  absent while one of them has not told, or from an earlier node. */
+  workbench?: boolean;
 }
 
 export interface HubNodes {
@@ -296,6 +306,11 @@ export interface HubNodes {
   machines: Node[];
 }
 
+/** A machine whose own work waited for a thread past a second lately, or
+ *  some of whose work has not gone on for a while
+ *  (`specs/world-engine.md`, 量与告警). */
+export type Strain = "busy" | "stuck";
+
 export interface Node {
   name: MachineName;
   /** How it is written: `name.hub` where another hub has a different
@@ -305,6 +320,9 @@ export interface Node {
   since: Timestamp | null;
   /** The machine it reaches the hub through, when its own line is down. */
   through?: string | null;
+  /** How its own work goes while online, as its hub tells: absent while
+   *  it goes as it should, or the hub does not tell. */
+  strain?: Strain;
   /** Whether the network's administrator allowed direct connections to it. */
   allows_direct?: boolean;
   /** How this computer's calls to it go now. */

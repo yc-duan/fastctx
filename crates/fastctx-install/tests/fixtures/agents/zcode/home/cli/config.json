@@ -1,0 +1,10 @@
+{
+  "permission": {
+    "disallowedTools": [
+      "Bash"
+    ]
+  },
+  "plugins": {
+    "enabled": false
+  }
+}

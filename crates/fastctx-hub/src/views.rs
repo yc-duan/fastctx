@@ -29,39 +29,62 @@ use fastctx_net::directory_index::{Index, Indexed, ordered};
 use fastctx_types::{AccountName, MachineName};
 use jiff::Timestamp;
 
-use crate::store::Store;
-
 /// Whether a member is connected, as the hub sees it.
+#[derive(Clone)]
 pub(crate) struct Presence {
     pub since: Option<Timestamp>,
     pub through: Option<String>,
     pub reach: Reach,
     pub paths: Option<Paths>,
+    pub strain: Option<fastctx_types::health::Strain>,
+}
+
+pub(crate) trait Online {
+    fn get(&self, name: &MachineName, key: &fastctx_net::sign::PublicKey) -> Option<Presence>;
+    /// Whether one of its logins has the workbench open, as it last told
+    /// (`crate::workbench`).
+    fn workbench(&self, name: &MachineName) -> Option<bool> {
+        let _ = name;
+        None
+    }
+}
+impl Online for HashMap<MachineName, Presence> {
+    fn get(&self, name: &MachineName, _key: &fastctx_net::sign::PublicKey) -> Option<Presence> {
+        HashMap::get(self, name).cloned()
+    }
+}
+impl Online for crate::Hub {
+    fn get(&self, name: &MachineName, key: &fastctx_net::sign::PublicKey) -> Option<Presence> {
+        self.sessions().get(name).filter(|session| session.key == *key).map(crate::presence_of)
+    }
+    fn workbench(&self, name: &MachineName) -> Option<bool> {
+        crate::workbench::of(self, name)
+    }
 }
 
 /// `me`'s view of the directory; `trial`, the addresses the hub checks it
 /// at for direct connections now, if it does.
 pub(crate) fn view_for(
     hub: &crate::Hub,
-    store: &Store,
-    online: &HashMap<MachineName, Presence>,
+    store: &crate::store::Snapshot,
+    online: &impl Online,
     me: &MachineName,
     trial: Vec<std::net::SocketAddr>,
 ) -> Result<View, String> {
-    let index = Index::new(&store.book.directory);
-    view_for_in(hub, store, &Indexed::new(&store.book.directory, &index), online, me, trial)
+    view_for_in(hub, store, &store.indexed(), online, me, trial)
 }
 
 /// `me`'s view, the directory asked through `x`, its index: one index
 /// makes the views of every member told of one change (`Hub::push_views`).
 pub(crate) fn view_for_in(
     hub: &crate::Hub,
-    store: &Store,
+    store: &crate::store::Snapshot,
     x: &Indexed<'_>,
-    online: &HashMap<MachineName, Presence>,
+    online: &impl Online,
     me: &MachineName,
     trial: Vec<std::net::SocketAddr>,
 ) -> Result<View, String> {
+    let _timing = hub.health.view.time();
     let all = &store.book.directory;
     let mine = x.acts_for(me);
     let users = users_in(x, me);
@@ -84,8 +107,9 @@ pub(crate) fn view_for_in(
         // Where a machine may be reached is the super administrator's to
         // choose from, and the machine's own to know; a visitor's is its own.
         let reach = (whole && !others) || member.name == *me;
+        let own = member.home.as_ref().is_some_and(|owner| mine.contains(owner));
         let member = std::sync::Arc::make_mut(member);
-        present(store, online, member, reach);
+        present(store, online, member, reach, own);
         if others {
             member.direct.clear();
             member.relay.clear();
@@ -108,11 +132,15 @@ pub(crate) fn view_for_in(
     // administrator's devices see every account's, as it may revoke any.
     let every =
         logged.iter().any(|name| x.accounts_named(name).iter().any(|&at| all.accounts[at].level == Level::Super));
-    let tokens = store
-        .book
-        .tokens
-        .iter()
-        .filter(|record| (every || logged.contains(&record.account)) && record.closed(now).is_none())
+    let candidates = if every {
+        (0..store.book.tokens.len()).collect()
+    } else {
+        ordered(logged.iter().flat_map(|account| store.tokens.get(*account).into_iter().flatten()).copied())
+    };
+    let tokens = candidates
+        .into_iter()
+        .map(|at| &store.book.tokens[at])
+        .filter(|record| record.closed(now).is_none())
         .map(|record| fastctx_types::accounts::TokenSeen {
             key: record.key.to_string(),
             account: record.account.clone(),
@@ -149,6 +177,7 @@ pub(crate) fn view_for_in(
         })
         .collect();
     Ok(View {
+        shared_records: true,
         ledger_parts: true,
         project_memory: true,
         collaboration_tree: true,
@@ -159,10 +188,14 @@ pub(crate) fn view_for_in(
         hub_name: store.hub.name.clone(),
         hub_machine: crate::hub_machine::current(hub, store)
             .filter(|machine| whole || mine.iter().any(|account| x.rights(account, machine).hands)),
-        machine_notices: store.book.machine_log.notices(all, me).map_err(|e| e.to_string())?,
+        machine_notices: store.book.machine_log.notices(x, me).map_err(|e| e.to_string())?,
+        troubles: hub.troubles.for_member(x, me),
         me: me.clone(),
         self_registration: store.hub.self_registration,
         direct_links: true,
+        // Its machines tell how their own work goes with each heartbeat
+        // (`crate::strain`).
+        health: true,
         trial,
         forwarders,
         moving: true,
@@ -205,9 +238,9 @@ pub(crate) fn view_for_in(
 /// How `machine` is connected now as `reader`'s view has it, when the view
 /// has it at all: the same as `view_for` puts in the whole view.
 pub(crate) fn presence_for(
-    store: &Store,
+    store: &crate::store::Snapshot,
     x: &Indexed<'_>,
-    online: &HashMap<MachineName, Presence>,
+    online: &impl Online,
     reader: &MachineName,
     machine: &MachineName,
 ) -> Option<fastctx_net::directory::Presence> {
@@ -220,8 +253,9 @@ pub(crate) fn presence_for(
     let others = member.name != *reader
         && member.home.as_ref().is_some_and(|owner| x.is_visitor(owner) && !mine.contains(owner));
     let reach = (whole && !others) || member.name == *reader;
+    let own = member.home.as_ref().is_some_and(|owner| mine.contains(owner));
     let mut member = Member::clone(member);
-    present(store, online, &mut member, reach);
+    present(store, online, &mut member, reach, own);
     if others {
         member.through = None;
         member.paths = None;
@@ -423,15 +457,19 @@ fn projects_in(
         .collect()
 }
 
-fn present(store: &Store, online: &HashMap<MachineName, Presence>, member: &mut Member, reach: bool) {
+/// `member` as it is connected now; `own`, whether the view is its owner's,
+/// who alone is told how its logins stand.
+fn present(store: &crate::store::Snapshot, online: &impl Online, member: &mut Member, reach: bool, own: bool) {
     member.settled = store.letters.get(&member.name).and_then(|letters| letters.settled);
-    match online.get(&member.name) {
+    member.workbench = if own { online.workbench(&member.name) } else { None };
+    match online.get(&member.name, &member.key) {
         Some(presence) => {
             member.online = true;
             member.since = presence.since;
             member.through = presence.through.clone();
             member.reach = (reach && member.kind.is_computer()).then(|| presence.reach.clone());
             member.paths = presence.paths.clone();
+            member.strain = presence.strain;
         }
         None => {
             member.online = false;
@@ -439,6 +477,7 @@ fn present(store: &Store, online: &HashMap<MachineName, Presence>, member: &mut 
             member.through = None;
             member.reach = None;
             member.paths = None;
+            member.strain = None;
         }
     }
 }

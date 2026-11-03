@@ -128,7 +128,7 @@ fn send(node: &Arc<Node>, tell: Vec<(ResidentId, (WorldFact, String))>, event: &
     for (resident, (fact, text)) in tell {
         let node = node.clone();
         let id = speech::fixed_id("desk", &[event, resident.as_str(), &text]);
-        tokio::spawn(async move {
+        fastctx_platform::task::spawn(async move {
             let to = Address { machine: node.machine(), resident: resident.clone() };
             let notice = Notice::World { fact, text };
             if let Err(failure) = speech::tell(&node, &Default::default(), &to, id, notice, Owed::Working).await {

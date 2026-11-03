@@ -15,9 +15,9 @@ use tokio::sync::Notify;
 const BEAT: Duration = Duration::from_secs(2);
 
 /// How long the worker threads may run nothing at all before the node ends.
-/// Far longer than any wait a task should block a worker for; the node of
-/// 2026-10-17 had every worker blocked for twenty-five minutes while its
-/// control loop answered on the main thread.
+/// Far longer than any wait a task should block a worker for. The control
+/// loop answers on the main thread, so it stays responsive even while every
+/// worker is blocked; only this notices that.
 const WORKERS_SILENT: Duration = Duration::from_secs(90);
 
 pub(crate) struct Watchdog {
@@ -42,7 +42,7 @@ impl Watchdog {
         // beating, nothing scheduled there runs, whatever the control loop
         // on the main thread still answers.
         let beating = progress.clone();
-        tokio::spawn(async move {
+        fastctx_platform::task::spawn(async move {
             let mut every = tokio::time::interval(BEAT);
             every.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
             loop {
@@ -70,7 +70,7 @@ impl Watchdog {
                         crate::ending::with_reason(1, format!("watchdog cannot read the running-time clock: {error}"));
                     }
                 };
-                // 2026-10-03: this detects a failed responsiveness contract,
+                // This detects a failed responsiveness contract,
                 // not a proof of deadlock. The existing wire contract gives
                 // H = 10 s and S = 3H = 30 s. The accept loop does no jobs or
                 // remote I/O: it only dispatches clients and answers this

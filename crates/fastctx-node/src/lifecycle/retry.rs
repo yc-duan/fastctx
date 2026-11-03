@@ -4,14 +4,14 @@ use crate::Node;
 use fastctx_types::{
     NoticeId, ResidentId,
     ipc::Failure,
-    residents::{Landed, PendingState},
+    layout::ConversationDir,
+    residents::{About, Landed, Pending, PendingState},
 };
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     io,
-    path::PathBuf,
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -32,78 +32,84 @@ pub(crate) struct Progress {
     pub after_activation: Option<String>,
 }
 
-fn path(node: &Node, id: &ResidentId, input: &NoticeId) -> PathBuf {
-    node.world.conversation(id).book("host-progress").join(format!("{input}.json"))
+pub(crate) fn directory(node: &Node, id: &ResidentId) -> io::Result<fastctx_types::layout::ConversationDir> {
+    let directory = node.world.conversation(id);
+    crate::records::legacy::directory::<Progress>(&directory, "host-progress", &directory.book("host-progress"))?;
+    Ok(directory)
 }
-
-pub(crate) fn progress(node: &Node, id: &ResidentId, input: &NoticeId) -> io::Result<Option<Progress>> {
-    match std::fs::read(path(node, id, input)) {
-        Ok(bytes) => serde_json::from_slice(&bytes).map(Some).map_err(io::Error::other),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error),
+pub(crate) fn progress_now(node: &Node, id: &ResidentId, input: &NoticeId) -> io::Result<Option<Progress>> {
+    let directory = directory(node, id)?;
+    crate::records::read(&directory, |rows| rows.get("host-progress", input.as_str()))
+}
+/// `progress_now`, read where reading may block.
+pub(crate) async fn progress(node: &Arc<Node>, id: &ResidentId, input: &NoticeId) -> io::Result<Option<Progress>> {
+    let (node, id, input) = (node.clone(), id.clone(), input.clone());
+    fastctx_platform::task::blocking(move || progress_now(&node, &id, &input)).await
+}
+fn initial() -> Progress {
+    let now = Timestamp::now();
+    Progress {
+        began: now,
+        next: now,
+        failures: 0,
+        reason: None,
+        attempted: false,
+        accepted: false,
+        after_activation: None,
     }
 }
-
-fn keep(node: &Node, id: &ResidentId, input: &NoticeId, progress: &Progress) -> io::Result<()> {
-    let path = path(node, id, input);
-    fastctx_platform::ensure_private_dir(path.parent().expect("progress directory"))?;
-    fastctx_platform::publish(&path, &serde_json::to_vec(progress)?, fastctx_platform::Permissions::Private)
+fn update<T: Send + 'static>(
+    node: &Node,
+    id: &ResidentId,
+    input: &NoticeId,
+    create: bool,
+    apply: impl FnOnce(&mut Progress) -> fastctx_storage::Result<T> + Send + 'static,
+) -> Result<Option<T>, Failure> {
+    let directory = directory(node, id).map_err(failure)?;
+    let key = input.to_string();
+    crate::records::write_at(&directory, fastctx_storage::Priority::Interactive, 2048, move |rows| {
+        let mut progress = match rows.get::<Progress>("host-progress", &key)? {
+            Some(row) => row,
+            None if create => initial(),
+            None => return Ok(None),
+        };
+        let result = apply(&mut progress)?;
+        rows.put("host-progress", &key, &progress)?;
+        Ok(Some(result))
+    })
+    .map_err(failure)
 }
-
-/// Preflight is durable before Waking is published. A restart can distinguish
-/// a request never offered to the CLI from an unanswered launch.
+/// Preflight is durable before Waking is published.
 pub(crate) fn begin(node: &Node, id: &ResidentId, input: &NoticeId) -> Result<(), Failure> {
-    let _transaction = crate::resident_storage::lock();
-    if progress(node, id, input).map_err(failure)?.is_none() {
-        let now = Timestamp::now();
-        keep(
-            node,
-            id,
-            input,
-            &Progress {
-                began: now,
-                next: now,
-                failures: 0,
-                reason: None,
-                attempted: false,
-                accepted: false,
-                after_activation: None,
-            },
-        )
-        .map_err(failure)?;
-    }
-    Ok(())
+    update(node, id, input, true, |_| Ok(())).map(|_| ())
 }
-
-/// The next activation, not a late report from the previous one, must consume
-/// this wake. Commit that boundary before publishing the Waking state.
 pub(crate) fn begin_after(
     node: &Node,
     id: &ResidentId,
     input: &NoticeId,
     activation: Option<String>,
 ) -> Result<(), Failure> {
-    begin(node, id, input)?;
-    let _transaction = crate::resident_storage::lock();
-    let mut kept = progress(node, id, input).map_err(failure)?.ok_or_else(|| failure("missing host preflight"))?;
-    kept.after_activation = activation;
-    keep(node, id, input, &kept).map_err(failure)
+    update(node, id, input, true, move |row| {
+        row.after_activation = activation;
+        Ok(())
+    })
+    .map(|_| ())
 }
-
-/// Commits the boundary before a command capable of accepting the input runs.
+/// Commit the host boundary before issuing a command that could accept words.
 pub(crate) fn attempting(node: &Node, id: &ResidentId, input: &NoticeId) -> Result<(), Failure> {
-    let _transaction = crate::resident_storage::lock();
-    let mut kept = progress(node, id, input).map_err(failure)?.ok_or_else(|| failure("missing host preflight"))?;
-    kept.attempted = true;
-    kept.accepted = false;
-    keep(node, id, input, &kept).map_err(failure)
+    update(node, id, input, false, |row| {
+        row.attempted = true;
+        row.accepted = false;
+        Ok(())
+    })?
+    .ok_or_else(|| failure("missing host preflight"))
 }
-
 pub(crate) fn accepted(node: &Node, id: &ResidentId, input: &NoticeId) -> Result<(), Failure> {
-    let _transaction = crate::resident_storage::lock();
-    let Some(mut kept) = progress(node, id, input).map_err(failure)? else { return Ok(()) };
-    kept.accepted = true;
-    keep(node, id, input, &kept).map_err(failure)
+    update(node, id, input, false, |row| {
+        row.accepted = true;
+        Ok(())
+    })
+    .map(|_| ())
 }
 
 pub(crate) async fn unavailable(
@@ -115,23 +121,23 @@ pub(crate) async fn unavailable(
     if error.permanent {
         super::refused::reject(node, id, input, error.failure).await
     } else {
-        defer(node, id, input, &error.failure.message)
+        defer(node, id, input, &error.failure.message).await
     }
 }
 
 /// The caller owns the action and management gates and retries its durable work.
 /// Its scheduler may check sooner, but only this progress permits another wake.
 pub(crate) async fn prepare_work(node: &Arc<Node>, id: &ResidentId, key: &NoticeId) -> Result<(), Failure> {
-    if progress(node, id, key).map_err(failure)?.is_some_and(|progress| progress.next > Timestamp::now()) {
+    if progress(node, id, key).await.map_err(failure)?.is_some_and(|progress| progress.next > Timestamp::now()) {
         return Err(Failure::host_unavailable("the host retry is waiting for its next attempt"));
     }
     match super::wake::wake(node, id, super::wake::Source::Control, None).await {
-        Ok(_) => clear(node, id, key).map_err(failure),
+        Ok(_) => clear(node, id, key).await.map_err(failure),
         Err(error) => {
             if !error.permanent {
-                failed(node, id, key, &error.failure.message)?;
+                failed(node, id, key, &error.failure.message).await?;
             } else {
-                clear(node, id, key).map_err(failure)?;
+                clear(node, id, key).await.map_err(failure)?;
             }
             Err(error.control())
         }
@@ -139,63 +145,93 @@ pub(crate) async fn prepare_work(node: &Arc<Node>, id: &ResidentId, key: &Notice
 }
 
 /// Call only with evidence that this input has not crossed the host boundary.
-pub(crate) fn defer(node: &Arc<Node>, id: &ResidentId, input: &NoticeId, reason: &str) -> Result<Landed, Failure> {
-    failed(node, id, input, reason)?;
+pub(crate) fn defer_now(node: &Arc<Node>, id: &ResidentId, input: &NoticeId, reason: &str) -> Result<Landed, Failure> {
+    failed_now(node, id, input, reason)?;
     crate::inbox::set_state(&node.world.conversation(id), input, PendingState::Waiting).map_err(failure)?;
     kick(node, id);
     Ok(Landed::Waiting { why: None, answered: true })
 }
+/// `defer_now`, written where writing may block.
+pub(crate) async fn defer(
+    node: &Arc<Node>,
+    id: &ResidentId,
+    input: &NoticeId,
+    reason: &str,
+) -> Result<Landed, Failure> {
+    let (node, id, input, reason) = (node.clone(), id.clone(), input.clone(), reason.to_string());
+    fastctx_platform::task::blocking(move || defer_now(&node, &id, &input, &reason)).await
+}
 
-pub(crate) fn failed(node: &Arc<Node>, id: &ResidentId, input: &NoticeId, reason: &str) -> Result<(), Failure> {
-    begin(node, id, input)?;
-    {
-        let _transaction = crate::resident_storage::lock();
-        let mut kept = progress(node, id, input).map_err(failure)?.ok_or_else(|| failure("missing host progress"))?;
-        if kept.reason.as_deref() != Some(reason) {
-            node.log.line(format_args!("lifecycle {id}: host unavailable; retrying: {reason}"));
-        }
-        kept.reason = Some(reason.into());
-        kept.attempted = false;
-        kept.accepted = false;
-        kept.failures = kept.failures.saturating_add(1);
-        let seconds = 3u64.saturating_mul(1u64 << kept.failures.saturating_sub(1).min(5)).min(60);
-        kept.next = Timestamp::now().checked_add(Duration::from_secs(seconds)).map_err(failure)?;
-        keep(node, id, input, &kept).map_err(failure)?;
+/// `failed_now`, written where writing may block.
+pub(crate) async fn failed(node: &Arc<Node>, id: &ResidentId, input: &NoticeId, reason: &str) -> Result<(), Failure> {
+    let (node, id, input, reason) = (node.clone(), id.clone(), input.clone(), reason.to_string());
+    fastctx_platform::task::blocking(move || failed_now(&node, &id, &input, &reason)).await
+}
+
+pub(crate) fn failed_now(node: &Arc<Node>, id: &ResidentId, input: &NoticeId, reason: &str) -> Result<(), Failure> {
+    let why = reason.to_string();
+    let changed = update(node, id, input, true, move |row| {
+        let changed = row.reason.as_deref() != Some(&why);
+        row.reason = Some(why);
+        row.attempted = false;
+        row.accepted = false;
+        row.failures = row.failures.saturating_add(1);
+        let seconds = 3u64.saturating_mul(1u64 << row.failures.saturating_sub(1).min(5)).min(60);
+        row.next = Timestamp::now()
+            .checked_add(Duration::from_secs(seconds))
+            .map_err(|error| fastctx_storage::Error::new(error.to_string()))?;
+        Ok(changed)
+    })?
+    .unwrap_or(false);
+    if changed {
+        node.log.line(format_args!("lifecycle {id}: host unavailable; retrying: {reason}"));
     }
     Ok(())
 }
-
-/// Like `failed`, for something that waits its place in its login's line
-/// (`turn_slots`): asked again in two seconds, however often it waited.
-pub(crate) fn queued(node: &Arc<Node>, id: &ResidentId, input: &NoticeId, reason: &str) -> Result<(), Failure> {
-    begin(node, id, input)?;
-    let _transaction = crate::resident_storage::lock();
-    let mut kept = progress(node, id, input).map_err(failure)?.ok_or_else(|| failure("missing host progress"))?;
-    kept.reason = Some(reason.into());
-    kept.attempted = false;
-    kept.accepted = false;
-    kept.next = Timestamp::now().checked_add(Duration::from_secs(2)).map_err(failure)?;
-    keep(node, id, input, &kept).map_err(failure)
+/// `queued_now`, written where writing may block.
+pub(crate) async fn queued(node: &Arc<Node>, id: &ResidentId, input: &NoticeId, reason: &str) -> Result<(), Failure> {
+    let (node, id, input, reason) = (node.clone(), id.clone(), input.clone(), reason.to_string());
+    fastctx_platform::task::blocking(move || queued_now(&node, &id, &input, &reason)).await
 }
-
-/// Records a startup observation without granting permission to resubmit.
+pub(crate) fn queued_now(node: &Arc<Node>, id: &ResidentId, input: &NoticeId, reason: &str) -> Result<(), Failure> {
+    let why = reason.to_string();
+    update(node, id, input, true, move |row| {
+        row.reason = Some(why);
+        row.attempted = false;
+        row.accepted = false;
+        row.next = Timestamp::now()
+            .checked_add(Duration::from_secs(2))
+            .map_err(|error| fastctx_storage::Error::new(error.to_string()))?;
+        Ok(())
+    })
+    .map(|_| ())
+}
 pub(crate) fn observing(node: &Node, id: &ResidentId, input: &NoticeId, reason: String) -> Result<(), Failure> {
-    begin(node, id, input)?;
-    let _transaction = crate::resident_storage::lock();
-    let mut kept = progress(node, id, input).map_err(failure)?.ok_or_else(|| failure("missing host progress"))?;
-    if kept.reason.as_ref() != Some(&reason) {
+    let why = reason.clone();
+    let changed = update(node, id, input, true, move |row| {
+        let changed = row.reason.as_ref() != Some(&why);
+        if changed {
+            row.reason = Some(why);
+        }
+        Ok(changed)
+    })?
+    .unwrap_or(false);
+    if changed {
         node.log.line(format_args!("lifecycle {id}: observing startup: {reason}"));
-        kept.reason = Some(reason);
-        keep(node, id, input, &kept).map_err(failure)?;
     }
     Ok(())
 }
-
-pub(crate) fn clear(node: &Node, id: &ResidentId, input: &NoticeId) -> io::Result<()> {
-    match std::fs::remove_file(path(node, id, input)) {
-        Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
-        _ => Ok(()),
-    }
+/// `clear_now`, written where writing may block.
+pub(crate) async fn clear(node: &Arc<Node>, id: &ResidentId, input: &NoticeId) -> io::Result<()> {
+    let (node, id, input) = (node.clone(), id.clone(), input.clone());
+    fastctx_platform::task::blocking(move || clear_now(&node, &id, &input)).await
+}
+pub(crate) fn clear_now(node: &Node, id: &ResidentId, input: &NoticeId) -> io::Result<()> {
+    let directory = directory(node, id)?;
+    let key = input.to_string();
+    crate::records::write_at(&directory, fastctx_storage::Priority::Interactive, key.len(), move |rows| {
+        rows.delete("host-progress", &key).map(|_| ())
+    })
 }
 
 pub(crate) fn kick(node: &Arc<Node>, id: &ResidentId) {
@@ -207,7 +243,7 @@ pub(crate) fn kick(node: &Arc<Node>, id: &ResidentId) {
         signal
     };
     let (node, id) = (node.clone(), id.clone());
-    tokio::spawn(run(node, id, signal));
+    fastctx_platform::task::spawn(run(node, id, signal));
 }
 
 /// Host readiness and consuming-turn receipts release waiting arrivals
@@ -232,16 +268,9 @@ fn run(
             }
             let Some((about, _)) = node.residents.about(&id) else { break };
             let directory = node.world.conversation(&id);
-            let next = crate::inbox::pending(&directory).map(|rows| {
-                rows.into_iter().find(|row| {
-                    row.state == PendingState::Waiting
-                        && row.delivery.notice.along().is_none()
-                        && crate::speech::ready_for_delivery(&node, &about, row)
-                })
-            });
-            let input = match next {
+            let input = match first_ready(&node, &about, &directory).await {
                 Ok(Some(input)) => input,
-                Ok(None) => match crate::control_queue::waiting_for_host(&node, &id) {
+                Ok(None) => match crate::control_queue::waiting_for_host(&node, &id).await {
                     Ok(true) => {
                         if let Err(error) = crate::control_queue::run_pending(&node, &id).await {
                             node.log.line(format_args!("lifecycle {id}: retrying control: {error}"));
@@ -266,7 +295,7 @@ fn run(
                     continue;
                 }
             };
-            match progress(&node, &id, &input.delivery.id) {
+            match progress(&node, &id, &input.delivery.id).await {
                 Ok(Some(progress)) => {
                     let remaining = progress.next.as_millisecond().saturating_sub(Timestamp::now().as_millisecond());
                     if remaining > 0 {
@@ -285,19 +314,15 @@ fn run(
             if let Err(error) = crate::speech::hand_over(&node, &id, &about, &directory, input.clone()).await {
                 // A failure after handover is not permission to repeat it.
                 // Only the still-Waiting state proves no submission happened.
-                if crate::inbox::read(&directory, &input.delivery.id)
-                    .is_ok_and(|row| row.is_some_and(|row| row.state == PendingState::Waiting))
-                {
-                    if let Err(error) = defer(&node, &id, &input.delivery.id, &error.message) {
+                if still_waiting(&directory, &input.delivery.id).await {
+                    if let Err(error) = defer(&node, &id, &input.delivery.id, &error.message).await {
                         node.log.line(format_args!("lifecycle {id}: keeping retry: {error}"));
                     }
                 } else {
                     node.log.line(format_args!("lifecycle {id}: handover needs reconciliation: {error}"));
                 }
             }
-            if crate::inbox::read(&directory, &input.delivery.id)
-                .is_ok_and(|row| row.is_some_and(|row| row.state == PendingState::Waiting))
-            {
+            if still_waiting(&directory, &input.delivery.id).await {
                 tokio::select! {
                     () = signal.notified() => {},
                     () = tokio::time::sleep(Duration::from_secs(3)) => {},
@@ -307,20 +332,43 @@ fn run(
         node.retrying.0.lock().expect("never poisoned").remove(&id);
         // An arrival racing the final empty read either starts its own worker
         // after this removal, or is picked up by this recheck.
-        if node.residents.active(&id).is_ok()
-            && (crate::inbox::pending(&node.world.conversation(&id)).is_ok_and(|rows| {
-                node.residents.about(&id).is_some_and(|(about, _)| {
-                    rows.iter().any(|row| {
-                        row.state == PendingState::Waiting
-                            && row.delivery.notice.along().is_none()
-                            && crate::speech::ready_for_delivery(&node, &about, row)
-                    })
-                })
-            }) || crate::control_queue::waiting_for_host(&node, &id).unwrap_or(false))
-        {
-            kick(&node, &id);
+        if node.residents.active(&id).is_ok() {
+            let ready = match node.residents.about(&id) {
+                Some((about, _)) => {
+                    first_ready(&node, &about, &node.world.conversation(&id)).await.is_ok_and(|first| first.is_some())
+                }
+                None => false,
+            };
+            if ready || crate::control_queue::waiting_for_host(&node, &id).await.unwrap_or(false) {
+                kick(&node, &id);
+            }
         }
     })
+}
+
+/// The first of what waits in `directory` that may go in now, read where
+/// reading may block.
+async fn first_ready(node: &Arc<Node>, about: &About, directory: &ConversationDir) -> io::Result<Option<Pending>> {
+    let (node, about, directory) = (node.clone(), about.clone(), directory.clone());
+    fastctx_platform::task::blocking(move || {
+        crate::inbox::first(&directory, |row| {
+            row.state == PendingState::Waiting
+                && row.delivery.notice.along().is_none()
+                && crate::speech::ready_for_delivery(&node, &about, row)
+        })
+    })
+    .await
+}
+
+/// Whether `input` still waits to go in: only that proves it was not handed
+/// over, so only then is it put off for later.
+pub(crate) async fn still_waiting(directory: &ConversationDir, input: &NoticeId) -> bool {
+    let (directory, input) = (directory.clone(), input.clone());
+    fastctx_platform::task::blocking(move || {
+        crate::inbox::read(&directory, &input)
+            .is_ok_and(|row| row.is_some_and(|row| row.state == PendingState::Waiting))
+    })
+    .await
 }
 
 fn failure(error: impl std::fmt::Display) -> Failure {

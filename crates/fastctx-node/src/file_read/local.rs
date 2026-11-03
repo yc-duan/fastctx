@@ -31,7 +31,7 @@ pub async fn read_attachment(
         .to_string_lossy()
         .into_owned();
     let path = request.path.clone();
-    let opened = tokio::task::spawn_blocking(move || {
+    let opened = fastctx_platform::task::spawn_blocking(move || {
         let path = Path::new(&path);
         if !path.is_absolute() {
             return Err(error(FileReadErrorKind::InvalidInput, "the file path must be absolute", 0));
@@ -83,7 +83,7 @@ pub async fn read_attachment(
             .map_err(|e| error(FileReadErrorKind::Io, e.to_string(), bytes))?;
         bytes += read as u64;
     }
-    tokio::task::spawn_blocking(move || {
+    fastctx_platform::task::spawn_blocking(move || {
         let after = file_read::snapshot(&check, &check.metadata().map_err(|e| io_error(e, bytes))?)
             .map_err(|e| io_error(e, bytes))?;
         let observed = metadata(&after).map_err(|e| io_error(e, bytes))?;

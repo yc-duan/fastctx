@@ -163,10 +163,13 @@ export class LoginUsagePage implements Page {
         keepRecord(heard.logins, asked);
       }
     });
-    const report = readReport(this.key, () => options.usage(options.machine, options.agent, options.dir)).then((report) => {
-      this.report = report;
-      this.problem = null;
-    });
+    // A login the workbench is closed in has no use read.
+    const report = !this.open()
+      ? Promise.resolve()
+      : readReport(this.key, () => options.usage(options.machine, options.agent, options.dir)).then((report) => {
+          this.report = report;
+          this.problem = null;
+        });
     const [, used] = await Promise.allSettled([record, report]);
     // Left while it read: nothing more is drawn or asked.
     if (this.left) return;
@@ -178,6 +181,14 @@ export class LoginUsagePage implements Page {
 
   private login(): Login | null {
     return this.record?.[this.options.agent].listed.find((one) => one.dir === this.options.dir) ?? null;
+  }
+
+  /** Whether the workbench is open in this login: as its machine keeps it,
+   *  where that is by login; otherwise as the account has it. */
+  private open(): boolean {
+    const login = this.login();
+    if (!this.options.workbench.peek()) return false;
+    return this.record?.by_login && login ? !!login.workbench : true;
   }
 
   private who(): string {
@@ -208,10 +219,11 @@ export class LoginUsagePage implements Page {
     const now = options.store.clock.peek().getTime();
     const login = this.login();
     this.head(login);
+    this.element.querySelector<HTMLElement>(".ledger-talk")!.hidden = !this.open();
     let html: string;
     let context: CallsContext | null = null;
     let panel: { html: string; draw(): string } | null = null;
-    if (!options.workbench.peek()) {
+    if (!this.open()) {
       html = `<p class="feature-quiet">${escape(words.workbenchOff)}</p>`;
     } else if (!this.report) {
       html = this.problem ? `<p class="feature-note" title="${escape(this.problem)}">${escape(words.failed)}</p>` : `<p class="feature-quiet ledger-reading">${escape(words.reading)}</p>`;

@@ -120,3 +120,8 @@ pub(crate) fn watch(
     }
     Ok(())
 }
+
+/// Only declared readers receive new shared-record shapes and notifications.
+pub(crate) fn replica_reader(hub: &Hub, from: &MachineName, key: &PublicKey) -> bool {
+    hub.sessions().get(from).is_some_and(|session| session.key == *key && session.replicated_records)
+}

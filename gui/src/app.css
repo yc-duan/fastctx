@@ -99,37 +99,9 @@
   display: none;
 }
 
-/* What the conversation is pointed at, in the head's line before its tools,
-   its panel opening below it at the right. */
-.page-head .focus-strip {
-  z-index: 5;
-  margin-right: var(--space-2);
-  padding: 0;
-}
-
-.page-head .focus-chip {
-  margin-left: 0;
-}
-
-/* Its panel hangs from the chip's right edge, as wide as its own content
-   wants, not as narrow as the chip; on a phone it is a sheet from below
-   (`focus-panel.css`). */
-@media (min-width: 761px) {
-  .page-head .focus-pop {
-    top: calc(100% + 6px);
-    right: 0;
-    left: auto;
-    width: min(440px, calc(100vw - 2 * var(--space-4)));
-  }
-}
-
-.focus-count {
-  display: none;
-}
-
-/* On a phone the line keeps the seal, the title, the machines as a mark and
-   a count, and the "⋯"; where it lives, finding, the choice of view and the
-   details are a press of the seal or the "⋯" away. */
+/* On a phone the line keeps the seal, the title and the "⋯"; where it
+   lives, finding, the choice of view and the details are a press of the
+   seal or the "⋯" away. */
 @media (max-width: 760px) {
   .who {
     gap: 10px;
@@ -137,20 +109,6 @@
 
   .who-home {
     display: none;
-  }
-
-  .page-head .focus-strip {
-    margin-right: 0;
-  }
-
-  .page-head .focus-chip :is(.talk-chip-name, .talk-chip-sub, .focus-more),
-  .page-head .focus-chip > .glyph:last-child {
-    display: none;
-  }
-
-  .page-head .focus-count {
-    display: inline;
-    font-variant-numeric: tabular-nums;
   }
 
   .page-head-actions:has(.talk-menu-toggle) :is(.find-toggle, .view-steps) {

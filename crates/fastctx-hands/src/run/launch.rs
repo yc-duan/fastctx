@@ -21,7 +21,6 @@ use super::record;
 /// Who asks, where, and with what.
 pub struct Launch<'a> {
     /// The owner confirms the foreground answer after its host accepts it.
-    pub answer_receipts: bool,
     pub world: &'a WorldDir,
     /// The names machines answer to here: this machine's, and every name
     /// of a machine renamed since, whose residents' jobs go on in the rooms
@@ -101,9 +100,23 @@ impl CheckedLaunch<'_, '_> {
         stdin: Option<&Path>,
         register: impl FnOnce(&Path) -> Result<(), Failure>,
     ) -> Result<Launched, Failure> {
+        self.launch_with_io_reserved(mode, stdin, |_| Some(()), register).map(|(launched, ())| launched)
+    }
+
+    /// Reserves each candidate's files before creating any of them, then keeps
+    /// that lease through registration and supervisor startup. A candidate
+    /// whose lease is unavailable is skipped. The returned lease lets the
+    /// caller finish its bookkeeping before collection can take the files.
+    pub fn launch_with_io_reserved<G>(
+        self,
+        mode: OutputMode,
+        stdin: Option<&Path>,
+        reserve: impl FnMut(&Path) -> Option<G>,
+        register: impl FnOnce(&Path) -> Result<(), Failure>,
+    ) -> Result<(Launched, G), Failure> {
         let launch = self.launch;
-        let (job, output, stderr, record_path, resident) =
-            prepare(launch, mode, stdin).map_err(|failure| Failure::not_run(failure.message))?;
+        let ((job, output, stderr, record_path, resident), files) =
+            prepare(launch, mode, stdin, reserve).map_err(|failure| Failure::not_run(failure.message))?;
         register(&record_path)?;
         if let Some(request) = launch.on.and_then(|on| on.request.as_ref()) {
             let stopped = resident.jobs().join(format!("request-{request}.stopped"));
@@ -134,13 +147,18 @@ impl CheckedLaunch<'_, '_> {
             launch.environment,
         )
         .map_err(|error| failure("starting the job's supervisor (execution may have begun)", &error))?;
-        Ok(Launched { job, record: record_path, output, stderr, supervisor: started.identity })
+        Ok((Launched { job, record: record_path, output, stderr, supervisor: started.identity }, files))
     }
 }
 
 type Prepared = (JobId, PathBuf, Option<PathBuf>, PathBuf, ConversationDir);
 
-fn prepare(launch: &Launch<'_>, mode: OutputMode, stdin: Option<&Path>) -> Result<Prepared, Failure> {
+fn prepare<G>(
+    launch: &Launch<'_>,
+    mode: OutputMode,
+    stdin: Option<&Path>,
+    reserve: impl FnMut(&Path) -> Option<G>,
+) -> Result<(Prepared, G), Failure> {
     if let Some(path) = stdin {
         if !path.is_absolute() {
             return Err(Failure::new(format!("stdin must name an absolute path: {}", path.display())));
@@ -152,7 +170,8 @@ fn prepare(launch: &Launch<'_>, mode: OutputMode, stdin: Option<&Path>) -> Resul
     }
     let cwd = starting_directory(launch)?;
     let resident = launch.world.job_owner(launch.names, launch.owner);
-    let (job, output) = reserve(&resident).map_err(|error| failure("could not reserve a job", &error))?;
+    let (job, output, files) =
+        reserve_with(&resident, reserve).map_err(|error| failure("could not reserve a job", &error))?;
     let stderr = if mode == OutputMode::Separate {
         let path = output.with_extension("stderr.log");
         OpenOptions::new()
@@ -203,17 +222,7 @@ fn prepare(launch: &Launch<'_>, mode: OutputMode, stdin: Option<&Path>) -> Resul
         account: launch.account.cloned(),
     };
     record::write(&record_path, &record).map_err(|error| failure("could not write the job's record", &error))?;
-    if launch.owner.resident().is_some()
-        && launch.on.is_none_or(|on| on.sentinel.is_none())
-        && (launch.on.is_some() || launch.answer_receipts)
-    {
-        // No supervisor can execute until its completion debt is durable.
-        // Empty markers retain the pre-negotiation background/on behavior.
-        let debt: &[u8] = if launch.on.is_none() && launch.answer_receipts { b"answer" } else { b"" };
-        publish_new(&resident.job_owed(&job), debt, Permissions::Private)
-            .map_err(|error| failure("could not keep the job's completion debt", &error))?;
-    }
-    Ok((job, output, stderr, record_path, resident))
+    Ok(((job, output, stderr, record_path, resident), files))
 }
 
 /// The directory the script starts in: the one asked for, which must be an
@@ -245,12 +254,16 @@ fn starting_directory(launch: &Launch<'_>) -> Result<PathBuf, Failure> {
 
 /// Picks an unused job id. The output file, created exclusively, is what
 /// reserves it.
-pub fn reserve(resident: &ConversationDir) -> io::Result<(JobId, PathBuf)> {
+fn reserve_with<G>(
+    resident: &ConversationDir,
+    mut reserve: impl FnMut(&Path) -> Option<G>,
+) -> io::Result<(JobId, PathBuf, G)> {
     ensure_private_dir(resident.path())?;
     std::fs::create_dir_all(resident.jobs())?;
     std::fs::create_dir_all(resident.out())?;
     loop {
         let job = random_job_id()?;
+        let Some(files) = reserve(&resident.job_record(&job)) else { continue };
         // Losing or removing a log does not release the identity of the
         // job whose durable record still exists.
         if resident.job_record(&job).try_exists()? {
@@ -261,7 +274,7 @@ pub fn reserve(resident: &ConversationDir) -> io::Result<(JobId, PathBuf)> {
             continue;
         }
         match OpenOptions::new().write(true).create_new(true).open(&output) {
-            Ok(_) => return Ok((job, output)),
+            Ok(_) => return Ok((job, output, files)),
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
             Err(error) => return Err(error),
         }

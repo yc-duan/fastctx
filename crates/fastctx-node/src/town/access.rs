@@ -14,6 +14,15 @@ use crate::Node;
 /// what asked is not done when it cannot tell.
 pub(crate) fn permits(node: &Node, acting: &Acting, town: &TownName) -> Result<bool, Failure> {
     let place = crate::ledger::names::place(&node.world, town).map_err(|error| Failure::not_run(error.to_string()))?;
+    permits_at(node, acting, town, place.as_ref())
+}
+
+pub(crate) fn permits_at(
+    node: &Node,
+    acting: &Acting,
+    town: &TownName,
+    place: Option<&crate::ledger::names::Place>,
+) -> Result<bool, Failure> {
     if let Some(place) = place {
         if let Some(link) = node.link_of(&place.hub) {
             let view = link.view();

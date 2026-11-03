@@ -60,6 +60,8 @@ pub(crate) async fn here(node: &Arc<Node>, resident: &ResidentId, agent: &str) -
         .residents
         .about(resident)
         .ok_or_else(|| Failure::new(format!("no resident {resident} lives on {}", node.machine())))?;
+    // Only its host knows what an agent did.
+    crate::logins::workbench::works(node, &about)?;
     match about.host.agent.as_str() {
         "claude" => claude(node, resident, agent).await,
         "codex" => {
@@ -87,7 +89,7 @@ async fn claude(node: &Arc<Node>, resident: &ResidentId, agent: &str) -> Result<
     // is read again, until one sees it whole.
     let read = loop {
         let (reading, id) = (path.clone(), agent.to_string());
-        let read = tokio::task::spawn_blocking(move || transcript::read_agent(&reading, &id))
+        let read = fastctx_platform::task::spawn_blocking(move || transcript::read_agent(&reading, &id))
             .await
             .map_err(|error| Failure::new(format!("reading the agent's record: {error}")))?;
         match read {

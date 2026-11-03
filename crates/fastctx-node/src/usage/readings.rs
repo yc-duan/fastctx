@@ -13,69 +13,88 @@ use std::path::Path;
 /// The minutes of a week, the window whose usage only rises until it resets.
 const WEEK_MINUTES: u32 = 10_080;
 
-/// Of each weekly window of one account, by name, a reading lower than the
-/// one kept, and when it was seen, waiting for the next reading to say
-/// whether the week was reset in place (`merge`).
-pub(super) type Lowered = HashMap<String, (Timestamp, u32)>;
+/// How long news below the kept figure holds before the week counts as
+/// cleared: longer than any answer takes, so by then a figure that an
+/// answer carried and that came late has been overtaken.
+const LATE: SignedDuration = SignedDuration::from_secs(30 * 60);
+
+/// The most sources a weekly window remembers the last figure of; past it
+/// they are forgotten, and each one's next figure is news again.
+const SOURCES: usize = 65_536;
+
+/// Of each weekly window of one account, by name, what tells a figure that
+/// came late from the week cleared in place (`merge`).
+pub(super) type Lowered = HashMap<String, Heard>;
+
+/// Of one weekly window in its period: the figure each source last gave,
+/// since when news below the kept figure has come with none back up to it,
+/// and the period's clearings, the latest last.
+#[derive(Default)]
+pub(super) struct Heard {
+    last: HashMap<String, u32>,
+    lower: Option<Timestamp>,
+    cleared: Vec<Clearing>,
+}
+
+struct Clearing {
+    since: Timestamp,
+    /// The figure the week fell from: coming back up to it, it was none.
+    from: u32,
+    standing: bool,
+}
+
+/// Where readings come from.
+#[derive(Clone, Copy)]
+pub(super) enum Source<'a> {
+    /// A session, or a Codex login's app-server, telling them now.
+    Live(&'a str),
+    /// The ledger read back, its rows carrying the clearings seen live.
+    Ledger,
+}
 
 pub(super) fn same(a: Timestamp, b: Timestamp) -> bool {
     a.duration_since(b).abs() <= SignedDuration::from_secs(120)
 }
 
 /// Merges `windows`, observed at `at`, no earlier than `known`, into it.
-/// Within one period usage only rises, so in a week a reading lower than
+/// Within one period usage only rises, so in a week a figure lower than
 /// the one kept is the week cleared in place, its reset kept, as a vendor
 /// does when the plan changes; from then its usage counts anew (`since`).
-/// Each session reports what the last answer to it carried, and one whose
-/// request failed may report an older figure: so a lower reading is held
-/// in `lowered` until the next, and taken when that one is lower too. A
-/// shorter window resets soon enough by itself, and keeps the higher. Rows
-/// read back from the ledger, `lowered` none, are as merged when written.
+/// But each session gives what the last answer to it carried: while others
+/// have seen the week rise, one whose answer took long gives the figure
+/// from before, and one whose requests fail gives its old figure again.
+/// So only a figure that changed is news, and the week counts as cleared
+/// when news below the kept figure has held for `LATE`, none rising back
+/// to it; a week that comes back up to the figure it fell from was not
+/// cleared. A shorter window resets soon enough by itself, and keeps the
+/// higher. Only where the login's owner chose to `follow` such clearings:
+/// otherwise within one period the week only rises, and runs from its
+/// reset alone.
 pub(super) fn merge(
     known: &mut Vec<LimitWindow>,
     windows: Vec<LimitWindow>,
     at: Timestamp,
-    mut lowered: Option<&mut Lowered>,
+    lowered: &mut Lowered,
+    source: Source<'_>,
+    follow: bool,
 ) {
     for incoming in windows {
+        let incoming = if follow { incoming } else { LimitWindow { since: None, ..incoming } };
         let Some(old) = known.iter_mut().find(|old| old.name == incoming.name && old.minutes == incoming.minutes)
         else {
+            lowered.remove(&incoming.name);
             known.push(incoming);
             continue;
         };
-        // A lower reading held from another period is no second word on
-        // this one.
-        let mut forget = |name: &str| {
-            if let Some(lowered) = lowered.as_deref_mut() {
-                lowered.remove(name);
-            }
-        };
         match (old.resets_at, incoming.resets_at) {
-            (Some(a), Some(b)) if same(a, b) && incoming.since.is_some() && incoming.since != old.since => {
-                forget(&old.name);
-                *old = incoming;
+            (Some(a), Some(b)) if same(a, b) && follow && old.minutes == Some(WEEK_MINUTES) => {
+                weekly(old, incoming, at, lowered.entry(old.name.clone()).or_default(), source);
             }
-            (Some(a), Some(b))
-                if same(a, b) && old.minutes == Some(WEEK_MINUTES) && incoming.used_tenths < old.used_tenths =>
-            {
-                let Some(lowered) = lowered.as_deref_mut() else { continue };
-                match lowered.remove(&old.name) {
-                    Some((first, _)) => *old = LimitWindow { since: Some(first), ..incoming },
-                    None => {
-                        lowered.insert(old.name.clone(), (at, incoming.used_tenths));
-                    }
-                }
-            }
-            (Some(a), Some(b)) if same(a, b) => {
-                old.used_tenths = old.used_tenths.max(incoming.used_tenths);
-                if let Some(lowered) = lowered.as_deref_mut() {
-                    lowered.remove(&old.name);
-                }
-            }
+            (Some(a), Some(b)) if same(a, b) => old.used_tenths = old.used_tenths.max(incoming.used_tenths),
             (Some(a), Some(b)) if b < a => {}
             // Without a reset identifier, only a newer observation can establish recovery.
             (_, Some(_)) | (_, None) => {
-                forget(&old.name);
+                lowered.remove(&old.name);
                 *old = incoming;
             }
         }
@@ -83,12 +102,62 @@ pub(super) fn merge(
     known.sort_by(|a, b| a.name.cmp(&b.name).then(a.minutes.cmp(&b.minutes)));
 }
 
+/// One weekly window's reading within the period kept (`merge`).
+fn weekly(old: &mut LimitWindow, incoming: LimitWindow, at: Timestamp, heard: &mut Heard, source: Source<'_>) {
+    match source {
+        Source::Ledger => match incoming.since {
+            Some(since) if !heard.cleared.iter().any(|clearing| clearing.since == since) => {
+                heard.cleared.push(Clearing { since, from: old.used_tenths, standing: true });
+                old.used_tenths = incoming.used_tenths;
+            }
+            _ => old.used_tenths = old.used_tenths.max(incoming.used_tenths),
+        },
+        Source::Live(source) => {
+            if heard.last.len() >= SOURCES && !heard.last.contains_key(source) {
+                heard.last.clear();
+            }
+            let before = heard.last.insert(source.to_string(), incoming.used_tenths);
+            if before == Some(incoming.used_tenths) {
+                return;
+            }
+            // A source's first figure is as old as its last answer that got
+            // through; one that changed is news an answer just carried.
+            let news = before.is_some();
+            if incoming.used_tenths >= old.used_tenths {
+                if !news
+                    && heard.cleared.iter().any(|clearing| clearing.standing && incoming.used_tenths >= clearing.from)
+                {
+                    return;
+                }
+                old.used_tenths = incoming.used_tenths;
+                heard.lower = None;
+            } else if news {
+                match heard.lower {
+                    None => heard.lower = Some(at),
+                    Some(first) if at.duration_since(first) >= LATE => {
+                        heard.cleared.push(Clearing { since: first, from: old.used_tenths, standing: true });
+                        old.used_tenths = incoming.used_tenths;
+                        heard.lower = None;
+                    }
+                    Some(_) => {}
+                }
+            }
+        }
+    }
+    for clearing in &mut heard.cleared {
+        clearing.standing &= old.used_tenths < clearing.from;
+    }
+    old.since = heard.cleared.iter().rev().find(|clearing| clearing.standing).map(|clearing| clearing.since);
+}
+
+/// Records `incoming`, as `source` gave it at `at`, for `account`.
 pub(super) fn record(
     book: &mut Book,
     path: &Path,
     incoming: Vec<LimitWindow>,
     at: Timestamp,
     account: Option<String>,
+    source: &str,
 ) -> io::Result<bool> {
     if incoming.is_empty() {
         return Ok(false);
@@ -98,7 +167,8 @@ pub(super) fn record(
         return Ok(false);
     }
     let mut windows = old.map_or_else(Vec::new, |(_, windows)| windows.clone());
-    merge(&mut windows, incoming, at, Some(book.lowered.entry(account.clone()).or_default()));
+    let lowered = book.lowered.entry(account.clone()).or_default();
+    merge(&mut windows, incoming, at, lowered, Source::Live(source), book.follow);
     if windows.iter().all(|window| window.resets_at.is_some()) && old.is_some_and(|(_, old)| *old == windows) {
         return Ok(false);
     }
@@ -148,7 +218,8 @@ pub(crate) fn codex_reading(
     account: Option<String>,
 ) -> io::Result<bool> {
     let path = super::ledger(node, "codex", dir);
-    super::with_book(node, &path, |book| record(book, &path, windows, at, account))
+    // One app-server per login gives them, each as it hears it.
+    super::with_book(node, &path, |book| record(book, &path, windows, at, account, ""))
 }
 
 pub(super) fn claude_windows(limits: &[Value]) -> Vec<LimitWindow> {

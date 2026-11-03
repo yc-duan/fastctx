@@ -65,6 +65,15 @@
   border-top: 1px solid var(--hairline);
 }
 
+/* Where pages cannot be shown, the stage says so in one quiet line. */
+.page-unsupported {
+  margin: auto;
+  padding: var(--space-4) var(--gutter);
+  font-size: var(--size-text);
+  color: var(--text-2);
+  text-align: center;
+}
+
 .page-frame {
   flex: 1;
   width: 100%;

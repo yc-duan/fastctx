@@ -158,14 +158,17 @@ pub struct Ended {
 /// the memberships under `net` keep them, while its place has not ended
 /// (`world-network.md`, 受管机器).
 pub fn managed_on(net: &Path) -> io::Result<Option<(HubName, fastctx_types::AccountName)>> {
-    let entries = match std::fs::read_dir(net) {
+    let entries = match fastctx_platform::disk::read_dir(net) {
         Ok(entries) => entries,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error),
     };
     for entry in entries {
         let dir = NetDir::new(entry?.path());
-        if !dir.membership().is_file() || dir.ended().try_exists()? || older_view(&dir.view()) {
+        if !fastctx_platform::disk::is_file(dir.membership())
+            || fastctx_platform::disk::exists(dir.ended())?
+            || older_view(&dir.view())
+        {
             continue;
         }
         let membership: Membership = read(&dir.membership())?;
@@ -182,7 +185,18 @@ pub fn managed_on(net: &Path) -> io::Result<Option<(HubName, fastctx_types::Acco
 /// two calls under one number and takes one's answer for the other's.
 pub struct Counter {
     path: PathBuf,
-    state: Mutex<(u64, u64)>,
+    state: Mutex<Numbers>,
+    /// The file is written one write at a time, off the lock on `state`.
+    writing: Mutex<()>,
+}
+
+struct Numbers {
+    /// The next number to give.
+    next: u64,
+    /// Every number below it is reserved on disk.
+    reserved: u64,
+    /// The reservation being written ahead, while one is.
+    ahead: Option<u64>,
 }
 
 const RESERVED_AT_ONCE: u64 = 1000;
@@ -197,24 +211,52 @@ impl Counter {
         let start = read_or(&path, CounterFile { reserved: 1 })?.reserved;
         let reserved = start + RESERVED_AT_ONCE;
         write(&path, &CounterFile { reserved })?;
-        Ok(Self { path, state: Mutex::new((start, reserved)) })
+        Ok(Self { path, state: Mutex::new(Numbers { next: start, reserved, ahead: None }), writing: Mutex::new(()) })
     }
 
-    pub fn next(&self) -> io::Result<u64> {
-        let mut state = self.state.lock().expect("never poisoned");
-        if state.0 == state.1 {
-            let reserved = state.1 + RESERVED_AT_ONCE;
-            write(&self.path, &CounterFile { reserved })?;
-            state.1 = reserved;
+    /// The next number, and, once half of those reserved are given, the
+    /// reservation to write ahead (`reserve`) while the rest are given. Only
+    /// when every reserved number is given and none was written ahead does
+    /// it write one itself.
+    pub fn next(&self) -> io::Result<(u64, Option<u64>)> {
+        loop {
+            let wanted = {
+                let mut numbers = self.state.lock().expect("never poisoned");
+                if numbers.next < numbers.reserved {
+                    let n = numbers.next;
+                    numbers.next += 1;
+                    let low = numbers.reserved - numbers.next <= RESERVED_AT_ONCE / 2;
+                    let ahead = (low && numbers.ahead.is_none()).then(|| numbers.reserved + RESERVED_AT_ONCE);
+                    numbers.ahead = numbers.ahead.or(ahead);
+                    return Ok((n, ahead));
+                }
+                numbers.reserved + RESERVED_AT_ONCE
+            };
+            self.reserve(wanted)?;
         }
-        let n = state.0;
-        state.0 += 1;
-        Ok(n)
+    }
+
+    /// Reserves on disk every number below `through`, unless they are.
+    pub fn reserve(&self, through: u64) -> io::Result<()> {
+        let _writing = self.writing.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if self.state.lock().expect("never poisoned").reserved >= through {
+            return Ok(());
+        }
+        let written = write(&self.path, &CounterFile { reserved: through });
+        let mut numbers = self.state.lock().expect("never poisoned");
+        if numbers.ahead.is_some_and(|ahead| ahead <= through) {
+            numbers.ahead = None;
+        }
+        if written.is_ok() {
+            numbers.reserved = numbers.reserved.max(through);
+        }
+        written
     }
 }
 
+#[track_caller]
 pub fn read_or<T: DeserializeOwned>(path: &Path, default: T) -> io::Result<T> {
-    match std::fs::read(path) {
+    match fastctx_platform::disk::read(path) {
         Ok(bytes) => serde_json::from_slice(&bytes)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("{}: {error}", path.display()))),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(default),
@@ -222,8 +264,9 @@ pub fn read_or<T: DeserializeOwned>(path: &Path, default: T) -> io::Result<T> {
     }
 }
 
+#[track_caller]
 pub fn read<T: DeserializeOwned>(path: &Path) -> io::Result<T> {
-    let bytes = std::fs::read(path)?;
+    let bytes = fastctx_platform::disk::read(path)?;
     serde_json::from_slice(&bytes)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("{}: {error}", path.display())))
 }
@@ -234,8 +277,9 @@ pub fn read<T: DeserializeOwned>(path: &Path) -> io::Result<T> {
 /// other things then, and the cut a member holds cannot be read into
 /// today's shape the way the hub reads its whole directory, so it is
 /// dropped and the hub gives the view again.
+#[track_caller]
 pub fn older_view(path: &Path) -> bool {
-    let Ok(bytes) = std::fs::read(path) else { return false };
+    let Ok(bytes) = fastctx_platform::disk::read(path) else { return false };
     let Ok(serde_json::Value::Object(view)) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
         return false;
     };
@@ -248,6 +292,7 @@ pub fn older_view(path: &Path) -> bool {
 }
 
 /// Replaces the file at `path`, in a directory that exists.
+#[track_caller]
 pub fn write(path: &Path, value: &impl Serialize) -> io::Result<()> {
     let mut bytes = serde_json::to_vec_pretty(value).map_err(io::Error::other)?;
     bytes.push(b'\n');

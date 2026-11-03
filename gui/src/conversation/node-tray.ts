@@ -36,6 +36,9 @@ interface Sending {
   preview: string | null;
 }
 
+/** How a file's picture is known, by name and size. */
+const pictured = (name: string, size: number | null): string => `${name}:${size}`;
+
 /** For an agent assisting the user, which has no machine it works on:
  *  where its files other than images go. */
 export interface AssistantFiles {
@@ -52,8 +55,12 @@ export class NodeTray {
   readonly element: HTMLUListElement;
   /** What this device started sending, by its upload's operation. */
   private readonly sending = new Map<string, Sending>();
-  /** Pictures of the files this device attached, by name and size. */
+  /** Pictures of the files this device attached, by name and size: each
+   *  holds the file's bytes until it is let go. */
   private readonly previews = new Map<string, string>();
+  /** The pictures whose files the node has listed with words: let go once
+   *  no words hold them. */
+  private readonly listed = new Set<string>();
   private state: ComposerSessionState | null = null;
 
   constructor(
@@ -150,7 +157,12 @@ export class NodeTray {
       const placed = this.placed(image);
       if (placed === null) continue;
       const preview = image ? URL.createObjectURL(file) : null;
-      if (preview) this.previews.set(`${file.name}:${file.size}`, preview);
+      if (preview) {
+        const key = pictured(file.name, file.size);
+        const before = this.previews.get(key);
+        if (before) URL.revokeObjectURL(before);
+        this.previews.set(key, preview);
+      }
       this.start({ name: file.name || this.words.attach, size: file.size, image, preview }, () => this.session.attachFile(file, this.document), placed);
     }
   }
@@ -208,8 +220,37 @@ export class NodeTray {
     );
   }
 
+  /** Lets go of the pictures of files the node listed with words that no
+   *  words hold any more, the input's or a queued one's: sent, or taken
+   *  out. One still on its way stays until it is listed. */
+  private prune(state: ComposerSessionState): void {
+    if (!this.previews.size) return;
+    const held = new Set<string>();
+    const { composer } = state;
+    for (const draft of [composer.draft, ...composer.queue.map((one) => one.draft), ...composer.unobserved.map((one) => one.draft)]) {
+      for (const one of draft.attachments) held.add(pictured(one.name, one.size));
+      for (const one of draft.uploads) held.add(pictured(one.file.name, one.file.size));
+    }
+    for (const [key, url] of this.previews) {
+      if (held.has(key)) this.listed.add(key);
+      else if (this.listed.has(key)) {
+        URL.revokeObjectURL(url);
+        this.previews.delete(key);
+        this.listed.delete(key);
+      }
+    }
+  }
+
+  /** Lets go of every picture: the tray is gone. */
+  close(): void {
+    for (const url of this.previews.values()) URL.revokeObjectURL(url);
+    this.previews.clear();
+    this.listed.clear();
+  }
+
   draw(state: ComposerSessionState | null = this.state): void {
     this.state = state;
+    if (state) this.prune(state);
     const { words } = this;
     const draft = this.draft(state);
     const operations = new Map((state?.operations ?? []).map((operation) => [operation.id, operation]));
@@ -231,12 +272,12 @@ export class NodeTray {
     const listed = new Set((draft?.uploads ?? []).flatMap((one) => (one.operation ? [one.operation] : [])));
     const rows = [
       ...(draft?.attachments ?? []).map((one) =>
-        item(one.id, one.name, one.media_type.startsWith("image/") || IMAGE.test(one.name), this.previews.get(`${one.name}:${one.size}`) ?? null, words.size(one.size), null, null),
+        item(one.id, one.name, one.media_type.startsWith("image/") || IMAGE.test(one.name), this.previews.get(pictured(one.name, one.size)) ?? null, words.size(one.size), null, null),
       ),
       ...(draft?.uploads ?? []).map((one) => {
         const operation = one.operation && this.sending.has(one.operation) ? one.operation : null;
         const now = standing(operation, one.error);
-        return item(one.id, one.file.name, one.file.media_type.startsWith("image/"), this.previews.get(`${one.file.name}:${one.file.size}`) ?? null, now.fact, now.failed, now.retry, now.why);
+        return item(one.id, one.file.name, one.file.media_type.startsWith("image/"), this.previews.get(pictured(one.file.name, one.file.size)) ?? null, now.fact, now.failed, now.retry, now.why);
       }),
       ...[...this.sending].filter(([id]) => !listed.has(id)).map(([id, file]) => {
         const now = standing(id, null);

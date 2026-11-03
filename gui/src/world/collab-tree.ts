@@ -4,6 +4,7 @@
 // colleagues' machines report; parts it could not reach are named, not faked.
 
 import { invoke } from "@tauri-apps/api/core";
+import { observe } from "./delivery";
 import type { Address, ResidentId, Timestamp } from "./wire";
 
 export type GoalStateWire = "active" | "complete" | "blocked" | "paused";
@@ -36,7 +37,7 @@ export interface Branch {
   address: Address;
   label?: string | null;
   born_at?: Timestamp | null;
-  now?: { activity?: string; trouble?: unknown; title?: string | null; since?: Timestamp } | null;
+  now?: { activity?: string; trouble?: unknown; title?: string | null; since?: Timestamp; waiting_for_user?: boolean } | null;
   /** The colleague's goal, or the reason it could not be read (Rust Result). */
   goal: { Ok: TreeGoal | null } | { Err: string };
   agents: NativeAgent[];
@@ -50,4 +51,18 @@ export interface Tree {
 
 export function collaborationTree(resident: ResidentId, machine?: string): Promise<Tree> {
   return invoke<Tree>("collaboration_tree", { resident, machine });
+}
+
+export type CollaborationPiece =
+  | { kind: "tree"; tree: Tree }
+  | { kind: "interrupted"; error: string; since: number };
+
+/** Follows the collaboration: the tree now (resolved here), then after each
+ *  change, until `unwatch`. */
+export function watchCollaboration(
+  resident: ResidentId,
+  machine: string | undefined,
+  onPiece: (piece: CollaborationPiece) => void,
+): Promise<{ id: number; tree: Tree }> {
+  return observe<CollaborationPiece, { id: number; tree: Tree }>("collaboration_watch", { resident, machine }, onPiece);
 }

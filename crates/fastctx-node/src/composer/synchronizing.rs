@@ -137,7 +137,8 @@ pub fn update_document<'a>(node: &'a Arc<Node>, id: &'a ResidentId, input: Input
         let (committed_node, committed_id, runtime) = (node.clone(), id.clone(), tokio::runtime::Handle::current());
         let result = node
             .database
-            .write_then(
+            .write_then_at(
+                fastctx_storage::Priority::Interactive,
                 prepared.bytes,
                 move |transaction| prepared.commit(transaction),
                 move |_| {

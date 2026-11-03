@@ -45,7 +45,7 @@ pub(super) async fn run(
         permit.started();
         let working = permit.clone();
         let worker_node = node.clone();
-        let mut worker = tokio::spawn(crate::gate_waits::asked(async move {
+        let mut worker = fastctx_platform::task::spawn(crate::gate_waits::asked(async move {
             let _handover = handover;
             let _permit = working;
             let _memory = incoming.memory;
@@ -58,7 +58,7 @@ pub(super) async fn run(
             () = tokio::time::sleep_until(deadline) => "the document update did not finish within 300 s; it is still being done there",
         };
         permit.settling();
-        tokio::spawn(async move {
+        fastctx_platform::task::spawn(async move {
             match worker.await {
                 Ok(Ok(_)) => {},
                 Ok(Err(error)) => node.log.line(format_args!("finishing a shared document update: {}", error.message)),

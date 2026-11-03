@@ -51,7 +51,7 @@ impl Inner {
             self.node.log(format!("putting in what changed in the view: {error}; asking for it whole"));
         }
         let Some(inner) = self.this.upgrade() else { return };
-        tokio::spawn(async move {
+        fastctx_platform::task::spawn(async move {
             if let Err(error) = inner.refresh().await {
                 inner.node.log(format!("asking the hub for the view: {error}"));
             }
@@ -126,14 +126,14 @@ impl Inner {
             .expect("never poisoned")
             .map_or(Duration::ZERO, |at| KEEPING.saturating_sub(at.elapsed()));
         let this = self.this.clone();
-        tokio::spawn(async move {
+        fastctx_platform::task::spawn(async move {
             tokio::time::sleep(wait).await;
             let Some(inner) = this.upgrade() else { return };
             inner.keeping.store(false, Ordering::SeqCst);
             *inner.kept_at.lock().expect("never poisoned") = Some(std::time::Instant::now());
             let view = inner.view();
             let path = inner.dir.view();
-            match tokio::task::spawn_blocking(move || state::write(&path, &*view)).await {
+            match fastctx_platform::task::spawn_blocking(move || state::write(&path, &*view)).await {
                 Ok(Ok(())) => {}
                 Ok(Err(error)) => inner.node.log(format!("keeping the view: {error}")),
                 Err(error) => inner.node.log(format!("keeping the view: {error}")),

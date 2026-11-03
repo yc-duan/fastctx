@@ -22,7 +22,8 @@ use crate::Node;
 /// candidates, as the node keeps them.
 pub async fn here(node: &Arc<Node>) -> Result<AgentsReply, Failure> {
     let logins = crate::logins::here(node).await?;
-    Ok(reply(logins))
+    // Whether each login's program is there is looked at on the disk.
+    Ok(fastctx_platform::task::blocking(move || reply(logins)).await)
 }
 
 /// The record in the shape of an older reply: a login a scan has not asked
@@ -36,7 +37,7 @@ pub(crate) fn reply(logins: MachineLogins) -> AgentsReply {
             agents.push(facts(agent, login));
         }
     }
-    AgentsReply { machine: logins.machine, checked_at, elapsed_ms: 0, agents }
+    AgentsReply { machine: logins.machine, checked_at, elapsed_ms: 0, agents, by_login: logins.by_login }
 }
 
 fn facts(agent: &str, login: &Login) -> AgentFacts {
@@ -62,7 +63,7 @@ fn facts(agent: &str, login: &Login) -> AgentFacts {
     let program = Fact::known(login.launcher.as_ref().map(|launcher| AgentProgram {
         path: launcher.path.clone(),
         source: if launcher.desktop_app { ProgramSource::DesktopApp } else { ProgramSource::Path },
-        exists: launcher.path.is_file(),
+        exists: fastctx_platform::disk::is_file(&launcher.path),
     }));
     let version = match login.launcher.as_ref().and_then(|launcher| launcher.version.clone()) {
         Some(version) => Fact::known(version),
@@ -93,6 +94,7 @@ fn facts(agent: &str, login: &Login) -> AgentFacts {
         },
         timings: Vec::new(),
         drift: login.drift.clone(),
+        workbench: login.workbench,
     }
 }
 
@@ -105,8 +107,14 @@ pub(crate) fn places(node: &Node, env: &[(OsString, OsString)], home: &Path, cla
         world: node.world.path().into(),
         codex_home: node.codex.default().config_home().into(),
         claude_home: crate::homes::claude_default(env, home),
+        claude_config_dir: env
+            .iter()
+            .find(|(name, _)| name.eq_ignore_ascii_case("CLAUDE_CONFIG_DIR"))
+            .filter(|(_, value)| !value.is_empty())
+            .map(|(_, value)| PathBuf::from(value)),
         claude,
         fastctx: node.fastctx.clone(),
+        workbench: None,
     }
 }
 

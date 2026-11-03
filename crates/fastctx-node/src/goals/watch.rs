@@ -12,10 +12,14 @@ pub(crate) async fn opening(
     resident: &ResidentId,
     account: &HubAccount,
 ) -> Result<crate::talk::Opening, Failure> {
-    let account = super::scope::resolve(node, resident, Some(account))?;
+    let actor = account.clone();
+    let account = super::scope::resolve(node, resident, Some(account)).await?;
     let events = node.watchers.watch(resident);
+    let conversation = Address { machine: node.machine(), resident: resident.clone() };
+    let access = crate::record_access::Access { actor, owner: account.clone(), conversation: conversation.clone() };
+    let modern = node.link_of(&account.hub).is_some_and(|link| link.view().shared_records);
     let view =
-        super::operations::read(node, &Address { machine: node.machine(), resident: resident.clone() }, &account)
+        crate::record_access::within(modern.then_some(access), super::operations::read(node, &conversation, &account))
             .await?;
     let event = SessionEvent {
         at: jiff::Timestamp::now(),
@@ -24,7 +28,7 @@ pub(crate) async fn opening(
             change: SessionChange::Goal { goal: serde_json::json!({"world":true,"view":view}) },
         },
     };
-    Ok(crate::talk::Opening { pieces: vec![Watched::Live { event }], events, slim: None })
+    Ok(crate::talk::Opening { pieces: vec![Watched::Live { event, mark: None }], events, slim: None })
 }
 
 pub(crate) fn is_goal(event: &SessionEvent) -> bool {

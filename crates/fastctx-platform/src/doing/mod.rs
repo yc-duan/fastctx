@@ -2,9 +2,10 @@
 //! (`specs/world-concurrency.md`).
 //!
 //! The locks that guard more than a leaf of bookkeeping are made here: tokio's
-//! for tasks, and `SyncMutex` for the short work on the node's own records
-//! that blocks its thread. Each knows its place in the order locks are taken
-//! in (`Rank`); a task or thread that takes one while holding one of the same
+//! for tasks, `SyncMutex` for the short work on the node's own records that
+//! blocks its thread, and `MemoryMutex` for state only changed in memory, as
+//! the hub's is. Each knows its place in the order locks are taken in
+//! (`Rank`); a task or thread that takes one while holding one of the same
 //! or a later place is told about (`set_reporter`), as that is how two of
 //! them come to wait on each other.
 //! Every such lock held or waited for, and every wait on something outside
@@ -32,7 +33,7 @@ pub use registry::{
     Active, Cycle, OutsideWait, Snapshot, Stuck, Work, progress, set_reporter, snapshot, task_waits, try_task_waits,
     violations,
 };
-pub use sync::{SyncMutex, SyncMutexGuard};
+pub use sync::{MemoryMutex, MemoryMutexGuard, SyncMutex, SyncMutexGuard};
 
 /// A lock's place in the order locks are taken in: a task holding a lock
 /// takes only locks of later places, or of the same place with a later
@@ -57,9 +58,6 @@ impl Rank {
     pub const JOB_END: Rank = Rank(20);
     /// Writing one copy's destination.
     pub const COPYING: Rank = Rank(30);
-    /// Claude sessions being born and claimed: a launch holds it shared
-    /// until it knows its session, a registration alone while it is placed.
-    pub const BIRTHS: Rank = Rank(95);
 
     // A conversation's locks, in the order they are taken.
     /// Its place on this machine: deleting it holds it alone; starting a
@@ -68,9 +66,18 @@ impl Rank {
     pub const PLACE: Rank = Rank(90);
     /// User actions enter one conversation in order, before lifecycle or host locks.
     pub const ACTION: Rank = Rank(85);
+    /// Claude sessions being born and claimed: a launch holds it shared
+    /// until it knows its session, a registration alone while it is placed.
+    /// After a conversation's action and place gates, before its other
+    /// locks: holding it, a conversation's lock is only tried, and when
+    /// busy this is let go and that waited for outside it.
+    pub const BIRTHS: Rank = Rank(95);
     /// Its management gate: what changes its life holds it alone, what
     /// uses it shares it.
     pub const LIFECYCLE: Rank = Rank(100);
+    /// Reading its history for viewers that open it: once for those that
+    /// open it together.
+    pub const OPENING: Rank = Rank(150);
     /// The reports of one of its Claude sessions.
     pub const SESSION: Rank = Rank(200);
     /// The reports of its Codex thread.
@@ -81,6 +88,8 @@ impl Rank {
     pub const SPEAKING: Rank = Rank(300);
     /// Paying out its answers.
     pub const PAYING: Rank = Rank(320);
+    /// Refreshing its context: one refresh at a time, whoever asks.
+    pub const REFRESHING: Rank = Rank(350);
     /// Its shared input.
     pub const COMPOSER: Rank = Rank(400);
 
@@ -103,15 +112,53 @@ impl Rank {
     // The node's own records, after every lock above: a thread holding one
     // reads and writes a few of its files and waits on nothing outside
     // (`SyncMutex`).
-    /// Jobs' records kept from collection while they are made, read or
-    /// changed.
+    /// One incoming run dispatch being registered or cancelled.
+    pub const RUN_DISPATCH: Rank = Rank(790);
+    /// One job's records, after reserving its files against collection.
     pub const DISK: Rank = Rank(800);
+    /// Registration and collection of job files; memory only, after job gates.
+    pub const JOB_FILES: Rank = Rank(805);
+    /// The latest delivery time shared by the jobs in one directory.
+    pub const JOB_ARTIFACTS: Rank = Rank(806);
     /// A command's call facts, emitted in order.
     pub const EMITTING: Rank = Rank(810);
     /// Conversations' records, each read and written as one transaction.
     pub const RECORDS: Rank = Rank(820);
     /// A command's write facts.
     pub const WRITE_FACTS: Rank = Rank(830);
+    /// One legacy source moving into its verified or damaged archive.
+    pub const ARCHIVING: Rank = Rank(840);
+
+    // The hub's shared state: each lock guards memory only and is held for
+    // microseconds (`MemoryMutex`). The hub is a process of its own, so these
+    // places are ordered among themselves only.
+    /// Login tries counted by account and address.
+    pub const HUB_LIMITS: Rank = Rank(10);
+    /// Who came online or left since it was last told.
+    pub const HUB_PRESENCE: Rank = Rank(10);
+    /// Direct connections being tried.
+    pub const HUB_TRIALS: Rank = Rank(30);
+    /// Data connections registered and paired.
+    pub const HUB_DATA: Rank = Rank(700);
+    /// Calls on their way.
+    pub const HUB_CALLS: Rank = Rank(810);
+    /// The members' sessions.
+    pub const HUB_SESSIONS: Rank = Rank(820);
+    /// Where each machine's activity is kept.
+    pub const HUB_ACTIVITY: Rank = Rank(820);
+    /// The views each session was given.
+    pub const HUB_GIVEN: Rank = Rank(830);
+    /// The projects' ledgers.
+    pub const HUB_LEDGERS: Rank = Rank(830);
+    /// The network's versions and the packages kept.
+    pub const HUB_UPDATES: Rank = Rank(830);
+    /// One machine's activity as it told it.
+    pub const HUB_MACHINE_ACTIVITY: Rank = Rank(830);
+    /// What troubles were told lately, and when machines came and went.
+    pub const HUB_TROUBLES: Rank = Rank(840);
+    /// Whether each machine's logins have the workbench open, as it last
+    /// told: looked up under any of the others.
+    pub const HUB_WORKBENCH: Rank = Rank(850);
 }
 
 /// What each task says it does, latest last, by the token of each saying.
@@ -196,6 +243,13 @@ pub fn label() -> Arc<str> {
         }
         None => Arc::from(UNSAID_THREAD),
     }
+}
+
+/// What the current task, or blocking thread, said it is doing; nothing when
+/// it said nothing.
+pub fn said_label() -> Option<Arc<str>> {
+    let label = label();
+    said(&label).then_some(label)
 }
 
 /// What `label` names a task or thread by when it said nothing it does.

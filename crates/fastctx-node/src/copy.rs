@@ -192,7 +192,7 @@ async fn copy_once(
         let root = fastctx_platform::local_path(&from.path).map_err(|error| Failure::new(error.to_string()))?;
         let target = to.path;
         let world = node.world.clone();
-        return tokio::task::spawn_blocking(move || {
+        return fastctx_platform::task::spawn_blocking(move || {
             fastctx_hands::copy::local::copy_protected(&root, &target, &here, world.path())
         })
         .await
@@ -403,10 +403,11 @@ async fn walked<'a>(node: &'a Node, from: &str) -> Result<Walked<'a>, Failure> {
     }
     let holding = node.learned.hold(&root);
     let known = holding.known.clone();
-    let walked = tokio::task::spawn_blocking(move || walk_knowing(&root, &mut known.lock().expect("never poisoned")))
-        .await
-        .map_err(|error| Failure::new(format!("reading {from}: {error}")))?
-        .map_err(|error| Failure::new(format!("{from} on {}: {error}", node.machine())))?;
+    let walked =
+        fastctx_platform::task::spawn_blocking(move || walk_knowing(&root, &mut known.lock().expect("never poisoned")))
+            .await
+            .map_err(|error| Failure::new(format!("reading {from}: {error}")))?
+            .map_err(|error| Failure::new(format!("{from} on {}: {error}", node.machine())))?;
     let manifest = serde_json::to_vec(&walked.manifest).expect("manifests serialize");
     let files = walked
         .sources
@@ -740,5 +741,7 @@ async fn take_files(
 
 /// Runs `work`, which reads and writes files, off the runtime's threads.
 async fn blocking<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> Result<T, Failure> {
-    tokio::task::spawn_blocking(work).await.map_err(|error| Failure::new(format!("at the destination: {error}")))
+    fastctx_platform::task::spawn_blocking(work)
+        .await
+        .map_err(|error| Failure::new(format!("at the destination: {error}")))
 }

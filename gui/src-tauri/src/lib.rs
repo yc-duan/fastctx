@@ -5,36 +5,37 @@
 //! come. The page speaks as the person at this machine, never as a session.
 
 mod accounts;
-mod book;
 #[cfg(target_os = "android")]
 mod android;
+mod book;
 mod collab;
 mod collaboration;
 mod composer;
 mod connection;
 #[cfg(desktop)]
 mod data;
-mod held_events;
+#[cfg(desktop)]
+mod doctor;
 mod features;
 mod goals;
+mod held_events;
+mod history;
 mod hub_moving;
 mod item_details;
 mod kept;
 mod layers;
 #[cfg(desktop)]
 mod local_repair;
-mod memory;
 mod plan;
 mod profile;
 #[cfg(desktop)]
 mod repair_probe;
-mod startup;
+mod sentinel_controls;
 mod sentinels;
 mod skills;
-mod sentinel_controls;
+mod startup;
 mod transcript;
 mod updates;
-mod world_delta;
 mod world_watch;
 
 #[cfg(desktop)]
@@ -98,9 +99,13 @@ mod uploading;
 
 #[cfg(windows)]
 mod titlebar;
+#[cfg(target_os = "macos")]
+mod mac_window;
+#[cfg(all(unix, desktop))]
+mod unix_instance;
 
-mod watch_delivery;
 mod conversation_watch;
+mod watch_delivery;
 
 struct Shell {
     connection: connection::Connection,
@@ -407,12 +412,25 @@ async fn watch(
     drop(history);
     let transcript = shell.transcripts.open(id, transcript);
     let mut initial = Some(conversation);
-    if let Err(error) = shell.follow_delivery(page, id, pieces, |piece| match piece {
-        Piece::Now { .. } => Some("now".into()),
-        _ => None,
-    }, move |pieces, _| {
-        conversation_watch::stream(initial.take(), world.clone(), resident.clone(), machine.clone(), transcript.clone(), pieces)
-    }) {
+    if let Err(error) = shell.follow_delivery(
+        page,
+        id,
+        pieces,
+        |piece| match piece {
+            Piece::Now { .. } => Some("now".into()),
+            _ => None,
+        },
+        move |pieces, _| {
+            conversation_watch::stream(
+                initial.take(),
+                world.clone(),
+                resident.clone(),
+                machine.clone(),
+                transcript.clone(),
+                pieces,
+            )
+        },
+    ) {
         shell.transcripts.close(id);
         return Err(error.into());
     }
@@ -1093,6 +1111,14 @@ pub(crate) const WINDOW_KEPT: tauri_plugin_window_state::StateFlags = tauri_plug
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // WebKitGTK's DMA-BUF renderer leaves the window blank with many GPU
+    // drivers, NVIDIA's own among them; it is off unless the user says
+    // otherwise. Set before any thread starts.
+    #[cfg(target_os = "linux")]
+    if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
+        // SAFETY: nothing else runs yet that reads or writes the environment.
+        unsafe { std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1") };
+    }
     #[cfg(desktop)]
     {
         let args: Vec<_> = std::env::args_os().collect();
@@ -1121,6 +1147,17 @@ pub fn run() {
         Ok(None) => return,
         Err(error) => (None, Some(error)),
     };
+    let context = tauri::generate_context!();
+    #[cfg(all(unix, desktop))]
+    let instance = match unix_instance::enter(&context.config().identifier) {
+        Ok(Some(instance)) => Ok(instance),
+        Ok(None) => return,
+        Err(error) => Err(error),
+    };
+    #[cfg(windows)]
+    let context = titlebar::configure(context);
+    #[cfg(desktop)]
+    updates::take_left(&context.config().identifier);
     let builder = tauri::Builder::default()
         .manage(startup::Startup::default())
         .plugin(tauri_plugin_world_pages::init())
@@ -1240,15 +1277,14 @@ pub fn run() {
             collab::collab_read,
             collab::collab_write,
             collaboration::collaboration_tree,
-            memory::memory_list,
-            memory::memory_read,
-            memory::memory_save_spec,
-            memory::memory_add_journal,
-            memory::memory_settings_read,
-            memory::memory_settings_set,
-            memory::memory_watch,
+            collaboration::collaboration_watch,
+            history::history_list,
+            history::history_read,
+            history::history_save,
+            history::history_retire,
+            history::history_restore,
+            history::history_watch,
             layers::layer_read,
-            layers::layer_set,
             layers::bring_in,
             book::book,
             features::features_read,
@@ -1257,6 +1293,8 @@ pub fn run() {
             features::features_watch,
             #[cfg(desktop)]
             data::data,
+            #[cfg(desktop)]
+            doctor::doctor_readings,
             accounts::account_change,
             accounts::server_command,
             hub_moving::hub_move,
@@ -1271,6 +1309,7 @@ pub fn run() {
             logins::change_agent_login,
             logins::read_agent_limits,
             logins::set_agent_title,
+            logins::set_agent_reset_in_place,
             logins::agent_usage,
             logins::agent_calls,
             world_watch::world_now,
@@ -1378,11 +1417,12 @@ pub fn run() {
     let builder = builder.plugin(desktop_presence::plugin(desktop, desktop_error));
     #[cfg(windows)]
     let builder = builder.plugin(titlebar::plugin());
+    #[cfg(target_os = "macos")]
+    let builder = builder.plugin(mac_window::plugin());
+    #[cfg(all(unix, desktop))]
+    let builder = builder.plugin(unix_instance::plugin(instance));
     #[cfg(target_os = "android")]
     let builder = builder.plugin(android::plugin());
-    let context = tauri::generate_context!();
-    #[cfg(windows)]
-    let context = titlebar::configure(context);
     if let Err(error) = builder.run(context) {
         startup::persist("open_window", &error.to_string());
     }

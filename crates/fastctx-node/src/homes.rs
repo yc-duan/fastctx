@@ -23,10 +23,40 @@ pub(crate) fn same_dir(a: &Path, b: &Path) -> bool {
     if normal(a) == normal(b) {
         return true;
     }
-    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
-        (Ok(a), Ok(b)) => normal(&a) == normal(&b),
+    match (resolved(a), resolved(b)) {
+        (Some(a), Some(b)) => normal(&a) == normal(&b),
         _ => false,
     }
+}
+
+/// The directories a home's path was last resolved to on disk. Homes are
+/// few and seldom moved, and comparing them is asked for with every turn
+/// and under the hosts' locks: each path is resolved once in a while, not
+/// every time.
+/// A path as last resolved on disk, and when.
+type Resolution = (Option<std::path::PathBuf>, std::time::Instant);
+
+static RESOLVED: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<std::path::PathBuf, Resolution>>> =
+    std::sync::LazyLock::new(Default::default);
+
+/// How long a path's resolution is taken as it was found.
+const RESOLVED_FOR: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// The path `path` resolves to, as last found on disk.
+fn resolved(path: &Path) -> Option<std::path::PathBuf> {
+    if let Some((found, at)) = RESOLVED.lock().expect("never poisoned").get(path)
+        && at.elapsed() < RESOLVED_FOR
+    {
+        return found.clone();
+    }
+    let found = fastctx_platform::disk::canonicalize(path).ok();
+    let mut resolved = RESOLVED.lock().expect("never poisoned");
+    // A guard against paths that are not homes: those are let go together.
+    if resolved.len() >= 4096 {
+        resolved.clear();
+    }
+    resolved.insert(path.to_path_buf(), (found.clone(), std::time::Instant::now()));
+    found
 }
 
 /// Whether `path` lies inside `dir`, as this machine writes paths.
@@ -49,7 +79,7 @@ fn normal(dir: &Path) -> String {
 }
 
 fn location(path: &Path) -> String {
-    match std::fs::canonicalize(path) {
+    match fastctx_platform::disk::canonicalize(path) {
         Ok(path) => normal(&path),
         // Missing transcripts and removed homes retain their recorded path;
         // they never acquire another login's identity.

@@ -3,11 +3,18 @@ resolver = "3"
 members = ["crates/*"]
 exclude = ["vendor/pdf_oxide", "vendor/yrs"]
 
+# Held across an await, a lock holds up every task that waits for it; a
+# crate's own lock guards are named in its `clippy.toml`.
+[workspace.lints.clippy]
+await_holding_lock = "deny"
+await_holding_refcell_ref = "deny"
+await_holding_invalid_type = "deny"
+
 [patch.crates-io]
 pdf_oxide = { path = "vendor/pdf_oxide" }
 
 [workspace.package]
-version = "1.0.1-beta.13"
+version = "1.0.1-beta.14"
 edition = "2024"
 rust-version = "1.92"
 license = "Apache-2.0"
@@ -25,6 +32,11 @@ tokio = "1"
 # Every command hashes the World program it runs beside; unoptimized SHA-256
 # makes that take seconds in a debug build.
 [profile.dev.package.sha2]
+opt-level = 3
+
+# Unoptimized SQLite is several times slower, so a debug build's storage would
+# miss the writer's two-millisecond budget that the record drill holds it to.
+[profile.dev.package.libsqlite3-sys]
 opt-level = 3
 
 [profile.release]

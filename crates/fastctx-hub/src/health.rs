@@ -34,6 +34,9 @@ const NAMED: usize = 5;
 /// What the hub counts as it goes, for its health.
 #[derive(Default)]
 pub(crate) struct Health {
+    pub view: crate::measure::Timing,
+    pub presence: crate::measure::Timing,
+    pub presence_queue: crate::measure::Timing,
     /// How long each of the latest letters took to keep, in milliseconds.
     kept: Mutex<VecDeque<u32>>,
     /// When sessions opened lately.
@@ -72,30 +75,46 @@ pub(crate) async fn keep(hub: Weak<Hub>) {
     loop {
         tokio::time::sleep(every).await;
         let Some(hub) = hub.upgrade() else { return };
-        let now = now(&hub);
-        let path = hub.store().dir().join(FILE);
-        let mut bytes = serde_json::to_vec_pretty(&now).expect("health serializes");
-        bytes.push(b'\n');
-        if let Err(error) = publish(&path, &bytes, Permissions::Private) {
-            hub.log.line(format_args!("writing how the hub is doing: {error}"));
-        }
-        if logged.is_none_or(|at| at.elapsed() >= LOG_EVERY) {
+        let log_due = logged.is_none_or(|at| at.elapsed() >= LOG_EVERY);
+        if log_due {
             logged = Some(Instant::now());
-            hub.log.line(format_args!("health: {}", serde_json::to_string(&now).expect("health serializes")));
         }
+        let _ = fastctx_platform::task::spawn_blocking(move || {
+            let now = now(&hub);
+            let path = hub.diagnostic_dir.join(FILE);
+            let mut bytes = serde_json::to_vec_pretty(&now).expect("health serializes");
+            bytes.push(b'\n');
+            if let Err(error) = publish(&path, &bytes, Permissions::Private) {
+                hub.log.line(format_args!("writing how the hub is doing: {error}"));
+            }
+            if log_due {
+                hub.log.line(format_args!("health: {now}"));
+            }
+            // The hub's own work held up or stuck, or one of its bounds near
+            // its limit, is the network's trouble, told to its super
+            // administrator (`crate::troubles`).
+            let own = fastctx_platform::health::summary();
+            if own.stuck > 0 || own.busy || own.near.is_some() {
+                let seconds = Some(own.held_up_ms / 1000).filter(|seconds| *seconds > 0);
+                let detail = crate::troubles::Detail { seconds, near: own.near, ..crate::troubles::Detail::default() };
+                hub.troubles.raise(&hub, None, fastctx_types::trouble::TroubleKind::Hub, detail);
+            }
+        })
+        .await;
     }
 }
 
 /// How the hub is doing now.
 fn now(hub: &Hub) -> serde_json::Value {
-    let queues: Vec<(String, crate::outq::Sizes)> =
-        hub.sessions().iter().map(|(name, session)| (name.to_string(), session.out.sizes())).collect();
-    let oldest = hub.calls.lock().expect("never poisoned").values().map(|pending| pending.at).min();
+    // Each queue is measured after the sessions are let go: measuring takes
+    // each queue's own lock, and every connection waits on the sessions'.
+    let outs: Vec<(String, crate::outq::Outq)> =
+        hub.sessions().iter().map(|(name, session)| (name.to_string(), session.out.clone())).collect();
+    let queues: Vec<(String, crate::outq::Sizes)> = outs.into_iter().map(|(name, out)| (name, out.sizes())).collect();
+    let calls = crate::control::diagnostics::snapshot(hub);
     let (waiting, live, registered) = crate::data::counts(hub);
-    let (letters, behind) = {
-        let store = hub.store();
-        (crate::mailbox::backlog(&store), store.revision().saturating_sub(store.records.written_revision()))
-    };
+    let letters = crate::mailbox::backlog(hub);
+    let behind: usize = letters.iter().map(|waiting| waiting.pending).sum();
     let kept: Vec<u32> = hub.health.kept.lock().expect("never poisoned").iter().copied().collect();
     let opened = {
         let now = Instant::now();
@@ -109,7 +128,15 @@ fn now(hub: &Hub) -> serde_json::Value {
     backlog.sort_by_key(|waiting| std::cmp::Reverse(waiting.held));
     json!({
         "at": jiff::Timestamp::now(),
+        "view": hub.health.view.snapshot(), "presence": hub.health.presence.snapshot(), "presence_queue": hub.health.presence_queue.snapshot(),
         "sessions": queues.len(),
+        "locks": [hub.sessions.measurements(), hub.given.measurements(), hub.calls.measurements(), hub.data.measurements(), hub.ledgers.measurements(), hub.afoots.measurements(), hub.updates.measurements(), hub.pending_presence.measurements(), hub.troubles.measurements()],
+        "lock_order_violations": fastctx_platform::doing::violations(),
+        // The threads' rules broken, by kind and place (`fastctx_platform::conduct`).
+        "violations": fastctx_platform::conduct::total(),
+        "violated": fastctx_platform::conduct::snapshot(),
+        // How long tasks waited for a thread on each runtime (`fastctx_platform::task::watch`).
+        "runtime": fastctx_platform::readings::snapshot().timings.into_iter().filter(|timing| timing.name.starts_with("runtime.hub")).collect::<Vec<_>>(),
         "opened_in_5_minutes": opened,
         "queues": {
             "urgent_frames": queues.iter().map(|(_, sizes)| sizes.urgent).sum::<usize>(),
@@ -124,10 +151,7 @@ fn now(hub: &Hub) -> serde_json::Value {
                 "notices": sizes.notices,
             })).collect::<Vec<_>>(),
         },
-        "calls": {
-            "pending": hub.calls.lock().expect("never poisoned").len(),
-            "oldest_seconds": oldest.map(|at| at.elapsed().as_secs()),
-        },
+        "calls": calls,
         "transfers": { "waiting": waiting, "live": live, "registered": registered },
         "letters": {
             "held": letters.iter().map(|waiting| waiting.held).sum::<usize>(),

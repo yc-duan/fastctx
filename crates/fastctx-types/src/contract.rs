@@ -136,6 +136,20 @@ impl RemoteCall {
             } => Contract::QUERY,
             Self::GoalCommand { request: crate::goals::AgentRequest::Read, .. } => Contract::QUERY,
             Self::WorkingCopy { .. } | Self::Goal { .. } | Self::GoalCommand { .. } => Contract::CHANGE,
+            Self::SentinelControl { request: crate::sentinel_control::Request::Conversation { request, .. } } => {
+                if matches!(request.as_ref(), crate::sentinel_control::Request::Stop { .. }) {
+                    Contract::CONTROL
+                } else {
+                    Contract { within: Some(Duration::from_secs(90)), ..Contract::QUERY }
+                }
+            }
+            Self::SentinelHome { request: crate::sentinel_control::HomeRequest::Conversation { request, .. } } => {
+                if matches!(request.as_ref(), crate::sentinel_control::HomeRequest::Withdraw { .. }) {
+                    Contract::CONTROL
+                } else {
+                    Contract { within: Some(Duration::from_secs(90)), ..Contract::QUERY }
+                }
+            }
             Self::SentinelControl {
                 request: crate::sentinel_control::Request::List { .. } | crate::sentinel_control::Request::Help,
             }
@@ -219,6 +233,7 @@ impl RemoteCall {
             | Self::AddAgentLogin { .. }
             | Self::AgentFolder { .. }
             | Self::SetAgentTitle { .. }
+            | Self::SetAgentResetInPlace { .. }
             | Self::ChangeAgentLogin { .. }
             | Self::MemoryRoom { bytes: Some(_) }
             | Self::Open { .. }
@@ -317,7 +332,7 @@ impl Call {
                     Leaving::Stop
                 }
             }
-            Self::DoctorCalls | Self::PlanRead { .. } | Self::Skill { .. } => Leaving::Stop,
+            Self::DoctorCalls | Self::DoctorReadings | Self::PlanRead { .. } | Self::Skill { .. } => Leaving::Stop,
             Self::Plan { .. } | Self::PlanWrite { .. } => Leaving::Finish,
             Self::AccountRecords {
                 request: crate::account_records::Request::Read { .. } | crate::account_records::Request::List { .. },
@@ -328,6 +343,15 @@ impl Call {
                 request: crate::account_records::Request::Write { .. } | crate::account_records::Request::Delete { .. },
                 ..
             } => Leaving::Finish,
+            Self::History(request) => {
+                if request.writes() {
+                    Leaving::Finish
+                } else {
+                    Leaving::Stop
+                }
+            }
+            Self::WatchHistory { .. } => Leaving::Stop,
+            Self::PrepareCopies { .. } => Leaving::Finish,
             Self::Memory(crate::memory::MemoryCall::List { .. } | crate::memory::MemoryCall::Read { .. }) => {
                 Leaving::Stop
             }
@@ -434,6 +458,7 @@ impl Call {
             | Self::AddAgentLogin { .. }
             | Self::AgentFolder { .. }
             | Self::SetAgentTitle { .. }
+            | Self::SetAgentResetInPlace { .. }
             | Self::ChangeAgentLogin { .. }
             | Self::Talk { .. }
             | Self::Upload { .. }

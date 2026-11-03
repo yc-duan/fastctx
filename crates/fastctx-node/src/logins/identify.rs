@@ -1,16 +1,18 @@
-//! Asking one login who is logged in there, only through the agent's own
-//! program (`world-agent-logins.md`, 认出是谁): Codex through the app-server
-//! of that login, the one already running or one started for the questions
-//! and stopped; Claude Code through `claude auth status --json` with the
-//! login's directory named. Nothing is left running.
+//! Who is logged in to a login, as the files in its directory say
+//! (`world-agent-logins.md`, 认出是谁): nothing is started and nothing goes
+//! over the network, and the program the login starts is found on disk. On
+//! the workbench a Codex login's program is asked as well, through an
+//! official process started for the questions and stopped, which models it
+//! has and which version it is, for the workbench's conversations; its
+//! limits only when the user asks for them (`limits::read`).
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::path::Path;
 use std::sync::Arc;
 
 use fastctx_hosts::codex::LimitsHow;
+use fastctx_types::access::Acting;
 use fastctx_types::agents::{AgentModel, Fact, ProgramSource};
-use fastctx_types::ipc::Failure;
 use fastctx_types::logins::{FoundProgram, Identified, Launcher};
 use jiff::Timestamp;
 
@@ -20,26 +22,103 @@ use crate::Node;
 pub(super) struct Asked {
     pub identified: Identified,
     pub launcher: Option<Launcher>,
-    pub models: Vec<AgentModel>,
+    /// The models its program said; none where it was not asked or did not
+    /// say them.
+    pub models: Option<Vec<AgentModel>>,
     /// Codex's limits as read, and when.
     pub limits: Option<(Timestamp, serde_json::Value)>,
 }
 
-/// Asks the Codex login in `dir` who is logged in, and with `limits` its
-/// usage limits, which are read only when the user asks for them
-/// (`world-agent-logins.md`, 额度).
+/// What the record keeps of `agent`'s login `dir`, the agent's default one
+/// or not: who its files say is logged in, and the program it starts with
+/// its version as `programs`, the agent's programs found here, record it;
+/// on the workbench, a Codex login's models and version as its program says
+/// them. `env` is the user's environment, which places Claude Code's files.
+pub(super) async fn asked(
+    node: &Arc<Node>,
+    agent: &'static str,
+    dir: &Path,
+    default: bool,
+    programs: Vec<FoundProgram>,
+    env: Vec<(OsString, OsString)>,
+) -> Asked {
+    let (finding, path) = (node.clone(), dir.to_path_buf());
+    let read =
+        fastctx_platform::task::blocking(move || on_disk(&finding, agent, &path, default, &programs, &env)).await;
+    if agent != "codex" || !super::workbench::is_open(node, &Acting::Here, agent, Some(dir)) {
+        return read;
+    }
+    let said = codex(node, dir, false).await;
+    Asked {
+        // The files say who; the program only where they cannot, a sign-in
+        // kept in the system's keyring.
+        identified: if matches!(read.identified.who, Fact::Known { .. }) { read.identified } else { said.identified },
+        // The program's own version where it gave one, else as found on disk.
+        launcher: match said.launcher {
+            Some(launcher) if launcher.version.is_some() => Some(launcher),
+            said => read.launcher.or(said),
+        },
+        models: said.models,
+        limits: None,
+    }
+}
+
+fn on_disk(
+    node: &Node,
+    agent: &str,
+    dir: &Path,
+    default: bool,
+    programs: &[FoundProgram],
+    env: &[(OsString, OsString)],
+) -> Asked {
+    let at = Timestamp::now();
+    let (who, program) = if agent == "codex" {
+        let program = match node.codex.launch(dir) {
+            Ok(Some(launch)) => Some((launch.binary, launch.source == ProgramSource::DesktopApp)),
+            Ok(None) | Err(_) => None,
+        };
+        (fastctx_hosts::codex::login_files::identity(dir), program)
+    } else {
+        let named =
+            |name: &str| env.iter().find(|(key, _)| key.eq_ignore_ascii_case(name)).map(|(_, value)| value.as_os_str());
+        // The World starts a login's sessions with its directory named,
+        // the default one as the user's environment has it.
+        let configured: Option<&OsStr> = if default { named("CLAUDE_CONFIG_DIR") } else { Some(dir.as_os_str()) };
+        let who = fastctx_hosts::claude::login_files::identity(configured, named("CLAUDE_SECURESTORAGE_CONFIG_DIR"));
+        (who, crate::claude::program().map(|path| (path, false)))
+    };
+    let launcher = program.map(|(path, desktop_app)| Launcher {
+        version: programs
+            .iter()
+            .find(|found| found.path.as_ref().is_some_and(|known| fastctx_hosts::inventory::same_file(known, &path)))
+            .and_then(|found| found.version.clone()),
+        path,
+        desktop_app,
+    });
+    Asked { identified: Identified { at, who }, launcher, models: None, limits: None }
+}
+
+/// Asks the Codex login in `dir` through its program who is logged in, its
+/// models and its version, and with `limits` its usage limits: on the
+/// workbench only (`asked`, `limits::read`).
 pub(super) async fn codex(node: &Arc<Node>, dir: &Path, limits: bool) -> Asked {
     let at = Timestamp::now();
     // A running app-server can retain the previous directory login. Identification
     // uses a short-lived official process so a rescan cannot restore that owner.
-    let launch = match node.codex.launch(dir) {
+    // The program and the directory to ask it in are found on disk.
+    let found = {
+        let (finding, dir) = (node.clone(), dir.to_path_buf());
+        fastctx_platform::task::blocking(move || (finding.codex.launch(&dir), finding.codex.asking_dir(&dir))).await
+    };
+    let (launch, asking) = found;
+    let launch = match launch {
         Ok(Some(launch)) => launch,
         Ok(None) => {
             return failed(at, "neither the ChatGPT desktop app nor a codex command was found to ask it".into());
         }
         Err(error) => return failed(at, error),
     };
-    let cwd = match node.codex.asking_dir(dir) {
+    let cwd = match asking {
         Ok(cwd) => cwd,
         Err(failure) => return failed(at, failure.message),
     };
@@ -55,10 +134,7 @@ pub(super) async fn codex(node: &Arc<Node>, dir: &Path, limits: bool) -> Asked {
         node.codex.environment(),
         node.codex.log(),
         limits,
-        // The models are for the workbench's conversations; in Connect the
-        // World asks the login who it is and nothing more
-        // (`world-layers.md`).
-        crate::layers::of(node, &fastctx_types::access::Acting::Here) == fastctx_types::layers::Layer::Workbench,
+        true,
     )
     .await
     {
@@ -66,7 +142,7 @@ pub(super) async fn codex(node: &Arc<Node>, dir: &Path, limits: bool) -> Asked {
         Err(error) => Asked {
             identified: Identified { at, who: Fact::failed(error) },
             launcher: Some(launcher),
-            models: Vec::new(),
+            models: None,
             limits: None,
         },
     }
@@ -82,47 +158,15 @@ fn asked_codex(at: Timestamp, said: fastctx_hosts::codex::identify::Said, launch
         identified: Identified { at, who: said.who },
         launcher,
         models: match said.models {
-            Fact::Known { value } => value,
-            _ => Vec::new(),
+            Fact::Known { value } => Some(value),
+            _ => None,
         },
         limits,
     }
 }
 
-pub(super) fn failed(at: Timestamp, reason: String) -> Asked {
-    Asked { identified: Identified { at, who: Fact::failed(reason) }, launcher: None, models: Vec::new(), limits: None }
-}
-
-/// Asks the Claude Code login in `dir`; `programs` are the Claude programs
-/// found here, whose records say the command's version.
-pub(super) fn claude(dir: &Path, default: bool, programs: &[FoundProgram]) -> Result<Asked, Failure> {
-    let at = Timestamp::now();
-    let Some(program) = crate::claude::program() else {
-        return Ok(Asked {
-            identified: Identified { at, who: Fact::unavailable("no claude command is on the node's search path") },
-            launcher: None,
-            models: Vec::new(),
-            limits: None,
-        });
-    };
-    let mut env: Vec<(OsString, OsString)> = crate::claude::environment()?;
-    if !default {
-        env.retain(|(name, _)| !name.eq_ignore_ascii_case("CLAUDE_CONFIG_DIR"));
-        env.push(("CLAUDE_CONFIG_DIR".into(), dir.as_os_str().to_owned()));
-    }
-    let cwd =
-        fastctx_platform::user_home().map_err(|error| Failure::new(format!("finding the home directory: {error}")))?;
-    let who = fastctx_hosts::agents::claude_identity(&program, &cwd, &env);
-    let version = programs
-        .iter()
-        .find(|found| found.path.as_ref().is_some_and(|path| fastctx_hosts::inventory::same_file(path, &program)))
-        .and_then(|found| found.version.clone());
-    Ok(Asked {
-        identified: Identified { at, who },
-        launcher: Some(Launcher { path: program, version, desktop_app: false }),
-        models: Vec::new(),
-        limits: None,
-    })
+fn failed(at: Timestamp, reason: String) -> Asked {
+    Asked { identified: Identified { at, who: Fact::failed(reason) }, launcher: None, models: None, limits: None }
 }
 
 /// The limits a Codex read gave, as the node records them.

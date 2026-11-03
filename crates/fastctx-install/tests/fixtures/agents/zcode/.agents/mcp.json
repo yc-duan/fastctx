@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "compat-existing": {
+      "command": "node",
+      "args": [
+        "/lab/mcp-echo.cjs"
+      ]
+    }
+  }
+}

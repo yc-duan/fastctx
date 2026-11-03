@@ -10,6 +10,7 @@
 //! into (`fastctx apply`); putting them in lists a candidate, taking them
 //! out (removing it) returns it to the candidates.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use jiff::Timestamp;
@@ -56,6 +57,14 @@ pub struct MachineLogins {
     pub scan: Option<Scan>,
     pub codex: AgentLogins,
     pub claude: AgentLogins,
+    /// Whether this machine's node keeps the workbench by login
+    /// (`Login::workbench`); an earlier one keeps it by account alone.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub by_login: bool,
+    /// The other agents found here, connected through their configuration
+    /// alone (`world-layers.md`, 支持尽可能多的智能体), by name.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub others: BTreeMap<AgentName, AgentLogins>,
     /// The folders the user chose on this machine for logins kept below
     /// them, each searched by the names in it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -67,7 +76,7 @@ impl MachineLogins {
         match agent {
             "codex" => Some(&self.codex),
             "claude" => Some(&self.claude),
-            _ => None,
+            other => self.others.iter().find(|(name, _)| name.as_str() == other).map(|(_, logins)| logins),
         }
     }
 
@@ -75,7 +84,7 @@ impl MachineLogins {
         match agent {
             "codex" => Some(&mut self.codex),
             "claude" => Some(&mut self.claude),
-            _ => None,
+            other => self.others.iter_mut().find(|(name, _)| name.as_str() == other).map(|(_, logins)| logins),
         }
     }
 }
@@ -83,6 +92,10 @@ impl MachineLogins {
 /// One agent on a machine: its programs, and its logins in three groups.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentLogins {
+    /// How an agent of `MachineLogins::others` is named, as its description
+    /// names it; interfaces name Codex and Claude Code themselves.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
     /// Its programs installed here, as their manifests and version
     /// information say, none of them run; empty before the first scan.
     pub programs: Vec<FoundProgram>,
@@ -130,6 +143,11 @@ pub struct Login {
     /// the official client does; off by default (`world-agent-logins.md`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub auto_title: bool,
+    /// For Codex and Claude Code: whether a week the vendor cleared before
+    /// its reset counts anew from then, for the account and those it
+    /// assists; off unless its owner turned it on (`world-usage.md`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub reset_in_place: bool,
     /// The program the World starts for this login, as it would start it
     /// now; none when there is none to start.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -146,6 +164,11 @@ pub struct Login {
     /// it writes them (`world-agent-logins.md`, 接入跟着版本走).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub drift: Option<Drift>,
+    /// The workbench is open in it (`world-layers.md`, 工作台：在一个登录上
+    /// 打开): the World starts and drives conversations with it, reads its
+    /// limits and asks its models. Only a listed Codex or Claude Code login.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub workbench: bool,
 }
 
 /// Why the World's tools in a login were not brought up to date by
@@ -462,6 +485,20 @@ pub struct ChangePreview {
     /// user changed since the tools were put in.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub kept: Vec<Kept>,
+    /// The same change told as the window before it shows it: one card each
+    /// kind of change, in the order it is made, each with the lines it adds
+    /// and takes out (`world-layers.md`, 接入之前讲清楚做了什么). Empty from
+    /// a node that does not tell it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cards: Vec<ChangeCard>,
+    /// What the change was worked out from, for the change to be refused
+    /// when the files moved on since: what was shown is what is done.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fingerprint: Option<String>,
+    /// Connecting cannot turn the agent's own shell off: it runs commands
+    /// both ways, and only those through `run` are in the activity.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub keeps_shell: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -495,4 +532,49 @@ pub struct ItemChange {
     pub after: Option<String>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub withheld: bool,
+}
+
+/// One kind of change connecting a login makes, as the window before it tells
+/// it in plain words.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Change {
+    /// The World's MCP server, which gives the agent `run`.
+    Tools,
+    /// The agent's limits on what one tool answer or description holds,
+    /// raised so that `run`'s reach the model whole.
+    Limits,
+    /// The agent's own shell, turned off: its commands go through `run`.
+    Shell,
+    /// The passage in its instructions that teaches it when to use `run`.
+    Guidance,
+    /// The World's plugin, put in through the agent's own commands.
+    Plugin,
+    /// Leave for the conversations Fastctx opens to run without asking.
+    Consent,
+    /// What an earlier fastctx left, taken over or put away.
+    Legacy,
+}
+
+/// The lines of one file a kind of change touches.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileDiff {
+    pub path: PathBuf,
+    pub how: FileHow,
+    /// The changed lines with a little around them. A value that might be a
+    /// secret, on a line the World does not write, is masked.
+    pub lines: Vec<crate::run_facts::DiffLine>,
+    /// Set when there were more lines than one card holds; how many more.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub more: Option<u64>,
+}
+
+/// One kind of change, with what it does to each file and the agent's own
+/// commands it runs.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChangeCard {
+    pub change: Change,
+    pub files: Vec<FileDiff>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub commands: Vec<String>,
 }

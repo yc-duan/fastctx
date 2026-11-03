@@ -7,21 +7,33 @@ use std::time::Duration;
 
 use super::Rank;
 use super::registry::{self, Hold, Wait};
+use crate::readings::Timing;
 
+/// A tokio lock is held across awaits: it keeps one kind of work to one
+/// task at a time, so it is never one over many units held briefly
+/// (`super::sync`); how long it is held is timed all the same.
 struct Identity {
     id: u64,
     rank: Rank,
     name: &'static str,
     subject: Arc<str>,
+    held: &'static Timing,
 }
 
 impl Identity {
     fn new(rank: Rank, name: &'static str, subject: Arc<str>) -> Self {
-        Self { id: registry::next(), rank, name, subject }
+        Self { id: registry::next(), rank, name, subject, held: registry::holds(name) }
     }
 
     fn lock(&self) -> registry::Lock<'_> {
-        registry::Lock { id: self.id, rank: self.rank, name: self.name, subject: &self.subject }
+        registry::Lock {
+            id: self.id,
+            rank: self.rank,
+            name: self.name,
+            subject: &self.subject,
+            held: self.held,
+            shared: false,
+        }
     }
 }
 
@@ -55,6 +67,12 @@ impl<T: ?Sized> Mutex<T> {
     pub fn try_lock(&self) -> Result<MutexGuard<'_, T>, tokio::sync::TryLockError> {
         let guard = self.inner.try_lock()?;
         Ok(MutexGuard { guard, _hold: registry::taken(self.identity.lock(), true) })
+    }
+
+    /// As `try_lock`, held by a guard that owns its share of the mutex.
+    pub fn try_lock_owned(&self) -> Result<OwnedMutexGuard<T>, tokio::sync::TryLockError> {
+        let guard = self.inner.clone().try_lock_owned()?;
+        Ok(OwnedMutexGuard { guard, _hold: registry::taken(self.identity.lock(), true) })
     }
 
     /// As `lock`, held by a guard that owns its share of the mutex, so it
@@ -169,6 +187,19 @@ impl<T: ?Sized> RwLock<T> {
     pub fn try_write(&self) -> Result<RwLockWriteGuard<'_, T>, tokio::sync::TryLockError> {
         let guard = self.inner.try_write()?;
         Ok(RwLockWriteGuard { guard, _hold: registry::taken(self.identity.lock(), true) })
+    }
+
+    /// Reads at once, or not at all: not while it is held to write or a
+    /// writer waits for it.
+    pub fn try_read(&self) -> Result<RwLockReadGuard<'_, T>, tokio::sync::TryLockError> {
+        let guard = self.inner.try_read()?;
+        Ok(RwLockReadGuard { guard, _hold: registry::taken(self.identity.lock(), false) })
+    }
+
+    /// As `try_read`, held by a guard that owns its share of the lock.
+    pub fn try_read_owned(&self) -> Result<OwnedRwLockReadGuard<T>, tokio::sync::TryLockError> {
+        let guard = self.inner.clone().try_read_owned()?;
+        Ok(OwnedRwLockReadGuard { _guard: guard, _hold: registry::taken(self.identity.lock(), false) })
     }
 }
 

@@ -276,7 +276,7 @@ More commands (`--help` on each gives all its options):
 const RUN_COMMANDS_HELD: &str = "
 - `fastctx project` lists the user's projects and shows their records. A fastctx project is not a folder or a repository but a named piece of work that can span several machines; its record says what it is for and where its code and data are on each. `fastctx project enter NAME` makes you work in one; enter one only when the user tells you which project to work on.
 - `fastctx page` publishes an HTML page the user opens in the World app.
-- `fastctx plan` shows this conversation's plan, which is a Markdown file your instructions name: change it as any file.";
+- `fastctx plan` shows this conversation's plan, which is a Markdown file your instructions name: change it as any file. `fastctx plan ID` shows another conversation's, such as a colleague's.";
 
 /// Sentinels, not offered in a release yet (`fastctx_platform::preview`).
 const RUN_COMMANDS_SENSE: &str = "
@@ -289,11 +289,17 @@ fn ask_colleague_definition(collab: &fastctx_types::collab::Offered) -> Value {
             None => "It is another account's agent assisting the user: it runs its scripts on the user's machines, each one `on MACHINE`, as you do.".to_string(),
         };
         let account = callee.account.as_ref().map(|account| format!("It works for account {account}. ")).unwrap_or_default();
-        format!("{}: {}\n{account}{lives}", callee.name, callee.use_when)
+        let most = callee.at_once.map(|most| format!(" It works on at most {most} at once.")).unwrap_or_default();
+        format!("{}: {}\n{account}{lives}{most}", callee.name, callee.use_when)
     }).collect::<Vec<_>>().join("\n\n");
+    let limits = if collab.callees.iter().any(|callee| callee.at_once.is_some()) {
+        format!("\n{}", fastctx_types::collab_prompt::ASK_LIMITS)
+    } else {
+        String::new()
+    };
     let mut tool = json!({
         "name": "ask_colleague",
-        "description": format!("{}\n\n{lives}\n\n{}", fastctx_types::collab_prompt::ASK_DESCRIPTION, collab.prompt),
+        "description": format!("{}{limits}\n\n{lives}\n\n{}", fastctx_types::collab_prompt::ASK_DESCRIPTION, collab.prompt),
         "inputSchema": {
             "type": "object",
             "properties": {

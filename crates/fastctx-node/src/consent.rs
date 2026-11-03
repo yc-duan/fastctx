@@ -40,7 +40,7 @@ pub async fn call(
 /// from, for the node's log.
 pub async fn here(node: &Arc<Node>, accept: bool, home: Option<PathBuf>, by: String) -> Result<(bool, bool), Failure> {
     let local = node.clone();
-    let (changed, dir) = tokio::task::spawn_blocking(move || {
+    let (changed, dir) = fastctx_platform::task::spawn_blocking(move || {
         let env = crate::claude::environment().map_err(|failure| failure.message)?;
         let user_home = fastctx_platform::user_home().map_err(|error| error.to_string())?;
         let dir = match home {

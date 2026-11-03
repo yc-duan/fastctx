@@ -354,8 +354,8 @@ export function pickFolder(): Promise<string | null> {
 /** What putting the World's tools into a login (`into`), or taking them
  *  out, would change, with nothing written; with `takeBack`, rewriting what
  *  the user changed of them too. */
-export function previewAgentChange(machine: MachineName, agent: string, dir: string, into: boolean, takeBack = false): Promise<ChangePreview> {
-  return invoke("preview_agent_change", { machineName: machine, agentName: agent, dir, into, takeBack });
+export function previewAgentChange(machine: MachineName, agent: string, dir: string, into: boolean, takeBack = false, workbench?: boolean): Promise<ChangePreview> {
+  return invoke("preview_agent_change", { machineName: machine, agentName: agent, dir, into, takeBack, workbench });
 }
 
 /** Puts the World's tools into a login, or takes them out, by its
@@ -368,8 +368,10 @@ export function changeAgentLogin(
   into: boolean,
   raiseOutputLimit = false,
   takeBack = false,
+  expected?: string,
+  workbench?: boolean,
 ): Promise<LoginChange> {
-  return invoke("change_agent_login", { machineName: machine, agentName: agent, dir, into, raiseOutputLimit, takeBack });
+  return invoke("change_agent_login", { machineName: machine, agentName: agent, dir, into, raiseOutputLimit, takeBack, expected, workbench });
 }
 
 /** Reads a login's limits afresh on its machine. */
@@ -380,6 +382,12 @@ export function readAgentLimits(machine: MachineName, agent: string, dir: string
 /** Turns naming new Codex conversations in a login on or off. */
 export function setAgentTitle(machine: MachineName, agent: string, dir: string, on: boolean): Promise<MachineLogins> {
   return invoke("set_agent_title", { machineName: machine, agentName: agent, dir, on });
+}
+
+/** Turns on or off whether a week cleared before its reset counts anew in
+ *  a login. */
+export function setAgentResetInPlace(machine: MachineName, agent: string, dir: string, on: boolean): Promise<MachineLogins> {
+  return invoke("set_agent_reset_in_place", { machineName: machine, agentName: agent, dir, on });
 }
 
 /** What a login on a machine was used for, as this device's accounts may

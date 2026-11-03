@@ -37,9 +37,9 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   TAURI_CLI: '@tauri-apps/cli@2.12.1'
-  # The release before this one: the network drill runs its hub with this one's machines, and its
-  # node on this one's hub, from its Linux package.
-  EARLIER_RELEASE: 1.0.1-beta.12
+  # The release before this one: the network drill runs its hub with this one's machines on every
+  # system it was published for, and its node on this one's hub on Linux.
+  EARLIER_RELEASE: 1.0.1-beta.13
   # The drills run on a ci/ branch, never for a version tag.
   DRILLS: ${{ github.ref_type == 'branch' }}
 
@@ -169,9 +169,18 @@ jobs:
         with:
           name: tests-${{ matrix.target }}
           path: tests
+      # With the earlier release's hub too, where it was published for this system.
       - if: env.DRILLS == 'true'
         name: Network drill
-        run: tests/network_drill.exe --root "$(cygpath -m "$RUNNER_TEMP")"
+        run: |
+          earlier=()
+          if [[ '${{ matrix.target }}' == x86_64-pc-windows-msvc ]]; then
+            curl -fsSL -o "$RUNNER_TEMP/earlier.zip" \
+              "https://github.com/${{ github.repository }}/releases/download/v$EARLIER_RELEASE/fastctx-${{ matrix.target }}.zip"
+            unzip -q -o "$RUNNER_TEMP/earlier.zip" -d "$RUNNER_TEMP/earlier"
+            earlier=(--earlier "$(cygpath -m "$RUNNER_TEMP/earlier/fastctx.exe")")
+          fi
+          tests/network_drill.exe --root "$(cygpath -m "$RUNNER_TEMP")" "${earlier[@]}"
 
   test-windows-arm:
     needs: kernel-windows
@@ -366,7 +375,11 @@ jobs:
           curl -fsSL -o "$RUNNER_TEMP/placement-codex.tar.gz" "https://github.com/openai/codex/releases/download/rust-v0.160.0/codex-x86_64-unknown-linux-musl.tar.gz"
           echo "306865417d4ee7a927785852910a527f41e1e159add390ac5ae3accb67d44a13  $RUNNER_TEMP/placement-codex.tar.gz" | sha256sum -c -
           tar -xzf "$RUNNER_TEMP/placement-codex.tar.gz" -C "$RUNNER_TEMP/placement-codex"
-          python scripts/placement.py --kernel "$PWD/target/${{ matrix.build }}/release/fastctx" --drill "$PWD/tests/placement_drill" --codex "$RUNNER_TEMP/placement-codex/codex-x86_64-unknown-linux-musl" --root /tmp/placement-drill
+          # A machine of the earlier release too, for a job's steps between the two.
+          curl -fsSL -o "$RUNNER_TEMP/earlier.deb" \
+            "https://github.com/${{ github.repository }}/releases/download/v$EARLIER_RELEASE/Fastctx_${EARLIER_RELEASE}_amd64.deb"
+          dpkg-deb -x "$RUNNER_TEMP/earlier.deb" "$RUNNER_TEMP/earlier"
+          python scripts/placement.py --kernel "$PWD/target/${{ matrix.build }}/release/fastctx" --drill "$PWD/tests/placement_drill" --codex "$RUNNER_TEMP/placement-codex/codex-x86_64-unknown-linux-musl" --root /tmp/placement-drill --earlier "$RUNNER_TEMP/earlier/usr/bin/fastctx"
       - name: Upload the tests
         uses: actions/upload-artifact@v4
         with:
@@ -397,18 +410,121 @@ jobs:
           path: tests
       - name: Restore executable permissions
         run: chmod +x tests/*
-      # With the earlier release's hub and node too, where its Linux package runs.
+      # With the earlier release's hub and node too.
       - if: env.DRILLS == 'true'
         name: Network drill
         run: |
-          earlier=()
-          if [[ "$(uname -m)" == x86_64 ]]; then
-            curl -fsSL -o "$RUNNER_TEMP/earlier.deb" \
-              "https://github.com/${{ github.repository }}/releases/download/v$EARLIER_RELEASE/Fastctx_${EARLIER_RELEASE}_amd64.deb"
-            dpkg-deb -x "$RUNNER_TEMP/earlier.deb" "$RUNNER_TEMP/earlier"
-            earlier=(--earlier "$RUNNER_TEMP/earlier/usr/bin/fastctx")
-          fi
-          tests/network_drill --root "$RUNNER_TEMP" "${earlier[@]}"
+          mkdir -p "$RUNNER_TEMP/earlier"
+          curl -fsSL "https://github.com/${{ github.repository }}/releases/download/v$EARLIER_RELEASE/fastctx-${{ matrix.target }}.tar.gz" \
+            | tar xz -C "$RUNNER_TEMP/earlier"
+          tests/network_drill --root "$RUNNER_TEMP" --earlier "$RUNNER_TEMP/earlier/fastctx"
+      # The letter window between machines and their hub, by seed, through every fault of a line
+      # and a process: nothing lost, each letter's effect once and in order, no window overrun.
+      - if: env.DRILLS == 'true'
+        name: Letter window simulation
+        run: tests/letter_drill --seeds 5000
+
+  # A real hub limited to two CPUs and 2 GiB under a systemd unit, a thousand members and then ten
+  # thousand over real TLS and WebSocket: no false alarms, every member back after a storm, and the
+  # cost of a view and of presence not growing with the network (`world-engine.md`, 验证的设施).
+  # As root, for the unit and the generator's descriptors.
+  scale-linux:
+    needs: kernel-linux
+    name: hub scale
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: tests-x86_64-unknown-linux-gnu
+          path: tests
+      - name: Restore executable permissions
+        run: chmod +x tests/*
+      - if: env.DRILLS == 'true'
+        name: Hub scale drill
+        run: |
+          root="$RUNNER_TEMP/scale"
+          sudo bash -c "ulimit -n 1048576 && tests/hub_scale --root '$root' --members 1000 --seconds 20 --cgroup && tests/hub_scale --root '$root' --members 10000 --seconds 20 --cgroup --baseline '$root/result-1000.json'"
+
+  # The node's storage held to the constitution's numbers where its engine and its records are: a
+  # hundred thousand events paged, a write's transaction within two milliseconds, a writer killed
+  # at random losing no acknowledged row, a damaged database salvaged, and a hundred thousand
+  # steps of a job written and read (`world-engine.md`, 验证的设施). The records drill needs the
+  # node's drill feature, so both are built here, beside the kernel rather than with it.
+  storage-linux:
+    if: github.ref_type == 'branch'
+    name: storage drills
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.92.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: storage-linux
+          save-if: false
+      - if: env.DRILLS == 'true'
+        name: Storage engine drill
+        run: cargo test --release --locked -p fastctx-storage --test storage_drill -- --root "$RUNNER_TEMP/storage-drill"
+      - if: env.DRILLS == 'true'
+        name: Node records drill
+        run: cargo test --release --locked -p fastctx-node --features storage-drill --test record_drill -- --root "$RUNNER_TEMP/record-drill"
+
+  # The same on Windows, under a directory long enough that the archive of a moved record passes the
+  # length Windows' own calls take, and with a record another program holds open as a scanner does.
+  storage-windows:
+    if: github.ref_type == 'branch'
+    name: storage drills on Windows
+    runs-on: windows-2025
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Keep the antivirus off the build's and the drills' files
+        shell: pwsh
+        run: Add-MpPreference -ExclusionPath $env:GITHUB_WORKSPACE, $env:RUNNER_TEMP, "$env:USERPROFILE\.cargo", "$env:USERPROFILE\.rustup"
+      - uses: dtolnay/rust-toolchain@1.92.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: storage-windows
+          save-if: false
+      - if: env.DRILLS == 'true'
+        name: Storage engine drill
+        run: cargo test --release --locked -p fastctx-storage --test storage_drill -- --root "$(cygpath -m "$RUNNER_TEMP")/storage-drill"
+      - if: env.DRILLS == 'true'
+        name: Node records drill
+        run: cargo test --release --locked -p fastctx-node --features storage-drill --test record_drill -- --root "$(cygpath -m "$RUNNER_TEMP")/record-drill-under-a-directory-named-long-enough-to-matter"
+
+  # What each crate may touch and on which threads is kept by clippy (`clippy.toml` in the hub, the
+  # link and the node; `specs/world-engine.md`, 线程的三种角色), on every system: each has code paths
+  # no other system's build reaches.
+  clippy:
+    if: github.ref_type == 'branch'
+    name: clippy ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: linux
+            runner: ubuntu-24.04
+          - os: macos
+            runner: macos-15
+          - os: windows
+            runner: windows-2025
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.92.0
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: clippy-${{ matrix.os }}
+          save-if: false
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo clippy -p fastctx-node --features storage-drill --all-targets --locked -- -D warnings
 
   test-linux:
     needs: kernel-linux
@@ -456,14 +572,16 @@ jobs:
           sudo python3 scripts/oldkernel-smoke.py "$RUNNER_TEMP/oldkernel" kernel/fastctx --root "$RUNNER_TEMP/oldkernel-smoke"
       # A real Codex app-server whose model is a mock on this machine: no
       # request goes to any vendor (`scripts/concurrency.py`). The node finds
-      # Codex on the login PATH.
+      # Codex on the login PATH. As root, for the faults: the node's World on
+      # a small disk of its own, slowed down and filled up now and then, and
+      # this machine's clock moved ten minutes forward and back.
       - if: env.DRILLS == 'true'
         name: Concurrency and lifecycle drill
         run: |
           arch="$(uname -m)"
           curl -fsSL "https://github.com/openai/codex/releases/download/rust-v0.160.0/codex-${arch}-unknown-linux-musl.tar.gz" | tar -xz -C "$RUNNER_TEMP"
           sudo install -m 0755 "$RUNNER_TEMP/codex-${arch}-unknown-linux-musl" /usr/local/bin/codex
-          python scripts/concurrency.py kernel/fastctx --codex /usr/local/bin/codex --minutes 4 --restarts --root "$RUNNER_TEMP"
+          sudo python3 scripts/concurrency.py kernel/fastctx --codex /usr/local/bin/codex --minutes 4 --restarts --faults --clock --root "$RUNNER_TEMP"
       - if: env.DRILLS == 'true'
         name: Verify the bundled ripgrep, the node's lifetime, job control and byte streams
         run: |
@@ -599,9 +717,14 @@ jobs:
           path: tests
       - name: Restore executable permissions
         run: chmod +x tests/*
+      # With the earlier release's hub too.
       - if: env.DRILLS == 'true'
         name: Network drill
-        run: tests/network_drill --root "$RUNNER_TEMP"
+        run: |
+          mkdir -p "$RUNNER_TEMP/earlier"
+          curl -fsSL "https://github.com/${{ github.repository }}/releases/download/v$EARLIER_RELEASE/fastctx-${{ matrix.target }}.tar.gz" \
+            | tar xz -C "$RUNNER_TEMP/earlier"
+          tests/network_drill --root "$RUNNER_TEMP" --earlier "$RUNNER_TEMP/earlier/fastctx"
 
   test-macos-arm:
     needs: kernel-macos

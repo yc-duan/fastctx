@@ -1,0 +1,11 @@
+{
+  "context_servers": {
+    "lab-existing": {
+      "command": "node",
+      "args": [
+        "--version"
+      ],
+      "env": {}
+    }
+  }
+}

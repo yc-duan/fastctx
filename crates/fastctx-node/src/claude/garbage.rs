@@ -25,7 +25,7 @@ pub(crate) fn collect(world: &WorldDir) -> io::Result<()> {
 }
 
 fn collect_session(session: &Path) -> io::Result<()> {
-    let metadata = std::fs::symlink_metadata(session)?;
+    let metadata = fastctx_platform::disk::symlink_metadata(session)?;
     if fastctx_platform::owned_directory::is_link(&metadata) || !metadata.is_dir() {
         return Ok(());
     }
@@ -38,7 +38,10 @@ fn collect_session(session: &Path) -> io::Result<()> {
         for directory in [session.to_path_buf(), session.join("events"), session.join("control")] {
             parts(&directory, &session.join("damaged"))?;
         }
-        let retired = session.parent().and_then(Path::parent).is_some_and(|home| home.join("books-retired").exists());
+        let retired = session
+            .parent()
+            .and_then(Path::parent)
+            .is_some_and(|home| fastctx_platform::disk::is_there(home.join("books-retired")));
         if retired {
             for name in ["applied", "receipts", "attempts", "closed", "calls", "inbox-parts"] {
                 fastctx_platform::owned_directory::delete(&session.join(name))?;
@@ -56,7 +59,7 @@ fn collect_session(session: &Path) -> io::Result<()> {
     for path in control::requests(&directory)? {
         if let Some(waiting) = control::read::<control::Waiting>(&path.join("request.json"))?
             && !fastctx_platform::is_alive(&waiting.process)?
-            && path.join("resolved.json").try_exists()?
+            && fastctx_platform::disk::exists(path.join("resolved.json"))?
         {
             fastctx_platform::owned_directory::delete(&path)?;
         }
@@ -79,7 +82,7 @@ fn settled(entry: &std::fs::DirEntry, now: std::time::SystemTime) -> io::Result<
 fn readies(control: &Path) -> io::Result<()> {
     // Without its present activation known, none is taken for a past one.
     let Some(current) = control::host(control)?.map(|host| host.instance) else { return Ok(()) };
-    let entries = match std::fs::read_dir(control) {
+    let entries = match fastctx_platform::disk::read_dir(control) {
         Ok(entries) => entries,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
         Err(error) => return Err(error),
@@ -98,7 +101,7 @@ fn readies(control: &Path) -> io::Result<()> {
         if instance == current || !settled(&entry, now)? {
             continue;
         }
-        match std::fs::remove_file(entry.path()) {
+        match fastctx_platform::disk::remove_file(entry.path()) {
             Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
             _ => {}
         }
@@ -113,7 +116,7 @@ fn readies(control: &Path) -> io::Result<()> {
 /// its sessions' records, but left these.
 pub(crate) fn untrust_departed(node: &Node) -> io::Result<()> {
     let conversations = node.world.conversations();
-    if !conversations.is_dir() {
+    if !fastctx_platform::disk::is_dir(&conversations) {
         return Ok(());
     }
     let key = trust::uninstall_key(&conversations)?;
@@ -133,13 +136,13 @@ pub(crate) fn untrust_departed(node: &Node) -> io::Result<()> {
         let config = home.clone().map(PathBuf::into_os_string).or_else(|| default_config.clone());
         for entry in trust::world_entries(config.as_deref(), &key)? {
             let directory = PathBuf::from(&entry);
-            if directory.try_exists()? {
+            if fastctx_platform::disk::exists(&directory)? {
                 continue;
             }
             trust::remove_world_trust(config.as_deref(), &entry)?;
             let claude = home.as_deref().unwrap_or(&default);
             let folder = claude.join("projects").join(projects::slug(&projects::cwd_text(&directory)?));
-            if folder.is_dir() {
+            if fastctx_platform::disk::is_dir(&folder) {
                 fastctx_platform::owned_directory::delete(&folder)?;
             }
             node.log.line(format_args!("took back Claude Code's trust of {entry}, a deleted conversation's directory"));
@@ -154,7 +157,7 @@ fn parts(directory: &Path, damaged: &Path) -> io::Result<()> {
             continue;
         }
         let manifest = path.with_extension("json");
-        let count = match std::fs::read(&manifest) {
+        let count = match fastctx_platform::disk::read(&manifest) {
             Ok(bytes) => serde_json::from_slice::<serde_json::Value>(&bytes)
                 .map_err(io::Error::other)?
                 .get("parts")
@@ -162,7 +165,7 @@ fn parts(directory: &Path, damaged: &Path) -> io::Result<()> {
                 .unwrap_or(0),
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
                 if let Some(name) = manifest.file_name()
-                    && damaged.join(name).try_exists()?
+                    && fastctx_platform::disk::exists(damaged.join(name))?
                 {
                     fastctx_platform::owned_directory::move_to(
                         &path,

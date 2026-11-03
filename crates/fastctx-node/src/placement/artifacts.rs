@@ -30,10 +30,17 @@ pub(crate) async fn lease(
     let location = super::location::prepare(node, id, origin, acting)
         .await?
         .ok_or_else(|| Failure::not_run("there is no online working computer for the evidence files"))?;
-    let scope =
-        crate::plan::file_account(node, id, acting)?.ok_or_else(|| failure("the evidence needs one owning account"))?;
+    let scope = crate::plan::load_account(node, id, acting)
+        .await?
+        .ok_or_else(|| failure("the evidence needs one owning account"))?;
     let link = node.link_of(&scope.hub).ok_or_else(|| failure("the evidence hub is unavailable"))?;
     let owner = Address { machine: node.machine(), resident: id.clone() };
+    if link.view().shared_records {
+        let location = crate::replicas::location::prepare(node, id, &Origin::User, acting, &scope, Resource::Directory)
+            .await?
+            .ok_or_else(|| Failure::not_run("there is no eligible computer for the evidence files"))?;
+        return Ok(Lease { location, scope, owner, version: 0 });
+    }
     let (version, place) = super::location::read_place(&link, &scope, &owner).await?;
     if place.is_none_or(|place| place.machine.as_ref() != Some(&location.machine)) {
         return Err(Failure::not_run("the working location changed before evidence preparation"));
@@ -87,7 +94,7 @@ pub(crate) fn read_directory(
 ) -> Result<Option<std::path::PathBuf>, Failure> {
     let room = node.world.owner(&node.names(), owner);
     let path = room.path().join("artifacts");
-    let metadata = match std::fs::symlink_metadata(&path) {
+    let metadata = match fastctx_platform::disk::symlink_metadata(&path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(failure(error)),
@@ -113,16 +120,23 @@ pub(crate) async fn put(
 ) -> Result<Location, Failure> {
     validate_key(&key)?;
     let size = fastctx_types::skill_files::validate_files(&files).map_err(failure)?;
-    let maximum = (fastctx_platform::memory::physical().map_err(failure)? / 128)
-        .min(fastctx_platform::space::available(&directory).map_err(failure)? / 128);
+    // The room left on its disk, and the path as the World writes it, are asked of the disk.
+    let (available, written) = {
+        let (measuring, target) = (directory.clone(), directory.join("artifacts").join(&key));
+        fastctx_platform::task::blocking(move || {
+            (fastctx_platform::space::available(&measuring), crate::world::native(&target))
+        })
+        .await
+    };
+    let maximum = (fastctx_platform::memory::physical().map_err(failure)? / 128).min(available.map_err(failure)? / 128);
     if size > maximum {
         return Err(failure(format!("the evidence folder exceeds this computer's {maximum}-byte allowance")));
     }
     let target = directory.join("artifacts").join(&key);
     let gate = node.places.using(&format!("artifact-{}-{key}", directory.to_string_lossy())).await;
-    let location = Location { machine: node.machine(), path: crate::world::native(&target) };
-    tokio::task::spawn_blocking(move || {
-        if target.exists() {
+    let location = Location { machine: node.machine(), path: written };
+    fastctx_platform::task::spawn_blocking(move || {
+        if fastctx_platform::disk::is_there(&target) {
             if super::files::complete(&target, &files).map_err(failure)? {
                 return Ok(());
             }
@@ -131,7 +145,7 @@ pub(crate) async fn put(
         let stage = target.with_file_name(format!(".{key}.arriving"));
         super::files::erase(&stage).map_err(failure)?;
         super::files::unpack(&stage, &files).map_err(failure)?;
-        std::fs::rename(stage, target).map_err(failure)
+        fastctx_platform::disk::rename(stage, target).map_err(failure)
     })
     .await
     .map_err(failure)??;

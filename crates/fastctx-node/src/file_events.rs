@@ -16,7 +16,7 @@ use notify::event::{MetadataKind, ModifyKind};
 /// the real place behind any link in it, as a Claude session's directory is
 /// once it lives in its conversation.
 pub(crate) fn named(path: &Path) -> io::Result<PathBuf> {
-    if cfg!(target_os = "macos") { std::fs::canonicalize(path) } else { Ok(path.to_path_buf()) }
+    if cfg!(target_os = "macos") { fastctx_platform::disk::canonicalize(path) } else { Ok(path.to_path_buf()) }
 }
 
 /// Whether `event` can have changed what is in a watched place: anything but

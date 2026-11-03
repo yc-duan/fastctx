@@ -243,7 +243,7 @@ pub fn here<'a>(
             if let Some(callback) = callback {
                 callback();
             }
-            runtime.spawn(async move {
+            fastctx_platform::task::spawn_on(&runtime, async move {
                 crate::attachments::forsake(&committed_node, &committed_id, &forsaken);
             });
         })

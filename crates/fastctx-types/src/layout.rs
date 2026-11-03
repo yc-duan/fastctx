@@ -187,6 +187,13 @@ impl WorldDir {
         self.root.join("departed")
     }
 
+    /// The directories of conversations let go after another machine took
+    /// them whole, each as it was when it left, until the operator removes
+    /// them.
+    pub fn released(&self) -> PathBuf {
+        self.root.join("released")
+    }
+
     /// Conversation book directories plus the older shared queue, while an
     /// upgrade still has records whose owner cannot be recovered.
     pub fn book_directories(&self, name: &str) -> std::io::Result<Vec<PathBuf>> {
@@ -638,9 +645,9 @@ impl ConversationDir {
         self.jobs().join(format!("{job}.sh"))
     }
 
-    /// The conversation's bookkeeping, all of it: what keeps it from being
-    /// told the same thing twice, the settings of its host session, what it
-    /// saw of files. It goes once the conversation has ended and owes nothing.
+    /// Legacy bookkeeping sources. Each record family owns its lifetime:
+    /// rebuildable observations may retire after archive, while birth settings
+    /// and delivery proofs remain available for restoration and replay.
     pub fn books(&self) -> PathBuf {
         self.path.join("books")
     }

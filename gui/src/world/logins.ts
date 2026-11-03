@@ -5,6 +5,7 @@
 // the logins its tools are put into.
 
 import type { AgentLimits, AgentModel, Fact, Integration } from "./agents";
+import type { DiffLine } from "./run-facts";
 import type { AgentName, MachineName, Timestamp } from "./wire";
 
 /** Every machine asked: this one, or each the user may look at. */
@@ -25,12 +26,21 @@ export interface MachineLogins {
   scan?: Scan;
   codex: AgentLogins;
   claude: AgentLogins;
+  /** Whether its node keeps the workbench by login (`Login.workbench`);
+   *  an earlier one keeps it by account alone. */
+  by_login?: boolean;
+  /** The other agents found there, connected through their configuration
+   *  alone (`world-layers.md`, 支持尽可能多的智能体), by name. */
+  others?: Record<string, AgentLogins>;
   /** The folders the user chose there for logins kept below them. */
   folders?: Folder[];
 }
 
 /** One agent on a machine: its programs, and its logins in three groups. */
 export interface AgentLogins {
+  /** How an agent of `MachineLogins.others` is named, as its description
+   *  names it; Codex and Claude Code are named by the interface. */
+  title?: string;
   /** Its programs found here without running any; empty before a scan. */
   programs: FoundProgram[];
   /** The logins the World lists and uses: those its tools are put into. */
@@ -63,6 +73,9 @@ export interface Login {
   /** Codex: whether the World names new conversations in it the way the
    *  official client does. On unless turned off. */
   auto_title?: boolean;
+  /** Whether a week the vendor cleared before its reset counts anew from
+   *  then, as its owner chose; off unless turned on. */
+  reset_in_place?: boolean;
   /** The program the World starts for it. */
   launcher?: Launcher;
   /** The models a conversation in it can start on, as last read. */
@@ -72,6 +85,9 @@ export interface Login {
   /** What bringing the World's tools in it up to date waits for: none
    *  when they are as this fastctx writes them. */
   drift?: Drift;
+  /** The workbench is open in it (`world-layers.md`, 工作台：在一个登录上
+   *  打开). */
+  workbench?: boolean;
 }
 
 /** Why the World's tools in a listed login were not brought up to date by
@@ -246,6 +262,33 @@ export interface ChangePreview {
   output_limit?: OutputLimit;
   /** What it leaves as the user has it. */
   kept?: Kept[];
+  /** The same change, one card each kind in the order it is made, with
+   *  the lines it adds and takes out; empty from an older node. */
+  cards?: ChangeCard[];
+  /** What it was worked out from: the change is refused when the files
+   *  moved on since. */
+  fingerprint?: string;
+  /** The agent's own shell cannot be turned off: it runs commands both ways. */
+  keeps_shell?: boolean;
+}
+
+/** One kind of change connecting a login makes (`world-layers.md`). */
+export type Change = "tools" | "limits" | "shell" | "guidance" | "plugin" | "consent" | "legacy";
+
+export interface ChangeCard {
+  change: Change;
+  files: FileDiff[];
+  commands?: string[];
+}
+
+/** The lines of one file a kind of change touches; a value that might be a
+ *  secret, on a line the World does not write, comes masked. */
+export interface FileDiff {
+  path: string;
+  how: FileHow;
+  lines: DiffLine[];
+  /** How many more lines there were than one card holds. */
+  more?: number;
 }
 
 export interface FilePreview {

@@ -378,7 +378,7 @@ impl Drop for Guard {
             return;
         }
         let (node, id, scope) = (self.node.clone(), self.id.clone(), self.scope.clone());
-        tokio::spawn(async move {
+        fastctx_platform::task::spawn(async move {
             if let Err(error) =
                 failed(&node, &id, &scope, "the upload connection ended before a verified file was completed").await
             {

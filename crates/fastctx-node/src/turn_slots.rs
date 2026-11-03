@@ -13,6 +13,11 @@
 //! and its conversation tells how many wait ahead. Only turns the World
 //! starts wait; those someone starts in a host's own window count as
 //! running all the same.
+//!
+//! A colleague's turn waits in a second line too, its callee's: as many of
+//! one callee's colleagues work at once as the account's settings say
+//! (`world-colleagues.md`, 同事从哪里来、能去哪里), and one past that waits
+//! for one of them to end, as its words wait.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -20,8 +25,9 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use fastctx_types::ResidentId;
-use fastctx_types::access::HubAccount;
-use fastctx_types::residents::{About, Activity, Landed};
+use fastctx_types::access::{Acting, HubAccount};
+use fastctx_types::collab::AtOnce;
+use fastctx_types::residents::{About, Activity, Landed, Origin};
 use fastctx_types::session::{TurnEnd, TurnHow};
 use serde_json::Value;
 
@@ -63,11 +69,11 @@ struct Waiting {
     asked: Instant,
 }
 
-/// Why a control that starts a turn waits: its login runs as many turns at
-/// once as it may, or its machine has no room for one more. It is done once
-/// one of them ends, as words are delivered (`control_queue`).
+/// Why a control that starts a turn waits: its login or its callee runs as
+/// many turns at once as it may, or its machine has no room for one more.
+/// It is done once one of them ends, as words are delivered (`control_queue`).
 pub(crate) const FULL: &str =
-    "its agent login, or its machine, runs as many turns at once as it may; it is done once one of them ends";
+    "its agent login, its callee or its machine runs as many turns at once as it may; it is done once one of them ends";
 
 /// The failure a control that would start a turn now gives, to wait in its
 /// conversation's queue of controls for a turn of its login.
@@ -78,21 +84,30 @@ pub(crate) fn full() -> fastctx_types::ipc::Failure {
 /// A turn waiting its place, with how many wait ahead of it.
 pub(crate) struct Queued {
     pub ahead: u32,
-    /// What its machine keeps free for agents and has available, when the
-    /// turn waits for memory rather than for its login (`memory_room`).
-    pub memory: Option<(u64, u64)>,
+    pub line: Line,
+}
+
+/// The line a turn waits in.
+pub(crate) enum Line {
+    Login,
+    /// Its callee's, which lets this many at work at once.
+    Callee(u32),
+    /// The machine's memory: what it keeps free for agents and has
+    /// available (`memory_room`).
+    Memory(u64, u64),
 }
 
 impl Queued {
     pub(crate) fn landed(&self) -> Landed {
-        let why = match self.memory {
-            Some((room, available)) => format!(
-                "this machine keeps {} free for its agents and has {} available; {} wait ahead of it",
+        let ahead = self.ahead;
+        let why = match self.line {
+            Line::Memory(room, available) => format!(
+                "this machine keeps {} free for its agents and has {} available; {ahead} wait ahead of it",
                 crate::memory_room::size(room),
                 crate::memory_room::size(available),
-                self.ahead
             ),
-            None => format!("its agent login runs as many turns at once as it may; {} wait ahead of it", self.ahead),
+            Line::Callee(most) => format!("its callee works on at most {most} at once; {ahead} wait ahead of it"),
+            Line::Login => format!("its agent login runs as many turns at once as it may; {ahead} wait ahead of it"),
         };
         Landed::Waiting { why: Some(why), answered: true }
     }
@@ -123,23 +138,62 @@ impl Defaults {
 }
 
 /// Whether `id`, about to start a turn in its login, may start it now; else
-/// its place in the line, kept while it asks again.
+/// its place in the line, kept while it asks again. A turn let through and
+/// not begun yet is let through again.
 pub(crate) fn admit(node: &Arc<Node>, id: &ResidentId, about: &About) -> Result<(), Queued> {
     let defaults = Defaults::of(node);
     let Some((key, dir)) = defaults.login(about) else { return Ok(()) };
     let hard = hard(node, about, &dir, &defaults);
     let assisted = assisted(node, about);
+    let callee = callee_line(about).map(|line| (most(node, about), line));
     let now = Instant::now();
     let mut slots = node.turn_slots.0.lock().expect("never poisoned");
+    // Its callee's line first, where only colleagues of one account's
+    // callee wait.
+    let mut others = Vec::new();
+    if let Some((most, line_key)) = &callee {
+        let mut running = running_where(node, Some(id), |about| callee_line(about).as_ref() == Some(line_key));
+        let line = slots.entry(line_key.clone()).or_default();
+        line.unqueued(&mut running);
+        line.prune(now, &running);
+        match most {
+            Some(most) if !line.starting.iter().any(|(starting, _)| starting == id) => {
+                match line.waiting.iter_mut().find(|waiting| waiting.id == *id) {
+                    Some(waiting) => waiting.asked = now,
+                    None => line.waiting.push(Waiting { id: id.clone(), assisted: None, asked: now }),
+                }
+                let order = line.order();
+                let place = order.iter().position(|waiting| waiting == id).expect("it waits in line");
+                let free = (*most as usize).saturating_sub(running.len() + line.starting.len());
+                if place >= free {
+                    return Err(Queued { ahead: place as u32, line: Line::Callee(*most) });
+                }
+                others = order.into_iter().take(free).filter(|waiting| waiting != id).collect();
+            }
+            Some(_) => {}
+            None => line.leave(id),
+        }
+    }
     // Who runs is read under this lock: a turn let through counts as
     // starting until its host says it began, and as running from then, so
     // read before it, a turn could pass from one to the other unseen by both.
-    let running = running(node, &key, &defaults, Some(id));
+    let mut running = running(node, &key, &defaults, Some(id));
     let login = slots.entry(key).or_default();
+    login.unqueued(&mut running);
     login.prune(now, &running);
+    if login.starting.iter().any(|(starting, _)| starting == id) {
+        went(&mut slots, callee.as_ref().map(|(_, line)| line), id, now);
+        drop(slots);
+        wake(node, others);
+        return Ok(());
+    }
     let Some(limit) = login.limit(hard) else {
         login.leave(id);
-        return machine(node, id);
+        machine(node, id)?;
+        went(&mut slots, callee.as_ref().map(|(_, line)| line), id, now);
+        drop(slots);
+        wake(node, others);
+        return Ok(());
     };
     match login.waiting.iter_mut().find(|waiting| waiting.id == *id) {
         Some(waiting) => {
@@ -152,27 +206,77 @@ pub(crate) fn admit(node: &Arc<Node>, id: &ResidentId, about: &About) -> Result<
     let place = order.iter().position(|waiting| waiting == id).expect("it waits in line");
     let free = (limit as usize).saturating_sub(running.len() + login.starting.len());
     if place >= free {
-        return Err(Queued { ahead: place as u32, memory: None });
+        return Err(Queued { ahead: place as u32, line: Line::Login });
     }
     // Its login has room for it; the machine's memory may still hold it.
     machine(node, id)?;
     // Those ahead of it within the room go too, once they ask again.
-    let others: Vec<ResidentId> = order.into_iter().take(free).filter(|waiting| waiting != id).collect();
+    others.extend(order.into_iter().take(free).filter(|waiting| waiting != id));
     login.go(id, now);
+    went(&mut slots, callee.as_ref().map(|(_, line)| line), id, now);
     drop(slots);
     wake(node, others);
     Ok(())
 }
 
-/// How many turns wait ahead of `id`'s, while it waits for one.
-pub(crate) fn ahead(node: &Node, id: &ResidentId) -> Option<u32> {
+/// `id` went: out of its callee's line, counted there until its host says
+/// its turn began.
+fn went(slots: &mut HashMap<String, Login>, callee: Option<&String>, id: &ResidentId, now: Instant) {
+    if let Some(line) = callee.and_then(|key| slots.get_mut(key)) {
+        line.go(id, now);
+    }
+}
+
+/// The line of a colleague's callee, by the account it works for and the
+/// callee's name: none for a conversation no one asked for.
+fn callee_line(about: &About) -> Option<String> {
+    if !matches!(about.origin, Origin::Colleague { .. }) {
+        return None;
+    }
+    let name = about.callee.as_deref()?;
+    let whose = match &about.acting {
+        Acting::Accounts { accounts } => {
+            accounts.first().map(|account| format!("{}/{}", account.hub, account.account))?
+        }
+        Acting::Here => "here".to_string(),
+    };
+    Some(format!("{CALLEE}{whose} {name}"))
+}
+
+/// What a callee's line is named by, before whose and which callee it is.
+const CALLEE: &str = "callee ";
+
+/// How many of the colleagues of `about`'s callee may be at work at once,
+/// as its account's settings say now; the default where they say nothing,
+/// as when the callee is no longer set.
+fn most(node: &Node, about: &About) -> Option<u32> {
+    let said = match (&about.acting, about.callee.as_deref()) {
+        (Acting::Accounts { accounts }, Some(name)) => accounts.first().and_then(|account| {
+            node.links()
+                .iter()
+                .filter(|link| link.membership().id == account.hub)
+                .find_map(|link| link.view().account(&account.account).and_then(|found| found.collab.clone()))
+                .and_then(|collab| collab.callees.into_iter().find(|callee| callee.name == name))
+                .and_then(|callee| callee.at_once)
+        }),
+        _ => None,
+    };
+    AtOnce::most(said)
+}
+
+/// How many turns wait ahead of `id`'s, while it waits for one, and whether
+/// it waits in its callee's line rather than its login's.
+pub(crate) fn ahead(node: &Node, id: &ResidentId) -> Option<(u32, bool)> {
     let slots = node.turn_slots.0.lock().expect("never poisoned");
-    slots.values().find_map(|login| {
-        login
-            .waiting
-            .iter()
-            .any(|waiting| waiting.id == *id)
-            .then(|| login.order().iter().position(|waiting| waiting == id).expect("it waits in line") as u32)
+    // A turn its callee holds back waits in that line, though its login's
+    // may hold a place of its from before.
+    let mut lines: Vec<_> = slots.iter().collect();
+    lines.sort_by_key(|(key, _)| !key.starts_with(CALLEE));
+    lines.into_iter().find_map(|(key, line)| {
+        line.waiting.iter().any(|waiting| waiting.id == *id).then(|| {
+            let place = line.order().iter().position(|waiting| waiting == id).expect("it waits in line");
+            (place as u32, key.starts_with(CALLEE))
+        })
     })
 }
 
@@ -185,13 +289,32 @@ pub(crate) fn ended(node: &Arc<Node>, id: &ResidentId, about: &About, end: &Turn
     let Some((key, dir)) = defaults.login(about) else { return };
     let refused = refused_for_rate(node, about, &dir, end);
     let hard = hard(node, about, &dir, &defaults);
+    let callee = callee_line(about).map(|line| (most(node, about), line));
     let now = Instant::now();
     let mut slots = node.turn_slots.0.lock().expect("never poisoned");
+    // Its callee's line lets the next go.
+    let mut next = Vec::new();
+    if let Some((most, line_key)) = &callee
+        && let Some(line) = slots.get_mut(line_key)
+    {
+        let mut running = running_where(node, None, |about| callee_line(about).as_ref() == Some(line_key));
+        line.unqueued(&mut running);
+        line.starting.retain(|(starting, _)| starting != id);
+        line.prune(now, &running);
+        let room = most.map_or(usize::MAX, |most| (most as usize).saturating_sub(running.len() + line.starting.len()));
+        next = line.order().into_iter().take(room).collect();
+        if line.waiting.is_empty() && line.starting.is_empty() {
+            slots.remove(line_key);
+        }
+    }
     if !refused && !slots.contains_key(&key) {
+        drop(slots);
+        wake(node, next);
         return;
     }
-    let running = running(node, &key, &defaults, None);
+    let mut running = running(node, &key, &defaults, None);
     let login = slots.entry(key.clone()).or_default();
+    login.unqueued(&mut running);
     login.starting.retain(|(starting, _)| starting != id);
     if refused {
         if login.halved.is_none_or(|at| now.duration_since(at) >= HALVING_AT_MOST) {
@@ -215,7 +338,7 @@ pub(crate) fn ended(node: &Arc<Node>, id: &ResidentId, about: &About, end: &Turn
     let room = login
         .limit(hard)
         .map_or(usize::MAX, |limit| (limit as usize).saturating_sub(running.len() + login.starting.len()));
-    let next: Vec<ResidentId> = login.order().into_iter().take(room).collect();
+    next.extend(login.order().into_iter().take(room));
     if login.waiting.is_empty() && login.found.is_none() && login.starting.is_empty() {
         slots.remove(&key);
     }
@@ -263,6 +386,12 @@ impl Login {
 
     /// Lets go of turns that stopped asking, and of turns let through that
     /// run now or never began.
+    /// Leaves out of `running` the conversations that wait in this line: a
+    /// colleague is busy from its birth, before its first turn is let go.
+    fn unqueued(&self, running: &mut Vec<ResidentId>) {
+        running.retain(|other| !self.waiting.iter().any(|waiting| waiting.id == *other));
+    }
+
     fn prune(&mut self, now: Instant, running: &[ResidentId]) {
         self.waiting.retain(|waiting| now.duration_since(waiting.asked) < ASKING);
         self.starting.retain(|(id, at)| !running.contains(id) && now.duration_since(*at) < STARTING);
@@ -307,11 +436,16 @@ impl Login {
 
 /// The conversations of the login `key` running a turn now, but `except`.
 fn running(node: &Node, key: &str, defaults: &Defaults, except: Option<&ResidentId>) -> Vec<ResidentId> {
+    running_where(node, except, |about| defaults.login(about).is_some_and(|(login, _)| login == key))
+}
+
+/// The conversations `of` takes running a turn now, but `except`.
+fn running_where(node: &Node, except: Option<&ResidentId>, of: impl Fn(&About) -> bool) -> Vec<ResidentId> {
     node.residents
         .everyone()
         .filter(|record| record.removed.is_none() && except != Some(&record.id))
         .filter(|record| record.now.as_ref().is_some_and(|now| now.turn.is_some() || now.activity == Activity::Busy))
-        .filter(|record| defaults.login(&record.about).is_some_and(|(login, _)| login == key))
+        .filter(|record| of(&record.about))
         .map(|record| record.id)
         .collect()
 }
@@ -321,7 +455,7 @@ fn running(node: &Node, key: &str, defaults: &Defaults, except: Option<&Resident
 fn machine(node: &Node, id: &ResidentId) -> Result<(), Queued> {
     let running = crate::memory_room::running(node, id);
     crate::memory_room::admit(node, id, &running)
-        .map_err(|waits| Queued { ahead: waits.ahead, memory: Some((waits.room, waits.available)) })
+        .map_err(|waits| Queued { ahead: waits.ahead, line: Line::Memory(waits.room, waits.available) })
 }
 
 /// The account a conversation works for when its login only assists it.

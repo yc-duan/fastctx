@@ -32,7 +32,6 @@ fn rejection_precedes_all_job_side_effects() {
             attachments: Vec::new(),
         };
         let result = run::launch(&run::Launch {
-            answer_receipts: false,
             on: None,
             account: None,
             world: &world,

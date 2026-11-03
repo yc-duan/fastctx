@@ -50,6 +50,8 @@ export interface AgentLoginsWords extends MachinePickWords {
    *  themselves; an older Fastctx's that waits for the output limit. */
   driftChanged: string;
   driftAsks: string;
+  /** Putting the tools in again as this version writes them. */
+  renew: string;
   searchFailed: string;
   noneBelow: string;
   notSearched: string;
@@ -73,12 +75,17 @@ export interface AgentLoginsWords extends MachinePickWords {
   apply: string;
   more: string;
   remove: string;
+  /** Opening the workbench in a connected login, and closing it. */
+  bench: string;
+  benchSaid: string;
   assist: string;
   rereadLimits: string;
   copyDir: string;
   copied: string;
   autoTitle: string;
   autoTitleWhy: string;
+  resetInPlace: string;
+  resetInPlaceWhy: string;
   plan: string;
   planNone: string;
   assisting: string;
@@ -132,8 +139,8 @@ export const zhAgentLogins: AgentLoginsWords = {
   yours: "你的",
   sharedBy: (owner) => `${owner} 共享`,
   offline: "离线",
-  noAnswer: "没有回应",
-  reading: "正在读",
+  noAnswer: "无应答",
+  reading: "正在读取",
   noneForYou: (agent) => `这台机器上的 ${agent === "codex" ? "Codex" : "Claude Code"} 没有协助你`,
   holds: { mine: "我的机器", shared: "共享给我的", others: "其他成员的", assist: "协助我的" },
   assistAgents: (owner) => `${owner} 的智能体`,
@@ -142,24 +149,25 @@ export const zhAgentLogins: AgentLoginsWords = {
   scanHere: "扫描这台电脑",
   scanThere: "扫描这台机器",
   rescan: "重新扫描",
-  scanning: "正在找",
-  scanFailed: "扫描没有完成",
+  scanning: "正在扫描",
+  scanFailed: "扫描未完成",
   programs: (n) => `${n} 个程序`,
-  noProgram: "没有找到它的程序",
+  noProgram: "未找到程序",
   how,
   within: (name, version) => (version ? `${name} ${version} 自带` : `${name} 自带`),
   commandLine: (version) => (version ? `命令行 ${version}` : "命令行"),
   onPath: "终端里敲命令用的是它",
   listed: "已接入",
-  candidates: "找到的登录",
-  noneFound: "没有找到登录",
+  candidates: "发现的登录",
+  noneFound: "未找到登录",
   folders: "文件夹",
   addFolder: "添加文件夹…",
   searching: (directories) => `已看 ${directories.toLocaleString("zh-CN")} 个文件夹`,
   stop: "停止",
   stopped: "已停止",
-  driftChanged: "接入没跟上",
-  driftAsks: "接入要更新",
+  driftChanged: "接入已被改动",
+  driftAsks: "接入待更新",
+  renew: "更新接入",
   searchFailed: "没找完",
   noneBelow: "没找到",
   notSearched: "还没找过",
@@ -170,9 +178,9 @@ export const zhAgentLogins: AgentLoginsWords = {
   picker: zhFolderPicker,
   defaultLogin: "默认",
   token: "长期令牌",
-  tokenSaid: "用 setup-token 得到的长期令牌登录：认不出账号与套餐",
+  tokenSaid: "以 setup-token 获得的长期令牌登录，无法识别账号与套餐",
   loggedOut: "未登录",
-  tooOld: "版本太旧",
+  tooOld: "版本过旧",
   tooOldSaid: (version, oldest) => `这里的 Claude Code 是 ${version}，要升级到 ${oldest} 或更新`,
   applied: "已接入",
   applying: "正在接入",
@@ -180,12 +188,16 @@ export const zhAgentLogins: AgentLoginsWords = {
   apply: "接入",
   more: "更多",
   remove: "移除",
+  bench: "工作台",
+  benchSaid: "在 Fastctx 中与它对话；打开或关闭之前，先说明会做的改动",
   assist: "协助…",
   rereadLimits: "重读额度",
   copyDir: "复制目录",
   copied: "已复制",
   autoTitle: "自动命名对话",
-  autoTitleWhy: "新对话的第一轮结束后，由这个登录起一个标题，和 Codex 官方客户端一样；每段对话多一次很小的模型请求",
+  autoTitleWhy: "新对话的第一句话送出时，由这个登录起一个标题，和 Codex 官方客户端一样；每段对话多一次很小的模型请求",
+  resetInPlace: "随清零重算本周",
+  resetInPlaceWhy: "厂商在重置时间之前清零这个账号的周额度时（比如升级套餐），这一周与受协助者的周用量从那一刻重新算；关着时只按账号的重置时间",
   plan: "套餐",
   planNone: "不标",
   assisting: "协助",
@@ -246,7 +258,7 @@ export const enAgentLogins: AgentLoginsWords = {
   within: (name, version) => (version ? `inside ${name} ${version}` : `inside ${name}`),
   commandLine: (version) => (version ? `CLI ${version}` : "CLI"),
   onPath: "What the command runs in a terminal",
-  listed: "Hooked up",
+  listed: "Connected",
   candidates: "Logins found",
   noneFound: "No logins found",
   folders: "Folders",
@@ -256,6 +268,7 @@ export const enAgentLogins: AgentLoginsWords = {
   stopped: "Stopped",
   driftChanged: "Not up to date",
   driftAsks: "Needs update",
+  renew: "Update connection",
   searchFailed: "Not finished",
   noneBelow: "None found",
   notSearched: "Not searched yet",
@@ -270,18 +283,22 @@ export const enAgentLogins: AgentLoginsWords = {
   loggedOut: "Logged out",
   tooOld: "Too old",
   tooOldSaid: (version, oldest) => `Claude Code here is ${version}; update it to ${oldest} or later`,
-  applied: "Hooked up",
-  applying: "Hooking up",
+  applied: "Connected",
+  applying: "Connecting",
   removing: "Removing",
-  apply: "Hook up",
+  apply: "Connect",
   more: "More",
   remove: "Remove",
+  bench: "Workbench",
+  benchSaid: "Talk to it in Fastctx; what opening or closing it changes is shown first",
   assist: "Assist…",
   rereadLimits: "Read limits again",
   copyDir: "Copy directory",
   copied: "Copied",
   autoTitle: "Name conversations",
-  autoTitleWhy: "After a new conversation's first turn, this login names it, as the Codex app does: one small model request per conversation",
+  autoTitleWhy: "As a new conversation's first words go in, this login names it, as the Codex app does: one small model request per conversation",
+  resetInPlace: "Restart the week on early resets",
+  resetInPlaceWhy: "When the vendor clears this account's weekly limit before its reset time, as on a plan change, the week and the weekly usage of those it assists start over from then; when off, only at the reset time",
   plan: "Plan",
   planNone: "None",
   assisting: "Assisting",

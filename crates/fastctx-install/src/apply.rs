@@ -33,6 +33,7 @@ use crate::plan::{ClaudePlan, CodexPlan};
 use crate::transaction::{Created, FileChange, FileError, Snapshot, Transaction};
 use crate::{File, Notice, executable, guidance, legacy};
 
+mod agents;
 mod homes;
 mod identity;
 pub mod kernel;
@@ -41,11 +42,16 @@ mod progress;
 mod recovery;
 mod refresh;
 mod settle;
+mod state;
 mod tools;
 mod withdrawn;
+pub use agents::{
+    agent_apply_expecting, agent_connected, agent_fingerprint, agent_integrations, agent_preview, agent_refresh,
+    agent_unapply_expecting,
+};
 pub use homes::Host;
 pub use identity::forward_login_identity;
-pub use preview::preview;
+pub use preview::{fingerprint, preview};
 pub use progress::Progress;
 use progress::tell;
 pub use refresh::{Refresh, refresh};
@@ -64,10 +70,19 @@ pub struct Places {
     pub codex_home: PathBuf,
     /// Claude Code's directory: `~/.claude`, or `CLAUDE_CONFIG_DIR`.
     pub claude_home: PathBuf,
+    /// `CLAUDE_CONFIG_DIR` as the user's environment sets it, none where it
+    /// is unset or empty: the Claude Code home that environment opens by
+    /// default, whose global state is found by it.
+    pub claude_config_dir: Option<PathBuf>,
     /// The `claude` command, when it is on `PATH`.
     pub claude: Option<PathBuf>,
     /// The fastctx that runs now, which an apply copies into place.
     pub fastctx: PathBuf,
+    /// What an apply leaves the selected logins holding (`world-layers.md`,
+    /// 工作台：在一个登录上打开): what the workbench needs too (`Some(true)`),
+    /// only what connecting needs (`Some(false)`), or what they hold now
+    /// (`None`), which for a login connected afresh is connecting's.
+    pub workbench: Option<bool>,
 }
 
 impl Places {
@@ -76,17 +91,16 @@ impl Places {
         let root = fastctx_platform::fastctx_root()?;
         let home = fastctx_platform::user_home()?;
         let environment: Vec<(OsString, OsString)> = std::env::vars_os().collect();
-        let claude_home = match std::env::var_os("CLAUDE_CONFIG_DIR") {
-            Some(directory) if !directory.is_empty() => PathBuf::from(directory),
-            _ => home.join(".claude"),
-        };
+        let claude_config_dir = std::env::var_os("CLAUDE_CONFIG_DIR").filter(|dir| !dir.is_empty()).map(PathBuf::from);
         Ok(Self {
             world: WorldDir::under(&root).path().to_path_buf(),
             codex_home: fastctx_hosts::codex::launch::codex_home(&home, &environment),
-            claude_home,
+            claude_home: claude_config_dir.clone().unwrap_or_else(|| home.join(".claude")),
+            claude_config_dir,
             claude: crate::claude::find(std::env::var_os("PATH").as_ref()),
             fastctx: std::env::current_exe()?,
             root,
+            workbench: None,
         })
     }
 
@@ -120,6 +134,11 @@ impl Places {
     }
     fn stamp(&self) -> PathBuf {
         self.root.join("applied-operation.json")
+    }
+
+    /// What undoes the global state's edit of a change not committed yet.
+    fn entry_undo(&self) -> PathBuf {
+        self.root.join("applied-claude-entry-undo.json")
     }
 }
 
@@ -176,6 +195,7 @@ pub fn status(places: &Places) -> Result<Status, Error> {
         (false, false) => Standing::Absent,
     };
     let plugin = load_plugin_record(&homes::plugin_record(places)?)?.is_some_and(|plugin| plugin.receipt.has_work());
+    let entry = state::receipt(places)?.1.is_some();
     // The old fastctx kept its record in its settings, only for Codex.
     let old = record.codex.is_none() && homes::legacy(places)?.is_some();
     Ok(Status {
@@ -191,7 +211,8 @@ pub fn status(places: &Places) -> Result<Status, Error> {
                 || record.description.is_some()
                 || record.claude_tools.is_some()
                 || record.consent.is_some()
-                || plugin,
+                || plugin
+                || entry,
         ),
         codex_tools: None,
         claude_tools: None,
@@ -213,7 +234,8 @@ pub fn status_at(places: &Places, host: Host, home: &Path) -> Result<Standing, E
         Host::Claude
             if !record.holds_nothing()
                 || load_plugin_record(&homes::plugin_record(&places)?)?
-                    .is_some_and(|plugin| plugin.receipt.has_work()) =>
+                    .is_some_and(|plugin| plugin.receipt.has_work())
+                || state::receipt(&places)?.1.is_some() =>
         {
             Standing::In
         }
@@ -244,6 +266,13 @@ pub fn claude_consent(places: &Places) -> Result<bool, Error> {
     }
     let settings = Snapshot::read(places.claude_home.join("settings.json"))?;
     crate::claude::consent::accepted(settings.bytes()).map_err(Error::Claude)
+}
+
+/// Whether the World's plugin is in the Claude Code home `home`, as its
+/// record says: put in with the workbench, or by an earlier version.
+pub fn claude_plugin_at(places: &Places, home: &Path) -> Result<bool, Error> {
+    let places = places.at_home(Host::Claude, home)?;
+    Ok(load_plugin_record(&homes::plugin_record(&places)?)?.is_some_and(|plugin| plugin.receipt.has_work()))
 }
 
 /// Reads bypass-permissions consent in the selected Claude directory.
@@ -309,6 +338,10 @@ pub enum Error {
     Files(String),
     #[error("the claude command is not on PATH")]
     NoClaude,
+    /// The files a change is worked out from moved on since it was shown:
+    /// nothing was changed, and the change is to be looked at again.
+    #[error("the files changed since this change was shown; look at it again")]
+    Moved,
 }
 
 impl From<FileError> for Error {
@@ -421,6 +454,51 @@ pub fn apply_reporting(
     edits: Edits,
     progress: Option<Progress>,
 ) -> Result<Report, Error> {
+    apply_made(places, hosts, approval, edits, progress, None)
+}
+
+/// `apply_reporting` for `host` alone, made only while the files it is worked
+/// out from are as they were when the user was shown it (`expected`, from
+/// `fingerprint`): the change made is the one shown. A change handed to an
+/// installed fastctx of another build is checked just before it is handed.
+pub fn apply_expecting(
+    places: &Places,
+    host: Host,
+    approval: Approval,
+    edits: Edits,
+    progress: Option<Progress>,
+    expected: &str,
+) -> Result<Report, Error> {
+    unmoved(places, host, expected)?;
+    apply_made(places, host.only(), approval, edits, progress, Some((host, expected)))
+}
+
+/// Refuses a change whose files moved on since `expected` was taken.
+fn unmoved(places: &Places, host: Host, expected: &str) -> Result<(), Error> {
+    if fingerprint(places, host)? != expected {
+        return Err(Error::Moved);
+    }
+    Ok(())
+}
+
+/// `unmoved` again for `host` once its files were read for the change and
+/// before anything is written: what is planned then is planned from the
+/// files the user was shown, and the commit holds them to that.
+fn still(places: &Places, host: Host, expected: Option<(Host, &str)>) -> Result<(), Error> {
+    match expected {
+        Some((shown, expected)) if shown == host => unmoved(places, host, expected),
+        _ => Ok(()),
+    }
+}
+
+fn apply_made(
+    places: &Places,
+    hosts: Hosts,
+    approval: Approval,
+    edits: Edits,
+    progress: Option<Progress>,
+    expected: Option<(Host, &str)>,
+) -> Result<Report, Error> {
     if places.root.join("uninstalled.json").try_exists().map_err(io("checking uninstall state"))? {
         return Err(Error::Io("this World was uninstalled; reinstall it before reconnecting hosts".into()));
     }
@@ -436,12 +514,16 @@ pub fn apply_reporting(
         return Err(Error::Io("this World is being uninstalled".into()));
     }
     let mut report = recovery::before(places)?;
+    if let Some((host, expected)) = expected {
+        unmoved(places, host, expected)?;
+    }
     let operation = recovery::id()?;
     let record_file = Snapshot::read(places.record())?;
     let mut records = homes::Records::read(&record_file, places)?;
     let mut record = records.selected(places, hosts)?;
     let installed = places.installed();
     let mut changes = Vec::new();
+    let mut codex_workbench = false;
 
     if hosts.codex {
         let config = Snapshot::read(places.codex_home.join("config.toml"))?;
@@ -462,7 +544,11 @@ pub fn apply_reporting(
         let applied = codex::apply(
             File { path: &config_path, bytes: config.bytes() },
             File { path: &agents_path, bytes: agents.bytes() },
-            &CodexPlan::new(&installed),
+            &{
+                let plan = codex_plan(places, &installed, record.codex.as_ref());
+                codex_workbench = plan.workbench;
+                plan
+            },
             &briefing::guidance(true),
             ownership,
             approval,
@@ -481,14 +567,17 @@ pub fn apply_reporting(
         if old.is_some() {
             retire_legacy(&mut changes, old_file.expect("legacy receipt came from this snapshot"))?;
         }
+        still(places, Host::Codex, expected)?;
     }
 
     let mut plugin = None;
+    // A plugin an earlier change put into a login now connected alone, taken
+    // out; and what undoes this change's edit of Claude Code's global state
+    // when the files cannot be committed.
+    let mut withdrawn = None;
+    let mut entry_undo = EntryUndo::Nothing;
     if hosts.claude {
         let plugin_record = homes::plugin_record(places)?;
-        let claude = places.claude.clone().ok_or(Error::NoClaude)?;
-        // Nothing goes into a Claude Code the World does not work with.
-        claude_supported(&claude, places)?;
         let initial_settings = Snapshot::read(places.claude_home.join("settings.json"))?;
         let claude_md = Snapshot::read(places.claude_home.join("CLAUDE.md"))?;
         let path = text(claude_md.path());
@@ -499,7 +588,7 @@ pub fn apply_reporting(
             record.claude_md.as_ref(),
         )?;
         let previous = read_plugin_record(&plugin_record, initial_settings.path(), &record)?;
-        fastctx_hosts::claude::write_plugin(&places.world).map_err(io("writing the World's plugin"))?;
+        let (entry_file, entry_receipt) = state::receipt(places)?;
         let plan = ClaudePlan::new(&places.world);
         settings::apply(initial_settings.bytes(), &plan, record.settings.as_ref(), edits == Edits::TakeBack)
             .map_err(Error::Claude)?;
@@ -520,71 +609,116 @@ pub fn apply_reporting(
         let settings_created = record.settings_created
             || previous.as_ref().is_some_and(|r| r.settings_created)
             || !initial_settings.exists();
-        let mut host = Cli::new(claude, plugin_record, initial_settings.path().to_owned(), settings_created);
-        host.progress = progress.clone();
-        let before = plugins::snapshot(&mut host).map_err(Error::Claude)?;
-        let planned =
-            PluginApply::prepare(&plan, before, previous.as_ref().map(|r| &r.receipt)).map_err(Error::Claude)?;
-        host.operation =
-            Some(recovery::PendingPlugin { id: operation.clone(), plan: planned.clone(), withdrawing: false });
-        let added = match planned.execute(&mut host) {
-            Ok(receipt) => receipt,
-            Err(failure) => {
-                let mut message = failure.to_string();
-                if failure.rollback_error.is_none()
-                    && let Err(error) =
-                        recovery::finish_rollback(places, &planned, &failure.receipt, &mut host, &mut report)
-                {
-                    message.push_str(&format!("\n{error}"));
+        still(places, Host::Claude, expected)?;
+        if !claude_workbench(places, previous.as_ref()) {
+            withdrawn = connect_claude(
+                places,
+                &mut record,
+                &mut report,
+                &mut changes,
+                Connecting { edits, progress: &progress, operation: &operation, plan: &plan, settings_created },
+                (&plugin_record, previous.as_ref(), initial_settings.path()),
+                (entry_file, entry_receipt.as_ref(), &mut entry_undo),
+            )?;
+        } else {
+            let claude = places.claude.clone().ok_or(Error::NoClaude)?;
+            // Nothing goes into a Claude Code the World does not work with.
+            claude_supported(&claude, places)?;
+            fastctx_hosts::claude::write_plugin(&places.world).map_err(io("writing the World's plugin"))?;
+            let mut host = Cli::new(claude, plugin_record, initial_settings.path().to_owned(), settings_created);
+            host.progress = progress.clone();
+            let before = plugins::snapshot(&mut host).map_err(Error::Claude)?;
+            let planned =
+                PluginApply::prepare(&plan, before, previous.as_ref().map(|r| &r.receipt)).map_err(Error::Claude)?;
+            host.operation =
+                Some(recovery::PendingPlugin { id: operation.clone(), plan: planned.clone(), withdrawing: false });
+            let added = match planned.execute(&mut host) {
+                Ok(receipt) => receipt,
+                Err(failure) => {
+                    let mut message = failure.to_string();
+                    if failure.rollback_error.is_none()
+                        && let Err(error) =
+                            recovery::finish_rollback(places, &planned, &failure.receipt, &mut host, &mut report)
+                    {
+                        message.push_str(&format!("\n{error}"));
+                    }
+                    return Err(Error::Claude(message));
                 }
-                return Err(Error::Claude(message));
-            }
-        };
-        report.commands.append(&mut host.ran);
+            };
+            report.commands.append(&mut host.ran);
 
-        // Read only now: the plugin commands write Claude's settings.
-        let edit = (|| {
-            let settings_file = Snapshot::read(places.claude_home.join("settings.json"))?;
-            let edit =
-                settings::apply(settings_file.bytes(), &plan, record.settings.as_ref(), edits == Edits::TakeBack)
-                    .map_err(Error::Claude)?;
-            settings_notice(&mut report, settings_file.path(), Limit::output(&plan).key, &edit);
-            let described = settings::apply_limit(
-                edit.bytes.as_deref(),
-                Limit::description(&plan),
-                record.description.as_ref(),
-                edits == Edits::TakeBack,
-            )
-            .map_err(Error::Claude)?;
-            settings_notice(&mut report, settings_file.path(), Limit::description(&plan).key, &described);
-            let path = text(settings_file.path());
-            let tools = crate::claude::tools::apply(
-                File { path: &path, bytes: described.bytes.as_deref() },
-                record.claude_tools.as_ref(),
-                edits == Edits::TakeBack,
-            )
-            .map_err(Error::Claude)?;
-            report.notices.extend(tools.notices);
-            let (bytes, consent) = crate::claude::consent::grant(tools.bytes.as_deref(), record.consent.as_ref())
+            // Read only now: the plugin commands write Claude's settings.
+            let edit = (|| {
+                let settings_file = Snapshot::read(places.claude_home.join("settings.json"))?;
+                let edit =
+                    settings::apply(settings_file.bytes(), &plan, record.settings.as_ref(), edits == Edits::TakeBack)
+                        .map_err(Error::Claude)?;
+                settings_notice(&mut report, settings_file.path(), Limit::output(&plan).key, &edit);
+                let described = settings::apply_limit(
+                    edit.bytes.as_deref(),
+                    Limit::description(&plan),
+                    record.description.as_ref(),
+                    edits == Edits::TakeBack,
+                )
                 .map_err(Error::Claude)?;
-            change(&mut changes, settings_file, bytes);
-            Ok::<_, Error>((edit, tools.receipt, consent, described.receipt))
-        })();
-        let edit = match edit {
-            Ok(edit) => edit,
-            Err(error) => return Err(rollback_plugin(places, error, &planned, &added, &mut host)),
-        };
-        record.settings = edit.0.receipt;
-        record.claude_tools = Some(edit.1);
-        record.consent = edit.2;
-        record.description = edit.3;
+                settings_notice(&mut report, settings_file.path(), Limit::description(&plan).key, &described);
+                let path = text(settings_file.path());
+                let tools = crate::claude::tools::apply(
+                    File { path: &path, bytes: described.bytes.as_deref() },
+                    record.claude_tools.as_ref(),
+                    edits == Edits::TakeBack,
+                )
+                .map_err(Error::Claude)?;
+                report.notices.extend(tools.notices);
+                let (bytes, consent) = crate::claude::consent::grant(tools.bytes.as_deref(), record.consent.as_ref())
+                    .map_err(Error::Claude)?;
+                change(&mut changes, settings_file, bytes);
+                Ok::<_, Error>((edit, tools.receipt, consent, described.receipt))
+            })();
+            let edit = match edit {
+                Ok(edit) => edit,
+                Err(error) => return Err(rollback_plugin(places, error, &planned, &added, &mut host)),
+            };
+            record.settings = edit.0.receipt;
+            record.claude_tools = Some(edit.1);
+            record.consent = edit.2;
+            record.description = edit.3;
+            // The plugin brings the server now: Fastctx's entry in Claude Code's
+            // state goes, or the login's sessions would see `run` twice. One
+            // the user changed goes only when that is taken back; otherwise
+            // the workbench is not opened beside it.
+            if let Some(receipt) = entry_receipt {
+                let undo = EntryUndo::PutBack(receipt.clone());
+                if let Err(error) = recovery::keep_entry_undo(places, &operation, &undo) {
+                    return Err(rollback_plugin(places, error, &planned, &added, &mut host));
+                }
+                let taken = state::take(&receipt, edits == Edits::TakeBack);
+                if !matches!(taken, Ok(None)) {
+                    recovery::drop_entry_undo(places);
+                }
+                match taken {
+                    Ok(None) => {}
+                    Ok(Some(left)) => {
+                        let error = Error::Claude(format!(
+                            "{} was changed since Fastctx wrote it, and the World's plugin would serve run beside it; the workbench opens once that change is taken back",
+                            left.location
+                        ));
+                        return Err(rollback_plugin(places, error, &planned, &added, &mut host));
+                    }
+                    Err(error) => return Err(rollback_plugin(places, error, &planned, &added, &mut host)),
+                }
+                entry_undo = undo;
+                changes.extend(state::keep(entry_file, None)?);
+            }
+            plugin = Some((planned, added, host));
+        }
         record.settings_created = settings_created;
         change(&mut changes, claude_md, Some(applied.bytes));
         record.claude_md = Some(applied.receipt);
-        plugin = Some((planned, added, host));
     }
 
     record.version = RECORD_VERSION;
+    changes.extend(recovery::entry_undo_done(places)?);
     // fastctx's own copy, and the directory it lives in, belong to fastctx,
     // not to what an unapply takes out.
     let bin = installed.parent().map(Path::to_path_buf);
@@ -614,7 +748,16 @@ pub fn apply_reporting(
                 host.operation = None;
                 host.checkpoint(&added).map_err(Error::Claude)?;
             }
-            if hosts.codex {
+            if let Some((remaining, mut host)) = withdrawn {
+                host.operation = None;
+                host.checkpoint(&remaining).map_err(Error::Claude)?;
+                if !remaining.has_work() {
+                    forget_plugin(&homes::plugin_record(places)?, &mut report);
+                }
+            }
+            // Codex's own reading of its tools asks its program: only where
+            // the workbench is to be open, since connecting starts none.
+            if hosts.codex && codex_workbench {
                 report.tools.push(progress::checked(&progress, || tools::codex(places)));
             }
             if hosts.claude {
@@ -625,7 +768,8 @@ pub fn apply_reporting(
         Err(failure) => {
             // File rollback failures are already in the error. Withdraw this
             // invocation's plugin additions even when a file could not be restored.
-            let error = Error::Files(failure.to_string());
+            let error = entry_undo.undo(Error::Files(failure.to_string()));
+            recovery::drop_entry_undo(places);
             if let Some((planned, added, mut host)) = plugin {
                 return Err(rollback_plugin(places, error, &planned, &added, &mut host));
             }
@@ -642,6 +786,27 @@ pub fn unapply(places: &Places, hosts: Hosts) -> Result<Report, Error> {
 
 /// `unapply`, telling `progress` each step as it goes.
 pub fn unapply_reporting(places: &Places, hosts: Hosts, progress: Option<Progress>) -> Result<Report, Error> {
+    unapply_made(places, hosts, progress, None)
+}
+
+/// `unapply_reporting` for `host` alone, made only while its files are as
+/// they were when the user was shown it (`apply_expecting`).
+pub fn unapply_expecting(
+    places: &Places,
+    host: Host,
+    progress: Option<Progress>,
+    expected: &str,
+) -> Result<Report, Error> {
+    unmoved(places, host, expected)?;
+    unapply_made(places, host.only(), progress, Some((host, expected)))
+}
+
+fn unapply_made(
+    places: &Places,
+    hosts: Hosts,
+    progress: Option<Progress>,
+    expected: Option<(Host, &str)>,
+) -> Result<Report, Error> {
     if let Some(report) =
         progress::delegated(&progress, || kernel::delegate(places, hosts, Approval::Require, Edits::Keep, false))?
     {
@@ -650,6 +815,9 @@ pub fn unapply_reporting(places: &Places, hosts: Hosts, progress: Option<Progres
     crate::disk::ensure_private_dir(&places.root).map_err(io("making fastctx's directory"))?;
     let _lock = FileLock::acquire(&places.lock()).map_err(io("taking the apply lock"))?;
     let mut report = recovery::before(places)?;
+    if let Some((host, expected)) = expected {
+        unmoved(places, host, expected)?;
+    }
     let operation = recovery::id()?;
     let record_file = Snapshot::read(places.record())?;
     let mut records = homes::Records::read(&record_file, places)?;
@@ -682,10 +850,14 @@ pub fn unapply_reporting(places: &Places, hosts: Hosts, progress: Option<Progres
                 retire_legacy(&mut changes, old_file.expect("legacy receipt came from this snapshot"))?;
             }
         }
+        still(places, Host::Codex, expected)?;
     }
 
     let mut plugin_done = false;
     let mut plugin = None;
+    // What undoes this change's edit of Claude Code's global state when the
+    // files cannot be committed.
+    let mut entry_undo = EntryUndo::Nothing;
     let plugin_record = if hosts.claude { Some(homes::plugin_record(places)?) } else { None };
     if hosts.claude {
         let plugin_record = plugin_record.as_ref().expect("selected Claude record");
@@ -700,7 +872,10 @@ pub fn unapply_reporting(places: &Places, hosts: Hosts, progress: Option<Progres
             None
         };
         let previous = read_plugin_record(plugin_record, initial_settings.path(), &record)?;
-        if let Some(claude) = places.claude.clone() {
+        still(places, Host::Claude, expected)?;
+        // A login that never had the plugin starts none of Claude Code's
+        // programs to be taken out.
+        if let Some(claude) = places.claude.clone().filter(|_| previous.is_some()) {
             record.settings_created |= previous.as_ref().is_some_and(|record| record.settings_created);
             let mut host =
                 Cli::new(claude, plugin_record.clone(), initial_settings.path().to_owned(), record.settings_created);
@@ -729,12 +904,8 @@ pub fn unapply_reporting(places: &Places, hosts: Hosts, progress: Option<Progres
             report.notices.extend(edit.notices);
             settings_bytes = edit.bytes;
         }
-        if let Some(receipt) = record.settings.take() {
-            let edit = settings::unapply(settings_bytes.as_deref(), Some(&receipt)).map_err(Error::Claude)?;
-            settings_notice(&mut report, settings_file.path(), "MAX_MCP_OUTPUT_TOKENS", &edit);
-            settings_bytes = edit.bytes;
-            record.settings = edit.receipt;
-        }
+        // The limits go in the reverse of the order they were written: the
+        // first made `env`, and takes it with it once it holds nothing else.
         if let Some(receipt) = record.description.take() {
             let key = Limit::description(&ClaudePlan::new(&places.world)).key;
             let edit =
@@ -742,6 +913,12 @@ pub fn unapply_reporting(places: &Places, hosts: Hosts, progress: Option<Progres
             settings_notice(&mut report, settings_file.path(), key, &edit);
             settings_bytes = edit.bytes;
             record.description = edit.receipt;
+        }
+        if let Some(receipt) = record.settings.take() {
+            let edit = settings::unapply(settings_bytes.as_deref(), Some(&receipt)).map_err(Error::Claude)?;
+            settings_notice(&mut report, settings_file.path(), "MAX_MCP_OUTPUT_TOKENS", &edit);
+            settings_bytes = edit.bytes;
+            record.settings = edit.receipt;
         }
         if let Some(receipt) = record.consent.take() {
             let (bytes, kept) =
@@ -756,6 +933,20 @@ pub fn unapply_reporting(places: &Places, hosts: Hosts, progress: Option<Progres
         }
         change(&mut changes, settings_file, settings_bytes);
         record.settings_created = false;
+        let (entry_file, entry_receipt) = state::receipt(places)?;
+        if let Some(receipt) = &entry_receipt {
+            let undo = EntryUndo::PutBack(receipt.clone());
+            recovery::keep_entry_undo(places, &operation, &undo)?;
+            let left = state::take(receipt, false);
+            if !matches!(left, Ok(None)) {
+                recovery::drop_entry_undo(places);
+            }
+            match left? {
+                None => entry_undo = undo,
+                Some(left) => report.notices.push(left),
+            }
+            changes.extend(state::keep(entry_file, None)?);
+        }
         if let Some((claude_md, taken)) = guidance {
             change(&mut changes, claude_md, taken.bytes);
             record.claude_md = taken.receipt;
@@ -763,6 +954,7 @@ pub fn unapply_reporting(places: &Places, hosts: Hosts, progress: Option<Progres
         }
     }
 
+    changes.extend(recovery::entry_undo_done(places)?);
     changes.push(recovery::stamp(places, &operation)?);
     let cleanup = records.update(places, hosts, &record)?;
     tell(&progress, progress::Step::Files { changed: Vec::new() }, progress::StepState::Running);
@@ -778,7 +970,14 @@ pub fn unapply_reporting(places: &Places, hosts: Hosts, progress: Option<Progres
             |_| serde_json::to_vec_pretty(&records).map_err(io::Error::other),
         )
     };
-    let receipt = committed.map_err(|failure| Error::Files(failure.to_string()))?;
+    let receipt = match committed {
+        Ok(receipt) => receipt,
+        Err(failure) => {
+            let error = entry_undo.undo(Error::Files(failure.to_string()));
+            recovery::drop_entry_undo(places);
+            return Err(error);
+        }
+    };
     tell(&progress, progress::Step::Files { changed: receipt.changed.clone() }, progress::StepState::Done);
     report.changed.extend(receipt.changed);
     report.preserved.extend(receipt.preserved);
@@ -789,14 +988,139 @@ pub fn unapply_reporting(places: &Places, hosts: Hosts, progress: Option<Progres
         host.checkpoint(&remaining).map_err(Error::Claude)?;
     }
     if plugin_done {
-        let plugin_record = plugin_record.expect("Claude was withdrawn");
-        match std::fs::remove_file(&plugin_record) {
-            Ok(()) => {}
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => report.leftovers.push(format!("{}: {error}", plugin_record.display())),
-        }
+        forget_plugin(&plugin_record.expect("Claude was withdrawn"), &mut report);
     }
     Ok(report)
+}
+
+/// Removes the record of a plugin taken out whole.
+fn forget_plugin(plugin_record: &Path, report: &mut Report) {
+    match std::fs::remove_file(plugin_record) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => report.leftovers.push(format!("{}: {error}", plugin_record.display())),
+    }
+}
+
+/// How a change of a Claude Code login connected alone is made.
+struct Connecting<'a> {
+    edits: Edits,
+    progress: &'a Option<Progress>,
+    operation: &'a str,
+    plan: &'a ClaudePlan,
+    settings_created: bool,
+}
+
+/// Connects a Claude Code login alone (`world-layers.md`, 接入只写接入的东西):
+/// no program of Claude Code's is started, but to take out a plugin an
+/// earlier change put in, by its own commands where it is found and
+/// otherwise by taking its declarations out of the settings, so that it no
+/// longer loads. The settings get the limits and the shell turned off, the
+/// permission an earlier change granted goes, and the World's server is
+/// entered in Claude Code's global state. Answers the plugin taken out, to
+/// keep its record once the files are committed.
+fn connect_claude(
+    places: &Places,
+    record: &mut Record,
+    report: &mut Report,
+    changes: &mut Vec<FileChange>,
+    how: Connecting<'_>,
+    (plugin_record, previous, settings_at): (&Path, Option<&PluginRecord>, &Path),
+    (entry_file, entry_receipt, entry_undo): (Snapshot, Option<&crate::claude::entry::Receipt>, &mut EntryUndo),
+) -> Result<Option<(PluginReceipt, Cli)>, Error> {
+    let take_back = how.edits == Edits::TakeBack;
+    let mut withdrawn = None;
+    if previous.is_some_and(|record| record.receipt.has_work())
+        && let Some(claude) = places.claude.clone()
+    {
+        let mut host = Cli::new(claude, plugin_record.to_owned(), settings_at.to_owned(), how.settings_created);
+        host.progress = how.progress.clone();
+        let receipt = previous.map(|record| &record.receipt);
+        let baseline = plugins::snapshot(&mut host).map_err(Error::Claude)?;
+        let baseline = PluginApply::prepare(how.plan, baseline, receipt).map_err(Error::Claude)?;
+        host.operation =
+            Some(recovery::PendingPlugin { id: how.operation.to_owned(), plan: baseline, withdrawing: true });
+        let remaining = plugins::unapply_managed(&mut host, how.plan, receipt)?;
+        report.commands.append(&mut host.ran);
+        withdrawn = Some((remaining, host));
+    }
+    // Read only now: the plugin commands write Claude's settings.
+    let settings_file = Snapshot::read(places.claude_home.join("settings.json"))?;
+    let declared =
+        crate::claude::registration::remove(settings_file.bytes(), how.plan, true, true).map_err(Error::Claude)?;
+    let edit =
+        settings::apply(declared.as_deref(), how.plan, record.settings.as_ref(), take_back).map_err(Error::Claude)?;
+    settings_notice(report, settings_file.path(), Limit::output(how.plan).key, &edit);
+    let described = settings::apply_limit(
+        edit.bytes.as_deref(),
+        Limit::description(how.plan),
+        record.description.as_ref(),
+        take_back,
+    )
+    .map_err(Error::Claude)?;
+    settings_notice(report, settings_file.path(), Limit::description(how.plan).key, &described);
+    let path = text(settings_file.path());
+    let tools = crate::claude::tools::apply(
+        File { path: &path, bytes: described.bytes.as_deref() },
+        record.claude_tools.as_ref(),
+        take_back,
+    )
+    .map_err(Error::Claude)?;
+    report.notices.extend(tools.notices);
+    let mut bytes = tools.bytes;
+    if let Some(receipt) = record.consent.take() {
+        let (restored, kept) = crate::claude::consent::restore(bytes.as_deref(), &receipt).map_err(Error::Claude)?;
+        if kept {
+            report.notices.push(consent_kept(settings_file.path()));
+        }
+        bytes = restored;
+    }
+    change(changes, settings_file, bytes);
+    record.settings = edit.receipt;
+    record.claude_tools = Some(tools.receipt);
+    record.description = described.receipt;
+    let (receipt, changed) = state::put(places, entry_receipt, take_back)?;
+    if changed {
+        // Put in where there was none, it is taken out again; written over
+        // an earlier one, that one is put back.
+        *entry_undo = match entry_receipt {
+            None => EntryUndo::TakeOut(receipt.clone()),
+            Some(previous) => EntryUndo::PutBack(previous.clone()),
+        };
+        recovery::keep_entry_undo(places, how.operation, entry_undo)?;
+    }
+    if entry_receipt != Some(&receipt) {
+        changes.extend(state::keep(entry_file, Some(&receipt))?);
+    }
+    Ok(withdrawn)
+}
+
+/// What undoes a change's edit of Claude Code's global state when the
+/// change's files cannot be committed; kept on disk until they are
+/// (`recovery::keep_entry_undo`).
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum EntryUndo {
+    Nothing,
+    /// The entry it put in where there was none.
+    TakeOut(crate::claude::entry::Receipt),
+    /// The entry it took out, for the workbench's plugin.
+    PutBack(crate::claude::entry::Receipt),
+}
+
+impl EntryUndo {
+    /// Undoes the edit, and says so with `error` where it could not be.
+    fn undo(self, error: Error) -> Error {
+        let undone = match &self {
+            Self::Nothing => Ok(()),
+            Self::TakeOut(receipt) => state::take(receipt, false).map(|_| ()),
+            Self::PutBack(receipt) => state::restore(receipt),
+        };
+        match undone {
+            Ok(()) => error,
+            Err(more) => Error::Io(format!("{error}\nand Claude Code's global state could not be put back: {more}")),
+        }
+    }
 }
 
 /// Runs the public `claude` command for the plugin engine, and keeps each
@@ -995,6 +1319,23 @@ fn change(changes: &mut Vec<FileChange>, file: Snapshot, after: Option<Vec<u8>>)
         Some(bytes) => changes.push(FileChange::write(file, bytes)),
         None => changes.push(FileChange::delete(file)),
     }
+}
+
+/// The World's server for Codex as this change writes it: with the
+/// colleagues' tools where the workbench is to be open in the login, and
+/// where that is not said, as it was written before (`Places::workbench`).
+fn codex_plan(places: &Places, installed: &Path, receipt: Option<&codex::Receipt>) -> CodexPlan {
+    let workbench = places.workbench.unwrap_or_else(|| receipt.is_some_and(codex::Receipt::colleagues));
+    CodexPlan { workbench, ..CodexPlan::new(installed) }
+}
+
+/// Whether the selected Claude Code login is to hold what the workbench
+/// needs: as said, and where that is not said, as an earlier change left it,
+/// the World's plugin put in. Not by the permission for the World's
+/// conversations: a login whose user had given it before holds no grant of
+/// the World's.
+fn claude_workbench(places: &Places, plugin: Option<&PluginRecord>) -> bool {
+    places.workbench.unwrap_or_else(|| plugin.is_some_and(|plugin| plugin.receipt.has_work()))
 }
 
 /// Whether two paths name the same place, however each is spelled.

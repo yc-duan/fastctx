@@ -1,4 +1,4 @@
-//! An assisting host keeps only the project's attributes and memory catalog.
+//! An assisting host keeps project metadata in memory, never as a disk replica.
 
 use std::io;
 use std::sync::Arc;
@@ -11,13 +11,15 @@ use fastctx_types::memory::ProjectIndex;
 
 use crate::Node;
 
+type Indices = std::collections::HashMap<std::path::PathBuf, ProjectIndex>;
+static INDICES: std::sync::LazyLock<std::sync::Mutex<Indices>> = std::sync::LazyLock::new(Default::default);
+
 pub(crate) fn read(world: &WorldDir, town: &TownName) -> io::Result<Option<ProjectIndex>> {
-    let path = world.town(town).path().join("index.json");
-    match std::fs::read(path) {
-        Ok(bytes) => serde_json::from_slice(&bytes).map(Some).map_err(io::Error::other),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error),
-    }
+    Ok(INDICES.lock().expect("never poisoned").get(world.town(town).path()).cloned())
+}
+
+pub(crate) fn forget(world: &WorldDir, town: &TownName) {
+    INDICES.lock().expect("never poisoned").remove(world.town(town).path());
 }
 
 /// Fetches without local gates, then applies under the synchronization gate.
@@ -47,18 +49,29 @@ pub(crate) async fn refresh(node: &Arc<Node>, link: &Arc<Link>, wanted: Option<&
         if view.member_keeps_project(&view.me, &id) {
             continue;
         }
-        let town = super::local_name(node, link, &id)?;
-        if read(&node.world, &town)
-            .map_err(|error| error.to_string())?
-            .as_ref()
-            .is_some_and(|kept| kept.seq >= index.seq)
-        {
+        // The project's files are named, cleared and read on the blocking pool.
+        let (town, kept) = {
+            let (naming, link, id) = (node.clone(), link.clone(), id.clone());
+            fastctx_platform::task::blocking(move || -> Result<_, String> {
+                let town = super::local_name(&naming, &link, &id)?;
+                match fastctx_platform::disk::remove_file(naming.world.town(&town).path().join("index.json")) {
+                    Ok(()) => {}
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                    Err(error) => return Err(error.to_string()),
+                }
+                let kept = read(&naming.world, &town).map_err(|error| error.to_string())?;
+                Ok((town, kept))
+            })
+            .await?
+        };
+        if kept.as_ref().is_some_and(|kept| kept.seq >= index.seq) {
             continue;
         }
         let (node, world) = (node.clone(), node.world.clone());
-        tokio::task::spawn_blocking(move || {
-            fastctx_net::link::state::write(&world.town(&town).path().join("index.json"), &index)?;
+        fastctx_platform::task::spawn_blocking(move || {
+            INDICES.lock().expect("never poisoned").insert(world.town(&town).path().to_path_buf(), index);
             crate::town::instructions::refresh(&node, &town);
+            crate::context::invalidations::project(&node, &town);
             node.memory_changed();
             io::Result::Ok(())
         })

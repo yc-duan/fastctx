@@ -23,12 +23,13 @@ pub(super) fn prefix(
     let original = exchange::transcript(&exchange::sessions(node.world.path()).join(session))
         .map_err(failure)?
         .ok_or_else(|| Failure::new("Claude did not identify its source history"))?;
-    let input = std::fs::File::open(original).map_err(failure)?;
+    let input = fastctx_platform::disk::open(original).map_err(failure)?;
     let length = input.metadata().map_err(failure)?.len();
     let source = directory.join("claude-fork-source");
     fastctx_platform::ensure_private_dir(&source).map_err(failure)?;
     let path = source.join(format!("{session}.jsonl"));
-    let mut output = std::fs::OpenOptions::new().create_new(true).write(true).open(&path).map_err(failure)?;
+    let mut output = fastctx_platform::disk::open_with(std::fs::OpenOptions::new().create_new(true).write(true), &path)
+        .map_err(failure)?;
     let mut input = std::io::BufReader::new(input.take(length));
     let (mut row, mut offset, mut boundary) = (Vec::new(), 0_u64, None);
     while input.read_until(b'\n', &mut row).map_err(failure)? != 0 {

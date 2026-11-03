@@ -12,7 +12,6 @@ use std::time::{Duration, Instant, SystemTime};
 
 use fastctx_types::ResidentId;
 use fastctx_types::plan::Page;
-use fastctx_types::residents::Origin;
 
 use crate::Node;
 
@@ -50,10 +49,21 @@ fn hash(text: &str) -> u64 {
 }
 
 fn stamp(path: &std::path::Path) -> Option<(SystemTime, u64)> {
-    std::fs::metadata(path).ok().map(|meta| (meta.modified().unwrap_or(SystemTime::UNIX_EPOCH), meta.len()))
+    fastctx_platform::disk::metadata(path)
+        .ok()
+        .map(|meta| (meta.modified().unwrap_or(SystemTime::UNIX_EPOCH), meta.len()))
 }
 
-pub(crate) fn start(node: &Arc<Node>) {
+fn watch_legacy(node: &Arc<Node>) {
+    let links = node.links();
+    if !links.is_empty() && links.iter().all(|link| link.view().shared_records) {
+        let old = node.plan_files.2.lock().expect("never poisoned").take();
+        drop(old);
+        return;
+    }
+    if node.plan_files.2.lock().expect("never poisoned").is_some() {
+        return;
+    }
     let weak = Arc::downgrade(node);
     let runtime = tokio::runtime::Handle::current();
     let mut watcher = fastctx_watch::Watcher::new(move |event: fastctx_watch::Result<fastctx_watch::Event>| {
@@ -79,13 +89,27 @@ pub(crate) fn start(node: &Arc<Node>) {
         node.log.line(format_args!("watching legacy plan directories: {error}"));
     }
     *node.plan_files.2.lock().expect("never poisoned") = Some(watcher);
+}
+
+pub(crate) fn start(node: &Arc<Node>) {
+    watch_legacy(node);
     let weak = Arc::downgrade(node);
     let mut views = node.views.subscribe();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         loop {
             let Some(node) = weak.upgrade() else { return };
-            for resident in node.residents.everyone().filter(|resident| resident.here && resident.removed.is_none()) {
-                request(&node, &resident.id);
+            let working = node.clone();
+            if let Err(error) = fastctx_platform::task::spawn_blocking(move || {
+                watch_legacy(&working);
+                for resident in
+                    working.residents.everyone().filter(|resident| resident.here && resident.removed.is_none())
+                {
+                    request(&working, &resident.id);
+                }
+            })
+            .await
+            {
+                node.log.line(format_args!("watching legacy plans: {error}"));
             }
             drop(node);
             if views.changed().await.is_err() {
@@ -100,7 +124,7 @@ pub(crate) fn request(node: &Arc<Node>, id: &ResidentId) {
         return;
     }
     let (weak, id) = (Arc::downgrade(node), id.clone());
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         loop {
             let Some(node) = weak.upgrade() else { return };
             node.plan_files.1.lock().expect("never poisoned").insert(id.clone(), false);
@@ -130,19 +154,23 @@ pub(crate) fn request(node: &Arc<Node>, id: &ResidentId) {
 
 /// Takes each plan file changed since it was last looked at.
 async fn look(node: &Arc<Node>, wanted: &ResidentId) {
+    // The one resident asked for, read alone: every resident here is asked
+    // for when the view changes.
     let held: Vec<ResidentId> = node
         .residents
-        .everyone()
-        .filter(|held| {
-            held.id == *wanted
-                && held.here
-                && held.removed.is_none()
-                && held.about.world_managed()
-                && matches!(held.about.origin, Origin::User)
-        })
+        .on_record(wanted)
+        .filter(|held| held.here && held.removed.is_none() && held.about.world_managed())
         .map(|held| held.id)
+        .into_iter()
         .collect();
     for id in held {
+        if let Some((about, _)) = node.residents.about(&id)
+            && let Ok(Some(account)) = crate::plan::file_account(node, &id, &about.acting)
+            && node.link_of(&account.hub).is_some_and(|link| link.view().shared_records)
+        {
+            node.plan_files.0.lock().expect("never poisoned").remove(&id);
+            continue;
+        }
         if allowed(node, &id) == Ok(true)
             && let Some((about, _)) = node.residents.about(&id)
             && let Ok(Some(account)) = crate::plan::file_account(node, &id, &about.acting)
@@ -185,7 +213,7 @@ async fn look(node: &Arc<Node>, wanted: &ResidentId) {
         // with no hub to keep it, the file is taken as it is.
         let Some(before) = before else {
             if let Some((about, _)) = node.residents.about(&id) {
-                let _ = crate::plan::context(node, &id, &about.origin, &about.acting).await;
+                let _ = crate::plan::context(node, &id, &about.acting).await;
             }
             let text = now.is_none().then(|| hash(""));
             node.plan_files.0.lock().expect("never poisoned").entry(id.clone()).or_insert(Synced {
@@ -200,12 +228,13 @@ async fn look(node: &Arc<Node>, wanted: &ResidentId) {
             continue;
         }
         let text = match &now {
-            Some(_) => match std::fs::read(&path) {
+            Some(_) => match fastctx_platform::disk::read(&path) {
                 Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
                 // Unreadable for now (held open, permissions): looked at
                 // again in a while rather than at once.
                 Err(_) => {
-                    let waiting = Synced { stamp: before.stamp, text: before.text, retry: Some(Instant::now() + RETRY) };
+                    let waiting =
+                        Synced { stamp: before.stamp, text: before.text, retry: Some(Instant::now() + RETRY) };
                     node.plan_files.0.lock().expect("never poisoned").insert(id.clone(), waiting);
                     continue;
                 }
@@ -241,7 +270,7 @@ async fn look(node: &Arc<Node>, wanted: &ResidentId) {
 /// what the file was last seen to hold.
 pub(crate) fn pulled(node: &Node, id: &ResidentId, page: &Page) {
     let Some((about, _)) = node.residents.about(id) else { return };
-    if !about.world_managed() || !matches!(about.origin, Origin::User) || allowed(node, id) != Ok(true) {
+    if !about.world_managed() || allowed(node, id) != Ok(true) {
         return;
     }
     if let Ok(Some(account)) = crate::plan::file_account(node, id, &about.acting)
@@ -252,7 +281,7 @@ pub(crate) fn pulled(node: &Node, id: &ResidentId, page: &Page) {
     let path = path(node, id);
     let markdown = page.body.as_ref().map(|body| body.markdown.as_str()).unwrap_or_default();
     let mut files = node.plan_files.0.lock().expect("never poisoned");
-    let on_disk = std::fs::read(&path).ok().map(|bytes| String::from_utf8_lossy(&bytes).into_owned());
+    let on_disk = fastctx_platform::disk::read(&path).ok().map(|bytes| String::from_utf8_lossy(&bytes).into_owned());
     let pending = match (files.get(id), &on_disk) {
         // Changed since last taken, or never taken: the file wins and is
         // taken next.

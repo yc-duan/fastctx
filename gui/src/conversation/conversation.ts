@@ -16,7 +16,7 @@ import type { AskState } from "./ask-state";
 import { inOrder, type ModelRequest } from "./requests";
 import type { SessionEvent, TurnEnd } from "../world/events";
 import type { MachineName } from "../world/events";
-import { Fold, sayOf, type Block, type Entry, type Gap, type KeptWords, type SendState, type ShownAttachment } from "./model";
+import { Fold, sayOf, type Block, type Entry, type Gap, type KeptWords, type SendState, type Settler, type ShownAttachment } from "./model";
 import type { AgentRun } from "./agents";
 import { machineNamed } from "./acted-on";
 import type { PendingControl } from "../world/control";
@@ -767,6 +767,13 @@ export class Conversation {
   }
   unsend(key: string): void {
     this.live.unsend(key);
+  }
+  /** `Fold.settles`, `Fold.settler`. */
+  settles(key: string, settler: Settler | null): void {
+    this.live.settles(key, settler);
+  }
+  settler(key: string): Settler | undefined {
+    return this.live.settler(key);
   }
   /** `Fold.heardMark`, `Fold.heardAlready`. */
   heardMark(): number {

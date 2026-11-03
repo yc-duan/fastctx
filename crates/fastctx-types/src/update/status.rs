@@ -48,6 +48,8 @@ pub enum FailureReason {
         code: Option<i32>,
     },
     NotNewer,
+    /// The network's administrator withdrew the release.
+    Withdrawn,
     #[serde(other)]
     Other,
 }
@@ -56,6 +58,11 @@ pub enum FailureReason {
 pub struct SourceFailure {
     pub via: Via,
     pub why: String,
+    /// The network could not be asked: the line to its hub was down, or
+    /// dropped while the package came. It is asked again once the line is
+    /// back, not after an ordinary failure's wait.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub unconnected: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

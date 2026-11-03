@@ -43,6 +43,8 @@ struct Held {
     guards: Vec<Box<dyn Send>>,
     came: tokio::time::Instant,
     deadline: Option<tokio::time::Instant>,
+    /// The call's kind, once its body is in.
+    kind: Option<String>,
 }
 
 /// Checks a call from another machine, and does what it asks.
@@ -131,11 +133,15 @@ pub(super) async fn answer(inner: Arc<Inner>, replier: Replier, message: Envelop
         )),
     };
     // Kept until the answer has gone, or is given up.
-    let mut held = Held { guards: Vec::new(), came, deadline: None };
+    let mut held = Held { guards: Vec::new(), came, deadline: None, kind: None };
     let Some(result) = work(&inner, &caller, &message, &endpoint, &mut stop, &mut held).await else {
         // Nobody is left to hear the answer.
         return;
     };
+    // From the door to the answer, under the call's kind.
+    if let Some(kind) = &held.kind {
+        fastctx_platform::readings::timing_of("remote", kind).record(came.elapsed());
+    }
     let deadline = held.deadline;
     let sending = async {
         if stop.stopped().is_some() || registered.as_ref().is_some_and(|registered| !registered.wanted()) {
@@ -311,6 +317,7 @@ async fn work(
         .capacity(fastctx_types::ipc::CapacityReason::Expired)));
     }
     let kind = remote.kind();
+    held.kind = Some(kind.clone());
     let doing = inner.node.call(caller.clone(), remote, stream);
     let past = async {
         match contract.within {
@@ -321,7 +328,7 @@ async fn work(
     if !contract.cancellable {
         let kept = std::mem::take(&mut held.guards);
         let working_place = place.clone();
-        let worker = tokio::spawn(async move {
+        let worker = fastctx_platform::task::spawn(async move {
             working_place.started();
             let result = doing.await;
             (result, kept)
@@ -342,7 +349,7 @@ async fn work(
         // still reaches a caller whose own deadline may be longer.
         held.deadline = None;
         let node = inner.node.clone();
-        tokio::spawn(async move {
+        fastctx_platform::task::spawn(async move {
             match worker.await {
                 Ok((Err(error), _)) => node.log(format!("finishing {kind}: {}", error.message)),
                 Err(error) => node.log(format!("finishing {kind}: {error}")),

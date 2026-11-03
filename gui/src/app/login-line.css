@@ -1,0 +1,118 @@
+/* A login as a line on paper (`login-line.ts`): whether Fastctx is
+   connected to it is drawn by its plug; ink connected, faint found and not
+   yet connected, clay asking to be renewed. */
+
+.ll-line {
+  container: ll-line / inline-size;
+  font-size: var(--size-text);
+}
+
+/* The line never breaks: what is known of it gives way first, then who it
+   is, and the deed at its end always stays in sight. */
+.ll-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 36px;
+}
+
+.ll-plug {
+  flex: none;
+  display: inline-flex;
+  color: var(--text);
+}
+
+.ll-who {
+  flex: 0 1 auto;
+  min-width: 3em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+.ll-line[data-standing="found"] .ll-plug,
+.ll-line[data-standing="busy"] .ll-plug {
+  color: var(--text-3);
+}
+
+.ll-line[data-standing="found"] .ll-who {
+  color: var(--text-2);
+}
+
+.ll-line[data-standing="renew"] .ll-plug {
+  color: var(--accent);
+}
+
+.ll-tags {
+  flex: 0 100 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-3);
+  font-size: var(--size-fine);
+}
+
+.ll-tag + .ll-tag {
+  margin-left: var(--space-2);
+}
+
+.ll-tag.ll-warn {
+  color: var(--accent);
+}
+
+.ll-act {
+  flex: none;
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+/* Connecting, or renewing what was changed, is the line's one main deed:
+   its word stands in clay; any other is quiet. */
+.ll-go {
+  color: var(--accent);
+}
+
+.ll-quiet {
+  color: var(--text-2);
+}
+
+.ll-busy {
+  color: var(--text-3);
+  font-size: var(--size-text);
+}
+
+/* A note on the line, below it, set in under who it is. */
+.ll-line > .feature-note {
+  margin: 0 0 var(--space-2) calc(round(nearest, 16px * var(--icon-scale), 1px) + var(--space-2));
+}
+
+@media (pointer: coarse) {
+  .ll-row {
+    min-height: 44px;
+  }
+}
+
+/* On a narrow paper what is known of the line goes under who it is, rather
+   than being cut down to nothing; who it is gives way before the deed,
+   which keeps its place at the end of the first line. */
+@container ll-line (max-width: 480px) {
+  .ll-row {
+    flex-wrap: wrap;
+    align-content: center;
+    row-gap: 0;
+  }
+
+  .ll-who {
+    flex: 1 1 0;
+  }
+
+  .ll-tags {
+    order: 1;
+    flex: 1 0 100%;
+    padding-left: calc(round(nearest, 16px * var(--icon-scale), 1px) + var(--space-2));
+  }
+}

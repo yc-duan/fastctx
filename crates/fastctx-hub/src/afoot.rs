@@ -17,6 +17,8 @@
 //! once for them all and kept once.
 
 mod publishing;
+mod state;
+pub(crate) use state::Afoots;
 mod visibility;
 pub(crate) use publishing::start;
 use visibility::{seen, sees};
@@ -24,45 +26,15 @@ use visibility::{seen, sees};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 
-use fastctx_net::directory::Directory;
-
 use fastctx_types::town::{Afoot, AfootChange, AfootJob, AfootResident, AfootSeen};
 use fastctx_types::{AccountName, MachineName, ResidentId};
 
 use crate::Hub;
 use fastctx_net::afoot::isolation::{self, Previous, Problems};
 
-/// The latest each machine told, and what each member's session was told.
-#[derive(Default)]
-pub(crate) struct Afoots {
-    told: HashMap<MachineName, Afoot>,
-    prior: HashMap<MachineName, Previous>,
-    shown: HashMap<MachineName, Shown>,
-    rejected: HashMap<MachineName, Problems>,
-    /// The directory as of the book's last keeping, copied once for each
-    /// time it is kept or changed rather than for each change told: in a
-    /// network of thousands, what is afoot changes many times a second.
-    directory: Option<(u64, Arc<Directory>)>,
-    publishing: Arc<publishing::Publishing>,
-}
-
-/// The directory as it is kept now, from the copy made since it was last
-/// kept or changed.
-fn directory(afoots: &mut Afoots, store: &crate::store::Store) -> Arc<Directory> {
-    let saves = store.book_saves.load(std::sync::atomic::Ordering::SeqCst);
-    match &afoots.directory {
-        Some((kept, directory)) if *kept == saves => directory.clone(),
-        _ => {
-            let directory = Arc::new(store.book.directory.clone());
-            afoots.directory = Some((saves, directory.clone()));
-            directory
-        }
-    }
-}
-
-/// The directory changed: the next telling copies it again.
+/// Schedules a fresh projection after the committed directory changes.
 pub(crate) fn directory_changed(hub: &Hub) {
-    hub.afoots().directory = None;
+    hub.afoots.publishing.all();
 }
 
 /// What one session of a member was told, machine by machine.
@@ -89,142 +61,182 @@ enum Scope<'a> {
     /// Every session's, of the machines that told something new.
     Machines(&'a HashSet<MachineName>),
     /// The sessions just come, of every machine.
-    Come,
+    Come(&'a HashSet<MachineName>),
 }
 
 /// `machine` told how what is afoot on it changed.
-pub(crate) fn heard(hub: &Hub, machine: &MachineName, mut change: AfootChange<AfootResident, AfootJob>) {
+pub(crate) fn heard(
+    hub: &Hub,
+    machine: &MachineName,
+    key: fastctx_net::sign::PublicKey,
+    mut change: AfootChange<AfootResident, AfootJob>,
+) {
     fastctx_net::afoot::bounded::change(&mut change);
+    born_keys(hub, machine, &mut change.residents);
     {
-        let mut afoots = hub.afoots();
-        let Afoots { told, prior, rejected, .. } = &mut *afoots;
-        isolation::apply(
-            told.entry(machine.clone()).or_default(),
-            prior.entry(machine.clone()).or_default(),
-            change,
-            rejected.entry(machine.clone()).or_default(),
-            |reason| hub.log.line(format_args!("from {machine}: {reason}")),
-        );
+        let store = hub.store();
+        if store.indexed().member(machine).is_none_or(|member| member.key != key) {
+            return;
+        }
+        let member = hub.afoots.member(key, store.sequence);
+        let mut status = member.lock();
+        let state::Status { told, prior, rejected } = &mut *status;
+        isolation::apply(Arc::make_mut(told), prior, change, rejected, |reason| {
+            hub.log.line(format_args!("from {machine}: {reason}"))
+        });
     }
-    hub.afoots().publishing.request(Some(machine));
+    hub.afoots.publishing.request(machine);
+}
+
+/// Seals each conversation's birth as the hub knows it: the registered
+/// birth, or for one not registered yet, the telling machine as it is now
+/// when it was born there; none otherwise. The seal, not the machine's name,
+/// says who holds it (`owned_records::born_on`). The account that opened it
+/// goes first among those it works for: it is who others are told opened it.
+fn born_keys(hub: &Hub, machine: &MachineName, residents: &mut [AfootResident]) {
+    if residents.iter().all(|resident| resident.shared_on.is_none()) {
+        return;
+    }
+    let store = hub.store();
+    let directory = &store.book.directory;
+    let owners = hub.account_records.owners.lock().expect("never poisoned");
+    for resident in residents {
+        resident.born_seal = None;
+        let Some(born) = resident.shared_on.clone() else { continue };
+        let address = fastctx_types::Address { machine: machine.clone(), resident: resident.resident.about.id.clone() };
+        resident.born_seal = match owners.at(directory, &address) {
+            Some(conversation) => {
+                if let Some(at) = resident.accounts.iter().position(|account| *account == conversation.account) {
+                    resident.accounts[..=at].rotate_right(1);
+                }
+                conversation
+                    .shared_on
+                    .as_ref()
+                    .is_some_and(|shared| directory.same(shared, &born))
+                    .then(|| conversation.born_seal.clone())
+                    .flatten()
+            }
+            None if directory.same(&born, machine) => {
+                directory.member(machine).and_then(fastctx_net::record_ownership::seal)
+            }
+            None => None,
+        };
+    }
 }
 
 /// Tells every member what changed in what it may see, after the directory
 /// changed who sees what.
 pub(crate) fn settle(hub: &Hub) {
-    tell(hub, Scope::All);
+    hub.afoots.publishing.all();
 }
 
 /// Tells a session just come what is afoot on every machine it sees; the
 /// others were told already.
-pub(crate) fn came(hub: &Hub) {
-    hub.afoots().publishing.request(None);
+pub(crate) fn came(hub: &Hub, name: &MachineName) {
+    hub.afoots.publishing.came(name);
 }
 
 /// The accounts the conversation at `conversation` works for, as its
 /// machine last told: `None` when it told nothing of it.
-pub(crate) fn accounts_of(hub: &Hub, conversation: &fastctx_types::Address) -> Option<Vec<AccountName>> {
-    let afoots = hub.afoots();
-    let resident = afoots.told.get(&conversation.machine)?.residents.get(&conversation.resident)?;
-    Some(resident.accounts.clone())
+pub(crate) fn owned_by(hub: &Hub, conversation: &fastctx_types::Address, account: &AccountName) -> Option<bool> {
+    let store = hub.store();
+    let key = store.indexed().member(&conversation.machine)?.key;
+    let snapshot = hub.afoots.get(&key)?;
+    let resident = snapshot.residents.get(&conversation.resident)?;
+    let directory = &store.book.directory;
+    Some(fastctx_net::record_ownership::allows(
+        directory,
+        account,
+        &resident.accounts,
+        resident
+            .shared_on
+            .as_ref()
+            .filter(|born| crate::owned_records::born_there(directory, born, resident.born_seal.as_deref())),
+    ))
 }
 
 /// Tells each member reading what is afoot what changed in `scope`.
-fn tell(hub: &Hub, scope: Scope<'_>) {
-    // The sessions and the directory are read first, without the afoot
-    // record's lock, which is taken last.
-    let readers: Vec<(MachineName, u64, crate::outq::Outq)> = hub
-        .sessions()
-        .iter()
-        .filter(|(_, session)| session.afoot)
-        .map(|(name, session)| (name.clone(), session.generation, session.out.clone()))
-        .collect();
-    // Hold the directory until the state it will prune is locked. A newly
-    // admitted machine cannot publish into a snapshot from before it joined.
-    // Afoot writers never acquire the store while holding this leaf lock.
+fn tell(hub: &Hub, shown: &mut HashMap<MachineName, Shown>, scope: Scope<'_>) {
     let store = hub.store();
+    let directory = store.indexed();
+    let names: Vec<_> = match scope {
+        Scope::All => {
+            hub.afoots.retain(&directory, store.sequence);
+            hub.sessions().keys().cloned().collect()
+        }
+        Scope::Come(names) => names.iter().cloned().collect(),
+        Scope::Machines(machines) => machines
+            .iter()
+            .flat_map(|name| store.audience.readers(&directory, name))
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect(),
+    };
+    let readers: Vec<_> = names
+        .into_iter()
+        .filter_map(|name| {
+            hub.sessions()
+                .get(&name)
+                .filter(|session| {
+                    session.afoot && directory.member(&name).is_some_and(|member| member.key == session.key)
+                })
+                .map(|session| (name.clone(), session.generation, session.out.clone(), session.replicated_records))
+        })
+        .collect();
     let hidden = crate::forget::hidden(&store);
-    let index = hub.index_of(&store);
-    let mut afoots = hub.afoots();
-    let directory = directory(&mut afoots, &store);
-    let directory = fastctx_net::directory_index::Indexed::new(&directory, &index);
-    drop(store);
-    let Afoots { told, prior, shown, rejected, .. } = &mut *afoots;
-    // A machine's last stays while it is on the hub under that name.
-    told.retain(|machine, _| directory.member(machine).is_some_and(|member| member.name == *machine));
-    let generations: HashMap<_, _> = readers.iter().map(|(name, generation, _)| (name, generation)).collect();
-    shown.retain(|reader, shown| generations.get(reader).is_some_and(|generation| **generation == shown.generation));
-    rejected.retain(|machine, _| told.contains_key(machine));
-    prior.retain(|machine, _| told.contains_key(machine));
-    let told = &*told;
-    // What each set of logins sees of each machine, worked out once.
-    let mut groups: HashMap<BTreeSet<AccountName>, usize> = HashMap::new();
-    let mut seen_by: HashMap<(usize, &MachineName), Option<Arc<Seen>>> = HashMap::new();
-    let mut candidates: HashMap<usize, Vec<&MachineName>> = HashMap::new();
-    for (reader, generation, out) in readers {
-        let shown = shown.entry(reader.clone()).or_insert_with(|| Shown {
+    if matches!(scope, Scope::All) {
+        shown
+            .retain(|name, kept| hub.sessions().get(name).is_some_and(|session| session.generation == kept.generation));
+    }
+    let mut groups = HashMap::new();
+    let mut projected: HashMap<(usize, MachineName), Option<Arc<Seen>>> = HashMap::new();
+    let mut sources: HashMap<MachineName, Option<Arc<Afoot>>> = HashMap::new();
+    for (reader, generation, out, replicated_records) in readers {
+        let current = shown.entry(reader.clone()).or_insert_with(|| Shown {
             generation,
             fresh: true,
             machines: HashMap::new(),
             rejected: HashMap::new(),
         });
-        if matches!(scope, Scope::Come) && !shown.fresh {
+        if current.generation != generation {
+            *current = Shown { generation, fresh: true, machines: HashMap::new(), rejected: HashMap::new() };
+        }
+        if matches!(scope, Scope::Come(_)) && !current.fresh {
             continue;
         }
-        let logins: BTreeSet<AccountName> =
-            directory.member(&reader).map(|member| member.logins.clone()).unwrap_or_default();
+        let logins = directory.member(&reader).map(|member| member.logins.clone()).unwrap_or_default();
         let next = groups.len();
-        let group = *groups.entry(logins.clone()).or_insert(next);
-        let machines: Vec<&MachineName> = match scope {
-            Scope::Machines(machines) if !shown.fresh => {
-                let candidates =
-                    candidates.entry(group).or_insert_with(|| visibility::candidates(&directory, &logins, told));
-                candidates
-                    .iter()
-                    .copied()
-                    .filter(|machine| machines.contains(*machine))
-                    .chain(
-                        shown
-                            .machines
-                            .keys()
-                            .filter(|machine| machines.contains(*machine))
-                            .filter_map(|machine| told.get_key_value(machine).map(|(name, _)| name)),
-                    )
-                    .collect::<HashSet<_>>()
-                    .into_iter()
-                    .collect()
-            }
-            _ => {
-                let candidates =
-                    candidates.entry(group).or_insert_with(|| visibility::candidates(&directory, &logins, told));
-                // Previously visible machines must also be projected so revocation
-                // sends an empty state rather than leaving stale private activity.
-                let machines: HashSet<_> = candidates
-                    .iter()
-                    .copied()
-                    .chain(
-                        shown.machines.keys().filter_map(|machine| told.get_key_value(machine).map(|(name, _)| name)),
-                    )
-                    .collect();
-                machines.into_iter().collect()
-            }
+        let group = *groups.entry((logins.clone(), replicated_records)).or_insert(next);
+        let machines: HashSet<_> = match scope {
+            Scope::Machines(machines) if !current.fresh => machines.iter().cloned().collect(),
+            _ => visibility::candidates(&directory, &logins)
+                .into_iter()
+                .chain(current.machines.keys().cloned())
+                .collect(),
         };
         for machine in machines {
-            if *machine == reader {
+            if machine == reader {
                 continue;
             }
-            let mut now = seen_by
-                .entry((group, machine))
+            let mut now = projected
+                .entry((group, machine.clone()))
                 .or_insert_with(|| {
-                    sees(&directory, &logins, machine)
-                        .then(|| Arc::new(seen(&directory, &logins, machine, &told[machine], hidden.get(machine))))
+                    if !sees(&directory, &logins, &machine) {
+                        return None;
+                    }
+                    let source = sources
+                        .entry(machine.clone())
+                        .or_insert_with(|| directory.member(&machine).and_then(|member| hub.afoots.get(&member.key)));
+                    source.as_ref().map(|source| {
+                        Arc::new(seen(&directory, &logins, &machine, source, hidden.get(&machine), replicated_records))
+                    })
                 })
                 .clone();
-            let before = shown.machines.get(machine);
+            let before = current.machines.get(&machine);
             if let Some(candidate) = &now {
                 let mut after = candidate.afoot.clone();
                 let rejected = isolation::snapshot(&mut after, before.map(|before| &*before.afoot));
-                isolation::report(shown.rejected.entry(machine.clone()).or_default(), rejected, |reason| {
+                isolation::report(current.rejected.entry(machine.clone()).or_default(), rejected, |reason| {
                     hub.log.line(format_args!("from {machine} to {reader}: {reason}"))
                 });
                 if !Arc::ptr_eq(&after, &candidate.afoot) {
@@ -244,20 +256,17 @@ fn tell(hub: &Hub, scope: Scope<'_>) {
             }
             match now {
                 Some(now) => {
-                    shown.machines.insert(machine.clone(), now);
+                    current.machines.insert(machine, now);
                 }
                 None => {
-                    shown.machines.remove(machine);
+                    current.machines.remove(&machine);
+                    current.rejected.remove(&machine);
                 }
             }
         }
-        // Of machines that left, nothing more is told: they leave the
-        // member's view, and it forgets them.
-        shown.machines.retain(|machine, _| told.contains_key(machine));
-        shown.rejected.retain(|machine, _| told.contains_key(machine));
-        if shown.fresh {
+        if current.fresh {
             out.afoot_started();
-            shown.fresh = false;
+            current.fresh = false;
         }
     }
 }

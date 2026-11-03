@@ -9,7 +9,6 @@ use std::time::Duration;
 
 use fastctx_net::sign::Signed;
 use fastctx_net::wire::{self, Down, Told};
-use fastctx_types::MachineName;
 use fastctx_types::access::TownId;
 use tokio::sync::oneshot;
 
@@ -26,12 +25,31 @@ pub(super) struct Page {
     pub town: TownId,
     pub after: u64,
     pub last: u64,
+    pub history: std::collections::BTreeSet<u64>,
 }
 
 /// Answers a ledger read on this session's queue, independently of its
 /// next frame and of every project's writer.
-pub(crate) fn ask(hub: &Arc<Hub>, name: &MachineName, out: &Outq, id: u64, town: TownId, after: u64) {
-    if !hub.store().book.directory.member_keeps_project(name, &town) {
+pub(crate) fn ask(hub: &Arc<Hub>, name: &crate::origin::Origin, out: &Outq, id: u64, town: TownId, after: u64) {
+    serve(hub, name, out, id, town, after, false)
+}
+
+pub(crate) fn projection(hub: &Arc<Hub>, name: &crate::origin::Origin, out: &Outq, id: u64, town: TownId, after: u64) {
+    serve(hub, name, out, id, town, after, true)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn serve(
+    hub: &Arc<Hub>,
+    name: &crate::origin::Origin,
+    out: &Outq,
+    id: u64,
+    town: TownId,
+    after: u64,
+    projection: bool,
+) {
+    let store = hub.store();
+    if name.check(&store.book.directory).is_err() || !store.book.directory.member_keeps_project(name, &town) {
         let answer = Err(format!(
             "{name} has no logged-in account that may keep the bodies of {town}; assisting hosts must use project indices (update older clients)"
         ));
@@ -41,7 +59,7 @@ pub(crate) fn ask(hub: &Arc<Hub>, name: &MachineName, out: &Outq, id: u64, town:
     let deadline = tokio::time::Instant::now() + READ_WITHIN;
     let page = hub.ledgers.lock().expect("never poisoned").page(town.clone(), after);
     let (hub, name, out) = (hub.clone(), name.clone(), out.clone());
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         // A read waits its turn among the others, within its own time.
         let place = tokio::select! {
             biased;
@@ -61,10 +79,10 @@ pub(crate) fn ask(hub: &Arc<Hub>, name: &MachineName, out: &Outq, id: u64, town:
         // Dropping the receiver stops a running read between files. Aborting
         // its task also stops a read still waiting for a blocking thread.
         let (wanted, reader) = oneshot::channel::<()>();
-        let mut reading = tokio::task::spawn_blocking(move || {
+        let mut reading = fastctx_platform::task::spawn_blocking(move || {
             // A cancelled caller cannot return a place still occupied by disk I/O.
             let _place = place;
-            page.read(&wanted, deadline)
+            page.read(&wanted, deadline, projection)
         });
         let answer = tokio::select! {
             biased;
@@ -82,7 +100,10 @@ pub(crate) fn ask(hub: &Arc<Hub>, name: &MachineName, out: &Outq, id: u64, town:
         };
         drop(reader);
         // Permission may have been withdrawn while the disk was being read.
-        let answer = if hub.store().book.directory.member_keeps_project(&name, &town) {
+        let store = hub.store();
+        let answer = if name.check(&store.book.directory).is_ok()
+            && store.book.directory.member_keeps_project(&name, &town)
+        {
             answer
         } else {
             Err(format!(
@@ -94,17 +115,33 @@ pub(crate) fn ask(hub: &Arc<Hub>, name: &MachineName, out: &Outq, id: u64, town:
 }
 
 impl Page {
-    fn read(self, wanted: &oneshot::Sender<()>, deadline: tokio::time::Instant) -> Result<Told, String> {
+    fn read(
+        self,
+        wanted: &oneshot::Sender<()>,
+        deadline: tokio::time::Instant,
+        projection: bool,
+    ) -> Result<Told, String> {
         // The longest id and `false` leave room for either value of `more`.
         let mut size =
             wire::encode(&Down::Told { id: u64::MAX, answer: Ok(Told::Entries { entries: Vec::new(), more: false }) })
                 .len();
+        let answer = |entries, through, more| {
+            if projection { Told::LedgerProjection { entries, through, more } } else { Told::Entries { entries, more } }
+        };
         let mut entries = Vec::new();
+        let mut through = self.after;
         for previous in self.after..self.last {
             if wanted.is_closed() || tokio::time::Instant::now() >= deadline {
                 return Err("the ledger reader ended".into());
             }
             let seq = previous + 1;
+            // A projection reads history on demand. A reader of a release before
+            // history takes a history append as any entry: it keeps its two files
+            // and reads on, where refusing the page would stop the whole project.
+            if self.history.contains(&seq) && projection {
+                through = seq;
+                continue;
+            }
             let path = self.dir.join(format!("{seq:020}.json"));
             let signed = entry(&path).map_err(|error| format!("reading entry {seq} of {}: {error}", self.town))?;
             let cost = wire::encode(&(seq, &signed)).len() + usize::from(!entries.is_empty());
@@ -117,19 +154,20 @@ impl Page {
                         wire::PARTS_AT_MOST
                     ));
                 }
-                return Ok(Told::Entries { entries, more: true });
+                return Ok(answer(entries, through, true));
             }
             size += cost;
             entries.push((seq, signed));
+            through = seq;
         }
-        Ok(Told::Entries { entries, more: false })
+        Ok(answer(entries, through, false))
     }
 }
 
 /// A damaged file must not make a read allocate beyond the multipart limit.
 pub(super) fn entry(path: &Path) -> io::Result<Signed> {
     let mut bytes = Vec::new();
-    std::fs::File::open(path)?.take(wire::PARTS_AT_MOST as u64 + 1).read_to_end(&mut bytes)?;
+    fastctx_platform::disk::open(path)?.take(wire::PARTS_AT_MOST as u64 + 1).read_to_end(&mut bytes)?;
     if bytes.len() > wire::PARTS_AT_MOST {
         return Err(io::Error::new(io::ErrorKind::InvalidData, "the entry file is larger than the multipart limit"));
     }

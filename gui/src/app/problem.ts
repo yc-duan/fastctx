@@ -57,6 +57,8 @@ export interface ProblemWords {
   /** This Claude Code cannot rewind; forking through a turn can. */
   noRewind: string;
   somethingElse: string;
+  /** No answer came in time: what was asked may or may not be done. */
+  unanswered: string;
   /** Words asked to go while the last ones are still on their way. */
   stillGoing: string;
   /** The shared draft was sent from another device before these words went. */
@@ -65,6 +67,8 @@ export interface ProblemWords {
   viewPending: string;
   /** Something busy with it for a moment. */
   busyNow: string;
+  /** A conversation asked of a login the workbench is not open in. */
+  workbenchClosed: string;
 }
 
 export const zhProblems: ProblemWords = {
@@ -105,10 +109,12 @@ export const zhProblems: ProblemWords = {
   forkPreparing: "分叉还在准备",
   noRewind: "这一版 Claude Code 不能回退，可以从这一轮分叉",
   somethingElse: "操作未完成",
+  unanswered: "不知是否做成",
   stillGoing: "上一条还在路上，稍后再试",
   sentElsewhere: "草稿已在另一台设备上发出",
   viewPending: "还在等中枢的确认，稍后再试",
   busyNow: "正忙，稍后再试",
+  workbenchClosed: "这个登录没有打开工作台",
 };
 
 export const enProblems: ProblemWords = {
@@ -149,13 +155,16 @@ export const enProblems: ProblemWords = {
   forkPreparing: "The fork is still being prepared",
   noRewind: "This Claude Code can't rewind. Fork from this turn instead",
   somethingElse: "Something went wrong",
+  unanswered: "Not known whether it was done",
   stillGoing: "The last one is still on its way. Try again in a moment",
   sentElsewhere: "The draft was sent from another device",
   viewPending: "Still waiting for the hub. Try again in a moment",
   busyNow: "Busy right now. Try again in a moment",
+  workbenchClosed: "The workbench isn't open in this login",
 };
 
 const KNOWN: [RegExp, keyof ProblemWords][] = [
+  [/no answer came within two minutes/, "unanswered"],
   [/another composer message is being delivered|that queued message is being delivered/, "stillGoing"],
   [/the draft was sent from another device|this draft was already sent/, "sentElsewhere"],
   [/current account view is unavailable/, "viewPending"],
@@ -164,6 +173,7 @@ const KNOWN: [RegExp, keyof ProblemWords][] = [
   [/unavailable in an assisted conversation/, "assistedCommand"],
   [/did not say a version the World can read/, "claudeVersionUnknown"],
   [/Claude Code is not installed on/, "claudeMissing"],
+  [/the workbench is not open in this login/, "workbenchClosed"],
   [/Codex is not installed on this machine/, "codexMissing"],
   [/fork is incomplete|Claude fork incomplete|stopped before finishing this fork/, "forkIncomplete"],
   [/waiting for Claude to finish copying the fork/, "forkPreparing"],

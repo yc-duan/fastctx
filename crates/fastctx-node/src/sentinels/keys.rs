@@ -45,7 +45,7 @@ fn path(node: &Node, scope: &HubAccount) -> PathBuf {
     node.world.path().join("sentinel-keys").join(format!("{name:x}.json"))
 }
 fn read(node: &Node, scope: &HubAccount) -> Result<Keys, String> {
-    match std::fs::read(path(node, scope)) {
+    match fastctx_platform::disk::read(path(node, scope)) {
         Ok(bytes) => serde_json::from_slice(&bytes).map_err(|error| format!("reading sentinel keys: {error}")),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Keys::default()),
         Err(error) => Err(format!("reading sentinel keys: {error}")),
@@ -54,8 +54,10 @@ fn read(node: &Node, scope: &HubAccount) -> Result<Keys, String> {
 fn write(node: &Node, scope: &HubAccount, keys: &Keys) -> Result<(), String> {
     let path = path(node, scope);
     if keys.model.is_none() && keys.search.is_none() {
-        return match std::fs::remove_file(&path) {
-            Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(format!("removing sentinel keys: {error}")),
+        return match fastctx_platform::disk::remove_file(&path) {
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+                Err(format!("removing sentinel keys: {error}"))
+            }
             _ => Ok(()),
         };
     }
@@ -92,10 +94,14 @@ pub(crate) async fn keep_here(
     if !home_is_here(node, scope, &settings)? {
         return Err(Failure::refused("this machine is not the account's sentinel home"));
     }
-    let mut keys = read(node, scope).map_err(Failure::new)?;
-    *keys.slot(key) = value.map(|Secret(value)| value).filter(|value| !value.trim().is_empty());
-    write(node, scope, &keys).map_err(Failure::new)?;
-    Ok(keys.status())
+    let (keeping, scope) = (node.clone(), scope.clone());
+    fastctx_platform::task::blocking(move || {
+        let mut keys = read(&keeping, &scope).map_err(Failure::new)?;
+        *keys.slot(key) = value.map(|Secret(value)| value).filter(|value| !value.trim().is_empty());
+        write(&keeping, &scope, &keys).map_err(Failure::new)?;
+        Ok(keys.status())
+    })
+    .await
 }
 
 /// The user's key, handed from this machine to the account's sentinel home.
@@ -133,7 +139,8 @@ pub(crate) fn status_here(node: &Node, scope: &HubAccount) -> Result<KeyStatus, 
 /// Drops the keys of an account whose sentinel home is now another machine.
 /// Only a settings read that names another home removes them.
 pub(crate) async fn forget_if_moved(node: &Arc<Node>, scope: &HubAccount) {
-    if !path(node, scope).exists() {
+    let kept = path(node, scope);
+    if !fastctx_platform::task::blocking(move || fastctx_platform::disk::is_there(kept)).await {
         return;
     }
     let _held = node.sentinels.keys.lock().await;
@@ -141,8 +148,14 @@ pub(crate) async fn forget_if_moved(node: &Arc<Node>, scope: &HubAccount) {
     if home_is_here(node, scope, &settings).unwrap_or(true) {
         return;
     }
-    match write(node, scope, &Keys::default()) {
-        Ok(()) => node.log.line(format_args!("removed the sentinel keys of {}: its home is another machine", scope.account)),
+    let written = {
+        let (forgetting, scope) = (node.clone(), scope.clone());
+        fastctx_platform::task::blocking(move || write(&forgetting, &scope, &Keys::default())).await
+    };
+    match written {
+        Ok(()) => {
+            node.log.line(format_args!("removed the sentinel keys of {}: its home is another machine", scope.account))
+        }
         Err(error) => node.log.line(format_args!("sentinel keys of {}: {error}", scope.account)),
     }
 }

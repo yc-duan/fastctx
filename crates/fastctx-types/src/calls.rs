@@ -31,10 +31,16 @@ pub enum Call {
     },
     /// Local operational diagnostics. Never relayed through another machine.
     DoctorCalls,
+    /// The node's measures of itself, its health and the scenes it left.
+    /// Never relayed through another machine.
+    DoctorReadings,
     Plan {
         hub: Option<crate::HubName>,
         account: Option<crate::AccountName>,
         operation: crate::plan::Operation,
+        /// Another conversation's plan to read; the caller's own when absent.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        of: Option<crate::plan::Of>,
     },
     /// A skill of the account the caller works for, read whole by its name
     /// (`crate::skills`).
@@ -70,10 +76,19 @@ pub enum Call {
         hub: Option<crate::HubName>,
         account: Option<crate::AccountName>,
         kind: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        owner: Option<ResidentId>,
     },
     Collaboration {
         resident: ResidentId,
         machine: Option<crate::access::Written>,
+    },
+    PrepareCopies {
+        paths: Vec<std::path::PathBuf>,
+    },
+    History(crate::history::HistoryCall),
+    WatchHistory {
+        scope: crate::history::Scope,
     },
     Memory(crate::memory::MemoryCall),
     WatchMemory {
@@ -528,6 +543,16 @@ pub enum Call {
         dir: std::path::PathBuf,
         on: bool,
     },
+    /// Whether a week the vendor cleared before its reset counts anew from
+    /// then, for the account and those it assists, in the login `dir` on
+    /// `machine`; off by default, set by whoever may manage the login
+    /// (`world-usage.md`).
+    SetAgentResetInPlace {
+        machine: Written,
+        agent: AgentName,
+        dir: std::path::PathBuf,
+        on: bool,
+    },
     /// What putting the World's tools into a login on `machine` (`into`),
     /// or taking them out, would change, with nothing written; with
     /// `take_back`, what the user changed of them is rewritten too.
@@ -538,6 +563,10 @@ pub enum Call {
         into: bool,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         take_back: bool,
+        /// The workbench in the login opened (`true`) or closed, the change
+        /// of its own; none leaves it as it is (`logins::Login::workbench`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        workbench: Option<bool>,
     },
     /// Puts the World's tools into a login on `machine`, listing it, or
     /// takes them out, removing it from the list; done by that machine's
@@ -553,6 +582,15 @@ pub enum Call {
         raise_output_limit: bool,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         take_back: bool,
+        /// The fingerprint of the change the user was shown
+        /// (`ChangePreview::fingerprint`): it is refused when the files it
+        /// is worked out from moved on since.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expected: Option<String>,
+        /// The workbench in the login opened (`true`) or closed, the change
+        /// of its own; none leaves it as it is (`logins::Login::workbench`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        workbench: Option<bool>,
     },
     /// Reads a login's usage limits afresh on its machine.
     ReadAgentLimits {
@@ -633,6 +671,11 @@ pub enum Call {
         /// The viewer reads `session::Watched::Now`.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         now: bool,
+        /// Follows the conversation's collaboration instead of its history
+        /// (`session::Watched::Collaboration`); said only to a node whose
+        /// welcome says `collaboration_watch`.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        collaboration: bool,
     },
     /// Opens a session for the user: a resident of `agent` started on this
     /// machine or on `node`, in `town`, with the user's words as its first.
@@ -904,6 +947,12 @@ pub enum Reply {
     DoctorCalls {
         calls: Vec<crate::stats::CallWork>,
     },
+    DoctorReadings {
+        readings: Box<crate::readings::Readings>,
+        health: crate::health::Health,
+        /// The scenes kept, oldest first, as paths.
+        scenes: Vec<String>,
+    },
     Plan {
         result: crate::plan::Result,
     },
@@ -916,6 +965,7 @@ pub enum Reply {
         response: crate::account_records::Response,
     },
     Collaboration(Box<crate::collaboration::Tree>),
+    History(crate::history::HistoryReply),
     Memory(crate::memory::MemoryReply),
     MemorySettings(crate::memory::Settings),
     Layer(crate::layers::Chosen),
@@ -1006,6 +1056,10 @@ pub enum Reply {
     Lines(crate::lines::Reply),
     Asked {
         colleague: Address,
+        /// How many colleagues wait ahead of its first turn, when it waits
+        /// for its callee to have room.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        waiting: Option<u32>,
     },
     Spoken {
         to: Address,

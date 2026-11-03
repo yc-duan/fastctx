@@ -1,0 +1,22 @@
+[
+  {
+    "id": "tool-bash",
+    "disabled": true
+  },
+  {
+    "insert": [
+      {
+        "id": "lab-echo",
+        "name": "@deepseek-ai/dsh-mcp-client",
+        "config": {
+          "serverName": "lab_echo",
+          "transport": "stdio",
+          "command": "node",
+          "args": [
+            "/lab/deepseek-mcp.cjs"
+          ]
+        }
+      }
+    ]
+  }
+]

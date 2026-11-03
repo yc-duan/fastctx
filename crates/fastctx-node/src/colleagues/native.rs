@@ -13,16 +13,29 @@ use std::{
 };
 use tokio::time::Instant;
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct Kept {
     agent: NativeAgent,
     parent: Option<String>,
     observed: Option<Timestamp>,
 }
+/// How many of the latest calls a followed conversation keeps the start of:
+/// an agent's start is told with the call that started it, so only a recent
+/// call is still looked for once the history has been read.
+const RECENT_CALLS: usize = 256;
+
+type Call = (Option<String>, String);
+
 #[derive(Default)]
 pub(super) struct Fold {
     agents: BTreeMap<String, Kept>,
-    calls: BTreeMap<(Option<String>, String), Timestamp>,
+    /// When each call began, by the agent whose loop made it.
+    calls: BTreeMap<Call, Timestamp>,
+    /// The calls in the order they were first seen.
+    seen: VecDeque<Call>,
+    /// Whether only the recent calls are kept, as when the conversation is
+    /// followed after its history was read.
+    recent: bool,
 }
 impl Fold {
     fn entry(&mut self, id: &str) -> &mut Kept {
@@ -63,11 +76,11 @@ impl Fold {
             self.event(&event.happened, event.at, parent, false);
         }
     }
-    fn event(&mut self, event: &Happened, at: Timestamp, parent: Option<&str>, live: bool) {
+    pub(super) fn event(&mut self, event: &Happened, at: Timestamp, parent: Option<&str>, live: bool) {
         match event {
             Happened::Began { item, .. } | Happened::Finished { item, .. } | Happened::Updated { item, .. } => {
                 if let Some(started) = item.started_at {
-                    self.calls.insert((parent.map(str::to_string), item.id.clone()), started);
+                    self.call((parent.map(str::to_string), item.id.clone()), started);
                 }
             }
             Happened::TurnStarted { .. } if live && parent.is_some() => {
@@ -129,6 +142,29 @@ impl Fold {
             _ => {}
         }
     }
+    fn call(&mut self, call: Call, started: Timestamp) {
+        if self.calls.insert(call.clone(), started).is_none() {
+            self.seen.push_back(call);
+        }
+        if self.recent {
+            self.forget_calls();
+        }
+    }
+    fn forget_calls(&mut self) {
+        while self.calls.len() > RECENT_CALLS {
+            let Some(oldest) = self.seen.pop_front() else { break };
+            self.calls.remove(&oldest);
+        }
+    }
+    /// Keeps only the recent calls from now on.
+    pub(super) fn recent_only(&mut self) {
+        self.recent = true;
+        self.forget_calls();
+    }
+    /// The agents as they stand, the fold left to take more.
+    pub(super) fn agents(&self) -> Vec<NativeAgent> {
+        Fold { agents: self.agents.clone(), ..Default::default() }.finish()
+    }
     pub(super) fn finish(mut self) -> Vec<NativeAgent> {
         fn take(id: String, agents: &mut BTreeMap<String, Kept>) -> NativeAgent {
             let mut kept = agents.remove(&id).expect("known agent");
@@ -167,25 +203,45 @@ impl Fold {
 }
 
 pub(super) async fn read(node: &Arc<Node>, id: &ResidentId, deadline: Instant) -> (Vec<NativeAgent>, Vec<String>) {
+    let read = open(node, id, deadline).await;
+    (read.fold.finish(), read.unavailable)
+}
+
+/// A conversation's native agents as read now, what could not be read of
+/// them, and the conversation's events from then on, when its history was
+/// read.
+pub(super) struct Read {
+    pub(super) fold: Fold,
+    pub(super) unavailable: Vec<String>,
+    pub(super) events: Option<crate::watch::Events>,
+}
+
+pub(super) async fn open(node: &Arc<Node>, id: &ResidentId, deadline: Instant) -> Read {
     let mut fold = Fold::default();
     let mut unavailable = Vec::new();
-    match tokio::time::timeout_at(deadline, crate::talk::history_here(node, id)).await {
+    let events = match tokio::time::timeout_at(deadline, crate::talk::history_quietly(node, id)).await {
         Ok(Ok(mut history)) => {
             fold.events(&history.history, None);
+            let mut lagged = false;
             loop {
                 match history.events.try_recv() {
                     Ok(event) => fold.event(&event.happened, event.at, None, true),
                     Err(fastctx_net::watch_queue::TryRecvError::Lagged) => {
                         unavailable.push(fastctx_net::watch_queue::Lagged.to_string());
+                        lagged = true;
                         break;
                     }
                     Err(_) => break,
                 }
             }
+            (!lagged).then_some(history.events)
         }
-        Ok(Err(error)) => return (Vec::new(), vec![error.message]),
-        Err(_) => return (Vec::new(), vec![fastctx_types::collab_prompt::NATIVE_DEADLINE.into()]),
-    }
+        Ok(Err(error)) => return Read { fold, unavailable: vec![error.message], events: None },
+        Err(_) => {
+            let unavailable = vec![fastctx_types::collab_prompt::NATIVE_DEADLINE.into()];
+            return Read { fold, unavailable, events: None };
+        }
+    };
     let mut read = BTreeSet::new();
     let mut queue: VecDeque<_> = fold.agents.keys().cloned().collect();
     let mut scheduled: BTreeSet<_> = fold.agents.keys().cloned().collect();
@@ -225,5 +281,8 @@ pub(super) async fn read(node: &Arc<Node>, id: &ResidentId, deadline: Instant) -
             }
         }
     }
-    (fold.finish(), unavailable)
+    // Every agent the history tells of has found its call; what follows
+    // tells a new agent with its call.
+    fold.recent_only();
+    Read { fold, unavailable, events }
 }

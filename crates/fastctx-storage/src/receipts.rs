@@ -1,5 +1,7 @@
 //! Indexed receipts expire only after durable transport acknowledgement or an
 //! independent terminal business effect. Unproven legacy receipts have no expiry.
+//! A watermark is kept for each authority's current epoch only, so there is
+//! one for each hub this machine has belonged to.
 
 use crate::{Error, Result};
 use rusqlite::{Connection, OptionalExtension, params};

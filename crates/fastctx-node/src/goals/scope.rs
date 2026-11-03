@@ -7,26 +7,55 @@ use fastctx_types::access::HubAccount;
 use fastctx_types::ipc::Failure;
 use std::collections::BTreeSet;
 
-pub(crate) fn pinned(node: &Node, resident: &ResidentId) -> Result<Option<HubAccount>, Failure> {
-    pinned_at(&node.world.conversation(resident))
+pub(crate) async fn pinned(node: &Node, resident: &ResidentId) -> Result<Option<HubAccount>, Failure> {
+    pinned_at(&node.world.conversation(resident)).await
 }
 
-pub(crate) fn pinned_at(directory: &fastctx_types::layout::ConversationDir) -> Result<Option<HubAccount>, Failure> {
-    let path = directory.books().join("goal-account.json");
-    match std::fs::read(path) {
-        Ok(bytes) => serde_json::from_slice(&bytes).map(Some).map_err(|error| Failure::new(error.to_string())),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(Failure::new(error.to_string())),
-    }
+pub(crate) fn pinned_now(node: &Node, resident: &ResidentId) -> Result<Option<HubAccount>, Failure> {
+    pinned_at_now(&node.world.conversation(resident))
+}
+pub(crate) async fn pinned_at(
+    directory: &fastctx_types::layout::ConversationDir,
+) -> Result<Option<HubAccount>, Failure> {
+    let directory = directory.clone();
+    fastctx_platform::task::spawn_blocking(move || pinned_at_now(&directory))
+        .await
+        .map_err(|error| Failure::new(error.to_string()))?
 }
 
-pub(crate) fn resolve(
+fn pinned_at_now(directory: &fastctx_types::layout::ConversationDir) -> Result<Option<HubAccount>, Failure> {
+    initialize(directory).map_err(|error| Failure::new(error.to_string()))?;
+    crate::records::read(directory, |rows| rows.get("goal-account", "current"))
+        .map_err(|error| Failure::new(error.to_string()))
+}
+pub(crate) fn initialize(directory: &fastctx_types::layout::ConversationDir) -> std::io::Result<()> {
+    crate::records::legacy::single::<HubAccount>(
+        directory,
+        "goal-account",
+        &directory.books().join("goal-account.json"),
+    )
+}
+
+pub(crate) async fn resolve(
     node: &Node,
     resident: &ResidentId,
     selected: Option<&HubAccount>,
 ) -> Result<HubAccount, Failure> {
     let (about, _) = node.residents.about(resident).ok_or_else(|| crate::forget::gone(node, resident))?;
-    let pinned = pinned(node, resident)?;
+    let requested_hub = selected.map(|account| account.hub.clone());
+    let selected = match selected {
+        Some(account) if !node.serves(&about.acting, &account.hub, &account.account) => {
+            if !crate::record_ownership::allows(node, &about, &account.hub, &account.account) {
+                return Err(Failure::refused("this account does not own the conversation's goal"));
+            }
+            None
+        }
+        selected => selected,
+    };
+    let pinned = pinned(node, resident).await?;
+    if pinned.as_ref().is_some_and(|pinned| requested_hub.as_ref().is_some_and(|hub| hub != &pinned.hub)) {
+        return Err(Failure::not_run(words::ACCOUNT_CHANGED));
+    }
     if let (Some(pinned), Some(selected)) = (&pinned, selected)
         && pinned != selected
     {
@@ -35,6 +64,7 @@ pub(crate) fn resolve(
     let choices: BTreeSet<_> = node
         .links()
         .iter()
+        .filter(|link| requested_hub.as_ref().is_none_or(|hub| link.membership().id == *hub))
         .flat_map(|link| {
             node.accounts_on(link, &about.acting)
                 .into_iter()
@@ -56,18 +86,54 @@ pub(crate) fn resolve(
     }
 }
 
-pub(crate) fn keep(node: &Node, resident: &ResidentId, account: &HubAccount) -> std::io::Result<()> {
-    keep_at(&node.world.conversation(resident), account)
+pub(crate) async fn keep(node: &Node, resident: &ResidentId, account: &HubAccount) -> std::io::Result<()> {
+    keep_at(&node.world.conversation(resident), account).await
 }
 
-pub(crate) fn keep_at(directory: &fastctx_types::layout::ConversationDir, account: &HubAccount) -> std::io::Result<()> {
-    if pinned_at(directory)
-        .map_err(|error| std::io::Error::other(error.message))?
-        .is_some_and(|pinned| &pinned != account)
-    {
-        return Err(std::io::Error::other(words::ACCOUNT_CHANGED));
+pub(crate) async fn keep_at(
+    directory: &fastctx_types::layout::ConversationDir,
+    account: &HubAccount,
+) -> std::io::Result<()> {
+    let (directory, account) = (directory.clone(), account.clone());
+    fastctx_platform::task::spawn_blocking(move || keep_at_now(&directory, &account))
+        .await
+        .map_err(std::io::Error::other)?
+}
+
+fn keep_at_now(directory: &fastctx_types::layout::ConversationDir, account: &HubAccount) -> std::io::Result<()> {
+    initialize(directory)?;
+    let account = account.clone();
+    crate::records::write_at(directory, fastctx_storage::Priority::Interactive, 256, move |rows| {
+        if rows.get::<HubAccount>("goal-account", "current")?.is_some_and(|prior| prior != account) {
+            return Err(fastctx_storage::Error::new(words::ACCOUNT_CHANGED));
+        }
+        rows.put("goal-account", "current", &account)
+    })
+}
+
+pub(crate) async fn user(
+    node: &Node,
+    resident: &ResidentId,
+    selected: Option<&HubAccount>,
+) -> Result<HubAccount, Failure> {
+    let (about, _) = node.residents.about(resident).ok_or_else(|| crate::forget::gone(node, resident))?;
+    let mut choices = Vec::new();
+    for link in node.links() {
+        for name in node.accounts_on(&link, &fastctx_types::access::Acting::Here) {
+            let account = HubAccount { hub: link.membership().id, account: name };
+            if selected.is_none_or(|selected| selected == &account)
+                && crate::record_ownership::allows(node, &about, &account.hub, &account.account)
+            {
+                choices.push(account);
+            }
+        }
     }
-    let path = directory.books().join("goal-account.json");
-    fastctx_platform::ensure_private_dir(path.parent().expect("goal binding directory"))?;
-    fastctx_platform::publish(&path, &serde_json::to_vec(account)?, fastctx_platform::Permissions::Private)
+    if choices.len() == 1 {
+        return Ok(choices.remove(0));
+    }
+    let owner = resolve(node, resident, selected).await?;
+    if choices.contains(&owner) {
+        return Ok(owner);
+    }
+    Err(Failure::refused(words::ACCOUNT_AMBIGUOUS))
 }

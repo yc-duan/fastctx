@@ -182,6 +182,11 @@ fn contains(bytes: &[u8], needle: &[u8]) -> bool {
     bytes.windows(needle.len()).any(|part| part == needle)
 }
 
+/// Whether the block `receipt` records is still in `bytes` as written.
+pub(crate) fn holds(bytes: Option<&[u8]>, receipt: &Receipt) -> bool {
+    bytes.is_some_and(|bytes| receipt.block.is_empty() || contains(bytes, &receipt.block))
+}
+
 pub(crate) fn marker_range(
     bytes: &[u8],
     begin: &[u8],

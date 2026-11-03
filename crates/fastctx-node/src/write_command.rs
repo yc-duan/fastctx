@@ -26,14 +26,18 @@ pub(crate) async fn write(
     } else {
         town
     };
-    let memory = crate::memory::writing::intercept(node, &caller, &op, job.as_ref(), town.as_ref()).await?;
+    let memory = match crate::replicas::writing::intercept(node, &caller, &op, job.as_ref(), town.as_ref()).await? {
+        Some(outcome) => Some(outcome),
+        None => crate::history::local_copy::intercept(node, &caller, &op, job.as_ref(), town.as_ref()).await?,
+    };
     let owner = owner.clone();
     let world = node.world.clone();
     let record_path = job.as_ref().map(|job| node.world.job_record(&here, town.as_ref(), &owner.clone().into(), job));
     let action_record = record_path.clone();
-    let result = tokio::task::spawn_blocking(move || {
+    let result = fastctx_platform::task::spawn_blocking(move || {
         let at = jiff::Timestamp::now();
-        let turn = action_record.as_deref().map(fastctx_hands::run::record::read).transpose()?.and_then(|record| record.turn);
+        let turn =
+            action_record.as_deref().map(fastctx_hands::run::record::read).transpose()?.and_then(|record| record.turn);
         let outcome = match memory {
             Some(outcome) => outcome,
             None => crate::write::write_job(&world, &here, &owner, town.as_ref(), op.clone(), job.as_ref())?,
@@ -48,15 +52,14 @@ pub(crate) async fn write(
     .map_err(|error| Failure::new(format!("writing: {error}")))?;
     let (outcome, recorded) = result;
     if let Some(path) = record_path {
-        let changes = match &outcome {
-            Ok(result) => &result.changes,
-            Err(error) => &error.changes,
-        };
-        let facts = changes.iter().filter_map(|change| change.fact.as_deref().cloned()).collect();
-        crate::run_facts::update_job(node, &path, facts)
-            .map_err(|error| Failure::new(format!("updating call facts: {error}")))?;
-        let record = fastctx_hands::run::record::read(&path)
-            .map_err(|error| Failure::new(format!("reading the writing job: {error}")))?;
+        let emitting = node.clone();
+        let record = fastctx_platform::task::spawn_blocking(move || {
+            crate::run_facts::update_job(&emitting, &path)?;
+            fastctx_hands::run::record::read(&path)
+        })
+        .await
+        .map_err(|error| Failure::new(format!("updating call facts: {error}")))?
+        .map_err(|error| Failure::new(format!("updating call facts: {error}")))?;
         node.jobs.notify(record.id);
     }
     recorded.map_err(|error| Failure::new(format!("writing: {error}")))?;

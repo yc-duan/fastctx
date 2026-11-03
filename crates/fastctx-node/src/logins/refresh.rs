@@ -30,7 +30,7 @@ const AGAIN: Duration = Duration::from_secs(30);
 pub(crate) async fn all(node: &Arc<Node>) {
     let _changing = node.logins.changing.lock().await;
     let refreshing = node.clone();
-    match tokio::task::spawn_blocking(move || every(&refreshing)).await {
+    match fastctx_platform::task::spawn_blocking(move || every(&refreshing)).await {
         Ok(Some((waiting, again))) => {
             *node.logins.drift.lock().expect("never poisoned") = waiting;
             if again {
@@ -53,7 +53,7 @@ pub(crate) async fn replaced(node: &Arc<Node>) {
 
 /// Tries again once the World program is likely in place.
 fn later(node: Weak<Node>) {
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         tokio::time::sleep(AGAIN).await;
         if let Some(node) = node.upgrade() {
             all(&node).await;
@@ -92,6 +92,7 @@ fn every(node: &Node) -> Option<(Waiting, bool)> {
             return None;
         }
     };
+    super::workbench::seed(node, &context);
     let integrations = match apply::integrations(&context.places) {
         Ok(integrations) => integrations,
         Err(error) => {
@@ -99,19 +100,50 @@ fn every(node: &Node) -> Option<(Waiting, bool)> {
             return None;
         }
     };
+    // The other agents' homes, each as its own record says
+    // (`super::others`).
+    let others = match apply::agent_integrations(&context.places) {
+        Ok(others) => others,
+        Err(error) => {
+            node.log.line(format_args!("bringing the World's tools up to date: reading the agents' records: {error}"));
+            Vec::new()
+        }
+    };
+    let connected: Vec<(&str, PathBuf)> = integrations
+        .iter()
+        .map(|integration| {
+            let agent = match integration.host {
+                Host::Codex => "codex",
+                Host::Claude => "claude",
+            };
+            (agent, fastctx_hosts::inventory::plain(&integration.home))
+        })
+        .collect();
+    super::workbench::prune(node, &connected);
     let mut waiting = Vec::new();
     let mut again = false;
-    for integration in integrations {
+    let hosts = integrations.into_iter().map(|integration| {
         let agent = AgentName::try_from(match integration.host {
             Host::Codex => "codex",
             Host::Claude => "claude",
         })
         .expect("an agent name");
         let dir = fastctx_hosts::inventory::plain(&integration.home);
-        let refreshed = context
-            .places
-            .at_home(integration.host, &integration.home)
-            .and_then(|places| apply::refresh(&places, integration.host));
+        // Each login holds what the workbench needs where it is open there,
+        // and only what connecting needs where it is not.
+        let refreshed = context.places.at_home(integration.host, &integration.home).and_then(|mut places| {
+            places.workbench = super::workbench::known(node, agent.as_str(), &dir);
+            apply::refresh(&places, integration.host)
+        });
+        (agent, dir, refreshed)
+    });
+    let others = others.into_iter().filter_map(|(name, home)| {
+        let other = fastctx_install::agents::find(&name)?;
+        let agent = AgentName::try_from(other.name).ok()?;
+        let refreshed = apply::agent_refresh(&context.places, other, &home);
+        Some((agent, fastctx_hosts::inventory::plain(&home), refreshed))
+    });
+    for (agent, dir, refreshed) in hosts.chain(others) {
         let shown = dir.display();
         match refreshed {
             Ok(Refresh::Out | Refresh::Current) => {}

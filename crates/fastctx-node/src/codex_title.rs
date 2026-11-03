@@ -3,7 +3,8 @@
 //! asks for it, the World names the conversation once its first turn is in:
 //! the host makes a short title from the first words and names the thread,
 //! and the name reaches every device through the ordinary thread-name path.
-//! Off by default; the title is made at most once for a conversation.
+//! On unless the login's owner turned it off; the title is made at most
+//! once for a conversation while the node runs.
 
 use std::collections::HashSet;
 use std::sync::{Arc, LazyLock, Mutex};
@@ -29,7 +30,10 @@ pub(crate) fn maybe(node: &Arc<Node>, id: &ResidentId, about: &About) {
     if node.residents.now(id).is_some_and(|now| now.title.is_some()) {
         return;
     }
-    if !crate::logins::codex_auto_title(node, about.home.as_deref()) {
+    // Naming asks OpenAI: only with the workbench open in the login.
+    if !crate::logins::codex_auto_title(node, about.home.as_deref())
+        || !crate::logins::workbench::is_open(node, &about.acting, "codex", about.home.as_deref())
+    {
         return;
     }
     {
@@ -50,7 +54,7 @@ pub(crate) fn maybe(node: &Arc<Node>, id: &ResidentId, about: &About) {
         }
     };
     let (node, id) = (node.clone(), id.clone());
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         match codex.make_title(&thread, &words).await {
             // Named by the user, or by its host, while the title was being
             // made: that name stays.

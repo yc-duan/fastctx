@@ -28,11 +28,18 @@ pub(super) async fn expected(node: &Node, session: &str, prefix: Option<&Path>) 
     Ok(read.context_messages)
 }
 
+pub(super) struct Inheritance {
+    pub _source_gate: crate::leases::Lease<ResidentId, fastctx_platform::doing::RwLock<()>>,
+    pub _source: Arc<fastctx_platform::doing::OwnedRwLockReadGuard<()>>,
+    pub _target: Arc<crate::data::places::Using>,
+}
+
 pub(super) async fn inherit(
     node: &Arc<Node>,
     parent: &ResidentId,
     child: &ResidentId,
     expected: &[Value],
+    source: Inheritance,
 ) -> Result<(), Failure> {
     let session = node
         .residents
@@ -42,9 +49,14 @@ pub(super) async fn inherit(
     let directory = exchange::sessions(node.world.path()).join(session);
     let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
     loop {
-        if let Some(path) = exchange::transcript(&directory).map_err(failure)? {
+        let finding = directory.clone();
+        let path = fastctx_platform::task::spawn_blocking(move || exchange::transcript(&finding))
+            .await
+            .map_err(failure)?
+            .map_err(failure)?;
+        if let Some(path) = path {
             let copied = read(path).await?;
-            // 2026-10-20: creating the transcript precedes asynchronously saving
+            // Creating the transcript precedes asynchronously saving
             // the copied rows. Grant only the attachments in the confirmed context.
             let inherited = if copied.synthetic_tail && copied.context_messages.len() == expected.len() + 1 {
                 &copied.context_messages[..expected.len()]
@@ -58,7 +70,13 @@ pub(super) async fn inherit(
                     .zip(expected)
                     .all(|(actual, expected)| fastctx_hosts::claude::transcript::same_projection(actual, expected))
             {
-                return crate::attachments::inherit_texts(node, parent, child, &copied.context_messages);
+                let (node, parent, child) = (node.clone(), parent.clone(), child.clone());
+                return fastctx_platform::task::spawn_blocking(move || {
+                    let _source = source;
+                    crate::attachments::inherit_texts(&node, &parent, &child, &copied.context_messages)
+                })
+                .await
+                .map_err(failure)?;
             }
         }
         if tokio::time::Instant::now() >= deadline {
@@ -69,5 +87,8 @@ pub(super) async fn inherit(
 }
 
 async fn read(path: PathBuf) -> Result<transcript::Transcript, Failure> {
-    tokio::task::spawn_blocking(move || transcript::read_with_cuts(&path, &[])).await.map_err(failure)?.map_err(failure)
+    fastctx_platform::task::spawn_blocking(move || transcript::read_with_cuts(&path, &[]))
+        .await
+        .map_err(failure)?
+        .map_err(failure)
 }

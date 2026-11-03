@@ -18,12 +18,26 @@ SENTINEL = {"sentinel": "s-0123456789abcdef", "generation": 1, "machine": "deskt
                  "exit_code": None, "full_path": None}]}}
 # The World's facts after the five protocol 13 shipped with.
 LATER_FACTS = ["delivery_failed", "woke"]
+# A live piece as a node now tells it, with where it stands in its telling.
+MARKED_LIVE = {"kind": "watched", "id": 37, "watched": {
+    "kind": "live", "event": {"at": AT, "event": "turn_started", "turn": "turn-1"},
+    "mark": {"epoch": 7, "sequence": 3}}}
 # The protocol each kind of host control's result came with; the rest came with 13.
 CONTROLLED_SINCE = {"done": 5, "forked": 5, "reported": 10, "refused": 10, "model_menu": 10}
 
 
 def frame(reply):
     return {"kind": "reply", "id": 37, "reply": {"Ok": reply}}
+
+
+def worlds(fixtures):
+    """Whole Worlds as a `WatchWorld` call is sent them, from the fixtures' parts."""
+    world = fixtures["world"]
+    accounts = fixtures["accounts"]["replies"]
+    for index in range(max(len(world["who"]), len(world["nodes"]), len(accounts))):
+        yield {"here": "desktop", "who": world["who"][index % len(world["who"])],
+               "nodes": world["nodes"][index % len(world["nodes"])], "towns": world["towns"],
+               "accounts": accounts[index % len(accounts)]}
 
 
 def replies(fixtures):
@@ -47,7 +61,13 @@ def replies(fixtures):
         "callees": [{"name": "quick", "use_when": "Check one file", "lives_on": "desktop"},
                     {"name": "deep", "account": "ada", "use_when": "Check a precise point", "lives_on": "laptop"}],
         "prompt": "This computer's collaboration text"}}
+    # A callee says how many it works on at once, and an ask that waits for
+    # room says how many wait ahead of it.
+    yield {"reply": "machines", "here": "desktop", "others": ["laptop"], "collab": {
+        "callees": [{"name": "deep", "account": "ada", "use_when": "Check a precise point", "lives_on": "laptop", "at_once": 4}],
+        "prompt": "The account's collaboration text"}}
     yield {"reply": "asked", "colleague": ADDRESS}
+    yield {"reply": "asked", "colleague": ADDRESS, "waiting": 2}
     for landed in [{"kind": "uncertain", "why": "interrupted"}, {"kind": "new_turn", "turn": "a"},
                    {"kind": "joined_turn", "turn": "b"}, {"kind": "waiting", "why": "offline", "answered": True},
                    {"kind": "sent"}, {"kind": "handed", "id": "notice-ab12"}]:
@@ -105,6 +125,9 @@ def replies(fixtures):
     for speaker in [{"kind": "user", "machine": "desktop"}, {"kind": "resident", "address": ADDRESS},
                     {"kind": "world"}, fixtures["pages"]["speaker"]]:
         notices.append({"kind": "words", "from": speaker, "text": "verbatim words"})
+    # What a colleague tells the agent that asked it, with message_user.
+    notices.append({"kind": "words", "from": {"kind": "resident", "address": ADDRESS}, "text": "verbatim words",
+                    "told": {"colleague": ADDRESS, "label": "task", "attachments": [{"machine": "laptop", "path": "C:/out/report.md"}]}})
     for fact in [{"fact": "desk_taken", "by": ADDRESS}, {"fact": "desk_outside"}, {"fact": "desk_free", "by": ADDRESS},
                  {"fact": "moved", "to": "project"}, {"fact": "delivery_failed", "id": "notice-ab12"},
                  {"fact": "woke", "why": {"kind": "due"}}]:
@@ -226,7 +249,7 @@ def elsewhere(value):
     return isinstance(value, list) and any(map(elsewhere, value))
 
 
-def samples(root):
+def samples(root, shipped):
     fixtures = json.loads((root / "gui/fixtures/wire.json").read_text(encoding="utf-8"))
     for protocol in [5, 6, 7, 8, 9, 10]:
         # New GUI reads are parsed by today's node and refused before use
@@ -245,6 +268,10 @@ def samples(root):
             if lifetime is not None:
                 welcome["node_lifetime"] = lifetime
             yield {"mode": "welcome", "protocol": protocol, "value": welcome}
+        # A node that follows collaborations says so; a client before it reads past that.
+        yield {"mode": "welcome", "protocol": protocol,
+               "value": {"kind": "accepted", "machine": "desktop", "version": "1.0.0", "collaboration_watch": True}}
+        yield {"mode": "watched", "protocol": protocol, "value": MARKED_LIVE}
         for reply in replies(fixtures):
             if protocol == 5 and reply["reply"] == "server_invitation":
                 continue
@@ -283,15 +310,22 @@ def samples(root):
                    "value": {"kind": "call", "id": 37, "call": call}}
     # The releases of protocol 13 read today's replies with the types they
     # shipped: a tool process outlives its node's change of program, so a
-    # beta 1, 2 or 11 tool reads a later node's answers as it is. It says no
-    # later notices, so a sentinel's finding and the later World facts are
-    # words to it.
-    for reader in ["v13_beta1", "v13_beta2", "v13_beta11"]:
+    # tool of any shipped release reads a later node's answers as it is. It
+    # says no later notices, so a sentinel's finding and the later World facts
+    # are words to it.
+    for reader, shapes in shipped.items():
+        # Its interface follows the World: the node sends it the whole, shaped
+        # for what it says it reads.
+        for now in worlds(fixtures):
+            yield {"mode": "world", "protocol": 13, "reader": reader, "shapes": shapes, "value": now}
         for lifetime in [None, fixtures["world"]["nodes"][0]["facts"]["node_lifetime"]]:
             welcome = {"kind": "accepted", "machine": "desktop", "version": "1.0.0"}
             if lifetime is not None:
                 welcome["node_lifetime"] = lifetime
             yield {"mode": "welcome", "protocol": 13, "reader": reader, "value": welcome}
+        yield {"mode": "welcome", "protocol": 13, "reader": reader,
+               "value": {"kind": "accepted", "machine": "desktop", "version": "1.0.0", "collaboration_watch": True}}
+        yield {"mode": "watched", "protocol": 13, "reader": reader, "value": MARKED_LIVE}
         for reply in replies(fixtures):
             notice = reply["notices"][0]["notice"] if reply["reply"] == "notices" else {}
             yield {"mode": "reply", "protocol": 13, "reader": reader, "value": frame(reply),

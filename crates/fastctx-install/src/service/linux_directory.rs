@@ -16,7 +16,7 @@ pub(super) fn prepare(service: &super::Service) -> anyhow::Result<()> {
         ensure!(metadata.is_dir(), "{} is not a plain directory", directory.display());
         return Ok(());
     }
-    // 2026-10-20: creating as the service user avoids a root-owned private directory
+    // Creating as the service user avoids a root-owned private directory
     // and never grants root's chown authority to a path in a user's directory.
     if service.uid == unsafe { libc::getuid() } {
         fs::DirBuilder::new()

@@ -32,8 +32,10 @@ fn released_ownership_is_bound_and_retired_with_the_host_files() {
         world: temp.path().join("fastctx/world"),
         codex_home: temp.path().join("codex"),
         claude_home: temp.path().join("claude"),
+        claude_config_dir: None,
         claude: None,
         fastctx: std::env::current_exe().unwrap(),
+        workbench: None,
     };
     fs::create_dir(&places.root).unwrap();
     fs::create_dir(&places.codex_home).unwrap();

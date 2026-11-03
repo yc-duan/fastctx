@@ -1,13 +1,25 @@
 //! Named context shared by both hosts. Setting a block never starts a turn.
 
+mod archived;
+pub(crate) mod blocking;
+pub(crate) mod dependencies;
 pub(crate) mod input;
+pub(crate) mod invalidations;
 pub(crate) mod memory;
+#[cfg(feature = "storage-drill")]
+pub(crate) mod migration_drill;
+pub(crate) mod parts;
+mod projection;
+mod projects;
+pub(crate) mod records;
+pub(crate) mod routes;
 pub(crate) mod sources;
 mod storage;
 pub(crate) mod turn;
 mod updates;
 pub(crate) mod words;
-pub(crate) use updates::{Updates, refresh, request_plan, start};
+pub(crate) use invalidations::request_plan;
+pub(crate) use updates::{Updates, refresh, start, told};
 
 use crate::Node;
 use fastctx_types::{Address, ResidentId};
@@ -39,6 +51,14 @@ pub struct Receipt {
 }
 
 impl Receipt {
+    pub(crate) fn revision(&self, name: &str) -> Option<u64> {
+        self.revisions.get(name).copied()
+    }
+
+    pub(crate) fn version(&self, name: &str) -> Option<&str> {
+        self.versions.get(name).map(String::as_str)
+    }
+
     pub(crate) fn preceded_by_identity(&mut self) {
         self.shown.start += 1;
         self.shown.end += 1;
@@ -65,6 +85,9 @@ pub(crate) fn set(node: &Node, id: &ResidentId, name: &str, text: &str, change: 
 /// whose things never land on the owner's disk (`world-placement.md`, 一条规则).
 /// While the account's view has not come it is held in memory.
 pub(crate) fn set_account(node: &Node, id: &ResidentId, name: &str, text: &str, change: Change<'_>) -> io::Result<()> {
+    if name == "history" || crate::assists::host::kept(node, id).ok().flatten() == Some(true) {
+        return storage::set_memory(node, id, name, text, change);
+    }
     let Some((about, _)) = node.residents.about(id) else {
         return storage::set(&node.world, id, name, text, change);
     };
@@ -81,7 +104,12 @@ pub(crate) fn clear(node: &Node, id: &ResidentId, name: &str, change: Change<'_>
     storage::set(&node.world, id, name, "", change)
 }
 
-pub(crate) use sources::{map, plan, plan_unavailable, prepare, refresh_local};
+pub(crate) use sources::{map, plan, plan_unavailable, prepare, refresh_local_now};
+
+/// The revision the current context epoch records as heard, in the caller's transaction.
+pub(crate) fn seen_revision(rows: &crate::records::Rows<'_>, name: &str) -> fastctx_storage::Result<Option<u64>> {
+    storage::seen_revision(rows, name)
+}
 
 /// Moves the account blocks of conversations known to assist another account
 /// off this disk; the owner's own keep theirs here (`set_account`).
@@ -96,12 +124,20 @@ pub(crate) fn migrate(node: &Node) {
     }
 }
 
-pub(crate) fn instructed(node: &Node, id: &ResidentId, heard: &crate::residents::Heard) -> io::Result<()> {
-    if let Some(receipt) = &heard.context {
-        storage::instructed(&node.world, id, receipt)?;
-        sources::observed(node, id, receipt)?;
-    }
-    Ok(())
+pub(crate) async fn instructed(
+    node: &std::sync::Arc<Node>,
+    id: &ResidentId,
+    heard: &crate::residents::Heard,
+) -> io::Result<()> {
+    let heard = heard.clone();
+    blocking::with(node, id, move |node, id| {
+        if let Some(receipt) = &heard.context {
+            storage::instructed(&node.world, id, receipt)?;
+            sources::observed(node, id, receipt)?;
+        }
+        Ok(())
+    })
+    .await
 }
 
 pub(crate) fn compacted(node: &Node, id: &ResidentId, marker: &str) -> io::Result<()> {
@@ -169,12 +205,15 @@ pub(crate) fn hand_to_session(node: &Node, id: &ResidentId, session: &Path) -> i
         "memory": true,
     }))
     .map_err(io::Error::other)?;
-    match std::fs::read(&path) {
+    match fastctx_platform::disk::read(&path) {
         Ok(kept) if kept == bytes => return Ok(()),
         Ok(_) => {}
         Err(error) if error.kind() == io::ErrorKind::NotFound => {}
         Err(error) => return Err(error),
     }
+    // Initialization repairs any durable dirty intent. A new pointer also
+    // checks the full projection before the plugin can use it.
+    records::repair(&node.world, id)?;
     fastctx_platform::publish(&path, &bytes, fastctx_platform::Permissions::Private)
 }
 
@@ -199,7 +238,7 @@ pub(crate) fn plugin_heard(node: &Node, id: &ResidentId) -> io::Result<()> {
     }
     let Some(session) = about.session else { return Ok(()) };
     let path = fastctx_hosts::claude::exchange::sessions(node.world.path()).join(session).join("context-heard.json");
-    let heard: PluginHeard = match std::fs::read(path) {
+    let heard: PluginHeard = match fastctx_platform::disk::read(path) {
         Ok(bytes) => serde_json::from_slice(&bytes).map_err(io::Error::other)?,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
         Err(error) => return Err(error),
@@ -212,4 +251,35 @@ pub(crate) fn plugin_heard(node: &Node, id: &ResidentId) -> io::Result<()> {
         sources::observed(node, id, &accepted)?;
     }
     Ok(())
+}
+
+pub(crate) fn initialized(node: &Node, id: &ResidentId) -> io::Result<bool> {
+    records::initialized(&node.world, id)
+}
+
+/// A native compaction observation and its context epoch advance together.
+pub(crate) fn native_observed(
+    node: &Node,
+    id: &ResidentId,
+    observed: serde_json::Value,
+    marker: Option<String>,
+) -> io::Result<()> {
+    let changed = marker.is_some();
+    records::commit(
+        &node.world,
+        id,
+        2048,
+        projection::Selection::State,
+        |_| {
+            if changed {
+                node.residents.restore_opening_heard(id);
+            }
+        },
+        move |rows| {
+            if let Some(marker) = marker {
+                storage::reset_in(rows, &marker)?;
+            }
+            rows.put("native-context", "current", &observed)
+        },
+    )
 }

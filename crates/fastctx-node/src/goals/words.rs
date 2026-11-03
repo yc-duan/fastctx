@@ -129,6 +129,9 @@ pub(crate) fn question(colleague: &fastctx_types::Address, item: &fastctx_types:
     )
 }
 
+/// How a colleague's report goes, where its goal is on.
+const REPORT: &str = "- The draft you mark it with is your report: it reaches the requesting conversation.\n";
+
 pub(crate) fn context(goal: &Goal) -> String {
     if !goal.active() {
         return String::new();
@@ -136,10 +139,13 @@ pub(crate) fn context(goal: &Goal) -> String {
     let block = if goal.standing { STANDING_BLOCK } else { BLOCK };
     let text = match &goal.owner {
         Owner::User => block.to_string(),
-        Owner::Conversation { address } => block
-            .replace("The user", &format!("The conversation that asked you ({address})"))
-            .replace("the user's", "the requester's")
-            .replace("the user", "the requesting conversation"),
+        Owner::Conversation { address } => {
+            let block = block
+                .replace("The user", &format!("The conversation that asked you ({address})"))
+                .replace("the user's", "the requester's")
+                .replace("the user", "the requesting conversation");
+            format!("{block}{REPORT}")
+        }
     };
     text.replace("{{ goal }}", &goal.objective)
 }

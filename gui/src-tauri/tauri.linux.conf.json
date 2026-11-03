@@ -1,0 +1,15 @@
+{
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Fastctx",
+        "width": 1180,
+        "height": 860,
+        "minWidth": 360,
+        "minHeight": 520,
+        "decorations": false
+      }
+    ]
+  }
+}

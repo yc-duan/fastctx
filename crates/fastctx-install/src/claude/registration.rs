@@ -1,7 +1,7 @@
 //! Only the reserved product's declarations are removed here. Claude commands
 //! can leave them behind without a listable installation record.
 
-use super::jsonc::Document;
+use crate::jsonc::Document;
 use crate::plan::ClaudePlan;
 
 pub(crate) fn remove(

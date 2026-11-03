@@ -1,4 +1,7 @@
 //! Avoid mallocng's shared allocation lock in the static Linux executable.
+//! A build against glibc takes the same allocator, so what a development
+//! build's memory does on Linux is what the released one's does: glibc's
+//! arena for each thread would keep what a burst of threads freed.
 
 #[global_allocator]
 static ALLOCATOR: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;

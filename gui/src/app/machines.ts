@@ -44,6 +44,8 @@ import { MachineLog, type ReadLog } from "./machine-log";
 import { boxParts, groupingOf, groupMoreKey, groupMoreOf, regroup, renameGroups, type GroupBox, type Grouping } from "./machine-groups";
 import { MachineMap, MAP_ORDER, personKey } from "./machine-map";
 import { isManaged, listOrder, machineList } from "./machine-list";
+import { DAY_MS, tellsTroubles, troublesIn, troubleView } from "./trouble-view";
+import type { TroubleWords } from "./trouble-words";
 import { whenNear } from "./read-on";
 import { MapPeople } from "./map-people";
 import type { PeopleWords } from "./people-words";
@@ -54,7 +56,7 @@ import { deviceKey, type MapNode } from "./map-nodes";
 import { link } from "./places";
 import { runsHub, holds, assistantsOf, isComputer, isSuper, isVisitor, machinesOf, owns, type Machine } from "./reach";
 import type { Page } from "./shell";
-import { effect } from "./signals";
+import { effect, type Signal } from "./signals";
 import type { BatchWords } from "./machine-batch-words";
 import { ChosenBar } from "./machine-framed";
 import { removerLoginOf } from "./machine-logins";
@@ -76,6 +78,9 @@ export interface MachinesOptions {
   /** Opens on the update view instead, that machine ticked in it: a
    *  machine's page sends here to update it. */
   ticked?: boolean;
+  /** Opens on the alerts: a notification of the network's trouble sends
+   *  here. */
+  alerts?: boolean;
   /** When, as the front page says it: a clock time today, a day before. */
   when(at: Date, now: Date): string;
   /** Makes a change as a login. */
@@ -85,6 +90,9 @@ export interface MachinesOptions {
   invite(login: Login): Promise<boolean> | void;
   /** Opens a new conversation with an agent on `machine`, as written. */
   talk(machine: string): void;
+  /** Whether the workbench's places are shown: a new conversation is one
+   *  of them (`world-layers.md`). */
+  workbench: Signal<boolean>;
   confirm: Confirm;
   /** Reads the hub's record of changes, a page at a time. */
   log: ReadLog;
@@ -97,6 +105,8 @@ export interface MachinesOptions {
   /** The words of machines chosen together, and of taking machines off. */
   batch: BatchWords;
   manage: ManageWords;
+  /** The words of what went wrong, for the alerts (`trouble-view.ts`). */
+  troubles: TroubleWords;
 }
 
 const spotsMade = new WeakMap<WorldNow, Map<string, Spot>>();
@@ -116,12 +126,12 @@ const ARRIVED_MS = 6_000;
 /** Where this device keeps whether the machines show as a drawing or a list. */
 const VIEW_KEY = "machines.view";
 
-type View = "map" | "list" | "updates";
+type View = "map" | "list" | "updates" | "alerts";
 
 function keptView(): View {
   try {
     const kept = localStorage.getItem(VIEW_KEY);
-    return kept === "list" || kept === "updates" ? kept : "map";
+    return kept === "list" || kept === "updates" || kept === "alerts" ? kept : "map";
   } catch {
     return "map";
   }
@@ -302,6 +312,7 @@ export class MachinesPage implements Page {
             else if (this.note?.machine === "") this.note = null;
           },
           width: () => this.list.clientWidth,
+          confirm: options.confirm,
         })
       : null;
     this.moving = new HubMoving({ ...options.moving, words, access: options.access, confirm: options.confirm, changed: () => this.redraw() });
@@ -338,10 +349,12 @@ export class MachinesPage implements Page {
     this.element.innerHTML = `
       ${options.head(
         `<h1 class="page-title">${escape(words.title)}</h1>`,
-        `<button class="icon-button mf-toggle" type="button" aria-label="${escape(words.find.find)}" title="${escape(words.find.find)}" hidden>${glyph("search", 18)}</button><div class="ml-views" role="radiogroup" aria-label="${escape(words.views)}" hidden>${(options.updates ? (["map", "list", "updates"] as View[]) : (["map", "list"] as View[]))
+        `<button class="icon-button mf-toggle" type="button" aria-label="${escape(words.find.find)}" title="${escape(words.find.find)}" hidden>${glyph("search", 18)}</button><div class="ml-views" role="radiogroup" aria-label="${escape(words.views)}" hidden>${(options.updates ? (["map", "list", "updates", "alerts"] as View[]) : (["map", "list", "alerts"] as View[]))
           .map((view) => {
-            const label = view === "map" ? words.viewMap : view === "list" ? words.viewList : options.updates!.view.view;
-            return `<button class="ml-view" type="button" role="radio" data-view="${view}" title="${escape(label)}">${glyph(view === "map" ? "tree" : view === "list" ? "rows" : "update", 16)}<span>${escape(label)}</span>${view === "updates" ? `<span class="ml-view-count" hidden></span>` : ""}</button>`;
+            const label = view === "map" ? words.viewMap : view === "list" ? words.viewList : view === "updates" ? options.updates!.view.view : options.troubles.view;
+            const icon = view === "map" ? "tree" : view === "list" ? "rows" : view === "updates" ? "update" : "bell";
+            // The alerts are there only where a hub tells them.
+            return `<button class="ml-view" type="button" role="radio" data-view="${view}" title="${escape(label)}"${view === "alerts" ? " hidden" : ""}>${glyph(icon, 16)}<span>${escape(label)}</span>${view === "updates" || view === "alerts" ? `<span class="ml-view-count" hidden></span>` : ""}</button>`;
           })
           .join("")}</div><button class="text-button add-device" type="button" hidden>${glyph("plus", 16)}<span>${escape(words.add)}</span></button>`,
       )}
@@ -441,7 +454,7 @@ export class MachinesPage implements Page {
     document.addEventListener("keydown", this.findKey);
     // A machine named in the address is shown on the drawing, or ticked in
     // the update view.
-    this.view = ticked ? "updates" : options.focus ? "map" : keptView();
+    this.view = ticked ? "updates" : options.alerts ? "alerts" : options.focus ? "map" : keptView();
     if (this.view === "updates" && !options.updates) this.view = "list";
     this.views.addEventListener("click", (event) => {
       const view = (event.target as HTMLElement).closest<HTMLElement>("[data-view]")?.dataset.view as View | undefined;
@@ -576,9 +589,14 @@ export class MachinesPage implements Page {
           this.redraw();
         })
       : () => {};
+    const stopWorkbench = effect(() => {
+      options.workbench.get();
+      this.redraw();
+    });
     this.stop = () => {
       stopWorld();
       stopUpdates();
+      stopWorkbench();
       this.updateView?.stop();
     };
     this.updateView?.watch();
@@ -780,7 +798,7 @@ export class MachinesPage implements Page {
     // the drawing, and ticked in the list and the update view. On a narrow
     // page the list ticks only what a long press began to choose.
     this.updateView?.watch();
-    if (view !== "map" && !this.framed.length && this.selected && this.isPickable(this.selected) && !this.narrow()) {
+    if (view !== "map" && view !== "alerts" && !this.framed.length && this.selected && this.isPickable(this.selected) && !this.narrow()) {
       this.framed = [this.selected];
       this.selected = null;
     } else if (view === "map" && this.framed.length === 1) {
@@ -1237,7 +1255,8 @@ export class MachinesPage implements Page {
     // together; on the drawing one alone is the one chosen. What is done to
     // them is the bar at the foot of the page, which takes no room from the
     // list; the panel is only ever the details of one.
-    const together = framed.length > (this.view === "map" ? 1 : 0);
+    // Nothing is done to machines together from the alerts.
+    const together = this.view !== "alerts" && framed.length > (this.view === "map" ? 1 : 0);
     // The one chosen on the drawing has its bar beside it, out of the way
     // of a menu or a card of changes while they are open, and of the
     // server's new place being chosen; what is known of a hub, a phone or
@@ -1258,8 +1277,15 @@ export class MachinesPage implements Page {
     // ways into one; the drawing waits until there is one.
     const alone = !loginsOf(world.accounts).length && isComputer(world);
     this.alone(alone);
+    // The alerts are there only where a hub tells them; kept chosen where
+    // none does, the list stands in for them.
+    const alerts = tellsTroubles(world);
+    const alertsView = this.views.querySelector<HTMLElement>('[data-view="alerts"]');
+    if (alertsView) alertsView.hidden = !alerts;
+    if (this.view === "alerts" && !alerts) this.view = "list";
     const listing = !alone && this.view !== "map";
     const updating = listing && this.view === "updates";
+    const alerting = listing && this.view === "alerts";
     this.views.hidden = alone;
     // Nothing is found where there is only this computer.
     this.findToggle.hidden = alone;
@@ -1271,27 +1297,36 @@ export class MachinesPage implements Page {
     }
     this.canvas.classList.toggle("listing", listing);
     this.list.hidden = !listing;
-    this.list.classList.toggle("picking", framed.length > 0);
+    this.list.classList.toggle("picking", framed.length > 0 && !alerting);
     this.list.classList.toggle("updates", updating);
+    this.list.classList.toggle("alerts", alerting);
     const able = this.updateView?.able() ?? 0;
-    const count = this.views.querySelector<HTMLElement>(".ml-view-count");
+    const count = this.views.querySelector<HTMLElement>('[data-view="updates"] .ml-view-count');
     if (count) {
       count.hidden = !able;
       count.textContent = able ? String(able) : "";
+    }
+    // How many troubles were told within the day.
+    const told = alerts ? troublesIn(world, now, DAY_MS) : 0;
+    const toldCount = alertsView?.querySelector<HTMLElement>(".ml-view-count");
+    if (toldCount) {
+      toldCount.hidden = !told;
+      toldCount.textContent = told ? String(told) : "";
     }
     this.list.classList.toggle("selecting", this.selecting);
     // Beside the list on a wide page the panel takes its own room.
     this.canvas.classList.toggle("beside", listing && open && !narrow);
     if (listing) {
       const adds = world.accounts.hubs.filter((hub) => this.hubLogin(hub.hub)).map((hub) => hub.hub);
-      const { html, rows } = machineList(
+      // The list's columns are narrow: a day before today is its date.
+      const when = (at: Date, now: Date) => (at.toDateString() === now.toDateString() ? this.options.when(at, now) : this.options.access.moment.short(at, now));
+      const { html, rows } = alerting ? { html: troubleView({ world, now, when }, this.options.troubles), rows: new Map<string, number>() } : machineList(
         {
           world,
           now,
           selected: open ? this.selected : this.findCurrent && found?.includes(this.findCurrent) ? this.findCurrent : null,
           adds,
-          // The list's columns are narrow: a day before today is its date.
-          when: (at, now) => (at.toDateString() === now.toDateString() ? this.options.when(at, now) : this.options.access.moment.short(at, now)),
+          when,
           picked: new Set(framed),
           pick: { one: this.options.batch.pickOne, all: this.options.batch.pickAll },
           open: (key, byDefault) => this.listFolds.get(key) ?? byDefault,
@@ -1306,14 +1341,14 @@ export class MachinesPage implements Page {
         this.listed = html;
         // The update view's machines scroll on their own, and are where
         // they were after each drawing.
-        const scrolled = this.list.querySelector<HTMLElement>(".uv-rows")?.scrollTop ?? 0;
+        const scrolled = this.list.querySelector<HTMLElement>(".uv-rows, .tv-rows")?.scrollTop ?? 0;
         redrawKeepingFocus(this.list, () => {
           this.list.innerHTML = html;
-          const rows = this.list.querySelector<HTMLElement>(".uv-rows");
+          const rows = this.list.querySelector<HTMLElement>(".uv-rows, .tv-rows");
           if (rows) rows.scrollTop = scrolled;
         });
         this.listUnwatch();
-        this.listUnwatch = whenNear(this.list, this.list.querySelector(".uv-rows") ?? this.list, () => {
+        this.listUnwatch = whenNear(this.list, this.list.querySelector(".uv-rows, .tv-rows") ?? this.list, () => {
           this.listReach += LIST_ROWS;
           this.redraw();
         });
@@ -1500,7 +1535,9 @@ export class MachinesPage implements Page {
         ...(top && spot.hub.dissolves ? [{ act: "dissolve", label: words.dissolve, icon: "close" as const, danger: true }] : []),
       ];
     }
-    if (spot.kind === "assist") return [{ act: "talk", label: words.talk, icon: "plus" }, details];
+    // A new conversation is the workbench's.
+    const talk: Act[] = this.options.workbench.peek() ? [{ act: "talk", label: words.talk, icon: "plus" }] : [];
+    if (spot.kind === "assist") return [...talk, details];
     // A phone is only signed in: nothing runs on it to work with.
     if (spot.kind === "device") return [details, ...(spot.here ? [] : [{ act: "remove", label: words.removePhone, icon: "close" as const, danger: true }])];
     const holders = this.holdersOf(spot.machine, world);
@@ -1533,10 +1570,7 @@ export class MachinesPage implements Page {
     return [
       ...(managed
         ? []
-        : [
-            { act: "talk", label: words.talk, icon: "plus" as const },
-            { act: "agents", label: words.hosts, icon: "agents" as const },
-          ]),
+        : [...talk, { act: "agents", label: words.hosts, icon: "agents" as const }]),
       ...(shares ? [{ act: "share", label: words.share, icon: "colleague" as const }] : []),
       ...direct,
       ...relay,

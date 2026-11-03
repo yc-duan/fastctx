@@ -10,7 +10,8 @@ publish = false
 
 [dependencies]
 fastctx-types = { path = "../fastctx-types" }
-tokio = { workspace = true, features = ["fs", "io-util", "net", "rt", "sync", "time"] }
+jiff = { workspace = true }
+tokio = { workspace = true, features = ["fs", "io-util", "net", "rt", "rt-multi-thread", "sync", "time"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
@@ -44,3 +45,6 @@ windows-sys = { version = "0.61", features = [
     "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging",
 ] }
+
+[lints]
+workspace = true

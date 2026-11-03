@@ -1,87 +1,85 @@
-//! Receipt migration never blocks startup. Each committed batch is verified
-//! before its legacy files are removed; uncertain acceptances have no expiry.
-
+//! Legacy acceptance receipts use the same bounded, demand-promoted workers as
+//! conversation records. An unreadable receipt never stalls another identity.
 use super::delivered;
-use crate::Node;
-use fastctx_storage::migration;
-use std::io;
-use std::sync::Arc;
+use crate::{
+    Node,
+    record_migration::{archive, scheduler},
+};
+use fastctx_platform::{disk, task};
+use fastctx_storage::{Database, receipts};
+use std::{
+    io,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
+pub(super) fn prepare(database: &Database, path: &Path) -> io::Result<()> {
+    let world = path.parent().and_then(Path::parent).ok_or_else(|| io::Error::other("letter receipt has no world"))?;
+    let name =
+        path.file_name().and_then(|name| name.to_str()).ok_or_else(|| io::Error::other("invalid receipt identity"))?;
+    let (database, path, root) = (database.clone(), path.to_path_buf(), world.to_path_buf());
+    scheduler::request(world, "@node", &format!("letter-receipt/{name}"), move || import(&database, &root, &path))
+}
+fn import(database: &Database, world: &Path, path: &Path) -> io::Result<()> {
+    let original = match disk::read(path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return archive::damaged(world, "@node", "letter-receipts", path, &error.to_string()),
+    };
+    if original != b"accepted" {
+        return archive::damaged(world, "@node", "letter-receipts", path, "receipt is not an accepted handoff");
+    }
+    let signature = archive::fingerprint(path)?;
+    let key = delivered::key(path.file_name().and_then(|name| name.to_str()).expect("receipt identity"));
+    let imported = key.clone();
+    database
+        .write_now_at(scheduler::priority(), key.bytes() + 8, move |db| {
+            receipts::import(db, &imported, b"accepted", delivered::KEEP, jiff::Timestamp::now().as_millisecond())
+        })
+        .map_err(io::Error::other)?;
+    let reread = disk::read(path)?;
+    let stored = database.read_background_now(|db| receipts::get(db, &key)).map_err(io::Error::other)?;
+    if reread != original || stored.as_deref() != Some(reread.as_slice()) {
+        return archive::damaged(world, "@node", "letter-receipts", path, "receipt differs from reread original");
+    }
+    archive::verified(world, "@node", path, &signature)
+}
+fn all(database: &Database, world: &Path) -> io::Result<()> {
+    let entries = match disk::read_dir(world.join("letter-receipts")) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    for entry in entries {
+        scheduler::checkpoint()?;
+        let entry = entry?;
+        if entry.file_type()?.is_file() && !entry.file_name().to_string_lossy().starts_with('.') {
+            prepare(database, &entry.path())?;
+        }
+    }
+    Ok(())
+}
 pub(crate) fn start(node: &Arc<Node>) {
-    let node = Arc::downgrade(node);
-    tokio::spawn(async move {
-        let mut previous = String::new();
+    let node = node.clone();
+    task::spawn(async move {
         let mut again = crate::again::Again::default();
         loop {
-            let Some(node) = node.upgrade() else { return };
-            let root = node.world.path().join("letter-receipts");
-            let database = node.database.clone();
-            let result = tokio::task::spawn_blocking(move || -> io::Result<usize> {
-                let entries = match std::fs::read_dir(&root) {
-                    Ok(entries) => entries,
-                    Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(0),
-                    Err(error) => return Err(error),
-                };
-                let mut batch = Vec::new();
-                let mut count = 0;
-                for entry in entries {
-                    let entry = entry?;
-                    if !entry.file_type()?.is_file() {
-                        continue;
-                    }
-                    let id = entry
-                        .file_name()
-                        .into_string()
-                        .map_err(|_| io::Error::other("letter receipt id is not UTF-8"))?;
-                    if id.starts_with('.') {
-                        continue;
-                    }
-                    let bytes = match std::fs::read(entry.path()) {
-                        Ok(bytes) => bytes,
-                        Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
-                        Err(error) => return Err(error),
-                    };
-                    if bytes != b"accepted" {
-                        return Err(io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            format!("invalid letter receipt: {}", entry.path().display()),
-                        ));
-                    }
-                    batch.push(migration::Receipt {
-                        path: entry.path(),
-                        key: delivered::key(&id),
-                        value: bytes,
-                        keep: delivered::KEEP,
-                    });
-                    if batch.len() == 256 {
-                        count +=
-                            migration::receipts(&database, std::mem::take(&mut batch)).map_err(io::Error::other)?;
-                    }
-                }
-                count += migration::receipts(&database, batch).map_err(io::Error::other)?;
-                Ok(count)
+            let working = node.clone();
+            let result = task::spawn_blocking(move || {
+                let world: PathBuf = working.world.path().into();
+                let source = world.clone();
+                let database = working.database.clone();
+                scheduler::discovery(|| {
+                    scheduler::request(&world, "@node", "letter-receipts", move || all(&database, &source))
+                })
             })
             .await;
             match result {
-                Ok(Ok(count)) => {
-                    if count != 0 {
-                        node.log.line(format_args!("moved {count} business letter receipts into the database"));
-                    }
-                    return;
-                }
-                result => {
-                    let reason = match result {
-                        Ok(Err(error)) => error.to_string(),
-                        Err(error) => error.to_string(),
-                        _ => unreachable!(),
-                    };
-                    if previous != reason {
-                        node.log.line(format_args!("moving business letter receipts: {reason}"));
-                        previous = reason;
-                    }
-                }
+                Ok(Ok(())) => return,
+                Ok(Err(error)) if error.kind() == io::ErrorKind::WouldBlock => {}
+                Ok(Err(error)) => node.log.line(format_args!("moving business letter receipts: {error}")),
+                Err(error) => node.log.line(format_args!("letter receipt migration worker: {error}")),
             }
-            drop(node);
             tokio::time::sleep(again.next()).await;
         }
     });

@@ -25,3 +25,6 @@ serde_json.workspace = true
 tar = "0.4"
 zip = { version = "8.6", default-features = false, features = ["deflate"] }
 tokio = { workspace = true, features = ["fs", "io-util", "macros", "rt", "sync", "time"] }
+
+[lints]
+workspace = true

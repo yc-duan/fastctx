@@ -1,10 +1,11 @@
 //! Claude Code checks the World's plugin as it checks one before loading it,
 //! and the node says loudly when it would not load: its mod is read and
 //! judged by Claude Code before it runs, and a mod it refuses tells the
-//! World nothing at all. The check runs with a login the plugin is put into,
-//! once for each version of the plugin: running Claude Code reads that
-//! login, and syncs its remote settings, so it is not run at every start.
-//! Where no login has the plugin, nothing loads it, and nothing is run.
+//! World nothing at all. The check runs with a login the workbench is open
+//! in, which the plugin is put into, once for each version of the plugin:
+//! running Claude Code reads that login, and syncs its remote settings, so
+//! it is not run at every start. Where no such login has the plugin, nothing
+//! the World starts loads it, and nothing is run.
 
 use std::path::{Path, PathBuf};
 
@@ -28,7 +29,15 @@ pub(super) fn run(node: &Node, plugin: &Path) {
         Ok(found) => found
             .into_iter()
             .filter(|integration| integration.host == fastctx_install::apply::Host::Claude)
-            .map(|integration| fastctx_hosts::inventory::plain(&integration.home))
+            // A login connected alone starts no program, though it may still
+            // hold the plugin an earlier version put there, which is taken
+            // out without one.
+            .map(|integration| (fastctx_hosts::inventory::plain(&integration.home), integration))
+            .filter(|(dir, integration)| {
+                crate::logins::workbench::known(node, "claude", dir) == Some(true)
+                    && fastctx_install::apply::claude_plugin_at(&context.places, &integration.home).unwrap_or(false)
+            })
+            .map(|(dir, _)| dir)
             .collect(),
         Err(error) => {
             node.log.line(format_args!(
@@ -49,7 +58,7 @@ pub(super) fn run(node: &Node, plugin: &Path) {
         }
     };
     let record = plugin.with_file_name(CHECKED);
-    if std::fs::read_to_string(&record).is_ok_and(|kept| kept.trim() == fingerprint) {
+    if fastctx_platform::disk::read_to_string(&record).is_ok_and(|kept| kept.trim() == fingerprint) {
         return;
     }
     let Ok(Command { program, cwd, env }) = command(node, Some(home)) else { return };
@@ -74,9 +83,9 @@ fn fingerprint(plugin: &Path) -> std::io::Result<String> {
     let mut files = Vec::new();
     let mut pending = vec![plugin.to_path_buf()];
     while let Some(directory) = pending.pop() {
-        for entry in std::fs::read_dir(&directory)? {
+        for entry in fastctx_platform::disk::read_dir(&directory)? {
             let path = entry?.path();
-            if path.is_dir() {
+            if fastctx_platform::disk::is_dir(&path) {
                 pending.push(path);
             } else {
                 files.push(path);
@@ -89,7 +98,7 @@ fn fingerprint(plugin: &Path) -> std::io::Result<String> {
         let relative = file.strip_prefix(plugin).unwrap_or(&file);
         hash.update(relative.to_string_lossy().as_bytes());
         hash.update([0]);
-        hash.update(std::fs::read(&file)?);
+        hash.update(fastctx_platform::disk::read(&file)?);
         hash.update([0]);
     }
     Ok(format!("{:x}", hash.finalize()))

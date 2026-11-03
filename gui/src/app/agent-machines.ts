@@ -103,6 +103,25 @@ function pickablesOf(world: WorldNow): Pickable[] {
   return picked.sort((a, b) => HOLDS.indexOf(a.hold) - HOLDS.indexOf(b.hold) || grouped(a, b) || Number(b.here) - Number(a.here) || Number(b.online === true) - Number(a.online === true) || a.written.localeCompare(b.written));
 }
 
+const MACHINE = "agents.machine";
+
+/** The machine the agents were last shown for, on this device. */
+export function keptMachine(): string | null {
+  try {
+    return localStorage.getItem(MACHINE);
+  } catch {
+    return null;
+  }
+}
+
+export function keepMachine(machine: string): void {
+  try {
+    localStorage.setItem(MACHINE, machine);
+  } catch {
+    // Not kept: this computer shows first next time.
+  }
+}
+
 /** The machine to show: the one named, else the one kept, else this
  *  computer, else the first. */
 export function chosen(machines: Pickable[], named: string | null, kept: string | null): Pickable | null {

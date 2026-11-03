@@ -100,7 +100,7 @@ impl Drop for Lease {
             return;
         }
         let (node, id, cell) = (self.node.clone(), self.id.clone(), self.cell.clone());
-        tokio::spawn(async move {
+        fastctx_platform::task::spawn(async move {
             if !node.residents.knows(&id) {
                 return;
             }

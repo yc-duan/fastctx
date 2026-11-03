@@ -32,7 +32,7 @@ impl World {
         path: String,
         decoding: Decoding,
     ) -> Result<LinesReply, Error> {
-        // 2026-10-21: historical artifact indexes carry no hub, so they cannot
+        // Artifact indexes of earlier releases carry no hub, so they cannot
         // identify the cached file of a hub-qualified source.
         if let Some(cache) = self.cache().cloned()
             && let Some(machine) = machine.clone()

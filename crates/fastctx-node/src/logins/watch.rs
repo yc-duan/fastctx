@@ -25,18 +25,21 @@ const EVERY: Duration = Duration::from_secs(60 * 60);
 /// Watches the logins the World's tools are in from now on.
 pub(crate) fn start(node: &Arc<Node>) {
     let node = Arc::downgrade(node);
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         loop {
             // Held here as well as by the watch, so that where nothing can
             // be watched the hourly look still waits its hour.
             let (changed, mut changes) = mpsc::channel(1);
-            let watcher = {
+            let (watcher, rewatch) = {
                 let Some(node) = node.upgrade() else { return };
-                watch(&node, changed.clone())
+                (watch(&node, changed.clone()), node.logins.rewatch.clone())
             };
             tokio::select! {
                 _ = changes.recv() => {}
                 _ = tokio::time::sleep(EVERY) => {}
+                // A login was connected or taken out: its files are watched
+                // from now on, or no longer.
+                () = rewatch.notified() => continue,
             }
             while tokio::time::timeout(SETTLED, changes.recv()).await.is_ok_and(|change| change.is_some()) {}
             drop((watcher, changed));
@@ -60,6 +63,19 @@ fn watch(node: &Node, changed: mpsc::Sender<()>) -> Option<fastctx_watch::Watche
     };
     let mut watched: BTreeSet<PathBuf> = BTreeSet::new();
     let mut folders = Vec::new();
+    // The other agents: each file their connecting writes, in the folder it
+    // is in (`fastctx_install::agents`).
+    let others = apply::agent_integrations(&places).unwrap_or_default();
+    for (name, home) in others {
+        let Some(agent) = fastctx_install::agents::find(&name) else { continue };
+        for file in agent.files() {
+            let path = fastctx_install::agents::located(&home, file);
+            let (Some(folder), Some(name)) = (path.parent(), path.file_name()) else { continue };
+            let Ok(named) = crate::file_events::named(folder) else { continue };
+            watched.insert(named.join(name));
+            folders.push(folder.to_path_buf());
+        }
+    }
     for integration in integrations {
         let names: &[&str] = match integration.host {
             Host::Codex => &["config.toml", "AGENTS.md"],

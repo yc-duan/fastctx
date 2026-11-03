@@ -391,7 +391,10 @@ export class DataPage implements Page {
         const refused = reply.deletions.filter((one) => one.outcome.outcome !== "deleted");
         this.said = {
           text: refused.length ? words.refused(refused[0]!.name, "why" in refused[0]!.outcome ? refused[0]!.outcome.why : "") : words.deleted(done.length, size(freed)),
-          detail: refused.map((one) => `${one.name}: ${"why" in one.outcome ? one.outcome.why : ""}`).join("\n"),
+          detail: [
+            ...refused.map((one) => `${one.name}: ${"why" in one.outcome ? one.outcome.why : ""}`),
+            ...done.flatMap((one) => (one.outcome.outcome === "deleted" && one.outcome.finishing ? [`${one.name}: ${one.outcome.finishing}`] : [])),
+          ].join("\n"),
         };
         this.chosen.clear();
       },

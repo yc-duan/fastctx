@@ -21,6 +21,8 @@ export interface AgentsReply {
   checked_at: Timestamp;
   elapsed_ms: number;
   agents: AgentFacts[];
+  /** Whether its node keeps the workbench by login (`AgentFacts.workbench`). */
+  by_login?: boolean;
 }
 
 /** One agent in one of its homes on a machine: a home is one login, so a
@@ -43,6 +45,8 @@ export interface AgentFacts {
    *  the user's consent once on that machine. An older World does not say. */
   unattended?: Fact<boolean>;
   timings: { step: string; elapsed_ms: number }[];
+  /** The workbench is open in this home. */
+  workbench?: boolean;
 }
 
 /** Where an agent keeps one login: Codex's `CODEX_HOME`, Claude Code's

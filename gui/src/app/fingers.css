@@ -24,6 +24,13 @@
     height: 44px;
   }
 
+  /* Sending words again or taking them away under a bubble: the note's
+     line keeps its height, the target spills over it. */
+  .bubble-settle .text-button {
+    height: 44px;
+    margin-block: -8px;
+  }
+
   /* Its line keeps its height: the target spills over it. */
   .side-add {
     width: 44px;
@@ -39,7 +46,14 @@
     min-height: 44px;
   }
 
-  .logins-candidate,
+  /* The network's update policy and a version's act: the target grows,
+     the line keeps its height. */
+  .uv-chip,
+  .vw-go {
+    height: 44px;
+    margin-block: -7px;
+  }
+
   .logins-folder-head {
     min-height: 44px;
   }

@@ -291,6 +291,9 @@ pub struct CallWork {
     pub conversation: Option<String>,
     pub kind: String,
     pub pool: String,
+    /// Diagnostic lifetime, independent of the scheduling pool; absent from older nodes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub class: Option<crate::call_diagnostics::Class>,
     pub phase: String,
     pub seconds: u64,
     pub within: Option<u64>,

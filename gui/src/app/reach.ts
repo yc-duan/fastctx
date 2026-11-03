@@ -8,7 +8,7 @@
 
 import { loginsOf, type AccountName, type HubAccounts, type HubId, type HubName, type Login, type Rights } from "../world/accounts";
 import type { WorldNow } from "../world/bridge";
-import type { MachineFacts, ResidentNow } from "../world/world";
+import type { MachineFacts, ResidentNow, Strain } from "../world/world";
 import type { MachineName, Result, Timestamp } from "../world/wire";
 import { indexOf, pair } from "./world-index";
 
@@ -24,6 +24,9 @@ export interface Machine {
   since: Timestamp | null;
   /** The relay it connects through. */
   through: string | null;
+  /** Its Fastctx held up or stuck while online, as a hub it is on hears
+   *  it; the worse where two hubs hear it. */
+  strain: Strain | null;
   facts: Result<MachineFacts, string>;
   /** Hub by hub: whose it is there, and what each login may do on it. */
   on: MachineOn[];
@@ -125,6 +128,11 @@ function once<T>(made: WeakMap<WorldNow, T>, world: WorldNow, make: () => T): T 
   return value;
 }
 
+/** The worse of two strains: stuck before busy. */
+function worse(a: Strain | null, b: Strain | null): Strain | null {
+  return a === "stuck" || b === "stuck" ? "stuck" : (a ?? b);
+}
+
 function machinesFrom(world: WorldNow): Machine[] {
   const { nodes } = world;
   const machines: Machine[] = [];
@@ -139,6 +147,7 @@ function machinesFrom(world: WorldNow): Machine[] {
       online: true,
       since: null,
       through: null,
+      strain: null,
       facts: { Ok: nodes.facts },
       on: nodes.hubs.map((hub) => ({
         hub: hub.hub,
@@ -171,6 +180,7 @@ function machinesFrom(world: WorldNow): Machine[] {
           machine.since = node.since;
           machine.through = node.through ?? null;
         } else if (machine.online === null) machine.online = node.online;
+        if (node.online === true) machine.strain = worse(machine.strain, node.strain ?? null);
         if (!("Ok" in machine.facts) && "Ok" in node.facts) machine.facts = node.facts;
       } else {
         machine = {
@@ -180,6 +190,7 @@ function machinesFrom(world: WorldNow): Machine[] {
           online: node.online,
           since: node.since,
           through: node.through ?? null,
+          strain: node.online === true ? (node.strain ?? null) : null,
           facts: node.facts,
           on: [on],
         };

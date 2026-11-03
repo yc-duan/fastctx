@@ -63,6 +63,10 @@ pub struct AgentsReply {
     pub checked_at: Timestamp,
     pub elapsed_ms: u64,
     pub agents: Vec<AgentFacts>,
+    /// Whether the machine's node keeps the workbench by login
+    /// (`AgentFacts::workbench`); an earlier one keeps it by account alone.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub by_login: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -99,6 +103,9 @@ pub struct AgentFacts {
     /// anything (`crate::logins::Drift`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub drift: Option<crate::logins::Drift>,
+    /// The workbench is open in this home (`logins::Login::workbench`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub workbench: bool,
 }
 
 fn unreported<T>() -> Fact<T> {

@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "lab-existing": {
+      "command": "node",
+      "args": [
+        "echo-server.js"
+      ],
+      "env": {
+        "FASTCTX_LAB": "1"
+      }
+    }
+  }
+}

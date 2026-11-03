@@ -55,7 +55,7 @@ fn root(node: &Node, account: &HubAccount, opened: jiff::Timestamp) -> Result<Pa
         .join(format!("{:x}", Sha256::digest(serde_json::to_vec(&identity).map_err(failure)?))))
 }
 fn load(root: &Path) -> Result<Kept, Failure> {
-    match std::fs::read(root.join("generations.json")) {
+    match fastctx_platform::disk::read(root.join("generations.json")) {
         Ok(bytes) => serde_json::from_slice(&bytes).map_err(failure),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Kept::default()),
         Err(error) => Err(failure(error)),
@@ -102,7 +102,7 @@ pub(crate) async fn prepare(
     let node = node.clone();
     let name = name.to_owned();
     let owner = owner.cloned();
-    tokio::task::spawn_blocking(move || {
+    fastctx_platform::task::spawn_blocking(move || {
         let _one = one;
         let (name, owner, node) = (name.as_str(), owner.as_ref(), &node);
         let Some(skill) = snapshot.skill else {
@@ -122,7 +122,7 @@ pub(crate) async fn prepare(
                 erase(&root.join(&key)).map_err(failure)?;
                 kept.generations.remove(&key);
             }
-            if root.is_dir() {
+            if fastctx_platform::disk::is_dir(&root) {
                 keep(&root, &kept)?;
             }
             node.skill_copies.held.lock().expect("never poisoned").remove(&(scope, name.into()));
@@ -153,7 +153,7 @@ pub(crate) async fn prepare(
         )
         .map_err(failure)?;
         let mut kept = load(&root)?;
-        for entry in std::fs::read_dir(&root).map_err(failure)? {
+        for entry in fastctx_platform::disk::read_dir(&root).map_err(failure)? {
             let entry = entry.map_err(failure)?;
             if entry.file_type().map_err(failure)?.is_dir()
                 && !kept.generations.contains_key(&entry.file_name().to_string_lossy().to_string())
@@ -197,7 +197,7 @@ pub(crate) async fn prepare(
             let destination = root.join(&key);
             unpack(&stage, &files).map_err(failure)?;
             erase(&destination).map_err(failure)?;
-            std::fs::rename(&stage, &destination).map_err(failure)?;
+            fastctx_platform::disk::rename(&stage, &destination).map_err(failure)?;
             kept.generations.insert(key.clone(), Generation { name: name.into(), version, size, users });
         }
         if let Some(owner) = owner {

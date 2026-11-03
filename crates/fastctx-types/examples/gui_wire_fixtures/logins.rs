@@ -3,6 +3,7 @@ use fastctx_types::logins::*;
 use fastctx_types::remote::{RemoteCall, RemoteReply};
 use fastctx_types::{Call, Reply};
 use serde::Serialize;
+use std::collections::BTreeMap;
 
 #[derive(Serialize)]
 pub struct Fixtures {
@@ -46,6 +47,7 @@ pub fn fixtures() -> Fixtures {
         integration: Integration::In,
         unattended: None,
         auto_title: true,
+        reset_in_place: false,
         launcher: Some(Launcher {
             path: "C:/app/codex.exe".into(),
             version: Some("0.162.0".into()),
@@ -85,6 +87,7 @@ pub fn fixtures() -> Fixtures {
             location: "C:/Users/me/.codex/AGENTS.md".into(),
             reason: "the fastctx block differs from the recorded bytes".into(),
         }),
+        workbench: true,
     };
     let candidate = Login {
         dir: "/home/me/.claude-work".into(),
@@ -99,6 +102,7 @@ pub fn fixtures() -> Fixtures {
         integration: Integration::Out,
         unattended: Some(false),
         auto_title: false,
+        reset_in_place: false,
         launcher: Some(Launcher { path: "/home/me/.local/bin/claude".into(), version: None, desktop_app: false }),
         models: vec![],
         change: Some(LoginChange {
@@ -111,6 +115,7 @@ pub fn fixtures() -> Fixtures {
             end: None,
         }),
         drift: None,
+        workbench: false,
     };
     let never = Login {
         dir: "C:/Users/me/CodexHomes/b".into(),
@@ -122,6 +127,7 @@ pub fn fixtures() -> Fixtures {
         integration: Integration::Old,
         unattended: None,
         auto_title: false,
+        reset_in_place: false,
         launcher: None,
         models: vec![],
         change: Some(LoginChange {
@@ -137,15 +143,18 @@ pub fn fixtures() -> Fixtures {
         drift: Some(Drift::Asks {
             limit: OutputLimit { location: "config.toml".into(), current: 1000, requested: 26000 },
         }),
+        workbench: false,
     };
     let record = MachineLogins {
         machine: machine.clone(),
+        by_login: true,
         scan: Some(Scan {
             started_at: at,
             usual: Stage::Done { at },
             unreadable: vec!["C:/Program Files/WindowsApps: access denied".into()],
         }),
         codex: AgentLogins {
+            title: None,
             programs: vec![
                 FoundProgram {
                     path: Some("C:/app/codex.exe".into()),
@@ -172,6 +181,7 @@ pub fn fixtures() -> Fixtures {
             elsewhere: vec![],
         },
         claude: AgentLogins {
+            title: None,
             programs: vec![FoundProgram {
                 path: None,
                 how: Installed::DesktopApp,
@@ -188,6 +198,39 @@ pub fn fixtures() -> Fixtures {
             candidates: vec![candidate],
             elsewhere: vec![],
         },
+        others: BTreeMap::from([(
+            "antigravity".parse().unwrap(),
+            AgentLogins {
+                title: Some("Antigravity".into()),
+                programs: vec![],
+                listed: vec![Login {
+                    dir: "/home/me/.antigravity".into(),
+                    default: true,
+                    found: Found::Default,
+                    identity: Some(Identified {
+                        at,
+                        who: Fact::known(Identity {
+                            logged_in: true,
+                            email: Some("me@example.com".into()),
+                            ..Identity::default()
+                        }),
+                    }),
+                    limits: Fact::unavailable("only the workbench reads limits"),
+                    programs: vec![],
+                    integration: Integration::In,
+                    unattended: None,
+                    auto_title: false,
+                    reset_in_place: false,
+                    launcher: None,
+                    models: vec![],
+                    change: None,
+                    drift: None,
+                    workbench: false,
+                }],
+                candidates: vec![],
+                elsewhere: vec![],
+            },
+        )]),
         folders: vec![
             Folder {
                 dir: "C:/Users/me/CodexHomes".into(),
@@ -231,6 +274,8 @@ pub fn fixtures() -> Fixtures {
         }),
         codex: AgentLogins::default(),
         claude: AgentLogins::default(),
+        by_login: false,
+        others: BTreeMap::new(),
         folders: vec![],
     };
     let preview = ChangePreview {
@@ -280,6 +325,44 @@ pub fn fixtures() -> Fixtures {
         commands: vec!["claude plugin marketplace add /home/me/.fastctx/world/claude-marketplace --scope user".into()],
         output_limit: None,
         kept: vec![],
+        cards: vec![ChangeCard {
+            change: Change::Shell,
+            files: vec![FileDiff {
+                path: "/home/me/.claude-work/settings.json".into(),
+                how: FileHow::Changed,
+                lines: vec![
+                    fastctx_types::run_facts::DiffLine {
+                        kind: fastctx_types::run_facts::DiffLineKind::Hunk,
+                        before: Some(3),
+                        after: Some(3),
+                        text: String::new(),
+                        ending: String::new(),
+                    },
+                    fastctx_types::run_facts::DiffLine {
+                        kind: fastctx_types::run_facts::DiffLineKind::Context,
+                        before: Some(3),
+                        after: Some(3),
+                        text: "  \"permissions\": {".into(),
+                        ending: "
+"
+                        .into(),
+                    },
+                    fastctx_types::run_facts::DiffLine {
+                        kind: fastctx_types::run_facts::DiffLineKind::Added,
+                        before: None,
+                        after: Some(4),
+                        text: "    \"deny\": [\"Bash\"]".into(),
+                        ending: "
+"
+                        .into(),
+                    },
+                ],
+                more: Some(12),
+            }],
+            commands: vec![],
+        }],
+        fingerprint: Some("0f3c9a1b2d4e5f60718293a4b5c6d7e8".into()),
+        keeps_shell: false,
     };
     let codex_preview = ChangePreview {
         agent: codex.clone(),
@@ -296,6 +379,9 @@ pub fn fixtures() -> Fixtures {
             location: "config.toml: features.shell_tool".into(),
             reason: "changed since apply; left untouched".into(),
         }],
+        cards: vec![],
+        fingerprint: None,
+        keeps_shell: true,
     };
     let change = LoginChange {
         into: false,
@@ -325,6 +411,7 @@ pub fn fixtures() -> Fixtures {
                 dir: "/home/me/.claude-work".into(),
                 into: true,
                 take_back: true,
+                workbench: Some(true),
             },
             Call::ChangeAgentLogin {
                 machine: machine.clone().into(),
@@ -333,6 +420,8 @@ pub fn fixtures() -> Fixtures {
                 into: true,
                 raise_output_limit: true,
                 take_back: true,
+                expected: Some("5f0c2a9e41d7b3c86e1f0a2b9c4d7e13".into()),
+                workbench: Some(true),
             },
             Call::ReadAgentLimits {
                 machine: machine.clone().into(),
@@ -369,6 +458,7 @@ pub fn fixtures() -> Fixtures {
                 dir: "/home/me/.claude-work".into(),
                 into: false,
                 take_back: false,
+                workbench: None,
             },
             RemoteCall::ChangeAgentLogin {
                 agent: claude,
@@ -376,6 +466,8 @@ pub fn fixtures() -> Fixtures {
                 into: false,
                 raise_output_limit: false,
                 take_back: false,
+                expected: None,
+                workbench: Some(false),
             },
             RemoteCall::ReadAgentLimits { agent: codex, dir: "C:/Users/me/.codex".into() },
         ],

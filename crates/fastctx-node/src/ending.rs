@@ -48,6 +48,14 @@ pub(crate) fn start(log: Arc<crate::log::Log>) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Waits at most `within` for the node's log to reach its file, as before
+/// the process ends without going through `with_reason`.
+pub fn flush_log(within: std::time::Duration) {
+    if let Some(log) = LOG.get() {
+        log.flush(within);
+    }
+}
+
 pub(crate) fn exit(code: i32) -> ! {
     with_reason(code, "the node is ending".into())
 }
@@ -66,8 +74,14 @@ pub(crate) fn with_reason(code: i32, reason: String) -> ! {
         std::process::exit(code);
     }
     if let Some(log) = LOG.get() {
-        log.line(reason);
+        log.line(&reason);
         crate::intake::dump(log);
+        // An ending forced by something gone wrong leaves the scene written
+        // down (`specs/world-engine.md`, 量与告警).
+        if code != 0 {
+            fastctx_platform::scene::capture_now(&reason);
+        }
+        log.flush(std::time::Duration::from_millis(200));
     }
     std::process::exit(code)
 }

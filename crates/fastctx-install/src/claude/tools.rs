@@ -4,7 +4,7 @@ use jsonc_parser::ast::{Array, Object, Value};
 use jsonc_parser::common::Ranged;
 use serde::{Deserialize, Serialize};
 
-use super::jsonc::{Document, Insertion};
+use crate::jsonc::{Document, Insertion};
 use crate::{File, Notice};
 
 /// Every deny rule apply has ever owned, in the order receipts record

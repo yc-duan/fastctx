@@ -14,11 +14,6 @@
 // carries its usage windows and what it used this week, and opens its own
 // page of usage (`./usage/login-page`). The machine last shown is kept on
 // this device; coming from a machine's page shows that one.
-//
-// Where the device is logged in to an account, a switch in the head turns
-// the page to the account's preferences for this agent (`./host-prefs`):
-// they are the account's, not a machine's, so the machine's pill gives way
-// to the account's.
 
 import { Popover } from "../conversation/popover";
 import { escape } from "../conversation/prose";
@@ -34,16 +29,14 @@ import { AgentChangeSheet, type AgentChangeTarget, type AgentChangeWords } from 
 import { foldersSection, foundOf, freshness, searching } from "./agent-folders";
 import { CLAUDE_OLDEST, claudeTooOld, dirName, loginRow, planName, programLine } from "./agent-login-row";
 import type { AgentLoginsWords } from "./agent-logins-words";
-import { chosen, pickButton, pickMenu, pickables, type Pickable } from "./agent-machines";
-import { keepTab } from "./agent-sections";
+import { chosen, keepMachine, keptMachine, pickButton, pickMenu, pickables, type Pickable } from "./agent-machines";
+import { loginLine, type LineTag, type Standing } from "./login-line";
 import { AssistSheet, assistChange, assistancesIn, fiveHourWindow, namesOn, type Assistance } from "./assist-sheet";
 import type { Confirm } from "./confirm";
 import { FolderPicker } from "./folder-picker";
 import { redrawKeepingFocus } from "./focus";
-import type { HostPrefs } from "./host-prefs";
 import { detailOf } from "./problem";
 import { isVisitor } from "./reach";
-import type { AgentTab, ProfileWords } from "./profile-words";
 import type { Page } from "./shell";
 import { effect, type Signal } from "./signals";
 import type { Store } from "./store";
@@ -65,20 +58,17 @@ export interface AgentLoginsOptions {
   agent: Agent;
   /** The machine to show, when one was named. */
   machine: string | null;
-  /** The tab shown first. */
-  tab: AgentTab;
-  /** The account's preferences for an agent, where this device keeps an
-   *  account's own configuration. */
-  prefs: { words: ProfileWords; make(agent: Agent): HostPrefs } | null;
   /** The machine shown changed, or the agent, as when a folder chosen is the
    *  other agent's login: the address and the sidebar follow. */
   showing(machine: string, agent: Agent): void;
-  /** The tab shown changed: the address follows. */
-  tabbed(tab: AgentTab, agent: Agent): void;
   when(at: Date, now: Date): string;
-  /** Whether this device's workbench is on: the limits and the usage
-   *  belong to it, and without it they are neither read nor shown. */
+  /** Whether the account's workbench is on: on a node that keeps it by
+   *  account, the limits and the usage belong to it, and without it they
+   *  are neither read nor shown; a node that keeps it by login says it of
+   *  each login (`Login.workbench`). */
   workbench: Signal<boolean>;
+  /** The workbench was opened or closed in a login. */
+  benched(open: boolean): void;
   read(machine: string | null): Promise<WorldLogins>;
   scan(machine: string, stop: boolean): Promise<MachineLogins>;
   add(machine: string, agent: Agent, dir: string): Promise<MachineLogins>;
@@ -88,11 +78,14 @@ export interface AgentLoginsOptions {
   /** A machine's folders, walked by its node, where its picker is out of
    *  reach. */
   folders(machine: string, path: string | null): Promise<Folders>;
-  preview(machine: string, agent: Agent, dir: string, into: boolean, takeBack: boolean): Promise<ChangePreview>;
-  change(machine: string, agent: Agent, dir: string, into: boolean, raise: boolean, takeBack: boolean): Promise<LoginChange>;
+  preview(machine: string, agent: Agent, dir: string, into: boolean, takeBack: boolean, workbench?: boolean): Promise<ChangePreview>;
+  /** `expected`: the fingerprint of the change the user was shown;
+   *  `workbench`: the workbench opened or closed in the login with it. */
+  change(machine: string, agent: Agent, dir: string, into: boolean, raise: boolean, takeBack: boolean, expected?: string, workbench?: boolean): Promise<LoginChange>;
   limits(machine: string, agent: Agent, dir: string): Promise<MachineLogins>;
   /** Codex only: turns naming new conversations in a login on or off. */
   setTitle(machine: string, agent: Agent, dir: string, on: boolean): Promise<MachineLogins>;
+  setResetInPlace(machine: string, agent: Agent, dir: string, on: boolean): Promise<MachineLogins>;
   usageOf(machine: string, agent: Agent, dir: string): Promise<UsageReport>;
   change_(login: AccountLogin, change: AccountChange): Promise<void>;
   confirm: Confirm;
@@ -106,7 +99,6 @@ interface Shown extends Pickable {
   mine: boolean;
 }
 
-const MACHINE = "agents.machine";
 /** While a scan, a search or a change runs, its record is read again this
  *  often: reading is a file the node keeps, and a search's count moves on
  *  as it goes. */
@@ -156,13 +148,9 @@ export class AgentLoginsPage implements Page {
   private machines: { element: HTMLElement; popover: Popover } | null = null;
   private pickDrawn = "";
   private drawn = "";
-  private prefs: HostPrefs | null;
-  private readonly tabs: HTMLElement;
-  private tab: AgentTab;
-  private tabsDrawn = "";
 
   /** The calls that name a machine, as `options` makes them. */
-  private readonly calls: Pick<AgentLoginsOptions, "read" | "scan" | "add" | "folder" | "folders" | "preview" | "change" | "limits" | "setTitle" | "usageOf">;
+  private readonly calls: Pick<AgentLoginsOptions, "read" | "scan" | "add" | "folder" | "folders" | "preview" | "change" | "limits" | "setTitle" | "setResetInPlace" | "usageOf">;
 
   constructor(private readonly options: AgentLoginsOptions) {
     // Every call names the machine shown as this computer writes it, its
@@ -177,10 +165,11 @@ export class AgentLoginsPage implements Page {
       add: (machine, agent, dir) => options.add(as(machine), agent, dir),
       folder: (machine, dir, change) => options.folder(as(machine), dir, change),
       folders: (machine, path) => options.folders(as(machine), path),
-      preview: (machine, agent, dir, into, takeBack) => options.preview(as(machine), agent, dir, into, takeBack),
-      change: (machine, agent, dir, into, raise, takeBack) => options.change(as(machine), agent, dir, into, raise, takeBack),
+      preview: (machine, agent, dir, into, takeBack, workbench) => options.preview(as(machine), agent, dir, into, takeBack, workbench),
+      change: (machine, agent, dir, into, raise, takeBack, expected, workbench) => options.change(as(machine), agent, dir, into, raise, takeBack, expected, workbench),
       limits: (machine, agent, dir) => options.limits(as(machine), agent, dir),
       setTitle: (machine, agent, dir, on) => options.setTitle(as(machine), agent, dir, on),
+      setResetInPlace: (machine, agent, dir, on) => options.setResetInPlace(as(machine), agent, dir, on),
       usageOf: (machine, agent, dir) => options.usageOf(as(machine), agent, dir),
     };
     const { words } = options;
@@ -188,33 +177,22 @@ export class AgentLoginsPage implements Page {
     this.title = options.agent === "claude" ? words.claude : words.codex;
     this.machine = options.machine ?? keptMachine();
     if (options.machine) keepMachine(options.machine);
-    this.tab = options.tab;
-    this.prefs = options.prefs?.make(options.agent) ?? null;
     this.element = document.createElement("div");
     this.element.className = "agents-page logins-page";
-    this.element.innerHTML = `${options.head(`<h1 class="page-title logins-title">${titleHtml(this.agent, this.title)}</h1><span class="host-tabs-place"></span><span class="agents-pick-place"></span><span class="host-account-place"></span>`, `<div class="logins-machine-state"></div><span class="host-status-place"></span>`)}
+    this.element.innerHTML = `${options.head(`<h1 class="page-title logins-title">${titleHtml(this.agent, this.title)}</h1><span class="agents-pick-place"></span>`, `<div class="logins-machine-state"></div>`)}
       <div class="logins-body scroller"></div>`;
     this.body = this.element.querySelector<HTMLElement>(".logins-body")!;
     this.pick = this.element.querySelector<HTMLElement>(".agents-pick-place")!;
-    this.tabs = this.element.querySelector<HTMLElement>(".host-tabs-place")!;
-    if (this.prefs) {
-      this.element.querySelector(".host-account-place")!.replaceWith(this.prefs.account);
-      this.element.querySelector(".host-status-place")!.replaceWith(this.prefs.status);
-      this.element.append(this.prefs.element);
-    }
-    this.tabs.addEventListener("click", (event) => {
-      const tab = (event.target as HTMLElement).closest<HTMLElement>("[data-host-tab]")?.dataset.hostTab as AgentTab | undefined;
-      if (tab) this.chooseTab(tab);
-    });
     this.assistSheet = new AssistSheet(options.access);
     this.sheet = new AgentChangeSheet(options.changeWords, {
-      preview: (target) => this.calls.preview(target.machine, target.agent, target.dir, target.into, !!target.takeBack),
-      change: (target, raise) => this.calls.change(target.machine, target.agent, target.dir, target.into, raise, !!target.takeBack),
+      preview: (target) => this.calls.preview(target.machine, this.agent, target.dir, target.into, !!target.takeBack, target.workbench),
+      change: (target, raise, expected) => this.calls.change(target.machine, this.agent, target.dir, target.into, raise, !!target.takeBack, expected, target.workbench),
+      benched: (open) => options.benched(open),
       progress: async (target) => {
         const record = await this.calls.read(target.machine);
         const machine = record.machines.find((one) => one.kind === "answered" && one.logins.machine === target.machine);
         if (machine?.kind !== "answered") return null;
-        const agent = machine.logins[target.agent];
+        const agent = machine.logins[this.agent];
         return [...agent.listed, ...agent.candidates].find((login) => login.dir === target.dir)?.change ?? null;
       },
       ended: () => void this.read(),
@@ -231,11 +209,9 @@ export class AgentLoginsPage implements Page {
     this.choosing = new FolderPicker(options.words.picker);
     this.body.addEventListener("click", (event) => void this.click(event));
     this.stop = effect(() => {
-      const world = options.store.world.get();
+      options.store.world.get();
       options.store.clock.get();
       options.workbench.get();
-      this.prefs?.draw(world);
-      this.drawTabs();
       this.draw();
       this.ensure();
     });
@@ -246,64 +222,6 @@ export class AgentLoginsPage implements Page {
     clearTimeout(this.following);
     this.machines?.element.remove();
     this.menu.close();
-    this.prefs?.leave();
-  }
-
-  /** The tab shown: the preferences only where there is an account whose
-   *  they are. */
-  private shownTab(): AgentTab {
-    if (this.tab === "prefs" && this.prefs?.available()) return "prefs";
-    return "logins";
-  }
-
-  private chooseTab(tab: AgentTab): void {
-    if (tab === this.shownTab()) return;
-    this.tab = tab;
-    keepTab(tab);
-    this.drawTabs();
-    this.options.tabbed(tab, this.agent);
-  }
-
-  /** The preferences, made anew for the agent shown once it changed. */
-  private remakePrefs(): void {
-    const old = this.prefs;
-    if (!old || !this.options.prefs) return;
-    const next = this.options.prefs.make(this.agent);
-    old.leave();
-    old.account.replaceWith(next.account);
-    old.status.replaceWith(next.status);
-    old.element.replaceWith(next.element);
-    this.prefs = next;
-    next.draw(this.options.store.world.peek());
-    this.drawTabs();
-  }
-
-  /** The switch between the logins and the preferences, and what each
-   *  shows in the head and the body. */
-  private drawTabs(): void {
-    const shown = this.shownTab();
-    const words = this.options.prefs?.words;
-    const html =
-      this.prefs?.available() && words
-        ? `<div class="segmented host-tabs" role="tablist">${(["logins", "prefs"] as const)
-            .map((tab) => `<button class="segment${tab === shown ? " chosen" : ""}" type="button" role="tab" aria-selected="${tab === shown}" data-host-tab="${tab}">${escape(words.tabs[tab])}</button>`)
-            .join("")}</div>`
-        : "";
-    if (html !== this.tabsDrawn) {
-      this.tabs.innerHTML = html;
-      this.tabsDrawn = html;
-    }
-    const prefs = shown === "prefs";
-    this.element.classList.toggle("host-tabbed", html !== "");
-    this.body.hidden = shown !== "logins";
-    this.pick.hidden = shown !== "logins";
-    this.element.querySelector<HTMLElement>(".logins-machine-state")!.hidden = shown !== "logins";
-    if (this.prefs) {
-      this.prefs.element.hidden = !prefs;
-      this.prefs.account.hidden = !prefs;
-      this.prefs.status.hidden = !prefs;
-      if (prefs) this.prefs.shown();
-    }
   }
 
   /** Reads the machine shown once the World knows it, unless its record
@@ -376,10 +294,10 @@ export class AgentLoginsPage implements Page {
    *  read for a while; each row fills in as its own comes. */
   private async readUsage(): Promise<void> {
     const record = this.record;
-    if (!record || !this.options.workbench.peek()) return;
+    if (!record) return;
     const agent = this.agent;
     await Promise.allSettled(
-      record[agent].listed.map(async (login) => {
+      record[agent].listed.filter((login) => this.benched(record, login)).map(async (login) => {
         const key = reportKey(record.machine, agent, login.dir);
         const kept = keptReport(key);
         if (kept && Date.now() - kept.at < USAGE_STALE_MS) return;
@@ -509,19 +427,11 @@ export class AgentLoginsPage implements Page {
         </div>`;
     }
     const scanning = scan?.usual.state === "running";
-    const listed = agent.listed.map((login) => this.row(machine, login, agent, world, now)).join("");
-    const candidates = machine.mine
-      ? agent.candidates
-          .map((login) => {
-            const who = login.identity?.who.kind === "known" ? (login.identity.who.value.email ?? null) : null;
-            const changing = login.change && !login.change.end;
-            const fresh = freshness(this.fresh, `d:${machine.name}:${login.dir}`);
-            const old = claudeTooOld(this.agent, agent.programs, login);
-            return `<li class="logins-candidate${fresh}>${glyph(this.agent, 16)}<span class="logins-candidate-name" title="${escape(login.dir)}">${escape(who ?? dirName(login.dir))}</span>${login.default ? `<span class="tag">${escape(words.defaultLogin)}</span>` : ""}${who ? `<span class="logins-dir">${escape(dirName(login.dir))}</span>` : ""}${old ? `<span class="tag tag-warn" title="${escape(words.tooOldSaid(old, CLAUDE_OLDEST))}">${escape(words.tooOld)}</span>` : ""}
-          <button class="text-button logins-apply" type="button" data-act="apply" data-machine="${escape(machine.name)}" data-dir="${escape(login.dir)}"${changing ? " disabled" : ""}>${escape(changing ? words.applying : words.apply)}</button></li>`;
-          })
-          .join("")
-      : "";
+    // On the workbench a listed login is a row of its own with its usage;
+    // otherwise every login is a line on one paper, as on the overview.
+    const rows = agent.listed.filter((login) => this.benched(record, login)).map((login) => this.row(machine, login, agent, world, now, !!record.by_login)).join("");
+    const listed = agent.listed.filter((login) => !this.benched(record, login)).map((login) => this.line(machine, record, login, agent, world, true)).join("");
+    const candidates = machine.mine ? agent.candidates.map((login) => this.line(machine, record, login, agent, world, false)).join("") : "";
     const folders = record.folders ?? [];
     const searched = machine.mine
       ? foldersSection({
@@ -541,10 +451,14 @@ export class AgentLoginsPage implements Page {
       : "";
     const none = machine.hold === "assist" ? words.noneForYou(this.agent) : words.noneFound;
     const empty = !agent.listed.length && !candidates && !(machine.mine && foundOf(folders, this.agent)) && !scanning ? `<p class="feature-quiet logins-none">${escape(none)}</p>` : "";
-    return `${note ? `<p class="feature-note" title="${escape(note.detail)}">${escape(note.text)}</p>` : ""}
-      ${listed ? `<ul class="logins-rows${this.options.workbench.peek() ? "" : " plain"}" aria-label="${escape(words.listed)}">${listed}</ul>` : ""}
-      ${candidates ? `<h3 class="logins-group">${escape(words.candidates)}</h3><ul class="logins-candidates">${candidates}</ul>` : ""}
-      ${empty}${searched}`;
+    const lines = `${rows ? `<ul class="logins-rows" aria-label="${escape(words.listed)}">${rows}</ul>` : ""}${listed || candidates ? `<section class="logins-card"><ul class="logins-lines"${rows ? "" : ` aria-label="${escape(words.listed)}"`}>${listed}${candidates}</ul></section>` : ""}`;
+    return `<div class="logins-paper${rows ? " wide" : ""}">${note ? `<p class="feature-note" title="${escape(note.detail)}">${escape(note.text)}</p>` : ""}${lines}${empty}${searched}</div>`;
+  }
+
+  /** Whether the workbench is open in a listed login: as its node keeps it
+   *  by login, or as an earlier node keeps it, by account. */
+  private benched(record: MachineLogins, login: Login): boolean {
+    return record.by_login ? !!login.workbench : this.options.workbench.peek();
   }
 
   /** The agent's programs on the machine, as one quiet chip with the list
@@ -556,7 +470,52 @@ export class AgentLoginsPage implements Page {
     return `<span class="logins-programs" title="${escape(lines)}" tabindex="0">${escape(words.programs(agent.programs.length))}</span>`;
   }
 
-  private row(machine: Shown, login: Login, agent: AgentLogins, world: WorldNow | null, now: Date): string {
+  /** A login as a line (`login-line.ts`): one the World lists with its
+   *  menu, and the way to update it where it asks; one found with the way to
+   *  connect it. */
+  private line(machine: Shown, record: MachineLogins, login: Login, agent: AgentLogins, world: WorldNow | null, listed: boolean): string {
+    const { words } = this.options;
+    const identity = login.identity?.who.kind === "known" ? login.identity.who.value : null;
+    const changing = !!login.change && !login.change.end;
+    const old = claudeTooOld(this.agent, agent.programs, login);
+    const plan = identity?.method === "oauth_token" ? this.planOf(machine, login, world) : (identity?.plan ?? null);
+    const mine = listed && machine.hold === "assist" ? assistingMe(world, machine.name, this.agent, login.dir, login.default) : null;
+    const tags: LineTag[] = [
+      login.default ? { text: words.defaultLogin } : null,
+      // Which of the user's directories it is, where an email names it and
+      // it is not the agent's default.
+      identity?.email && !login.default ? { text: dirName(login.dir), said: login.dir } : null,
+      plan ? { text: planName(plan) } : null,
+      identity?.method === "oauth_token" ? { text: words.token, said: words.tokenSaid } : null,
+      identity && !identity.logged_in ? { text: words.loggedOut, warn: true } : null,
+      old ? { text: words.tooOld, said: words.tooOldSaid(old, CLAUDE_OLDEST), warn: true } : null,
+      mine ? { text: words.assistedFrom(mine.owner ?? "–") } : null,
+    ].filter((tag): tag is LineTag => !!tag);
+    const at = `data-machine="${escape(machine.name)}" data-dir="${escape(login.dir)}"`;
+    const renew = listed && !changing && (!!login.drift || login.integration === "old");
+    const standing: Standing = changing ? "busy" : !listed ? "found" : renew ? "renew" : "in";
+    // The workbench opens on a connected Codex or Claude Code login of a
+    // node that keeps it by login.
+    const bench = listed && !renew && machine.mine && record.by_login ? benchSwitch(at, false, words) : "";
+    const menu = `<button class="icon-button logins-more" type="button" data-act="menu" ${at} data-menu-key="${escape(JSON.stringify([machine.name, login.dir]))}" aria-haspopup="menu" aria-label="${escape(words.more)}" title="${escape(words.more)}">${glyph("more", 16)}</button>`;
+    const act = changing
+      ? `<span class="ll-busy">${escape(login.change!.into ? words.applying : words.removing)}</span>`
+      : listed
+        ? `${renew && login.drift ? `<button class="text-button ll-go" type="button" data-act="drift" ${at} title="${escape(login.drift.kind === "changed" ? `${login.drift.location}\n${login.drift.reason}` : words.driftAsks)}">${escape(words.renew)}</button>` : ""}${bench}${menu}`
+        : `<button class="text-button ll-go" type="button" data-act="apply" ${at}>${escape(words.apply)}</button>`;
+    const note = listed ? this.notes.get(`s:${machine.name}:${login.dir}`) : undefined;
+    return loginLine({
+      standing,
+      who: identity?.email ?? dirName(login.dir),
+      whoSaid: login.dir,
+      tags,
+      act,
+      fresh: freshness(this.fresh, `d:${machine.name}:${login.dir}`),
+      ...(note ? { below: `<p class="feature-note" title="${escape(note.detail)}">${escape(note.text)}</p>` } : {}),
+    });
+  }
+
+  private row(machine: Shown, login: Login, agent: AgentLogins, world: WorldNow | null, now: Date, byLogin: boolean): string {
     const { options } = this;
     const report = keptReport(reportKey(machine.name, this.agent, login.dir))?.report ?? null;
     return loginRow(
@@ -572,9 +531,9 @@ export class AgentLoginsPage implements Page {
         plan: login.identity?.who.kind === "known" && login.identity.who.value.method === "oauth_token" ? this.planOf(machine, login, world) : login.identity?.who.kind === "known" ? (login.identity.who.value.plan ?? null) : null,
         assistsMe: machine.hold === "assist" ? assistingMe(world, machine.name, this.agent, login.dir, login.default) : null,
         usage: report ? usageOf(report, namer(world, machine.name, options.usage)) : null,
-        workbench: options.workbench.peek(),
         fresh: freshness(this.fresh, `d:${machine.name}:${login.dir}`),
         note: this.notes.get(`s:${machine.name}:${login.dir}`),
+        bench: machine.mine && byLogin ? benchSwitch(`data-machine="${escape(machine.name)}" data-dir="${escape(login.dir)}"`, true, options.words) : "",
         now,
       },
       { words: options.words, access: options.access, usage: options.usage, when: options.when },
@@ -677,6 +636,12 @@ export class AgentLoginsPage implements Page {
         this.sheet.open(target);
         return;
       }
+      case "bench-open":
+      case "bench-close": {
+        const target = this.target(machine, dir, true);
+        if (target) this.sheet.open({ ...target, workbench: button.dataset.act === "bench-open" });
+        return;
+      }
       // A listed login whose tools wait for the user: put in again, what
       // they changed of them taken back where that is what holds them.
       case "drift": {
@@ -723,14 +688,23 @@ export class AgentLoginsPage implements Page {
     // 一个中枢，几个账号).
     if (owner && !isVisitor(world, owner)) entries.push({ act: "assist", icon: "person", label: words.assist });
     // The windows of a login that only assists the reader are its owner's.
-    if (this.options.workbench.peek() && found.machine.hold !== "assist") entries.push({ act: "limits", icon: "reread", label: words.rereadLimits });
+    const record = found.machine.heard.kind === "answered" ? found.machine.heard.logins : null;
+    const benched = !!record && this.benched(record, login);
+    if (benched && found.machine.hold !== "assist") entries.push({ act: "limits", icon: "reread", label: words.rereadLimits });
     entries.push({ act: "copy", icon: "folder", label: words.copyDir });
     // Codex names its own conversations when the login's owner asks it to;
     // Claude Code does its own. Only a login the World's tools are in hosts
     // World conversations, so only such a login shows it.
+    const switches: MenuEntry[] = [];
     if (this.agent === "codex" && found.machine.mine && login.integration === "in") {
-      entries.push({ rule: true }, { act: "title", icon: "edit", label: words.autoTitle, on: !!login.auto_title, hint: words.autoTitleWhy });
+      switches.push({ act: "title", icon: "edit", label: words.autoTitle, on: !!login.auto_title, hint: words.autoTitleWhy });
     }
+    // The week's start is the owner's to choose, where the workbench keeps
+    // the login's usage (`world-usage.md`).
+    if (found.machine.mine && benched) {
+      switches.push({ act: "reset", icon: "reread", label: words.resetInPlace, on: !!login.reset_in_place, hint: words.resetInPlaceWhy });
+    }
+    if (switches.length) entries.push({ rule: true }, ...switches);
     if (identity?.method === "oauth_token" && admin) {
       const current = this.planOf(found.machine, login, world);
       const plans: (PlanLabel | null)[] = ["max", "pro", "free", null];
@@ -766,6 +740,9 @@ export class AgentLoginsPage implements Page {
         return;
       case "title":
         await this.quietly(null, key, () => this.calls.setTitle(machineName, this.agent, dir, !found.login!.auto_title));
+        return;
+      case "reset":
+        await this.quietly(null, key, () => this.calls.setResetInPlace(machineName, this.agent, dir, !found.login!.reset_in_place));
         return;
       case "copy":
         await navigator.clipboard.writeText(dir).catch(() => {});
@@ -832,7 +809,6 @@ export class AgentLoginsPage implements Page {
         this.title = marked.agent === "claude" ? this.options.words.claude : this.options.words.codex;
         const heading = this.element.querySelector<HTMLElement>(".logins-title");
         if (heading) heading.innerHTML = titleHtml(this.agent, this.title);
-        this.remakePrefs();
         this.options.showing(machine, marked.agent);
       }
       this.mark(marked.keys);
@@ -909,22 +885,6 @@ function titleHtml(agent: Agent, title: string): string {
   return `<span class="logins-title-mark">${glyph(agent, 20)}</span><span class="logins-title-name">${escape(title)}</span>`;
 }
 
-function keptMachine(): string | null {
-  try {
-    return localStorage.getItem(MACHINE);
-  } catch {
-    return null;
-  }
-}
-
-function keepMachine(machine: string): void {
-  try {
-    localStorage.setItem(MACHINE, machine);
-  } catch {
-    // Not kept: this computer shows first next time.
-  }
-}
-
 /** Whether two paths a machine wrote name the same directory: a Windows
  *  path without regard to case, slash or the verbatim prefix. */
 function sameDir(a: string, b: string): boolean {
@@ -934,4 +894,10 @@ function sameDir(a: string, b: string): boolean {
     return /^[A-Za-z]:|\\/.test(bare) ? trimmed.replace(/\//g, "\\").toLowerCase() : trimmed;
   };
   return plain(a) === plain(b);
+}
+
+/** A login's workbench switch: turning it opens the window that says what
+ *  opening or closing it changes. */
+function benchSwitch(at: string, on: boolean, words: AgentLoginsWords): string {
+  return `<button class="logins-bench" type="button" role="switch" aria-checked="${on}" data-act="${on ? "bench-close" : "bench-open"}" ${at} title="${escape(words.benchSaid)}"><span>${escape(words.bench)}</span><span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span></button>`;
 }

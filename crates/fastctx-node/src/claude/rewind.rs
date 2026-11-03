@@ -64,7 +64,7 @@ pub(super) async fn finish(
     tokio::pin!(exited);
     let (tail, uuids, context_tail) = loop {
         let (reading, cuts) = (transcript.clone(), cuts.clone());
-        match tokio::task::spawn_blocking(move || transcript::read_with_cuts(&reading, &cuts))
+        match fastctx_platform::task::spawn_blocking(move || transcript::read_with_cuts(&reading, &cuts))
             .await
             .map_err(|error| Failure::new(error.to_string()))?
         {

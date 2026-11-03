@@ -1,7 +1,6 @@
 //! A package downloaded from where its release published it, going on from
 //! what an earlier download left.
 
-use std::io::{Seek as _, Write as _};
 use std::path::Path;
 use std::time::{Duration, Instant};
 
@@ -33,7 +32,7 @@ pub async fn patiently_checked(
     let mut failed = 0;
     let mut wait = Duration::from_secs(1);
     loop {
-        let before = length(file);
+        let before = length(file).await;
         let result = {
             let mut heard = |brought, total| {
                 pace.heard(Instant::now(), brought);
@@ -48,7 +47,7 @@ pub async fn patiently_checked(
                     return Err(problem);
                 }
                 // One that brought bytes did connect: only a run of none counts.
-                failed = if length(file) > before { 0 } else { failed + 1 };
+                failed = if length(file).await > before { 0 } else { failed + 1 };
                 if failed >= TRIES {
                     problem.why = format!("{}; {TRIES} connections running brought nothing", problem.why);
                     return Err(problem);
@@ -60,8 +59,8 @@ pub async fn patiently_checked(
     }
 }
 
-fn length(file: &Path) -> u64 {
-    std::fs::metadata(file).map(|metadata| metadata.len()).unwrap_or(0)
+async fn length(file: &Path) -> u64 {
+    tokio::fs::metadata(file).await.map(|metadata| metadata.len()).unwrap_or(0)
 }
 
 /// Downloads `url` into `file`, appending to what is there when the server
@@ -83,22 +82,28 @@ async fn from_url_checked(
     progress: &mut (dyn FnMut(u64, Option<u64>) + Send),
     throttle: Option<&Throttle>,
 ) -> Result<(), Problem> {
+    use tokio::io::{AsyncSeekExt as _, AsyncWriteExt as _};
     // Written at the end it reaches, and cut back when the whole comes again:
-    // a file opened only to append cannot be cut on Windows.
-    let mut out = std::fs::OpenOptions::new()
+    // a file opened only to append cannot be cut on Windows. Each write runs
+    // on a blocking thread, not on the task that streams the response.
+    let mut out = tokio::fs::OpenOptions::new()
         .create(true)
         .truncate(false)
         .write(true)
         .open(file)
+        .await
         .map_err(|error| Problem::new(FailureReason::Disk, format!("{}: {error}", file.display())))?;
-    let have =
-        out.seek(std::io::SeekFrom::End(0)).map_err(|error| Problem::new(FailureReason::Disk, error.to_string()))?;
+    let have = out
+        .seek(std::io::SeekFrom::End(0))
+        .await
+        .map_err(|error| Problem::new(FailureReason::Disk, error.to_string()))?;
     let mut response = fastctx_net::web::get(url, "application/octet-stream", have).await?;
     let (mut written, total) = match response.status {
         206 => (have, response.length.map(|rest| rest + have)),
         200 => {
-            out.set_len(0).map_err(|error| Problem::new(FailureReason::Disk, error.to_string()))?;
+            out.set_len(0).await.map_err(|error| Problem::new(FailureReason::Disk, error.to_string()))?;
             out.seek(std::io::SeekFrom::Start(0))
+                .await
                 .map_err(|error| Problem::new(FailureReason::Disk, error.to_string()))?;
             (0, response.length)
         }
@@ -115,6 +120,7 @@ async fn from_url_checked(
             throttle.take(chunk.len() as u64).await;
         }
         out.write_all(&chunk)
+            .await
             .map_err(|error| Problem::new(FailureReason::Disk, format!("{}: {error}", file.display())))?;
         written += chunk.len() as u64;
         progress(written, total);
@@ -124,5 +130,6 @@ async fn from_url_checked(
     {
         return Err(format!("{} ended after {written} of {total} bytes", response.url).into());
     }
-    out.sync_all().map_err(|error| Problem::new(FailureReason::Disk, error.to_string()))
+    out.flush().await.map_err(|error| Problem::new(FailureReason::Disk, error.to_string()))?;
+    out.sync_all().await.map_err(|error| Problem::new(FailureReason::Disk, error.to_string()))
 }

@@ -37,6 +37,9 @@ pub enum RemoteCall {
     Plan {
         resident: ResidentId,
         operation: crate::plan::Operation,
+        /// Another conversation's plan to read; the resident's own when absent.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        of: Option<crate::plan::Of>,
     },
     Collaboration {
         resident: ResidentId,
@@ -310,6 +313,13 @@ pub enum RemoteCall {
         dir: std::path::PathBuf,
         on: bool,
     },
+    /// Turn counting a week cleared before its reset anew in a login there
+    /// on or off; only for the machine's owner.
+    SetAgentResetInPlace {
+        agent: AgentName,
+        dir: std::path::PathBuf,
+        on: bool,
+    },
     /// What a change of a login there would do; only for the machine's
     /// owner.
     PreviewAgentChange {
@@ -318,6 +328,10 @@ pub enum RemoteCall {
         into: bool,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         take_back: bool,
+        /// The workbench in the login opened (`true`) or closed, the change
+        /// of its own; none leaves it as it is (`logins::Login::workbench`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        workbench: Option<bool>,
     },
     /// Put the World's tools into a login there, or take them out; only for
     /// the machine's owner.
@@ -329,6 +343,15 @@ pub enum RemoteCall {
         raise_output_limit: bool,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         take_back: bool,
+        /// The fingerprint of the change the user was shown
+        /// (`ChangePreview::fingerprint`): it is refused when the files it
+        /// is worked out from moved on since.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expected: Option<String>,
+        /// The workbench in the login opened (`true`) or closed, the change
+        /// of its own; none leaves it as it is (`logins::Login::workbench`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        workbench: Option<bool>,
     },
     /// Read a login's limits there afresh.
     ReadAgentLimits {
@@ -451,6 +474,11 @@ pub enum RemoteCall {
         /// it reads past this and sends none.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         now: bool,
+        /// Follows the conversation's collaboration instead of its history
+        /// (`session::Watched::Collaboration`); said only to a machine whose
+        /// facts say `collaboration_watch`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        collaboration: Option<crate::collaboration::Follow>,
     },
     /// Open a session there for the user, as `Call::Open`.
     Open {
@@ -598,6 +626,13 @@ impl RemoteCall {
             Self::EnterProject { .. } | Self::Plan { .. } => Purpose::Echo,
             Self::SentinelSettings { .. } | Self::SentinelControl { .. } | Self::SentinelKeys => Purpose::Look,
             Self::SentinelKey { .. } => Purpose::Hands,
+            Self::SentinelHome { request: crate::sentinel_control::HomeRequest::Conversation { request, .. } } => {
+                if matches!(request.as_ref(), crate::sentinel_control::HomeRequest::Withdraw { .. }) {
+                    Purpose::Hands
+                } else {
+                    Purpose::Look
+                }
+            }
             Self::SentinelHome {
                 request:
                     crate::sentinel_control::HomeRequest::Inspect { .. }
@@ -646,6 +681,7 @@ impl RemoteCall {
             | RemoteCall::AddAgentLogin { .. }
             | RemoteCall::AgentFolder { .. }
             | RemoteCall::SetAgentTitle { .. }
+            | RemoteCall::SetAgentResetInPlace { .. }
             | RemoteCall::PreviewAgentChange { .. }
             | RemoteCall::ChangeAgentLogin { .. }
             | RemoteCall::UpdateWorld
@@ -770,6 +806,9 @@ pub enum RemoteReply {
     },
     Asked {
         colleague: ResidentId,
+        /// How many colleagues wait ahead of its first turn, when it waits.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        waiting: Option<u32>,
     },
     Found {
         lives_here: bool,

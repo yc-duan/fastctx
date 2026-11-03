@@ -311,92 +311,6 @@
   color: var(--text-2);
 }
 
-/* A conversation's strip under its head: what it is pointed at, opening the
-   same panel beneath it. */
-.focus-strip {
-  position: relative;
-  z-index: 5;
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-width: 0;
-  padding: 0 var(--gutter) var(--space-1);
-}
-
-.focus-strip[hidden] {
-  display: none;
-}
-
-.focus-chip {
-  min-width: 0;
-  margin-left: calc(-1 * var(--space-2));
-}
-
-.focus-chip.quiet .talk-chip-name {
-  color: var(--text-3);
-}
-
-.focus-chip:disabled {
-  opacity: 0.6;
-}
-
-.focus-state {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: var(--size-text);
-  color: var(--text-3);
-}
-
-.focus-state.refused {
-  color: var(--wrong);
-}
-
-/* 「撤回」 after a choice cleared of every machine, beside what it says. */
-.focus-undo {
-  margin-left: var(--space-2);
-  padding: 0 var(--space-1);
-}
-
-/* Opened down from the head, its content's size; the field stands at its
-   top, where it was reached from. */
-.focus-pop {
-  position: absolute;
-  top: 100%;
-  left: var(--gutter);
-  display: flex;
-  flex-direction: column;
-  width: min(440px, calc(100% - 2 * var(--gutter)));
-  max-height: min(64dvh, 520px);
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  scrollbar-width: thin;
-  padding: var(--space-3) var(--space-4);
-  border-radius: var(--radius-l);
-  background: var(--bg-elevated);
-  box-shadow: var(--shadow-pop);
-  opacity: var(--shown);
-  translate: var(--slide) var(--lift);
-  animation: panel-rise var(--fold) var(--fold-easing) both;
-}
-
-.focus-pop[hidden] {
-  display: none;
-}
-
-.focus-pop .focus-foot {
-  order: -1;
-  top: calc(-1 * var(--space-3));
-  bottom: auto;
-  margin: calc(-1 * var(--space-3)) 0 var(--space-2);
-  padding: var(--space-3) 0 var(--space-2);
-}
-
-.focus-pop .focus-panel > .focus-foot {
-  order: -1;
-}
-
 /* The machines and folders the new conversation is pointed at, among the
    labels over its input. */
 .talk-pop[data-pop="focus"] {
@@ -412,57 +326,8 @@
   font-size: var(--size-text);
 }
 
-/* A conversation's strip under its head: what it is pointed at, opening the
-   same panel beneath it. */
-.focus-strip {
-  position: relative;
-  z-index: 5;
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-width: 0;
-  padding: 0 var(--gutter) var(--space-1);
-}
-
-.focus-strip[hidden] {
-  display: none;
-}
-
-.focus-chip {
-  min-width: 0;
-  margin-left: calc(-1 * var(--space-2));
-}
-
-.focus-chip.quiet .talk-chip-name {
-  color: var(--text-3);
-}
-
-.focus-chip:disabled {
-  opacity: 0.6;
-}
-
-.focus-state {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: var(--size-text);
-  color: var(--text-3);
-}
-
-.focus-state.refused {
-  color: var(--wrong);
-}
-
 @media (max-width: 760px) {
-  /* A phone's head has room for the way back alone, beside the chip that
-     shows nothing is chosen. */
-  .focus-cleared {
-    display: none;
-  }
-
-  .talk-pop[data-pop="focus"],
-  .focus-pop {
+  .talk-pop[data-pop="focus"] {
     position: fixed;
     left: 0;
     right: 0;
@@ -504,8 +369,7 @@
 
   /* A sheet from the bottom: the field at its foot, nearest the thumb,
      down to the sheet's own edge. */
-  .focus-foot,
-  .focus-pop .focus-foot {
+  .focus-foot {
     order: 0;
     top: auto;
     bottom: calc(-1 * (var(--space-5) + var(--safe-bottom)));
@@ -513,24 +377,6 @@
     padding: var(--space-2) 0 calc(var(--space-5) + var(--safe-bottom));
   }
 
-  .focus-pop .focus-panel > .focus-foot {
-    order: 0;
-  }
-
-  /* As every sheet on a phone: a shade over the rest. */
-  .focus-strip:has(.focus-pop:not([hidden]))::after {
-    content: "";
-    position: fixed;
-    inset: 0;
-    z-index: -1;
-    background: var(--scrim);
-    opacity: var(--shown);
-    animation: sheet-scrim var(--fold) var(--ease) both;
-  }
-}
-
-:root[data-reduced] .focus-pop {
-  animation: none;
 }
 
 /* The account's MCP servers: a line each, as a machine's, its switch at
@@ -583,19 +429,3 @@
   background: var(--text-2);
 }
 
-/* Put away, it settles where it stood, or sinks back down as a sheet, its
-   shade going with it. */
-.focus-pop.leaving {
-  pointer-events: none;
-  animation: panel-settle var(--quick) var(--ease-out) both;
-}
-
-@media (max-width: 760px) {
-  .focus-pop.leaving {
-    animation: sheet-sink var(--fold) var(--fold-easing) both;
-  }
-
-  .focus-strip:has(.focus-pop.leaving)::after {
-    animation: sheet-scrim-out var(--fold) var(--ease-out) both;
-  }
-}

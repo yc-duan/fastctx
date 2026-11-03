@@ -227,7 +227,7 @@ where
             self.0.abort();
         }
     }
-    let task = tokio::spawn(dialing);
+    let task = fastctx_platform::task::spawn(dialing);
     let _abort = Abort(task.abort_handle());
     match task.await {
         Ok(dialed) => dialed,

@@ -119,6 +119,21 @@ html.gripping-y * {
   display: flex;
   flex-direction: column;
   padding: calc(var(--space-2) + var(--safe-top)) var(--space-2) calc(var(--space-2) + var(--safe-bottom));
+  /* A press on a row opens it: no text of the sidebar is chosen by a hand
+     that moves a little as it clicks, nor is a link carried off as a link
+     (WebKit does both for a mouse; a row is carried only past its own
+     threshold, `talk-drag.ts`). */
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.sidebar :is(a, img) {
+  -webkit-user-drag: none;
+}
+
+.sidebar :is(input, textarea) {
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 .sidebar ul {
@@ -295,6 +310,13 @@ html.gripping-y * {
 
 .sidebar-group {
   margin-top: var(--space-5);
+}
+
+/* The workbench's new conversation is one of its lines, as wide as the
+   others. */
+.side-begin {
+  width: 100%;
+  text-align: left;
 }
 
 .side-group-title {
@@ -1016,6 +1038,57 @@ html.gripping-y * {
 
 html.framed .page-head {
   padding-right: calc(3 * 46px + var(--space-2));
+}
+
+/* Where the buttons are drawn as lines (Linux). */
+.window-control svg {
+  display: block;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1px;
+  shape-rendering: crispEdges;
+}
+
+/* On macOS the system's own buttons stand at the window's top left, over
+   the sidebar's head (`tauri.macos.conf.json`): what would lie under them
+   moves aside, there and on a page's head where the sidebar is away. */
+html[data-frame="macos"] .sidebar-head {
+  padding-left: calc(var(--mac-lights) - var(--space-2));
+}
+
+html[data-frame="macos"] .shell.folded .page-head {
+  padding-left: var(--mac-lights);
+}
+
+@media (max-width: 760px) {
+  html[data-frame="macos"] .page-head {
+    padding-left: var(--mac-lights);
+  }
+}
+
+.frame-lights {
+  position: fixed;
+  top: 24px;
+  left: 18px;
+  z-index: 80;
+  display: flex;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.frame-lights i {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--mac-close);
+}
+
+.frame-lights i:nth-child(2) {
+  background: var(--mac-minimize);
+}
+
+.frame-lights i:nth-child(3) {
+  background: var(--mac-zoom);
 }
 
 /* On the desk the window's buttons stand over the top row's last pane

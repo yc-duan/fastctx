@@ -40,7 +40,10 @@ impl World {
         account: Option<AccountName>,
         owner: ResidentId,
     ) -> Result<PlanWatch, Error> {
-        Ok(PlanWatch { records: self.watch_account_records(hub, account, plan::KIND.into()).await?, owner })
+        Ok(PlanWatch {
+            records: self.watch_records_for(hub, account, plan::KIND.into(), Some(owner.clone())).await?,
+            owner,
+        })
     }
 }
 

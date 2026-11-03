@@ -16,6 +16,7 @@
 
 import { curve } from "../design/curve";
 import { blot, seeded } from "../pen/shapes";
+import { bezier } from "./flight";
 
 /** What the line says. */
 export type LineSays =
@@ -48,14 +49,94 @@ const DRIES = 3500;
 const DRY = 700;
 const WHOLE = 4500;
 
+/** A stroke's value at a moment of one writing, in milliseconds. */
+interface Frame {
+  at: number;
+  alpha: number;
+  scale: number;
+}
+
+/** The ink of dot `index`: it lands and swells, settles, stands, and dries
+ *  away; a little later from left to right, as ink laid later dries later. */
+function inkFrames(index: number): Frame[] {
+  const land = LANDS[index]!;
+  const dries = DRIES + index * 40;
+  return [
+    { at: 0, alpha: 0, scale: 0.4 },
+    { at: land, alpha: 0, scale: 0.4 },
+    { at: land + 110, alpha: 1, scale: 1.18 },
+    { at: land + 260, alpha: 1, scale: 1 },
+    { at: dries, alpha: 1, scale: 1 },
+    { at: dries + DRY, alpha: 0, scale: 1 },
+    { at: WHOLE, alpha: 0, scale: 1 },
+  ];
+}
+
+/** The ink dot `index` spreads into the paper as it lands. */
+function bloomFrames(index: number): Frame[] {
+  const land = LANDS[index]!;
+  return [
+    { at: 0, alpha: 0, scale: 0.5 },
+    { at: land + 60, alpha: 0, scale: 0.5 },
+    { at: land + 160, alpha: 0.32, scale: 0.8 },
+    { at: land + 900, alpha: 0, scale: 1.25 },
+    { at: WHOLE, alpha: 0, scale: 1.25 },
+  ];
+}
+
+/** Where `frames` stand `ms` into a writing, each easing out into the next:
+ *  an easing over the whole writing would bend its clock instead, and the
+ *  dots would land early. */
+function sample(frames: Frame[], ms: number, ease: (t: number) => number): { alpha: number; scale: number } {
+  let from = frames[0]!;
+  for (const to of frames) {
+    if (to.at > ms) {
+      const span = to.at - from.at;
+      const progress = span > 0 ? ease((ms - from.at) / span) : 1;
+      return { alpha: from.alpha + (to.alpha - from.alpha) * progress, scale: from.scale + (to.scale - from.scale) * progress };
+    }
+    from = to;
+  }
+  return { alpha: from.alpha, scale: from.scale };
+}
+
+/** How often the pen moves the dots: they are a slow writing, and each
+ *  move restyles them. Moved by the animations' own clock instead, a page
+ *  whose model works restyled them every frame of the screen, 60 to 144
+ *  times a second, nearly half a processor's core for the dots alone. */
+const PEN_STEP = 1000 / 30;
+
+/** Every pen at work, moved together by one clock, held weakly: a line
+ *  dropped with its page goes with it. The clock runs while one is held,
+ *  and stops where the page is not shown, as its timers and frames do. */
+const pens = new Set<WeakRef<TurnLine>>();
+let moving = false;
+
+function move(): void {
+  requestAnimationFrame((now) => {
+    for (const pen of pens) {
+      const line = pen.deref();
+      if (line) line.draw(now);
+      else pens.delete(pen);
+    }
+    if (pens.size > 0) window.setTimeout(move, PEN_STEP);
+    else moving = false;
+  });
+}
+
 export class TurnLine {
   readonly element: HTMLElement;
   private readonly step: HTMLElement;
   private readonly time: HTMLElement;
   private since: number | null = null;
   private ticking = 0;
-  /** The pen's strokes, held still while the turn waits on the user. */
-  private strokes: Animation[] = [];
+  /** The pen's strokes: each dot's ink and bloom, what each was last set
+   *  to, and since when the pen writes. */
+  private strokes: { element: SVGPathElement; frames: Frame[]; alpha: number; scale: number }[] = [];
+  private began = 0;
+  /** Held still while the turn waits on the user, the ellipsis written whole. */
+  private still = false;
+  private ease: (t: number) => number = (t) => t;
 
   constructor(private readonly words: LineWords) {
     this.element = document.createElement("div");
@@ -70,52 +151,55 @@ export class TurnLine {
   /** Sets the pen to writing the ellipsis, over and over: each dot lands
    *  at its moment and blooms, all six dry together, and the pen comes
    *  back. The dots go on where the system asks for less motion: they are
-   *  the one sign that the model works. */
+   *  the one sign that the model works. The pen moves the dots' own
+   *  properties (`design/breath.css`), not their opacity and transform, so
+   *  no layer is made for them and the words beside them stay sharp. */
   private write(): void {
     const inks = [...this.element.querySelectorAll<SVGPathElement>(".ellipsis-ink")];
     const blooms = [...this.element.querySelectorAll<SVGPathElement>(".ellipsis-bloom")];
-    const at = (ms: number) => Math.min(1, ms / WHOLE);
-    inks.forEach((ink, index) => {
-      const land = LANDS[index]!;
-      // A little later from left to right, as ink laid later dries later.
-      const dries = DRIES + index * 40;
-      // The pen moves the dots' own properties (`design/breath.css`), not
-      // their opacity and transform, so no layer is made for them and the
-      // words beside them stay sharp.
-      const inked = ink.animate(
-        eased([
-          { offset: 0, "--ink-alpha": 0, "--ink-scale": 0.4 },
-          { offset: at(land), "--ink-alpha": 0, "--ink-scale": 0.4 },
-          { offset: at(land + 110), "--ink-alpha": 1, "--ink-scale": 1.18 },
-          { offset: at(land + 260), "--ink-alpha": 1, "--ink-scale": 1 },
-          { offset: at(dries), "--ink-alpha": 1, "--ink-scale": 1 },
-          { offset: at(dries + DRY), "--ink-alpha": 0, "--ink-scale": 1 },
-          { offset: 1, "--ink-alpha": 0, "--ink-scale": 1 },
-        ]),
-        { duration: WHOLE, iterations: Infinity },
-      );
-      const bloomed = blooms[index]!.animate(
-        eased([
-          { offset: 0, "--ink-alpha": 0, "--ink-scale": 0.5 },
-          { offset: at(land + 60), "--ink-alpha": 0, "--ink-scale": 0.5 },
-          { offset: at(land + 160), "--ink-alpha": 0.32, "--ink-scale": 0.8 },
-          { offset: at(land + 900), "--ink-alpha": 0, "--ink-scale": 1.25 },
-          { offset: 1, "--ink-alpha": 0, "--ink-scale": 1.25 },
-        ]),
-        { duration: WHOLE, iterations: Infinity },
-      );
-      this.strokes.push(inked, bloomed);
-    });
+    this.strokes = inks.flatMap((ink, index) => [
+      { element: ink, frames: inkFrames(index), alpha: Number.NaN, scale: Number.NaN },
+      { element: blooms[index]!, frames: bloomFrames(index), alpha: Number.NaN, scale: Number.NaN },
+    ]);
+    try {
+      this.ease = bezier(curve("--ease-out"));
+    } catch {
+      // Without its token the pen moves at an even pace.
+    }
+    this.began = performance.now();
+    pens.add(new WeakRef(this));
+    if (!moving) {
+      moving = true;
+      move();
+    }
+  }
+
+  /** Moves the dots to where the writing stands at `now`, setting only
+   *  what changed. */
+  draw(now: number): void {
+    if (!this.element.isConnected) return;
+    const ms = this.still ? DRIES - 1 : (now - this.began) % WHOLE;
+    for (const stroke of this.strokes) {
+      const { alpha, scale } = sample(stroke.frames, ms, this.ease);
+      const a = Math.round(alpha * 1000) / 1000;
+      const s = Math.round(scale * 1000) / 1000;
+      if (a !== stroke.alpha) {
+        stroke.alpha = a;
+        stroke.element.style.setProperty("--ink-alpha", String(a));
+      }
+      if (s !== stroke.scale) {
+        stroke.scale = s;
+        stroke.element.style.setProperty("--ink-scale", String(s));
+      }
+    }
   }
 
   /** Holds the pen with the ellipsis written whole, or lets it write on. */
   private hold(still: boolean): void {
-    for (const stroke of this.strokes) {
-      if (still && stroke.playState !== "paused") {
-        stroke.pause();
-        stroke.currentTime = DRIES - 1;
-      } else if (!still && stroke.playState === "paused") stroke.play();
-    }
+    if (still === this.still) return;
+    this.still = still;
+    // Written on, the pen picks up at the moment it was held at.
+    if (!still) this.began = performance.now() - (DRIES - 1);
   }
 
   get shown(): boolean {
@@ -167,12 +251,6 @@ export class TurnLine {
     if (this.time.textContent !== said) this.time.textContent = said;
     if (this.since !== null && this.element.isConnected) this.ticking = window.setTimeout(() => this.tick(), 1000);
   }
-}
-
-/** Keyframes that each ease out into the next: an easing on the whole
- *  animation would bend its clock instead, and the dots would land early. */
-function eased(frames: Keyframe[]): Keyframe[] {
-  return frames.map((frame) => ({ ...frame, easing: curve("--ease-out") }));
 }
 
 /** A duration from a design token, in milliseconds. */
