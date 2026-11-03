@@ -194,11 +194,15 @@ pub fn agent_refresh(places: &Places, agent: &Agent, home: &Path) -> Result<Refr
         return Ok(Refresh::Out);
     }
     // Worked out keeping everyone else's changes, it conflicts where one of
-    // them is to Fastctx's own and would be taken back.
+    // them is to Fastctx's own and would be taken back; what someone took
+    // out of Fastctx's is written back without conflict, and taken back too.
     let taken = match plan(places, agent, &read, true, false) {
         Ok(_) => false,
         Err(Error::Edit(crate::Error::Conflict { .. })) => true,
         Err(error) => return Err(error),
+    } || match &read.record {
+        Some(record) => agents::taken_out(agent, &read.files, &record.receipt)?,
+        None => false,
     };
     let planned = match plan(places, agent, &read, true, true) {
         Ok(Some(planned)) => planned,

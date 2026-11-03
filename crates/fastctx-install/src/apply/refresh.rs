@@ -85,7 +85,12 @@ pub(super) fn keep(places: &Places, agent: &str, files: &[PathBuf]) -> Result<Pa
         let Some(name) = file.file_name() else { continue };
         match std::fs::copy(file, folder.join(name)) {
             Ok(_) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            // It was not there: kept as having been absent.
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                let mut absent = name.to_os_string();
+                absent.push(".absent");
+                std::fs::write(folder.join(absent), b"").map_err(io("keeping the files taken back"))?;
+            }
             Err(error) => return Err(io("keeping the files taken back")(error)),
         }
     }

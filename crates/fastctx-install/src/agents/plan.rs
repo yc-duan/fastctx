@@ -156,6 +156,40 @@ pub fn connect(
     Ok(work.done(receipt, notices))
 }
 
+/// Whether something an earlier connecting put into `files`, as `receipt`
+/// records it, is no longer there, or no longer as written for the
+/// instructions: connecting again puts it back, taking back what someone
+/// took out (`crate::apply::agent_refresh` keeps the files first).
+pub fn taken_out(agent: &Agent, files: &Files, receipt: &Receipt) -> Result<bool, Error> {
+    let bytes = |file: &'static str| files.get(file).and_then(|(_, bytes)| bytes.as_deref());
+    let path = |file: &'static str| files.get(file).map_or(file, |(path, _)| path.as_str());
+    if let Some(placed) = &receipt.server
+        && !json::holds_placed(bytes(agent.mcp.file), path(agent.mcp.file), placed)?
+    {
+        return Ok(true);
+    }
+    let edits = agent.shell.iter().zip(&receipt.shell).chain(
+        agent.limits.iter().zip(&receipt.limits).filter_map(|(edit, owned)| owned.as_ref().map(|owned| (edit, owned))),
+    );
+    for (edit, owned) in edits {
+        let file = edit.file();
+        let held = match owned {
+            Owned::Set(placed) => json::holds_placed(bytes(file), path(file), placed)?,
+            Owned::Add(added) => json::holds_added(bytes(file), path(file), added)?,
+            Owned::Own(_) => bytes(file).is_some(),
+        };
+        if !held {
+            return Ok(true);
+        }
+    }
+    if let (Some(file), Some(held)) = (agent.guidance, &receipt.guidance)
+        && !guidance::holds(bytes(file), held)
+    {
+        return Ok(true);
+    }
+    Ok(false)
+}
+
 /// Takes `agent` out: what its receipt holds, where still as written,
 /// last placed first.
 pub fn disconnect(agent: &Agent, files: &Files, previous: &Receipt) -> Result<Planned, Error> {

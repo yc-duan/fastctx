@@ -215,6 +215,39 @@ pub fn unplace(
     tidy(next, location, &at, placed.made, placed.file_made).map(|bytes| (bytes, None))
 }
 
+/// Whether the property `placed` names is still there, whatever it holds.
+pub fn holds_placed(bytes: Option<&[u8]>, location: &str, placed: &Placed) -> Result<bool, Error> {
+    let Some(bytes) = bytes else { return Ok(false) };
+    let text = String::from_utf8_lossy(bytes).into_owned();
+    let document = parse(&text, location)?;
+    let Some(root) = document.root.as_ref() else { return Ok(false) };
+    let at: Vec<&str> = placed.at.iter().map(String::as_str).collect();
+    let (object, depth) = walk(root, &at, location)?;
+    Ok(depth == at.len() && find(object, &placed.name).is_some())
+}
+
+/// Whether the item `added` is still in its array: one that was there
+/// before Fastctx came is not Fastctx's to miss.
+pub fn holds_added(bytes: Option<&[u8]>, location: &str, added: &Added) -> Result<bool, Error> {
+    if added.found {
+        return Ok(true);
+    }
+    let Some(bytes) = bytes else { return Ok(false) };
+    let text = String::from_utf8_lossy(bytes).into_owned();
+    let document = parse(&text, location)?;
+    let Some(root) = document.root.as_ref() else { return Ok(false) };
+    let at: Vec<&str> = added.at.iter().map(String::as_str).collect();
+    let Some((name, parent)) = at.split_last() else { return Ok(false) };
+    let (object, depth) = walk(root, parent, location)?;
+    if depth < parent.len() {
+        return Ok(false);
+    }
+    let array = find(object, name).and_then(|property| as_array(&property.value));
+    Ok(array.is_some_and(|array| {
+        array.elements.iter().any(|element| read(&document, element).as_ref() == Some(&added.item))
+    }))
+}
+
 /// Adds `item` to the array at `at`, making it and the objects on the way.
 /// An item already there is left as found and is not taken out later.
 pub fn add(

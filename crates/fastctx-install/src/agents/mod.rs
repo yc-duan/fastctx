@@ -26,7 +26,7 @@ mod trae;
 mod vscode_copilot;
 mod zed;
 
-pub use plan::{Files, Planned, Receipt, connect, disconnect};
+pub use plan::{Files, Planned, Receipt, connect, disconnect, taken_out};
 pub use spec::{Agent, Edit, Format, Home, Mcp, Program, Server};
 
 /// Every agent connected this way, in the order the interface lists them.
