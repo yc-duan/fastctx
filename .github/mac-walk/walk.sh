@@ -24,6 +24,11 @@ say "window: ${X:-none} ${Y:-} ${WD:-} ${HT:-}"
 check "a window opens" '[ -n "${X:-}" ]'
 check "one app process" '[ "$(apps)" = 1 ]'
 
+# A first opening asks for a language: English, a little below the middle.
+$W click $((X + WD / 2)) $((Y + HT / 2 + 26))
+sleep 5
+shot language-chosen
+
 # The sidebar's rows, as the interface lays them out: Agents, Activity,
 # Machines, each 36 points apart from 52 down, their middle at 146 across.
 $W click $((X + 146)) $((Y + 141))
