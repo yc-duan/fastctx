@@ -334,8 +334,7 @@ fn ask_colleague_definition(collab: &fastctx_types::collab::Offered) -> Value {
 fn message_colleague_definition() -> Value {
     json!({
         "name": "message_colleague",
-        // Goals are not offered in a release yet (`fastctx_platform::preview`).
-        "description": fastctx_types::collab_prompt::message_description(fastctx_platform::preview()),
+        "description": fastctx_types::collab_prompt::MESSAGE_DESCRIPTION,
         "inputSchema": {
             "type": "object",
             "properties": {

@@ -68,28 +68,22 @@ signing, trust boundaries and work that may trip its maker's safety checks."#;
 pub const ASK_DESCRIPTION: &str = r#"Ask a colleague for something you want: a GPT agent, run by Codex, that works on it on its own while you go on. The call returns its id at once.
 
 A colleague is not a subagent inside this conversation. It lives in the World, knows nothing of this conversation, and keeps working if you stop, so the prompt must say all it needs, including which machines and paths it works on.
-- What you ask for is its goal: it keeps going on its own until it is reached or it cannot go on. What it says as it goes comes to you by itself, and so does its report; if this session has ended by then, it is brought back to hear them. Do not wait or poll for it.
+- It works on what you ask on its own until it is done or cannot go on. What it says as it goes comes to you by itself, and so does its answer when its turn ends; if this session has ended by then, it is brought back to hear them. Do not wait or poll for it.
 - `fastctx w ID` shows what it is doing now: its current step, and what it has run and written.
 - message_colleague answers it, turns it while it works, or asks it for more once it is done. `fastctx stop ID` stops its turn."#;
 
 /// The line `ASK_DESCRIPTION` gains when a callee below has a limit.
 pub const ASK_LIMITS: &str = "- Each callee below works on at most as many requests at once as it says; past that, a new colleague waits for a place, and the call says so.";
 
-/// message_colleague's description; `goals` when colleagues work toward a
-/// goal they can mark blocked.
-pub fn message_description(goals: bool) -> String {
-    let blocked = if goals { " If it marked its goal blocked, your message starts it again." } else { "" };
-    format!(
-        "Send a message to a colleague: one you started, or any other that `fastctx w` shows, including one that is idle or asleep.
+/// message_colleague's description.
+pub const MESSAGE_DESCRIPTION: &str = "Send a message to a colleague: one you started, or any other that `fastctx w` shows, including one that is idle or asleep.
 - If it is working, the message joins its current turn at its next tool call, so it can change course mid-turn; otherwise it starts a new turn.
-- Its reply comes back to you by itself.{blocked}
-- A colleague on a machine that is offline gets it when the machine is back."
-    )
-}
+- Its reply comes back to you by itself.
+- A colleague on a machine that is offline gets it when the machine is back.";
 
-pub const COLLEAGUE_RULES: &str = r#"You work for the agent that asked you. What it asks for is your goal: keep going on your own until
-it is reached or you truly cannot go on. Hold yourself to what it asked for, at the level it asked
-for it; a partial or "good enough" result is not done.
+pub const COLLEAGUE_RULES: &str = r#"You work for the agent that asked you. Work on what it asks for on your own until it is done or
+you truly cannot go on. Hold yourself to what it asked for, at the level it asked for it; a partial
+or "good enough" result is not done.
 - message_user reaches the agent that asked you, and wakes it. Use it whenever something comes up
   that it should know: a finding that changes the way, a premise that does not hold, a conflict
   with what another colleague is doing, a question, real progress. Do not save these for the end.
@@ -103,10 +97,11 @@ for it; a partial or "good enough" result is not done.
 - Check your work in proportion to what you changed: show that what was asked for holds; do not
   write tests that only mirror the implementation, or repeat checks that have passed unless
   something changed.
-- When it is reached, send your report: what you did and what failed, why it now holds (facts,
-  paths, experiments), what you are unsure of, what else you touched and why. If you cannot reach
-  it, say how far you got, what stands in the way, what you tried and what would clear it: that is
-  an honest answer, not a failure to hide."#;
+- When it is done, end your turn with your report, the last thing you say, which is what reaches
+  it: what you did and what failed, why it now holds (facts, paths, experiments), what you are
+  unsure of, what else you touched and why. If you cannot finish, say how far you got, what stands
+  in the way, what you tried and what would clear it: that is an honest answer, not a failure to
+  hide."#;
 
 /// What the asker is told of a colleague it started: where it lives, when
 /// that is not where the asker does, and how many wait ahead of it when it
