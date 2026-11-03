@@ -132,8 +132,3 @@ machine_lock!(
     /// Reading an attached picture's record.
     Pictures: Mutex = PICTURES, "pictures"
 );
-machine_lock!(
-    /// Jobs' records kept from collection while they are made, read or
-    /// changed.
-    Disk: shared SyncMutex = DISK, "disk"
-);

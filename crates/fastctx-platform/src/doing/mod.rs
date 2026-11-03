@@ -112,9 +112,14 @@ impl Rank {
     // The node's own records, after every lock above: a thread holding one
     // reads and writes a few of its files and waits on nothing outside
     // (`SyncMutex`).
-    /// Jobs' records kept from collection while they are made, read or
-    /// changed.
+    /// One incoming run dispatch being registered or cancelled.
+    pub const RUN_DISPATCH: Rank = Rank(790);
+    /// One job's records, after reserving its files against collection.
     pub const DISK: Rank = Rank(800);
+    /// Registration and collection of job files; memory only, after job gates.
+    pub const JOB_FILES: Rank = Rank(805);
+    /// The latest delivery time shared by the jobs in one directory.
+    pub const JOB_ARTIFACTS: Rank = Rank(806);
     /// A command's call facts, emitted in order.
     pub const EMITTING: Rank = Rank(810);
     /// Conversations' records, each read and written as one transaction.

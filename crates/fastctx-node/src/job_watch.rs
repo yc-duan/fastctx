@@ -44,10 +44,7 @@ pub(crate) async fn restore(node: &Arc<Node>, path: &Path, record: &JobRecord) -
 /// Releases transferred bytes after the final reader leaves. Metadata and
 /// scratch await the enclosing answer's host receipt.
 pub(crate) fn copied(node: &Arc<Node>, path: &Path) -> std::io::Result<()> {
-    let _gate = node.disk.lock();
-    if crate::collecting::gone(node, path) {
-        return Ok(());
-    }
+    let Some(_files) = node.job_files.hold(path) else { return Ok(()) };
     crate::job_metadata::put_raw(&path.with_extension("copied"), b"")?;
     {
         let mut watched = node.job_watches.0.lock().expect("never poisoned");
@@ -73,7 +70,7 @@ pub(crate) fn collect(node: &Node, path: &Path) -> std::io::Result<()> {
         Ok(record) => match crate::activity_book::consumed(node, &record) {
             Ok(true) => {}
             result => {
-                node.disk_due.lock().expect("never poisoned").insert(path.to_path_buf());
+                node.job_files.due.lock().expect("never poisoned").insert(path.to_path_buf());
                 result?;
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::WouldBlock,
@@ -88,8 +85,8 @@ pub(crate) fn collect(node: &Node, path: &Path) -> std::io::Result<()> {
 }
 
 fn remove(node: &Arc<Node>, path: PathBuf) {
-    node.disk_due.lock().expect("never poisoned").insert(path);
-    node.disk_changed.notify_one();
+    node.job_files.due.lock().expect("never poisoned").insert(path);
+    node.job_files.changed.notify_one();
 }
 
 /// How often a supervisor is looked at where the system cannot say when a

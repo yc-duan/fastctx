@@ -32,7 +32,7 @@ impl Default for Settings {
     }
 }
 
-pub(crate) use crate::job_receipts::{confirmed, confirmed_under, received, received_from, wait_taken};
+pub(crate) use crate::job_receipts::{confirmed, received, received_from, wait_taken};
 
 /// How many days full command output stays after the model got its answer.
 pub(crate) fn days(world: &fastctx_types::layout::WorldDir) -> io::Result<u32> {
@@ -99,7 +99,7 @@ pub(crate) fn start(node: &Arc<Node>) -> io::Result<()> {
             let maintenance = tokio::select! {
                 _ = schedule.tick() => true,
                 () = settings_changed.notified() => true,
-                () = node.disk_changed.notified() => false,
+                () = node.job_files.changed.notified() => false,
             };
             let collecting = node.clone();
             match fastctx_platform::task::spawn_blocking(move || {
@@ -142,19 +142,13 @@ pub(crate) fn start(node: &Arc<Node>) -> io::Result<()> {
                 })
                 .map_err(io::Error::other);
                 let books = crate::books::retire(&retiring);
-                // None of these touch a job's records but the sweep, which
-                // removes empty directories where jobs once were: only it
-                // holds the jobs' gate.
                 let presence = crate::inbox::presence::collect(&retiring.database);
                 let claude = crate::claude::garbage::collect(&retiring.world);
                 let trust = crate::claude::garbage::untrust_departed(&retiring);
                 let usage = crate::usage::collect(&retiring);
                 let purged = crate::activity_book::purge(&retiring);
                 let folded = crate::activity_book::fold(&retiring);
-                let swept = {
-                    let _collecting = retiring.disk.lock();
-                    crate::gather::sweep(&retiring.world)
-                };
+                let swept = crate::gather::sweep(&retiring.world);
                 // Each step is told on its own when it fails.
                 [
                     ("collecting conversation projections", payloads),
@@ -195,22 +189,19 @@ pub(crate) fn start(node: &Arc<Node>) -> io::Result<()> {
     Ok(())
 }
 
-/// Recovery holds a job lease, never the global disk gate while replaying journals.
+/// Recovery holds a job lease while replaying journals, without a shared lock.
 /// Failed jobs stay eligible for the next maintenance round; one does not stop others.
 fn recover_book(node: &Arc<Node>) {
-    let paths: Vec<_> = node.disk_due.lock().expect("never poisoned").iter().cloned().collect();
+    let paths: Vec<_> = node.job_files.due.lock().expect("never poisoned").iter().cloned().collect();
     for path in paths {
-        let Some(lease) = ({
-            let _gate = node.disk.lock();
-            crate::job_reader::hold(node, &path)
-        }) else {
+        let Some(lease) = crate::job_reader::hold(node, &path) else {
             continue;
         };
         let record = match record::read(&path) {
             Ok(record) if record.end.is_some() => record,
             _ => continue,
         };
-        node.disk_due.lock().expect("never poisoned").remove(&path);
+        node.job_files.due.lock().expect("never poisoned").remove(&path);
         match crate::activity_book::consumed(node, &record) {
             Ok(true) => {}
             Ok(false) => {
@@ -221,35 +212,34 @@ fn recover_book(node: &Arc<Node>) {
             Err(error) => node.log.line(format_args!("checking activity for job {}: {error}", record.id)),
         }
         drop(lease);
-        node.disk_due.lock().expect("never poisoned").insert(path);
+        node.job_files.due.lock().expect("never poisoned").insert(path);
     }
 }
 
 fn collect_immediate(node: &Arc<Node>) -> io::Result<()> {
-    let paths: Vec<_> = node.disk_due.lock().expect("never poisoned").drain().collect();
+    let paths: Vec<_> = node.job_files.due.lock().expect("never poisoned").drain().collect();
     let mut failures = Vec::new();
     for path in paths {
         match collect_due(node, &path) {
             Ok(true) => {}
             Ok(false) => {
-                node.disk_due.lock().expect("never poisoned").insert(path);
+                node.job_files.due.lock().expect("never poisoned").insert(path);
             }
             Err(error) => {
                 failures.push(format!("{}: {error}", path.display()));
-                node.disk_due.lock().expect("never poisoned").insert(path);
+                node.job_files.due.lock().expect("never poisoned").insert(path);
             }
         }
     }
     if failures.is_empty() { Ok(()) } else { Err(io::Error::other(failures.join("\n"))) }
 }
 
-/// Lets go of a due job's files once its end was delivered and nothing uses
-/// or reads it; false while something still does. What it is decided by
-/// stays so once it is (an end delivered, the job's processes gone), so it
-/// is read off the jobs' gate; the gate is held only to look for readers
-/// and mark the job, and its files go after (`crate::collecting`): on a slow
-/// disk, as long as they take, no other job waits for them.
+/// Checks one due job under its own gate, then atomically exchanges its lease
+/// for collection. Other jobs never wait for these reads or deletions.
 fn collect_due(node: &Arc<Node>, path: &Path) -> io::Result<bool> {
+    let Some(files) = node.job_files.hold(path) else { return Ok(false) };
+    let gate = node.job_files.gate(path);
+    let _job = gate.lock();
     let job = match record::read(path) {
         Ok(job) => job,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(true),
@@ -261,11 +251,7 @@ fn collect_due(node: &Arc<Node>, path: &Path) -> io::Result<bool> {
     if !crate::job_metadata::exists(&path.with_extension("delivered"))? {
         return Ok(true);
     }
-    let marked = {
-        let _gate = node.disk.lock();
-        crate::collecting::begin(node, vec![path.to_path_buf()])
-    };
-    let Ok(_marked) = marked else { return Ok(false) };
+    let Ok(_marked) = files.collect() else { return Ok(false) };
     crate::job_watch::collect(node, path)?;
     Ok(true)
 }
@@ -273,53 +259,28 @@ fn collect_due(node: &Arc<Node>, path: &Path) -> io::Result<bool> {
 fn collect(node: &Arc<Node>, now: Timestamp) -> io::Result<()> {
     let settings: Settings = serde_json::from_slice(&fs::read(node.world.retention())?).map_err(io::Error::other)?;
     let lifetime = i64::from(settings.command_artifact_days) * DAY as i64;
-    collect_records(
-        &node.world,
-        now,
-        lifetime,
-        || node.disk.lock(),
-        |path| crate::collecting::begin(node, vec![path.to_path_buf()]).ok(),
-        |path| {
-            crate::on::unfollowed(node, path) && !node.job_readers.lock().expect("never poisoned").contains_key(path)
-        },
-        |path| crate::job_watch::collect(node, path),
-        |directory| match fastctx_install::renewal::read_json::<fastctx_types::residents::Now>(&directory.join("now")) {
-            Ok(now) => now.is_none_or(|now| now.activity != fastctx_types::residents::Activity::Busy),
-            Err(error) => {
-                node.log.line(format_args!("reading temporary artifacts' owner: {error}"));
-                false
-            }
-        },
-    )
+    collect_records(node, now, lifetime)
 }
 
-/// Each job's record, and each scratch and output directory, is looked at
-/// under `hold`, the jobs' gate, taken for that one alone: a pass costs as
-/// much as history holds, a hold as little as one job's look. What is to
-/// go is marked under it (`mark`) and let go of once it is let go
-/// (`crate::collecting`).
-#[allow(clippy::too_many_arguments)]
-fn collect_records<G, M>(
-    world: &fastctx_types::layout::WorldDir,
-    now: Timestamp,
-    lifetime: i64,
-    hold: impl Fn() -> G,
-    mark: impl Fn(&Path) -> Option<M>,
-    unfollowed: impl Fn(&Path) -> bool,
-    forget: impl Fn(&Path) -> io::Result<()>,
-    idle: impl Fn(&Path) -> bool,
-) -> io::Result<()> {
-    // A job still in use, or read since it was looked at, is left for a
-    // later pass, as the rest go on.
-    let forget = |path: &Path, held: G| {
-        let Some(marked) = mark(path) else { return Ok(false) };
-        drop(held);
-        let forgotten = match forget(path) {
+/// Each job is leased and checked under its own gate. Its last lease is
+/// exchanged for a collection claim before any of its files are removed.
+fn collect_records(node: &Arc<Node>, now: Timestamp, lifetime: i64) -> io::Result<()> {
+    let world = &node.world;
+    let idle = |directory: &Path| match fastctx_install::renewal::read_json::<fastctx_types::residents::Now>(
+        &directory.join("now"),
+    ) {
+        Ok(now) => now.is_none_or(|now| now.activity != fastctx_types::residents::Activity::Busy),
+        Err(error) => {
+            node.log.line(format_args!("reading temporary artifacts' owner: {error}"));
+            false
+        }
+    };
+    let forget = |path: &Path, files: crate::job_reader::Lease| {
+        let Ok(_marked) = files.collect() else { return Ok(false) };
+        match crate::job_watch::collect(node, path) {
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => Ok(false),
             result => result.map(|()| true),
-        };
-        drop(marked);
-        forgotten
+        }
     };
     for parent in world.job_parents()? {
         for directory in entries(&parent)? {
@@ -332,13 +293,22 @@ fn collect_records<G, M>(
                 if path.extension().is_none_or(|extension| extension != "json") {
                     continue;
                 }
-                let held = hold();
-                let job = record::read(&path)?;
+                let Some(held) = node.job_files.hold(&path) else {
+                    pending = true;
+                    continue;
+                };
+                let gate = node.job_files.gate(&path);
+                let _job = gate.lock();
+                let job = match record::read(&path) {
+                    Ok(job) => job,
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+                    Err(error) => return Err(error),
+                };
                 if job.is_sentinel()
                     && let Some(end) = &job.end
                     && expired(now, end.at, lifetime)
                     && !program::in_use(&job)?
-                    && unfollowed(&path)
+                    && crate::on::unfollowed(node, &path)
                 {
                     if !forget(&path, held)? {
                         pending = true;
@@ -362,7 +332,7 @@ fn collect_records<G, M>(
                                     };
                                     if job.end.is_none()
                                         || program::in_use(&job)?
-                                        || !unfollowed(&path)
+                                        || !crate::on::unfollowed(node, &path)
                                         || crate::job_metadata::exists(&path.with_extension("owed"))?
                                         || !expired(now, delivery.at, lifetime)
                                         || !forget(&path, held)?
@@ -375,18 +345,14 @@ fn collect_records<G, M>(
                             continue;
                         };
                         create(&marker, &delivery)?;
-                        let latest_path = directory.join("artifacts-delivered.json");
-                        let prior = fastctx_install::renewal::read_json::<Timestamp>(&latest_path)?;
-                        if prior.is_none_or(|prior| prior < delivery.at) {
-                            fastctx_install::renewal::write_json(&latest_path, &delivery.at)?;
-                        }
+                        crate::job_receipts::keep_artifact_time(node, &directory, delivery.at)?;
                         delivery
                     }
                     Err(error) => return Err(error),
                 };
                 if job.end.is_none()
                     || program::in_use(&job)?
-                    || !unfollowed(&path)
+                    || !crate::on::unfollowed(node, &path)
                     || crate::job_metadata::exists(&path.with_extension("owed"))?
                 {
                     pending = true;
@@ -407,7 +373,7 @@ fn collect_records<G, M>(
                 else {
                     continue;
                 };
-                let held = hold();
+                let Ok(_marked) = node.job_files.collect(vec![scratch.clone()]) else { continue };
                 if !fastctx_platform::disk::is_dir(&scratch)
                     || fastctx_platform::owned_directory::is_link(&fs::symlink_metadata(&scratch)?)
                     || fastctx_platform::disk::exists(directory.join("jobs").join(format!("{job}.json")))?
@@ -417,9 +383,7 @@ fn collect_records<G, M>(
                 if fastctx_install::renewal::read_json::<Timestamp>(&scratch.join(".delivered"))?.is_some()
                     && retired_owner(world, &directory)?
                     && idle(&directory)
-                    && let Some(_marked) = mark(&scratch)
                 {
-                    drop(held);
                     fastctx_platform::owned_directory::delete(&scratch)?;
                 }
             }
@@ -428,10 +392,8 @@ fn collect_records<G, M>(
                 && retired_owner(world, &directory)?
                 && let Some(delivered) = latest
             {
-                let held = hold();
                 let out = directory.join("out");
-                if let Some(_marked) = mark(&out) {
-                    drop(held);
+                if let Ok(_marked) = node.job_files.collect(vec![out.clone()]) {
                     collect_out(&out, delivered)?;
                 }
             }

@@ -178,34 +178,55 @@ impl Jobs {
             // Parsing starts an external bash process; unrelated conversations
             // must remain able to publish and collect their job records.
             let checked = launch.check()?;
-            let _collecting = registering.disk.lock();
-            let launched = checked.launch_with_io_registered(mode, input.as_deref(), |path| {
-                if owner.resident().is_some()
-                    && on.as_ref().is_none_or(|on| on.sentinel.is_none())
-                    && (on.is_some() || answer_receipts)
-                {
-                    let debt: &[u8] = if on.is_none() && answer_receipts { b"answer" } else { b"" };
-                    crate::job_metadata::put_raw(&path.with_extension("owed"), debt)
-                        .map_err(|e| failure("keeping completion debt", e))?;
-                }
-                if let Some(dispatch) = &dispatch {
-                    crate::run_stops::register(&registering, path, dispatch)?;
-                }
-                if let Some(registration) = registration {
-                    let follower = crate::on::Follower::reserved(
-                        &registering,
-                        path,
-                        on.as_ref().is_some_and(|on| on.sentinel.is_some()),
-                    )
-                    .ok_or_else(|| failure("following the job", crate::job_reader::gone()))?;
-                    *registration.lock() = Some(follower);
-                }
-                Ok(())
-            })?;
+            let directory = world.job_owner(&names, &owner);
+            let _directories = [directory.jobs(), directory.out()]
+                .iter()
+                .map(|path| {
+                    registering
+                        .job_files
+                        .hold_directory(path)
+                        .ok_or_else(|| Failure::not_run("the job's directory is being collected"))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let dispatch_gate = dispatch
+                .as_ref()
+                .zip(owner.resident())
+                .map(|(dispatch, owner)| crate::run_stops::starting(&registering, owner, dispatch));
+            let _dispatch = dispatch_gate.as_ref().map(|gate| gate.lock());
+            let (launched, files) = checked.launch_with_io_reserved(
+                mode,
+                input.as_deref(),
+                |path| registering.job_files.hold(path),
+                |path| {
+                    if owner.resident().is_some()
+                        && on.as_ref().is_none_or(|on| on.sentinel.is_none())
+                        && (on.is_some() || answer_receipts)
+                    {
+                        let debt: &[u8] = if on.is_none() && answer_receipts { b"answer" } else { b"" };
+                        crate::job_metadata::put_raw(&path.with_extension("owed"), debt)
+                            .map_err(|e| failure("keeping completion debt", e))?;
+                    }
+                    if let Some(dispatch) = &dispatch {
+                        crate::run_stops::register(&registering, path, dispatch)?;
+                    }
+                    if let Some(registration) = registration {
+                        let follower = crate::on::Follower::reserved(
+                            &registering,
+                            path,
+                            on.as_ref().is_some_and(|on| on.sentinel.is_some()),
+                        )
+                        .ok_or_else(|| failure("following the job", crate::job_reader::gone()))?;
+                        *registration.lock() = Some(follower);
+                    }
+                    Ok(())
+                },
+            )?;
+            drop(_dispatch);
             starting.started(&launched.record);
             crate::job_watch::start(&registering, &launched.record, launched.supervisor.clone());
             crate::run_facts::update_job(&registering, &launched.record)
                 .map_err(|error| failure("updating call facts", error))?;
+            drop(files);
             Ok(launched)
         })
         .await
@@ -448,7 +469,7 @@ pub async fn forget(node: &Arc<Node>, town: Option<TownName>, owner: fastctx_typ
     }
 }
 
-/// Collection never waits for a supervisor while holding the shared disk gate.
+/// Collection owns the job's files and only tries the supervisor's file lock.
 /// A process still exiting leaves its artifacts for the next maintenance round.
 const SUPERVISOR_EXIT: Duration = Duration::ZERO;
 

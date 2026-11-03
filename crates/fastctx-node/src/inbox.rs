@@ -244,12 +244,10 @@ pub(crate) fn uncertain_lately(directory: &ConversationDir, within: std::time::D
 /// Confirm an external job artifact first; receipt and inbox state commit together.
 pub fn settle(node: &Node, directory: &ConversationDir, id: &NoticeId) -> io::Result<Option<Pending>> {
     let Some(pending) = read(directory, id)? else { return Ok(None) };
-    let _gate = matches!(pending.delivery.notice, Notice::JobEnded { .. }).then(|| node.disk.lock());
     let previously = delivered_here(directory, id)?;
     if !previously && let Notice::JobEnded { job, machine, output, .. } = &pending.delivery.notice {
         let about = crate::residents::read_about(directory)?;
-        crate::retention::confirmed_under(
-            _gate.as_ref().expect("job end owns disk gate"),
+        crate::retention::confirmed(
             node,
             fastctx_types::Address { machine: node.machine(), resident: about.id },
             machine.clone(),

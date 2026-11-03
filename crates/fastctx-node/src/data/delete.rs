@@ -244,13 +244,7 @@ async fn delete_inner(node: &Arc<Node>, name: &str) -> Result<Gone, Stop> {
             }
         }
     }
-    if node
-        .job_readers
-        .lock()
-        .expect("never poisoned")
-        .keys()
-        .any(|path| measured.places.iter().any(|place| path.starts_with(place)))
-    {
+    if node.job_files.reading(&measured.places) {
         return Err(Stop::Refused("its command output is being read; close that reader first".into()));
     }
     crate::attachments::lifetime::ensure_holders(node, id).await.map_err(|error| Stop::Failed(error.message))?;
@@ -668,27 +662,23 @@ async fn remove_places(node: &Arc<Node>, measured: &Measured) -> Result<(u64, u6
                 deleted_scopes.push(conversation);
             }
         }
-        // Marked under the jobs' gate as nothing reads them, and let go of
-        // after it (`crate::collecting`). A job of theirs that retention lets
+        // Atomically marked while no file lease overlaps them. A job that retention lets
         // go of just now is waited for, as briefly as that takes.
         let waited = std::time::Instant::now();
         let _collecting = loop {
-            let marked = {
-                let _gate = node.disk.lock();
-                crate::collecting::begin(&node, places.clone())
-            };
+            let marked = node.job_files.collect(places.clone());
             match marked {
                 Ok(collecting) => break collecting,
-                Err(crate::collecting::Held::Read) => {
+                Err(crate::job_files::Held::Read) => {
                     return Err(std::io::Error::new(
                         std::io::ErrorKind::WouldBlock,
                         "its command output is being read",
                     ));
                 }
-                Err(crate::collecting::Held::Collecting) if waited.elapsed() < COLLECTED_WITHIN => {
+                Err(crate::job_files::Held::Collecting) if waited.elapsed() < COLLECTED_WITHIN => {
                     std::thread::sleep(std::time::Duration::from_millis(100));
                 }
-                Err(crate::collecting::Held::Collecting) => {
+                Err(crate::job_files::Held::Collecting) => {
                     return Err(std::io::Error::new(
                         std::io::ErrorKind::WouldBlock,
                         "a command's files of it are still being let go of",

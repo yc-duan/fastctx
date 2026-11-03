@@ -150,8 +150,8 @@ impl Job {
                 .unwrap_or(0) as u64)
         })
     }
-    /// Called while artifact deletion owns the disk gate, before deleting the
-    /// supervisor record. Small transactions keep unrelated writers moving.
+    /// Called while artifact deletion owns the job's collection claim, before
+    /// deleting the supervisor record. Small transactions keep unrelated writers moving.
     pub(crate) fn delete_all(&self) -> io::Result<()> {
         crate::run_facts::delete_step_view(self)?;
         loop {

@@ -1040,7 +1040,7 @@ pub fn sweep(world: &WorldDir) -> io::Result<()> {
                 && !fastctx_platform::owned_directory::is_link(&fastctx_platform::disk::symlink_metadata(&directory)?)
                 && holds_no_file(&directory)?
             {
-                fastctx_platform::owned_directory::delete(&directory)?;
+                remove_empty_tree(&directory)?;
             }
         }
         remove_dir(&parent)?;
@@ -1050,12 +1050,33 @@ pub fn sweep(world: &WorldDir) -> io::Result<()> {
 
 fn holds_no_file(directory: &Path) -> io::Result<bool> {
     for entry in entries(directory)? {
-        let metadata = fastctx_platform::disk::symlink_metadata(&entry)?;
+        let metadata = match fastctx_platform::disk::symlink_metadata(&entry) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error),
+        };
         if !metadata.is_dir() || fastctx_platform::owned_directory::is_link(&metadata) || !holds_no_file(&entry)? {
             return Ok(false);
         }
     }
     Ok(true)
+}
+
+// Only the atomic empty-directory removal decides what can go. A file
+// created after the scan keeps its directory; no recursive delete follows it.
+fn remove_empty_tree(directory: &Path) -> io::Result<()> {
+    let metadata = match fastctx_platform::disk::symlink_metadata(directory) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    if !metadata.is_dir() || fastctx_platform::owned_directory::is_link(&metadata) {
+        return Ok(());
+    }
+    for entry in entries(directory)? {
+        remove_empty_tree(&entry)?;
+    }
+    remove_dir(directory)
 }
 
 /// Removes a directory if it is empty; one that is not, or is gone, stays as

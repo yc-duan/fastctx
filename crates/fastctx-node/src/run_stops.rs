@@ -41,6 +41,22 @@ fn incoming_path(node: &Node, owner: &Address, dispatch: &NoticeId) -> PathBuf {
     node.world.owner(&node.names(), owner).book("run-requests").join(format!("{dispatch}.json"))
 }
 
+/// Held from registration until the supervisor has been spawned.
+pub(crate) fn starting(node: &Node, owner: &Address, dispatch: &NoticeId) -> crate::job_files::Gate {
+    dispatch_gate(node, &incoming_path(node, owner, dispatch))
+}
+
+fn dispatch_gate(node: &Node, path: &Path) -> crate::job_files::Gate {
+    node.run_dispatches.get_or_insert_with(&path.to_path_buf(), || {
+        fastctx_platform::doing::SyncMutex::new(
+            fastctx_platform::doing::Rank::RUN_DISPATCH,
+            "run dispatch",
+            path.to_string_lossy().into_owned(),
+            (),
+        )
+    })
+}
+
 fn read<T: serde::de::DeserializeOwned>(path: &Path) -> io::Result<Option<T>> {
     items::get(path)
 }
@@ -309,8 +325,9 @@ fn record(
     Ok(true)
 }
 
-/// Called with the jobs' disk gate held, after the job record is durable and
-/// before its supervisor starts. The same gate serializes cancellation below.
+/// Called with `starting` held, after the job record is durable and before
+/// its supervisor starts. The dispatch gate orders registration and cancellation
+/// independently of other jobs. The incoming identity commits before execution.
 pub(crate) fn register(node: &Arc<Node>, path: &Path, dispatch: &NoticeId) -> Result<(), Failure> {
     let result = (|| -> io::Result<bool> {
         let mut record = fastctx_hands::run::record::read(path)?;
@@ -363,8 +380,9 @@ pub(crate) async fn serve(
 ) -> Result<(), Failure> {
     let (keeping, whose, which, account) = (node.clone(), owner.clone(), dispatch.clone(), scope.clone());
     let path = fastctx_platform::task::blocking(move || {
-        let _disk = keeping.disk.lock();
         let incoming = incoming_path(&keeping, &whose, &which);
+        let gate = dispatch_gate(&keeping, &incoming);
+        let _dispatch = gate.lock();
         let known: Option<Incoming> = read(&incoming).map_err(|error| Failure::new(error.to_string()))?;
         if known.as_ref().is_some_and(|known| known.scope != account) {
             return Err(Failure::refused("the run dispatch belongs to another account"));

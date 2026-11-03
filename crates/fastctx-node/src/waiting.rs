@@ -31,7 +31,6 @@ pub async fn wait(
     let registering = node.clone();
     let wanted = jobs.clone();
     let (paths, readers) = fastctx_platform::task::spawn_blocking(move || {
-        let _gate = registering.disk.lock();
         let mut paths = Vec::new();
         let mut readers = Vec::new();
         for job in wanted {

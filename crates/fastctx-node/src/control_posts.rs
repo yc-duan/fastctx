@@ -146,7 +146,7 @@ pub(crate) fn receive(
     if still_pending {
         items::keep(&request.path.with_extension("reply"), &Reply { id: id.clone(), result })?;
         node.control_letters.changed.notify_waiters();
-        node.disk_changed.notify_one();
+        node.job_files.changed.notify_one();
         node.receipts_changed.notify_one();
     } else {
         // Another request has taken its place, which asks and is answered

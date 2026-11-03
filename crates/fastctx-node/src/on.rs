@@ -1373,24 +1373,24 @@ pub(crate) struct Follower {
 }
 
 impl Follower {
-    /// Under the jobs' gate; none for a job being let go of
-    /// (`crate::collecting`).
+    /// Reserves the files before the follower becomes visible to collection.
     pub(crate) fn reserved(node: &Arc<Node>, path: &Path, internal: bool) -> Option<Self> {
         let reader = crate::job_reader::hold(node, path)?;
+        Some(Self::with_reader(node, path, reader, internal))
+    }
+
+    fn with_reader(node: &Arc<Node>, path: &Path, reader: crate::job_reader::Lease, internal: bool) -> Self {
         *node.following.lock().expect("never poisoned").entry(path.to_path_buf()).or_default() += 1;
-        Some(Self { node: node.clone(), path: path.to_path_buf(), _reader: reader, internal })
+        Self { node: node.clone(), path: path.to_path_buf(), _reader: reader, internal }
     }
 
     async fn new(node: &Arc<Node>, path: &Path) -> Result<Self, Failure> {
         let (node, path) = (node.clone(), path.to_path_buf());
         fastctx_platform::task::spawn_blocking(move || {
-            let _gate = node.disk.lock();
-            if crate::collecting::gone(&node, &path) {
-                return Err(Failure::new(crate::job_reader::gone().to_string()));
-            }
+            let reader = crate::job_reader::hold(&node, &path)
+                .ok_or_else(|| Failure::new(crate::job_reader::gone().to_string()))?;
             let record = fastctx_hands::run::record::read(&path).map_err(|error| Failure::new(error.to_string()))?;
-            Self::reserved(&node, &path, record.is_sentinel())
-                .ok_or_else(|| Failure::new(crate::job_reader::gone().to_string()))
+            Ok(Self::with_reader(&node, &path, reader, record.is_sentinel()))
         })
         .await
         .map_err(|error| Failure::new(error.to_string()))?
@@ -1411,8 +1411,8 @@ impl Follower {
                     };
                     crate::job_metadata::put(&self.path.with_extension("delivered"), &receipt)
                         .map_err(|e| Failure::new(e.to_string()))?;
-                    self.node.disk_due.lock().expect("never poisoned").insert(self.path.clone());
-                    self.node.disk_changed.notify_one();
+                    self.node.job_files.due.lock().expect("never poisoned").insert(self.path.clone());
+                    self.node.job_files.changed.notify_one();
                 }
                 return Ok(());
             }

@@ -1,24 +1,16 @@
 //! Readers that need a job's record and output across several IO calls.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 use crate::Node;
 
-pub(crate) struct Lease {
-    node: Arc<Node>,
-    path: PathBuf,
-}
+pub(crate) use crate::job_files::Lease;
 
-/// The caller holds the disk gate while resolving and registering a reader;
-/// a job being let go of has none, gone as it will be a moment later
-/// (`crate::collecting`).
-pub(crate) fn hold(node: &Arc<Node>, path: &Path) -> Option<Lease> {
-    if crate::collecting::gone(node, path) {
-        return None;
-    }
-    *node.job_readers.lock().expect("never poisoned").entry(path.to_path_buf()).or_default() += 1;
-    Some(Lease { node: node.clone(), path: path.to_path_buf() })
+/// Reserves the files before reading; collection and registration share one
+/// in-memory decision, never a lock held over IO.
+pub(crate) fn hold(node: &Node, path: &Path) -> Option<Lease> {
+    node.job_files.hold(path)
 }
 
 /// What reading a job that is gone says.
@@ -33,29 +25,10 @@ pub(crate) async fn open(node: &Arc<Node>, path: &Path) -> Result<Lease, fastctx
     };
     let (node, path) = (node.clone(), path.to_path_buf());
     fastctx_platform::task::spawn_blocking(move || {
-        let lease = {
-            let _gate = node.disk.lock();
-            hold(&node, &path)
-        }
-        .ok_or_else(|| fastctx_types::ipc::Failure::new(gone().to_string()))?;
+        let lease = hold(&node, &path).ok_or_else(|| fastctx_types::ipc::Failure::new(gone().to_string()))?;
         fastctx_hands::run::record::read(&path).map_err(|error| fastctx_types::ipc::Failure::new(error.to_string()))?;
         Ok(lease)
     })
     .await
     .map_err(|error| fastctx_types::ipc::Failure::new(error.to_string()))?
-}
-
-impl Drop for Lease {
-    fn drop(&mut self) {
-        let mut readers = self.node.job_readers.lock().expect("never poisoned");
-        if let Some(count) = readers.get_mut(&self.path) {
-            *count -= 1;
-            if *count == 0 {
-                readers.remove(&self.path);
-                if self.node.disk_due.lock().expect("never poisoned").contains(&self.path) {
-                    self.node.disk_changed.notify_one();
-                }
-            }
-        }
-    }
 }

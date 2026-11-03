@@ -36,7 +36,6 @@ mod codex;
 mod codex_title;
 mod collab;
 mod colleagues;
-mod collecting;
 mod completion_debt;
 mod completion_delivery;
 mod composer;
@@ -83,6 +82,7 @@ mod inbox;
 mod initializing;
 mod intake;
 mod job_accounts;
+mod job_files;
 mod job_metadata;
 mod job_reader;
 mod job_receipts;
@@ -125,7 +125,6 @@ mod proxy_setting;
 mod ranked;
 mod reach;
 mod received;
-mod said;
 mod record_access;
 mod record_database;
 mod record_gates;
@@ -136,9 +135,9 @@ mod record_value;
 mod records;
 mod recovery;
 mod removed;
-mod reopen;
 mod renewal;
 mod renewal_legacy;
+mod reopen;
 pub mod replacement;
 mod replicas;
 mod residents;
@@ -146,6 +145,7 @@ mod retention;
 mod run_facts;
 mod run_receipts;
 mod run_stops;
+mod said;
 mod scratch;
 mod sentinels;
 mod server;
@@ -250,14 +250,12 @@ pub(crate) struct Node {
     locations: placement::location::Locations,
     /// What failing background work has told already.
     said: said::Said,
-    disk: ranked::Disk,
+    job_files: job_files::Files,
+    run_dispatches: leases::Registry<PathBuf, fastctx_platform::doing::SyncMutex<()>>,
+    artifact_clocks: leases::Registry<PathBuf, fastctx_platform::doing::SyncMutex<()>>,
     /// Each conversation's place here, deleted alone (`data::places`).
     places: data::places::Places,
-    disk_changed: tokio::sync::Notify,
-    disk_due: std::sync::Mutex<std::collections::HashSet<PathBuf>>,
-    job_readers: std::sync::Mutex<std::collections::HashMap<PathBuf, usize>>,
-    /// Jobs' files let go of off the jobs' gate (`collecting`).
-    collecting: std::sync::Mutex<Vec<PathBuf>>,
+
     residents: residents::Residents,
     contexts: context::Updates,
     context_deliveries: context::Deliveries,
@@ -804,12 +802,10 @@ pub async fn run_prepared(
                 context_deliveries: Default::default(),
                 scratch_deliveries: Default::default(),
                 native_context: Default::default(),
-                disk: Default::default(),
+                job_files: Default::default(),
+                run_dispatches: Default::default(),
+                artifact_clocks: Default::default(),
                 places: Default::default(),
-                disk_changed: Default::default(),
-                disk_due: Default::default(),
-                job_readers: Default::default(),
-                collecting: Default::default(),
                 residents,
                 codex,
                 logins: logins::Logins::default(),
