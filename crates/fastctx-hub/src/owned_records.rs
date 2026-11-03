@@ -127,6 +127,12 @@ pub(crate) fn record_key(conversation: &Conversation, kind: &str, key: &str) -> 
     if allowed { Ok(()) } else { Err("this key is not a record of that conversation".into()) }
 }
 
+/// Whether `machine` registered a conversation's records here.
+fn registered(hub: &Hub, machine: &fastctx_types::MachineName) -> bool {
+    let store = hub.store();
+    hub.account_records.owners.lock().expect("never poisoned").registered(&store.book.directory, machine)
+}
+
 fn resolve(hub: &Hub, actor: &AccountName, address: &Address) -> Result<(Access, Timestamp), String> {
     let store = hub.store();
     let directory = &store.book.directory;
@@ -211,10 +217,13 @@ pub(crate) async fn ask(
                 .collect();
             Response::Conversations { conversations }
         }
-        Request::Resolve { conversation } => {
-            let (access, _) = resolve(hub, &account, &conversation)?;
-            Response::Conversation { conversation: access.conversation }
-        }
+        Request::Resolve { conversation } => match resolve(hub, &account, &conversation) {
+            Ok((access, _)) => Response::Conversation { conversation: access.conversation },
+            // A machine from before the records registered none: its
+            // conversations' records are their account's, as before them.
+            Err(_) if !registered(hub, &conversation.machine) => Response::Unregistered,
+            Err(error) => return Err(error),
+        },
         Request::Record { conversation, request } => {
             let (access, opened) = resolve(hub, &account, &conversation)?;
             match &request {

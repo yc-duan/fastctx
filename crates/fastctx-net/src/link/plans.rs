@@ -22,7 +22,13 @@ impl Link {
     /// same short name reads as none.
     pub async fn plan_read_of(&self, account: &AccountName, whose: &Address) -> Result<Page, String> {
         if self.view().shared_records {
-            return self.owned_plan_read(account, whose).await;
+            match self.owned_plan_read(account, whose).await {
+                Ok(page) => return Ok(page),
+                // A conversation on a machine from before the records keeps
+                // its plan with its account, read as before them.
+                Err(error) if !self.unregistered(account, whose).await => return Err(error),
+                Err(_) => {}
+            }
         }
         let page = self.plan_read(account, whose.resident.clone()).await?;
         Ok(if self.plan_of_another(&page, whose).is_some() {
@@ -54,7 +60,9 @@ impl Link {
         };
         match conversation {
             Some(conversation) => self.owned_plan_read(account, &conversation.address).await,
-            None => Ok(Page { owner: of.resident.clone(), metadata: None, body: None }),
+            // None registered by that name: one on a machine from before the
+            // records, or none at all, whose plan is the account's.
+            None => self.plan_read(account, of.resident.clone()).await,
         }
     }
 
@@ -99,7 +107,13 @@ impl Link {
         if self.view().shared_records
             && let Some(whose) = whose
         {
-            return self.owned_plan_write(account, whose, expected, markdown, author, None).await;
+            match self.owned_plan_write(account, whose, expected, markdown.clone(), author.clone(), None).await {
+                Ok(result) => return Ok(result),
+                // A conversation on a machine from before the records keeps
+                // its plan with its account, written as before them.
+                Err(error) if !self.unregistered(account, whose).await => return Err(error),
+                Err(_) => {}
+            }
         }
         let owned = match &author {
             Author::Resident { address } => Some(Box::new(address.clone())),

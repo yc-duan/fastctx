@@ -35,23 +35,40 @@ impl Link {
         let mut logins: Vec<_> = view.me().into_iter().flat_map(|member| member.logins.iter().cloned()).collect();
         logins.sort_by_key(|account| view.me().and_then(|member| member.home.as_ref()) != Some(account));
         let mut found: Option<(AccountName, fastctx_types::owned_records::Conversation)> = None;
+        let mut unregistered = false;
         for actor in logins {
-            if let Ok(Response::Conversation { conversation }) =
-                self.owned_records(&actor, Request::Resolve { conversation: address.clone() }).await
-            {
-                if found.as_ref().is_some_and(|(_, other)| other != &conversation) {
-                    return Err(
-                        "more than one signed-in account has a different record at this conversation address".into()
-                    );
+            match self.owned_records(&actor, Request::Resolve { conversation: address.clone() }).await {
+                Ok(Response::Conversation { conversation }) => {
+                    if found.as_ref().is_some_and(|(_, other)| other != &conversation) {
+                        return Err("more than one signed-in account has a different record at this conversation address"
+                            .into());
+                    }
+                    if found.is_none() {
+                        found = Some((actor, conversation));
+                    }
                 }
-                if found.is_none() {
-                    found = Some((actor, conversation));
-                }
+                Ok(Response::Unregistered) => unregistered = true,
+                _ => {}
             }
+        }
+        // A machine from before the records registered none: the
+        // conversation's records are its account's, as before them.
+        if found.is_none() && unregistered {
+            return self.account_of(&address.machine, &address.resident).map(|account| (account, address.clone()));
         }
         found.map(|(actor, conversation)| (actor, conversation.address)).ok_or_else(|| {
             "this account has no registered record of that conversation; update an older conversation host".into()
         })
+    }
+
+    /// Whether the machine of the conversation `whose` registered no
+    /// conversation: one from before the records, whose plan and other
+    /// records are its account's own.
+    pub(crate) async fn unregistered(&self, account: &AccountName, whose: &fastctx_types::Address) -> bool {
+        matches!(
+            self.owned_records(account, Request::Resolve { conversation: whose.clone() }).await,
+            Ok(Response::Unregistered)
+        )
     }
 
     /// A local deletion must retain its hub-owned audience before erasing the ownership record.

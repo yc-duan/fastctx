@@ -94,6 +94,10 @@ pub enum Response {
     Revision { record: account_records::Record },
     Versions { versions: Vec<Version> },
     Catalog { catalog: crate::history::Catalog },
+    /// The conversation's machine registered no conversation: one from
+    /// before the records, whose conversations' records are their
+    /// account's own, read and changed as before them.
+    Unregistered,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

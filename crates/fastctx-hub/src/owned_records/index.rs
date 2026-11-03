@@ -141,4 +141,13 @@ impl Index {
         }
         Ok(conversation)
     }
+
+    /// Whether `machine`, by any name it had, registered a conversation.
+    pub(crate) fn registered(&self, directory: &fastctx_net::directory::Directory, machine: &MachineName) -> bool {
+        let names: Vec<_> = match directory.member(machine) {
+            Some(member) => std::iter::once(&member.name).chain(&member.was).collect(),
+            None => vec![machine],
+        };
+        self.addresses.keys().any(|(name, _)| names.contains(&name))
+    }
 }
