@@ -11,7 +11,8 @@ pub(super) fn archive_left(database: &Database, world: &std::path::Path) -> io::
             Ok(db
                 .prepare(
                     "SELECT DISTINCT f.conversation,f.family FROM migration_files f WHERE f.verified=1 AND f.archived=0
-                AND EXISTS(SELECT 1 FROM conversation_record_imports i WHERE i.family=f.family AND (i.conversation=f.conversation OR i.conversation='@node')) LIMIT 64",
+                AND (EXISTS(SELECT 1 FROM conversation_record_imports i WHERE i.family=f.family AND (i.conversation=f.conversation OR i.conversation='@node'))
+                OR (f.family='run-facts' AND EXISTS(SELECT 1 FROM run_imported r WHERE r.conversation=f.conversation AND r.checked=1))) LIMIT 64",
                 )?
                 .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?
                 .collect::<std::result::Result<Vec<_>, _>>()?)
@@ -42,27 +43,37 @@ pub(super) fn collect(database: &Database) -> io::Result<()> {
         if files.is_empty() {
             return Ok(());
         }
-        for (family, path, incarnation) in files {
-            loop {
-                let (family, path, incarnation) = (family.clone(), path.clone(), incarnation.clone());
-                let removed=database.write_now_at(Priority::Background,16*1024,move |db| {
-                    Ok(db.execute("DELETE FROM migration_row_proofs WHERE family=?1 AND path=?2 AND ordinal IN (
+        // What goes here is done with and found again if lost, so a batch of
+        // files goes in relaxed commits rather than waiting on the disk for
+        // each file twice.
+        loop {
+            let batch = files.clone();
+            let removed = database
+                .write_relaxed_now_at(Priority::Background, 16 * 1024, move |db| {
+                    let mut delete = db.prepare_cached("DELETE FROM migration_row_proofs WHERE family=?1 AND path=?2 AND ordinal IN (
                         SELECT ordinal FROM migration_row_proofs WHERE family=?1 AND path=?2 LIMIT 128)
-                        AND EXISTS(SELECT 1 FROM migration_files WHERE family=?1 AND path=?2 AND incarnation=?3 AND archived=1)",(&family,&path,incarnation))?)
-                }).map_err(io::Error::other)?;
-                if removed == 0 {
-                    break;
-                }
-            }
-            database
-                .write_now_at(Priority::Background, 256, move |db| {
-                    db.execute(
-                        "DELETE FROM migration_files WHERE family=?1 AND path=?2 AND incarnation=?3 AND archived=1",
-                        (family, path, incarnation),
-                    )?;
-                    Ok(())
+                        AND EXISTS(SELECT 1 FROM migration_files WHERE family=?1 AND path=?2 AND incarnation=?3 AND archived=1)")?;
+                    let mut removed = 0;
+                    for (family, path, incarnation) in &batch {
+                        removed += delete.execute((family, path, incarnation))?;
+                    }
+                    Ok(removed)
                 })
                 .map_err(io::Error::other)?;
+            if removed == 0 {
+                break;
+            }
         }
+        database
+            .write_relaxed_now_at(Priority::Background, 256 * files.len(), move |db| {
+                let mut delete = db.prepare_cached(
+                    "DELETE FROM migration_files WHERE family=?1 AND path=?2 AND incarnation=?3 AND archived=1",
+                )?;
+                for (family, path, incarnation) in &files {
+                    delete.execute((family, path, incarnation))?;
+                }
+                Ok(())
+            })
+            .map_err(io::Error::other)?;
     }
 }
