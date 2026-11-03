@@ -524,13 +524,16 @@ for (const session of sessions) {
       }
       if (session.startsWith("connect-")) {
         // The window before connecting an agent: Claude Code's candidate on
-        // this computer connected, a Codex login removed from its menu, or
+        // this computer connected, a Codex login removed from its menu (or,
+        // `connect-codex-in`, one found in a folder connected), or
         // (`connect-other`) the first other agent the overview lists
         // connected from there; `-open` unfolds the first card's file,
         // `-about` asks what connecting is.
         const codex = session.includes("codex");
         const other = session.includes("other");
-        const open = codex
+        const open = session.includes("codex-in")
+          ? "document.querySelector('.ll-go[data-act=take]')?.click();"
+          : codex
           ? "document.querySelector('.logins-more')?.click(); return new Promise(r => setTimeout(r, 300)).then(() => [...document.querySelectorAll('[role=menuitem]')].find((b) => /移除|Remove/.test(b.textContent))?.click());"
           : other
             ? "document.querySelector('.ll-go:not([data-agent=claude]):not([data-agent=codex])')?.click();"

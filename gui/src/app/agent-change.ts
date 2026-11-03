@@ -441,6 +441,9 @@ export class AgentChangeSheet {
     const limit = target.into ? preview.output_limit : undefined;
     const also: Partial<Record<Change, string>> = {};
     if (limit) also.limits = said.raised(limit.current, limit.requested);
+    // Codex asks before each call of a tool that changes things, and where
+    // it may ask no one refuses it: the run tool, its only hands, is let be.
+    if (target.into && target.agent === "codex" && target.workbench === undefined) also.tools = said.unasked;
     const notes = target.workbench !== undefined ? [] : [...(target.takeBack ? [said.takeBack] : []), said.sessions(target.agent, agentName(target), target.into)];
     return {
       list: discloseCards(preview, said, this.unfolded, also, target.workbench),

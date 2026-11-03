@@ -27,6 +27,8 @@ export interface DiscloseWords {
   out: Record<Change, ChangeWords>;
   /** On the limits card: a limit the user set, raised. */
   raised(current: number, requested: number): string;
+  /** On Codex's card of the run tool: its calls are not put to the user. */
+  unasked: string;
   /** What connecting never does, on a card of its own. */
   never: ChangeWords;
   /** An agent whose own shell cannot be turned off, on a card of its own. */
@@ -95,6 +97,7 @@ export const zhDisclose: DiscloseWords = {
     legacy: { title: "清理旧版配置", line: "早期版本写入的配置一并移除。" },
   },
   raised: (current, requested) => `你设定的上限 ${current.toLocaleString("zh-CN")} 将调至 ${requested.toLocaleString("zh-CN")}；此上限由所有工具共用。`,
+  unasked: "调用 run 无需逐次批准。",
   never: { title: "边界", line: "Fastctx 不唤醒它，不代它向厂商发出请求，也不读取它的对话。" },
   keepsShell: { title: "自带的 shell 无法停用", line: "它会两种都用；只有经 run 执行的命令记入「活动」。" },
   benchOpen: (agent) => `打开 ${agent} 的工作台`,
@@ -160,6 +163,7 @@ export const enDisclose: DiscloseWords = {
     legacy: { title: "Clears earlier settings", line: "Settings an earlier version wrote are removed as well." },
   },
   raised: (current, requested) => `Your limit of ${current.toLocaleString("en")} is raised to ${requested.toLocaleString("en")}; every tool shares this limit.`,
+  unasked: "Calls to run no longer wait for your approval.",
   never: { title: "Boundaries", line: "Fastctx does not wake it, sends no request to its vendor on its behalf, and does not read its conversations." },
   keepsShell: { title: "Its own shell stays on", line: "It will use both; only what runs through run is in Activity." },
   benchOpen: (agent) => `Open the workbench in ${agent}`,
