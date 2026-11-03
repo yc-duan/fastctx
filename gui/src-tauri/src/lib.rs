@@ -101,6 +101,8 @@ mod uploading;
 mod titlebar;
 #[cfg(target_os = "macos")]
 mod mac_window;
+#[cfg(all(unix, desktop))]
+mod unix_instance;
 
 mod conversation_watch;
 mod watch_delivery;
@@ -1146,6 +1148,12 @@ pub fn run() {
         Err(error) => (None, Some(error)),
     };
     let context = tauri::generate_context!();
+    #[cfg(all(unix, desktop))]
+    let instance = match unix_instance::enter(&context.config().identifier) {
+        Ok(Some(instance)) => Ok(instance),
+        Ok(None) => return,
+        Err(error) => Err(error),
+    };
     #[cfg(windows)]
     let context = titlebar::configure(context);
     #[cfg(desktop)]
@@ -1412,6 +1420,8 @@ pub fn run() {
     let builder = builder.plugin(titlebar::plugin());
     #[cfg(target_os = "macos")]
     let builder = builder.plugin(mac_window::plugin());
+    #[cfg(all(unix, desktop))]
+    let builder = builder.plugin(unix_instance::plugin(instance));
     #[cfg(target_os = "android")]
     let builder = builder.plugin(android::plugin());
     if let Err(error) = builder.run(context) {

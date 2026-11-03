@@ -381,6 +381,8 @@ mod desktop {
         outcome?;
         // Windows' installer has ended this application and starts the new
         // one itself; elsewhere the new one is started here.
+        #[cfg(all(unix, desktop))]
+        crate::unix_instance::leaving();
         app.restart();
     }
 
