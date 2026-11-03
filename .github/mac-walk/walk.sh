@@ -49,7 +49,9 @@ $W click $((X + 146)) $((Y + 69))
 sleep 3
 shot click-agents-after-minimize
 
-red=$($W red || true)
+read -r X Y WD HT < <(win)
+screencapture -x -R"$X,$Y,60,60" corner.png
+red=$($W red corner.png "$X" "$Y" || true)
 say "red button: ${red:-not found}"
 if [ -n "$red" ]; then
   # shellcheck disable=SC2086

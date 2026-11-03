@@ -2,7 +2,7 @@
 // is, clicks, a drag, a key with Command, and where the window's red button
 // is drawn. Compiled once with swiftc; each call does one thing.
 //
-//   walk trusted | window | click X Y | wobble X Y | drag X1 Y1 X2 Y2 | key m|w|q | red
+//   walk trusted | window | click X Y | wobble X Y | drag X1 Y1 X2 Y2 | key m|w|q | red FILE X Y
 
 import AppKit
 import ApplicationServices
@@ -67,23 +67,25 @@ func key(_ code: CGKeyCode) {
   }
 }
 
-/// The red button's centre, found by its colour near the window's top left.
-func red(in window: CGRect) -> CGPoint? {
-  guard let image = CGDisplayCreateImage(CGMainDisplayID()) else { return nil }
-  let scale = CGFloat(image.width) / CGDisplayBounds(CGMainDisplayID()).width
-  let rep = NSBitmapImageRep(cgImage: image)
+/// The red button's centre, found by its colour in a screenshot of the
+/// window's top left corner, 60 points square, taken at `origin`.
+func red(in file: String, origin: CGPoint) -> CGPoint? {
+  guard let image = NSImage(contentsOfFile: file), let data = image.tiffRepresentation,
+    let rep = NSBitmapImageRep(data: data)
+  else { return nil }
+  let scale = CGFloat(rep.pixelsWide) / 60
   var found: [CGPoint] = []
-  for y in stride(from: window.minY, to: window.minY + 60, by: 1) {
-    for x in stride(from: window.minX, to: window.minX + 60, by: 1) {
-      guard let color = rep.colorAt(x: Int(x * scale), y: Int(y * scale)) else { continue }
+  for y in 0..<rep.pixelsHigh {
+    for x in 0..<rep.pixelsWide {
+      guard let color = rep.colorAt(x: x, y: y)?.usingColorSpace(.sRGB) else { continue }
       if color.redComponent > 0.85 && color.greenComponent < 0.5 && color.blueComponent < 0.5 {
-        found.append(CGPoint(x: x, y: y))
+        found.append(CGPoint(x: CGFloat(x) / scale, y: CGFloat(y) / scale))
       }
     }
   }
   guard !found.isEmpty else { return nil }
   let sum = found.reduce(CGPoint.zero) { CGPoint(x: $0.x + $1.x, y: $0.y + $1.y) }
-  return CGPoint(x: sum.x / CGFloat(found.count), y: sum.y / CGFloat(found.count))
+  return CGPoint(x: origin.x + sum.x / CGFloat(found.count), y: origin.y + sum.y / CGFloat(found.count))
 }
 
 let args = CommandLine.arguments.dropFirst().map { $0 }
@@ -104,7 +106,7 @@ case "drag":
 case "key":
   key(["m": 0x2E, "w": 0x0D, "q": 0x0C][args[1]]!)
 case "red":
-  guard let window = fastctxWindows().first, let at = red(in: window) else { exit(1) }
+  guard let at = red(in: args[1], origin: CGPoint(x: numbers[0], y: numbers[1])) else { exit(1) }
   print("\(Int(at.x)) \(Int(at.y))")
 default:
   FileHandle.standardError.write("unknown step\n".data(using: .utf8)!)
