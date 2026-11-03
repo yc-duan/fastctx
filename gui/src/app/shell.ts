@@ -217,9 +217,10 @@ export class Shell {
     this.page = page;
     this.place = place;
     // Gone to another place, the page there comes in over a moment rather
-    // than at a blink; the first page, and a page shown again where it was,
-    // are simply there.
-    if (before && before !== page) {
+    // than at a blink; the first page, a page shown again where it was, and
+    // a tab of the same row of tabs (`data-tab-group`), its head standing as
+    // it stood, are simply there.
+    if (before && before !== page && !sameTabs(before.element, page.element)) {
       page.element.classList.remove("page-arriving");
       void page.element.offsetWidth;
       page.element.classList.add("page-arriving");
@@ -327,4 +328,12 @@ export function pageHead(words: ShellWords, title: string, actions = "", back: s
     <div class="page-head-title">${title}</div>
     ${actions ? `<div class="page-head-actions">${actions}</div>` : ""}
   </header>`;
+}
+
+/** Whether two pages are tabs of one row of tabs, which their heads both
+ *  draw: going between them changes what is under the row, not the page. */
+function sameTabs(before: HTMLElement, after: HTMLElement): boolean {
+  const group = (page: HTMLElement) => page.querySelector<HTMLElement>("[data-tab-group]")?.dataset.tabGroup;
+  const was = group(before);
+  return was !== undefined && was === group(after);
 }

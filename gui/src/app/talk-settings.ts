@@ -68,7 +68,7 @@ export function settingsHead(
   } catch {
     // Kept for this visit only.
   }
-  const tabs = `<nav class="segmented cset-tabs" aria-label="${escape(words.title)}">${TABS.map(
+  const tabs = `<nav class="segmented cset-tabs" data-tab-group="talk-settings" aria-label="${escape(words.title)}">${TABS.map(
     (tab) =>
       `<a class="segment${tab === current ? " chosen" : ""}" href="${link(settingsPlace(tab))}"${tab === current ? ' aria-current="page"' : ""}>${escape(words.tabs[tab])}</a>`,
   ).join("")}</nav>`;
