@@ -1,10 +1,12 @@
 name: Soak
 
-# The long soak before a release, started by hand on the ci/ branch being released: the Linux kernel
-# and drills that branch's run built, held to the foundation's numbers under the worst case for four
-# hours (`world-engine.md`, 验证的设施). Nothing is built here; it waits for that run's kernel and
-# drills, so it can be started as soon as the branch is pushed. Every ci/ run soaks half an hour in
-# `release.yml` with the same drill.
+# The soak, started by hand on a ci/ branch when it is to be measured: the Linux kernel and drills
+# that branch's run built, held to the foundation's numbers under the worst case: a real node held
+# to a small server's two cores, two gigabytes and slow disk, under a hundred and more
+# conversations, its own interfaces and two dozen phones, while its line is cut, dropped and
+# frozen, its disk hung, a job runs away and calls storm in (`world-engine.md`, 验证的设施). Nothing
+# is built here; it waits for that run's kernel and drills, so it can be started as soon as the
+# branch is pushed. A release does not wait for it.
 
 on:
   workflow_dispatch:
