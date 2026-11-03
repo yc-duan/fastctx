@@ -65,6 +65,11 @@ pub async fn control(node: &Arc<Node>, resident: &ResidentId, control: Control) 
     {
         return Err(Failure::not_run(fastctx_hosts::claude::assisted::COMMAND_REFUSED));
     }
+    // What a running turn asks is answered whatever its login: the answer
+    // goes to the session waiting for it, which is alive, and wakes nothing.
+    if let Control::Answer { request, answer } = control {
+        return answer_request(node, resident, request, answer).await;
+    }
     // What has the model work in a session between turns, a compaction or a
     // skill, takes a turn of its login, as words do (`turn_slots`), before
     // the session is woken for it.
@@ -76,7 +81,7 @@ pub async fn control(node: &Arc<Node>, resident: &ResidentId, control: Control) 
     super::resume::ready(node, resident).await?;
     match control {
         Control::Fork { through, side } => super::fork::fork(node, resident, through, side).await,
-        Control::Answer { request, answer } => answer_request(node, resident, request, answer).await,
+        Control::Answer { .. } => unreachable!("an answer is given before the session is woken"),
         Control::Rewind { .. } if !REWIND_SUPPORTED => Err(Failure::not_run(
             "Claude Code has no supported in-place rewind; fork through the selected turn instead",
         )),

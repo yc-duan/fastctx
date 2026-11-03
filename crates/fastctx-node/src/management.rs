@@ -51,6 +51,14 @@ pub async fn manage(
 
 pub async fn here(node: &Arc<Node>, id: &ResidentId, action: Management) -> Result<Managed, Failure> {
     let _doing = fastctx_platform::doing::doing(format!("{action:?} of {id}"));
+    // Archiving and restoring go through the conversation's host, which is
+    // not started where the workbench is closed in its login.
+    if matches!(action, Management::Archive | Management::Restore)
+        && let Some((about, _)) = node.residents.about(id)
+        && !crate::logins::workbench::drives(node, &about)
+    {
+        return Err(Failure::refused(crate::logins::workbench::CLOSED));
+    }
     let actions = crate::control_queue::gate(node, id);
     let _action = if matches!(action, Management::Sleep | Management::Archive) {
         None

@@ -68,6 +68,8 @@ pub(crate) async fn resolve(
         AttachmentSource::Upload(_) => Failure::original_gone(),
         _ => Failure::not_run("the attachment's resident is unknown"),
     })?;
+    // Past the World's own originals, a picture is the host's to give.
+    crate::logins::workbench::works(node, &about)?;
     if let AttachmentSource::HostImage { host_image, .. } = &source {
         let host = match host_image {
             HostImage::Codex { .. } => "codex",

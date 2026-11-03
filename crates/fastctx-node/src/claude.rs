@@ -545,10 +545,14 @@ async fn look(node: &Arc<Node>, directory: &Path) -> bool {
     // A session the user opened on their own, as one registered before the
     // World kept to that line, is known for its run and nothing more: its
     // record and controls are not the World's to read (`world-layers.md`).
-    if node.residents.about(&resident).is_none_or(|(about, _)| !about.world_managed()) {
+    let Some((about, _)) = node.residents.about(&resident).filter(|(about, _)| about.world_managed()) else {
         return true;
-    }
-    if let Err(error) = policy(node, &resident, directory).await {
+    };
+    // With the workbench closed in its login, Claude Code's own record of
+    // the session is not read: the turn under way is heard through what the
+    // World's plugin reports alone.
+    let reads_host = crate::logins::workbench::reads_host(node, &about);
+    if reads_host && let Err(error) = policy(node, &resident, directory).await {
         node.log.line(format_args!("publishing Claude session policy for {session}: {error}"));
         return false;
     }
@@ -556,7 +560,7 @@ async fn look(node: &Arc<Node>, directory: &Path) -> bool {
         node.log.line(format_args!("finding where Claude Code keeps {session}'s record: {error}"));
         settled = false;
     }
-    if let Err(error) = titles::start(node, &resident, directory).await {
+    if reads_host && let Err(error) = titles::start(node, &resident, directory).await {
         node.log.line(format_args!("watching Claude's title: {error}"));
         settled = false;
     }

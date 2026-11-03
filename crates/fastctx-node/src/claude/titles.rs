@@ -56,9 +56,16 @@ pub(super) async fn start(node: &Arc<Node>, resident: &ResidentId, directory: &P
         let mut followed = false;
         loop {
             let Some(node) = node.upgrade() else { return };
-            // A conversation removed or deleted is followed no longer; one
-            // brought back is followed again from its session's next report.
-            if !node.residents.knows(&resident) || node.residents.removed(&resident).is_some() {
+            // A conversation removed or deleted is followed no longer, nor
+            // one whose login the workbench was closed in; one brought back
+            // or opened again is followed again from its session's next report.
+            if !node.residents.knows(&resident)
+                || node.residents.removed(&resident).is_some()
+                || node
+                    .residents
+                    .about(&resident)
+                    .is_none_or(|(about, _)| !crate::logins::workbench::reads_host(&node, &about))
+            {
                 node.claude.title_files.lock().expect("never poisoned").remove(&path);
                 return;
             }

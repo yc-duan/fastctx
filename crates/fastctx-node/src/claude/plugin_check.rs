@@ -1,10 +1,11 @@
 //! Claude Code checks the World's plugin as it checks one before loading it,
 //! and the node says loudly when it would not load: its mod is read and
 //! judged by Claude Code before it runs, and a mod it refuses tells the
-//! World nothing at all. The check runs with a login the plugin is put into,
-//! once for each version of the plugin: running Claude Code reads that
-//! login, and syncs its remote settings, so it is not run at every start.
-//! Where no login has the plugin, nothing loads it, and nothing is run.
+//! World nothing at all. The check runs with a login the workbench is open
+//! in, which the plugin is put into, once for each version of the plugin:
+//! running Claude Code reads that login, and syncs its remote settings, so
+//! it is not run at every start. Where no such login has the plugin, nothing
+//! the World starts loads it, and nothing is run.
 
 use std::path::{Path, PathBuf};
 
@@ -28,11 +29,15 @@ pub(super) fn run(node: &Node, plugin: &Path) {
         Ok(found) => found
             .into_iter()
             .filter(|integration| integration.host == fastctx_install::apply::Host::Claude)
-            // A login connected alone has no plugin, and starts no program.
-            .filter(|integration| {
-                fastctx_install::apply::claude_plugin_at(&context.places, &integration.home).unwrap_or(false)
+            // A login connected alone starts no program, though it may still
+            // hold the plugin an earlier version put there, which is taken
+            // out without one.
+            .map(|integration| (fastctx_hosts::inventory::plain(&integration.home), integration))
+            .filter(|(dir, integration)| {
+                crate::logins::workbench::known(node, "claude", dir) == Some(true)
+                    && fastctx_install::apply::claude_plugin_at(&context.places, &integration.home).unwrap_or(false)
             })
-            .map(|integration| fastctx_hosts::inventory::plain(&integration.home))
+            .map(|(dir, _)| dir)
             .collect(),
         Err(error) => {
             node.log.line(format_args!(

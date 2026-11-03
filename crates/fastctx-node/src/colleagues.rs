@@ -248,6 +248,8 @@ pub async fn ask_here(
     let home = crate::homes::listed(node, "codex", started.callee.login.home.as_deref()).map_err(|failure| {
         Failure::not_run(format!("{}; the user changes it on the Model collaboration page", failure.message))
     })?;
+    // Asked before anything of the colleague is kept or its login started.
+    crate::logins::workbench::may_start(node, &acting, "codex", home.as_deref())?;
     let agent = AgentName::try_from("codex").expect("a valid agent name");
     let id = node.residents.new_id(&agent)?;
     crate::record_migration::born(node, &id);
@@ -273,7 +275,6 @@ pub async fn ask_here(
         node.log.line(format_args!("starting {id} where its requester works: {}", error.message));
     }
     let origin = Origin::Colleague { asked_by: asker.clone(), label };
-    crate::logins::workbench::may_start(node, &acting, "codex", home.as_deref())?;
     let _birth = crate::here::born(node, &id, acting.clone());
     let (spec, heard) = thread_spec(node, &id, &origin, town.as_ref(), &acting, home.as_deref()).await?;
     // Until it is claimed below, reports of threads nobody claims are kept.

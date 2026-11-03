@@ -85,9 +85,20 @@ pub(crate) fn drives(node: &Node, about: &About) -> bool {
     !about.world_managed() || is_open(node, &about.acting, about.host.agent.as_str(), about.home.as_deref())
 }
 
-/// Refuses to work a conversation the World holds in a login the workbench
-/// is not open in: to start its host to read, list or change anything of it.
+/// Whether the World reads what the host keeps of the conversation `about`:
+/// of one it holds, in a login the workbench is open in. Any other reads as
+/// the World recorded it (`world-layers.md`, 接入严格不越界).
+pub(crate) fn reads_host(node: &Node, about: &About) -> bool {
+    about.world_managed() && drives(node, about)
+}
+
+/// Refuses to work a conversation the World does not hold, or holds in a
+/// login the workbench is not open in: to start its host to read, list or
+/// change anything of it.
 pub(crate) fn works(node: &Node, about: &About) -> Result<(), Failure> {
+    if !about.world_managed() {
+        return Err(Failure::refused(crate::speech::OWN_SESSION));
+    }
     if drives(node, about) { Ok(()) } else { Err(Failure::refused(CLOSED)) }
 }
 
