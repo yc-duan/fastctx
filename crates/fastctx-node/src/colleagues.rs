@@ -84,8 +84,8 @@ pub async fn ask(
             let born = ask_for_account(node, &link, &account, chosen.started, request).await?;
             (born, Some(fastctx_types::access::HubAccount { hub: link.membership().id.clone(), account }))
         }
-        // This computer's own settings, in no network: the colleague would be
-        // born here, but no account keeps the goal it works toward.
+        // This computer's own settings, in no network: no account would keep
+        // the colleague, so none is asked here yet (`world-colleagues.md`).
         Whose::Computer => {
             return Err(Failure::not_run(fastctx_types::collab_prompt::needs_network(
                 crate::goals::colleagues::offered(),

@@ -1,4 +1,4 @@
-//! Asking a colleague where goals are not offered, as a release does: it opens
+//! Asking a colleague, which works toward no goal in any build: it opens
 //! no goal; what it tells with message_user reaches the conversation that
 //! asked it and wakes it; the end of its turn comes back too; and that
 //! conversation no longer waits for it once the turn ended
@@ -7,12 +7,6 @@
 //! they wait loses none (同事从哪里来、能去哪里).
 use super::*;
 use fastctx_types::collab::{AgentLogin, AtOnce, Callee, Collab};
-
-/// Whether the kernel is a release, where only FASTCTX_PREVIEW offers goals.
-fn released(kernel: &Path) -> Result<bool> {
-    let output = Command::new(kernel).arg("--version").env_clear().output()?;
-    Ok(!String::from_utf8_lossy(&output.stdout).contains("development build"))
-}
 
 /// What the drill's script checks of the models' inputs: the colleague's
 /// id, when the scene ran.
@@ -23,10 +17,6 @@ pub(super) async fn exercise(
     mock_configuration: &[u8],
     agent: &AgentName,
 ) -> Result<Option<Value>> {
-    if !released(KERNEL.get().expect("kernel path"))? {
-        println!("SKIP a colleague in a release: a development kernel always offers goals");
-        return Ok(None);
-    }
     let (root, mut child) = node_with(base, "release-pc", "owner", listen, None, false).await?;
     let pc: MachineName = "release-pc".parse()?;
     let home = base.join("release-codex");
@@ -104,7 +94,7 @@ pub(super) async fn exercise(
     let waited = evidence["evidence"]["waiting"].to_string().contains(&id);
     anyhow::ensure!(idle_after(&root, &id, None).await, "the release colleague did not settle");
     record(
-        "in a release, a colleague opens no goal",
+        "a colleague opens no goal",
         block(&root, &id, "goal").is_empty(),
         json!(block(&root, &id, "goal")),
     );
