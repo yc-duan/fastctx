@@ -8,6 +8,8 @@ use std::cell::RefCell;
 pub(super) const GENERATION: &str = ".record-generation";
 pub(super) const ORIGINS: &str = ".queue-origins.json";
 pub(super) const REJECTIONS: &str = ".queue-rejections.json";
+/// A row for each conversation whose records were gathered, written over
+/// at each gathering and gone with the conversation.
 pub(crate) const SCHEMA: &str = "CREATE TABLE IF NOT EXISTS conversation_record_gathering (
     conversation TEXT PRIMARY KEY, generation TEXT NOT NULL, boundary INTEGER NOT NULL,
     complete INTEGER NOT NULL DEFAULT 0

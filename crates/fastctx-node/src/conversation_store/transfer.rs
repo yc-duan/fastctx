@@ -25,6 +25,11 @@ static REJECTED: LazyLock<Mutex<HashMap<std::path::PathBuf, HashMap<String, Stri
     LazyLock::new(Default::default);
 static PENDING: LazyLock<Mutex<HashMap<std::path::PathBuf, HashSet<String>>>> = LazyLock::new(Default::default);
 
+/// The conversations being imported here: a row for each, how far it came
+/// through each table, and the key of every row it wrote, kept to take the
+/// import back if it is refused. All of it goes when the import completes,
+/// its journal discarded (`discard_journal`), or is refused; the import and
+/// its progress also when its conversation is deleted.
 pub(super) const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS node_conversation_transfers (
     name TEXT PRIMARY KEY, fingerprint TEXT, finished INTEGER NOT NULL DEFAULT 0,

@@ -8,6 +8,8 @@ use fastctx_storage::{
 use sha2::{Digest, Sha256};
 use std::io;
 
+/// A proof for each legacy row brought over, gone once its file is archived
+/// (`maintenance::files::collect`) or its conversation goes.
 pub(crate) const SCHEMA:&str="
 CREATE TABLE IF NOT EXISTS migration_row_proofs (
     conversation TEXT NOT NULL, family TEXT NOT NULL, path TEXT NOT NULL, ordinal INTEGER NOT NULL,

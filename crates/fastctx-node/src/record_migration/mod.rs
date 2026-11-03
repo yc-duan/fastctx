@@ -10,6 +10,10 @@ pub(crate) mod withdrawal;
 pub(crate) use files::{Context, FileComplete, FileRow, file};
 pub(crate) use scheduler::Service;
 
+/// What bringing the legacy files over keeps: a content key for each row
+/// that had one and each file's progress, gone once the files are archived
+/// (`maintenance::collect`) or their conversation goes, and the generation
+/// each conversation was born in, a row for each.
 pub(crate) const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS migration_content_keys (
     conversation TEXT NOT NULL, family TEXT NOT NULL, hash TEXT NOT NULL, occurrences INTEGER NOT NULL DEFAULT 0,

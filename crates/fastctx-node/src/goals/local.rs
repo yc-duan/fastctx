@@ -17,6 +17,8 @@ use std::{io, path::Path};
 pub(super) const LOCAL: &str = "goal-local";
 pub(super) const HOLD: &str = "goal-hold";
 const HELD: &str = "goal-frozen-inputs";
+/// A row for each conversation whose goal projection is yet to be
+/// written, gone once it is (`projected`) and with the conversation.
 pub(crate) const SCHEMA: &str =
     "CREATE TABLE IF NOT EXISTS goal_projection_dirty(conversation TEXT PRIMARY KEY) WITHOUT ROWID;";
 #[derive(Clone, Serialize, Deserialize)]

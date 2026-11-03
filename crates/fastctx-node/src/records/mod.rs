@@ -23,6 +23,12 @@ use fastctx_types::layout::ConversationDir;
 use serde::{Serialize, de::DeserializeOwned};
 use std::io;
 
+/// The records a conversation's families keep. Every row is its
+/// conversation's and goes with it (`conversation_store::purge`); a family
+/// removes what it is done with itself (a report applied, a control
+/// answered, a job's metadata let go), a row past its `expires` goes
+/// (`obligations::collect`), and a conversation's dirty mark, positions,
+/// versions and imports are a row for it, or for each of its families.
 pub(crate) const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS context_projection_dirty(conversation TEXT PRIMARY KEY) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS conversation_records (
