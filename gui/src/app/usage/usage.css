@@ -62,6 +62,10 @@
   background: var(--fill-strong);
 }
 
+.ledger-talk[hidden] {
+  display: none;
+}
+
 /* The page lays itself out by the room it has, the sidebar's taken. */
 .ledger-body {
   flex: 1;

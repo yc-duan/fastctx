@@ -3053,7 +3053,7 @@ function show(next: Place): void {
           // A node keeping the workbench by account opens it on the account.
           workbenchOn: () => (accountLayer.workbench.peek() ? show({ kind: "home" }) : accountLayer.choose("workbench")),
           benched: (open) => void workbenchChanged(open),
-          talkOn: () => void workbenchChanged(true).then(() => show({ kind: "new", town: null })),
+          talkOn: (machine, agent, home) => void workbenchChanged(true).then(() => beginTalk(null, loginKey(machine, agent, home), machine)),
         });
         break;
       }
@@ -3629,7 +3629,16 @@ if (live) {
       return first ? { hub: first.hubName, account: first.account } : null;
     }),
   );
-  addEventListener("focus", () => void accountLayer.refresh());
+  // Where the workbench is open is each login's own: read again on focus,
+  // after the account's layer and at most once a minute, so that a login
+  // opened or closed elsewhere shows here (`workbenchSeen`).
+  let loginsRead = 0;
+  addEventListener("focus", () => {
+    const reading = accountLayer.refresh();
+    if (Date.now() - loginsRead < 60_000) return;
+    loginsRead = Date.now();
+    void reading.then(() => agentLogins(null)).then(workbenchSeen, () => {});
+  });
   // Which account the mode is read for is known once the logins are: the
   // first read may have come before them.
   let refreshedFor = "";

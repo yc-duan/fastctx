@@ -335,7 +335,9 @@ export class AgentChangeSheet {
     try {
       const change = await this.seams.change(target, raise, told?.fingerprint);
       this.state = { at: "ended", planned, change, problem: change.end?.end === "failed" ? change.end.reason : null, told };
-      if (change.end?.end === "done" && target.workbench !== undefined) this.seams.benched?.(target.workbench);
+      // Taking a login out closes the workbench in it as well.
+      const bench = target.workbench ?? (target.into ? undefined : false);
+      if (change.end?.end === "done" && bench !== undefined) this.seams.benched?.(bench);
     } catch (error) {
       this.state = { at: "ended", planned, change: null, problem: detailOf(error), told };
     } finally {

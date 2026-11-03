@@ -42,9 +42,11 @@ const key = (card: number, file: number) => `${card}:${file}`;
 /** `bench`: the workbench opened (`true`) or closed in the login, told on
  *  a card of its own in place of what connecting never does. */
 export function discloseCards(preview: ChangePreview, words: DiscloseWords, open: ReadonlySet<string>, also: Partial<Record<Change, string>> = {}, bench?: boolean): string {
-  const told = preview.into ? words.into : words.out;
+  // The plugin and the permission come in only with the workbench opened;
+  // any other change takes them out, what an earlier version left included.
+  const told = (change: Change) => ((change === "plugin" || change === "consent" ? bench === true : preview.into) ? words.into : words.out);
   const cards = toldCards(preview).map((card, index) => {
-    const said = bench !== undefined && card.change === "tools" ? words.benchTools(preview.agent, bench) : told[card.change];
+    const said = bench !== undefined && card.change === "tools" ? words.benchTools(preview.agent, bench) : told(card.change)[card.change];
     const more = also[card.change];
     const files = card.files.map((file, at) => fileLine(file, index, at, words, open.has(key(index, at)))).join("");
     const commands = card.commands?.length

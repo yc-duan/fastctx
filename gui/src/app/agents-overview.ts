@@ -71,8 +71,9 @@ export interface AgentsOverviewOptions {
   workbenchOn(machine: string, agent: Agent, dir: string): void;
   /** The workbench was opened or closed in a login. */
   benched(open: boolean): void;
-  /** Starts a conversation with a login the workbench is open in. */
-  talkOn(machine: string, agent: Agent, dir: string): void;
+  /** Starts a conversation with `agent`'s login `home` on `machine`, its
+   *  default one where none, the workbench open in it. */
+  talkOn(machine: string, agent: Agent, home: string | null): void;
 }
 
 export class AgentsOverview implements Page {
@@ -103,10 +104,10 @@ export class AgentsOverview implements Page {
     this.body = this.element.querySelector<HTMLElement>(".ao-body")!;
     this.pick = this.element.querySelector<HTMLElement>(".agents-pick-place")!;
     this.sheet = new AgentChangeSheet(options.changeWords, {
-      preview: (target) => options.preview(target.machine, target.agent, target.dir, target.into, !!target.takeBack, target.workbench),
-      change: (target, raise, expected) => options.change(target.machine, target.agent, target.dir, target.into, raise, !!target.takeBack, expected, target.workbench),
+      preview: (target) => options.preview(this.written(target.machine), target.agent, target.dir, target.into, !!target.takeBack, target.workbench),
+      change: (target, raise, expected) => options.change(this.written(target.machine), target.agent, target.dir, target.into, raise, !!target.takeBack, expected, target.workbench),
       progress: async (target) => {
-        const record = await options.read(target.machine);
+        const record = await options.read(this.written(target.machine));
         const machine = record.machines.find((one) => one.kind === "answered" && one.logins.machine === target.machine);
         if (machine?.kind !== "answered") return null;
         const agent = sideOf(machine.logins, target.agent);
@@ -137,6 +138,13 @@ export class AgentsOverview implements Page {
     this.stop();
     clearTimeout(this.following);
     this.machines?.element.remove();
+  }
+
+  /** The machine named `name` as every call names it: as this computer
+   *  writes it, its hub with it where another hub has one of that name. */
+  private written(name: string): string {
+    const shown = this.current(this.options.store.world.peek()).machine;
+    return shown?.name === name ? shown.written : name;
   }
 
   /** The machines of the menu, and the one shown among them. */
@@ -180,7 +188,7 @@ export class AgentsOverview implements Page {
     this.reading = name;
     const asked = readerNow();
     try {
-      const world = await this.options.read(name);
+      const world = await this.options.read(machine.written);
       const heard = world.machines.find((one) => (one.kind === "answered" ? one.logins.machine : one.machine) === name) ?? world.machines[0];
       if (this.reading !== name) return;
       if (heard?.kind === "answered") {
@@ -252,8 +260,9 @@ export class AgentsOverview implements Page {
     }
     const record = this.record?.machine === machine.name ? this.record : null;
     if (!record) return `<p class="ao-quiet">${escape(logins.reading)}</p>`;
-    // Never scanned: the agents' marks and the one thing to do.
-    if (!record.scan) {
+    // Never scanned: the agents' marks and the one thing to do. A machine
+    // whose agents assist the user tells no scan, only the logins it may.
+    if (!record.scan && machine.hold !== "assist") {
       return `<div class="ao-first">
         <span class="ao-first-marks" aria-hidden="true">${glyph("claude", 34)}${glyph("codex", 34)}</span>
         ${this.mine(machine) ? `<button class="sheet-go" type="button" data-ao="scan" data-machine="${escape(machine.name)}">${escape(machine.here ? logins.scanHere : logins.scanThere)}</button>` : ""}
@@ -417,7 +426,7 @@ export class AgentsOverview implements Page {
     const dir = button.dataset.dir ?? "";
     switch (button.dataset.ao) {
       case "scan": {
-        const record = await this.options.scan(machine.name, false).catch(() => null);
+        const record = await this.options.scan(machine.written, false).catch(() => null);
         if (record) {
           this.record = record;
           keepRecord(record, readerNow());
@@ -445,12 +454,17 @@ export class AgentsOverview implements Page {
         const record = this.record?.machine === machine.name ? this.record : null;
         const target = record?.by_login ? this.target(machine, agent, dir, true) : null;
         if (target) this.sheet.open({ ...target, workbench: true });
-        else this.options.workbenchOn(machine.name, agent, dir);
+        else this.options.workbenchOn(machine.written, agent, dir);
         return;
       }
-      case "talk":
-        if (agent) this.options.talkOn(machine.name, agent, dir);
+      case "talk": {
+        if (!agent) return;
+        const record = this.record?.machine === machine.name ? this.record : null;
+        const login = record ? sideOf(record, agent)?.listed.find((one) => one.dir === dir) : undefined;
+        // The default login is named by none, as a conversation records it.
+        this.options.talkOn(machine.written, agent, login?.default ? null : dir);
         return;
+      }
     }
   }
 }
