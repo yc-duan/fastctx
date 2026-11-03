@@ -3541,9 +3541,8 @@ if (live) {
   );
   // Where the workbench is open is each login's own, and the machines tell
   // it with the world (`NodesReply.workbench`): the places follow it as it
-  // changes, and the account's layer, which earlier devices read, with
-  // them. Only while some machine does not tell it is the layer read again
-  // on focus, as another device may have changed it.
+  // changes. Only while some machine does not tell it is the account's layer
+  // read, and read again on focus, as another device may have changed it.
   let told: boolean | undefined;
   effect(() => {
     const now = store.world.get()?.nodes.workbench;

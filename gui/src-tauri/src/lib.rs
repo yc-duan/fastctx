@@ -1285,7 +1285,6 @@ pub fn run() {
             history::history_restore,
             history::history_watch,
             layers::layer_read,
-            layers::layer_set,
             layers::bring_in,
             book::book,
             features::features_read,

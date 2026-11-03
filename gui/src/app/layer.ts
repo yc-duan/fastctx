@@ -1,10 +1,11 @@
-// The account's layer (`world-layers.md`): Connect gives the user's own
-// agents `run` and shows what they did; the workbench adds Fastctx's own
-// conversations. It is kept with the account, on its hub, and a computer
-// in no network keeps its own; this window keeps the last value read so its
-// first frame is already right. An account that never chose has Connect
-// (`world-layers.md`, 用户 2026-11-02), unless its device had the workbench
-// on before there were layers.
+// Whether this window shows the workbench's places (`world-layers.md`):
+// Connect gives the user's own agents `run` and shows what they did; the
+// workbench adds Fastctx's own conversations. The workbench opens in each
+// login, and the machines tell where it is open; only where one does not,
+// being from before, is the account's layer read, which such a machine still
+// keeps and gates by. Nothing here writes that layer: a machine of this
+// release refuses it, since it would not follow it. This window keeps the
+// last value so its first frame is already right.
 
 import { invoke } from "@tauri-apps/api/core";
 import { signal, type Signal } from "./signals";
@@ -17,12 +18,11 @@ interface Chosen {
   layer?: LayerName;
 }
 
-/** Where the layer is read and kept: the node, or a device's hub. */
+/** Where the account's layer is read: the node, or a device's hub. */
 export interface LayerSeam {
-  /** Whose layer it reads and keeps now: the account, or none. */
+  /** Whose layer it reads now: the account, or none. */
   scope(): string;
   read(): Promise<LayerName | null>;
-  write(layer: LayerName): Promise<LayerName | null>;
 }
 
 /** The layer as the node keeps it, for the account `scope` names: with
@@ -38,7 +38,6 @@ export function liveLayer(scope: () => { hub: string; account: string } | null):
       return hub && account ? `${hub}/${account}` : "";
     },
     read: () => invoke<Chosen>("layer_read", at()).then((chosen) => chosen.layer ?? null),
-    write: (layer) => invoke<Chosen>("layer_set", { ...at(), layer }).then((chosen) => chosen.layer ?? null),
   };
 }
 
@@ -72,10 +71,11 @@ class AccountLayer {
     }
   }
 
-  async choose(layer: LayerName): Promise<void> {
-    const chosen = this.seam ? await this.seam.write(layer) : layer;
-    this.set(chosen ?? layer);
+  /** Shows the workbench's places or puts them away, in this window. */
+  choose(layer: LayerName): Promise<void> {
+    this.set(layer);
     this.known.set(true);
+    return Promise.resolve();
   }
 
   private set(layer: LayerName | null): void {
