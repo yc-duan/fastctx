@@ -102,12 +102,13 @@ pub(super) fn plan_put(places: &Places, previous: Option<&Receipt>, take_back: b
     Ok(Planned { path, before, after })
 }
 
-/// What taking out the entry `receipt` records would make of its state.
-pub(super) fn plan_take(receipt: &Receipt) -> Result<Planned, Error> {
+/// What taking out the entry `receipt` records would make of its state, and
+/// why it would be left where the user changed it.
+pub(super) fn plan_take(receipt: &Receipt, take_back: bool) -> Result<(Planned, Option<Notice>), Error> {
     let (path, before) = read(receipt.configured())?;
-    let (next, _) = entry::unplace(before.as_deref(), &text(&path), receipt)?;
+    let (next, left) = entry::unplace(before.as_deref(), &text(&path), receipt, take_back)?;
     let after = next.or_else(|| before.clone());
-    Ok(Planned { path, before, after })
+    Ok((Planned { path, before, after }, left))
 }
 
 /// The selected home's entry as its state holds it now, for a fingerprint:
@@ -126,7 +127,7 @@ pub(super) fn put(places: &Places, previous: Option<&Receipt>, take_back: bool) 
     // An entry in the state a home's earlier setting named goes first.
     let previous = match previous {
         Some(receipt) if receipt.configured() != configured.as_deref() => {
-            take(receipt)?;
+            take(receipt, false)?;
             None
         }
         other => other,
@@ -155,23 +156,25 @@ pub(super) fn put(places: &Places, previous: Option<&Receipt>, take_back: bool) 
     Ok((made.expect("the entry was worked out"), changed.is_some()))
 }
 
-/// Takes the entry `receipt` records out of the state it is in; answers why
-/// it was left where the user changed it since.
-pub(super) fn take(receipt: &Receipt) -> Result<Option<Notice>, Error> {
+/// Takes the entry `receipt` records out of the state it is in, however the
+/// user changed it with `take_back`; answers why it was left where the user
+/// changed it since.
+pub(super) fn take(receipt: &Receipt, take_back: bool) -> Result<Option<Notice>, Error> {
     let (path, _) = read(receipt.configured())?;
     let location = text(&path);
     let mut notice = None;
     let mut refused = None;
-    let taken = trust::edit_state(receipt.configured(), |bytes| match entry::unplace(bytes, &location, receipt) {
-        Ok((next, left)) => {
-            notice = left;
-            Ok(next)
-        }
-        Err(error) => {
-            refused = Some(error);
-            Err(std::io::Error::other("refused"))
-        }
-    });
+    let taken =
+        trust::edit_state(receipt.configured(), |bytes| match entry::unplace(bytes, &location, receipt, take_back) {
+            Ok((next, left)) => {
+                notice = left;
+                Ok(next)
+            }
+            Err(error) => {
+                refused = Some(error);
+                Err(std::io::Error::other("refused"))
+            }
+        });
     if let Some(error) = refused {
         return Err(error.into());
     }

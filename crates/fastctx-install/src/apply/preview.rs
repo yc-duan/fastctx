@@ -162,7 +162,7 @@ fn claude(
     let settings_at = settings_file.path();
     let (_, entry_receipt) = state::receipt(places)?;
     if into {
-        let workbench = claude_workbench(places, record);
+        let workbench = claude_workbench(places, previous.as_ref());
         let withdrawal = |claude: PathBuf| -> Result<Vec<String>, Error> {
             Ok(plugins::withdrawal(&plan, &listings(claude)?)
                 .map_err(Error::Claude)?
@@ -239,7 +239,14 @@ fn claude(
         // The World's server: from the plugin with the workbench, and
         // otherwise entered in Claude Code's global state.
         let planned = if workbench {
-            entry_receipt.as_ref().map(state::plan_take).transpose()?
+            match &entry_receipt {
+                Some(receipt) => {
+                    let (planned, left) = state::plan_take(receipt, take_back)?;
+                    preview.kept.extend(left.map(kept));
+                    Some(planned)
+                }
+                None => None,
+            }
         } else {
             Some(state::plan_put(places, entry_receipt.as_ref(), take_back)?)
         };
@@ -309,7 +316,9 @@ fn claude(
         file(preview, claude_md.path(), claude_md.bytes(), taken.bytes.as_deref(), Kind::Guidance)?;
     }
     if let Some(receipt) = &entry_receipt {
-        entry_file(preview, steps, &state::plan_take(receipt)?)?;
+        let (planned, left) = state::plan_take(receipt, false)?;
+        preview.kept.extend(left.map(kept));
+        entry_file(preview, steps, &planned)?;
     }
     Ok(())
 }

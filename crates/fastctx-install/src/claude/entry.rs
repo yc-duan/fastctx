@@ -75,16 +75,22 @@ pub fn place(
 }
 
 /// The state's bytes with the entry taken out while it is still as written,
-/// `None` where there is nothing to change, and why it was left where the
-/// user changed it since. The objects Fastctx made on the way go with it; a
-/// state file is never removed, since Claude Code keeps its own in it.
+/// or however the user changed it with `take_back`; `None` where there is
+/// nothing to change, and why it was left where the user changed it. The
+/// objects Fastctx made on the way go with it; a state file is never
+/// removed, since Claude Code keeps its own in it.
 pub fn unplace(
     bytes: Option<&[u8]>,
     location: &str,
     receipt: &Receipt,
+    take_back: bool,
 ) -> Result<(Option<Vec<u8>>, Option<Notice>), Error> {
     let Some(bytes) = bytes else { return Ok((None, None)) };
-    let (next, notice) = json::unplace(Some(bytes), location, &receipt.placed)?;
+    let placed = match current(Some(bytes), location)? {
+        Some(now) if take_back => receipt.placed.clone().taken_as(now),
+        _ => receipt.placed.clone(),
+    };
+    let (next, notice) = json::unplace(Some(bytes), location, &placed)?;
     let next = next.unwrap_or_else(|| b"{}\n".to_vec());
     Ok(((next != bytes).then_some(next), notice))
 }

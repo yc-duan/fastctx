@@ -49,6 +49,13 @@ impl Placed {
     pub fn written(&self) -> &Json {
         &self.written
     }
+
+    /// This placing with `now`, what the user changed Fastctx's value to,
+    /// taken as written: taking it out then takes it whole, as taking back
+    /// what the user changed does.
+    pub fn taken_as(self, now: Json) -> Self {
+        Self { written: now, ..self }
+    }
 }
 
 /// An item Fastctx added to an array.

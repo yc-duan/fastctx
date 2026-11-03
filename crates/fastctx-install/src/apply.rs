@@ -593,7 +593,7 @@ fn apply_made(
         let settings_created = record.settings_created
             || previous.as_ref().is_some_and(|r| r.settings_created)
             || !initial_settings.exists();
-        if !claude_workbench(places, &record) {
+        if !claude_workbench(places, previous.as_ref()) {
             withdrawn = connect_claude(
                 places,
                 &mut record,
@@ -667,10 +667,19 @@ fn apply_made(
             record.consent = edit.2;
             record.description = edit.3;
             // The plugin brings the server now: Fastctx's entry in Claude Code's
-            // state goes, or the login's sessions would see `run` twice.
+            // state goes, or the login's sessions would see `run` twice. One
+            // the user changed goes only when that is taken back; otherwise
+            // the workbench is not opened beside it.
             if let Some(receipt) = entry_receipt {
-                match state::take(&receipt) {
-                    Ok(notice) => report.notices.extend(notice),
+                match state::take(&receipt, edits == Edits::TakeBack) {
+                    Ok(None) => {}
+                    Ok(Some(left)) => {
+                        let error = Error::Claude(format!(
+                            "{} was changed since Fastctx wrote it, and the World's plugin would serve run beside it; the workbench opens once that change is taken back",
+                            left.location
+                        ));
+                        return Err(rollback_plugin(places, error, &planned, &added, &mut host));
+                    }
                     Err(error) => return Err(rollback_plugin(places, error, &planned, &added, &mut host)),
                 }
                 entry_undo = EntryUndo::PutBack(receipt);
@@ -894,7 +903,7 @@ fn unapply_made(
         record.settings_created = false;
         let (entry_file, entry_receipt) = state::receipt(places)?;
         if let Some(receipt) = &entry_receipt {
-            report.notices.extend(state::take(receipt)?);
+            report.notices.extend(state::take(receipt, false)?);
             changes.extend(state::keep(entry_file, None)?);
         }
         if let Some((claude_md, taken)) = guidance {
@@ -1046,7 +1055,7 @@ impl EntryUndo {
     fn undo(self, error: Error) -> Error {
         let undone = match &self {
             Self::Nothing => Ok(()),
-            Self::TakeOut(receipt) => state::take(receipt).map(|_| ()),
+            Self::TakeOut(receipt) => state::take(receipt, false).map(|_| ()),
             Self::PutBack(receipt) => state::restore(receipt),
         };
         match undone {
@@ -1264,9 +1273,11 @@ fn codex_plan(places: &Places, installed: &Path, receipt: Option<&codex::Receipt
 
 /// Whether the selected Claude Code login is to hold what the workbench
 /// needs: as said, and where that is not said, as an earlier change left it,
-/// the permission for the World's conversations granted.
-fn claude_workbench(places: &Places, record: &Record) -> bool {
-    places.workbench.unwrap_or(record.consent.is_some())
+/// the World's plugin put in. Not by the permission for the World's
+/// conversations: a login whose user had given it before holds no grant of
+/// the World's.
+fn claude_workbench(places: &Places, plugin: Option<&PluginRecord>) -> bool {
+    places.workbench.unwrap_or_else(|| plugin.is_some_and(|plugin| plugin.receipt.has_work()))
 }
 
 /// Whether two paths name the same place, however each is spelled.
