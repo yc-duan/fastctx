@@ -164,6 +164,27 @@ impl Hub {
         self.start()
     }
 
+    /// Stops it and serves its directory with the earlier release `program`
+    /// again, as installing that release back over this one does.
+    pub fn back_to(&self, program: &Path) -> anyhow::Result<()> {
+        self.kill()?;
+        *self.program.lock().expect("never poisoned") = Program::Earlier(program.to_path_buf());
+        self.restarts.fetch_add(1, Ordering::SeqCst);
+        self.start()
+    }
+
+    /// The format its database says it is in; none before it has one.
+    pub fn format(&self) -> Option<u64> {
+        let c = fastctx_storage::rusqlite::Connection::open_with_flags(
+            self.dir.join("hub.sqlite3"),
+            fastctx_storage::rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )
+        .ok()?;
+        let value: Vec<u8> =
+            c.query_row("SELECT value FROM hub_meta WHERE name = 'format'", [], |row| row.get(0)).ok()?;
+        std::str::from_utf8(&value).ok()?.trim().parse().ok()
+    }
+
     /// The earlier release serving it, while one does.
     pub fn earlier_program(&self) -> Option<PathBuf> {
         match &*self.program.lock().expect("never poisoned") {
