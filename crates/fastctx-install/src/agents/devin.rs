@@ -4,7 +4,7 @@
 
 use serde_json::{Value, json};
 
-use super::spec::{Agent, Edit, Format, Home, Mcp, Program, Server};
+use super::spec::{Agent, Edit, Format, Guidance, Home, Mcp, Place, Program, Server, Slot, To};
 
 pub(super) const AGENT: Agent = Agent {
     name: "devin",
@@ -14,16 +14,20 @@ pub(super) const AGENT: Agent = Agent {
     } else {
         Home { env: &[("XDG_CONFIG_HOME", "devin")], default: ".config/devin" }
     },
+    marks: &[],
     programs: &[Program::Command("devin"), Program::Command("devin-desktop")],
-    mcp: Mcp { file: "mcp_config.json", format: Format::Jsonc, at: &["mcpServers"], entry },
-    guidance: Some("AGENTS.md"),
-    shell: Some(Edit::Add {
-        file: "config.json",
-        format: Format::Jsonc,
-        at: &["permissions", "deny"],
+    mcp: Mcp {
+        to: To::One(Place { file: "mcp_config.json", format: Format::Jsonc, at: &["mcpServers"] }),
+        slot: Slot::Named,
+        entry,
+    },
+    guidance: Some(Guidance { file: "AGENTS.md", head: None, most: None }),
+    shell: &[Edit::Add {
+        to: To::One(Place { file: "config.json", format: Format::Jsonc, at: &["permissions", "deny"] }),
         item: || json!("exec"),
-    }),
+    }],
     limits: &[],
+    data: None,
     identity: |_| None,
 };
 

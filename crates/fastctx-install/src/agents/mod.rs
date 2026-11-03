@@ -26,10 +26,11 @@ mod roo;
 mod spec;
 mod trae;
 mod vscode_copilot;
+mod yaml;
 mod zed;
 
 pub use plan::{Files, Planned, Receipt, connect, disconnect, taken_out};
-pub use spec::{Agent, Edit, Format, Home, Mcp, Program, Server};
+pub use spec::{Agent, Edit, Format, Guidance, Home, Mcp, Pick, Place, Program, Server, Slot, To, located};
 
 /// Every agent connected this way, in the order the interface lists them.
 static AGENTS: &[&Agent] = &[

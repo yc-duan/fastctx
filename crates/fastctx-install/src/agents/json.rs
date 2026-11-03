@@ -38,6 +38,12 @@ pub struct Placed {
 }
 
 impl Placed {
+    /// This placing in a file that was not there before the change it came
+    /// with, which another of its places may have made first.
+    pub fn in_made_file(self) -> Self {
+        Self { file_made: true, ..self }
+    }
+
     /// This placing with what was there before taken as Fastctx's own, as
     /// an earlier change that stopped before its receipt was kept left it:
     /// taking it out removes it.
@@ -76,6 +82,14 @@ pub struct Added {
     /// What Fastctx wrote before the item to set it after the last one, so
     /// that taking it out takes that too.
     gap: String,
+}
+
+impl Added {
+    /// This item in a file that was not there before the change it came
+    /// with, which another of its places may have made first.
+    pub fn in_made_file(self) -> Self {
+        Self { file_made: true, ..self }
+    }
 }
 
 /// A whole file of Fastctx's own, by the digest of what was written.
@@ -213,6 +227,33 @@ pub fn unplace(
     }
     .map_err(|error| Error::at(location, error))?;
     tidy(next, location, &at, placed.made, placed.file_made).map(|bytes| (bytes, None))
+}
+
+/// The settings `bytes` hold, as JSON; none where there is no file, and
+/// null where it holds nothing.
+pub fn settings(bytes: Option<&[u8]>, location: &str) -> Result<Option<Json>, Error> {
+    let Some(bytes) = bytes else { return Ok(None) };
+    let text = String::from_utf8_lossy(bytes);
+    if text.trim().is_empty() {
+        return Ok(Some(Json::Null));
+    }
+    jsonc_parser::parse_to_serde_value::<Json>(&text, &Default::default())
+        .map(Some)
+        .map_err(|error| Error::at(location, error.to_string()))
+}
+
+/// The value at `at` in the settings `bytes` hold, where it is plain JSON.
+pub fn value_at(bytes: Option<&[u8]>, location: &str, at: &[&str]) -> Result<Option<Json>, Error> {
+    let Some(bytes) = bytes else { return Ok(None) };
+    let text = String::from_utf8_lossy(bytes).into_owned();
+    let document = parse(&text, location)?;
+    let Some(root) = document.root.as_ref() else { return Ok(None) };
+    let Some((name, parent)) = at.split_last() else { return Ok(None) };
+    let (object, depth) = walk(root, parent, location)?;
+    if depth < parent.len() {
+        return Ok(None);
+    }
+    Ok(find(object, name).and_then(|property| read(&document, &property.value)))
 }
 
 /// Whether the property `placed` names is still there, whatever it holds.

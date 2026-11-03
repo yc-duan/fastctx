@@ -30,6 +30,7 @@ roxmltree = "0.21"
 ryu-js = "1"
 serde.workspace = true
 serde_json.workspace = true
+serde_yaml_ng = "0.10"
 semver = "1"
 sha2 = "0.10"
 thiserror.workspace = true

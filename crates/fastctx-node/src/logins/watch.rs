@@ -69,7 +69,7 @@ fn watch(node: &Node, changed: mpsc::Sender<()>) -> Option<fastctx_watch::Watche
     for (name, home) in others {
         let Some(agent) = fastctx_install::agents::find(&name) else { continue };
         for file in agent.files() {
-            let path = home.join(file);
+            let path = fastctx_install::agents::located(&home, file);
             let (Some(folder), Some(name)) = (path.parent(), path.file_name()) else { continue };
             let Ok(named) = crate::file_events::named(folder) else { continue };
             watched.insert(named.join(name));

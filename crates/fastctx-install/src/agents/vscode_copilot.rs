@@ -4,7 +4,7 @@
 
 use serde_json::{Value, json};
 
-use super::spec::{Agent, Format, Home, Mcp, Program, Server};
+use super::spec::{Agent, Format, Home, Mcp, Place, Program, Server, Slot, To};
 
 pub(super) const AGENT: Agent = Agent {
     name: "vscode-copilot",
@@ -29,11 +29,17 @@ pub(super) const AGENT: Agent = Agent {
             default: ".config/Code/User",
         }
     },
+    marks: &[],
     programs: &[Program::Command("code")],
-    mcp: Mcp { file: "mcp.json", format: Format::Jsonc, at: &["servers"], entry },
+    mcp: Mcp {
+        to: To::One(Place { file: "mcp.json", format: Format::Jsonc, at: &["servers"] }),
+        slot: Slot::Named,
+        entry,
+    },
     guidance: None,
-    shell: None,
+    shell: &[],
     limits: &[],
+    data: None,
     identity: |_| None,
 };
 

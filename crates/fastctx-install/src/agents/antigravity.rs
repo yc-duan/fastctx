@@ -4,22 +4,31 @@
 
 use serde_json::{Value, json};
 
-use super::spec::{Agent, Edit, Format, Home, Mcp, Program, Server};
+use super::spec::{Agent, Edit, Format, Guidance, Home, Mcp, Place, Program, Server, Slot, To};
 
 pub(super) const AGENT: Agent = Agent {
     name: "antigravity",
     title: "Antigravity App / CLI",
     home: Home { env: &[], default: ".gemini" },
+    marks: &[],
     programs: &[Program::Command("agy"), Program::Command("antigravity")],
-    mcp: Mcp { file: "config/mcp_config.json", format: Format::Json, at: &["mcpServers"], entry },
-    guidance: Some("AGENTS.md"),
-    shell: Some(Edit::Add {
-        file: "config/config.json",
-        format: Format::Json,
-        at: &["userSettings", "globalPermissionGrants", "deny"],
+    mcp: Mcp {
+        to: To::One(Place { file: "config/mcp_config.json", format: Format::Json, at: &["mcpServers"] }),
+        slot: Slot::Named,
+        entry,
+    },
+    // One instructions file is read up to 24,000 bytes.
+    guidance: Some(Guidance { file: "AGENTS.md", head: None, most: Some(24_000) }),
+    shell: &[Edit::Add {
+        to: To::One(Place {
+            file: "config/config.json",
+            format: Format::Json,
+            at: &["userSettings", "globalPermissionGrants", "deny"],
+        }),
         item: || json!("command(*)"),
-    }),
+    }],
     limits: &[],
+    data: None,
     identity: |_| None,
 };
 

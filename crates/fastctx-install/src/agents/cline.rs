@@ -4,22 +4,26 @@
 
 use serde_json::{Value, json};
 
-use super::spec::{Agent, Edit, Format, Home, Mcp, Program, Server};
+use super::spec::{Agent, Edit, Format, Guidance, Home, Mcp, Place, Program, Server, Slot, To};
 
 pub(super) const AGENT: Agent = Agent {
     name: "cline",
     title: "Cline",
     home: Home { env: &[("CLINE_DIR", "")], default: ".cline" },
+    marks: &[],
     programs: &[Program::Command("cline"), Program::Npm("cline")],
-    mcp: Mcp { file: "data/settings/cline_mcp_settings.json", format: Format::Json, at: &["mcpServers"], entry },
-    guidance: Some("rules/fastctx.md"),
-    shell: Some(Edit::Add {
-        file: "data/settings/global-settings.json",
-        format: Format::Json,
-        at: &["disabledTools"],
+    mcp: Mcp {
+        to: To::One(Place { file: "data/settings/cline_mcp_settings.json", format: Format::Json, at: &["mcpServers"] }),
+        slot: Slot::Named,
+        entry,
+    },
+    guidance: Some(Guidance { file: "rules/fastctx.md", head: None, most: None }),
+    shell: &[Edit::Add {
+        to: To::One(Place { file: "data/settings/global-settings.json", format: Format::Json, at: &["disabledTools"] }),
         item: || json!("run_commands"),
-    }),
+    }],
     limits: &[],
+    data: None,
     identity: |_| None,
 };
 

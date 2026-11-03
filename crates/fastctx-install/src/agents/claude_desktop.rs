@@ -4,7 +4,7 @@
 
 use serde_json::{Value, json};
 
-use super::spec::{Agent, Format, Home, Mcp, Server};
+use super::spec::{Agent, Format, Home, Mcp, Place, Server, Slot, To};
 
 pub(super) const AGENT: Agent = Agent {
     name: "claude-desktop",
@@ -16,11 +16,17 @@ pub(super) const AGENT: Agent = Agent {
     } else {
         Home { env: &[("XDG_CONFIG_HOME", "Claude")], default: ".config/Claude" }
     },
+    marks: &[],
     programs: &[],
-    mcp: Mcp { file: "claude_desktop_config.json", format: Format::Json, at: &["mcpServers"], entry },
+    mcp: Mcp {
+        to: To::One(Place { file: "claude_desktop_config.json", format: Format::Json, at: &["mcpServers"] }),
+        slot: Slot::Named,
+        entry,
+    },
     guidance: None,
-    shell: None,
+    shell: &[],
     limits: &[],
+    data: None,
     identity: |_| None,
 };
 

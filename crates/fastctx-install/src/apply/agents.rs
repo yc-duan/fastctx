@@ -69,7 +69,7 @@ fn read(places: &Places, agent: &Agent, home: &Path) -> Result<Read, Error> {
     let mut files = Files::new();
     let mut snapshots = Vec::new();
     for name in agent.files() {
-        let snapshot = Snapshot::read(home.join(name))?;
+        let snapshot = Snapshot::read(crate::agents::located(&home, name))?;
         files.insert(name, (text(snapshot.path()), snapshot.bytes().map(<[u8]>::to_vec)));
         snapshots.push((name, snapshot));
     }
@@ -137,7 +137,7 @@ pub fn agent_preview(
             .unwrap_or_default(),
         cards: planned.as_ref().map(|planned| planned.steps.cards()).unwrap_or_default(),
         fingerprint: Some(fingerprint_of(&read)),
-        keeps_shell: into && agent.shell.is_none(),
+        keeps_shell: into && agent.shell.is_empty(),
     })
 }
 

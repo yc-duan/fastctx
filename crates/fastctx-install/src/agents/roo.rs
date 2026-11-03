@@ -5,7 +5,7 @@
 
 use serde_json::{Value, json};
 
-use super::spec::{Agent, Format, Home, Mcp, Server};
+use super::spec::{Agent, Format, Home, Mcp, Place, Server, Slot, To};
 
 pub(super) const AGENT: Agent = Agent {
     name: "roo",
@@ -23,11 +23,17 @@ pub(super) const AGENT: Agent = Agent {
             default: ".config/Code/User/globalStorage/rooveterinaryinc.roo-cline",
         }
     },
+    marks: &[],
     programs: &[],
-    mcp: Mcp { file: "settings/mcp_settings.json", format: Format::Json, at: &["mcpServers"], entry },
+    mcp: Mcp {
+        to: To::One(Place { file: "settings/mcp_settings.json", format: Format::Json, at: &["mcpServers"] }),
+        slot: Slot::Named,
+        entry,
+    },
     guidance: None,
-    shell: None,
+    shell: &[],
     limits: &[],
+    data: None,
     identity: |_| None,
 };
 

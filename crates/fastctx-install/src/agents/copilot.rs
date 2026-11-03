@@ -4,17 +4,23 @@
 
 use serde_json::{Value, json};
 
-use super::spec::{Agent, Format, Home, Mcp, Program, Server};
+use super::spec::{Agent, Format, Guidance, Home, Mcp, Place, Program, Server, Slot, To};
 
 pub(super) const AGENT: Agent = Agent {
     name: "copilot",
     title: "GitHub Copilot CLI",
     home: Home { env: &[("COPILOT_HOME", "")], default: ".copilot" },
+    marks: &[],
     programs: &[Program::Command("copilot"), Program::Npm("@github/copilot")],
-    mcp: Mcp { file: "mcp-config.json", format: Format::Json, at: &["mcpServers"], entry },
-    guidance: Some("copilot-instructions.md"),
-    shell: None,
+    mcp: Mcp {
+        to: To::One(Place { file: "mcp-config.json", format: Format::Json, at: &["mcpServers"] }),
+        slot: Slot::Named,
+        entry,
+    },
+    guidance: Some(Guidance { file: "copilot-instructions.md", head: None, most: None }),
+    shell: &[],
     limits: &[],
+    data: None,
     identity: |_| None,
 };
 

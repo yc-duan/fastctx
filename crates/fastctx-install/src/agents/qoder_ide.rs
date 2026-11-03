@@ -4,18 +4,25 @@
 
 use serde_json::{Value, json};
 
-use super::spec::{Agent, Format, Home, Mcp, Server};
+use super::spec::{Agent, Format, Home, Mcp, Place, Server, Slot, To};
 
 pub(super) const AGENT: Agent = Agent {
     name: "qoder-ide",
     title: "Qoder IDE",
     home: Home { env: &[], default: ".qoder" },
     // The CLI also installs a command named qoder, so it cannot identify the IDE.
+    // What the editor makes at its first start, beside the CLI's files.
+    marks: &["argv.json", "extensions", "mcp.json"],
     programs: &[],
-    mcp: Mcp { file: "mcp.json", format: Format::Json, at: &["mcpServers"], entry },
+    mcp: Mcp {
+        to: To::One(Place { file: "mcp.json", format: Format::Json, at: &["mcpServers"] }),
+        slot: Slot::Named,
+        entry,
+    },
     guidance: None,
-    shell: None,
+    shell: &[],
     limits: &[],
+    data: None,
     identity: |_| None,
 };
 

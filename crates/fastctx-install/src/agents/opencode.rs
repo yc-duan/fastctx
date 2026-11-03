@@ -4,35 +4,35 @@
 
 use serde_json::{Value, json};
 
-use super::spec::{Agent, Edit, Format, Home, Mcp, Program, Server};
+use super::spec::{Agent, Edit, Format, Guidance, Home, Mcp, Place, Program, Server, Slot, To};
 
 pub(super) const AGENT: Agent = Agent {
     name: "opencode",
     title: "OpenCode",
     home: Home { env: &[("OPENCODE_CONFIG_DIR", ""), ("XDG_CONFIG_HOME", "opencode")], default: ".config/opencode" },
+    marks: &[],
     programs: &[Program::Command("opencode"), Program::Npm("opencode-ai")],
-    mcp: Mcp { file: "opencode.jsonc", format: Format::Jsonc, at: &["mcp"], entry },
-    guidance: Some("AGENTS.md"),
-    shell: Some(Edit::Set {
-        file: "opencode.jsonc",
-        format: Format::Jsonc,
-        at: &["permission", "bash"],
+    mcp: Mcp {
+        to: To::One(Place { file: "opencode.jsonc", format: Format::Jsonc, at: &["mcp"] }),
+        slot: Slot::Named,
+        entry,
+    },
+    guidance: Some(Guidance { file: "AGENTS.md", head: None, most: None }),
+    shell: &[Edit::Set {
+        to: To::One(Place { file: "opencode.jsonc", format: Format::Jsonc, at: &["permission", "bash"] }),
         value: || json!("deny"),
-    }),
+    }],
     limits: &[
-        Edit::Set {
-            file: "opencode.jsonc",
-            format: Format::Jsonc,
-            at: &["tool_output", "max_bytes"],
+        Edit::Raise {
+            to: To::One(Place { file: "opencode.jsonc", format: Format::Jsonc, at: &["tool_output", "max_bytes"] }),
             value: || json!(1_048_576),
         },
-        Edit::Set {
-            file: "opencode.jsonc",
-            format: Format::Jsonc,
-            at: &["tool_output", "max_lines"],
+        Edit::Raise {
+            to: To::One(Place { file: "opencode.jsonc", format: Format::Jsonc, at: &["tool_output", "max_lines"] }),
             value: || json!(100_000),
         },
     ],
+    data: None,
     identity: |_| None,
 };
 

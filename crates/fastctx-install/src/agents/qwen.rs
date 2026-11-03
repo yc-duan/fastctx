@@ -5,41 +5,51 @@
 
 use serde_json::{Value, json};
 
-use super::spec::{Agent, Edit, Format, Home, Mcp, Program, Server};
+use super::spec::{Agent, Edit, Format, Guidance, Home, Mcp, Place, Program, Server, Slot, To};
 
 pub(super) const AGENT: Agent = Agent {
     name: "qwen",
     title: "Qwen Code",
     home: Home { env: &[("QWEN_HOME", "")], default: ".qwen" },
+    marks: &[],
     programs: &[Program::Command("qwen"), Program::Npm("@qwen-code/qwen-code")],
-    mcp: Mcp { file: "settings.json", format: Format::Jsonc, at: &["mcpServers"], entry },
-    guidance: Some("QWEN.md"),
-    shell: Some(Edit::Add {
-        file: "settings.json",
-        format: Format::Jsonc,
-        at: &["permissions", "deny"],
+    mcp: Mcp {
+        to: To::One(Place { file: "settings.json", format: Format::Jsonc, at: &["mcpServers"] }),
+        slot: Slot::Named,
+        entry,
+    },
+    guidance: Some(Guidance { file: "QWEN.md", head: None, most: None }),
+    shell: &[Edit::Add {
+        to: To::One(Place { file: "settings.json", format: Format::Jsonc, at: &["permissions", "deny"] }),
         item: || json!("Bash"),
-    }),
+    }],
     limits: &[
-        Edit::Set {
-            file: "settings.json",
-            format: Format::Jsonc,
-            at: &["tools", "truncateToolOutputThreshold"],
+        Edit::Raise {
+            to: To::One(Place {
+                file: "settings.json",
+                format: Format::Jsonc,
+                at: &["tools", "truncateToolOutputThreshold"],
+            }),
             value: || json!(-1),
         },
-        Edit::Set {
-            file: "settings.json",
-            format: Format::Jsonc,
-            at: &["tools", "truncateToolOutputLines"],
+        Edit::Raise {
+            to: To::One(Place {
+                file: "settings.json",
+                format: Format::Jsonc,
+                at: &["tools", "truncateToolOutputLines"],
+            }),
             value: || json!(-1),
         },
-        Edit::Set {
-            file: "settings.json",
-            format: Format::Jsonc,
-            at: &["tools", "toolOutputBatchBudget"],
+        Edit::Raise {
+            to: To::One(Place {
+                file: "settings.json",
+                format: Format::Jsonc,
+                at: &["tools", "toolOutputBatchBudget"],
+            }),
             value: || json!(-1),
         },
     ],
+    data: None,
     identity,
 };
 

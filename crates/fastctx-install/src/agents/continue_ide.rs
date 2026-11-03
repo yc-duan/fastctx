@@ -5,17 +5,23 @@
 
 use serde_json::{Value, json};
 
-use super::spec::{Agent, Format, Home, Mcp, Server};
+use super::spec::{Agent, Format, Home, Mcp, Place, Server, Slot, To};
 
 pub(super) const AGENT: Agent = Agent {
     name: "continue-ide",
     title: "Continue (IDE)",
     home: Home { env: &[("CONTINUE_GLOBAL_DIR", "")], default: ".continue" },
+    marks: &[],
     programs: &[],
-    mcp: Mcp { file: "mcpServers/fastctx.json", format: Format::Jsonc, at: &["mcpServers"], entry },
+    mcp: Mcp {
+        to: To::One(Place { file: "mcpServers/fastctx.json", format: Format::Jsonc, at: &["mcpServers"] }),
+        slot: Slot::Named,
+        entry,
+    },
     guidance: None,
-    shell: None,
+    shell: &[],
     limits: &[],
+    data: None,
     identity: |_| None,
 };
 

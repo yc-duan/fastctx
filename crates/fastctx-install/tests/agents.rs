@@ -7,7 +7,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use fastctx_install::agents::{self, Agent, Files, Format, Server};
+use fastctx_install::agents::{self, Agent, Files, Format, Server, Slot};
 use fastctx_types::logins::Identity;
 
 fn fixture(agent: &Agent) -> PathBuf {
@@ -19,7 +19,7 @@ fn files_of(agent: &Agent, home: &Path) -> Files {
         .files()
         .into_iter()
         .map(|name| {
-            let path = home.join(name);
+            let path = agents::located(home, name);
             (name, (path.display().to_string(), std::fs::read(&path).ok()))
         })
         .collect()
@@ -27,6 +27,19 @@ fn files_of(agent: &Agent, home: &Path) -> Files {
 
 fn with(files: &Files, after: &BTreeMap<&'static str, Option<Vec<u8>>>) -> Files {
     files.iter().map(|(name, (path, _))| (*name, (path.clone(), after[name].clone()))).collect()
+}
+
+/// The settings in `bytes`, read as the agent's format reads them.
+fn settings(format: Format, bytes: &[u8], agent: &Agent) -> serde_json::Value {
+    let text = std::str::from_utf8(bytes).unwrap_or_else(|_| panic!("{}: not text after connecting", agent.name));
+    match format {
+        Format::Json => serde_json::from_str(text).unwrap_or_else(|error| panic!("{}: not JSON: {error}", agent.name)),
+        Format::Jsonc => jsonc_parser::parse_to_serde_value(text, &Default::default())
+            .unwrap_or_else(|error| panic!("{}: not JSONC: {error}", agent.name)),
+        Format::Yaml => {
+            serde_yaml_ng::from_str(text).unwrap_or_else(|error| panic!("{}: not YAML: {error}", agent.name))
+        }
+    }
 }
 
 #[test]
@@ -43,15 +56,18 @@ fn every_agent_connects_and_is_taken_out_whole() {
 
         let connected = agents::connect(agent, &before, None, &server, &body, false)
             .unwrap_or_else(|error| panic!("{}: {error}", agent.name));
-        let mcp = connected.files[agent.mcp.file].as_ref().expect("the server's file is written");
-        if agent.mcp.format == Format::Json {
-            let settings: serde_json::Value = serde_json::from_slice(mcp)
-                .unwrap_or_else(|error| panic!("{}: not JSON after connecting: {error}", agent.name));
-            let mut place = &settings;
-            for key in agent.mcp.at {
-                place = &place[*key];
-            }
-            assert_eq!(place["fastctx"], (agent.mcp.entry)(&server), "{}: the server's entry", agent.name);
+        let file = connected.receipt.server_file().expect("the server is placed");
+        let place = agent.mcp.to.places().iter().find(|place| place.file == file).expect("a place of the agent's");
+        let written = connected.files[file].as_ref().expect("the server's file is written");
+        let held = place.at.iter().fold(settings(place.format, written, agent), |value, key| value[*key].clone());
+        let entry = (agent.mcp.entry)(&server);
+        match agent.mcp.slot {
+            Slot::Named => assert_eq!(held["fastctx"], entry, "{}: the server's entry", agent.name),
+            Slot::Listed { .. } => assert!(
+                held.as_array().is_some_and(|servers| servers.contains(&entry)),
+                "{}: the server's entry",
+                agent.name
+            ),
         }
         assert!(!connected.steps.cards().is_empty(), "{}: connecting tells no change", agent.name);
 
@@ -59,6 +75,11 @@ fn every_agent_connects_and_is_taken_out_whole() {
         let again = agents::connect(agent, &after, Some(&connected.receipt), &server, &body, false)
             .unwrap_or_else(|error| panic!("{}: connecting again: {error}", agent.name));
         assert_eq!(again.files, connected.files, "{}: connecting again changes files", agent.name);
+        assert!(
+            !agents::taken_out(agent, &after, &connected.receipt).expect("read"),
+            "{}: what was just written is missed",
+            agent.name
+        );
 
         let taken = agents::disconnect(agent, &after, &connected.receipt)
             .unwrap_or_else(|error| panic!("{}: taking out: {error}", agent.name));
@@ -86,7 +107,7 @@ fn a_user_change_to_fastctx_s_entry_is_kept() {
         let before = files_of(agent, &home);
         let connected = agents::connect(agent, &before, None, &server, &body, false).expect("connects");
         // The user points Fastctx's entry somewhere else.
-        let file = agent.mcp.file;
+        let file = connected.receipt.server_file().expect("the server is placed");
         let text = String::from_utf8(connected.files[file].clone().expect("written")).expect("text");
         let changed = text.replacen("/fastctx", "/elsewhere/fastctx", 1);
         let mut after = with(&before, &connected.files);

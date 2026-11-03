@@ -25,6 +25,25 @@ pub(super) fn default_home(context: &Context, agent: &Agent) -> PathBuf {
     })
 }
 
+/// Whether `agent` is in `home`: the home is there, and where another
+/// agent keeps the same home, what only it keeps there too.
+fn present(agent: &Agent, home: &Path) -> bool {
+    fastctx_platform::disk::is_dir(home)
+        && (agent.marks.is_empty()
+            || agent.marks.iter().any(|mark| fastctx_platform::disk::exists(home.join(mark)).unwrap_or(false)))
+}
+
+/// Where `agent` keeps who is logged in: its data directory where it keeps
+/// one apart, else `home`.
+fn data_dir(context: &Context, agent: &Agent, home: &Path) -> PathBuf {
+    match &agent.data {
+        Some(data) => data.resolve(&context.user_home, |name| {
+            context.env.iter().find(|(key, _)| key.eq_ignore_ascii_case(name)).map(|(_, value)| value.clone())
+        }),
+        None => home.to_path_buf(),
+    }
+}
+
 /// Each home of `agent` the World knows here: its default one where it is
 /// there, those the last scan found, and those Fastctx is connected to.
 pub(super) fn dirs(context: &Context, kept: &Kept, agent: &Agent) -> Result<Vec<(PathBuf, Found)>, Failure> {
@@ -35,7 +54,7 @@ pub(super) fn dirs(context: &Context, kept: &Kept, agent: &Agent) -> Result<Vec<
         }
     };
     let home = default_home(context, agent);
-    if fastctx_platform::disk::is_dir(&home) {
+    if present(agent, &home) {
         add(home, Found::Default);
     }
     for login in &kept.of(agent.name).logins {
@@ -53,14 +72,14 @@ pub(super) fn dirs(context: &Context, kept: &Kept, agent: &Agent) -> Result<Vec<
 /// who its files say is logged in.
 pub(super) fn scanned(context: &Context, agent: &Agent) -> Vec<KeptLogin> {
     let home = default_home(context, agent);
-    if !fastctx_platform::disk::is_dir(&home) {
+    if !present(agent, &home) {
         return Vec::new();
     }
-    vec![asked(home, Found::Default, agent)]
+    vec![asked(context, home, Found::Default, agent)]
 }
 
-fn asked(dir: PathBuf, found: Found, agent: &Agent) -> KeptLogin {
-    let who = match (agent.identity)(&dir) {
+fn asked(context: &Context, dir: PathBuf, found: Found, agent: &Agent) -> KeptLogin {
+    let who = match (agent.identity)(&data_dir(context, agent, &dir)) {
         Some(identity) => Fact::known(identity),
         None => Fact::unavailable("its files name no account"),
     };
@@ -96,7 +115,7 @@ pub(super) fn side(
             identity: Some(
                 known
                     .map(|login| login.identified.clone())
-                    .unwrap_or_else(|| asked(dir.clone(), found, agent).identified),
+                    .unwrap_or_else(|| asked(context, dir.clone(), found, agent).identified),
             ),
             limits: Fact::unavailable("only the workbench reads limits"),
             programs: Vec::new(),
