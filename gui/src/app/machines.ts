@@ -56,7 +56,7 @@ import { deviceKey, type MapNode } from "./map-nodes";
 import { link } from "./places";
 import { runsHub, holds, assistantsOf, isComputer, isSuper, isVisitor, machinesOf, owns, type Machine } from "./reach";
 import type { Page } from "./shell";
-import { effect } from "./signals";
+import { effect, type Signal } from "./signals";
 import type { BatchWords } from "./machine-batch-words";
 import { ChosenBar } from "./machine-framed";
 import { removerLoginOf } from "./machine-logins";
@@ -90,6 +90,9 @@ export interface MachinesOptions {
   invite(login: Login): Promise<boolean> | void;
   /** Opens a new conversation with an agent on `machine`, as written. */
   talk(machine: string): void;
+  /** Whether the workbench's places are shown: a new conversation is one
+   *  of them (`world-layers.md`). */
+  workbench: Signal<boolean>;
   confirm: Confirm;
   /** Reads the hub's record of changes, a page at a time. */
   log: ReadLog;
@@ -586,9 +589,14 @@ export class MachinesPage implements Page {
           this.redraw();
         })
       : () => {};
+    const stopWorkbench = effect(() => {
+      options.workbench.get();
+      this.redraw();
+    });
     this.stop = () => {
       stopWorld();
       stopUpdates();
+      stopWorkbench();
       this.updateView?.stop();
     };
     this.updateView?.watch();
@@ -1527,7 +1535,9 @@ export class MachinesPage implements Page {
         ...(top && spot.hub.dissolves ? [{ act: "dissolve", label: words.dissolve, icon: "close" as const, danger: true }] : []),
       ];
     }
-    if (spot.kind === "assist") return [{ act: "talk", label: words.talk, icon: "plus" }, details];
+    // A new conversation is the workbench's.
+    const talk: Act[] = this.options.workbench.peek() ? [{ act: "talk", label: words.talk, icon: "plus" }] : [];
+    if (spot.kind === "assist") return [...talk, details];
     // A phone is only signed in: nothing runs on it to work with.
     if (spot.kind === "device") return [details, ...(spot.here ? [] : [{ act: "remove", label: words.removePhone, icon: "close" as const, danger: true }])];
     const holders = this.holdersOf(spot.machine, world);
@@ -1560,10 +1570,7 @@ export class MachinesPage implements Page {
     return [
       ...(managed
         ? []
-        : [
-            { act: "talk", label: words.talk, icon: "plus" as const },
-            { act: "agents", label: words.hosts, icon: "agents" as const },
-          ]),
+        : [...talk, { act: "agents", label: words.hosts, icon: "agents" as const }]),
       ...(shares ? [{ act: "share", label: words.share, icon: "colleague" as const }] : []),
       ...direct,
       ...relay,

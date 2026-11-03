@@ -48,8 +48,9 @@ export interface SpotActs {
 }
 
 /** The acts tried in turn for the one a bar writes out, and those it
- *  shows as marks beside it. */
-const LEADS = ["talk", "details"];
+ *  shows as marks beside it: in Connect, where there is no new
+ *  conversation, a machine leads with its agents. */
+const LEADS = ["talk", "agents", "details"];
 const MARKS = ["agents", "share", "invite", "details"];
 
 export function spotActs(acts: Act[]): SpotActs {

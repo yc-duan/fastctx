@@ -2939,6 +2939,7 @@ function show(next: Place): void {
           if (renamed) store.world.set(renamed);
         },
         talk: (machine) => beginTalk(null, null, machine),
+        workbench: accountLayer.workbench,
         confirm: accountConfirm,
         replace: (to) => replacePlace(link(to)),
         updates: {
@@ -2994,6 +2995,7 @@ function show(next: Place): void {
         change,
         invite: (login) => tokens.open(login),
         talk: (machine) => beginTalk(null, null, machine),
+        workbench: accountLayer.workbench,
         confirm: accountConfirm,
         log: live ? machineLog : specimenMachineLog,
         renaming: {

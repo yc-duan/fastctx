@@ -310,8 +310,9 @@ export function startPresence(options: PresenceOptions): void {
   /** Calls the user, unless the window is in front of them already, and,
    *  for what the conversation at `about` says, shows that conversation. */
   async function call(id: string, notice: { title: string; body: string; route: string; actions: { id: string; title: string; quiet?: boolean }[] }, about?: Address): Promise<void> {
-    // What a conversation asks or answers is the workbench's (`world-layers.md`).
-    if (!accountLayer.workbench.peek()) return;
+    // What a conversation asks or answers is the workbench's (`world-layers.md`);
+    // what happens to the networks and machines is called about in Connect too.
+    if (about && !accountLayer.workbench.peek()) return;
     const presence = await getWindowPresence();
     if (presence.focused && (!about || viewing(about))) return;
     const previous = shown.get(id);

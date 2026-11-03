@@ -73,6 +73,9 @@ export interface MachinePageOptions {
   renameHere(to: string): Promise<void>;
   /** Opens a new conversation with an agent on `machine`, as written. */
   talk(machine: string): void;
+  /** Whether the workbench's places are shown: a new conversation is one
+   *  of them (`world-layers.md`). */
+  workbench: Signal<boolean>;
   confirm: Confirm;
   /** Goes to `place` in this page's stead: the machine renamed, removed, or
    *  one with no page of its own. */
@@ -339,9 +342,14 @@ export class MachinePage implements Page {
           this.render();
         })
       : () => {};
+    const stopWorkbench = effect(() => {
+      options.workbench.get();
+      this.render();
+    });
     this.stop = () => {
       stopWorld();
       stopUpdates();
+      stopWorkbench();
     };
     this.moving = window.setInterval(() => {
       if (document.visibilityState === "visible") this.drawLines();
@@ -588,7 +596,7 @@ export class MachinePage implements Page {
       "acts",
       this.acts,
       [
-        managed ? "" : button("talk", "plus", machines.talk),
+        managed || !this.options.workbench.peek() ? "" : button("talk", "plus", machines.talk),
         managed ? "" : `<a class="text-button quiet-button mp-act" href="${link({ kind: "agents", machine: machine.written })}" title="${escape(machines.hosts)}">${glyph("agents", 15)}<span>${escape(machines.hosts)}</span></a>`,
         giver ? button("share", "colleague", machines.share) : "",
         `<a class="icon-button mp-act-map" href="${link({ kind: "machines", focus: machine.written })}" aria-label="${escape(words.onMap)}" title="${escape(words.onMap)}">${glyph("machine", 17)}</a>`,
@@ -1161,15 +1169,19 @@ export class MachinePage implements Page {
     const { words, machines } = this.options;
     const viewer = loginsOf(world.accounts).find((login) => machine.on.some((on) => on.hub === login.hub)) ?? null;
     const group = viewer ? (groupsOf(world).find((one) => sameLogin(one.login, viewer)) ?? null) : null;
-    const residents = residentsOf(world).filter(
-      (r) => r.about.machine === machine.written && (r.now?.activity === "busy" || r.now?.waiting_for_user || !!r.now?.asked) && (!group || residentIn(world, group, r)),
-    );
+    // Conversations are the workbench's: in Connect, only what runs there.
+    const workbench = this.options.workbench.peek();
+    const residents = !workbench
+      ? []
+      : residentsOf(world).filter(
+          (r) => r.about.machine === machine.written && (r.now?.activity === "busy" || r.now?.waiting_for_user || !!r.now?.asked) && (!group || residentIn(world, group, r)),
+        );
     const jobs = jobsOf(world).filter((job) => job.machine === machine.written);
     // Its owner is told how many are at work or waiting there, whosever
     // they are; those of other accounts go without their names.
     const answered = world.who.machines.find((one) => one.kind === "answered" && one.reply.machine === machine.name);
     const busy = answered?.kind === "answered" ? (answered.reply.busy ?? 0) : 0;
-    const others = Math.max(0, busy - residents.length);
+    const others = workbench ? Math.max(0, busy - residents.length) : 0;
     const stuck = stats?.node.stuck ?? [];
     const health = stats?.node.health ?? [];
     const waiting = stats?.memory.waiting ?? 0;
