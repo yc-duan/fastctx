@@ -986,6 +986,11 @@ fn refused_letter(inner: &Inner, seq: u64, reason: &str) -> std::io::Result<()> 
 /// that they are.
 const TAKEN_AT_ONCE: usize = 64;
 
+/// How many times in a row a letter's handling fails for good, as when the
+/// conversation it is for was deleted here, before it is set aside: a
+/// couple of minutes at the pace of trying again (`crate::again`).
+const SET_ASIDE_AFTER: u32 = 8;
+
 /// How many of the hub's letters may wait to be taken: more than a hub of
 /// this release sends at once, which it never fills.
 const DELIVERIES: usize = 1024;
@@ -1068,12 +1073,22 @@ async fn take_letters(
         let run: Arc<[(u64, Envelope)]> = run.into();
         let mut failures = 0;
         let mut said = String::new();
+        // The letter the run last stopped at, and how many times in a row:
+        // one whose handling keeps failing in a way taking it again does not
+        // mend is set aside, so that it holds up none behind it.
+        let mut stuck: Option<(u64, u32)> = None;
         let seq = loop {
-            match letters::take(inner.clone(), hub_letters, run.clone()).await {
+            let give_up = stuck.filter(|(_, times)| *times >= SET_ASIDE_AFTER).map(|(at, _)| at);
+            match letters::take(inner.clone(), hub_letters, run.clone(), give_up).await {
                 Ok(seq) => break seq,
-                Err(error) => {
+                Err(untaken) => {
                     failures += 1;
-                    let error = error.to_string();
+                    stuck = match (untaken.at, stuck) {
+                        (Some(at), Some((was, times))) if at == was => Some((at, times + 1)),
+                        (Some(at), _) => Some((at, 1)),
+                        (None, _) => None,
+                    };
+                    let error = untaken.error.to_string();
                     if error != said {
                         inner.node.log(format!("taking letters failed, trying again: {error}"));
                         said = error;

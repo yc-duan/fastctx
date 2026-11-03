@@ -108,11 +108,26 @@ pub fn admit(
             }
         },
     };
-    if carries == Purpose::Words && (node.residents.is_deleting(to) || node.residents.removed(to).is_some()) {
-        return Err(format!("{to} is being deleted or was removed"));
+    // Nothing is taken for a conversation deleted here or being deleted,
+    // whatever the letter carries: none of it would be kept, and failing to
+    // keep it would hold up every letter behind it, the deletion's own
+    // business with the hub among them (los-angeles-linux, 11-03).
+    if gone(node, to) {
+        return Err(format!("{to} is deleted on this machine"));
+    }
+    if carries == Purpose::Words && node.residents.removed(to).is_some() {
+        return Err(format!("{to} was removed"));
     }
     expect(purpose, carries)?;
     serves(node, hub, caller, also, to)
+}
+
+/// Whether the conversation `id` was deleted on this machine, or is being:
+/// its deletion begun now, or by a node that stopped before it ended.
+fn gone(node: &Node, id: &ResidentId) -> bool {
+    node.residents.deleted(id).is_some()
+        || node.residents.is_deleting(id)
+        || fastctx_platform::disk::is_there(node.world.conversation(id).path().join("deleting"))
 }
 
 fn expect(declared: Purpose, carries: Purpose) -> Result<(), String> {
