@@ -257,7 +257,7 @@ pub struct OnRecord {
 
 impl Residents {
     pub(crate) fn host_open(&self, id: &ResidentId) -> bool {
-        self.lock().live.get(id).is_some_and(|live| live.host_present || live.connections > 0)
+        self.lock_for(id).live.get(id).is_some_and(|live| live.host_present || live.connections > 0)
     }
     /// Reads every resident this machine has a record of. A record that
     /// cannot be read is reported and left as it is.
@@ -428,18 +428,18 @@ impl Residents {
     pub fn former(&self) -> Vec<Former> {
         let ids = self.lock().live.ids();
         ids.flat_map(|id| {
-            self.lock().live.get(&id).map(|live| former(&live.about.id, &live.places)).unwrap_or_default()
+            self.lock_for(&id).live.get(&id).map(|live| former(&live.about.id, &live.places)).unwrap_or_default()
         })
         .collect()
     }
 
     /// What the resident has been told of where it lives.
     pub fn heard(&self, id: &ResidentId) -> Option<Heard> {
-        self.lock().live.get(id).and_then(|live| live.heard.clone())
+        self.lock_for(id).live.get(id).and_then(|live| live.heard.clone())
     }
 
     pub fn set_heard(&self, id: &ResidentId, heard: Heard) {
-        if let Some(live) = self.lock().live.get_mut(id) {
+        if let Some(live) = self.lock_for(id).live.get_mut(id) {
             live.heard = Some(heard.position());
         }
     }
@@ -448,7 +448,7 @@ impl Residents {
     /// its town: it has heard that, and is back there when it compacts.
     pub fn set_instructed(&self, id: &ResidentId, heard: Heard) {
         let heard = heard.position();
-        if let Some(live) = self.lock().live.get_mut(id) {
+        if let Some(live) = self.lock_for(id).live.get_mut(id) {
             live.heard = Some(heard.clone());
             live.instructed = Some(heard);
         }
@@ -456,7 +456,7 @@ impl Residents {
 
     /// Its host told of its context compacted, at `at`.
     pub fn compacted_at(&self, id: &ResidentId, at: Timestamp) {
-        if let Some(live) = self.lock().live.get_mut(id) {
+        if let Some(live) = self.lock_for(id).live.get_mut(id) {
             live.compacted_at = Some(at);
             live.heard = live.instructed.clone();
         }
@@ -464,20 +464,20 @@ impl Residents {
 
     /// Compaction retains the opening instructions, not earlier tool-response notes.
     pub(crate) fn restore_opening_heard(&self, id: &ResidentId) {
-        if let Some(live) = self.lock().live.get_mut(id) {
+        if let Some(live) = self.lock_for(id).live.get_mut(id) {
             live.heard = live.instructed.clone();
         }
     }
 
     /// When its host last told of its context compacted.
     pub fn last_compaction(&self, id: &ResidentId) -> Option<Timestamp> {
-        self.lock().live.get(id).and_then(|live| live.compacted_at)
+        self.lock_for(id).live.get(id).and_then(|live| live.compacted_at)
     }
 
     /// A tool reply was written. Concurrent replies must not move the
     /// cursor backwards or acknowledge news from a town the resident left.
     pub fn acknowledge_heard(&self, id: &ResidentId, heard: Heard) {
-        if let Some(live) = self.lock().live.get_mut(id)
+        if let Some(live) = self.lock_for(id).live.get_mut(id)
             && live.town() == heard.town
             && live.heard.as_ref().is_none_or(|prior| prior.town != heard.town || prior.ledger <= heard.ledger)
         {
@@ -487,6 +487,19 @@ impl Residents {
 
     fn lock(&self) -> StateGuard<'_> {
         StateGuard(self.state.lock().expect("never poisoned"), &self.changed)
+    }
+
+    /// The residents' lock, with `id` in memory: one put aside on disk is
+    /// read back and decoded before the lock is taken, so that no one waits
+    /// on it for the disk (`cache::Cache::aside`).
+    fn lock_for(&self, id: &ResidentId) -> StateGuard<'_> {
+        let state = self.lock();
+        let Some(aside) = state.live.aside(id) else { return state };
+        drop(state);
+        let read = aside.read();
+        let mut state = self.lock();
+        state.live.install(id, read);
+        state
     }
 
     /// Moves whenever a resident may have changed.
@@ -648,12 +661,12 @@ impl Residents {
     }
 
     pub(crate) fn host_present(&self, id: &ResidentId) -> bool {
-        self.lock().live.get(id).is_some_and(|live| live.host_present)
+        self.lock_for(id).live.get(id).is_some_and(|live| live.host_present)
     }
 
     /// Updates host presence and says whether a user-opened resident left.
     pub(crate) fn set_host_present(&self, id: &ResidentId, present: bool) -> bool {
-        if let Some(live) = self.lock().live.get_mut(id) {
+        if let Some(live) = self.lock_for(id).live.get_mut(id) {
             let was_here = here(live);
             live.host_present = present;
             return was_here && !here(live) && !live.about.world_managed();
@@ -789,16 +802,16 @@ impl Residents {
     /// The town of the resident `id` living on this machine; `None` when no
     /// such resident lives here.
     pub fn town_of(&self, id: &ResidentId) -> Option<Option<TownName>> {
-        self.lock().live.get(id).map(Live::town)
+        self.lock_for(id).live.get(id).map(Live::town)
     }
 
     /// The original recorded machine, retained when a conversation directory is moved.
     pub(crate) fn birth_machine(&self, id: &ResidentId) -> Option<MachineName> {
-        self.lock().live.get(id).map(|live| live.about.machine.clone())
+        self.lock_for(id).live.get(id).map(|live| live.about.machine.clone())
     }
 
     pub fn about(&self, id: &ResidentId) -> Option<(About, Option<TownName>)> {
-        self.lock().live.get(id).map(|live| (self.placed(live.about.clone()), live.town()))
+        self.lock_for(id).live.get(id).map(|live| (self.placed(live.about.clone()), live.town()))
     }
 
     /// This machine is called `name` now (`world-network.md`, 机器的名字).
@@ -817,7 +830,7 @@ impl Residents {
     }
 
     pub fn now(&self, id: &ResidentId) -> Option<Now> {
-        self.lock().live.get(id).and_then(|live| live.now.clone())
+        self.lock_for(id).live.get(id).and_then(|live| live.now.clone())
     }
 
     pub fn resident_of_thread(&self, thread: &str) -> Option<ResidentId> {
@@ -855,7 +868,7 @@ impl Residents {
 
     /// One resident on record, read alone rather than found among everyone.
     pub fn on_record(&self, id: &ResidentId) -> Option<OnRecord> {
-        let mut state = self.lock();
+        let mut state = self.lock_for(id);
         state.live.get(id).map(|live| OnRecord {
             id: id.clone(),
             removed: live.removed,
@@ -873,7 +886,7 @@ impl Residents {
     pub fn unfinished(&self) -> Vec<(ResidentId, String)> {
         let ids = self.lock().live.ids();
         ids.flat_map(|id| {
-            let mut state = self.lock();
+            let mut state = self.lock_for(&id);
             let Some(live) = state.live.get(&id).filter(|live| live.removed.is_none()) else { return Vec::new() };
             let mut turns: BTreeSet<String> = live.owed.keys().cloned().collect();
             if let Some(now) = &live.now

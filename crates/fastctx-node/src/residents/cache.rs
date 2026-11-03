@@ -11,6 +11,7 @@ use serde::{Serialize, de::DeserializeOwned};
 use std::collections::{HashMap, HashSet};
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 pub(super) struct Cache {
     root: PathBuf,
@@ -26,7 +27,14 @@ pub(super) struct Cache {
     /// A resident was put in, taken out or handed out to be changed since
     /// this was last asked (`take_touched`).
     touched: bool,
-    putting: Aside,
+    putting: Arc<Aside>,
+}
+
+/// A resident put aside, to be read back outside the residents' lock
+/// (`Cache::aside`, `Cache::install`).
+pub(super) struct PutAside {
+    path: PathBuf,
+    putting: Arc<Aside>,
 }
 
 /// How many residents no longer at work are held in memory before the
@@ -69,7 +77,7 @@ impl Cache {
             cold: HashSet::new(),
             changed: HashSet::new(),
             touched: false,
-            putting: Aside::new("resident-cache", "a resident's state"),
+            putting: Arc::new(Aside::new("resident-cache", "a resident's state")),
         })
     }
 
@@ -102,9 +110,36 @@ impl Cache {
         self.entries.get_mut(id)
     }
 
+    /// Where `id` was put aside, when it is not in memory: read back with
+    /// `PutAside::read` outside the lock, and installed with `install`.
+    pub fn aside(&self, id: &ResidentId) -> Option<PutAside> {
+        (!self.entries.contains_key(id) && self.on_disk.contains(id))
+            .then(|| PutAside { path: self.path(id), putting: self.putting.clone() })
+    }
+
+    /// `id` as it was read back from where it was put aside, unless it came
+    /// back meanwhile or went.
+    pub fn install(&mut self, id: &ResidentId, read: io::Result<Live>) {
+        if self.entries.contains_key(id) || !self.on_disk.contains(id) {
+            return;
+        }
+        match read {
+            Ok(live) => {
+                self.entries.insert(id.clone(), live);
+                self.cold.insert(id.clone());
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                self.on_disk.remove(id);
+            }
+            // Read again under the lock when asked, and said there.
+            Err(_) => {}
+        }
+    }
+
     /// Whether `id` is on record, read into memory when it was put aside:
-    /// only past `KEPT` does that read the disk. One that cannot be read
-    /// back now is said and taken as not here, and read again next time.
+    /// only past `KEPT` does that read the disk, and then under the lock
+    /// only where it was not read back first (`aside`). One that cannot be
+    /// read back now is said and taken as not here, and read again next time.
     fn load(&mut self, id: &ResidentId) -> bool {
         if self.entries.contains_key(id) {
             return true;
@@ -187,6 +222,18 @@ impl Cache {
                 self.entries.remove(&id);
             }
         }
+    }
+}
+
+impl PutAside {
+    /// The resident as it was put aside: what is still on its way, or the
+    /// disk.
+    pub fn read(&self) -> io::Result<Live> {
+        let bytes = match self.putting.on_its_way(&self.path) {
+            Some(bytes) => bytes,
+            None => fastctx_platform::disk::read(&self.path)?,
+        };
+        serde_json::from_slice(&bytes).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
     }
 }
 

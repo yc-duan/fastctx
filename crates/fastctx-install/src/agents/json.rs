@@ -261,9 +261,11 @@ pub fn add(
     }
     let raw = serde_json::to_string(item).expect("a value serializes");
     let (next, gap) = match array.elements.last() {
+        // Just inside the bracket, what is between the brackets left as it
+        // is: taken out, the array is again exactly as it was found.
         None => {
-            let range = array.range;
-            (document.replace(range.start..range.end, &format!("[{raw}]")), String::new())
+            let inside = array.range.start + 1;
+            (document.replace(inside..inside, &raw), String::new())
         }
         Some(last) => {
             let end = last.range().end;

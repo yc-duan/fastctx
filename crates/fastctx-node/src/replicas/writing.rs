@@ -372,15 +372,15 @@ pub(crate) async fn flush(node: &Arc<Node>, link: &fastctx_net::link::Link, copy
     Ok(())
 }
 
-/// Keeps an edit until its hub has it. One made offline after another made
-/// offline by the same writer joins it: the two go as one write from the
-/// earlier one's base, so a long time offline keeps one candidate, not every
-/// step. Only the last of two or more joins, never the first, which the hub
-/// may have taken already.
+/// Keeps an edit until its hub has it. One that follows an edit left
+/// waiting, made offline or not taken when it was sent, joins it where the
+/// writer is the same: the two go as one write from the earlier one's base,
+/// so a long time offline, or a hub that keeps failing to take them, keeps
+/// one candidate, not every step. Only the last of two or more joins, never
+/// the first, which the hub may have taken already.
 fn keep(waiting: &mut Vec<Pending>, edit: Pending, path: &Path) {
     let crowded = waiting.len() >= WAITING_EDITS;
-    if edit.offline
-        && waiting.len() >= 2
+    if waiting.len() >= 2
         && let Some(last) = waiting.last_mut()
         && last.offline
         && (crowded || same_writer(&last.author, &edit.author))
