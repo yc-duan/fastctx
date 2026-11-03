@@ -73,13 +73,20 @@ sleep 5
 shot back-after-close
 check "the Dock brings it back after closing" '$W window >/dev/null'
 
+# The sidebar's head is the network's name and the fold button under the
+# lights, both clicked; the page's head beyond the machine picker is bare.
 read -r X Y WD HT < <(win)
-$W drag $((X + 215)) $((Y + 30)) $((X + 415)) $((Y + 130))
+$W drag $((X + WD - 120)) $((Y + 26)) $((X + WD - 320)) $((Y + 126))
 sleep 2
 read -r X2 Y2 _ _ < <(win)
 say "dragged from $X $Y to ${X2:-} ${Y2:-}"
-check "the sidebar's head drags the window" '[ -n "${X2:-}" ] && [ "$X2" != "$X" ]'
+check "the page's head drags the window" '[ -n "${X2:-}" ] && [ "$X2 $Y2" != "$X $Y" ]'
 shot dragged
+read -r X Y _ _ < <(win)
+$W drag $((X + 215)) $((Y + 26)) $((X + 315)) $((Y + 76))
+sleep 2
+read -r X2 Y2 _ _ < <(win)
+check "the network's name in the sidebar's head is not dragged from" '[ "$X2 $Y2" = "$X $Y" ]'
 
 "$app/Contents/MacOS/fastctx-app" >second.log 2>&1 &
 sleep 8
