@@ -1,7 +1,8 @@
 //! Consume durable executor journals in bounded batches. Contributions and their
 //! cursors commit together; segment retention waits for this independent reader.
 //! One thread reads a journal at a time, and no other waits for it: one asking
-//! meanwhile leaves its newer record, which the reader reads with before it stops.
+//! meanwhile marks the journal to be read again, which the reader does before
+//! it stops, with the job's record as it stands then.
 
 use super::*;
 use fastctx_storage::{
@@ -15,11 +16,11 @@ use std::path::PathBuf;
 use std::sync::{LazyLock, Mutex, MutexGuard, PoisonError};
 use std::{io, path::Path};
 
-/// The journals being read now, by path, each with the newest record of its
-/// job asked to be observed while it was read.
-static READING: LazyLock<Mutex<HashMap<PathBuf, Option<JobRecord>>>> = LazyLock::new(Default::default);
+/// The journals being read now, by path, each marked when its job was asked
+/// to be observed again while it was read.
+static READING: LazyLock<Mutex<HashMap<PathBuf, bool>>> = LazyLock::new(Default::default);
 
-fn reading() -> MutexGuard<'static, HashMap<PathBuf, Option<JobRecord>>> {
+fn reading() -> MutexGuard<'static, HashMap<PathBuf, bool>> {
     READING.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
@@ -96,27 +97,36 @@ pub(crate) fn observe(node: &Node, path: &Path, record: &JobRecord) -> io::Resul
     }
     {
         let mut reading = reading();
-        if let Some(waiting) = reading.get_mut(path) {
-            *waiting = Some(record.clone());
+        if let Some(again) = reading.get_mut(path) {
+            *again = true;
             return Ok(());
         }
-        reading.insert(path.to_path_buf(), None);
+        reading.insert(path.to_path_buf(), false);
     }
     let mut reader = Reader { path, done: false };
-    let mut record = record.clone();
     loop {
-        let read = read(node, path, &record);
-        // Whether to read again and letting go are decided together, so a
-        // record left meanwhile is never left unread.
+        let read = current(node, path);
+        // Whether to read again and letting go are decided together, so an
+        // observation asked meanwhile is never left unread, nor dropped with
+        // a read that failed before it.
         let mut reading = reading();
-        match reading.get_mut(path).and_then(Option::take) {
-            Some(newer) if read.is_ok() => record = newer,
-            _ => {
-                reading.remove(path);
-                reader.done = true;
-                return read;
-            }
+        if !reading.get_mut(path).is_some_and(std::mem::take) {
+            reading.remove(path);
+            reader.done = true;
+            return read;
         }
+    }
+}
+
+/// Reads the journal with the job's record as it stands now. A record an
+/// observer took earlier can be older than one already read, and reading
+/// with it would take back the end the book had marked complete.
+fn current(node: &Node, path: &Path) -> io::Result<()> {
+    match fastctx_hands::run::record::read(path) {
+        Ok(record) => read(node, path, &record),
+        // A job's files go only once the book holds all of it.
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
     }
 }
 
