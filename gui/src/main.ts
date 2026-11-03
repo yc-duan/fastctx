@@ -74,7 +74,7 @@ import { enProfile, zhProfile } from "./app/profile-words";
 import { isHost, keepSection, sectionOf } from "./app/agent-sections";
 import { PromptPage } from "./app/prompt-page";
 import { HostPrefs } from "./app/host-prefs";
-import { ModelPrefsPage, settingsHead } from "./app/talk-settings";
+import { ModelPrefsPage, settingsHead, settingsTabOf } from "./app/talk-settings";
 import { enTalkSettings, zhTalkSettings } from "./app/talk-settings-words";
 import "./app/talk-settings.css";
 import { SubagentsPage } from "./app/subagents-page";
@@ -484,9 +484,12 @@ const WORKBENCH_PLACES: Place["kind"][] = ["home", "new", "project", "projects",
 /** The pages one comes into from another, which have a way back in their
  *  head (`world-gui.md`, 界面的结构); the sidebar's own pages have none. */
 function inner(at: Place): boolean {
-  // In Connect an agent's own page is a step in from the agents' overview;
-  // the sidebar names it only on the workbench.
-  if (at.kind === "agents" && (at.section === "claude" || at.section === "codex") && !accountLayer.workbench.peek()) return true;
+  // The parts of the conversations' settings are tabs of one row, gone
+  // between on the row itself; a subagent's page is a step in from them.
+  if (settingsTabOf(at) !== null && at.kind !== "subagents") return false;
+  // An agent's own page is a step in from the agents' overview, which the
+  // sidebar names; the agents themselves it does not.
+  if (at.kind === "agents" && (at.section === "claude" || at.section === "codex")) return true;
   return ["feature", "data", "history", "talk-history", "page", "file", "login", "talks", "archived", "machine", "usage", "subagents", "sentinel", "sentinels"].includes(at.kind);
 }
 
