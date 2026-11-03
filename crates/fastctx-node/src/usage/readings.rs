@@ -105,13 +105,19 @@ pub(super) fn merge(
 /// One weekly window's reading within the period kept (`merge`).
 fn weekly(old: &mut LimitWindow, incoming: LimitWindow, at: Timestamp, heard: &mut Heard, source: Source<'_>) {
     match source {
-        Source::Ledger => match incoming.since {
-            Some(since) if !heard.cleared.iter().any(|clearing| clearing.since == since) => {
-                heard.cleared.push(Clearing { since, from: old.used_tenths, standing: true });
-                old.used_tenths = incoming.used_tenths;
+        Source::Ledger => {
+            match incoming.since.map(|since| (since, heard.cleared.iter().find(|clearing| clearing.since == since))) {
+                Some((since, None)) => {
+                    heard.cleared.push(Clearing { since, from: old.used_tenths, standing: true });
+                    old.used_tenths = incoming.used_tenths;
+                }
+                // The clearing this row was written for, heard as it came: the
+                // figure kept is still the height the week fell from, and the
+                // row's own is the week's now, as a reload of it finds.
+                Some((_, Some(clearing))) if old.used_tenths >= clearing.from => old.used_tenths = incoming.used_tenths,
+                _ => old.used_tenths = old.used_tenths.max(incoming.used_tenths),
             }
-            _ => old.used_tenths = old.used_tenths.max(incoming.used_tenths),
-        },
+        }
         Source::Live(source) => {
             if heard.last.len() >= SOURCES && !heard.last.contains_key(source) {
                 heard.last.clear();
