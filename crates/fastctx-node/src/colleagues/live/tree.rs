@@ -41,6 +41,11 @@ pub(super) async fn keep(node: &Arc<Node>, id: &ResidentId, acting: &Acting, tol
     // asked another.
     let mut asked: Option<BTreeMap<Address, String>> = None;
     let mut conversation: Option<Branch> = None;
+    // When those could not be read, as when the hub that says whose a
+    // colleague is cannot be reached for a moment, the colleagues known so
+    // far stay, and they are read again a while later.
+    let mut again: Option<Instant> = None;
+    let mut retry = crate::again::Again::default();
     loop {
         let latest = own.borrow_and_update().clone();
         match latest {
@@ -52,10 +57,15 @@ pub(super) async fn keep(node: &Arc<Node>, id: &ResidentId, acting: &Acting, tol
             Some(asked) => asked,
             None => match crate::colleagues::tree::asked(node, &owner, acting).await {
                 Ok(found) => {
+                    again = None;
+                    retry.reset();
                     asked = Some(found.clone());
                     found
                 }
-                Err(failure) => return failure,
+                Err(_) => {
+                    again = Some(Instant::now() + retry.next());
+                    colleagues.values().map(|colleague| (colleague.address.clone(), colleague.label.clone())).collect()
+                }
             },
         };
         found.extend(crate::colleagues::tree::born_here(node, &owner, acting));
@@ -95,6 +105,7 @@ pub(super) async fn keep(node: &Arc<Node>, id: &ResidentId, acting: &Acting, tol
             },
             changed = residents.changed() => if changed.is_err() { return stopping() } else { false },
             () = tokio::time::sleep_until(late.map_or_else(far, tokio::time::Instant::from_std)), if late.is_some() => false,
+            () = tokio::time::sleep_until(again.map_or_else(far, tokio::time::Instant::from_std)), if again.is_some() => true,
         };
         tokio::time::sleep(SETTLE).await;
         if asks || drain(node, id, &mut events) {
