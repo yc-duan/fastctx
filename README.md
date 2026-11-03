@@ -17,7 +17,7 @@
 
 ## What Fastctx is
 
-Fastctx is an MCP tool. When you connect it to the agents you already use—17 supported agents, including Claude Code, Codex, and Cursor—the agent gets a single tool named `run`. With `run`, it can execute commands, view and edit files on any of your machines, copy files between machines, and leave long-running jobs in the background.
+Fastctx is an MCP tool. When you connect it to the agents you already use—23 supported agents, including Claude Code, Codex, and Cursor—the agent gets a single tool named `run`. With `run`, it can execute commands, view and edit files on any of your machines, copy files between machines, and leave long-running jobs in the background.
 
 - You keep working in your own agent without changing tools or habits.
 - Your machines connect through your own Hub across Windows, macOS, and Linux, without needing public IP addresses.
@@ -38,7 +38,7 @@ Connecting does three things:
 
 1. **Adds the `run` tool**: Registers the Fastctx MCP server in the agent's config file, such as `config.toml` for Codex or `.claude.json` for Claude Code.
 2. **Adds usage instructions**: Writes a short section into the agent's global instruction file (such as `AGENTS.md` or `CLAUDE.md`) explaining when to use `run`.
-3. **Turns off its own shell**: Routes command execution through `run`. For 8 agents whose built-in shell cannot be turned off (see the table below), both remain available, and only commands run through `run` are recorded in Activity.
+3. **Turns off its own shell**: Routes command execution through `run`. For 10 agents whose built-in shell cannot be turned off (see the table below), both remain available, and only commands run through `run` are recorded in Activity.
 
 - **Remove**: Removes only what Fastctx wrote and restores modified values. Your own content in those files stays untouched.
 - **Updates**: When Fastctx upgrades, it updates the sections it wrote to match the new version. If those sections were edited manually, Fastctx backs up the file before replacing them.
@@ -53,8 +53,8 @@ Connecting does three things:
 
 | Built-in shell | Agents |
 |---|---|
-| Turned off | Claude Code, Codex, Antigravity (App & CLI), OpenCode, Qwen Code, Cline, Zed, Auggie, Devin (Desktop & Local) |
-| Stays on | Cursor, GitHub Copilot CLI, Copilot (VS Code), Roo Code (VS Code), Kiro, Trae, Continue, Claude Desktop |
+| Turned off | Claude Code, Codex, Antigravity (App & CLI), OpenCode, Qwen Code, Cursor, Cline, Zed, Kiro, Auggie, Devin (Desktop & Local), Qoder CLI, Amp |
+| Stays on | GitHub Copilot CLI, Copilot (VS Code), Roo Code (VS Code), Trae, Continue, Claude Desktop, Qoder IDE, ZCode, DeepSeek Harness, Goose |
 
 ## One tool: `run`
 
@@ -124,12 +124,13 @@ Every machine keeps its own Activity log to answer one question: what did my age
 
 ## Workbench (Claude Code and Codex)
 
-On a connected Claude Code or Codex sign-in, you can also turn on the Workbench. Before enabling it, a window shows the exact changes it will make.
+On a connected Claude Code or Codex sign-in, you can also turn on the Workbench: open the agent and flip the switch on that sign-in, so each sign-in decides for itself. Before enabling it, a window shows the exact changes it will make.
 
 - **Conversations**: Talk with the agent from the Fastctx desktop or Android app.
 - **Wake**: When something the agent is waiting on finishes (such as a background job), Fastctx wakes the agent to continue, even while you are away.
 - **Quota**: Displays the quota and usage for that sign-in.
 - **Model collaboration**: A conversation can hand off subtasks to another model (for example, Claude handing off to Codex), with a configurable concurrency limit.
+- **Conversation settings**: Prompts, skills, MCP servers, models, and collaboration settings live under **Conversation settings** in the sidebar's Workbench group, and apply only to Workbench conversations.
 - **Non-intrusive**: Sessions you open directly in Claude Code or Codex are unaffected.
 - **Turn off anytime**: You can disable the Workbench at any time without losing your conversations or data.
 - **Quota usage**: Conversations consume the quota of that specific sign-in.

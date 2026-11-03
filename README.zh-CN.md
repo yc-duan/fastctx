@@ -17,7 +17,7 @@
 
 ## Fastctx 是什么
 
-Fastctx 是一个 MCP 工具。把它接进你已经在用的智能体（共支持 17 款，包括 Claude Code、Codex 与 Cursor），智能体就多了一个工具 `run`：在你的任意一台机器上执行命令、查看与修改文件，在机器之间复制文件，把耗时的任务留在后台继续运行。
+Fastctx 是一个 MCP 工具。把它接进你已经在用的智能体（共支持 23 款，包括 Claude Code、Codex 与 Cursor），智能体就多了一个工具 `run`：在你的任意一台机器上执行命令、查看与修改文件，在机器之间复制文件，把耗时的任务留在后台继续运行。
 
 - 你照常在原来的智能体里工作，不用换工具，也不用改习惯。
 - 你的机器经你自己的中枢服务器连成一个网络，Windows、macOS、Linux 都可以加入，不需要公网地址。
@@ -38,7 +38,7 @@ Fastctx 是一个 MCP 工具。把它接进你已经在用的智能体（共支�
 
 1. **新增工具 `run`**：把 Fastctx 的 MCP 服务登记进智能体的配置文件，例如 Codex 的 `config.toml`、Claude Code 的 `.claude.json`。
 2. **写入使用说明**：在智能体的全局说明文件（例如 `AGENTS.md`、`CLAUDE.md`）里写一小段，说明什么时候用 `run`。
-3. **停用自带的 shell**：命令改由 `run` 执行。有 8 款智能体的自带 shell 无法停用（见下表），它们会两种都用，只有经 `run` 执行的命令记入活动。
+3. **停用自带的 shell**：命令改由 `run` 执行。有 10 款智能体的自带 shell 无法停用（见下表），它们会两种都用，只有经 `run` 执行的命令记入活动。
 
 - **移除**：只拿走 Fastctx 写入的内容，还原改过的值；文件里你自己的内容不动。
 - **升级**：Fastctx 升级后，会把它写入的内容换成新版本的写法；这几处若被人改过，替换之前先把文件原样留一份。
@@ -53,8 +53,8 @@ Fastctx 是一个 MCP 工具。把它接进你已经在用的智能体（共支�
 
 | 自带的 shell | 智能体 |
 |---|---|
-| 停用 | Claude Code、Codex、Antigravity（App 与 CLI）、OpenCode、Qwen Code、Cline、Zed、Auggie、Devin（Desktop 与 Local） |
-| 无法停用 | Cursor、GitHub Copilot CLI、Copilot（VS Code）、Roo Code（VS Code）、Kiro、Trae、Continue、Claude Desktop |
+| 停用 | Claude Code、Codex、Antigravity（App 与 CLI）、OpenCode、Qwen Code、Cursor、Cline、Zed、Kiro、Auggie、Devin（Desktop 与 Local）、Qoder CLI、Amp |
+| 无法停用 | GitHub Copilot CLI、Copilot（VS Code）、Roo Code（VS Code）、Trae、Continue、Claude Desktop、Qoder IDE、ZCode、DeepSeek Harness、Goose |
 
 ## 一个工具：`run`
 
@@ -124,12 +124,13 @@ RUN
 
 ## 工作台（Claude Code 与 Codex）
 
-在接入的 Claude Code 或 Codex 登录上，还可以另外打开工作台。打开之前，同样有一个窗口写明它要做的改动。
+在接入的 Claude Code 或 Codex 登录上，还可以另外打开工作台：点进这个智能体，在那个登录上打开开关，每个登录各自决定。打开之前，同样有一个窗口写明它要做的改动。
 
 - **对话**：在 Fastctx 的桌面应用和安卓应用里与智能体对话。
 - **叫醒**：智能体等着的事情发生时（例如后台任务结束），Fastctx 叫醒它接着做，你不在时也一样。
 - **额度**：显示这个登录的额度与用量。
 - **模型协作**：一段对话可以把局部任务交给另一个模型（例如 Claude 交给 Codex），同时进行的数量可以设置。
+- **对话设置**：提示词、技能、MCP、模型与模型协作的设置，都在侧栏工作台下的「对话设置」里，只作用于工作台里的对话。
 - **互不干扰**：你直接在 Claude Code、Codex 里开的会话不受影响。
 - **随时关闭**：工作台随时可以关掉，对话和数据都留着。
 - **花谁的额度**：对话花的是这个登录自己的额度。
