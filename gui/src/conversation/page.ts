@@ -1420,14 +1420,14 @@ export class ConversationPage {
     pop.innerHTML = "";
   }
 
-  /** Which view this conversation was last read in on this device: only
-   *  what was said, unless every step was asked for. */
+  /** Which view this conversation was last read in on this device: every
+   *  step, unless only what was said was asked for. */
   private storedView(): "said" | "steps" {
-    if (!this.options.viewKey) return "said";
+    if (!this.options.viewKey) return "steps";
     try {
-      return localStorage.getItem(this.options.viewKey) === "steps" ? "steps" : "said";
+      return localStorage.getItem(this.options.viewKey) === "said" ? "said" : "steps";
     } catch {
-      return "said";
+      return "steps";
     }
   }
 
@@ -1443,8 +1443,8 @@ export class ConversationPage {
     this.view.showing(mode);
     if (!keep || !this.options.viewKey) return;
     try {
-      if (steps) localStorage.setItem(this.options.viewKey, "steps");
-      else localStorage.removeItem(this.options.viewKey);
+      if (steps) localStorage.removeItem(this.options.viewKey);
+      else localStorage.setItem(this.options.viewKey, "said");
     } catch {
       // Not kept: the conversation opens in its usual view next time.
     }
