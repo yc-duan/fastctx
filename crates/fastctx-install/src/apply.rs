@@ -135,6 +135,11 @@ impl Places {
     fn stamp(&self) -> PathBuf {
         self.root.join("applied-operation.json")
     }
+
+    /// What undoes the global state's edit of a change not committed yet.
+    fn entry_undo(&self) -> PathBuf {
+        self.root.join("applied-claude-entry-undo.json")
+    }
 }
 
 /// Which hosts an apply or unapply is for.
@@ -683,7 +688,15 @@ fn apply_made(
             // the user changed goes only when that is taken back; otherwise
             // the workbench is not opened beside it.
             if let Some(receipt) = entry_receipt {
-                match state::take(&receipt, edits == Edits::TakeBack) {
+                let undo = EntryUndo::PutBack(receipt.clone());
+                if let Err(error) = recovery::keep_entry_undo(places, &operation, &undo) {
+                    return Err(rollback_plugin(places, error, &planned, &added, &mut host));
+                }
+                let taken = state::take(&receipt, edits == Edits::TakeBack);
+                if !matches!(taken, Ok(None)) {
+                    recovery::drop_entry_undo(places);
+                }
+                match taken {
                     Ok(None) => {}
                     Ok(Some(left)) => {
                         let error = Error::Claude(format!(
@@ -694,7 +707,7 @@ fn apply_made(
                     }
                     Err(error) => return Err(rollback_plugin(places, error, &planned, &added, &mut host)),
                 }
-                entry_undo = EntryUndo::PutBack(receipt);
+                entry_undo = undo;
                 changes.extend(state::keep(entry_file, None)?);
             }
             plugin = Some((planned, added, host));
@@ -705,6 +718,7 @@ fn apply_made(
     }
 
     record.version = RECORD_VERSION;
+    changes.extend(recovery::entry_undo_done(places)?);
     // fastctx's own copy, and the directory it lives in, belong to fastctx,
     // not to what an unapply takes out.
     let bin = installed.parent().map(Path::to_path_buf);
@@ -755,6 +769,7 @@ fn apply_made(
             // File rollback failures are already in the error. Withdraw this
             // invocation's plugin additions even when a file could not be restored.
             let error = entry_undo.undo(Error::Files(failure.to_string()));
+            recovery::drop_entry_undo(places);
             if let Some((planned, added, mut host)) = plugin {
                 return Err(rollback_plugin(places, error, &planned, &added, &mut host));
             }
@@ -840,6 +855,9 @@ fn unapply_made(
 
     let mut plugin_done = false;
     let mut plugin = None;
+    // What undoes this change's edit of Claude Code's global state when the
+    // files cannot be committed.
+    let mut entry_undo = EntryUndo::Nothing;
     let plugin_record = if hosts.claude { Some(homes::plugin_record(places)?) } else { None };
     if hosts.claude {
         let plugin_record = plugin_record.as_ref().expect("selected Claude record");
@@ -917,7 +935,16 @@ fn unapply_made(
         record.settings_created = false;
         let (entry_file, entry_receipt) = state::receipt(places)?;
         if let Some(receipt) = &entry_receipt {
-            report.notices.extend(state::take(receipt, false)?);
+            let undo = EntryUndo::PutBack(receipt.clone());
+            recovery::keep_entry_undo(places, &operation, &undo)?;
+            let left = state::take(receipt, false);
+            if !matches!(left, Ok(None)) {
+                recovery::drop_entry_undo(places);
+            }
+            match left? {
+                None => entry_undo = undo,
+                Some(left) => report.notices.push(left),
+            }
             changes.extend(state::keep(entry_file, None)?);
         }
         if let Some((claude_md, taken)) = guidance {
@@ -927,6 +954,7 @@ fn unapply_made(
         }
     }
 
+    changes.extend(recovery::entry_undo_done(places)?);
     changes.push(recovery::stamp(places, &operation)?);
     let cleanup = records.update(places, hosts, &record)?;
     tell(&progress, progress::Step::Files { changed: Vec::new() }, progress::StepState::Running);
@@ -942,7 +970,14 @@ fn unapply_made(
             |_| serde_json::to_vec_pretty(&records).map_err(io::Error::other),
         )
     };
-    let receipt = committed.map_err(|failure| Error::Files(failure.to_string()))?;
+    let receipt = match committed {
+        Ok(receipt) => receipt,
+        Err(failure) => {
+            let error = entry_undo.undo(Error::Files(failure.to_string()));
+            recovery::drop_entry_undo(places);
+            return Err(error);
+        }
+    };
     tell(&progress, progress::Step::Files { changed: receipt.changed.clone() }, progress::StepState::Done);
     report.changed.extend(receipt.changed);
     report.preserved.extend(receipt.preserved);
@@ -1045,8 +1080,14 @@ fn connect_claude(
     record.claude_tools = Some(tools.receipt);
     record.description = described.receipt;
     let (receipt, changed) = state::put(places, entry_receipt, take_back)?;
-    if changed && entry_receipt.is_none() {
-        *entry_undo = EntryUndo::TakeOut(receipt.clone());
+    if changed {
+        // Put in where there was none, it is taken out again; written over
+        // an earlier one, that one is put back.
+        *entry_undo = match entry_receipt {
+            None => EntryUndo::TakeOut(receipt.clone()),
+            Some(previous) => EntryUndo::PutBack(previous.clone()),
+        };
+        recovery::keep_entry_undo(places, how.operation, entry_undo)?;
     }
     if entry_receipt != Some(&receipt) {
         changes.extend(state::keep(entry_file, Some(&receipt))?);
@@ -1055,7 +1096,10 @@ fn connect_claude(
 }
 
 /// What undoes a change's edit of Claude Code's global state when the
-/// change's files cannot be committed.
+/// change's files cannot be committed; kept on disk until they are
+/// (`recovery::keep_entry_undo`).
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 enum EntryUndo {
     Nothing,
     /// The entry it put in where there was none.

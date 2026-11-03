@@ -182,6 +182,16 @@ pub(super) fn take(receipt: &Receipt, take_back: bool) -> Result<Option<Notice>,
     Ok(notice)
 }
 
+/// Puts back the entry `receipt` records where the state holds none now:
+/// recovery's undo, which leaves an entry someone wrote since as it is.
+pub(super) fn restore_absent(receipt: &Receipt) -> Result<(), Error> {
+    let (path, bytes) = read(receipt.configured())?;
+    if entry::current(bytes.as_deref(), &text(&path))?.is_some() {
+        return Ok(());
+    }
+    restore(receipt)
+}
+
 /// Puts back the entry `receipt` records, taken out by a change that did
 /// not go through.
 pub(super) fn restore(receipt: &Receipt) -> Result<(), Error> {
