@@ -7,6 +7,7 @@
 //! `AGENTS`; nothing else changes. The engine keeps each connected home's
 //! receipt in a record file of its own (`apply::agent_apply_expecting`).
 
+mod amp;
 mod antigravity;
 mod auggie;
 mod claude_desktop;
@@ -14,7 +15,9 @@ mod cline;
 mod continue_ide;
 mod copilot;
 mod cursor;
+mod deepseek;
 mod devin;
+mod goose;
 pub(crate) mod json;
 mod kiro;
 mod opencode;
@@ -27,6 +30,7 @@ mod spec;
 mod trae;
 mod vscode_copilot;
 mod yaml;
+mod zcode;
 mod zed;
 
 pub use plan::{Files, Planned, Receipt, connect, disconnect, taken_out};
@@ -51,6 +55,10 @@ static AGENTS: &[&Agent] = &[
     &continue_ide::AGENT,
     &qoder::AGENT,
     &qoder_ide::AGENT,
+    &zcode::AGENT,
+    &deepseek::AGENT,
+    &amp::AGENT,
+    &goose::AGENT,
 ];
 
 pub fn all() -> &'static [&'static Agent] {

@@ -1,0 +1,7 @@
+# Lab user's Goose config
+extensions:
+  developer:
+    name: developer
+    type: platform
+    enabled: true
+GOOSE_MAX_TOOL_RESPONSE_SIZE: 200000
