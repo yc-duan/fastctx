@@ -213,6 +213,9 @@ pub(super) fn start(node: &std::sync::Arc<crate::Node>) {
     }
     let node = node.clone();
     fastctx_platform::task::spawn(async move {
+        // A repair that keeps failing is tried again later each time, and
+        // told when it starts failing or fails otherwise (`crate::said`).
+        let mut again = crate::again::Again::default();
         loop {
             let notified = signal.notified();
             tokio::pin!(notified);
@@ -227,8 +230,20 @@ pub(super) fn start(node: &std::sync::Arc<crate::Node>) {
                     }).map_err(io::Error::other)?;
                     let Some(last)=keys.last() else {break};after=last.clone();
                     for key in keys {
-                        let result=key.parse::<ResidentId>().map_err(io::Error::other).and_then(|id|repair(&working.world,&id));
-                        if let Err(error)=result {failed=true;working.log.line(format_args!("repairing context projection for {key}: {error}"));}
+                        let Ok(id) = key.parse::<ResidentId>() else {
+                            // Names no conversation, so nothing can repair it.
+                            working.log.line(format_args!("letting go of a context projection mark that names no conversation: {key}"));
+                            working.database.write_now(128, move |db| {
+                                db.execute("DELETE FROM context_projection_dirty WHERE conversation=?1", [&key])?;
+                                Ok(())
+                            }).map_err(io::Error::other)?;
+                            continue;
+                        };
+                        let failure = repair(&working.world, &id).err().map(|error| error.to_string());
+                        failed |= failure.is_some();
+                        if working.said.changed(&id, "context projection", failure.as_deref()) {
+                            working.log.line(format_args!("repairing context projection for {key}: {}", failure.unwrap_or_default()));
+                        }
                     }
                 }
                 Ok(failed)
@@ -245,8 +260,9 @@ pub(super) fn start(node: &std::sync::Arc<crate::Node>) {
                 }
             };
             if failed {
-                tokio::select! {()=&mut notified=>{},()=tokio::time::sleep(std::time::Duration::from_secs(5))=>{}}
+                tokio::select! {()=&mut notified=>{},()=tokio::time::sleep(again.next())=>{}}
             } else {
+                again.reset();
                 notified.await;
             }
         }

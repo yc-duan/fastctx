@@ -22,6 +22,12 @@ const SETTLE: std::time::Duration = std::time::Duration::from_secs(3);
 /// the rest wait their turn, holding nothing.
 const BACKGROUND: usize = 2;
 
+/// How many times in a row a refresh may fail the same way before it stops
+/// being tried on a timer: what it reads did not change, so another try
+/// would fail again (a conversation of an account the hub no longer has).
+/// A change it reads, or the conversation's next turn, tries it once more.
+const SAME_FAILURES: u32 = 4;
+
 pub(crate) struct Updates {
     pending: Mutex<BTreeMap<ResidentId, Pending>>,
     refreshing: crate::leases::Registry<ResidentId, fastctx_platform::doing::Mutex<()>>,
@@ -54,10 +60,12 @@ struct Pending {
     plan_revision: u64,
     plan_loaded: u64,
     working: bool,
+    /// The last failure, and how many times in a row it came.
+    failed: Option<(String, u32)>,
 }
 impl Default for Pending {
     fn default() -> Self {
-        Self { revision: 1, loaded: 0, plan_revision: 1, plan_loaded: 0, working: false }
+        Self { revision: 1, loaded: 0, plan_revision: 1, plan_loaded: 0, working: false, failed: None }
     }
 }
 
@@ -118,11 +126,10 @@ fn request(node: &Arc<Node>, id: &ResidentId, plan: bool) {
                 refresh(&node, &id).await
             }
             .await;
-            let failed = result.is_err();
-            if let Err(error) = result
-                && node.residents.active(&id).is_ok()
-            {
-                node.log.line(format_args!("refreshing {id}'s context: {error}"));
+            let failure = result.err().map(|error| error.to_string());
+            let failed = failure.is_some();
+            if node.residents.active(&id).is_ok() {
+                told(&node, &id, failure.as_deref());
             }
             {
                 let mut pending = node.contexts.pending.lock().expect("never poisoned");
@@ -131,7 +138,16 @@ fn request(node: &Arc<Node>, id: &ResidentId, plan: bool) {
                     break;
                 }
                 let pending = pending.get_mut(&id).expect("worker owns its entry");
+                pending.failed = match (failure, pending.failed.take()) {
+                    (None, _) => None,
+                    (Some(now), Some((before, times))) if now == before => Some((now, times.saturating_add(1))),
+                    (Some(now), _) => Some((now, 1)),
+                };
                 if !failed && pending.loaded == pending.revision {
+                    pending.working = false;
+                    break;
+                }
+                if pending.failed.as_ref().is_some_and(|(_, times)| *times >= SAME_FAILURES) {
                     pending.working = false;
                     break;
                 }
@@ -146,6 +162,14 @@ fn request(node: &Arc<Node>, id: &ResidentId, plan: bool) {
             }
         }
     });
+}
+
+/// Logs how a refresh of `id`'s context failed, when it starts failing or
+/// fails otherwise than it did; a success clears it.
+pub(crate) fn told(node: &Node, id: &ResidentId, failure: Option<&str>) {
+    if node.said.changed(id, "context", failure) {
+        node.log.line(format_args!("refreshing {id}'s context: {}", failure.unwrap_or_default()));
+    }
 }
 
 /// Refreshes `id`'s context with its plan read again: its plan or working

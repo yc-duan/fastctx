@@ -12,7 +12,7 @@ mod storage;
 pub(crate) mod turn;
 mod updates;
 pub(crate) mod words;
-pub(crate) use updates::{Updates, refresh, request_plan, start};
+pub(crate) use updates::{Updates, refresh, request_plan, start, told};
 
 use crate::Node;
 use fastctx_types::{Address, ResidentId};

@@ -793,9 +793,8 @@ async fn collect(
     }
     let (working, id) = (node.clone(), resident.clone());
     blocking("reading the host's context receipt", move || crate::context::plugin_heard(&working, &id)).await?;
-    if let Err(failure) = crate::context::refresh(node, &resident).await {
-        node.log.line(format_args!("{resident}: refreshing its context: {}", failure.message));
-    }
+    let refreshed = crate::context::refresh(node, &resident).await;
+    crate::context::told(node, &resident, refreshed.as_ref().err().map(|failure| failure.message.as_str()));
     if native_delivery(node, &resident) {
         return collect_notes(node, resident, answering, Vec::new(), Some(collected_notes)).await;
     }
