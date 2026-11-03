@@ -27,6 +27,12 @@ use crate::Node;
 /// bursts. Each time reads every resident here.
 const SETTLE: Duration = Duration::from_secs(1);
 
+/// How long the World is held back for what the hubs tell of the other
+/// machines to come whole (`ready`): past it the World is told as it is
+/// known, and told again as the rest comes, so that a session that never
+/// says all is told cannot keep an interface from showing anything.
+const READY_WITHIN: Duration = Duration::from_secs(3);
+
 /// The World as the interfaces watching it are told it, worked out once for
 /// them all and only while one watches; none until it is worked out anew.
 pub(crate) struct Shown {
@@ -67,6 +73,8 @@ async fn publish(node: Arc<Node>) {
     // on showing what they were told, and the log says why, once a reason.
     let mut failing: Option<String> = None;
     let mut stale = true;
+    // Since when the hubs' sessions have not all told what is afoot whole.
+    let mut unready: Option<tokio::time::Instant> = None;
     loop {
         if told.receiver_count() == 0 {
             // Nobody watches: nothing is worked out, and what was told is
@@ -95,7 +103,13 @@ async fn publish(node: Arc<Node>) {
             residents.borrow_and_update();
             shown.borrow_and_update();
             while jobs.try_recv().is_ok() {}
-            if ready(&node) {
+            let held = if ready(&node) {
+                unready = None;
+                false
+            } else {
+                unready.get_or_insert_with(tokio::time::Instant::now).elapsed() < READY_WITHIN
+            };
+            if !held {
                 match now(&node).await {
                     Ok(world) => {
                         failing = None;
@@ -120,9 +134,12 @@ async fn publish(node: Arc<Node>) {
                     }
                 }
             }
-            stale = false;
+            stale = held;
         }
+        // Held back, it is told at the latest when the wait is over.
+        let until = unready.filter(|_| stale).map(|since| since + READY_WITHIN);
         tokio::select! {
+            () = async { tokio::time::sleep_until(until.expect("a wait")).await }, if until.is_some() => {}
             () = node.world_shown.watched.notified() => {}
             changed = residents.changed() => if changed.is_err() { return } else { stale = true },
             changed = shown.changed() => if changed.is_err() { return } else { stale = true },
@@ -154,8 +171,9 @@ pub(crate) async fn now(node: &Arc<Node>) -> Result<WorldNow, Failure> {
 }
 
 /// Whether what the hubs told of the other machines is as each session on
-/// now first gave it: until then the World is not told, so that it does not
-/// show the other machines' residents gone for a moment.
+/// now first gave it: until then the World is held back, for no longer than
+/// `READY_WITHIN`, so that it does not show the other machines' residents
+/// gone for a moment.
 pub(crate) fn ready(node: &Node) -> bool {
     node.links().iter().all(|link| link.afoot_ready())
 }
