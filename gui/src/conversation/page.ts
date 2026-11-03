@@ -990,6 +990,7 @@ export class ConversationPage {
     this.unbindShared?.();
     this.fileLinks?.release();
     this.pictures?.release();
+    this.nodeTray?.close();
     void this.session?.close();
   }
 

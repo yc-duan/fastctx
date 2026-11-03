@@ -80,6 +80,7 @@ import { TurnLine, time, type LineSays } from "./turn-line";
 import { fly, type Departure } from "./flight";
 import { estimate } from "./estimate";
 import { Heights } from "./heights";
+import { RowsKept } from "./rows-kept";
 import { FindContent, displayedDiff, toolText } from "./find-content";
 import { clockSays, stretchSays, thoughtHeads, thoughtOnly, thoughtText, thoughtTook } from "./stretch-says";
 import { displayedText, htmlText as displayedTextHtml, type TextMatch } from "./find-text";
@@ -168,6 +169,9 @@ const WRITE = "~";
 /** The most bytes of rows a change is read ahead in, not kept with the
  *  conversation: larger ones are read as they are opened. */
 const PREFETCH = 1024 * 1024;
+/** The characters of changes' rows a page keeps read whole (`RowsKept`):
+ *  the few latest changes of any size, or many small ones. */
+const ROWS_KEPT = 4 * 1024 * 1024;
 
 /** How far beyond what is in view blocks are drawn, in screens: one above,
  *  as a reader going up meets what was just there; two below, where the
@@ -284,8 +288,8 @@ export class ConversationView {
   private findRead = new Map<string, string>();
   private findRemoved = new Set<string>();
   /** The rows of changes read whole, by row: what finding and opening
-   *  them again draw from, with no request. */
-  private findWrites = new Map<string, { signature: string; lines: readonly string[] }>();
+   *  them again draw from, with no request, the latest used kept. */
+  private findWrites = new RowsKept(ROWS_KEPT);
   /** Reading in the background the changes that are not kept with the
    *  conversation but are small enough to read whole (`prefetch`). */
   private prefetching: AbortController | null = null;
@@ -2834,18 +2838,27 @@ export class ConversationView {
           const key = `${entry.key}${WRITE}${write.id}`;
           const diff = write.diff;
           if (diff && !diff.lines && diff.bytes !== undefined && diff.bytes <= PREFETCH && !this.readAhead.has(key)) {
-            this.readAhead.add(key);
             wanted.push([key, write, diff]);
           }
         }
       }
     }
-    if (!wanted.length) return;
+    // The latest first, the reader being at the end, and only as many as the
+    // rows kept hold: more would let the latest go again.
+    let room = this.findWrites.room;
+    const taken: typeof wanted = [];
+    for (const one of wanted.reverse()) {
+      const bytes = one[2].bytes ?? 0;
+      if (bytes > room) break;
+      room -= bytes;
+      this.readAhead.add(one[0]);
+      taken.push(one);
+    }
+    if (!taken.length) return;
     const request = new AbortController();
     this.prefetching = request;
     void (async () => {
-      // The latest first: the reader is at the end.
-      for (const [key, write, diff] of wanted.reverse()) {
+      for (const [key, write, diff] of taken) {
         let raw: OpenedLines | null = null;
         try {
           raw = await lines(diff.machine, diff.path, { kind: "file", encoding: "utf-8" });

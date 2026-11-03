@@ -189,6 +189,7 @@ export class NodeQueue {
       editing.unbind();
       editing.tray?.settle();
       await this.session.finishEditing(editing.document);
+      editing.tray?.close();
       if (this.editing === editing) this.editing = null;
       this.draw();
     } catch (error) {
@@ -199,6 +200,7 @@ export class NodeQueue {
 
   private close(): void {
     this.editing?.unbind();
+    this.editing?.tray?.close();
     this.editing = null;
   }
 
