@@ -104,36 +104,56 @@ pub fn run(command: Doctor) -> anyhow::Result<()> {
 }
 
 fn calls_out(calls: Vec<fastctx_types::stats::CallWork>, json: bool) -> anyhow::Result<()> {
+    use fastctx_types::call_diagnostics::{Class, Summary};
     if json {
         println!("{}", serde_json::to_string(&calls)?);
     } else if calls.is_empty() {
         println!("No calls in progress.");
     } else {
-        for call in calls {
-            // A stream stays open by design, a watch for as long as its
-            // caller watches; any other call has a term, and one past it is
-            // said to be overdue.
+        let class = |call: &fastctx_types::stats::CallWork| {
+            call.class.unwrap_or(if call.within.is_some() { Class::Request } else { Class::Unknown })
+        };
+        let mut summary = Summary::default();
+        for call in &calls {
+            summary.record(class(call), call.seconds, call.overdue);
+        }
+        calls_summary(summary);
+        for call in calls.iter().filter(|call| class(call) != Class::Subscription || call.overdue) {
             let term = match call.within {
                 Some(within) if call.overdue => format!(", overdue past its {within} s"),
                 Some(within) => format!(" of its {within} s"),
-                None if call.pool == "stream" => ", a stream that stays open".to_string(),
-                None => String::new(),
+                None => ", no total deadline".to_string(),
             };
             println!(
-                "{} {} ({}) for {} from {}: {}, {} s{term}, {}{}",
+                "{} {} ({}, {}) for {} from {}: {}, {} s{term}, {}{}",
                 call.id,
                 call.kind,
+                class(call).name(),
                 call.pool,
                 call.account,
                 call.machine,
                 call.phase,
                 call.seconds,
                 call.waiting,
-                call.conversation.map(|id| format!(" ({id})")).unwrap_or_default()
+                call.conversation.as_ref().map(|id| format!(" ({id})")).unwrap_or_default()
             );
         }
     }
     Ok(())
+}
+
+fn calls_summary(summary: fastctx_types::call_diagnostics::Summary) {
+    println!("Calls still open (age buckets: <1m, 1–5m, 5m–1h, 1h–1d, >=1d):");
+    for (class, ages) in summary.groups() {
+        println!(
+            "  {}: {}, oldest {} s, ages {:?}, {} overdue",
+            class.name(),
+            ages.count,
+            ages.oldest_seconds,
+            ages.buckets,
+            ages.overdue
+        );
+    }
 }
 
 /// What work cost since the node started, the costliest first: the time its
@@ -195,6 +215,9 @@ fn readings_out(
         said.push(format!("{} is {}% used", near.bound, near.used));
     }
     println!("Health: {}.", said.join("; "));
+    if let Some(calls) = health.calls {
+        calls_summary(calls);
+    }
     println!("Rules broken since the node started: {}.", readings.violations_total);
     for violation in &readings.violations {
         println!(

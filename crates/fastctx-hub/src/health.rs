@@ -111,7 +111,7 @@ fn now(hub: &Hub) -> serde_json::Value {
     let outs: Vec<(String, crate::outq::Outq)> =
         hub.sessions().iter().map(|(name, session)| (name.to_string(), session.out.clone())).collect();
     let queues: Vec<(String, crate::outq::Sizes)> = outs.into_iter().map(|(name, out)| (name, out.sizes())).collect();
-    let oldest = hub.calls.lock().expect("never poisoned").values().map(|pending| pending.at).min();
+    let calls = crate::control::diagnostics::snapshot(hub);
     let (waiting, live, registered) = crate::data::counts(hub);
     let letters = crate::mailbox::backlog(hub);
     let behind: usize = letters.iter().map(|waiting| waiting.pending).sum();
@@ -151,10 +151,7 @@ fn now(hub: &Hub) -> serde_json::Value {
                 "notices": sizes.notices,
             })).collect::<Vec<_>>(),
         },
-        "calls": {
-            "pending": hub.calls.lock().expect("never poisoned").len(),
-            "oldest_seconds": oldest.map(|at| at.elapsed().as_secs()),
-        },
+        "calls": calls,
         "transfers": { "waiting": waiting, "live": live, "registered": registered },
         "letters": {
             "held": letters.iter().map(|waiting| waiting.held).sum::<usize>(),

@@ -15,6 +15,7 @@ pub mod agent;
 pub mod agents;
 pub mod attachments;
 pub mod authorization;
+pub mod call_diagnostics;
 pub mod calls;
 pub mod closest;
 pub mod collab;

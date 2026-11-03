@@ -18,6 +18,7 @@ use fastctx_types::{AccountName, AgentName, MachineName};
 use jiff::Timestamp;
 use tokio::sync::mpsc;
 
+pub(crate) mod diagnostics;
 mod encoding;
 mod transport;
 
@@ -165,6 +166,7 @@ pub(crate) struct Pending {
     stream: Option<u64>,
     /// When the hub passed it on.
     pub(crate) at: tokio::time::Instant,
+    diagnostic: Arc<diagnostics::Call>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1140,10 +1142,15 @@ async fn keep(
 }
 
 /// The same authorization facts for an inline call and one carried over a data connection.
-fn call_details(message: &Envelope, target_verifies: bool) -> Result<fastctx_net::call_details::CallDetails, String> {
+fn call_details(
+    message: &Envelope,
+    target_verifies: bool,
+) -> Result<(fastctx_net::call_details::CallDetails, Option<diagnostics::Kind>), String> {
     use fastctx_net::{call_details::CallDetails, message::Body};
     match message.body::<Body>().map_err(|error| error.to_string())? {
-        Body::Call { call } | Body::StreamCall { call } => Ok(CallDetails::of(&message.from, &call)),
+        Body::Call { call } | Body::StreamCall { call } => {
+            Ok((CallDetails::of(&message.from, &call), Some(diagnostics::Kind::of(&call))))
+        }
         Body::LargeCall { details, .. } => {
             let details = details.ok_or("upgrade the sender: its large call has no authorization facts")?;
             if message.purpose != Some(details.purpose) {
@@ -1152,7 +1159,7 @@ fn call_details(message: &Envelope, target_verifies: bool) -> Result<fastctx_net
             if !target_verifies {
                 return Err(format!("upgrade {}: it cannot verify a large call's authorization facts", message.to));
             }
-            Ok(details)
+            Ok((details, None))
         }
         _ => Err("the envelope does not carry a call".into()),
     }
@@ -1330,7 +1337,7 @@ fn call(
     let Some((target_generation, target, target_verifies)) = target else {
         return CallStatus::Offline { last_seen };
     };
-    let details = match call_details(&message, target_verifies) {
+    let (details, kind) = match call_details(&message, target_verifies) {
         Ok(details) => details,
         Err(reason) => return CallStatus::Refused { reason },
     };
@@ -1360,6 +1367,13 @@ fn call(
         id,
         target: to.clone(),
         target_generation,
+        diagnostic: Arc::new(diagnostics::Call {
+            id: key,
+            caller: name.clone(),
+            target: to.clone(),
+            account: standing.account.clone(),
+            kind,
+        }),
         standing,
         stream,
         at: tokio::time::Instant::now(),

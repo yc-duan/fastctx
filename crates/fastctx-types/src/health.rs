@@ -45,6 +45,9 @@ pub struct Health {
     /// any are left, failed or set aside (`specs/world-engine.md`, 兼容与迁移).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub migrating: Option<Migrating>,
+    /// The latest census of admitted calls. Ages alone never imply stuck work.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub calls: Option<crate::call_diagnostics::Summary>,
 }
 
 /// How the move of a machine's earlier records goes.

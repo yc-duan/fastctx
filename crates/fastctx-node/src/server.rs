@@ -123,6 +123,7 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
             writer.drain().await?;
             continue;
         }
+        let _subscription = crate::local_subscriptions::observe(node.machine(), &caller, &call);
         if let Call::McpRelay { name } = call {
             return crate::mcp::local::serve(node, &hello.peer, name, id, reader, writer).await;
         }

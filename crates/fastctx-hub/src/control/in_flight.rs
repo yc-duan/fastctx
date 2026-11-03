@@ -94,10 +94,6 @@ impl InFlight {
         self.calls.values()
     }
 
-    pub(crate) fn len(&self) -> usize {
-        self.calls.len()
-    }
-
     /// The hub's keys of the calls that `member`'s session `generation` made
     /// or was called in.
     pub(crate) fn in_session(&self, member: &MachineName, generation: u64) -> Vec<u64> {

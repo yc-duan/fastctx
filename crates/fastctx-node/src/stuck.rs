@@ -55,7 +55,8 @@ pub(crate) fn start(node: &Arc<Node>) {
             // The node is gone when its last holder let go: nothing to watch.
             let Some(node) = watched.upgrade() else { return };
             let mut snapshot = doing::snapshot(WAITS, HOLDS);
-            snapshot.stuck.extend(crate::intake::stuck());
+            let (calls, call_details) = crate::intake::stuck();
+            snapshot.stuck.extend(calls);
             let now = Instant::now();
             if !node.handoff.yielding() {
                 handoff_reported = None;
@@ -77,6 +78,11 @@ pub(crate) fn start(node: &Arc<Node>) {
             for stuck in &snapshot.stuck {
                 let first = !told.contains_key(&stuck.key);
                 let due = told.get(&stuck.key).is_none_or(|at| now.duration_since(*at) >= AGAIN);
+                if (first || due)
+                    && let Some(call) = call_details.get(&stuck.key)
+                {
+                    node.log.line(format_args!("overdue call: {call}"));
+                }
                 if first {
                     // While it is still stuck, the scene says who waits for
                     // whom (`specs/world-engine.md`, 量与告警).

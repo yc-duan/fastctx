@@ -98,6 +98,7 @@ mod lifecycle;
 mod lifetime;
 mod limits;
 mod lines;
+mod local_subscriptions;
 mod log;
 mod login_identity;
 mod logins;

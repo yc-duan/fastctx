@@ -155,6 +155,7 @@ pub fn summary() -> Health {
         near,
         damaged: DAMAGED.read().unwrap_or_else(|poisoned| poisoned.into_inner()).map(str::to_string),
         migrating: migrating(),
+        calls: crate::call_readings::get(),
     }
 }
 
