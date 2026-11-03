@@ -482,8 +482,8 @@ pub(crate) async fn prepare_update(hub: &Arc<Hub>, name: &MachineName, version: 
 
 fn keep_prepared_manifest(hub: &Hub, manifest: &Manifest) -> Result<(), String> {
     let mut store = hub.edit_store();
-    // A fetch begun before the move can finish after its final snapshot
-    // (2026-10-29). The store lock also orders this check with freeze's flush.
+    // A fetch begun before the move can finish after its final snapshot.
+    // The store lock also orders this check with freeze's flush.
     if hub.moving.frozen() {
         return Err("the hub is handing its records over; prepare this update at its new place".into());
     }

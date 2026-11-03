@@ -181,7 +181,7 @@ pub(super) fn mount(path: &Path) -> io::Result<u64> {
         use std::ffi::CString;
         use std::os::unix::ffi::OsStrExt;
         let name = CString::new(path.as_os_str().as_bytes())?;
-        // 2026-10-20: device IDs cannot distinguish a bind mount from its source.
+        // Device IDs cannot distinguish a bind mount from its source.
         let fallback = || fastctx_platform::mountinfo::id(path);
         // SAFETY: initialized output and terminated path, queried without following links.
         let mut data: libc::statx = unsafe { std::mem::zeroed() };

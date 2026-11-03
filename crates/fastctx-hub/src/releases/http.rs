@@ -137,7 +137,7 @@ async fn respond(
                 let parts = upgraded.downcast::<TokioIo<TlsStream>>().map_err(|_| "unexpected upgraded transport")?;
                 let limit = wire::MAX_DATA_MESSAGE + wire::MAX_CONTROL_FRAME;
                 let config = if path == wire::CONTROL_PATH {
-                    // 2026-10-31: default per-socket buffers exhausted 2 GiB at
+                    // Default per-socket buffers took 2 GiB at
                     // ten thousand idle members. Frames still retain their
                     // existing bounds and grow the receive buffer when needed.
                     fastctx_net::dial::config(limit).read_buffer_size(4096).write_buffer_size(0)

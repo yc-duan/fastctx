@@ -444,8 +444,8 @@ pub(super) fn problem(hub: &Hub, version: &str, target: Option<&str>, why: Optio
     let cache = hub.updates.lock().expect("never poisoned").cache.clone();
     let available = super::inventory::held(hub, &cache);
     let mut store = hub.edit_store();
-    // Background preparation may outlive the final moving snapshot
-    // (2026-10-29); its late outcome is retried by the receiving hub.
+    // Background preparation may outlive the final moving snapshot; its
+    // late outcome is retried by the receiving hub.
     if hub.moving.frozen() {
         return;
     }

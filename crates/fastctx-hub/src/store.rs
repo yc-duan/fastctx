@@ -846,7 +846,7 @@ impl Store {
             // The same name spelled anew keeps its records where they are.
             if old != new && self.letters.contains_key(&new) {
                 // The current member still owns its old-name record. The
-                // occupied destination belongs to a removed member (2026-10-16).
+                // occupied destination belongs to a removed member.
                 let removed = self.letters[&new].out_epoch;
                 let discarded = self.forget_letters(&new);
                 said.push(format!(
@@ -1236,7 +1236,7 @@ fn rehouse(
             .collect();
         for alias in names {
             // A directly recorded name belongs to that record even when a
-            // different current member now has it as an alias (2026-10-16).
+            // different current member now has it as an alias.
             if alias != name && letters.contains_key(alias) {
                 continue;
             }

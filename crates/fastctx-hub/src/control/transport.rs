@@ -11,7 +11,7 @@ use futures_util::{SinkExt as _, StreamExt as _};
 use tokio::sync::{mpsc, watch};
 use tokio_tungstenite::tungstenite::Message;
 
-// 2026-10-31: bound both count and bytes. A full legitimate letter window
+// Both count and bytes are bounded. A full legitimate letter window
 // fits; a peer ignoring the window cannot allocate unbounded business work.
 const INPUT_FRAMES: usize = 2048;
 const INPUT_BYTES: usize = 16 * 1024 * 1024;
