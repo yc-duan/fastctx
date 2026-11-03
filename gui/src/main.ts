@@ -480,7 +480,7 @@ async function agentModels(agent: "claude" | "codex"): Promise<AgentModel[]> {
 let place: Place = { kind: "home" };
 
 /** The places that are the workbench's: in Connect they open the activity. */
-const WORKBENCH_PLACES: Place["kind"][] = ["home", "new", "project", "talk", "talks", "archived", "history", "talk-history", "page", "feature"];
+const WORKBENCH_PLACES: Place["kind"][] = ["home", "new", "project", "projects", "talk", "talks", "archived", "history", "talk-history", "page", "feature", "usage"];
 
 /** The pages one comes into from another, which have a way back in their
  *  head (`world-gui.md`, 界面的结构); the sidebar's own pages have none. */
@@ -3317,7 +3317,8 @@ function show(next: Place): void {
         cache: live ? { size: async () => (await keptUsage()).bytes, clear: asDevice ? keptClear : async () => { await data({ do: "clear_cache" }); } } : specimenCache,
         confirm: accountConfirm,
         now: () => new Date(),
-        archived: () => talksOf(store.world.peek(), talkActs).archived.length,
+        // Conversations are the workbench's: in Connect none are offered.
+        archived: () => (accountLayer.workbench.peek() ? talksOf(store.world.peek(), talkActs).archived.length : 0),
       });
       break;
     case "settings":
