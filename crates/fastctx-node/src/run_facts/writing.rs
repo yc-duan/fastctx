@@ -37,6 +37,9 @@ pub(crate) fn prepare(record: &Path) -> io::Result<Job> {
                 }
                 let fact: WriteFact = serde_json::from_slice(&line)?;
                 valid(&fact)?;
+                // The line end is the journal's: the same fact kept as a file
+                // of its own has none, and the two are one record.
+                line.pop();
                 push(Source::new(fact.id.clone(), journal.clone(), line.clone())?)?;
             }
             Ok(())
