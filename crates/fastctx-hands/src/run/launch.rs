@@ -254,10 +254,6 @@ fn starting_directory(launch: &Launch<'_>) -> Result<PathBuf, Failure> {
 
 /// Picks an unused job id. The output file, created exclusively, is what
 /// reserves it.
-pub fn reserve(resident: &ConversationDir) -> io::Result<(JobId, PathBuf)> {
-    reserve_with(resident, |_| Some(())).map(|(job, output, ())| (job, output))
-}
-
 fn reserve_with<G>(
     resident: &ConversationDir,
     mut reserve: impl FnMut(&Path) -> Option<G>,

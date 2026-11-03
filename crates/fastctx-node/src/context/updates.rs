@@ -193,10 +193,15 @@ fn start_pending(node: &Arc<Node>, id: &ResidentId) {
                     break;
                 }
             }
+            // A refresh that failed is tried again, later each time. One that
+            // a change outdated while it ran waits for changes to settle, so a
+            // stream of them, as a replica's sync sends, runs it a few times
+            // rather than back to back.
             if failed {
                 tokio::time::sleep(again.next()).await;
             } else {
                 again.reset();
+                tokio::time::sleep(SETTLE).await;
             }
         }
     });

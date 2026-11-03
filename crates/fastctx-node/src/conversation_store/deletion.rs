@@ -48,8 +48,9 @@ pub(crate) fn purge(database: &Database, conversation: &str) -> Result<u64> {
             [conversation],
             |row| row.get(0),
         )?;
-        // The durable tombstone fences all conversation rows after the first
-        // purge. Transfer bookkeeping below can still arrive and must be cleared.
+        // The tombstone, written when the deletion began, fences every
+        // conversation row, so once a purge has finished none is left to
+        // remove. Transfer bookkeeping below can still arrive and must be cleared.
         if purged { Ok(Vec::new()) } else { schema::tables(db) }
     })?;
     // Children precede parents, so cascading deletes never turn a small batch
