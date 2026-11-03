@@ -2,9 +2,10 @@
    beside their name in the head; on the models tab, each agent's own on a
    paper card, the two side by side. */
 
+/* On the name's baseline: the tabs' words stand on the line the name does. */
 .cset-tabs {
   flex: none;
-  align-self: center;
+  align-self: baseline;
   margin-left: var(--space-3);
 }
 
