@@ -1,11 +1,13 @@
 //! Referenced map snapshots share unchanged scalar rows. A complete data revision
 //! becomes the next diff base before its owner is published; a live pin protects
 //! that revision until the owner's metadata and root commit together.
+mod staging;
+
 use super::Rows;
 use crate::leases;
 use fastctx_storage::{
     Database, Error, ErrorKind, Priority, Result,
-    rusqlite::{Connection, OptionalExtension, params},
+    rusqlite::{Connection, OptionalExtension},
 };
 use sha2::{Digest, Sha256};
 use std::{
@@ -108,113 +110,10 @@ pub(crate) async fn stage<T: Send + 'static, R: Send + 'static>(
     let permit = Arc::clone(&lease).lock_owned().await;
     let order = Arc::new(Order { _lease: lease, _permit: permit });
     fastctx_platform::task::spawn_blocking(move || {
-        stage_now(&database, conversation, name, values, priority, order, describe, install)
+        staging::stage_now(&database, conversation, name, values, priority, order, describe, install)
     })
     .await
     .map_err(|error| Error::new(error.to_string()))?
-}
-#[allow(clippy::too_many_arguments)]
-fn stage_now<T: Send + 'static, R: Send + 'static>(
-    database: &Database,
-    conversation: String,
-    name: String,
-    values: Values,
-    priority: Priority,
-    order: Arc<Order>,
-    describe: impl FnOnce(Option<&Values>) -> Result<R>,
-    install: impl FnOnce(&Rows<'_>, &Staged) -> Result<T> + Send + 'static,
-) -> Result<(T, R)> {
-    for (key, value) in &values {
-        if key.len() > KEY_BYTES || value.len() > VALUE_BYTES {
-            return Err(invalid("map scalars exceed their row admission bound"));
-        }
-    }
-    let hash = digest(&values);
-    let (base, previous) = database.read_background_now(|db| {
-        let tx = db.unchecked_transaction()?;
-        let base = tx
-            .query_row(
-                "SELECT published FROM record_map_heads WHERE conversation=?1 AND name=?2",
-                (&conversation, &name),
-                |row| row.get::<_, i64>(0),
-            )
-            .optional()?
-            .unwrap_or(0);
-        let previous = if base == 0 { Values::new() } else { read_revision(&tx, &conversation, &name, base)? };
-        tx.commit()?;
-        Ok((base, previous))
-    })?;
-    let description = describe((base != 0).then_some(&previous))?;
-    let mut changes: Vec<_> =
-        previous.keys().filter(|key| !values.contains_key(*key)).map(|key| (key.clone(), None)).collect();
-    changes.extend(
-        values
-            .into_iter()
-            .filter(|(key, value)| previous.get(key) != Some(value))
-            .map(|(key, value)| (key, Some(value))),
-    );
-    drop(previous);
-    let mut random = [0u8; 16];
-    getrandom::fill(&mut random).map_err(|error| Error::new(error.to_string()))?;
-    let token = format!("{:x}", u128::from_be_bytes(random));
-    let pin = Arc::new(Pin(token.clone()));
-    LIVE.lock().expect("map pins").insert(token.clone(), Arc::downgrade(&pin));
-    let (scope, map, lease, expected) = (conversation.clone(), name.clone(), token.clone(), changes.len() as i64);
-    let revision = commit(database, priority, 512, order.clone(), pin.clone(), move |db| {
-        db.prepare_cached(
-            "INSERT OR IGNORE INTO record_map_heads(conversation,name,allocated,published) VALUES(?1,?2,0,0)",
-        )?
-        .execute((&scope, &map))?;
-        let revision=db.prepare_cached("UPDATE record_map_heads SET allocated=allocated+1 WHERE conversation=?1 AND name=?2 AND allocated<9223372036854775807 RETURNING allocated")?.query_row((&scope,&map),|row|row.get::<_,i64>(0)).optional()?.ok_or_else(||invalid("map revision counter exhausted"))?;
-        db.prepare_cached("INSERT INTO record_map_revisions(conversation,name,revision,state,expected,written,hash) VALUES(?1,?2,?3,0,?4,0,?5)")?.execute((&scope,&map,revision,expected,hash))?;
-        db.prepare_cached("INSERT INTO record_map_pins(conversation,name,identity,revision) VALUES(?1,?2,?3,?4)")?
-            .execute((&scope, &map, lease, revision))?;
-        Ok(revision)
-    })?;
-    let staged = Staged { conversation, name, revision, token, _pin: pin.clone() };
-    let mut changes = changes.into_iter().peekable();
-    while changes.peek().is_some() {
-        let mut batch = Vec::new();
-        let mut bytes = 0;
-        while let Some((key, value)) = changes.peek() {
-            let size = key.len() + value.as_ref().map_or(0, Vec::len) + 128;
-            if !batch.is_empty() && (batch.len() == 64 || bytes + size > BATCH_BYTES) {
-                break;
-            }
-            bytes += size;
-            batch.push(changes.next().expect("peeked map row"));
-        }
-        let kept = staged.clone();
-        commit(database, priority, bytes, order.clone(), pin.clone(), move |db| {
-            let count = batch.len() as i64;
-            for (key, body) in batch {
-                db.prepare_cached(
-                    "INSERT OR IGNORE INTO record_map_keys(conversation,name,identity) VALUES(?1,?2,?3)",
-                )?
-                .execute((&kept.conversation, &kept.name, &key))?;
-                db.prepare_cached(
-                    "INSERT INTO record_map_entries(conversation,name,identity,revision,body) VALUES(?1,?2,?3,?4,?5)",
-                )?
-                .execute(params![kept.conversation, kept.name, key, kept.revision, body])?;
-            }
-            if db.prepare_cached("UPDATE record_map_revisions SET written=written+?4 WHERE conversation=?1 AND name=?2 AND revision=?3 AND state=0")?.execute((&kept.conversation,&kept.name,kept.revision,count))?!=1{return Err(invalid("map staging revision disappeared"));}
-            Ok(())
-        })?;
-    }
-    commit(database, priority, 512, order, pin, move |db| {
-        if db.prepare_cached("UPDATE record_map_revisions SET state=2 WHERE conversation=?1 AND name=?2 AND revision=?3 AND state=0 AND written=expected AND EXISTS(SELECT 1 FROM record_map_pins WHERE conversation=?1 AND name=?2 AND identity=?4 AND revision=?3)")?.execute((&staged.conversation,&staged.name,staged.revision,&staged.token))?!=1{return Err(invalid("map staging is incomplete or was collected"));}
-        if db
-            .prepare_cached(
-                "UPDATE record_map_heads SET published=?3 WHERE conversation=?1 AND name=?2 AND published=?4",
-            )?
-            .execute((&staged.conversation, &staged.name, staged.revision, base))?
-            != 1
-        {
-            return Err(invalid("map diff base changed during staging"));
-        }
-        let rows = Rows { connection: db, conversation: &staged.conversation };
-        Ok((install(&rows, &staged)?, description))
-    })
 }
 /// Install only a still-pinned revision, in the owning record's transaction.
 pub(crate) fn link(rows: &Rows<'_>, owner: &str, staged: &Staged) -> Result<()> {
