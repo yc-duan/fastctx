@@ -39,7 +39,11 @@ pub(super) fn configured(places: &Places) -> Result<Option<OsString>, Error> {
     Ok(if homes::same_home(&places.claude_home, &default)? {
         places.claude_config_dir.clone().map(PathBuf::into_os_string)
     } else {
-        Some(places.claude_home.clone().into_os_string())
+        // One spelling of the home, however it was given, so that every
+        // change works out the same entry: a home handed to another build
+        // arrives resolved, and on Windows in its verbatim form.
+        let home = std::fs::canonicalize(&places.claude_home).unwrap_or_else(|_| places.claude_home.clone());
+        Some(fastctx_hosts::inventory::plain(&home).into_os_string())
     })
 }
 
