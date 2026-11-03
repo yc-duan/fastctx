@@ -1,0 +1,53 @@
+# Walks the macOS application a ci/ run built, or a release, on a real Mac,
+# as people reported its window: `.github/mac-walk/walk.sh`. The run's
+# number or the release's tag is in `.github/mac-walk/run`; a push to a
+# mac-walk/ branch starts it.
+name: mac-walk
+
+on:
+  push:
+    branches: ['mac-walk/**']
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  walk:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - id: run
+        run: echo "from=$(tr -d '[:space:]' < .github/mac-walk/run)" >> "$GITHUB_OUTPUT"
+      - if: ${{ !startsWith(steps.run.outputs.from, 'v') }}
+        uses: actions/download-artifact@v4
+        with:
+          name: gui-macos-aarch64
+          run-id: ${{ steps.run.outputs.from }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: built
+      - if: ${{ startsWith(steps.run.outputs.from, 'v') }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download "${{ steps.run.outputs.from }}" --repo "${{ github.repository }}" --pattern '*_aarch64.app.tar.gz' --dir built
+      - name: Install it
+        run: |
+          ls -la built
+          tar -xzf built/*.app.tar.gz -C /Applications
+          ls /Applications/Fastctx.app/Contents/MacOS
+          sw_vers
+          system_profiler SPDisplaysDataType | grep -E "Resolution|Retina" || true
+      - name: Walk
+        working-directory: .github/mac-walk
+        run: |
+          swiftc -O walk.swift -o walk
+          bash walk.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mac-walk
+          path: |
+            .github/mac-walk/shots
+            .github/mac-walk/walk.log
+          if-no-files-found: ignore
