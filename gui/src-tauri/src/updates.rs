@@ -340,7 +340,9 @@ mod desktop {
             "version": version,
             "platforms": { target: { "url": format!("http://127.0.0.1:{port}/package"), "signature": package.signature } },
         });
-        let serving = tokio::spawn(serve(listener, manifest.to_string(), path.to_path_buf()));
+        // What the local source met on its side, told with a failed read.
+        let served = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let serving = tokio::spawn(serve(listener, manifest.to_string(), path.to_path_buf(), served.clone()));
         let installed = async {
             let endpoint =
                 format!("http://127.0.0.1:{port}/latest.json").parse().map_err(|error| format!("{error}"))?;
@@ -362,7 +364,9 @@ mod desktop {
                 .ok_or("the updater does not take this version as newer")?;
             // The updater checks the signature again as it reads the package.
             let bytes = update.download(|_, _| {}, || {}).await.map_err(|error| {
-                format!("reading and verifying installer {} for {version}: {error}", path.display())
+                let met = served.lock().map(|met| met.join("; ")).unwrap_or_default();
+                let met = if met.is_empty() { String::new() } else { format!(" (the local source: {met})") };
+                format!("reading and verifying installer {} for {version}: {error}{met}", path.display())
             })?;
             let marker = marker(app)?;
             if let Some(dir) = marker.parent() {
@@ -387,10 +391,21 @@ mod desktop {
     }
 
     /// Answers the updater's two requests: the manifest naming the package
-    /// here, and the package.
-    async fn serve(listener: tokio::net::TcpListener, manifest: String, package: PathBuf) {
+    /// here, and the package, streamed. What goes wrong on this side is
+    /// noted in `served`, with how much of the package was sent.
+    async fn serve(
+        listener: tokio::net::TcpListener,
+        manifest: String,
+        package: PathBuf,
+        served: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    ) {
+        let note = move |said: String| {
+            if let Ok(mut met) = served.lock() {
+                met.push(said);
+            }
+        };
         while let Ok((mut stream, _)) = listener.accept().await {
-            let (manifest, package) = (manifest.clone(), package.clone());
+            let (manifest, package, note) = (manifest.clone(), package.clone(), note.clone());
             tokio::spawn(async move {
                 let mut request = Vec::new();
                 let mut byte = [0_u8; 1];
@@ -401,23 +416,44 @@ mod desktop {
                     }
                 }
                 let line = String::from_utf8_lossy(&request).lines().next().unwrap_or_default().to_string();
-                let (kind, body) = if line.starts_with("GET /latest.json ") {
-                    ("application/json", manifest.into_bytes())
+                let head = |kind: &str, length: u64| {
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: {kind}\r\nContent-Length: {length}\r\nConnection: close\r\n\r\n"
+                    )
+                };
+                if line.starts_with("GET /latest.json ") {
+                    let body = manifest.into_bytes();
+                    let _ = stream.write_all(head("application/json", body.len() as u64).as_bytes()).await;
+                    let _ = stream.write_all(&body).await;
                 } else if line.starts_with("GET /package ") {
-                    match tokio::fs::read(&package).await {
-                        Ok(bytes) => ("application/octet-stream", bytes),
-                        Err(_) => return,
+                    let opened = async {
+                        let file = tokio::fs::File::open(&package).await?;
+                        let length = file.metadata().await?.len();
+                        Ok::<_, std::io::Error>((file, length))
+                    };
+                    let (mut file, length) = match opened.await {
+                        Ok(opened) => opened,
+                        Err(error) => {
+                            note(format!("opening {}: {error}", package.display()));
+                            let _ = stream
+                                .write_all(b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n")
+                                .await;
+                            return;
+                        }
+                    };
+                    if let Err(error) = stream.write_all(head("application/octet-stream", length).as_bytes()).await {
+                        note(format!("sending the package's head: {error}"));
+                        return;
+                    }
+                    match tokio::io::copy(&mut file, &mut stream).await {
+                        Ok(sent) if sent == length => {}
+                        Ok(sent) => note(format!("sent {sent} of {length} bytes, the file ending early")),
+                        Err(error) => note(format!("sending the package, {length} bytes: {error}")),
                     }
                 } else {
                     let _ = stream.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n").await;
                     return;
-                };
-                let head = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: {kind}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                    body.len()
-                );
-                let _ = stream.write_all(head.as_bytes()).await;
-                let _ = stream.write_all(&body).await;
+                }
                 let _ = stream.shutdown().await;
             });
         }
