@@ -97,12 +97,17 @@
 }
 
 /* On a narrow paper what is known of the line goes under who it is, rather
-   than being cut down to nothing; the deed keeps its place at the end. */
+   than being cut down to nothing; who it is gives way before the deed,
+   which keeps its place at the end of the first line. */
 @container ll-line (max-width: 480px) {
   .ll-row {
     flex-wrap: wrap;
     align-content: center;
     row-gap: 0;
+  }
+
+  .ll-who {
+    flex: 1 1 0;
   }
 
   .ll-tags {

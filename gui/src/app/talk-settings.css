@@ -1,0 +1,105 @@
+/* The workbench conversations' settings (`talk-settings.ts`): the tabs
+   beside their name in the head; on the models tab, each agent's own on a
+   paper card, the two side by side. */
+
+.cset-tabs {
+  flex: none;
+  align-self: center;
+  margin-left: var(--space-3);
+}
+
+.cset-tabs .segment {
+  white-space: nowrap;
+  text-decoration: none;
+}
+
+.cset-cards {
+  flex: 1;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 400px), 1fr));
+  align-items: start;
+  align-content: start;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--gutter) var(--space-10);
+}
+
+.cset-card {
+  min-width: 0;
+  padding: var(--space-4) var(--space-5) var(--space-3);
+  border-radius: var(--radius-l);
+  background: var(--fill);
+}
+
+.cset-card-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.cset-card-mark {
+  flex: none;
+  display: inline-flex;
+  color: var(--text);
+}
+
+.cset-card-name {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-family: var(--font-emphasis);
+  font-weight: 400;
+  font-size: var(--size-h3);
+  color: var(--text-strong);
+}
+
+.cset-card .prof-account {
+  position: relative;
+  display: inline-flex;
+  min-width: 0;
+}
+
+/* The preferences in a card: the card's width, the page scrolling them. */
+.cset-card .host-prefs {
+  --board: 100%;
+  padding-bottom: 0;
+}
+
+.cset-card .host-prefs > .hp-board > .home-section:first-child,
+.cset-card .host-prefs > .hp-first {
+  margin-top: var(--space-3);
+}
+
+/* On a phone the tabs take a line of their own below the menu and the
+   name, across the page, all five in reach without sliding. */
+@media (max-width: 760px) {
+  .page-head:has(.cset-tabs) {
+    flex-wrap: wrap;
+    row-gap: var(--space-2);
+    padding-bottom: var(--space-2);
+  }
+
+  .page-head:has(.cset-tabs) > .page-head-title {
+    display: contents;
+  }
+
+  .cset-tabs {
+    order: 10;
+    flex: 0 0 100%;
+    display: flex;
+    margin: 0;
+  }
+
+  .cset-tabs .segment {
+    flex: 1 1 auto;
+    padding: 4px 8px;
+    text-align: center;
+  }
+
+  .cset-cards {
+    padding-top: var(--space-2);
+  }
+
+  .cset-card {
+    padding: var(--space-3) var(--space-4) var(--space-2);
+  }
+}

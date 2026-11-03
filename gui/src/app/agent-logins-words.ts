@@ -77,13 +77,15 @@ export interface AgentLoginsWords extends MachinePickWords {
   remove: string;
   /** Opening the workbench in a connected login, and closing it. */
   bench: string;
-  benchClose: string;
+  benchSaid: string;
   assist: string;
   rereadLimits: string;
   copyDir: string;
   copied: string;
   autoTitle: string;
   autoTitleWhy: string;
+  resetInPlace: string;
+  resetInPlaceWhy: string;
   plan: string;
   planNone: string;
   assisting: string;
@@ -187,13 +189,15 @@ export const zhAgentLogins: AgentLoginsWords = {
   more: "更多",
   remove: "移除",
   bench: "工作台",
-  benchClose: "关闭工作台",
+  benchSaid: "在 Fastctx 中与它对话；打开或关闭之前，先说明会做的改动",
   assist: "协助…",
   rereadLimits: "重读额度",
   copyDir: "复制目录",
   copied: "已复制",
   autoTitle: "自动命名对话",
   autoTitleWhy: "新对话的第一轮结束后，由这个登录起一个标题，和 Codex 官方客户端一样；每段对话多一次很小的模型请求",
+  resetInPlace: "随清零重算本周",
+  resetInPlaceWhy: "厂商在重置时间之前清零这个账号的周额度时（比如升级套餐），这一周与受协助者的周用量从那一刻重新算；关着时只按账号的重置时间",
   plan: "套餐",
   planNone: "不标",
   assisting: "协助",
@@ -286,13 +290,15 @@ export const enAgentLogins: AgentLoginsWords = {
   more: "More",
   remove: "Remove",
   bench: "Workbench",
-  benchClose: "Close the workbench",
+  benchSaid: "Talk to it in Fastctx; what opening or closing it changes is shown first",
   assist: "Assist…",
   rereadLimits: "Read limits again",
   copyDir: "Copy directory",
   copied: "Copied",
   autoTitle: "Name conversations",
   autoTitleWhy: "After a new conversation's first turn, this login names it, as the Codex app does: one small model request per conversation",
+  resetInPlace: "Restart the week on early resets",
+  resetInPlaceWhy: "When the vendor clears this account's weekly limit before its reset time, as on a plan change, the week and the weekly usage of those it assists start over from then; when off, only at the reset time",
   plan: "Plan",
   planNone: "None",
   assisting: "Assisting",

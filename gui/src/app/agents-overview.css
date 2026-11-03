@@ -53,19 +53,32 @@
   fill: var(--text-3);
 }
 
-/* One column in the middle of the page, an agent's paper after another,
-   read as a list rather than a board. */
+/* The agents side by side, as many to a row as the page holds, so those
+   of a machine are seen at once rather than scrolled through; a card holds
+   a few logins, the rest a step in. */
 .ao-cards,
 .ao-missing {
-  max-width: 680px;
+  max-width: 1160px;
   margin-inline: auto;
 }
 
 .ao-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr));
+  align-items: start;
+  gap: var(--space-4);
+  padding-top: var(--space-5);
+}
+
+.ao-more {
   display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  padding-top: var(--space-4);
+  justify-content: flex-end;
+  padding-top: var(--space-1);
+}
+
+.ao-more .text-button {
+  color: var(--text-3);
+  text-decoration: none;
 }
 
 .ao-card {

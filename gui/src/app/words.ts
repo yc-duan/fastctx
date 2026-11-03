@@ -35,6 +35,8 @@ export interface ShellWords {
   activity: string;
   /** Model collaboration's settings, among the kernels'. */
   collaboration: string;
+  /** The workbench's conversations' settings, a row of its group. */
+  talkSettings: string;
   features: string;
   /** The way to every conversation of a list. */
   all: string;
@@ -1565,6 +1567,7 @@ export const zhShell: ShellWords = {
   workbench: "工作台",
   activity: "活动",
   collaboration: "模型协作",
+  talkSettings: "对话设置",
   features: "功能",
   all: "全部",
   device: (form) => ({ desktop: "台式机", laptop: "笔记本", server: "服务器" })[form],
@@ -1623,6 +1626,7 @@ export const enShell: ShellWords = {
   workbench: "Workbench",
   activity: "Activity",
   collaboration: "Model collaboration",
+  talkSettings: "Conversation settings",
   features: "Features",
   all: "All",
   device: (form) => form,

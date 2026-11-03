@@ -3,9 +3,10 @@
 // A connected login stands in ink; one found and not yet connected offers
 // to connect; a connection changed since, or asking for more, offers to be
 // renewed, in clay. Connecting or renewing opens the window that tells
-// what it changes (`agent-change.ts`). Claude Code's and Codex's connected
-// logins offer the workbench. Each agent's own page, with its folders, its
-// scans and each login's menu, is a step further in, from the card.
+// what it changes (`agent-change.ts`). Each agent's own page, with its
+// folders, its scans, each login's menu and, for Claude Code and Codex,
+// the switch of each login's workbench, is a step further in, from the
+// card.
 
 import { Popover } from "../conversation/popover";
 import { escape } from "../conversation/prose";
@@ -27,6 +28,9 @@ import type { Page } from "./shell";
 import { effect, type Signal } from "./signals";
 import type { Store } from "./store";
 import { keepRecord, keptRecord, readerNow } from "./usage/kept";
+
+/** The most lines a card holds: past it, the last says how many more. */
+const SHOWN = 3;
 
 /** An agent, by the word the node names it by. */
 type Agent = string;
@@ -67,8 +71,6 @@ export interface AgentsOverviewOptions {
   change(machine: string, agent: Agent, dir: string, into: boolean, raise: boolean, takeBack: boolean, expected?: string, workbench?: boolean): Promise<LoginChange>;
   /** The machine shown changed: the address follows. */
   showing(machine: string): void;
-  /** Opens the workbench on a machine whose node keeps it by account. */
-  workbenchOn(machine: string, agent: Agent, dir: string): void;
   /** The workbench was opened or closed in a login. */
   benched(open: boolean): void;
   /** Starts a conversation with `agent`'s login `home` on `machine`, its
@@ -290,17 +292,21 @@ export class AgentsOverview implements Page {
   }
 
   /** An agent's card: its mark and name, the way to its own page, and a
-   *  line for each login, connected ones first. */
+   *  line for each login, connected ones first; past `SHOWN` of them, where
+   *  the agent has a page of its own, the rest are a step in. */
   private card(machine: Pickable, record: MachineLogins, agent: Agent): string {
     const { logins, words } = this.options;
     const side = sideOf(record, agent) ?? { programs: [], listed: [], candidates: [], elsewhere: [] };
     const programs = side.programs.map((program) => programLine(program, logins)).join("\n\n");
-    const lines = [...side.listed, ...(this.mine(machine) ? side.candidates : [])].map((login) => this.line(machine, side, agent, login, !!record.by_login)).join("");
+    const all = [...side.listed, ...(this.mine(machine) ? side.candidates : [])];
     // Only Codex and Claude Code have a page of their own, for their
     // folders, scans and each login's menu.
-    const manage = isHost(agent)
-      ? `<a class="text-button ao-manage" href="${link({ kind: "agents", machine: machine.written, section: agent })}" title="${escape(words.manageSaid)}">${escape(words.manage)}</a>`
-      : "";
+    const page = isHost(agent) ? link({ kind: "agents", machine: machine.written, section: agent }) : null;
+    const shown = page && all.length > SHOWN ? all.slice(0, SHOWN - 1) : all;
+    const lines =
+      shown.map((login) => this.line(machine, side, agent, login, !!record.by_login)).join("") +
+      (page && shown.length < all.length ? `<li class="ao-more"><a class="text-button" href="${page}">${escape(words.moreLogins(all.length - shown.length))}</a></li>` : "");
+    const manage = page ? `<a class="text-button ao-manage" href="${page}" title="${escape(words.manageSaid)}">${escape(words.manage)}</a>` : "";
     return `<section class="ao-card" data-agent="${escape(agent)}">
       <header class="ao-head">
         <span class="ao-mark" aria-hidden="true">${agentGlyph(agent, 22)}</span>
@@ -343,7 +349,7 @@ export class AgentsOverview implements Page {
                   `<button class="text-button ll-quiet" type="button" data-ao="remove" ${at}>${escape(logins.remove)}</button>`
                 : byLogin && login.workbench
                   ? `<button class="text-button ll-quiet" type="button" data-ao="talk" ${at}>${escape(words.talk)}</button>`
-                  : `<button class="text-button ll-quiet" type="button" data-ao="workbench" ${at} title="${escape(words.workbenchSaid)}">${escape(words.workbench)}</button>`;
+                  : "";
     return loginLine({ standing, who: identity?.email ?? dirName(login.dir), whoSaid: login.dir, tags, act });
   }
 
@@ -445,16 +451,6 @@ export class AgentsOverview implements Page {
       case "remove": {
         const target = agent ? this.target(machine, agent, dir, false) : null;
         if (target) this.sheet.open(target);
-        return;
-      }
-      case "workbench": {
-        if (!agent) return;
-        // A node keeping the workbench by login opens it there, after its
-        // window; an earlier one keeps it by account.
-        const record = this.record?.machine === machine.name ? this.record : null;
-        const target = record?.by_login ? this.target(machine, agent, dir, true) : null;
-        if (target) this.sheet.open({ ...target, workbench: true });
-        else this.options.workbenchOn(machine.written, agent, dir);
         return;
       }
       case "talk": {

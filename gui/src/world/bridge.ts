@@ -384,6 +384,12 @@ export function setAgentTitle(machine: MachineName, agent: string, dir: string, 
   return invoke("set_agent_title", { machineName: machine, agentName: agent, dir, on });
 }
 
+/** Turns on or off whether a week cleared before its reset counts anew in
+ *  a login. */
+export function setAgentResetInPlace(machine: MachineName, agent: string, dir: string, on: boolean): Promise<MachineLogins> {
+  return invoke("set_agent_reset_in_place", { machineName: machine, agentName: agent, dir, on });
+}
+
 /** What a login on a machine was used for, as this device's accounts may
  *  see it. */
 export function agentUsage(machine: MachineName, agent: string, dir: string): Promise<UsageReport> {

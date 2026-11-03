@@ -7,9 +7,10 @@ export interface AgentsOverviewWords {
   /** A card's way to the agent's own page, and what is there. */
   manage: string;
   manageSaid: string;
+  /** The logins of an agent past the few its card shows. */
+  moreLogins(count: number): string;
   /** A connected login's way into the workbench, and what it is. */
   workbench: string;
-  workbenchSaid: string;
   /** A login the workbench is open in: a conversation started with it. */
   talk: string;
   /** A login whose connection was changed since, or asks for more. */
@@ -26,8 +27,8 @@ export const zhAgentsOverview: AgentsOverviewWords = {
   title: "智能体",
   manage: "管理",
   manageSaid: "全部登录、搜索的文件夹与扫描",
+  moreLogins: (count) => `还有 ${count} 个`,
   workbench: "工作台",
-  workbenchSaid: "在 Fastctx 中与它对话；开启前先说明将做的改动",
   talk: "新对话",
   renew: "更新接入",
   noLogin: "已安装，尚无登录",
@@ -39,8 +40,8 @@ export const enAgentsOverview: AgentsOverviewWords = {
   title: "Agents",
   manage: "Manage",
   manageSaid: "Every login, the folders searched, and scans",
+  moreLogins: (count) => `${count} more`,
   workbench: "Workbench",
-  workbenchSaid: "Talk to it in Fastctx; what opening it changes is shown first",
   talk: "New conversation",
   renew: "Update connection",
   noLogin: "Installed, no login yet",

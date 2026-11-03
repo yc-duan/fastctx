@@ -66,6 +66,8 @@ export interface RowFacts {
   usage: Usage | null;
   fresh: string;
   note: { text: string; detail: string } | undefined;
+  /** The switch of its workbench, where it may be turned. */
+  bench: string;
   now: Date;
 }
 
@@ -103,7 +105,7 @@ export function loginRow(facts: RowFacts, { words, access, usage: usageWords, wh
     ${facts.assistsMe ? allowanceBars(facts, usageWords, words) : bars(agent, login.limits, now, words, when)}
     ${week(facts, usageWords, words)}
     <div class="logins-row-mini">${miniCalendar(facts.usage ? byDay(facts.usage, facts.usage.usd ? "usd" : "tokens") : new Map(), dayOf(now.getTime()), `${machine}:${login.dir}`)}</div>
-    ${more}${note}
+    <div class="logins-row-acts">${facts.bench}${more}</div>${note}
   </li>`;
 }
 

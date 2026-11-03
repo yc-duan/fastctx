@@ -220,7 +220,7 @@
 .logins-row {
   position: relative;
   display: grid;
-  grid-template-columns: minmax(0, 1.15fr) minmax(170px, 1.25fr) 112px auto 32px;
+  grid-template-columns: minmax(0, 1.15fr) minmax(170px, 1.25fr) 112px auto auto;
   align-items: center;
   gap: var(--space-5);
   padding: var(--space-3) var(--space-3) var(--space-3) var(--space-4);
@@ -341,13 +341,35 @@
   justify-self: end;
 }
 
+/* What can be done to a row: its workbench switch, then its "⋯". */
+.logins-row-acts {
+  display: flex;
+  align-items: center;
+  justify-self: end;
+  gap: var(--space-3);
+}
+
+.logins-bench {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 32px;
+  color: var(--text-2);
+  font-size: var(--size-text);
+  white-space: nowrap;
+}
+
+.logins-bench:hover {
+  color: var(--text);
+}
+
 .logins-row-note {
   grid-column: 1 / -1;
 }
 
 @media (max-width: 1080px) {
   .logins-row {
-    grid-template-columns: minmax(0, 1fr) minmax(170px, 1.1fr) 112px 32px;
+    grid-template-columns: minmax(0, 1fr) minmax(170px, 1.1fr) 112px auto;
   }
 
   .logins-row-mini {
@@ -367,7 +389,7 @@
     grid-row: 1;
   }
 
-  .logins-row .logins-more {
+  .logins-row .logins-row-acts {
     grid-column: 2;
     grid-row: 1;
     align-self: start;

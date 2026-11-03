@@ -17,10 +17,9 @@
 // the settings are at its foot.
 
 import { glyph } from "../conversation/glyphs";
-import { keptSection, sectionOf, sectionRows } from "./agent-sections";
+import { keptSettings, settingsTabOf } from "./talk-settings";
 import { dropZones, followDrags } from "./sidebar-drag";
 import "./sidebar-drag.css";
-import type { ProfileWords } from "./profile-words";
 import { ActsMenu, type MenuAct, type MenuEntry } from "./acts-menu";
 import { Popover } from "../conversation/popover";
 import { escape } from "../conversation/prose";
@@ -49,8 +48,6 @@ import { onHeld } from "./press";
 export interface SidebarOptions {
   store: Store;
   words: ShellWords;
-  /** The agents' sections, named under 「智能体」 while one is open. */
-  sections: ProfileWords;
   /** The place shown now. */
   place(): Place;
   newTalk(): void;
@@ -124,9 +121,6 @@ export class Sidebar {
   /** Until when a folder opens or closes: drawing waits for it. */
   private folding = 0;
   private foldingTimer = 0;
-  /** Until when the agents' sections slide in, once they come; null while
-   *  they are not shown. */
-  private sectionsSince: number | null = null;
 
   constructor(private readonly options: SidebarOptions) {
     const { words } = options;
@@ -292,18 +286,10 @@ export class Sidebar {
     const at = (kinds: Place["kind"][]) => (kinds.includes(place.kind) ? " current" : "");
     const top = (href: string, current: string, mark: string, name: string, extra = "") =>
       `<a class="place home${current}" href="${href}"${current.includes("current") ? ' aria-current="page"' : ""}><span class="place-mark">${mark}</span><span class="place-name">${escape(name)}</span>${extra}</a>`;
-    // On the workbench, while one of the agents' sections is open they
-    // stand under it, and it is the section that is current; they slide in
-    // once as they come. The agents of a machine all at once are the agents'
-    // place itself.
-    const inCollab = place.kind === "feature" && place.feature === "collaboration";
-    const overview = place.kind === "agents" && !place.section && place.tab !== "prefs";
-    const section = !talking || overview ? null : (sectionOf(place) ?? (inCollab ? keptSection() : null));
-    const agentsAt = section !== null ? " open" : at(["agents", "usage", "subagents"]);
-    if (section === null) this.sectionsSince = null;
-    else this.sectionsSince ??= performance.now();
-    const opening = this.sectionsSince !== null && performance.now() - this.sectionsSince < FOLDING_MS ? " opening" : "";
-    const sections = section === null ? "" : `<div class="asec-fold${opening}"><div class="asec-inner">${sectionRows(inCollab ? null : section, loggedIn, this.options.sections, talking && loggedIn ? { name: words.collaboration, current: inCollab } : null)}</div></div>`;
+    // The conversations' settings are the workbench's: they reach no agent
+    // that is only connected (`./talk-settings`).
+    const settings = settingsTabOf(place) !== null;
+    const agentsAt = settings ? "" : at(["agents", "usage"]);
     // The agents come first: connecting them is what the interface is for
     // (`world-gui.md`, 界面的结构).
     const bench = talking
@@ -311,10 +297,11 @@ export class Sidebar {
           <button class="place home side-begin${beginning ? " current" : ""}" type="button" data-new-talk${beginning ? ' aria-current="page"' : ""}><span class="place-mark">${glyph("plus", 18)}</span><span class="place-name">${escape(words.newTalk)}</span></button>
           ${top(link({ kind: "home" }), at(["home"]), knotMark(), words.world, waiting ? `<span class="count waiting"><span class="spoken">${escape(words.waiting)}</span>${waiting}</span>` : "")}
           ${top(link({ kind: "projects" }), at(["projects"]), glyph("folder", 18), words.projects)}
+          ${loggedIn ? top(link(keptSettings()), settings ? " current" : "", glyph("settings", 18), words.talkSettings) : ""}
         </div></section>`
       : "";
     const places = `<div class="side-places">
-        ${machines || assisted || !talking ? top(link({ kind: "agents", machine: null }), agentsAt, glyph("agents", 18), words.agents) + sections : ""}
+        ${machines || assisted || !talking ? top(link({ kind: "agents", machine: null }), agentsAt, glyph("agents", 18), words.agents) : ""}
         ${top(link({ kind: "activity" }), at(["activity"]), glyph("history", 18), words.activity)}
         ${machines ? top(link({ kind: "machines" }), at(["machines", "machine"]), glyph("machine", 18), words.machines) : ""}
       </div>

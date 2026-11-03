@@ -12,7 +12,6 @@ import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import type { Place } from "./places";
 import { Sidebar, type ProjectMenuOptions } from "./sidebar";
-import type { ProfileWords } from "./profile-words";
 import type { Store } from "./store";
 import type { TalkActs } from "./talk-acts";
 import type { TalkMenu } from "./talk-menu";
@@ -32,8 +31,6 @@ export interface Page {
 export interface ShellOptions {
   store: Store;
   words: ShellWords;
-  /** The agents' sections, named in the sidebar. */
-  sections: ProfileWords;
   newTalk(): void;
   /** A new project, in `login`'s account where the sidebar names one. */
   newProject(login: Login | null): void;
@@ -100,7 +97,6 @@ export class Shell {
     this.sidebar = new Sidebar({
       store: options.store,
       words: options.words,
-      sections: options.sections,
       place: () => this.place,
       newTalk: () => {
         this.closeDrawer();

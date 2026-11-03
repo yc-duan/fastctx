@@ -73,6 +73,9 @@ export interface Login {
   /** Codex: whether the World names new conversations in it the way the
    *  official client does. On unless turned off. */
   auto_title?: boolean;
+  /** Whether a week the vendor cleared before its reset counts anew from
+   *  then, as its owner chose; off unless turned on. */
+  reset_in_place?: boolean;
   /** The program the World starts for it. */
   launcher?: Launcher;
   /** The models a conversation in it can start on, as last read. */

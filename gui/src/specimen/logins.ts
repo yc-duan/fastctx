@@ -73,6 +73,7 @@ let scanUntil = 0;
 /** Codex logins the specimen does not name conversations in, as the
  *  toggle sets: naming is on unless turned off. */
 const untitled = new Set<string>();
+const resetting = new Set<string>();
 /** The logins the workbench is open in, as opening and closing it set. */
 const benches = new Set<string>(["C:\\Users\\me\\.codex"]);
 /** When the laptop was scanned, finding nothing; never, at first. */
@@ -109,7 +110,9 @@ const drifting = new URLSearchParams(location.search).has("drift");
 
 function desktop(now: number): MachineLogins {
   const record = desktopAsIs(now);
-  for (const side of [record.codex, record.claude]) side.listed = side.listed.map((login) => (benches.has(login.dir) ? { ...login, workbench: true } : login));
+  for (const side of [record.codex, record.claude]) {
+    side.listed = side.listed.map((login) => ({ ...login, ...(benches.has(login.dir) ? { workbench: true } : {}), ...(resetting.has(login.dir) ? { reset_in_place: true } : {}) }));
+  }
   return { ...record, by_login: true, others: otherAgents() };
 }
 
@@ -314,6 +317,17 @@ export function specimenSetTitle(machine: string, agent: string, dir: string, on
   base = at.getTime();
   if (on) untitled.delete(dir);
   else untitled.add(dir);
+  return new Promise((resolve) => setTimeout(() => resolve(desktop(Date.now())), 200));
+}
+
+/** Turns counting a week cleared before its reset anew on or off in the
+ *  specimen. */
+export function specimenSetResetInPlace(machine: string, agent: string, dir: string, on: boolean, at: Date): Promise<MachineLogins> {
+  void machine;
+  void agent;
+  base = at.getTime();
+  if (on) resetting.add(dir);
+  else resetting.delete(dir);
   return new Promise((resolve) => setTimeout(() => resolve(desktop(Date.now())), 200));
 }
 

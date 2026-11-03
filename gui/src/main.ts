@@ -71,10 +71,12 @@ import { enAgentLogins, zhAgentLogins } from "./app/agent-logins-words";
 import { AgentsOverview } from "./app/agents-overview";
 import { enAgentsOverview, zhAgentsOverview } from "./app/agents-overview-words";
 import { enProfile, zhProfile } from "./app/profile-words";
-import { isHost, keepSection, sectionOf, tabOf } from "./app/agent-sections";
-import "./app/agent-sections.css";
+import { isHost, keepSection, sectionOf } from "./app/agent-sections";
 import { PromptPage } from "./app/prompt-page";
 import { HostPrefs } from "./app/host-prefs";
+import { ModelPrefsPage, settingsHead } from "./app/talk-settings";
+import { enTalkSettings, zhTalkSettings } from "./app/talk-settings-words";
+import "./app/talk-settings.css";
 import { SubagentsPage } from "./app/subagents-page";
 import { SkillsPage } from "./app/skills-page";
 import { skillCalls } from "./world/skills";
@@ -94,7 +96,7 @@ import { ServerLists } from "./app/mcp-switches";
 import { enAgentChange, zhAgentChange } from "./app/agent-change";
 import "./app/agent-logins.css";
 import "./app/disclose.css";
-import { specimenChange as specimenLoginChange, specimenFolder, specimenLogins, specimenPreview, specimenScan, specimenSetTitle, specimenTakeUp } from "./specimen/logins";
+import { specimenChange as specimenLoginChange, specimenFolder, specimenLogins, specimenPreview, specimenScan, specimenSetResetInPlace, specimenSetTitle, specimenTakeUp } from "./specimen/logins";
 import { TalksPage, enTalks, zhTalks } from "./app/talks";
 import { FeaturesPage } from "./app/features";
 import { accountLayer, liveLayer } from "./app/layer";
@@ -268,6 +270,7 @@ import {
   previewAgentChange,
   readAgentLimits,
   setAgentTitle,
+  setAgentResetInPlace,
   scanAgents,
   control,
   offers,
@@ -1295,7 +1298,6 @@ followSwitches();
 const shell = new Shell({
   store,
   words: shellWords,
-  sections: english ? enProfile : zhProfile,
   updates: { offered: appUpdates.offered, open: () => updateCard.open(), words: updateWords },
   // The sidebar's own is the one outside any project, wherever it is
   // pressed; a project's is in its "⋯" (user 2026-10-29).
@@ -2957,8 +2959,6 @@ function show(next: Place): void {
             history.replaceState(history.state, "", link(place));
             shell.mark(place);
           },
-          // A node keeping the workbench by account opens it on the account.
-          workbenchOn: () => (accountLayer.workbench.peek() ? show({ kind: "home" }) : accountLayer.choose("workbench")),
           benched: (open) => void workbenchChanged(open),
           talkOn: (machine, agent, home) => void workbenchChanged(true).then(() => beginTalk(null, loginKey(machine, agent, home), machine)),
         });
@@ -2967,32 +2967,26 @@ function show(next: Place): void {
       const section = sectionOf(next) ?? "claude";
       keepSection(section);
       const profile = english ? enProfile : zhProfile;
+      const settings = english ? enTalkSettings : zhTalkSettings;
       if (section === "prompt") {
-        page = new PromptPage({ store, words: profile, head, calls: profileCalls });
+        page = new PromptPage({ store, words: profile, head: settingsHead(head, settings, "prompt"), calls: profileCalls });
         break;
       }
       if (section === "skills") {
-        page = new SkillsPage({ store, words: profile, head, calls: live ? skillCalls : specimenSkillCalls, confirm: accountConfirm, close: pageWords.close });
+        page = new SkillsPage({ store, words: profile, head: settingsHead(head, settings, "skills"), calls: live ? skillCalls : specimenSkillCalls, confirm: accountConfirm, close: pageWords.close });
         break;
       }
       if (!isHost(section)) {
-        page = new McpPage({ store, words: profile, head, calls: profileCalls, confirm: accountConfirm, close: pageWords.close });
+        page = new McpPage({ store, words: profile, head: settingsHead(head, settings, "mcp"), calls: profileCalls, confirm: accountConfirm, close: pageWords.close });
         break;
       }
-      page = deferredPage(section === "claude" ? (english ? enAgentLogins : zhAgentLogins).claude : (english ? enAgentLogins : zhAgentLogins).codex, async () => {
-        const { AgentLoginsPage } = await import("./app/agent-logins");
-        return new AgentLoginsPage({
-        store,
-        words: english ? enAgentLogins : zhAgentLogins,
-        changeWords: english ? enAgentChange : zhAgentChange,
-        access: english ? enAccess : zhAccess,
-        usage: english ? enUsage : zhUsage,
-        head,
-        agent: section,
-        machine: next.machine,
-        tab: tabOf(next),
-        prefs: {
-          words: profile,
+      // An agent's preferences are the conversations' settings, not its
+      // logins' (`./app/talk-settings`).
+      if (next.tab === "prefs") {
+        page = new ModelPrefsPage({
+          store,
+          words: settings,
+          head,
           make: (agent) =>
             new HostPrefs({
               agent,
@@ -3013,12 +3007,20 @@ function show(next: Place): void {
                     }
                   : undefined,
             }),
-        },
-        tabbed: (tab, agent) => {
-          place = tab === "logins" ? { kind: "agents", machine: null, section: agent } : { kind: "agents", machine: null, section: agent, tab };
-          history.replaceState(history.state, "", link(place));
-          shell.mark(place);
-        },
+        });
+        break;
+      }
+      page = deferredPage(section === "claude" ? (english ? enAgentLogins : zhAgentLogins).claude : (english ? enAgentLogins : zhAgentLogins).codex, async () => {
+        const { AgentLoginsPage } = await import("./app/agent-logins");
+        return new AgentLoginsPage({
+        store,
+        words: english ? enAgentLogins : zhAgentLogins,
+        changeWords: english ? enAgentChange : zhAgentChange,
+        access: english ? enAccess : zhAccess,
+        usage: english ? enUsage : zhUsage,
+        head,
+        agent: section,
+        machine: next.machine,
         showing: (machine, agent) => {
           // The address and the sidebar follow the machine and the agent
           // shown, without coming anew.
@@ -3042,6 +3044,7 @@ function show(next: Place): void {
         benched: (open) => void workbenchChanged(open),
         limits: (machine, agent, dir) => (live ? readAgentLimits(machine, agent, dir) : notLive()),
         setTitle: (machine, agent, dir, on) => (live ? setAgentTitle(machine, agent, dir, on) : specimenSetTitle(machine, agent, dir, on, specimen.now)),
+        setResetInPlace: (machine, agent, dir, on) => (live ? setAgentResetInPlace(machine, agent, dir, on) : specimenSetResetInPlace(machine, agent, dir, on, specimen.now)),
         usageOf: (machine, agent, dir) => (live ? agentUsage(machine, agent, dir) : specimenUsage(machine, agent, dir, specimen.now)),
         change_: change,
         confirm: accountConfirm,
@@ -3110,7 +3113,7 @@ function show(next: Place): void {
       });
       break;
     case "feature":
-      page = new FeaturesPage({ store, words: english ? enFeatures : zhFeatures, homeWords: agentHomeWords, english, head, feature: next.feature === "conversations" ? "collaboration" : next.feature, agents: () => agentsOn(null), confirm: accountConfirm, sentinels: { seam: sentinelSeam, machines: sentinelHomes } });
+      page = new FeaturesPage({ store, words: english ? enFeatures : zhFeatures, homeWords: agentHomeWords, english, head: next.feature === "collaboration" || next.feature === "conversations" ? settingsHead(head, english ? enTalkSettings : zhTalkSettings, "collab") : head, feature: next.feature === "conversations" ? "collaboration" : next.feature, agents: () => agentsOn(null), confirm: accountConfirm, sentinels: { seam: sentinelSeam, machines: sentinelHomes } });
       break;
     case "activity":
       page = new ActivityPage({
