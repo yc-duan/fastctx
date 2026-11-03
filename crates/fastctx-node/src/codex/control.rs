@@ -40,8 +40,9 @@ pub(super) fn reported(node: &Node, resident: &ResidentId, thread: &str, event: 
 
 pub async fn offers(node: &Arc<Node>, resident: &ResidentId) -> Result<Offers, Failure> {
     let (codex, thread) = thread(node, resident).await?;
-    let mut offers = codex.offers(&thread).await.map_err(Failure::new)?;
     let (about, _) = node.residents.about(resident).ok_or_else(|| Failure::new("unknown conversation"))?;
+    crate::logins::workbench::works(node, &about)?;
+    let mut offers = codex.offers(&thread).await.map_err(Failure::new)?;
     if crate::assists::assisting(node, &about.acting) {
         if crate::assists::host::kept(node, resident)? != Some(true) {
             offers.controls.clear();
@@ -105,6 +106,9 @@ pub async fn control(node: &Arc<Node>, resident: &ResidentId, mut control: Contr
         codex.answer(&thread, &request, &answer).map_err(Failure::new)?;
         return done("Answer sent. Codex uses the first response it receives; another client may have answered first.");
     }
+    // What a running turn asks is answered whatever its login; anything else
+    // works the conversation, only where the workbench is open in it.
+    crate::logins::workbench::works(node, &about)?;
     if let Control::Command { name, args, path: None } = &control {
         control = match name.as_str() {
             "compact" => {

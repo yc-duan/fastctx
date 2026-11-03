@@ -263,6 +263,13 @@ pub fn claude_consent(places: &Places) -> Result<bool, Error> {
     crate::claude::consent::accepted(settings.bytes()).map_err(Error::Claude)
 }
 
+/// Whether the World's plugin is in the Claude Code home `home`, as its
+/// record says: put in with the workbench, or by an earlier version.
+pub fn claude_plugin_at(places: &Places, home: &Path) -> Result<bool, Error> {
+    let places = places.at_home(Host::Claude, home)?;
+    Ok(load_plugin_record(&homes::plugin_record(&places)?)?.is_some_and(|plugin| plugin.receipt.has_work()))
+}
+
 /// Reads bypass-permissions consent in the selected Claude directory.
 pub fn claude_consent_at(places: &Places, home: &Path) -> Result<bool, Error> {
     claude_consent(&places.at_home(Host::Claude, home)?)
@@ -501,6 +508,7 @@ fn apply_made(
     let mut record = records.selected(places, hosts)?;
     let installed = places.installed();
     let mut changes = Vec::new();
+    let mut codex_workbench = false;
 
     if hosts.codex {
         let config = Snapshot::read(places.codex_home.join("config.toml"))?;
@@ -521,7 +529,11 @@ fn apply_made(
         let applied = codex::apply(
             File { path: &config_path, bytes: config.bytes() },
             File { path: &agents_path, bytes: agents.bytes() },
-            &codex_plan(places, &installed, record.codex.as_ref()),
+            &{
+                let plan = codex_plan(places, &installed, record.codex.as_ref());
+                codex_workbench = plan.workbench;
+                plan
+            },
             &briefing::guidance(true),
             ownership,
             approval,
@@ -708,7 +720,9 @@ fn apply_made(
                     forget_plugin(&homes::plugin_record(places)?, &mut report);
                 }
             }
-            if hosts.codex {
+            // Codex's own reading of its tools asks its program: only where
+            // the workbench is to be open, since connecting starts none.
+            if hosts.codex && codex_workbench {
                 report.tools.push(progress::checked(&progress, || tools::codex(places)));
             }
             if hosts.claude {

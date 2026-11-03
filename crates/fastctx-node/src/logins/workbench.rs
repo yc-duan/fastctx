@@ -82,6 +82,12 @@ pub(crate) fn drives(node: &Node, about: &About) -> bool {
     !about.world_managed() || is_open(node, &about.acting, about.host.agent.as_str(), about.home.as_deref())
 }
 
+/// Refuses to work a conversation the World holds in a login the workbench
+/// is not open in: to start its host to read, list or change anything of it.
+pub(crate) fn works(node: &Node, about: &About) -> Result<(), Failure> {
+    if drives(node, about) { Ok(()) } else { Err(Failure::refused(CLOSED)) }
+}
+
 /// Opens or closes the workbench in `agent`'s login `dir`, once a change
 /// of its files made it so (`super::change`).
 pub(crate) fn set(node: &Node, agent: &str, dir: &Path, open: bool) -> std::io::Result<()> {

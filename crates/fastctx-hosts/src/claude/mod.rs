@@ -13,7 +13,6 @@
 //! knowledge pinned to the statically inspected 2.1.294 program.
 
 mod accounting;
-pub mod agents;
 pub mod assisted;
 pub mod background;
 pub mod calls;

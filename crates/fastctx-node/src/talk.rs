@@ -385,7 +385,11 @@ async fn read_here(node: &Arc<Node>, resident: &ResidentId, hearing: Hearing) ->
     }
     let owner = Address { machine: node.machine(), resident: resident.clone() };
     let mut unread = false;
+    // Where the workbench is closed in its login, its host is not started
+    // nor its record read: the conversation reads as the World recorded it.
+    let hosted = crate::logins::workbench::drives(node, &about);
     let (recorded, hosted) = match &about.session {
+        _ if !hosted => (recorded(&directory).await?, None),
         // Codex keeps every thread of its home, whoever opened it: the World
         // reads the history of one the user opened in the Codex command line
         // from the same record as one it started.

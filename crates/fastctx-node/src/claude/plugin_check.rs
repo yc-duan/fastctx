@@ -28,6 +28,10 @@ pub(super) fn run(node: &Node, plugin: &Path) {
         Ok(found) => found
             .into_iter()
             .filter(|integration| integration.host == fastctx_install::apply::Host::Claude)
+            // A login connected alone has no plugin, and starts no program.
+            .filter(|integration| {
+                fastctx_install::apply::claude_plugin_at(&context.places, &integration.home).unwrap_or(false)
+            })
             .map(|integration| fastctx_hosts::inventory::plain(&integration.home))
             .collect(),
         Err(error) => {

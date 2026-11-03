@@ -60,6 +60,8 @@ pub(crate) async fn here(node: &Arc<Node>, resident: &ResidentId, agent: &str) -
         .residents
         .about(resident)
         .ok_or_else(|| Failure::new(format!("no resident {resident} lives on {}", node.machine())))?;
+    // Only its host knows what an agent did.
+    crate::logins::workbench::works(node, &about)?;
     match about.host.agent.as_str() {
         "claude" => claude(node, resident, agent).await,
         "codex" => {

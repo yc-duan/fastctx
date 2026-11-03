@@ -207,6 +207,12 @@ async fn stamp(node: &Arc<Node>, resident: &ResidentId) -> Result<Option<String>
     for record in records {
         take(&record);
     }
+    // Where the workbench is closed in its login, the history is the
+    // World's record alone (`crate::talk`), and so is its version.
+    if !crate::logins::workbench::drives(node, &about) {
+        take(b"recorded alone");
+        return Ok(Some(digest.finalize().iter().map(|byte| format!("{byte:02x}")).collect()));
+    }
     match (about.host.agent.as_str(), &about.session) {
         // A thread the user opened in the Codex command line runs turns the
         // World does not see, so its record can grow under a stamp that

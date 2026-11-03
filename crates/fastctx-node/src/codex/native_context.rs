@@ -44,6 +44,10 @@ pub(crate) async fn observe(node: &Arc<Node>, id: &ResidentId) -> Result<(), Fai
     if about.world_started || !about.native_resumed || about.host.agent.as_str() != "codex" {
         return Ok(());
     }
+    // Nor once the workbench is closed in its login.
+    if !crate::logins::workbench::drives(node, &about) {
+        return Ok(());
+    }
     let Some(thread) = about.session.as_ref() else { return Ok(()) };
     // A loaded runtime reports compactions directly; its later rollout flush must not reset them twice.
     if node.codex.of(node, &about)?.loaded(thread) {

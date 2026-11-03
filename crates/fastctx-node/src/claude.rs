@@ -542,15 +542,15 @@ async fn look(node: &Arc<Node>, directory: &Path) -> bool {
         }
         return true;
     };
-    if let Err(error) = policy(node, &resident, directory).await {
-        node.log.line(format_args!("publishing Claude session policy for {session}: {error}"));
-        return false;
-    }
     // A session the user opened on their own, as one registered before the
     // World kept to that line, is known for its run and nothing more: its
     // record and controls are not the World's to read (`world-layers.md`).
     if node.residents.about(&resident).is_none_or(|(about, _)| !about.world_managed()) {
         return true;
+    }
+    if let Err(error) = policy(node, &resident, directory).await {
+        node.log.line(format_args!("publishing Claude session policy for {session}: {error}"));
+        return false;
     }
     if let Err(error) = settle::name_record(node, &resident, directory, &session) {
         node.log.line(format_args!("finding where Claude Code keeps {session}'s record: {error}"));
