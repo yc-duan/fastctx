@@ -134,6 +134,7 @@ pub fn migrate(from: &Path, to: &Path, new: Migrated) -> anyhow::Result<Report> 
             reach: None,
             paths: None,
             strain: None,
+            workbench: None,
             settled: None,
         }));
         if machine { report.machines.push(name) } else { report.devices.push(name) }

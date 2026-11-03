@@ -687,6 +687,9 @@ impl fastctx_net::link::Node for Handler {
         let node = self.node.upgrade().ok_or("the node is stopping")?;
         crate::logins::identities(&node, agent).map_err(|error| error.message)
     }
+    fn workbench(&self) -> Option<bool> {
+        self.node.upgrade().and_then(|node| crate::logins::workbench::told(&node))
+    }
     fn acquire(
         &self,
         request: fastctx_net::link::admission::Request,

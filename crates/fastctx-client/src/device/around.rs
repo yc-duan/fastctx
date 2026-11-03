@@ -250,7 +250,8 @@ impl Device {
     }
 
     pub(super) async fn nodes(&self) -> Result<NodesReply, Error> {
-        let links = self.sessions().into_iter().map(|session| session.link.clone()).collect();
+        let links: Vec<_> = self.sessions().into_iter().map(|session| session.link.clone()).collect();
+        let workbench = super::world_now::workbench_shown(links.iter().map(|link| &**link));
         let hubs = around::on_hubs(links, |link, fresh| async move {
             let view = link.view();
             let logins: Vec<AccountName> = view.me().map(|me| me.logins.iter().cloned().collect()).unwrap_or_default();
@@ -318,6 +319,6 @@ impl Device {
             }
         })
         .await;
-        Ok(NodesReply { machine: self.here(), facts: None, hubs })
+        Ok(NodesReply { machine: self.here(), facts: None, hubs, workbench })
     }
 }

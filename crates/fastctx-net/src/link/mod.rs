@@ -127,6 +127,12 @@ pub trait Node: Send + Sync + 'static {
     fn login_homes(&self, agent: &fastctx_types::AgentName) -> Result<Vec<(std::path::PathBuf, bool)>, String> {
         Err(format!("this device has no local {agent} logins"))
     }
+    /// Whether one of this machine's logins has the workbench open, once
+    /// that is known (`world-layers.md`): told the hub with each heartbeat,
+    /// so it must answer at once.
+    fn workbench(&self) -> Option<bool> {
+        None
+    }
     /// Takes the place a call from `from` takes here while it is answered,
     /// of the kind `pool` (`fastctx_types::contract::Pool`), before anything
     /// waits on it; or says why there is none: this machine is answering as
@@ -395,6 +401,9 @@ pub(crate) struct Inner {
     check: Notify,
     /// How many of those checks the hub answered.
     checks: watch::Sender<u64>,
+    /// What this machine tells with its heartbeat changed: it is told at
+    /// once (`Link::tell`).
+    tell: Notify,
     /// Woken when the ways to the hub this machine should connect by changed.
     rerouted: Notify,
     /// The way to the hub that last opened a session: tried first next time,
@@ -573,6 +582,7 @@ impl Link {
             clock: Mutex::default(),
             reconnect: Notify::new(),
             check: Notify::new(),
+            tell: Notify::new(),
             checks: watch::channel(0).0,
             rerouted: Notify::new(),
             last_way: Mutex::new(None),
@@ -620,6 +630,12 @@ impl Link {
     /// removed membership is never restarted by this signal.
     pub fn reconnect(&self) {
         self.inner.reconnect.notify_one();
+    }
+
+    /// What this machine tells the hub with its heartbeat changed
+    /// (`Node::workbench`): it goes at once, not with the next heartbeat.
+    pub fn tell(&self) {
+        self.inner.tell.notify_one();
     }
 
     /// How many checks the hub has answered, as it changes. One asked after

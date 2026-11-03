@@ -3629,24 +3629,34 @@ if (live) {
       return first ? { hub: first.hubName, account: first.account } : null;
     }),
   );
-  // Where the workbench is open is each login's own: read again on focus,
-  // after the account's layer and at most once a minute, so that a login
-  // opened or closed elsewhere shows here (`workbenchSeen`).
-  let loginsRead = 0;
+  // Where the workbench is open is each login's own, and the machines tell
+  // it with the world (`NodesReply.workbench`): the places follow it as it
+  // changes, and the account's layer, which earlier devices read, with
+  // them. Only while some machine does not tell it is the layer read again
+  // on focus, as another device may have changed it.
+  let told: boolean | undefined;
+  effect(() => {
+    const now = store.world.get()?.nodes.workbench;
+    if (now === told) return;
+    told = now;
+    if (now === undefined || now === accountLayer.workbench.peek()) return;
+    void accountLayer
+      .choose(now ? "workbench" : "connect")
+      .catch((error: unknown) => console.error(now ? "showing the workbench" : "putting the workbench away", error));
+  });
   addEventListener("focus", () => {
-    const reading = accountLayer.refresh();
-    if (Date.now() - loginsRead < 60_000) return;
-    loginsRead = Date.now();
-    void reading.then(() => agentLogins(null)).then(workbenchSeen, () => {});
+    if (store.world.peek()?.nodes.workbench === undefined) void accountLayer.refresh();
   });
   // Which account the mode is read for is known once the logins are: the
-  // first read may have come before them.
+  // first read may have come before them. What the machines tell decides
+  // where they tell it.
   let refreshedFor = "";
   effect(() => {
-    const login = loginKey(store.world.get());
+    const world = store.world.get();
+    const login = loginKey(world);
     if (login === refreshedFor) return;
     refreshedFor = login;
-    void accountLayer.refresh();
+    if (world?.nodes.workbench === undefined) void accountLayer.refresh();
   });
   // Asked only of the account itself, once the logins are known and its
   // own mode was read: a read made before them is this computer's.

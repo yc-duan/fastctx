@@ -41,6 +41,12 @@ pub(crate) struct Presence {
 
 pub(crate) trait Online {
     fn get(&self, name: &MachineName, key: &fastctx_net::sign::PublicKey) -> Option<Presence>;
+    /// Whether one of its logins has the workbench open, as it last told
+    /// (`crate::workbench`).
+    fn workbench(&self, name: &MachineName) -> Option<bool> {
+        let _ = name;
+        None
+    }
 }
 impl Online for HashMap<MachineName, Presence> {
     fn get(&self, name: &MachineName, _key: &fastctx_net::sign::PublicKey) -> Option<Presence> {
@@ -50,6 +56,9 @@ impl Online for HashMap<MachineName, Presence> {
 impl Online for crate::Hub {
     fn get(&self, name: &MachineName, key: &fastctx_net::sign::PublicKey) -> Option<Presence> {
         self.sessions().get(name).filter(|session| session.key == *key).map(crate::presence_of)
+    }
+    fn workbench(&self, name: &MachineName) -> Option<bool> {
+        crate::workbench::of(self, name)
     }
 }
 
@@ -98,8 +107,9 @@ pub(crate) fn view_for_in(
         // Where a machine may be reached is the super administrator's to
         // choose from, and the machine's own to know; a visitor's is its own.
         let reach = (whole && !others) || member.name == *me;
+        let own = member.home.as_ref().is_some_and(|owner| mine.contains(owner));
         let member = std::sync::Arc::make_mut(member);
-        present(store, online, member, reach);
+        present(store, online, member, reach, own);
         if others {
             member.direct.clear();
             member.relay.clear();
@@ -243,8 +253,9 @@ pub(crate) fn presence_for(
     let others = member.name != *reader
         && member.home.as_ref().is_some_and(|owner| x.is_visitor(owner) && !mine.contains(owner));
     let reach = (whole && !others) || member.name == *reader;
+    let own = member.home.as_ref().is_some_and(|owner| mine.contains(owner));
     let mut member = Member::clone(member);
-    present(store, online, &mut member, reach);
+    present(store, online, &mut member, reach, own);
     if others {
         member.through = None;
         member.paths = None;
@@ -446,8 +457,11 @@ fn projects_in(
         .collect()
 }
 
-fn present(store: &crate::store::Snapshot, online: &impl Online, member: &mut Member, reach: bool) {
+/// `member` as it is connected now; `own`, whether the view is its owner's,
+/// who alone is told how its logins stand.
+fn present(store: &crate::store::Snapshot, online: &impl Online, member: &mut Member, reach: bool, own: bool) {
     member.settled = store.letters.get(&member.name).and_then(|letters| letters.settled);
+    member.workbench = if own { online.workbench(&member.name) } else { None };
     match online.get(&member.name, &member.key) {
         Some(presence) => {
             member.online = true;

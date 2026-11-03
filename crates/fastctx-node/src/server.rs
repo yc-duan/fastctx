@@ -2301,13 +2301,14 @@ async fn nodes(
     use fastctx_net::around::{self, Heard, Reachable};
 
     let here = node.machine();
-    let links = node
+    let links: Vec<_> = node
         .links()
         .into_iter()
         .filter(|link| {
             !node.accounts_on(link, acting).is_empty() || matches!(acting, fastctx_types::access::Acting::Here)
         })
         .collect();
+    let workbench = crate::logins::workbench::shown(node, &links, acting, works_here);
     let hubs = around::on_hubs(links, |link, fresh| async move {
         let view = link.view();
         let logins = node.accounts_on(&link, acting);
@@ -2396,7 +2397,7 @@ async fn nodes(
     } else {
         None
     };
-    Ok(NodesReply { machine: here, facts, hubs })
+    Ok(NodesReply { machine: here, facts, hubs, workbench })
 }
 
 async fn blocking<T: Send + 'static>(

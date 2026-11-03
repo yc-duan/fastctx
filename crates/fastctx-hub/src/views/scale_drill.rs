@@ -60,6 +60,7 @@ fn member(name: MachineName, kind: Kind, logins: BTreeSet<AccountName>, home: Op
         reach: None,
         paths: None,
         strain: None,
+        workbench: None,
         settled: None,
     }
 }

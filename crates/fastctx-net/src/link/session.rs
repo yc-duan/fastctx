@@ -522,7 +522,8 @@ async fn connected(
                     let paths = inner.view().direct_links.then(|| inner.paths());
                     let held = Some(inner.held_now.load(std::sync::atomic::Ordering::Acquire));
                     let health = inner.view().health.then(fastctx_platform::health::summary);
-                    let _ = up.send_first(Up::Ping { n: 0, paths, took: Some(pulse.taken()), held, health });
+                    let workbench = inner.node.workbench();
+                    let _ = up.send_first(Up::Ping { n: 0, paths, took: Some(pulse.taken()), held, health, workbench });
                 }
                 continue;
             },
@@ -884,14 +885,28 @@ async fn heartbeat(
     let mut n = 0;
     let mut beats = crate::beats::Beats::from_now("link.heartbeat", "link.heartbeat.late");
     loop {
-        tokio::time::sleep(HEARTBEAT).await;
+        tokio::select! {
+            () = tokio::time::sleep(HEARTBEAT) => {}
+            () = inner.tell.notified() => {
+                // Told at once, numbered apart from the heartbeats, so its
+                // pong measures nothing.
+                let held = Some(inner.held_now.load(std::sync::atomic::Ordering::Acquire));
+                let health = inner.view().health.then(fastctx_platform::health::summary);
+                let workbench = inner.node.workbench();
+                if up.send_first(Up::Ping { n: 0, paths: None, took: Some(pulse.taken()), held, health, workbench }).is_err() {
+                    return;
+                }
+                continue;
+            }
+        }
         beats.beat();
         n += 1;
         let paths = inner.view().direct_links.then(|| inner.paths());
         pinged.lock().expect("never poisoned").insert(n, Instant::now());
         let held = Some(inner.held_now.load(std::sync::atomic::Ordering::Acquire));
         let health = inner.view().health.then(fastctx_platform::health::summary);
-        if up.send_first(Up::Ping { n, paths, took: Some(pulse.taken()), held, health }).is_err() {
+        let workbench = inner.node.workbench();
+        if up.send_first(Up::Ping { n, paths, took: Some(pulse.taken()), held, health, workbench }).is_err() {
             return;
         }
     }

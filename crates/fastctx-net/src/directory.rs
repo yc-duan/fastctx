@@ -100,6 +100,11 @@ pub struct Member {
         deserialize_with = "fastctx_types::tolerant::read_option"
     )]
     pub strain: Option<Strain>,
+    /// Whether one of its logins has the workbench open, as it last told the
+    /// hub, kept while it is away (`world-layers.md`): only in its owner's
+    /// views, and none from a machine that never told.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workbench: Option<bool>,
     /// When the hub last set aside what waited for it, it having been away
     /// more than 30 days: a letter to it from before then that was not
     /// answered never will be, nor one from it to a machine away as long.
@@ -127,6 +132,8 @@ pub struct Presence {
         deserialize_with = "fastctx_types::tolerant::read_option"
     )]
     pub strain: Option<Strain>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workbench: Option<bool>,
 }
 
 impl Presence {
@@ -139,6 +146,7 @@ impl Presence {
             reach: member.reach.clone(),
             paths: member.paths.clone(),
             strain: member.strain,
+            workbench: member.workbench,
         }
     }
 
@@ -150,6 +158,7 @@ impl Presence {
         member.reach = self.reach.clone();
         member.paths = self.paths.clone();
         member.strain = self.strain;
+        member.workbench = self.workbench;
     }
 }
 
@@ -889,6 +898,19 @@ impl View {
     /// Whether `name` names this member: its name now, or one it had.
     pub fn is_me(&self, name: &MachineName) -> bool {
         *name == self.me || self.me().is_some_and(|me| me.named(name))
+    }
+
+    /// What each computer of `accounts` other than this one told of the
+    /// workbench in its logins (`Member::workbench`); a managed machine runs
+    /// no conversation, and this one is told by its own node.
+    pub fn workbench_told<'a>(&'a self, accounts: &'a [AccountName]) -> impl Iterator<Item = Option<bool>> + 'a {
+        self.machines()
+            .filter(move |machine| {
+                !machine.managed
+                    && !self.is_me(&machine.name)
+                    && machine.home.as_ref().is_some_and(|home| accounts.contains(home))
+            })
+            .map(|machine| machine.workbench)
     }
 
     /// The accounts this member may act for.

@@ -148,6 +148,9 @@ impl Rank {
     pub const HUB_MACHINE_ACTIVITY: Rank = Rank(830);
     /// What troubles were told lately, and when machines came and went.
     pub const HUB_TROUBLES: Rank = Rank(840);
+    /// Whether each machine's logins have the workbench open, as it last
+    /// told: looked up under any of the others.
+    pub const HUB_WORKBENCH: Rank = Rank(850);
 }
 
 /// What each task says it does, latest last, by the token of each saying.

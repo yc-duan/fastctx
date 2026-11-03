@@ -587,6 +587,7 @@ fn join(
                         reach: None,
                         paths: None,
                         strain: None,
+                        workbench: None,
                         settled: None,
                     }));
                     joining.name.clone()

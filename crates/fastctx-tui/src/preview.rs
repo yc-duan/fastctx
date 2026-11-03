@@ -444,6 +444,7 @@ fn nodes(now: Timestamp) -> NodesReply {
                 node("server", false, 95, Err("it is offline".into())),
             ],
         }],
+        workbench: None,
     }
 }
 

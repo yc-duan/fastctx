@@ -72,6 +72,7 @@ mod updates;
 mod upgrade;
 mod views;
 mod watchdog;
+mod workbench;
 mod worked;
 
 use crate::locks::{Guard as MutexGuard, Mutex};
@@ -296,6 +297,9 @@ pub(crate) struct Hub {
     account_records: account_records::Records,
     /// What went wrong with the machines and the network lately (`troubles`).
     troubles: troubles::Troubles,
+    /// Whether one of each machine's logins has the workbench open, as it
+    /// last told (`workbench`).
+    workbench: Mutex<HashMap<MachineName, bool>>,
 }
 
 /// The view a session that reads what changes in its view was last given
@@ -920,6 +924,7 @@ async fn serving(
         diagnostic_dir: dir.to_path_buf(),
         account_records,
         troubles,
+        workbench: Mutex::new("hub workbench", Rank::HUB_WORKBENCH, HashMap::new()),
     });
     let _ = hub.this.set(Arc::downgrade(&hub));
     hub.post.attach(Arc::downgrade(&hub));

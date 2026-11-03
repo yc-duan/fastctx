@@ -286,6 +286,10 @@ export interface NodesReply {
   /** What this computer is like; a device has nothing to say. */
   facts?: MachineFacts;
   hubs: HubNodes[];
+  /** Whether the workbench's places are shown, from this computer's logins
+   *  and what its accounts' other computers told (`world-layers.md`);
+   *  absent while one of them has not told, or from an earlier node. */
+  workbench?: boolean;
 }
 
 export interface HubNodes {

@@ -435,9 +435,15 @@ fn nodes() -> Vec<NodesReply> {
                     },
                 ],
             }],
+            workbench: Some(true),
         })
         .collect();
-    replies.push(NodesReply { machine: machine(), facts: Some(facts("desktop", "windows", false)), hubs: Vec::new() });
+    replies.push(NodesReply {
+        machine: machine(),
+        facts: Some(facts("desktop", "windows", false)),
+        hubs: Vec::new(),
+        workbench: None,
+    });
     replies
 }
 

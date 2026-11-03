@@ -39,3 +39,20 @@ impl Chosen {
 
 /// Said when an account's hub is too old to keep a layer.
 pub const HUB_TOO_OLD: &str = "the hub is too old to keep the account's layer; update the hub's machine";
+
+/// Whether the workbench's places are shown, from what each computer that
+/// could have it open in a login told (`world-layers.md`): shown while one
+/// has it open, put away once every one told it has not; none while one has
+/// not told, as an earlier release or one not heard yet, when the account's
+/// layer decides.
+pub fn shown(told: impl IntoIterator<Item = Option<bool>>) -> Option<bool> {
+    let mut closed = true;
+    for one in told {
+        match one {
+            Some(true) => return Some(true),
+            Some(false) => {}
+            None => closed = false,
+        }
+    }
+    closed.then_some(false)
+}

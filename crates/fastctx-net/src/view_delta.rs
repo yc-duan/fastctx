@@ -38,7 +38,7 @@ fn name_of(entry: &Value, key: &[&str]) -> Option<String> {
 
 /// What of a member the hub tells as it changes (`crate::wire::Down::Presence`):
 /// a member that changed in nothing else is not sent again for it.
-const PRESENCE: &[&str] = &["online", "since", "through", "reach", "paths", "strain"];
+const PRESENCE: &[&str] = &["online", "since", "through", "reach", "paths", "strain", "workbench"];
 
 /// The field that numbers a view, never itself a change.
 const REVISION: &str = "revision";

@@ -272,8 +272,10 @@ fn machine_of(who: &MachineWho) -> &MachineName {
 /// the views have them; what each machine is like as it said when it last
 /// connected (`crate::facts`).
 fn nodes(node: &Arc<Node>) -> NodesReply {
+    let links = node.links();
+    let workbench = crate::logins::workbench::shown(node, &links, &fastctx_types::access::Acting::Here, true);
     let mut hubs = Vec::new();
-    for link in node.links() {
+    for link in links {
         let view = link.view();
         // A view kept while the line to the hub is down still has the
         // machines, and says who was online then, not now.
@@ -322,5 +324,5 @@ fn nodes(node: &Arc<Node>) -> NodesReply {
             machines,
         });
     }
-    NodesReply { machine: node.machine(), facts: Some(crate::world::facts(node)), hubs }
+    NodesReply { machine: node.machine(), facts: Some(crate::world::facts(node)), hubs, workbench }
 }

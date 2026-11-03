@@ -74,6 +74,34 @@ pub(crate) fn known(node: &Node, agent: &str, dir: &Path) -> Option<bool> {
     state.seeded.then(|| state.dirs.iter().any(|(name, open)| name == agent && crate::homes::same_dir(open, dir)))
 }
 
+/// Whether one of this machine's logins has the workbench open, once the
+/// logins it was open in by account were worked out. The hubs are told it
+/// with each heartbeat, so it reads only what is in memory.
+pub(crate) fn told(node: &Node) -> Option<bool> {
+    let state = node.logins.workbench.lock().expect("never poisoned");
+    (state.read && state.seeded).then(|| !state.dirs.is_empty())
+}
+
+/// Whether the workbench's places are shown to whoever reads the world
+/// through `links` as `acting` (`fastctx_types::layers::shown`): this
+/// computer's logins, where it works here, and what the accounts' other
+/// computers told their hubs.
+pub(crate) fn shown(
+    node: &Node,
+    links: &[Arc<fastctx_net::link::Link>],
+    acting: &Acting,
+    works_here: bool,
+) -> Option<bool> {
+    let mut told = vec![if works_here { self::told(node) } else { None }];
+    for link in links {
+        match link.last_view() {
+            Some(view) => told.extend(view.workbench_told(&node.accounts_on(link, acting))),
+            None => told.push(None),
+        }
+    }
+    fastctx_types::layers::shown(told)
+}
+
 /// Refuses to start a conversation in a login the workbench is not open in.
 pub(crate) fn may_start(node: &Node, acting: &Acting, agent: &str, home: Option<&Path>) -> Result<(), Failure> {
     if is_open(node, acting, agent, home) { Ok(()) } else { Err(Failure::refused(CLOSED)) }
@@ -152,6 +180,10 @@ pub(super) fn prune(node: &Node, connected: &[(&str, PathBuf)]) {
 /// is tried at once, and the login asked again, its models too.
 pub(crate) fn changed(node: &Arc<Node>) {
     node.shown_changed();
+    // The owner's other devices are told by the hubs at once.
+    for link in node.links() {
+        link.tell();
+    }
     // Whether each of its conversations rests is told the hubs too.
     node.residents.touch();
     for held in node.residents.everyone().filter(|held| held.about.world_managed()) {

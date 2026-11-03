@@ -209,7 +209,7 @@ async fn session(
                 }
             }
             _ = beat.tick() => {
-                dial::send(&mut socket, &Up::Ping { n, paths: None, took: None, held: Some(state.held), health: None }).await.map_err(anyhow::Error::msg)?;
+                dial::send(&mut socket, &Up::Ping { n, paths: None, took: None, held: Some(state.held), health: None, workbench: None }).await.map_err(anyhow::Error::msg)?;
                 n += 1;
             }
             _ = work.tick() => {

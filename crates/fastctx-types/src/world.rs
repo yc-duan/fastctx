@@ -217,6 +217,11 @@ pub struct NodesReply {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub facts: Option<MachineFacts>,
     pub hubs: Vec<HubNodes>,
+    /// Whether the workbench's places are shown, from this computer's logins
+    /// and what its accounts' other computers told (`layers::shown`); none
+    /// while one of them has not told.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workbench: Option<bool>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

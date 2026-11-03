@@ -227,7 +227,8 @@ impl Device {
                 machines,
             });
         }
-        NodesReply { machine: self.here(), facts: None, hubs }
+        let workbench = workbench_shown(self.sessions().iter().map(|session| &*session.link));
+        NodesReply { machine: self.here(), facts: None, hubs, workbench }
     }
 
     /// What `member` said of itself, as kept; asked again for `account` in
@@ -349,4 +350,22 @@ fn said(kept: Option<Kept>, member: &Member) -> Result<MachineFacts, String> {
         None if member.online => Err("it has not said yet".to_string()),
         None => Err("it is offline".to_string()),
     }
+}
+
+/// Whether the workbench's places are shown on this device
+/// (`fastctx_types::layers::shown`): a device has no logins of its own, so it
+/// goes by what its accounts' computers told their hubs.
+pub(super) fn workbench_shown<'a>(links: impl IntoIterator<Item = &'a Link>) -> Option<bool> {
+    let mut told = Vec::new();
+    for link in links {
+        match link.last_view() {
+            Some(view) => {
+                let accounts: Vec<AccountName> =
+                    view.me().map(|me| me.logins.iter().cloned().collect()).unwrap_or_default();
+                told.extend(view.workbench_told(&accounts));
+            }
+            None => told.push(None),
+        }
+    }
+    fastctx_types::layers::shown(told)
 }

@@ -87,6 +87,10 @@ pub enum Up {
         /// This machine's health, to a hub that reads it (`View::health`).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         health: Option<fastctx_types::health::Health>,
+        /// Whether one of this machine's logins has the workbench open, once
+        /// its node knows (`world-layers.md`); an earlier release says none.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        workbench: Option<bool>,
     },
     /// The second half of a password login (`Intent::Login`): the last
     /// OPAQUE message, and the computer or phone that logs in.
