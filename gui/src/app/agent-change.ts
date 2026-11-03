@@ -15,13 +15,15 @@
 import { Sketch } from "../pen/sketch";
 import { counts, parse } from "../conversation/diff";
 import { diffPaint, memoryDiff } from "../conversation/diff-lines";
-import { glyph } from "../conversation/glyphs";
+import { agentMark, glyph } from "../conversation/glyphs";
 import { LongText, type LongTextWords } from "../conversation/long-text";
 import { escape } from "../conversation/prose";
 import { AnchorLayout } from "../longview";
+import { connect as connectFilm } from "../film/connect";
+import { Film } from "../film/film";
 import type { Change, ChangePreview, ChangeStep, LoginChange, OutputLimit, Step } from "../world/logins";
 import { previewDiff, shortPath } from "./change-diff";
-import { connectDrawing, discloseCards, drawDisclosed, moved, toggleDisclosed } from "./disclose";
+import { discloseCards, drawDisclosed, moved, toggleDisclosed } from "./disclose";
 import { enDisclose, zhDisclose, type DiscloseWords } from "./disclose-words";
 import { Sheet } from "./confirm";
 import { detailOf, enProblems, known, zhProblems } from "./problem";
@@ -241,6 +243,8 @@ export class AgentChangeSheet {
    *  is shows. */
   private unfolded = new Set<string>();
   private about = false;
+  /** The film of what connecting is, while it shows. */
+  private film: Film | null = null;
 
   constructor(
     private readonly words: AgentChangeWords,
@@ -271,9 +275,11 @@ export class AgentChangeSheet {
       const box = event.target as HTMLInputElement;
       if (box.dataset.raise !== undefined && this.state.at === "asking") this.state.raise = box.checked;
     });
+    this.sheet.dialog.addEventListener("close", () => this.stopFilm());
   }
 
   open(target: AgentChangeTarget): void {
+    this.stopFilm();
     this.target = target;
     this.unfolded = new Set();
     this.about = false;
@@ -368,6 +374,7 @@ export class AgentChangeSheet {
     this.sheet.body.innerHTML = `${head}<div class="agent-change">${this.body(target)}</div>`;
     this.drawDetails();
     this.drawDisclosure();
+    this.placeFilm();
   }
 
   /** Whether the window is told as cards. A node that works the change out
@@ -386,9 +393,26 @@ export class AgentChangeSheet {
     drawDisclosed(this.sheet.body, preview, this.unfolded, this.words.disclose, this.words.lines);
   }
 
-  /** What connecting is, under the window's head while asked for. */
-  private aboutPanel(target: AgentChangeTarget, opening: boolean): string {
-    return `<div class="dc-about${opening ? " opening" : ""}"><div class="dc-about-inner">${connectDrawing()}<p>${escape(this.words.disclose.about(agentName(target)))}</p></div></div>`;
+  /** What connecting is, under the window's head while asked for: its
+   *  film goes in once drawn (`placeFilm`). */
+  private aboutPanel(opening: boolean): string {
+    return `<div class="dc-about${opening ? " opening" : ""}"><div class="dc-about-inner"></div></div>`;
+  }
+
+  /** The film of what connecting is, in its panel while that shows: drawn
+   *  again, the window takes it as it was, playing where it had got to. */
+  private placeFilm(): void {
+    const target = this.target;
+    const inner = this.sheet.body.querySelector<HTMLElement>(".dc-about-inner");
+    if (!inner || !target) return this.stopFilm();
+    const said = this.words.disclose;
+    this.film ??= new Film((shape) => connectFilm(said.film(agentName(target)), agentMark(target.agent), shape), said.about(agentName(target)));
+    if (this.film.element.parentElement !== inner) inner.append(this.film.element);
+  }
+
+  private stopFilm(): void {
+    this.film?.destroy();
+    this.film = null;
   }
 
   /** What connecting is shown or put away, the cards left as they are. */
@@ -397,20 +421,29 @@ export class AgentChangeSheet {
     if (this.state.at !== "asking" || !target) return;
     this.sheet.body.querySelector(".dc-what")?.setAttribute("aria-pressed", String(this.about));
     const shown = this.sheet.body.querySelector(".dc-about");
+    const scroller = this.sheet.body.querySelector<HTMLElement>(".dc-scroll");
     if (!this.about) shown?.remove();
-    else if (!shown) this.sheet.body.querySelector(".dc-where")?.insertAdjacentHTML("afterend", this.aboutPanel(target, true));
+    else if (!shown && scroller) {
+      // It opens at the top of what scrolls, which comes to it.
+      scroller.insertAdjacentHTML("afterbegin", this.aboutPanel(true));
+      scroller.scrollTop = 0;
+    }
+    this.placeFilm();
   }
 
-  /** The cards of a change and the sentences under them: a limit the user
-   *  set on its card, the World's lines they changed put back, sessions
-   *  already open. */
-  private cards(target: AgentChangeTarget, preview: ChangePreview): string {
+  /** The cards of a change, a limit the user set on its card; and the
+   *  sentences under them, which stay as the cards scroll: the World's
+   *  lines they changed put back, sessions already open. */
+  private cards(target: AgentChangeTarget, preview: ChangePreview): { list: string; notes: string } {
     const said = this.words.disclose;
     const limit = target.into ? preview.output_limit : undefined;
     const also: Partial<Record<Change, string>> = {};
     if (limit) also.limits = said.raised(limit.current, limit.requested);
     const notes = target.workbench !== undefined ? [] : [...(target.takeBack ? [said.takeBack] : []), said.sessions(target.agent, agentName(target), target.into)];
-    return `${discloseCards(preview, said, this.unfolded, also, target.workbench)}${notes.length ? `<ul class="dc-notes">${notes.map((line) => `<li>${escape(line)}</li>`).join("")}</ul>` : ""}`;
+    return {
+      list: discloseCards(preview, said, this.unfolded, also, target.workbench),
+      notes: notes.length ? `<ul class="dc-notes">${notes.map((line) => `<li>${escape(line)}</li>`).join("")}</ul>` : "",
+    };
   }
 
   /** The window as cards: which login, what connecting is when asked, a
@@ -419,16 +452,20 @@ export class AgentChangeSheet {
     const { words } = this;
     const said = words.disclose;
     const { preview, problem } = state;
-    const middle = preview
-      ? this.cards(target, preview)
+    const told = preview ? this.cards(target, preview) : null;
+    const middle = told
+      ? told.list
       : problem
         ? `<p class="removal-said removal-wrong" title="${escape(problem)}">${escape(words.previewFailed)}</p>`
         : `<p class="removal-said">${escape(words.reading)}</p>`;
     return `<div class="dc">
       <p class="dc-where">${escape(said.where(target.machine, target.who))}</p>
-      ${this.about ? this.aboutPanel(target, false) : ""}
-      ${state.moved ? `<p class="dc-moved">${escape(said.moved)}</p>` : ""}
-      ${middle}
+      <div class="dc-scroll">
+        ${this.about ? this.aboutPanel(false) : ""}
+        ${state.moved ? `<p class="dc-moved">${escape(said.moved)}</p>` : ""}
+        ${middle}
+      </div>
+      ${told?.notes ?? ""}
       <div class="dc-foot">
         <span class="dc-undo">${preview ? escape(target.workbench !== undefined ? (target.workbench ? said.benchUndo : said.benchUndone) : target.into ? said.undo : said.undone) : ""}</span>
         <button class="text-button" type="button" data-change="cancel">${escape(words.cancel)}</button>
@@ -447,9 +484,11 @@ export class AgentChangeSheet {
     const done = change?.end?.end === "done";
     const kept = change?.end?.end === "done" ? (change.end.kept ?? []) : [];
     const steps = state.at === "running" ? state.steps : (change?.steps ?? []);
+    const { list, notes } = this.cards(target, told);
     return `<div class="dc">
       <p class="dc-where">${escape(words.disclose.where(target.machine, target.who))}</p>
-      ${this.cards(target, told)}
+      <div class="dc-scroll">${list}</div>
+      ${notes}
       ${kept.length ? `<ul class="agent-change-kept">${kept.map((one) => `<li title="${escape(one.reason)}"><span>${escape(words.kept)}</span><code>${escape(one.location)}</code></li>`).join("")}</ul>` : ""}
       ${ended?.problem ? `<p class="removal-said removal-wrong" title="${escape(ended.problem)}">${escape(words.failed(ended.problem))}</p>` : ""}
       <div class="dc-foot">

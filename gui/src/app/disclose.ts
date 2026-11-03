@@ -10,7 +10,6 @@ import { glyph, type GlyphName } from "../conversation/glyphs";
 import { LongText, type LongTextWords } from "../conversation/long-text";
 import { escape } from "../conversation/prose";
 import { AnchorLayout } from "../longview";
-import { Sketch } from "../pen/sketch";
 import type { Change, ChangeCard, ChangePreview, FileDiff } from "../world/logins";
 import { shortPath } from "./change-diff";
 import type { DiscloseWords } from "./disclose-words";
@@ -101,7 +100,7 @@ export function drawDisclosed(
   words: DiscloseWords,
   lines: LongTextWords & { unchanged(n: number): string },
 ): void {
-  const scroller = root.querySelector<HTMLElement>(".dc-cards");
+  const scroller = root.querySelector<HTMLElement>(".dc-scroll");
   if (!scroller) return;
   const layout = new AnchorLayout(scroller);
   toldCards(preview).forEach((card, index) =>
@@ -129,37 +128,6 @@ export function drawDisclosed(
       }
     }),
   );
-}
-
-/** What connecting is: the agent's own window, a few lines written in it,
- *  and a stroke of ink from it to each of the user's machines, a screen on
- *  a stand; a drop of clay where the work lands. */
-export function connectDrawing(): string {
-  const sketch = new Sketch("dc-connect");
-  sketch.wash(14, 42, 92, 64, "box", 8);
-  sketch.rule([26, 60], [66, 60], 2, "graphite");
-  sketch.rule([26, 72], [90, 72], 2, "graphite");
-  sketch.rule([26, 84], [56, 84], 2, "graphite");
-  const machines: [number, number][] = [
-    [196, 12],
-    [214, 60],
-    [196, 108],
-  ];
-  for (const [x, y] of machines) {
-    sketch.stroke(
-      [
-        [110, 74],
-        [150, 74 + (y + 12 - 74) * 0.5],
-        [x - 6, y + 12],
-      ],
-      1.4,
-      "graphite",
-    );
-    sketch.wash(x, y, 44, 26, "box", 4);
-    sketch.rule([x + 13, y + 33], [x + 31, y + 33], 1.6, "graphite");
-  }
-  sketch.blot([218, 25], 3, "clay");
-  return sketch.svg(270, 150, "dc-sketch");
 }
 
 /** Whether a change was refused because the files it was worked out from

@@ -180,8 +180,12 @@ const AGENT_MARKS: readonly string[] = ["claude", "codex"];
 
 /** An agent's mark, by the word the node names it by: its own where it has
  *  one, else the agents' mark. */
+export function agentMark(agent: string): GlyphName {
+  return AGENT_MARKS.includes(agent) ? (agent as Named) : "agents";
+}
+
 export function agentGlyph(agent: string, size = 20): string {
-  return glyph(AGENT_MARKS.includes(agent) ? (agent as Named) : "agents", size);
+  return glyph(agentMark(agent), size);
 }
 
 export function glyph(name: keyof typeof paths, size = 20): string {

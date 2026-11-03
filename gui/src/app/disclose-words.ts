@@ -2,6 +2,7 @@
 // 接入之前讲清楚做了什么): a card each kind of change, in concise written
 // words, and what the change does not do.
 
+import type { ConnectFilmWords } from "../film/connect";
 import type { Change } from "../world/logins";
 
 /** A card's two lines: what changes, and what that means for the user. */
@@ -16,9 +17,11 @@ export interface DiscloseWords {
   remove(agent: string): string;
   /** Under the title: which machine, which login. */
   where(machine: string, who: string): string;
-  /** What connecting is, behind the question mark. */
+  /** What connecting is, behind the question mark: the film's name, and
+   *  its words. */
   what: string;
   about(agent: string): string;
+  film(agent: string): ConnectFilmWords;
   /** Each kind of change, putting the World's in and taking it out. */
   into: Record<Change, ChangeWords>;
   out: Record<Change, ChangeWords>;
@@ -69,6 +72,10 @@ export const zhDisclose: DiscloseWords = {
   where: (machine, who) => `${machine}，${who}`,
   what: "关于接入",
   about: (agent) => `你仍在自己的 ${agent} 中工作，它经由 Fastctx 通达你的每一台机器；所做之事，尽在「活动」中。`,
+  film: (agent) => ({
+    captions: [`你仍在自己的 ${agent} 中工作。`, "接入之后，它多了一个工具 run，经由 Fastctx 通达你的每一台机器。", "它经 run 所做之事，尽在「活动」中。"],
+    activity: "活动",
+  }),
   into: {
     tools: { title: "新增工具 run", line: "在你的各台机器上执行命令、读写文件，并在机器之间传送文件。" },
     shell: { title: "停用自带的 shell", line: "命令改由 run 执行；Fastctx 未运行时，无法执行命令。" },
@@ -130,6 +137,10 @@ export const enDisclose: DiscloseWords = {
   where: (machine, who) => `${machine}, ${who}`,
   what: "About connecting",
   about: (agent) => `You keep working in your own ${agent}; through Fastctx it reaches every one of your machines, and all it does is recorded in Activity.`,
+  film: (agent) => ({
+    captions: [`You keep working in your own ${agent}.`, "Connected, it has one more tool, run, that reaches every one of your machines through Fastctx.", "All it does through run is recorded in Activity."],
+    activity: "Activity",
+  }),
   into: {
     tools: { title: "Adds the run tool", line: "Runs commands and reads and writes files on each of your machines, and moves files between them." },
     shell: { title: "Turns off its own shell", line: "Commands run through run instead; while Fastctx is not running, none can run." },

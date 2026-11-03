@@ -8,8 +8,7 @@
   gap: var(--space-3);
 }
 
-/* In the sheet it takes the room left under the head; only the cards
-   scroll. */
+/* In the sheet it takes the room left under the head. */
 .agent-change > .dc {
   flex: 1 1 auto;
   min-height: 0;
@@ -17,6 +16,18 @@
 
 .dc > * {
   flex: none;
+}
+
+/* What scrolls, the line above and the foot staying: what connecting is,
+   when asked, and the cards. */
+.dc-scroll {
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
 }
 
 /* Which machine, which login: a quiet line close under the title. */
@@ -36,8 +47,8 @@
   color: var(--text-strong);
 }
 
-/* What connecting is: the drawing and its line, while it is asked for.
-   Asked, it unfolds; the height is carried by the grid. */
+/* What connecting is: its film, while it is asked for. Asked, it
+   unfolds; the height is carried by the grid. */
 .dc-about {
   display: grid;
   grid-template-rows: 1fr;
@@ -58,29 +69,9 @@
 .dc-about-inner {
   min-height: 0;
   overflow: hidden;
-  display: flex;
-  align-items: center;
-  gap: var(--space-4);
-  color: var(--text-2);
-  font-size: var(--size-text);
-}
-
-.dc-about svg {
-  flex: none;
-  width: 180px;
-  height: auto;
-}
-
-.dc-about p {
-  margin: 0;
-  line-height: 1.7;
 }
 
 .dc-cards {
-  flex: 0 1 auto;
-  min-height: 0;
-  overflow-y: auto;
-  overscroll-behavior: contain;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -304,9 +295,5 @@
   .dc-undo,
   .dc-foot .dc-steps {
     flex-basis: 100%;
-  }
-
-  .dc-about svg {
-    width: 130px;
   }
 }
