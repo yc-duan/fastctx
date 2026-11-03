@@ -476,6 +476,16 @@ fn unmoved(places: &Places, host: Host, expected: &str) -> Result<(), Error> {
     Ok(())
 }
 
+/// `unmoved` again for `host` once its files were read for the change and
+/// before anything is written: what is planned then is planned from the
+/// files the user was shown, and the commit holds them to that.
+fn still(places: &Places, host: Host, expected: Option<(Host, &str)>) -> Result<(), Error> {
+    match expected {
+        Some((shown, expected)) if shown == host => unmoved(places, host, expected),
+        _ => Ok(()),
+    }
+}
+
 fn apply_made(
     places: &Places,
     hosts: Hosts,
@@ -552,6 +562,7 @@ fn apply_made(
         if old.is_some() {
             retire_legacy(&mut changes, old_file.expect("legacy receipt came from this snapshot"))?;
         }
+        still(places, Host::Codex, expected)?;
     }
 
     let mut plugin = None;
@@ -593,6 +604,7 @@ fn apply_made(
         let settings_created = record.settings_created
             || previous.as_ref().is_some_and(|r| r.settings_created)
             || !initial_settings.exists();
+        still(places, Host::Claude, expected)?;
         if !claude_workbench(places, previous.as_ref()) {
             withdrawn = connect_claude(
                 places,
@@ -823,6 +835,7 @@ fn unapply_made(
                 retire_legacy(&mut changes, old_file.expect("legacy receipt came from this snapshot"))?;
             }
         }
+        still(places, Host::Codex, expected)?;
     }
 
     let mut plugin_done = false;
@@ -841,6 +854,7 @@ fn unapply_made(
             None
         };
         let previous = read_plugin_record(plugin_record, initial_settings.path(), &record)?;
+        still(places, Host::Claude, expected)?;
         // A login that never had the plugin starts none of Claude Code's
         // programs to be taken out.
         if let Some(claude) = places.claude.clone().filter(|_| previous.is_some()) {

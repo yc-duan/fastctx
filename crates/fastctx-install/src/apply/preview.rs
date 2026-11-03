@@ -22,6 +22,20 @@ mod items;
 /// (`into`), doing `edits` with what the user changed of the World's, or
 /// taking them out.
 pub fn preview(places: &Places, host: Host, into: bool, edits: Edits) -> Result<ChangePreview, Error> {
+    // Its fingerprint is taken before and after it is worked out: the same
+    // both times, the files it was worked out from are the ones it names.
+    for _ in 0..8 {
+        let before = fingerprint(places, host)?;
+        let mut preview = worked_out(places, host, into, edits)?;
+        if fingerprint(places, host)? == before {
+            preview.fingerprint = Some(before);
+            return Ok(preview);
+        }
+    }
+    Err(Error::Moved)
+}
+
+fn worked_out(places: &Places, host: Host, into: bool, edits: Edits) -> Result<ChangePreview, Error> {
     let record_file = Snapshot::read(places.record())?;
     let records = homes::Records::read(&record_file, places)?;
     let record = records.selected(places, host.only())?;
@@ -47,7 +61,6 @@ pub fn preview(places: &Places, host: Host, into: bool, edits: Edits) -> Result<
         Host::Claude => claude(places, &record, into, edits, &mut preview, &mut steps)?,
     }
     preview.cards = steps.cards();
-    preview.fingerprint = Some(fingerprint(places, host)?);
     Ok(preview)
 }
 
