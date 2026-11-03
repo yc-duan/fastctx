@@ -55,9 +55,8 @@ fn identity(home: &std::path::Path) -> Option<fastctx_types::logins::Identity> {
     let settings = read(home, "settings.json")?;
     let method = settings.pointer("/security/auth/selectedType").and_then(Value::as_str);
 
-    let Some(method) = method else {
-        return if home.join("oauth_creds.json").exists() { None } else { Some(Identity::default()) };
-    };
+    // Without a chosen way it may still log in from the environment.
+    let method = method?;
     let present = if method == "qwen-oauth" {
         let credentials = read(home, "oauth_creds.json")?;
         credentials.get("access_token").and_then(Value::as_str).is_some_and(|value| !value.is_empty())

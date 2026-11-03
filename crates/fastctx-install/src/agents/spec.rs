@@ -14,8 +14,8 @@ pub struct Agent {
     /// Its word, as an `AgentName`: lowercase, sixteen characters at most,
     /// never `codex` or `claude`.
     pub name: &'static str,
-    /// How the log and the command line name it, such as `Gemini CLI`; the
-    /// interface names it in its own words.
+    /// How it is named, such as `Qwen Code`: in the log, on the command line
+    /// and in the interface.
     pub title: &'static str,
     /// Its user-level configuration directory.
     pub home: Home,
@@ -39,7 +39,7 @@ pub struct Agent {
 /// user's home.
 pub struct Home {
     /// An environment variable and the directory under it, such as
-    /// (`GEMINI_CLI_HOME`, `.gemini`); an empty subdirectory is the variable's
+    /// (`XDG_CONFIG_HOME`, `opencode`); an empty subdirectory is the variable's
     /// directory itself.
     pub env: &'static [(&'static str, &'static str)],
     pub default: &'static str,

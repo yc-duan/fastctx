@@ -19,7 +19,8 @@ pub(super) const AGENT: Agent = Agent {
 };
 
 fn entry(server: &Server<'_>) -> Value {
+    // As `copilot mcp add` writes one: a local server with all its tools.
     let env: serde_json::Map<String, Value> =
         server.env.iter().map(|(name, value)| (name.clone(), json!(value))).collect();
-    json!({ "command": server.command, "args": server.args, "env": env, "type": "stdio", "tools": ["*"] })
+    json!({ "type": "local", "command": server.command, "args": server.args, "env": env, "tools": ["*"] })
 }

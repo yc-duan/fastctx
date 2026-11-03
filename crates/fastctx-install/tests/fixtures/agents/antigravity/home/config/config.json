@@ -1,10 +1,5 @@
 {
   "userSettings": {
-    "globalPermissionGrants": {
-      "deny": [
-        "command(*)"
-      ]
-    },
     "remoteControlHostname": "lab-host"
   }
 }

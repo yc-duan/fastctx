@@ -1,7 +1,4 @@
 {
   "autoUpdateEnabled": false,
-  "telemetryOptOut": true,
-  "disabledTools": [
-    "run_commands"
-  ]
+  "telemetryOptOut": true
 }

@@ -52,22 +52,15 @@ fn quote(value: &str) -> String {
     if cfg!(windows) { format!("\"{value}\"") } else { format!("'{}'", value.replace('\'', "'\\''")) }
 }
 
-/// A saved OAuth session names its authentication method, but no account or plan.
+/// A saved session says it is logged in; it names no account and no plan.
 fn identity(home: &std::path::Path) -> Option<fastctx_types::logins::Identity> {
     use fastctx_types::logins::Identity;
-    let bytes = match std::fs::read(home.join("session.json")) {
-        Ok(bytes) => bytes,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Some(Identity::default()),
-        Err(_) => return None,
-    };
+    // Without the file nothing is known: AUGMENT_SESSION_AUTH may hold it.
+    let bytes = std::fs::read(home.join("session.json")).ok()?;
     let session: Value = serde_json::from_slice(&bytes).ok()?;
     let present = ["accessToken", "tenantURL"]
         .into_iter()
         .all(|key| session[key].as_str().is_some_and(|value| !value.is_empty()))
         && session["scopes"].is_array();
-    Some(if present {
-        Identity { logged_in: true, method: Some("oauth".to_owned()), ..Identity::default() }
-    } else {
-        Identity::default()
-    })
+    Some(if present { Identity { logged_in: true, ..Identity::default() } } else { Identity::default() })
 }

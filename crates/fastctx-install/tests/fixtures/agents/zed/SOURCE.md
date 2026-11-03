@@ -7,3 +7,5 @@ Source-derived editor fixture, not a runtime capture. The settings schema and te
 Upstream: https://github.com/zed-industries/zed/blob/504a7f2cf25b817cda3998cab93473adef15f93c/crates/agent/src/tool_permissions.rs
 
 Only lab-specific absolute paths and the lab Fastctx server key have been normalized. The server is named `lab-existing` here so the round-trip also checks that a neighboring service survives. No real credentials, accounts or machine names are included. The fixture tests configuration editing, not an authenticated model round-trip.
+
+The item that turns its shell off was taken out of the sample, so that it stands as before Fastctx: connecting puts it in, and taking out takes it away.

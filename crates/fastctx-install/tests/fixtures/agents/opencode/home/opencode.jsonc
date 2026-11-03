@@ -18,8 +18,5 @@
         "/lab/scripts/mcp-echo.cjs"
       ]
     }
-  },
-  "permission": {
-    "bash": "deny"
   }
 }

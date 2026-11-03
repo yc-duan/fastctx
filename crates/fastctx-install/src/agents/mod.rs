@@ -15,7 +15,6 @@ mod continue_ide;
 mod copilot;
 mod cursor;
 mod devin;
-mod gemini;
 pub(crate) mod json;
 mod kiro;
 mod opencode;
@@ -47,7 +46,6 @@ static AGENTS: &[&Agent] = &[
     &vscode_copilot::AGENT,
     &trae::AGENT,
     &continue_ide::AGENT,
-    &gemini::AGENT,
 ];
 
 pub fn all() -> &'static [&'static Agent] {
