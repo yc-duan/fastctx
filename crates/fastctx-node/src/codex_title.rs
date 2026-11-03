@@ -3,7 +3,8 @@
 //! asks for it, the World names the conversation once its first turn is in:
 //! the host makes a short title from the first words and names the thread,
 //! and the name reaches every device through the ordinary thread-name path.
-//! Off by default; the title is made at most once for a conversation.
+//! On unless the login's owner turned it off; the title is made at most
+//! once for a conversation while the node runs.
 
 use std::collections::HashSet;
 use std::sync::{Arc, LazyLock, Mutex};
