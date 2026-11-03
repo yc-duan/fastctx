@@ -58,9 +58,6 @@ impl Rank {
     pub const JOB_END: Rank = Rank(20);
     /// Writing one copy's destination.
     pub const COPYING: Rank = Rank(30);
-    /// Claude sessions being born and claimed: a launch holds it shared
-    /// until it knows its session, a registration alone while it is placed.
-    pub const BIRTHS: Rank = Rank(95);
 
     // A conversation's locks, in the order they are taken.
     /// Its place on this machine: deleting it holds it alone; starting a
@@ -69,6 +66,12 @@ impl Rank {
     pub const PLACE: Rank = Rank(90);
     /// User actions enter one conversation in order, before lifecycle or host locks.
     pub const ACTION: Rank = Rank(85);
+    /// Claude sessions being born and claimed: a launch holds it shared
+    /// until it knows its session, a registration alone while it is placed.
+    /// After a conversation's action and place gates, before its other
+    /// locks: holding it, a conversation's lock is only tried, and when
+    /// busy this is let go and that waited for outside it.
+    pub const BIRTHS: Rank = Rank(95);
     /// Its management gate: what changes its life holds it alone, what
     /// uses it shares it.
     pub const LIFECYCLE: Rank = Rank(100);
