@@ -85,10 +85,16 @@ export class SideHome implements SidePage {
       const head = target.closest<HTMLElement>(".sh-head");
       if (head) {
         const card = head.dataset.card!;
-        if (this.fold.has(card)) this.fold.delete(card);
-        else this.fold.add(card);
+        const shut = !this.fold.has(card);
+        if (shut) this.fold.add(card);
+        else this.fold.delete(card);
         keepFolded(this.fold);
-        this.draw();
+        // Folded where it stands, so it eases shut or open as a
+        // conversation's steps do; the next drawing finds it as it is.
+        const section = head.closest<HTMLElement>(".sh-card");
+        section?.classList.toggle("shut", shut);
+        section?.querySelector(":scope > .sh-fold")?.classList.toggle("open", !shut);
+        head.setAttribute("aria-expanded", String(!shut));
         return;
       }
       const open = target.closest<HTMLElement>("[data-open]")?.dataset.open;
@@ -155,7 +161,7 @@ export class SideHome implements SidePage {
   private card(card: Card, name: string, state: string, body: string, waiting = "", waits = false, barred = false): string {
     const shut = this.fold.has(card);
     const said = `${escape(state)}${waiting ? `<span class="sh-waits">${escape(waiting)}</span>` : ""}`;
-    return `<section class="sh-card${shut ? " shut" : ""}${barred ? " barred" : ""}" data-of="${card}"><button class="sh-head" type="button" data-card="${card}" aria-expanded="${!shut}"><span class="sh-name">${escape(name)}</span><span class="sh-turn">${glyph("chevron", 12)}</span><span class="sh-state${waits ? " waiting" : ""}">${said}</span></button>${shut ? "" : `<div class="sh-body">${body}</div>`}</section>`;
+    return `<section class="sh-card${shut ? " shut" : ""}${barred ? " barred" : ""}" data-of="${card}"><button class="sh-head" type="button" data-card="${card}" aria-expanded="${!shut}"><span class="sh-name">${escape(name)}</span><span class="sh-turn">${glyph("chevron", 12)}</span><span class="sh-state${waits ? " waiting" : ""}">${said}</span></button><div class="sh-fold${shut ? "" : " open"}"><div class="sh-fold-inner"><div class="sh-body">${body}</div></div></div></section>`;
   }
 
   private goalCard(now: number): string {
