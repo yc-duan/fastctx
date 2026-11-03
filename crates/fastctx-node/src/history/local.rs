@@ -166,6 +166,7 @@ pub(crate) async fn call(
         shelf.write_copy(&path, &saved.name, &saved, written.as_deref(), previous.as_deref())
     })
     .await?;
+    crate::context::invalidations::history(node, &scope);
     node.memory_changed();
     Ok(HistoryReply::Saved { revision: Box::new(revision) })
 }

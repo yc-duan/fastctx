@@ -138,14 +138,21 @@ pub(crate) async fn refresh(
         return Ok(());
     };
     catalog.sort();
-    let usable = |machine: &fastctx_types::MachineName| node.authorize_machine(acting, &machine.into()).is_ok();
-    for revision in &mut catalog.documents {
-        let own = matches!(&revision.author.stamp.by, Writer::Resident { address } if address.resident == *id && node.is_me(&address.machine));
-        let writer = revision.author.stamp.by.clone();
-        revision.author.stamp.for_reader(&usable);
-        if own {
-            revision.author.stamp.by = writer;
+    {
+        let authors = std::cell::RefCell::new(std::collections::BTreeSet::new());
+        let usable = |machine: &fastctx_types::MachineName| {
+            authors.borrow_mut().insert(machine.clone());
+            node.authorize_machine(acting, &machine.into()).is_ok()
+        };
+        for revision in &mut catalog.documents {
+            let own = matches!(&revision.author.stamp.by, Writer::Resident { address } if address.resident == *id && node.is_me(&address.machine));
+            let writer = revision.author.stamp.by.clone();
+            revision.author.stamp.for_reader(&usable);
+            if own {
+                revision.author.stamp.by = writer;
+            }
         }
+        node.contexts.routes.remember_authors(id, authors.into_inner().into_iter().collect());
     }
     let scope_id = hash(&serde_json::to_string(&(&scope, &account)).map_err(failure)?);
     let cursor = Cursor {

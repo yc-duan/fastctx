@@ -79,6 +79,7 @@ pub(crate) async fn call(node: &Arc<Node>, caller: &Caller, request: HistoryCall
         return Err(Failure::not_run("history is not enabled in this release"));
     }
     let changed = request.writes();
+    let scope = request.scope().clone();
     let author = if request.writes() { Some(author(node, caller).await?) } else { None };
     let network = network(node, caller, request.scope()).await?;
     let acting = crate::around::acting_of(node, caller);
@@ -98,6 +99,7 @@ pub(crate) async fn call(node: &Arc<Node>, caller: &Caller, request: HistoryCall
     // Local callers may have a narrower work scope than their computer's logins.
     redact(&mut reply, &|machine| node.authorize_machine(&acting, &machine.into()).is_ok());
     if changed {
+        crate::context::invalidations::history(node, &scope);
         node.memory_changed();
     }
     Ok(reply)

@@ -2,18 +2,24 @@
 
 mod archived;
 pub(crate) mod blocking;
+pub(crate) mod dependencies;
 pub(crate) mod input;
+pub(crate) mod invalidations;
 pub(crate) mod memory;
 #[cfg(feature = "storage-drill")]
 pub(crate) mod migration_drill;
+pub(crate) mod parts;
 mod projection;
+mod projects;
 pub(crate) mod records;
+pub(crate) mod routes;
 pub(crate) mod sources;
 mod storage;
 pub(crate) mod turn;
 mod updates;
 pub(crate) mod words;
-pub(crate) use updates::{Updates, refresh, request_plan, start, told};
+pub(crate) use invalidations::request_plan;
+pub(crate) use updates::{Updates, refresh, start, told};
 
 use crate::Node;
 use fastctx_types::{Address, ResidentId};
@@ -98,7 +104,7 @@ pub(crate) fn clear(node: &Node, id: &ResidentId, name: &str, change: Change<'_>
     storage::set(&node.world, id, name, "", change)
 }
 
-pub(crate) use sources::{map, plan, plan_unavailable, prepare, refresh_local, refresh_local_now};
+pub(crate) use sources::{map, plan, plan_unavailable, prepare, refresh_local_now};
 
 /// The revision the current context epoch records as heard, in the caller's transaction.
 pub(crate) fn seen_revision(rows: &crate::records::Rows<'_>, name: &str) -> fastctx_storage::Result<Option<u64>> {

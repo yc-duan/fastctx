@@ -267,6 +267,7 @@ pub(crate) async fn take(
         })
         .await?
     };
+    let changed = after < latest;
     let mut last_page = None;
     while after < latest {
         let (items, more, through) = link.ledger_projection(town, after).await?;
@@ -325,6 +326,9 @@ pub(crate) async fn take(
         None => node.syncing.lock().await,
     };
     check_place(node, link, name, town)?;
+    if changed {
+        crate::context::invalidations::project(node, name);
+    }
     node.memory_changed();
     Ok(())
 }

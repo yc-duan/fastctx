@@ -71,6 +71,7 @@ pub(crate) async fn refresh(node: &Arc<Node>, link: &Arc<Link>, wanted: Option<&
         fastctx_platform::task::spawn_blocking(move || {
             INDICES.lock().expect("never poisoned").insert(world.town(&town).path().to_path_buf(), index);
             crate::town::instructions::refresh(&node, &town);
+            crate::context::invalidations::project(&node, &town);
             node.memory_changed();
             io::Result::Ok(())
         })

@@ -9,11 +9,6 @@ static SOURCES: std::sync::LazyLock<crate::record_gates::Gates> = std::sync::Laz
     crate::record_gates::Gates::new(fastctx_platform::doing::Rank::EMITTING, "local context source")
 });
 
-pub(crate) async fn refresh_local(node: &Arc<Node>, id: &ResidentId) -> io::Result<()> {
-    let (node, id) = (node.clone(), id.clone());
-    fastctx_platform::task::spawn_blocking(move || refresh_local_now(&node, &id)).await.map_err(io::Error::other)?
-}
-
 pub(crate) fn refresh_local_now(node: &Node, id: &ResidentId) -> io::Result<()> {
     let gate = SOURCES.get(node.world.conversation(id).path());
     let _refreshing = gate.lock();
@@ -27,45 +22,75 @@ fn local(node: &Node, id: &ResidentId, town: Option<&TownName>, acting: &Acting)
     local_current(node, id, town, acting)
 }
 
+pub(crate) fn refresh_part_now(node: &Node, id: &ResidentId, part: super::parts::Part) -> io::Result<()> {
+    let gate = SOURCES.get(node.world.conversation(id).path());
+    let _refreshing = gate.lock();
+    let (about, town) = node.residents.about(id).ok_or_else(|| io::Error::other(words::UNKNOWN))?;
+    local_part(node, id, town.as_ref(), &about.acting, part)
+}
+
 fn local_current(node: &Node, id: &ResidentId, town: Option<&TownName>, acting: &Acting) -> io::Result<()> {
-    let prompt = crate::profile::session::text(&crate::profile::session::prompt(node, acting));
-    storage::set(
-        &node.world,
-        id,
-        "user",
-        &prompt,
-        Change { by: None, version: "", fact: &words::changed("user", words::USER), full: true },
-    )?;
-    let (text, author, version, by) = match town {
-        Some(town) => match crate::town::instructions::current(node, town, acting)? {
-            Some((text, record)) => {
-                let version = format!("{town}:{}", record.version);
-                let writer = fastctx_hands::town::writer(&record.by, record.on.as_ref());
-                let by = match record.by {
-                    Writer::Resident { address } => Some(address),
-                    _ => None,
-                };
-                (text, by, version, writer)
-            }
-            None => (String::new(), None, String::new(), words::USER.into()),
-        },
-        None => (String::new(), None, String::new(), words::USER.into()),
-    };
-    storage::set(
-        &node.world,
-        id,
-        "project",
-        &text,
-        Change { by: author.as_ref(), version: &version, fact: &words::changed("project", &by), full: true },
-    )?;
-    let focus = crate::focus::text(&node.world.conversation(id))?;
-    storage::set(
-        &node.world,
-        id,
-        "focus",
-        &focus,
-        Change { by: None, version: "selection", fact: &words::changed("focus", words::USER), full: true },
-    )
+    for part in [super::parts::Part::User, super::parts::Part::Project, super::parts::Part::Focus] {
+        local_part(node, id, town, acting, part)?;
+    }
+    Ok(())
+}
+
+fn local_part(
+    node: &Node,
+    id: &ResidentId,
+    town: Option<&TownName>,
+    acting: &Acting,
+    part: super::parts::Part,
+) -> io::Result<()> {
+    use super::parts::Part;
+    match part {
+        Part::User => {
+            let prompt = crate::profile::session::text(&crate::profile::session::prompt(node, acting));
+            storage::set(
+                &node.world,
+                id,
+                "user",
+                &prompt,
+                Change { by: None, version: "", fact: &words::changed("user", words::USER), full: true },
+            )
+        }
+        Part::Project => {
+            let (text, author, version, by) = match town {
+                Some(town) => match crate::town::instructions::current(node, town, acting)? {
+                    Some((text, record)) => {
+                        let version = format!("{town}:{}", record.version);
+                        let writer = fastctx_hands::town::writer(&record.by, record.on.as_ref());
+                        let by = match record.by {
+                            Writer::Resident { address } => Some(address),
+                            _ => None,
+                        };
+                        (text, by, version, writer)
+                    }
+                    None => (String::new(), None, String::new(), words::USER.into()),
+                },
+                None => (String::new(), None, String::new(), words::USER.into()),
+            };
+            storage::set(
+                &node.world,
+                id,
+                "project",
+                &text,
+                Change { by: author.as_ref(), version: &version, fact: &words::changed("project", &by), full: true },
+            )
+        }
+        Part::Focus => {
+            let focus = crate::focus::text(&node.world.conversation(id))?;
+            storage::set(
+                &node.world,
+                id,
+                "focus",
+                &focus,
+                Change { by: None, version: "selection", fact: &words::changed("focus", words::USER), full: true },
+            )
+        }
+        _ => unreachable!("not a local context source"),
+    }
 }
 
 pub(crate) async fn prepare(

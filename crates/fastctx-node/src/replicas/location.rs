@@ -1,5 +1,7 @@
 //! Select one existing replica to tell the model; selection never retires other copies.
 
+pub(crate) mod selection;
+
 use crate::Node;
 use fastctx_types::{
     Address, ResidentId,
@@ -45,27 +47,6 @@ pub(crate) async fn prepare(
             _ => return Err(failure("the hub did not return the conversation's ownership")),
         },
     };
-    let subject = Acting::one(account.hub.clone(), account.account.clone());
-    let mut candidates = Vec::new();
-    for member in view.machines().filter(|member| member.online) {
-        let keeps = match &resource {
-            Resource::History { scope: fastctx_types::history::Scope::Project { project } } => view
-                .project_named(&account.account, project)
-                .is_some_and(|project| view.member_keeps_project(&member.name, &project.town)),
-            _ => ownership.as_ref().is_some_and(|conversation| {
-                fastctx_net::record_ownership::keeps(
-                    &view.directory,
-                    member,
-                    std::slice::from_ref(&conversation.account),
-                    conversation.shared_on.as_ref(),
-                )
-            }),
-        };
-        let machine = Written { name: member.name.clone(), hub: Some(link.hub_name()) };
-        if keeps && node.authorize_machine(&subject, &machine).is_ok() {
-            candidates.push(machine);
-        }
-    }
     let room = node.world.conversation(id);
     let focus = match node.residents.about(id) {
         Some((about, _)) => about.focus,
@@ -78,24 +59,22 @@ pub(crate) async fn prepare(
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
             Err(error) => return Err(failure(error)),
         };
-    let mut ranked = Vec::new();
-    let mut add = |machine: &fastctx_types::MachineName| {
-        if let Some(candidate) = candidates.iter().find(|candidate| view.same(&candidate.name, machine))
-            && !ranked.contains(candidate)
-        {
-            ranked.push(candidate.clone());
-        }
+    let ranked = candidates(node, &view, account, &resource, ownership.as_ref(), &focus, speaking.as_ref());
+    let remember = |selected: Option<fastctx_types::MachineName>| {
+        node.contexts.routes.observe(
+            id,
+            crate::context::routes::Route {
+                account: account.clone(),
+                resource: resource.clone(),
+                ownership: ownership.clone(),
+                speaking: speaking.clone(),
+                selected,
+                legacy: false,
+            },
+        )
     };
-    add(&node.machine());
-    for focused in &focus.machines {
-        add(&focused.machine.name);
-    }
-    if let Some(speaking) = &speaking {
-        add(speaking);
-    }
-    if candidates.len() == 1 {
-        add(&candidates[0].name);
-    }
+    remember(None);
+    let subject = Acting::one(account.hub.clone(), account.account.clone());
     let mut outdated = false;
     for machine in ranked {
         if node.is_here(&machine) {
@@ -105,7 +84,9 @@ pub(crate) async fn prepare(
                 account: account.account.clone(),
                 hands: true,
             };
-            return crate::placement::prepare_copy(node, &asker, owner.clone(), 0, resource.clone()).await.map(Some);
+            let location = crate::placement::prepare_copy(node, &asker, owner.clone(), 0, resource.clone()).await?;
+            remember(Some(machine.name.clone()));
+            return Ok(Some(location));
         }
         match node.call(&subject, &machine, Purpose::Look, RemoteCall::Facts).await {
             Ok(Ok(RemoteReply::Facts(facts))) if facts.replicated_records => {}
@@ -124,7 +105,10 @@ pub(crate) async fn prepare(
             )
             .await
         {
-            Ok(Ok(RemoteReply::WorkingCopy { location })) => return Ok(Some(location)),
+            Ok(Ok(RemoteReply::WorkingCopy { location })) => {
+                remember(Some(machine.name.clone()));
+                return Ok(Some(location));
+            }
             Ok(Err(error)) => return Err(error),
             Err(error) => return Err(failure(error)),
             _ => return Err(failure("the computer did not return the replica location")),
@@ -215,4 +199,19 @@ pub(crate) async fn prepare_here(
     };
     let path = fastctx_platform::task::blocking(move || crate::world::native(&path)).await;
     Ok(Location { machine: node.machine(), path })
+}
+
+/// Candidate selection shared with context dependency tracking.
+pub(crate) fn candidates(
+    node: &Node,
+    view: &fastctx_net::directory::View,
+    account: &HubAccount,
+    resource: &Resource,
+    ownership: Option<&fastctx_types::owned_records::Conversation>,
+    focus: &fastctx_types::focus::Focus,
+    speaking: Option<&fastctx_types::MachineName>,
+) -> Vec<Written> {
+    let subject = Acting::one(account.hub.clone(), account.account.clone());
+    selection::Selection { view, account, resource, ownership, focus, here: &node.machine(), speaking }
+        .candidates(|machine| node.authorize_machine(&subject, machine).is_ok())
 }

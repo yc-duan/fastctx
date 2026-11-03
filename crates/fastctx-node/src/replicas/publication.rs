@@ -68,11 +68,23 @@ pub(crate) fn save_now(node: &Node, copy: &Copy, publish: bool, previous: Option
     {
         return Err("this document copy was withdrawn while its operation was in progress".into());
     }
+    let changed = node
+        .replicas
+        .state
+        .routes
+        .lock()
+        .expect("never poisoned")
+        .get(&copy.id())
+        .is_none_or(|before| before.head != route.head || before.path != route.path);
     node.replicas.state.relocated(copy);
     state::save(&node.world, copy).map_err(|error| error.to_string())?;
     node.replicas.state.routes.lock().expect("never poisoned").insert(copy.id(), route);
     if publish {
         project(copy, previous)?;
+    }
+    drop(_publication);
+    if changed {
+        crate::context::invalidations::document(node, &copy.account.hub, &copy.head.document);
     }
     Ok(())
 }

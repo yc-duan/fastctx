@@ -234,7 +234,9 @@ pub(crate) async fn intercept(
         submitted = Ok(());
     }
     let path = copy.path.clone();
+    let document = copy.head.document.clone();
     drop(copy);
+    crate::context::invalidations::document(node, link.hub(), &document);
     node.memory_changed();
     let text = if pending {
         format!("{} {}: saved locally; the hub will receive it when connected", operation.tool(), path.display())

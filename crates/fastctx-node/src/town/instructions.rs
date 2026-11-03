@@ -24,13 +24,37 @@ pub(crate) fn current(
     town: &TownName,
     acting: &Acting,
 ) -> io::Result<Option<(String, fastctx_types::project::Record)>> {
-    if !super::access::permits(node, acting, town).map_err(io::Error::other)? {
-        return Ok(None);
-    }
-    let Some((mut record, mut opened)) = super::read::current(&node.world, town)? else { return Ok(None) };
-    crate::ledger::query::seen(node, acting, town, &mut record)?;
-    crate::ledger::query::seen_stamp(node, acting, town, &mut opened)?;
-    Ok(Some((fastctx_hands::town::record_of(town, &record, &opened), record)))
+    let generation = (*node.views.borrow(), *node.ways.borrow(), *node.memory_changes.borrow());
+    let place = crate::ledger::names::place(&node.world, town)?;
+    let mut machines = Vec::new();
+    let result = if !super::access::permits_at(node, acting, town, place.as_ref()).map_err(io::Error::other)? {
+        None
+    } else if let Some((record, opened)) = super::read::current(&node.world, town)? {
+        let usable = crate::ledger::query::usable_at(node, acting, place.as_ref().map(|place| &place.hub));
+        let (rendered, names) = render(town, record, opened, usable);
+        machines = names;
+        Some(rendered)
+    } else {
+        None
+    };
+    node.contexts.projects.remember(node, acting, town, (place, machines), &result, generation);
+    Ok(result)
+}
+
+fn render(
+    town: &TownName,
+    mut record: fastctx_types::project::Record,
+    mut opened: fastctx_types::project::Stamp,
+    usable: Option<crate::ledger::query::Usable>,
+) -> ((String, fastctx_types::project::Record), Vec<fastctx_types::MachineName>) {
+    let machines = std::cell::RefCell::new(std::collections::BTreeSet::new());
+    let visible = |machine: &fastctx_types::MachineName| {
+        machines.borrow_mut().insert(machine.clone());
+        usable.as_ref().is_none_or(|usable| usable(machine))
+    };
+    record.for_reader(&visible);
+    opened.for_reader(&visible);
+    ((fastctx_hands::town::record_of(town, &record, &opened), record), machines.into_inner().into_iter().collect())
 }
 
 /// Refreshes named project context and gives the plugin its canonical location.
@@ -64,7 +88,8 @@ pub(crate) fn refresh(node: &Node, town: &TownName) {
     for resident in node.residents.everyone() {
         if resident.removed.is_none()
             && resident.town.as_ref() == Some(town)
-            && let Err(error) = hand_to_current(node, &resident.id)
+            && let Err(error) =
+                crate::context::sources::refresh_part_now(node, &resident.id, crate::context::parts::Part::Project)
         {
             node.log.line(format_args!("refreshing {}'s project instructions: {error}", resident.id));
         }

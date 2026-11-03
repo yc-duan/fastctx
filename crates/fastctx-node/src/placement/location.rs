@@ -268,6 +268,17 @@ pub(crate) async fn prepare(
         fastctx_platform::Permissions::Private,
     )
     .map_err(failure)?;
+    node.contexts.routes.observe(
+        id,
+        crate::context::routes::Route {
+            account: scope.clone(),
+            resource: fastctx_types::placement::Resource::Plan,
+            ownership: None,
+            speaking: from,
+            selected: location.as_ref().map(|location| location.machine.clone()),
+            legacy: true,
+        },
+    );
     if settled {
         node.locations.chosen.lock().expect("never poisoned").insert(id.clone(), signature);
     }

@@ -225,17 +225,52 @@ const SETTLE: std::time::Duration = std::time::Duration::from_secs(3);
 /// Brings the sessions' configuration of `only`'s conversations, or of every
 /// conversation, in line with the accounts' profiles. Returns those busy at
 /// the time, to be tried again.
-async fn refresh(node: &Arc<Node>, only: Option<&BTreeSet<ResidentId>>) -> Result<BTreeSet<ResidentId>, Failure> {
+async fn refresh(
+    node: &Arc<Node>,
+    only: Option<&BTreeSet<ResidentId>>,
+    seen: &mut std::collections::BTreeMap<ResidentId, u64>,
+) -> Result<BTreeSet<ResidentId>, Failure> {
+    let generation = (*node.views.borrow(), *node.ways.borrow(), *node.memory_changes.borrow());
+    let all = only.is_none();
     let (reading, only) = (node.clone(), only.cloned());
-    let residents: Vec<_> = fastctx_platform::task::spawn_blocking(move || match only {
-        None => reading.residents.everyone().collect(),
-        Some(ids) => ids.iter().filter_map(|id| reading.residents.on_record(id)).collect(),
+    let residents: Vec<_> = fastctx_platform::task::spawn_blocking(move || {
+        let residents: Vec<_> = match only {
+            None => reading.residents.everyone().collect(),
+            Some(ids) => ids.iter().filter_map(|id| reading.residents.on_record(id)).collect(),
+        };
+        let mut inputs = crate::context::dependencies::Scan::default();
+        residents
+            .into_iter()
+            .map(|resident| {
+                let context = inputs.inputs(&reading, &resident.about, resident.town.as_ref());
+                let signature = crate::context::dependencies::hash(&(
+                    context,
+                    &resident.about,
+                    &resident.town,
+                    get(&reading, &resident.about.acting),
+                    servers(&reading, &resident.id, &resident.about.acting, &resident.about.mcp_off, false),
+                    crate::assists::own_accounts(&reading, &resident.about.acting),
+                ));
+                (resident, signature)
+            })
+            .collect()
     })
     .await
     .map_err(|error| Failure::new(error.to_string()))?;
+    if all {
+        let live: BTreeSet<_> = residents
+            .iter()
+            .filter(|(resident, _)| resident.removed.is_none())
+            .map(|(resident, _)| &resident.id)
+            .collect();
+        seen.retain(|id, _| live.contains(id));
+    }
     let mut busy = BTreeSet::new();
-    for resident in residents {
+    for (resident, signature) in residents {
         if resident.removed.is_some() || !resident.about.world_started {
+            continue;
+        }
+        if seen.get(&resident.id) == Some(&signature) {
             continue;
         }
         let Ok(gate) = node.residents.management(&resident.id) else {
@@ -248,12 +283,22 @@ async fn refresh(node: &Arc<Node>, only: Option<&BTreeSet<ResidentId>>) -> Resul
         if node.residents.active(&resident.id).is_err() {
             continue;
         }
-        if resident.about.host.agent.as_str() == "claude" {
-            if let Err(e) = load_claude(node, &resident.id, false).await {
-                node.log.line(format_args!("updating {}'s user configuration: {e}", resident.id));
-            }
+        let result = if resident.about.host.agent.as_str() == "claude" {
+            load_claude(node, &resident.id, false).await.map(|_| ())
         } else if resident.about.host.agent.as_str() == "codex" {
-            crate::codex::moved(node, &resident.id).await;
+            crate::codex::refresh_spec(node, &resident.id).await
+        } else {
+            Ok(())
+        };
+        match result {
+            Ok(()) if generation == (*node.views.borrow(), *node.ways.borrow(), *node.memory_changes.borrow()) => {
+                seen.insert(resident.id.clone(), signature);
+            }
+            Ok(()) => {
+                seen.remove(&resident.id);
+                busy.insert(resident.id.clone());
+            }
+            Err(error) => node.log.line(format_args!("updating {}'s user configuration: {error}", resident.id)),
         }
     }
     Ok(busy)
@@ -285,9 +330,10 @@ pub(crate) fn start(node: &Arc<Node>) {
     fastctx_platform::task::spawn(async move {
         let mut views = node.views.subscribe();
         let mut ways = node.ways.subscribe();
+        let mut seen = std::collections::BTreeMap::new();
         let (mut busy, mut swept, mut all) = (BTreeSet::new(), true, true);
         loop {
-            let failed = match refresh(&node, (!all).then_some(&busy)).await {
+            let failed = match refresh(&node, (!all).then_some(&busy), &mut seen).await {
                 Ok(updated) => {
                     busy = updated;
                     false

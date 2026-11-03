@@ -1496,14 +1496,16 @@ impl fastctx_net::link::Node for Handler {
             crate::replicas::updates::schedule(
                 &node,
                 &self.hub,
-                crate::replicas::updates::Change::History { town, name, version },
+                crate::replicas::updates::Change::History { town: town.clone(), name, version },
             );
+            crate::context::invalidations::project_at(&node, &self.hub, &town);
             node.memory_changed();
         }
     }
     fn replicas_changed(&self) {
         if let Some(node) = self.node.upgrade() {
             crate::replicas::updates::schedule(&node, &self.hub, crate::replicas::updates::Change::All);
+            crate::context::invalidations::hub(&node, &self.hub);
             node.memory_changed();
         }
     }
@@ -1551,7 +1553,7 @@ impl fastctx_net::link::Node for Handler {
     fn connected(&self) {
         let Some(node) = self.node.upgrade() else { return };
         node.views_changed();
-        node.plan_reads.clear();
+        crate::context::invalidations::reconnected(&node, &self.hub);
         node.skill_index.invalidate(&self.hub, None);
         crate::placement::copies::refresh(&node, &self.hub);
         crate::skills::copies::refresh(&node, &self.hub);
@@ -1583,6 +1585,7 @@ impl fastctx_net::link::Node for Handler {
             ) {
                 node.memory_changed();
             }
+            crate::context::invalidations::record(&node, &self.hub, change);
             crate::placement::copies::changed(&node, &self.hub, change);
         }
         if let Some(node) = self.node.upgrade() {
@@ -1616,8 +1619,6 @@ impl fastctx_net::link::Node for Handler {
         }
         crate::hub_arrival::check(&node, &self.hub);
         node.views_changed();
-        let contexts = node.clone();
-        fastctx_platform::task::spawn(async move { crate::focus::refresh_all(&contexts).await });
         self.changes.reconcile(&node, link);
     }
 

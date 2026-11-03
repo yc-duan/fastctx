@@ -476,20 +476,22 @@ pub(crate) async fn titled(node: &Arc<Node>, id: &ResidentId, title: String) {
 /// A resident whose thread the World holds moved to another town: when its
 /// thread is next resumed, it is told it lives there.
 pub async fn moved(node: &Arc<Node>, id: &ResidentId) {
-    let Some((about, town)) = node.residents.about(id) else { return };
+    if let Err(failure) = refresh_spec(node, id).await {
+        node.log.line(format_args!("{id} moved, and its thread cannot be told: {failure}"));
+    }
+}
+
+pub(crate) async fn refresh_spec(node: &Arc<Node>, id: &ResidentId) -> Result<(), fastctx_types::ipc::Failure> {
+    let Some((about, town)) = node.residents.about(id) else { return Ok(()) };
     if !about.world_started || about.host.agent.as_str() != "codex" {
-        return;
+        return Ok(());
     }
-    let Some(thread) = &about.session else { return };
-    match crate::colleagues::thread_spec(node, id, &about.origin, town.as_ref(), &about.acting, about.home.as_deref())
-        .await
-    {
-        Ok((spec, _)) => match node.codex.of(node, &about) {
-            Ok(codex) => codex.adopt(thread, spec),
-            Err(failure) => node.log.line(format_args!("{id} moved, and its thread cannot be told: {failure}")),
-        },
-        Err(failure) => node.log.line(format_args!("{id} moved, and its thread cannot be told: {failure}")),
-    }
+    let Some(thread) = &about.session else { return Ok(()) };
+    let (spec, _) =
+        crate::colleagues::thread_spec(node, id, &about.origin, town.as_ref(), &about.acting, about.home.as_deref())
+            .await?;
+    node.codex.of(node, &about)?.adopt(thread, spec);
+    Ok(())
 }
 
 /// The resident `id` is the thread `thread` now: what was reported of the

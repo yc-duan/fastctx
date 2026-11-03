@@ -142,7 +142,7 @@ pub(crate) fn usable(node: &Node, acting: &Acting, town: &TownName) -> std::io::
 
 pub(crate) type Usable = Box<dyn Fn(&MachineName) -> bool + Send + Sync>;
 
-fn usable_at(node: &Node, acting: &Acting, hub: Option<&HubId>) -> Option<Usable> {
+pub(crate) fn usable_at(node: &Node, acting: &Acting, hub: Option<&HubId>) -> Option<Usable> {
     let link = hub.and_then(|hub| node.link_of(hub))?;
     let accounts = node.accounts_on(&link, acting);
     let view = link.view();

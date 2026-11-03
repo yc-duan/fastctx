@@ -36,9 +36,6 @@ impl Reads {
             entry.3 = false;
         }
     }
-    pub(crate) fn clear(&self) {
-        self.0.lock().expect("never poisoned").clear();
-    }
 }
 
 pub(crate) fn changed(node: &Arc<Node>, hub: &HubId, change: &Changed) {

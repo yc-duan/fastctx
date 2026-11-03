@@ -263,43 +263,13 @@ async fn refresh_selection(node: &Arc<Node>, id: &ResidentId, force: bool) -> Re
             return Ok(());
         }
         if storage::keep(&working.world.conversation(&resident), generation, note.as_deref(), &visible, None)? {
-            crate::context::refresh_local_now(&working, &resident)?;
+            crate::context::sources::refresh_part_now(&working, &resident, crate::context::parts::Part::Focus)?;
         }
         Ok(())
     })
     .await
     .map_err(failed)?
     .map_err(failed)
-}
-
-pub(crate) async fn refresh_all(node: &Arc<Node>) {
-    let working = node.clone();
-    let ids = match task::spawn_blocking(move || {
-        working
-            .residents
-            .everyone()
-            .filter(|resident| resident.removed.is_none())
-            .map(|resident| resident.id)
-            .collect::<Vec<_>>()
-    })
-    .await
-    {
-        Ok(ids) => ids,
-        Err(error) => {
-            node.log.line(format_args!("reading residents' focus: {error}"));
-            return;
-        }
-    };
-    for id in ids {
-        let Ok(gate) = node.residents.management(&id) else { continue };
-        let _reading = gate.read().await;
-        if node.residents.active(&id).is_err() {
-            continue;
-        }
-        if let Err(failure) = refresh(node, &id).await {
-            node.log.line(format_args!("updating {id}'s authorized folders: {failure}"));
-        }
-    }
 }
 
 /// Whether the user may point this conversation at machines and folders:
