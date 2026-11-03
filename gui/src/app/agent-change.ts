@@ -127,7 +127,7 @@ export const zhAgentChange: AgentChangeWords = {
 };
 
 export const enAgentChange: AgentChangeWords = {
-  applyTitle: (who, machine) => `Hook up ${who} on ${machine}`,
+  applyTitle: (who, machine) => `Connect ${who} on ${machine}`,
   removeTitle: (who, machine) => `Remove ${who} on ${machine}`,
   putIn: "Puts in",
   putInWhat: "Fastctx's run: commands, files and images, edits, other machines",
@@ -139,7 +139,7 @@ export const enAgentChange: AgentChangeWords = {
   leaveWhat: "Everything else: reading and writing files, images, to-dos, subagents, plugins, web search",
   leaveTags: ["Write tools", "To-dos", "Subagents", "Web search"],
   restore: "Puts back",
-  restoreWhat: "What hooking up changed, from its record",
+  restoreWhat: "What connecting changed, from its record",
   kept: "Keeps",
   keepsWhat: "What you changed since",
   openSessions: (agent, into) =>
@@ -163,10 +163,10 @@ export const enAgentChange: AgentChangeWords = {
   takeBack: "What you changed of Fastctx's lines goes back to how this version writes them; the rest of each file stays",
   steps: { program: "Put the program in place", command: (command) => `Run ${command}`, files: "Change settings and guidance", check: (scope) => `Check ${scope}` },
   cancel: "Cancel",
-  apply: "Hook up",
+  apply: "Connect",
   remove: "Remove",
   close: "Close",
-  done: "Hooked up",
+  done: "Connected",
   removedDone: "Removed",
   failed: (reason) => known(reason, enProblems) ?? "Not done",
   previewFailed: "Couldn't work out the change",
@@ -662,7 +662,7 @@ export class AgentChangeSheet {
 
 /** The steps a change will take, in the order the node takes them: the
  *  program, Claude Code's own commands, the files, and a check of the
- *  agent's tools when it hooks up; the commands and the files when it is
+ *  agent's tools when it connects; the commands and the files when it is
  *  taken out. */
 function plannedSteps(target: AgentChangeTarget, preview: ChangePreview | null): Step[] {
   const commands: Step[] = (preview?.commands ?? []).map((command) => ({ step: "command", command }));
@@ -670,7 +670,7 @@ function plannedSteps(target: AgentChangeTarget, preview: ChangePreview | null):
 }
 
 /** The agent's own hands, struck through, and the World's run beside them:
- *  drawn one way to hook up, the other to remove. The interface's marks are
+ *  drawn one way to connect, the other to remove. The interface's marks are
  *  drawn as the interface draws them; the strike, the way across and the
  *  ring round the World's are the pen's. */
 function handsDrawing(into: boolean): string {
