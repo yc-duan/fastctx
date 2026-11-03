@@ -974,7 +974,10 @@ pub async fn run_prepared(
             match inbox::settle_jobs(&jobs_node).await {
                 Ok(problems) if problems.is_empty() => break,
                 Ok(problems) => {
-                    for (path, error) in problems {
+                    // Records still moving in are not yet, not a problem.
+                    for (path, error) in
+                        problems.iter().filter(|(_, error)| error.kind() != std::io::ErrorKind::WouldBlock)
+                    {
                         jobs_node.log.line(format_args!("could not tell what {} owes: {error}", path.display()));
                     }
                 }
