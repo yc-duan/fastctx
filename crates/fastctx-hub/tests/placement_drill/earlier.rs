@@ -289,25 +289,19 @@ async fn serving(old: &Path, peer: &Path) -> (bool, Value) {
 }
 
 /// A history as it is kept: what a Codex conversation's app-server says of
-/// its thread whenever the thread is taken up, its thread object, its status
-/// and its tool servers, is live state such as whether it takes input now,
-/// kept by neither release.
+/// its thread whenever the thread is taken up is live state kept by neither
+/// release: its status and its tool servers, and its thread object and
+/// name, which stand at the thread's last update and so move whenever the
+/// thread is taken up again.
 fn recorded(events: &[Value]) -> Vec<Value> {
     events
         .iter()
         .filter(|event| {
-            !matches!(
-                event.get("change").and_then(|change| change.get("kind")).and_then(Value::as_str),
-                Some("status" | "tool_server")
-            )
+            let kind = event.get("change").and_then(|change| change.get("kind")).and_then(Value::as_str);
+            !matches!(kind, Some("status" | "tool_server" | "metadata"))
+                && event.get("event").and_then(Value::as_str) != Some("titled")
         })
         .cloned()
-        .map(|mut event| {
-            if let Some(change) = event.get_mut("change").and_then(Value::as_object_mut) {
-                change.remove("metadata");
-            }
-            event
-        })
         .collect()
 }
 
