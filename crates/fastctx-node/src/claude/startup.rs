@@ -224,12 +224,14 @@ pub(super) fn recover(node: &Arc<Node>, records: &[crate::residents::OnRecord]) 
                 let (mut again, mut told) = (crate::again::Again::default(), None);
                 loop {
                     let result = async {
-                        let _births = node.claude.births.write().await;
-                        if !pending(&node, &about.id, &first.delivery.id, false)? {
-                            return Ok(());
-                        }
+                        let decided = super::births_speaking(&node, &about.id, || {
+                            pending(&node, &about.id, &first.delivery.id, false)
+                        })
+                        .await?;
+                        let Some((births, held)) = decided else { return Ok(()) };
+                        drop(births);
                         let why = "the node restarted before recording Claude Code's background session ID; its startup outcome is unknown";
-                        super::failed_wake(&node, &about.id, &directory, &first.delivery.id, Failure::new(why))
+                        super::failed_wake_held(&node, &about.id, &directory, &first.delivery.id, Failure::new(why), held)
                             .await.map(|_| ()).map_err(std::io::Error::other)
                     }.await;
                     match result {
@@ -389,17 +391,6 @@ fn submitted_since(path: &std::path::Path, since: jiff::Timestamp) -> std::io::R
     Ok(unreadable)
 }
 
-async fn failed(
-    node: &Arc<Node>,
-    resident: &ResidentId,
-    directory: &fastctx_types::layout::ConversationDir,
-    id: &NoticeId,
-    why: String,
-) -> std::io::Result<()> {
-    super::failed_wake(node, resident, directory, id, Failure::new(why)).await.map_err(std::io::Error::other)?;
-    Ok(())
-}
-
 fn pending(node: &Node, resident: &ResidentId, id: &NoticeId, waking: bool) -> std::io::Result<bool> {
     if (!waking && super::paired(node, resident)) || node.residents.removed(resident).is_some() {
         return Ok(false);
@@ -545,13 +536,12 @@ async fn watch(
                     // A registration written before the host outcome wins,
                     // including one the filesystem watcher has not seen yet.
                     super::replay(node).await;
-                    let births = node.claude.births.write().await;
-                    if !pending(node, resident, id, waking)? {
-                        return Ok(());
-                    }
                     // Claude Code may go on listing a session its daemon
                     // settled long ago as blocked: that one has ended.
                     if job.ended() || settled(command, &short) {
+                        let decided =
+                            super::births_speaking(node, resident, || pending(node, resident, id, waking)).await?;
+                        let Some((births, held)) = decided else { return Ok(()) };
                         if node.residents.about(resident).is_none() {
                             return Ok(());
                         }
@@ -561,11 +551,19 @@ async fn watch(
                         // memory, retires the very worker it just claimed
                         // for them as one long idle.
                         if waking && untaken(node, &session, &directory, id)? {
-                            drop(births);
+                            drop((births, held));
                             retry_untaken(node, resident, &session, id)?;
                             return Ok(());
                         }
-                        return failed(node, resident, &directory, id, why).await;
+                        drop(births);
+                        super::failed_wake_held(node, resident, &directory, id, Failure::new(why), held)
+                            .await
+                            .map_err(std::io::Error::other)?;
+                        return Ok(());
+                    }
+                    let _births = super::births_after_pairing(node, resident).await;
+                    if !pending(node, resident, id, waking)? {
+                        return Ok(());
                     }
                     // The host's watchdog and a real setup dialog produce the
                     // same blocked state. Preserve the fact without declaring
@@ -582,7 +580,7 @@ async fn watch(
                     }
                     let why = diagnosis(command, &short, why).await;
                     super::replay(node).await;
-                    let _births = node.claude.births.write().await;
+                    let _births = super::births_after_pairing(node, resident).await;
                     if !pending(node, resident, id, waking)? {
                         return Ok(());
                     }
@@ -593,7 +591,7 @@ async fn watch(
                 last_problem = None;
             }
             Ok(None) => {
-                let _births = node.claude.births.write().await;
+                let _births = super::births_after_pairing(node, resident).await;
                 if !pending(node, resident, id, waking)? {
                     return Ok(());
                 }
@@ -605,7 +603,7 @@ async fn watch(
                 }
             }
             Err(error) => {
-                let _births = node.claude.births.write().await;
+                let _births = super::births_after_pairing(node, resident).await;
                 if !pending(node, resident, id, waking)? {
                     return Ok(());
                 }

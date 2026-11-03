@@ -153,9 +153,20 @@ pub async fn fork(
         let selected_model = model.clone();
         let selected_effort = effort.clone();
 
-        let birth = node.claude.births.read().await;
+        // The source's gate is tried under the births gate, and when busy
+        // waited for outside it before the births gate is asked again: a
+        // launch holding births waits on no conversation (`world-concurrency.md`).
         let gate = node.residents.management(resident)?;
-        let source_guard = std::sync::Arc::new(crate::gate_waits::shared_owned(node, resident, &gate).await?);
+        let (birth, source_guard) = loop {
+            let birth = node.claude.births.read().await;
+            match gate.try_read_owned() {
+                Ok(source) => break (birth, std::sync::Arc::new(source)),
+                Err(_) => {
+                    drop(birth);
+                    drop(crate::gate_waits::shared_owned(node, resident, &gate).await?);
+                }
+            }
+        };
         node.residents.active(resident)?;
         if let Some(town) = &town {
             crate::town::access::check(node, &source.acting, town)?;

@@ -69,6 +69,12 @@ impl<T: ?Sized> Mutex<T> {
         Ok(MutexGuard { guard, _hold: registry::taken(self.identity.lock(), true) })
     }
 
+    /// As `try_lock`, held by a guard that owns its share of the mutex.
+    pub fn try_lock_owned(&self) -> Result<OwnedMutexGuard<T>, tokio::sync::TryLockError> {
+        let guard = self.inner.clone().try_lock_owned()?;
+        Ok(OwnedMutexGuard { guard, _hold: registry::taken(self.identity.lock(), true) })
+    }
+
     /// As `lock`, held by a guard that owns its share of the mutex, so it
     /// can outlive the borrow it was taken from.
     pub async fn lock_owned(&self) -> OwnedMutexGuard<T> {
@@ -181,6 +187,19 @@ impl<T: ?Sized> RwLock<T> {
     pub fn try_write(&self) -> Result<RwLockWriteGuard<'_, T>, tokio::sync::TryLockError> {
         let guard = self.inner.try_write()?;
         Ok(RwLockWriteGuard { guard, _hold: registry::taken(self.identity.lock(), true) })
+    }
+
+    /// Reads at once, or not at all: not while it is held to write or a
+    /// writer waits for it.
+    pub fn try_read(&self) -> Result<RwLockReadGuard<'_, T>, tokio::sync::TryLockError> {
+        let guard = self.inner.try_read()?;
+        Ok(RwLockReadGuard { guard, _hold: registry::taken(self.identity.lock(), false) })
+    }
+
+    /// As `try_read`, held by a guard that owns its share of the lock.
+    pub fn try_read_owned(&self) -> Result<OwnedRwLockReadGuard<T>, tokio::sync::TryLockError> {
+        let guard = self.inner.clone().try_read_owned()?;
+        Ok(OwnedRwLockReadGuard { _guard: guard, _hold: registry::taken(self.identity.lock(), false) })
     }
 }
 

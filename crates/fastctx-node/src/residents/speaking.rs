@@ -32,6 +32,12 @@ impl Lease {
     pub fn try_lock(&self) -> Result<MutexGuard<'_, ()>, tokio::sync::TryLockError> {
         self.0.mutex.try_lock()
     }
+    /// As `lock`, at once or not at all.
+    pub fn try_held(&self) -> Option<Arc<Held>> {
+        let permit = Arc::new(self.0.mutex.try_lock_owned().ok()?);
+        *self.0.active.lock().expect("speech permit") = Arc::downgrade(&permit);
+        Some(Arc::new(Held { _permit: permit, _lease: self.0.clone() }))
+    }
 }
 
 pub struct Held {

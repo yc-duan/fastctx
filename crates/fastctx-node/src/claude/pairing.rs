@@ -81,10 +81,21 @@ pub(crate) async fn directory(
     };
     // A World launch holds births.read until the background CLI returns.
     // Its settings already name its conversation, independently of that ID.
-    // Births come before the session's own lock (`fastctx_platform::doing::Rank`).
-    let _births = if known.is_none() { Some(node.claude.births.write_owned().await) } else { None };
+    // Births come before the session's own lock (`fastctx_platform::doing::Rank`),
+    // which is only tried under them: when busy, it is waited for outside
+    // the gate before the gate is asked again (`world-concurrency.md`, 锁只管落账).
     let reading = super::reading(node, &session);
-    let _reading = reading.lock_owned().await;
+    let (_births, _reading) = loop {
+        let births = if known.is_none() { Some(node.claude.births.write_owned().await) } else { None };
+        match reading.try_lock_owned() {
+            Ok(held) => break (births, held),
+            Err(_) if births.is_none() => break (None, reading.lock_owned().await),
+            Err(_) => {
+                drop(births);
+                drop(reading.lock_owned().await);
+            }
+        }
+    };
     let observing = process.clone();
     let reported = session.clone();
     let working = node.clone();

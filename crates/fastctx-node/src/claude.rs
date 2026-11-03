@@ -110,6 +110,10 @@ struct State {
     /// The last record each session's mod saw Claude Code keep, in this run
     /// of the node: what its file must hold before it is read as whole.
     stored: crate::residents::cache::Index,
+    /// The residents a session was found to be under the births gate and
+    /// is being written as, outside it: until then a launch's failure is
+    /// not declared for them (`startup`).
+    pairing: HashMap<ResidentId, usize>,
 }
 
 struct Session {
@@ -128,6 +132,7 @@ impl Claude {
                 observed: HashSet::new(),
                 paired: crate::residents::cache::Index::default(),
                 stored: crate::residents::cache::Index::default(),
+                pairing: HashMap::new(),
             }),
             bridge: Default::default(),
             births: Default::default(),
@@ -723,11 +728,8 @@ async fn look(node: &Arc<Node>, directory: &Path) -> bool {
         settled = false;
     }
     settle::consider(node, &resident, &session, directory);
-    // Births come before the session's own lock: it is let go and taken
-    // again behind them (`fastctx_platform::doing::Rank`).
-    drop(_reading);
-    let _births = node.claude.births.write().await;
-    let _reading = reading.lock().await;
+    // Its end is settled under its own reading lock alone: it ends only the
+    // activation it names, so one placed meanwhile is left as it is.
     let registration = node
         .claude
         .state
@@ -751,6 +753,10 @@ async fn look(node: &Arc<Node>, directory: &Path) -> bool {
         node.log.line(format_args!("settling {session}: {error}"));
         return false;
     }
+    // Births come before the session's own lock: it is let go, and the
+    // registration let go under the gate unless another took its place.
+    drop(_reading);
+    let _births = node.claude.births.write().await;
     let mut state = node.claude.state.lock().expect("never poisoned");
     if state.sessions.get(&session).is_some_and(|entry| entry.registration == registration) {
         state.sessions.remove(&session);
@@ -803,7 +809,8 @@ async fn hear(node: &Arc<Node>, registration: exchange::Registration) {
     }) {
         return;
     }
-    let _births = node.claude.births.write().await;
+    // The activation this one replaces, gone with its process, is ended
+    // under its conversation's own locks, before the births gate is asked.
     let prior = {
         let state = node.claude.state.lock().expect("never poisoned");
         state
@@ -837,27 +844,49 @@ async fn hear(node: &Arc<Node>, registration: exchange::Registration) {
             }
         }
     }
-    let speaking = prior.as_ref().and_then(|(resident, _)| node.residents.speaking(resident));
-    let guard = match &speaking {
-        Some(lock) => Some(lock.lock().await),
-        None => None,
-    };
-    let changed = {
+    // The registration is placed under the births gate, which a launch
+    // holds until it knows its session. The gate waits on no conversation
+    // (`world-concurrency.md`, 锁只管落账): the words of the conversation
+    // whose activation is replaced, held off over the swap, are tried for
+    // under it, and when busy waited for outside it before it is asked again.
+    let changed = loop {
+        let births = node.claude.births.write().await;
+        let prior = node
+            .claude
+            .state
+            .lock()
+            .expect("never poisoned")
+            .sessions
+            .get(&session)
+            .and_then(|entry| entry.resident.clone().filter(|_| entry.registration.process.is_some()));
+        let speaking = prior.as_ref().and_then(|resident| node.residents.speaking(resident));
+        let guard = match &speaking {
+            Some(lock) => match lock.try_held() {
+                Some(guard) => Some(guard),
+                None => {
+                    drop(births);
+                    drop(lock.lock().await);
+                    continue;
+                }
+            },
+            None => None,
+        };
         let mut state = node.claude.state.lock().expect("never poisoned");
-        match state.sessions.get_mut(&session) {
+        let changed = match state.sessions.get_mut(&session) {
             Some(entry) if entry.registration == registration || entry.registration.at > registration.at => false,
             Some(entry) => {
-                entry.registration = registration;
+                entry.registration = registration.clone();
                 entry.resident = None;
                 true
             }
             None => {
-                state.sessions.insert(session.clone(), Session { registration, resident: None });
+                state.sessions.insert(session.clone(), Session { registration: registration.clone(), resident: None });
                 true
             }
-        }
+        };
+        drop((state, guard, births));
+        break changed;
     };
-    drop(guard);
     if changed {
         node.claude.changed.notify_waiters();
     }
@@ -1181,32 +1210,49 @@ async fn identify_now(node: &Arc<Node>, tool_use_id: &str) -> Result<fastctx_typ
 
 /// Pairs a registered session with its resident, if it is known yet.
 async fn pair(node: &Arc<Node>, session: &str) {
-    let registration = {
-        let state = node.claude.state.lock().expect("never poisoned");
-        match state.sessions.get(session) {
-            Some(entry) if entry.resident.is_none() => entry.registration.clone(),
-            _ => return,
-        }
-    };
+    // Whose the session is, decided under the births gate so that no launch
+    // is half done, with the conversation's own locks tried there; when one
+    // is busy, the gate is let go and the lock waited for before asking
+    // again (`world-concurrency.md`, 锁只管落账).
     let unknown = crate::adoption::Arrival { login: crate::adoption::Login::Unknown, own: false };
-    let resident = match pairing::resident(node, &registration, &unknown) {
-        Ok(resident) => resident,
-        Err(error) => {
-            node.log.line(format_args!("pairing Claude session {session}: {error}"));
+    let (registration, resident, _reading, guard, pairing_mark) = loop {
+        let births = node.claude.births.write().await;
+        let registration = {
+            let state = node.claude.state.lock().expect("never poisoned");
+            match state.sessions.get(session) {
+                Some(entry) if entry.resident.is_none() => entry.registration.clone(),
+                _ => return,
+            }
+        };
+        let resident = match pairing::resident(node, &registration, &unknown) {
+            Ok(resident) => resident,
+            Err(error) => {
+                node.log.line(format_args!("pairing Claude session {session}: {error}"));
+                return;
+            }
+        };
+        let Ok(gate) = node.residents.management(&resident) else { return };
+        let Ok(reading) = gate.try_read_owned() else {
+            drop(births);
+            drop(gate.read().await);
+            continue;
+        };
+        // Removed or deleted: its session is no one's to pair.
+        let speaking = node.residents.speaking(&resident).filter(|_| node.residents.removed(&resident).is_none());
+        let Some(speaking) = speaking else {
+            node.claude.state.lock().expect("never poisoned").sessions.remove(session);
+            node.claude.changed.notify_waiters();
             return;
-        }
+        };
+        let Some(guard) = speaking.try_held() else {
+            drop((reading, births));
+            drop(speaking.lock().await);
+            continue;
+        };
+        let pairing = Pairing::new(node, &resident);
+        drop(births);
+        break (registration, resident, reading, guard, pairing);
     };
-    let Ok(gate) = node.residents.management(&resident) else { return };
-    let _reading = gate.read().await;
-    // Removed, or deleted while this waited for the gate: its session is no
-    // one's to pair.
-    let speaking = node.residents.speaking(&resident).filter(|_| node.residents.removed(&resident).is_none());
-    let Some(speaking) = speaking else {
-        node.claude.state.lock().expect("never poisoned").sessions.remove(session);
-        node.claude.changed.notify_waiters();
-        return;
-    };
-    let guard = speaking.lock().await;
     let current = node.residents.about(&resident).and_then(|(about, _)| about.session);
     let newer = match current.as_deref() {
         None => true,
@@ -1252,9 +1298,18 @@ async fn pair(node: &Arc<Node>, session: &str) {
         node.claude.state.lock().expect("never poisoned").paired.insert(resident.clone(), session.to_string());
     }
     // Publish the association only after both the durable alias and about
-    // record are written. A failed write can then be retried on the next look.
-    node.claude.state.lock().expect("never poisoned").sessions.get_mut(session).expect("looked up above").resident =
-        Some(resident.clone());
+    // record are written, and while the registration it was decided for
+    // still stands: one placed since, or the session let go, is paired anew
+    // at its next look. A failed write can then be retried on the next look.
+    {
+        let mut state = node.claude.state.lock().expect("never poisoned");
+        match state.sessions.get_mut(session) {
+            Some(entry) if entry.registration == registration && entry.resident.is_none() => {
+                entry.resident = Some(resident.clone());
+            }
+            _ => return,
+        }
+    }
     let present = match pairing::present(node, &registration) {
         Ok(present) => present,
         Err(error) => {
@@ -1317,9 +1372,86 @@ async fn pair(node: &Arc<Node>, session: &str) {
         Ok(Err(error)) => node.log.line(format_args!("reading what waits for {resident}: {error}")),
         Err(_) => {}
     }
-    drop(guard);
+    drop((guard, pairing_mark));
     node.claude.changed.notify_waiters();
     process::observe(node, registration.process);
+}
+
+/// A pairing decided under the births gate and being written: marked from
+/// the decision until it is written or given up (`State::pairing`).
+struct Pairing<'a> {
+    node: &'a Node,
+    resident: ResidentId,
+}
+
+impl<'a> Pairing<'a> {
+    fn new(node: &'a Node, resident: &ResidentId) -> Self {
+        *node.claude.state.lock().expect("never poisoned").pairing.entry(resident.clone()).or_default() += 1;
+        Self { node, resident: resident.clone() }
+    }
+}
+
+impl Drop for Pairing<'_> {
+    fn drop(&mut self) {
+        let mut state = self.node.claude.state.lock().expect("never poisoned");
+        if let Some(count) = state.pairing.get_mut(&self.resident) {
+            *count -= 1;
+            if *count == 0 {
+                state.pairing.remove(&self.resident);
+            }
+        }
+    }
+}
+
+/// Whether a session was found to be `resident` and is being written as it:
+/// what the launch that started it may say of its failure waits for that.
+fn pairing(node: &Node, resident: &ResidentId) -> bool {
+    node.claude.state.lock().expect("never poisoned").pairing.contains_key(resident)
+}
+
+/// The births gate, taken once no session found to be `resident` is still
+/// being written as it: what a launch decides of itself under the gate comes
+/// after the pairing it would otherwise race, as it did when the pairing
+/// held the gate throughout.
+pub(super) async fn births_after_pairing<'a>(
+    node: &'a Node,
+    resident: &ResidentId,
+) -> fastctx_platform::doing::RwLockWriteGuard<'a, ()> {
+    loop {
+        let changed = node.claude.changed.notified();
+        let births = node.claude.births.write().await;
+        if !pairing(node, resident) {
+            return births;
+        }
+        drop(births);
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(1), changed).await;
+    }
+}
+
+/// The births gate as `births_after_pairing` gives it, with `resident`'s
+/// speech permit, which is tried under the gate and, when busy, waited for
+/// outside it before the gate is asked again; `decide` runs under the gate
+/// each time, and its no lets both go.
+pub(super) async fn births_speaking<'a>(
+    node: &'a Node,
+    resident: &ResidentId,
+    mut decide: impl FnMut() -> std::io::Result<bool>,
+) -> std::io::Result<Option<(fastctx_platform::doing::RwLockWriteGuard<'a, ()>, Arc<crate::residents::speaking::Held>)>>
+{
+    loop {
+        let births = births_after_pairing(node, resident).await;
+        if !decide()? {
+            return Ok(None);
+        }
+        let Some(speaking) = node.residents.speaking(resident) else { return Ok(None) };
+        match speaking.try_held() {
+            Some(held) => return Ok(Some((births, held))),
+            None => {
+                drop(births);
+                drop(speaking.lock().await);
+            }
+        }
+    }
 }
 
 /// Hands something kept to a resident whose Claude session the World
@@ -1488,7 +1620,19 @@ async fn failed_wake(
     error: Failure,
 ) -> Result<Landed, Failure> {
     let speaking = node.residents.speaking(resident).ok_or_else(|| Failure::new(format!("{resident} was deleted")))?;
-    let _speaking = speaking.lock().await;
+    let held = speaking.lock().await;
+    failed_wake_held(node, resident, directory, id, error, held).await
+}
+
+/// `failed_wake` by one holding the resident's speech permit (`held`).
+async fn failed_wake_held(
+    node: &Arc<Node>,
+    resident: &ResidentId,
+    directory: &ConversationDir,
+    id: &fastctx_types::NoticeId,
+    error: Failure,
+    _held: Arc<crate::residents::speaking::Held>,
+) -> Result<Landed, Failure> {
     if let Some(turn) = crate::delivery::input_turn(directory, id).map_err(|error| Failure::new(error.to_string()))? {
         node.log.line(format_args!("the Claude command failed after its turn was identified: {error}"));
         crate::lifecycle::retry::clear_now(node, resident, id).map_err(|error| Failure::new(error.to_string()))?;
