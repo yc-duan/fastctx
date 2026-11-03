@@ -1,22 +1,22 @@
-// The side of the conversations shown (`world-gui.md`, 对话的侧面板): shut
-// until asked for, then a column of the desk beside the conversations, set
-// apart from them by the margin ruled along the edge they share alone. It
-// holds the parts of the conversation in focus: its first line is their
-// marks, the goal, the plan and who works with it, how far the plan is and
-// how many work with it in small figures after them, a mark in clay while
-// something there waits on the user, the one shown on the clay wash; then the
-// side's "⋯". Another conversation in focus, the side turns to its parts.
-// One of the host's agents, opened from who works with it, is read in the
-// side's body until a part's mark is pressed again. What the conversation is
-// pointed at stands at the foot under its parts. The side opens and shuts by
-// the desk's `--sp-open` (`side.css`): shutting, it stays drawn until that
-// has gone back to nothing. Where there is no room beside the conversations,
-// as on a phone, it lies over the whole desk.
+// The side of the conversations shown (`world-gui.md`, 对话的侧面板): folded
+// away until asked for, then a column of the desk beside the conversations,
+// set apart from them by the margin ruled along the edge they share alone.
+// It holds the parts of the conversation in focus, the first of them its
+// overview, where it opens; any other, and a file read over the parts, has
+// the way back to it over the page. Another conversation in focus, the side
+// turns to its parts. Its "⋯", where it stands, is held in the desk's
+// corner with where the conversation works and the side's switch, which
+// stay as it folds away. The side opens and folds by the desk's `--sp-open`
+// (`side.css`): folding, it stays drawn until that has gone back to
+// nothing. Where there is no room beside the conversations, as on a phone,
+// it lies over the whole desk, where the conversation works said in its
+// own line.
 
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import { msOf, reducedMotion } from "../motion";
 import { Sketch } from "../pen/sketch";
+import type { SideWhere } from "./where";
 import type { SideWords } from "./words";
 import "./side.css";
 
@@ -30,30 +30,19 @@ export interface SidePage {
 /** Where the side stands beside the conversations. */
 export type Dock = "right" | "bottom" | "left";
 
-/** One of a conversation's own parts, a mark in the side's first line. */
+/** One of a conversation's own parts, a page of the side; the first is its
+ *  overview. */
 export interface PanePart {
   id: string;
   name: string;
-  glyph: "goal" | "rows" | "tree" | "history";
   page: SidePage;
-}
-
-/** How a part stands, drawn on its mark. */
-export interface PartState {
-  /** A few figures after the mark: how far the plan is, how many work. */
-  count?: string;
-  /** Something there waits on the user: the mark is in clay. */
-  waiting?: boolean;
-  /** What pointing at it says after its name. */
-  said?: string;
 }
 
 /** A conversation's parts, as the side shows them while it is in focus. */
 export interface PartSet {
   readonly parts: PanePart[];
-  state(id: string): PartState | undefined;
-  /** What the conversation is pointed at, for the foot. */
-  readonly env: HTMLElement | null;
+  /** Where the conversation works. */
+  readonly where: SideWhere;
   /** The part this conversation last showed. */
   part: string | null;
 }
@@ -67,10 +56,12 @@ export interface Peek {
 
 export class SidePane {
   readonly element: HTMLElement;
+  /** Its "⋯" and the menu of where it stands, held in the desk's corner. */
+  readonly more: HTMLElement;
   private readonly sheet: HTMLElement;
-  private readonly partsRow: HTMLElement;
+  private readonly whereSlot: HTMLElement;
+  private readonly back: HTMLElement;
   private readonly body: HTMLElement;
-  private readonly foot: HTMLElement;
   private readonly margin: HTMLElement;
   private readonly menu: HTMLElement;
   private set: PartSet | null = null;
@@ -93,16 +84,19 @@ export class SidePane {
     this.element.className = "sp-panel";
     this.element.hidden = true;
     this.element.setAttribute("aria-label", words.panel);
-    this.element.innerHTML = `<div class="sp-sheet"><div class="sp-margin" aria-hidden="true"></div><header class="sp-head"><div class="sp-line"><div class="sp-parts" role="tablist" aria-label="${escape(words.panel)}"></div><div class="sp-acts"><button class="icon-button sp-more" type="button" aria-haspopup="menu" aria-expanded="false" aria-label="${escape(words.more)}" title="${escape(words.more)}">${glyph("more", 18)}</button><button class="icon-button sp-shut" type="button" aria-label="${escape(words.shut)}" title="${escape(words.shut)}">${glyph("close", 18)}</button><div class="sp-menu" role="menu" hidden>${(["right", "bottom", "left"] as const)
+    this.element.innerHTML = `<div class="sp-sheet"><div class="sp-margin" aria-hidden="true"></div><header class="sp-head"><div class="sp-line"><div class="sp-where"></div><div class="sp-acts"><button class="icon-button sp-shut" type="button" aria-label="${escape(words.shut)}" title="${escape(words.shut)}">${glyph("close", 18)}</button></div></div></header><div class="sp-back" hidden></div><div class="sp-body"></div></div>`;
+    this.more = document.createElement("div");
+    this.more.className = "sp-dock";
+    this.more.innerHTML = `<button class="icon-button sp-more" type="button" aria-haspopup="menu" aria-expanded="false" aria-label="${escape(words.more)}" title="${escape(words.more)}">${glyph("more", 18)}</button><div class="sp-menu" role="menu" hidden>${(["right", "bottom", "left"] as const)
       .map((dock) => `<button class="sp-menu-row" type="button" role="menuitemradio" aria-checked="false" data-dock="${dock}">${glyph(`dock-${dock}`, 16)}<span>${escape(words.docks[dock])}</span></button>`)
-      .join("")}</div></div></div></header><div class="sp-body"></div><footer class="sp-foot"></footer></div>`;
+      .join("")}</div>`;
     this.sheet = this.element.querySelector(".sp-sheet")!;
-    this.partsRow = this.element.querySelector(".sp-parts")!;
+    this.whereSlot = this.element.querySelector(".sp-where")!;
+    this.back = this.element.querySelector(".sp-back")!;
     this.body = this.element.querySelector(".sp-body")!;
-    this.foot = this.element.querySelector(".sp-foot")!;
     this.margin = this.element.querySelector(".sp-margin")!;
-    this.menu = this.element.querySelector(".sp-menu")!;
-    const more = this.element.querySelector<HTMLButtonElement>(".sp-more")!;
+    this.menu = this.more.querySelector(".sp-menu")!;
+    const more = this.more.querySelector<HTMLButtonElement>(".sp-more")!;
     more.addEventListener("click", () => this.openMenu(this.menu.hidden));
     this.menu.addEventListener("click", (event) => {
       const dock = (event.target as HTMLElement).closest<HTMLElement>(".sp-menu-row")?.dataset.dock as Dock | undefined;
@@ -115,19 +109,9 @@ export class SidePane {
       if (!this.menu.hidden && !this.menu.contains(target) && !more.contains(target)) this.openMenu(false);
     });
     this.element.querySelector(".sp-shut")!.addEventListener("click", () => this.close());
-    this.partsRow.addEventListener("click", (event) => {
-      const id = (event.target as HTMLElement).closest<HTMLElement>("[data-part]")?.dataset.part;
-      if (id) this.select(id);
-    });
-    this.partsRow.addEventListener("keydown", (event) => {
-      const at = (event.target as HTMLElement).closest<HTMLElement>("[data-part]")?.dataset.part;
-      const step = event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
-      const all = this.set?.parts.map((part) => part.id) ?? [];
-      if (!at || !step || !all.length) return;
-      event.preventDefault();
-      const next = all[(all.indexOf(at) + step + all.length) % all.length]!;
-      this.select(next);
-      this.partsRow.querySelector<HTMLElement>(`[data-part="${CSS.escape(next)}"]`)?.focus();
+    this.back.addEventListener("click", (event) => {
+      const home = this.set?.parts[0]?.id;
+      if (home && (event.target as HTMLElement).closest(".sp-home")) this.select(home);
     });
     this.element.addEventListener("keydown", (event) => {
       if (event.key === "Escape" && this.element.classList.contains("sp-over")) this.close();
@@ -152,8 +136,8 @@ export class SidePane {
   }
 
   /** Turns the side to another conversation's parts, or to none: what was
-   *  read over the parts goes, the parts' pages are put in, the foot holds
-   *  what that conversation is pointed at. */
+   *  read over the parts goes, the parts' pages are put in, its own line
+   *  holds where that conversation works. */
   use(set: PartSet | null): void {
     if (set === this.set) return;
     this.unpeek();
@@ -164,14 +148,14 @@ export class SidePane {
       part.page.element.setAttribute("role", "tabpanel");
       this.body.append(part.page.element);
     }
-    this.foot.replaceChildren(...(set?.env ? [set.env] : []));
+    this.whereSlot.replaceChildren(...(set ? [set.where.line] : []));
     this.drawShown();
     if (this.open) this.page()?.shown?.();
   }
 
-  /** The marks drawn again, as the parts' states changed. */
+  /** The way back drawn again, as what the side shows changed. */
   restate(): void {
-    this.drawParts();
+    this.drawBack();
   }
 
   /** Opens the side: at `part` when one is named, else where it was left. */
@@ -260,7 +244,7 @@ export class SidePane {
 
   private openMenu(open: boolean): void {
     this.menu.hidden = !open;
-    this.element.querySelector(".sp-more")!.setAttribute("aria-expanded", String(open));
+    this.more.querySelector(".sp-more")!.setAttribute("aria-expanded", String(open));
   }
 
   /** The part shown, unless something is read over the parts. */
@@ -277,26 +261,17 @@ export class SidePane {
   private drawShown(): void {
     const shown = this.shown();
     for (const part of this.set?.parts ?? []) part.page.element.hidden = part.id !== shown;
-    // What the conversation is pointed at is said under its parts.
-    this.foot.hidden = !shown || this.foot.childElementCount === 0;
-    this.drawParts();
+    this.drawBack();
   }
 
-  /** The first line's marks: each part's, with its figures after it, in
-   *  clay while something there waits on the user; the one shown on the
-   *  clay wash. */
-  private drawParts(): void {
-    const shown = this.shown();
-    const set = this.set;
-    this.partsRow.innerHTML = (set?.parts ?? [])
-      .map((part) => {
-        const chosen = part.id === shown;
-        const state = set!.state(part.id) ?? {};
-        const said = [part.name, state.said].filter(Boolean).join("\n");
-        const count = state.count ? `<span class="sp-part-count">${escape(state.count)}</span>` : "";
-        return `<button class="sp-part${chosen ? " chosen" : ""}${state.waiting ? " waiting" : ""}" type="button" role="tab" data-part="${escape(part.id)}" aria-selected="${chosen}" tabindex="${chosen || (!shown && part === set!.parts[0]) ? 0 : -1}" aria-label="${escape(said)}" title="${escape(said)}">${glyph(part.glyph, 18)}${count}</button>`;
-      })
-      .join("");
+  /** Over the page: on the overview nothing; on any other page, and over
+   *  the parts, the way back to the overview, named by it. */
+  private drawBack(): void {
+    const home = this.set?.parts[0];
+    const away = !!home && (this.peeked !== null || this.shown() !== home.id);
+    const html = away ? `<button class="text-button page-back sp-home" type="button">${glyph("back", 18)}<span>${escape(home.name)}</span></button>` : "";
+    if (this.back.innerHTML !== html) this.back.innerHTML = html;
+    this.back.hidden = !away;
   }
 
   /** The margin is drawn again when the sheet's length along it changes,
@@ -313,6 +288,9 @@ export class SidePane {
       across
         ? new Sketch("side-margin-across").rule([-16, 2], [length + 16, 2], 1, ink).svg(length, 4, "sp-margin-svg")
         : new Sketch("side-margin").rule([2, -16], [2, length + 16], 1, ink).svg(4, length, "sp-margin-svg");
-    this.margin.innerHTML = `${stroke("graphite")}<div class="sp-margin-ink">${stroke("current")}</div>`;
+    // Nothing is ruled between the side and the conversations: its cards
+    // stand on the page. The line comes up only while it is held or pointed
+    // at, to be dragged.
+    this.margin.innerHTML = `<div class="sp-margin-ink">${stroke("current")}</div>`;
   }
 }

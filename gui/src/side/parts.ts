@@ -1,13 +1,17 @@
 // A conversation's own parts, for the side of the desk while it is in focus
-// (`world-gui.md`, 对话的侧面板): its goal, its plan and who works with it,
-// each a page whole beneath its mark, and how each stands on the mark; the
+// (`world-gui.md`, 对话的侧面板): its overview first, a card for each part,
+// then its goal, its plan and its history, each a page of the side; the
 // goal's bar above the input while the goal is worked toward. Who works with
 // it is drawn from two places: the colleagues it asked, from the World, and
 // the host's own agents, from the conversation itself as it goes. A colleague
-// pressed opens beside the conversation on the desk; one of the host's agents
-// is read in the side over the parts.
+// pressed opens beside the conversation on the desk; everyone who works with
+// it, and one of the host's agents, are read in a sheet. Where it works is
+// said in the desk's corner, whether the side is open or folded away.
 
+import { Sheet } from "../app/confirm";
 import type { AgentRun } from "../conversation/agents";
+import { glyph } from "../conversation/glyphs";
+import { escape } from "../conversation/prose";
 import { PlanPage, type PlanShown } from "../plan/panel";
 import { planShape } from "../plan/shape";
 import type { Address } from "../world/wire";
@@ -15,12 +19,14 @@ import { CollabPage } from "./collab-page";
 import { GoalBar } from "./goal-bar";
 import { GoalPage } from "./goal-page";
 import { HistoryCard } from "./history-card";
-import type { PanePart, PartSet, PartState, Peek } from "./pane";
+import { SideHome } from "./home";
+import { SideWhere } from "./where";
+import type { PanePart, PartSet, Peek } from "./pane";
 import type { Following, SideSeams } from "./seams";
 import type { CollabNode, GoalShown, NodeState } from "./types";
 
 /** The side's own parts, as their marks are named. */
-export const PART = { goal: "part:goal", plan: "part:plan", team: "part:team", history: "part:history" } as const;
+export const PART = { home: "part:home", goal: "part:goal", history: "part:history" } as const;
 
 export interface PartsContext {
   host: "claude" | "codex";
@@ -33,9 +39,8 @@ export interface PartsContext {
   agentBox(run: AgentRun): { element: HTMLElement; update(run: AgentRun): void; destroy(): void };
   /** Brings the row of the call that sent one of the host's agents into view. */
   jump(id: string): void;
-  /** What the conversation is pointed at, at the side's foot; none where it
-   *  was not opened in Fastctx. */
-  env?: HTMLElement | null;
+  /** What one of the host's agents does this moment, in a few words. */
+  doing?(run: AgentRun): string | null;
 }
 
 /** The side showing these parts, while their conversation is in focus. */
@@ -66,7 +71,13 @@ function contains(node: CollabNode, id: string): boolean {
 }
 
 /** One of the host's agents as a node, with those it sent under it. */
-function nodeOf(run: AgentRun, host: "claude" | "codex", under: Map<string, AgentRun[]>, now: number): CollabNode {
+function nodeOf(
+  run: AgentRun,
+  host: "claude" | "codex",
+  under: Map<string, AgentRun[]>,
+  now: number,
+  doing?: (run: AgentRun) => string | null,
+): CollabNode {
   const began = run.began ?? now;
   const took = run.duration ?? Math.max(0, (run.ended ?? (run.going ? now : began)) - began);
   return {
@@ -77,8 +88,13 @@ function nodeOf(run: AgentRun, host: "claude" | "codex", under: Map<string, Agen
     task: run.task ?? run.prompt?.split("\n")[0] ?? "",
     state: stateOf(run),
     took,
+    began: run.began,
+    ended: run.going ? null : (run.ended ?? (run.began !== null && run.duration !== null ? run.began + run.duration : null)),
+    doing: run.going ? (doing?.(run) ?? null) : null,
+    tokens: run.tokens,
+    model: run.model,
     steps: run.tools ?? run.steps.length,
-    children: (under.get(run.id) ?? []).map((child) => nodeOf(child, host, under, now)),
+    children: (under.get(run.id) ?? []).map((child) => nodeOf(child, host, under, now, doing)),
   };
 }
 
@@ -88,24 +104,25 @@ const minutes = (name: string, value: unknown) => (name === "took" ? Math.floor(
 
 export class SideParts implements PartSet {
   readonly parts: PanePart[];
-  readonly env: HTMLElement | null;
+  readonly where: SideWhere;
   part: string | null = null;
   /** Someone new works with the conversation while its side was not seen. */
   fresh = false;
   /** The side showing these parts, while their conversation is in focus. */
   frame: PartsFrame | null = null;
-  private readonly states = new Map<string, PartState>();
   private readonly bar: GoalBar;
+  private readonly home: SideHome;
   private readonly collab: CollabPage;
+  /** Everyone who works with the conversation, while their sheet is open. */
+  private teamSheet: Sheet | null = null;
   private readonly goalPage: GoalPage;
   private readonly planPage: PlanPage;
-  /** Whether the conversation has a plan, for where the side first opens. */
-  private planned = false;
   private readonly stops: (() => void)[] = [];
   private colleagues: CollabNode[] = [];
   /** The colleagues followed, read in full while a page shows them. */
   private following: Following | null = null;
   private detailed = false;
+  private shownPart: string | null = null;
   private runs: AgentRun[] = [];
   private drawnTeam = "";
   /** The team as last drawn, in full. */
@@ -122,10 +139,7 @@ export class SideParts implements PartSet {
     const { seams } = context;
     const words = seams.words;
     const planWords = seams.plan.words;
-    this.env = context.env ?? null;
-    // What it is pointed at is said at the side's foot while it is in focus,
-    // not in its head.
-    this.env?.remove();
+    this.where = new SideWhere(words.where, words.close, seams.reveal);
     this.planPage = new PlanPage(planWords, {
       ...seams.plan.seams,
       // A decision on the plan is the user's words to the conversation.
@@ -148,20 +162,32 @@ export class SideParts implements PartSet {
     });
     this.collab = new CollabPage(words.collab, words.goal, (node) => this.openNode(node));
     page.querySelector(".composer-dock > form.composer")?.before(this.bar.element);
-    const team = document.createElement("section");
-    team.className = "sp-team";
-    team.append(this.collab.element);
+    this.home = new SideHome(
+      words,
+      {
+        page: (part) => this.frame?.show(part === "goal" ? PART.goal : PART.history),
+        node: (node) => this.openNode(node),
+        team: () => this.openTeam(),
+        link: (name) => seams.history?.link(name) ?? "",
+      },
+      !seams.noGoal,
+      this.planPage.element,
+    );
     this.parts = [
-      ...(seams.noGoal ? [] : [{ id: PART.goal, name: words.pages.goal, glyph: "goal" as const, page: this.goalPage }]),
-      { id: PART.plan, name: words.pages.plan, glyph: "rows", page: this.planPage },
-      { id: PART.team, name: words.pages.collab, glyph: "tree", page: { element: team, shown: () => this.collab.shown() } },
+      { id: PART.home, name: words.home.name, page: this.home },
+      ...(seams.noGoal ? [] : [{ id: PART.goal, name: words.pages.goal, page: this.goalPage }]),
     ];
     // A conversation in no project keeps its own history, a page of its own.
     if (seams.history) {
       const history = seams.history;
       const card = new HistoryCard({ words: history.words, link: history.link, write: history.write });
-      this.parts.push({ id: PART.history, name: words.pages.history, glyph: "history", page: card });
-      this.stops.push(history.watch((catalog) => card.show(catalog)));
+      this.parts.push({ id: PART.history, name: words.pages.history, page: card });
+      this.stops.push(
+        history.watch((catalog) => {
+          card.show(catalog);
+          this.home.history(catalog);
+        }),
+      );
     }
     this.following = seams.colleagues((nodes) => {
       this.colleagues = nodes;
@@ -170,15 +196,12 @@ export class SideParts implements PartSet {
     });
     const following = this.following;
     this.stops.push(
+      seams.where((where) => this.where.show(where)),
       seams.plan.watch((plan) => this.plan(plan)),
       seams.goal.watch((goal) => this.goal(goal)),
       () => following.stop(),
     );
     this.drawTeam();
-  }
-
-  state(id: string): PartState | undefined {
-    return this.states.get(id);
   }
 
   /** The host's own agents, as the conversation now knows them. */
@@ -191,12 +214,11 @@ export class SideParts implements PartSet {
     }
   }
 
-  /** One of the host's agents, opened in the side from the row that sent
-   *  it; false where the conversation does not know it, or where the side
-   *  lies over the desk and the row opens where it stands. */
+  /** One of the host's agents, opened in a sheet from the row that sent
+   *  it; false where the conversation does not know it. */
   openAgent(id: string): boolean {
     const run = this.runs.find((at) => at.id === id);
-    if (!run || !this.frame || this.frame.lying) return false;
+    if (!run) return false;
     this.openNode(nodeOf(run, this.context.host, new Map(), Date.now()));
     return true;
   }
@@ -220,23 +242,77 @@ export class SideParts implements PartSet {
     void this.act(this.context.seams.goal.set(objective, this.shownGoal?.version));
   }
 
-  /** Where the side opens with nothing chosen: with whoever is at work,
-   *  else at the plan, else at the goal, else with who works with it. */
+  /** Where the side opens with nothing chosen: at the overview. */
   firstPart(): string {
-    if (this.collabAtWork()) return PART.team;
-    if (this.planned) return PART.plan;
-    if (this.shownGoal && !this.context.seams.noGoal) return PART.goal;
-    return PART.team;
+    return PART.home;
   }
 
   /** The part in view, none while the side is shut or shows another
    *  conversation's: the colleagues' goals and agents are read only while
-   *  a page shows them. */
+   *  the overview, the goal or everyone's sheet shows them. */
   seen(part: string | null): void {
-    const detailed = part === PART.team || part === PART.goal;
+    this.shownPart = part;
+    this.follow();
+  }
+
+  private follow(): void {
+    const detailed = this.shownPart === PART.home || this.shownPart === PART.goal || this.teamSheet !== null;
     if (detailed === this.detailed) return;
     this.detailed = detailed;
     this.following?.detail(detailed);
+  }
+
+  /** Everyone who works with the conversation, in a sheet: a colleague
+   *  pressed opens beside the conversation, one of the host's agents in the
+   *  sheet, the way back to everyone at its head. */
+  private openTeam(): void {
+    const sheet = this.teamSheet ?? new Sheet("cs-sheet");
+    if (!this.teamSheet) {
+      this.teamSheet = sheet;
+      sheet.dialog.addEventListener("close", () => {
+        if (this.teamSheet === sheet) this.teamSheet = null;
+        this.follow();
+      });
+    }
+    const words = this.context.seams.words;
+    sheet.body.innerHTML = sheet.head(words.pages.collab, words.close);
+    sheet.body.append(this.collab.element);
+    sheet.anew();
+    sheet.show();
+    this.follow();
+  }
+
+  /** One of the host's agents, read in a sheet: in everyone's sheet where it
+   *  was pressed there, with the way back to them; its row in the
+   *  conversation a press away. */
+  private readAgent(run: AgentRun, node: CollabNode): void {
+    const words = this.context.seams.words;
+    const back = this.teamSheet;
+    const sheet = back ?? new Sheet("cs-sheet");
+    const box = this.context.agentBox(run);
+    let gone = false;
+    const done = () => {
+      if (gone) return;
+      gone = true;
+      if (this.box === held) this.box = null;
+      box.destroy();
+    };
+    const way = back ? `<button class="text-button page-back cs-back" type="button">${glyph("back", 18)}<span>${escape(words.pages.collab)}</span></button>` : "";
+    sheet.body.innerHTML = `<header class="sheet-head cs-head">${way}<h2 class="sheet-title">${escape(node.task || node.name)}</h2><button class="text-button cs-jump" type="button">${escape(words.collab.jump)}</button><button class="icon-button sheet-close" type="button" aria-label="${escape(words.close)}">${glyph("close", 18)}</button></header>`;
+    sheet.body.append(box.element);
+    sheet.body.querySelector(".cs-back")?.addEventListener("click", () => {
+      done();
+      this.openTeam();
+    });
+    sheet.body.querySelector(".cs-jump")!.addEventListener("click", () => {
+      sheet.close();
+      this.context.jump(node.id);
+    });
+    sheet.dialog.addEventListener("close", done, { once: true });
+    this.box = { id: node.id, update: (next) => box.update(next) };
+    const held = this.box;
+    sheet.anew();
+    sheet.show();
   }
 
   leave(): void {
@@ -248,6 +324,7 @@ export class SideParts implements PartSet {
    *  host's agents is read in the side. */
   private openNode(node: CollabNode): void {
     if (node.kind === "colleague" || node.kind === "side") {
+      this.teamSheet?.close();
       this.frame?.beside({ resident: node.id, machine: node.machine ?? this.context.seams.self.machine });
       return;
     }
@@ -257,75 +334,24 @@ export class SideParts implements PartSet {
       if (colleague) this.openNode(colleague);
       return;
     }
-    // With no room beside, the side gives way to the row that sent it.
-    if (!this.frame || this.frame.lying) {
-      this.context.jump(node.id);
-      return;
-    }
-    const run = this.runs.find((at) => at.id === node.id)!;
-    const box = this.context.agentBox(run);
-    const jump = document.createElement("button");
-    jump.type = "button";
-    jump.className = "text-button sp-jump";
-    jump.textContent = this.context.seams.words.collab.jump;
-    jump.addEventListener("click", () => this.context.jump(node.id));
-    box.element.prepend(jump);
-    this.box = { id: node.id, update: (next) => box.update(next) };
-    const held = this.box;
-    this.frame.peek({
-      element: box.element,
-      leave: () => {
-        if (this.box === held) this.box = null;
-        box.destroy();
-      },
-    });
+    this.readAgent(this.runs.find((at) => at.id === node.id)!, node);
   }
 
-  private setState(id: string, state: PartState): void {
-    const before = this.states.get(id);
-    if (before && JSON.stringify(before) === JSON.stringify(state)) return;
-    this.states.set(id, state);
-    this.frame?.restate();
-  }
-
-  /** The plan: its page, and on its mark how far it is, in clay while a
-   *  question in it waits on the user. */
+  /** The plan: its page, and its card on the overview, how far it is and
+   *  what it asks. */
   private plan(plan: PlanShown | null): void {
     this.planPage.show(plan ?? { source: null, version: 0, when: "" });
-    const shape = plan?.source ? planShape(plan.source) : null;
-    // A plan takes whatever form its work asks for: any text is a plan.
-    this.planned = !!plan?.source?.trim();
-    const words = this.context.seams.words;
-    let count = "";
-    if (shape?.checks.length) count = words.planCount(shape.checks.filter((check) => check.done).length, shape.checks.length);
-    else if (shape?.stops.length) {
-      const here = shape.stops.findIndex((stop) => stop.where === "here");
-      if (here >= 0) count = words.planCount(here + 1, shape.stops.length);
-    }
-    const ask = shape?.asks[0];
-    this.setState(PART.plan, {
-      ...(count ? { count } : {}),
-      ...(ask ? { waiting: true, said: ask } : {}),
-    });
+    this.home.plan(plan?.source ?? null, plan?.source ? planShape(plan.source) : null);
   }
 
   /** The goal: on its bar while it is worked toward, one done leaving it
-   *  for its part of the side; on its mark, how it stands. */
+   *  for its page; its card on the overview while the bar does not say it. */
   private goal(goal: GoalShown | null): void {
     this.shownGoal = goal;
     this.goalPage.show(goal);
-    this.bar.show(!this.context.seams.noGoal && goal && goal.status !== "complete" ? goal : null);
-    const words = this.context.seams.words.goal;
-    // Blocked, the goal waits on the user.
-    this.setState(PART.goal, {
-      ...(goal?.status === "blocked" ? { waiting: true } : {}),
-      ...(goal ? { said: `${words.states[goal.status]}\n${goal.objective}` } : {}),
-    });
-  }
-
-  private collabAtWork(): boolean {
-    const working = (nodes: CollabNode[]): boolean => nodes.some((node) => node.state === "working" || working(node.children));
-    return working(this.colleagues) || this.runs.some((run) => run.going);
+    const barred = !this.context.seams.noGoal && goal && goal.status !== "complete" ? goal : null;
+    this.bar.show(barred);
+    this.home.goal(goal, barred !== null);
   }
 
   /** Who works with the conversation, drawn again when it changed: who is
@@ -339,7 +365,8 @@ export class SideParts implements PartSet {
       if (run.parent && known.has(run.parent)) under.set(run.parent, [...(under.get(run.parent) ?? []), run]);
       else top.push(run);
     }
-    const nodes = [...this.colleagues, ...top.map((run) => nodeOf(run, this.context.host, under, now))];
+    const doing = this.context.doing?.bind(this.context);
+    const nodes = [...this.colleagues, ...top.map((run) => nodeOf(run, this.context.host, under, now, doing))];
     if (JSON.stringify(nodes, minutes) === this.shownTeam) return;
     this.shownTeam = JSON.stringify(nodes, minutes);
     // What is new is told by what the World pushes, the same whether a
@@ -352,24 +379,12 @@ export class SideParts implements PartSet {
     const key = JSON.stringify([...colleagues, ...nodes.filter((node) => node.kind !== "colleague")], minutes);
     const fresh = this.drawnTeam !== "" && key !== this.drawnTeam;
     this.drawnTeam = key;
-    this.collab.show({ agent: this.context.host, name: "" }, nodes);
-    let all = 0;
-    let working = 0;
-    const count = (list: CollabNode[]) => {
-      for (const node of list) {
-        all += 1;
-        if (node.state === "working") working += 1;
-        count(node.children);
-      }
-    };
-    count(nodes);
-    const collab = this.context.seams.words.collab;
-    if (fresh) this.fresh = true;
-    this.setState(PART.team, {
-      ...(all ? { count: String(all) } : {}),
-      ...(working ? { said: collab.atWork(working) } : {}),
-    });
-    if (fresh) this.frame?.restate();
+    this.collab.show(nodes);
+    this.home.team(nodes);
+    if (fresh) {
+      this.fresh = true;
+      this.frame?.restate();
+    }
   }
 
   /** What the user did to the goal: said beside the input when it did not

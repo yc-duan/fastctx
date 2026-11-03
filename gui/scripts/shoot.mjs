@@ -344,12 +344,16 @@ for (const session of sessions) {
           }, 2000))`,
         });
       }
-      // `panel` is a conversation with its side open at its home;
+      // `panel` is a conversation with its side open at its overview;
       // `panel-goal-blocked` and the like with its goal in that state;
-      // `panel-talk` with a colleague it asked opened beside it, and
-      // `panel-agent` one of the host's agents; `panel-menu` with the menu
-      // of where it stands open. `panel-drop-left` and the like are the
-      // page shut with a conversation dragged from the list over that part.
+      // `panel-talk` with a colleague it asked opened beside it,
+      // `panel-agent` one of the host's agents read in a sheet, and
+      // `panel-all` everyone who works with it in theirs; `panel-menu` with
+      // the menu of where it stands open; `panel-where` with where it works
+      // pulled out of the corner's line; `panel-shut` with the side folded
+      // away to that line, and `panel-shut-where` so, pulled out.
+      // `panel-drop-left` and the like are the page shut with a conversation
+      // dragged from the list over that part.
       if (named.startsWith("panel-drop-")) {
         const at = { right: [0.8, 0.4], left: [0.2, 0.4], bottom: [0.5, 0.85] }[named.slice("panel-drop-".length)];
         // A row of the list carried by the pointer over that part of the page.
@@ -358,15 +362,11 @@ for (const session of sessions) {
           expression: `new Promise((r) => setTimeout(() => { const name = document.querySelector('.sidebar .talk-item[data-resident] .talk-name'); const from = name.getBoundingClientRect(); const box = document.querySelector('.sp-split').getBoundingClientRect(); const x = box.left + box.width * ${at[0]}, y = box.top + box.height * ${at[1]}; const pointer = (type, cx, cy) => new PointerEvent(type, { bubbles: true, cancelable: true, pointerId: 7, pointerType: 'mouse', isPrimary: true, button: 0, buttons: 1, clientX: cx, clientY: cy }); name.dispatchEvent(pointer('pointerdown', from.left + 8, from.top + 8)); window.dispatchEvent(pointer('pointermove', from.left + 30, from.top + 20)); window.dispatchEvent(pointer('pointermove', x, y)); setTimeout(r, 600); }, 600))`,
         });
       } else if (named.startsWith("panel")) {
-        const opened = named === "panel-file" ? `'a[data-file$="控制环.md"]'` : named === "panel-talk" ? `'.cp-node[data-id="codex-b10g"]'` : named === "panel-agent" ? `'.cp-node[data-id="b7c1d9e4f2"]'` : named === "panel-plan" || named.startsWith("panel-plan-") ? `'[data-part="part:plan"]'` : named === "panel-goal" ? `'.gb-act[data-act="expand"]'` : named === "panel-team" ? `'[data-part="part:team"]'` : named === "panel-menu" ? `'.sp-more'` : named === "panel-bottom" || named === "panel-left" ? `'.sp-menu-row[data-dock="${named.slice("panel-".length)}"]'` : named.startsWith("panel-goalpage-") ? `'[data-part="part:goal"]'` : null;
-        // Those who work with it are pressed on the team's part.
-        if (named === "panel-talk" || named === "panel-agent") {
-          await send("Runtime.evaluate", { awaitPromise: true, expression: `new Promise((r) => { if (!document.querySelector(".sp-host.sp-shown")) document.querySelector(".sp-toggle")?.click(); setTimeout(() => { document.querySelector('[data-part="part:team"]')?.click(); setTimeout(r, 300); }, 300); })` });
-        }
+        const opened = named === "panel-file" ? `'a[data-file$="控制环.md"]'` : named === "panel-talk" ? `'.sh-page [data-id="codex-b10g"]'` : named === "panel-agent" ? `'.sh-page [data-id="b7c1d9e4f2"]'` : named === "panel-all" ? `'.sh-page [data-open="team"]'` : named === "panel-plan" || named.startsWith("panel-plan-") ? `'.sh-page [data-open="plan"]'` : named === "panel-goal" ? `'.gb-act[data-act="expand"]'` : named === "panel-menu" ? `'.sp-more'` : named === "panel-where" || named === "panel-shut-where" ? `'.sw-line:not([hidden])'` : named === "panel-bottom" || named === "panel-left" ? `'.sp-menu-row[data-dock="${named.slice("panel-".length)}"]'` : named.startsWith("panel-goalpage-") ? `'.sh-page [data-open="goal"]'` : null;
         await send("Runtime.evaluate", {
           awaitPromise: true,
           // The row to press is waited for: an agent comes as the stream goes.
-          expression: `new Promise((r) => { if (!document.querySelector(".sp-host.sp-shown")) document.querySelector(".sp-toggle")?.click(); let tries = 0; const press = () => { const row = ${opened ? `document.querySelector(${opened})` : "null"}; if (row) row.click(); else if (${opened ? "true" : "false"} && tries++ < 40) return setTimeout(press, 200); setTimeout(r, 1300); }; setTimeout(press, 300); })`,
+          expression: `new Promise((r) => { if (!document.querySelector(".sp-host.sp-shown") !== ${named.startsWith("panel-shut")}) document.querySelector(".sp-toggle")?.click(); let tries = 0; const press = () => { const row = ${opened ? `([...document.querySelectorAll(${opened})].find((one) => one.offsetParent) ?? document.querySelector(${opened}))` : "null"}; if (row) row.click(); else if (${opened ? "true" : "false"} && tries++ < 40) return setTimeout(press, 200); setTimeout(r, 1300); }; setTimeout(press, 300); })`,
         });
       }
       // `panel-goalpage-none-typed` and the like: a new goal's words typed

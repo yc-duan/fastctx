@@ -7,7 +7,7 @@ import type { HistoryWords } from "../project/history-words";
 import type { HistoryCatalog } from "../world/history";
 import type { PlanWords } from "../plan/words";
 import type { Address } from "../world/wire";
-import type { CollabNode, GoalShown, PastGoal } from "./types";
+import type { CollabNode, GoalShown, PastGoal, WhereShown } from "./types";
 import type { SideWords } from "./words";
 
 /** The colleagues followed: stopped, or asked for more or less of them. */
@@ -47,6 +47,11 @@ export interface SideSeams {
    *  stands, as the World is pushed; with `detail`, each one's goal and the
    *  host's agents it sent too, read only while a page shows them. */
   colleagues(show: (nodes: CollabNode[]) => void): Following;
+  /** Where it works, followed as the World changes. */
+  where(show: (where: WhereShown | null) => void): () => void;
+  /** Shows a folder of this computer in the system's own window, where this
+   *  is a computer. */
+  reveal?: (path: string) => void;
   /** Its own history, where it is in no project (`world-history.md`). */
   history?: {
     words: HistoryWords;

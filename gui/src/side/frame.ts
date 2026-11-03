@@ -1,13 +1,16 @@
 // The side of the desk (`world-gui.md`, 对话的侧面板): one for all the
 // conversations shown, holding the parts of the one in focus. It stands at
 // the conversations' right as tall as the window by default, or at their
-// left, or along their foot as wide as the desk; half the desk at first and
-// dragged larger or smaller by the line between them. Where it stands, how
+// left, or along their foot as wide as the desk; as wide as its cards read
+// well at first, or half the desk's height along its foot, and dragged
+// larger or smaller by the line between them. Where it stands, how
 // much it takes and whether it is open are kept on this device; its own menu
 // moves it. Where the desk has no room for it there, it stands along the
 // other edge, or lies over the whole desk as on a phone, until the room comes
-// back. Its one switch stays in the window's top right corner, under the
-// window's own buttons where they are drawn, open or shut.
+// back. The window's top right corner holds one line, before the window's
+// own buttons where they are drawn: where the conversation in focus works,
+// the side's "⋯" and its switch. It stays there as the side opens and folds
+// away, and is all that is left of the side while it is folded.
 
 import { makeGrip } from "../app/grip";
 import { glyph } from "../conversation/glyphs";
@@ -21,9 +24,11 @@ export const OVER = matchMedia("(max-width: 760px)");
 
 /** The share of the desk the side was dragged to, kept on this device. */
 const SHARE_KEPT = "side-share";
-/** Half the desk at first; the least the side may be, and the least it
- *  leaves the conversations, across and down. */
-const SHARE = 0.5;
+/** Its size at first: across, a share of the desk kept between a reading
+ *  width's bounds; down, half the desk. */
+const FIRST = { share: 0.3, least: 360, most: 440, down: 0.5 };
+/** The least the side may be, and the least it leaves the conversations,
+ *  across and down. */
 const LEAST = { across: 320, down: 180 };
 const ROOM = { across: 360, down: 220 };
 
@@ -63,6 +68,9 @@ function keptShare(): number | null {
 export class SideFrame implements PartsFrame {
   readonly pane: SidePane;
   readonly opener: HTMLButtonElement;
+  /** The corner's line, and where in it the conversation's place goes. */
+  private readonly corner: HTMLElement;
+  private readonly whereSlot: HTMLElement;
   /** The conversations and the side, the two columns of the desk. */
   readonly split: HTMLElement;
   private parts: SideParts | null = null;
@@ -115,10 +123,20 @@ export class SideFrame implements PartsFrame {
     this.opener.setAttribute("aria-label", words.panel);
     this.opener.title = words.panel;
     this.opener.addEventListener("click", () => this.pane.toggle(this.parts?.firstPart()));
+    this.corner = document.createElement("div");
+    this.corner.className = "sp-corner-bar";
+    this.whereSlot = document.createElement("div");
+    this.whereSlot.className = "sp-corner-where";
+    this.corner.append(this.whereSlot, this.pane.more, this.opener);
     // It stands over a head that drags the window: the window is told it is
     // pressed, not dragged from.
-    this.opener.dataset.worldTitlebar = "client";
-    host.append(this.opener);
+    this.corner.dataset.worldTitlebar = "client";
+    host.append(this.corner);
+    // The heads under the corner keep clear of it, as wide as it is now.
+    new ResizeObserver(() => {
+      const width = `${Math.ceil(this.corner.getBoundingClientRect().width)}px`;
+      if (host.style.getPropertyValue("--sp-corner-width") !== width) host.style.setProperty("--sp-corner-width", width);
+    }).observe(this.corner);
     this.place(true);
     this.fitting = new ResizeObserver(([entry]) => {
       if (!entry) return;
@@ -140,7 +158,8 @@ export class SideFrame implements PartsFrame {
     }
     this.parts = parts;
     if (parts) parts.frame = this;
-    this.opener.hidden = !parts;
+    this.corner.hidden = !parts;
+    this.whereSlot.replaceChildren(...(parts ? [parts.where.corner] : []));
     this.pane.use(parts);
     this.drawSwitch();
     parts?.seen(this.pane.visible);
@@ -248,9 +267,12 @@ export class SideFrame implements PartsFrame {
     return Math.max(this.least(), room - (this.down ? ROOM.down : ROOM.across));
   }
 
-  /** The side's size in `room`, at the share it was dragged to. */
+  /** The side's size in `room`: at the share it was dragged to, else its
+   *  first. */
   private fitted(room: number): number {
-    return Math.round(Math.min(this.most(room), Math.max(this.least(), (keptShare() ?? SHARE) * room)));
+    const share = keptShare();
+    const wanted = share !== null ? share * room : this.down ? FIRST.down * room : Math.min(FIRST.most, Math.max(FIRST.least, FIRST.share * room));
+    return Math.round(Math.min(this.most(room), Math.max(this.least(), wanted)));
   }
 
   /** The side is put where it was chosen to: kept on this device, and the
@@ -270,7 +292,7 @@ export class SideFrame implements PartsFrame {
   }
 
   /** Takes a width the side was dragged to, as its share of the desk, or
-   *  none to go back to half. */
+   *  none to go back to its first. */
   private resize(width: number | null): void {
     keep(SHARE_KEPT, width === null ? null : String(width / Math.max(1, this.room())));
     this.fit();

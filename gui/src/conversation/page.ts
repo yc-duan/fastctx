@@ -2,12 +2,9 @@
 // conversation itself in a region that scrolls on its own, and the words
 // the user is about to send, always at the foot.
 
-import { leave, leaving, stay } from "../app/leave";
 import { keepChoice } from "../app/model-memory";
 import { layerOpened } from "../app/back";
-import { FocusPanel, type FocusServers, focusSummary, type FocusPlace } from "../app/focus-panel";
-import type { ComposerWords, FocusWords } from "../app/words";
-import { sameFocus, type Focus, type Folders } from "../world/focus";
+import type { ComposerWords } from "../app/words";
 import type { Words } from "../words";
 import type { Control, Controlled, Offers } from "../world/control";
 import type { Attachment } from "../world/attachments";
@@ -64,9 +61,6 @@ import { composing } from "../typing";
  *  holds before what comes before its newest turns is let go, down to how
  *  many (`ConversationPage.bound`). */
 const HELD_MOST = 6000;
-/** How long a choice cleared of every machine can be taken back, as long as
- *  a change on the machines page can. */
-const FOCUS_UNDO_MS = 6_000;
 /** How many screens from what is in view a part may be and still be held,
  *  whatever the page holds: the reader goes on into it. */
 const KEEP_SCREENS = 3;
@@ -84,9 +78,6 @@ export interface Someone {
   /** Whose agent it is, for one of another account assisting the user: it
    *  works on no machine by default, each command naming one. */
   assistFrom?: string | null;
-  /** The machines and folders it is pointed at; null for a conversation
-   *  the user cannot point, one they did not open from here. */
-  focus?: Focus | null;
   model: string | null;
   /** The project it is in, by the name the user gave it. */
   project: string | null;
@@ -122,16 +113,6 @@ export interface PageOptions {
   /** The conversation's pictures, from the machines holding them. */
   pictures?: PictureSeams;
   conversation: Conversation;
-  /** Pointing it at machines and folders, from the strip at the top. */
-  focus?: {
-    words: FocusWords;
-    places(): FocusPlace[];
-    folders(machine: string, path: string | null): Promise<Folders>;
-    /** Resolves with what was not done of it, in the user's words. */
-    set(focus: Focus): Promise<string[]>;
-    /** The account's MCP servers and their switches, where it keeps any. */
-    servers?: FocusServers | undefined;
-  };
   /** What the user does to the conversation, from the "⋯" in its head
    *  (`app/talk-menu.ts`): opening that menu, and bringing it back when it
    *  is archived. */
@@ -393,10 +374,6 @@ export class ConversationPage {
     const far = () => this.far;
     this.far = new FarFind(options.conversation, (block) => this.view.findParts(block), () => this.finder.refresh());
     this.scroller.before(this.finder.element);
-    if (options.focus) {
-      this.focusStrip(options.focus);
-      this.drawFocus();
-    }
     this.element.querySelector(".find-toggle")!.addEventListener("click", () => (this.finder.open ? this.finder.close() : this.finder.show()));
     this.element.querySelector(".view-steps")!.addEventListener("click", () => this.toggleSteps());
     document.addEventListener("keydown", this.findKey);
@@ -541,8 +518,14 @@ export class ConversationPage {
         jump: (id) => {
           if (this.view.openAgent(id)) this.following = false;
         },
-        // What it is pointed at leaves the head for the side's foot.
-        env: this.element.querySelector<HTMLElement>(".focus-strip"),
+        // What one of its agents does this moment: its latest step, as the
+        // step's row would say it.
+        doing: (run) => {
+          const step = run.steps.at(-1);
+          if (!step) return null;
+          const said = headline(step.tool, null, words, () => null, true);
+          return [said.action, said.object].filter(Boolean).join(" ");
+        },
       });
     }
     // For how long a way has been broken, and why, as the note says it.
@@ -996,7 +979,6 @@ export class ConversationPage {
   leave(): void {
     phoneWide.removeEventListener("change", this.placeDial);
     clearTimeout(this.offersAgain);
-    clearTimeout(this.focusUndoTimer);
     cancelAnimationFrame(this.frame);
     this.view.destroy();
     this.badge?.dispose();
@@ -2250,7 +2232,6 @@ export class ConversationPage {
             : "";
     this.element.querySelector<HTMLElement>(".talk-menu-toggle")?.toggleAttribute("hidden", away === "deleted");
     this.drawState();
-    this.drawFocus();
     this.update();
   }
 
@@ -2258,153 +2239,11 @@ export class ConversationPage {
    *  as one just started, goes by its agent's id until this; its project
    *  and model follow it when they change. */
   identify(who: Someone): void {
-    // A change being kept stands until the World lists it.
-    if (this.focusSaving) who = { ...who, focus: this.options.someone.focus ?? null };
     Object.assign(this.options.someone, who);
     const said = this.options.words.sendPlaceholder(who.agent);
     this.input.placeholder = said;
     this.input.setAttribute("aria-label", said);
     this.drawState();
-    this.drawFocus();
-  }
-
-  private focusPanel: FocusPanel | null = null;
-  /** What the panel holds while it is open. */
-  private focusDraft: Focus | null = null;
-  private focusSaving = false;
-  /** While a choice cleared of every machine can be taken back. */
-  private focusUndoTimer = 0;
-
-  /** The strip under the head: the machines and folders it is pointed at,
-   *  which open the panel to change them; a change is kept, and told to
-   *  the agent, as the panel closes. */
-  private focusStrip(focus: NonNullable<PageOptions["focus"]>): void {
-    const strip = document.createElement("div");
-    strip.className = "focus-strip";
-    strip.hidden = true;
-    strip.innerHTML = `<button type="button" class="talk-chip focus-chip" aria-haspopup="dialog" aria-expanded="false"></button><span class="focus-state" aria-live="polite"></span><div class="focus-pop" role="dialog" hidden></div>`;
-    // In the head's one line, before its tools.
-    this.element.querySelector(".page-head-actions")?.prepend(strip);
-    const chip = strip.querySelector<HTMLButtonElement>(".focus-chip")!;
-    const pop = strip.querySelector<HTMLElement>(".focus-pop")!;
-    chip.addEventListener("click", () => (pop.hidden ? this.openFocus(focus) : this.closeFocus(focus)));
-    document.addEventListener("pointerdown", (event) => {
-      if (pop.hidden || !this.element.isConnected) return;
-      const target = event.target as HTMLElement;
-      // The window of a machine's folders, opened from the panel, is part of it.
-      if (!pop.contains(target) && !chip.contains(target) && !target.closest("dialog")) this.closeFocus(focus);
-    });
-    strip.addEventListener("keydown", (event) => {
-      if (event.key !== "Escape" || pop.hidden) return;
-      event.stopPropagation();
-      this.closeFocus(focus);
-      chip.focus({ preventScroll: true });
-    });
-  }
-
-  private openFocus(focus: NonNullable<PageOptions["focus"]>): void {
-    const current = this.options.someone.focus;
-    if (!current || this.focusSaving) return;
-    const strip = this.element.querySelector<HTMLElement>(".focus-strip")!;
-    const pop = strip.querySelector<HTMLElement>(".focus-pop")!;
-    this.focusDraft = structuredClone(current);
-    this.focusPanel ??= new FocusPanel(
-      {
-        words: focus.words,
-        places: focus.places,
-        folders: focus.folders,
-        changed: (next) => {
-          this.focusDraft = next;
-        },
-        done: () => this.closeFocus(focus),
-        servers: focus.servers,
-      },
-      current,
-    );
-    this.focusPanel.set(current);
-    pop.replaceChildren(this.focusPanel.element);
-    stay(pop);
-    pop.hidden = false;
-    strip.querySelector(".focus-chip")!.setAttribute("aria-expanded", "true");
-    layerOpened({ isOpen: () => !pop.hidden && this.element.isConnected, close: () => this.closeFocus(focus) });
-  }
-
-  private closeFocus(focus: NonNullable<PageOptions["focus"]>): void {
-    const strip = this.element.querySelector<HTMLElement>(".focus-strip")!;
-    const pop = strip.querySelector<HTMLElement>(".focus-pop")!;
-    if (pop.hidden || leaving(pop)) return;
-    leave(pop, () => (pop.hidden = true));
-    strip.querySelector(".focus-chip")!.setAttribute("aria-expanded", "false");
-    const before = this.options.someone.focus;
-    const next = this.focusDraft;
-    this.focusDraft = null;
-    if (!before || !next || sameFocus(before, next)) return;
-    // A choice left with no machine at all may be a slip of the hand: it can
-    // be taken back for a moment.
-    this.saveFocus(focus, before, next, before.machines.length > 0 && next.machines.length === 0);
-  }
-
-  private saveFocus(focus: NonNullable<PageOptions["focus"]>, before: Focus, next: Focus, undoable: boolean): void {
-    const state = this.element.querySelector<HTMLElement>(".focus-state")!;
-    clearTimeout(this.focusUndoTimer);
-    this.focusSaving = true;
-    this.options.someone.focus = next;
-    this.drawFocus();
-    state.textContent = focus.words.saving;
-    state.classList.remove("refused");
-    focus
-      .set(next)
-      .then((unfinished) => {
-        if (undoable && !unfinished.length) this.offerFocusUndo(focus, before, next);
-        else state.textContent = unfinished.join(" ");
-      })
-      .catch((error: unknown) => {
-        this.options.someone.focus = before;
-        const why = error instanceof Error ? error.message : String(error);
-        state.textContent = focus.words.failed(why);
-        state.title = why;
-        state.classList.add("refused");
-      })
-      .finally(() => {
-        this.focusSaving = false;
-        this.drawFocus();
-      });
-  }
-
-  /** Says the choice was cleared, with the way to take it back, for as long
-   *  as the machines page offers its own. */
-  private offerFocusUndo(focus: NonNullable<PageOptions["focus"]>, before: Focus, cleared: Focus): void {
-    const state = this.element.querySelector<HTMLElement>(".focus-state")!;
-    state.innerHTML = `<span class="focus-cleared">${escape(focus.words.cleared)}</span><button class="text-button focus-undo" type="button">${escape(focus.words.undo)}</button>`;
-    state.querySelector(".focus-undo")!.addEventListener("click", () => {
-      state.textContent = "";
-      if (this.focusSaving) return;
-      this.saveFocus(focus, cleared, before, false);
-    });
-    this.focusUndoTimer = window.setTimeout(() => {
-      if (state.querySelector(".focus-undo")) state.textContent = "";
-    }, FOCUS_UNDO_MS);
-  }
-
-  /** The strip as the conversation stands: shown where the user may point
-   *  it, and while it is not removed. */
-  private drawFocus(): void {
-    const words = this.options.focus?.words;
-    const strip = this.element.querySelector<HTMLElement>(".focus-strip");
-    if (!words || !strip) return;
-    const focus = this.options.someone.focus;
-    strip.hidden = !focus || this.away !== null;
-    if (!focus) return;
-    const chip = strip.querySelector<HTMLButtonElement>(".focus-chip")!;
-    const summary = focusSummary(focus, words);
-    // On a phone the chip is its machine and how many places it holds.
-    const count = focus.machines.reduce((sum, chosen) => sum + Math.max(1, chosen.folders.length), 0);
-    const named = summary ? summary.html : `<span class="talk-chip-name">${escape(words.none)}</span>`;
-    const html = `${glyph("machine", 16)}${named}${count ? `<span class="focus-count">${count}</span>` : ""}${glyph("chevron", 12)}`;
-    if (chip.innerHTML !== html) chip.innerHTML = html;
-    chip.classList.toggle("quiet", !summary);
-    chip.title = summary ? `${words.title}\n${summary.said}` : words.title;
-    chip.disabled = this.focusSaving;
   }
 
   /** The watch on the session is over: what is shown stays, and the bar

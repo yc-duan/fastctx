@@ -37,7 +37,7 @@ export interface Branch {
   address: Address;
   label?: string | null;
   born_at?: Timestamp | null;
-  now?: { activity?: string; trouble?: unknown; title?: string | null; since?: Timestamp } | null;
+  now?: { activity?: string; trouble?: unknown; title?: string | null; since?: Timestamp; waiting_for_user?: boolean } | null;
   /** The colleague's goal, or the reason it could not be read (Rust Result). */
   goal: { Ok: TreeGoal | null } | { Err: string };
   agents: NativeAgent[];

@@ -18,7 +18,8 @@ import type { Address } from "../world/wire";
 import type { GoalStatus } from "./types";
 import { goalSamples, pastSamples, teamSample } from "./samples";
 import type { SideSeams } from "./seams";
-import type { CollabNode, GoalShown, NodeState, PastGoal } from "./types";
+import type { CollabNode, GoalShown, NodeState, PastGoal, WhereShown } from "./types";
+import { whereOf } from "./where-live";
 import type { SideWords } from "./words";
 import { sentinelList, type SentinelSummary } from "../world/sentinels";
 import { PREVIEW } from "../app/preview";
@@ -41,7 +42,15 @@ function branchNode(branch: Branch, agent: "claude" | "codex", store: Store, now
   const since = branch.now?.since ? Date.parse(branch.now.since) : born;
   // A branch its machine could not tell about is not known to be done.
   const why = [...branch.unavailable, ...("Err" in branch.goal ? [branch.goal.Err] : [])].join("; ");
-  const state: NodeState = branch.now?.trouble ? "failed" : !branch.now ? "unknown" : busy ? "working" : "done";
+  const state: NodeState = branch.now?.trouble
+    ? "failed"
+    : !branch.now
+      ? "unknown"
+      : branch.now.waiting_for_user
+        ? "waiting"
+        : busy
+          ? "working"
+          : "done";
   return {
     id: branch.address.resident,
     kind: "colleague",
@@ -53,6 +62,9 @@ function branchNode(branch: Branch, agent: "claude" | "codex", store: Store, now
     goal: treeGoal(branch.goal),
     branchOf: "Ok" in branch.goal ? (branch.goal.Ok?.parent ?? null) : null,
     took: Number.isFinite(born) ? Math.max(0, (busy ? now : Number.isFinite(since) ? since : now) - born) : 0,
+    began: Number.isFinite(born) ? born : null,
+    ended: busy || state === "waiting" || !Number.isFinite(since) ? null : since,
+    model: found?.about.model ?? null,
     steps: null,
     machine: branch.address.machine,
     children: branch.agents.map((child) => agentNode(child, agent, now)),
@@ -63,15 +75,20 @@ function agentNode(agent: NativeAgent, parent: "claude" | "codex", now: number):
   const model = agent.model ?? "";
   const kind: "claude" | "codex" = /codex|gpt/i.test(model) ? "codex" : /claude/i.test(model) ? "claude" : parent;
   const started = agent.started_at ? Date.parse(agent.started_at) : NaN;
+  const ended = agent.ended_at ? Date.parse(agent.ended_at) : NaN;
+  const state = agentState(agent);
   return {
     id: agent.id,
     kind: "subagent",
     agent: kind,
     name: agent.name ?? agent.id,
     task: agent.task ?? "",
-    state: agentState(agent),
+    state,
     goal: null,
     took: agent.duration_ms ?? (Number.isFinite(started) ? Math.max(0, now - started) : 0),
+    began: Number.isFinite(started) ? started : null,
+    ended: state === "working" ? null : Number.isFinite(ended) ? ended : Number.isFinite(started) && agent.duration_ms != null ? started + agent.duration_ms : null,
+    model: agent.model ?? null,
     steps: null,
     children: agent.children.map((child) => agentNode(child, kind, now)),
   };
@@ -138,6 +155,10 @@ export interface LiveSide {
   took(ms: number): string;
   /** Opens what one of the world's ids names, from the plan. */
   openId(id: string): void;
+  /** Where a computer's page is read. */
+  machineLink(machine: string): string | null;
+  /** Shows a folder of this computer in the system's own window. */
+  reveal?: ((path: string) => void) | undefined;
 }
 
 /** The colleagues the conversation at `address` asked, as the World pushes
@@ -246,6 +267,8 @@ export function liveSide(options: LiveSide): SideSeams {
     self: options.address,
     ...(options.noGoal ? { noGoal: true } : {}),
     ...(options.history ? { history: options.history } : {}),
+    where: (show) => effect(() => show(whereOf(options.store.world.get(), options.address, options.machineLink))),
+    ...(options.reveal ? { reveal: options.reveal } : {}),
     plan: {
       words: options.planWords,
       seams: plan,
@@ -426,7 +449,7 @@ export function specimenSide(
   planWords: PlanWords,
   plan: PlanShown & { facts: PageSeams["facts"] },
   english: boolean,
-  side: { self: Address; goal?: string | null; history?: SideSeams["history"] },
+  side: { self: Address; goal?: string | null; history?: SideSeams["history"]; where: () => WhereShown | null },
 ): SideSeams {
   let goal: GoalShown | null = side.goal === "none" ? null : (goalSamples(english, Date.now())[side.goal ?? "active"] ?? null);
   const past: PastGoal[] = pastSamples(english, Date.now());
@@ -444,6 +467,10 @@ export function specimenSide(
     words,
     self: side.self,
     ...(side.history ? { history: side.history } : {}),
+    where: (show) => {
+      show(side.where());
+      return () => {};
+    },
     plan: {
       words: planWords,
       seams: { facts: plan.facts, save: async () => ({ ok: true }) },

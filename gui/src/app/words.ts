@@ -123,11 +123,6 @@ export interface FocusWords {
   picker: FolderPickerWords;
   /** How many more are chosen than the chip names. */
   more(count: number): string;
-  saving: string;
-  failed(why: string): string;
-  /** Every machine was taken off, and the way to put them back. */
-  cleared: string;
-  undo: string;
 }
 
 export const zhFolderPicker: FolderPickerWords = {
@@ -177,10 +172,6 @@ export const zhFocus: FocusWords = {
   done: "完成",
   picker: zhFolderPicker,
   more: (count) => `+${count}`,
-  saving: "保存中…",
-  failed: failure(zhProblems, "没改成"),
-  cleared: "已清空",
-  undo: "撤回",
 };
 
 export const enFocus: FocusWords = {
@@ -200,10 +191,6 @@ export const enFocus: FocusWords = {
   done: "Done",
   picker: enFolderPicker,
   more: (count) => `+${count}`,
-  saving: "Saving…",
-  failed: failure(enProblems, "Not changed"),
-  cleared: "Cleared",
-  undo: "Undo",
 };
 
 export interface NewTalkWords {
@@ -826,138 +813,6 @@ export const readerWords: ReaderWordsSet = {
     bytes: (count) => sizeOf(count, units.en),
     modified: (ago) => `modified ${ago}`,
   },
-};
-
-export interface DetailsWords {
-  open: string;
-  close: string;
-  model: string;
-  modelSelf: string;
-  machine: string;
-  host: string;
-  startedByWorld: string;
-  origin: string;
-  openedByYou: string;
-  askedBy(asker: string, label: string): string;
-  here: string;
-  since(ago: string): string;
-  state: string;
-  busy(lasted: string): string;
-  idle(ago: string): string;
-  removed(ago: string): string;
-  waiting: string;
-  trouble: string;
-  task: string;
-  colleagues: string;
-  /** An agent assisting the user: whose it is. */
-  assistFrom: string;
-  actingFor: string;
-  separator: string;
-  /** Which login of its agent it uses, where not the default one. */
-  login: string;
-  running: string;
-  actions(shown: number, total: number): string;
-  noActions: string;
-  answers: string;
-  records: string;
-  stop: string;
-  stopped: string;
-  notRunning: string;
-  exportMarkdown: string;
-  exported: string;
-  openOwn(agent: string): string;
-  openedOwn: string;
-  cannotLook(why: string): string;
-  notFound: string;
-  /** A stage of an act that was not done: where, how, and the World's
-   *  own account of it. */
-  unfinished(stage: string, outcome: "pending" | "unsupported" | "failed", detail: string): string;
-}
-
-export const zhDetails: DetailsWords = {
-  open: "详情",
-  close: "收起",
-  model: "模型",
-  modelSelf: "（自报）",
-  machine: "所在机器",
-  host: "程序",
-  startedByWorld: "后台会话",
-  origin: "来源",
-  openedByYou: "由你开启",
-  askedBy: (asker, label) => `${asker} 调用的模型：${label}`,
-  here: "加入",
-  since: (ago) => `${ago}前`,
-  state: "状态",
-  busy: (lasted) => `工作中　${lasted}`,
-  idle: (ago) => `空闲　${ago}前`,
-  removed: (ago) => `${ago}前已移除`,
-  waiting: "等待回复",
-  trouble: "异常",
-  task: "任务",
-  colleagues: "调用的模型",
-  assistFrom: "来自",
-  actingFor: "所属账号",
-  separator: "、",
-  login: "登录",
-  running: "运行中的命令",
-  actions: (shown, total) => (shown < total ? `最近动作 ${shown}/${total}` : "动作"),
-  noActions: "暂无动作",
-  answers: "已交回",
-  records: "记录",
-  stop: "停止",
-  stopped: "已请求停止",
-  notRunning: "当前没有运行",
-  exportMarkdown: "复制为 Markdown",
-  exported: "已复制",
-  openOwn: (agent) => `在 ${agent} 中打开`,
-  openedOwn: "已在新终端窗口中打开",
-  cannotLook: () => "无法获取详情",
-  notFound: "未找到该对话",
-  unfinished: (stage, outcome) =>
-    `${{ host: "宿主", records: "记录", tools: "工具", notification: "通知" }[stage] ?? stage}${{ pending: "等待中", unsupported: "不支持", failed: "失败" }[outcome]}`,
-};
-
-export const enDetails: DetailsWords = {
-  open: "Details",
-  close: "Close",
-  model: "Model",
-  modelSelf: " (self-reported)",
-  machine: "Machine",
-  host: "Program",
-  startedByWorld: "background session",
-  origin: "Origin",
-  openedByYou: "opened by you",
-  askedBy: (asker, label) => `called by ${asker}: ${label}`,
-  here: "Joined",
-  since: (ago) => `${ago} ago`,
-  state: "Status",
-  busy: (lasted) => `working, ${lasted}`,
-  idle: (ago) => `idle, ${ago} ago`,
-  removed: (ago) => `removed ${ago} ago`,
-  waiting: "waiting for your reply",
-  trouble: "Issues",
-  task: "Task",
-  colleagues: "Models it called",
-  assistFrom: "From",
-  actingFor: "Account",
-  separator: ", ",
-  login: "Login",
-  running: "Running jobs",
-  actions: (shown, total) => (shown < total ? `Recent actions ${shown}/${total}` : "Actions"),
-  noActions: "No actions yet",
-  answers: "Handed back",
-  records: "Records",
-  stop: "Stop",
-  stopped: "Stop requested",
-  notRunning: "Not running",
-  exportMarkdown: "Copy as Markdown",
-  exported: "Copied",
-  openOwn: (agent) => `Open in ${agent}`,
-  openedOwn: "Opened in a new terminal window",
-  cannotLook: () => "Couldn't load details",
-  notFound: "Conversation not found",
-  unfinished: (stage, outcome) =>
-    `${{ host: "host", records: "records", tools: "tools", notification: "notification" }[stage] ?? stage} ${{ pending: "pending", unsupported: "unsupported", failed: "failed" }[outcome]}`,
 };
 
 export interface ProjectFormWords {

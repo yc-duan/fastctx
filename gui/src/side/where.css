@@ -1,0 +1,204 @@
+/* Where the conversation in focus works (`where.ts`): a quiet line in the
+   desk's corner, pulled out into each computer it works on and its
+   folders in full. */
+
+.sw {
+  position: relative;
+  display: flex;
+  min-width: 0;
+}
+
+.sw[hidden] {
+  display: none;
+}
+
+/* The line: the computer by its kind and name, the folder by its name, how
+   many more places after them. Where it is short, the folder's name gives
+   way first. */
+.sw-line {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+  max-width: 280px;
+  height: 32px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-m);
+  color: var(--text-2);
+  font-family: var(--font-reading);
+  font-size: var(--size-text);
+  white-space: nowrap;
+  transition: background-color var(--hover) var(--ease), color var(--hover) var(--ease);
+}
+
+.sw-line[hidden] {
+  display: none;
+}
+
+.sw-line:hover,
+.sw-line[aria-expanded="true"] {
+  background: var(--hairline);
+  color: var(--text);
+}
+
+.sw-at {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.sw-host {
+  flex: 0 1 auto;
+}
+
+.sw-folder-at {
+  flex: 0 100 auto;
+}
+
+.sw-at > .glyph {
+  flex: none;
+  color: var(--text-3);
+}
+
+.sw-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sw-at.away .sw-text {
+  color: var(--text-3);
+}
+
+.sw-more {
+  flex: none;
+  margin-left: calc(-1 * var(--space-1));
+  color: var(--text-3);
+  font-size: var(--size-fine);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Pulled out under the line, at the corner's end: each computer, its
+   folders under its name. */
+.sw-pop {
+  position: absolute;
+  z-index: 8;
+  top: calc(100% + var(--space-1));
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: max-content;
+  min-width: 240px;
+  max-width: min(420px, calc(100vw - 2 * var(--space-4)));
+  max-height: min(64dvh, 480px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  padding: var(--space-2);
+  border-radius: var(--radius-l);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-pop);
+  font-family: var(--font-reading);
+  font-size: var(--size-text);
+  opacity: var(--shown);
+  translate: var(--slide) var(--lift);
+  animation: panel-rise var(--fold) var(--fold-easing) both;
+}
+
+.sw-pop[hidden] {
+  display: none;
+}
+
+.sw-pop.leaving {
+  pointer-events: none;
+  animation: panel-settle var(--quick) var(--ease-out) both;
+}
+
+:root[data-reduced] .sw-pop {
+  animation: none;
+}
+
+.sw-places {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-bottom: var(--space-2);
+}
+
+.sw-place {
+  display: flex;
+  flex-direction: column;
+}
+
+.sw-machine,
+.sw-folder {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: 5px var(--space-2);
+  border-radius: var(--radius-s);
+  color: var(--text);
+  font: inherit;
+  line-height: var(--leading-ui);
+  text-align: left;
+  text-decoration: none;
+  transition: background-color var(--hover) var(--ease);
+}
+
+.sw-machine {
+  font-family: var(--font-emphasis);
+}
+
+.sw-machine.away {
+  color: var(--text-3);
+}
+
+/* A computer's folders stand under its name. */
+.sw-folder {
+  margin-left: calc(16px + var(--space-2));
+  color: var(--text-2);
+}
+
+a.sw-machine:hover,
+button.sw-folder:hover {
+  background: var(--fill);
+}
+
+.sw-machine > .glyph,
+.sw-folder > .glyph {
+  flex: none;
+  margin-top: calc((1lh - 16px) / 2);
+  color: var(--text-3);
+}
+
+.sw-path {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.sw-from {
+  margin: 0;
+  padding: 0 var(--space-2) var(--space-1) calc(var(--space-2) + 16px + var(--space-2));
+  color: var(--text-3);
+}
+
+@media (pointer: coarse) {
+  .sw-line,
+  .sw-machine,
+  .sw-folder {
+    min-height: 44px;
+  }
+
+  .sw-machine,
+  .sw-folder {
+    align-items: center;
+  }
+
+  .sw-machine > .glyph,
+  .sw-folder > .glyph {
+    margin-top: 0;
+  }
+}

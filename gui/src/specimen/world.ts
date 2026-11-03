@@ -548,6 +548,7 @@ export function specimenWorld(): { world: WorldState; now: Date; lastVisit: Date
           busy: 2,
           residents: [
             resident("claude-2b1c", "laptop", claude(), "mark50", "claude-opus-5-5", "05:02:00", {
+              focus: { machines: [{ machine: "laptop", folders: ["C:/Users/me/mark50/firmware"] }, { machine: "lab", folders: ["/srv/mark50"] }] },
               now: { owed: {}, answering: [], activity: "busy", since: at("13:36:00"), turn: "t3", trouble: null, desk: false, waiting_for_user: false, title: "PID 环改定点" },
               last_action: action("13:37:10", "lab", "run", "cd /srv/mark50 && git fetch laptop colleague/q16-edge && cargo test -p ctrl overflow_repro", "running"),
             }),

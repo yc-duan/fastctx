@@ -4,7 +4,6 @@
 // `?s=home|claude|codex|project|journal|machines|settings|new`,
 // `?theme=…`, `?lang=en` and `?live` pick what to look at.
 
-import { focusPlace } from "./app/focus-places";
 import { followSwitches } from "./app/segment-slide";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import type { Attachment, FilePlace, UploadTarget } from "./world/attachments";
@@ -92,7 +91,6 @@ import "./app/skills.css";
 import { mcp as mcpCall, readProfile, writeProfile } from "./world/profile";
 import { specimenProfileCalls } from "./specimen/profile";
 import { ServerLists } from "./app/mcp-switches";
-import type { FocusServers } from "./app/focus-panel";
 import { enAgentChange, zhAgentChange } from "./app/agent-change";
 import "./app/agent-logins.css";
 import "./app/disclose.css";
@@ -160,7 +158,6 @@ import {
   enComposer,
   enConsent,
   enPresence,
-  enDetails,
   enFocus,
   enNewTalk,
   enPalette,
@@ -170,7 +167,6 @@ import {
   zhComposer,
   zhConsent,
   zhPresence,
-  zhDetails,
   zhFocus,
   zhNewTalk,
   zhPalette,
@@ -181,9 +177,8 @@ import {
 import { enRemoval, zhRemoval } from "./app/removal-words";
 import { enAccess, enLogin, enMachines, enToken, zhAccess, zhLogin, zhMachines, zhToken } from "./app/account-words";
 import { LASTING, loginsOf, type AccountChange, type Login, type TokenSeen, type TokenWay } from "./world/accounts";
-import { assistantOf, assistantsOf, fileHome, filePlaces, groupsOf, inNoNetwork, loginKey, loginLabel, machinesOf, residentIn, sameLogin, workPlaces, type Machine } from "./app/reach";
-import type { FocusPlace } from "./app/focus-panel";
-import { folders as foldersOf, noFocus, type Focus, type Folders } from "./world/focus";
+import { assistantOf, assistantsOf, fileHome, groupsOf, inNoNetwork, loginKey, loginLabel, machinesOf, residentIn } from "./app/reach";
+import { folders as foldersOf, type Folders } from "./world/focus";
 import { ComposerSession } from "./conversation/composer";
 import { allowPrivacy, attachmentThumbnail, fetchAttachment, fetchFile, openLocal, reveal, saveAs, thumbnail, thumbnailUrl, type Saved, type Thumbnail } from "./world/files";
 import { askProgram } from "./app/program-sheet";
@@ -256,6 +251,7 @@ import type { MachineLogins, WorldLogins } from "./world/logins";
 import { ownerResident, type ResidentNow, type WorldWho } from "./world/world";
 import { agentName, titleOf } from "./world/names";
 import { liveSide, specimenSide } from "./side/live";
+import { whereOf } from "./side/where-live";
 import { enSide, zhSide } from "./side/words";
 import { enPlan, zhPlan } from "./plan/words";
 import { samples as planSamples } from "./plan/specimen-samples";
@@ -1367,7 +1363,6 @@ function shapeOf(world: WorldNow): string {
 }
 
 const focusWords = english ? enFocus : zhFocus;
-const detailsWords = english ? enDetails : zhDetails;
 const composerWords = english ? enComposer : zhComposer;
 
 /** Files dropped onto the window from the system, by path, as the shell
@@ -1412,79 +1407,6 @@ function exported(conversation: Conversation, someone: Someone): () => Promise<s
 function someoneAt(address: Address): string {
   const known = listedAt(store.world.peek(), address);
   return known ? someoneSaid(known) : `${address.resident} ${address.machine}`;
-}
-
-/** The card about the agent in a conversation, and how to fill it. */
-/** The machine the agent at `address` lives on, where an account it works
- *  for may work on it (not so for an agent assisting the user), and the login
- *  it works for among this computer's, as this computer reaches them. */
-function livesFor(address: Address): { lives: Machine | null; login: Login | null } {
-  const world = store.world.peek();
-  const lives = machinesOf(world).find((machine) => machine.name === address.machine) ?? null;
-  const acting = residentAt(world, address)?.about.acting;
-  const logins = loginsOf(world?.accounts);
-  const login =
-    acting?.kind === "accounts" ? (logins.find((one) => acting.accounts.some((a) => sameLogin(one, a))) ?? null) : (logins[0] ?? null);
-  return { lives, login };
-}
-
-/** The machines the conversation at `address` may be pointed at: where it
- *  lives and those an account it works for may work on; for an agent
- *  assisting the user, the account's own. */
-function focusPlacesFor(address: Address): FocusPlace[] {
-  const world = store.world.peek();
-  const known = residentAt(world, address);
-  const assistant = known ? assistantOf(world, known) : null;
-  const found = livesFor(address);
-  const machines = assistant ? filePlaces(world, assistant.login) : found.lives ? workPlaces(world, found.lives, found.login) : [];
-  return machines.map((machine) => focusPlace(world, machine));
-}
-
-/** The machines and folders a conversation is pointed at, where the user
- *  may point it: one they opened from here and that is still here. */
-function focusOf(known: ResidentNow | null): Focus | null {
-  if (!known || known.about.origin.kind !== "user" || !known.about.world_started) return null;
-  return known.about.focus ?? noFocus();
-}
-
-/** The account's MCP servers as the conversation at `address` switches
- *  them, where it works for one account the user opened it from: each switch
- *  is sent as it is turned, and shown turned until the World says
- *  otherwise. */
-function conversationServers(address: Address): FocusServers | undefined {
-  const { login } = livesFor(address);
-  if (!login || !focusOf(residentAt(store.world.peek(), address))) return undefined;
-  let turned: string[] | null = null;
-  return {
-    ...serverLists.switches(() => login),
-    off: () => turned ?? residentAt(store.world.peek(), address)?.about.mcp_off ?? [],
-    changed: (off) => {
-      turned = off;
-      if (!live) return;
-      void manageResident(address, { do: "mcp", off })
-        .then(() => store.refresh())
-        .catch(() => {
-          turned = null;
-        });
-    },
-  };
-}
-
-/** The specimen's MCP switches: the account's servers, turned here alone. */
-function specimenServers(): FocusServers {
-  let off: string[] = ["figma"];
-  const login = loginsOf(specimen.world.accounts)[0] ?? null;
-  return { ...serverLists.switches(() => login), off: () => off, changed: (next) => (off = next) };
-}
-
-/** Points the conversation at `address` at machines and folders; what was
- *  not done of it is said in the user's words. */
-async function pointAt(address: Address, focus: Focus): Promise<string[]> {
-  const managed = await manageResident(address, { do: "focus", focus });
-  void store.refresh();
-  return managed.steps
-    .filter((step): step is typeof step & { outcome: "pending" | "unsupported" | "failed" } => step.outcome !== "done")
-    .map((step) => detailsWords.unfinished(step.stage, step.outcome, step.detail));
 }
 
 /** A specimen's folders: a few made up, the same on every machine. */
@@ -1825,8 +1747,6 @@ function specimenTalk(address: Address): DeskTalk {
       model: sample.model,
       project: sample.town,
       heldByWorld: true,
-      // A specimen with none listed is pointed at its own machine.
-      focus: focusOf(known ?? null) ?? { machines: [{ machine: sample.machine, folders: [] }] },
     },
     head,
     link: talkLink,
@@ -1839,15 +1759,8 @@ function specimenTalk(address: Address): DeskTalk {
       goal: params.get("goal"),
       // As the World lists it: one in no project keeps its own history.
       ...(historyOffered && !(known ? known.town : sample.town) ? { history: specimenOwnHistory(address) } : {}),
+      where: () => whereOf(specimen.world, address, (name) => link({ kind: "machine", name })),
     }),
-    focus: {
-      words: focusWords,
-      places: () =>
-        machinesOf(specimen.world).map((machine) => focusPlace(specimen.world, machine)),
-      folders: specimenFolders,
-      set: () => new Promise((resolve) => setTimeout(() => resolve([]), 600)),
-      servers: specimenServers(),
-    },
     opening: { open: notLive, reveal: notLive },
     pictures: {
       thumbnail: async (_machine, path, max) => {
@@ -2090,7 +2003,6 @@ function someoneOf(world: ReturnType<typeof store.world.peek>, address: Address)
     agent: agentName(known.about.host.agent),
     machine: address.machine,
     assistFrom: assistant ? (assistant.owner ?? assistant.machine) : assistedBy(world, known),
-    focus: known.removed ? null : focusOf(known),
     model: known.about.model ?? null,
     project: known.town ? (world?.towns.find((t) => t.town === known.town)?.record.name ?? known.town) : null,
     heldByWorld: known.about.world_started,
@@ -2183,6 +2095,8 @@ function liveTalk(address: Address): DeskTalk {
       history: ownHistory,
       took: (ms) => words.took(ms),
       openId: (id) => openWorldId(id),
+      machineLink: (name) => link({ kind: "machine", name }),
+      reveal: onComputer() ? reveal : undefined,
     }),
     controls: {
       words: composerWords,
@@ -2194,13 +2108,6 @@ function liveTalk(address: Address): DeskTalk {
     draftKey: `draft:${address.resident}@${address.machine}`,
     viewKey: `view:${address.resident}@${address.machine}`,
     composer: () => ComposerSession.open(address),
-    focus: {
-      words: focusWords,
-      places: () => focusPlacesFor(address),
-      folders: (machine, path) => foldersOf(machine, path),
-      set: (focus) => pointAt(address, focus),
-      servers: conversationServers(address),
-    },
     // A file elsewhere is brought to this device first; one here opens
     // where it is. A program is not run at a click: the user chooses.
     opening: {
@@ -2457,7 +2364,7 @@ function liveTalk(address: Address): DeskTalk {
           page.update();
         }
         if (!known || !who || left) return;
-        if (shown && who.agent === shown.agent && who.project === shown.project && who.model === shown.model && JSON.stringify(who.focus) === JSON.stringify(shown.focus)) return;
+        if (shown && who.agent === shown.agent && who.project === shown.project && who.model === shown.model) return;
         shown = who;
         page.identify(who);
       });

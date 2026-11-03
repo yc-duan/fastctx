@@ -1,11 +1,14 @@
 // The words of the panel beside a conversation, the goal's bar above the
 // input, and the pages the panel holds.
 
+import { en, zh } from "../words";
 import type { GoalStatus, NodeState, PausedBy } from "./types";
 
 export interface SideWords {
   /** The conversation's own parts, each a word in the side's first line. */
   pages: { plan: string; goal: string; collab: string; history: string };
+  /** The side's first page: the parts at a glance. */
+  home: { name: string; none: string; all: (n: number) => string; allHistory: string };
   /** A file read in the side, over the parts. */
   file: FileWords;
   /** The switch that opens the side, and the act that shuts it. */
@@ -27,8 +30,23 @@ export interface SideWords {
   planCount: (reached: number, stops: number) => string;
   /** A side conversation's name where it has none yet. */
   sideTalk: string;
+  where: WhereWords;
   goal: GoalWords;
   collab: CollabWords;
+}
+
+/** Where the conversation works, in the desk's corner and pulled out. */
+export interface WhereWords {
+  /** Its name, said on hover and to a screen reader. */
+  title: string;
+  /** How many more places it works in than its line names. */
+  more: (n: number) => string;
+  /** A computer away now, said on hover alone: it is drawn in grey. */
+  away: string;
+  /** One of another account assisting the user: whose agent it is. */
+  from: (who: string) => string;
+  /** A folder on this computer, shown in the system's own window. */
+  reveal: string;
 }
 
 export interface FileWords {
@@ -92,14 +110,30 @@ export interface GoalWords {
 
 export interface CollabWords {
   empty: string;
-  here: string;
   states: Record<NodeState, string>;
   goal: Record<GoalStatus, string>;
+  /** How long one worked, to the second while it works. */
+  took: (ms: number) => string;
+  /** The clock's two ends: how long ago it begins, and now. */
+  ago: (span: string) => string;
+  now: string;
+  /** The page's groups: the colleagues it asked, each with the agents it
+   *  sent, the host's own agents, and the conversations branched off it. */
+  groups: { colleagues: string; agents: string; side: string };
+  /** Over the agents a colleague sent, inside its card. */
+  sent: (n: number) => string;
+  /** Those that ended long before the rest, folded into one row. */
+  earlier: (n: number) => string;
+  fold: string;
+  began: (at: string) => string;
+  tokens: (n: number) => string;
   steps: (n: number) => string;
   /** Between the facts of one line said when pointed at. */
   separator: string;
   /** To the row of the call that sent one of the host's agents. */
   jump: string;
+  /** From one of the host's agents back to who works with the conversation. */
+  back: string;
   /** How many work now, said on the team's tab. */
   atWork: (n: number) => string;
 }
@@ -117,6 +151,7 @@ function clock(ms: number, now: number, locale: string, today: string, tomorrow:
 
 export const zhSide: SideWords = {
   pages: { plan: "计划", goal: "目标", collab: "协作", history: "历史" },
+  home: { name: "概览", none: "还没有计划与协作", all: (n) => `全部 ${n} 个`, allHistory: "全部历史" },
   file: { outside: "用默认程序打开", reading: "读取中…", missing: "找不到这个文件", failed: "读取失败", interrupted: "连接中断，正在重连…" },
   panel: "侧面板",
   shut: "收起侧面板",
@@ -129,6 +164,7 @@ export const zhSide: SideWords = {
   dropHint: "把左边的一段对话拖过来，分屏来看",
   planCount: (reached, stops) => `${reached}/${stops}`,
   sideTalk: "侧边对话",
+  where: { title: "所在的电脑与文件夹", more: (n) => `+${n}`, away: "离线", from: (who) => `来自 ${who}`, reveal: "在文件夹中显示" },
   goal: {
     bar: { active: "进行中的目标", paused: "已暂停", blocked: "阻碍", complete: "已完成" },
     states: { active: "进行中", paused: "已暂停", blocked: "阻碍", complete: "已完成" },
@@ -182,18 +218,28 @@ export const zhSide: SideWords = {
   },
   collab: {
     empty: "还没有同事或子代理",
-    here: "这段对话",
-    states: { working: "在干", done: "交回了", failed: "失败", stopped: "已停下", idle: "空着", unknown: "不知道是否还在干" },
+    states: { working: "在干", waiting: "等你回答", done: "交回了", failed: "失败", stopped: "已停下", idle: "空着", unknown: "不知道是否还在干" },
     goal: { active: "进行中", paused: "已暂停", blocked: "阻碍", complete: "已完成" },
+    took: zh.took,
+    ago: (span) => `${span}前`,
+    now: "现在",
+    groups: { colleagues: "模型协作", agents: "子代理", side: "侧边对话" },
+    sent: (n) => `派出 ${n} 个子代理`,
+    earlier: (n) => `更早 ${n} 个`,
+    fold: "收起更早的",
+    began: (at) => `${at} 开始`,
+    tokens: (n) => (n >= 10_000 ? `${(n / 10_000).toFixed(1)} 万 token` : `${n} token`),
     steps: (n) => `${n} 步`,
     separator: "，",
     jump: "转到它",
+    back: "返回协作",
     atWork: (n) => `${n} 个在干活`,
   },
 };
 
 export const enSide: SideWords = {
   pages: { plan: "Plan", goal: "Goal", collab: "Team", history: "History" },
+  home: { name: "Overview", none: "No plan or helpers yet", all: (n) => `All ${n}`, allHistory: "All of it" },
   file: { outside: "Open with default app", reading: "Reading…", missing: "File not found", failed: "Couldn't read this file", interrupted: "Disconnected, reconnecting…" },
   panel: "Side panel",
   shut: "Close the side panel",
@@ -206,6 +252,7 @@ export const enSide: SideWords = {
   dropHint: "Drag a conversation here from the list to see both",
   planCount: (reached, stops) => `${reached}/${stops}`,
   sideTalk: "Side conversation",
+  where: { title: "Computer and folders it works in", more: (n) => `+${n}`, away: "Offline", from: (who) => `From ${who}`, reveal: "Show in folder" },
   goal: {
     bar: { active: "Goal", paused: "Paused", blocked: "Blocked", complete: "Done" },
     states: { active: "Under way", paused: "Paused", blocked: "Blocked", complete: "Done" },
@@ -257,12 +304,21 @@ export const enSide: SideWords = {
   },
   collab: {
     empty: "No colleagues or subagents yet",
-    here: "This conversation",
-    states: { working: "Working", done: "Handed back", failed: "Failed", stopped: "Stopped", idle: "Idle", unknown: "Not known whether it still works" },
+    states: { working: "Working", waiting: "Waiting for you", done: "Handed back", failed: "Failed", stopped: "Stopped", idle: "Idle", unknown: "Not known whether it still works" },
     goal: { active: "Under way", paused: "Paused", blocked: "Blocked", complete: "Done" },
+    took: en.took,
+    ago: (span) => `${span} ago`,
+    now: "now",
+    groups: { colleagues: "Model collaboration", agents: "Subagents", side: "Side conversations" },
+    sent: (n) => `Sent ${n} subagent${n === 1 ? "" : "s"}`,
+    earlier: (n) => `${n} earlier`,
+    fold: "Fold the earlier ones",
+    began: (at) => `Began ${at}`,
+    tokens: (n) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k tokens` : `${n} tokens`),
     steps: (n) => `${n} step${n === 1 ? "" : "s"}`,
     separator: ", ",
     jump: "Go to it",
+    back: "Back to the team",
     atWork: (n) => `${n} at work`,
   },
 };
