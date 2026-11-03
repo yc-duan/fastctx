@@ -57,13 +57,17 @@ pub fn transfer(root: &std::path::Path) -> Result<(), Box<dyn std::error::Error>
     crate::conversation_store::transfer_drill::run(root)
 }
 
+/// How long an in-process restart waits for the old connections to close:
+/// a shared Windows runner's disk took longer than ten seconds.
+const CLOSING: std::time::Duration = std::time::Duration::from_secs(60);
+
 /// In-process restarts wait for the old connections' final checkpoint and WAL
 /// removal. A killed process has no surviving closer and uses normal recovery.
 pub(crate) fn reopen(world: &fastctx_types::layout::WorldDir) -> fastctx_storage::Result<fastctx_storage::Database> {
     let started = std::time::Instant::now();
     loop {
         if fastctx_platform::disk::exists(world.path().join("node.sqlite3-wal"))? {
-            if started.elapsed() >= std::time::Duration::from_secs(10) {
+            if started.elapsed() >= CLOSING {
                 return Err(fastctx_storage::Error::with_kind(
                     fastctx_storage::ErrorKind::Busy,
                     "the old database connections have not closed",
@@ -77,7 +81,7 @@ pub(crate) fn reopen(world: &fastctx_types::layout::WorldDir) -> fastctx_storage
             None => return Ok(database),
             Some(error)
                 if error.kind() == fastctx_storage::ErrorKind::Busy
-                    && started.elapsed() < std::time::Duration::from_secs(10) =>
+                    && started.elapsed() < CLOSING =>
             {
                 drop(database);
                 std::thread::sleep(std::time::Duration::from_millis(10));
