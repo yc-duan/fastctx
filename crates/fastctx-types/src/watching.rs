@@ -24,6 +24,8 @@ pub struct Subscription {
     pub now: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub goal: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub collaboration: Option<crate::collaboration::Follow>,
 }
 
 impl Subscription {
@@ -36,6 +38,7 @@ impl Subscription {
             held: self.held.clone(),
             now: self.now,
             goal: self.goal,
+            collaboration: self.collaboration,
             multiplex,
         }
     }

@@ -21,7 +21,21 @@ export interface TitlebarState {
   pressed: boolean;
 }
 
-export const titlebarAvailable = (): boolean => inShell() && navigator.userAgent.includes("Windows");
+export const titlebarAvailable = (): boolean => shellSystem() === "windows";
+
+/** The desktop systems the shell draws the window's frame on. */
+export type FrameSystem = "windows" | "macos" | "linux";
+
+/** The desktop system the shell runs on, as its webview says; none in a
+ *  plain browser or on a phone. */
+export function shellSystem(): FrameSystem | null {
+  if (!inShell()) return null;
+  const agent = navigator.userAgent;
+  if (agent.includes("Windows")) return "windows";
+  if (agent.includes("Macintosh") || agent.includes("Mac OS X")) return "macos";
+  if (agent.includes("Linux") && !agent.includes("Android")) return "linux";
+  return null;
+}
 
 type Rect = { x: number; y: number; width: number; height: number };
 type Regions = { drag: Rect[]; client: Rect[]; maximize: Rect | null; scale: number };

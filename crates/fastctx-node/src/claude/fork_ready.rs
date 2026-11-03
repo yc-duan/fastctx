@@ -66,7 +66,7 @@ pub(super) fn failed(node: &Arc<Node>, resident: &ResidentId, why: &str) -> Resu
 }
 
 pub(super) async fn finish(node: &Arc<Node>, resident: &ResidentId) -> Result<(), Failure> {
-    std::fs::remove_file(path(node, resident)).map_err(failure)?;
+    fastctx_platform::disk::remove_file(path(node, resident)).map_err(failure)?;
     node.residents
         .change_now(&node.world, resident, |now| {
             if now.turn.is_none() {
@@ -99,10 +99,21 @@ pub(super) fn recover(node: &Arc<Node>, records: &[crate::residents::OnRecord]) 
     }
 }
 
+/// Waits for the fork's session to register whole, its saved history too
+/// with `saved`. The whole wait has its term, and it reads the fork's own
+/// session alone: the machine's other sessions may be registering behind a
+/// gate the fork's source holds, and waiting on them would wait on itself
+/// (`world-concurrency.md`, 锁只管落账).
 pub(super) async fn wait(node: &Arc<Node>, resident: &ResidentId, saved: bool) -> Result<(), Failure> {
-    let deadline = tokio::time::sleep(Duration::from_secs(120));
-    tokio::pin!(deadline);
-    super::replay(node).await;
+    tokio::time::timeout(Duration::from_secs(120), registered_whole(node, resident, saved)).await.unwrap_or_else(|_| {
+        Err(Failure::new("Claude's fork did not finish registering its control bridge and saved history within 120 s"))
+    })
+}
+
+async fn registered_whole(node: &Arc<Node>, resident: &ResidentId, saved: bool) -> Result<(), Failure> {
+    if let Some(session) = node.residents.about(resident).and_then(|(about, _)| about.session) {
+        super::replay_session(node, &session).await;
+    }
     loop {
         let changed = node.claude.changed.notified();
         tokio::pin!(changed);
@@ -114,7 +125,10 @@ pub(super) async fn wait(node: &Arc<Node>, resident: &ResidentId, saved: bool) -
             let host = control::host(&directory.join("control")).map_err(failure)?;
             if registered(node, resident).map_err(failure)?
                 && host.as_ref().is_some_and(|host| control::active(&directory.join("control"), host).unwrap_or(false))
-                && (!saved || exchange::transcript(&directory).map_err(failure)?.is_some_and(|path| path.is_file()))
+                && (!saved
+                    || exchange::transcript(&directory)
+                        .map_err(failure)?
+                        .is_some_and(|path| fastctx_platform::disk::is_file(&path)))
             {
                 return Ok(());
             }
@@ -122,7 +136,6 @@ pub(super) async fn wait(node: &Arc<Node>, resident: &ResidentId, saved: bool) -
         tokio::select! {
             () = &mut changed => {},
             () = tokio::time::sleep(fastctx_hosts::claude::MOD_LOOK) => {},
-            () = &mut deadline => return Err(Failure::new("Claude's fork did not finish registering its control bridge and saved history within 120 s")),
         }
     }
 }

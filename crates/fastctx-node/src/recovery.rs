@@ -39,19 +39,21 @@ pub(crate) fn prepare(world: &WorldDir, log: &Log) {
 /// does not retire its worker: a later request can leave a new intent.
 pub(crate) fn start(node: &Arc<Node>, jobs_reconciled: bool) {
     let sentinels = node.clone();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let mut previous = Vec::new();
         loop {
             let errors = crate::sentinels::deletion::recover(&sentinels).await;
             for error in &errors {
-                if !previous.contains(error) { sentinels.log.line(error); }
+                if !previous.contains(error) {
+                    sentinels.log.line(error);
+                }
             }
             previous = errors;
             tokio::time::sleep(Duration::from_secs(30)).await;
         }
     });
     let deleting = node.clone();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         loop {
             crate::data::delete::finish_interrupted(&deleting).await;
             crate::attachments::lifetime::collect(&deleting).await;
@@ -64,11 +66,11 @@ pub(crate) fn start(node: &Arc<Node>, jobs_reconciled: bool) {
 
     // Who runs how many: the jobs left running when the node started.
     let counting = node.clone();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let mut again = crate::again::Again::default();
         loop {
             let scanning = counting.clone();
-            match tokio::task::spawn_blocking(move || crate::job_accounts::recover(&scanning)).await {
+            match fastctx_platform::task::spawn_blocking(move || crate::job_accounts::recover(&scanning)).await {
                 Ok(Ok(())) => break,
                 Ok(Err(error)) => {
                     counting.log.line(format_args!("counting the jobs left running; will retry: {error}"))
@@ -80,13 +82,14 @@ pub(crate) fn start(node: &Arc<Node>, jobs_reconciled: bool) {
     });
 
     let jobs = node.clone();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let mut again = crate::again::Again::default();
         let mut complete = jobs_reconciled;
         while !complete {
             tokio::time::sleep(again.next().max(Duration::from_secs(1))).await;
             let checking = jobs.clone();
-            let reconciled = tokio::task::spawn_blocking(move || reconcile(&checking.world, &checking.log)).await;
+            let reconciled =
+                fastctx_platform::task::spawn_blocking(move || reconcile(&checking.world, &checking.log)).await;
             match reconciled {
                 Ok(done) => complete = done,
                 Err(error) => jobs.log.line(format_args!("recovering interrupted jobs: {error}")),
@@ -95,7 +98,7 @@ pub(crate) fn start(node: &Arc<Node>, jobs_reconciled: bool) {
     });
 
     let reports = node.clone();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         loop {
             tokio::time::sleep(RETRY).await;
             crate::codex::replay(&reports).await;
@@ -103,7 +106,7 @@ pub(crate) fn start(node: &Arc<Node>, jobs_reconciled: bool) {
     });
 
     let answers = node.clone();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         loop {
             tokio::time::sleep(RETRY).await;
             for resident in answers.residents.everyone() {

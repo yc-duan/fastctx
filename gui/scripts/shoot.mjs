@@ -47,10 +47,12 @@ const widths = [
   { name: "phone", width: 390, height: 844, scale: 3, mobile: true },
   { name: "tablet", width: 820, height: 1180, scale: 2, mobile: true },
   { name: "desktop", width: 1280, height: 860, scale: 1.5, mobile: false },
+  // The narrowest phones in use, shot only when named.
+  { name: "narrow", width: 360, height: 780, scale: 3, mobile: true },
 ];
 const themes = option("theme", null) ? [option("theme")] : ["warm-black", "ink-black", "warm-white"];
-const sessions = only ? only.split(",") : ["welcome", "create", "created", "home", "claude", "codex", "project", "journal", "machines", "settings", "new", "new-project", "invite", "invite-windows", "invite-windows-made", "share", "lend", "relays", "palette", "login", "account", "admin", "home-2", "machines-2", "new-2", "slash", "drawer", "about", "manage", "asks", "asks-question", "asks-form", "asks-link", "asks-claude-permission", "asks-claude-question", "asks-claude-plan", "asks-claude-form", "stop", "new-codex", "new-attach", "new-lent-2", "new-pick-2", "find", "attach", "queue", "rewind", "usage", "service", "remove-keep", "remove-erase", "remove-run", "program", "mention", "decision", "log", "written", "page", "page-ask", "page-versions"];
-const sizes = option("width", null) ? widths.filter((size) => option("width").split(",").includes(size.name)) : widths;
+const sessions = only ? only.split(",") : ["welcome", "create", "created", "home", "claude", "codex", "project", "journal", "machines", "settings", "new", "new-project", "invite", "invite-windows", "invite-windows-made", "share", "lend", "relays", "palette", "login", "account", "admin", "home-2", "machines-2", "new-2", "slash", "drawer", "about", "manage", "asks", "asks-question", "asks-form", "asks-link", "asks-claude-permission", "asks-claude-question", "asks-claude-plan", "asks-claude-form", "stop", "new-codex", "new-attach", "new-lent-2", "new-pick-2", "find", "attach", "queue", "rewind", "usage", "service", "remove-keep", "remove-erase", "remove-run", "program", "mention", "decision", "log", "written", "page", "page-ask", "page-versions", "read-card", "panel-code", "panel-file"];
+const sizes = option("width", null) ? widths.filter((size) => option("width").split(",").includes(size.name)) : widths.filter((size) => size.name !== "narrow");
 
 const profile = mkdtempSync(join(tmpdir(), "shoot-"));
 const port = 9300 + Math.floor(Math.random() * 500);
@@ -145,10 +147,10 @@ for (const session of sessions) {
       const loaded = once("Page.loadEventFired");
       const two = session.endsWith("-2");
       const named = two ? session.slice(0, -2) : session;
-      const shown = named.startsWith("invite-") ? "invite" : named === "stop" || named === "program" ? "claude" : named === "drawer" || named === "palette" ? "home" : named === "service" || named.startsWith("remove-") ? "settings" : named === "slash" || named === "mention" || named === "find" || named === "attach" || named === "rewind" || named === "usage" ? "codex" : named.startsWith("asks") ? "asks" : named === "new-codex" || named === "new-attach" || named === "new-lent" || named === "new-pick" ? "new" : named === "manage" ? "about" : named === "welcome" || named === "create" || named === "created" ? "login" : named === "share" || named === "relays" ? "machines" : named === "lend" || named.startsWith("ledger") ? "home" : named === "queue" ? "codex" : named.startsWith("page") ? "page" : named.startsWith("panel") && named !== "panel-agent" ? "claude" : named.startsWith("team") || named === "panel-agent" ? "stream" : named.startsWith("repair-") ? "home" : named === "updates-repair" ? "machines" : named === "journal-edit" ? "journal" : named === "project-write" ? "project" : named === "features" || named.startsWith("feature-") || named.startsWith("prefs-") || named.startsWith("activity") || named === "mode" || named === "sidebar-drag" ? "home" : named;
+      const shown = named === "strain" || named === "strain-list" || named.startsWith("alerts") || named.startsWith("rollout") ? "machines" : named === "strain-machine" || named === "health" ? "machine" : named.startsWith("patrol") ? "trips" : named.startsWith("invite-") ? "invite" : named === "stop" || named === "program" || named === "read-card" || named === "late" ? "claude" : named === "late-straight" ? "voice" : named === "drawer" || named === "palette" ? "home" : named === "service" || named.startsWith("remove-") ? "settings" : named === "slash" || named === "mention" || named === "find" || named === "attach" || named === "rewind" || named === "usage" ? "codex" : named.startsWith("asks") ? "asks" : named === "new-codex" || named === "new-attach" || named === "new-lent" || named === "new-pick" ? "new" : named === "manage" ? "about" : named === "welcome" || named === "create" || named === "created" ? "login" : named === "share" || named === "relays" ? "machines" : named === "lend" || named.startsWith("ledger") ? "home" : named === "queue" ? "codex" : named.startsWith("page") ? "page" : named.startsWith("panel") && named !== "panel-agent" ? "claude" : named.startsWith("team") || named === "panel-agent" ? "stream" : named.startsWith("repair-") ? "home" : named === "updates-repair" ? "machines" : named === "journal-edit" || named === "journal-versions" ? "journal" : named === "project-write" || named === "project-history" ? "project" : named.startsWith("feature-") || named.startsWith("prefs-") || named.startsWith("activity") || named === "sidebar-drag" ? "home" : named;
       // `welcome` and `create` are a computer's first open, in no World yet.
       const alone = named === "welcome" || named === "create" || named === "created";
-      const ask = (session.startsWith("asks-") ? `&ask=${session.slice(5)}` : "") + (two ? "&accounts=2" : "") + (alone ? "&accounts=0" : "") + (named.startsWith("team") || named === "panel-agent" ? "&start=agents" : "") + (named.startsWith("repair-") ? `&repair=${named === "repair-broken" ? "broken" : "failed"}` : "") + (named.startsWith("panel-goal-") ? `&goal=${named.slice("panel-goal-".length)}` : "") + (named.startsWith("panel-goalpage-") ? `&goal=${named.slice("panel-goalpage-".length).replace(/-typed$/, "")}` : "");
+      const ask = (named.startsWith("strain") ? `&strain${named === "strain-machine" ? "&m=server" : ""}` : "") + (named === "alerts-none" ? "&troubles=0" : "") + (named === "health" ? "&health=strained" : "") + (named === "rollout" || named === "rollout-page" ? "&rollout=stopped" : "") + (session.startsWith("asks-") ? `&ask=${session.slice(5)}` : "") + (named === "late" || named === "late-straight" ? "&slow=200,6000,999999&late=1500" : "") + (two ? "&accounts=2" : "") + (alone ? "&accounts=0" : "") + (named.startsWith("team") || named === "panel-agent" ? "&start=agents" : "") + (named.startsWith("repair-") ? `&repair=${named === "repair-broken" ? "broken" : "failed"}` : "") + (named.startsWith("panel-goal-") ? `&goal=${named.slice("panel-goal-".length)}` : "") + (named.startsWith("panel-goalpage-") ? `&goal=${named.slice("panel-goalpage-".length).replace(/-typed$/, "")}` : "") + (named.startsWith("panel-plan-") ? `&plan=${named.slice("panel-plan-".length)}` : "") + (named.startsWith("page") ? "&layer=workbench" : "");
       // A page an agent wrote is its own document, with a stand-in host.
       const written = session === "written";
       const specimen = named === "mapcanvas" ? "mapcanvas-specimen.html" : named === "longview" ? "longview-specimen.html" : written ? "page-specimen.html" : null;
@@ -184,11 +186,10 @@ for (const session of sessions) {
           })`,
         });
       }
-      // `features` is the features' cards; `feature-memory` and the like one
-      // feature's page.
-      // `prefs-claude` and `prefs-codex` are an agent's preferences.
-      if (named === "features" || named.startsWith("feature-") || named.startsWith("prefs-")) {
-        const where = named === "features" ? "#/features" : named.startsWith("prefs-") ? `#/agents/prefs/${named.slice("prefs-".length)}` : `#/feature/${named.slice("feature-".length)}`;
+      // `feature-memory` and the like are one feature's page; `prefs-claude`
+      // and `prefs-codex` an agent's preferences.
+      if (named.startsWith("feature-") || named.startsWith("prefs-")) {
+        const where = named.startsWith("prefs-") ? `#/agents/prefs/${named.slice("prefs-".length)}` : `#/feature/${named.slice("feature-".length)}`;
         await send("Runtime.evaluate", { awaitPromise: true, expression: `new Promise((r) => { location.hash = ${JSON.stringify(where)}; setTimeout(r, 2600); })` });
       }
       // `sidebar-drag` is a conversation being dragged over the sidebar's
@@ -207,21 +208,53 @@ for (const session of sessions) {
           }, 900))`,
         });
       }
-      // `activity-<view>` is one view of the activity page; `mode` the page
-      // that chooses Connect or the workbench (`--query layer=connect` for
-      // Connect, nothing for an account that has not chosen).
-      if (named.startsWith("activity") || named === "mode") {
+      // `activity-<view>` is one view of the activity page.
+      if (named.startsWith("activity")) {
         const view = named.startsWith("activity-") ? named.slice("activity-".length) : null;
-        const where = named === "mode" ? "#/mode" : "#/activity";
+        const where = "#/activity";
         const keep = view ? `localStorage.setItem("activity.view", ${JSON.stringify(view)});` : "";
         await send("Runtime.evaluate", { awaitPromise: true, expression: `new Promise((r) => { ${keep} location.hash = ${JSON.stringify(where)}; setTimeout(r, 2400); })` });
       }
-      // `journal-edit` is a decision being edited; `project-write` the sheet
-      // for writing a journal (both with `--query memory`).
-      if (named === "journal-edit" || named === "project-write") {
+      // `journal-edit` is a history document being edited, `journal-versions`
+      // its versions' sheet; `project-history` a
+      // project's page turned to what it keeps, `project-write` the sheet
+      // for writing a new document there.
+      if (named === "journal-edit" || named === "journal-versions") {
         await send("Runtime.evaluate", {
           awaitPromise: true,
-          expression: `new Promise((r) => setTimeout(() => { document.querySelector(${JSON.stringify(named === "journal-edit" ? ".mm-edit" : "[data-write-journal]")})?.click(); setTimeout(r, 700); }, 700))`,
+          expression: `new Promise((r) => setTimeout(() => { document.querySelector(${JSON.stringify(named === "journal-edit" ? ".hd-edit" : ".hd-versions")})?.click(); setTimeout(r, 700); }, 900))`,
+        });
+      }
+      if (named === "project-history" || named === "project-write") {
+        await send("Runtime.evaluate", {
+          awaitPromise: true,
+          expression: `new Promise((r) => setTimeout(() => { document.querySelector('[data-view="reference"]')?.click(); setTimeout(() => { ${named === "project-write" ? 'document.querySelector("[data-write-history]")?.click();' : ""} setTimeout(r, 700); }, 500); }, 900))`,
+        });
+      }
+      // `alerts` is what went wrong lately, as the machines page shows it;
+      // `alerts-none` the same where nothing did.
+      if (named.startsWith("alerts")) {
+        await send("Runtime.evaluate", {
+          awaitPromise: true,
+          expression: `new Promise((r) => setTimeout(() => { document.querySelector('.ml-view[data-view="alerts"]')?.click(); setTimeout(r, 900); }, 900))`,
+        });
+      }
+      // `rollout-page` is the update view with beta 8 going out, stopped by the
+      // hub, and beta 5 withdrawn; `rollout` its sheet; `rollout-versions`
+      // the versions to roll out where none goes out; `rollout-new` the sheet
+      // of the newest picked there.
+      if (named.startsWith("rollout")) {
+        const open = named === "rollout-page" ? "" : `document.querySelector(".uv-policy-fold:not([open]) > summary")?.click(); setTimeout(() => { document.querySelector("[data-uv-rollout]")?.click(); ${named === "rollout-new" ? 'setTimeout(() => document.querySelector("[data-vw-pick]")?.click(), 700);' : ""} }, 400);`;
+        await send("Runtime.evaluate", {
+          awaitPromise: true,
+          expression: `new Promise((r) => { location.hash = "#/updates"; setTimeout(() => { ${open} setTimeout(r, 1800); }, 1400); })`,
+        });
+      }
+      // `strain-list` is the machines as a list, lab held up and server stuck.
+      if (named === "strain-list") {
+        await send("Runtime.evaluate", {
+          awaitPromise: true,
+          expression: `new Promise((r) => setTimeout(() => { document.querySelector('.ml-view[data-view="list"]')?.click(); setTimeout(r, 900); }, 900))`,
         });
       }
       // `updates-repair` is the machines' update view with two machines picked,
@@ -253,12 +286,74 @@ for (const session of sessions) {
           } setTimeout(r, 1200); }))`,
         });
       }
-      // `panel` is a conversation with its side open at its home;
+      // `read-card` is the Claude specimen's own read of a file, opened on its
+      // row; `panel-code` that file opened in the side from the row's name.
+      if (named === "read-card" || named === "panel-code") {
+        // Every step shown, the stretch with the read is looked for upward,
+        // as a phone draws only what is near the screen.
+        await send("Runtime.evaluate", {
+          awaitPromise: true,
+          expression: `new Promise((r) => setTimeout(r, 2000)).then(() => new Promise((r) => {
+            const steps = document.querySelector('.view-steps');
+            if (steps?.getAttribute('aria-pressed') !== 'true') steps?.click();
+            const scroller = document.querySelector('.talk-scroller');
+            const find = () => [...document.querySelectorAll('.row-tool')].find((one) => one.querySelector('.row-name[data-name-path$="fixed.rs"]') && ['读取', 'Read'].includes(one.querySelector('.row-action')?.textContent));
+            let tries = 0;
+            const look = () => {
+              for (const head of document.querySelectorAll('.group-head[aria-expanded="false"]')) head.click();
+              const row = find();
+              if (!row && tries++ < 30) {
+                scroller.scrollTop = Math.max(0, scroller.scrollTop - scroller.clientHeight * 0.8);
+                return setTimeout(look, 400);
+              }
+              row?.scrollIntoView({ block: 'start' });
+              (${named === "panel-code"} ? row?.querySelector('.row-name') : row?.querySelector('.row-line'))?.click();
+              // Opened, the row is brought back to the top of the screen.
+              setTimeout(() => {
+                find()?.scrollIntoView({ block: 'start' });
+                setTimeout(r, 600);
+              }, 1200);
+            };
+            setTimeout(look, 600);
+          }))`,
+        });
+      }
+      // `patrol` is the trips specimen's patrol of the server room opened:
+      // its last round drawn, the rounds before it counted above;
+      // `patrol-folded` those counted rounds opened, on the whole run.
+      if (named.startsWith("patrol")) {
+        await send("Runtime.evaluate", {
+          awaitPromise: true,
+          expression: `new Promise((r) => setTimeout(() => {
+            const steps = document.querySelector('.view-steps');
+            if (steps?.getAttribute('aria-pressed') !== 'true') steps?.click();
+            const find = () => [...document.querySelectorAll('.row-tool')].find((one) => (one.textContent ?? '').includes(${named === "patrol-folded" ? `'更早的'` : `'systemctl is-active'`}));
+            let tries = 0;
+            const look = () => {
+              for (const head of document.querySelectorAll('.group-head[aria-expanded="false"]')) head.click();
+              const row = find();
+              if (!row && tries++ < 30) return setTimeout(look, 400);
+              row?.scrollIntoView({ block: 'start' });
+              row?.querySelector('.row-line')?.click();
+              setTimeout(() => {
+                find()?.scrollIntoView({ block: 'start' });
+                setTimeout(r, 600);
+              }, 1200);
+            };
+            setTimeout(look, 600);
+          }, 2000))`,
+        });
+      }
+      // `panel` is a conversation with its side open at its overview;
       // `panel-goal-blocked` and the like with its goal in that state;
-      // `panel-talk` with a colleague it asked opened beside it, and
-      // `panel-agent` one of the host's agents; `panel-menu` with the menu
-      // of where it stands open. `panel-drop-left` and the like are the
-      // page shut with a conversation dragged from the list over that part.
+      // `panel-talk` with a colleague it asked opened beside it,
+      // `panel-agent` one of the host's agents read in a sheet, and
+      // `panel-all` everyone who works with it in theirs; `panel-menu` with
+      // the menu of where it stands open; `panel-where` with where it works
+      // pulled out of the corner's line; `panel-shut` with the side folded
+      // away to that line, and `panel-shut-where` so, pulled out.
+      // `panel-drop-left` and the like are the page shut with a conversation
+      // dragged from the list over that part.
       if (named.startsWith("panel-drop-")) {
         const at = { right: [0.8, 0.4], left: [0.2, 0.4], bottom: [0.5, 0.85] }[named.slice("panel-drop-".length)];
         // A row of the list carried by the pointer over that part of the page.
@@ -267,15 +362,11 @@ for (const session of sessions) {
           expression: `new Promise((r) => setTimeout(() => { const name = document.querySelector('.sidebar .talk-item[data-resident] .talk-name'); const from = name.getBoundingClientRect(); const box = document.querySelector('.sp-split').getBoundingClientRect(); const x = box.left + box.width * ${at[0]}, y = box.top + box.height * ${at[1]}; const pointer = (type, cx, cy) => new PointerEvent(type, { bubbles: true, cancelable: true, pointerId: 7, pointerType: 'mouse', isPrimary: true, button: 0, buttons: 1, clientX: cx, clientY: cy }); name.dispatchEvent(pointer('pointerdown', from.left + 8, from.top + 8)); window.dispatchEvent(pointer('pointermove', from.left + 30, from.top + 20)); window.dispatchEvent(pointer('pointermove', x, y)); setTimeout(r, 600); }, 600))`,
         });
       } else if (named.startsWith("panel")) {
-        const opened = named === "panel-talk" ? `'.cp-node[data-id="codex-b10g"]'` : named === "panel-agent" ? `'.cp-node[data-id="b7c1d9e4f2"]'` : named === "panel-plan" ? `'[data-part="part:plan"]'` : named === "panel-goal" ? `'.gb-act[data-act="expand"]'` : named === "panel-team" ? `'[data-part="part:team"]'` : named === "panel-menu" ? `'.sp-more'` : named === "panel-bottom" || named === "panel-left" ? `'.sp-menu-row[data-dock="${named.slice("panel-".length)}"]'` : named.startsWith("panel-goalpage-") ? `'[data-part="part:goal"]'` : null;
-        // Those who work with it are pressed on the team's part.
-        if (named === "panel-talk" || named === "panel-agent") {
-          await send("Runtime.evaluate", { awaitPromise: true, expression: `new Promise((r) => { if (!document.querySelector(".sp-host.sp-shown")) document.querySelector(".sp-toggle")?.click(); setTimeout(() => { document.querySelector('[data-part="part:team"]')?.click(); setTimeout(r, 300); }, 300); })` });
-        }
+        const opened = named === "panel-file" ? `'a[data-file$="控制环.md"]'` : named === "panel-talk" ? `'.sh-page [data-id="codex-b10g"]'` : named === "panel-agent" ? `'.sh-page [data-id="b7c1d9e4f2"]'` : named === "panel-all" ? `'.sh-page [data-open="team"]'` : named === "panel-plan" || named.startsWith("panel-plan-") ? `'.sh-page [data-open="plan"]'` : named === "panel-goal" ? `'.gb-act[data-act="expand"]'` : named === "panel-menu" ? `'.sp-more'` : named === "panel-where" || named === "panel-shut-where" ? `'.sw-line:not([hidden])'` : named === "panel-bottom" || named === "panel-left" ? `'.sp-menu-row[data-dock="${named.slice("panel-".length)}"]'` : named.startsWith("panel-goalpage-") ? `'.sh-page [data-open="goal"]'` : null;
         await send("Runtime.evaluate", {
           awaitPromise: true,
           // The row to press is waited for: an agent comes as the stream goes.
-          expression: `new Promise((r) => { if (!document.querySelector(".sp-host.sp-shown")) document.querySelector(".sp-toggle")?.click(); let tries = 0; const press = () => { const row = ${opened ? `document.querySelector(${opened})` : "null"}; if (row) row.click(); else if (${opened ? "true" : "false"} && tries++ < 40) return setTimeout(press, 200); setTimeout(r, 1300); }; setTimeout(press, 300); })`,
+          expression: `new Promise((r) => { if (!document.querySelector(".sp-host.sp-shown") !== ${named.startsWith("panel-shut")}) document.querySelector(".sp-toggle")?.click(); let tries = 0; const press = () => { const row = ${opened ? `([...document.querySelectorAll(${opened})].find((one) => one.offsetParent) ?? document.querySelector(${opened}))` : "null"}; if (row) row.click(); else if (${opened ? "true" : "false"} && tries++ < 40) return setTimeout(press, 200); setTimeout(r, 1300); }; setTimeout(press, 300); })`,
         });
       }
       // `panel-goalpage-none-typed` and the like: a new goal's words typed
@@ -419,6 +510,46 @@ for (const session of sessions) {
           expression: "new Promise(r => { location.hash = '#/agents/claude'; setTimeout(r, 900); }).then(() => { document.querySelector('.logins-more')?.click(); return new Promise(r => setTimeout(r, 300)); }).then(() => { document.querySelector('[data-act=\"assist\"]')?.click(); return new Promise(r => setTimeout(r, 700)); }).then(() => { const w = document.querySelector('.assist-new [name=weekly]'); if (w) { w.value = '100'; w.dispatchEvent(new Event('input', { bubbles: true })); } return new Promise(r => setTimeout(r, 200)); })",
         });
       }
+      if (session.startsWith("agents-")) {
+        // An agent's own page, as the overview's 「管理」 opens it.
+        await send("Runtime.evaluate", { awaitPromise: true, expression: `new Promise(r => { location.hash = '#/agents/${session.slice("agents-".length)}'; setTimeout(r, 1200); })` });
+      }
+      if (session === "bench-open" || session === "bench-close") {
+        // The workbench opened in a connected login from the overview's line,
+        // or closed from the login's 「⋯」 on its agent's page.
+        const open = session === "bench-open"
+          ? "new Promise(r => { location.hash = '#/agents'; setTimeout(r, 900); }).then(() => { document.querySelector('[data-ao=workbench]')?.click(); return new Promise(r => setTimeout(r, 900)); })"
+          : "new Promise(r => { location.hash = '#/agents/codex'; setTimeout(r, 900); }).then(() => { document.querySelector('.logins-row .logins-more')?.click(); return new Promise(r => setTimeout(r, 300)); }).then(() => { [...document.querySelectorAll('[role=menuitem]')].find((b) => /关闭工作台|Close the workbench/.test(b.textContent))?.click(); return new Promise(r => setTimeout(r, 900)); })";
+        await send("Runtime.evaluate", { awaitPromise: true, expression: open });
+      }
+      if (session.startsWith("connect-")) {
+        // The window before connecting an agent: Claude Code's candidate on
+        // this computer connected, a Codex login removed from its menu (or,
+        // `connect-codex-in`, one found in a folder connected), or
+        // (`connect-other`) the first other agent the overview lists
+        // connected from there; `-open` unfolds the first card's file,
+        // `-about` asks what connecting is.
+        const codex = session.includes("codex");
+        const other = session.includes("other");
+        const open = session.includes("codex-in")
+          ? "document.querySelector('.ll-go[data-act=take]')?.click();"
+          : codex
+          ? "document.querySelector('.logins-more')?.click(); return new Promise(r => setTimeout(r, 300)).then(() => [...document.querySelectorAll('[role=menuitem]')].find((b) => /移除|Remove/.test(b.textContent))?.click());"
+          : other
+            ? "document.querySelector('.ll-go:not([data-agent=claude]):not([data-agent=codex])')?.click();"
+            : "document.querySelector('.ll-go[data-act=apply]')?.click();";
+        const then = session.endsWith("-open")
+          ? ".then(() => { document.querySelector('.dc-file-line')?.click(); return new Promise(r => setTimeout(r, 500)); })"
+          : session.endsWith("-about")
+            ? ".then(() => { document.querySelector('.dc-what')?.click(); return new Promise(r => setTimeout(r, 900)); })"
+            : session.endsWith("-done")
+              ? ".then(() => { document.querySelector('.dc-foot [data-change=go]')?.click(); return new Promise(r => setTimeout(r, 2600)); })"
+              : "";
+        await send("Runtime.evaluate", {
+          awaitPromise: true,
+          expression: `new Promise(r => { location.hash = '#/agents${other ? "" : codex ? "/codex" : "/claude"}'; setTimeout(r, 900); }).then(() => { ${open} }).then(() => new Promise(r => setTimeout(r, 700)))${then}`,
+        });
+      }
       if (session === "create" || session === "created") {
         await send("Runtime.evaluate", { awaitPromise: true, expression: "new Promise(r => setTimeout(r, 300)).then(() => document.querySelector('[data-way=create]')?.click())" });
       }
@@ -498,6 +629,21 @@ for (const session of sessions) {
           })()`,
         });
       }
+      if (session === "late" || session === "late-straight") {
+        // Words with no answer in time, waiting their turn in the queue or sent
+        // straight on: not known to have gone, to send again or take away.
+        await send("Runtime.evaluate", {
+          awaitPromise: true,
+          expression: `(async () => {
+            await new Promise((r) => setTimeout(r, 1300));
+            const t = document.querySelector(".composer textarea");
+            t.value = ${JSON.stringify("把 lab 上的日志归档发我")};
+            t.dispatchEvent(new Event("input"));
+            document.querySelector(".composer-action").click();
+            await new Promise((r) => setTimeout(r, 2600));
+          })()`,
+        });
+      }
       if (session === "join") {
         // The way into a World with a code, pasted or (on a phone) scanned.
         await send("Runtime.evaluate", { awaitPromise: true, expression: "new Promise(r => setTimeout(r, 300)).then(() => document.querySelector('[data-path=join]')?.click())" });
@@ -536,7 +682,8 @@ for (const session of sessions) {
       // A page an agent wrote scrolls inside the frame the host gives it.
       if (!written && page.h > page.inner + 1) problems.push(`${session} ${size.name} ${theme}: the page scrolls, ${page.h}px in a ${page.inner}px screen`);
       if (probe) {
-        const { result: probed } = await send("Runtime.evaluate", { expression: `JSON.stringify(${probe})`, returnByValue: true });
+        // A probe may be a promise: it is waited for, then said.
+        const { result: probed } = await send("Runtime.evaluate", { expression: `Promise.resolve(${probe}).then((value) => JSON.stringify(value))`, awaitPromise: true, returnByValue: true });
         console.log(`${session} ${size.name} ${theme}: ${probed.value}`);
       }
       const shot = await send("Page.captureScreenshot", { format: "png" });

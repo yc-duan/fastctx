@@ -12,7 +12,7 @@ import { escape } from "../conversation/prose";
 import type { Address } from "../world/events";
 import { holds, sameAct, unconsented, type PageAct, type PageConsent, type PageVersion, type PageView, type PageWriter } from "../world/pages";
 import { compose } from "./compose";
-import { mountFrame } from "./frame";
+import { mountFrame, pagesShownHere } from "./frame";
 import { PageHost, type HostContext } from "./host";
 import type { PageWords } from "./words";
 import { agentName } from "../world/names";
@@ -140,7 +140,7 @@ export class PageScreen {
     acts.hidden = version.acts.length === 0 || version.withdrawn;
     this.mount(view);
     void this.drawNotice(view);
-    if (this.current(view) && !version.withdrawn && unconsented(view).length && !this.asked) {
+    if (pagesShownHere() && this.current(view) && !version.withdrawn && unconsented(view).length && !this.asked) {
       this.asked = true;
       this.ask(view);
     }
@@ -157,6 +157,13 @@ export class PageScreen {
     this.host = null;
     this.stage.replaceChildren();
     if (view.html === null) return;
+    if (!pagesShownHere()) {
+      const said = document.createElement("p");
+      said.className = "page-unsupported";
+      said.textContent = this.options.words.unsupported;
+      this.stage.append(said);
+      return;
+    }
     const context = this.options.context();
     const html = compose(view.html, { theme: context.theme, locale: context.locale });
     const frame = mountFrame(this.stage, html, view.publication.title || view.page);

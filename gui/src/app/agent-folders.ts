@@ -7,6 +7,7 @@
 
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
+import { loginLine } from "./login-line";
 import { folderName } from "../world/focus";
 import type { Folder, FolderSearch, FoundIn } from "../world/logins";
 import type { AgentLoginsWords } from "./agent-logins-words";
@@ -36,15 +37,16 @@ export interface FoldersView {
   choosing: boolean;
 }
 
-/** The folders, and the way to choose another. */
+/** The folders, a paper of their own with the way to choose another at
+ *  its head; with none chosen, only that way. */
 export function foldersSection(view: FoldersView): string {
   const { words, folders, mine, machine } = view;
   const rows = folders.map((folder) => folderRow(view, folder)).join("");
   const add = mine
     ? `<button class="text-button quiet-button logins-add-open" type="button" data-act="add-folder" data-machine="${escape(machine)}"${view.choosing ? " disabled" : ""}>${glyph("plus", 14)}<span>${escape(words.addFolder)}</span></button>`
     : "";
-  if (!rows && !add) return "";
-  return `<div class="logins-folders">${rows ? `<h3 class="logins-group">${escape(words.folders)}</h3><ul class="logins-folder-list">${rows}</ul>` : ""}${add}</div>`;
+  if (!rows) return add ? `<div class="logins-add-alone">${add}</div>` : "";
+  return `<section class="logins-card logins-folders"><header class="logins-card-head"><h2 class="logins-card-title">${escape(words.folders)}</h2>${add}</header><ul class="logins-folder-list ruled">${rows}</ul></section>`;
 }
 
 /** The rest of a row's class, and its style, for a row marked new: its
@@ -115,7 +117,7 @@ function state(view: FoldersView, search: FolderSearch | undefined, found: numbe
 }
 
 function foundRows(view: FoldersView, folder: Folder, found: FoundIn[]): string {
-  const { words, machine, mine, agent } = view;
+  const { words, machine, mine } = view;
   const open = view.open.has(`${machine}:${folder.dir}`) || found.length <= SHOWN + 1;
   const shown = open ? found : found.slice(0, SHOWN);
   const rows = shown
@@ -123,10 +125,12 @@ function foundRows(view: FoldersView, folder: Folder, found: FoundIn[]): string 
       const full = joinPath(folder.dir, one.path);
       const taking = view.taking.has(full);
       const fresh = freshness(view.fresh, `d:${machine}:${full}`);
-      const take = mine
-        ? `<button class="text-button logins-apply" type="button" data-act="take" data-machine="${escape(machine)}" data-dir="${escape(full)}" data-folder="${escape(folder.dir)}"${taking ? " disabled" : ""}>${taking ? `<span class="pulse" aria-hidden="true"></span>` : ""}${escape(words.apply)}</button>`
-        : "";
-      return `<li class="logins-found-row${fresh}>${glyph(agent, 16)}<span class="logins-found-path" title="${escape(`${full}\n${one.traces.join("\n")}`)}">${escape(one.path)}</span>${take}</li>`;
+      const take = !mine
+        ? ""
+        : taking
+          ? `<span class="ll-busy">${escape(words.applying)}</span>`
+          : `<button class="text-button ll-go" type="button" data-act="take" data-machine="${escape(machine)}" data-dir="${escape(full)}" data-folder="${escape(folder.dir)}">${escape(words.apply)}</button>`;
+      return loginLine({ standing: taking ? "busy" : "found", who: one.path, whoSaid: `${full}\n${one.traces.join("\n")}`, tags: [], act: take, fresh });
     })
     .join("");
   const more = open

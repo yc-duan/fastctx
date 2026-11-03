@@ -11,8 +11,10 @@ fn places(home: &std::path::Path) -> Places {
         world: home.join(".fastctx/world"),
         codex_home: home.join(".codex"),
         claude_home: home.join(".claude"),
+        claude_config_dir: None,
         claude: None,
         fastctx: std::env::current_exe().unwrap(),
+        workbench: None,
     }
 }
 

@@ -21,6 +21,10 @@ pub struct CodexPlan {
     /// most `BUDGET` units, including the World's notes and script prints.
     /// Code Mode exec/wait prints have a separate per-execution output budget.
     pub output_token_limit: u64,
+    /// Whether the workbench is open in the login: its conversations ask
+    /// colleagues too, whose tools get the same limit; connected alone, its
+    /// sessions are given `run` and nothing more.
+    pub workbench: bool,
 }
 
 impl CodexPlan {
@@ -31,6 +35,7 @@ impl CodexPlan {
             startup_timeout_sec: STARTUP_TIMEOUT.as_secs(),
             tool_timeout_sec: TOOL_TIMEOUT.as_secs(),
             output_token_limit: output_limit(BUDGET),
+            workbench: false,
         }
     }
 }

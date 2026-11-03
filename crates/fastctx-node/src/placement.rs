@@ -157,6 +157,19 @@ pub(crate) async fn require_copy(
     let link = node.link_of(&account.hub).ok_or_else(|| Failure::new("the working-copy hub is unavailable"))?;
     let acting = Acting::one(account.hub.clone(), account.account.clone());
     node.authorize_machine(&acting, &node.machine().into())?;
+    if link.view().shared_records {
+        if placement != 0 {
+            return Err(Failure::not_run("update the conversation's host to use replicated records"));
+        }
+        let location =
+            crate::replicas::location::prepare_here(node, asker, owner, &fastctx_types::placement::Resource::Directory)
+                .await?;
+        return Ok((
+            fastctx_platform::local_path(std::path::Path::new(&location.path))
+                .map_err(|error| Failure::new(error.to_string()))?,
+            owner.clone(),
+        ));
+    }
     if !owned(crate::authorization::current_view(&link)?.member(&node.machine()), &account.account) {
         return Err(Failure::refused("working copies belong on the account's own computers"));
     }
@@ -178,8 +191,24 @@ pub(crate) async fn prepare_copy(
     placement: u64,
     resource: fastctx_types::placement::Resource,
 ) -> Result<fastctx_types::placement::Location, Failure> {
+    if node.link_of(&asker.hub).is_some_and(|link| link.view().shared_records) {
+        if placement != 0 {
+            return Err(Failure::not_run("update the conversation's host to use replicated records"));
+        }
+        if matches!(
+            resource,
+            fastctx_types::placement::Resource::Plan
+                | fastctx_types::placement::Resource::Directory
+                | fastctx_types::placement::Resource::History { .. }
+        ) {
+            return crate::replicas::location::prepare_here(node, asker, &owner, &resource).await;
+        }
+    }
     let (directory, owner) = require_copy(node, asker, &owner, placement).await?;
     match resource {
+        fastctx_types::placement::Resource::History { .. } => {
+            return Err(Failure::not_run("update the hub to use history"));
+        }
         fastctx_types::placement::Resource::Plan => {
             copies::activate(node, asker, owner, placement).await?;
         }

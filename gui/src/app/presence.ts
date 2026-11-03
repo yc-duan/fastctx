@@ -11,16 +11,20 @@
 // that conversation. What a conversation says is not called about while the
 // window is in front of the user showing that conversation; from any other
 // page it is. A network this computer was on, dissolved, is called about
-// once too. The shell's own mechanics are in `world/desktop.ts`.
+// once too, and so is each trouble a hub tells of a machine or the network
+// (`specs/world-engine.md`, 量与告警), on every network and with the workbench
+// off as well, kept called about across starts. The shell's own mechanics
+// are in `world/desktop.ts`.
 
 import { connectDesktop, desktopAvailable, dismissDesktopNotice, getWindowPresence, notifyDesktop } from "../world/desktop";
 import type { Address } from "../world/events";
 import type { Asked, ResidentNow } from "../world/world";
-import type { MachineNotice } from "../world/accounts";
+import type { MachineNotice, Trouble } from "../world/accounts";
 import { link, placeOf, talkLink } from "./places";
 import { accountLayer } from "./layer";
 import { effect } from "./signals";
 import { residentsOf, type Store } from "./store";
+import type { TroubleWords } from "./trouble-words";
 
 export interface PresenceWords {
   /** The agent asks the user something; `what` is what it wants of them,
@@ -43,6 +47,8 @@ export interface PresenceWords {
   dissolvedBody: string;
   /** What another who holds a machine with this account did to it. */
   machineNotice(notice: MachineNotice): string;
+  /** What went wrong with a machine or the network. */
+  troubles: TroubleWords;
 }
 
 export interface PresenceOptions {
@@ -79,6 +85,31 @@ export function chooseNotifying(on: boolean): void {
  *  says it waits is a question too. */
 export function askedKey(now: ResidentNow["now"]): string | null {
   return now?.asked?.id ?? (now?.waiting_for_user ? "waiting" : null);
+}
+
+/** Where this device keeps the troubles it called about, by hub. */
+const TROUBLES_KEY = "troubles.told";
+/** A trouble older than this is kept as called about, not called about. */
+const TROUBLE_FRESH_MS = 24 * 3_600_000;
+
+/** A trouble as kept: a hub that starts counting again tells new ones. */
+const troubleKey = (trouble: Trouble) => `${trouble.id}@${trouble.at}`;
+
+function toldTroubles(): Record<string, string[]> {
+  try {
+    const kept = JSON.parse(localStorage.getItem(TROUBLES_KEY) ?? "{}") as unknown;
+    return kept && typeof kept === "object" ? (kept as Record<string, string[]>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function keepTroubles(told: Record<string, string[]>): void {
+  try {
+    localStorage.setItem(TROUBLES_KEY, JSON.stringify(told));
+  } catch {
+    // Not kept: the next start learns them again without calling.
+  }
 }
 
 /** Whether this window shows the conversation at `address`. */
@@ -149,6 +180,38 @@ export function startPresence(options: PresenceOptions): void {
         actions: [{ id: "open", title: words.open }],
       });
     }
+  });
+
+  // What went wrong, on every network this device is on: each trouble
+  // called about once, kept across starts; a hub's first look only learns,
+  // and one older than a day is only kept.
+  effect(() => {
+    const world = store.whole.get();
+    if (!world) return;
+    const several = world.accounts.hubs.length > 1;
+    const told = toldTroubles();
+    const now = Date.now();
+    let changed = false;
+    for (const hub of world.accounts.hubs) {
+      if (!hub.health) continue;
+      const troubles = hub.troubles ?? [];
+      const keys = troubles.map(troubleKey);
+      const before = told[hub.hub];
+      told[hub.hub] = keys;
+      changed ||= !before || keys.some((key) => !before.includes(key)) || before.length !== keys.length;
+      if (!before || !notifying()) continue;
+      for (const trouble of troubles) {
+        if (before.includes(troubleKey(trouble)) || now - Date.parse(trouble.at) > TROUBLE_FRESH_MS) continue;
+        const route = trouble.machine ? link({ kind: "machine", name: trouble.machine }) : link({ kind: "machines", alerts: true });
+        void callAlways(`trouble:${hub.hub}/${troubleKey(trouble)}`, {
+          title: words.troubles.title(trouble),
+          body: [words.troubles.detail(trouble), several ? hub.name : ""].filter(Boolean).join("\n"),
+          route,
+          actions: [{ id: "open", title: words.open }],
+        }, () => location.hash === route);
+      }
+    }
+    if (changed) keepTroubles(told);
   });
 
   // The networks dissolved, each called about once; the first look only
@@ -234,11 +297,22 @@ export function startPresence(options: PresenceOptions): void {
     return !now.told?.turn || now.told.turn !== now.last_turn;
   }
 
+  /** Calls the user of what is not the workbench's, unless the window is in
+   *  front of them showing what it is about. */
+  async function callAlways(id: string, notice: { title: string; body: string; route: string; actions: { id: string; title: string }[] }, showing: () => boolean): Promise<void> {
+    const presence = await getWindowPresence();
+    if (presence.focused && showing()) return;
+    const previous = shown.get(id);
+    if (previous) await dismissDesktopNotice(previous).catch(() => {});
+    shown.set(id, await notifyDesktop(notice));
+  }
+
   /** Calls the user, unless the window is in front of them already, and,
    *  for what the conversation at `about` says, shows that conversation. */
   async function call(id: string, notice: { title: string; body: string; route: string; actions: { id: string; title: string; quiet?: boolean }[] }, about?: Address): Promise<void> {
-    // What a conversation asks or answers is the workbench's (`world-layers.md`).
-    if (!accountLayer.workbench.peek()) return;
+    // What a conversation asks or answers is the workbench's (`world-layers.md`);
+    // what happens to the networks and machines is called about in Connect too.
+    if (about && !accountLayer.workbench.peek()) return;
     const presence = await getWindowPresence();
     if (presence.focused && (!about || viewing(about))) return;
     const previous = shown.get(id);

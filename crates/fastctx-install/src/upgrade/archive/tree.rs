@@ -234,7 +234,7 @@ impl Manifest {
 
     fn check_source_mounts(&self) -> io::Result<()> {
         let mount = metadata::mount(&self.source.path)?;
-        // 2026-10-20: a saved manifest may predate this process or a mount change. Check
+        // A saved manifest may predate this process or a mount change. Check
         // every remaining entry before retiring any part of the source tree.
         for entry in &self.entries {
             let path = entry.path(&self.source.path);

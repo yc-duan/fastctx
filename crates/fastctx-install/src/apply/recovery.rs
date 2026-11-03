@@ -41,12 +41,72 @@ fn committed(places: &Places, id: &str) -> Result<bool, Error> {
     Ok(stamp.id == id)
 }
 
+#[derive(Serialize, Deserialize)]
+struct KeptUndo {
+    version: u32,
+    id: String,
+    undo: EntryUndo,
+}
+
+/// Keeps what undoes operation `id`'s edit of Claude Code's global state
+/// until its files commit, which take it away (`entry_undo_done`).
+pub(super) fn keep_entry_undo(places: &Places, id: &str, undo: &EntryUndo) -> Result<(), Error> {
+    let bytes = serde_json::to_vec(&KeptUndo { version: 1, id: id.into(), undo: clone_undo(undo) })
+        .map_err(io::Error::other)
+        .map_err(io("encoding what undoes the global state's edit"))?;
+    fastctx_platform::publish(&places.entry_undo(), &bytes, fastctx_platform::Permissions::Private)
+        .map_err(io("keeping what undoes the global state's edit"))
+}
+
+fn clone_undo(undo: &EntryUndo) -> EntryUndo {
+    match undo {
+        EntryUndo::Nothing => EntryUndo::Nothing,
+        EntryUndo::TakeOut(receipt) => EntryUndo::TakeOut(receipt.clone()),
+        EntryUndo::PutBack(receipt) => EntryUndo::PutBack(receipt.clone()),
+    }
+}
+
+/// The change that takes the kept undo away with the files of its
+/// operation, where one is kept.
+pub(super) fn entry_undo_done(places: &Places) -> Result<Option<FileChange>, Error> {
+    let file = Snapshot::read(places.entry_undo())?;
+    Ok(file.exists().then(|| FileChange::delete(file)))
+}
+
+/// Lets the kept undo go: it was run, or nothing was edited.
+pub(super) fn drop_entry_undo(places: &Places) {
+    let _ = std::fs::remove_file(places.entry_undo());
+}
+
+/// Runs the kept undo of an operation whose files never committed: an entry
+/// it put in is taken out where still as written, one it took out is put
+/// back where none stands now; an edit someone made since is left alone.
+fn settle_entry_undo(places: &Places, report: &mut Report) -> Result<(), Error> {
+    let file = Snapshot::read(places.entry_undo())?;
+    let Some(bytes) = file.bytes() else { return Ok(()) };
+    let kept: KeptUndo = serde_json::from_slice(bytes)
+        .map_err(|error| Error::Io(format!("reading {}: {error}", file.path().display())))?;
+    if kept.version != 1 {
+        return Err(Error::Io("unsupported global state undo record".into()));
+    }
+    if !committed(places, &kept.id)? {
+        match &kept.undo {
+            EntryUndo::Nothing => {}
+            EntryUndo::TakeOut(receipt) => report.notices.extend(state::take(receipt, false)?),
+            EntryUndo::PutBack(receipt) => state::restore_absent(receipt)?,
+        }
+    }
+    drop_entry_undo(places);
+    Ok(())
+}
+
 pub(super) fn before(places: &Places) -> Result<Report, Error> {
     let files = crate::transaction::recover(places.journal());
     if places.journal().try_exists().map_err(io("checking pending file recovery"))? {
         return Err(files.err().map(Error::from).unwrap_or_else(|| Error::Io("file recovery is still pending".into())));
     }
     let mut report = Report::default();
+    settle_entry_undo(places, &mut report)?;
     let mut records = Vec::new();
     for entry in std::fs::read_dir(&places.root).map_err(io("reading plugin recovery records"))? {
         let entry = entry.map_err(io("reading plugin recovery record"))?;

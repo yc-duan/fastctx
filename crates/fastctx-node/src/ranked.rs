@@ -36,6 +36,11 @@ pub(crate) fn paying(id: &impl Display) -> Mutex<()> {
     Mutex::new(Rank::PAYING, "paying", id.to_string(), ())
 }
 
+/// Refreshing a conversation's context.
+pub(crate) fn refreshing(id: &impl Display) -> Mutex<()> {
+    Mutex::new(Rank::REFRESHING, "refreshing", id.to_string(), ())
+}
+
 /// A conversation's shared input.
 pub(crate) fn composer<T>(id: &impl Display) -> Mutex<Option<T>> {
     Mutex::new(Rank::COMPOSER, "composer", id.to_string(), None)
@@ -47,8 +52,29 @@ pub(crate) fn listing<T>(login: &impl Display) -> Mutex<Option<T>> {
 }
 
 /// A lock over many conversations, held by a struct that is made by
-/// `Default`: a named field type that makes the lock in its place.
+/// `Default`: a named field type that makes the lock in its place. A
+/// `shared` one guards records and is held only briefly
+/// (`fastctx_platform::doing::SyncMutex::shared`); the others keep one kind
+/// of work to one task at a time.
 macro_rules! machine_lock {
+    ($(#[$doc:meta])* $name:ident: shared $lock:ident = $rank:ident, $label:literal) => {
+        $(#[$doc])*
+        pub(crate) struct $name(fastctx_platform::doing::$lock<()>);
+
+        impl Default for $name {
+            fn default() -> Self {
+                Self(fastctx_platform::doing::$lock::shared(fastctx_platform::doing::Rank::$rank, $label, ()))
+            }
+        }
+
+        impl std::ops::Deref for $name {
+            type Target = fastctx_platform::doing::$lock<()>;
+
+            fn deref(&self) -> &Self::Target {
+                &self.0
+            }
+        }
+    };
     ($(#[$doc:meta])* $name:ident: $lock:ident = $rank:ident, $label:literal) => {
         $(#[$doc])*
         pub(crate) struct $name(fastctx_platform::doing::$lock<()>);
@@ -99,31 +125,10 @@ machine_lock!(
     Syncing: Mutex = SYNCING, "syncing"
 );
 machine_lock!(
-    /// Writing a project's or a page's records.
-    Writing: Mutex = WRITING, "writing"
-);
-machine_lock!(
     /// Decoding a picture into a thumbnail.
     Decoding: Mutex = DECODING, "decoding"
 );
 machine_lock!(
     /// Reading an attached picture's record.
     Pictures: Mutex = PICTURES, "pictures"
-);
-machine_lock!(
-    /// Jobs' records kept from collection while they are made, read or
-    /// changed.
-    Disk: SyncMutex = DISK, "disk"
-);
-machine_lock!(
-    /// A command's call facts, emitted in order.
-    Emitting: SyncMutex = EMITTING, "call facts"
-);
-machine_lock!(
-    /// Conversations' records, each read and written as one transaction.
-    Records: SyncMutex = RECORDS, "records"
-);
-machine_lock!(
-    /// A command's write facts.
-    WriteFacts: SyncMutex = WRITE_FACTS, "write facts"
 );

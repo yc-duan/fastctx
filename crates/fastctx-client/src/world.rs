@@ -343,6 +343,18 @@ impl World {
         machine_logins(self.ask(Call::SetAgentTitle { machine, agent, dir, on }).await?)
     }
 
+    /// Turns on or off whether a week the vendor cleared before its reset
+    /// counts anew in a login.
+    pub async fn set_agent_reset_in_place(
+        &self,
+        machine: Written,
+        agent: fastctx_types::AgentName,
+        dir: std::path::PathBuf,
+        on: bool,
+    ) -> Result<fastctx_types::logins::MachineLogins, Error> {
+        machine_logins(self.ask(Call::SetAgentResetInPlace { machine, agent, dir, on }).await?)
+    }
+
     /// What putting the World's tools into a login (`into`), or taking them
     /// out, would change; with `take_back`, rewriting what the user changed
     /// of them too.
@@ -353,15 +365,18 @@ impl World {
         dir: std::path::PathBuf,
         into: bool,
         take_back: bool,
+        workbench: Option<bool>,
     ) -> Result<fastctx_types::logins::ChangePreview, Error> {
-        match self.ask(Call::PreviewAgentChange { machine, agent, dir, into, take_back }).await? {
+        match self.ask(Call::PreviewAgentChange { machine, agent, dir, into, take_back, workbench }).await? {
             Reply::AgentChangePreview(preview) => Ok(*preview),
             other => Err(unexpected(other)),
         }
     }
 
     /// Puts the World's tools into a login, or takes them out, by its
-    /// machine's node.
+    /// machine's node; with `expected`, only while its files are as they
+    /// were when the change was shown.
+    #[allow(clippy::too_many_arguments)]
     pub async fn change_agent_login(
         &self,
         machine: Written,
@@ -370,8 +385,22 @@ impl World {
         into: bool,
         raise_output_limit: bool,
         take_back: bool,
+        expected: Option<String>,
+        workbench: Option<bool>,
     ) -> Result<fastctx_types::logins::LoginChange, Error> {
-        match self.ask(Call::ChangeAgentLogin { machine, agent, dir, into, raise_output_limit, take_back }).await? {
+        match self
+            .ask(Call::ChangeAgentLogin {
+                machine,
+                agent,
+                dir,
+                into,
+                raise_output_limit,
+                take_back,
+                expected,
+                workbench,
+            })
+            .await?
+        {
             Reply::AgentLoginChanged(change) => Ok(*change),
             other => Err(unexpected(other)),
         }
@@ -696,7 +725,15 @@ impl World {
         self.local_watches
             .watch(
                 self,
-                fastctx_types::watching::local::Subscription { resident, machine, composer, held, now, goal: None },
+                fastctx_types::watching::local::Subscription {
+                    resident,
+                    machine,
+                    composer,
+                    held,
+                    now,
+                    goal: None,
+                    collaboration: false,
+                },
             )
             .await
     }

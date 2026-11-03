@@ -40,8 +40,10 @@ pub(crate) async fn open(
     scope: FileSearchScope,
 ) -> Result<(FileSearchReply, Lease), Failure> {
     if let Some(machine) = machine.filter(|machine| !node.is_here(machine)) {
-        let (link, account) =
-            node.speaking(acting, &machine, Purpose::Hands).await.map_err(|failure| Failure::new(failure.to_string()))?;
+        let (link, account) = node
+            .speaking(acting, &machine, Purpose::Hands)
+            .await
+            .map_err(|failure| Failure::new(failure.to_string()))?;
         let (reply, lease) = fastctx_net::file_search::open(link, machine.name, account, scope).await?;
         return Ok((reply, Lease::Remote(lease)));
     }
@@ -117,8 +119,9 @@ pub(crate) async fn here(
             let current = roots(node, &scope, None).await?;
             let expected = current.clone();
             let original_query = query.clone();
-            let result =
-                tokio::task::spawn_blocking(move || session.query(current, query, limit)).await.map_err(failed)?;
+            let result = fastctx_platform::task::spawn_blocking(move || session.query(current, query, limit))
+                .await
+                .map_err(failed)?;
             if roots(node, &scope, None).await? != expected {
                 FileSearchResult::Matches { query: original_query, ready: false, total: 0, files: vec![] }
             } else {
@@ -155,7 +158,7 @@ async fn roots(
             let reading = move || crate::town::read::latest(&world, &name);
             let record = match initializing {
                 Some(initializing) => initializing.run(reading).await?,
-                None => tokio::task::spawn_blocking(reading).await.map_err(failed)?,
+                None => fastctx_platform::task::spawn_blocking(reading).await.map_err(failed)?,
             }
             .map_err(failed)?
             .ok_or_else(|| Failure::new("the resident's project has no local address book"))?;

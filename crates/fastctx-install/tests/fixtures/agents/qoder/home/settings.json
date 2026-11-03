@@ -1,0 +1,20 @@
+// Lab user comment
+{
+  "userLabSentinel": {
+    "keep": true
+  },
+  "mcpServers": {
+    "lab-echo": {
+      "command": "node",
+      "args": [
+        "/lab/mcp-echo.cjs"
+      ]
+    },
+    "lab-second": {
+      "command": "node",
+      "args": [
+        "/lab/mcp-echo.cjs"
+      ]
+    }
+  }
+}

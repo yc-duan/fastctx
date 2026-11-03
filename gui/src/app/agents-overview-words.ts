@@ -1,0 +1,50 @@
+// What the agents' overview says (`agents-overview.ts`): its title, each
+// card's way to the agent's own page, a login's actions, and the agents not
+// found on the machine shown.
+
+export interface AgentsOverviewWords {
+  title: string;
+  /** A card's way to the agent's own page, and what is there. */
+  manage: string;
+  manageSaid: string;
+  /** The logins of an agent past the few its card shows. */
+  moreLogins(count: number): string;
+  /** A connected login's way into the workbench, and what it is. */
+  workbench: string;
+  /** A login the workbench is open in: a conversation started with it. */
+  talk: string;
+  /** A login whose connection was changed since, or asks for more. */
+  renew: string;
+  /** An agent whose program is here, with no login yet. */
+  noLogin: string;
+  /** The agents not found on the machine shown. */
+  missing(names: string[], here: boolean): string;
+  /** The machines reached past those drawn. */
+  more(n: number): string;
+}
+
+export const zhAgentsOverview: AgentsOverviewWords = {
+  title: "智能体",
+  manage: "管理",
+  manageSaid: "全部登录、搜索的文件夹与扫描",
+  moreLogins: (count) => `还有 ${count} 个`,
+  workbench: "工作台",
+  talk: "新对话",
+  renew: "更新接入",
+  noLogin: "已安装，尚无登录",
+  missing: (names, here) => `${here ? "这台电脑" : "这台机器"}上未找到 ${names.join("、")}`,
+  more: (n) => `另有 ${n} 台`,
+};
+
+export const enAgentsOverview: AgentsOverviewWords = {
+  title: "Agents",
+  manage: "Manage",
+  manageSaid: "Every login, the folders searched, and scans",
+  moreLogins: (count) => `${count} more`,
+  workbench: "Workbench",
+  talk: "New conversation",
+  renew: "Update connection",
+  noLogin: "Installed, no login yet",
+  missing: (names, here) => `${names.join(", ")} not found on this ${here ? "computer" : "machine"}`,
+  more: (n) => `${n} more`,
+};

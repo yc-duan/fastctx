@@ -250,7 +250,7 @@ async fn advance(root: &Path, plan: &mut Plan) -> anyhow::Result<()> {
     }
     let legacy = matches!(current, Probe::Legacy { .. });
     if legacy {
-        // 2026-10-04: the shipped HandOver converts a colleague's first
+        // The HandOver of earlier releases converts a colleague's first
         // queued input into failure while draining. Its admission boundary
         // cannot be repaired by this client. A prepared node waits for the
         // old instance to leave naturally, then resumes this durable plan.

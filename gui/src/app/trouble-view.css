@@ -1,0 +1,160 @@
+/* The machines page's alerts (`trouble-view.ts`): the week's days named
+   along the top, standing still, and under them a row for each machine with
+   troubles, each a short stroke on its own ruled line; only the rows
+   scroll. */
+
+.ml-list.alerts {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding-bottom: 0;
+}
+
+/* The name's column, about as wide as a list row's, the week after it. */
+.tv-head,
+.tv-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 240px) minmax(0, 1fr);
+  align-items: center;
+  column-gap: var(--space-4);
+  padding: 0 var(--space-5) 0 var(--space-3);
+}
+
+.tv-head {
+  flex: none;
+  height: 40px;
+  margin-top: var(--space-2);
+}
+
+.tv-days {
+  position: relative;
+  align-self: stretch;
+}
+
+/* A day's name under its middle, a short stroke at each midnight. */
+.tv-day {
+  position: absolute;
+  bottom: 6px;
+  display: flex;
+  justify-content: center;
+  width: 0;
+  font-size: var(--size-fine);
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.tv-short {
+  display: none;
+}
+
+.tv-tick {
+  position: absolute;
+  bottom: 0;
+  display: grid;
+  margin-left: -2px;
+  fill: var(--pen-trace);
+}
+
+.tv-rows {
+  flex: 1;
+  margin: 0;
+  padding: 0 0 var(--space-8);
+  list-style: none;
+  overflow-y: auto;
+  mask-image: linear-gradient(to bottom, transparent, var(--text) var(--space-3));
+}
+
+.tv-row {
+  min-height: 44px;
+  border-radius: var(--radius-m);
+  color: var(--text-2);
+  font-size: var(--size-text);
+  text-decoration: none;
+  transition: background-color var(--hover) var(--ease);
+}
+
+a.tv-row:hover,
+a.tv-row:focus-visible {
+  outline: 0;
+  background: var(--fill);
+}
+
+.tv-who {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  color: var(--text-2);
+}
+
+.tv-who .glyph,
+.tv-who .ml-knot {
+  flex: none;
+  color: var(--text-3);
+}
+
+.tv-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tv-strip {
+  position: relative;
+  height: 16px;
+}
+
+.tv-rule {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  fill: var(--pen-trace);
+}
+
+/* A trouble: a fault in the colour of a fault, the rest of a warning. */
+.tv-mark {
+  position: absolute;
+  top: 0;
+  display: grid;
+  margin-left: -4px;
+  cursor: default;
+}
+
+.tv-mark.fault {
+  fill: var(--wrong);
+}
+
+.tv-mark.warning {
+  fill: var(--caution);
+}
+
+.tv-none {
+  margin: auto;
+  color: var(--text-3);
+  font-size: var(--size-text);
+}
+
+/* A phone: the name's column narrower, the week what is left, its days
+   named by their first letter. */
+@container ml (max-width: 520px) {
+  .tv-head,
+  .tv-row {
+    grid-template-columns: minmax(84px, 32%) minmax(0, 1fr);
+    column-gap: var(--space-3);
+    padding: 0 var(--space-3);
+  }
+
+  .tv-whole {
+    display: none;
+  }
+
+  .tv-short {
+    display: inline;
+  }
+
+  .tv-row {
+    min-height: 48px;
+  }
+}

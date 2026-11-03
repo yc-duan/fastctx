@@ -1,11 +1,14 @@
 //! Old per-node programs retire after their processes and reserved jobs do.
-
-use std::fs;
+//!
+//! None of it is done under the jobs' gate: a job started while the jobs'
+//! uses are read runs this node's own program, which is in use while the
+//! node runs, and a program is let go of only while the system says no
+//! process runs it, with a handle held meanwhile that keeps any from
+//! starting it (`fastctx_platform::image_usage`).
 
 use crate::Node;
 
 pub(crate) fn collect(node: &Node) -> anyhow::Result<()> {
-    let _collecting = node.disk.lock();
     collect_legacy(&node.world)?;
     fastctx_install::program_collection::collect(&node.root)?;
     let Some(_apply) = fastctx_platform::FileLock::try_acquire(&node.root.join("apply.lock"))? else { return Ok(()) };
@@ -19,7 +22,7 @@ pub(crate) fn collect(node: &Node) -> anyhow::Result<()> {
 pub(super) fn collect_legacy(world: &fastctx_types::layout::WorldDir) -> anyhow::Result<()> {
     let uses = fastctx_hands::run::program::uses(world)?;
     for directory in crate::retention::entries(&world.path().join("bin"))? {
-        let metadata = fs::symlink_metadata(&directory)?;
+        let metadata = fastctx_platform::disk::symlink_metadata(&directory)?;
         if fastctx_platform::owned_directory::is_link(&metadata) || !metadata.is_dir() {
             continue;
         }
@@ -37,7 +40,7 @@ pub(super) fn collect_legacy(world: &fastctx_types::layout::WorldDir) -> anyhow:
             continue;
         }
         let image = directory.join(fastctx_install::renewal::EXECUTABLE);
-        let _unused = if image.try_exists()? {
+        let _unused = if fastctx_platform::disk::exists(&image)? {
             let Some(unused) = fastctx_platform::image_usage::unused(&image)? else { continue };
             Some(unused)
         } else {
@@ -58,13 +61,13 @@ pub(super) fn collect_legacy(world: &fastctx_types::layout::WorldDir) -> anyhow:
                 .iter()
                 .any(|owned| name == *owned)
             });
-            if owned && fs::symlink_metadata(&file)?.is_file() {
-                fs::remove_file(file)?;
+            if owned && fastctx_platform::disk::symlink_metadata(&file)?.is_file() {
+                fastctx_platform::disk::remove_file(file)?;
             }
         }
         drop(_unused);
         if crate::retention::entries(&directory)?.is_empty() {
-            fs::remove_dir(directory)?;
+            fastctx_platform::disk::remove_dir(directory)?;
         }
     }
     Ok(())

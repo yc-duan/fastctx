@@ -93,6 +93,19 @@
   gap: 4px;
 }
 
+/* A rollout the hub stopped by itself. */
+.uv-note.caution {
+  color: var(--caution);
+}
+
+/* A withdrawn release, crossed out. */
+.uv-tick.withdrawn {
+  color: var(--text-3);
+  text-decoration: line-through;
+  text-decoration-color: var(--caution);
+  text-decoration-thickness: 1.5px;
+}
+
 /* What a bar counts, said when pointed at. */
 .uv-hit {
   position: absolute;
@@ -167,6 +180,11 @@
 
 .uv-chip:hover {
   background: var(--hairline);
+}
+
+/* A rollout the hub stopped by itself. */
+.uv-chip.caution {
+  color: var(--caution);
 }
 
 /* A machine's own updating by itself, and the managed machines': the
@@ -307,6 +325,11 @@
   .ml-list.updates .ml-count {
     display: inline;
     margin-left: var(--space-2);
+  }
+
+  /* How many of a group are online gives way to its name. */
+  .ml-list.updates .ml-online {
+    display: none;
   }
 
   .ml-list.updates .ml-name .tag {

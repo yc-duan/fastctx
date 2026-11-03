@@ -44,7 +44,7 @@ impl Default for Seen {
 
 pub(super) fn start(node: &Arc<Node>) {
     let weak = Arc::downgrade(node);
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         loop {
             tokio::time::sleep(LOOK).await;
             let Some(node) = weak.upgrade() else { return };
@@ -106,7 +106,7 @@ pub(super) fn heard(node: &Arc<Node>) {
                 state.helping.insert(key.clone());
                 let (node, link, machine, owner, due, slots) =
                     (node.clone(), link.clone(), member.name.clone(), owner.clone(), due.clone(), state.slots.clone());
-                tokio::spawn(async move {
+                fastctx_platform::task::spawn(async move {
                     let _slot = slots.acquire_owned().await.expect("repair slots remain open");
                     if let Err(why) = super::legacy_repair::help(&node, &link, &machine, &owner, &due).await {
                         node.log.line(format_args!("delivering repair {} to {machine}: {why}", due.id));
@@ -181,7 +181,7 @@ pub(super) fn heard(node: &Arc<Node>) {
             state.helping.insert(key.clone());
             let (node, link, owner, machine, version) =
                 (node.clone(), link.clone(), owner.clone(), member.name.clone(), offer.version.clone());
-            tokio::spawn(async move {
+            fastctx_platform::task::spawn(async move {
                 if let Err(error) = link
                     .network_updates(
                         &owner,

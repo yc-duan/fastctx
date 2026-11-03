@@ -47,7 +47,7 @@ pub(crate) async fn connect(node: &Arc<Node>, id: &ResidentId) -> Result<(), Fai
     if !super::alive(node, about.home.as_deref(), session).await? {
         let (current, _) = node.residents.about(id).ok_or_else(crate::authorization::no_subject)?;
         crate::homes::listed(node, current.host.agent.as_str(), current.home.as_deref())?;
-        crate::assists::may_turn(node, id, &current)?;
+        crate::assists::may_turn(node, id, &current).await?;
         super::management::wake(node, about.home.as_deref(), session).await?;
     }
     let deadline = tokio::time::Instant::now() + Duration::from_secs(120);
@@ -74,7 +74,7 @@ pub(crate) async fn connect(node: &Arc<Node>, id: &ResidentId) -> Result<(), Fai
                 .ok_or_else(|| Failure::new("Claude has not identified this conversation yet"))?;
             if !super::alive(node, current.home.as_deref(), session).await? {
                 crate::homes::listed(node, current.host.agent.as_str(), current.home.as_deref())?;
-                crate::assists::may_turn(node, id, &current)?;
+                crate::assists::may_turn(node, id, &current).await?;
                 super::management::wake(node, current.home.as_deref(), session).await?;
             }
             probe = tokio::time::Instant::now() + Duration::from_secs(1);
@@ -98,9 +98,7 @@ fn ready_activation(node: &Node, id: &ResidentId) -> Result<bool, Failure> {
     // host.done identifies the activation before its asynchronous catalog and
     // control scanner are initialized. Wait for the latter's committed receipt.
     let receipt = if host.handoff_contract == Some(1) { "ready" } else { "catalog" };
-    Ok(directory
-        .join(format!("{receipt}-{}.done", host.instance))
-        .try_exists()
+    Ok(fastctx_platform::disk::exists(directory.join(format!("{receipt}-{}.done", host.instance)))
         .map_err(|error| Failure::new(error.to_string()))?
         && files::active(&directory, &host).map_err(|error| Failure::new(error.to_string()))?)
 }

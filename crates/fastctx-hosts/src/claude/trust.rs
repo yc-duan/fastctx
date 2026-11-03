@@ -82,6 +82,69 @@ pub fn ensure_trusted(directory: &Path, config_dir: Option<&std::ffi::OsStr>) ->
     }
 }
 
+/// Where Claude Code keeps its global state for the home `configured` names,
+/// the value of `CLAUDE_CONFIG_DIR` its sessions start with (`None` is
+/// unset): `.claude.json`, or the legacy `.config.json` where that is there.
+pub(crate) fn state_file(configured: Option<&std::ffi::OsStr>) -> io::Result<PathBuf> {
+    Ok(StatePaths::resolve(configured)?.file)
+}
+
+/// Claude Code's global state for the home `configured` names, as it is
+/// now: where it is, and its bytes, none where there is no such file.
+pub fn read_state(configured: Option<&std::ffi::OsStr>) -> io::Result<(PathBuf, Option<Vec<u8>>)> {
+    let paths = StatePaths::resolve(configured)?;
+    let bytes = state_file::read(&paths.file)?;
+    Ok((paths.file, bytes))
+}
+
+/// Claude Code's global state as a change found it, and as it left it.
+pub struct Edited {
+    pub before: Option<Vec<u8>>,
+    pub after: Vec<u8>,
+}
+
+/// Changes Claude Code's global state for the home `configured` names as
+/// `edit` works it out from its bytes, `None` from `edit` being nothing to
+/// change. The file is read again under Claude's own lock, kept among
+/// Claude's backups, published only while it is still as it was read, and
+/// read back. Answers none where nothing changed.
+pub fn edit_state(
+    configured: Option<&std::ffi::OsStr>,
+    mut edit: impl FnMut(Option<&[u8]>) -> io::Result<Option<Vec<u8>>>,
+) -> io::Result<Option<Edited>> {
+    let paths = StatePaths::resolve(configured)?;
+    if edit(state_file::read(&paths.file)?.as_deref())?.is_none() {
+        return Ok(None);
+    }
+    fs::create_dir_all(paths.file.parent().expect("absolute global state path"))?;
+    // Claude Code holds its lock only while it writes: a held lock is
+    // waited out for a moment before the edit gives up.
+    let mut tries = 0;
+    let lease = loop {
+        match lease::Lease::acquire(&paths.file) {
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock && tries < 40 => {
+                tries += 1;
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            other => break other?,
+        }
+    };
+    let result = (|| {
+        let before = state_file::read(&paths.file)?;
+        let Some(after) = edit(before.as_deref())? else { return Ok(None) };
+        state_file::backup(&paths.file, &paths.backups, before.is_some())?;
+        state_file::publish(&paths.file, before.as_deref(), &after, &lease)?;
+        if state_file::read(&paths.file)?.as_deref() != Some(after.as_slice()) {
+            return Err(io::Error::other("Claude's global state changed again as it was published"));
+        }
+        Ok(Some(Edited { before, after }))
+    })();
+    // A lock that could not be let go goes stale by itself: Claude takes it
+    // over after its threshold, and what was published stays published.
+    let _ = lease.release();
+    result
+}
+
 struct StatePaths {
     file: PathBuf,
     backups: PathBuf,

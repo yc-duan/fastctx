@@ -1,0 +1,193 @@
+/* The agents' overview (`agents-overview.ts`): a paper card for each agent
+   found on the machine shown, its logins as quiet lines under a ruled line;
+   whether a login is connected is drawn by its plug, ink or faint. */
+
+.ao-body {
+  padding: var(--space-2) var(--gutter) var(--space-8);
+}
+
+/* The agents' reach, drawn above their cards: wide on a computer's page,
+   narrow on a phone's, so its names keep the size of the interface's
+   fine print. */
+.ao-reach {
+  max-width: 680px;
+  margin: var(--space-3) auto 0;
+}
+
+.ao-reach > svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.ao-reach > .ao-reach-narrow {
+  display: none;
+}
+
+.ao-reach-mark {
+  color: var(--text);
+}
+
+.ao-reach-mark.faint {
+  color: var(--text-3);
+}
+
+/* How many agents more than the screen holds. */
+.ao-reach-more {
+  fill: var(--text-2);
+  font-family: var(--font-reading);
+  font-size: var(--size-fine);
+}
+
+.ao-reach-name {
+  fill: var(--text-2);
+  font-family: var(--font-reading);
+  font-size: var(--size-fine);
+}
+
+.ao-reach-name.here {
+  fill: var(--text);
+}
+
+.ao-reach-name.away {
+  fill: var(--text-3);
+}
+
+/* The agents side by side, as many to a row as the page holds, so those
+   of a machine are seen at once rather than scrolled through; a card holds
+   a few logins, the rest a step in. */
+.ao-cards,
+.ao-missing {
+  max-width: 1160px;
+  margin-inline: auto;
+}
+
+.ao-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr));
+  align-items: start;
+  gap: var(--space-4);
+  padding-top: var(--space-5);
+}
+
+.ao-more {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: var(--space-1);
+}
+
+.ao-more .text-button {
+  color: var(--text-3);
+  text-decoration: none;
+}
+
+.ao-card {
+  padding: var(--space-4) var(--space-5) var(--space-3);
+  border-radius: var(--radius-l);
+  background: var(--fill);
+}
+
+.ao-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.ao-mark {
+  flex: none;
+  display: inline-flex;
+  color: var(--text);
+}
+
+.ao-name {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-family: var(--font-emphasis);
+  font-weight: 400;
+  font-size: var(--size-h3);
+  color: var(--text-strong);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ao-manage {
+  flex: none;
+  color: var(--text-3);
+}
+
+/* The logins, set off from the agent's name by a ruled line. */
+.ao-logins,
+.ao-none {
+  position: relative;
+  margin: var(--space-3) 0 0;
+  padding: var(--space-2) 0 0;
+}
+
+.ao-logins::before,
+.ao-none::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -4px;
+  height: 8px;
+  background: var(--pen-rule);
+  opacity: 0.7;
+  -webkit-mask: var(--pen-rule-1) 0 50% / 100% 100% no-repeat;
+  mask: var(--pen-rule-1) 0 50% / 100% 100% no-repeat;
+}
+
+.ao-logins {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+}
+
+.ao-none {
+  color: var(--text-3);
+  font-size: var(--size-text);
+  line-height: 32px;
+}
+
+.ao-scanning {
+  color: var(--text-3);
+  font-size: var(--size-text);
+}
+
+.ao-missing,
+.ao-quiet {
+  margin-top: var(--space-5);
+  color: var(--text-3);
+  font-size: var(--size-text);
+}
+
+/* Never scanned: the agents' marks and the way to look, in the middle. */
+.ao-first {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-5);
+  padding: var(--space-10) 0;
+}
+
+.ao-first-marks {
+  display: inline-flex;
+  gap: var(--space-4);
+  color: var(--text-3);
+}
+
+@media (max-width: 760px) {
+  .ao-reach > .ao-reach-wide {
+    display: none;
+  }
+
+  .ao-reach > .ao-reach-narrow {
+    display: block;
+  }
+
+  .ao-card {
+    padding: var(--space-3) var(--space-4) var(--space-2);
+  }
+}

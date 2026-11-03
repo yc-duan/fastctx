@@ -10,6 +10,18 @@ pub struct Tree {
     pub colleagues: Vec<Branch>,
 }
 
+/// What a watch of a conversation's collaboration follows
+/// (`session::Watched::Collaboration`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Follow {
+    /// The conversation and the colleagues it asked.
+    Tree,
+    /// The conversation alone, as one branch of the tree of the
+    /// conversation that asked it: a tree with no colleagues.
+    Branch,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Branch {
     pub address: Address,

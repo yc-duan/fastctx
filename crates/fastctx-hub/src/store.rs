@@ -40,6 +40,7 @@ use jiff::Timestamp;
 mod book_rows;
 mod conflicts;
 mod counts;
+mod format;
 mod hub_rows;
 mod legacy;
 pub(crate) mod letter_rows;
@@ -146,6 +147,10 @@ pub struct Book {
     /// them (`crate::forget`).
     #[serde(default)]
     pub(crate) forgetting: crate::forget::Forgettings,
+    /// Accounts deleted, which members that stay let go of
+    /// (`crate::forget::accounts`).
+    #[serde(default)]
+    pub(crate) account_forgetting: crate::forget::accounts::AccountForgettings,
 }
 
 /// An enrollment token, by the public half of its key.
@@ -363,7 +368,7 @@ impl Letters {
     /// The records of a member's letters as they start: its own count of its
     /// letters as its file keeps it, should one be left, and the hub's
     /// numbering of its letters to it, new.
-    fn fresh(kept: Option<Taken>) -> io::Result<Self> {
+    pub(crate) fn fresh(kept: Option<Taken>) -> io::Result<Self> {
         let (epoch, taken, refused) = match kept {
             Some(kept) => (kept.epoch, kept.taken, kept.refused),
             None => (0, 0, BTreeMap::new()),
@@ -390,53 +395,62 @@ impl Letters {
     }
 }
 
-pub struct Store {
-    dir: PathBuf,
-    pub hub: HubFile,
-    pub book: Book,
-    pub letters: LetterRows,
+/// A committed catalog, shared by readers without a business lock.
+#[derive(Clone)]
+pub struct Snapshot {
+    pub(crate) dir: PathBuf,
+    pub(crate) sequence: u64,
+    pub hub: crate::catalog::Shared<HubFile>,
+    pub book: crate::catalog::Shared<Book>,
     pub(crate) shelf: shelf::Shelf,
+    pub outgoing: Option<crate::moving::Outgoing>,
+    pub moves: Vec<crate::moving::Incoming>,
+    pub called_off: Vec<crate::moving::Outgoing>,
+    pub(crate) book_saves: u64,
+    pub(crate) view_reads: Arc<std::sync::atomic::AtomicU64>,
+    pub(crate) index: Arc<fastctx_net::directory_index::Index>,
+    pub(crate) audience: Arc<crate::presence::Audience>,
+    pub(crate) tokens: Arc<std::collections::HashMap<AccountName, Vec<usize>>>,
+    pub(crate) letters: crate::post::Read,
+    pub(crate) worked: Arc<crate::worked::Worked>,
+}
+
+impl Snapshot {
+    pub fn dir(&self) -> &Path {
+        &self.dir
+    }
+    pub(crate) fn indexed(&self) -> fastctx_net::directory_index::Indexed<'_> {
+        fastctx_net::directory_index::Indexed::new(&self.book.directory, &self.index)
+    }
+}
+
+pub struct Store {
+    metadata: Snapshot,
+    pub(crate) published: Option<Arc<arc_swap::ArcSwap<Snapshot>>>,
+    pub(crate) post: Option<Arc<crate::post::Post>>,
+    previous: Option<Arc<Snapshot>>,
+    pub letters: LetterRows,
     book_rows: book_rows::BookRows,
     hub_rows: hub_rows::HubRows,
-    /// Which machine was called to work for which resident: what it tells
-    /// that resident of the work goes on after the account's right on the
-    /// machine is taken back (`world-network.md`, 收回立刻生效).
     pub worked: std::collections::BTreeSet<(MachineName, fastctx_types::Address)>,
-    /// What reading a directory kept in an earlier shape into today's
-    /// changed, when this opening did it (`crate::upgrade`).
     pub upgraded: Vec<String>,
-    /// What this opening cleared that a stop had left: letters kept for no
-    /// member, and what could not be cleared.
     pub tidied: Vec<String>,
-    /// A move of the hub away from here (`crate::moving`).
-    pub outgoing: Option<crate::moving::Outgoing>,
-    /// The moves that brought the hub here, oldest first.
-    pub moves: Vec<crate::moving::Incoming>,
-    /// Moves called off whose new place may still hold the hub's identity,
-    /// until it gives it up (`crate::moving::out`).
-    pub called_off: Vec<crate::moving::Outgoing>,
-    /// Which letters wait for each member, and how far they were sent
-    /// (`crate::mailbox`).
-    pub(crate) mailboxes: std::collections::HashMap<MachineName, crate::mailbox::Mailbox>,
-    /// Told whenever `letters` changed, for its writer
-    /// (`crate::mailbox::keep_records`).
-    pub(crate) letters_changed: std::sync::Arc<tokio::sync::Notify>,
-    /// Counts every change of what the hub keeps of its letters: the
-    /// records, and the senders' counts (`crate::records`).
+    pub(crate) letters_changed: Arc<tokio::sync::Notify>,
     revision: u64,
-    /// How far the records of where the letters stand are written.
-    pub(crate) records: std::sync::Arc<crate::records::Records>,
-    /// What each sender's count is written through (`Store::write_count`).
-    counts: std::collections::HashMap<MachineName, std::sync::Arc<crate::records::Fence>>,
-    /// The session of each member whose letters move its count now: one
-    /// replaced keeps no more (`crate::control::intake`).
-    pub(crate) intake: std::collections::HashMap<MachineName, u64>,
-    /// Moves each time the book is kept, so what is worked out from the
-    /// directory knows it may have changed (`crate::afoot`).
-    pub(crate) book_saves: std::sync::atomic::AtomicU64,
-    /// Counts the members' views made from it, in the order they read it,
-    /// which this lock keeps: one read later holds every change made before.
-    pub(crate) view_reads: std::sync::atomic::AtomicU64,
+    pub(crate) records: Arc<crate::records::Records>,
+    counts: std::collections::HashMap<MachineName, Arc<crate::records::Fence>>,
+}
+
+impl std::ops::Deref for Store {
+    type Target = Snapshot;
+    fn deref(&self) -> &Snapshot {
+        &self.metadata
+    }
+}
+impl std::ops::DerefMut for Store {
+    fn deref_mut(&mut self) -> &mut Snapshot {
+        &mut self.metadata
+    }
 }
 
 /// A sender's count of its own letters, the last of which the hub holds,
@@ -459,18 +473,77 @@ impl Taken {
     }
 }
 
-/// A number given to a letter for a member (`Store::next_letter`).
-pub(crate) struct Numbered {
-    pub seq: u64,
-    /// The numbering it is of (`Letters::out_epoch`).
-    pub epoch: u64,
-    /// The file it is written to.
-    pub path: PathBuf,
-    /// The key of the member it is for, when it was numbered.
-    pub key: Option<PublicKey>,
-}
-
 impl Store {
+    fn token_index(book: &Book) -> Arc<std::collections::HashMap<AccountName, Vec<usize>>> {
+        let mut by_account: std::collections::HashMap<AccountName, Vec<usize>> = Default::default();
+        for (at, token) in book.tokens.iter().enumerate() {
+            by_account.entry(token.account.clone()).or_default().push(at);
+        }
+        Arc::new(by_account)
+    }
+
+    pub(crate) fn metadata(&self) -> &Snapshot {
+        &self.metadata
+    }
+
+    pub(crate) fn reset_committed(&mut self) {
+        if let Some(published) = &self.published {
+            self.metadata = (**published.load()).clone();
+        }
+    }
+
+    pub(crate) fn snapshot(&self) -> Snapshot {
+        self.metadata.clone()
+    }
+
+    pub(crate) fn enable_runtime(&mut self) -> io::Result<Arc<crate::post::Post>> {
+        let post = crate::post::Post::new(self.dir.clone(), self.shelf.clone(), &self.book.directory, &self.letters);
+        self.metadata.letters = post.view(&self.book.directory);
+        self.metadata.audience = Arc::new(crate::presence::Audience::new(&self.metadata.indexed()));
+        self.post = Some(post.clone());
+        self.metadata.worked = crate::worked::Worked::new(self.shelf.clone(), std::mem::take(&mut self.worked))?;
+        Ok(post)
+    }
+
+    pub(crate) fn refresh(&mut self) {
+        self.metadata.index = Arc::new(fastctx_net::directory_index::Index::new(&self.book.directory));
+        self.metadata.tokens = Self::token_index(&self.book);
+        if let Some(post) = &self.post {
+            self.metadata.letters = post.view(&self.book.directory);
+        }
+        self.metadata.audience = Arc::new(crate::presence::Audience::new(&self.metadata.indexed()));
+    }
+
+    fn publish(&mut self, book: bool, hub: bool, moves: bool) {
+        if book {
+            self.refresh();
+        }
+        if let Some(published) = &self.published {
+            let previous = published.load_full();
+            let mut next = (*previous).clone();
+            next.sequence = previous.sequence.checked_add(1).expect("catalog sequence exhausted");
+            self.metadata.sequence = next.sequence;
+            if book {
+                next.book = self.book.clone();
+                next.index = self.index.clone();
+                next.tokens = self.tokens.clone();
+                next.audience = self.audience.clone();
+                next.letters = self.metadata.letters.clone();
+                next.book_saves = self.book_saves;
+            }
+            if hub {
+                next.hub = self.hub.clone();
+            }
+            if moves {
+                next.moves = self.moves.clone();
+                next.outgoing = self.outgoing.clone();
+                next.called_off = self.called_off.clone();
+            }
+            self.previous = Some(previous);
+            published.store(Arc::new(next));
+        }
+    }
+
     /// Reads settings without starting recovery or changing presence records.
     pub fn read_hub(dir: &Path) -> io::Result<HubFile> {
         reading::hub(dir)
@@ -508,7 +581,7 @@ impl Store {
         secrets: &[u8],
         book: &Book,
     ) -> io::Result<()> {
-        if dir.join(shelf::FILE).try_exists()? {
+        if fastctx_platform::disk::exists(dir.join(shelf::FILE))? {
             return Err(io::Error::new(io::ErrorKind::AlreadyExists, "the directory already holds a hub database"));
         }
         ensure_private_dir(dir)?;
@@ -567,28 +640,38 @@ impl Store {
         };
         let moves = read_or_default(&dir.join(crate::moving::MOVES))?;
         let called_off = read_or_default(&dir.join(crate::moving::CALLED_OFF))?;
+        let letters = LetterRows::new(letters, changed);
         let mut store = Self {
-            dir: dir.to_path_buf(),
-            hub,
-            book,
-            letters: LetterRows::new(letters, changed),
-            shelf,
+            metadata: Snapshot {
+                dir: dir.to_path_buf(),
+                sequence: 0,
+                hub: hub.into(),
+                index: Arc::new(fastctx_net::directory_index::Index::new(&book.directory)),
+                audience: Arc::default(),
+                tokens: Self::token_index(&book),
+                book: book.into(),
+                shelf,
+                outgoing,
+                moves,
+                called_off,
+                book_saves: 0,
+                view_reads: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+                letters: crate::post::Read::default(),
+                worked: Arc::new(Default::default()),
+            },
+            published: None,
+            post: None,
+            previous: None,
+            letters,
             book_rows,
             hub_rows,
             worked,
             upgraded,
             tidied: Vec::new(),
-            outgoing,
-            moves,
-            called_off,
-            mailboxes: std::collections::HashMap::new(),
             letters_changed: std::sync::Arc::new(tokio::sync::Notify::new()),
             revision: 0,
             records: std::sync::Arc::new(crate::records::Records::new()),
             counts: std::collections::HashMap::new(),
-            intake: std::collections::HashMap::new(),
-            book_saves: std::sync::atomic::AtomicU64::new(0),
-            view_reads: std::sync::atomic::AtomicU64::new(0),
         };
         if changed {
             store.save_letters_now()?;
@@ -633,12 +716,12 @@ impl Store {
         {
             said.push(format!("recording that: {error}"));
         }
-        if let Ok(counts) = std::fs::read_dir(self.dir.join(TAKEN)) {
+        if let Ok(counts) = fastctx_platform::disk::read_dir(self.dir.join(TAKEN)) {
             for count in counts.flatten() {
                 let name = count.file_name().to_string_lossy().into_owned();
                 if !name.starts_with('.')
                     && !members.contains(&name)
-                    && let Err(error) = std::fs::remove_file(count.path())
+                    && let Err(error) = fastctx_platform::disk::remove_file(count.path())
                 {
                     said.push(format!("deleting the count of {name}, no member of the hub: {error}"));
                 }
@@ -647,7 +730,7 @@ impl Store {
         // Kept by name, as before 1.0.1-beta.3: a member's were moved as the
         // hub opened, so what is left is no member's.
         let outbox = self.dir.join(OUTBOX);
-        match std::fs::read_dir(&outbox) {
+        match fastctx_platform::disk::read_dir(&outbox) {
             Ok(entries) => {
                 for entry in entries.flatten() {
                     let name = entry.file_name().to_string_lossy().into_owned();
@@ -659,14 +742,14 @@ impl Store {
                         Err(error) => said.push(format!("setting aside the letters kept for {name}: {error}")),
                     }
                 }
-                let _ = std::fs::remove_dir(&outbox);
+                let _ = fastctx_platform::disk::remove_dir(&outbox);
             }
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
             Err(error) => said.push(format!("reading {}: {error}", outbox.display())),
         }
         let numberings: std::collections::BTreeSet<String> =
             self.letters.values().map(|entry| format!("{:016x}", entry.out_epoch)).collect();
-        match std::fs::read_dir(self.dir.join(COUNTS)) {
+        match fastctx_platform::disk::read_dir(self.dir.join(COUNTS)) {
             Ok(entries) => {
                 for entry in entries {
                     let entry = match entry {
@@ -679,7 +762,7 @@ impl Store {
                     let name = entry.file_name().to_string_lossy().into_owned();
                     if !name.starts_with('.')
                         && !numberings.contains(&name)
-                        && let Err(error) = std::fs::remove_file(entry.path())
+                        && let Err(error) = fastctx_platform::disk::remove_file(entry.path())
                     {
                         said.push(format!("deleting the count of removed numbering {name}: {error}"));
                     }
@@ -689,7 +772,7 @@ impl Store {
             Err(error) => said.push(format!("reading sender counts: {error}")),
         }
         let boxes = self.dir.join(BOXES);
-        match std::fs::read_dir(&boxes) {
+        match fastctx_platform::disk::read_dir(&boxes) {
             Ok(entries) => {
                 for entry in entries.flatten() {
                     let numbering = entry.file_name().to_string_lossy().into_owned();
@@ -722,7 +805,7 @@ impl Store {
         let trash = self.dir.join(TRASH);
         ensure_private_dir(&trash)?;
         let unique = u64::from_le_bytes(fastctx_net::sign::random::<8>()?);
-        match std::fs::rename(path, trash.join(format!("{name}.{unique:016x}"))) {
+        match fastctx_platform::disk::rename(path, trash.join(format!("{name}.{unique:016x}"))) {
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
             other => other,
         }
@@ -731,7 +814,7 @@ impl Store {
     /// Deletes the letters set aside. A long removal is not done under any
     /// lock: whoever sets letters aside empties the trash after letting go.
     pub fn clear_trash(dir: &Path) -> io::Result<()> {
-        match std::fs::remove_dir_all(dir.join(TRASH)) {
+        match fastctx_platform::disk::remove_dir_all(dir.join(TRASH)) {
             Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
             _ => Ok(()),
         }
@@ -742,6 +825,12 @@ impl Store {
     /// A rename does this once the directory that says it is kept, and a
     /// hub stopped in between does it when it opens. Says what moved.
     pub fn settle_names(&mut self) -> io::Result<Vec<String>> {
+        if self.post.is_some() {
+            // The directory transaction moves SQL names. Member actors retain
+            // their epoch, and resolve the committed name on every write.
+            self.metadata.worked.rename(self.book.directory.clone())?;
+            return Ok(Vec::new());
+        }
         let directory = &self.book.directory;
         let mut said = Vec::new();
         let renamed: Vec<(MachineName, MachineName)> = self
@@ -757,7 +846,7 @@ impl Store {
             // The same name spelled anew keeps its records where they are.
             if old != new && self.letters.contains_key(&new) {
                 // The current member still owns its old-name record. The
-                // occupied destination belongs to a removed member (2026-10-16).
+                // occupied destination belongs to a removed member.
                 let removed = self.letters[&new].out_epoch;
                 let discarded = self.forget_letters(&new);
                 said.push(format!(
@@ -772,8 +861,6 @@ impl Store {
             // is known of them goes on under the new name, those being
             // written among them; its session ended with the rename. What was
             // counting its own letters under the old name counts no more.
-            crate::mailbox::renamed(&mut self.mailboxes, &old, &new);
-            self.intake.remove(&old);
             if let Some(fence) = self.counts.remove(&old) {
                 // Pending writes keep the same path and ordering across a rename.
                 self.counts.insert(new.clone(), fence);
@@ -842,37 +929,49 @@ impl Store {
         &self.dir
     }
 
-    pub fn save_outgoing(&self) -> io::Result<()> {
+    pub fn save_outgoing(&mut self) -> io::Result<()> {
         let path = self.dir.join(crate::moving::OUTGOING);
-        match &self.outgoing {
+        let result = match &self.outgoing {
             Some(outgoing) => publish(&path, &json(outgoing)?, Permissions::Private),
-            None => match std::fs::remove_file(&path) {
+            None => match fastctx_platform::disk::remove_file(&path) {
                 Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
                 _ => Ok(()),
             },
-        }
+        };
+        result?;
+        self.publish(false, false, true);
+        Ok(())
     }
 
-    pub fn save_called_off(&self) -> io::Result<()> {
-        publish(&self.dir.join(crate::moving::CALLED_OFF), &json(&self.called_off)?, Permissions::Private)
+    pub fn save_called_off(&mut self) -> io::Result<()> {
+        publish(&self.dir.join(crate::moving::CALLED_OFF), &json(&self.called_off)?, Permissions::Private)?;
+        self.publish(false, false, true);
+        Ok(())
     }
 
-    pub fn save_moves(&self) -> io::Result<()> {
-        publish(&self.dir.join(crate::moving::MOVES), &json(&self.moves)?, Permissions::Private)
+    pub fn save_moves(&mut self) -> io::Result<()> {
+        publish(&self.dir.join(crate::moving::MOVES), &json(&self.moves)?, Permissions::Private)?;
+        self.publish(false, false, true);
+        Ok(())
     }
 
     /// Keeps the one package target changed by a device's version report.
     pub(crate) fn save_package_target(&mut self, key: &PublicKey) -> io::Result<()> {
-        self.hub_rows.save_target(&self.shelf, &self.hub, key)
+        self.hub_rows.save_target(&self.metadata.shelf, &self.metadata.hub, key)?;
+        self.publish(false, true, false);
+        Ok(())
     }
 
     pub fn save_hub(&mut self) -> io::Result<()> {
-        self.hub_rows.save(&self.shelf, &self.hub)
+        self.hub_rows.save(&self.metadata.shelf, &self.metadata.hub)?;
+        self.publish(false, true, false);
+        Ok(())
     }
 
     pub fn save_book(&mut self) -> io::Result<()> {
-        self.book_rows.save(&self.shelf, &mut self.book)?;
-        self.book_saves.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.book_rows.save(&self.metadata.shelf, &mut self.metadata.book)?;
+        self.metadata.book_saves += 1;
+        self.publish(true, false, false);
         Ok(())
     }
 
@@ -880,18 +979,22 @@ impl Store {
     /// of arrangements. Neither durable baseline advances on failure.
     pub(crate) fn save_hub_and_book(&mut self) -> io::Result<()> {
         let mut changes = rows::Changes::default();
-        let next = self.hub_rows.stage(&self.hub, &mut changes)?;
-        if let Err(error) = self.book_rows.save_with(&self.shelf, &mut self.book, changes) {
+        let next = self.hub_rows.stage(&self.metadata.hub, &mut changes)?;
+        if let Err(error) = self.book_rows.save_with(&self.metadata.shelf, &mut self.metadata.book, changes) {
             self.hub_rows.lost();
             return Err(error);
         }
         self.hub_rows.committed(next);
-        self.book_saves.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.metadata.book_saves += 1;
+        self.publish(true, true, false);
         Ok(())
     }
 
     /// Notes that `machine` was called to work for `resident`.
     pub fn note_worked(&mut self, machine: &MachineName, resident: fastctx_types::Address) -> io::Result<()> {
+        if self.post.is_some() {
+            return self.metadata.worked.note(machine, resident);
+        }
         let entry = (machine.clone(), resident);
         if !self.worked.contains(&entry) {
             let mut changes = rows::Changes::default();
@@ -922,23 +1025,6 @@ impl Store {
         self.revision += 1;
         let letters = self.letters.snapshot(self.records.written_changes());
         self.records.write(self.revision, &self.shelf, &letters)
-    }
-
-    /// The records of where the letters stand as they are now, to be
-    /// written off this lock: their revision, what they say, and where.
-    pub(crate) fn letters_record(&mut self) -> (u64, letter_rows::Snapshot, shelf::Shelf) {
-        (self.revision, self.letters.snapshot(self.records.written_changes()), self.shelf.clone())
-    }
-
-    /// The revision of what is kept of the letters now (`crate::records`).
-    pub(crate) fn revision(&self) -> u64 {
-        self.revision
-    }
-
-    /// The numbering of the letters waiting for `name`, and the directory
-    /// they are kept in; none while it has no records of letters.
-    pub(crate) fn outbox_of(&self, name: &MachineName) -> Option<(u64, PathBuf)> {
-        self.letters.get(name).map(|entry| (entry.out_epoch, box_path(&self.dir, entry.out_epoch)))
     }
 
     /// `name`'s count as it is now, its revision, and the fence it is
@@ -974,39 +1060,12 @@ impl Store {
             .map(|_| ())
     }
 
-    /// The letter records of a member, made when it first connects or a
-    /// letter first comes for it, and kept before either goes on: a stop
-    /// before they are kept would number its first letters again, over
-    /// those the hub said it holds.
-    pub fn letters_of(&mut self, name: &MachineName) -> io::Result<&mut Letters> {
-        if !self.letters.contains_key(name) {
-            let fresh = Letters::fresh(None)?;
-            self.letters.insert(name.clone(), fresh);
-            if let Err(error) = self.save_letters_now() {
-                self.letters.remove(name);
-                return Err(error);
-            }
-        }
-        Ok(self.letters.get_mut(name).expect("just made"))
-    }
-
-    /// The number the next letter for `to` takes, and the file it is to be
-    /// written to, off this lock (`write_letter`). Until it is written or
-    /// given up (`crate::mailbox::kept`, `abandoned`), no letter after it goes
-    /// to `to`; one given up leaves a gap, which nothing minds.
-    pub(crate) fn next_letter(&mut self, to: &MachineName) -> io::Result<Numbered> {
-        let key = self.book.directory.member(to).map(|member| member.key);
-        let entry = self.letters_of(to)?;
-        let (seq, epoch) = (entry.next, entry.out_epoch);
-        entry.next = seq + 1;
-        self.save_letters()?;
-        crate::mailbox::numbered(self, to, epoch, seq);
-        Ok(Numbered { seq, epoch, path: box_path(&self.dir, epoch).join(format!("{seq:020}")), key })
-    }
-
     /// Forgets which machines were called to work for the conversation at
     /// `conversation`, deleted.
     pub fn forget_worked(&mut self, conversation: &fastctx_types::Address) -> io::Result<()> {
+        if self.post.is_some() {
+            return self.metadata.worked.delete(conversation);
+        }
         let gone: Vec<_> = self.worked.iter().filter(|(_, worked)| worked == conversation).cloned().collect();
         let mut changes = rows::Changes::default();
         for entry in &gone {
@@ -1023,20 +1082,24 @@ impl Store {
     /// records, once it is taken off the hub and the directory that says so
     /// is kept (`clear_trash` deletes them).
     pub fn forget_letters(&mut self, name: &MachineName) -> io::Result<()> {
+        if self.post.is_some() {
+            if let Some(member) = self.previous.as_ref().and_then(|previous| previous.letters.member(name)) {
+                member.retire();
+            }
+            return Ok(());
+        }
         let entry = self.letters.remove(name);
-        self.mailboxes.remove(name);
-        self.intake.remove(name);
         if let Some(fence) = self.counts.remove(name) {
             fence.close();
         }
         self.save_letters()?;
-        match std::fs::remove_file(taken_path(&self.dir, name)) {
+        match fastctx_platform::disk::remove_file(taken_path(&self.dir, name)) {
             Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
             _ => {}
         }
         self.set_aside(&name.entry_in(&self.dir.join(OUTBOX))?, &name.file_name())?;
         if let Some(entry) = entry {
-            match std::fs::remove_file(count_path(&self.dir, entry.out_epoch)) {
+            match fastctx_platform::disk::remove_file(count_path(&self.dir, entry.out_epoch)) {
                 Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
                 _ => {}
             }
@@ -1103,7 +1166,7 @@ pub(crate) fn write_letter(path: &Path, message: &Envelope) -> io::Result<u64> {
 
 /// The numbers of the letter files in `directory`, and their sizes.
 pub(crate) fn letter_numbers(directory: &Path) -> io::Result<Vec<(u64, u64)>> {
-    let entries = match std::fs::read_dir(directory) {
+    let entries = match fastctx_platform::disk::read_dir(directory) {
         Ok(entries) => entries,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(error) => return Err(error),
@@ -1142,7 +1205,7 @@ fn rehouse(
     shelf: &shelf::Shelf,
 ) -> io::Result<(bool, Vec<String>)> {
     let outbox = dir.join(OUTBOX);
-    if !std::fs::exists(&outbox)? {
+    if !fastctx_platform::disk::exists(&outbox)? {
         return Ok((false, Vec::new()));
     }
     let mut changed = false;
@@ -1153,7 +1216,7 @@ fn rehouse(
         if !recorded {
             let mut found = false;
             for name in std::iter::once(&member.name).chain(&member.was) {
-                found |= std::fs::exists(name.entry_in(&outbox)?)?;
+                found |= fastctx_platform::disk::exists(name.entry_in(&outbox)?)?;
             }
             if found {
                 letters.insert(member.name.clone(), Letters::fresh(None)?);
@@ -1173,27 +1236,27 @@ fn rehouse(
             .collect();
         for alias in names {
             // A directly recorded name belongs to that record even when a
-            // different current member now has it as an alias (2026-10-16).
+            // different current member now has it as an alias.
             if alias != name && letters.contains_key(alias) {
                 continue;
             }
             let old = alias.entry_in(&outbox)?;
-            if !std::fs::exists(&old)? {
+            if !fastctx_platform::disk::exists(&old)? {
                 continue;
             }
             let new = box_path(dir, entry.out_epoch);
             ensure_private_dir(&new)?;
             for (seq, path) in numbered_in(&old)? {
                 let to = new.join(format!("{seq:020}"));
-                let bytes = std::fs::read(&path)?;
-                match std::fs::read(&to) {
+                let bytes = fastctx_platform::disk::read(&path)?;
+                match fastctx_platform::disk::read(&to) {
                     Ok(kept) if kept != bytes => {
                         let record = conflicts::keep(dir, entry.out_epoch, seq, &path, &bytes, &to, &kept)?;
                         conflicts.push(format!(
                             "{} and {} disagree under letter {seq}; both copies and their locations are preserved in {}",
                             path.display(), to.display(), record.display()
                         ));
-                        std::fs::remove_file(&path)?;
+                        fastctx_platform::disk::remove_file(&path)?;
                         continue;
                     }
                     Ok(_) => {}
@@ -1203,10 +1266,10 @@ fn rehouse(
                 // Reconfirm an existing copy too: visibility after an interrupted
                 // publication does not prove the durability needed to delete its source.
                 publish(&to, &bytes, Permissions::Private)?;
-                std::fs::remove_file(&path)?;
+                fastctx_platform::disk::remove_file(&path)?;
             }
             // Only hidden temporary files may remain; startup cleanup owns those.
-            match std::fs::remove_dir(&old) {
+            match fastctx_platform::disk::remove_dir(&old) {
                 Err(error) if error.kind() != io::ErrorKind::DirectoryNotEmpty => return Err(error),
                 _ => {}
             }
@@ -1221,7 +1284,7 @@ fn box_entries(dir: &Path, epoch: u64) -> io::Result<Vec<(u64, PathBuf)>> {
 
 /// The letters in `directory`, by number.
 fn numbered_in(directory: &Path) -> io::Result<Vec<(u64, PathBuf)>> {
-    let entries = match std::fs::read_dir(directory) {
+    let entries = match fastctx_platform::disk::read_dir(directory) {
         Ok(entries) => entries,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(error) => return Err(error),
@@ -1245,7 +1308,7 @@ pub(crate) fn json(value: &impl Serialize) -> io::Result<Vec<u8>> {
 }
 
 pub(crate) fn read<T: DeserializeOwned>(path: &Path) -> io::Result<T> {
-    let bytes = std::fs::read(path)?;
+    let bytes = fastctx_platform::disk::read(path)?;
     serde_json::from_slice(&bytes)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("{}: {error}", path.display())))
 }

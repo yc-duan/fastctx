@@ -13,14 +13,16 @@ import type { PlanWords } from "../plan/words";
 import { unwatch, type WorldNow } from "../world/bridge";
 import { planRead, planWrite, watchPlan, type PlanAccount, type PlanPage } from "../world/plan";
 import { goalPast, goalShown, goalUpdate, watchGoal, type GoalChange, type GoalView } from "../world/goal";
-import { collaborationTree, type Branch, type NativeAgent, type Tree } from "../world/collab-tree";
+import { watchCollaboration, type Branch, type NativeAgent, type Tree } from "../world/collab-tree";
 import type { Address } from "../world/wire";
 import type { GoalStatus } from "./types";
 import { goalSamples, pastSamples, teamSample } from "./samples";
 import type { SideSeams } from "./seams";
-import type { CollabNode, GoalShown, NodeState, PastGoal } from "./types";
+import type { CollabNode, GoalShown, NodeState, PastGoal, WhereShown } from "./types";
+import { whereOf } from "./where-live";
 import type { SideWords } from "./words";
 import { sentinelList, type SentinelSummary } from "../world/sentinels";
+import { PREVIEW } from "../app/preview";
 
 /** The colleagues the conversation asked, as the World reports them, each
  *  with its goal and the agents it sent. The conversation's own agents come
@@ -40,7 +42,15 @@ function branchNode(branch: Branch, agent: "claude" | "codex", store: Store, now
   const since = branch.now?.since ? Date.parse(branch.now.since) : born;
   // A branch its machine could not tell about is not known to be done.
   const why = [...branch.unavailable, ...("Err" in branch.goal ? [branch.goal.Err] : [])].join("; ");
-  const state: NodeState = branch.now?.trouble ? "failed" : !branch.now ? "unknown" : busy ? "working" : "done";
+  const state: NodeState = branch.now?.trouble
+    ? "failed"
+    : !branch.now
+      ? "unknown"
+      : branch.now.waiting_for_user
+        ? "waiting"
+        : busy
+          ? "working"
+          : "done";
   return {
     id: branch.address.resident,
     kind: "colleague",
@@ -52,6 +62,9 @@ function branchNode(branch: Branch, agent: "claude" | "codex", store: Store, now
     goal: treeGoal(branch.goal),
     branchOf: "Ok" in branch.goal ? (branch.goal.Ok?.parent ?? null) : null,
     took: Number.isFinite(born) ? Math.max(0, (busy ? now : Number.isFinite(since) ? since : now) - born) : 0,
+    began: Number.isFinite(born) ? born : null,
+    ended: busy || state === "waiting" || !Number.isFinite(since) ? null : since,
+    model: found?.about.model ?? null,
     steps: null,
     machine: branch.address.machine,
     children: branch.agents.map((child) => agentNode(child, agent, now)),
@@ -62,15 +75,20 @@ function agentNode(agent: NativeAgent, parent: "claude" | "codex", now: number):
   const model = agent.model ?? "";
   const kind: "claude" | "codex" = /codex|gpt/i.test(model) ? "codex" : /claude/i.test(model) ? "claude" : parent;
   const started = agent.started_at ? Date.parse(agent.started_at) : NaN;
+  const ended = agent.ended_at ? Date.parse(agent.ended_at) : NaN;
+  const state = agentState(agent);
   return {
     id: agent.id,
     kind: "subagent",
     agent: kind,
     name: agent.name ?? agent.id,
     task: agent.task ?? "",
-    state: agentState(agent),
+    state,
     goal: null,
     took: agent.duration_ms ?? (Number.isFinite(started) ? Math.max(0, now - started) : 0),
+    began: Number.isFinite(started) ? started : null,
+    ended: state === "working" ? null : Number.isFinite(ended) ? ended : Number.isFinite(started) && agent.duration_ms != null ? started + agent.duration_ms : null,
+    model: agent.model ?? null,
     steps: null,
     children: agent.children.map((child) => agentNode(child, kind, now)),
   };
@@ -131,10 +149,49 @@ export interface LiveSide {
   address: Address;
   /** No goal is set here (`SideSeams.noGoal`). */
   noGoal?: boolean;
+  /** Its own history, where it is in no project (`SideSeams.history`). */
+  history?: SideSeams["history"];
   /** A span of time, short. */
   took(ms: number): string;
   /** Opens what one of the world's ids names, from the plan. */
   openId(id: string): void;
+  /** Where a computer's page is read. */
+  machineLink(machine: string): string | null;
+  /** Shows a folder of this computer in the system's own window. */
+  reveal?: ((path: string) => void) | undefined;
+}
+
+/** The colleagues the conversation at `address` asked, as the World pushes
+ *  them: who each is and how it stands, worked out as the tree does. Their
+ *  goals and the agents they sent come with the tree, while a page shows
+ *  them. */
+function worldColleagues(store: Store, address: Address, now: number): CollabNode[] {
+  return residentsOf(store.world.peek()).flatMap((r): CollabNode[] => {
+    const origin = r.about.origin;
+    if (origin.kind !== "colleague" || origin.asked_by.resident !== address.resident || origin.asked_by.machine !== address.machine) return [];
+    const agent = /codex/i.test(r.about.host.agent) ? "codex" : "claude";
+    const busy = r.now?.activity === "busy";
+    const born = Date.parse(r.about.born_at);
+    const since = r.now?.since ? Date.parse(r.now.since) : born;
+    const state: NodeState = r.now?.trouble ? "failed" : !r.now ? "unknown" : busy ? "working" : "done";
+    return [
+      {
+        id: r.about.id,
+        kind: "colleague",
+        agent,
+        name: r.about.model ? modelName(r.about.model) : (origin.label ?? agent),
+        task: origin.label ?? r.now?.title ?? "",
+        state,
+        why: null,
+        goal: null,
+        branchOf: null,
+        took: Number.isFinite(born) ? Math.max(0, (busy ? now : Number.isFinite(since) ? since : now) - born) : 0,
+        steps: null,
+        machine: r.about.machine,
+        children: [],
+      },
+    ];
+  });
 }
 
 /** The side conversations branched off the one at `address`, from the
@@ -209,6 +266,9 @@ export function liveSide(options: LiveSide): SideSeams {
     words: options.words,
     self: options.address,
     ...(options.noGoal ? { noGoal: true } : {}),
+    ...(options.history ? { history: options.history } : {}),
+    where: (show) => effect(() => show(whereOf(options.store.world.get(), options.address, options.machineLink))),
+    ...(options.reveal ? { reveal: options.reveal } : {}),
     plan: {
       words: options.planWords,
       seams: plan,
@@ -216,15 +276,19 @@ export function liveSide(options: LiveSide): SideSeams {
         let alive = true;
         let watching: number | null = null;
         let shown: PlanShown | null = null;
+        // Sentinels are not offered in a release yet. Where they are, one the
+        // plan names says how it stands as its home last answered, asked one
+        // question at a time, and only while the plan names one.
+        const naming = () => PREVIEW && /s-[0-9a-z]{6,16}/.test(shown?.source ?? "");
         const refresh = () => {
           planRead(owner, at(), bareName(options.address.machine))
             .then((page) => {
-              if (alive) show((shown = planShownOf(page, options.words, Date.now())));
+              if (!alive) return;
+              show((shown = planShownOf(page, options.words, Date.now())));
+              if (naming()) void ask();
             })
             .catch((error) => console.error("the plan could not be read", error));
         };
-        // A sentinel the plan names says how it stands as its home last
-        // answered, asked one question at a time.
         let reading = false;
         const ask = () => {
           if (reading) return;
@@ -242,8 +306,7 @@ export function liveSide(options: LiveSide): SideSeams {
               reading = false;
             });
         };
-        void ask();
-        const asking = window.setInterval(() => void ask(), 30_000);
+        const asking = PREVIEW ? window.setInterval(() => naming() && void ask(), 30_000) : 0;
         refresh();
         watchPlan(
           owner,
@@ -302,51 +365,91 @@ export function liveSide(options: LiveSide): SideSeams {
     },
     colleagues: (show) => {
       let alive = true;
-      let inflight = false;
-      let again = false;
-      let last: CollabNode[] = [];
-      const refresh = () => {
-        if (inflight) {
-          again = true;
-          return;
-        }
-        inflight = true;
-        again = false;
-        collaborationTree(owner, options.address.machine)
-          .then((tree) => {
-            const now = Date.now();
-            if (alive) show((last = [...treeNodes(tree, options.store, now), ...sideNodes(options.store, options.address, options.words, now)]));
+      let detail = false;
+      // The collaboration as the World last told it, followed while a page
+      // shows it; the colleagues drawn from it, or why they no longer stand
+      // as they did.
+      let tree: Tree | null = null;
+      let broken: string | null = null;
+      let watching: number | null = null;
+      // Which following a told piece belongs to: one let go says no more.
+      let following = 0;
+      const draw = () => {
+        const now = Date.now();
+        const told = tree ? treeNodes(tree, options.store, now) : null;
+        const colleagues = told
+          ? broken === null ? told : told.map((node) => ({ ...node, state: "unknown" as const, why: broken }))
+          : worldColleagues(options.store, options.address, now);
+        show([...colleagues, ...sideNodes(options.store, options.address, options.words, now)]);
+      };
+      const follow = () => {
+        const mine = ++following;
+        const current = () => alive && detail && mine === following;
+        watchCollaboration(owner, options.address.machine, (piece) => {
+          if (!current()) return;
+          if (piece.kind === "tree") {
+            tree = piece.tree;
+            broken = null;
+          } else broken = piece.error;
+          draw();
+        })
+          .then(({ id, tree: first }) => {
+            if (!current()) {
+              void unwatch(id);
+              return;
+            }
+            watching = id;
+            tree = first;
+            broken = null;
+            draw();
           })
           .catch((error: unknown) => {
-            // What was known stays, no longer said to stand as it did.
-            const why = error instanceof Error ? error.message : String(error);
-            if (alive) show(last.map((node) => ({ ...node, state: "unknown", why })));
-          })
-          .finally(() => {
-            inflight = false;
-            if (alive && again) refresh();
+            if (!current()) return;
+            broken = error instanceof Error ? error.message : String(error);
+            draw();
           });
       };
+      const letGo = () => {
+        following++;
+        if (watching != null) void unwatch(watching);
+        watching = null;
+        tree = null;
+        broken = null;
+      };
+      // The World's changes redraw the colleagues from what was last told.
       const stop = effect(() => {
         options.store.world.get();
-        refresh();
+        draw();
       });
-      return () => {
-        alive = false;
-        stop();
+      return {
+        stop: () => {
+          alive = false;
+          letGo();
+          stop();
+        },
+        detail: (shown) => {
+          if (shown === detail) return;
+          detail = shown;
+          if (shown) follow();
+          else {
+            letGo();
+            draw();
+          }
+        },
       };
     },
   };
 }
 
 /** A specimen conversation's side: a plan, a goal in the state `goal`
- *  names (under way at first) and a team. */
+ *  names (under way at first), a team, and its own history where it is in
+ *  no project. */
 export function specimenSide(
   words: SideWords,
   planWords: PlanWords,
   plan: PlanShown & { facts: PageSeams["facts"] },
   english: boolean,
-  side: { self: Address; goal?: string | null },
+  side: { self: Address; goal?: string | null; history?: SideSeams["history"]; where: () => WhereShown | null },
 ): SideSeams {
   let goal: GoalShown | null = side.goal === "none" ? null : (goalSamples(english, Date.now())[side.goal ?? "active"] ?? null);
   const past: PastGoal[] = pastSamples(english, Date.now());
@@ -363,6 +466,11 @@ export function specimenSide(
   return {
     words,
     self: side.self,
+    ...(side.history ? { history: side.history } : {}),
+    where: (show) => {
+      show(side.where());
+      return () => {};
+    },
     plan: {
       words: planWords,
       seams: { facts: plan.facts, save: async () => ({ ok: true }) },
@@ -406,7 +514,7 @@ export function specimenSide(
     },
     colleagues: (show) => {
       show(teamSample(english).filter((node) => node.kind === "colleague"));
-      return () => {};
+      return { stop: () => {}, detail: () => {} };
     },
   };
 }

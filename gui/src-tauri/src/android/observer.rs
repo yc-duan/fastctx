@@ -2,10 +2,12 @@
 //! following the World as the hubs push what is afoot on each machine, so a
 //! question asked, what an agent told the user, or a turn the user's words
 //! began that ended without telling them anything is told the moment it
-//! reaches this phone (`world-gui.md`, 对话; `world-voice.md`). State
-//! survives process death; unavailable machines retain their last facts.
-//! The page gives the titles, in its words; the body is the agent's own:
-//! what it asks, what it told, or the words that ended its turn.
+//! reaches this phone (`world-gui.md`, 对话; `world-voice.md`), and so is
+//! each trouble a hub tells of a machine or the network (`world-engine.md`,
+//! 量与告警). State survives process death; unavailable machines retain
+//! their last facts. The page gives the titles, in its words; the body is
+//! the agent's own: what it asks, what it told, or the words that ended its
+//! turn; a trouble's, the page's words filled in with what the hub said.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -13,8 +15,10 @@ use std::sync::Arc;
 
 use fastctx_client::World;
 use fastctx_platform::{Permissions, publish};
+use fastctx_types::accounts::AccountsReply;
 use fastctx_types::residents::{Activity, Now, Origin};
 use fastctx_types::town::{MachineWho, ResidentNow, WorldWho};
+use fastctx_types::trouble::{Trouble, TroubleKind};
 use serde::{Deserialize, Serialize};
 
 use super::bridge::Bridge;
@@ -26,7 +30,24 @@ struct Policy {
     rules: Vec<Rule>,
     #[serde(default)]
     agent_names: BTreeMap<String, String>,
+    #[serde(default)]
+    troubles: Option<TroubleWords>,
 }
+
+/// What went wrong, in the page's words: a title and a detail for each kind
+/// of trouble, `{machine}`, `{count}`, `{seconds}`, `{bound}`, `{used}` and
+/// `{version}` standing for what the trouble says, and the bounds by their
+/// plain names (`gui/src/app/phone.ts`).
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct TroubleWords {
+    titles: BTreeMap<String, String>,
+    details: BTreeMap<String, String>,
+    bounds: BTreeMap<String, String>,
+}
+
+/// A trouble older than this is kept as called about, not called about.
+const TROUBLE_FRESH: jiff::SignedDuration = jiff::SignedDuration::from_hours(24);
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -110,6 +131,9 @@ struct Observed {
     world: Option<String>,
     learned: bool,
     residents: BTreeMap<String, Seen>,
+    /// The troubles each hub told, by hub: those called about, or learned.
+    #[serde(default)]
+    troubles: BTreeMap<String, Vec<String>>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -255,6 +279,81 @@ fn observe(who: WorldWho, bridge: &Bridge, observed: &mut Observed) -> Result<()
     Ok(())
 }
 
+/// Calls the user of each trouble a hub that tells them told since it was
+/// last looked at, once; a hub's first look only learns, and one older than
+/// a day is only kept (`gui/src/app/presence.ts`).
+fn observe_troubles(accounts: &AccountsReply, bridge: &Bridge, observed: &mut Observed) -> Result<(), String> {
+    let policy: Policy = serde_json::from_str(&bridge.string("configuration")?).map_err(|error| error.to_string())?;
+    let several = accounts.hubs.len() > 1;
+    let now = jiff::Timestamp::now();
+    for hub in accounts.hubs.iter().filter(|hub| hub.health) {
+        let keys: Vec<String> = hub.troubles.iter().map(trouble_key).collect();
+        let before = observed.troubles.insert(hub.hub.to_string(), keys);
+        let (Some(before), Some(words), true) = (before, policy.troubles.as_ref(), policy.enabled) else { continue };
+        for trouble in &hub.troubles {
+            let key = trouble_key(trouble);
+            if before.contains(&key) || now.duration_since(trouble.at) > TROUBLE_FRESH {
+                continue;
+            }
+            let kind = trouble_kind(trouble);
+            let Some(title) = words.titles.get(&kind) else { continue };
+            let detail = words.details.get(&kind).map(|template| fill(template, trouble, words)).unwrap_or_default();
+            let body = if several {
+                [detail, hub.name.to_string()]
+                    .into_iter()
+                    .filter(|line| !line.is_empty())
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            } else {
+                detail
+            };
+            let route = match &trouble.machine {
+                Some(machine) => format!("#/machine/{machine}"),
+                None => "#/alerts".into(),
+            };
+            bridge.string_arg(
+                "showNotice",
+                &serde_json::json!({
+                    "id": format!("trouble:{}/{key}", hub.hub), "title": fill(title, trouble, words), "body": body,
+                    "route": route, "version": key,
+                })
+                .to_string(),
+            )?;
+        }
+    }
+    // A hub this phone is no longer on is forgotten.
+    observed.troubles.retain(|hub, _| accounts.hubs.iter().any(|one| one.hub.to_string() == *hub));
+    Ok(())
+}
+
+/// A trouble as kept: a hub that starts counting again tells new ones.
+fn trouble_key(trouble: &Trouble) -> String {
+    format!("{}@{}", trouble.id, trouble.at)
+}
+
+/// The kind a trouble's words are keyed by: the hub's own near a limit
+/// apart from held up.
+fn trouble_kind(trouble: &Trouble) -> String {
+    if trouble.kind == TroubleKind::Hub && trouble.near.is_some() {
+        return "hub_near".into();
+    }
+    kind_of(trouble.kind).unwrap_or_else(|| "other".into())
+}
+
+/// The page's `template` with what `trouble` says in its places.
+fn fill(template: &str, trouble: &Trouble, words: &TroubleWords) -> String {
+    let near = trouble.near.as_ref();
+    let bound =
+        near.map(|near| words.bounds.get(&near.bound).map_or(near.bound.as_str(), String::as_str)).unwrap_or("");
+    template
+        .replace("{machine}", trouble.machine.as_ref().map(|machine| machine.as_str()).unwrap_or(""))
+        .replace("{count}", &trouble.count.map(|count| count.to_string()).unwrap_or_default())
+        .replace("{seconds}", &trouble.seconds.map(|seconds| seconds.to_string()).unwrap_or_default())
+        .replace("{bound}", bound)
+        .replace("{used}", &near.map(|near| near.used.to_string()).unwrap_or_default())
+        .replace("{version}", trouble.version.as_deref().unwrap_or(""))
+}
+
 pub(super) async fn run(world: World, directory: PathBuf, bridge: Arc<Bridge>) {
     let path = directory.join("notification-observations.json");
     let loaded = match std::fs::read(&path) {
@@ -302,6 +401,7 @@ pub(super) async fn run(world: World, directory: PathBuf, bridge: Arc<Bridge>) {
                     }
                     observed = Observed { world: hubs.clone(), ..Observed::default() };
                 }
+                observe_troubles(&now.accounts, &bridge, &mut observed)?;
                 observe(now.who, &bridge, &mut observed)?;
                 let bytes = serde_json::to_vec(&observed).map_err(|error| error.to_string())?;
                 if saved != bytes {

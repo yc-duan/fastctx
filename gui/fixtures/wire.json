@@ -923,6 +923,9 @@
         "kind": "not_newer"
       },
       {
+        "kind": "withdrawn"
+      },
+      {
         "kind": "other"
       },
       {
@@ -965,6 +968,29 @@
         "do": "policy",
         "minimum": null,
         "managed_auto": true
+      },
+      {
+        "do": "rollout",
+        "version": "1.0.2",
+        "first": [
+          "server"
+        ],
+        "share": 25
+      },
+      {
+        "do": "rollout",
+        "version": null,
+        "first": [],
+        "share": 0
+      },
+      {
+        "do": "pause",
+        "paused": true
+      },
+      {
+        "do": "withdraw",
+        "version": "1.0.3",
+        "withdrawn": true
       }
     ],
     "device_calls": [
@@ -1035,7 +1061,23 @@
           ],
           "policy": {
             "channel": "stable",
-            "managed_auto": true
+            "managed_auto": true,
+            "rollout": {
+              "version": "1.0.2",
+              "first": [
+                "ed25519:server"
+              ],
+              "share": 25,
+              "paused": true,
+              "stopped": {
+                "at": "2026-10-31T08:00:00Z",
+                "machine": "server",
+                "kind": "stuck"
+              }
+            },
+            "withdrawn": [
+              "1.0.3"
+            ]
           },
           "machines": [
             {
@@ -1111,7 +1153,11 @@
             }
           ],
           "available": 1,
-          "repair_supported": true
+          "repair_supported": true,
+          "rollouts": true,
+          "rollout_first": [
+            "server"
+          ]
         }
       },
       {
@@ -4418,6 +4464,51 @@
                 }
               }
             ],
+            "troubles": [
+              {
+                "id": 7,
+                "at": "2026-10-09T08:30:00Z",
+                "machine": "server",
+                "kind": "stuck",
+                "seconds": 75
+              },
+              {
+                "id": 8,
+                "at": "2026-10-09T08:30:00Z",
+                "machine": "laptop",
+                "kind": "near",
+                "near": {
+                  "bound": "log.waiting",
+                  "used": 93
+                }
+              },
+              {
+                "id": 9,
+                "at": "2026-10-09T08:30:00Z",
+                "kind": "outage",
+                "count": 12
+              },
+              {
+                "id": 10,
+                "at": "2026-10-09T08:30:00Z",
+                "kind": "rollout",
+                "version": "1.0.2"
+              },
+              {
+                "id": 11,
+                "at": "2026-10-09T08:30:00Z",
+                "machine": "server",
+                "kind": "damaged"
+              },
+              {
+                "id": 12,
+                "at": "2026-10-09T08:30:00Z",
+                "machine": "server",
+                "kind": "migration",
+                "count": 3
+              }
+            ],
+            "health": true,
             "renames": true,
             "managed": true,
             "roles": true,
@@ -15450,6 +15541,7 @@
                 "written": "server",
                 "online": true,
                 "since": "2026-10-04T12:06:07Z",
+                "strain": "busy",
                 "allows_direct": true,
                 "path": {
                   "kind": "direct",
@@ -15486,7 +15578,8 @@
               }
             ]
           }
-        ]
+        ],
+        "workbench": true
       },
       {
         "machine": "desktop",
@@ -15624,6 +15717,7 @@
                 "written": "server",
                 "online": true,
                 "since": "2026-10-04T12:06:07Z",
+                "strain": "busy",
                 "allows_direct": true,
                 "path": {
                   "kind": "direct",
@@ -15660,7 +15754,8 @@
               }
             ]
           }
-        ]
+        ],
+        "workbench": true
       },
       {
         "machine": "desktop",
@@ -15798,6 +15893,7 @@
                 "written": "server",
                 "online": true,
                 "since": "2026-10-04T12:06:07Z",
+                "strain": "busy",
                 "allows_direct": true,
                 "path": {
                   "kind": "hub",
@@ -15834,7 +15930,8 @@
               }
             ]
           }
-        ]
+        ],
+        "workbench": true
       },
       {
         "machine": "desktop",
@@ -15971,6 +16068,7 @@
                 "written": "server",
                 "online": true,
                 "since": "2026-10-04T12:06:07Z",
+                "strain": "busy",
                 "allows_direct": true,
                 "path": {
                   "kind": "direct",
@@ -16007,7 +16105,8 @@
               }
             ]
           }
-        ]
+        ],
+        "workbench": true
       },
       {
         "machine": "desktop",
@@ -16145,6 +16244,7 @@
                 "written": "server",
                 "online": true,
                 "since": "2026-10-04T12:06:07Z",
+                "strain": "busy",
                 "allows_direct": true,
                 "path": {
                   "kind": "direct",
@@ -16181,7 +16281,8 @@
               }
             ]
           }
-        ]
+        ],
+        "workbench": true
       },
       {
         "machine": "desktop",
@@ -16322,6 +16423,7 @@
                 "written": "server",
                 "online": true,
                 "since": "2026-10-04T12:06:07Z",
+                "strain": "busy",
                 "allows_direct": true,
                 "path": {
                   "kind": "direct",
@@ -16358,7 +16460,8 @@
               }
             ]
           }
-        ]
+        ],
+        "workbench": true
       },
       {
         "machine": "desktop",
@@ -16500,6 +16603,7 @@
                 "written": "server",
                 "online": true,
                 "since": "2026-10-04T12:06:07Z",
+                "strain": "busy",
                 "allows_direct": true,
                 "path": {
                   "kind": "direct",
@@ -16536,7 +16640,8 @@
               }
             ]
           }
-        ]
+        ],
+        "workbench": true
       },
       {
         "machine": "desktop",
@@ -16678,6 +16783,7 @@
                 "written": "server",
                 "online": true,
                 "since": "2026-10-04T12:06:07Z",
+                "strain": "busy",
                 "allows_direct": true,
                 "path": {
                   "kind": "direct",
@@ -16714,7 +16820,8 @@
               }
             ]
           }
-        ]
+        ],
+        "workbench": true
       },
       {
         "machine": "desktop",
@@ -16855,6 +16962,7 @@
                 "written": "server",
                 "online": true,
                 "since": "2026-10-04T12:06:07Z",
+                "strain": "busy",
                 "allows_direct": true,
                 "path": {
                   "kind": "direct",
@@ -16891,7 +16999,8 @@
               }
             ]
           }
-        ]
+        ],
+        "workbench": true
       },
       {
         "machine": "desktop",
@@ -17034,6 +17143,7 @@
                 "written": "server",
                 "online": true,
                 "since": "2026-10-04T12:06:07Z",
+                "strain": "busy",
                 "allows_direct": true,
                 "path": {
                   "kind": "direct",
@@ -17070,7 +17180,8 @@
               }
             ]
           }
-        ]
+        ],
+        "workbench": true
       },
       {
         "machine": "desktop",
@@ -19823,7 +19934,8 @@
                       "step": "model/list",
                       "elapsed_ms": 0
                     }
-                  ]
+                  ],
+                  "workbench": true
                 },
                 {
                   "agent": "claude",
@@ -19934,7 +20046,8 @@
                       "step": "model/list",
                       "elapsed_ms": 0
                     }
-                  ]
+                  ],
+                  "workbench": true
                 },
                 {
                   "agent": "codex",
@@ -20014,7 +20127,8 @@
                       "step": "model/list",
                       "elapsed_ms": 0
                     }
-                  ]
+                  ],
+                  "workbench": true
                 },
                 {
                   "agent": "claude",
@@ -20065,7 +20179,8 @@
                   },
                   "timings": []
                 }
-              ]
+              ],
+              "by_login": true
             }
           },
           {
@@ -20238,7 +20353,8 @@
                 "step": "model/list",
                 "elapsed_ms": 0
               }
-            ]
+            ],
+            "workbench": true
           },
           {
             "agent": "claude",
@@ -20349,7 +20465,8 @@
                 "step": "model/list",
                 "elapsed_ms": 0
               }
-            ]
+            ],
+            "workbench": true
           },
           {
             "agent": "codex",
@@ -20429,7 +20546,8 @@
                 "step": "model/list",
                 "elapsed_ms": 0
               }
-            ]
+            ],
+            "workbench": true
           },
           {
             "agent": "claude",
@@ -20480,7 +20598,8 @@
             },
             "timings": []
           }
-        ]
+        ],
+        "by_login": true
       },
       {
         "reply": "set"
@@ -20533,7 +20652,8 @@
         "agent": "claude",
         "dir": "/home/me/.claude-work",
         "into": true,
-        "take_back": true
+        "take_back": true,
+        "workbench": true
       },
       {
         "call": "change_agent_login",
@@ -20542,7 +20662,9 @@
         "dir": "C:/Users/me/.codex",
         "into": true,
         "raise_output_limit": true,
-        "take_back": true
+        "take_back": true,
+        "expected": "5f0c2a9e41d7b3c86e1f0a2b9c4d7e13",
+        "workbench": true
       },
       {
         "call": "read_agent_limits",
@@ -20701,7 +20823,8 @@
                       "kind": "changed",
                       "location": "C:/Users/me/.codex/AGENTS.md",
                       "reason": "the fastctx block differs from the recorded bytes"
-                    }
+                    },
+                    "workbench": true
                   }
                 ],
                 "candidates": [
@@ -20799,6 +20922,38 @@
                   }
                 ],
                 "elsewhere": []
+              },
+              "by_login": true,
+              "others": {
+                "antigravity": {
+                  "title": "Antigravity",
+                  "programs": [],
+                  "listed": [
+                    {
+                      "dir": "/home/me/.antigravity",
+                      "default": true,
+                      "found": "default",
+                      "identity": {
+                        "at": "2026-10-11T12:00:00Z",
+                        "who": {
+                          "kind": "known",
+                          "value": {
+                            "logged_in": true,
+                            "email": "me@example.com"
+                          }
+                        }
+                      },
+                      "limits": {
+                        "kind": "unavailable",
+                        "reason": "only the workbench reads limits"
+                      },
+                      "programs": [],
+                      "integration": "in"
+                    }
+                  ],
+                  "candidates": [],
+                  "elsewhere": []
+                }
               },
               "folders": [
                 {
@@ -21041,7 +21196,8 @@
                 "kind": "changed",
                 "location": "C:/Users/me/.codex/AGENTS.md",
                 "reason": "the fastctx block differs from the recorded bytes"
-              }
+              },
+              "workbench": true
             }
           ],
           "candidates": [
@@ -21139,6 +21295,38 @@
             }
           ],
           "elsewhere": []
+        },
+        "by_login": true,
+        "others": {
+          "antigravity": {
+            "title": "Antigravity",
+            "programs": [],
+            "listed": [
+              {
+                "dir": "/home/me/.antigravity",
+                "default": true,
+                "found": "default",
+                "identity": {
+                  "at": "2026-10-11T12:00:00Z",
+                  "who": {
+                    "kind": "known",
+                    "value": {
+                      "logged_in": true,
+                      "email": "me@example.com"
+                    }
+                  }
+                },
+                "limits": {
+                  "kind": "unavailable",
+                  "reason": "only the workbench reads limits"
+                },
+                "programs": [],
+                "integration": "in"
+              }
+            ],
+            "candidates": [],
+            "elsewhere": []
+          }
         },
         "folders": [
           {
@@ -21239,7 +21427,43 @@
         ],
         "commands": [
           "claude plugin marketplace add /home/me/.fastctx/world/claude-marketplace --scope user"
-        ]
+        ],
+        "cards": [
+          {
+            "change": "shell",
+            "files": [
+              {
+                "path": "/home/me/.claude-work/settings.json",
+                "how": "changed",
+                "lines": [
+                  {
+                    "kind": "hunk",
+                    "before": 3,
+                    "after": 3,
+                    "text": "",
+                    "ending": ""
+                  },
+                  {
+                    "kind": "context",
+                    "before": 3,
+                    "after": 3,
+                    "text": "  \"permissions\": {",
+                    "ending": "\n"
+                  },
+                  {
+                    "kind": "added",
+                    "before": null,
+                    "after": 4,
+                    "text": "    \"deny\": [\"Bash\"]",
+                    "ending": "\n"
+                  }
+                ],
+                "more": 12
+              }
+            ]
+          }
+        ],
+        "fingerprint": "0f3c9a1b2d4e5f60718293a4b5c6d7e8"
       },
       {
         "reply": "agent_change_preview",
@@ -21263,7 +21487,8 @@
             "location": "config.toml: features.shell_tool",
             "reason": "changed since apply; left untouched"
           }
-        ]
+        ],
+        "keeps_shell": true
       },
       {
         "reply": "agent_login_changed",
@@ -21315,7 +21540,8 @@
         "call": "change_agent_login",
         "agent": "claude",
         "dir": "/home/me/.claude-work",
-        "into": false
+        "into": false,
+        "workbench": false
       },
       {
         "call": "read_agent_limits",
@@ -21468,7 +21694,8 @@
                 "kind": "changed",
                 "location": "C:/Users/me/.codex/AGENTS.md",
                 "reason": "the fastctx block differs from the recorded bytes"
-              }
+              },
+              "workbench": true
             }
           ],
           "candidates": [
@@ -21566,6 +21793,38 @@
             }
           ],
           "elsewhere": []
+        },
+        "by_login": true,
+        "others": {
+          "antigravity": {
+            "title": "Antigravity",
+            "programs": [],
+            "listed": [
+              {
+                "dir": "/home/me/.antigravity",
+                "default": true,
+                "found": "default",
+                "identity": {
+                  "at": "2026-10-11T12:00:00Z",
+                  "who": {
+                    "kind": "known",
+                    "value": {
+                      "logged_in": true,
+                      "email": "me@example.com"
+                    }
+                  }
+                },
+                "limits": {
+                  "kind": "unavailable",
+                  "reason": "only the workbench reads limits"
+                },
+                "programs": [],
+                "integration": "in"
+              }
+            ],
+            "candidates": [],
+            "elsewhere": []
+          }
         },
         "folders": [
           {
@@ -21666,7 +21925,43 @@
         ],
         "commands": [
           "claude plugin marketplace add /home/me/.fastctx/world/claude-marketplace --scope user"
-        ]
+        ],
+        "cards": [
+          {
+            "change": "shell",
+            "files": [
+              {
+                "path": "/home/me/.claude-work/settings.json",
+                "how": "changed",
+                "lines": [
+                  {
+                    "kind": "hunk",
+                    "before": 3,
+                    "after": 3,
+                    "text": "",
+                    "ending": ""
+                  },
+                  {
+                    "kind": "context",
+                    "before": 3,
+                    "after": 3,
+                    "text": "  \"permissions\": {",
+                    "ending": "\n"
+                  },
+                  {
+                    "kind": "added",
+                    "before": null,
+                    "after": 4,
+                    "text": "    \"deny\": [\"Bash\"]",
+                    "ending": "\n"
+                  }
+                ],
+                "more": 12
+              }
+            ]
+          }
+        ],
+        "fingerprint": "0f3c9a1b2d4e5f60718293a4b5c6d7e8"
       },
       {
         "reply": "agent_login_changed",

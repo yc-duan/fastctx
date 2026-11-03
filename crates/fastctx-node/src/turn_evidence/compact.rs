@@ -47,7 +47,7 @@ async fn run(
     {
         return Ok(Compacted::Refused { reason: "The goal no longer requests this compaction.".into() });
     }
-    if crate::control_queue::busy(node, resident)? {
+    if crate::control_queue::busy(node, resident).await? {
         return Ok(Compacted::Refused { reason: "a turn is still running".into() });
     }
     let before = node.residents.last_compaction(resident);

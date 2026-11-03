@@ -248,6 +248,9 @@ impl ResidentHost for Host {
     fn call<'a>(&'a self, scope: &'a HubAccount, request: &'a HomeRequest) -> FutureResult<'a, HomeReply> {
         Box::pin(async move {
             match request {
+                HomeRequest::Conversation { .. } => {
+                    Err("a shared sentinel request must pass resource authorization first".into())
+                }
                 HomeRequest::Judge { request } => Ok(HomeReply::Judged {
                     judgment: self.judge(scope, request).await.unwrap_or_else(|reason| Judgment::NotJudged { reason }),
                 }),
@@ -296,7 +299,7 @@ impl ResidentHost for Host {
                         None => (None, None),
                     };
                     let standing = serde_json::to_string(&(&summary, next)).map_err(|error| error.to_string())?;
-                    let mut record = tokio::task::spawn_blocking(move || {
+                    let mut record = fastctx_platform::task::spawn_blocking(move || {
                         crate::record::read(&directory, held.as_deref(), &standing)
                     })
                     .await
@@ -312,7 +315,7 @@ impl ResidentHost for Host {
                 HomeRequest::Overview => {
                     let since = self.runtime.now() - OVERVIEW_DAYS * 86_400_000;
                     let scope_dir = self.scope_dir(scope);
-                    let watched = tokio::task::spawn_blocking(move || overview(&scope_dir, since))
+                    let watched = fastctx_platform::task::spawn_blocking(move || overview(&scope_dir, since))
                         .await
                         .map_err(|error| error.to_string())??;
                     Ok(HomeReply::Overview { watched })

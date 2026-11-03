@@ -1,4 +1,5 @@
-//! An isolated decoder's additional memory allowance, enforced by the OS.
+//! Memory: how much the machine has, how much this process holds, and an
+//! isolated decoder's additional allowance, enforced by the OS.
 
 use std::io;
 
@@ -26,6 +27,62 @@ pub fn physical() -> io::Result<u64> {
 #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 pub fn physical() -> io::Result<u64> {
     Err(io::Error::new(io::ErrorKind::Unsupported, "isolated image decoding is not implemented on this platform"))
+}
+
+/// The bytes of memory this process has resident now.
+#[cfg(windows)]
+pub fn resident() -> io::Result<u64> {
+    use windows_sys::Win32::System::ProcessStatus::{GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS};
+    use windows_sys::Win32::System::Threading::GetCurrentProcess;
+    let mut usage: PROCESS_MEMORY_COUNTERS = unsafe { std::mem::zeroed() };
+    if unsafe { GetProcessMemoryInfo(GetCurrentProcess(), &mut usage, std::mem::size_of_val(&usage) as u32) } == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(usage.WorkingSetSize as u64)
+}
+
+/// The bytes of memory this process has resident now.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+pub fn resident() -> io::Result<u64> {
+    let status = std::fs::read_to_string("/proc/self/statm")?;
+    let pages: u64 = status
+        .split_whitespace()
+        .nth(1)
+        .ok_or_else(|| io::Error::other("missing resident size"))?
+        .parse()
+        .map_err(io::Error::other)?;
+    let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+    if page < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    pages.checked_mul(page as u64).ok_or_else(|| io::Error::other("resident size overflow"))
+}
+
+/// The bytes of memory this process has resident now.
+#[cfg(target_os = "macos")]
+pub fn resident() -> io::Result<u64> {
+    // SAFETY: zeroed is a valid out-parameter for proc_pidinfo.
+    let mut task: libc::proc_taskinfo = unsafe { std::mem::zeroed() };
+    let size = std::mem::size_of::<libc::proc_taskinfo>() as libc::c_int;
+    // SAFETY: the buffer is exactly one proc_taskinfo.
+    let read = unsafe {
+        libc::proc_pidinfo(
+            std::process::id() as libc::c_int,
+            libc::PROC_PIDTASKINFO,
+            0,
+            (&mut task as *mut libc::proc_taskinfo).cast(),
+            size,
+        )
+    };
+    if read != size {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(task.pti_resident_size)
+}
+
+#[cfg(not(any(windows, target_os = "linux", target_os = "android", target_os = "macos")))]
+pub fn resident() -> io::Result<u64> {
+    Err(io::Error::new(io::ErrorKind::Unsupported, "this process's resident memory is not read on this platform"))
 }
 
 #[cfg(windows)]

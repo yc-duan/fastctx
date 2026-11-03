@@ -65,10 +65,21 @@ impl From<fastctx_net::web::Failure> for Failure {
 /// `cache` keeps ETags and their corresponding pages together across restarts.
 pub async fn look_after(running: Option<&str>, previous: &Looked, cache: Option<&Path>) -> Looked {
     let started = Instant::now();
-    let mut pages: Pages = cache
-        .and_then(|p| std::fs::read(p).ok())
-        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-        .unwrap_or_default();
+    // The conditional listing kept from the last look, read where reading
+    // may block.
+    let mut pages: Pages = match cache {
+        Some(path) => {
+            let path = path.to_path_buf();
+            fastctx_platform::task::spawn_blocking(move || {
+                std::fs::read(path).ok().and_then(|bytes| serde_json::from_slice(&bytes).ok())
+            })
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or_default()
+        }
+        None => Pages::default(),
+    };
     let mut last = None;
     let mut reached_at = previous.github_at;
     let work = async {
@@ -107,13 +118,17 @@ pub async fn look_after(running: Option<&str>, previous: &Looked, cache: Option<
         })),
     };
     if let Some(path) = cache {
-        let saved = (|| -> Result<(), String> {
+        let path = path.to_path_buf();
+        let saved = fastctx_platform::task::spawn_blocking(move || -> Result<(), String> {
             if let Some(parent) = path.parent() {
                 std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
             }
             let bytes = serde_json::to_vec(&pages).map_err(|e| e.to_string())?;
-            fastctx_platform::publish(path, &bytes, fastctx_platform::Permissions::Private).map_err(|e| e.to_string())
-        })();
+            fastctx_platform::publish(&path, &bytes, fastctx_platform::Permissions::Private).map_err(|e| e.to_string())
+        })
+        .await
+        .map_err(|error| error.to_string())
+        .and_then(|saved| saved);
         if let Err(why) = saved {
             eprintln!("keeping GitHub's conditional listing: {why}");
         }

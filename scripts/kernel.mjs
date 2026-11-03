@@ -3,7 +3,7 @@
 //   node scripts/kernel.mjs [TARGET]
 //   node scripts/kernel.mjs --tests TARGET DIR
 // `--tests` builds the release tests for TARGET into DIR (the bundled ripgrep, the node's lifetime,
-// job control and byte streams, and the network drill) from the very units the kernel is built of: with the kernel's
+// job control and byte streams, the network drill, and on Linux the hub's scale drill) from the very units the kernel is built of: with the kernel's
 // package among theirs every dependency gets the kernel's features, and the same environment keeps
 // the embedded notices, so only the tests themselves are compiled.
 import { execFileSync } from "node:child_process";
@@ -16,8 +16,10 @@ export const toolchain = "+1.92.0";
 // The release tests, by the package each belongs to.
 const tests = {
   offline: "fastctx-ripgrep", own_lifetime: "fastctx-node", job_lifecycle: "fastctx-hands", network_drill: "fastctx-hub",
-  placement_drill: "fastctx-hub",
+  placement_drill: "fastctx-hub", letter_drill: "fastctx-net",
 };
+// The hub's scale drill and the soak hold what they run with systemd, on Linux alone.
+const linuxTests = { hub_scale: "fastctx-hub", soak_drill: "fastctx-hub" };
 
 /** How a release kernel for `target` is compiled: its environment and its cargo. */
 function release(target, environment) {
@@ -67,19 +69,20 @@ export function buildKernel(target, environment = process.env) {
 /** The release tests for `target`, built after its kernel, copied into `out` by their names. */
 export function buildKernelTests(target, out, environment = process.env) {
   const { windows, cargo } = release(target, environment);
-  const printed = cargo(["-p", "fastctx", ...Object.entries(tests).flatMap(([name, owner]) => ["-p", owner, "--test", name]),
+  const wanted = target.includes("-linux-") ? { ...tests, ...linuxTests } : tests;
+  const printed = cargo(["-p", "fastctx", ...Object.entries(wanted).flatMap(([name, owner]) => ["-p", owner, "--test", name]),
     "--message-format=json-render-diagnostics"], { stdio: ["ignore", "pipe", "inherit"], encoding: "utf8", maxBuffer: 1 << 28 });
   mkdirSync(out, { recursive: true });
   const built = {};
   for (const line of printed.split("\n")) {
     if (!line.startsWith("{")) continue;
     const message = JSON.parse(line);
-    if (message.reason === "compiler-artifact" && message.executable && Object.hasOwn(tests, message.target.name)) {
+    if (message.reason === "compiler-artifact" && message.executable && Object.hasOwn(wanted, message.target.name)) {
       built[message.target.name] = join(out, message.target.name + (windows ? ".exe" : ""));
       copyFileSync(message.executable, built[message.target.name]);
     }
   }
-  for (const name of Object.keys(tests)) if (!built[name]) throw new Error(`the build left no ${name} test`);
+  for (const name of Object.keys(wanted)) if (!built[name]) throw new Error(`the build left no ${name} test`);
   return built;
 }
 

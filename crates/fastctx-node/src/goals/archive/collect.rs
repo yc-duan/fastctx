@@ -86,7 +86,7 @@ pub(crate) async fn for_resident(node: &Arc<Node>, account: &HubAccount, residen
 pub(crate) fn start(node: &Arc<Node>, account: &HubAccount) {
     for kind in [TEXT, HISTORY, WRITES] {
         let (node, account) = (node.clone(), account.clone());
-        tokio::spawn(async move {
+        fastctx_platform::task::spawn(async move {
             let mut again = crate::again::Again::default();
             let mut previous = None;
             loop {

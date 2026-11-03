@@ -7,7 +7,7 @@ use fastctx_types::{Address, ResidentId, ipc::Failure};
 
 pub(super) async fn retire(node: &Node, id: &ResidentId) -> Result<(), Failure> {
     let path = super::path(node, id);
-    let bytes = match std::fs::read(&path) {
+    let bytes = match fastctx_platform::disk::read(&path) {
         Ok(bytes) => bytes,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(error) => return Err(Failure::new(error.to_string())),
@@ -34,11 +34,11 @@ pub(super) async fn retire(node: &Node, id: &ResidentId) -> Result<(), Failure> 
         return Err(Failure::new("legacy plan retained: its contents are not confirmed in the hub's versions"));
     }
     // Recheck after the network read; never remove a file changed while the
-    // hub was being consulted (2026-10-30, legacy assisted-plan migration).
-    if std::fs::read(&path).map_err(|error| Failure::new(error.to_string()))? != bytes {
+    // hub was being consulted.
+    if fastctx_platform::disk::read(&path).map_err(|error| Failure::new(error.to_string()))? != bytes {
         return Err(Failure::new("legacy plan changed while checking its hub version; retained"));
     }
-    std::fs::remove_file(&path).map_err(|error| Failure::new(error.to_string()))?;
+    fastctx_platform::disk::remove_file(&path).map_err(|error| Failure::new(error.to_string()))?;
     node.log.line(format_args!("retired the legacy plan file of {id}; its contents are on the hub"));
     Ok(())
 }

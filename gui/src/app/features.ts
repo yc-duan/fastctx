@@ -1,6 +1,6 @@
 // What the workbench brings that has settings of its own (`world-layers.md`):
-// model collaboration, reached from the kernels, and project memory and the
-// sentinels, reached from Settings. Each is a page: off, the film that tells
+// model collaboration, reached from the kernels, and the sentinels, reached
+// from Settings. Each is a page: off, the film that tells
 // what it does, playing on a loop, and the button that turns it on under
 // it; turned on, a page over the window says it is on and what the
 // interface gained. On, its page shows a still of the film, to be watched
@@ -12,9 +12,7 @@
 // GPT (callers), which GPTs they may hand it to (callees: a Codex login
 // each, its model and effort, the name and the line the calling model
 // chooses by, whether it may use the screen), the text the callers are given
-// and the rules every callee is given. Project memory: for the whole account, a
-// project's journal and decisions shown with it and given to its
-// conversations; it has no settings.
+// and the rules every callee is given.
 
 import { EffortSlider, effortLabel } from "../conversation/effort-slider";
 import { glyph } from "../conversation/glyphs";
@@ -22,7 +20,7 @@ import { escape } from "../conversation/prose";
 import type { Login } from "../world/accounts";
 import { loginsOf } from "../world/accounts";
 import type { AgentFacts, AgentModel, WorldAgents } from "../world/agents";
-import { readCollab, sameAgentLogin, writeCollab, type AgentLogin, type Collab, type CollabView } from "../world/collab";
+import { AT_ONCE_DEFAULT, readCollab, sameAgentLogin, writeCollab, type AgentLogin, type Collab, type CollabView } from "../world/collab";
 import { agentName, titleOf } from "../world/names";
 import { accountOf, homeChoice, homeLabel, homesOf, listed, usableHome, type HomeWords } from "./agent-homes";
 import type { FeaturesWords } from "./features-words";
@@ -31,12 +29,12 @@ import { ActsMenu } from "./acts-menu";
 import type { Confirm } from "./confirm";
 import { link, type Feature } from "./places";
 import { detailOf } from "./problem";
+import { inNoNetwork } from "./reach";
 import type { Page } from "./shell";
 import { effect } from "./signals";
 import { residentsOf, type Store } from "./store";
 import { leave } from "./leave";
 import { collaboration } from "../film/collaboration";
-import { memoryFilm } from "../film/memory";
 import { sentinelFilm } from "../film/sentinel";
 import { SentinelForm } from "./sentinel-form";
 import type { SentinelSeam, SentinelSettingsView } from "../world/sentinels";
@@ -47,6 +45,9 @@ import type { Built, Shape } from "../film/reel";
  *  only as `collab.rs` lets it. */
 const COLLABORATION_READY = true;
 import { watchFilm } from "../film/theater";
+
+/** The limits a callee's slider steps through, before no limit. */
+const AT_ONCE_STEPS = [1, 2, 3, 4, 6, 8, 12, 16];
 
 /** The menu a callee's choices open in, one for every page. */
 let shared: ActsMenu | null = null;
@@ -62,9 +63,6 @@ export interface FeaturesOptions {
   agents(): Promise<WorldAgents>;
   /** Asks before a feature is turned off. */
   confirm: Confirm;
-  /** Project memory's switch, for the account. */
-  /** Project memory, on or off for a login's account; null lets the World pick. */
-  memory: { enabled(hub: string | null, account: string | null): Promise<boolean>; set(on: boolean, hub: string | null, account: string | null): Promise<void> };
   /** The sentinels' settings, and the machines they may live on. */
   sentinels: { seam: SentinelSeam; machines(hub: string, account: string): { name: string; form: "desktop" | "laptop" | "server" }[] };
 }
@@ -83,6 +81,12 @@ export class FeaturesPage implements Page {
   private readonly body: HTMLElement;
   private stop: () => void = () => {};
   private account: Login | null = null;
+  /** Whether this computer is in no network: it asks no colleagues, and
+   *  its page offers the ways into one instead of settings. */
+  private alone = false;
+  /** Whether the World was seen once, so that where the settings are kept
+   *  is known. */
+  private placed = false;
   private view: CollabView | null = null;
   private draft: Collab | null = null;
   private problem: { text: string; detail: string } | null = null;
@@ -98,7 +102,7 @@ export class FeaturesPage implements Page {
 
   constructor(private readonly options: FeaturesOptions) {
     const { words, feature } = options;
-    this.title = feature === "memory" ? words.memory.name : feature === "sentinels" ? words.sentinels.name : words.collaboration.name;
+    this.title = feature === "sentinels" ? words.sentinels.name : words.collaboration.name;
     this.element = document.createElement("div");
     this.element.className = "features-page";
     this.element.innerHTML = `${options.head(`<h1 class="page-title">${escape(this.title)}</h1>`)}<div class="features-body scroller"></div>`;
@@ -106,8 +110,7 @@ export class FeaturesPage implements Page {
     this.body.addEventListener("click", (event) => {
       if ((event.target as HTMLElement).closest("[data-act='replay']")) this.replay();
     });
-    if (feature === "memory") this.memory();
-    else if (feature === "sentinels") this.sentinels();
+    if (feature === "sentinels") this.sentinels();
     else this.collaboration();
   }
 
@@ -221,51 +224,6 @@ export class FeaturesPage implements Page {
     confirm.ask({ title: words.offTitle(name), what, go: words.turnOff, gentle: true, act: off, done });
   }
 
-  /** Project memory: its film and its switch, for the account; on, a still
-   *  of the film waits at the top. */
-  private memory(): void {
-    const { words } = this.options;
-    const login = this.login();
-    const memory = this.options.memory;
-    const seam = {
-      enabled: () => memory.enabled(login?.hub ?? null, login?.account ?? null),
-      set: (on: boolean) => memory.set(on, login?.hub ?? null, login?.account ?? null),
-    };
-    const make = (shape: Shape) => memoryFilm(words.memory.film, shape);
-    const label = words.memory.name;
-    this.replayFilm = () => this.watch(make, label);
-    const draw = (on: boolean) => {
-      this.dropFilms();
-      this.body.classList.toggle("features-film", !on);
-      this.body.classList.toggle("features-on", on);
-      this.body.innerHTML = on
-        ? this.onTop(words.memory.after, true) + this.offWay(label)
-        : `<div class="feature-intro"><div class="feature-film"></div><button class="sheet-go feature-turn" type="button" data-turn="1">${escape(words.turnOn)}</button></div>`;
-      this.film(this.body.querySelector(on ? ".feature-still" : ".feature-film"), make, label, on);
-    };
-    seam.enabled().then(draw, () => draw(false));
-    this.body.addEventListener("click", (event) => {
-      const target = event.target as HTMLElement;
-      if (target.closest("[data-act='turn-off']")) {
-        this.askOff(label, words.memory.offWhat, () => seam.set(false), () => draw(false));
-        return;
-      }
-      const turn = target.closest<HTMLButtonElement>("[data-turn]");
-      if (!turn || turn.disabled) return;
-      turn.disabled = true;
-      void seam.set(true).then(
-        () => {
-          draw(true);
-          this.celebrate(label, words.memory.after, make);
-        },
-        (error: unknown) => {
-          turn.disabled = false;
-          turn.title = detailOf(error);
-        },
-      );
-    });
-  }
-
   /** The login the account's settings are read and kept for. */
   private login(): { hub: string; account: string } | null {
     const [first] = loginsOf(this.options.store.world.peek()?.accounts);
@@ -353,13 +311,12 @@ export class FeaturesPage implements Page {
       this.film(this.body.querySelector(".feature-film"), make, words.collaboration.name);
       return;
     }
-    const logins = loginsOf(store.world.peek()?.accounts);
-    this.account = logins[0] ?? null;
+    this.place();
     this.draw();
-    void this.load();
     void this.ask();
     this.stop = effect(() => {
       store.world.get();
+      if (this.place()) this.draw();
       this.drawNow();
     });
     this.body.addEventListener("click", (event) => this.click(event));
@@ -367,18 +324,41 @@ export class FeaturesPage implements Page {
     this.body.addEventListener("change", (event) => this.input(event));
   }
 
-  /** The account's settings, or in no network this computer's own. */
+  /** Where the settings are kept, as the World now says: the first
+   *  account's, read again when that changes; none in no network. Whether
+   *  it changed. */
+  private place(): boolean {
+    const world = this.options.store.world.peek();
+    if (!world) return false;
+    const alone = inNoNetwork(world);
+    const account = alone ? null : (loginsOf(world.accounts)[0] ?? null);
+    if (this.placed && alone === this.alone && account?.hub === this.account?.hub && account?.account === this.account?.account) return false;
+    this.placed = true;
+    this.alone = alone;
+    this.account = account;
+    this.view = null;
+    this.draft = null;
+    this.problem = null;
+    this.saved = false;
+    if (!alone && account) void this.load();
+    return true;
+  }
+
+  /** The account's settings. */
   private async load(): Promise<void> {
     const account = this.account;
+    let view: CollabView | null = null;
+    let problem: { text: string; detail: string } | null = null;
     try {
-      this.view = await readCollab(account?.hubName ?? null, account?.account ?? null);
-      this.draft = structuredClone(this.view.collab);
-      this.problem = null;
+      view = await readCollab(account?.hubName ?? null, account?.account ?? null);
     } catch (error) {
-      this.view = null;
-      this.draft = null;
-      this.problem = { text: this.options.words.unavailable, detail: detailOf(error) };
+      problem = { text: this.options.words.unavailable, detail: detailOf(error) };
     }
+    // Read for an account no longer the one shown: the newer read draws.
+    if (account !== this.account) return;
+    this.view = view;
+    this.draft = view ? structuredClone(view.collab) : null;
+    this.problem = problem;
     this.draw();
   }
 
@@ -592,8 +572,15 @@ export class FeaturesPage implements Page {
     this.replayFilm?.();
   }
 
+  /** In no network, where the switch would be: that it needs one, and the
+   *  ways into one, as the machines' page offers them. */
+  private ways(): string {
+    const { words } = this.options;
+    return `<div class="feature-ways"><p class="feature-note">${escape(words.alone)}</p><div class="feature-way-links"><a class="sheet-go" href="${link({ kind: "login", way: "new" })}">${escape(words.newNetwork)}</a><a class="text-button quiet-button" href="${link({ kind: "login", way: "join" })}">${escape(words.joinNetwork)}</a></div></div>`;
+  }
+
   /** What model collaboration gives the user: a ready text that teaches
-   *  the calling model to hand a part over in plain words, and nothing to
+   *  the calling model how to ask for what it wants, and nothing to
    *  operate by hand. */
   private gives(): string {
     return `<ul class="feature-gives">${this.options.words.collaboration.gives
@@ -606,14 +593,18 @@ export class FeaturesPage implements Page {
     const collab = this.draft;
     const on = !!collab?.on;
     const gives = this.gives();
-    const turn = !collab
-        ? this.problem
-          ? `<p class="feature-note feature-trouble" title="${escape(this.problem.detail)}">${escape(this.problem.text)}<button class="text-button quiet-button" type="button" data-act="retry">${glyph("regenerate", 14)}<span>${escape(words.retry)}</span></button></p>`
-          : `<p class="feature-note">${escape(words.reading)}</p>`
-        : on
-          ? ""
-          : `<button class="sheet-go feature-turn" type="button" data-act="turn" data-on="1">${escape(words.turnOn)}</button>${
-              this.problem ? `<p class="feature-note feature-trouble" title="${escape(this.problem.detail)}">${escape(this.problem.text)}</p>` : ""}`;
+    const turn = this.alone
+      ? this.ways()
+      : this.placed && !this.account
+        ? `<p class="feature-note">${escape(words.noAccount)}</p>`
+        : !collab
+          ? this.problem
+            ? `<p class="feature-note feature-trouble" title="${escape(this.problem.detail)}">${escape(this.problem.text)}<button class="text-button quiet-button" type="button" data-act="retry">${glyph("regenerate", 14)}<span>${escape(words.retry)}</span></button></p>`
+            : `<p class="feature-note">${escape(words.reading)}</p>`
+          : on
+            ? ""
+            : `<button class="sheet-go feature-turn" type="button" data-act="turn" data-on="1">${escape(words.turnOn)}</button>${
+                this.problem ? `<p class="feature-note feature-trouble" title="${escape(this.problem.detail)}">${escape(this.problem.text)}</p>` : ""}`;
     const top = on ? this.onTop(words.collaboration.after) : `<div class="feature-intro with-gives"><div class="feature-film"></div>${gives}${turn}</div>`;
     // The film keeps playing while the page around it is drawn again.
     const playing = !on ? this.body.querySelector(".feature-intro .film") : null;
@@ -655,6 +646,7 @@ export class FeaturesPage implements Page {
           <div class="callee-field"><span>${escape(words.login)}</span>${pick("login", index, at ? at.known.label : `${callee.login.machine} ${callee.login.home ?? ""}`)}</div>
           <div class="callee-field"><span>${escape(words.model)}</span>${pick("model", index, models.find((model) => model.model === callee.model)?.display_name ?? (callee.model || words.modelDefault))}</div>
           <div class="callee-field"><span>${escape(words.effort)}</span><div class="callee-effort" data-index="${index}"></div></div>
+          <div class="callee-field"><span title="${escape(words.atOnceSaid)}">${escape(words.atOnce)}</span><div class="callee-at-once" data-index="${index}"></div></div>
           <button class="callee-switch" type="button" role="switch" aria-checked="${callee.screen}" data-act="screen" data-index="${index}" title="${escape(words.screenSaid)}"><span>${escape(words.screen)}</span><span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span></button>
         </li>`;
       })
@@ -687,6 +679,23 @@ export class FeaturesPage implements Page {
         this.drawSave();
       });
       slider.set((model?.reasoning_efforts ?? []).map((one) => ({ value: one.effort, label: effortLabel(one.effort, english) })), callee.effort ?? model?.default_reasoning_effort ?? null);
+      holder.append(slider.element);
+      this.sliders.push(slider);
+    }
+    // How many at once, from one up, and none at the end: a number set
+    // elsewhere that is no step here stands among them in its place.
+    for (const holder of this.body.querySelectorAll<HTMLElement>(".callee-at-once")) {
+      const callee = this.draft?.callees[Number(holder.dataset.index)];
+      if (!callee) continue;
+      const slider = new EffortSlider(words.atOnce, (value) => {
+        callee.at_once = value === words.noLimit ? "any" : { most: Number(value) };
+        this.saved = false;
+        this.drawSave();
+      });
+      const most = callee.at_once === "any" ? null : (callee.at_once?.most ?? AT_ONCE_DEFAULT);
+      const counts = [...new Set([...AT_ONCE_STEPS, ...(most === null ? [] : [most])])].sort((a, b) => a - b);
+      const steps = [...counts.map((count) => ({ value: String(count), label: String(count) })), { value: words.noLimit, label: words.noLimit }];
+      slider.set(steps, most === null ? words.noLimit : String(most));
       holder.append(slider.element);
       this.sliders.push(slider);
     }

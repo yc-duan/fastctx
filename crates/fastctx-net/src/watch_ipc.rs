@@ -6,7 +6,7 @@ mod reader;
 mod writer;
 pub use crate::watch_mux::{MAX_PACKET, QUANTUM, SUBSCRIPTIONS};
 pub use reader::{Reader, Received};
-pub use writer::{Output, cancel, send, write};
+pub use writer::{Output, cancel, send, send_sized, write};
 
 use crate::reassembly::{Buffer, Reservation};
 use fastctx_platform::ipc::{FrameReader, FrameWriter};

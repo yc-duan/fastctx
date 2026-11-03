@@ -182,6 +182,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "arc-swap"
+version = "1.9.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "380962b3d93b99642e50b9febf72c071e97e8b32d86eae9cf4ef582bb960ae6e"
+dependencies = [
+ "rustversion",
+]
+
+[[package]]
 name = "argon2"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1859,7 +1868,7 @@ checksum = "c6e8948ce679d00a02a94739ea185595dca7118ed04feb991127e443bd3d761f"
 
 [[package]]
 name = "fastctx-client"
-version = "1.0.1-beta.13"
+version = "1.0.1-beta.14"
 dependencies = [
  "base64 0.22.1",
  "fastctx-net",
@@ -1877,7 +1886,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-gui"
-version = "1.0.1-beta.13"
+version = "1.0.1-beta.14"
 dependencies = [
  "ashpd",
  "base64 0.22.1",
@@ -1916,7 +1925,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-gui-command"
-version = "1.0.1-beta.13"
+version = "1.0.1-beta.14"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1925,7 +1934,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-hands"
-version = "1.0.1-beta.13"
+version = "1.0.1-beta.14"
 dependencies = [
  "aho-corasick",
  "base64 0.22.1",
@@ -1954,7 +1963,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-hosts"
-version = "1.0.1-beta.13"
+version = "1.0.1-beta.14"
 dependencies = [
  "base64 0.22.1",
  "fastctx-platform",
@@ -1977,9 +1986,10 @@ dependencies = [
 
 [[package]]
 name = "fastctx-hub"
-version = "1.0.1-beta.13"
+version = "1.0.1-beta.14"
 dependencies = [
  "anyhow",
+ "arc-swap",
  "bytes",
  "fastctx-net",
  "fastctx-platform",
@@ -2008,7 +2018,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-install"
-version = "1.0.1-beta.13"
+version = "1.0.1-beta.14"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2019,6 +2029,7 @@ dependencies = [
  "fastctx-types",
  "fastctx-update",
  "getrandom 0.3.4",
+ "imara-diff",
  "jiff",
  "jsonc-parser",
  "libc",
@@ -2028,6 +2039,7 @@ dependencies = [
  "semver",
  "serde",
  "serde_json",
+ "serde_yaml_ng",
  "sha2 0.10.9",
  "tempfile",
  "thiserror 2.0.21",
@@ -2044,7 +2056,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-net"
-version = "1.0.1-beta.13"
+version = "1.0.1-beta.14"
 dependencies = [
  "argon2 0.5.3",
  "base64 0.22.1",
@@ -2084,7 +2096,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-office"
-version = "1.0.1-beta.13"
+version = "1.0.1-beta.14"
 dependencies = [
  "anyhow",
  "num-bigint 0.4.8",
@@ -2096,7 +2108,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-pdf"
-version = "1.0.1-beta.13"
+version = "1.0.1-beta.14"
 dependencies = [
  "fontdb",
  "hayro",
@@ -2112,10 +2124,11 @@ dependencies = [
 
 [[package]]
 name = "fastctx-platform"
-version = "1.0.1-beta.13"
+version = "1.0.1-beta.14"
 dependencies = [
  "async-io",
  "fastctx-types",
+ "jiff",
  "libc",
  "tokio",
  "tokio-util",
@@ -2125,7 +2138,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-ripgrep"
-version = "1.0.1-beta.13"
+version = "1.0.1-beta.14"
 dependencies = [
  "fastctx-platform",
  "flate2",
@@ -2135,7 +2148,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-storage"
-version = "1.0.1-beta.13"
+version = "1.0.1-beta.14"
 dependencies = [
  "fastctx-platform",
  "rusqlite",
@@ -2144,7 +2157,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-types"
-version = "1.0.1-beta.13"
+version = "1.0.1-beta.14"
 dependencies = [
  "base64 0.22.1",
  "icu_casemap",
@@ -2161,7 +2174,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-update"
-version = "1.0.1-beta.13"
+version = "1.0.1-beta.14"
 dependencies = [
  "base64 0.22.1",
  "fastctx-net",
@@ -6922,7 +6935,7 @@ dependencies = [
 
 [[package]]
 name = "tauri-plugin-world-pages"
-version = "1.0.1-beta.13"
+version = "1.0.1-beta.14"
 dependencies = [
  "serde",
  "serde_json",

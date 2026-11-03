@@ -41,7 +41,7 @@ fn wake(parent: &ProcessIdentity, session: &Path, root: &Path) -> io::Result<()>
     let inbox = session.join("inbox");
     let controls = session.join("control").join("inbox");
     for directory in [&inbox, &controls] {
-        std::fs::create_dir_all(directory)?;
+        fastctx_platform::disk::create_dir_all(directory)?;
     }
     let (sender, receiver) = mpsc::channel();
     let changes = sender.clone();
@@ -87,7 +87,7 @@ fn wake(parent: &ProcessIdentity, session: &Path, root: &Path) -> io::Result<()>
     std::thread::spawn(move || {
         let _ = sender.send(Woken::Exited(fastctx_platform::host_process::wait_for_exit(&parent)));
     });
-    if root.join("uninstalled.json").try_exists()? {
+    if fastctx_platform::disk::exists(root.join("uninstalled.json"))? {
         return say("removed");
     }
     let mut out = io::stdout();
@@ -108,7 +108,7 @@ fn wake(parent: &ProcessIdentity, session: &Path, root: &Path) -> io::Result<()>
                 },
             }
         }
-        if root.join("uninstalled.json").try_exists()? {
+        if fastctx_platform::disk::exists(root.join("uninstalled.json"))? {
             return say("removed");
         }
         writeln!(out, "look")?;
@@ -311,7 +311,7 @@ fn wait(directory: &Path, question: Question) -> io::Result<Answer> {
     // A hook can fire while MCP startup still precedes the mod's session
     // registration. Waiting then could block the very registration that
     // would let the node route the request to a resident.
-    if !directory.parent().is_some_and(|session| session.join("resident.json").exists()) {
+    if !directory.parent().is_some_and(|session| fastctx_platform::disk::is_there(session.join("resident.json"))) {
         return Ok(pass("the World has not paired this Claude session with a resident yet"));
     }
     let world = directory.ancestors().nth(3).ok_or_else(|| io::Error::other("invalid Claude control directory"))?;
@@ -367,7 +367,7 @@ fn wait(directory: &Path, question: Question) -> io::Result<Answer> {
 
 fn invalidated(directory: &Path, request: &Path, question: &Question) -> io::Result<Option<String>> {
     if control::host(directory)?.is_some_and(|host| host != question.host)
-        || directory.join("closed").join(format!("{}.json", question.host.instance)).exists()
+        || fastctx_platform::disk::is_there(directory.join("closed").join(format!("{}.json", question.host.instance)))
     {
         return Ok(Some("the Claude activation ended".into()));
     }

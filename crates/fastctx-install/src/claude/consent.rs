@@ -12,7 +12,7 @@
 use jsonc_parser::common::Ranged;
 use serde::{Deserialize, Serialize};
 
-use super::jsonc::{Document, Insertion};
+use crate::jsonc::{Document, Insertion};
 
 const KEY: &str = "skipDangerousModePermissionPrompt";
 

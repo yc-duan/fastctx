@@ -22,7 +22,7 @@ pub(crate) fn begin(store: &mut Store, project: Project) -> Result<(), String> {
         .iter()
         .filter(|member| member.is_machine() && directory.member_in_project(&member.name, &project.town))
     {
-        if !store.letters.get(&member.name).is_some_and(|said| said.conversation_deletions) {
+        if !store.metadata().letters.get(&member.name).is_some_and(|said| said.conversation_deletions) {
             return Err(format!("update {} before deleting a project with conversations there", member.name));
         }
     }
@@ -36,8 +36,11 @@ pub(crate) fn begin(store: &mut Store, project: Project) -> Result<(), String> {
     Ok(())
 }
 
-pub(crate) fn for_member(store: &Store, name: &MachineName) -> Vec<Project> {
-    let Some(member) = store.book.directory.member(name) else { return Vec::new() };
+pub(crate) fn for_member(store: &crate::store::Snapshot, name: &MachineName) -> Vec<Project> {
+    if store.book.project_deletions.is_empty() {
+        return Vec::new();
+    }
+    let Some(member) = store.indexed().member(name) else { return Vec::new() };
     store
         .book
         .project_deletions
@@ -49,7 +52,7 @@ pub(crate) fn for_member(store: &Store, name: &MachineName) -> Vec<Project> {
 
 pub(crate) fn finished(hub: &Hub, member: &MachineName, town: &TownId) -> Result<Told, String> {
     {
-        let mut store = hub.store();
+        let mut store = hub.edit_store();
         let key =
             store.book.directory.member(member).ok_or_else(|| "the member is no longer on the hub".to_string())?.key;
         if let Some(pending) = store.book.project_deletions.iter_mut().find(|pending| pending.project.town == *town) {

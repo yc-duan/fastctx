@@ -1,16 +1,15 @@
 //! A scan of this machine for its agents, only when the user asks
 //! (`world-agent-logins.md`, 世界怎样找到它们): the usual places, the
-//! agents' programs where their installers put them and each login there
-//! asked who it is, which takes seconds; then every folder the user chose
-//! is searched again in the background (`folders`). With `stop`, those
-//! searches stop.
+//! agents' programs where their installers put them and who each login
+//! there is, as its files say, which takes seconds; then every folder the
+//! user chose is searched again in the background (`folders`). With
+//! `stop`, those searches stop.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
 use fastctx_hosts::inventory::{self, traces};
-use fastctx_types::agents::Fact;
 use fastctx_types::ipc::Failure;
 use fastctx_types::logins::{Found, MachineLogins, Scan, Stage};
 use jiff::Timestamp;
@@ -21,10 +20,11 @@ use crate::Node;
 
 /// Scans this machine, answering once the usual places are done while the
 /// chosen folders are searched; with `stop`, stops those searches. Asked
-/// while a scan runs, it answers how that one is going. It asks each login
-/// who it is, never its limits: those come as its sessions work, or when
-/// the user asks for them (`limits::read`). The scan goes on to its end
-/// even when whoever asked for it is gone.
+/// while a scan runs, it answers how that one is going. It reads who each
+/// login is (`identify::asked`), never its limits: those come as its
+/// sessions work on the workbench, or when the user asks for them there
+/// (`limits::read`). The scan goes on to its end even when whoever asked
+/// for it is gone.
 pub(crate) async fn scan(node: &Arc<Node>, stop: bool) -> Result<MachineLogins, Failure> {
     if stop {
         super::folders::stop_all(node);
@@ -34,7 +34,7 @@ pub(crate) async fn scan(node: &Arc<Node>, stop: bool) -> Result<MachineLogins, 
         return super::here(node).await;
     }
     let scanning = node.clone();
-    let scanned = tokio::spawn(async move {
+    let scanned = fastctx_platform::task::spawn(async move {
         let node = scanning;
         let scanned = scan_once(&node).await;
         // What the scan finds is listed as this fastctx writes it.
@@ -76,16 +76,23 @@ async fn blocking<T: Send + 'static>(
     work: impl FnOnce(&Node) -> Result<T, Failure> + Send + 'static,
 ) -> Result<T, Failure> {
     let node = node.clone();
-    tokio::task::spawn_blocking(move || work(&node)).await.map_err(|error| Failure::new(error.to_string()))?
+    fastctx_platform::task::spawn_blocking(move || work(&node))
+        .await
+        .map_err(|error| Failure::new(error.to_string()))?
 }
 
 /// The usual places: each agent's default login, the directories directly
 /// in the user's home named and kept like the agent's, those the user took
-/// up and those the World's tools are in, each asked who it is; and the
+/// up and those the World's tools are in, with who each one is; and the
 /// agents' programs.
 async fn usual(node: &Arc<Node>, started_at: Timestamp) -> Result<(), Failure> {
-    let (context, programs, candidates) = blocking(node, move |node| {
+    let (context, programs, candidates, others) = blocking(node, move |node| {
         let context = Context::of(node)?;
+        // The other agents' homes, and who their files say is logged in.
+        let others: Vec<(&'static str, Vec<KeptLogin>)> = fastctx_install::agents::all()
+            .iter()
+            .map(|agent| (agent.name, super::others::scanned(&context, agent)))
+            .collect();
         kept::change(node, |kept| {
             kept.scan = Some(Scan { started_at, usual: Stage::Running, unreadable: Vec::new() });
         })
@@ -111,29 +118,21 @@ async fn usual(node: &Arc<Node>, started_at: Timestamp) -> Result<(), Failure> {
             }
             candidates.push((agent, dirs));
         }
-        Ok((context, programs, candidates))
+        Ok((context, programs, candidates, others))
     })
     .await?;
-    // Each login is asked at once: a slow one does not hold the others.
+    // Each login at once: a slow one, on the workbench, does not hold the
+    // others.
     let mut asking = Vec::new();
     for (agent, dirs) in candidates {
         for (dir, found) in dirs {
             let node = node.clone();
-            let claude_programs = programs.claude.clone();
+            let agent_programs = if agent == "codex" { programs.codex.clone() } else { programs.claude.clone() };
+            let env = context.env.clone();
             let default = crate::homes::same_dir(&dir, context.default_of(agent));
             let signed = super::sign_in::now(&context, agent, &dir);
-            asking.push(tokio::spawn(async move {
-                let asked = if agent == "codex" {
-                    identify::codex(&node, &dir, false).await
-                } else {
-                    let path = dir.clone();
-                    match tokio::task::spawn_blocking(move || identify::claude(&path, default, &claude_programs)).await
-                    {
-                        Ok(Ok(asked)) => asked,
-                        Ok(Err(failure)) => failed(failure.message),
-                        Err(error) => failed(error.to_string()),
-                    }
-                };
+            asking.push(fastctx_platform::task::spawn(async move {
+                let asked = identify::asked(&node, agent, &dir, default, agent_programs, env).await;
                 (agent, dir, found, asked, signed)
             }));
         }
@@ -146,10 +145,15 @@ async fn usual(node: &Arc<Node>, started_at: Timestamp) -> Result<(), Failure> {
         kept::change(node, |kept| {
             kept.codex.programs = programs.codex;
             kept.claude.programs = programs.claude;
-            kept.codex.logins.clear();
-            kept.claude.logins.clear();
+            let codex = std::mem::take(&mut kept.codex.logins);
+            let claude = std::mem::take(&mut kept.claude.logins);
             for (agent, dir, found, asked, signed) in answers {
-                kept.of_mut(agent).logins.push(KeptLogin::asked(dir, found, asked, signed));
+                let before = if agent == "codex" { &codex } else { &claude };
+                let before = before.iter().find(|login| crate::homes::same_dir(&login.dir, &dir));
+                kept.of_mut(agent).logins.push(KeptLogin::asked(dir, found, asked, signed, before));
+            }
+            for (agent, logins) in others {
+                kept.of_mut(agent).logins = logins;
             }
             if let Some(scan) = &mut kept.scan
                 && scan.started_at == started_at
@@ -163,19 +167,10 @@ async fn usual(node: &Arc<Node>, started_at: Timestamp) -> Result<(), Failure> {
     .await
 }
 
-fn failed(reason: String) -> identify::Asked {
-    identify::Asked {
-        identified: fastctx_types::logins::Identified { at: Timestamp::now(), who: Fact::failed(reason) },
-        launcher: None,
-        models: Vec::new(),
-        limits: None,
-    }
-}
-
 /// Whether `dir`, found in the user's home before, may be there still: it
 /// is a directory, or it cannot be looked at now, which `unreadable` is told.
 fn still_there(dir: &Path, unreadable: &mut Vec<String>) -> bool {
-    match std::fs::metadata(dir) {
+    match fastctx_platform::disk::metadata(dir) {
         Ok(metadata) => metadata.is_dir(),
         Err(error) if matches!(error.kind(), std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory) => false,
         Err(error) => {
@@ -189,7 +184,7 @@ fn still_there(dir: &Path, unreadable: &mut Vec<String>) -> bool {
 /// by the usual rule, by the names of their entries.
 fn in_home(home: &Path, agent: &str, unreadable: &mut Vec<String>) -> Vec<PathBuf> {
     let mut found = Vec::new();
-    let entries = match std::fs::read_dir(home) {
+    let entries = match fastctx_platform::disk::read_dir(home) {
         Ok(entries) => entries,
         Err(error) => {
             unreadable.push(format!("{}: {error}", home.display()));
@@ -201,7 +196,7 @@ fn in_home(home: &Path, agent: &str, unreadable: &mut Vec<String>) -> Vec<PathBu
         if !entry.file_type().is_ok_and(|kind| kind.is_dir()) {
             continue;
         }
-        let names = match std::fs::read_dir(entry.path()) {
+        let names = match fastctx_platform::disk::read_dir(entry.path()) {
             Ok(names) => names
                 .flatten()
                 .map(|inner| {

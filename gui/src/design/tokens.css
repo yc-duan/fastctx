@@ -59,10 +59,6 @@
      the size. Gutters close in on a phone and open out on a wide screen. */
   --column: calc(var(--body-size) * 48);
   --gutter: clamp(16px, 4.5vw, 36px);
-  /* The panel beside a conversation, opened: its plan, goal and who works
-     with it; a width the user dragged it to stands in its place on the
-     conversation's page (`side/mount.ts`). */
-  --side-width: clamp(340px, 30vw, 440px);
 
   /* Space, on a 4px step. */
   --space-1: 4px;
@@ -182,6 +178,12 @@
   --window-close-pressed: #b0271a;
   --on-window-close: #ffffff;
   --qr-paper: #ffffff;
+  /* macOS's three window buttons, drawn only where a page is looked at in
+     a plain browser, and the room they take at the window's top left. */
+  --mac-close: #ff5f57;
+  --mac-minimize: #febc2e;
+  --mac-zoom: #28c840;
+  --mac-lights: 82px;
 
   /* Android supplies the bars' heights before the page paints; browsers
      use their own safe areas. Content at an edge keeps clear by these. */

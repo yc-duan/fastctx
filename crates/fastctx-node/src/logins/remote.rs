@@ -75,6 +75,8 @@ pub(crate) fn seen(view: &fastctx_net::directory::View, asker: &Asker, mut login
     let here = view.me.clone();
     logins.scan = None;
     logins.folders.clear();
+    // No login of the other agents assists anyone.
+    logins.others.clear();
     for agent in super::AGENTS {
         let side = logins.of_mut(agent).expect("an agent that keeps logins");
         side.programs.clear();
@@ -103,6 +105,7 @@ pub(crate) fn seen(view: &fastctx_net::directory::View, asker: &Asker, mut login
 pub(crate) fn seen_by_none(mut logins: MachineLogins) -> MachineLogins {
     logins.scan = None;
     logins.folders.clear();
+    logins.others.clear();
     for agent in super::AGENTS {
         let side = logins.of_mut(agent).expect("an agent that keeps logins");
         side.programs.clear();
@@ -188,16 +191,19 @@ pub(crate) async fn preview(
     dir: PathBuf,
     into: bool,
     take_back: bool,
+    workbench: Option<bool>,
 ) -> Result<ChangePreview, Failure> {
     if node.is_here(&machine) {
-        return super::change::preview(node, agent, dir, into, take_back).await;
+        return super::change::preview(node, agent, dir, into, take_back, workbench).await;
     }
-    match ask(node, &machine, Purpose::Hands, RemoteCall::PreviewAgentChange { agent, dir, into, take_back }).await? {
+    let call = RemoteCall::PreviewAgentChange { agent, dir, into, take_back, workbench };
+    match ask(node, &machine, Purpose::Hands, call).await? {
         RemoteReply::AgentChangePreview(preview) => Ok(*preview),
         _ => Err(other(&machine)),
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn change(
     node: &Arc<Node>,
     machine: Written,
@@ -206,11 +212,13 @@ pub(crate) async fn change(
     into: bool,
     raise_output_limit: bool,
     take_back: bool,
+    expected: Option<String>,
+    workbench: Option<bool>,
 ) -> Result<LoginChange, Failure> {
     if node.is_here(&machine) {
-        return super::change::change(node, agent, dir, into, raise_output_limit, take_back).await;
+        return super::change::change(node, agent, dir, into, raise_output_limit, take_back, expected, workbench).await;
     }
-    let call = RemoteCall::ChangeAgentLogin { agent, dir, into, raise_output_limit, take_back };
+    let call = RemoteCall::ChangeAgentLogin { agent, dir, into, raise_output_limit, take_back, expected, workbench };
     match ask(node, &machine, Purpose::Hands, call).await? {
         RemoteReply::AgentLoginChanged(change) => Ok(*change),
         _ => Err(other(&machine)),
@@ -224,14 +232,31 @@ pub(crate) async fn read_limits(
     dir: PathBuf,
 ) -> Result<MachineLogins, Failure> {
     if node.is_here(&machine) {
-        // A login's limits are read for the workbench only (`world-layers.md`).
-        if crate::layers::of(node, &fastctx_types::access::Acting::Here) == fastctx_types::layers::Layer::Connect {
-            return Err(Failure::refused(fastctx_types::layers::CONNECT_ONLY));
-        }
         super::limits::read(node, &agent, &dir).await?;
         return super::here(node).await;
     }
     match ask(node, &machine, Purpose::Look, RemoteCall::ReadAgentLimits { agent, dir }).await? {
+        RemoteReply::AgentLogins(logins) => Ok(*logins),
+        _ => Err(other(&machine)),
+    }
+}
+
+/// Turns on or off whether a week cleared before its reset counts anew in a
+/// login, here or on another of the user's machines; the holds of those it
+/// assists are looked at again.
+pub(crate) async fn set_resets_in_place(
+    node: &Arc<Node>,
+    machine: Written,
+    agent: AgentName,
+    dir: PathBuf,
+    on: bool,
+) -> Result<MachineLogins, Failure> {
+    if node.is_here(&machine) {
+        super::set_resets_in_place(node, &agent, &dir, on)?;
+        crate::usage::after_reading(node, agent.as_str(), &dir).await;
+        return super::here(node).await;
+    }
+    match ask(node, &machine, Purpose::Hands, RemoteCall::SetAgentResetInPlace { agent, dir, on }).await? {
         RemoteReply::AgentLogins(logins) => Ok(*logins),
         _ => Err(other(&machine)),
     }
@@ -298,7 +323,7 @@ async fn here_calls(
     query: fastctx_types::usage_calls::UsageCallsQuery,
 ) -> Result<fastctx_types::usage_calls::UsageCallsPage, Failure> {
     let node = node.clone();
-    tokio::task::spawn_blocking(move || {
+    fastctx_platform::task::spawn_blocking(move || {
         use crate::admission::seen::Looker;
         let only =
             asker.as_ref().filter(|a| !a.hands).map(|a| HubAccount { hub: a.hub.clone(), account: a.account.clone() });
@@ -319,7 +344,7 @@ async fn here_usage(
     only: Option<HubAccount>,
 ) -> Result<UsageReport, Failure> {
     let node = node.clone();
-    tokio::task::spawn_blocking(move || crate::usage::report(&node, agent.as_str(), &dir, only.as_ref()))
+    fastctx_platform::task::spawn_blocking(move || crate::usage::report(&node, agent.as_str(), &dir, only.as_ref()))
         .await
         .map_err(|error| Failure::new(error.to_string()))?
         .map_err(|error| Failure::new(format!("reading what the login was used for: {error}")))
@@ -343,13 +368,18 @@ pub(crate) async fn answer(
             super::set_title(node, &agent, &dir, on)?;
             super::here(node).await.map(logins)
         }
-        RemoteCall::PreviewAgentChange { agent, dir, into, take_back } => {
-            super::change::preview(node, agent, dir, into, take_back)
+        RemoteCall::SetAgentResetInPlace { agent, dir, on } => {
+            super::set_resets_in_place(node, &agent, &dir, on)?;
+            crate::usage::after_reading(node, agent.as_str(), &dir).await;
+            super::here(node).await.map(logins)
+        }
+        RemoteCall::PreviewAgentChange { agent, dir, into, take_back, workbench } => {
+            super::change::preview(node, agent, dir, into, take_back, workbench)
                 .await
                 .map(|preview| RemoteReply::AgentChangePreview(Box::new(preview)))
         }
-        RemoteCall::ChangeAgentLogin { agent, dir, into, raise_output_limit, take_back } => {
-            super::change::change(node, agent, dir, into, raise_output_limit, take_back)
+        RemoteCall::ChangeAgentLogin { agent, dir, into, raise_output_limit, take_back, expected, workbench } => {
+            super::change::change(node, agent, dir, into, raise_output_limit, take_back, expected, workbench)
                 .await
                 .map(|change| RemoteReply::AgentLoginChanged(Box::new(change)))
         }

@@ -1,7 +1,6 @@
 //! Who holds this machine's places when a call cannot have one, for the
 //! node's log: at most once a while for each kind, so that a refusal shows
-//! what the places were taken by (2026-10-29: the 64 places a client's
-//! words were refused for could not be told afterwards).
+//! what the places were taken by, which nothing can tell afterwards.
 
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};

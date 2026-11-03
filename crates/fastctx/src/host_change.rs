@@ -23,6 +23,14 @@ pub struct HostChangeArgs {
     /// Rewrite what the World put in and the user changed since.
     #[arg(long)]
     take_back: bool,
+    /// Leave the logins holding what the workbench needs too (true), or only
+    /// what connecting needs (false); left out, what they hold now.
+    #[arg(long)]
+    workbench: Option<bool>,
+    /// CLAUDE_CONFIG_DIR as the user's environment sets it, empty where it
+    /// is unset.
+    #[arg(long)]
+    claude_config_dir: Option<String>,
 }
 
 pub fn run(args: HostChangeArgs) -> anyhow::Result<()> {
@@ -32,6 +40,10 @@ pub fn run(args: HostChangeArgs) -> anyhow::Result<()> {
             places = places.at_home(host, &home)?;
         }
     }
+    if let Some(dir) = args.claude_config_dir {
+        places.claude_config_dir = (!dir.is_empty()).then(|| PathBuf::from(dir));
+    }
+    places.workbench = args.workbench;
     let hosts = Hosts { codex: args.codex, claude: args.claude };
     let approval = if args.raise_output_limit { Approval::RaiseOutputLimit } else { Approval::Require };
     let edits = if args.take_back { Edits::TakeBack } else { Edits::Keep };

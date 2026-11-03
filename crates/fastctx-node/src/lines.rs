@@ -120,6 +120,7 @@ pub(crate) async fn open(
     if !path.is_absolute() {
         return Err(failed("the text path must be absolute"));
     }
+    crate::replicas::sync::repair_paths(node, std::slice::from_ref(&path)).await.map_err(failed)?;
     let (job_record, notes_record) = match &decoding {
         Decoding::Output { job } => {
             let found = crate::look::look_here(node, job.as_str()).await?.0;
@@ -231,7 +232,7 @@ pub(crate) async fn open(
     let key = (from, id.clone());
     let lease = Lease::Here { node: Arc::downgrade(node), key: key.clone(), closed: source.closed.subscribe() };
     node.line_sources.0.lock().expect("line sources").insert(key, source.clone());
-    tokio::spawn(monitor(Arc::downgrade(&source), event_rx, source.closed.subscribe()));
+    fastctx_platform::task::spawn(monitor(Arc::downgrade(&source), event_rx, source.closed.subscribe()));
     // Catch appends racing the initial bounded snapshot, without waiting for
     // another filesystem event to happen after the monitor starts.
     refresh(source.clone(), Some(initializing)).await?;
@@ -280,7 +281,7 @@ async fn refresh(
     source: Arc<Source>,
     initializing: Option<crate::initializing::Guard>,
 ) -> std::result::Result<(), Failure> {
-    tokio::task::spawn_blocking(move || {
+    fastctx_platform::task::spawn_blocking(move || {
         let _initializing = initializing;
         let mut state = source.state.lock().expect("line source");
         if let Some(error) = &state.error {
@@ -423,6 +424,7 @@ pub(crate) async fn call(
         .ok_or_else(|| failed("line source is closed or belongs to another caller"))?;
     let mut changes = source.changed.subscribe();
     let mut closed = source.closed.subscribe();
+    crate::replicas::sync::repair_paths(node, std::slice::from_ref(&source.path)).await.map_err(failed)?;
     refresh(source.clone(), None).await?;
     if let Request::Changed { version, .. } = &request {
         loop {
@@ -460,7 +462,7 @@ pub(crate) async fn call(
             return Err(failed("line source closed"));
         }
     }
-    let result = tokio::task::spawn_blocking(move || {
+    let result = fastctx_platform::task::spawn_blocking(move || {
         let mut state = source.state.lock().expect("line source");
         let index = state.index.as_mut().ok_or_else(|| "line source closed".to_string())?;
         let result = match request {
@@ -530,7 +532,7 @@ fn source_failed(error: std::io::Error) -> Failure {
     }
 }
 fn watch_failed(error: notify::Error, source: &std::path::Path) -> Failure {
-    if std::fs::metadata(source).is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound) {
+    if fastctx_platform::disk::metadata(source).is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound) {
         Failure::source_missing(error.to_string())
     } else {
         failed(error)

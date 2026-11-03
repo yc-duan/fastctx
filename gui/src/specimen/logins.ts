@@ -7,7 +7,8 @@
 // becomes a candidate; what a search found is taken up as a candidate.
 // Times are told from `at`, the specimen's own morning.
 
-import type { ChangePreview, Folder, FolderChange, FoundIn, Login, LoginChange, MachineLogins, WorldLogins } from "../world/logins";
+import type { AgentLogins, ChangeCard, ChangePreview, Folder, FolderChange, FoundIn, Login, LoginChange, MachineLogins, WorldLogins } from "../world/logins";
+import type { DiffLine } from "../world/run-facts";
 import { specimenLimits } from "./usage";
 
 let base = Date.now();
@@ -72,6 +73,9 @@ let scanUntil = 0;
 /** Codex logins the specimen does not name conversations in, as the
  *  toggle sets: naming is on unless turned off. */
 const untitled = new Set<string>();
+const resetting = new Set<string>();
+/** The logins the workbench is open in, as opening and closing it set. */
+const benches = new Set<string>(["C:\\Users\\me\\.codex"]);
 /** When the laptop was scanned, finding nothing; never, at first. */
 let laptopScanned: number | null = null;
 
@@ -105,6 +109,78 @@ function candidate(agent: "codex" | "claude", dir: string): Login {
 const drifting = new URLSearchParams(location.search).has("drift");
 
 function desktop(now: number): MachineLogins {
+  const record = desktopAsIs(now);
+  for (const side of [record.codex, record.claude]) {
+    side.listed = side.listed.map((login) => ({ ...login, ...(benches.has(login.dir) ? { workbench: true } : {}), ...(resetting.has(login.dir) ? { reset_in_place: true } : {}) }));
+  }
+  return { ...record, by_login: true, others: otherAgents() };
+}
+
+/** The other agents a node with their adapters finds on the desktop, as it
+ *  lists them: Antigravity connected, OpenCode and Cursor found. */
+function otherAgents(): Record<string, AgentLogins> {
+  const login = (dir: string, connected: boolean): Login => ({
+    dir,
+    default: true,
+    found: "default",
+    identity: { at: ago(52), who: { kind: "unavailable", reason: "its files name no account" } },
+    limits: { kind: "unavailable", reason: "only the workbench reads limits" },
+    programs: [],
+    integration: connected ? "in" : "absent",
+    auto_title: false,
+    workbench: false,
+  });
+  const agent = (title: string, dir: string, connected: boolean): AgentLogins => ({
+    title,
+    programs: [],
+    listed: connected ? [login(dir, true)] : [],
+    candidates: connected ? [] : [login(dir, false)],
+    elsewhere: [],
+  });
+  return {
+    antigravity: agent("Antigravity App / CLI", "C:\\Users\\me\\.gemini", !otherOut.has("antigravity")),
+    opencode: agent("OpenCode", "C:\\Users\\me\\.config\\opencode", otherIn.has("opencode")),
+    cursor: agent("Cursor", "C:\\Users\\me\\.cursor", otherIn.has("cursor")),
+  };
+}
+
+/** The other agents connected or taken out in the specimen. */
+const otherIn = new Set<string>();
+const otherOut = new Set<string>();
+
+/** Connecting another agent, as its adapter works it out: OpenCode gets its
+ *  server, instructions, shell turned off and limits; Cursor its server
+ *  alone, its own shell staying on. */
+function otherPreview(agent: string, dir: string, into: boolean): ChangePreview {
+  const way = (lines: DiffLine[]) => (into ? lines : undone(lines));
+  const card = (change: ChangeCard["change"], path: string, lines: DiffLine[]): ChangeCard => ({ change, files: [{ path, how: "changed", lines: way(lines) }] });
+  const server = (at: string) =>
+    told(2, 2, [
+      add(`    "fastctx": {`),
+      add('      "args": ['),
+      add('        "serve"'),
+      add("      ],"),
+      add('      "command": "C:/Users/me/.fastctx/bin/fastctx.exe",'),
+      add('      "env": {'),
+      add('        "FASTCTX_HOME": "C:/Users/me/.fastctx"'),
+      add("      }"),
+      add("    },"),
+    ]).map((line) => (line.kind === "hunk" ? { ...line, text: at } : line));
+  const cards: ChangeCard[] =
+    agent === "cursor"
+      ? [card("tools", `${dir}\\mcp.json`, server(""))]
+      : agent === "opencode"
+        ? [
+            card("tools", `${dir}\\opencode.jsonc`, server("")),
+            card("shell", `${dir}\\opencode.jsonc`, told(14, 14, [add('  "permission": {'), add('    "bash": "deny"'), add("  },")])),
+            card("limits", `${dir}\\opencode.jsonc`, told(14, 14, [add('  "tool_output": {'), add('    "max_bytes": 1048576,'), add('    "max_lines": 100000'), add("  },")])),
+            card("guidance", `${dir}\\AGENTS.md`, told(1, 1, passage(false).map(add))),
+          ]
+        : [card("tools", `${dir}\\config\\mcp_config.json`, server("")), card("guidance", `${dir}\\AGENTS.md`, told(1, 1, passage(false).map(add)))];
+  return { agent, dir, into, files: [], fingerprint: "3c1e9a7b5d2f4068a1c3e5f7092b4d6e", cards, ...(agent === "cursor" ? { keeps_shell: true } : {}) };
+}
+
+function desktopAsIs(now: number): MachineLogins {
   const scanning = now < scanUntil - 4000;
   return {
     machine: "desktop",
@@ -244,6 +320,17 @@ export function specimenSetTitle(machine: string, agent: string, dir: string, on
   return new Promise((resolve) => setTimeout(() => resolve(desktop(Date.now())), 200));
 }
 
+/** Turns counting a week cleared before its reset anew on or off in the
+ *  specimen. */
+export function specimenSetResetInPlace(machine: string, agent: string, dir: string, on: boolean, at: Date): Promise<MachineLogins> {
+  void machine;
+  void agent;
+  base = at.getTime();
+  if (on) resetting.add(dir);
+  else resetting.delete(dir);
+  return new Promise((resolve) => setTimeout(() => resolve(desktop(Date.now())), 200));
+}
+
 /** What a folder's search found, taken up as a candidate. */
 export function specimenTakeUp(machine: string, agent: "codex" | "claude", dir: string, at: Date): Promise<MachineLogins> {
   void machine;
@@ -252,14 +339,260 @@ export function specimenTakeUp(machine: string, agent: "codex" | "claude", dir: 
   return new Promise((resolve) => setTimeout(() => resolve(desktop(Date.now())), 900));
 }
 
-export function specimenPreview(machine: string, agent: "codex" | "claude", dir: string, into: boolean): Promise<ChangePreview> {
+type Row = ["context" | "added" | "removed", string];
+const ctx = (line: string): Row => ["context", line];
+const add = (line: string): Row => ["added", line];
+const del = (line: string): Row => ["removed", line];
+
+/** A file's lines as the node tells them: `rows` from the first one shown,
+ *  numbered from `before` and `after`. */
+function told(before: number, after: number, rows: Row[]): DiffLine[] {
+  const lines: DiffLine[] = [{ kind: "hunk", before, after, text: "", ending: "" }];
+  for (const [kind, text] of rows) {
+    lines.push({ kind, before: kind === "added" ? null : before, after: kind === "removed" ? null : after, text, ending: "\n" });
+    if (kind !== "added") before += 1;
+    if (kind !== "removed") after += 1;
+  }
+  return lines;
+}
+
+/** The same lines taken back out: what was added is removed, each change's
+ *  removed lines before its added ones. */
+function undone(lines: DiffLine[]): DiffLine[] {
+  const out: DiffLine[] = [];
+  let run: DiffLine[] = [];
+  const settle = () => {
+    out.push(...run.filter((line) => line.kind === "removed"), ...run.filter((line) => line.kind === "added"));
+    run = [];
+  };
+  for (const line of lines) {
+    const kind = line.kind === "added" ? "removed" : line.kind === "removed" ? "added" : line.kind;
+    const turned: DiffLine = { ...line, kind, before: line.after, after: line.before };
+    if (kind === "added" || kind === "removed") run.push(turned);
+    else {
+      settle();
+      out.push(turned);
+    }
+  }
+  settle();
+  return out;
+}
+
+/** Opening the workbench in a login (`open`), or closing it, as the node
+ *  works it out: Claude Code gets the World's plugin and the permission to
+ *  work unattended, Codex the limits of the colleagues' tools. */
+function benchPreview(agent: string, dir: string, open: boolean): ChangePreview {
+  const way = (lines: DiffLine[]) => (open ? lines : undone(lines));
+  const card = (change: ChangeCard["change"], path: string, lines: DiffLine[], extra: Partial<ChangeCard> = {}): ChangeCard => ({
+    change,
+    files: [{ path, how: "changed", lines: way(lines) }],
+    ...extra,
+  });
+  const cards: ChangeCard[] =
+    agent === "codex"
+      ? [
+          card(
+            "tools",
+            `${dir}\\config.toml`,
+            told(15, 15, [
+              ctx("[mcp_servers.fastctx.tools.run]"),
+              ctx("output_token_limit = 41708"),
+              add(""),
+              add("[mcp_servers.fastctx.tools.ask_colleague]"),
+              add("output_token_limit = 41708"),
+              add(""),
+              add("[mcp_servers.fastctx.tools.message_colleague]"),
+              add("output_token_limit = 41708"),
+            ]),
+          ),
+        ]
+      : [
+          {
+            change: "plugin",
+            files: [],
+            commands: open
+              ? ["claude plugin marketplace add C:\\Users\\me\\.fastctx\\world\\claude-plugin", "claude plugin install fastctx-world@fastctx"]
+              : ["claude plugin uninstall fastctx-world@fastctx", "claude plugin marketplace remove fastctx"],
+          },
+          card("consent", `${dir}\\settings.json`, told(1, 1, [ctx("{"), add('  "skipDangerousModePermissionPrompt": true,'), ctx('  "permissions": {')])),
+          // The plugin brings `run` with the workbench; without it, the
+          // entry in Claude Code's state does.
+          {
+            change: "tools",
+            files: [
+              {
+                path: "C:\\Users\\me\\.claude.json",
+                how: "changed",
+                lines: (open ? undone : (lines: DiffLine[]) => lines)(
+                  told(2, 2, [
+                    add('  "mcpServers": {'),
+                    add('    "fastctx": {'),
+                    add('      "args": ['),
+                    add('        "serve"'),
+                    add("      ],"),
+                    add('      "command": "C:/Users/me/.fastctx/bin/fastctx.exe",'),
+                    add('      "env": {'),
+                    add('        "FASTCTX_AGENT_HOME": "",'),
+                    add('        "FASTCTX_HOME": "C:/Users/me/.fastctx"'),
+                    add("      },"),
+                    add('      "type": "stdio"'),
+                    add("    }"),
+                    add("  },"),
+                  ]),
+                ),
+              },
+            ],
+          },
+        ];
+  return { agent, dir, into: true, files: [], fingerprint: "7a1d3c5e9b2f4a6c8e0d1b3f5a7c9e2d", cards };
+}
+
+/** The World's passage in an agent's instructions, as `briefing.rs` writes it. */
+const passage = (codex: boolean): string[] => [
+  "<!-- fastctx:begin -->",
+  "## Your shell and tools",
+  "",
+  "You work through fastctx's `run` tool. `run` is your shell: bash with the GNU tools and `rg`, Windows included. Do all shell work with it, on this machine too. On every machine it reaches, it also works on files:",
+  "- `fastctx view PATH...` shows files: text with line numbers (`--lines 120-180` for part of one); an image as the image itself, for you to see; a PDF as its text by page (`--pages 3-5`, and `--image` to see the pages); Word, PowerPoint and Excel as their content.",
+  "- `edit PATH` and `write PATH` change a file and keep its encoding and line endings.",
+  "- `rg` searches.",
+  "",
+  "`run`'s description shows each of these in full.",
+  "",
+  "`run` runs each script on one of the machines its description lists, this computer among them, the whole script written as one `on MACHINE`; its description says how. When the user speaks of one of those machines, work on it.",
+  "",
+  "Inside a script, these commands are ordinary programs: give them several files, pipe into and out of them, loop over machines, as with any command. Calls to `run` share nothing: make several at once, or call `run` from your scripts and subagents, as with any tool.",
+  ...(codex
+    ? [
+        "",
+        "## fastctx in Codex",
+        "",
+        "You must begin every `exec` script with this exact first line, every time:",
+        "",
+        '    // @exec: {"max_output_tokens": 60000}',
+        "",
+        "fastctx answers are long, and without that line you see only their first part. Put any other setting, such as `yield_time_ms`, into that same line.",
+      ]
+    : []),
+  "<!-- fastctx:end -->",
+];
+
+/** What connecting the login does, a card each kind of change, as the node
+ *  works it out: Codex keeps its server, its limit and its shell in
+ *  `config.toml`; Claude Code its server in `.claude.json` beside its
+ *  folder, and its limits and shell in `settings.json`. */
+function disclosed(agent: string, dir: string, into: boolean): Pick<ChangePreview, "cards" | "fingerprint" | "output_limit"> {
+  const way = (lines: DiffLine[]) => (into ? lines : undone(lines));
+  const how = into ? "created" : "removed";
+  const card = (change: ChangeCard["change"], path: string, lines: DiffLine[], made: "created" | "changed" = "changed"): ChangeCard => ({
+    change,
+    files: [{ path, how: made === "created" ? how : "changed", lines: way(lines) }],
+  });
+  const fingerprint = "5f0c2a9e41d7b3c86e1f0a2b9c4d7e13";
+  if (agent === "codex") {
+    const config = `${dir}\\config.toml`;
+    return {
+      fingerprint,
+      ...(into ? { output_limit: { location: `${config}: tool_output_token_limit`, current: 10000, requested: 41708 } } : {}),
+      cards: [
+        card("limits", config, told(1, 1, [ctx('model = "gpt-5.5"'), ctx('model_reasoning_effort = "high"'), del("tool_output_token_limit = 10000"), add("tool_output_token_limit = 41708"), ctx(""), ctx("[mcp_servers.github]")])),
+        card(
+          "tools",
+          config,
+          told(6, 6, [
+            ctx('command = "github-mcp-server"'),
+            ctx('env = { GITHUB_TOKEN = "•••" }'),
+            add(""),
+            add("[mcp_servers.fastctx]"),
+            add("command = 'C:\\Users\\me\\.fastctx\\bin\\fastctx.exe'"),
+            add('args = ["serve"]'),
+            add('env_vars = ["CODEX_HOME"]'),
+            add("startup_timeout_sec = 120"),
+            add("tool_timeout_sec = 660"),
+            add('omit_tools_from = ["deferred"]'),
+            add(""),
+            add("[mcp_servers.fastctx.tools.run]"),
+            add("output_token_limit = 41708"),
+          ]),
+        ),
+        card("guidance", `${dir}\\AGENTS.md`, told(1, 1, passage(true).map(add)), "created"),
+        card("shell", config, told(17, 17, [ctx("[mcp_servers.fastctx.tools.run]"), ctx("output_token_limit = 41708"), add(""), add("[features]"), add("shell_tool = false")])),
+      ],
+    };
+  }
+  const home = /\\\.claude$/i.test(dir) ? dir.replace(/\\\.claude$/i, "") : dir;
+  const settings = `${dir}\\settings.json`;
+  return {
+    fingerprint,
+    cards: [
+      // Fastctx's entry alone: the rest of the state is the user's account
+      // and history, and the node tells none of it.
+      card(
+        "tools",
+        `${home}\\.claude.json`,
+        told(2, 2, [
+          add('  "mcpServers": {'),
+          add('    "fastctx": {'),
+          add('      "args": ['),
+          add('        "serve"'),
+          add("      ],"),
+          add('      "command": "C:/Users/me/.fastctx/bin/fastctx.exe",'),
+          add('      "env": {'),
+          add('        "FASTCTX_AGENT_HOME": "",'),
+          add('        "FASTCTX_HOME": "C:/Users/me/.fastctx"'),
+          add("      },"),
+          add('      "type": "stdio"'),
+          add("    }"),
+          add("  },"),
+        ]),
+      ),
+      card(
+        "limits",
+        settings,
+        told(4, 4, [
+          ctx('    "type": "command",'),
+          ctx('    "command": "~/.claude/statusline.sh"'),
+          del("  }"),
+          add("  },"),
+          add('  "env": {'),
+          add('    "MAX_MCP_OUTPUT_TOKENS": "100000",'),
+          add('    "CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH": "16384"'),
+          add("  }"),
+          ctx("}"),
+        ]),
+      ),
+      card(
+        "shell",
+        settings,
+        told(8, 8, [
+          ctx('    "MAX_MCP_OUTPUT_TOKENS": "100000",'),
+          ctx('    "CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH": "16384"'),
+          del("  }"),
+          add("  },"),
+          add('  "permissions": {'),
+          add('    "deny": ['),
+          add('      "Bash",'),
+          add('      "PowerShell"'),
+          add("    ]"),
+          add("  }"),
+          ctx("}"),
+        ]),
+      ),
+      card("guidance", `${dir}\\CLAUDE.md`, told(1, 1, [ctx("# 我的习惯"), ctx(""), ctx("- 回答用中文。"), add(""), ...passage(false).map(add)])),
+    ],
+  };
+}
+
+export function specimenPreview(machine: string, agent: string, dir: string, into: boolean, workbench?: boolean): Promise<ChangePreview> {
   void machine;
+  if (workbench !== undefined) return Promise.resolve(benchPreview(agent, dir, workbench));
+  if (agent !== "codex" && agent !== "claude") return Promise.resolve(otherPreview(agent, dir, into));
   // As the node gives them: the World's own values, any other key named
   // with its values withheld, and the World's section of the guidance file.
   const way = (value: string) => (into ? { after: value } : { before: value });
   const how = into ? "created" : "removed";
   const section = ["<!-- fastctx:begin -->", "## Fastctx", "", "Run commands, read and edit files and reach the other machines through `run`.", "A long command goes on in the background; you are told when it ends.", "<!-- fastctx:end -->", ""].join("\n");
-  return Promise.resolve(
+  const made: ChangePreview =
     agent === "codex"
       ? {
           agent,
@@ -273,7 +606,7 @@ export function specimenPreview(machine: string, agent: "codex" | "claude", dir:
                 { item: "tool_output_token_limit", how: "changed", before: into ? "10000" : "41708", after: into ? "41708" : "10000" },
                 { item: "features.shell_tool", how, ...way("false") },
                 { item: "mcp_servers.fastctx.command", how, ...way(JSON.stringify("C:\\Users\\me\\.fastctx\\bin\\fastctx.exe")) },
-                { item: "mcp_servers.fastctx.args", how, ...way(JSON.stringify(["mcp"])) },
+                { item: "mcp_servers.fastctx.args", how, ...way(JSON.stringify(["serve"])) },
                 { item: "mcp_servers.fastctx.tool_timeout_sec", how, ...way("660") },
                 { item: "mcp_servers.fastctx.tools.run.output_token_limit", how, ...way("41708") },
                 { item: "mcp_servers.github.env.GITHUB_TOKEN", how: "changed", withheld: true },
@@ -291,22 +624,24 @@ export function specimenPreview(machine: string, agent: "codex" | "claude", dir:
               path: `${dir}\\settings.json`,
               how: "changed",
               items: [
-                { item: "env.MAX_MCP_OUTPUT_TOKENS", how, ...way(JSON.stringify("30000")) },
+                { item: "env.MAX_MCP_OUTPUT_TOKENS", how, ...way(JSON.stringify("100000")) },
                 { item: "permissions.deny", how, ...way(JSON.stringify(["Bash", "PowerShell"])) },
-                { item: 'enabledPlugins."fastctx-world@fastctx"', how, ...way("true") },
               ],
             },
             { path: `${dir}\\CLAUDE.md`, how: "changed", items: [{ item: "fastctx", how, ...way(section) }] },
           ],
-          commands: [`claude plugin ${into ? "install" : "uninstall"} fastctx-world@fastctx`],
-        },
-  );
+        };
+  return Promise.resolve({ ...made, ...disclosed(agent, dir, into) });
 }
 
-export function specimenChange(machine: string, agent: "codex" | "claude", dir: string, into: boolean): Promise<LoginChange> {
+export function specimenChange(machine: string, agent: string, dir: string, into: boolean, workbench?: boolean): Promise<LoginChange> {
   void machine;
-  void agent;
-  void dir;
+  if (agent !== "codex" && agent !== "claude") {
+    (into ? otherIn : otherOut).add(agent);
+    (into ? otherOut : otherIn).delete(agent);
+  }
+  if (workbench === true && into) benches.add(dir);
+  else if (workbench === false || !into) benches.delete(dir);
   return new Promise((done) =>
     setTimeout(
       () => done({ into, started_at: ago(0), steps: [{ step: { step: "program" }, state: { state: "done" } }, { step: { step: "files" }, state: { state: "done" } }, { step: { step: "check", scope: "user" }, state: { state: "done" } }], end: { end: "done", at: ago(0) } }),

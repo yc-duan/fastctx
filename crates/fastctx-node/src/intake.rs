@@ -87,7 +87,6 @@ fn budgets() -> (usize, usize) {
 
 #[derive(Default)]
 struct State {
-    next: u64,
     calls: HashMap<u64, Entry>,
     pools: HashMap<Pool, queue::PoolQueue>,
     /// What each account's calls hold, of every kind, and everyone's.
@@ -185,8 +184,7 @@ async fn admit(
         }
         *state.held.entry(account.clone()).or_default() += cost;
         state.all_held += cost;
-        state.next += 1;
-        let id = state.next;
+        let id = crate::local_subscriptions::next_id();
         state.pools.entry(pool).or_default().push(account.clone(), subject.clone(), id);
         state
             .calls

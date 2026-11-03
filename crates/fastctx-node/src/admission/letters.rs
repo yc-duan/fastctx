@@ -55,6 +55,7 @@ pub fn admit(
                 from: Speaker::Resident { address },
                 goal_report: Some(report),
                 goal_question: None,
+                told: None,
                 ..
             } if *address == report.colleague
                 && sender(&address.machine)
@@ -107,11 +108,26 @@ pub fn admit(
             }
         },
     };
-    if carries == Purpose::Words && (node.residents.is_deleting(to) || node.residents.removed(to).is_some()) {
-        return Err(format!("{to} is being deleted or was removed"));
+    // Nothing is taken for a conversation deleted here or being deleted,
+    // whatever the letter carries: none of it would be kept, and failing to
+    // keep it would hold up every letter behind it, the deletion's own
+    // business with the hub among them (los-angeles-linux, 11-03).
+    if gone(node, to) {
+        return Err(format!("{to} is deleted on this machine"));
+    }
+    if carries == Purpose::Words && node.residents.removed(to).is_some() {
+        return Err(format!("{to} was removed"));
     }
     expect(purpose, carries)?;
     serves(node, hub, caller, also, to)
+}
+
+/// Whether the conversation `id` was deleted on this machine, or is being:
+/// its deletion begun now, or by a node that stopped before it ended.
+fn gone(node: &Node, id: &ResidentId) -> bool {
+    node.residents.deleted(id).is_some()
+        || node.residents.is_deleting(id)
+        || fastctx_platform::disk::is_there(node.world.conversation(id).path().join("deleting"))
 }
 
 fn expect(declared: Purpose, carries: Purpose) -> Result<(), String> {
@@ -122,10 +138,10 @@ fn expect(declared: Purpose, carries: Purpose) -> Result<(), String> {
 /// for, or for one of the others the speaker works for: each of those this
 /// machine checks itself, as the hub checked the one it was sent for.
 fn serves(node: &Node, hub: &HubId, caller: &Caller, also: &[AccountName], to: &ResidentId) -> Result<(), String> {
-    let Some((about, _)) = node.residents.about(to) else {
+    let Some(_) = node.residents.about(to) else {
         return Err(format!("no resident {to} lives on {}", node.machine()));
     };
-    if node.serves(&about.acting, hub, &caller.account) {
+    if crate::record_ownership::resident(node, to, hub, &caller.account) {
         return Ok(());
     }
     let here = node.machine();
@@ -133,7 +149,7 @@ fn serves(node: &Node, hub: &HubId, caller: &Caller, also: &[AccountName], to: &
     let speaks_for = |account: &&AccountName| {
         view.as_ref().is_some_and(|view| view.admits(&caller.machine, account, &here, Purpose::Words).is_ok())
     };
-    if also.iter().filter(speaks_for).any(|account| node.serves(&about.acting, hub, account)) {
+    if also.iter().filter(speaks_for).any(|account| crate::record_ownership::resident(node, to, hub, account)) {
         return Ok(());
     }
     Err(format!("{to} on {here} works for none of the accounts the words came for"))

@@ -23,7 +23,11 @@ use serde::{Deserialize, Serialize};
 use super::{Device, failed};
 use crate::Error;
 
+/// What every machine said of itself, kept whole by earlier releases: read
+/// still, written no more.
 const FACTS: &str = "machine-facts.json";
+/// What each machine said of itself, a file each holding its name with it.
+const EACH: &str = "machine-facts";
 
 /// What the device keeps to show the World without asking.
 pub(super) struct Shown {
@@ -55,7 +59,7 @@ struct Towns {
 }
 
 /// What a machine said of itself, and when it had connected then.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 struct Kept {
     since: Option<Timestamp>,
     facts: Result<MachineFacts, String>,
@@ -201,6 +205,7 @@ impl Device {
                     online: current.then_some(member.online),
                     since: member.since,
                     through: member.through.clone(),
+                    strain: member.strain.filter(|_| current && member.online),
                     allows_direct: !member.direct.is_empty(),
                     path: Some(session.link.path_to(&member.name)),
                     facts,
@@ -222,7 +227,8 @@ impl Device {
                 machines,
             });
         }
-        NodesReply { machine: self.here(), facts: None, hubs }
+        let workbench = workbench_shown(self.sessions().iter().map(|session| &*session.link));
+        NodesReply { machine: self.here(), facts: None, hubs, workbench }
     }
 
     /// What `member` said of itself, as kept; asked again for `account` in
@@ -256,11 +262,14 @@ impl Device {
                     (Err(_), Some(Ok(facts))) => Ok(facts),
                     (answer, _) => answer,
                 };
-                {
+                let fresh = Kept { since, facts };
+                let changed = {
                     let mut kept = device.shown.facts.lock().expect("never poisoned");
                     let machines = kept.entry(hub.clone()).or_default();
-                    machines.insert(name.clone(), Kept { since, facts });
-                    device.write_facts(&hub, machines);
+                    machines.insert(name.clone(), fresh.clone()).is_none_or(|before| before != fresh)
+                };
+                if changed {
+                    device.write_fact(&hub, &name, fresh);
                 }
                 device.shown.asking.lock().expect("never poisoned").remove(&(hub, name));
                 super::changed(&device.shown_changes);
@@ -281,20 +290,50 @@ impl Device {
         machines.get(name).cloned()
     }
 
+    /// What the machines of `hub` said of themselves, as kept: the whole file
+    /// an earlier release wrote, then each machine's own, which is newer.
     fn read_facts(&self, hub: &HubId) -> BTreeMap<MachineName, Kept> {
-        let path = self.store.net(hub).path().join(FACTS);
-        std::fs::read(&path).ok().and_then(|bytes| serde_json::from_slice(&bytes).ok()).unwrap_or_default()
+        let net = self.store.net(hub).path().to_path_buf();
+        let mut machines: BTreeMap<MachineName, Kept> = std::fs::read(net.join(FACTS))
+            .ok()
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+            .unwrap_or_default();
+        for entry in std::fs::read_dir(net.join(EACH)).into_iter().flatten().flatten() {
+            let read = std::fs::read(entry.path()).ok().and_then(|bytes| serde_json::from_slice(&bytes).ok());
+            if let Some((name, kept)) = read {
+                machines.insert(name, kept);
+            }
+        }
+        machines
     }
 
-    fn write_facts(&self, hub: &HubId, machines: &BTreeMap<MachineName, Kept>) {
-        let path = self.store.net(hub).path().join(FACTS);
-        let written = serde_json::to_vec(machines)
-            .map_err(std::io::Error::other)
-            .and_then(|bytes| fastctx_platform::publish(&path, &bytes, fastctx_platform::Permissions::Private));
-        if let Err(error) = written {
-            eprintln!("World device: keeping what the machines said of themselves: {error}");
-        }
+    /// Keeps what `name` said of itself in its own file, on a thread that
+    /// may block.
+    fn write_fact(&self, hub: &HubId, name: &MachineName, kept: Kept) {
+        let directory = self.store.net(hub).path().join(EACH);
+        let path = directory.join(file_of(name));
+        let name = name.clone();
+        fastctx_platform::task::spawn_blocking(move || {
+            let written = serde_json::to_vec(&(name, kept)).map_err(std::io::Error::other).and_then(|bytes| {
+                fastctx_platform::ensure_private_dir(&directory)?;
+                fastctx_platform::publish(&path, &bytes, fastctx_platform::Permissions::Private)
+            });
+            if let Err(error) = written {
+                eprintln!("World device: keeping what a machine said of itself: {error}");
+            }
+        });
     }
+}
+
+/// The file a machine's facts are kept in: named by a digest of its name,
+/// which any file system takes however long the name and in whatever
+/// language; the name itself is kept inside.
+fn file_of(name: &MachineName) -> String {
+    use sha2::Digest as _;
+    let digest = sha2::Sha256::digest(name.as_str().as_bytes());
+    let mut file: String = digest[..16].iter().map(|byte| format!("{byte:02x}")).collect();
+    file.push_str(".json");
+    file
 }
 
 fn machine_of(who: &MachineWho) -> &MachineName {
@@ -311,4 +350,22 @@ fn said(kept: Option<Kept>, member: &Member) -> Result<MachineFacts, String> {
         None if member.online => Err("it has not said yet".to_string()),
         None => Err("it is offline".to_string()),
     }
+}
+
+/// Whether the workbench's places are shown on this device
+/// (`fastctx_types::layers::shown`): a device has no logins of its own, so it
+/// goes by what its accounts' computers told their hubs.
+pub(super) fn workbench_shown<'a>(links: impl IntoIterator<Item = &'a Link>) -> Option<bool> {
+    let mut told = Vec::new();
+    for link in links {
+        match link.last_view() {
+            Some(view) => {
+                let accounts: Vec<AccountName> =
+                    view.me().map(|me| me.logins.iter().cloned().collect()).unwrap_or_default();
+                told.extend(view.workbench_told(&accounts));
+            }
+            None => told.push(None),
+        }
+    }
+    fastctx_types::layers::shown(told)
 }

@@ -87,6 +87,8 @@ pub struct RecordWatch {
     changes: tokio::sync::broadcast::Receiver<Option<Changed>>,
     status: tokio::sync::watch::Receiver<super::Status>,
     first: bool,
+    owner: Option<fastctx_types::ResidentId>,
+    conversation: Option<fastctx_types::Address>,
     watch: fastctx_types::NoticeId,
 }
 
@@ -100,6 +102,8 @@ impl Link {
             changes: self.record_changes(),
             status: self.subscribe(),
             first: true,
+            owner: None,
+            conversation: None,
             watch: format!(
                 "{:032x}",
                 u128::from_be_bytes(crate::sign::random::<16>().map_err(|error| error.to_string())?)
@@ -111,9 +115,51 @@ impl Link {
 }
 
 impl RecordWatch {
+    pub fn for_plan(mut self, owner: Option<fastctx_types::ResidentId>) -> Self {
+        self.owner = owner.filter(|_| self.kind == fastctx_types::plan::KIND);
+        self
+    }
+
+    async fn plan_next(&mut self) -> Result<fastctx_types::account_records::Watched, String> {
+        let owner = self.owner.as_ref().expect("plan watch");
+        if !std::mem::take(&mut self.first) {
+            loop {
+                tokio::select! {
+                    changed = self.changes.recv() => match changed {
+                        Ok(Some(change)) if change.metadata.kind == fastctx_types::plan::KIND && change.metadata.key == owner.as_str() => break,
+                        Ok(Some(_)) => continue,
+                        Ok(None) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => break,
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => return Err(words::WATCH_CLOSED.into()),
+                    },
+                    changed = self.status.changed() => { changed.map_err(|_| words::HUB_CLOSED)?; self.status.borrow_and_update(); break; },
+                }
+            }
+        }
+        let response = self
+            .link
+            .owned_records(
+                &self.account,
+                fastctx_types::owned_records::Request::PlanHead {
+                    resident: owner.clone(),
+                    conversation: self.conversation.clone(),
+                },
+            )
+            .await?;
+        let fastctx_types::owned_records::Response::PlanHead { conversation, metadata } = response else {
+            return Err("the hub did not return the plan metadata".into());
+        };
+        if let Some(conversation) = conversation {
+            self.conversation = Some(conversation.address);
+        }
+        Ok(fastctx_types::account_records::Watched::Current { entries: metadata.into_iter().collect() })
+    }
+
     /// Receives the initial list, later invalidations, or a fresh list after lag.
     pub async fn next(&mut self) -> Result<fastctx_types::account_records::Watched, String> {
         use fastctx_types::account_records::Watched;
+        if self.owner.is_some() && self.link.view().shared_records {
+            return self.plan_next().await;
+        }
         if !std::mem::take(&mut self.first) {
             loop {
                 tokio::select! {
@@ -182,7 +228,7 @@ impl Drop for RecordWatch {
         if let Ok(runtime) = tokio::runtime::Handle::try_current() {
             let (link, account, kind, watch) =
                 (self.link.clone(), self.account.clone(), self.kind.clone(), self.watch.clone());
-            runtime.spawn(async move {
+            fastctx_platform::task::spawn_on(&runtime, async move {
                 let _ = link.watch_records(&account, &kind, watch.as_str(), false).await;
             });
         }

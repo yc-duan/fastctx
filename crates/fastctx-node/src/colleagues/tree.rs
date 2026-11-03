@@ -7,12 +7,79 @@ use fastctx_types::{
     collaboration::{Branch, Tree},
     ipc::Failure,
     remote::{RemoteCall, RemoteReply},
-    residents::{Action, Origin},
+    residents::Origin,
 };
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 use tokio::time::Instant;
 
+/// How long one read of a conversation's collaboration answers every ask
+/// for it, at least: a page asks whenever the World changes, many times a
+/// second while work goes on, and each read goes through every colleague's
+/// record. A read that took long answers four times as long as it took, so
+/// however often it is asked, reading it takes at most a fifth of the time.
+const FRESH: Duration = Duration::from_secs(1);
+
+/// How long a read no one asked again for is kept.
+const KEPT: Duration = Duration::from_secs(60);
+
+/// When a read was done, how long it took, and what it found.
+type Read = Arc<tokio::sync::Mutex<Option<(Instant, Duration, Result<Tree, Failure>)>>>;
+
+/// The latest read of each conversation's collaboration asked for, here or
+/// from another machine, by conversation and by who asks: asks that come
+/// together share one read.
+#[derive(Default)]
+pub(crate) struct Reads(std::sync::Mutex<std::collections::HashMap<String, Read>>);
+
+/// The collaboration of `id` as the user here sees it, shared as `shared`
+/// shares it.
 pub(crate) async fn query(node: &Arc<Node>, id: ResidentId, machine: Option<Written>) -> Result<Tree, Failure> {
+    let key = serde_json::to_string(&(&id, &machine)).map_err(|error| Failure::new(error.to_string()))?;
+    shared(node, key, read_now(node, id, machine)).await
+}
+
+/// The collaboration of `id` here as `acting` on another machine sees it,
+/// shared as `shared` shares it: an interface of any version asks for it
+/// whole, as often as it likes.
+pub(crate) async fn here_shared(
+    node: &Arc<Node>,
+    id: ResidentId,
+    acting: Acting,
+    colleagues: bool,
+) -> Result<Tree, Failure> {
+    let key =
+        serde_json::to_string(&("asked", &id, &acting, colleagues)).map_err(|error| Failure::new(error.to_string()))?;
+    shared(node, key, async move { here(node, &id, &acting, colleagues).await }).await
+}
+
+/// What `read` finds, read once for the asks of `key` that come while it is
+/// fresh.
+async fn shared(
+    node: &Arc<Node>,
+    key: String,
+    read: impl std::future::Future<Output = Result<Tree, Failure>>,
+) -> Result<Tree, Failure> {
+    let kept = {
+        let mut reads = node.collaboration_reads.0.lock().expect("never poisoned");
+        reads.retain(|_, kept| {
+            Arc::strong_count(kept) > 1
+                || kept.try_lock().is_ok_and(|held| held.as_ref().is_some_and(|(at, _, _)| at.elapsed() < KEPT))
+        });
+        reads.entry(key).or_default().clone()
+    };
+    let mut held = kept.lock().await;
+    if let Some((at, took, result)) = held.as_ref()
+        && at.elapsed() < FRESH.max(*took * 4)
+    {
+        return result.clone();
+    }
+    let began = Instant::now();
+    let result = read.await;
+    *held = Some((Instant::now(), began.elapsed(), result.clone()));
+    result
+}
+
+async fn read_now(node: &Arc<Node>, id: ResidentId, machine: Option<Written>) -> Result<Tree, Failure> {
     let acting = Acting::Here;
     let machine = match machine {
         Some(machine) => machine,
@@ -25,7 +92,7 @@ pub(crate) async fn query(node: &Arc<Node>, id: ResidentId, machine: Option<Writ
     remote(node, &acting, &machine, id, true).await
 }
 
-async fn remote(
+pub(super) async fn remote(
     node: &Arc<Node>,
     acting: &Acting,
     machine: &Written,
@@ -69,7 +136,7 @@ async fn remote(
     Ok(*tree)
 }
 
-fn visible(node: &Node, acting: &Acting, id: &ResidentId) -> Result<(), Failure> {
+pub(super) fn visible(node: &Node, acting: &Acting, id: &ResidentId) -> Result<(), Failure> {
     if crate::admission::seen::resident(node, crate::admission::seen::Looker::Here(acting), id) {
         Ok(())
     } else {
@@ -103,7 +170,7 @@ pub(crate) async fn here(
                             branch(&node, &address.resident, &acting, deadline).await
                         } else {
                             let mut machine = Written::from(&address.machine);
-                            if let Some(account) = crate::collab::asked_account(&node, &parent, &address)? {
+                            if let Some(account) = crate::collab::asked_account(&node, &parent, &address).await? {
                                 machine.hub = node.link_of(&account.hub).map(|link| link.hub_name());
                                 let acting = Acting::one(account.hub, account.account);
                                 remote(&node, &acting, &machine, address.resident.clone(), false)
@@ -159,7 +226,7 @@ async fn branch(node: &Arc<Node>, id: &ResidentId, acting: &Acting, deadline: In
         Origin::User => None,
     };
     let goal = async {
-        if label.is_none() {
+        if label.is_none() || !crate::goals::colleagues::offered() {
             return Ok(None);
         }
         match tokio::time::timeout_at(deadline, crate::goals::colleagues::summary(node, id)).await {
@@ -182,23 +249,23 @@ async fn branch(node: &Arc<Node>, id: &ResidentId, acting: &Acting, deadline: In
 }
 
 async fn targets(node: &Arc<Node>, owner: &Address, acting: &Acting) -> Result<BTreeMap<Address, String>, Failure> {
+    let mut found = asked(node, owner, acting).await?;
+    found.extend(born_here(node, owner, acting));
+    Ok(found)
+}
+
+/// The colleagues `owner` asked that `acting` may see, as its actions recorded
+/// them, with what each was asked to do.
+pub(super) async fn asked(
+    node: &Arc<Node>,
+    owner: &Address,
+    acting: &Acting,
+) -> Result<BTreeMap<Address, String>, Failure> {
     let path = node.world.conversation(&owner.resident).actions();
-    let actions = tokio::task::spawn_blocking(move || {
-        let bytes = match std::fs::read(&path) {
-            Ok(bytes) => bytes,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-            Err(error) => return Err(error),
-        };
-        let Some(end) = bytes.iter().rposition(|byte| *byte == b'\n') else { return Ok(Vec::new()) };
-        bytes[..end]
-            .split(|byte| *byte == b'\n')
-            .filter(|line| !line.is_empty())
-            .map(|line| serde_json::from_slice::<Action>(line).map_err(std::io::Error::other))
-            .collect::<std::io::Result<Vec<_>>>()
-    })
-    .await
-    .map_err(|error| Failure::new(error.to_string()))?
-    .map_err(|error| Failure::new(error.to_string()))?;
+    let actions = fastctx_platform::task::spawn_blocking(move || crate::residents::activity::asked(&path, None))
+        .await
+        .map_err(|error| Failure::new(error.to_string()))?
+        .map_err(|error| Failure::new(error.to_string()))?;
     let mut found = BTreeMap::new();
     for action in actions.into_iter().filter(|action| action.hand == "ask_colleague") {
         let address = Address {
@@ -208,7 +275,7 @@ async fn targets(node: &Arc<Node>, owner: &Address, acting: &Acting) -> Result<B
                 .parse()
                 .map_err(|error| Failure::new(fastctx_types::collab_prompt::recorded_colleague(error)))?,
         };
-        if let Some(account) = crate::collab::asked_account(node, &owner.resident, &address)?
+        if let Some(account) = crate::collab::asked_account(node, &owner.resident, &address).await?
             && !node
                 .link_of(&account.hub)
                 .is_some_and(|link| node.accounts_on(&link, acting).contains(&account.account))
@@ -217,6 +284,12 @@ async fn targets(node: &Arc<Node>, owner: &Address, acting: &Acting) -> Result<B
         }
         found.insert(address, action.what);
     }
+    Ok(found)
+}
+
+/// The colleagues of `owner` that live on this machine and `acting` may see.
+pub(super) fn born_here(node: &Node, owner: &Address, acting: &Acting) -> BTreeMap<Address, String> {
+    let mut found = BTreeMap::new();
     for resident in node.residents.everyone() {
         if let Origin::Colleague { asked_by, label } = &resident.about.origin
             && asked_by.resident == owner.resident
@@ -226,5 +299,5 @@ async fn targets(node: &Arc<Node>, owner: &Address, acting: &Acting) -> Result<B
             found.insert(Address { machine: node.machine(), resident: resident.id }, label.clone());
         }
     }
-    Ok(found)
+    found
 }

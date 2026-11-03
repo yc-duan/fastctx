@@ -124,18 +124,6 @@ pub(super) async fn identity(server: &AppServer) -> Fact<Identity> {
     })
 }
 
-/// `account/rateLimits/read`: every limit's windows, each named by its
-/// limit and known by its length, never by which slot it came in (the
-/// first is not always the five-hour one), and the credits the account
-/// goes on with once a window is used up.
-pub(super) async fn limits(server: &AppServer) -> Fact<AgentLimits> {
-    let observed_at = jiff::Timestamp::now();
-    match server.request("account/rateLimits/read", json!({})).await {
-        Ok(answer) => limits_of(&buckets(&answer), observed_at),
-        Err(error) => Fact::failed(format!("account/rateLimits/read: {error}")),
-    }
-}
-
 /// A limit's key: its id, as Codex keys the limits it reads; empty for a
 /// snapshot that names none.
 fn limit_key(snapshot: &Value) -> String {

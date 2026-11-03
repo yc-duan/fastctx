@@ -1,0 +1,15 @@
+{
+	"servers": {
+		"probe-generated": {
+			"type": "stdio",
+			"command": "node",
+			"args": [
+				"echo-probe.js"
+			],
+			"env": {
+				"LAB_MODE": "1"
+			}
+		}
+	},
+	"inputs": []
+}

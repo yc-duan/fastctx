@@ -31,3 +31,15 @@ pub struct Attachment {
 
 /// The most files one message shows.
 pub const ATTACHMENTS_MOST: usize = 8;
+
+/// What a colleague tells the agent that asked it with `message_user`, as
+/// the asker receives it (`world-colleagues.md`, 两个工具): it owes no
+/// answer, and it wakes the asker, as the colleague's report does.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ColleagueTold {
+    pub colleague: crate::Address,
+    /// The label of the task it was asked for.
+    pub label: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<Attachment>,
+}

@@ -53,9 +53,9 @@ export interface PastGoal {
   statement: string | null;
 }
 
-/** How one stands; `unknown` where only its start is known, and it may
- *  have ended long ago or work still. */
-export type NodeState = "working" | "done" | "failed" | "stopped" | "idle" | "unknown";
+/** How one stands; `waiting` where it waits on the user, `unknown` where
+ *  only its start is known, and it may have ended long ago or work still. */
+export type NodeState = "working" | "waiting" | "done" | "failed" | "stopped" | "idle" | "unknown";
 
 /** One that works with a conversation: a colleague it asked, a side
  *  conversation branched off it, or one of the host's own agents, under
@@ -73,9 +73,40 @@ export interface CollabNode {
   branchOf?: string | null;
   /** How long it has worked, in milliseconds. */
   took: number;
+  /** When it began, and when it ended, in milliseconds since the epoch:
+   *  no end while it works, neither where they are not known. */
+  began?: number | null;
+  ended?: number | null;
+  /** What it does this moment, while it works: its latest step. */
+  doing?: string | null;
+  tokens?: number | null;
+  model?: string | null;
   steps: number | null;
   machine?: string;
   /** Why how it stands is not known, as the World said it. */
   why?: string | null;
   children: CollabNode[];
+}
+
+/** Where a conversation works, as the corner of the desk shows it: the
+ *  computer it lives on first, then any other it was pointed at. */
+export interface WhereShown {
+  machines: WhereMachine[];
+  /** Whose agent it is, for one of another account assisting the user. */
+  from: string | null;
+}
+
+/** A computer a conversation works on, with the folders it works in there. */
+export interface WhereMachine {
+  /** As written: its name, or `name.hub` where two hubs share a name. */
+  name: string;
+  form: "desktop" | "laptop" | "server" | null;
+  online: boolean | null;
+  /** This computer, whose folders open in the system's own window. */
+  here: boolean;
+  /** Where its page is read. */
+  link: string | null;
+  /** Absolute paths as that computer writes them; none where it works on
+   *  the computer as a whole. */
+  folders: string[];
 }

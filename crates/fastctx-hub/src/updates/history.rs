@@ -67,7 +67,7 @@ pub(super) fn open(shelf: &Shelf) -> Result<(History, Writer), String> {
     }));
     let weak = Arc::downgrade(&writer.0);
     let shelf = shelf.clone();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         loop {
             let Some(writing) = weak.upgrade() else { return };
             writing.changed.notified().await;
@@ -84,7 +84,7 @@ pub(super) fn open(shelf: &Shelf) -> Result<(History, Writer), String> {
                     break;
                 }
                 let (saving, records) = (shelf.clone(), entries.clone());
-                let result = tokio::task::spawn_blocking(move || -> std::io::Result<()> {
+                let result = fastctx_platform::task::spawn_blocking(move || -> std::io::Result<()> {
                     let mut changes = Changes::default();
                     let mut bytes = 0;
                     for (key, value) in &records {

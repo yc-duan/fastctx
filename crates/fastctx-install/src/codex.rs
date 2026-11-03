@@ -6,6 +6,9 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 use toml_edit::Item;
 
+use fastctx_types::logins::Change;
+
+use crate::connect::Steps;
 use crate::guidance;
 use crate::legacy;
 use crate::plan::CodexPlan;
@@ -91,6 +94,8 @@ pub struct Applied {
     pub receipt: Receipt,
     pub notices: Vec<Notice>,
     pub messages: Vec<String>,
+    /// What each kind of change did to each file, for the window before it.
+    pub steps: Steps,
 }
 
 #[derive(Clone, Debug)]
@@ -100,6 +105,7 @@ pub struct Unapplied {
     pub receipt: Option<Receipt>,
     pub retained: Vec<Notice>,
     pub messages: Vec<String>,
+    pub steps: Steps,
 }
 
 /// Plans both files atomically in memory. Unowned or edited server/guidance
@@ -122,6 +128,8 @@ pub fn apply(
     let mut legacy_agents_existed = None;
     let mut reinstall = false;
     let take_back = matches!(ownership, Ownership::TakeBack(_));
+    let mut steps = Steps::default();
+    let mut config_now = config.bytes.map(<[u8]>::to_vec);
     let mut receipt = Receipt {
         version: 1,
         config_path: config.path.into(),
@@ -166,6 +174,8 @@ pub fn apply(
             let migrated = legacy::take_over(config, agents, old)?;
             bytes = migrated.config;
             agents_bytes = migrated.agents;
+            steps.advance(Change::Legacy, config.path, &mut config_now, config.bytes.unwrap_or_default(), &bytes);
+            steps.record(Change::Legacy, agents.path, agents.bytes, agents_bytes.as_deref());
             receipt.config_existed = migrated.config_existed;
             receipt.limit = migrated.limit;
             receipt.guidance = migrated.guidance;
@@ -198,9 +208,11 @@ pub fn apply(
         }
     }
     let (next, limit) = apply_limit(&bytes, config.path, plan.output_token_limit, receipt.limit.as_ref(), approval)?;
+    steps.advance(Change::Limits, config.path, &mut config_now, &bytes, &next);
     bytes = next;
     receipt.limit = limit;
     let source = Source::parse(&bytes, config.path)?;
+    let before_server = bytes.clone();
     if let Some(server) = &receipt.server {
         let command = if portable { shared::COMMAND } else { plan.command.to_str().expect("validated path") };
         let replacement = server_body(plan, command, server.inline, newline(&bytes));
@@ -226,6 +238,7 @@ pub fn apply(
         receipt.server = Some(server);
     }
     Source::parse(&bytes, config.path)?;
+    steps.advance(Change::Tools, config.path, &mut config_now, &before_server, &bytes);
     let input = File { path: agents.path, bytes: agents_bytes.as_deref() };
     let mut applied = if receipt.portable {
         let (applied, adopted) = guidance::apply_shared(input, body, receipt.guidance.as_ref())?;
@@ -241,13 +254,15 @@ pub fn apply(
     if let Some(existed) = legacy_agents_existed {
         applied.receipt.original_existed = existed;
     }
+    steps.record(Change::Guidance, agents.path, agents_bytes.as_deref(), Some(&applied.bytes));
     receipt.guidance = Some(applied.receipt);
-    let (config, tools, tool_notices) =
+    let (next, tools, tool_notices) =
         tools::apply(&bytes, config.path, receipt.tools.as_ref(), reinstall || take_back)?;
-    bytes = config;
+    steps.advance(Change::Shell, config.path, &mut config_now, &bytes, &next);
+    bytes = next;
     receipt.tools = Some(tools);
     notices.extend(tool_notices);
-    Ok(Applied { config: bytes, agents: applied.bytes, receipt, notices, messages })
+    Ok(Applied { config: bytes, agents: applied.bytes, receipt, notices, messages, steps })
 }
 
 /// Reverses independent owned changes. Edited portions are retained and
@@ -260,6 +275,7 @@ pub fn unapply(config: File<'_>, agents: File<'_>, receipt: Option<&Receipt>) ->
             receipt: None,
             retained: vec![],
             messages: vec![],
+            steps: Steps::default(),
         });
     };
     receipt.check(config.path)?;
@@ -267,17 +283,21 @@ pub fn unapply(config: File<'_>, agents: File<'_>, receipt: Option<&Receipt>) ->
     let mut retained = vec![];
     let mut messages = vec![];
     let mut bytes = config.bytes.map(<[u8]>::to_vec);
+    let mut steps = Steps::default();
+    let mut config_now = config.bytes.map(<[u8]>::to_vec);
     if let Some(current) = &mut bytes {
         let shared = receipt.portable || shared::portable(&Source::parse(current, config.path)?);
         remaining.portable |= shared;
         if let Some(tools) = remaining.tools.take() {
             let (next, notices) = tools::unapply(current, config.path, &tools)?;
+            steps.advance(Change::Shell, config.path, &mut config_now, current, &next);
             *current = next;
             retained.extend(notices);
         }
         if let Some(server) = &receipt.server {
             match remove_server(current, config.path, server) {
                 Ok(next) => {
+                    steps.advance(Change::Tools, config.path, &mut config_now, current, &next);
                     *current = next;
                     remaining.server = None;
                 }
@@ -290,6 +310,7 @@ pub fn unapply(config: File<'_>, agents: File<'_>, receipt: Option<&Receipt>) ->
         if let Some(limit) = &receipt.limit {
             match restore_limit(current, config.path, limit) {
                 Ok(next) => {
+                    steps.advance(Change::Limits, config.path, &mut config_now, current, &next);
                     *current = next;
                     remaining.limit = None;
                 }
@@ -311,11 +332,23 @@ pub fn unapply(config: File<'_>, agents: File<'_>, receipt: Option<&Receipt>) ->
         remaining.tools = None;
     }
     let guidance = guidance::unapply(agents, receipt.guidance.as_ref())?;
+    steps.record(Change::Guidance, agents.path, agents.bytes, guidance.bytes.as_deref());
     remaining.guidance = guidance.receipt;
     retained.extend(guidance.retained);
     let bytes = bytes.and_then(|bytes| finish(bytes, receipt.config_existed));
+    if bytes.is_none() {
+        // The configuration the World created goes with the server.
+        steps.record(Change::Tools, config.path, config_now.as_deref(), None);
+    }
     let keep = remaining.has_work() || remaining.portable;
-    Ok(Unapplied { config: bytes, agents: guidance.bytes, receipt: keep.then_some(remaining), retained, messages })
+    Ok(Unapplied {
+        config: bytes,
+        agents: guidance.bytes,
+        receipt: keep.then_some(remaining),
+        retained,
+        messages,
+        steps,
+    })
 }
 
 /// Withdraws a released install using the same ownership checks as migration,
@@ -332,16 +365,27 @@ pub fn unapply_legacy(config: File<'_>, agents: File<'_>, old: &legacy::Receipt)
         tools: None,
         portable: false,
     };
+    let mut steps = Steps::default();
+    steps.record(Change::Legacy, config.path, config.bytes, Some(&migrated.config));
+    steps.record(Change::Legacy, agents.path, agents.bytes, migrated.agents.as_deref());
     let mut result = unapply(
         File { path: config.path, bytes: Some(&migrated.config) },
         File { path: agents.path, bytes: migrated.agents.as_deref() },
         Some(&receipt),
     )?;
     result.retained.extend(migrated.notices);
+    steps.extend(std::mem::take(&mut result.steps));
+    result.steps = steps;
     Ok(result)
 }
 
 impl Receipt {
+    /// Whether the server it records was written with the colleagues'
+    /// tools, as for a login the workbench is open in.
+    pub(crate) fn colleagues(&self) -> bool {
+        self.server.as_ref().is_some_and(|server| server.body.windows(13).any(|window| window == b"ask_colleague"))
+    }
+
     pub(crate) fn guidance_path(&self) -> Option<&Path> {
         self.guidance.as_ref().map(|guidance| Path::new(&guidance.path))
     }
@@ -397,10 +441,14 @@ fn validate_plan(plan: &CodexPlan) -> Result<(), Error> {
 /// The server entry. Its tools are never deferred: a model whose tools are
 /// deferred sees only their names, and `run` takes the place of a shell whose
 /// description it always saw. In Code Mode they stay callable from scripts.
+/// They are called without asking, as the user's own hands (`world-layers.md`):
+/// with the shell off they are all the agent has, and a Codex that may ask
+/// no one, as `codex exec` never does, would refuse them and be left with
+/// none.
 fn server_body(plan: &CodexPlan, command: &str, inline: bool, nl: &str) -> Vec<u8> {
     let command = toml_edit::Value::from(command).to_string();
     let args = toml_edit::Array::from_iter(plan.args.iter().cloned()).to_string();
-    let tools = ["run", "apply_patch", "ask_colleague", "message_colleague"];
+    let tools: &[&str] = if plan.workbench { &["run", "ask_colleague", "message_colleague"] } else { &["run"] };
     let omit = r#"omit_tools_from = ["deferred"]"#;
     if inline {
         let limits = tools
@@ -408,7 +456,7 @@ fn server_body(plan: &CodexPlan, command: &str, inline: bool, nl: &str) -> Vec<u
             .map(|name| format!("{name} = {{ output_token_limit = {} }}", plan.output_token_limit))
             .collect::<Vec<_>>()
             .join(", ");
-        format!("fastctx = {{ command = {command}, args = {args}, env_vars = [\"CODEX_HOME\"], env = {{ FASTCTX_LOGIN_IDENTITY = \"1\" }}, startup_timeout_sec = {}, tool_timeout_sec = {}, {omit}, tools = {{ {limits} }} }}", plan.startup_timeout_sec, plan.tool_timeout_sec).into_bytes()
+        format!("fastctx = {{ command = {command}, args = {args}, env_vars = [\"CODEX_HOME\"], env = {{ FASTCTX_LOGIN_IDENTITY = \"1\" }}, startup_timeout_sec = {}, tool_timeout_sec = {}, default_tools_approval_mode = \"approve\", {omit}, tools = {{ {limits} }} }}", plan.startup_timeout_sec, plan.tool_timeout_sec).into_bytes()
     } else {
         let limits = tools
             .iter()
@@ -419,7 +467,7 @@ fn server_body(plan: &CodexPlan, command: &str, inline: bool, nl: &str) -> Vec<u
                 )
             })
             .collect::<String>();
-        format!("[mcp_servers.fastctx]{nl}command = {command}{nl}args = {args}{nl}env_vars = [\"CODEX_HOME\"]{nl}env = {{ FASTCTX_LOGIN_IDENTITY = \"1\" }}{nl}startup_timeout_sec = {}{nl}tool_timeout_sec = {}{nl}{omit}{nl}{limits}", plan.startup_timeout_sec, plan.tool_timeout_sec).into_bytes()
+        format!("[mcp_servers.fastctx]{nl}command = {command}{nl}args = {args}{nl}env_vars = [\"CODEX_HOME\"]{nl}env = {{ FASTCTX_LOGIN_IDENTITY = \"1\" }}{nl}startup_timeout_sec = {}{nl}tool_timeout_sec = {}{nl}default_tools_approval_mode = \"approve\"{nl}{omit}{nl}{limits}", plan.startup_timeout_sec, plan.tool_timeout_sec).into_bytes()
     }
 }
 

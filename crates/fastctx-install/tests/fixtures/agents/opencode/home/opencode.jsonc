@@ -1,0 +1,22 @@
+// Lab user configuration.
+{
+  "mcp": {
+    "lab_echo": {
+      "type": "local",
+      "command": [
+        "node",
+        "/lab/scripts/mcp-echo.cjs"
+      ],
+      "environment": {
+        "LAB_LABEL": "offline"
+      }
+    },
+    "lab_added": {
+      "type": "local",
+      "command": [
+        "node",
+        "/lab/scripts/mcp-echo.cjs"
+      ]
+    }
+  }
+}

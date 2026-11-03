@@ -32,7 +32,8 @@ pub fn event_size(event: &SessionEvent) -> (usize, Option<String>) {
 pub fn watched_size(watched: &Watched) -> (usize, Option<String>) {
     match watched {
         Watched::Now { .. } => (size(watched), Some("now".into())),
-        Watched::Live { event } => event_size(event),
+        Watched::Collaboration { .. } => (size(watched), Some("collaboration".into())),
+        Watched::Live { event, .. } => event_size(event),
         _ => (size(watched), None),
     }
 }

@@ -10,7 +10,7 @@
 //! stamped a record a little ahead of the file.
 
 use std::collections::BTreeMap;
-use std::io::{self, BufRead};
+use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
@@ -20,12 +20,10 @@ use fastctx_types::layout::{ConversationDir, Kind, WorldDir};
 use fastctx_types::project::{Location, Record, version_of};
 use fastctx_types::residents::{About, Action, Activity, MessageKind, MessageLine, Places};
 use fastctx_types::run::JobRecord;
-use fastctx_types::session::{Happened, SessionEvent, TurnEnd};
+use fastctx_types::session::{Happened, TurnEnd};
 use fastctx_types::since::*;
 use fastctx_types::{Address, MachineName, NoticeId, ResidentId, TownName};
 use jiff::Timestamp;
-
-use crate::delivery::Finished;
 
 pub(super) fn identity(kind: &str, parts: &[&str]) -> String {
     crate::speech::fixed_id(kind, parts).to_string()
@@ -285,7 +283,7 @@ impl Scan<'_> {
     }
 
     fn dirs(&mut self, directory: &Path) -> Vec<PathBuf> {
-        self.files(directory).into_iter().filter(|path| path.is_dir()).collect()
+        self.files(directory).into_iter().filter(|path| fastctx_platform::disk::is_dir(path)).collect()
     }
 
     fn json_files(&mut self, directory: &Path) -> Vec<PathBuf> {
@@ -319,11 +317,6 @@ impl Scan<'_> {
         (paths, passed)
     }
 
-    /// Whether a file only ever appended to was written to since the cutoff.
-    fn appended_since(&self, path: &Path) -> bool {
-        self.cutoff.is_none_or(|cutoff| modified(path).is_none_or(|at| at >= cutoff))
-    }
-
     fn jobs(&mut self, directory: &Path) {
         for path in self.changed_json_files(directory).0 {
             let Some(job) = self.optional::<JobRecord>(&path) else { continue };
@@ -355,60 +348,68 @@ impl Scan<'_> {
 
     fn resident(&mut self, about: &About, directory: &ConversationDir, files: &mut ResidentFiles) {
         let address = Address { machine: self.machine.clone(), resident: about.id.clone() };
-        for path in self.changed_json_files(&directory.turns()).0 {
-            if let Some(finished) = self.optional::<Finished>(&path) {
-                self.turn(
-                    files,
-                    finished.turn,
-                    Turn {
-                        at: finished.ended_at.unwrap_or(finished.at),
-                        end: finished.end,
-                        readers: Some(finished.readers),
-                        rank: 3,
-                        sources: vec![self.location(&path)],
-                    },
-                );
-            }
-        }
-        let (events, passed) = self.changed_json_files(&directory.session_events());
-        files.events_passed |= passed;
-        for path in events {
-            if let Some(event) = self.optional::<SessionEvent>(&path) {
-                match event.happened {
-                    Happened::TurnEnded { turn, end } => self.turn(
+        let database = crate::record_database::get(directory).map(|(db, _)| db.path().to_path_buf());
+        let source = database.unwrap_or_else(|_| directory.path().to_path_buf());
+        match crate::delivery::terminals(directory) {
+            Ok(rows) => {
+                for finished in rows {
+                    self.turn(
                         files,
-                        turn,
-                        Turn { at: event.at, end, readers: None, rank: 1, sources: vec![self.location(&path)] },
-                    ),
-                    Happened::DeliveryUncertain { delivery, why } => {
-                        let uncertain = files.uncertain.entry(delivery).or_default();
-                        uncertain.at = Some(event.at);
-                        uncertain.why = why;
-                        uncertain.sources.push(self.location(&path));
-                    }
-                    _ => {}
+                        finished.turn,
+                        Turn {
+                            at: finished.ended_at.unwrap_or(finished.at),
+                            end: finished.end,
+                            readers: Some(finished.readers),
+                            rank: 3,
+                            sources: vec![self.location(&source)],
+                        },
+                    );
                 }
             }
+            Err(error) => self.issue(&source, error),
         }
-        for path in self.json_files(&directory.handovers()) {
-            if let Some(handover) = self.optional::<crate::delivery::Handover>(&path)
-                && let Some(end) = handover.unresolved
-            {
-                for input in handover.inputs {
-                    let uncertain = files.uncertain.entry(input.delivery.id).or_default();
-                    uncertain.why = end.reason.clone().unwrap_or_default();
-                    uncertain.end = Some(end.clone());
-                    let readers = uncertain.readers.get_or_insert_default();
-                    readers.extend(input.readers);
-                    readers.sort();
-                    readers.dedup();
-                    uncertain.sources.push(self.location(&path));
+        match crate::delivery::history(directory) {
+            Ok(events) => {
+                for event in events {
+                    match event.happened {
+                        Happened::TurnEnded { turn, end } => self.turn(
+                            files,
+                            turn,
+                            Turn { at: event.at, end, readers: None, rank: 1, sources: vec![self.location(&source)] },
+                        ),
+                        Happened::DeliveryUncertain { delivery, why } => {
+                            let uncertain = files.uncertain.entry(delivery).or_default();
+                            uncertain.at = Some(event.at);
+                            uncertain.why = why;
+                            uncertain.sources.push(self.location(&source));
+                        }
+                        _ => {}
+                    }
                 }
             }
+            Err(error) => self.issue(&source, error),
+        }
+        match crate::delivery::handovers::uncertain(directory, self.cutoff) {
+            Ok(rows) => {
+                for handover in rows {
+                    if let Some(end) = handover.unresolved {
+                        for input in handover.inputs {
+                            let uncertain = files.uncertain.entry(input.delivery.id).or_default();
+                            uncertain.why = end.reason.clone().unwrap_or_default();
+                            uncertain.end = Some(end.clone());
+                            let readers = uncertain.readers.get_or_insert_default();
+                            readers.extend(input.readers);
+                            readers.sort();
+                            readers.dedup();
+                            uncertain.sources.push(self.location(&source));
+                        }
+                    }
+                }
+            }
+            Err(error) => self.issue(&source, error),
         }
         let path = directory.messages();
-        let messages = self.appended_since(&path);
-        self.lines::<MessageLine>(&path, messages, |scan, line, number| match line.what {
+        self.lines::<MessageLine>(&path, |scan, line, number| match line.what {
             MessageKind::Ended { turn, end, owed } => scan.turn(
                 files,
                 turn,
@@ -427,8 +428,7 @@ impl Scan<'_> {
             MessageKind::Asked { .. } | MessageKind::Heard { .. } => {}
         });
         let path = directory.actions();
-        let actions = self.appended_since(&path);
-        self.lines::<Action>(&path, actions, |scan, action, number| {
+        self.lines::<Action>(&path, |scan, action, number| {
             let town = files.town_at(action.at);
             if matches!(action.hand.as_str(), "write" | "edit" | "apply_patch") {
                 scan.events.push(SinceEvent {
@@ -473,28 +473,14 @@ impl Scan<'_> {
         });
     }
 
-    fn lines<T: serde::de::DeserializeOwned>(
-        &mut self,
-        path: &Path,
-        read: bool,
-        mut take: impl FnMut(&mut Self, T, usize),
-    ) {
-        if !read {
-            return;
-        }
-        let file = match std::fs::File::open(path) {
-            Ok(file) => file,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return,
-            Err(error) => {
-                self.issue(path, error);
-                return;
+    fn lines<T: serde::de::DeserializeOwned>(&mut self, path: &Path, mut take: impl FnMut(&mut Self, T, usize)) {
+        match crate::residents::activity::lines::<T>(path) {
+            Ok(rows) => {
+                for (index, row) in rows.into_iter().enumerate() {
+                    take(self, row, index + 1);
+                }
             }
-        };
-        for (index, line) in io::BufReader::new(file).lines().enumerate() {
-            match line.and_then(|line| serde_json::from_str(&line).map_err(io::Error::other)) {
-                Ok(value) => take(self, value, index + 1),
-                Err(error) => self.issue(path, format!("line {}: {error}", index + 1)),
-            }
+            Err(error) => self.issue(path, error),
         }
     }
 
@@ -721,11 +707,11 @@ fn ledger_fact(_town: &TownName, path: &str, bytes: &[u8]) -> io::Result<Option<
 
 /// When `path` was last written; none where that cannot be told.
 fn modified(path: &Path) -> Option<SystemTime> {
-    std::fs::metadata(path).and_then(|meta| meta.modified()).ok()
+    fastctx_platform::disk::metadata(path).and_then(|meta| meta.modified()).ok()
 }
 
 fn paths(directory: &Path) -> io::Result<Vec<PathBuf>> {
-    match std::fs::read_dir(directory) {
+    match fastctx_platform::disk::read_dir(directory) {
         Ok(entries) => {
             let mut paths = entries.map(|entry| entry.map(|entry| entry.path())).collect::<io::Result<Vec<_>>>()?;
             paths.sort();
@@ -737,5 +723,6 @@ fn paths(directory: &Path) -> io::Result<Vec<PathBuf>> {
 }
 
 fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> io::Result<T> {
-    serde_json::from_slice(&std::fs::read(path)?).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+    serde_json::from_slice(&fastctx_platform::disk::read(path)?)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
 }

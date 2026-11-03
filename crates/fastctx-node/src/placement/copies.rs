@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 mod journal;
 mod retire;
+pub(crate) mod upgrade;
 
 use std::{
     collections::HashMap,
@@ -72,6 +73,8 @@ struct State {
     retirement_base: Option<u64>,
     #[serde(default)]
     retirement_digest: Option<String>,
+    #[serde(default)]
+    upgraded: bool,
 }
 fn failure(error: impl std::fmt::Display) -> Failure {
     Failure::new(error.to_string())
@@ -86,7 +89,7 @@ fn file(node: &Node, owner: &Address) -> PathBuf {
     node.world.owner(&node.names(), owner).path().join("plan.md")
 }
 fn read(path: &Path) -> Result<Option<String>, Failure> {
-    match std::fs::read_to_string(path) {
+    match fastctx_platform::disk::read_to_string(path) {
         Ok(text) => {
             fastctx_types::plan::validate(&text).map_err(failure)?;
             Ok(Some(text))
@@ -178,6 +181,7 @@ pub(crate) async fn activate(
             retiring: false,
             retirement_base: None,
             retirement_digest: None,
+            upgraded: false,
         },
     )?;
     synchronize(node, &slot).await?;
@@ -188,6 +192,9 @@ pub(crate) async fn activate(
 async fn synchronize(node: &Arc<Node>, slot: &Arc<Slot>) -> Result<(), Failure> {
     let mut state = slot.state.lock().await;
     let link = node.link_of(&state.account.hub).ok_or_else(|| failure("the copy's hub is unavailable"))?;
+    if link.view().shared_records {
+        return Ok(());
+    }
     let acting = Acting::one(state.account.hub.clone(), state.account.account.clone());
     node.authorize_machine(&acting, &node.machine().into())?;
     if !super::owned(crate::authorization::current_view(&link)?.member(&node.machine()), &state.account.account) {
@@ -316,7 +323,7 @@ async fn had(
 
 fn discard(node: &Node, slot: &Slot) -> Result<(), Failure> {
     for path in [&slot.path, &retire::staged(slot), &directory(node).join(format!("{}.json", slot.key))] {
-        match std::fs::remove_file(path) {
+        match fastctx_platform::disk::remove_file(path) {
             Ok(()) => {}
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => return Err(failure(error)),
@@ -333,7 +340,7 @@ fn request(node: &Arc<Node>, slot: Arc<Slot>) {
         return;
     }
     let weak = Arc::downgrade(node);
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let mut retry = crate::again::Again::default();
         let mut previous = String::new();
         loop {
@@ -392,7 +399,16 @@ pub(crate) fn changed(node: &Arc<Node>, hub: &fastctx_types::access::HubId, chan
     }
 }
 
-pub(crate) fn start(node: &Arc<Node>) {
+fn watch_legacy(node: &Arc<Node>) {
+    let links = node.links();
+    if !links.is_empty() && links.iter().all(|link| link.view().shared_records) {
+        let old = node.copies.watcher.lock().expect("never poisoned").take();
+        drop(old);
+        return;
+    }
+    if node.copies.watcher.lock().expect("never poisoned").is_some() {
+        return;
+    }
     let weak = Arc::downgrade(node);
     let runtime = tokio::runtime::Handle::current();
     let mut watcher = fastctx_watch::Watcher::new(move |event: fastctx_watch::Result<fastctx_watch::Event>| {
@@ -428,8 +444,12 @@ pub(crate) fn start(node: &Arc<Node>) {
         node.log.line(format_args!("watching working-copy directories: {error}"));
     }
     *node.copies.watcher.lock().expect("never poisoned") = Some(watcher);
+}
+
+pub(crate) fn start(node: &Arc<Node>) {
+    watch_legacy(node);
     let restored = (|| -> Result<(), Failure> {
-        let entries = match std::fs::read_dir(directory(node)) {
+        let entries = match fastctx_platform::disk::read_dir(directory(node)) {
             Ok(entries) => entries,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
             Err(error) => return Err(failure(error)),
@@ -440,7 +460,7 @@ pub(crate) fn start(node: &Arc<Node>) {
                 continue;
             }
             // One copy that cannot be restored leaves the others theirs.
-            let restored = std::fs::read(&path)
+            let restored = fastctx_platform::disk::read(&path)
                 .map_err(failure)
                 .and_then(|bytes| serde_json::from_slice::<State>(&bytes).map_err(failure))
                 .and_then(|state| register(node, state));
@@ -458,6 +478,7 @@ pub(crate) fn start(node: &Arc<Node>) {
 
 /// Reconnection recovers invalidations missed while this computer was away.
 pub(crate) fn refresh(node: &Arc<Node>, hub: &fastctx_types::access::HubId) {
+    watch_legacy(node);
     let slots: Vec<_> = node
         .copies
         .slots

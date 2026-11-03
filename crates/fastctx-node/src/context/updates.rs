@@ -1,132 +1,278 @@
-//! Coalesced projection refreshes. Each conversation waits only at its own
-//! management gate; account invalidations carry no context bodies.
+//! Coalesced refreshes of changed sources. Each conversation keeps its own
+//! refresh lock and shared management gate; at most two background refreshes run.
 
+use super::{
+    dependencies,
+    parts::{self, COUNT, Part, Parts},
+};
 use crate::Node;
 use fastctx_types::{ResidentId, ipc::Failure};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     sync::{Arc, Mutex},
 };
 
-#[derive(Default)]
-pub(crate) struct Updates(Mutex<BTreeMap<ResidentId, Pending>>);
+const SETTLE: std::time::Duration = std::time::Duration::from_secs(3);
+const BACKGROUND: usize = 2;
+/// An unchanged failure stops after four attempts, until its inputs change.
+const SAME_FAILURES: u32 = 4;
+
+pub(crate) struct Updates {
+    pending: Mutex<BTreeMap<ResidentId, Pending>>,
+    wake: tokio::sync::Notify,
+    pub(crate) routes: super::routes::Routes,
+    pub(crate) projects: super::projects::Projects,
+    refreshing: crate::leases::Registry<ResidentId, fastctx_platform::doing::Mutex<()>>,
+    background: tokio::sync::Semaphore,
+}
+
+impl Default for Updates {
+    fn default() -> Self {
+        Self {
+            pending: Mutex::default(),
+            routes: super::routes::Routes::default(),
+            projects: super::projects::Projects::default(),
+            wake: tokio::sync::Notify::new(),
+            refreshing: crate::leases::Registry::default(),
+            background: tokio::sync::Semaphore::new(BACKGROUND),
+        }
+    }
+}
+
+impl Updates {
+    pub(crate) fn refreshing(
+        &self,
+        id: &ResidentId,
+    ) -> crate::leases::Lease<ResidentId, fastctx_platform::doing::Mutex<()>> {
+        self.refreshing.get_or_insert_with(id, || crate::ranked::refreshing(id))
+    }
+
+    pub(super) fn request(&self, id: &ResidentId, parts: Parts) {
+        if parts.empty() {
+            return;
+        }
+        self.pending.lock().expect("never poisoned").entry(id.clone()).or_default().invalidate(parts);
+        self.wake.notify_one();
+    }
+}
 
 struct Pending {
-    revision: u64,
-    loaded: u64,
-    plan_revision: u64,
-    plan_loaded: u64,
+    revision: [u64; COUNT],
+    loaded: [u64; COUNT],
     working: bool,
+    stopped: bool,
+    failed: Option<(String, u32)>,
 }
+
 impl Default for Pending {
     fn default() -> Self {
-        Self { revision: 1, loaded: 0, plan_revision: 1, plan_loaded: 0, working: false }
+        Self { revision: [1; COUNT], loaded: [0; COUNT], working: false, stopped: false, failed: None }
     }
 }
 
-/// Called while the conversation's exclusive management gate is held.
-pub(crate) async fn refresh(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {
-    let (revision, plan_revision, read_plan) = {
-        let mut pending = node.contexts.0.lock().expect("never poisoned");
-        let pending = pending.entry(id.clone()).or_default();
-        if pending.loaded == pending.revision {
-            return Ok(());
+impl Pending {
+    fn invalidate(&mut self, changed: Parts) {
+        for part in parts::ALL {
+            if changed.contains(part) {
+                self.revision[part as usize] = self.revision[part as usize].wrapping_add(1);
+            }
         }
-        (pending.revision, pending.plan_revision, pending.plan_loaded != pending.plan_revision)
+        self.stopped = false;
+    }
+    fn completed(&mut self, revision: [u64; COUNT], failure: Option<String>) -> bool {
+        let failed = failure.is_some();
+        if self.revision == revision {
+            self.failed = match (failure, self.failed.take()) {
+                (None, _) => None,
+                (Some(now), Some((before, times))) if now == before => Some((now, times.saturating_add(1))),
+                (Some(now), _) => Some((now, 1)),
+            };
+            self.stopped = self.failed.as_ref().is_some_and(|(_, times)| *times >= SAME_FAILURES);
+        }
+        if self.stopped || (!failed && self.loaded == self.revision) {
+            self.working = false;
+            return true;
+        }
+        false
+    }
+}
+
+/// Called while the conversation's management gate is held, shared or alone.
+pub(crate) async fn refresh(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {
+    let refreshing = node.contexts.refreshing(id);
+    let _refreshing = refreshing.lock().await;
+    let (revision, loaded) = {
+        let mut pending = node.contexts.pending.lock().expect("never poisoned");
+        let pending = pending.entry(id.clone()).or_default();
+        (pending.revision, pending.loaded)
     };
+    if revision == loaded {
+        return Ok(());
+    }
     node.residents.active(id)?;
     let (about, town) = node.residents.about(id).ok_or_else(|| Failure::new(super::words::UNKNOWN))?;
-    crate::focus::refresh(node, id).await?;
-    super::refresh_local(node, id).map_err(|error| Failure::new(error.to_string()))?;
-    super::sources::plan_guide(node, id, &about.origin, &about.acting)
-        .await
-        .map_err(|error| Failure::new(error.to_string()))?;
-    if read_plan {
-        crate::plan::context(node, id, &about.origin, &about.acting).await?;
+    for part in parts::ALL {
+        let index = part as usize;
+        if revision[index] == loaded[index] {
+            continue;
+        }
+        let generation = (*node.views.borrow(), *node.ways.borrow(), *node.memory_changes.borrow());
+        part.record();
+        match part {
+            Part::Focus => {
+                crate::focus::refresh(node, id).await?;
+                super::blocking::with(node, id, |node, id| super::sources::refresh_part_now(node, id, Part::Focus))
+                    .await
+                    .map_err(crate::record_migration::failure)?;
+            }
+            Part::User | Part::Project => {
+                super::blocking::with(node, id, move |node, id| super::sources::refresh_part_now(node, id, part))
+                    .await
+                    .map_err(crate::record_migration::failure)?;
+            }
+            Part::Guide => super::sources::plan_guide(node, id, &about.origin, &about.acting)
+                .await
+                .map_err(crate::record_migration::failure)?,
+            Part::Plan => crate::plan::context(node, id, &about.acting).await?,
+            Part::Skills => super::sources::skills(node, id, &about.acting).await?,
+            Part::History => super::map(node, id, town.as_ref(), &about.origin, &about.acting).await?,
+        }
+        if generation != (*node.views.borrow(), *node.ways.borrow(), *node.memory_changes.borrow()) {
+            // The source may have read a version between two notifications,
+            // even if the next scan sees the original inputs again.
+            continue;
+        }
+        // A later source may fail; the successful ones need not run again.
+        // A change arriving during this source retains its newer revision.
+        if let Some(pending) = node.contexts.pending.lock().expect("never poisoned").get_mut(id) {
+            pending.loaded[index] = revision[index];
+        }
     }
-    super::sources::skills(node, id, &about.acting).await?;
-    super::map(node, id, town.as_ref(), &about.origin, &about.acting).await?;
-    let mut contexts = node.contexts.0.lock().expect("never poisoned");
-    let pending = contexts.entry(id.clone()).or_default();
-    pending.loaded = revision;
-    pending.plan_loaded = plan_revision;
     Ok(())
 }
 
-fn request(node: &Arc<Node>, id: &ResidentId, plan: bool) {
+fn start_pending(node: &Arc<Node>, id: &ResidentId) {
     {
-        let mut pending = node.contexts.0.lock().expect("never poisoned");
-        let pending = pending.entry(id.clone()).or_default();
-        pending.revision = pending.revision.wrapping_add(1);
-        if plan {
-            pending.plan_revision = pending.plan_revision.wrapping_add(1);
-        }
-        if pending.working {
+        let mut entries = node.contexts.pending.lock().expect("never poisoned");
+        let Some(pending) = entries.get_mut(id) else {
+            return;
+        };
+        if pending.working || pending.stopped || pending.revision == pending.loaded {
             return;
         }
         pending.working = true;
     }
     let (node, id) = (node.clone(), id.clone());
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
+        let _doing = fastctx_platform::doing::doing(format!("refreshing {id}'s context"));
+        let mut again = crate::again::Again::default();
         loop {
+            let revision =
+                node.contexts.pending.lock().expect("never poisoned").get(&id).expect("worker owns entry").revision;
             let result = async {
+                let _turn = node.contexts.background.acquire().await.expect("never closed");
                 let gate = node.residents.management(&id)?;
-                let _one = gate.write().await;
+                let _using = gate.read().await;
                 refresh(&node, &id).await
             }
             .await;
-            let failed = result.is_err();
-            if let Err(error) = result
-                && node.residents.active(&id).is_ok()
+            let failure = result.err().map(|error| error.to_string());
+            let failed = failure.is_some();
+            let active = node.residents.active(&id).is_ok();
+            if active {
+                told(&node, &id, failure.as_deref());
+            }
             {
-                node.log.line(format_args!("refreshing {id}'s context: {error}"));
+                let mut entries = node.contexts.pending.lock().expect("never poisoned");
+                if !active {
+                    entries.remove(&id);
+                    break;
+                }
+                let pending = entries.get_mut(&id).expect("worker owns its entry");
+                if pending.completed(revision, failure) {
+                    break;
+                }
             }
-            let mut pending = node.contexts.0.lock().expect("never poisoned");
-            if node.residents.active(&id).is_err() {
-                pending.remove(&id);
-                break;
-            }
-            let pending = pending.get_mut(&id).expect("worker owns its entry");
-            if failed || pending.loaded == pending.revision {
-                pending.working = false;
-                break;
+            // A refresh that failed is tried again, later each time. One that
+            // a change outdated while it ran waits for changes to settle, so a
+            // stream of them, as a replica's sync sends, runs it a few times
+            // rather than back to back.
+            if failed {
+                tokio::time::sleep(again.next()).await;
+            } else {
+                again.reset();
+                tokio::time::sleep(SETTLE).await;
             }
         }
     });
 }
 
-/// Refreshes `id`'s context with its plan read again: its plan or working
-/// place changed.
-pub(crate) fn request_plan(node: &Arc<Node>, id: &ResidentId) {
-    request(node, id, true);
-}
-
-fn request_each(node: &Arc<Node>, plan: bool) {
-    for resident in node.residents.everyone().filter(|resident| resident.removed.is_none()) {
-        request(node, &resident.id, plan);
+pub(crate) fn told(node: &Node, id: &ResidentId, failure: Option<&str>) {
+    if node.said.changed(id, "context", failure) {
+        node.log.line(format_args!("refreshing {id}'s context: {}", failure.unwrap_or_default()));
     }
 }
 
+fn scan(node: &Arc<Node>, seen: &mut BTreeMap<ResidentId, [u64; COUNT]>) {
+    let mut sources = dependencies::Scan::default();
+    let mut live = BTreeSet::new();
+    let mut projects = BTreeSet::new();
+    for resident in node.residents.everyone().filter(|resident| resident.removed.is_none()) {
+        live.insert(resident.id.clone());
+        if let Some(town) = &resident.town {
+            projects.insert((serde_json::to_string(&resident.about.acting).expect("acting serializes"), town.clone()));
+        }
+        let now = sources.inputs(node, &resident.about, resident.town.as_ref());
+        let changed =
+            seen.get(&resident.id).map_or_else(|| Parts::of(&parts::ALL), |before| Parts::changed(before, &now));
+        seen.insert(resident.id.clone(), now);
+        if !changed.empty() {
+            node.contexts
+                .pending
+                .lock()
+                .expect("never poisoned")
+                .entry(resident.id.clone())
+                .or_default()
+                .invalidate(changed);
+        }
+        start_pending(node, &resident.id);
+    }
+    seen.retain(|id, _| live.contains(id));
+    node.contexts.routes.retain(&live);
+    node.contexts.projects.retain(&projects);
+    node.contexts.pending.lock().expect("never poisoned").retain(|id, pending| pending.working || live.contains(id));
+}
+
 pub(crate) fn start(node: &Arc<Node>) {
+    super::records::start(node);
     let node = node.clone();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let mut views = node.views.subscribe();
         let mut ways = node.ways.subscribe();
-        let mut memory = node.memory_changes.subscribe();
-        let mut retry = tokio::time::interval(std::time::Duration::from_secs(60));
-        retry.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        retry.tick().await;
-        let mut plan = true;
+        let mut seen = BTreeMap::new();
         loop {
-            request_each(&node, plan);
-            // Connectivity changes the authorized focus and memory paths, but
-            // never the plan. Plan records and reconnects invalidate it separately.
-            plan = tokio::select! {
-                _ = views.changed() => true,
-                _ = ways.changed() => false,
-                _ = memory.changed() => false,
-                _ = retry.tick() => true,
+            let working = node.clone();
+            seen = match fastctx_platform::task::spawn_blocking(move || {
+                scan(&working, &mut seen);
+                seen
+            })
+            .await
+            {
+                Ok(seen) => seen,
+                Err(error) => {
+                    node.log.line(format_args!("refreshing conversation contexts: {error}"));
+                    BTreeMap::new()
+                }
             };
+            tokio::select! {
+                _ = views.changed() => {},
+                _ = ways.changed() => {},
+                () = node.contexts.wake.notified() => {},
+            }
+            tokio::time::sleep(SETTLE).await;
+            // Changes during the next scan stay pending for the following scan.
+            views.mark_unchanged();
+            ways.mark_unchanged();
         }
     });
 }

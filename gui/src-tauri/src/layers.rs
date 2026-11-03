@@ -1,7 +1,8 @@
-//! The account's layer (`world-layers.md`), on desktop and devices without a node.
+//! The account's layer (`world-layers.md`), read on desktop and devices without a
+//! node where a machine from before keeps the workbench by it.
 
 use crate::Shell;
-use fastctx_types::layers::{Chosen, Layer};
+use fastctx_types::layers::Chosen;
 use fastctx_types::{AccountName, HubName, ResidentId};
 
 fn scope(hub: Option<String>, account: Option<String>) -> Result<(Option<HubName>, Option<AccountName>), String> {
@@ -19,17 +20,6 @@ pub(crate) async fn layer_read(
 ) -> Result<Chosen, String> {
     let (hub, account) = scope(hub, account)?;
     shell.world().layer(hub, account, None).await.map_err(|error| error.to_string())
-}
-
-#[fastctx_gui_command::command]
-pub(crate) async fn layer_set(
-    shell: tauri::State<'_, Shell>,
-    hub: Option<String>,
-    account: Option<String>,
-    layer: Layer,
-) -> Result<Chosen, String> {
-    let (hub, account) = scope(hub, account)?;
-    shell.world().layer(hub, account, Some(layer)).await.map_err(|error| error.to_string())
 }
 
 #[fastctx_gui_command::command]

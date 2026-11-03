@@ -11,7 +11,7 @@ use sha2::{Digest as _, Sha256};
 /// rather than sharing sockets, thread caches or model selections.
 pub(super) fn get(root: &Path, home: &Path) -> io::Result<PathBuf> {
     ensure_private_dir(root)?;
-    for entry in std::fs::read_dir(root)? {
+    for entry in fastctx_platform::disk::read_dir(root)? {
         let directory = entry?.path();
         if let Some(owner) = owner(&directory)?
             && crate::homes::same_dir(&owner, home)
@@ -46,7 +46,7 @@ pub(super) fn get(root: &Path, home: &Path) -> io::Result<PathBuf> {
 }
 
 fn owner(directory: &Path) -> io::Result<Option<PathBuf>> {
-    match std::fs::read(directory.join("home.json")) {
+    match fastctx_platform::disk::read(directory.join("home.json")) {
         Ok(bytes) => serde_json::from_slice(&bytes).map(Some).map_err(io::Error::other),
         Err(error) if matches!(error.kind(), io::ErrorKind::NotFound | io::ErrorKind::NotADirectory) => Ok(None),
         Err(error) => Err(error),

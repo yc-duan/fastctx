@@ -6,7 +6,7 @@ use fastctx_types::{
 };
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeSet, sync::Arc};
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 struct Removal {
     owners: Vec<Address>,
     pending: BTreeSet<HubAccount>,
@@ -38,7 +38,11 @@ pub(crate) fn note_deleted(node: &Node, id: &ResidentId) -> Result<(), String> {
 pub(crate) async fn recover(node: &Arc<Node>) -> Vec<String> {
     let mut errors = Vec::new();
     let directory = node.world.path().join("sentinel-owner-removals");
-    let entries = match std::fs::read_dir(directory) {
+    let entries = match fastctx_platform::task::blocking(move || {
+        fastctx_platform::disk::read_dir(directory).and_then(|entries| entries.collect::<std::io::Result<Vec<_>>>())
+    })
+    .await
+    {
         Ok(entries) => entries,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return errors,
         Err(e) => {
@@ -47,9 +51,12 @@ pub(crate) async fn recover(node: &Arc<Node>) -> Vec<String> {
     };
     for entry in entries {
         let result = async {
-            let path = entry.map_err(|e| e.to_string())?.path();
-            let mut removal: Removal =
-                fastctx_agent::state::load(&path)?.ok_or("sentinel owner removal disappeared")?;
+            let path = entry.path();
+            let mut removal: Removal = {
+                let path = path.clone();
+                fastctx_platform::task::blocking(move || fastctx_agent::state::load(&path)).await?
+            }
+            .ok_or("sentinel owner removal disappeared")?;
             for scope in removal.pending.clone() {
                 let records = node.sentinels.records().map_err(|e| e.message)?;
                 for owner in &removal.owners {
@@ -66,9 +73,12 @@ pub(crate) async fn recover(node: &Arc<Node>) -> Vec<String> {
                     }
                 }
                 removal.pending.remove(&scope);
-                fastctx_agent::state::save(&path, &removal)?;
+                let (path, kept) = (path.clone(), removal.clone());
+                fastctx_platform::task::blocking(move || fastctx_agent::state::save(&path, &kept)).await?;
             }
-            std::fs::remove_file(path).map_err(|e| e.to_string())
+            fastctx_platform::task::blocking(move || fastctx_platform::disk::remove_file(path))
+                .await
+                .map_err(|e| e.to_string())
         }
         .await;
         if let Err(error) = result {

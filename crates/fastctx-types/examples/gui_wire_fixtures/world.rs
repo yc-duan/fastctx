@@ -75,6 +75,7 @@ fn residents() -> Vec<ResidentNow> {
         .into_iter()
         .enumerate()
         .map(|(i, activity)| ResidentNow {
+            opened_by: None,
             source: None,
             tools: vec![CurrentTool {
                 turn: "turn-1".into(),
@@ -175,6 +176,7 @@ fn residents() -> Vec<ResidentNow> {
                 result: "exit 0".into(),
             }),
             removed: None,
+            benched: false,
             moved: match i {
                 0 => None,
                 1 => Some(Moved { to: Some("project-2".parse().unwrap()), at: at() }),
@@ -334,10 +336,13 @@ fn nodes() -> Vec<NodesReply> {
         attachment_runs: true,
         memory_folders: false,
         plan_copies: false,
+        replicated_records: false,
         collaboration_tree: false,
+        collaboration_watch: false,
         completion_receipts: false,
         control_letters: lifetime,
         run_stops: lifetime,
+        job_fact_deltas: false,
         upload_resumes: false,
         attachment_references: false,
         stats: lifetime,
@@ -386,6 +391,7 @@ fn nodes() -> Vec<NodesReply> {
                         online: None,
                         since: None,
                         through: Some("server".into()),
+                        strain: None,
                         allows_direct: false,
                         path: Some(fastctx_types::world::Path::Hub { why: None }),
                         facts: Ok(facts("lab", "linux", false)),
@@ -399,6 +405,7 @@ fn nodes() -> Vec<NodesReply> {
                         online: Some(false),
                         since: Some(at()),
                         through: None,
+                        strain: None,
                         allows_direct: false,
                         path: None,
                         facts: Err("offline".into()),
@@ -412,6 +419,7 @@ fn nodes() -> Vec<NodesReply> {
                         online: Some(true),
                         since: Some(at()),
                         through: None,
+                        strain: Some(fastctx_types::health::Strain::Busy),
                         allows_direct: true,
                         path: Some(if i == 2 {
                             fastctx_types::world::Path::Hub {
@@ -427,9 +435,15 @@ fn nodes() -> Vec<NodesReply> {
                     },
                 ],
             }],
+            workbench: Some(true),
         })
         .collect();
-    replies.push(NodesReply { machine: machine(), facts: Some(facts("desktop", "windows", false)), hubs: Vec::new() });
+    replies.push(NodesReply {
+        machine: machine(),
+        facts: Some(facts("desktop", "windows", false)),
+        hubs: Vec::new(),
+        workbench: None,
+    });
     replies
 }
 

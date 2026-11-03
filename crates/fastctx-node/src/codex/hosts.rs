@@ -202,7 +202,7 @@ impl CodexHosts {
 }
 
 fn forward(mut reports: mpsc::UnboundedReceiver<HostEvent>, events: mpsc::UnboundedSender<HostEvent>) {
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         while let Some(event) = reports.recv().await {
             if events.send(event).is_err() {
                 return;

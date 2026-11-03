@@ -3,10 +3,13 @@
 //!
 //! A colleague is a Codex resident the World starts, on the asker's machine
 //! or another, as a thread of that machine's app-server. The asker's words
-//! become its goal and first turn; the goal's report returns to the asker. Asking is
+//! become its first turn, and its goal where goals are offered; what it
+//! tells with `message_user` and the end of each turn the asker's words
+//! went into return to the asker, and so does its goal's report. Asking is
 //! recorded as one of the asker's actions: where the colleague lives, and
 //! its id; speaking to it later starts from that record.
 
+pub(crate) mod live;
 mod native;
 pub(crate) mod plan;
 pub(crate) mod stopping;
@@ -33,8 +36,14 @@ use crate::collab::Whose;
 use crate::residents::Heard;
 use crate::speech::{self, Owed};
 
+/// A colleague asked for: where it lives, and how many wait ahead of its
+/// first turn when it waits for its callee or its login to have room.
+pub struct Born {
+    pub colleague: Address,
+    pub waiting: Option<u32>,
+}
+
 /// Starts the named callee configured by an account the caller serves.
-/// Returns where the colleague lives.
 pub async fn ask(
     node: &Arc<Node>,
     asker: ResidentId,
@@ -43,12 +52,12 @@ pub async fn ask(
     prompt: String,
     callee: Option<String>,
     login: Option<&fastctx_types::collab::Caller>,
-) -> Result<Address, Failure> {
+) -> Result<Born, Failure> {
     let at = Timestamp::now();
     let turn = node.residents.now(&asker).and_then(|now| now.turn);
     let (about, _) =
         node.residents.about(&asker).ok_or_else(|| Failure::not_run(format!("no resident {asker} lives here")))?;
-    let choices = crate::collab::require(node, &asker, login)?;
+    let choices = crate::collab::require(node, &asker, login).await?;
     let mut matching: Vec<_> = choices
         .candidates
         .into_iter()
@@ -67,17 +76,23 @@ pub async fn ask(
             ));
         }
     };
-    let (colleague, account) = match chosen.whose {
+    crate::collab::room_for_ask(node, &asker).await?;
+    let (born, account) = match chosen.whose {
         Whose::Account { link, account } => {
             let request =
                 Request { about: &about, turn: turn.clone(), town: town.as_ref(), label: label.clone(), prompt };
-            let colleague = ask_for_account(node, &link, &account, chosen.started, request).await?;
-            (colleague, Some(fastctx_types::access::HubAccount { hub: link.membership().id.clone(), account }))
+            let born = ask_for_account(node, &link, &account, chosen.started, request).await?;
+            (born, Some(fastctx_types::access::HubAccount { hub: link.membership().id.clone(), account }))
         }
-        // This computer's own settings, in no network: the colleague would be
-        // born here, but no account keeps the goal it works toward.
-        Whose::Computer => return Err(Failure::not_run(fastctx_types::collab_prompt::GOAL_NEEDS_NETWORK)),
+        // This computer's own settings, in no network: no account would keep
+        // the colleague, so none is asked here yet (`world-colleagues.md`).
+        Whose::Computer => {
+            return Err(Failure::not_run(fastctx_types::collab_prompt::needs_network(
+                crate::goals::colleagues::offered(),
+            )));
+        }
     };
+    let colleague = &born.colleague;
     let action = Action {
         turn,
         at,
@@ -87,10 +102,10 @@ pub async fn ask(
         result: colleague.resident.to_string(),
     };
     if let Some(account) = &account {
-        crate::collab::keep_asked(node, &asker, &colleague, account)?;
+        crate::collab::keep_asked(node, &asker, colleague, account).await?;
     }
     record(node, &asker, action).await;
-    Ok(colleague)
+    Ok(born)
 }
 
 /// What a resident asks of a colleague.
@@ -110,7 +125,7 @@ async fn ask_for_account(
     account: &fastctx_types::AccountName,
     started: fastctx_types::collab::Started,
     request: Request<'_>,
-) -> Result<Address, Failure> {
+) -> Result<Born, Failure> {
     let machine = started.callee.login.machine.clone();
     let view = link.view();
     let call_town = node.town_across(link, request.town)?;
@@ -133,7 +148,7 @@ async fn ask_for_account(
     if link.view().is_me(&machine) {
         let acting = Acting::one(link.membership().id.clone(), account.clone());
         let address = Address { machine: here.clone(), resident: request.about.id.clone() };
-        let id = ask_here(
+        let (id, waiting) = ask_here(
             node,
             Requester { address, turn: request.turn },
             acting,
@@ -143,7 +158,7 @@ async fn ask_for_account(
             started,
         )
         .await?;
-        return Ok(Address { machine: here, resident: id });
+        return Ok(Born { colleague: Address { machine: here, resident: id }, waiting });
     }
     let lives_on = node.written(link, &machine);
     // A machine before the colleague goals answers Ask with a colleague of
@@ -164,7 +179,9 @@ async fn ask_for_account(
         started,
     };
     match link.call(&lives_on.name, account, Purpose::Agents, call).await {
-        Ok(Ok(RemoteReply::Asked { colleague })) => Ok(Address { machine: lives_on.name.clone(), resident: colleague }),
+        Ok(Ok(RemoteReply::Asked { colleague, waiting })) => {
+            Ok(Born { colleague: Address { machine: lives_on.name.clone(), resident: colleague }, waiting })
+        }
         Ok(Ok(_)) => Err(Failure::new(format!("{lives_on} answered something other than a colleague"))),
         // The far side says where it is changed when that is what to do.
         Ok(Err(failure)) => Err(Failure { message: format!("on {lives_on}: {}", failure.message), ..failure }),
@@ -188,6 +205,21 @@ pub(crate) struct Requester {
 /// another, with `prompt` as its first words. Returns its id once its
 /// thread exists; the words go in after, as its tools may take a while to
 /// start.
+/// Leaves a colleague whose start failed idle, with the reason it shows.
+async fn troubled(node: &Arc<Node>, id: &ResidentId, text: String) -> Result<(), Failure> {
+    let (node, id) = (node.clone(), id.clone());
+    fastctx_platform::task::spawn_blocking(move || {
+        node.residents.change_now(&node.world, &id, |now| {
+            now.activity = Activity::Idle;
+            now.trouble = Some(fastctx_types::residents::Trouble { at: Timestamp::now(), text });
+        })
+    })
+    .await
+    .map_err(std::io::Error::other)
+    .and_then(|result| result)
+    .map_err(|error| Failure::new(error.to_string()))
+}
+
 pub async fn ask_here(
     node: &Arc<Node>,
     requester: Requester,
@@ -196,8 +228,11 @@ pub async fn ask_here(
     label: String,
     prompt: String,
     started: fastctx_types::collab::Started,
-) -> Result<ResidentId, Failure> {
-    crate::goals::colleagues::ready(node)?;
+) -> Result<(ResidentId, Option<u32>), Failure> {
+    let goal = crate::goals::colleagues::offered();
+    if goal {
+        crate::goals::colleagues::ready(node)?;
+    }
     let Requester { address: asker, turn: requester_turn } = requester;
     node.residents
         .set_departed(&node.world, &asker, false, None)
@@ -213,14 +248,17 @@ pub async fn ask_here(
     let home = crate::homes::listed(node, "codex", started.callee.login.home.as_deref()).map_err(|failure| {
         Failure::not_run(format!("{}; the user changes it on the Model collaboration page", failure.message))
     })?;
+    // Asked before anything of the colleague is kept or its login started.
+    crate::logins::workbench::may_start(node, &acting, "codex", home.as_deref())?;
     let agent = AgentName::try_from("codex").expect("a valid agent name");
     let id = node.residents.new_id(&agent)?;
+    crate::record_migration::born(node, &id);
     node.codex.home(home.as_deref())?.require_login().await.map_err(|error| {
         Failure::not_run(format!(
             "this callee's Codex login is unavailable: {error}; the user changes it on the Model collaboration page"
         ))
     })?;
-    crate::collab::keep(node, &id, &started)?;
+    crate::collab::keep(node, &id, &started).await?;
     crate::session_options::keep(
         node,
         &id,
@@ -229,15 +267,15 @@ pub async fn ask_here(
             model: started.callee.model.clone(),
             reasoning_effort: started.callee.effort.clone(),
         },
-    )?;
+    )
+    .await?;
     // Where the requester works is only a first guess at where the colleague
     // speaks from; without it the colleague still chooses its own place.
     if let Err(error) = crate::placement::location::inherit(node, &id, &acting, &asker).await {
         node.log.line(format_args!("starting {id} where its requester works: {}", error.message));
     }
     let origin = Origin::Colleague { asked_by: asker.clone(), label };
-    crate::layers::may_start(node, &acting)?;
-    let _birth = crate::here::born(node, &id, acting.clone(), &origin);
+    let _birth = crate::here::born(node, &id, acting.clone());
     let (spec, heard) = thread_spec(node, &id, &origin, town.as_ref(), &acting, home.as_deref()).await?;
     // Until it is claimed below, reports of threads nobody claims are kept.
     let _starting = crate::codex::starting(node);
@@ -292,18 +330,15 @@ pub async fn ask_here(
     if let Some(town) = &town {
         crate::town::access::check(node, &about.acting, town)?;
     }
-    node.residents
-        .create(&node.world, about.clone(), town.clone(), now)
+    let (creating, born, at) = (node.clone(), about.clone(), town.clone());
+    fastctx_platform::task::spawn_blocking(move || creating.residents.create(&creating.world, born, at, now))
+        .await
+        .map_err(std::io::Error::other)
+        .and_then(|result| result)
         .map_err(|error| Failure::new(format!("recording the colleague: {error}")))?;
-    crate::context::instructed(node, &id, &heard).map_err(|error| Failure::new(error.to_string()))?;
-    if let Err(failure) = crate::goals::colleagues::open(node, &id, &asker, &prompt).await {
-        node.residents
-            .change_now(&node.world, &id, |now| {
-                now.activity = Activity::Idle;
-                now.trouble =
-                    Some(fastctx_types::residents::Trouble { at: Timestamp::now(), text: failure.message.clone() });
-            })
-            .map_err(|error| Failure::new(error.to_string()))?;
+    crate::context::instructed(node, &id, &heard).await.map_err(|error| Failure::new(error.to_string()))?;
+    if goal && let Err(failure) = crate::goals::colleagues::open(node, &id, &asker, &prompt).await {
+        troubled(node, &id, failure.message.clone()).await?;
         return Err(Failure::new(fastctx_types::collab_prompt::goal_failed(&id, failure)));
     }
     node.residents.set_instructed(&id, heard);
@@ -313,9 +348,6 @@ pub async fn ask_here(
         at: born_at,
         what: MessageKind::Asked { from: asker.clone(), text: prompt.clone(), requester_turn },
     };
-    if let Err(error) = crate::residents::append_message(&directory, &asked) {
-        node.log.line(format_args!("recording what {id} was asked: {error}"));
-    }
     // The request is kept before the asker hears of the colleague: a node
     // that stops before it goes in finds it, and puts it in then.
     let first = Pending {
@@ -327,26 +359,39 @@ pub async fn ask_here(
                 text: prompt,
                 goal_report: None,
                 goal_question: None,
+                told: None,
             },
         },
-        readers: Vec::new(),
+        // Working toward a goal, the colleague hands back its conclusion,
+        // and the turns it goes on with on its own wake no one; without
+        // one, the end of the turn these words start is its answer.
+        readers: if goal { Vec::new() } else { vec![asker.clone()] },
         state: PendingState::Waiting,
         working: false,
         session: None,
         since: None,
     };
-    if let Err(error) = crate::inbox::keep(&directory, &first) {
-        node.residents
-            .change_now(&node.world, &id, |now| {
-                now.activity = Activity::Idle;
-                now.trouble = Some(fastctx_types::residents::Trouble { at: Timestamp::now(), text: error.to_string() });
-            })
-            .map_err(|error| Failure::new(error.to_string()))?;
+    let (recording, kept_directory, kept_first) = (node.clone(), directory.clone(), first.clone());
+    let kept = fastctx_platform::task::spawn_blocking(move || {
+        if let Err(error) = crate::residents::append_message(&kept_directory, &asked) {
+            recording.log.line(format_args!("recording the colleague's first request: {error}"));
+        }
+        crate::inbox::keep(&kept_directory, &kept_first)
+    })
+    .await
+    .map_err(std::io::Error::other)
+    .and_then(|result| result);
+    if let Err(error) = kept {
+        troubled(node, &id, error.to_string()).await?;
         return Err(Failure::new(fastctx_types::collab_prompt::first_request_failed(&id, error)));
     }
+    // Whether its first turn may begin now, or waits for its callee or its
+    // login to have room, the asker hears at once; the words go in as they
+    // may either way.
+    let waiting = crate::turn_slots::admit(node, &id, &about).err().map(|queued| queued.ahead);
     let (node, colleague) = (node.clone(), id.clone());
     let answering = node.handoff.call();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let Some(_answering) = answering else { return };
         let why = match speech::hand_over(&node, &colleague, &about, &directory, first.clone()).await {
             Ok(
@@ -379,7 +424,7 @@ pub async fn ask_here(
         )
         .await;
     });
-    Ok(id)
+    Ok((id, waiting))
 }
 
 /// What a thread the World holds is started and resumed with: where it is,
@@ -398,12 +443,19 @@ pub async fn thread_spec(
 ) -> Result<(ThreadSpec, Heard), Failure> {
     let here = node.machine();
     crate::profile::session::ready(node, acting).await?;
-    let assisting = crate::assists::host::starting(node, id, acting)?;
-    let host = node.codex.session(home, assisting)?;
-    let cwd = match host.assisted_cwd() {
-        Some(cwd) => cwd.to_path_buf(),
-        None => standing(node, town)?,
-    };
+    let (preparing, resident, scope, login, project) =
+        (node.clone(), id.clone(), acting.clone(), home.map(std::path::Path::to_path_buf), town.cloned());
+    let (assisting, cwd) = fastctx_platform::task::spawn_blocking(move || {
+        let assisting = crate::assists::host::starting(&preparing, &resident, &scope)?;
+        let host = preparing.codex.session(login.as_deref(), assisting)?;
+        let cwd = match host.assisted_cwd() {
+            Some(cwd) => cwd.to_path_buf(),
+            None => standing(&preparing, project.as_ref())?,
+        };
+        Ok::<_, Failure>((assisting, cwd))
+    })
+    .await
+    .map_err(|error| Failure::new(error.to_string()))??;
     let binary = node.fastctx.clone();
     let address = Address { machine: here.clone(), resident: id.clone() };
     let env = vec![
@@ -411,34 +463,44 @@ pub async fn thread_spec(
         ("FASTCTX_RESIDENT".to_string(), address.tag()),
         ("FASTCTX_AGENT_HOME".to_string(), home.map(|home| home.to_string_lossy().into_owned()).unwrap_or_default()),
     ];
-    let mut tools = vec!["run"];
+    // Every session the World starts speaks with message_user, a colleague
+    // to the agent that asked it; only one the user opened asks colleagues.
+    let mut tools = vec!["run", fastctx_types::voice::TOOL];
     // A colleague's thread is listed under its task; a session the user
     // opens is named by whichever client shows it first, as Codex does.
     let name = match origin {
         Origin::Colleague { label, .. } => Some(label.clone()).filter(|label| !label.trim().is_empty()),
         Origin::User => {
-            tools.extend(["ask_colleague", "message_colleague", fastctx_types::voice::TOOL]);
+            tools.extend(["ask_colleague", "message_colleague"]);
             None
         }
     };
-    let mut config = codex::world_tools(&binary, &env, &tools, fastctx_hands::run::window::BUDGET);
-    let started = crate::collab::started(node, id)?;
-    if !assisting && started.as_ref().is_some_and(|started| !started.callee.screen) {
-        let config_home = home.unwrap_or_else(|| node.codex.default().config_home());
-        let (servers, plugins) = codex::desktop_hands(config_home).map_err(Failure::new)?;
-        codex::without_desktop(&mut config, &servers, &plugins);
-    }
-    let user_mcp = crate::profile::session::codex(node, id, acting, &mut config)?;
-    crate::session_options::configure(&mut config, crate::session_options::read(node, id)?);
-    if assisting {
-        codex::assisted::configure_thread(&mut config);
-    }
-    // Codex's memories are its login's, kept only for threads of this
-    // computer's own accounts (`crate::assists::own_accounts`).
-    if !crate::assists::own_accounts(node, acting) {
-        config["features"]["memories"] = false.into();
-        config["memories"] = serde_json::json!({"generate_memories": false, "use_memories": false});
-    }
+    let config = codex::world_tools(&binary, &env, &tools, fastctx_hands::run::window::BUDGET);
+    let (preparing, resident, scope, login) =
+        (node.clone(), id.clone(), acting.clone(), home.map(std::path::Path::to_path_buf));
+    let (config, user_mcp, started) = fastctx_platform::task::spawn_blocking(move || {
+        let mut config = config;
+        let started = crate::collab::started(&preparing, &resident)?;
+        if !assisting && started.as_ref().is_some_and(|started| !started.callee.screen) {
+            let config_home = login.as_deref().unwrap_or_else(|| preparing.codex.default().config_home());
+            let (servers, plugins) = codex::desktop_hands(config_home).map_err(Failure::new)?;
+            codex::without_desktop(&mut config, &servers, &plugins);
+        }
+        let user_mcp = crate::profile::session::codex(&preparing, &resident, &scope, &mut config)?;
+        crate::session_options::configure(&mut config, crate::session_options::read(&preparing, &resident)?);
+        if assisting {
+            codex::assisted::configure_thread(&mut config);
+        }
+        // Codex's memories are its login's, kept only for threads of this
+        // computer's own accounts (`crate::assists::own_accounts`).
+        if !crate::assists::own_accounts(&preparing, &scope) {
+            config["features"]["memories"] = false.into();
+            config["memories"] = serde_json::json!({"generate_memories": false, "use_memories": false});
+        }
+        Ok::<_, Failure>((config, user_mcp, started))
+    })
+    .await
+    .map_err(|error| Failure::new(error.to_string()))??;
     let (mut developer_instructions, heard) = instructions(node, id, town, origin, acting, true).await?;
 
     if let Some(started) = started.filter(|started| !started.rules.is_empty()) {
@@ -500,8 +562,12 @@ pub(crate) async fn instructions(
     acting: &Acting,
     record: bool,
 ) -> Result<(String, Heard), Failure> {
-    let mut heard =
-        heard_now(node, town).map_err(|error| Failure::new(format!("reading the town's ledger: {error}")))?;
+    let mut heard = {
+        let (reading, town) = (node.clone(), town.cloned());
+        fastctx_platform::task::blocking(move || heard_now(&reading, town.as_ref()))
+            .await
+            .map_err(|error| Failure::new(format!("reading the town's ledger: {error}")))?
+    };
     let words = words(id, town, origin, record);
     let (context, receipt) = crate::context::prepare(node, id, town, origin, acting).await?;
     heard.context = record.then_some(receipt);
@@ -558,7 +624,7 @@ pub async fn message(
     text: String,
     login: Option<&fastctx_types::collab::Caller>,
 ) -> Result<(Address, Landed), Failure> {
-    let choices = crate::collab::require(node, &from, login)?;
+    let choices = crate::collab::require(node, &from, login).await?;
     let here = node.machine();
     let at = Timestamp::now();
     let turn = node.residents.now(&from).and_then(|now| now.turn);
@@ -568,7 +634,7 @@ pub async fn message(
     };
     let to = Address { machine: machine.name.clone(), resident: to };
     let sender = Address { machine: here, resident: from.clone() };
-    let acting = match crate::collab::asked_account(node, &from, &to)? {
+    let acting = match crate::collab::asked_account(node, &from, &to).await? {
         Some(account) if node.serves(&choices.acting, &account.hub, &account.account) => {
             Acting::one(account.hub, account.account)
         }
@@ -604,6 +670,7 @@ pub async fn message(
         text,
         goal_report: None,
         goal_question: None,
+        told: None,
     };
     let landed =
         speech::tell_at(node, &acting, &to, &machine, speech::new_id("words"), notice, Owed::Speaker(sender)).await?;
@@ -633,7 +700,7 @@ pub async fn message(
 async fn locate(node: &Arc<Node>, from: &ResidentId, to: &ResidentId) -> Result<Written, Failure> {
     let here = node.machine();
     let actions = node.world.conversation(from).actions();
-    let asked = tokio::task::spawn_blocking({
+    let asked = fastctx_platform::task::spawn_blocking({
         let to = to.to_string();
         move || asked_on(&actions, &to)
     })
@@ -695,7 +762,7 @@ pub async fn find_for(node: &Arc<Node>, acting: &Acting, to: &ResidentId) -> Res
 /// ends; machines it asked colleagues on are told by letter.
 pub fn left(node: &Arc<Node>, resident: ResidentId) {
     let node = node.clone();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let address = Address { machine: node.machine(), resident: resident.clone() };
         if let Err(error) = node.residents.sleep_colleagues(&node.world, &address) {
             node.log.line(format_args!("putting {address}'s idle colleagues to sleep: {error}"));
@@ -703,11 +770,16 @@ pub fn left(node: &Arc<Node>, resident: ResidentId) {
         let Some((about, _)) = node.residents.about(&resident) else { return };
         let acting = about.acting;
         let actions = node.world.conversation(&resident).actions();
-        let machines = tokio::task::spawn_blocking(move || asked_machines(&actions)).await.unwrap_or_default();
+        let machines =
+            fastctx_platform::task::spawn_blocking(move || asked_machines(&actions)).await.unwrap_or_default();
         for machine in machines.into_iter().filter(|machine| *machine != address.machine) {
             let id = speech::fixed_id("left", &[resident.as_str(), &Timestamp::now().as_millisecond().to_string()]);
             let letter = Letter::Left { resident: resident.clone() };
-            if let Err(error) = crate::letters::send(&node, &acting, &Written::from(&machine), id, letter) {
+            let (sending, acting, to) = (node.clone(), acting.clone(), Written::from(&machine));
+            let sent =
+                fastctx_platform::task::blocking(move || crate::letters::send(&sending, &acting, &to, id, letter))
+                    .await;
+            if let Err(error) = sent {
                 node.log.line(format_args!("telling {machine} that {resident} left: {error}"));
             }
         }
@@ -721,32 +793,24 @@ pub fn departed(node: &Node, asker: Address, letter: (&str, &crate::letters::Ide
 
 /// The machines a resident asked colleagues on, from its `actions`.
 fn asked_machines(actions: &std::path::Path) -> Vec<MachineName> {
-    let Ok(text) = std::fs::read_to_string(actions) else { return Vec::new() };
-    let mut machines: Vec<MachineName> = text
-        .lines()
-        .filter_map(|line| serde_json::from_str::<Action>(line).ok())
-        .filter(|action| action.hand == "ask_colleague")
+    let mut machines: Vec<_> = crate::residents::activity::asked(actions, None)
+        .unwrap_or_default()
+        .into_iter()
         .map(|action| action.machine)
         .collect();
     machines.sort();
     machines.dedup();
     machines
 }
-
-/// The machine `to` was asked on, from the asker's `actions`.
 fn asked_on(actions: &std::path::Path, to: &str) -> Option<MachineName> {
-    let text = std::fs::read_to_string(actions).ok()?;
-    text.lines()
-        .rev()
-        .filter_map(|line| serde_json::from_str::<Action>(line).ok())
-        .find(|action| action.hand == "ask_colleague" && action.result == to)
-        .map(|action| action.machine)
+    crate::residents::activity::asked(actions, Some(to)).ok()?.into_iter().next().map(|action| action.machine)
 }
 
 async fn record(node: &Arc<Node>, resident: &ResidentId, action: Action) {
     let (world, resident) = (node.world.clone(), resident.clone());
     let recorded =
-        tokio::task::spawn_blocking(move || crate::residents::record_action(&world, &resident, &action)).await;
+        fastctx_platform::task::spawn_blocking(move || crate::residents::record_action(&world, &resident, &action))
+            .await;
     if let Ok(Err(error)) | Err(error) = recorded.map_err(std::io::Error::other) {
         node.log.line(format_args!("recording an action: {error}"));
     }

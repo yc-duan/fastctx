@@ -1,13 +1,11 @@
 //! Accepted conclusions are immutable facts, queued before an operation releases its proposed state.
 
+pub(crate) use super::report_store::recent;
+use super::report_store::{self, Frozen};
 use crate::Node;
-use fastctx_types::Address;
-use fastctx_types::goals::{Goal, Owner, Report, ReportSummary, Status, StopKind};
+use fastctx_types::goals::{Goal, Owner, Report, Status, StopKind};
 use fastctx_types::ipc::Failure;
-use fastctx_types::layout::ConversationDir;
 use fastctx_types::residents::{Delivery, Notice, Origin, Owing};
-use serde::{Deserialize, Serialize};
-use std::io;
 use std::sync::Arc;
 
 fn body(goal: &Goal) -> Option<&str> {
@@ -45,19 +43,9 @@ pub(super) fn remember(goal: &mut Goal, operation: &str, at: jiff::Timestamp) {
     }
 }
 
-#[derive(Serialize, Deserialize)]
-struct Frozen {
-    to: Address,
-    report: Report,
-}
-
-fn directory(conversation: &ConversationDir) -> std::path::PathBuf {
-    conversation.books().join("goal-reports")
-}
-
 /// Called for both accepted intents and authoritative local views. A later edit or resume
 /// cannot replace the report owed by an earlier accepted intent.
-pub(crate) fn keep(node: &Arc<Node>, goal: &Goal) -> Result<(), Failure> {
+fn keep_now(node: &Arc<Node>, goal: &Goal, runtime: tokio::runtime::Handle) -> Result<(), Failure> {
     if !node.is_me(&goal.resident.machine) || node.residents.is_deleting(&goal.resident.resident) {
         return Ok(());
     }
@@ -72,7 +60,7 @@ pub(crate) fn keep(node: &Arc<Node>, goal: &Goal) -> Result<(), Failure> {
     let text = body(goal).ok_or_else(|| Failure::new(super::words::REPORT_MISSING))?;
     let id = crate::speech::fixed_id("goal-result", &[&goal.id, &conclusion.operation]);
     let conversation = node.world.conversation(&goal.resident.resident);
-    let path = directory(&conversation).join(format!("{id}.json"));
+
     let label = node
         .residents
         .about(&goal.resident.resident)
@@ -96,83 +84,62 @@ pub(crate) fn keep(node: &Arc<Node>, goal: &Goal) -> Result<(), Failure> {
             text: text.into(),
         },
     };
-    fastctx_platform::ensure_private_dir(path.parent().expect("goal report directory")).map_err(failure)?;
-    match fastctx_platform::publish_new(
-        &path,
-        &serde_json::to_vec(&proposed).map_err(failure)?,
-        fastctx_platform::Permissions::Private,
-    ) {
-        Err(error) if error.kind() != io::ErrorKind::AlreadyExists => return Err(failure(error)),
-        _ => {}
-    }
-    let frozen: Frozen = serde_json::from_slice(&std::fs::read(&path).map_err(failure)?).map_err(failure)?;
-    if frozen.report.id != id || frozen.report.goal != goal.id || frozen.report.account != goal.account {
-        return Err(Failure::new(super::words::REPORT_CHANGED));
-    }
-    crate::inbox::owe(
+    report_store::prepare(&conversation).map_err(failure)?;
+    crate::inbox::storage::initialize(&conversation).map_err(failure)?;
+    let bytes = serde_json::to_vec(&proposed).map_err(failure)?.len();
+    let (saving, goal, notify, recipient) = (node.clone(), goal.clone(), node.clone(), goal.resident.resident.clone());
+    let paying = conversation.clone();
+    crate::records::write_then_at(
         &conversation,
-        &Owing {
-            to: frozen.to,
-            delivery: Delivery {
-                id,
-                at: frozen.report.ended_at,
-                notice: Notice::Words {
-                    from: fastctx_types::session::Speaker::Resident { address: frozen.report.colleague.clone() },
-                    text: fastctx_hands::told::goal_report(&frozen.report, Some(&node.machine())),
-                    goal_question: None,
-                    goal_report: Some(Box::new(fastctx_types::goals::ReportDelivery {
-                        id: frozen.report.id,
-                        completion: (!super::waiting::continues(goal)).then(|| super::waiting::completion(goal)),
-                        shown: Some(fastctx_types::goals::ReportShown {
-                            label: frozen.report.label,
-                            status: frozen.report.status,
-                            started_at: frozen.report.started_at,
-                            ended_at: frozen.report.ended_at,
-                            resume_at: frozen.report.resume_at,
-                            text: frozen.report.text,
-                        }),
-                        colleague: frozen.report.colleague,
-                        account: frozen.report.account,
-                    })),
-                },
-            },
+        fastctx_storage::Priority::Normal,
+        bytes.saturating_mul(3),
+        move |rows| {
+            let frozen = report_store::keep_in(rows, proposed)?;
+            crate::inbox::owe_in(rows, &owing(&saving, &goal, frozen))
+        },
+        move |_| {
+            fastctx_platform::task::spawn_on(&runtime, async move {
+                crate::turns::pay(&notify, &recipient, &paying).await;
+            });
         },
     )
-    .map_err(failure)?;
-    let node = node.clone();
-    let resident = goal.resident.resident.clone();
-    tokio::spawn(async move { crate::turns::pay(&node, &resident, &conversation).await });
-    Ok(())
+    .map_err(failure)
 }
 
-pub(crate) fn recent(conversation: &ConversationDir) -> io::Result<Vec<ReportSummary>> {
-    let entries = match std::fs::read_dir(directory(conversation)) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(error) => return Err(error),
-    };
-    let mut reports = Vec::new();
-    for entry in entries {
-        let path = entry?.path();
-        if path.extension().is_none_or(|ext| ext != "json")
-            || path.file_name().is_some_and(|name| name.to_string_lossy().starts_with('.'))
-        {
-            continue;
-        }
-        let Frozen { report, .. } = serde_json::from_slice(&std::fs::read(&path)?)?;
-        reports.push(ReportSummary {
-            id: report.id,
-            account: report.account,
-            status: report.status,
-            ended_at: report.ended_at,
-            elapsed_seconds: report.ended_at.as_second().saturating_sub(report.started_at.as_second()).max(0) as u64,
-            preview: report.text.lines().next().unwrap_or_default().chars().take(240).collect(),
-            path: path.to_string_lossy().into_owned(),
-        });
+fn owing(node: &Node, goal: &Goal, frozen: Frozen) -> Owing {
+    let id = frozen.report.id.clone();
+    Owing {
+        to: frozen.to,
+        delivery: Delivery {
+            id,
+            at: frozen.report.ended_at,
+            notice: Notice::Words {
+                from: fastctx_types::session::Speaker::Resident { address: frozen.report.colleague.clone() },
+                text: fastctx_hands::told::goal_report(&frozen.report, Some(&node.machine())),
+                goal_question: None,
+                told: None,
+                goal_report: Some(Box::new(fastctx_types::goals::ReportDelivery {
+                    id: frozen.report.id,
+                    completion: (!super::waiting::continues(goal)).then(|| super::waiting::completion(goal)),
+                    shown: Some(fastctx_types::goals::ReportShown {
+                        label: frozen.report.label,
+                        status: frozen.report.status,
+                        started_at: frozen.report.started_at,
+                        ended_at: frozen.report.ended_at,
+                        resume_at: frozen.report.resume_at,
+                        text: frozen.report.text,
+                    }),
+                    colleague: frozen.report.colleague,
+                    account: frozen.report.account,
+                })),
+            },
+        },
     }
-    reports.sort_by(|left, right| left.ended_at.cmp(&right.ended_at).then(left.id.cmp(&right.id)));
-    reports.drain(..reports.len().saturating_sub(10));
-    Ok(reports)
+}
+
+pub(crate) async fn keep(node: &Arc<Node>, goal: &Goal) -> Result<(), Failure> {
+    let (node, goal, runtime) = (node.clone(), goal.clone(), tokio::runtime::Handle::current());
+    fastctx_platform::task::spawn_blocking(move || keep_now(&node, &goal, runtime)).await.map_err(failure)?
 }
 
 fn failure(error: impl std::fmt::Display) -> Failure {

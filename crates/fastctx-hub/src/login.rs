@@ -22,7 +22,6 @@ use fastctx_types::{AccountName, MachineName};
 use jiff::Timestamp;
 use tokio::time::Instant;
 
-use crate::store::Store;
 use crate::{Hub, Socket, recv, refuse, send};
 
 /// Tries allowed in a row before each must wait.
@@ -140,7 +139,10 @@ pub(crate) async fn with_password(
     }
     hub.limits.lock().expect("never poisoned").succeeded(&account, peer.ip());
     let enrolled = Enrolled { register: member.register, managed: false };
-    let outcome = proved(&member, &binding).and_then(|()| join(&hub, peer, &account, &member, enrolled, None));
+    let owner = account.clone();
+    let outcome = hub
+        .blocking(move |hub| proved(&member, &binding).and_then(|()| join(&hub, peer, &owner, &member, enrolled, None)))
+        .await;
     logged_in(&hub, &mut socket, peer, &account, outcome).await;
 }
 
@@ -154,54 +156,56 @@ pub(crate) async fn with_token(
     proof: Signature,
     member: Joining,
 ) {
-    let outcome = (|| {
-        token
-            .verify(Domain::Session, &binding, &proof)
-            .map_err(|_| "the proof of the token does not verify".to_string())?;
-        proved(&member, &binding)?;
-        let (record, inside) = {
-            let store = hub.store();
-            let record = store.book.tokens.iter().find(|record| record.key == token).cloned();
-            (record, store.book.directory.by_key(&member.key).is_some())
-        };
-        let record = record.ok_or("the hub knows no such token; it may have been taken back")?;
-        // Asked again as the device joins, under the same hold of the
-        // directory as its joining; refused here, the refusal is kept.
-        if let Some(reason) = record.refuses(&member.key, inside, Timestamp::now()) {
-            let mut store = hub.store();
-            let directory = store.book.directory.clone();
-            crate::machine_log::keep(
-                &mut store,
-                &directory,
-                Actor {
-                    account: Some(record.account.clone()),
-                    authenticated: directory
-                        .by_key(&member.key)
-                        .is_some_and(|known| known.logins.contains(&record.account)),
-                    member: directory.by_key(&member.key).map(|member| member.name.clone()),
-                    peer: Some(peer),
-                },
-                Action::Joined {
-                    name: record.name.clone().unwrap_or_else(|| member.name.clone()),
-                    kind: record.kind,
-                    registered: record.register,
-                    via: LoginMethod::Token,
-                    managed: record.managed,
-                },
-                Outcome::Refused { reason: reason.to_string() },
-            )?;
-            hub.machine_log_changed.notify_one();
-            return Err(reason.to_string());
-        }
-        let joining = Joining {
-            name: record.name.clone().unwrap_or_else(|| member.name.clone()),
-            kind: record.kind,
-            ..member.clone()
-        };
-        let enrolled = Enrolled { register: record.register, managed: record.managed };
-        let name = join(&hub, peer, &record.account, &joining, enrolled, Some(&token))?;
-        Ok((record.account.clone(), name))
-    })();
+    let outcome = hub
+        .blocking(move |hub| {
+            token
+                .verify(Domain::Session, &binding, &proof)
+                .map_err(|_| "the proof of the token does not verify".to_string())?;
+            proved(&member, &binding)?;
+            let (record, inside) = {
+                let store = hub.store();
+                let record = store.book.tokens.iter().find(|record| record.key == token).cloned();
+                (record, store.book.directory.by_key(&member.key).is_some())
+            };
+            let record = record.ok_or("the hub knows no such token; it may have been taken back")?;
+            // Asked again as the device joins, under the same hold of the
+            // directory as its joining; refused here, the refusal is kept.
+            if let Some(reason) = record.refuses(&member.key, inside, Timestamp::now()) {
+                let mut store = hub.edit_store();
+                let directory = store.book.directory.clone();
+                crate::machine_log::keep(
+                    &mut store,
+                    &directory,
+                    Actor {
+                        account: Some(record.account.clone()),
+                        authenticated: directory
+                            .by_key(&member.key)
+                            .is_some_and(|known| known.logins.contains(&record.account)),
+                        member: directory.by_key(&member.key).map(|member| member.name.clone()),
+                        peer: Some(peer),
+                    },
+                    Action::Joined {
+                        name: record.name.clone().unwrap_or_else(|| member.name.clone()),
+                        kind: record.kind,
+                        registered: record.register,
+                        via: LoginMethod::Token,
+                        managed: record.managed,
+                    },
+                    Outcome::Refused { reason: reason.to_string() },
+                )?;
+                hub.machine_log_changed.notify_one();
+                return Err(reason.to_string());
+            }
+            let joining = Joining {
+                name: record.name.clone().unwrap_or_else(|| member.name.clone()),
+                kind: record.kind,
+                ..member.clone()
+            };
+            let enrolled = Enrolled { register: record.register, managed: record.managed };
+            let name = join(&hub, peer, &record.account, &joining, enrolled, Some(&token))?;
+            Ok((record.account.clone(), name))
+        })
+        .await;
     match outcome {
         Ok((account, name)) => logged_in(&hub, &mut socket, peer, &account, Ok(name)).await,
         Err(reason) => {
@@ -278,8 +282,10 @@ pub(crate) async fn open_account(
         }
     };
     if let Some(reason) = refused {
-        let reason =
-            record_opening(&hub, peer, &account, Outcome::Refused { reason: reason.clone() }).err().unwrap_or(reason);
+        let reason = record_opening(&hub, peer, &account, Outcome::Refused { reason: reason.clone() })
+            .await
+            .err()
+            .unwrap_or(reason);
         refuse(&mut socket, Refusal::Login { reason }).await;
         return;
     }
@@ -287,6 +293,7 @@ pub(crate) async fn open_account(
         Ok(response) => response,
         Err(reason) => {
             let reason = record_opening(&hub, peer, &account, Outcome::Refused { reason: reason.clone() })
+                .await
                 .err()
                 .unwrap_or(reason);
             refuse(&mut socket, Refusal::Login { reason }).await;
@@ -308,50 +315,57 @@ pub(crate) async fn open_account(
             return;
         }
     };
-    let outcome = HubSecrets::register_finish(&upload).and_then(|record| {
-        let mut store = hub.store();
-        let before = store.book.clone();
-        if !store.hub.self_registration {
-            return Err("this hub opens accounts only through its super administrator".to_string());
-        }
-        if store.book.directory.account(&account).is_some() {
-            return Err(format!("the account {account} exists already"));
-        }
-        // Anyone who reaches the hub may open one, so what it opens is a
-        // visitor's: its machines are its own, and it uses what is given
-        // to it (`world-network.md`, 超级管理员管什么).
-        store.book.directory.accounts.push(Arc::new(Account {
-            name: account.clone(),
-            level: fastctx_net::directory::Level::Visitor,
-            locked: false,
-            opened: Timestamp::now(),
-            collab: None,
-            profile: None,
-            promotion: false,
-        }));
-        Arc::make_mut(&mut store.book.passwords).insert(account.clone(), Bytes(record));
-        let actor = Actor { account: None, authenticated: false, member: None, peer: Some(peer) };
-        if let Err(reason) = crate::machine_log::keep(
-            &mut store,
-            &before.directory,
-            actor,
-            Action::OpenAccount { name: account.clone(), visitor: true },
-            Outcome::Done,
-        ) {
-            store.book = before;
-            return Err(reason);
-        }
-        Ok(())
-    });
+    let owner = account.clone();
+    let outcome = hub
+        .blocking(move |hub| {
+            let account = owner;
+            HubSecrets::register_finish(&upload).and_then(|record| {
+                let mut store = hub.edit_store();
+                let before = store.book.clone();
+                if !store.hub.self_registration {
+                    return Err("this hub opens accounts only through its super administrator".to_string());
+                }
+                if store.book.directory.account(&account).is_some() {
+                    return Err(format!("the account {account} exists already"));
+                }
+                // Anyone who reaches the hub may open one, so what it opens is a
+                // visitor's: its machines are its own, and it uses what is given
+                // to it (`world-network.md`, 超级管理员管什么).
+                store.book.directory.accounts.push(Arc::new(Account {
+                    name: account.clone(),
+                    level: fastctx_net::directory::Level::Visitor,
+                    locked: false,
+                    opened: Timestamp::now(),
+                    collab: None,
+                    profile: None,
+                    promotion: false,
+                }));
+                Arc::make_mut(&mut store.book.passwords).insert(account.clone(), Bytes(record));
+                let actor = Actor { account: None, authenticated: false, member: None, peer: Some(peer) };
+                if let Err(reason) = crate::machine_log::keep(
+                    &mut store,
+                    &before.directory,
+                    actor,
+                    Action::OpenAccount { name: account.clone(), visitor: true },
+                    Outcome::Done,
+                ) {
+                    store.book = before;
+                    return Err(reason);
+                }
+                Ok(())
+            })
+        })
+        .await;
     match outcome {
         Ok(()) => {
             hub.log.line(format_args!("{peer}: opened the account {account}"));
             let _ = send(&mut socket, &Down::Registered).await;
             let _ = futures_util::SinkExt::close(&mut socket).await;
-            hub.changed();
+            hub.changed_async().await;
         }
         Err(reason) => {
             let reason = record_opening(&hub, peer, &account, Outcome::Refused { reason: reason.clone() })
+                .await
                 .err()
                 .unwrap_or(reason);
             refuse(&mut socket, Refusal::Login { reason }).await;
@@ -359,18 +373,22 @@ pub(crate) async fn open_account(
     }
 }
 
-fn record_opening(hub: &Hub, peer: SocketAddr, account: &AccountName, outcome: Outcome) -> Result<(), String> {
-    let mut store = hub.store();
-    let directory = store.book.directory.clone();
-    let result = crate::machine_log::keep(
-        &mut store,
-        &directory,
-        Actor { account: None, authenticated: false, member: None, peer: Some(peer) },
-        Action::OpenAccount { name: account.clone(), visitor: true },
-        outcome,
-    );
-    hub.machine_log_changed.notify_one();
-    result
+async fn record_opening(hub: &Hub, peer: SocketAddr, account: &AccountName, outcome: Outcome) -> Result<(), String> {
+    let account = account.clone();
+    hub.blocking(move |hub| {
+        let mut store = hub.edit_store();
+        let directory = store.book.directory.clone();
+        let result = crate::machine_log::keep(
+            &mut store,
+            &directory,
+            Actor { account: None, authenticated: false, member: None, peer: Some(peer) },
+            Action::OpenAccount { name: account.clone(), visitor: true },
+            outcome,
+        );
+        hub.machine_log_changed.notify_one();
+        result
+    })
+    .await
 }
 
 /// That `asked` is taken: by a name written as it is, or written another
@@ -405,7 +423,7 @@ pub(crate) const OLDER_RELEASE: &str = "this hub has names beyond lowercase Engl
 
 /// Whether the hub or one of its members has a name that a release from
 /// before names of any language cannot read.
-pub(crate) fn beyond_older_releases(store: &Store) -> bool {
+pub(crate) fn beyond_older_releases(store: &crate::store::Snapshot) -> bool {
     !store.hub.name.is_ascii_word() || store.book.directory.members.iter().any(|member| !member.name.is_ascii_word())
 }
 
@@ -414,7 +432,7 @@ pub(crate) fn beyond_older_releases(store: &Store) -> bool {
 /// over it. So a device of such a release comes in only while every name on
 /// the hub is one it reads, and a name it cannot read comes in only while
 /// every other member's last session said it reads them.
-fn readable(store: &Store, joining: &Joining) -> Result<(), String> {
+fn readable(store: &crate::store::Snapshot, joining: &Joining) -> Result<(), String> {
     if !joining.any_names && beyond_older_releases(store) {
         return Err(format!("{OLDER_RELEASE} and log in again"));
     }
@@ -428,7 +446,7 @@ fn readable(store: &Store, joining: &Joining) -> Result<(), String> {
 
 /// Why `name` cannot come into the hub now, if it cannot: members other
 /// than `except` whose last session did not say they read it.
-pub(crate) fn unread(store: &Store, name: &MachineName, except: Option<&PublicKey>) -> Option<String> {
+pub(crate) fn unread(store: &crate::store::Snapshot, name: &MachineName, except: Option<&PublicKey>) -> Option<String> {
     if name.is_ascii_word() {
         return None;
     }
@@ -481,7 +499,7 @@ fn join(
 ) -> Result<fastctx_types::MachineName, String> {
     let Enrolled { register, managed } = enrolled;
     let name = {
-        let mut store = hub.store();
+        let mut store = hub.edit_store();
         let before = store.book.clone();
         let result = (|| {
             readable(&store, joining)?;
@@ -568,6 +586,8 @@ fn join(
                         through: None,
                         reach: None,
                         paths: None,
+                        strain: None,
+                        workbench: None,
                         settled: None,
                     }));
                     joining.name.clone()
@@ -630,18 +650,18 @@ fn join(
         {
             hub.log.line(format_args!("clearing what was left of the letters of an earlier {name}: {error}"));
         }
-        // What it said of names holds from now, not from its first session:
-        // one that joined and has not connected yet does not hold back the
-        // names of those joining by the same code after it.
-        if joining.any_names {
-            let kept =
-                store.letters_of(&name).map(|letters| letters.any_names = true).and_then(|()| store.save_letters());
-            if let Err(error) = kept {
-                hub.log.line(format_args!("keeping that {name} reads names of any language: {error}"));
-            }
-        }
         name
     };
+    // What it said of names holds from now, not from its first session:
+    // one that joined and has not connected yet does not hold back the
+    // names of those joining by the same code after it.
+    if joining.any_names
+        && let Some(member) = hub.store().letters.member(&name)
+        && let Err(error) =
+            tokio::runtime::Handle::current().block_on(member.request(|reply| crate::post::Command::Names { reply }))
+    {
+        hub.log.line(format_args!("keeping that {name} reads names of any language: {error}"));
+    }
     hub.changed();
     Ok(name)
 }

@@ -68,7 +68,7 @@ struct Kept {
 
 impl Room {
     pub(crate) fn new(world: &WorldDir) -> Self {
-        let bytes = std::fs::read(file(world))
+        let bytes = fastctx_platform::disk::read(file(world))
             .ok()
             .and_then(|bytes| serde_json::from_slice::<Kept>(&bytes).ok())
             .map_or_else(default_room, |kept| kept.bytes);

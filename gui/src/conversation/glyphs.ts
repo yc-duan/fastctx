@@ -11,16 +11,17 @@ type Named = Glyph | "thinking" | "chevron" | "copy" | "check" | "expand" | "sto
  *  archive and restore, delete), a page and its versions; an account, its
  *  password, a phone, logging out, trust and a relay; locking a person out
  *  and letting them in, signing up; a conversation's context, the
- *  provider's cache and how long it stays; saving a copy, and a file's
- *  path; the machines as a drawing and as a list; a new version; a
- *  conversation's goal, pausing and resuming it, and the panel beside it;
+ *  provider's cache and how long it stays; saving a copy, a file's path,
+ *  and opening it with this device's program; the machines as a drawing
+ *  and as a list; a new version; what went
+ *  wrong with them; a conversation's goal, pausing and resuming it, and the panel beside it;
  *  a repair; a project's journal and decision; a sentinel; a
  *  conversation's every step; one of the account's skills. */
 type Frame =
   | "menu" | "plus" | "minus" | "settings" | "sidebar" | "machine" | "close" | "more" | "back" | "sleep" | "wake" | "move"
   | "archive" | "unarchive" | "trash" | "reread" | "scan" | "grip" | "page" | "versions" | "history" | "person" | "key" | "phone"
-  | "logout" | "shield" | "lock" | "unlock" | "signup" | "relay" | "save" | "link"
-  | "context" | "cache" | "clock" | "tree" | "rows" | "update"
+  | "logout" | "shield" | "lock" | "unlock" | "signup" | "relay" | "save" | "link" | "launch"
+  | "context" | "cache" | "clock" | "tree" | "rows" | "update" | "bell"
   | "note" | "plug" | "tune" | "skill"
   | "goal" | "pause" | "resume" | "panel" | "repair" | "journal" | "spec" | "sentinel" | "steps" | "dock-right" | "dock-bottom" | "dock-left" | "split"
   | Marks;
@@ -28,10 +29,10 @@ type Frame =
 /** Which agent and which kind of device, drawn small beside a conversation's
  *  name; what is done to a turn; the places of the frame added since; what an
  *  agent asks the user; a command that takes the output of the row above;
- *  where a folder walk starts. None is a maker's mark: the agents are told
+ *  where a folder walk starts; what a window is about, asked. None is a maker's mark: the agents are told
  *  apart by shapes of our own. */
 type Marks =
-  | "claude" | "codex" | "desktop" | "laptop" | "server" | "group" | "features" | "agents" | "folder" | "folder-open" | "fork" | "info" | "regenerate"
+  | "claude" | "codex" | "desktop" | "laptop" | "server" | "group" | "features" | "agents" | "folder" | "folder-open" | "fork" | "info" | "help" | "regenerate"
   | "terminal" | "cross" | "fit" | "ask" | "fed" | "home" | "disk"
   | Deeds;
 
@@ -59,6 +60,8 @@ const paths: Record<Named, string> = {
   "folder-open": '<path d="M3.75 13.5V6.25a1 1 0 0 1 1-1h3.2l1.5 1.5h5.3a1 1 0 0 1 1 1v1"/><path d="M3.75 14.75l1.85-4.9a1 1 0 0 1 .94-.65h9.4a.7.7 0 0 1 .65.95l-1.6 4.25a1 1 0 0 1-.94.65H4.25a.5.5 0 0 1-.5-.3z"/>',
   fork: '<circle cx="6" cy="5" r="1.6"/><circle cx="14" cy="5" r="1.6"/><circle cx="10" cy="15.2" r="1.6"/><path d="M6 6.6v.9a2.5 2.5 0 0 0 2.5 2.5h3a2.5 2.5 0 0 0 2.5-2.5v-.9M10 10v3.6"/>',
   info: '<circle cx="10" cy="10" r="6.25"/><path d="M10 9.25v4"/><circle cx="10" cy="6.9" r="0.6" fill="currentColor"/>',
+  // A question in a ring: what a window is about.
+  help: '<circle cx="10" cy="10" r="6.25"/><path d="M8.1 8.3a1.95 1.95 0 0 1 3.8.5c0 1.3-1.9 1.5-1.9 2.75"/><circle cx="10" cy="13.55" r="0.6" fill="currentColor"/>',
   // A speech balloon with a question in it: something asked of the user.
   ask: '<path d="M5.75 4.25h8.5a1.5 1.5 0 0 1 1.5 1.5v6a1.5 1.5 0 0 1-1.5 1.5H9.75l-3.5 2.5v-2.5h-.5a1.5 1.5 0 0 1-1.5-1.5v-6a1.5 1.5 0 0 1 1.5-1.5z"/><path d="M8.6 7.35a1.5 1.5 0 0 1 2.9.45c0 1.05-1.5 1.25-1.5 2.15"/><circle cx="10" cy="11.55" r="0.55" fill="currentColor"/>',
   regenerate: '<path d="M15.25 10a5.25 5.25 0 1 1-1.54-3.71"/><path d="M14.25 3.75v2.75H11.5"/>',
@@ -84,6 +87,7 @@ const paths: Record<Named, string> = {
   trash: '<path d="M4.25 6h11.5"/><path d="M8 6V4.75a.75.75 0 0 1 .75-.75h2.5a.75.75 0 0 1 .75.75V6"/><path d="M5.6 6l.65 9.1a1 1 0 0 0 1 .9h5.5a1 1 0 0 0 1-.9L14.4 6"/><path d="M8.6 8.75v4.5M11.4 8.75v4.5"/>',
   save: '<path d="M10 3.75v8.5M6.75 9l3.25 3.25L13.25 9"/><path d="M4.25 13v2.25a1 1 0 0 0 1 1h9.5a1 1 0 0 0 1-1V13"/>',
   link: '<path d="M8.5 11.5l3-3"/><path d="M7.4 9.1 5.95 10.55a2.3 2.3 0 0 0 3.25 3.25l1.45-1.45"/><path d="M12.6 10.9l1.45-1.45a2.3 2.3 0 0 0-3.25-3.25L9.35 7.65"/>',
+  launch: '<path d="M9.25 4.75h-3.5a1 1 0 0 0-1 1v8.5a1 1 0 0 0 1 1h8.5a1 1 0 0 0 1-1v-3.5"/><path d="M11.75 4.75h3.5v3.5M15.25 4.75 9.75 10.25"/>',
   page: '<rect x="3.75" y="4.25" width="12.5" height="11.5" rx="1.5"/><path d="M3.75 7.25h12.5"/><path d="M6.25 13.25l2.25-2.5 1.75 1.5 3.5-3.5"/>',
   versions: '<rect x="6.25" y="6.75" width="10" height="9" rx="1.25"/><path d="M3.75 13.25v-7.5a1 1 0 0 1 1-1h8.5"/>',
   read: '<path d="M4.5 4.5h7l4 4v7a1 1 0 0 1-1 1h-10a1 1 0 0 1-1-1v-10a1 1 0 0 1 1-1z"/><path d="M11.5 4.5v4h4"/><path d="M7 11h6M7 13.5h4"/>',
@@ -155,6 +159,7 @@ const paths: Record<Named, string> = {
   steps: '<path d="M3.75 5h12.5M3.75 15h12.5"/><circle cx="7" cy="10" r="0.9" fill="currentColor"/><circle cx="10" cy="10" r="0.9" fill="currentColor"/><circle cx="13" cy="10" r="0.9" fill="currentColor"/>',
   rows: '<circle cx="5" cy="5.75" r="0.9" fill="currentColor"/><circle cx="5" cy="10" r="0.9" fill="currentColor"/><circle cx="5" cy="14.25" r="0.9" fill="currentColor"/><path d="M8.25 5.75h7.5M8.25 10h7.5M8.25 14.25h7.5"/>',
   clock: '<circle cx="10" cy="10" r="6.25"/><path d="M10 6.4V10l2.5 1.6"/>',
+  bell: '<path d="M5.75 13V8.35a4.25 4.25 0 0 1 8.5 0V13l1.25 1.5h-11z"/><path d="M8.4 14.5a1.7 1.7 0 0 0 3.2 0"/>',
   relay: '<circle cx="4.5" cy="10" r="1.5"/><circle cx="15.5" cy="10" r="1.5"/><path d="M6 10h2.25M11.75 10H14"/><rect x="8.25" y="8" width="3.5" height="4" rx="0.75"/>',
   // Where a folder walk starts: a machine's home, and each of its disks.
   home: '<path d="M4 9.25L10 4.25l6 5"/><path d="M5.75 8v7.25a.75.75 0 0 0 .75.75h7a.75.75 0 0 0 .75-.75V8"/><path d="M8.5 16v-3.5h3V16"/>',
@@ -170,6 +175,19 @@ const paths: Record<Named, string> = {
 /** A glyph at its nominal `size`; the interface draws every glyph at that
  *  size times one scale (`--icon-scale` in the design tokens), so the set
  *  grows together and keeps its proportions. */
+/** The agents with a mark of their own. */
+const AGENT_MARKS: readonly string[] = ["claude", "codex"];
+
+/** An agent's mark, by the word the node names it by: its own where it has
+ *  one, else the agents' mark. */
+export function agentMark(agent: string): GlyphName {
+  return AGENT_MARKS.includes(agent) ? (agent as Named) : "agents";
+}
+
+export function agentGlyph(agent: string, size = 20): string {
+  return glyph(agentMark(agent), size);
+}
+
 export function glyph(name: keyof typeof paths, size = 20): string {
   return `<svg class="glyph" width="${size}" height="${size}" style="--glyph:${size}" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name]}</svg>`;
 }

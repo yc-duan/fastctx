@@ -16,7 +16,7 @@ pub(super) async fn finish(
 ) -> Result<(), Failure> {
     let stage = staged(slot);
     if read(&stage)?.is_none() {
-        match std::fs::rename(&slot.path, &stage) {
+        match fastctx_platform::disk::rename(&slot.path, &stage) {
             Ok(()) => {}
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
             Err(error) => return Err(failure(error)),
@@ -44,14 +44,14 @@ pub(super) async fn finish(
         }
     }
     // Native scripts can keep a writable descriptor to the detached inode.
-    // Let their tracked jobs finish before removing it (2026-10-30).
+    // Let their tracked jobs finish before removing it.
     if crate::placement::jobs::busy(node, std::slice::from_ref(&state.owner))? {
         return Err(failure("the old working computer still has jobs; its detached plan waits for them"));
     }
     if read(&stage)?.as_deref() != Some(&text) {
         return Err(failure("the detached plan changed while its final edit was submitted"));
     }
-    std::fs::remove_file(stage).map_err(failure)?;
+    fastctx_platform::disk::remove_file(stage).map_err(failure)?;
     state.text.clear();
     keep(node, &slot.key, state)?;
     link.follow_record(&state.account.account, fastctx_types::plan::KIND, state.owner.resident.as_str(), false)

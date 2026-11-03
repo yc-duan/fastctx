@@ -53,16 +53,27 @@ impl WakeFailure {
     }
 }
 
-pub(crate) fn check(node: &Node, id: &ResidentId, about: &fastctx_types::residents::About) -> Result<(), WakeFailure> {
-    // A conversation the World holds is not driven while its account is in
-    // Connect (`world-layers.md`): what comes for it waits.
-    if !crate::layers::drives(node, about) {
-        return Err(Failure::host_unavailable(fastctx_types::layers::CONNECT_ONLY).into());
+fn check_now(node: &Node, id: &ResidentId, about: &fastctx_types::residents::About) -> Result<(), WakeFailure> {
+    // A conversation the World holds is not driven while the workbench is
+    // closed in its login (`world-layers.md`): what comes for it waits.
+    if !crate::logins::workbench::drives(node, about) {
+        return Err(Failure::host_unavailable(crate::logins::workbench::CLOSED).into());
     }
     crate::homes::available(node, about)?;
     crate::assists::check_turn(node, id, about)?;
     crate::town::access::current(node, id)?;
     Ok(())
+}
+
+pub(crate) async fn check(
+    node: &Arc<Node>,
+    id: &ResidentId,
+    about: &fastctx_types::residents::About,
+) -> Result<(), WakeFailure> {
+    let (node, id, about) = (node.clone(), id.clone(), about.clone());
+    fastctx_platform::task::spawn_blocking(move || check_now(&node, &id, &about))
+        .await
+        .map_err(|error| WakeFailure::from(Failure::new(error.to_string())))?
 }
 
 /// The caller owns the action gate and a shared management gate (or an
@@ -80,7 +91,7 @@ pub(crate) async fn wake(
     // Judged on its hubs' word: a turn asked in the moments after this
     // computer connects waits for their view rather than being turned away.
     node.settled_for(&about.acting).await;
-    check(node, id, &about)?;
+    check(node, id, &about).await?;
     let adapter = super::adapters::Adapter::for_conversation(&about)
         .ok_or_else(|| Failure::new("this host has no supported lifecycle entrance"))?;
     node.log.line(format_args!("lifecycle {id}: host requested by {source:?}"));

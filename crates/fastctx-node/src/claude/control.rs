@@ -65,6 +65,11 @@ pub async fn control(node: &Arc<Node>, resident: &ResidentId, control: Control) 
     {
         return Err(Failure::not_run(fastctx_hosts::claude::assisted::COMMAND_REFUSED));
     }
+    // What a running turn asks is answered whatever its login: the answer
+    // goes to the session waiting for it, which is alive, and wakes nothing.
+    if let Control::Answer { request, answer } = control {
+        return answer_request(node, resident, request, answer).await;
+    }
     // What has the model work in a session between turns, a compaction or a
     // skill, takes a turn of its login, as words do (`turn_slots`), before
     // the session is woken for it.
@@ -76,7 +81,7 @@ pub async fn control(node: &Arc<Node>, resident: &ResidentId, control: Control) 
     super::resume::ready(node, resident).await?;
     match control {
         Control::Fork { through, side } => super::fork::fork(node, resident, through, side).await,
-        Control::Answer { request, answer } => answer_request(node, resident, request, answer).await,
+        Control::Answer { .. } => unreachable!("an answer is given before the session is woken"),
         Control::Rewind { .. } if !REWIND_SUPPORTED => Err(Failure::not_run(
             "Claude Code has no supported in-place rewind; fork through the selected turn instead",
         )),
@@ -192,7 +197,7 @@ pub async fn offers(node: &Arc<Node>, resident: &ResidentId) -> Result<Offers, F
             .transpose()
             .map_err(failure)?
             .flatten();
-        let initial = crate::session_options::read(node, resident)?;
+        let initial = crate::session_options::load(node, resident).await?;
         let checkpoints = about
             .session
             .as_ref()
@@ -313,7 +318,7 @@ pub(super) async fn selection(
     resident: &ResidentId,
     running: bool,
 ) -> Result<fastctx_types::agents::SessionOptions, Failure> {
-    let initial = crate::session_options::read(node, resident)?;
+    let initial = crate::session_options::load(node, resident).await?;
     let selected = if running {
         Some(invoke(node, resident, json!({"do":"selection"})).await?)
     } else {
@@ -410,7 +415,7 @@ pub(super) async fn invoke(node: &Arc<Node>, resident: &ResidentId, control: Val
                 })?;
             }
             let executing = claimed.as_ref().map(|claim| &claim.host).unwrap_or(&host);
-            let result = if reply.with_extension("done").exists() {
+            let result = if fastctx_platform::disk::is_there(reply.with_extension("done")) {
                 Some(
                     files::read_message(&reply)
                         .map_err(|error| control_outcome::unknown(&format!("reading Claude's receipt: {error}")))
@@ -418,9 +423,10 @@ pub(super) async fn invoke(node: &Arc<Node>, resident: &ResidentId, control: Val
                 )
             } else if handoff && claimed.is_none() {
                 None
-            } else if directory.join("closed").join(format!("{}.json", executing.instance)).exists()
-                || !fastctx_platform::is_alive(&executing.process)
-                    .map_err(|error| control_outcome::unknown(&error.to_string()))?
+            } else if fastctx_platform::disk::is_there(
+                directory.join("closed").join(format!("{}.json", executing.instance)),
+            ) || !fastctx_platform::is_alive(&executing.process)
+                .map_err(|error| control_outcome::unknown(&error.to_string()))?
             {
                 match evidence.recovered(&directory, &key, executing) {
                     Ok(Some(result)) => Some(Ok(result)),
@@ -476,8 +482,8 @@ async fn answer_request(
     let directory = files::directory(node.world.path(), &question.host.session);
     if !files::active(&directory, &question.host).map_err(failure)?
         || !fastctx_platform::is_alive(&request.waiting.process).map_err(failure)?
-        || request.directory.join("resolved.json").exists()
-        || request.directory.join("cancel.json").exists()
+        || fastctx_platform::disk::is_there(request.directory.join("resolved.json"))
+        || fastctx_platform::disk::is_there(request.directory.join("cancel.json"))
     {
         return Err(Failure::not_run("Claude already finished or cancelled this request"));
     }
@@ -526,14 +532,14 @@ pub async fn look(node: &Arc<Node>, resident: &ResidentId, session_directory: &P
             collect_invocation(&directory, key)?;
         }
     }
-    let entries = match std::fs::read_dir(directory.join("requests")) {
+    let entries = match fastctx_platform::disk::read_dir(directory.join("requests")) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(error) => return Err(error),
     };
     for entry in entries {
         let path = entry?.path();
-        if !path.is_dir() {
+        if !fastctx_platform::disk::is_dir(&path) {
             continue;
         }
         let Some(waiting) = files::read::<Waiting>(&path.join("request.json"))? else { continue };
@@ -594,7 +600,7 @@ pub(super) fn collect_invocation(directory: &Path, key: &str) -> std::io::Result
     }
     // Answered and collected, the control is taken by no one again: its
     // claim only takes room.
-    match std::fs::remove_file(directory.join("claims").join(format!("{key}.json"))) {
+    match fastctx_platform::disk::remove_file(directory.join("claims").join(format!("{key}.json"))) {
         Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error),
         _ => Ok(()),
     }
@@ -609,7 +615,7 @@ fn observe_activation(node: &Arc<Node>, host: &Host, directory: &Path) {
     let host = host.clone();
     let node = node.clone();
     let directory = directory.to_path_buf();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let exited = super::process::wait(&node, &process);
         tokio::pin!(exited);
         let result = loop {
@@ -634,7 +640,9 @@ fn observe_activation(node: &Arc<Node>, host: &Host, directory: &Path) {
             tokio::select! { () = &mut exited => break Ok(()), () = changed => {} }
         };
         match result {
-            Ok(()) => super::look(&node, &directory).await,
+            Ok(()) => {
+                super::look(&node, &directory).await;
+            }
             result => node.log.line(format_args!("observing Claude's control activation: {result:?}")),
         }
         let mut observed = node.claude.bridge.observed.lock().expect("never poisoned");
@@ -654,7 +662,7 @@ fn session_present(node: &Node, directory: &Path) -> std::io::Result<bool> {
 
 fn supervise(node: &Arc<Node>, key: String, request: Request) {
     let node = node.clone();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let process = request.waiting.process.clone();
         let exited = super::process::wait(&node, &process);
         let mut completed = request.completed.subscribe();

@@ -13,7 +13,6 @@ use std::sync::Arc;
 fn deliveries(node: &Node, resident: &ResidentId, requester: &Address) -> io::Result<ConversationDebt> {
     let directory = node.world.conversation(resident);
     let names = node.names();
-    let (pending, uncertain) = crate::inbox::input_states(&directory)?;
     let matching = |input: fastctx_types::residents::Pending| {
         input
             .readers
@@ -21,8 +20,15 @@ fn deliveries(node: &Node, resident: &ResidentId, requester: &Address) -> io::Re
             .any(|reader| super::identity::same(&names, reader, requester))
             .then(|| (input.delivery.id.to_string(), input.delivery.at))
     };
-    let pending = pending.into_iter().filter_map(matching).collect();
-    let uncertain = uncertain.into_iter().filter_map(matching).collect();
+    let (mut pending, mut uncertain) = (Vec::new(), Vec::new());
+    crate::inbox::pages(&directory, |page| {
+        pending.extend(page.into_iter().filter_map(matching));
+        Ok(std::ops::ControlFlow::Continue(()))
+    })?;
+    crate::inbox::uncertain_pages(&directory, |page| {
+        uncertain.extend(page.into_iter().filter_map(matching));
+        Ok(std::ops::ControlFlow::Continue(()))
+    })?;
     let now = node.residents.now(resident).ok_or_else(|| io::Error::other("conversation state is unavailable"))?;
     let running = now
         .owed
@@ -30,18 +36,15 @@ fn deliveries(node: &Node, resident: &ResidentId, requester: &Address) -> io::Re
         .filter(|(_, readers)| readers.iter().any(|reader| super::identity::same(&names, reader, requester)))
         .map(|(turn, _)| (turn.clone(), now.since))
         .collect();
-    let answers = crate::inbox::owing(&directory)?
-        .into_iter()
-        .filter(|owing| {
-            super::identity::same(&names, &owing.to, requester)
-                && owing.delivery.notice.along().is_none()
-                && !matches!(
-                    owing.delivery.notice,
-                    fastctx_types::residents::Notice::Words { goal_report: Some(_), .. }
-                )
-        })
-        .map(|owing| (owing.delivery.id.to_string(), owing.delivery.at))
-        .collect();
+    let mut answers = Vec::new();
+    crate::inbox::each_owing(&directory, |owing| {
+        if super::identity::same(&names, &owing.to, requester)
+            && owing.delivery.notice.along().is_none()
+            && !matches!(owing.delivery.notice, fastctx_types::residents::Notice::Words { goal_report: Some(_), .. })
+        {
+            answers.push((owing.delivery.id.to_string(), owing.delivery.at));
+        }
+    })?;
     Ok(ConversationDebt { observed_at: Timestamp::now(), goal: None, pending, running, answers, uncertain })
 }
 

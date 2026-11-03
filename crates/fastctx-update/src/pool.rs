@@ -176,7 +176,7 @@ impl Pool {
                     return outcome;
                 }
                 // A helper must not wait for the hub it is supplying after its
-                // own source failed (2026-10-20).
+                // own source failed.
                 if request.local.requested
                     && !stopping
                     && let Some(problem) = current.local_failure

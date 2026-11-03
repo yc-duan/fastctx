@@ -21,6 +21,7 @@ use crate::envelope::Envelope;
 use crate::sign::Digest;
 
 /// Letters not yet held by the hub, one file each, named by number.
+#[derive(Clone)]
 pub struct Outbox {
     dir: PathBuf,
 }
@@ -46,7 +47,7 @@ impl Outbox {
     /// The letter `seq` and how many bytes it takes; none when it is not
     /// there.
     pub fn get_sized(&self, seq: u64) -> io::Result<Option<(Envelope, usize)>> {
-        let bytes = match std::fs::read(self.dir.join(format!("{seq:020}"))) {
+        let bytes = match fastctx_platform::disk::read(self.dir.join(format!("{seq:020}"))) {
             Ok(bytes) => bytes,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
             Err(error) => return Err(error),
@@ -68,7 +69,7 @@ impl Outbox {
 
     /// Forgets the letter `seq`, which the hub holds.
     pub fn remove(&self, seq: u64) -> io::Result<()> {
-        match std::fs::remove_file(self.dir.join(format!("{seq:020}"))) {
+        match fastctx_platform::disk::remove_file(self.dir.join(format!("{seq:020}"))) {
             Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
             _ => Ok(()),
         }
@@ -77,7 +78,7 @@ impl Outbox {
     /// The numbers of the letters waiting, in order.
     pub fn numbers(&self) -> io::Result<Vec<u64>> {
         let mut numbers = Vec::new();
-        for entry in std::fs::read_dir(&self.dir)? {
+        for entry in fastctx_platform::disk::read_dir(&self.dir)? {
             let entry = entry?;
             // Temporary files of an interrupted write start with a dot.
             if let Some(seq) = entry.file_name().to_str().and_then(|name| name.parse::<u64>().ok()) {
@@ -97,7 +98,6 @@ pub struct Receipt {
     pub digest: Digest,
     pub at: Timestamp,
 }
-
 
 /// A letter that could not be delivered or opened, kept with the reason.
 #[derive(Clone, Debug, Serialize, Deserialize)]

@@ -1,0 +1,11 @@
+// Lab user's Amp settings
+{
+  "amp.mcpServers": {
+    "lab-echo": {
+      "command": "node",
+      "args": [
+        "--version"
+      ]
+    }
+  }
+}

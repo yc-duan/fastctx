@@ -39,11 +39,23 @@ export type SendState =
   | { state: "landed"; how: string; machine: MachineName; why?: string | null }
   /** Kept for a turn their agent login, or their machine's memory, has no
    *  room for yet: `ahead` turns go before it. */
-  | { state: "queued"; ahead: number; memory?: boolean }
+  | { state: "queued"; ahead: number; memory?: boolean; callee?: boolean }
   /** Its machine keeps them no more and no turn runs: they went in, and
    *  stand as said until the session's own telling of them comes. */
   | { state: "settled" }
+  /** No answer came within `ANSWER_WITHIN` (`world/again.ts`): they may or
+   *  may not have gone in. They are still said again, under the same id,
+   *  when the way opens. */
+  | { state: "unknown"; why: string }
   | { state: "failed"; why: string };
+
+/** What can be done with words that did not go, or of which it is not known
+ *  whether they went (`specs/world-foundation.md`, 宪法第十一条): sent again
+ *  under the same id, which goes in once, or taken away. */
+export interface Settler {
+  again?: () => void;
+  remove: () => void;
+}
 
 /** Words a conversation's machine keeps that no turn took yet, as it tells
  *  them (`Watched::Now`). */
@@ -59,6 +71,9 @@ export interface KeptWords {
   /** Whether that room is in their machine's memory rather than in their
    *  login (`world-lifecycle.md`, 内存). */
   for_memory?: boolean;
+  /** Whether they wait for one of their callee's colleagues at work to
+   *  end (`world-colleagues.md`, 同事从哪里来、能去哪里). */
+  for_callee?: boolean;
 }
 
 /** Something the user attached to their words, as it is shown with them. */
@@ -297,6 +312,8 @@ export class Fold {
   private claimedHeard = new Set<string>();
   /** Entries by key, and by their turn and item; tools by their call. */
   private byKey = new Map<string, Entry>();
+  /** How words being sent are sent again or taken away, by their key. */
+  private settlers = new Map<string, Settler>();
   private byItem = new Map<string, Keyed>();
   private byCall = new Map<string, ToolEntry>();
   /** Each turn's entries, in the order they came. */
@@ -1291,7 +1308,20 @@ export class Fold {
 
   /** Words shown as being sent that went into the queue instead. */
   unsend(key: string): void {
+    this.settlers.delete(key);
     this.remove((entry) => entry.key === key);
+  }
+
+  /** Keeps how the words being sent under `key` are sent again or taken
+   *  away; none once nothing is left to do with them. */
+  settles(key: string, settler: Settler | null): void {
+    if (settler) this.settlers.set(key, settler);
+    else this.settlers.delete(key);
+  }
+
+  /** How the words being sent under `key` are sent again or taken away. */
+  settler(key: string): Settler | undefined {
+    return this.settlers.get(key);
   }
 
   /** What became of words being sent: they are kept, with how they stand,
@@ -1390,7 +1420,12 @@ export class Fold {
       if (!settling) continue;
       const words = entry.delivery === null ? undefined : keeping.get(entry.delivery);
       let next: SendState | null = null;
-      if (words?.queued !== undefined) next = words.for_memory ? { state: "queued", ahead: words.queued, memory: true } : { state: "queued", ahead: words.queued };
+      if (words?.queued !== undefined)
+        next = words.for_memory
+          ? { state: "queued", ahead: words.queued, memory: true }
+          : words.for_callee
+            ? { state: "queued", ahead: words.queued, callee: true }
+            : { state: "queued", ahead: words.queued };
       else if (words?.state === "waiting") next = { state: "landed", how: "kept", machine: entry.from?.kind === "user" ? entry.from.machine : "" };
       else if (words === undefined && !busy) next = { state: "settled" };
       else if (words !== undefined) next = words.host_retry ? { state: "going", retry: words.host_retry.reason } : { state: "going" };

@@ -19,3 +19,6 @@ serde.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["time", "sync"] }
 sha2 = "0.10"
+
+[lints]
+workspace = true

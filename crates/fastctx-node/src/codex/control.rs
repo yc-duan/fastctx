@@ -15,8 +15,14 @@ use fastctx_hosts::codex::CodexHost;
 
 use crate::Node;
 
-/// The resident's thread, and the app-server of its home that holds it.
-fn thread(node: &Node, resident: &ResidentId) -> Result<(Arc<CodexHost>, String), Failure> {
+/// The resident's thread, and the app-server of its home that holds it,
+/// found where finding its home may block.
+async fn thread(node: &Arc<Node>, resident: &ResidentId) -> Result<(Arc<CodexHost>, String), Failure> {
+    let (node, resident) = (node.clone(), resident.clone());
+    fastctx_platform::task::blocking(move || thread_now(&node, &resident)).await
+}
+
+fn thread_now(node: &Node, resident: &ResidentId) -> Result<(Arc<CodexHost>, String), Failure> {
     let (about, _) = node.residents.about(resident).ok_or_else(|| Failure::new(format!("{resident} is not here")))?;
     crate::homes::available(node, &about)?;
     let host = node.codex.of(node, &about)?;
@@ -33,9 +39,10 @@ pub(super) fn reported(node: &Node, resident: &ResidentId, thread: &str, event: 
 }
 
 pub async fn offers(node: &Arc<Node>, resident: &ResidentId) -> Result<Offers, Failure> {
-    let (codex, thread) = thread(node, resident)?;
-    let mut offers = codex.offers(&thread).await.map_err(Failure::new)?;
+    let (codex, thread) = thread(node, resident).await?;
     let (about, _) = node.residents.about(resident).ok_or_else(|| Failure::new("unknown conversation"))?;
+    crate::logins::workbench::works(node, &about)?;
+    let mut offers = codex.offers(&thread).await.map_err(Failure::new)?;
     if crate::assists::assisting(node, &about.acting) {
         if crate::assists::host::kept(node, resident)? != Some(true) {
             offers.controls.clear();
@@ -54,7 +61,7 @@ pub async fn offers(node: &Arc<Node>, resident: &ResidentId) -> Result<Offers, F
     let dir = codex.config_home().to_path_buf();
     let kept = {
         let node = node.clone();
-        tokio::task::spawn_blocking(move || crate::logins::limits::kept_of(&node, &dir))
+        fastctx_platform::task::spawn_blocking(move || crate::logins::limits::kept_of(&node, &dir))
             .await
             .map_err(|error| Failure::new(error.to_string()))?
             .map_err(|error| Failure::new(format!("reading Codex's limits: {error}")))?
@@ -83,10 +90,11 @@ fn limits(kept: &AgentLimits) -> Vec<Limit> {
 }
 
 pub async fn control(node: &Arc<Node>, resident: &ResidentId, mut control: Control) -> Result<Controlled, Failure> {
-    let (codex, thread) = thread(node, resident)?;
+    let (codex, thread) = thread(node, resident).await?;
     let (about, _) = node.residents.about(resident).ok_or_else(|| Failure::new("unknown conversation"))?;
     if crate::assists::assisting(node, &about.acting) {
-        crate::assists::host::require(node, resident)?;
+        let (node, resident) = (node.clone(), resident.clone());
+        fastctx_platform::task::blocking(move || crate::assists::host::require(&node, &resident)).await?;
     }
     if crate::assists::assisting(node, &about.acting)
         && let Control::Command { name, path, .. } = &control
@@ -98,6 +106,9 @@ pub async fn control(node: &Arc<Node>, resident: &ResidentId, mut control: Contr
         codex.answer(&thread, &request, &answer).map_err(Failure::new)?;
         return done("Answer sent. Codex uses the first response it receives; another client may have answered first.");
     }
+    // What a running turn asks is answered whatever its login; anything else
+    // works the conversation, only where the workbench is open in it.
+    crate::logins::workbench::works(node, &about)?;
     if let Control::Command { name, args, path: None } = &control {
         control = match name.as_str() {
             "compact" => {
@@ -275,16 +286,23 @@ async fn fork(
     through: Option<String>,
     side: bool,
 ) -> Result<Controlled, Failure> {
-    let gate = node.residents.management(parent)?;
-    let source_guard = crate::gate_waits::shared(node, parent, &gate).await?;
     node.residents.active(parent)?;
     let (source, town) = node.residents.about(parent).ok_or_else(|| Failure::new("unknown source resident"))?;
-
-    crate::layers::may_start(node, &source.acting)?;
+    crate::logins::workbench::may_start(node, &source.acting, source.host.agent.as_str(), source.home.as_deref())?;
     let id = node.residents.new_id(&source.host.agent)?;
-    let _birth = crate::here::born(node, &id, source.acting.clone(), &Origin::User);
-    crate::assists::host::inherit(node, codex.assisted_cwd().is_some(), &id)?;
-    crate::session_options::keep(node, &id, &crate::session_options::read(node, parent)?)?;
+    crate::record_migration::born(node, &id);
+    let target_place = Arc::new(node.places.using(id.as_str()).await);
+    let gate = node.residents.management(parent)?;
+    let source_guard = crate::gate_waits::shared_owned(node, parent, &gate).await?;
+    node.residents.active(parent)?;
+    let _birth = crate::here::born(node, &id, source.acting.clone());
+    {
+        // Its host mode is recorded on its disk.
+        let (recording, assisted, child) = (node.clone(), codex.assisted_cwd().is_some(), id.clone());
+        fastctx_platform::task::blocking(move || crate::assists::host::inherit(&recording, assisted, &child)).await?;
+    }
+    let options = crate::session_options::load(node, parent).await?;
+    crate::session_options::keep(node, &id, &options).await?;
     crate::focus::open(node, &node.world.conversation(&id), &source.acting, &source.focus).await?;
     let (spec, heard) =
         crate::colleagues::thread_spec(node, &id, &Origin::User, town.as_ref(), &source.acting, source.home.as_deref())
@@ -335,16 +353,29 @@ async fn fork(
     if let Some(town) = &town {
         crate::town::access::check(node, &about.acting, town)?;
     }
-    node.residents.create(&node.world, about, town, now).map_err(|error| {
+    let created = {
+        let creating = node.clone();
+        fastctx_platform::task::blocking(move || creating.residents.create(&creating.world, about, town, now)).await
+    };
+    created.map_err(|error| {
         Failure::new(format!("Codex created thread {fork}, but recording its resident {id} failed: {error}"))
     })?;
     let inherited =
         codex.history(&fork, &Address { machine: node.machine(), resident: id.clone() }).await.map_err(Failure::new)?;
-    crate::attachments::inherit(node, parent, &id, &inherited)?;
-    crate::context::input::inherit(&node.world.conversation(parent), &node.world.conversation(&id), &inherited)
-        .map_err(|error| Failure::new(error.to_string()))?;
-    drop(source_guard);
-    crate::context::instructed(node, &id, &heard).map_err(|error| Failure::new(error.to_string()))?;
+    let (working, source, child, held_target) = (node.clone(), parent.clone(), id.clone(), target_place.clone());
+    fastctx_platform::task::spawn_blocking(move || {
+        let (_gate, _source_guard, _target) = (gate, source_guard, held_target);
+        crate::attachments::inherit(&working, &source, &child, &inherited)?;
+        crate::context::input::inherit(
+            &working.world.conversation(&source),
+            &working.world.conversation(&child),
+            &inherited,
+        )
+        .map_err(|error| Failure::new(error.to_string()))
+    })
+    .await
+    .map_err(|error| Failure::new(error.to_string()))??;
+    crate::context::instructed(node, &id, &heard).await.map_err(|error| Failure::new(error.to_string()))?;
     node.residents.set_instructed(&id, heard);
     let event = SessionEvent {
         at,

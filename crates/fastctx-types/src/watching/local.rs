@@ -17,6 +17,8 @@ pub struct Subscription {
     pub held: Option<Held>,
     pub now: bool,
     pub goal: Option<HubAccount>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub collaboration: bool,
 }
 
 impl Subscription {
@@ -28,6 +30,7 @@ impl Subscription {
             held: self.held.clone(),
             now: self.now,
             goal: self.goal.clone(),
+            collaboration: self.collaboration,
         }
     }
 }

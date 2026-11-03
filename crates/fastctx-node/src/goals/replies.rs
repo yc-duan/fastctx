@@ -8,7 +8,7 @@ use fastctx_types::{
     residents::Origin,
 };
 use serde::{Deserialize, Serialize};
-use std::{io, path::PathBuf};
+use std::io;
 
 #[derive(Serialize, Deserialize)]
 struct Mode {
@@ -17,21 +17,18 @@ struct Mode {
     owner: Option<Address>,
 }
 
-fn path(node: &Node, resident: &ResidentId) -> PathBuf {
-    node.world.conversation(resident).books().join("goal-replies.json")
-}
-
 fn read(node: &Node, resident: &ResidentId) -> io::Result<Option<Mode>> {
-    match std::fs::read(path(node, resident)) {
-        Ok(bytes) => serde_json::from_slice(&bytes).map(Some).map_err(io::Error::other),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error),
-    }
+    let directory = node.world.conversation(resident);
+    initialize(&directory)?;
+    crate::records::read(&directory, |rows| rows.get("goal-replies", "current"))
+}
+pub(crate) fn initialize(directory: &fastctx_types::layout::ConversationDir) -> io::Result<()> {
+    crate::records::legacy::single::<Mode>(directory, "goal-replies", &directory.books().join("goal-replies.json"))
 }
 
 /// Record the accepted authority before context installation or other recoverable effects.
 /// An older observation cannot undo a newer goal or its explicit clearing.
-pub(crate) fn remember(node: &Node, resident: &ResidentId, view: &View) -> io::Result<()> {
+fn remember_now(node: &Node, resident: &ResidentId, view: &View) -> io::Result<()> {
     let Some(version) = view.version else { return Ok(()) };
     if !node.residents.about(resident).is_some_and(|(about, _)| matches!(about.origin, Origin::Colleague { .. })) {
         return Ok(());
@@ -40,27 +37,25 @@ pub(crate) fn remember(node: &Node, resident: &ResidentId, view: &View) -> io::R
         Owner::Conversation { address } => Some(address.clone()),
         Owner::User => None,
     });
-    let _transaction = crate::resident_storage::lock();
-    if let Some(prior) = read(node, resident)? {
-        if prior.account != view.account {
-            return Err(io::Error::other(super::words::ACCOUNT_CHANGED));
+    let directory = node.world.conversation(resident);
+    initialize(&directory)?;
+    let mode = Mode { account: view.account.clone(), version, owner };
+    crate::records::write_at(&directory, fastctx_storage::Priority::Interactive, 512, move |rows| {
+        if let Some(prior) = rows.get::<Mode>("goal-replies", "current")? {
+            if prior.account != mode.account {
+                return Err(fastctx_storage::Error::new(super::words::ACCOUNT_CHANGED));
+            }
+            if prior.version >= mode.version {
+                return Ok(());
+            }
         }
-        if prior.version >= version {
-            return Ok(());
-        }
-    }
-    let path = path(node, resident);
-    fastctx_platform::ensure_private_dir(path.parent().expect("goal reply mode directory"))?;
-    fastctx_platform::publish(
-        &path,
-        &serde_json::to_vec(&Mode { account: view.account.clone(), version, owner })?,
-        fastctx_platform::Permissions::Private,
-    )
+        rows.put("goal-replies", "current", &mode)
+    })
 }
 
 /// Explicit messages keep their recorded readers. This decision is only for automatic input,
 /// before its audience is frozen in a durable handover. A settled goal still owns its report.
-pub(crate) fn inherits(node: &Node, resident: &ResidentId) -> io::Result<bool> {
+fn inherits_now(node: &Node, resident: &ResidentId) -> io::Result<bool> {
     let Some((about, _)) = node.residents.about(resident) else { return Ok(true) };
     let Origin::Colleague { asked_by, .. } = about.origin else { return Ok(true) };
     if let Some(mode) = read(node, resident)? {
@@ -76,11 +71,20 @@ pub(crate) fn inherits(node: &Node, resident: &ResidentId) -> io::Result<bool> {
         .map(|view| view.goal.as_ref().map(|goal| goal.owner.clone()));
     let owner = match cached {
         Some(owner) => owner,
-        None => match std::fs::read(node.world.conversation(resident).books().join("goal-local.json")) {
-            Ok(bytes) => serde_json::from_slice::<View>(&bytes)?.goal.map(|goal| goal.owner),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
-            Err(error) => return Err(error),
-        },
+        None => {
+            super::local::get(&node.world.conversation(resident))?.and_then(|view| view.goal.map(|goal| goal.owner))
+        }
     };
     Ok(!matches!(owner, Some(Owner::Conversation { address }) if super::same(node, &address, &asked_by)))
+}
+
+pub(crate) async fn remember(node: &std::sync::Arc<Node>, resident: &ResidentId, view: &View) -> io::Result<()> {
+    let (node, resident, view) = (node.clone(), resident.clone(), view.clone());
+    fastctx_platform::task::spawn_blocking(move || remember_now(&node, &resident, &view))
+        .await
+        .map_err(io::Error::other)?
+}
+pub(crate) async fn inherits(node: &std::sync::Arc<Node>, resident: &ResidentId) -> io::Result<bool> {
+    let (node, resident) = (node.clone(), resident.clone());
+    fastctx_platform::task::spawn_blocking(move || inherits_now(&node, &resident)).await.map_err(io::Error::other)?
 }

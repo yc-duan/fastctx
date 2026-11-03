@@ -44,6 +44,7 @@ pub fn who(
             continue;
         }
         residents.push(ResidentNow {
+            opened_by: None,
             source: None,
             about: resident.about,
             town: resident.town,
@@ -53,6 +54,7 @@ pub fn who(
             tools: Vec::new(),
             moved: None,
             removed: resident.removed,
+            benched: false,
         });
     }
     // Those who moved away are listed in the town they left, with all: once,
@@ -88,6 +90,7 @@ pub fn who(
                 continue;
             }
             residents.push(ResidentNow {
+                opened_by: None,
                 source: None,
                 about,
                 town: former.town,
@@ -97,6 +100,7 @@ pub fn who(
                 tools: Vec::new(),
                 removed: crate::residents::removal(world, &former.id)?,
                 moved: Some(Moved { to: former.to, at: former.at }),
+                benched: false,
             });
         }
     }
@@ -166,7 +170,7 @@ pub(crate) fn running_jobs(jobs: &Path, running: &mut Vec<RunningJob>) -> io::Re
 }
 
 fn read_dir(path: &Path) -> io::Result<Vec<std::path::PathBuf>> {
-    match std::fs::read_dir(path) {
+    match fastctx_platform::disk::read_dir(path) {
         Ok(entries) => entries.map(|entry| entry.map(|entry| entry.path())).collect(),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Vec::new()),
         Err(error) => Err(error),

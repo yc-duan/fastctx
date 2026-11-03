@@ -23,7 +23,7 @@ fn path(node: &Node, hub: &HubId, account: &AccountName) -> PathBuf {
 }
 
 fn read(path: &std::path::Path) -> Result<BTreeMap<String, Kept>, String> {
-    match std::fs::read(path) {
+    match fastctx_platform::disk::read(path) {
         Ok(bytes) => serde_json::from_slice(&bytes).map_err(|e| format!("reading {}: {e}", path.display())),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(BTreeMap::new()),
         Err(e) => Err(format!("reading {}: {e}", path.display())),
@@ -101,7 +101,7 @@ pub(crate) fn sweep(node: &Node, hub: &HubId) -> Result<(), String> {
         return Ok(());
     }
     let dir = node.world.path().join("mcp").join(hub.as_str());
-    let paths = match std::fs::read_dir(&dir) {
+    let paths = match fastctx_platform::disk::read_dir(&dir) {
         Ok(paths) => paths,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(e) => return Err(e.to_string()),
@@ -152,7 +152,7 @@ pub(super) fn log(node: &Node, hub: &HubId, account: &AccountName, name: &str) -
     node.world.path().join("mcp").join(hub.as_str()).join("logs").join(account.as_str()).join(format!("{name}.log"))
 }
 fn delete_file(path: &std::path::Path) -> Result<(), String> {
-    match std::fs::remove_file(path) {
+    match fastctx_platform::disk::remove_file(path) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(e) => Err(e.to_string()),
@@ -161,7 +161,7 @@ fn delete_file(path: &std::path::Path) -> Result<(), String> {
 
 pub(crate) fn leave(node: &Node, hub: &HubId) -> Result<(), String> {
     let _one = node.mcp_keeping.lock().expect("never poisoned");
-    match std::fs::remove_dir_all(node.world.path().join("mcp").join(hub.as_str())) {
+    match fastctx_platform::disk::remove_dir_all(node.world.path().join("mcp").join(hub.as_str())) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(e) => Err(e.to_string()),

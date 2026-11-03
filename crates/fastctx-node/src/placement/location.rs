@@ -13,11 +13,42 @@ use fastctx_types::{
 };
 use std::sync::Arc;
 
+/// Why there is no plan file: the working computer, or the hub, runs an
+/// older Fastctx that cannot keep one.
+pub(crate) const OLD_COMPUTER: &str = "update the working computer to synchronize plan copies";
+pub(crate) const OLD_HUB: &str = "update the hub to place and synchronize this conversation's plan";
+
 #[derive(Default)]
-pub(crate) struct Locations(std::sync::Mutex<std::collections::HashMap<ResidentId, String>>);
+pub(crate) struct Locations {
+    chosen: std::sync::Mutex<std::collections::HashMap<ResidentId, String>>,
+    /// Computers found unable to keep plan copies, by when they came online:
+    /// asked again only once they connect anew, as after an update.
+    outdated: std::sync::Mutex<
+        std::collections::HashMap<(fastctx_types::access::HubId, MachineName), Option<jiff::Timestamp>>,
+    >,
+    /// What was last logged of each conversation's placement failing.
+    told: std::sync::Mutex<std::collections::HashMap<ResidentId, String>>,
+}
 impl Locations {
     pub(crate) fn invalidate(&self, id: &ResidentId) {
-        self.0.lock().expect("never poisoned").remove(id);
+        self.chosen.lock().expect("never poisoned").remove(id);
+    }
+
+    /// Whether `failure` (none once placing works) is news for `id`, worth a
+    /// line in the log.
+    pub(crate) fn tell(&self, id: &ResidentId, failure: Option<&str>) -> bool {
+        let mut told = self.told.lock().expect("never poisoned");
+        match failure {
+            Some(failure) if told.get(id).is_some_and(|said| said == failure) => false,
+            Some(failure) => {
+                told.insert(id.clone(), failure.to_string());
+                true
+            }
+            None => {
+                told.remove(id);
+                false
+            }
+        }
     }
 }
 
@@ -34,7 +65,7 @@ pub(crate) fn speaking(node: &Node, id: &ResidentId, machine: &MachineName) -> R
 }
 
 fn read<T: serde::de::DeserializeOwned>(path: &std::path::Path) -> Result<Option<T>, Failure> {
-    match std::fs::read(path) {
+    match fastctx_platform::disk::read(path) {
         Ok(bytes) => serde_json::from_slice(&bytes).map(Some).map_err(failure),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(failure(error)),
@@ -82,6 +113,17 @@ pub(crate) async fn inherit(
     if !link.view().plan_copies {
         return Ok(());
     }
+    if link.view().shared_records {
+        if node.is_me(&requester.machine)
+            && let Some(location) = read::<Option<Location>>(
+                &node.world.conversation(&requester.resident).path().join("working-place.json"),
+            )?
+            .flatten()
+        {
+            speaking(node, id, &location.machine)?;
+        }
+        return Ok(());
+    }
     if let Some(machine) = read_place(&link, &scope, requester).await?.1.and_then(|place| place.machine) {
         speaking(node, id, &machine)?;
     }
@@ -97,26 +139,53 @@ pub(crate) async fn prepare(
     let room = node.world.conversation(id);
     let receipt = room.path().join("working-place.json");
     if node.residents.now(id).is_some_and(|now| now.turn.is_some()) {
-        return Ok(read(&receipt)?.flatten());
+        let receipt = receipt.clone();
+        return Ok(fastctx_platform::task::blocking(move || read(&receipt)).await?.flatten());
     }
-    let Some(scope) = crate::plan::file_account(node, id, acting)? else {
+    // Where this machine keeps it, written as the World writes paths.
+    let here = || {
+        let (machine, room) = (node.machine(), room.path().to_path_buf());
+        async move {
+            Location { machine, path: fastctx_platform::task::blocking(move || crate::world::native(&room)).await }
+        }
+    };
+    let Some(scope) = crate::plan::load_account(node, id, acting).await? else {
         if node.links().is_empty() && matches!(acting, Acting::Here) {
-            return Ok(Some(Location { machine: node.machine(), path: crate::world::native(room.path()) }));
+            return Ok(Some(here().await));
         }
         return Ok(None);
     };
     let link = node.link_of(&scope.hub).ok_or_else(|| failure("the plan's hub is unavailable"))?;
+    if link.view().shared_records {
+        let location = crate::replicas::location::prepare(
+            node,
+            id,
+            origin,
+            acting,
+            &scope,
+            fastctx_types::placement::Resource::Plan,
+        )
+        .await?;
+        let bytes = serde_json::to_vec(&location).map_err(failure)?;
+        // Asked again as each turn begins, and the same nearly always.
+        fastctx_platform::task::blocking(move || {
+            fastctx_platform::publish_changed(&receipt, &bytes, fastctx_platform::Permissions::Private)
+        })
+        .await
+        .map_err(failure)?;
+        return Ok(location);
+    }
     if !link.view().plan_copies {
         if crate::plan_file::allowed(node, id)? {
             crate::plan_file::request(node, id);
-            return Ok(Some(Location { machine: node.machine(), path: crate::world::native(room.path()) }));
+            return Ok(Some(here().await));
         }
-        return Err(failure("update the hub to place and synchronize this conversation's plan"));
+        return Err(failure(OLD_HUB));
     }
     let choices = super::destinations(node, &Acting::one(scope.hub.clone(), scope.account.clone()))?;
     let focus = match node.residents.about(id) {
         Some((about, _)) => about.focus,
-        None => crate::focus::opening(&room)?.map(|opening| opening.focus).unwrap_or_default(),
+        None => crate::focus::opening(&room).await?.map(|opening| opening.focus).unwrap_or_default(),
     };
     let from: Option<MachineName> = read(&room.path().join("working-from.json"))?;
     let local = node.machine();
@@ -125,7 +194,7 @@ pub(crate) async fn prepare(
     let owner = Address { machine: node.machine(), resident: id.clone() };
     let names: Vec<&fastctx_types::access::Written> = candidates.iter().map(|choice| &choice.machine).collect();
     let signature = serde_json::to_string(&(&scope, &owner, names)).map_err(failure)?;
-    let known = node.locations.0.lock().expect("never poisoned").get(id) == Some(&signature);
+    let known = node.locations.chosen.lock().expect("never poisoned").get(id) == Some(&signature);
     if known && let Some(location) = read::<Option<Location>>(&receipt)? {
         return Ok(location);
     }
@@ -165,11 +234,7 @@ pub(crate) async fn prepare(
     }
     let placement = placement.ok_or_else(|| failure("the working-copy location keeps changing"))?;
     let owner = desired.owner.clone();
-    let resource = if matches!(origin, Origin::User) {
-        fastctx_types::placement::Resource::Plan
-    } else {
-        fastctx_types::placement::Resource::Directory
-    };
+    let resource = fastctx_types::placement::Resource::Plan;
     let location = if let Some(selected) = selected {
         if node.is_here(&selected.machine) {
             let asker = crate::admission::Asker {
@@ -197,14 +262,25 @@ pub(crate) async fn prepare(
     } else {
         None
     };
-    fastctx_platform::publish(
+    fastctx_platform::publish_changed(
         &receipt,
         &serde_json::to_vec(&location).map_err(failure)?,
         fastctx_platform::Permissions::Private,
     )
     .map_err(failure)?;
+    node.contexts.routes.observe(
+        id,
+        crate::context::routes::Route {
+            account: scope.clone(),
+            resource: fastctx_types::placement::Resource::Plan,
+            ownership: None,
+            speaking: from,
+            selected: location.as_ref().map(|location| location.machine.clone()),
+            legacy: true,
+        },
+    );
     if settled {
-        node.locations.0.lock().expect("never poisoned").insert(id.clone(), signature);
+        node.locations.chosen.lock().expect("never poisoned").insert(id.clone(), signature);
     }
     Ok(location)
 }
@@ -224,11 +300,21 @@ async fn usable(
         if node.is_here(&candidate.machine) {
             return Ok((Some(candidate), passed.is_none()));
         }
+        let known = (scope.hub.clone(), candidate.machine.name.clone());
+        let since = link.view().member(&candidate.machine.name).and_then(|member| member.since);
+        if node.locations.outdated.lock().expect("never poisoned").get(&known) == Some(&since) {
+            passed.get_or_insert(failure(OLD_COMPUTER));
+            continue;
+        }
         let failed = match link.call(&candidate.machine.name, &scope.account, Purpose::Look, RemoteCall::Facts).await {
             Ok(Ok(RemoteReply::Facts(facts))) if facts.plan_copies => {
+                node.locations.outdated.lock().expect("never poisoned").remove(&known);
                 return Ok((Some(candidate), passed.is_none()));
             }
-            Ok(Ok(_)) => failure("update the working computer to synchronize plan copies"),
+            Ok(Ok(_)) => {
+                node.locations.outdated.lock().expect("never poisoned").insert(known, since);
+                failure(OLD_COMPUTER)
+            }
             Ok(Err(error)) => error,
             Err(error) => failure(error),
         };

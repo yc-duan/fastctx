@@ -192,7 +192,16 @@ pub enum Watched {
     },
     Live {
         event: SessionEvent,
+        /// Where it stands among the events the session's machine told
+        /// since it began telling them; a machine from before this says
+        /// none.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        mark: Option<Mark>,
     },
+    /// For a viewer that said the mark of the last live event it took
+    /// (`held::Held::since`): what it holds stands, and the events after
+    /// that mark follow as live ones; nothing of the history is sent.
+    Resumed,
     /// For a viewer that said what it holds (`held::Held`): the history is
     /// still the version it holds.
     Unchanged {
@@ -221,6 +230,23 @@ pub enum Watched {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         kept: Vec<KeptWords>,
     },
+    /// For a viewer that follows the conversation's collaboration instead of
+    /// its history (the `collaboration` of its watch): the whole of it as it
+    /// is, then again each time it changes, with a higher `version`.
+    Collaboration {
+        version: u64,
+        tree: Box<crate::collaboration::Tree>,
+    },
+}
+
+/// Where a live event stands among those a session's machine has told of
+/// the session since it began telling them (`Watched::Live`): the telling,
+/// named by `epoch`, and the event's place in it, counted from one with
+/// none skipped. A machine that started again begins another telling.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct Mark {
+    pub epoch: u64,
+    pub sequence: u64,
 }
 
 /// Words a conversation's machine keeps that no turn has taken yet, and how
@@ -242,6 +268,10 @@ pub struct KeptWords {
     /// in its login (`world-lifecycle.md`, 内存).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub for_memory: bool,
+    /// Whether it waits for one of its callee's colleagues at work to end
+    /// (`world-colleagues.md`, 同事从哪里来、能去哪里).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub for_callee: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

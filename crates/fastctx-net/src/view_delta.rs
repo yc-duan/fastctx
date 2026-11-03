@@ -5,6 +5,9 @@
 //! went, in the order the whole view has them. A member holding another
 //! number than the one a change starts from asks for the whole view.
 
+mod apply;
+pub use apply::apply;
+
 use std::collections::{BTreeMap, HashMap};
 
 use serde::{Deserialize, Serialize};
@@ -35,7 +38,7 @@ fn name_of(entry: &Value, key: &[&str]) -> Option<String> {
 
 /// What of a member the hub tells as it changes (`crate::wire::Down::Presence`):
 /// a member that changed in nothing else is not sent again for it.
-const PRESENCE: &[&str] = &["online", "since", "through", "reach", "paths"];
+const PRESENCE: &[&str] = &["online", "since", "through", "reach", "paths", "strain", "workbench"];
 
 /// The field that numbers a view, never itself a change.
 const REVISION: &str = "revision";
@@ -138,73 +141,4 @@ fn list(before: &[Value], after: &[Value], key: &[&str], told: &[&str]) -> Optio
         .collect();
     let order = (!left.iter().copied().eq(new_names.iter())).then(|| new_names.clone());
     Some(ListDelta { removed, put, order })
-}
-
-/// `view` changed as `delta` says, and the names of the members put in it:
-/// what came new from the hub, to be read by this machine's clock.
-pub fn apply(view: &View, delta: &ViewDelta) -> Result<(View, Vec<String>), String> {
-    let Value::Object(mut object) = serde_json::to_value(view).map_err(|error| error.to_string())? else {
-        return Err("a view is not an object".into());
-    };
-    for field in &delta.unset {
-        object.remove(field);
-    }
-    for (field, value) in &delta.set {
-        object.insert(field.clone(), value.clone());
-    }
-    let mut members = Vec::new();
-    for (field, change) in &delta.lists {
-        let key = KEYED
-            .iter()
-            .find(|(name, _)| name == field)
-            .map(|(_, key)| *key)
-            .ok_or_else(|| format!("{field} is not a list sent entry by entry"))?;
-        let entries = match object.entry(field.clone()).or_insert_with(|| Value::Array(Vec::new())) {
-            Value::Array(entries) => entries,
-            _ => return Err(format!("{field} is not a list")),
-        };
-        let name = |entry: &Value| name_of(entry, key).ok_or_else(|| format!("an entry of {field} has no name"));
-        let gone: std::collections::HashSet<&String> = change.removed.iter().collect();
-        let mut kept = Vec::with_capacity(entries.len());
-        for entry in entries.drain(..) {
-            if !gone.contains(&name(&entry)?) {
-                kept.push(entry);
-            }
-        }
-        let mut at: HashMap<String, usize> = HashMap::with_capacity(kept.len());
-        for (index, entry) in kept.iter().enumerate() {
-            at.insert(name(entry)?, index);
-        }
-        for entry in &change.put {
-            let named = name(entry)?;
-            if field == "members" {
-                members.push(entry.get("name").and_then(Value::as_str).unwrap_or_default().to_string());
-            }
-            match at.get(&named) {
-                Some(&index) => kept[index] = entry.clone(),
-                None => {
-                    at.insert(named, kept.len());
-                    kept.push(entry.clone());
-                }
-            }
-        }
-        if let Some(order) = &change.order {
-            if order.len() != kept.len() {
-                return Err(format!("the order of {field} names {} entries, not {}", order.len(), kept.len()));
-            }
-            let mut slots: Vec<Option<Value>> = kept.into_iter().map(Some).collect();
-            kept = order
-                .iter()
-                .map(|named| {
-                    at.get(named)
-                        .and_then(|&index| slots[index].take())
-                        .ok_or_else(|| format!("{field} has no {named}"))
-                })
-                .collect::<Result<_, _>>()?;
-        }
-        *entries = kept;
-    }
-    object.insert(REVISION.into(), Value::from(delta.revision));
-    let view = serde_json::from_value(Value::Object(object)).map_err(|error| error.to_string())?;
-    Ok((view, members))
 }

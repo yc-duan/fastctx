@@ -19,7 +19,7 @@ pub async fn call(node: &Arc<Node>, caller: &Caller, call: ProjectCall) -> Resul
         return Err(Failure::not_run(fastctx_types::memory::LEGACY));
     }
     if matches!(call, ProjectCall::New { .. } | ProjectCall::Edit { .. }) {
-        crate::memory::identity::author(node, caller).await?;
+        crate::history::identity::author(node, caller).await?;
     }
     match call {
         ProjectCall::New { town, fields, account, hub } => new(node, caller, town, fields, account, hub).await,
@@ -38,8 +38,7 @@ pub async fn call(node: &Arc<Node>, caller: &Caller, call: ProjectCall) -> Resul
         ProjectCall::Map { town } => {
             let town = caller.town_or(node, town)?;
             map::query(node, &town).await?;
-            let read_only = crate::memory::identity::read_only(node, caller).await?;
-            let mut map = map::view_for(node, &town, &crate::around::acting_of(node, caller), read_only).await?;
+            let mut map = map::view(node, &town, &crate::around::acting_of(node, caller)).await?;
             seen(node, caller, &town, &mut map.record)?;
             Ok(Reply::Map { map: Box::new(map) })
         }
@@ -102,7 +101,8 @@ async fn new(
         at: Timestamp::now(),
     };
     let record = checked(node, caller, owner.as_ref().map(|owner| &owner.hub), record).await?;
-    crate::ledger::open(node, &town, owner).await?;
+    let shared_on = crate::record_ownership::project_origin(node, caller, owner.as_ref()).await?;
+    crate::ledger::open(node, &town, owner, shared_on).await?;
     write(node, &town, &record).await.map_err(|failure| {
         if failure.message.contains("already") {
             Failure::new(format!("a project named {town} exists already ({failure})"))
@@ -328,7 +328,7 @@ async fn blocking<T: Send + 'static>(
     read: fn(&fastctx_types::layout::WorldDir, &TownName) -> std::io::Result<T>,
 ) -> Result<T, Failure> {
     let (world, name) = (node.world.clone(), town.clone());
-    tokio::task::spawn_blocking(move || read(&world, &name))
+    fastctx_platform::task::spawn_blocking(move || read(&world, &name))
         .await
         .map_err(|error| Failure::new(format!("reading {town}'s ledger: {error}")))?
         .map_err(|error| Failure::new(format!("reading {town}'s ledger: {error}")))

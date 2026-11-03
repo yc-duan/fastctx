@@ -205,9 +205,12 @@ pub(super) struct Book {
     pub keys: HashSet<String>,
     pub reading: Option<Reading>,
     pub readings: HashMap<Option<String>, Reading>,
-    /// Of each account, weekly readings lower than the kept ones, waiting
-    /// for the next to say whether the week was cleared (`readings::merge`).
+    /// Of each account, what tells a weekly figure that came late from the
+    /// week cleared in place (`readings::merge`).
     pub lowered: HashMap<Option<String>, super::readings::Lowered>,
+    /// Whether the login's owner chose to have a week cleared in place count
+    /// anew from then (`super::resets_in_place`).
+    pub follow: bool,
     pub accounts: Vec<(Timestamp, String)>,
     pub recent: Vec<Charge>,
     pub history: super::history::History,
@@ -217,7 +220,7 @@ impl Book {
         if self.valid {
             return Ok(());
         }
-        *self = Self::default();
+        *self = Self { follow: super::follows_clearings(path), ..Self::default() };
         for file in days(path, Timestamp::MIN)? {
             let rows = read(&file)?;
             for row in &rows {
@@ -260,17 +263,20 @@ impl Book {
                     self.seen.extend(reports.iter().map(|at| (identity.clone(), *at)));
                 }
             }
-            Entry::Tokens { at, key: Some(key), .. } if *at >= month => {
+            Entry::Tokens { at, key: Some(key), .. } if *at >= month || key.starts_with("terminal:") => {
                 self.keys.insert(key.clone());
             }
-            Entry::Receipts { at, keys } if *at >= month => {
-                self.keys.extend(keys.iter().cloned());
+            Entry::Receipts { at, keys } => {
+                self.keys.extend(keys.iter().filter(|key| *at >= month || key.starts_with("terminal:")).cloned());
             }
             Entry::Account { at, account } => {
                 if self.accounts.is_empty() {
                     // The first known owner claims legacy readings once, durably.
                     if let Some(legacy) = self.readings.remove(&None) {
                         self.readings.insert(Some(account.clone()), legacy);
+                    }
+                    if let Some(legacy) = self.lowered.remove(&None) {
+                        self.lowered.insert(Some(account.clone()), legacy);
                     }
                 }
                 self.accounts.push((*at, account.clone()));
@@ -282,7 +288,9 @@ impl Book {
                 let old = self.readings.get(&account);
                 let mut merged = old.map_or_else(Vec::new, |(_, windows)| windows.clone());
                 if old.is_none_or(|(seen, _)| *seen <= *at) {
-                    super::readings::merge(&mut merged, windows.clone(), *at, None);
+                    let lowered = self.lowered.entry(account.clone()).or_default();
+                    let source = super::readings::Source::Ledger;
+                    super::readings::merge(&mut merged, windows.clone(), *at, lowered, source, self.follow);
                     self.readings.insert(account, (*at, merged));
                 }
                 self.reading = self.readings.get(&self.account_at(Timestamp::MAX)).cloned();
@@ -321,7 +329,7 @@ impl Book {
         {
             return Ok(());
         }
-        // 2026-10-20: reload ambiguous writes from disk, not a half-updated index.
+        // Reload ambiguous writes from disk, not a half-updated index.
         self.valid = false;
         append(path, &row)?;
         self.apply(&row);
@@ -340,12 +348,10 @@ pub(super) fn day_file(path: &Path, at: Timestamp) -> PathBuf {
 
 fn append(path: &Path, row: &Entry) -> io::Result<()> {
     fastctx_platform::ensure_private_dir(path)?;
-    let mut file = std::fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .read(true)
-        .write(true)
-        .open(day_file(path, row.usage_at()))?;
+    let mut file = fastctx_platform::disk::open_with(
+        std::fs::OpenOptions::new().create(true).truncate(false).read(true).write(true),
+        day_file(path, row.usage_at()),
+    )?;
     let len = file.metadata()?.len();
     if len > 0 {
         let mut end = len;
@@ -376,7 +382,7 @@ fn append(path: &Path, row: &Entry) -> io::Result<()> {
 
 pub(super) fn days(path: &Path, since: Timestamp) -> io::Result<Vec<PathBuf>> {
     let first = since.strftime("%Y-%m-%d").to_string();
-    let read = match std::fs::read_dir(path) {
+    let read = match fastctx_platform::disk::read_dir(path) {
         Ok(read) => read,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(e) => return Err(e),

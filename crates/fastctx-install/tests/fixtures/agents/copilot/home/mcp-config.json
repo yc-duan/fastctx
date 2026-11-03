@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "probe-generated": {
+      "tools": [
+        "*"
+      ],
+      "type": "local",
+      "command": "node",
+      "args": [
+        "echo-probe.js"
+      ],
+      "env": {
+        "LAB_MODE": "1"
+      }
+    }
+  }
+}

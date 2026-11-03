@@ -61,7 +61,7 @@ pub(super) fn tell(hub: &Hub, all: bool, initial: &BTreeSet<MachineName>) {
         )
     };
     let indexed = Indexed::new(&directory, &index);
-    let network = super::network_in(hub, &indexed, policy, &due, &repairs);
+    let network = super::network_in(hub, &indexed, policy.clone(), &due, &repairs);
     let offers = inventory::Offers::new(hub, &indexed);
     let due: BTreeMap<_, _> = due.into_iter().map(|kept| (kept.key, kept)).collect();
     let repairs: BTreeMap<_, _> = repairs.into_iter().map(|kept| (kept.key, kept)).collect();
@@ -116,6 +116,7 @@ pub(super) fn tell(hub: &Hub, all: bool, initial: &BTreeSet<MachineName>) {
                     hub: network.hub.clone(),
                     updates_view: network.updates_view,
                     repair_supported: network.repair_supported,
+                    rolled: None,
                 };
                 offers.offer_to(indexed.canonical(&name), &mut cut);
                 let previous = hub
@@ -145,7 +146,12 @@ pub(super) fn tell(hub: &Hub, all: bool, initial: &BTreeSet<MachineName>) {
                     .filter(|kept| base.repairs.get(&member.name).is_some_and(|ours| ours.id == kept.due.id))
             })
             .cloned();
-        let snapshot = VersionSnapshot::new(base, me.map(|member| member.name.clone()), update, repair);
+        // Whether this machine takes a version going out now, by its key.
+        let rolled = policy.rollout.as_ref().zip(me).map(|(rollout, member)| fastctx_types::update::Rolled {
+            version: rollout.version.clone(),
+            takes: rollout.takes(&member.key.to_string()),
+        });
+        let snapshot = VersionSnapshot::new(base, me.map(|member| member.name.clone()), update, repair, rolled);
         let mut updates = hub.updates.lock().expect("never poisoned");
         if !initial.contains(&name) && updates.told.get(&name) == Some(&snapshot) {
             continue;

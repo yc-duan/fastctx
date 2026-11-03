@@ -220,7 +220,7 @@
 .logins-row {
   position: relative;
   display: grid;
-  grid-template-columns: minmax(0, 1.15fr) minmax(170px, 1.25fr) 112px auto 32px;
+  grid-template-columns: minmax(0, 1.15fr) minmax(170px, 1.25fr) 112px auto auto;
   align-items: center;
   gap: var(--space-5);
   padding: var(--space-3) var(--space-3) var(--space-3) var(--space-4);
@@ -232,15 +232,6 @@
 
 .logins-row:hover {
   background: var(--fill-strong);
-}
-
-.logins-row.plain {
-  grid-template-columns: minmax(0, 1fr) 32px;
-  cursor: default;
-}
-
-.logins-row.plain:hover {
-  background: var(--fill);
 }
 
 .logins-row.changing {
@@ -350,13 +341,35 @@
   justify-self: end;
 }
 
+/* What can be done to a row: its workbench switch, then its "⋯". */
+.logins-row-acts {
+  display: flex;
+  align-items: center;
+  justify-self: end;
+  gap: var(--space-3);
+}
+
+.logins-bench {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 32px;
+  color: var(--text-2);
+  font-size: var(--size-text);
+  white-space: nowrap;
+}
+
+.logins-bench:hover {
+  color: var(--text);
+}
+
 .logins-row-note {
   grid-column: 1 / -1;
 }
 
 @media (max-width: 1080px) {
   .logins-row {
-    grid-template-columns: minmax(0, 1fr) minmax(170px, 1.1fr) 112px 32px;
+    grid-template-columns: minmax(0, 1fr) minmax(170px, 1.1fr) 112px auto;
   }
 
   .logins-row-mini {
@@ -376,7 +389,7 @@
     grid-row: 1;
   }
 
-  .logins-row .logins-more {
+  .logins-row .logins-row-acts {
     grid-column: 2;
     grid-row: 1;
     align-self: start;
@@ -511,74 +524,83 @@
   color: var(--text-3);
 }
 
-.logins-group {
-  margin: var(--space-5) 0 var(--space-2);
+/* The logins and the folders as papers in one column in the middle of the
+   page, as the agents' overview has them; on the workbench the listed
+   logins are rows as wide as the page, and the papers under them too. */
+.logins-paper {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  max-width: 680px;
+  margin-inline: auto;
+  padding-top: var(--space-2);
+}
+
+.logins-paper.wide {
+  max-width: none;
+}
+
+.logins-card {
+  padding: var(--space-2) var(--space-5);
+  border-radius: var(--radius-l);
+  background: var(--fill);
+}
+
+.logins-card-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 40px;
+  padding-top: var(--space-2);
+}
+
+.logins-card > .logins-card-title,
+.logins-card-title {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
   font-size: var(--size-text);
   font-weight: 400;
-  color: var(--text-3);
+  color: var(--text-2);
 }
 
-/* Rows read across in one look: on a wide screen they stop at a width
-   where a name and its 「接入」 stay together. */
-.logins-candidates,
-.logins-folders {
-  max-width: 760px;
+.logins-card > .logins-card-title {
+  padding-top: var(--space-3);
 }
 
-.logins-candidates {
+.logins-lines {
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
-.logins-candidate {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-height: 40px;
-  padding: 0 var(--space-2);
-  border-radius: var(--radius-s);
-  color: var(--text-2);
+/* Below a paper's head, its list is set off by a ruled line. */
+.logins-lines.ruled,
+.logins-folder-list.ruled {
+  position: relative;
+  margin-top: var(--space-2);
+  padding-top: var(--space-2);
 }
 
-.logins-candidate:hover {
-  background: var(--hairline);
+.logins-lines.ruled::before,
+.logins-folder-list.ruled::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -4px;
+  height: 8px;
+  background: var(--pen-rule);
+  opacity: 0.7;
+  -webkit-mask: var(--pen-rule-1) 0 50% / 100% 100% no-repeat;
+  mask: var(--pen-rule-1) 0 50% / 100% 100% no-repeat;
 }
 
-.logins-candidate-name {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text);
-}
-
-.logins-dir {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: var(--size-text);
-  color: var(--text-3);
-}
-
-/* 「接入」 stands out on its row: the one thing to do with a candidate. */
-.logins-apply {
-  margin-left: auto;
-  height: 28px;
-  background: var(--fill);
-  color: var(--text-strong);
-}
-
-.logins-apply:hover:not(:disabled) {
-  background: var(--fill-strong);
-}
-
-/* 「添加文件夹…」, and the folders searched for logins: a row each, the
-   folder's name and where it is, how its search goes at the end of the row;
-   what it found below it a quiet row each, set in under the name. */
-.logins-add-open {
-  margin-top: var(--space-3);
+/* 「添加文件夹…」 at the folders' head, or alone under the logins while no
+   folder is chosen; each folder a row with where it is and how its search
+   goes, what it found set in below its name. */
+.logins-add-alone {
+  padding-left: var(--space-5);
 }
 
 .logins-folder-list {
@@ -592,7 +614,6 @@
   align-items: center;
   gap: var(--space-2);
   min-height: 40px;
-  padding: 0 0 0 var(--space-2);
   color: var(--text-2);
 }
 
@@ -657,43 +678,13 @@
   list-style: none;
 }
 
-.logins-found-row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-height: 36px;
-  padding: 0 var(--space-2);
-  border-radius: var(--radius-s);
-  color: var(--text-2);
-}
-
-.logins-found-row > .glyph {
-  flex: none;
-  color: var(--text-3);
-}
-
-.logins-found-path {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: var(--size-text);
-  color: var(--text);
-  cursor: default;
-}
-
 .logins-found-more {
   margin: 2px 0 0 var(--space-1);
 }
 
-.logins-apply .pulse {
-  margin-right: 6px;
-}
-
 /* A row just added, or what a folder chosen turned out to be: a wash of
    the accent that fades to the row's own ground. */
-.logins-candidate.fresh,
-.logins-found-row.fresh,
+.ll-line.fresh,
 .logins-folder.fresh,
 .logins-row.fresh {
   animation: logins-fresh var(--fresh) var(--ease-out) both;
@@ -709,8 +700,7 @@
   }
 }
 
-:root[data-reduced] .logins-candidate.fresh,
-:root[data-reduced] .logins-found-row.fresh,
+:root[data-reduced] .ll-line.fresh,
 :root[data-reduced] .logins-folder.fresh,
 :root[data-reduced] .logins-row.fresh {
   animation: none;
@@ -718,9 +708,12 @@
 }
 
 @media (max-width: 760px) {
-  .logins-folder-head,
-  .logins-found-row {
+  .logins-folder-head {
     min-height: 44px;
+  }
+
+  .logins-card {
+    padding-inline: var(--space-4);
   }
 
   .logins-folder-where {
@@ -734,7 +727,7 @@
   display: flex;
   flex-direction: column;
   width: min(660px, 100vw - 32px);
-  max-height: 88vh;
+  max-height: calc(88dvh - var(--space-6));
   overflow: hidden;
 }
 
@@ -742,6 +735,7 @@
 @media (max-width: 760px) {
   .agent-change-sheet .sheet-body {
     width: 100%;
+    max-height: 92dvh;
   }
 }
 

@@ -6,7 +6,7 @@
 //! it holds, so what is gathered from it comes out in the directory's own
 //! order, as a scan would give it.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use fastctx_types::access::TownId;
 use fastctx_types::{AccountName, MachineName};
@@ -74,13 +74,26 @@ impl Index {
                 index.logged.entry(login.clone()).or_default().push(at);
             }
         }
+        let mut holders: HashMap<MachineName, BTreeSet<AccountName>> = HashMap::new();
+        for member in &all.members {
+            if let Some(home) = &member.home {
+                holders.entry(member.name.clone()).or_default().insert(home.clone());
+            }
+        }
+        for share in &all.shares {
+            holders.entry(share.machine.clone()).or_default().insert(share.account.clone());
+        }
         for (at, project) in all.projects.iter().enumerate() {
             index.projects.entry(project.town.clone()).or_insert(at);
-            index.projects_by_account.entry(project.owner.clone()).or_default().push(at);
-            for account in &project.granted {
-                if *account != project.owner {
-                    index.projects_by_account.entry(account.clone()).or_default().push(at);
-                }
+            let mut accounts = project.granted.clone();
+            accounts.insert(project.owner.clone());
+            if let Some(machine) = &project.shared_on
+                && let Some(shared) = holders.get(all.canonical(machine))
+            {
+                accounts.extend(shared.iter().filter(|account| all.holds(account, machine)).cloned());
+            }
+            for account in accounts {
+                index.projects_by_account.entry(account).or_default().push(at);
             }
         }
         for (at, share) in all.shares.iter().enumerate() {

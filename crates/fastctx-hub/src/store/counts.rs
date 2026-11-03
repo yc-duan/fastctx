@@ -9,7 +9,7 @@ pub(super) fn migrate(
     shelf: &shelf::Shelf,
 ) -> io::Result<bool> {
     let marker = dir.join(COUNTS).join(".legacy-imported");
-    match std::fs::read(&marker) {
+    match fastctx_platform::disk::read(&marker) {
         Ok(bytes) if bytes == b"1" => return Ok(false),
         Ok(_) => {
             return Err(io::Error::new(

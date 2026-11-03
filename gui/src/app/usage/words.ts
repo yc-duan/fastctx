@@ -330,6 +330,6 @@ export const enUsage: UsageWords = {
   reading: "Reading",
   failed: "Not read",
   away: "This machine is offline",
-  notListed: "This login is no longer hooked up on the machine",
+  notListed: "This login is no longer connected on the machine",
   workbenchOff: "Usage shows once the workbench is on",
 };

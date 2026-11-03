@@ -167,7 +167,7 @@ impl SentinelWaits for Waits {
 /// one already gone does nothing, so it is tried again until it is done.
 pub(crate) fn retire(node: &Arc<Node>, scope: HubAccount, owner: Address) {
     let node = node.clone();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let mut again = crate::again::Again::default();
         let mut told = None;
         while let Err(error) = goal::retire(&node, &scope, &owner).await {

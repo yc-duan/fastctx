@@ -20,8 +20,7 @@ impl crate::tolerant::Tolerant for Layer {
     const UNKNOWN: Self = Self::Connect;
 }
 
-/// The layer an account chose; none until it chooses, which the first
-/// interface opened asks.
+/// The layer an account chose; none until it chooses.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Chosen {
     #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::tolerant::read_option")]
@@ -29,16 +28,37 @@ pub struct Chosen {
 }
 
 impl Chosen {
-    /// What the World works by: an account that has not chosen keeps the
-    /// workbench it had before there were layers.
-    pub fn effective(&self) -> Layer {
-        self.layer.unwrap_or(Layer::Workbench)
+    /// What the World works by: the layer chosen. An account that never
+    /// chose is in Connect, unless `held` says Fastctx holds conversations
+    /// of its own for it from before there were layers: those keep the
+    /// workbench they had.
+    pub fn effective(&self, held: bool) -> Layer {
+        self.layer.unwrap_or(if held { Layer::Workbench } else { Layer::Connect })
     }
 }
 
-/// Said when the World is asked to start or drive a conversation for an
-/// account in Connect.
-pub const CONNECT_ONLY: &str = "this account uses Fastctx to connect its own agents only; conversations in Fastctx need the workbench, chosen in Settings";
-
 /// Said when an account's hub is too old to keep a layer.
 pub const HUB_TOO_OLD: &str = "the hub is too old to keep the account's layer; update the hub's machine";
+
+/// Said to an app from before the workbench opened in each login, which
+/// still offers to turn it on or off for a whole account: no machine that
+/// opens it by login would follow the account's choice.
+pub const MOVED: &str =
+    "the workbench opens in each login now, from its switch on the agent's page; update this app to turn it on or off";
+
+/// Whether the workbench's places are shown, from what each computer that
+/// could have it open in a login told (`world-layers.md`): shown while one
+/// has it open, put away once every one told it has not; none while one has
+/// not told, as an earlier release or one not heard yet, when the account's
+/// layer decides.
+pub fn shown(told: impl IntoIterator<Item = Option<bool>>) -> Option<bool> {
+    let mut closed = true;
+    for one in told {
+        match one {
+            Some(true) => return Some(true),
+            Some(false) => {}
+            None => closed = false,
+        }
+    }
+    closed.then_some(false)
+}

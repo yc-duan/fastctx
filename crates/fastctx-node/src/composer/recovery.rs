@@ -24,7 +24,7 @@ pub(super) async fn needed(node: &Node, id: &ResidentId) -> Result<bool, Failure
                 .optional()?;
             let bytes = match stored {
                 Some(bytes) => bytes,
-                None => match std::fs::read(file) {
+                None => match fastctx_platform::disk::read(file) {
                     Ok(bytes) => bytes,
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
                     Err(error) => return Err(error.into()),
@@ -98,7 +98,7 @@ pub(super) async fn settle(node: &Node, id: &ResidentId, state: &mut Stored) -> 
 
 pub(super) fn migrate(node: &Arc<Node>) {
     let node = node.clone();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let mut previous = String::new();
         loop {
             let mut failed = false;
@@ -155,7 +155,7 @@ async fn migrate_one(node: &Arc<Node>, id: &ResidentId) -> Result<bool, Failure>
         return Ok(false);
     }
     if persistence::exists(node, id).await? {
-        storage::forget_file(node, id);
+        storage::forget_file(node, id).await;
         finished(node, id);
         return Ok(false);
     }
@@ -167,7 +167,7 @@ async fn migrate_one(node: &Arc<Node>, id: &ResidentId) -> Result<bool, Failure>
     node.database.write(prepared.bytes, move |transaction| prepared.commit(transaction)).await.map_err(failure)?;
     // No snapshot is needed for an unopened input. Its text otherwise remains
     // resident in every idle conversation after a first upgrade.
-    storage::forget_file(node, id);
+    storage::forget_file(node, id).await;
     finished(node, id);
     Ok(true)
 }

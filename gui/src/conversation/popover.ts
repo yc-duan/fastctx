@@ -5,6 +5,7 @@
 // the shade behind it is "outside".
 
 import { layerOpened, type Layer } from "../app/back";
+import { longest } from "../app/leave";
 import { reducedMotion } from "../motion";
 
 export class Popover {
@@ -63,8 +64,16 @@ export class Popover {
     const before = getComputedStyle(this.panel).animationName;
     this.panel.classList.add("popover-leaving");
     // A panel drawn with no way of leaving goes at once rather than never.
-    const after = getComputedStyle(this.panel).animationName;
-    if (after === "none" || after === before) this.settle();
+    const style = getComputedStyle(this.panel);
+    if (style.animationName === "none" || style.animationName === before) {
+      this.settle();
+      return;
+    }
+    // Nor does one stay where the end of its keyframes does not come, as in
+    // a window put away as it leaves.
+    window.setTimeout(() => {
+      if (this.leaving) this.settle();
+    }, longest(style.animationDuration) + 32);
   }
 
   toggle(): void {

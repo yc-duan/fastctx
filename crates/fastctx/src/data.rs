@@ -125,7 +125,16 @@ fn delete(names: Vec<String>, yes: bool) -> anyhow::Result<()> {
     let mut failed = false;
     for deletion in deletions {
         match deletion.outcome {
-            DeletionOutcome::Deleted { bytes } => println!("{}: deleted, {} freed", deletion.name, size(bytes)),
+            DeletionOutcome::Deleted { bytes, finishing: None } => {
+                println!("{}: deleted, {} freed", deletion.name, size(bytes))
+            }
+            DeletionOutcome::Deleted { bytes, finishing: Some(why) } => {
+                println!(
+                    "{}: deleted, {} going; the rest is cleared in the background: {why}",
+                    deletion.name,
+                    size(bytes)
+                )
+            }
             DeletionOutcome::Refused { why } => {
                 failed = true;
                 println!("{}: not deleted: {why}", deletion.name);

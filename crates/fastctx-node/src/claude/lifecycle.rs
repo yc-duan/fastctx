@@ -43,7 +43,7 @@ fn command_home(node: &Node, about: &About) -> Result<(super::Command, PathBuf),
 }
 
 async fn list(command: super::Command, timeout: Duration) -> Result<String, Failure> {
-    tokio::task::spawn_blocking(fastctx_platform::doing::carried(move || {
+    fastctx_platform::task::spawn_blocking(fastctx_platform::doing::carried(move || {
         background::invoke(
             &command.program,
             &["agents".into(), "--json".into(), "--all".into()],
@@ -81,7 +81,7 @@ pub(crate) async fn collect(node: &Arc<Node>, about: &About, worker: &IdleWorker
     let id = worker.id.clone();
     let session = about.session.clone().ok_or_else(|| Failure::new("the host session is unknown"))?;
     let stopping_node = node.clone();
-    let running = tokio::task::spawn_blocking(fastctx_platform::doing::carried(move || {
+    let running = fastctx_platform::task::spawn_blocking(fastctx_platform::doing::carried(move || {
         let args: Vec<OsString> = vec!["stop".into(), id.into()];
         super::retire_command::run(&stopping_node, &command, &args, STOP)?;
         let listed = background::invoke(

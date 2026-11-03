@@ -57,7 +57,7 @@ pub(crate) async fn serve(
 ) -> Result<RemoteReply, Failure> {
     let (mut reader, writer) = stream.split();
     let (commands, mut receive) = mpsc::channel(1);
-    let _reading = Writer(tokio::spawn(async move {
+    let _reading = Writer(fastctx_platform::task::spawn(async move {
         loop {
             let command = watch_mux::commands::receive(&mut reader).await;
             let end = !matches!(command, Ok(Some(_)));
@@ -67,7 +67,7 @@ pub(crate) async fn serve(
         }
     }));
     let (output, queue) = mpsc::channel(watch_mux::SUBSCRIPTIONS + 1);
-    let mut writer = Writer(tokio::spawn(watch_mux::write(writer, queue)));
+    let mut writer = Writer(fastctx_platform::task::spawn(watch_mux::write(writer, queue)));
     send(
         &link,
         &output,
@@ -194,7 +194,7 @@ impl Context {
         let (consumed, mut acknowledgements) = tokio::sync::watch::channel(None);
         let (input, incoming) = mpsc::channel(1);
         let (alive, closed) = tokio::sync::watch::channel(());
-        let task = tokio::spawn(async move {
+        let task = fastctx_platform::task::spawn(async move {
             let result = crate::gate_waits::asked(run(
                 &node,
                 &link,
@@ -272,6 +272,33 @@ async fn run(
     .await?;
     let permit = crate::intake::take(node, link.hub().clone(), admission).await?;
     permit.started();
+    if let Some(follow) = request.collaboration {
+        let acting = fastctx_types::access::Acting::one(asker.hub.clone(), asker.account.clone());
+        let mut following = crate::colleagues::live::follow(node, &request.resident, None, follow, &acting);
+        drop(memory);
+        // The opening holds its slot until the first tree is told.
+        let mut permit = Some(permit);
+        loop {
+            let (version, tree) = match crate::colleagues::live::next(&mut following).await {
+                Some(told) => told?,
+                None => return Ok(()),
+            };
+            drop(permit.take());
+            let watched = fastctx_types::session::Watched::Collaboration { version, tree: Box::new(tree) };
+            flow.deliver(
+                link,
+                output,
+                Packet {
+                    watch,
+                    subscription: id,
+                    number: next.fetch_add(1, Ordering::Relaxed),
+                    event: Event::Piece { watched },
+                },
+                consumed,
+            )
+            .await?;
+        }
+    }
     if let Some(subscription) = request.documents.take() {
         if request.goal {
             return Err(Failure::not_run("goal observations do not accept document updates"));
@@ -288,7 +315,7 @@ async fn run(
             let frame = tokio::select! {
                 frame = documents.next() => match frame? { Some(frame) => frame, None => return Ok(()) },
                 Some(input) = incoming.recv(), if updating.is_none() => {
-                    updating = Some(tokio::spawn(input::run(node.clone(), link.clone(), caller.clone(), request.resident.clone(), input, closed.clone())));
+                    updating = Some(fastctx_platform::task::spawn(input::run(node.clone(), link.clone(), caller.clone(), request.resident.clone(), input, closed.clone())));
                     continue;
                 }
                 result = async { match updating.as_mut() { Some(task) => task.await, None => std::future::pending().await } } => {
@@ -346,8 +373,8 @@ async fn run(
             event = events.recv() => match event {
                 Ok(Some(event)) => {
                     if request.goal && !crate::goals::watch::is_goal(&event) { continue; }
-                    if !crate::goals::visible(node, crate::admission::seen::Looker::Asker(&asker), &event) { continue; }
-                    live(Arc::unwrap_or_clone(event), slim.as_ref()).map(|event| fastctx_types::session::Watched::Live { event })
+                    if !crate::goals::visible(node, crate::admission::seen::Looker::Asker(&asker), &request.resident, &event) { continue; }
+                    { let marked = Arc::unwrap_or_clone(event); live(marked.event, slim.as_ref()).map(|event| fastctx_types::session::Watched::Live { event, mark: marked.mark }) }
                 }
                 Ok(None) => return Ok(()),
                 Err(error) => return Err(Failure::new(error.to_string())),

@@ -231,7 +231,7 @@ pub(crate) fn follow(node: Arc<Node>, supervision: Prepared) {
     let watching = node.clone();
     let say_yielded = say.clone();
     node.handoff.watching.store(true, std::sync::atomic::Ordering::SeqCst);
-    tokio::spawn(async move { yield_when_idle(watching, say_yielded).await });
+    fastctx_platform::task::spawn(async move { yield_when_idle(watching, say_yielded).await });
     let reading = node.clone();
     let runtime = tokio::runtime::Handle::current();
     std::thread::spawn(move || {
@@ -281,7 +281,7 @@ pub(crate) fn hand_over(node: Arc<Node>) {
     }
     node.handoff.changed();
     if !node.handoff.watching.swap(true, std::sync::atomic::Ordering::SeqCst) {
-        tokio::spawn(async move { yield_when_idle(node, |_| {}).await });
+        fastctx_platform::task::spawn(async move { yield_when_idle(node, |_| {}).await });
     }
 }
 

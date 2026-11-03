@@ -24,12 +24,16 @@ impl World {
     /// one as it changes.
     pub async fn watch_world(&self) -> Result<WorldWatch, Error> {
         let watching = match self.device() {
-            Some(device) => {
-                Watching::Device { device: device.clone(), changes: device.world_changes(), first: true, told: None }
-            }
+            Some(device) => Watching::Device {
+                device: device.clone(),
+                changes: device.world_changes(),
+                first: true,
+                told: None,
+                unready: None,
+            },
             None => {
                 let (client, id) = self.connect().await?.watch_world().await?;
-                Watching::Local { client, id }
+                Watching::Local { client, id, held: None }
             }
         };
         Ok(WorldWatch { watching })
@@ -41,25 +45,65 @@ pub struct WorldWatch {
     watching: Watching,
 }
 
+/// A piece of a World watch: the World whole, or what changed in it since
+/// the last piece (`fastctx_types::world_delta`).
+pub enum Seen {
+    World(Box<WorldNow>),
+    Changed(serde_json::Value),
+}
+
 enum Watching {
     Local {
         client: Client,
         id: u64,
+        /// The World as the node told it so far, to put what changed into.
+        held: Option<serde_json::Value>,
     },
     Device {
         device: Arc<crate::device::Device>,
         changes: tokio::sync::watch::Receiver<u64>,
         first: bool,
         told: Option<Box<WorldNow>>,
+        /// Since when the hubs have not all told what is afoot whole.
+        unready: Option<tokio::time::Instant>,
     },
 }
+
+/// How long a device holds the World back for what the hubs tell of the
+/// machines to come whole: past it, it is told as it is known, and told
+/// again as the rest comes, so that a session that never says all is told
+/// cannot keep the interface from showing anything.
+const READY_WITHIN: std::time::Duration = std::time::Duration::from_secs(3);
 
 impl WorldWatch {
     /// The World, as it is at first, then after each change.
     pub async fn next(&mut self) -> Result<WorldNow, Error> {
+        match self.next_seen().await? {
+            Seen::World(world) => Ok(*world),
+            Seen::Changed(_) => match &self.watching {
+                Watching::Local { held: Some(held), .. } => serde_json::from_value(held.clone())
+                    .map_err(|error| CallError::Broken(std::io::Error::other(error)).into()),
+                _ => Err(CallError::Broken(std::io::Error::other("a change came before the World")).into()),
+            },
+        }
+    }
+
+    /// The World at first, then each change as the node told it: what
+    /// changed, when it says only that, so it can be passed on as it is.
+    pub async fn next_seen(&mut self) -> Result<Seen, Error> {
         let now = match &mut self.watching {
-            Watching::Local { client, id } => match client.frame().await? {
-                NodeFrame::World { id: told, world } if told == *id => *world,
+            Watching::Local { client, id, held } => match client.frame().await? {
+                NodeFrame::World { id: told, world } if told == *id => {
+                    *held = serde_json::to_value(&world).ok();
+                    *world
+                }
+                NodeFrame::WorldChanged { id: told, change } if told == *id => {
+                    let Some(held) = held.as_mut() else {
+                        return Err(CallError::Broken(std::io::Error::other("a change came before the World")).into());
+                    };
+                    fastctx_types::world_delta::apply(held, &change);
+                    return Ok(Seen::Changed(change));
+                }
                 NodeFrame::Reply { id: told, reply } if told == *id => {
                     return Err(match reply {
                         Ok(_) => CallError::Broken(std::io::Error::other("the World watch ended")),
@@ -74,17 +118,23 @@ impl WorldWatch {
                     .into());
                 }
             },
-            Watching::Device { device, changes, first, told } => loop {
+            Watching::Device { device, changes, first, told, unready } => loop {
                 if !std::mem::take(first) {
-                    changes
-                        .changed()
-                        .await
-                        .map_err(|_| CallError::Broken(std::io::Error::other("the device closed")))?;
+                    let closed = || CallError::Broken(std::io::Error::other("the device closed"));
+                    match unready.map(|since| since + READY_WITHIN) {
+                        Some(until) => tokio::select! {
+                            changed = changes.changed() => changed.map_err(|_| closed())?,
+                            () = tokio::time::sleep_until(until) => {}
+                        },
+                        None => changes.changed().await.map_err(|_| closed())?,
+                    }
                 }
                 changes.borrow_and_update();
                 // Until the hubs have told what is afoot again, what was
-                // told before stands.
-                if !device.afoot_ready() {
+                // told before stands, for a few seconds at most.
+                if device.afoot_ready() {
+                    *unready = None;
+                } else if unready.get_or_insert_with(tokio::time::Instant::now).elapsed() < READY_WITHIN {
                     continue;
                 }
                 let now = device.world_now().await?;
@@ -94,6 +144,6 @@ impl WorldWatch {
                 }
             },
         };
-        Ok(now)
+        Ok(Seen::World(Box::new(now)))
     }
 }

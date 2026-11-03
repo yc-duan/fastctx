@@ -1,31 +1,61 @@
-// Who works with a conversation, as a tree drawn by hand (`world-gui.md`,
-// 协作): the conversation at its root, the colleagues it asked on its
-// branches, and under each the host's own agents it sent, as the
-// conversation's own sent ones hang from the root. A node is its family's
-// mark in a seal, its name, its task, and how it stands at its end: a
-// breathing dot while it works, a tick once it handed back, a cross where it
-// failed, a stroke where it was stopped; a colleague also says how its goal
-// stands. How long and how many steps sit beside it; more is said when
-// pointed at. Pressing one opens it beside the conversation, in a tab.
+// Who works with a conversation (`world-gui.md`, 协作), in groups under their
+// names: the colleagues it asked, a card each, holding under a ruled line the
+// agents that colleague sent, a short line each; the host's own agents it
+// sent, a card each; the conversations branched off it. A card says how it stands at its
+// head, before its task in its own words: a breathing dot while it works, a
+// clay one while it waits on the user, a tick once it handed back, a cross
+// where it failed, a stroke where it was stopped. Under the task, how long it
+// has worked, to the second while it works, and what it does this moment;
+// once ended, what it spent. Those at work come first. Those that ended
+// before the work now going on began, and long before now, fold into one
+// line. The rest is said when pointed at. Pressing one opens it: a colleague
+// beside the conversation, one of the host's agents in the side.
 
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
-import { Sketch } from "../pen/sketch";
+import { ruled, seeded } from "../pen/shapes";
 import type { SidePage } from "./pane";
-import type { CollabNode } from "./types";
+import type { CollabNode, NodeState } from "./types";
 import type { CollabWords, GoalWords } from "./words";
 
-interface Placed {
-  node: CollabNode | null;
-  depth: number;
+/** How long ago one ended and still stands among the rest. */
+const RECENT = 30 * 60_000;
+
+export const going = (state: NodeState) => state === "working" || state === "waiting";
+export const anyGoing = (node: CollabNode): boolean => going(node.state) || node.children.some(anyGoing);
+
+/** When it or anyone under it was last at work: now while one still is. */
+function lastAt(node: CollabNode, now: number): number {
+  if (anyGoing(node)) return now;
+  return Math.max(node.ended ?? node.began ?? 0, ...node.children.map((child) => lastAt(child, now)));
+}
+
+/** Those at work first, the longest at it on top; then those that ended,
+ *  the latest first; each one's own in the same order. */
+export function order(nodes: CollabNode[], now: number): CollabNode[] {
+  return [...nodes]
+    .sort((a, b) => {
+      const working = Number(anyGoing(b)) - Number(anyGoing(a));
+      if (working) return working;
+      return anyGoing(a) ? (a.began ?? now) - (b.began ?? now) : lastAt(b, now) - lastAt(a, now);
+    })
+    .map((node) => ({ ...node, children: order(node.children, now) }));
+}
+
+/** The line ruled between a colleague and the agents it sent, stretched to
+ *  the card's width. */
+function rule(seed: string): string {
+  return `<svg class="cp-rule" viewBox="0 0 360 6" preserveAspectRatio="none" aria-hidden="true"><path d="${ruled([2, 3], [358, 3], 0.6, seeded(`collab-rule:${seed}`))}"/></svg>`;
 }
 
 export class CollabPage implements SidePage {
   readonly element: HTMLElement;
-  private readonly tree: HTMLElement;
   private nodes: CollabNode[] = [];
-  private root: { agent: "claude" | "codex"; name: string } = { agent: "claude", name: "" };
-  private drawn = "";
+  /** Those drawn, in the order their times stand on the page. */
+  private drawn: CollabNode[] = [];
+  private unfolded = false;
+  private timer: number | null = null;
+  private seen = false;
 
   constructor(
     private readonly words: CollabWords,
@@ -34,97 +64,127 @@ export class CollabPage implements SidePage {
   ) {
     this.element = document.createElement("section");
     this.element.className = "cp-page";
-    this.element.innerHTML = `<div class="cp-tree"></div>`;
-    this.tree = this.element.querySelector(".cp-tree")!;
-    this.tree.addEventListener("click", (event) => {
-      const id = (event.target as HTMLElement).closest<HTMLElement>(".cp-node[data-id]")?.dataset.id;
+    this.element.addEventListener("click", (event) => {
+      const target = event.target as HTMLElement;
+      if (target.closest(".cp-earlier")) {
+        this.unfolded = !this.unfolded;
+        this.draw();
+        return;
+      }
+      const id = target.closest<HTMLElement>("[data-id]")?.dataset.id;
       const node = id ? this.find(this.nodes, id) : null;
       if (node) this.pressed(node);
     });
-    new ResizeObserver(() => this.ink()).observe(this.tree);
+    // The times of those at work move only while the page is seen.
+    new IntersectionObserver((entries) => {
+      this.seen = entries.some((entry) => entry.isIntersecting);
+      this.tick();
+    }).observe(this.element);
   }
 
-  show(root: { agent: "claude" | "codex"; name: string }, nodes: CollabNode[]): void {
-    this.root = root;
+  show(nodes: CollabNode[]): void {
     this.nodes = nodes;
     this.draw();
   }
 
-  shown(): void {
-    this.ink();
+  private draw(): void {
+    const now = Date.now();
+    const ordered = order(this.nodes, now);
+    // What still goes began the work at hand: one that ended within it, or
+    // lately, stands; while none goes, the work at hand is the latest.
+    const latest = Math.max(0, ...ordered.map((node) => lastAt(node, now)));
+    const starts = ordered.filter(anyGoing).map((node) => node.began ?? now);
+    const since = Math.min(latest - RECENT, ...starts);
+    const recent = (node: CollabNode) => anyGoing(node) || lastAt(node, now) >= since;
+    this.drawn = [];
+    const groups = this.words.groups;
+    const kinds: [string, CollabNode["kind"]][] = [
+      [groups.colleagues, "colleague"],
+      [groups.agents, "subagent"],
+      [groups.side, "side"],
+    ];
+    const drawn = kinds.map(([name, kind]) => {
+      const all = ordered.filter((node) => node.kind === kind);
+      const kept = this.unfolded ? all : all.filter(recent);
+      const earlier = all.length - all.filter(recent).length;
+      if (all.length === 0) return "";
+      const fold = earlier ? `<button class="cp-earlier" type="button">${escape(this.unfolded ? this.words.fold : this.words.earlier(earlier))}</button>` : "";
+      return `<section class="cp-group"><h3 class="cp-group-name">${escape(name)}</h3>${kept.map((node) => this.card(node, now)).join("")}${fold}</section>`;
+    });
+    const empty = this.nodes.length === 0 ? `<p class="cp-empty">${escape(this.words.empty)}</p>` : "";
+    this.element.innerHTML = drawn.join("") + empty;
+    this.tick();
   }
 
-  private draw(): void {
-    const placed: Placed[] = [{ node: null, depth: 0 }];
-    const walk = (list: CollabNode[], depth: number) => {
-      for (const node of list) {
-        placed.push({ node, depth });
-        walk(node.children, depth + 1);
+  /** One of the host's agents alone, or a colleague with the agents it
+   *  sent: under a ruled line, how many, and each on a short line. */
+  private card(node: CollabNode, now: number): string {
+    const sent: CollabNode[] = [];
+    const walk = (list: CollabNode[]) => {
+      for (const child of list) {
+        sent.push(child);
+        walk(child.children);
       }
     };
-    walk(this.nodes, 1);
-    const rows = placed.map((at) => (at.node ? this.row(at.node, at.depth) : this.rootRow()));
-    const empty = this.nodes.length === 0 ? `<p class="cp-empty">${escape(this.words.empty)}</p>` : "";
-    this.tree.innerHTML = `<div class="cp-ink" aria-hidden="true"></div>${rows.join("")}${empty}`;
-    this.drawn = "";
-    requestAnimationFrame(() => this.ink());
+    walk(node.children);
+    const head = this.entry(node, now, sent.length > 0);
+    if (sent.length === 0) return `<div class="cp-card">${head}</div>`;
+    const lines = sent.map((child) => this.sentLine(child, now)).join("");
+    return `<div class="cp-card">${head}${rule(node.id)}<span class="cp-sent">${escape(this.words.sent(sent.length))}</span><div class="cp-sents">${lines}</div></div>`;
   }
 
-  private rootRow(): string {
-    return `<div class="cp-node cp-root" data-depth="0" style="--depth:0"><span class="cp-seal">${glyph(this.root.agent, 14)}</span><span class="cp-lines"><span class="cp-name">${escape(this.words.here)}</span></span></div>`;
+  /** One of the agents a colleague sent: how it stands, its task, how long. */
+  private sentLine(node: CollabNode, now: number): string {
+    this.drawn.push(node);
+    return shortLine(node, now, this.words, this.goals);
   }
 
-  private row(node: CollabNode, depth: number): string {
+  /** One line of a card: how it stands, its task, and under the task how
+   *  long it worked and what it does, or what it spent. The one that sent
+   *  the rest of its card heads it, its task in the heavier weight. */
+  private entry(node: CollabNode, now: number, heads: boolean): string {
     const words = this.words;
-    // A colleague says how its goal stands; one of the host's agents how
-    // long it took and how many steps. The rest is said when pointed at.
-    const meta = node.goal
-      ? `${glyph("goal", 14)}<span>${escape(words.goal[node.goal])}</span>`
-      : `<span>${escape(this.goals.worked(node.took))}</span>${node.steps !== null ? `<span>${escape(words.steps(node.steps))}</span>` : ""}`;
-    const facts = [words.states[node.state], this.goals.worked(node.took), node.steps !== null ? words.steps(node.steps) : "", node.why ?? ""];
-    const said = [node.name, facts.filter(Boolean).join(words.separator), node.machine ?? "", node.task].filter(Boolean).join("\n");
-    const end =
-      node.state === "working"
-        ? '<span class="cp-pulse"></span>'
-        : node.state === "done"
-          ? glyph("check", 16)
-          : node.state === "failed"
-            ? glyph("cross", 16)
-            : node.state === "stopped"
-              ? '<span class="cp-stopped"></span>'
-              : "";
-    return `<button class="cp-node ${node.state}" type="button" data-id="${escape(node.id)}" data-depth="${depth}" style="--depth:${depth}" title="${escape(said)}"><span class="cp-seal">${glyph(node.agent, 14)}</span><span class="cp-lines"><span class="cp-top"><span class="cp-name">${escape(node.name)}</span><span class="cp-meta">${meta}</span><span class="cp-end" aria-label="${escape(words.states[node.state])}">${end}</span></span><span class="cp-task">${escape(node.task)}</span></span></button>`;
+    this.drawn.push(node);
+    const took = this.took(node, now);
+    // A state no mark tells plainly is said: waiting on the user, stopped;
+    // a colleague's goal says why it stopped, where it did.
+    const stated = node.goal === "blocked" || node.goal === "paused";
+    const state = node.state === "waiting" || (node.state === "stopped" && !stated) ? `<span class="cp-said ${node.state}">${escape(words.states[node.state])}</span>` : "";
+    const meta = [
+      node.kind === "colleague" ? `<span>${escape(node.name)}</span>` : "",
+      state,
+      going(node.state) && node.doing ? `<span class="cp-doing">${escape(node.doing)}</span>` : "",
+      !going(node.state) && node.tokens ? `<span>${escape(words.tokens(node.tokens))}</span>` : "",
+      // A colleague's goal says itself only where it stopped short of done.
+      node.goal === "blocked" || node.goal === "paused" ? `<span class="cp-goal ${node.goal}">${escape(words.goal[node.goal])}</span>` : "",
+    ].join("");
+    const under = meta ? `<span class="cp-meta">${meta}</span>` : "";
+    return `<button class="cp-entry ${node.state}${heads ? " heads" : ""}" type="button" data-id="${escape(node.id)}" title="${escape(pointedAt(node, took, now, words, this.goals))}"><span class="cp-state" role="img" aria-label="${escape(words.states[node.state])}">${stateMark(node.state)}</span><span class="cp-task">${escape(node.task || node.name)}</span><span class="cp-took">${took === null ? "" : escape(words.took(took))}</span>${under}</button>`;
   }
 
-  /** Each branch, from under its parent's seal down and across to the
-   *  seal of what it holds, drawn when the tree's size is known. The seals
-   *  stand at their depth from the left whatever the width, so only the
-   *  rows moving down or up, the tree's height, draws them again: the side
-   *  widening with the sidebar every frame does not. */
-  private ink(): void {
-    const width = this.tree.clientWidth;
-    const height = this.tree.clientHeight;
-    const key = String(height);
-    if (width === 0 || key === this.drawn) return;
-    this.drawn = key;
-    const rows = [...this.tree.querySelectorAll<HTMLElement>(".cp-node")];
-    const box = this.tree.getBoundingClientRect();
-    const sketch = new Sketch("collab");
-    rows.forEach((row, at) => {
-      const depth = Number(row.dataset.depth);
-      if (depth === 0) return;
-      let parent = at - 1;
-      while (parent >= 0 && Number(rows[parent]!.dataset.depth) >= depth) parent -= 1;
-      if (parent < 0) return;
-      const p = rows[parent]!.querySelector<HTMLElement>(".cp-seal")!.getBoundingClientRect();
-      const c = row.querySelector<HTMLElement>(".cp-seal")!.getBoundingClientRect();
-      const x = p.left - box.left + p.width / 2;
-      const y0 = p.bottom - box.top + 3;
-      const y1 = c.top - box.top + c.height / 2;
-      sketch.rule([x, y0], [x, y1 - 4], 1.1, "graphite");
-      sketch.rule([x, y1 - 4], [c.left - box.left - 4, y1], 1.1, "graphite");
+  private took(node: CollabNode, now: number): number | null {
+    return workedFor(node, now);
+  }
+
+  /** Each second while the page is seen and one works: their times. */
+  private tick(): void {
+    const live = this.seen && this.drawn.some((node) => going(node.state));
+    if (live && this.timer === null) this.timer = window.setInterval(() => this.second(), 1000);
+    if (!live && this.timer !== null) {
+      window.clearInterval(this.timer);
+      this.timer = null;
+    }
+  }
+
+  private second(): void {
+    const now = Date.now();
+    const cells = this.element.querySelectorAll<HTMLElement>(".cp-took");
+    this.drawn.forEach((node, index) => {
+      if (!going(node.state)) return;
+      const took = this.took(node, now);
+      const cell = cells[index];
+      if (cell && took !== null) cell.textContent = this.words.took(took);
     });
-    this.tree.querySelector<HTMLElement>(".cp-ink")!.innerHTML = sketch.svgAt(width, height, "cp-ink-svg");
   }
 
   private find(list: CollabNode[], id: string): CollabNode | null {
@@ -135,4 +195,47 @@ export class CollabPage implements SidePage {
     }
     return null;
   }
+}
+
+/** How it stands, drawn before its task: a breathing dot while it works, a
+ *  clay one while it waits on the user, a tick, a cross, a stroke. */
+export function stateMark(state: NodeState): string {
+  if (state === "working") return '<span class="cp-pulse"></span>';
+  if (state === "waiting") return '<span class="cp-dot"></span>';
+  if (state === "done") return glyph("check", 14);
+  if (state === "failed") return glyph("cross", 14);
+  if (state === "stopped") return '<span class="cp-stopped"></span>';
+  return '<span class="cp-dot faint"></span>';
+}
+
+/** How long one worked: to now while it works. */
+export function workedFor(node: CollabNode, now: number): number | null {
+  if (typeof node.began === "number") {
+    if (typeof node.ended === "number") return Math.max(0, node.ended - node.began);
+    if (going(node.state)) return Math.max(0, now - node.began);
+  }
+  return node.took > 0 ? node.took : null;
+}
+
+/** What pointing at one says: who it is, how it stands, and the rest. */
+export function pointedAt(node: CollabNode, took: number | null, now: number, words: CollabWords, goals: GoalWords): string {
+  const facts = [
+    words.states[node.state],
+    took === null ? "" : words.took(took),
+    node.steps ? words.steps(node.steps) : "",
+    node.tokens ? words.tokens(node.tokens) : "",
+  ];
+  // A colleague goes by its model's name already.
+  const model = node.kind === "colleague" ? "" : (node.model ?? "");
+  const began = typeof node.began === "number" ? words.began(goals.at(node.began, now)) : "";
+  return [node.name, model, facts.filter(Boolean).join(words.separator), began, node.machine ?? "", node.why ?? "", node.task].filter(Boolean).join("\n");
+}
+
+/** One that works with the conversation on a short line: how it stands,
+ *  its task, how long; said in full when pointed at. */
+export function shortLine(node: CollabNode, now: number, words: CollabWords, goals: GoalWords): string {
+  const took = workedFor(node, now);
+  // One waiting on the user says so before its time.
+  const waits = node.state === "waiting" ? `<span class="cp-said waiting">${escape(words.states.waiting)}</span>` : "";
+  return `<button class="cp-line ${node.state}" type="button" data-id="${escape(node.id)}" title="${escape(pointedAt(node, took, now, words, goals))}"><span class="cp-state" role="img" aria-label="${escape(words.states[node.state])}">${stateMark(node.state)}</span><span class="cp-task">${escape(node.task || node.name)}</span><span class="cp-end">${waits}<span class="cp-took">${took === null ? "" : escape(words.took(took))}</span></span></button>`;
 }

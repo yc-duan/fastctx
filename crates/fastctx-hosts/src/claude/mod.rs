@@ -13,7 +13,6 @@
 //! knowledge pinned to the statically inspected 2.1.294 program.
 
 mod accounting;
-pub mod agents;
 pub mod assisted;
 pub mod background;
 pub mod calls;
@@ -24,6 +23,7 @@ pub mod control;
 pub mod ending;
 pub mod exchange;
 pub mod lifecycle;
+pub mod login_files;
 pub mod models;
 mod oldest;
 pub mod pricing;
@@ -129,12 +129,20 @@ pub fn plugin_dir(world: &Path) -> PathBuf {
     marketplace(world).join(PLUGIN)
 }
 
-/// Writes the marketplace and plugin using this World's stable program.
-/// Each file is replaced whole; the caller cannot select a delivery image.
-pub fn write_plugin(world: &Path) -> io::Result<PathBuf> {
+/// The World's server as Claude Code starts it, from the plugin or from an
+/// entry of its own: the stable program, and fastctx's directory it serves,
+/// both spelled as Claude Code keys directories.
+pub fn world_server(world: &Path) -> io::Result<(String, String)> {
     let root =
         trust::directory_key(world.parent().ok_or_else(|| io::Error::other("the World's directory has no parent"))?)?;
     let command = format!("{root}/bin/fastctx{}", if cfg!(windows) { ".exe" } else { "" });
+    Ok((command, root))
+}
+
+/// Writes the marketplace and plugin using this World's stable program.
+/// Each file is replaced whole; the caller cannot select a delivery image.
+pub fn write_plugin(world: &Path) -> io::Result<PathBuf> {
+    let (command, root) = world_server(world)?;
     let market = marketplace(world);
     let plugin = plugin_dir(world);
     let version = PLUGIN_VERSION;

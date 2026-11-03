@@ -3,14 +3,19 @@
 use crate::Hub;
 use fastctx_net::directory::{Directory, Member};
 use fastctx_net::wire::{Change, Told};
+use fastctx_types::AccountName;
 use fastctx_types::update::{
     ASKED_SINCE, ActionReason, Actions, Channel, FailureReason, Kind, MachineUpdate, Permission, Problem, Scheduled,
     Stage, View, ViewCall, ViewReply, release,
 };
-use fastctx_types::{AccountName, MachineName};
 use std::sync::Arc;
 
-pub(super) fn authenticate(directory: &Directory, asker: &MachineName, account: &AccountName) -> Result<(), String> {
+pub(super) fn authenticate(
+    directory: &Directory,
+    asker: &crate::origin::Origin,
+    account: &AccountName,
+) -> Result<(), String> {
+    asker.check(directory)?;
     if !directory.logged_in(asker, account) || directory.account(account).is_none_or(|a| a.locked) {
         return Err(format!("{asker} is not logged in to an unlocked account {account}"));
     }
@@ -49,7 +54,7 @@ fn actions(member: &Member, kernel: Option<&str>, online: bool, phone: bool, app
     }
 }
 
-pub(super) fn snapshot(hub: &Hub, asker: &MachineName, account: &AccountName) -> Result<View, String> {
+pub(super) fn snapshot(hub: &Hub, asker: &crate::origin::Origin, account: &AccountName) -> Result<View, String> {
     let store = hub.store();
     let directory = &store.book.directory;
     authenticate(directory, asker, account)?;
@@ -173,29 +178,70 @@ pub(super) fn snapshot(hub: &Hub, asker: &MachineName, account: &AccountName) ->
     }
     let available = machines.iter().filter(|m| m.offer.is_some() && m.actions.update.allowed).count();
     let beta = network.on(Channel::Beta).cloned();
+    let policy = directory.is_super(account).then(|| store.hub.updates.clone());
+    // The machines a rollout names first, by the names they have now: the
+    // policy keeps their keys.
+    let mut rollout_first: Vec<_> = policy
+        .as_ref()
+        .and_then(|policy| policy.rollout.as_ref())
+        .map(|rollout| {
+            directory
+                .members
+                .iter()
+                .filter(|member| rollout.first.contains(&member.key.to_string()))
+                .map(|member| member.name.clone())
+                .collect()
+        })
+        .unwrap_or_default();
+    rollout_first.sort();
     Ok(View {
         hub: env!("CARGO_PKG_VERSION").into(),
         stable: network.stable,
         beta,
         releases,
         versions,
-        policy: directory.is_super(account).then(|| store.hub.updates.clone()),
+        policy,
         machines,
         available,
         repair_supported: true,
+        rollouts: true,
+        rollout_first,
     })
+}
+
+/// Keeps how a version goes out and the versions withdrawn, as the super
+/// administrator `asker` set them.
+async fn change_rollout(
+    hub: &Hub,
+    asker: &crate::origin::Origin,
+    account: &AccountName,
+    rollout: Option<fastctx_types::update::Rollout>,
+    withdrawn: std::collections::BTreeSet<String>,
+) -> Result<(), String> {
+    let (asker, account) = (asker.clone(), account.clone());
+    let (result, ended) = hub
+        .blocking(move |hub| crate::manage::change(&hub, &asker, &account, Change::Rollout { rollout, withdrawn }))
+        .await;
+    result?;
+    crate::manage::end(hub, ended);
+    Ok(())
+}
+
+async fn read_snapshot(hub: &Hub, asker: &crate::origin::Origin, account: &AccountName) -> Result<View, String> {
+    let (asker, account) = (asker.clone(), account.clone());
+    hub.blocking(move |hub| snapshot(&hub, &asker, &account)).await
 }
 
 pub(crate) async fn request(
     hub: &Arc<Hub>,
-    asker: &MachineName,
+    asker: &crate::origin::Origin,
     account: &AccountName,
     request: ViewCall,
 ) -> Result<Told, String> {
     if matches!(request, ViewCall::Repair { .. } | ViewCall::CancelRepair { .. } | ViewCall::RepairResult { .. }) {
         return super::repair::request(hub, asker, account, request).await;
     }
-    let mut view = snapshot(hub, asker, account)?;
+    let mut view = read_snapshot(hub, asker, account).await?;
     let needed = match &request {
         ViewCall::Release { version } | ViewCall::Schedule { version: Some(version), .. } => Some(version),
         _ => None,
@@ -207,7 +253,7 @@ pub(crate) async fn request(
         manifest_problem = read_manifest(hub, version).await.err();
         // Authority can change during IO; the refreshed snapshot and each
         // committed arrangement both check it again.
-        view = snapshot(hub, asker, account)?;
+        view = read_snapshot(hub, asker, account).await?;
     }
     let reply = match request {
         ViewCall::Repair { .. } | ViewCall::CancelRepair { .. } | ViewCall::RepairResult { .. } => {
@@ -233,9 +279,74 @@ pub(crate) async fn request(
             let mut policy = hub.store().hub.updates.clone();
             policy.minimum = minimum;
             policy.managed_auto = managed_auto;
-            let (result, ended) = crate::manage::change(hub, asker, account, Change::Updates { policy });
+            let (asker, account) = (asker.clone(), account.clone());
+            let (result, ended) = hub
+                .blocking(move |hub| crate::manage::change(&hub, &asker, &account, Change::Updates { policy }))
+                .await;
             result?;
             crate::manage::end(hub, ended);
+            ViewReply::Done
+        }
+        ViewCall::Rollout { version, first, share } => {
+            let rollout = match version {
+                None => None,
+                Some(version) => {
+                    if fastctx_types::update::release(&version).is_none() {
+                        return Err(format!("{version} is not a version a release can have"));
+                    }
+                    if share > 100 {
+                        return Err("the share is in hundredths, at most 100".into());
+                    }
+                    let store = hub.store();
+                    let directory = store.indexed();
+                    let first = first
+                        .iter()
+                        .map(|name| {
+                            directory
+                                .member(name)
+                                .map(|member| member.key.to_string())
+                                .ok_or_else(|| format!("{name} is not a machine of this network"))
+                        })
+                        .collect::<Result<std::collections::BTreeSet<_>, String>>()?;
+                    // The same version with other machines or another share
+                    // stays paused, or stopped, as it was: going on again is
+                    // asked for by itself (`ViewCall::Pause`).
+                    let (paused, stopped) = store
+                        .hub
+                        .updates
+                        .rollout
+                        .as_ref()
+                        .filter(|current| current.version == version)
+                        .map_or((false, None), |current| (current.paused, current.stopped.clone()));
+                    Some(fastctx_types::update::Rollout { version, first, share, paused, stopped })
+                }
+            };
+            let withdrawn = hub.store().hub.updates.withdrawn.clone();
+            change_rollout(hub, asker, account, rollout, withdrawn).await?;
+            ViewReply::Done
+        }
+        ViewCall::Pause { paused } => {
+            let policy = hub.store().hub.updates.clone();
+            let Some(mut rollout) = policy.rollout else { return Err("no version is being rolled out".into()) };
+            rollout.paused = paused;
+            if !paused {
+                rollout.stopped = None;
+            }
+            change_rollout(hub, asker, account, Some(rollout), policy.withdrawn).await?;
+            ViewReply::Done
+        }
+        ViewCall::Withdraw { version, withdrawn } => {
+            if fastctx_types::update::release(&version).is_none() {
+                return Err(format!("{version} is not a version a release can have"));
+            }
+            let policy = hub.store().hub.updates.clone();
+            let mut all = policy.withdrawn;
+            if withdrawn {
+                all.insert(version);
+            } else {
+                all.remove(&version);
+            }
+            change_rollout(hub, asker, account, policy.rollout, all).await?;
             ViewReply::Done
         }
         ViewCall::Schedule { machines, version } => {
@@ -305,7 +416,10 @@ pub(crate) async fn request(
             // Bound each durable transaction, not the number the user can arrange.
             for chunk in pending.chunks(64) {
                 let machines: Vec<_> = chunk.iter().map(|&at| results[at].machine.clone()).collect();
-                let committed = super::due_batch::apply(hub, asker, account, &machines, version.as_deref());
+                let (asker, account, version) = (asker.clone(), account.clone(), version.clone());
+                let committed = hub
+                    .blocking(move |hub| super::due_batch::apply(&hub, &asker, &account, &machines, version.as_deref()))
+                    .await;
                 for (&at, result) in chunk.iter().zip(committed) {
                     match result {
                         Ok(()) => results[at].done = true,
@@ -320,18 +434,18 @@ pub(crate) async fn request(
             ViewReply::Scheduled { results }
         }
     };
-    super::prefetch(hub);
+    hub.blocking(|hub| super::prefetch(&hub)).await;
     super::tell(hub, None);
-    super::prune(hub);
+    hub.blocking(|hub| super::prune(&hub)).await;
     Ok(Told::NetworkUpdates { reply })
 }
 
 pub(super) fn problem(hub: &Hub, version: &str, target: Option<&str>, why: Option<String>) {
     let cache = hub.updates.lock().expect("never poisoned").cache.clone();
     let available = super::inventory::held(hub, &cache);
-    let mut store = hub.store();
-    // Background preparation may outlive the final moving snapshot
-    // (2026-10-29); its late outcome is retried by the receiving hub.
+    let mut store = hub.edit_store();
+    // Background preparation may outlive the final moving snapshot; its
+    // late outcome is retried by the receiving hub.
     if hub.moving.frozen() {
         return;
     }
@@ -405,7 +519,9 @@ pub(super) async fn read_manifest(hub: &Hub, version: &str) -> Result<(), String
     .await
     .map_err(|_| format!("reading the manifest of {version} took longer than 50 seconds"))??;
     let saving = manifest.clone();
-    tokio::task::spawn_blocking(move || cache.keep_manifest(&saving)).await.map_err(|error| error.to_string())??;
+    fastctx_platform::task::spawn_blocking(move || cache.keep_manifest(&saving))
+        .await
+        .map_err(|error| error.to_string())??;
     hub.updates.lock().expect("never poisoned").catalog.insert(manifest.version.clone(), manifest);
     Ok(())
 }

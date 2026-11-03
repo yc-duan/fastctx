@@ -94,7 +94,7 @@ pub(crate) async fn here(
     seen: Option<StatsSeen>,
 ) -> Result<MachineStats, Failure> {
     let read = || async {
-        tokio::task::spawn_blocking(|| {
+        fastctx_platform::task::spawn_blocking(|| {
             let traffic = fastctx_platform::system::traffic().unwrap_or_default();
             (counters(&traffic), traffic)
         })
@@ -125,7 +125,7 @@ pub(crate) async fn here(
         Some(bytes.checked_sub(earlier)? as f64 / seconds)
     };
     let gpus = gpus().await;
-    let (system, kernel, memory, disks, uptime, model, interfaces) = tokio::task::spawn_blocking(|| {
+    let (system, kernel, memory, disks, uptime, model, interfaces) = fastctx_platform::task::spawn_blocking(|| {
         (
             fastctx_platform::system::system_name().unwrap_or_default(),
             fastctx_platform::system::kernel(),
@@ -223,7 +223,7 @@ pub(crate) async fn here(
         .collect();
     let jobs = {
         let node = node.clone();
-        tokio::task::spawn_blocking(move || crate::job_accounts::counts(&node)).await.unwrap_or_default()
+        fastctx_platform::task::spawn_blocking(move || crate::job_accounts::counts(&node)).await.unwrap_or_default()
     };
     Ok(MachineStats {
         run: Some(run),
@@ -297,7 +297,7 @@ async fn gpus() -> Vec<Gpu> {
     if GPU_TOOL.get() == Some(&false) {
         return Vec::new();
     }
-    let read = tokio::task::spawn_blocking(|| {
+    let read = fastctx_platform::task::spawn_blocking(|| {
         let mut command = std::process::Command::new("nvidia-smi");
         command
             .args(["--query-gpu=name,memory.total,memory.used,utilization.gpu", "--format=csv,noheader,nounits"])

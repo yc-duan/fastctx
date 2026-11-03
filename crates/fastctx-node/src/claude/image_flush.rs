@@ -42,7 +42,7 @@ pub(crate) async fn wait_for_image(node: &crate::Node, resident: &ResidentId, me
         let paths = paths.clone();
         let message = message.to_owned();
         let temporary = scope.path().to_owned();
-        if tokio::task::spawn_blocking(move || {
+        if fastctx_platform::task::spawn_blocking(move || {
             for path in paths {
                 if contains(&path, &message, &temporary)? {
                     return Ok(true);

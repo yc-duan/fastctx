@@ -1,9 +1,10 @@
 //! Remote requesters' presence survives the resident cache and the receipt
 //! for the letter that changed it. Returning is a durable replacement too.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use fastctx_platform::Permissions;
 use fastctx_types::Address;
@@ -11,7 +12,7 @@ use fastctx_types::layout::WorldDir;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use sha2::{Digest, Sha256};
 
-#[derive(Default, Deserialize, Serialize)]
+#[derive(Clone, Default, Deserialize, Serialize)]
 struct Record {
     departed: bool,
     /// Each hub finishes a letter and its receipt before applying the next,
@@ -21,16 +22,38 @@ struct Record {
 
 pub(super) struct Departures {
     root: PathBuf,
+    /// Every requester's presence as recorded, read once as the node starts.
+    records: Mutex<HashMap<PathBuf, Record>>,
+    /// Held while one requester's presence is written, one change after
+    /// another.
+    writing: crate::leases::Registry<PathBuf, Mutex<()>>,
 }
 
 impl Departures {
     /// Preserves the old cache's surviving facts before it is rebuilt.
     pub fn load(world: &WorldDir) -> io::Result<Self> {
-        let departures = Self { root: world.departed() };
+        let departures =
+            Self { root: world.departed(), records: Mutex::new(HashMap::new()), writing: Default::default() };
         fastctx_platform::ensure_private_dir(&departures.root)?;
-        let entries = match std::fs::read_dir(world.path().join("resident-cache").join("departed")) {
+        departures.migrate(world)?;
+        let mut records = HashMap::new();
+        for entry in fastctx_platform::disk::read_dir(&departures.root)? {
+            let path = entry?.path();
+            if path.extension().is_some_and(|extension| extension == "json")
+                && let Some(record) = read::<Record>(&path)?
+            {
+                records.insert(path, record);
+            }
+        }
+        *departures.records.lock().expect("never poisoned") = records;
+        Ok(departures)
+    }
+
+    fn migrate(&self, world: &WorldDir) -> io::Result<()> {
+        let departures = self;
+        let entries = match fastctx_platform::disk::read_dir(world.path().join("resident-cache").join("departed")) {
             Ok(entries) => entries,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(departures),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
             Err(error) => return Err(error),
         };
         for entry in entries {
@@ -57,7 +80,7 @@ impl Departures {
             // this record and then failed, before discarding the old cache.
             publish(&target, &record)?;
         }
-        Ok(departures)
+        Ok(())
     }
 
     fn path(&self, asker: &Address) -> PathBuf {
@@ -66,8 +89,8 @@ impl Departures {
         self.root.join(format!("{:x}.json", Sha256::digest(key)))
     }
 
-    pub fn get(&self, asker: &Address) -> io::Result<bool> {
-        Ok(read::<Record>(&self.path(asker))?.is_some_and(|record| record.departed))
+    pub fn get(&self, asker: &Address) -> bool {
+        self.records.lock().expect("never poisoned").get(&self.path(asker)).is_some_and(|record| record.departed)
     }
 
     /// Publishes the effective presence and the letter that established it
@@ -81,7 +104,9 @@ impl Departures {
         letter: Option<(&str, &crate::letters::Identity)>,
     ) -> io::Result<bool> {
         let path = self.path(asker);
-        let mut record = read::<Record>(&path)?.unwrap_or_default();
+        let writing = self.writing.get_or_insert_with(&path, || Mutex::new(()));
+        let _written = writing.lock().expect("never poisoned");
+        let mut record = self.records.lock().expect("never poisoned").get(&path).cloned().unwrap_or_default();
         let repeated =
             letter.is_some_and(|(_, identity)| record.letters.values().any(|last| identity.recognizes(last)));
         if !repeated {
@@ -93,12 +118,14 @@ impl Departures {
         // Publish even on replay: a prior attempt may have replaced the
         // file but failed its durability barrier.
         publish(&path, &record)?;
-        Ok(record.departed)
+        let departed = record.departed;
+        self.records.lock().expect("never poisoned").insert(path, record);
+        Ok(departed)
     }
 }
 
 fn read<T: DeserializeOwned>(path: &Path) -> io::Result<Option<T>> {
-    match std::fs::read(path) {
+    match fastctx_platform::disk::read(path) {
         Ok(bytes) => serde_json::from_slice(&bytes).map(Some).map_err(|error| {
             io::Error::new(io::ErrorKind::InvalidData, format!("reading departure {}: {error}", path.display()))
         }),

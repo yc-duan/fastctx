@@ -64,7 +64,7 @@ pub(super) fn expires(kind: &str) -> i64 {
 /// theirs, for as long as the node runs.
 pub(crate) fn start(node: &Arc<Node>) {
     let node = node.clone();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let mut swept = None::<tokio::time::Instant>;
         loop {
             tokio::time::sleep(Duration::from_secs(60)).await;
@@ -74,7 +74,7 @@ pub(crate) fn start(node: &Arc<Node>) {
             if swept.is_none_or(|at| at.elapsed() >= SWEEPING) {
                 swept = Some(tokio::time::Instant::now());
                 let sweeping = node.clone();
-                match tokio::task::spawn_blocking(move || sweep(&sweeping)).await {
+                match fastctx_platform::task::spawn_blocking(move || sweep(&sweeping)).await {
                     Ok(Ok(())) => {}
                     Ok(Err(error)) => {
                         node.log.line(format_args!("migrating an older node's composer receipts: {error}"))

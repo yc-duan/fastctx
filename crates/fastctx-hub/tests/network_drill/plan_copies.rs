@@ -1,12 +1,25 @@
 //! Real hub persistence and concurrent edits from distinct network members.
 
 use crate::{report::Report, world::World};
+use fastctx_net::link::Link;
 use fastctx_types::{
-    Address, ResidentId,
+    AccountName, Address, ResidentId,
     plan::{Author, Page, Result as PlanResult},
     plan_copies::{Reply, Request},
 };
 use std::time::Duration;
+
+/// Registers a conversation of `link`'s machine, as its node does when the
+/// conversation is born: its records are reached through it.
+pub async fn register(link: &Link, account: &AccountName, resident: &ResidentId) -> anyhow::Result<()> {
+    link.owned_records(
+        account,
+        fastctx_types::owned_records::Request::Register { resident: resident.clone(), shared: true, previous: None },
+    )
+    .await
+    .map_err(anyhow::Error::msg)?;
+    Ok(())
+}
 
 fn text(page: &Page) -> &str {
     page.body.as_ref().map_or("", |body| body.markdown.as_str())
@@ -26,6 +39,7 @@ pub async fn exercise(world: &World, report: &mut Report) -> anyhow::Result<()> 
         resident: ResidentId::try_from("codex-a1b2".to_string()).map_err(anyhow::Error::msg)?,
     };
     report.check(alpha.view().plan_copies, "the hub advertises revision-aware plan copies", "");
+    register(&alpha, &world.account, &owner.resident).await?;
     let base = "# Work\n- [ ] first\n- [ ] second\n";
     let first = page(
         alpha
@@ -37,8 +51,11 @@ pub async fn exercise(world: &World, report: &mut Report) -> anyhow::Result<()> 
             .map_err(anyhow::Error::msg)?,
     )?;
     let user = "# Work\n- [x] first\n- [ ] second\n";
+    // An old client's panel writes through the account-record endpoint,
+    // which passing no address selects, even for a conversation a node of
+    // this release registered.
     let user_page = beta
-        .plan_write(&world.account, owner.resident.clone(), first.version(), user.into(), Author::User, Some(&owner))
+        .plan_write(&world.account, owner.resident.clone(), first.version(), user.into(), Author::User, None)
         .await
         .map_err(anyhow::Error::msg)?;
     let PlanResult::Page { page: user_page } = user_page else { anyhow::bail!("the user save conflicted") };
@@ -69,7 +86,7 @@ pub async fn exercise(world: &World, report: &mut Report) -> anyhow::Result<()> 
             merged.version(),
             "hub conflict\n".into(),
             Author::User,
-            Some(&owner),
+            None,
         )
         .await
         .map_err(anyhow::Error::msg)?;
@@ -121,7 +138,7 @@ pub async fn exercise(world: &World, report: &mut Report) -> anyhow::Result<()> 
         "a lost receipt replays the original accepted result",
         "",
     );
-    let current = alpha.plan_read_of(&world.account, &owner).await.map_err(anyhow::Error::msg)?;
+    let current = alpha.plan_read(&world.account, owner.resident.clone()).await.map_err(anyhow::Error::msg)?;
     report.check(
         current.version() == chosen.version() && text(&current) == text(&chosen),
         "replaying an accepted edit cannot overwrite a later edit",
@@ -158,7 +175,7 @@ pub async fn exercise(world: &World, report: &mut Report) -> anyhow::Result<()> 
         "historical content remains verifiable after hub restart",
         "",
     );
-    let unchanged = alpha.plan_read_of(&world.account, &owner).await.map_err(anyhow::Error::msg)?;
+    let unchanged = alpha.plan_read(&world.account, owner.resident.clone()).await.map_err(anyhow::Error::msg)?;
     report.check(text(&unchanged) == "file conflict\n", "old readers still read the same current page", "");
     use sha2::{Digest, Sha256};
     let opened = alpha.view().account(&world.account).expect("account").opened;

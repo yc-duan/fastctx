@@ -1,12 +1,12 @@
 //! A remote job returns plan operations only to the conversation it worked for.
 
-use crate::{Hub, store::Store};
+use crate::Hub;
 use fastctx_net::authorization::Action;
 use fastctx_types::{AccountName, Address, MachineName, ResidentId, plan::words};
 
 pub(crate) fn check(
     hub: &Hub,
-    store: &Store,
+    store: &crate::store::Snapshot,
     from: &MachineName,
     account: &AccountName,
     to: &MachineName,

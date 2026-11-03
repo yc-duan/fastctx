@@ -61,6 +61,7 @@ fn resident(
     here_for: i64,
 ) -> ResidentNow {
     ResidentNow {
+        opened_by: None,
         source: None,
         about: About {
             side: false,
@@ -90,6 +91,7 @@ fn resident(
         tools: Vec::new(),
         moved: None,
         removed: None,
+        benched: false,
     }
 }
 
@@ -363,6 +365,7 @@ fn agents(now: Timestamp) -> fastctx_types::agents::AgentsReply {
         checked_at: now,
         elapsed_ms: 900,
         agents: vec![codex, claude, work, personal],
+        by_login: true,
     }
 }
 
@@ -441,6 +444,7 @@ fn nodes(now: Timestamp) -> NodesReply {
                 node("server", false, 95, Err("it is offline".into())),
             ],
         }],
+        workbench: None,
     }
 }
 

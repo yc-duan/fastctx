@@ -9,7 +9,7 @@ use jsonc_parser::ast::{Object, ObjectProp};
 use jsonc_parser::common::Ranged;
 use serde::{Deserialize, Serialize};
 
-use super::jsonc::{Document, Insertion};
+use crate::jsonc::{Document, Insertion};
 use crate::plan::ClaudePlan;
 
 /// One limit in `env`: its name, and how high the World needs it.

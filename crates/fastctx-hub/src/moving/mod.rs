@@ -235,7 +235,7 @@ pub(crate) fn mode(dir: &Path) -> io::Result<Mode> {
 /// Whether `dir` holds nothing of a hub but the note that its data was
 /// deleted here.
 pub(crate) fn retired(dir: &Path) -> io::Result<bool> {
-    dir.join(RETIRED).try_exists()
+    fastctx_platform::disk::exists(dir.join(RETIRED))
 }
 
 #[derive(Serialize, Deserialize)]
@@ -245,21 +245,28 @@ struct Retired {
 }
 
 /// Deletes the hub's data in `dir`, all but its log, leaves a note why,
-/// and has its system service removed. The process then waits idle, as a
-/// service whose removal failed keeps starting it.
-pub(crate) fn retire(dir: &Path, why: &str, log: &crate::log::Log, leave: &crate::Leave) {
-    match clear(dir, why) {
-        Ok(()) => log.line(format_args!("the hub's data here is deleted: {why}")),
-        Err(error) => log.line(format_args!("deleting the hub's data here: {error}")),
-    }
-    match (leave.remove_service)(dir) {
-        Ok(said) => log.line(format_args!("{said}")),
-        Err(error) => log.line(format_args!("removing the hub's service: {error}")),
+/// and has its system service removed, on a blocking thread. The process
+/// then waits idle, as a service whose removal failed keeps starting it.
+pub(crate) async fn retire(dir: &Path, why: &str, log: &std::sync::Arc<crate::log::Log>, leave: &crate::Leave) {
+    let (dir, why, said, remove) = (dir.to_path_buf(), why.to_string(), log.clone(), leave.remove_service.clone());
+    let done = fastctx_platform::task::spawn_blocking(move || {
+        match clear(&dir, &why) {
+            Ok(()) => said.line(format_args!("the hub's data here is deleted: {why}")),
+            Err(error) => said.line(format_args!("deleting the hub's data here: {error}")),
+        }
+        match remove(&dir) {
+            Ok(removed) => said.line(format_args!("{removed}")),
+            Err(error) => said.line(format_args!("removing the hub's service: {error}")),
+        }
+    })
+    .await;
+    if let Err(error) = done {
+        log.line(format_args!("retiring the hub here: {error}"));
     }
 }
 
 pub(crate) fn clear(dir: &Path, why: &str) -> io::Result<()> {
-    for entry in std::fs::read_dir(dir)? {
+    for entry in fastctx_platform::disk::read_dir(dir)? {
         let entry = entry?;
         let name = entry.file_name();
         let name = name.to_string_lossy();
@@ -267,14 +274,14 @@ pub(crate) fn clear(dir: &Path, why: &str) -> io::Result<()> {
             continue;
         }
         if entry.file_type()?.is_dir() {
-            std::fs::remove_dir_all(entry.path())?;
+            fastctx_platform::disk::remove_dir_all(entry.path())?;
         } else {
-            std::fs::remove_file(entry.path())?;
+            fastctx_platform::disk::remove_file(entry.path())?;
         }
     }
     let note = Retired { at: Timestamp::now(), why: why.to_string() };
     fastctx_platform::publish(&dir.join(RETIRED), &crate::store::json(&note)?, fastctx_platform::Permissions::Private)?;
-    match std::fs::remove_file(dir.join(OUTGOING)) {
+    match fastctx_platform::disk::remove_file(dir.join(OUTGOING)) {
         Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
         _ => Ok(()),
     }
@@ -284,7 +291,7 @@ pub(crate) fn clear(dir: &Path, why: &str) -> io::Result<()> {
 /// moved, whose members keep what they logged in with. Otherwise the hub's
 /// own addresses, after the loopback one for the machine it runs on, and
 /// the old places still forwarding, for members that cannot reach it yet.
-pub(crate) fn addresses_for(store: &crate::store::Store, me: &MachineName) -> Vec<SocketAddr> {
+pub(crate) fn addresses_for(store: &crate::store::Snapshot, me: &MachineName) -> Vec<SocketAddr> {
     let Some(latest) = store.moves.last() else { return Vec::new() };
     let mut addresses = Vec::new();
     let listen = store.hub.listen;
@@ -420,7 +427,8 @@ impl Moving {
         if !hub.moving.settled(tokio::time::Instant::now() + SETTLING).await {
             return Err(format!("what the hub took was not done within {} s of it stopping", SETTLING.as_secs()));
         }
-        hub.store().save_letters_now().map_err(|error| format!("recording where the letters stand: {error}"))?;
+        hub.flush_catalog().await.map_err(|error| format!("settling the catalog: {error}"))?;
+        hub.post.flush().await.map_err(|error| format!("recording where the letters stand: {error}"))?;
         crate::updates::flush(hub).await
     }
 

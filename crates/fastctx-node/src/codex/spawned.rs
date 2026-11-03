@@ -120,7 +120,7 @@ pub(super) fn took(
 /// Asks whose `thread`, now being asked about, is, and settles it.
 fn ask(node: &Arc<Node>, thread: &str, plain: fn(&Arc<Node>, String, HostEvent) -> std::io::Result<()>) {
     let (node, thread) = (node.clone(), thread.to_string());
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let found = whose(&node, &thread).await;
         settle(&node, &thread, found, plain);
     });
@@ -193,7 +193,7 @@ fn settle(
             threads.insert(thread.to_string(), Thread::Unknown { asked: Instant::now(), since, waiting });
             drop(threads);
             let (node, thread) = (node.clone(), thread.to_string());
-            tokio::spawn(async move {
+            fastctx_platform::task::spawn(async move {
                 tokio::time::sleep(ASK_AGAIN).await;
                 again(&node, &thread, plain);
             });
@@ -251,8 +251,10 @@ fn tell(
         HostEvent::Desk { .. } | HostEvent::Unloaded { .. } | HostEvent::Synchronized { .. } => Vec::new(),
     };
     node.codex.acknowledge(&event);
-    if told.iter().any(|event| matches!(event.happened, Happened::TurnEnded { .. })) {
-        node.watchers.changed.notify_one();
+    if told.iter().any(|event| matches!(event.happened, Happened::TurnEnded { .. }))
+        && let Some(id) = node.residents.resident_of_thread(root)
+    {
+        node.watchers.changed.tell(&id);
     }
     for mut event in told {
         if let Happened::Changed { change: SessionChange::Usage { usage }, .. } = &mut event.happened

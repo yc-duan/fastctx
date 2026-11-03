@@ -1,0 +1,17 @@
+// Lab user configuration, written by the researcher.
+{
+  "mcpServers": {
+    "lab_echo": {
+      "command": "node",
+      "args": ["/lab/scripts/mcp-echo.cjs"],
+      "env": {"LAB_LABEL": "offline"}
+    },
+    "lab_added": {
+      "command": "node",
+      "args": [
+        "/lab/scripts/mcp-echo.cjs"
+      ]
+    }
+  },
+  "$version": 4
+}

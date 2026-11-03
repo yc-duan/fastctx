@@ -12,14 +12,14 @@ pub(crate) fn health(node: &Node) -> Vec<Health> {
         .map(|(path, error)| format!("usage ledger {} cannot be read or written: {error}", path.display()))
         .collect();
     let mut scan = || -> std::io::Result<()> {
-        let entries = match std::fs::read_dir(super::root(node)) {
+        let entries = match fastctx_platform::disk::read_dir(super::root(node)) {
             Ok(entries) => entries,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
             Err(error) => return Err(error),
         };
         for entry in entries {
             let path = entry?.path();
-            if !path.is_dir() {
+            if !fastctx_platform::disk::is_dir(&path) {
                 continue;
             }
             let count = super::quarantine::count(&path)?;

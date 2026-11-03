@@ -157,10 +157,17 @@ impl CodexHost {
             .ok_or("thread/fork answered without a thread ID")?
             .to_string();
         let model = answer.get("model").and_then(Value::as_str).map(str::to_string);
+        // Its choices are written before the host's state is taken, which
+        // no disk is waited for under.
+        {
+            let (choices, chosen) = (spec.choices.clone(), selection.clone());
+            fastctx_platform::task::blocking(move || chosen.write(&choices))
+                .await
+                .map_err(|error| format!("Codex created fork {thread}, but saving its choices failed: {error}"))?;
+        }
         let mut state = self.lock();
         let current = matches!(&state.server, Some((current, _)) if Arc::ptr_eq(current, &server));
         let entry = state.threads.entry(thread.clone()).or_default();
-        let choices = spec.choices.clone();
         entry.spec = Some(spec);
         entry.loaded = current;
         entry.subscribed = current;
@@ -169,9 +176,6 @@ impl CodexHost {
         entry.effort = answer.get("reasoningEffort").and_then(Value::as_str).map(str::to_string);
         entry.service_tier = answer.get("serviceTier").and_then(Value::as_str).map(str::to_string);
         entry.metadata = metadata(&answer["thread"]);
-        selection
-            .write(&choices)
-            .map_err(|error| format!("Codex created fork {thread}, but saving its choices failed: {error}"))?;
         entry.selection = selection;
         Ok((thread, model))
     }

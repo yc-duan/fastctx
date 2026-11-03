@@ -46,9 +46,6 @@
 .sp-split > .sp-panel,
 .sp-split > .desk-panes,
 .sp-panel > .sp-sheet,
-.sp-sheet > .sp-foot,
-.sp-foot > .focus-strip,
-.sp-foot > .focus-strip > .focus-pop,
 .desk-panes > .desk-pane.dk-corner,
 .desk-pane.dk-corner > :is(.conversation-page, .dk-fork-page),
 .desk-pane.dk-corner > :is(.conversation-page, .dk-fork-page) > .page-head {
@@ -64,19 +61,20 @@
   min-height: 0;
 }
 
-/* The desk's top right corner: the side's one switch. On Windows the
-   window's own buttons hold the corner's first line and the switch stands
-   under them; elsewhere it holds the corner itself. A head in that line
-   keeps clear of what stands in it (`--sp-corner`). */
+/* The desk's top right corner: one line, where the conversation in focus
+   works, the side's "⋯" and its switch, before the window's own buttons
+   where they are drawn. A head in that line keeps clear of it
+   (`--sp-corner`), as wide as the line is now (`--sp-corner-width`,
+   `frame.ts`). */
 .sp-host {
   --sp-switch-top: calc(var(--safe-top) + 10px);
   --sp-switch-right: var(--space-3);
-  --sp-corner: calc(var(--sp-switch-right) + 32px + var(--space-2));
+  --sp-corner: calc(var(--sp-switch-right) + var(--sp-corner-width, 32px) + var(--space-2));
 }
 
 html.framed .sp-host {
-  --sp-switch-top: calc(52px + var(--space-1));
-  --sp-corner: calc(3 * 46px + var(--space-2));
+  --sp-switch-top: 10px;
+  --sp-switch-right: calc(3 * 46px + var(--space-2));
 }
 
 .sp-panel {
@@ -96,10 +94,14 @@ html.framed .sp-host {
   display: none;
 }
 
+/* Beside the conversations the side has no ground of its own: its cards
+   stand on the page. Over the whole page, as on a phone, it keeps the
+   page's ground over what it covers. */
 .sp-split > .sp-panel:not(.sp-over) {
   flex: none;
   width: calc(var(--side-width) * var(--sp-open));
   overflow: hidden;
+  background: transparent;
 }
 
 /* The sheet keeps its width while the side widens, so nothing in it is set
@@ -109,7 +111,7 @@ html.framed .sp-host {
   position: relative;
   flex: none;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto minmax(0, 1fr);
   grid-template-columns: minmax(0, 1fr);
   width: var(--side-width);
   min-height: 0;
@@ -151,7 +153,7 @@ html.framed .sp-host {
 
 /* The line between the side and the conversation, to drag
    (`app/grip.ts`): the side wider or narrower, kept on this device as its
-   share of the page; pressed twice, back to half. */
+   share of the page; pressed twice, back to its first width. */
 .sp-grip {
   position: absolute;
   z-index: 3;
@@ -178,11 +180,9 @@ html.framed .sp-host {
 }
 
 /* The side's head: one line as high as a conversation's head and dragged
-   as a head is, the conversation's parts as marks and the side's "⋯". At
-   the desk's right it keeps the corner clear: on Windows of the window's
-   own buttons, the switch standing under them over the side's first words;
-   elsewhere of the switch. Its words begin as far from the margin as the
-   conversations' end before it, so the margin stands midway. */
+   as a head is. Beside the conversations the corner's line stands over it;
+   over the whole desk it says where the conversation works, and holds the
+   side's own cross. */
 .sp-head {
   display: flex;
   flex-direction: column;
@@ -202,73 +202,15 @@ html.framed .sp-host {
   padding-right: var(--sp-corner);
 }
 
-/* Under the window's own buttons the switch stands over the side's first
-   line of words: the pages there keep their ends clear of it. */
-html.framed .sp-split[data-dock="right"] > .sp-panel:not(.sp-over) .sp-page > :first-child {
-  margin-right: calc(32px + var(--space-2));
-}
-
 html.framed .sp-panel.sp-over .sp-line {
   padding-right: calc(3 * 46px + var(--space-2));
 }
 
-/* The parts' marks: each with its figures after it, in clay while
-   something there waits on the user, the one shown on the clay wash. Where
-   the line is short the figures give way first; shorter still, the marks
-   scroll across. */
-.sp-parts {
-  flex: 1 1 auto;
+.sp-where {
+  flex: 0 1 auto;
   display: flex;
-  align-items: center;
-  gap: 2px;
   min-width: 0;
   margin-left: calc(-1 * var(--space-2));
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-
-.sp-part {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  min-width: 34px;
-  height: 32px;
-  padding: 0 var(--space-2);
-  justify-content: center;
-  border-radius: var(--radius-m);
-  color: var(--text-2);
-  transition: background-color var(--hover) var(--ease), color var(--hover) var(--ease);
-}
-
-.sp-part:hover {
-  background: var(--hairline);
-  color: var(--text);
-}
-
-.sp-part.chosen {
-  background: var(--accent-wash);
-  color: var(--text-strong);
-}
-
-.sp-part.waiting {
-  color: var(--accent);
-}
-
-.sp-part-count {
-  color: var(--text-3);
-  font-size: var(--size-fine);
-  font-variant-numeric: tabular-nums;
-}
-
-.sp-part.chosen .sp-part-count {
-  color: var(--text-2);
-}
-
-@container (max-width: 400px) {
-  .sp-part-count {
-    display: none;
-  }
 }
 
 .sp-acts {
@@ -279,10 +221,11 @@ html.framed .sp-panel.sp-over .sp-line {
   margin-left: auto;
 }
 
-/* Over the whole page the side is shut by its own cross and stands nowhere
-   else; beside the conversation the switch in the corner shuts it. */
+/* Over the whole page the side is shut by its own cross and says where the
+   conversation works itself; beside the conversation the corner does
+   both. */
 .sp-panel:not(.sp-over) .sp-shut,
-.sp-panel.sp-over .sp-more {
+.sp-panel:not(.sp-over) .sp-where {
   display: none;
 }
 
@@ -296,62 +239,448 @@ html.framed .sp-panel.sp-over .sp-line {
   min-height: 0;
 }
 
+/* Close to the conversations it stands beside: nothing ruled between
+   them, a narrow gap on that side, and on the window's side as far as the
+   corner's line ends. */
+.sp-panel {
+  --sp-start: var(--gutter);
+  --sp-end: var(--gutter);
+}
+
+.sp-split[data-dock="right"] > .sp-panel:not(.sp-over) {
+  --sp-start: var(--space-1);
+  --sp-end: var(--space-3);
+}
+
+.sp-split[data-dock="left"] > .sp-panel:not(.sp-over) {
+  --sp-start: var(--space-3);
+  --sp-end: var(--space-1);
+}
+
 .sp-page {
   grid-area: 1 / 1;
   min-height: 0;
   overflow: auto;
   overscroll-behavior: contain;
   overflow-wrap: anywhere;
-  padding: var(--space-2) var(--gutter) var(--space-12);
+  padding: var(--space-2) var(--sp-end) var(--space-12) var(--sp-start);
   line-height: var(--leading-prose);
+}
+
+/* The way back to the overview, over the page it left, where a card's
+   name begins. */
+.sp-back {
+  padding: 0 var(--sp-end) 0 calc(var(--sp-start) + var(--space-3));
+}
+
+.sp-back[hidden] {
+  display: none;
+}
+
+/* With the side open beside them, the conversations keep a narrow margin:
+   room is short, and the side's cards stand close. */
+.sp-split:not([data-dock="bottom"]):has(> .sp-panel:not([hidden]):not(.sp-over)) > .desk-panes {
+  --gutter: var(--space-2);
 }
 
 .sp-page[hidden] {
   display: none;
 }
 
-/* What the conversation is pointed at, at the foot under its parts, its
-   panel opening above it. */
-.sp-foot {
-  min-width: 0;
-  padding: var(--space-2) var(--gutter) var(--space-3);
+/* The side's first page: a card for each part with anything to say, each
+   folding away under its name, as tall as it needs; the plan's takes the
+   height left, its plan scrolling in it. */
+.sh-page.sp-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  overflow: hidden;
+  padding-bottom: var(--space-3);
 }
 
-.sp-foot[hidden] {
+.sh-card {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-radius: var(--radius-m);
+  background: var(--fill);
+}
+
+/* The goal's card stands only where the side lies over the conversation
+   and its bar above the input; beside it, the bar says it. */
+.sp-panel:not(.sp-over) .sh-card.barred,
+.sh-page:has(> .sh-card:not(.barred)) > .sh-none,
+.sp-over .sh-page:has(> .sh-card) > .sh-none {
   display: none;
 }
 
-.sp-foot .focus-strip {
+.sh-card[data-of="plan"]:not(.shut) {
+  flex: 1 1 auto;
+  min-height: 160px;
+}
+
+.sh-card[data-of="plan"] > .sh-body {
+  flex: 1;
+  min-height: 0;
   padding: 0;
 }
 
-@media (min-width: 761px) {
-  .sp-foot .focus-pop {
-    top: auto;
-    bottom: calc(100% + var(--space-1));
-    right: auto;
-    left: 0;
-    width: min(440px, calc(var(--side-width) - 2 * var(--space-4)));
+.sh-plan {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+/* The plan fades out at an edge where more of it lies past the card's: at
+   its foot until its end is reached, at its head once it has moved. Where
+   the scroll cannot drive that, its foot always fades, and its end scrolls
+   clear of the fade. */
+@property --sh-fade-head {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+
+@property --sh-fade-foot {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+
+.sh-plan > .pb-page {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 0 var(--space-3) var(--space-3);
+  -webkit-mask-image: linear-gradient(to bottom, transparent, black var(--sh-fade-head), black calc(100% - var(--sh-fade-foot)), transparent);
+  mask-image: linear-gradient(to bottom, transparent, black var(--sh-fade-head), black calc(100% - var(--sh-fade-foot)), transparent);
+}
+
+@supports (animation-timeline: scroll()) {
+  .sh-plan > .pb-page {
+    animation: sh-fade-head linear both, sh-fade-foot linear both;
+    animation-timeline: scroll(self), scroll(self);
+    animation-range: 0 var(--space-6), calc(100% - var(--space-8)) 100%;
   }
 }
 
-/* Who works with the conversation. */
-.sp-team {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-6);
+@supports not (animation-timeline: scroll()) {
+  .sh-plan > .pb-page {
+    --sh-fade-foot: var(--space-8);
+    padding-bottom: var(--space-10);
+  }
 }
 
-/* The side's one switch, in the desk's top right corner whether the side
-   is open or shut, drawn as the place it opens at, with a dot while
-   something new waits there. Over the whole desk the side's own cross shuts
-   it; on a phone the head's "⋯" opens it. */
-.sp-toggle {
+@keyframes sh-fade-head {
+  from {
+    --sh-fade-head: 0px;
+  }
+
+  to {
+    --sh-fade-head: var(--space-6);
+  }
+}
+
+@keyframes sh-fade-foot {
+  from {
+    --sh-fade-foot: var(--space-8);
+  }
+
+  to {
+    --sh-fade-foot: 0px;
+  }
+}
+
+.sh-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-m);
+  color: var(--text-2);
+  font: inherit;
+  text-align: left;
+  transition: color var(--hover) var(--ease);
+}
+
+.sh-head:hover {
+  color: var(--text);
+}
+
+.sh-name {
+  font-family: var(--font-emphasis);
+}
+
+.sh-turn {
+  display: grid;
+  place-items: center;
+  color: var(--text-3);
+}
+
+.sh-card.shut .sh-turn {
+  rotate: -90deg;
+}
+
+.sh-state {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-3);
+  font-size: var(--size-fine);
+  text-align: right;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+
+.sh-state.waiting,
+.sh-waits {
+  color: var(--accent);
+}
+
+.sh-waits {
+  margin-left: var(--space-2);
+}
+
+.sh-body {
+  display: flex;
+  flex-direction: column;
+  padding: 0 0 var(--space-2);
+}
+
+/* What a card opens: its words, a page of the side under them. */
+.sh-open {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0 var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-s);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  transition: background-color var(--hover) var(--ease);
+}
+
+.sh-open:hover,
+.sh-ask:hover,
+.sh-doc:hover {
+  background: var(--fill-strong);
+}
+
+.sh-clamp {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+/* The plan's stops as dots along its way: walked in ink, the one it stands
+   at in clay, those ahead open. */
+.sh-stops {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0;
+}
+
+.sh-stop {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+  background: var(--text-2);
+}
+
+.sh-stop.here {
+  background: var(--accent);
+}
+
+.sh-stop.ahead,
+.sh-stop.maybe {
+  background: var(--fill-strong);
+}
+
+.sh-where {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.sh-ask {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: var(--space-2);
+  align-items: baseline;
+  margin: 0 var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-s);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  transition: background-color var(--hover) var(--ease);
+}
+
+.sh-said {
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+.sh-ask-text {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.sh-lines {
+  display: flex;
+  flex-direction: column;
+}
+
+.sh-lines .cp-line {
+  padding-left: var(--space-2);
+}
+
+.sh-doc {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  margin: 0 var(--space-1);
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-s);
+  color: var(--text);
+  text-decoration: none;
+  transition: background-color var(--hover) var(--ease);
+}
+
+.sh-doc > .glyph {
+  flex: none;
+  color: var(--text-3);
+}
+
+.sh-doc > span {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* Under the lines, where they begin. */
+.sh-all {
+  align-self: flex-start;
+  margin: var(--space-1) var(--space-1) 0;
+  padding: 0 var(--space-2);
+}
+
+.sh-none {
+  margin: var(--space-3) var(--space-1) 0;
+  color: var(--text-2);
+}
+
+@media (pointer: coarse) {
+  .sh-head,
+  .sh-open,
+  .sh-ask,
+  .sh-doc {
+    min-height: 44px;
+  }
+}
+
+/* Everyone who works with the conversation, and one of the host's agents,
+   in a sheet: the sheet scrolls, its head stays. */
+@media (min-width: 761px) {
+  .cs-sheet > .sheet-body {
+    width: min(640px, 100vw - 32px);
+  }
+}
+
+.cs-sheet .cp-page {
+  overflow: visible;
+}
+
+.cs-sheet .agent-scroll {
+  max-height: none;
+}
+
+.cs-sheet .agent-box {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+}
+
+.cs-head {
+  gap: var(--space-2);
+}
+
+.cs-head .sheet-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.cs-head .page-back {
+  max-width: none;
+}
+
+.cs-jump {
+  flex: none;
+}
+
+/* A conversation's own history, where it is in no project: its documents
+   one to a line, and the way to write one under them. */
+.sp-history {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.sp-history .page-links {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sp-history-write {
+  align-self: flex-start;
+  margin: var(--space-2) 0 0 calc(-1 * var(--space-3));
+}
+
+/* The corner's line stays where it is as the side opens and folds away,
+   the side sliding in beneath it on the paper's own ground. The switch is
+   drawn as the place the side opens at, with a dot while something new
+   waits there. Over the whole desk the side's own cross shuts it; on a
+   phone the head's "⋯" opens it. */
+.sp-corner-bar {
   position: absolute;
   z-index: 41;
   top: var(--sp-switch-top);
   right: var(--sp-switch-right);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  max-width: calc(100% - var(--sp-switch-right) - var(--space-4));
   background: var(--bg);
+}
+
+.sp-corner-bar[hidden] {
+  display: none;
+}
+
+.sp-corner-where {
+  display: flex;
+  min-width: 0;
+}
+
+.sp-toggle {
+  position: relative;
+  flex: none;
 }
 
 .sp-toggle[aria-pressed="true"] {
@@ -364,12 +693,12 @@ html.on-desk .window-controls {
   background: var(--bg);
 }
 
-.sp-host:has(> .sp-split > .sp-panel.sp-over:not([hidden])) .sp-toggle {
+.sp-host:has(> .sp-split > .sp-panel.sp-over:not([hidden])) .sp-corner-bar {
   display: none;
 }
 
 @media (max-width: 760px) {
-  .sp-toggle {
+  .sp-corner-bar {
     display: none;
   }
 }
@@ -446,8 +775,9 @@ html.on-desk .window-controls {
 
 /* The side's "⋯": where the side stands, in a small menu under its
    button. */
-.sp-acts {
+.sp-dock {
   position: relative;
+  flex: none;
 }
 
 .sp-menu {
@@ -935,47 +1265,250 @@ button.gh-goal:hover,
   }
 }
 
-/* Who works with the conversation, as a tree drawn by hand. */
-.cp-tree {
-  position: relative;
-  margin: var(--space-1) calc(var(--space-2) * -1) 0;
+/* Who works with the conversation: a card for each, those at work first;
+   the cards scroll in their own place. */
+.cp-page {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
 }
 
-/* Drawn at its own size (`svgAt`): what reaches past a tree that narrowed
-   is clipped rather than widening the page. */
-.cp-ink {
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
-  pointer-events: none;
+/* A group under its name: the colleagues, the host's agents, the
+   conversations branched off. */
+.cp-group {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
 }
 
-.cp-ink-svg {
-  display: block;
-  overflow: visible;
+.cp-group + .cp-group {
+  margin-top: var(--space-3);
 }
 
-.cp-node {
-  position: relative;
-  display: grid;
-  grid-template-columns: 26px minmax(0, 1fr);
-  column-gap: var(--space-3);
-  align-items: start;
-  box-sizing: border-box;
-  width: 100%;
-  padding: 7px var(--space-2) 7px calc(var(--space-2) + var(--depth) * 30px);
-  border-radius: var(--radius-m);
-  color: var(--text);
+.cp-group-name {
+  margin: 0;
+  padding: 0 var(--space-1);
+  color: var(--text-2);
   font: inherit;
-  line-height: 26px;
+  font-family: var(--font-emphasis);
+  line-height: 24px;
+}
+
+/* The agents a colleague sent, under its own line: how many, then a short
+   line each, set in under its task. */
+.cp-sent {
+  padding: var(--space-1) var(--space-3) 0 calc(var(--space-3) + 16px + var(--space-2));
+  color: var(--text-3);
+  font-size: var(--size-fine);
+  line-height: 18px;
+}
+
+.cp-sents {
+  display: flex;
+  flex-direction: column;
+  padding: 2px 0 var(--space-2);
+}
+
+.cp-line {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  column-gap: var(--space-2);
+  align-items: center;
+  margin: 0 var(--space-1);
+  padding: 2px var(--space-2) 2px calc(var(--space-2) + 16px + var(--space-2));
+  border-radius: var(--radius-s);
+  color: var(--text-2);
+  font: inherit;
   text-align: left;
   transition: background-color var(--hover) var(--ease);
 }
 
-button.cp-node:hover {
+.cp-line:hover {
+  background: var(--fill-strong);
+}
+
+.cp-line.working,
+.cp-line.waiting {
+  color: var(--text);
+}
+
+.cp-line.failed .cp-state {
+  color: var(--wrong);
+}
+
+.cp-line .cp-took {
+  color: var(--text-3);
+}
+
+.cp-line .cp-end {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  white-space: nowrap;
+}
+
+.cp-card {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--radius-m);
   background: var(--fill);
 }
 
+/* How it stands at the head, its task, and under the task how long and
+   what it does or spent. */
+.cp-entry {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  column-gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-m);
+  color: var(--text-2);
+  font: inherit;
+  text-align: left;
+  transition: background-color var(--hover) var(--ease);
+}
+
+.cp-entry:hover {
+  background: var(--fill-strong);
+}
+
+.cp-entry.working,
+.cp-entry.waiting {
+  color: var(--text);
+}
+
+.cp-state {
+  display: grid;
+  place-items: center;
+  height: 24px;
+  color: var(--text-3);
+}
+
+.cp-entry.failed .cp-state {
+  color: var(--wrong);
+}
+
+.cp-task {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  line-height: 24px;
+}
+
+.cp-entry.heads .cp-task {
+  font-family: var(--font-emphasis);
+}
+
+.cp-meta {
+  grid-column: 2 / 4;
+  display: flex;
+  gap: var(--space-3);
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-3);
+  font-size: var(--size-fine);
+  line-height: 18px;
+  white-space: nowrap;
+}
+
+.cp-meta > span {
+  flex: none;
+}
+
+.cp-meta > .cp-doing {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cp-took {
+  color: var(--text-3);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.cp-took:empty {
+  display: none;
+}
+
+.cp-entry.working .cp-took {
+  color: var(--text-2);
+}
+
+.cp-said.waiting,
+.cp-goal.blocked {
+  color: var(--accent);
+}
+
+.cp-pulse {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-full);
+  background: var(--text);
+  transform: scale(var(--breath-scale));
+  opacity: var(--breath-alpha);
+  animation: pulse var(--breath) var(--ease-in-out) infinite;
+}
+
+:root[data-reduced] .cp-pulse {
+  animation: none;
+}
+
+.cp-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+}
+
+.cp-dot.faint {
+  background: var(--text-3);
+}
+
+.cp-stopped {
+  width: 9px;
+  height: 1.5px;
+  border-radius: 1px;
+  background: currentColor;
+}
+
+/* The line ruled between a colleague and the agents it sent. */
+.cp-rule {
+  display: block;
+  width: calc(100% - 2 * var(--space-3));
+  height: 6px;
+  margin: 0 var(--space-3);
+  fill: var(--pen-trace);
+}
+
+.cp-earlier {
+  flex: none;
+  align-self: flex-start;
+  padding: var(--space-1) var(--space-3);
+  color: var(--text-3);
+  font: inherit;
+  transition: color var(--hover) var(--ease);
+}
+
+.cp-earlier:hover {
+  color: var(--text);
+}
+
+.cp-empty {
+  margin: var(--space-3) 0 0;
+  color: var(--text-2);
+}
+
+/* A colleague's family in a round seal, where a goal's history names it. */
 .cp-seal {
   display: grid;
   place-items: center;
@@ -986,89 +1519,10 @@ button.cp-node:hover {
   color: var(--text-2);
 }
 
-.cp-lines {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-
-.cp-top {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  min-width: 0;
-}
-
-.cp-name {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-  font-family: var(--font-emphasis);
-}
-
-.cp-meta {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  color: var(--text-2);
-  white-space: nowrap;
-  font-variant-numeric: tabular-nums;
-}
-
-.cp-meta .glyph {
-  margin-right: -4px;
-}
-
-.cp-end {
-  flex: none;
-  display: grid;
-  place-items: center;
-  width: 16px;
-  height: 16px;
-  color: var(--text-2);
-}
-
-.cp-node.failed .cp-end {
-  color: var(--wrong);
-}
-
-.cp-pulse {
-  width: 7px;
-  height: 7px;
-  border-radius: var(--radius-full);
-  background: var(--text-2);
-  transform: scale(var(--breath-scale));
-  opacity: var(--breath-alpha);
-  animation: pulse var(--breath) var(--ease-in-out) infinite;
-}
-
-:root[data-reduced] .cp-pulse {
-  animation: none;
-}
-
-.cp-stopped {
-  width: 10px;
-  height: 1.5px;
-  border-radius: 1px;
-  background: var(--text-2);
-}
-
-.cp-task {
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.cp-empty {
-  margin: var(--space-3) 0 0 calc(var(--space-2) + 26px + var(--space-3));
-  color: var(--text-2);
-}
-
 @media (pointer: coarse) {
-  .cp-node {
+  .cp-entry,
+  .cp-line,
+  .cp-earlier {
     min-height: 44px;
   }
 }
@@ -1089,7 +1543,22 @@ button.cp-node:hover {
   max-height: none;
 }
 
+/* An agent read over the parts: the way back, named by its task, and the
+   way to the row that sent it. */
+.sp-peek-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-width: 0;
+  padding: var(--space-2) var(--space-4) 0;
+}
+
+.sp-peek-head .page-back {
+  max-width: none;
+  margin-left: calc(var(--space-2) * -1);
+}
+
 .sp-jump {
-  justify-self: end;
-  margin: var(--space-2) var(--space-4) 0;
+  flex: none;
 }

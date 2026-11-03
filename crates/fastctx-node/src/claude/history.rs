@@ -22,7 +22,10 @@ use crate::Node;
 /// line it cannot make out reads the same each time, and is no such failure.
 pub async fn hosted(node: &Arc<Node>, resident: &ResidentId, recorded: &[SessionEvent]) -> (Vec<SessionEvent>, bool) {
     let root = exchange::sessions(node.world.path());
-    let (sessions, problems) = sessions(node, resident);
+    let (sessions, problems) = {
+        let (reading, whose) = (node.clone(), resident.clone());
+        fastctx_platform::task::blocking(move || sessions(&reading, &whose)).await
+    };
     // A session that could not be told for a failed read may be one of its
     // own, missing from this reading.
     let mut unread = !problems.is_empty();
@@ -78,11 +81,13 @@ pub fn stamp(node: &Node, resident: &ResidentId, digest: &mut impl FnMut(&[u8]))
     for Session { id, began, kept, .. } in sessions {
         let directory = root.join(&id);
         digest(format!("{id}|{began}|{kept:?}").as_bytes());
-        let cuts =
-            std::fs::metadata(directory.join("history-cuts.json")).map(|meta| (meta.len(), meta.modified().ok()));
+        let cuts = fastctx_platform::disk::metadata(directory.join("history-cuts.json"))
+            .map(|meta| (meta.len(), meta.modified().ok()));
         digest(format!("{cuts:?}").as_bytes());
         let record = exchange::transcript(&directory).map(|path| {
-            path.map(|path| (std::fs::metadata(&path).map(|meta| (meta.len(), meta.modified().ok())), path))
+            path.map(|path| {
+                (fastctx_platform::disk::metadata(&path).map(|meta| (meta.len(), meta.modified().ok())), path)
+            })
         });
         digest(format!("{record:?}").as_bytes());
     }
@@ -96,7 +101,7 @@ pub(crate) fn agent_record(node: &Node, resident: &ResidentId, agent: &str) -> O
     let (sessions, _) = sessions(node, resident);
     sessions.into_iter().rev().find_map(|session| {
         let path = exchange::transcript(&root.join(&session.id)).ok().flatten()?;
-        claude::subagents::record(&path, agent).filter(|record| record.is_file())
+        claude::subagents::record(&path, agent).filter(|record| fastctx_platform::disk::is_file(record))
     })
 }
 
@@ -128,13 +133,13 @@ struct Session {
     kept: Option<String>,
 }
 
-/// The sessions the resident has been, the oldest first.
+/// The sessions the resident has been, the oldest first: found on disk
+/// without the Claude state, which is asked only what its mod last saw.
 fn sessions(node: &Node, resident: &ResidentId) -> (Vec<Session>, Vec<String>) {
-    let state = node.claude.state.lock().expect("never poisoned");
     let mut sessions = Vec::new();
     let mut problems = Vec::new();
     let scanned = (|| -> std::io::Result<()> {
-        for entry in std::fs::read_dir(exchange::sessions(node.world.path()))? {
+        for entry in fastctx_platform::disk::read_dir(exchange::sessions(node.world.path()))? {
             let directory = match entry {
                 Ok(entry) => entry.path(),
                 Err(error) => {
@@ -143,7 +148,7 @@ fn sessions(node: &Node, resident: &ResidentId) -> (Vec<Session>, Vec<String>) {
                 }
             };
             let read = (|| -> std::io::Result<Option<Session>> {
-                let alias = match std::fs::read(directory.join("resident.json")) {
+                let alias = match fastctx_platform::disk::read(directory.join("resident.json")) {
                     Ok(bytes) => serde_json::from_slice::<ResidentId>(&bytes).map_err(std::io::Error::other)?,
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
                     Err(error) => return Err(error),
@@ -153,7 +158,7 @@ fn sessions(node: &Node, resident: &ResidentId) -> (Vec<Session>, Vec<String>) {
                 }
                 if let Some(registration) = exchange::registration(&directory)? {
                     return Ok(Some(Session {
-                        kept: state.stored.get(&registration.session),
+                        kept: None,
                         id: registration.session,
                         began: registration.at.unwrap_or_default(),
                         process: registration.process,
@@ -172,6 +177,11 @@ fn sessions(node: &Node, resident: &ResidentId) -> (Vec<Session>, Vec<String>) {
     if let Err(error) = scanned {
         problems.push(format!("reading {resident}'s Claude sessions: {error}"));
     }
+    let state = node.claude.state.lock().expect("never poisoned");
+    for session in &mut sessions {
+        session.kept = state.stored.get(&session.id);
+    }
+    drop(state);
     sessions.sort_by_key(|session| session.began);
     (sessions, problems)
 }
@@ -187,10 +197,17 @@ async fn read_whole(
     process: Option<ProcessIdentity>,
     earlier: HashSet<String>,
 ) -> Result<transcript::Transcript, String> {
-    let cuts = super::rewind::cuts(&directory).map_err(|error| error.to_string())?;
-    let path = exchange::transcript(&directory)
-        .map_err(|error| format!("where it is kept could not be read: {error}"))?
-        .ok_or("the World's plugin never said where Claude Code keeps it")?;
+    let (cuts, path) = {
+        let directory = directory.clone();
+        fastctx_platform::task::blocking(move || {
+            let cuts = super::rewind::cuts(&directory).map_err(|error| error.to_string())?;
+            let path = exchange::transcript(&directory)
+                .map_err(|error| format!("where it is kept could not be read: {error}"))?
+                .ok_or("the World's plugin never said where Claude Code keeps it")?;
+            Ok::<_, String>((cuts, path))
+        })
+        .await?
+    };
     let Some(kept) = kept else { return read_now(path, cuts, earlier).await };
     // Watched before it is read, so no change between the two goes unseen.
     // The record is on disk whether or not its folder can be watched: one
@@ -238,9 +255,10 @@ async fn read_now(
         let reading = path.clone();
         let cuts = cuts.clone();
         let earlier = earlier.clone();
-        let read = tokio::task::spawn_blocking(move || transcript::read_continuing(&reading, &cuts, &earlier))
-            .await
-            .map_err(|error| format!("reading it: {error}"))?;
+        let read =
+            fastctx_platform::task::spawn_blocking(move || transcript::read_continuing(&reading, &cuts, &earlier))
+                .await
+                .map_err(|error| format!("reading it: {error}"))?;
         match read {
             Ok(read) => return Ok(read),
             Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,

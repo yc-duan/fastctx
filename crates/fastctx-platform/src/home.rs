@@ -49,8 +49,14 @@ pub fn fastctx_root_in(home: &Path) -> PathBuf {
 /// takes it, and the account database when `HOME` is unset. On Windows it
 /// is the profile directory as the system records it, never a variable
 /// that a shell may have respelled, except for SYSTEM, whose home is the
-/// one Fastctx gives it (`crate::system_home`).
+/// one Fastctx gives it (`crate::system_home`). A development build takes
+/// `FASTCTX_USER_HOME` when it is set: it then runs in a home of its own and
+/// finds none of the user's agents, whose files it would otherwise change
+/// as the installed Fastctx does (`RELEASED`).
 pub fn user_home() -> io::Result<PathBuf> {
+    if !RELEASED && let Some(home) = std::env::var_os("FASTCTX_USER_HOME").filter(|home| !home.is_empty()) {
+        return absolute("FASTCTX_USER_HOME", home);
+    }
     imp::user_home()
 }
 

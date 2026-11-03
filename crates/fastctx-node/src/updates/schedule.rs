@@ -48,13 +48,13 @@ pub(super) fn reconcile(node: &Arc<Node>) {
     if !withdrawn(node, &version, held.origin.as_ref()) {
         return;
     }
-    if let Err(error) = std::fs::remove_file(dir(node).join("take.json"))
+    if let Err(error) = fastctx_platform::disk::remove_file(dir(node).join("take.json"))
         && error.kind() != std::io::ErrorKind::NotFound
     {
         node.log.line(format_args!("withdrawing the pending application update: {error}"));
         return;
     }
-    let _ = std::fs::remove_file(dir(node).join("asked.json"));
+    let _ = fastctx_platform::disk::remove_file(dir(node).join("asked.json"));
     held.take = None;
     held.origin = None;
     if held.chosen.as_ref().is_some_and(|manifest| manifest.version == version) {

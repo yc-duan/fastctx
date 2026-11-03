@@ -79,17 +79,27 @@ pub(crate) async fn preview_agent_change(
     dir: PathBuf,
     into: bool,
     take_back: Option<bool>,
+    workbench: Option<bool>,
 ) -> Result<ChangePreview, String> {
     shell
         .world()
-        .preview_agent_change(machine(machine_name)?, agent(agent_name)?, dir, into, take_back.unwrap_or(false))
+        .preview_agent_change(
+            machine(machine_name)?,
+            agent(agent_name)?,
+            dir,
+            into,
+            take_back.unwrap_or(false),
+            workbench,
+        )
         .await
         .map_err(|error| error.to_string())
 }
 
 /// Puts the World's tools into a login, or takes them out, by its machine's
-/// node; answered when the change has ended.
+/// node; answered when the change has ended. With `expected`, the change is
+/// made only while its files are as they were when it was shown.
 #[fastctx_gui_command::command]
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn change_agent_login(
     shell: tauri::State<'_, Shell>,
     machine_name: String,
@@ -98,6 +108,8 @@ pub(crate) async fn change_agent_login(
     into: bool,
     raise_output_limit: bool,
     take_back: Option<bool>,
+    expected: Option<String>,
+    workbench: Option<bool>,
 ) -> Result<LoginChange, String> {
     shell
         .world()
@@ -108,6 +120,8 @@ pub(crate) async fn change_agent_login(
             into,
             raise_output_limit,
             take_back.unwrap_or(false),
+            expected,
+            workbench,
         )
         .await
         .map_err(|error| error.to_string())
@@ -147,6 +161,23 @@ pub(crate) async fn read_agent_limits(
     shell
         .world()
         .read_agent_limits(machine(machine_name)?, agent(agent_name)?, dir)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+/// Turns on or off whether a week cleared before its reset counts anew in a
+/// login.
+#[fastctx_gui_command::command]
+pub(crate) async fn set_agent_reset_in_place(
+    shell: tauri::State<'_, Shell>,
+    machine_name: String,
+    agent_name: String,
+    dir: PathBuf,
+    on: bool,
+) -> Result<MachineLogins, String> {
+    shell
+        .world()
+        .set_agent_reset_in_place(machine(machine_name)?, agent(agent_name)?, dir, on)
         .await
         .map_err(|error| error.to_string())
 }

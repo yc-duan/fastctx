@@ -218,6 +218,44 @@
   color: var(--caution);
 }
 
+/* Its Fastctx held up, in the colour of a warning; stuck, of a fault: on
+   the line of the label of how long it has been up. */
+.mp-state {
+  flex: none;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
+}
+
+.mp-strain {
+  font-size: var(--size-text);
+  cursor: default;
+}
+
+.mp-strain.busy {
+  color: var(--caution);
+}
+
+.mp-strain.stuck {
+  color: var(--wrong);
+}
+
+/* This computer's Fastctx under 状况: held up and near a limit in the
+   colour of a warning, stuck in that of a fault; what each means behind
+   the pointer. */
+.mh-busy,
+.mh-near {
+  color: var(--caution);
+}
+
+.mh-stuck {
+  color: var(--wrong);
+}
+
+.mh-rows span[title] {
+  cursor: default;
+}
+
 .mp-uptime-value {
   font-family: var(--font-emphasis);
   font-size: var(--size-title);

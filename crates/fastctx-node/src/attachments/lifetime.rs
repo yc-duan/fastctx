@@ -19,60 +19,28 @@ fn failed(error: impl std::fmt::Display) -> Failure {
     Failure::new(error.to_string())
 }
 
-/// Reads only durable conversation records; callers serialize this with inherited-reference writes.
+/// The source's management gate protects inheritance against its deletion.
+/// The indexed pins retain an original while any other live source uses it.
 fn readers(node: &Node, wanted: &[Attachment], excluding: Option<&ResidentId>) -> Result<Vec<bool>, Failure> {
-    let mut used = vec![false; wanted.len()];
-    for kept in node.world.kept().map_err(failed)? {
-        let Kind::Home(id) = kept.kind else { continue };
-        if excluding == Some(&id) || node.world.deleted().join(format!("{id}.json")).try_exists().map_err(failed)? {
-            continue;
-        }
-        let Some(about) = super::references::optional::<fastctx_types::residents::About>(&kept.directory.about())?
-        else {
-            continue;
-        };
-        if about.id != id {
-            return Err(failed("the conversation identity differs from its directory"));
-        }
-        let files = super::references::listed(node, &id)?;
-        for (wanted, used) in wanted.iter().zip(&mut used) {
-            *used |= files.iter().any(|file| same(file, wanted));
-        }
-    }
-    Ok(used)
-}
-
-fn same(left: &Attachment, right: &Attachment) -> bool {
-    left.id == right.id && left.file == right.file && left.conversation().resident == right.conversation().resident
+    wanted
+        .iter()
+        .map(|file| super::index::reader(node, file, excluding, false).map(|id| id.is_some()).map_err(failed))
+        .collect()
 }
 
 pub(crate) fn referenced(node: &Node, wanted: &[Attachment]) -> Result<Vec<bool>, Failure> {
-    let _transaction = crate::resident_storage::lock();
     readers(node, wanted, None)
 }
 
 /// A live inheriting conversation supplies the same account and login admission as the original did.
 pub(crate) fn reader(node: &Node, wanted: &Attachment) -> Result<Option<ResidentId>, Failure> {
-    let _transaction = crate::resident_storage::lock();
-    for kept in node.world.kept().map_err(failed)? {
-        let Kind::Home(id) = kept.kind else { continue };
-        if node.world.deleted().join(format!("{id}.json")).try_exists().map_err(failed)? {
-            continue;
-        }
-        if !kept.directory.about().try_exists().map_err(failed)? {
-            continue;
-        }
-        if super::references::listed(node, &id)?.iter().any(|file| file == wanted) {
-            return Ok(Some(id));
-        }
-    }
-    Ok(None)
+    super::index::reader(node, wanted, None, true).map_err(failed)
 }
 
 fn slots(place: &Path) -> Result<Vec<(PathBuf, Attachment)>, Failure> {
     let mut slots = Vec::new();
     let base = place.join("attachments");
-    let entries = match std::fs::read_dir(base) {
+    let entries = match fastctx_platform::disk::read_dir(base) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(slots),
         Err(error) => return Err(failed(error)),
@@ -82,11 +50,8 @@ fn slots(place: &Path) -> Result<Vec<(PathBuf, Attachment)>, Failure> {
         if !entry.file_type().map_err(failed)?.is_dir() {
             continue;
         }
-        for name in ["receipt.json", "reference.json"] {
-            if let Some(file) = super::references::optional(&entry.path().join(name))? {
-                slots.push((entry.path(), file));
-                break;
-            }
+        if let Some(file) = super::references::optional(&entry.path().join("receipt.json"))? {
+            slots.push((entry.path(), file));
         }
     }
     Ok(slots)
@@ -109,12 +74,14 @@ fn keep_marker(place: &Path, acting: &Acting) -> Result<(), Failure> {
 /// Old original holders delete whole guest rooms. Only shared remote originals require this version check.
 pub(crate) async fn ensure_holders(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {
     let Some((about, _)) = node.residents.about(id) else { return Ok(()) };
-    let (files, used) = {
-        let _transaction = crate::resident_storage::lock();
-        let files = super::references::listed(node, id)?;
-        let used = readers(node, &files, Some(id))?;
-        (files, used)
-    };
+    let (working, resident) = (node.clone(), id.clone());
+    let (files, used) = fastctx_platform::task::spawn_blocking(move || {
+        let files = super::references::listed(&working, &resident)?;
+        let used = readers(&working, &files, Some(&resident))?;
+        Ok::<_, Failure>((files, used))
+    })
+    .await
+    .map_err(failed)??;
     let mut checked = Vec::new();
     for (file, used) in files.into_iter().zip(used) {
         if !used || node.is_me(&file.owner.machine) || checked.contains(&file.owner.machine) {
@@ -137,7 +104,15 @@ pub(crate) async fn ensure_holders(node: &Arc<Node>, id: &ResidentId) -> Result<
 pub(crate) async fn remote_retained(node: &Arc<Node>, places: &[PathBuf]) -> Result<Vec<PathBuf>, Failure> {
     let mut retained = Vec::new();
     for place in places {
-        let slots = slots(place)?;
+        let directory = place.clone();
+        let (slots, acting) = fastctx_platform::task::spawn_blocking(move || {
+            Ok::<_, Failure>((
+                slots(&directory)?,
+                super::references::optional::<Acting>(&directory.join(RETAINED))?.unwrap_or(Acting::Here),
+            ))
+        })
+        .await
+        .map_err(failed)??;
         // A room named by a tag of its home learns it from what it holds.
         let owner = match place.file_name().and_then(|name| name.to_str()).and_then(Kind::of) {
             Some(Kind::Guest(owner)) => owner,
@@ -155,34 +130,35 @@ pub(crate) async fn remote_retained(node: &Arc<Node>, places: &[PathBuf]) -> Res
         if !node.links().iter().any(|link| link.view().member(&owner.machine).is_some()) {
             continue;
         }
-        let acting = super::references::optional::<Acting>(&place.join(RETAINED))?.unwrap_or(Acting::Here);
         let target = (&owner.machine).into();
         let facts = node.call(&acting, &target, Purpose::Look, RemoteCall::Facts).await.map_err(failed)??;
         if !matches!(facts, RemoteReply::Facts(facts) if facts.attachment_references) {
             return Err(failed("update the conversation's machine before collecting its shared attachments"));
         }
-        let files = slots.iter().map(|(_, file)| file.clone()).collect();
-        let answer = node
-            .call(
-                &acting,
-                &target,
-                Purpose::Look,
-                RemoteCall::AttachmentReferences { conversation: owner, attachments: files },
-            )
-            .await
-            .map_err(failed)??;
-        let RemoteReply::AttachmentReferences { used } = answer else {
-            return Err(failed("expected attachment references"));
-        };
-        if used.len() != slots.len() {
-            return Err(failed("the attachment reference count differs from the request"));
+        for batch in slots.chunks(128) {
+            let files = batch.iter().map(|(_, file)| file.clone()).collect();
+            let answer = node
+                .call(
+                    &acting,
+                    &target,
+                    Purpose::Look,
+                    RemoteCall::AttachmentReferences { conversation: owner.clone(), attachments: files },
+                )
+                .await
+                .map_err(failed)??;
+            let RemoteReply::AttachmentReferences { used } = answer else {
+                return Err(failed("expected attachment references"));
+            };
+            if used.len() != batch.len() {
+                return Err(failed("the attachment reference count differs from the request"));
+            }
+            retained.extend(batch.iter().zip(used).filter_map(|((path, _), used)| used.then_some(path.clone())));
         }
-        retained.extend(slots.into_iter().zip(used).filter_map(|((path, _), used)| used.then_some(path)));
     }
     Ok(retained)
 }
 
-/// Under the resident-storage transaction, remove an attachment directory except its live originals.
+/// Under the source lifecycle gate, remove an attachment directory except its live originals.
 pub(crate) fn remove(node: &Node, place: &Path, remote: &[PathBuf]) -> Result<bool, Failure> {
     let slots = slots(place)?;
     let kind = place.file_name().and_then(|name| name.to_str()).and_then(Kind::of);
@@ -195,7 +171,7 @@ pub(crate) fn remove(node: &Node, place: &Path, remote: &[PathBuf]) -> Result<bo
     };
     let kept: Vec<PathBuf> = slots.into_iter().zip(kept).filter_map(|((path, _), used)| used.then_some(path)).collect();
     let base = place.join("attachments");
-    let entries = match std::fs::read_dir(&base) {
+    let entries = match fastctx_platform::disk::read_dir(&base) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
         Err(error) => return Err(failed(error)),
@@ -207,10 +183,10 @@ pub(crate) fn remove(node: &Node, place: &Path, remote: &[PathBuf]) -> Result<bo
         }
     }
     if kept.is_empty() {
-        std::fs::remove_dir(base).map_err(failed)?;
+        fastctx_platform::disk::remove_dir(base).map_err(failed)?;
         Ok(false)
     } else {
-        if !place.join(RETAINED).try_exists().map_err(failed)? {
+        if !fastctx_platform::disk::exists(place.join(RETAINED)).map_err(failed)? {
             keep_marker(place, &Acting::Here)?;
         }
         Ok(true)
@@ -218,13 +194,19 @@ pub(crate) fn remove(node: &Node, place: &Path, remote: &[PathBuf]) -> Result<bo
 }
 
 /// Deleted original conversations whose attachments this conversation still references.
-pub(crate) fn releasing(node: &Node, id: &ResidentId) -> Result<Vec<Address>, Failure> {
+pub(crate) async fn releasing(node: &Arc<Node>, id: &ResidentId) -> Result<Vec<Address>, Failure> {
+    let (node, id) = (node.clone(), id.clone());
+    fastctx_platform::task::spawn_blocking(move || releasing_now(&node, &id)).await.map_err(failed)?
+}
+
+fn releasing_now(node: &Node, id: &ResidentId) -> Result<Vec<Address>, Failure> {
     let mut owners = Vec::new();
     for file in super::references::listed(node, id)? {
         let owner = file.conversation();
         if owner.resident != *id
             && node.is_me(&owner.machine)
-            && node.world.conversation(&owner.resident).path().join(RETAINED).try_exists().map_err(failed)?
+            && fastctx_platform::disk::exists(node.world.conversation(&owner.resident).path().join(RETAINED))
+                .map_err(failed)?
             && !owners.contains(owner)
         {
             owners.push(owner.clone());
@@ -235,22 +217,34 @@ pub(crate) fn releasing(node: &Node, id: &ResidentId) -> Result<Vec<Address>, Fa
 
 /// Retry preserved guest rooms when their authoritative conversation node is reachable again.
 pub(crate) async fn collect(node: &Arc<Node>) {
-    let kept = match node.world.kept() {
-        Ok(kept) => kept,
-        Err(error) => {
+    let working = node.clone();
+    let kept = fastctx_platform::task::spawn_blocking(move || {
+        let mut names = Vec::new();
+        for kept in working.world.kept()? {
+            match fastctx_platform::disk::exists(kept.directory.path().join(RETAINED)) {
+                Ok(true) => names.push(kept.name),
+                Ok(false) => {}
+                Err(error) => working.log.line(format_args!("reading attachment retention for {}: {error}", kept.name)),
+            }
+        }
+        Ok::<_, std::io::Error>(names)
+    })
+    .await;
+    let names = match kept {
+        Ok(Ok(names)) => names,
+        result => {
+            let error = match result {
+                Ok(Err(error)) => error.to_string(),
+                Err(error) => error.to_string(),
+                _ => unreachable!(),
+            };
             node.log.line(format_args!("finding shared attachment originals: {error}"));
             return;
         }
     };
-    for kept in kept {
-        match kept.directory.path().join(RETAINED).try_exists() {
-            Ok(true) => {
-                if let Err(error) = crate::data::delete::delete_one(node, &kept.name).await {
-                    node.log.line(format_args!("collecting shared attachments of {}: {}", kept.name, error.why()));
-                }
-            }
-            Ok(false) => {}
-            Err(error) => node.log.line(format_args!("reading attachment retention for {}: {error}", kept.name)),
+    for name in names {
+        if let Err(error) = crate::data::delete::delete_one(node, &name).await {
+            node.log.line(format_args!("collecting shared attachments of {name}: {}", error.why()));
         }
     }
 }

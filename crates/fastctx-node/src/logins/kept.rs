@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 use fastctx_platform::{Permissions, publish};
 use fastctx_types::AgentName;
-use fastctx_types::agents::AgentModel;
+use fastctx_types::agents::{AgentModel, Fact};
 use fastctx_types::logins::{FolderSearch, Found, FoundProgram, Identified, Launcher, Scan};
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
@@ -30,9 +30,16 @@ pub(super) struct Kept {
     pub codex: KeptAgent,
     #[serde(default)]
     pub claude: KeptAgent,
+    /// The other agents' logins (`super::others`), by name.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub others: BTreeMap<String, KeptAgent>,
     /// Each chosen folder's search, running or the last one.
     #[serde(default)]
     pub folders: Vec<KeptSearch>,
+    /// Whether the logins the workbench was open in by account, before it
+    /// was kept by login, were worked out (`super::workbench::seed`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub workbench_seeded: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -43,11 +50,20 @@ pub(super) struct KeptSearch {
 
 impl Kept {
     pub fn of(&self, agent: &str) -> &KeptAgent {
-        if agent == "codex" { &self.codex } else { &self.claude }
+        static NONE: std::sync::LazyLock<KeptAgent> = std::sync::LazyLock::new(KeptAgent::default);
+        match agent {
+            "codex" => &self.codex,
+            "claude" => &self.claude,
+            other => self.others.get(other).unwrap_or(&NONE),
+        }
     }
 
     pub fn of_mut(&mut self, agent: &str) -> &mut KeptAgent {
-        if agent == "codex" { &mut self.codex } else { &mut self.claude }
+        match agent {
+            "codex" => &mut self.codex,
+            "claude" => &mut self.claude,
+            other => self.others.entry(other.to_owned()).or_default(),
+        }
     }
 }
 
@@ -62,10 +78,14 @@ pub(super) struct KeptAgent {
     #[serde(default)]
     pub limits: Vec<KeptLimits>,
     /// Codex login directories the World does not name new conversations
-    /// in: naming is on unless turned off there (2026-10-30). Kept apart from
+    /// in: naming is on unless turned off there. Kept apart from
     /// the login list, which a rescan rebuilds.
     #[serde(default)]
     pub untitled: Vec<PathBuf>,
+    /// Login directories the workbench is open in (`super::workbench`),
+    /// kept apart from the login list as well.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub workbench: Vec<PathBuf>,
 }
 
 /// What a login's agent said when last asked. Which program the login
@@ -92,19 +112,45 @@ pub(super) struct KeptLogin {
 
 impl KeptLogin {
     /// The login `dir`, found as `found`, as asking it gave while its
-    /// sign-in files stood as `signed`.
-    pub fn asked(dir: PathBuf, found: Found, asked: super::identify::Asked, signed: Vec<Option<FileStamp>>) -> Self {
-        let asked_file = asked.launcher.as_ref().and_then(|launcher| FileStamp::of(&launcher.path));
+    /// sign-in files stood as `signed`. What asking did not learn stays as
+    /// `before`, the login as last kept, had it: who is logged in, its
+    /// models, and its program's version while that file is the same.
+    pub fn asked(
+        dir: PathBuf,
+        found: Found,
+        asked: super::identify::Asked,
+        signed: Vec<Option<FileStamp>>,
+        before: Option<&KeptLogin>,
+    ) -> Self {
+        let mut launcher = asked.launcher;
+        let asked_file = launcher.as_ref().and_then(|launcher| FileStamp::of(&launcher.path));
+        if let (Some(launcher), Some(before)) = (&mut launcher, before)
+            && launcher.version.is_none()
+            && let Some(earlier) = &before.launcher
+            && earlier.path == launcher.path
+            && asked_file.is_some()
+            && before.asked_file == asked_file
+        {
+            launcher.version = earlier.version.clone();
+        }
+        let identified = match before {
+            Some(before) if !known(&asked.identified) && known(&before.identified) => before.identified.clone(),
+            _ => asked.identified,
+        };
         Self {
             dir,
             found,
-            identified: asked.identified,
-            launcher: asked.launcher,
+            identified,
+            launcher,
             asked_file,
-            models: asked.models,
+            models: asked.models.or_else(|| before.map(|before| before.models.clone())).unwrap_or_default(),
             signed: Some(signed),
         }
     }
+}
+
+fn known(identified: &Identified) -> bool {
+    matches!(identified.who, Fact::Known { .. })
 }
 
 /// A file as it stood: its length and when it was last written.
@@ -117,7 +163,7 @@ pub(crate) struct FileStamp {
 
 impl FileStamp {
     pub fn of(path: &Path) -> Option<Self> {
-        let metadata = std::fs::metadata(path).ok()?;
+        let metadata = fastctx_platform::disk::metadata(path).ok()?;
         let modified = metadata.modified().ok().and_then(|modified| Timestamp::try_from(modified).ok());
         Some(Self { len: metadata.len(), modified })
     }
@@ -139,7 +185,7 @@ fn path(node: &Node) -> PathBuf {
 
 /// The record as last kept.
 pub(super) fn read(node: &Node) -> io::Result<Kept> {
-    let kept: Kept = match std::fs::read(path(node)) {
+    let kept: Kept = match fastctx_platform::disk::read(path(node)) {
         Ok(bytes) => serde_json::from_slice(&bytes)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("agent-scan.json: {error}")))?,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Kept::default()),
@@ -227,7 +273,7 @@ fn added_path(node: &Node) -> PathBuf {
 }
 
 pub(super) fn chosen(node: &Node) -> io::Result<Added> {
-    match std::fs::read(added_path(node)) {
+    match fastctx_platform::disk::read(added_path(node)) {
         Ok(bytes) => serde_json::from_slice::<Added>(&bytes)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("agent-homes.json: {error}"))),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Added::default()),
