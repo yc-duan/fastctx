@@ -90,6 +90,11 @@ pub(crate) fn readable(node: &Node, acting: &Acting) -> Option<Layer> {
     }
     let mut read = false;
     for link in &links {
+        // Which accounts this machine logs in for is not known before the
+        // hub gave its view: no account of it can be read yet.
+        if matches!(acting, Acting::Here) && link.view().me().is_none() {
+            return None;
+        }
         for account in node.accounts_on(link, acting) {
             let chosen = link.layer(&account).ok()?;
             read = true;

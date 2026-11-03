@@ -96,6 +96,20 @@ pub(crate) async fn change(
     }
     let started = LoginChange { into, started_at: Timestamp::now(), steps: Vec::new(), end: None };
     set(node, &agent, &dir, |change| *change = started.clone());
+    // Closing the workbench is kept before the files change, so that nothing
+    // starts in the login once the user closed it; opening it, after they
+    // changed. The files follow what is kept (`super::refresh`), so a change
+    // broken off between the two comes right at the next look.
+    let after = if into { workbench } else { Some(false) }.filter(|_| matches!(agent.as_str(), "codex" | "claude"));
+    let closing = after == Some(false) && super::workbench::known(node, agent.as_str(), &dir) == Some(true);
+    if closing && let Err(error) = keep_workbench(node, &agent, &dir, false) {
+        let end = ChangeEnd::Failed {
+            at: Timestamp::now(),
+            reason: format!("keeping the workbench closed: {error}"),
+            output_limit: None,
+        };
+        return Ok(ended(node, &agent, &dir, end));
+    }
     let progress: apply::Progress = {
         let (node, agent, dir) = (node.clone(), agent.clone(), dir.clone());
         Arc::new(move |step: ChangeStep| set(&node, &agent, &dir, |change| told(&mut change.steps, step.clone())))
@@ -129,30 +143,31 @@ pub(crate) async fn change(
         .await
         .map_err(|error| Failure::new(format!("changing the login: {error}")))?
     };
+    node.logins.rewatch.notify_one();
     let at = Timestamp::now();
     let end = match ran {
         Ok(Ok(report)) => {
             let word = if into { "put the World's tools into" } else { "took the World's tools out of" };
             node.log.line(format_args!("the user {word} the {agent} login {}", dir.display()));
             super::refresh::settled(node, &agent, &dir);
-            let open = if into { workbench } else { Some(false) };
-            if let Some(open) = open.filter(|_| matches!(agent.as_str(), "codex" | "claude")) {
-                match super::workbench::set(node, agent.as_str(), &dir, open) {
-                    Ok(()) => {
-                        let word = if open { "opened" } else { "closed" };
-                        node.log.line(format_args!("the workbench is {word} in the {agent} login {}", dir.display()));
-                        super::workbench::changed(node);
-                    }
-                    Err(error) => node.log.line(format_args!("keeping where the workbench is open: {error}")),
-                }
-            }
-            ChangeEnd::Done {
-                at,
-                kept: report
-                    .notices
-                    .into_iter()
-                    .map(|notice| Kept { location: notice.location, reason: notice.reason })
-                    .collect(),
+            let opened = match after {
+                Some(true) => keep_workbench(node, &agent, &dir, true),
+                _ => Ok(()),
+            };
+            match opened {
+                Ok(()) => ChangeEnd::Done {
+                    at,
+                    kept: report
+                        .notices
+                        .into_iter()
+                        .map(|notice| Kept { location: notice.location, reason: notice.reason })
+                        .collect(),
+                },
+                Err(error) => ChangeEnd::Failed {
+                    at,
+                    reason: format!("the login was changed, but keeping the workbench open in it failed: {error}"),
+                    output_limit: None,
+                },
             }
         }
         Ok(Err(apply::Error::Edit(fastctx_install::Error::TokenLimitApproval { location, current, requested }))) => {
@@ -167,8 +182,29 @@ pub(crate) async fn change(
         Ok(Err(error)) => ChangeEnd::Failed { at, reason: error.to_string(), output_limit: None },
         Err(failure) => ChangeEnd::Failed { at, reason: failure.message, output_limit: None },
     };
+    // A change that failed leaves the workbench as it found it.
+    if closing
+        && matches!(end, ChangeEnd::Failed { .. })
+        && let Err(error) = keep_workbench(node, &agent, &dir, true)
+    {
+        node.log.line(format_args!("opening the workbench again after a failed change: {error}"));
+    }
+    Ok(ended(node, &agent, &dir, end))
+}
+
+/// Opens or closes the workbench in the login, and tells what waited on it.
+fn keep_workbench(node: &Arc<Node>, agent: &AgentName, dir: &Path, open: bool) -> std::io::Result<()> {
+    super::workbench::set(node, agent.as_str(), dir, open)?;
+    let word = if open { "opened" } else { "closed" };
+    node.log.line(format_args!("the workbench is {word} in the {agent} login {}", dir.display()));
+    super::workbench::changed(node);
+    Ok(())
+}
+
+/// Ends the change running in the login with `end`, answered with it.
+fn ended(node: &Node, agent: &AgentName, dir: &Path, end: ChangeEnd) -> LoginChange {
     let mut ended = None;
-    set(node, &agent, &dir, |change| {
+    set(node, agent, dir, |change| {
         if let ChangeEnd::Failed { reason, .. } = &end {
             for step in &mut change.steps {
                 if step.state == StepState::Running {
@@ -179,7 +215,7 @@ pub(crate) async fn change(
         change.end = Some(end.clone());
         ended = Some(change.clone());
     });
-    Ok(ended.expect("the change was set"))
+    ended.expect("the change was set")
 }
 
 fn edits(take_back: bool) -> apply::Edits {

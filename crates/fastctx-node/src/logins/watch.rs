@@ -30,13 +30,16 @@ pub(crate) fn start(node: &Arc<Node>) {
             // Held here as well as by the watch, so that where nothing can
             // be watched the hourly look still waits its hour.
             let (changed, mut changes) = mpsc::channel(1);
-            let watcher = {
+            let (watcher, rewatch) = {
                 let Some(node) = node.upgrade() else { return };
-                watch(&node, changed.clone())
+                (watch(&node, changed.clone()), node.logins.rewatch.clone())
             };
             tokio::select! {
                 _ = changes.recv() => {}
                 _ = tokio::time::sleep(EVERY) => {}
+                // A login was connected or taken out: its files are watched
+                // from now on, or no longer.
+                () = rewatch.notified() => continue,
             }
             while tokio::time::timeout(SETTLED, changes.recv()).await.is_ok_and(|change| change.is_some()) {}
             drop((watcher, changed));
