@@ -187,9 +187,24 @@ impl Rows<'_> {
             )
             .optional()?)
     }
+    /// Replacements keep their position; only a new identity advances the cursor.
+    fn position(&self, family: &str, key: &str) -> Result<i64> {
+        let existing = self
+            .connection
+            .prepare_cached(
+                "SELECT position FROM conversation_records WHERE conversation=?1 AND family=?2 AND identity=?3",
+            )?
+            .query_row((self.conversation, family, key), |row| row.get(0))
+            .optional()?;
+        match existing {
+            Some(position) => Ok(position),
+            None => positions::next(self.connection, self.conversation, "records"),
+        }
+    }
+
     pub(crate) fn put_raw(&self, family: &str, key: &str, body: &[u8]) -> Result<()> {
         let category = std::path::Path::new(key).extension().and_then(|extension| extension.to_str()).unwrap_or("");
-        let position = positions::next(self.connection, self.conversation, "records")?;
+        let position = self.position(family, key)?;
         let changed=self.connection.execute("INSERT INTO conversation_records(conversation,family,identity,body,modified,category,position) VALUES(?1,?2,?3,?4,?5,?6,?7)
             ON CONFLICT(conversation,family,identity) DO UPDATE SET body=excluded.body,modified=excluded.modified,category=excluded.category WHERE conversation_records.body!=excluded.body",(self.conversation,family,key,body,jiff::Timestamp::now().to_string(),category,position))?;
         if changed != 0 {
@@ -236,7 +251,7 @@ impl Rows<'_> {
         expires: Option<jiff::Timestamp>,
     ) -> Result<()> {
         let bytes = encode(value)?;
-        let position = positions::next(self.connection, self.conversation, "records")?;
+        let position = self.position(family, key)?;
         let changed=self.connection.execute("INSERT INTO conversation_records(conversation,family,identity,body,modified,expires,position) VALUES(?1,?2,?3,?4,?5,?6,?7)
             ON CONFLICT(conversation,family,identity) DO UPDATE SET body=excluded.body,modified=excluded.modified,expires=excluded.expires
             WHERE conversation_records.body!=excluded.body OR conversation_records.expires IS NOT excluded.expires",
