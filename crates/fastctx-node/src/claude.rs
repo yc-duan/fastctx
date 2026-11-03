@@ -318,10 +318,17 @@ fn look_soon(node: &Arc<Node>, directory: PathBuf) {
             {
                 let mut looking = node.claude.looking.lock().expect("never poisoned");
                 match looking.get_mut(&directory) {
-                    Some(again) if *again => {
+                    Some(again) if *again && settled => {
                         *again = false;
+                        wait = AGAIN_FIRST;
                         continue;
                     }
+                    // A look that left something over waits out its time even
+                    // when the session wrote meanwhile, as a live one keeps
+                    // doing: what it wrote is looked at after. Looking again at
+                    // once, while its records cannot be read yet (as they are
+                    // moved in), only failed again, many times a second.
+                    Some(again) if *again => *again = false,
                     _ if !settled => {}
                     _ => {
                         looking.remove(&directory);

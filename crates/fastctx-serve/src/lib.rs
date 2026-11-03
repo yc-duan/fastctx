@@ -138,11 +138,16 @@ async fn serve_session(
             (Some("ping"), Some(id)) => output.send(&protocol.response(&id, json!({}), false)),
             (Some("tools/list"), Some(id)) => {
                 let meta = params.get("_meta");
+                // The node may not answer for a while, as while it moves the
+                // records of an earlier release in: the tools are listed
+                // without the machines rather than refused, which a host
+                // takes as the tools failing to start for the whole turn,
+                // and listed again once the machines can be read.
                 let machines = match session.machines(meta).await {
                     Ok(machines) => machines,
-                    Err(error) => {
-                        output.send(&error_response(&id, -32603, &error));
-                        continue;
+                    Err(_) => {
+                        session.list_again_later(&output);
+                        None
                     }
                 };
                 let tools = tools::definitions(writes_off, session.woken(), session.codex(meta), machines.as_ref());

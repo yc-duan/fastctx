@@ -317,8 +317,8 @@ export class AgentsOverview implements Page {
     </section>`;
   }
 
-  /** A login's line: whether it is connected, drawn; who it is; its plan
-   *  and what to know of it; and what can be done to it. */
+  /** A login's line: whether it is connected, drawn; who it is, with its
+   *  plan and what to know of it on hover; and what can be done to it. */
   private line(machine: Pickable, side: AgentLogins, agent: Agent, login: Login, byLogin: boolean): string {
     const { logins, words } = this.options;
     const listed = side.listed.includes(login);
@@ -350,7 +350,10 @@ export class AgentsOverview implements Page {
                 : byLogin && login.workbench
                   ? `<button class="text-button ll-quiet" type="button" data-ao="talk" ${at}>${escape(words.talk)}</button>`
                   : "";
-    return loginLine({ standing, who: identity?.email ?? dirName(login.dir), whoSaid: login.dir, tags, act });
+    // A card holds a login to one line: who it is and its deed. What is
+    // known of it is said where the pointer rests, under its directory.
+    const said = [login.dir, ...tags.map((tag) => (tag.warn && tag.said ? tag.said : tag.text))].join("\n");
+    return loginLine({ standing, who: identity?.email ?? dirName(login.dir), whoSaid: said, tags: [], act });
   }
 
   /** The head's machine and, while it is open, its menu. */

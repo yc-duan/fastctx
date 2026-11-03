@@ -20,6 +20,10 @@ mod lifetime;
 use crate::answer::{self, Answer};
 use crate::protocol::{CLIENT_INFO, VERSION_KEY};
 
+/// How long after a listing without the machines the host is told to list
+/// the tools again.
+const LIST_AGAIN: std::time::Duration = std::time::Duration::from_secs(30);
+
 pub struct Session {
     world: WorldDir,
     host: OnceLock<Host>,
@@ -46,6 +50,8 @@ pub struct Session {
     watching: Mutex<Option<(Option<ResidentId>, tokio::task::JoinHandle<()>)>>,
     /// Whether a node was watched before, so a new one is told of.
     watched: std::sync::atomic::AtomicBool,
+    /// Whether the host is to be told in a while to list the tools again.
+    relisting: std::sync::atomic::AtomicBool,
 }
 
 struct Arrival {
@@ -82,6 +88,7 @@ impl Session {
             writes_off,
             watching: Mutex::new(None),
             watched: std::sync::atomic::AtomicBool::new(false),
+            relisting: std::sync::atomic::AtomicBool::new(false),
         })
     }
 
@@ -131,6 +138,7 @@ impl Session {
             writes_off: self.writes_off,
             watching: Mutex::new(None),
             watched: std::sync::atomic::AtomicBool::new(false),
+            relisting: std::sync::atomic::AtomicBool::new(false),
         })
     }
 
@@ -771,6 +779,20 @@ impl Session {
             });
             *watching = Some((resident, task));
         }
+    }
+
+    /// Tells the host to list the tools again in a while, once however often
+    /// asked meanwhile: the machines could not be read when it last did.
+    pub fn list_again_later(self: &Arc<Self>, output: &crate::stdio::Output) {
+        if self.relisting.swap(true, std::sync::atomic::Ordering::AcqRel) {
+            return;
+        }
+        let (session, output) = (self.clone(), output.clone());
+        tokio::spawn(async move {
+            tokio::time::sleep(LIST_AGAIN).await;
+            session.relisting.store(false, std::sync::atomic::Ordering::Release);
+            output.send(&crate::tools::list_changed());
+        });
     }
 
     pub fn stop_watching(&self) {

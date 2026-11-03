@@ -14,6 +14,8 @@ use std::{
 mod damaged;
 #[cfg(feature = "storage-drill")]
 pub(crate) use damaged::drill as damaged_drill;
+mod duplicates;
+pub(super) use duplicates::settle as settle_duplicates;
 
 pub(crate) const RETENTION: Duration = Duration::from_secs(30 * 24 * 60 * 60);
 static DAMAGED: LazyLock<&'static readings::Counter> = LazyLock::new(|| readings::counter("migration.damaged_files"));

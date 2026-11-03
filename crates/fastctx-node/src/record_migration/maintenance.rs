@@ -14,6 +14,15 @@ pub(super) fn start(node: &std::sync::Arc<crate::Node>) {
             let result = fastctx_platform::task::spawn_blocking(move || {
                 collect(&working.database)?;
                 archive_left(&working.database, working.world.path())?;
+                let (settled, failure) = super::archive::settle_duplicates(&working.database, working.world.path());
+                if settled > 0 {
+                    working
+                        .log
+                        .line(format_args!("{settled} originals set aside held records stored already: archived"));
+                }
+                if let Some(error) = failure {
+                    working.log.line(format_args!("settling originals set aside: {error}"));
+                }
                 super::archive::damaged_kept(working.world.path(), super::archive::RETENTION)?;
                 super::archive::collect(working.world.path(), super::archive::RETENTION)
             })

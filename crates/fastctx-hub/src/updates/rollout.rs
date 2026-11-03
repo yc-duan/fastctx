@@ -69,15 +69,21 @@ fn fared_worse<K: Copy + Eq + std::hash::Hash, V>(
 
 /// Watches every rollout while the hub runs.
 pub(crate) async fn watch(hub: Weak<Hub>) {
-    // When each machine was first seen running the version going out.
+    // When each machine took the version going out: the look before it was
+    // first seen running it, as a machine tells of trouble from its first
+    // moments on a version (records it cannot move, found as it starts),
+    // before the next look. Kept while the rollout is paused, to go on
+    // from; a hub started again begins anew.
     let mut took: HashMap<PublicKey, Timestamp> = HashMap::new();
     let mut watched: Option<String> = None;
+    let mut looked: Option<Timestamp> = None;
     loop {
         tokio::time::sleep(EVERY).await;
         let Some(hub) = hub.upgrade() else { return };
-        let Some(rollout) = hub.store().hub.updates.rollout.clone().filter(|rollout| !rollout.paused) else {
+        let Some(rollout) = hub.store().hub.updates.rollout.clone() else {
             took.clear();
             watched = None;
+            looked = None;
             continue;
         };
         if watched.as_deref() != Some(rollout.version.as_str()) {
@@ -85,12 +91,16 @@ pub(crate) async fn watch(hub: Weak<Hub>) {
             watched = Some(rollout.version.clone());
         }
         let now = Timestamp::now();
+        let since = looked.replace(now).unwrap_or(now);
         let running = super::running_kernels(&hub);
         took.retain(|key, _| running.get(key).is_some_and(|kernel| *kernel == rollout.version));
         for (key, kernel) in &running {
             if *kernel == rollout.version {
-                took.entry(*key).or_insert(now);
+                took.entry(*key).or_insert(since);
             }
+        }
+        if rollout.paused {
+            continue;
         }
         if took.is_empty() {
             continue;

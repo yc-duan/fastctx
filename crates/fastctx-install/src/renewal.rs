@@ -570,12 +570,8 @@ fn install_inner(root: &Path, program: &Program, repair: bool) -> io::Result<()>
 /// Keeps a hard link to a mapped Windows image before replacing its name.
 /// Without it NTFS refuses replacing the last name of an executable in use.
 pub fn publish_image(source: &Path, target: &Path) -> io::Result<()> {
-    use crate::transaction::{FileChange, Snapshot, Transaction};
-    let before = Snapshot::read(target).map_err(|e| at("reading executable snapshot", target, io::Error::other(e)))?;
-    let copy = FileChange::copy_executable(before, source)
-        .map_err(|e| at("preparing executable copy", source, io::Error::other(e)))?;
-    let receipt =
-        Transaction::new([copy]).commit().map_err(|e| at("publishing executable", target, io::Error::other(e)))?;
+    // Streamed, never held in memory whole (`crate::image`).
+    crate::image::publish(source, target).map_err(|e| at("publishing executable", target, e))?;
     // Mapped images are intentionally retained; the existing cleanup helper
     // retries recognized links at the next placement. Immutable images
     // retained as renewal provenance live separately in renewal/images.
@@ -583,8 +579,8 @@ pub fn publish_image(source: &Path, target: &Path) -> io::Result<()> {
     write_json(
         &target.with_extension("renewal-files.json"),
         &serde_json::json!({
-            "preserved": receipt.preserved,
-            "cleanup": receipt.cleanup.iter().chain(&retained).map(ToString::to_string).collect::<Vec<_>>(),
+            "preserved": Vec::<String>::new(),
+            "cleanup": retained.iter().map(ToString::to_string).collect::<Vec<_>>(),
         }),
     )
 }

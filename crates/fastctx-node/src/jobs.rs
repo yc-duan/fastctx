@@ -204,7 +204,7 @@ impl Jobs {
                     {
                         let debt: &[u8] = if on.is_none() && answer_receipts { b"answer" } else { b"" };
                         crate::job_metadata::put_raw(&path.with_extension("owed"), debt)
-                            .map_err(|e| failure("keeping completion debt", e))?;
+                            .map_err(|e| before_start("keeping completion debt", e))?;
                     }
                     if let Some(dispatch) = &dispatch {
                         crate::run_stops::register(&registering, path, dispatch)?;
@@ -856,9 +856,15 @@ fn failure(what: &str, error: std::io::Error) -> Failure {
     Failure::new(format!("{what}: {error}"))
 }
 
-/// What failed before the job's process was started: nothing ran.
+/// What failed before the job's process was started: nothing ran. Records
+/// still moving in are tried again later, as `record_migration` says.
 fn before_start(what: &str, error: std::io::Error) -> Failure {
-    Failure::not_run(format!("{what}: {error}"))
+    let failure = Failure::not_run(format!("{what}: {error}"));
+    if crate::record_migration::busy(&error) {
+        failure.capacity(fastctx_types::ipc::CapacityReason::Pending)
+    } else {
+        failure
+    }
 }
 
 /// Stops the job at `record_path`: its supervisor ends everything it

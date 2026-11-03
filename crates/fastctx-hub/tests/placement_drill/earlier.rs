@@ -178,11 +178,12 @@ async fn holds(path: &Path, text: &str) -> bool {
 }
 
 /// The earlier machine updated in place, as its user installing this release
-/// does: its World moves forward though killed along the way, answers as it
-/// did, and the earlier release installed again stops instead of misreading
-/// it. `peer` is another machine of its account, which sees it come back;
-/// `before` its conversation's history as the earlier release read it;
-/// `town` a project whose history that release kept as entries only.
+/// does: its World moves forward though killed along the way and answers as
+/// it did. The earlier release installed again serves it as it is when it
+/// wrote the format this release writes, and otherwise stops instead of
+/// misreading it. `peer` is another machine of its account, which sees it
+/// come back; `before` its conversation's history as the earlier release
+/// read it; `town` a project whose history that release kept as entries only.
 async fn upgrade(
     old: &Path,
     peer: &Path,
@@ -194,6 +195,7 @@ async fn upgrade(
 ) -> Result<()> {
     let installed = old.join("bin/fastctx");
     let this = KERNEL.get().expect("kernel path");
+    let earlier_format = format_of(old);
     replace(&installed, this)?;
     // Killed outright, the first time early, the others while it moves the
     // earlier records in.
@@ -224,26 +226,39 @@ async fn upgrade(
     record("the World says the format this release wrote", format.contains("\"format\": 2"), json!(format));
 
     replace(&installed, earlier)?;
-    let mut refused = start_with(old, &installed)?;
-    let mut ended = None;
-    for _ in 0..240 {
-        if let Some(status) = refused.try_wait()? {
-            ended = Some(status);
-            break;
+    if earlier_format.is_some() && earlier_format == format_of(old) {
+        let mut node = start_with(old, &installed)?;
+        let (served, seen) = serving(old, peer).await;
+        let back = if served { history_again(world, resident, "old-pc").await? } else { Vec::new() };
+        record(
+            "the earlier release installed again, of the same format, served the moved World as it is",
+            served && lost(&recorded(&after), &recorded(&back)).is_null(),
+            if served { json!({"lost": lost(&recorded(&after), &recorded(&back))}) } else { seen },
+        );
+        node.kill()?;
+        node.wait()?;
+    } else {
+        let mut refused = start_with(old, &installed)?;
+        let mut ended = None;
+        for _ in 0..240 {
+            if let Some(status) = refused.try_wait()? {
+                ended = Some(status);
+                break;
+            }
+            pause().await;
         }
-        pause().await;
+        if ended.is_none() {
+            refused.kill()?;
+            refused.wait()?;
+        }
+        let said = std::fs::read_to_string(old.join("stdout.log")).unwrap_or_default();
+        let tail: String = said.lines().rev().take(3).collect::<Vec<_>>().join(" | ");
+        record(
+            "the earlier release installed again stopped where it opens the moved World's database",
+            ended.is_some_and(|status| !status.success()) && said.contains("book_deeds_began"),
+            json!(tail),
+        );
     }
-    if ended.is_none() {
-        refused.kill()?;
-        refused.wait()?;
-    }
-    let said = std::fs::read_to_string(old.join("stdout.log")).unwrap_or_default();
-    let tail: String = said.lines().rev().take(3).collect::<Vec<_>>().join(" | ");
-    record(
-        "the earlier release installed again stopped where it opens the moved World's database",
-        ended.is_some_and(|status| !status.success()) && said.contains("book_deeds_began"),
-        json!(tail),
-    );
 
     replace(&installed, this)?;
     let mut node = start_with(old, &installed)?;
@@ -261,6 +276,13 @@ async fn upgrade(
     node.kill()?;
     node.wait()?;
     Ok(())
+}
+
+/// The format the World at `root` says its records are kept in; none from a
+/// release that kept them in files and wrote no such word.
+fn format_of(root: &Path) -> Option<u64> {
+    let said = std::fs::read_to_string(root.join("world/format.json")).ok()?;
+    serde_json::from_str::<Value>(&said).ok()?.get("format")?.as_u64()
 }
 
 /// Waits for the node at `old` to answer with its hub's view, and for the

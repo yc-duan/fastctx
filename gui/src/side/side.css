@@ -288,8 +288,8 @@ html.framed .sp-panel.sp-over .sp-line {
 }
 
 /* The side's first page: a card for each part with anything to say, each
-   folding away under its name, as tall as it needs; the plan's takes the
-   height left, its plan scrolling in it. */
+   folding away under its name, as tall as it needs; the plan's no more than
+   a little over half the side, its plan scrolling in it. */
 .sh-page.sp-page {
   display: flex;
   flex-direction: column;
@@ -315,15 +315,56 @@ html.framed .sp-panel.sp-over .sp-line {
   display: none;
 }
 
+/* Open or shut, the plan's card keeps its ceiling, and its floor comes and
+   goes with the fold: the card never rises past it as it shuts, nor jumps
+   to it as it opens. */
+.sh-card[data-of="plan"] {
+  max-height: 56%;
+  transition: min-height var(--expand) var(--expand-easing);
+}
+
 .sh-card[data-of="plan"]:not(.shut) {
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-height: 160px;
 }
 
-.sh-card[data-of="plan"] > .sh-body {
+.sh-card[data-of="plan"] > .sh-fold {
+  flex: 1 1 auto;
+}
+
+.sh-card[data-of="plan"] .sh-fold-inner {
+  display: flex;
+  flex-direction: column;
+}
+
+.sh-card[data-of="plan"] .sh-body {
   flex: 1;
   min-height: 0;
   padding: 0;
+}
+
+/* A card folds as a conversation's steps do (`conversation.css`, Folding):
+   its height carried by the grid, so nothing is measured, at the steps'
+   pace and curve. */
+.sh-fold {
+  display: grid;
+  min-height: 0;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows var(--expand) var(--expand-easing);
+}
+
+.sh-fold.open {
+  grid-template-rows: 1fr;
+}
+
+.sh-fold-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.sh-fold:not(.open) > .sh-fold-inner {
+  visibility: hidden;
+  transition: visibility 0s var(--expand);
 }
 
 .sh-plan {
@@ -418,10 +459,13 @@ html.framed .sp-panel.sp-over .sp-line {
   display: grid;
   place-items: center;
   color: var(--text-3);
+  --turn: 0deg;
+  rotate: var(--turn);
+  transition: --turn var(--expand) var(--expand-easing);
 }
 
 .sh-card.shut .sh-turn {
-  rotate: -90deg;
+  --turn: -90deg;
 }
 
 .sh-state {

@@ -27,13 +27,26 @@ use crate::world::{Said, World, earlier, until, with_password};
 /// answers of every size, cuts and a crash go as with this release's hub.
 /// Then it is updated in place while letters wait for a machine away: they
 /// are kept where this release keeps them, those after numbered on past
-/// them, and every one comes once.
+/// them, and every one comes once. An earlier hub of an older database
+/// format, as 1.0.1-beta.13's, leaves a copy of it and refuses the upgraded
+/// one; one of this release's format serves it again as it is.
 pub async fn earlier_hub(world: &World, report: &mut Report) -> anyhow::Result<()> {
     let program = world.hub.earlier_program().ok_or_else(|| anyhow::anyhow!("the earlier release serves no hub"))?;
     let (alpha, beta) = (world.machine("alpha"), world.machine("beta"));
-    // An earlier hub says nothing of taking health: this release's machines
-    // send none with their heartbeats.
-    report.check(!alpha.link().view().health, "this release's machines found the earlier hub takes no health", "");
+    let earlier_format = world.hub.format();
+    // Hubs read the health heartbeats carry since their database's format 2;
+    // to an earlier hub that says nothing of it, this release's machines
+    // send none.
+    let takes = earlier_format.is_some_and(|format| format >= 2);
+    report.check(
+        alpha.link().view().health == takes,
+        if takes {
+            "this release's machines found the earlier hub takes health"
+        } else {
+            "this release's machines found the earlier hub takes no health"
+        },
+        format!("format {earlier_format:?}"),
+    );
     beta.lab.stall(true);
     let gave_up = give_up(world, "alpha", "beta", 3).await?;
     let link = alpha.link();
@@ -116,16 +129,46 @@ pub async fn earlier_hub(world: &World, report: &mut Report) -> anyhow::Result<(
         format!("{} in {}", came.first_missing(), seconds(came.took)),
     );
     report.check(came.twice == 0, "none came twice", format!("{} twice", came.twice));
-    // The update kept the database as the earlier release left it, and that
-    // release now refuses the upgraded one instead of misreading it.
-    let kept = world.hub.dir.join("hub.sqlite3.format-1").exists();
-    report.check(kept, "the update kept the earlier hub's database beside the upgraded one", "");
-    let tried = world.hub.tried_by(&program)?;
-    report.check(
-        !tried.status.success() && tried.text().contains("format 2 is not supported"),
-        "the earlier release refused the upgraded hub database",
-        tried.text(),
-    );
+    let format = world.hub.format();
+    if earlier_format.is_some() && earlier_format == format {
+        // The earlier release writes this one's format: installed back, it
+        // serves the database this release left, letters and all.
+        world.hub.back_to(&program)?;
+        let mut again = send(world, &["alpha", "beta"], "gamma", "earlier-again", 100);
+        again.sent().await?;
+        let came = arrived(&gamma.lab, &again.wanted, Duration::from_secs(120)).await;
+        report.check(
+            came.missing.is_empty() && came.twice == 0,
+            "the earlier release installed back, of this release's format, served the hub this one left",
+            format!("{} and {} twice in {}", came.first_missing(), came.twice, seconds(came.took)),
+        );
+        world.hub.update()?;
+        let mut after = send(world, &["alpha", "beta"], "gamma", "this-again", 100);
+        after.sent().await?;
+        let came = arrived(&gamma.lab, &after.wanted, Duration::from_secs(120)).await;
+        report.check(
+            came.missing.is_empty() && came.twice == 0,
+            "and this release's hub served what the earlier one wrote",
+            format!("{} and {} twice in {}", came.first_missing(), came.twice, seconds(came.took)),
+        );
+    } else {
+        // The update kept the database as the earlier release left it, and
+        // that release now refuses the upgraded one instead of misreading it.
+        let kept =
+            earlier_format.is_some_and(|earlier| world.hub.dir.join(format!("hub.sqlite3.format-{earlier}")).exists());
+        report.check(
+            kept,
+            "the update kept the earlier hub's database beside the upgraded one",
+            format!("format {earlier_format:?} to {format:?}"),
+        );
+        let tried = world.hub.tried_by(&program)?;
+        report.check(
+            !tried.status.success()
+                && (tried.text().contains("is not supported") || tried.text().contains("newer than this Fastctx")),
+            "the earlier release refused the upgraded hub database",
+            tried.text(),
+        );
+    }
     Ok(())
 }
 

@@ -28,6 +28,7 @@ mod edits;
 mod jsonc;
 pub mod executable;
 pub mod guidance;
+mod image;
 pub mod legacy;
 pub mod path_command;
 pub mod placement;

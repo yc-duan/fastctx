@@ -577,42 +577,14 @@ pub(crate) fn end_id(
     }
 }
 
-/// Finishes telling the ends of jobs a node that stopped left owed.
+/// Finishes telling the ends of jobs a node that stopped left owed. Looking
+/// for what is owed is background work: a job whose records are still to
+/// move in is queued behind what someone waits for, and answered as not
+/// yet (`WouldBlock`), to be looked at again.
 pub async fn settle_jobs(node: &Arc<Node>) -> io::Result<Vec<(std::path::PathBuf, io::Error)>> {
     let working = node.clone();
     let (mut problems, owed) = fastctx_platform::task::spawn_blocking(move || {
-        let node = working;
-        let mut problems = Vec::new();
-        let mut owed = Vec::new();
-        for parent in node.world.job_parents()? {
-            let residents = match entries(&parent) {
-                Ok(entries) => entries,
-                Err(error) => {
-                    problems.push((parent, error));
-                    continue;
-                }
-            };
-            for resident in residents {
-                let jobs = resident.join("jobs");
-                let records = match entries(&jobs) {
-                    Ok(entries) => entries,
-                    Err(error) => {
-                        problems.push((jobs, error));
-                        continue;
-                    }
-                };
-                for path in records {
-                    if path.extension().is_some_and(|extension| extension == "json") {
-                        match crate::job_metadata::exists(&path.with_extension("owed")) {
-                            Ok(true) => owed.push(path),
-                            Ok(false) => {}
-                            Err(error) => problems.push((path, error)),
-                        }
-                    }
-                }
-            }
-        }
-        Ok::<_, io::Error>((problems, owed))
+        crate::record_migration::scheduler::discovery(|| owing(&working))
     })
     .await
     .map_err(io::Error::other)??;
@@ -632,6 +604,43 @@ pub async fn settle_jobs(node: &Arc<Node>) -> io::Result<Vec<(std::path::PathBuf
         }
     }
     Ok(problems)
+}
+
+/// The jobs of every conversation here that owe the telling of their end,
+/// and what could not be looked at.
+type OwedJobs = (Vec<(std::path::PathBuf, io::Error)>, Vec<std::path::PathBuf>);
+fn owing(node: &Node) -> io::Result<OwedJobs> {
+    let mut problems = Vec::new();
+    let mut owed = Vec::new();
+    for parent in node.world.job_parents()? {
+        let residents = match entries(&parent) {
+            Ok(entries) => entries,
+            Err(error) => {
+                problems.push((parent, error));
+                continue;
+            }
+        };
+        for resident in residents {
+            let jobs = resident.join("jobs");
+            let records = match entries(&jobs) {
+                Ok(entries) => entries,
+                Err(error) => {
+                    problems.push((jobs, error));
+                    continue;
+                }
+            };
+            for path in records {
+                if path.extension().is_some_and(|extension| extension == "json") {
+                    match crate::job_metadata::exists(&path.with_extension("owed")) {
+                        Ok(true) => owed.push(path),
+                        Ok(false) => {}
+                        Err(error) => problems.push((path, error)),
+                    }
+                }
+            }
+        }
+    }
+    Ok((problems, owed))
 }
 
 /// A failed durable handover remains owed. Retry independently of the

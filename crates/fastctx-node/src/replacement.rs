@@ -92,8 +92,14 @@ pub async fn prepare(root: &Path, digest: &str) -> anyhow::Result<()> {
             if abandoned.elapsed() >= STALLED
                 && let Some(_worker) = FileLock::try_acquire(&store::directory(&root).join("worker.lock"))?
             {
+                // A plan that went on to its end, or failed already, is
+                // what it is: the worker that took it there has simply left.
                 if let Some(mut plan) = store::read(&root)?
                     && plan.candidate.build == build
+                    && !matches!(
+                        plan.phase,
+                        fastctx_types::renewal::Phase::Complete | fastctx_types::renewal::Phase::Failed
+                    )
                 {
                     plan.phase = fastctx_types::renewal::Phase::Failed;
                     plan.error = Some("the handover coordinator waited ten minutes without a renewal worker; the serving node was left running".into());

@@ -148,6 +148,18 @@
   color: var(--text-3);
 }
 
+/* On a phone the head also holds the way back: the agent's name stands
+   whole, its mark goes, and the machine gives way first. */
+@media (max-width: 760px) {
+  .logins-title {
+    flex: none;
+  }
+
+  .logins-title-mark {
+    display: none;
+  }
+}
+
 .logins-machine-state {
   flex: 1;
   display: flex;

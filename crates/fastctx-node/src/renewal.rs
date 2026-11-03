@@ -104,8 +104,10 @@ pub(crate) fn resume(node: &Arc<Node>) {
             let result = fastctx_platform::task::spawn_blocking(move || -> anyhow::Result<bool> {
                 let plan = store::read(&root)?;
                 if let Some(plan) = &plan {
+                    // A failed plan is asked after on the first look alone,
+                    // and `request` keeps to its delay before trying again.
                     let failed = plan.phase == fastctx_types::renewal::Phase::Failed;
-                    if !failed
+                    if (!failed || first)
                         && (matches!(
                             plan.phase,
                             fastctx_types::renewal::Phase::Staged

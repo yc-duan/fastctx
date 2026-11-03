@@ -117,7 +117,9 @@ impl CheckedLaunch<'_, '_> {
         let launch = self.launch;
         let ((job, output, stderr, record_path, resident), files) =
             prepare(launch, mode, stdin, reserve).map_err(|failure| Failure::not_run(failure.message))?;
-        register(&record_path)?;
+        // Registration comes before the supervisor is started: whatever failed
+        // in it, nothing ran, and the caller may ask again.
+        register(&record_path).map_err(|failure| Failure { not_run: true, ..failure })?;
         if let Some(request) = launch.on.and_then(|on| on.request.as_ref()) {
             let stopped = resident.jobs().join(format!("request-{request}.stopped"));
             if stopped

@@ -35,6 +35,7 @@ SHIPPED = {
     "v13_beta11": "dfa5ca6929b7f91fcd46ec5fd47d9e3028bd20d4",
     "v13_beta12": "f4592f9d29e4e3b31d41d0a9d0355aa82286bc7f",
     "v13_beta13": "c12a8937722b4a7192616d0d14021bd67164b643",
+    "v13_beta14": "2fafa042ff329b1f9c5c3581b481356e3e8f264c",
 }
 
 

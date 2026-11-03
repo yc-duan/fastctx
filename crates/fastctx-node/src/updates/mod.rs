@@ -265,10 +265,14 @@ pub(crate) fn state(node: &Node) -> State {
 }
 
 /// The change of World program under way here, or the last one not taken.
+/// A failed change to a program this node runs already, or one older, is
+/// no failure to tell, as `failed` above has it.
 fn renewing(node: &Node) -> Option<Renewing> {
     let plan = fastctx_install::renewal::read(&node.root).ok().flatten()?;
     let version = plan.candidate.build.version;
-    let done = plan.phase == fastctx_types::renewal::Phase::Complete;
+    let done = plan.phase == fastctx_types::renewal::Phase::Complete
+        || (plan.phase == fastctx_types::renewal::Phase::Failed
+            && !fastctx_types::kernel::later(&version, env!("CARGO_PKG_VERSION")));
     (!done).then_some(Renewing { version, phase: plan.phase, error: plan.error })
 }
 

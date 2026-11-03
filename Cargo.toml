@@ -14,7 +14,7 @@ await_holding_invalid_type = "deny"
 pdf_oxide = { path = "vendor/pdf_oxide" }
 
 [workspace.package]
-version = "1.0.1-beta.14"
+version = "1.0.1-beta.15"
 edition = "2024"
 rust-version = "1.92"
 license = "Apache-2.0"
