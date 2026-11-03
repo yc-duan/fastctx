@@ -86,24 +86,39 @@ pub(crate) fn prepare(node: &Node, thread: &str) -> io::Result<(ConversationDir,
     })?;
     Ok((directory, family))
 }
-pub(super) fn append(node: &Node, thread: &str, key: String, event: &HostEvent) -> io::Result<u64> {
+/// Appends an ordered, bounded prefix in one durable transaction. Retried
+/// identities keep their original positions, including after an unknown commit.
+pub(super) fn append(node: &Node, thread: &str, reports: Vec<(String, Vec<u8>)>) -> io::Result<Vec<u64>> {
     let (directory, family) = prepare(node, thread)?;
-    let body = serde_json::to_vec(event)?;
-    records::write_at(&directory, Priority::Interactive, body.len(), move |rows| {
-        if let Some(prior) = rows.get_raw(&family, &key)? {
+    let bytes = reports.iter().map(|(_, body)| body.len()).sum::<usize>() + reports.len().saturating_sub(1) * 128;
+    records::write_at(&directory, Priority::Interactive, bytes, move |rows| append_in(rows, &family, reports))
+}
+
+fn append_in(
+    rows: &records::Rows<'_>,
+    family: &str,
+    reports: Vec<(String, Vec<u8>)>,
+) -> fastctx_storage::Result<Vec<u64>> {
+    let mut positions = Vec::with_capacity(reports.len());
+    for (key, body) in reports {
+        if let Some(prior) = rows.get_raw(family, &key)? {
             if prior != body {
                 return Err(fastctx_storage::Error::new("host report identity changed"));
             }
         } else {
-            rows.put_raw(&family, &key, &body)?;
+            rows.put_raw(family, &key, &body)?;
         }
-        Ok(rows.connection().query_row(
-            "SELECT position FROM conversation_records WHERE conversation=?1 AND family=?2 AND identity=?3",
-            (rows.conversation(), family, key),
-            |row| row.get::<_, i64>(0),
-        )? as u64)
-    })
+        positions.push(
+            rows.connection()
+                .prepare_cached(
+                    "SELECT position FROM conversation_records WHERE conversation=?1 AND family=?2 AND identity=?3",
+                )?
+                .query_row((rows.conversation(), family, key), |row| row.get::<_, i64>(0))? as u64,
+        );
+    }
+    Ok(positions)
 }
+
 pub(super) fn latest(node: &Node, thread: &str) -> io::Result<u64> {
     let (directory, family) = prepare(node, thread)?;
     records::read(&directory, |rows| {

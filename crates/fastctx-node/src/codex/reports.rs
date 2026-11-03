@@ -2,6 +2,8 @@
 //! bodies leave memory after insertion; live-only reports retain their order
 //! relative to the latest committed durable position without being persisted.
 
+mod batch;
+
 use super::{HostEvent, Node, report_store};
 use std::{
     collections::{HashMap, VecDeque},
@@ -119,38 +121,50 @@ pub(super) async fn flush(node: &Arc<Node>, thread: &str) -> io::Result<()> {
     }
     let Some(fence) = fence else { return Ok(()) };
     loop {
-        let pending = node
-            .unclaimed
-            .state
-            .lock()
-            .expect("host reports")
-            .queues
-            .get(thread)
-            .and_then(|queue| queue.incoming.front())
-            .cloned();
-        let Some((id, event)) = pending else { return Ok(()) };
-        let position = if super::durable(&event) {
-            let (writing, name, key, kept) = (node.clone(), thread.to_string(), id.clone(), event.clone());
-            Some(local(move || report_store::append(&writing, &name, key, &kept)).await?)
-        } else {
-            None
-        };
+        let (reading, name, through) = (node.clone(), thread.to_string(), fence.clone());
+        let (selected, positions) = local(move || {
+            let batch::Batch { items, reports } = batch::Batch::take(
+                |index| {
+                    reading
+                        .unclaimed
+                        .state
+                        .lock()
+                        .expect("host reports")
+                        .queues
+                        .get(&name)
+                        .and_then(|queue| queue.incoming.get(index))
+                        .cloned()
+                },
+                &through,
+            )?;
+            let positions =
+                if reports.is_empty() { Vec::new() } else { report_store::append(&reading, &name, reports)? };
+            Ok((items, positions))
+        })
+        .await?;
+        if selected.is_empty() {
+            return Ok(());
+        }
+        let mut positions = positions.into_iter();
         let mut state = node.unclaimed.state.lock().expect("host reports");
         let Some(queue) = state.queues.get_mut(thread) else { return Ok(()) };
-        if queue.incoming.front().is_none_or(|(key, _)| *key != id) {
-            return Err(io::Error::other("host handoff order changed"));
-        }
-        if let Some(position) = position {
-            queue.tail = Some(position);
-        } else {
-            queue.live.push_back((queue.tail.expect("initialized queue"), id.clone(), event));
-        }
-        queue.incoming.pop_front();
-        if id == fence {
-            return Ok(());
+        for (id, event, durable) in selected {
+            if queue.incoming.front().is_none_or(|(key, _)| *key != id) {
+                return Err(io::Error::other("host handoff order changed"));
+            }
+            if durable {
+                queue.tail = Some(positions.next().expect("committed report position"));
+            } else {
+                queue.live.push_back((queue.tail.expect("initialized queue"), id.clone(), event));
+            }
+            queue.incoming.pop_front();
+            if id == fence {
+                return Ok(());
+            }
         }
     }
 }
+
 pub(super) async fn next(node: &Arc<Node>, thread: &str) -> io::Result<Next> {
     let gate = persisting(node, thread);
     let _persisting = gate.lock().await;
