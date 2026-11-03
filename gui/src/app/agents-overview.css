@@ -32,6 +32,13 @@
   color: var(--text-3);
 }
 
+/* How many agents more than the screen holds. */
+.ao-reach-more {
+  fill: var(--text-2);
+  font-family: var(--font-reading);
+  font-size: var(--size-fine);
+}
+
 .ao-reach-name {
   fill: var(--text-2);
   font-family: var(--font-reading);

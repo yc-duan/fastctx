@@ -330,7 +330,8 @@ export class AgentsOverview implements Page {
             : standing === "renew"
               ? `<button class="text-button ll-go" type="button" data-ao="renew" ${at} title="${escape(login.drift?.kind === "changed" ? login.drift.reason : logins.driftAsks)}">${escape(words.renew)}</button>`
               : !isHost(agent)
-                ? ""
+                ? // Another agent has no page of its own: it is taken out here.
+                  `<button class="text-button ll-quiet" type="button" data-ao="remove" ${at}>${escape(logins.remove)}</button>`
                 : byLogin && login.workbench
                   ? `<button class="text-button ll-quiet" type="button" data-ao="talk" ${at}>${escape(words.talk)}</button>`
                   : `<button class="text-button ll-quiet" type="button" data-ao="workbench" ${at} title="${escape(words.workbenchSaid)}">${escape(words.workbench)}</button>`;
@@ -429,6 +430,11 @@ export class AgentsOverview implements Page {
       case "connect":
       case "renew": {
         const target = agent ? this.target(machine, agent, dir, true) : null;
+        if (target) this.sheet.open(target);
+        return;
+      }
+      case "remove": {
+        const target = agent ? this.target(machine, agent, dir, false) : null;
         if (target) this.sheet.open(target);
         return;
       }

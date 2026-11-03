@@ -7,7 +7,7 @@
 // becomes a candidate; what a search found is taken up as a candidate.
 // Times are told from `at`, the specimen's own morning.
 
-import type { ChangeCard, ChangePreview, Folder, FolderChange, FoundIn, Login, LoginChange, MachineLogins, WorldLogins } from "../world/logins";
+import type { AgentLogins, ChangeCard, ChangePreview, Folder, FolderChange, FoundIn, Login, LoginChange, MachineLogins, WorldLogins } from "../world/logins";
 import type { DiffLine } from "../world/run-facts";
 import { specimenLimits } from "./usage";
 
@@ -110,7 +110,71 @@ const drifting = new URLSearchParams(location.search).has("drift");
 function desktop(now: number): MachineLogins {
   const record = desktopAsIs(now);
   for (const side of [record.codex, record.claude]) side.listed = side.listed.map((login) => (benches.has(login.dir) ? { ...login, workbench: true } : login));
-  return { ...record, by_login: true };
+  return { ...record, by_login: true, others: otherAgents() };
+}
+
+/** The other agents a node with their adapters finds on the desktop, as it
+ *  lists them: Antigravity connected, OpenCode and Cursor found. */
+function otherAgents(): Record<string, AgentLogins> {
+  const login = (dir: string, connected: boolean): Login => ({
+    dir,
+    default: true,
+    found: "default",
+    identity: { at: ago(52), who: { kind: "unavailable", reason: "its files name no account" } },
+    limits: { kind: "unavailable", reason: "only the workbench reads limits" },
+    programs: [],
+    integration: connected ? "in" : "absent",
+    auto_title: false,
+    workbench: false,
+  });
+  const agent = (title: string, dir: string, connected: boolean): AgentLogins => ({
+    title,
+    programs: [],
+    listed: connected ? [login(dir, true)] : [],
+    candidates: connected ? [] : [login(dir, false)],
+    elsewhere: [],
+  });
+  return {
+    antigravity: agent("Antigravity App / CLI", "C:\\Users\\me\\.gemini", !otherOut.has("antigravity")),
+    opencode: agent("OpenCode", "C:\\Users\\me\\.config\\opencode", otherIn.has("opencode")),
+    cursor: agent("Cursor", "C:\\Users\\me\\.cursor", otherIn.has("cursor")),
+  };
+}
+
+/** The other agents connected or taken out in the specimen. */
+const otherIn = new Set<string>();
+const otherOut = new Set<string>();
+
+/** Connecting another agent, as its adapter works it out: OpenCode gets its
+ *  server, instructions, shell turned off and limits; Cursor its server
+ *  alone, its own shell staying on. */
+function otherPreview(agent: string, dir: string, into: boolean): ChangePreview {
+  const way = (lines: DiffLine[]) => (into ? lines : undone(lines));
+  const card = (change: ChangeCard["change"], path: string, lines: DiffLine[]): ChangeCard => ({ change, files: [{ path, how: "changed", lines: way(lines) }] });
+  const server = (at: string) =>
+    told(2, 2, [
+      add(`    "fastctx": {`),
+      add('      "args": ['),
+      add('        "serve"'),
+      add("      ],"),
+      add('      "command": "C:/Users/me/.fastctx/bin/fastctx.exe",'),
+      add('      "env": {'),
+      add('        "FASTCTX_HOME": "C:/Users/me/.fastctx"'),
+      add("      }"),
+      add("    },"),
+    ]).map((line) => (line.kind === "hunk" ? { ...line, text: at } : line));
+  const cards: ChangeCard[] =
+    agent === "cursor"
+      ? [card("tools", `${dir}\\mcp.json`, server(""))]
+      : agent === "opencode"
+        ? [
+            card("tools", `${dir}\\opencode.jsonc`, server("")),
+            card("shell", `${dir}\\opencode.jsonc`, told(14, 14, [add('  "permission": {'), add('    "bash": "deny"'), add("  },")])),
+            card("limits", `${dir}\\opencode.jsonc`, told(14, 14, [add('  "tool_output": {'), add('    "max_bytes": 1048576,'), add('    "max_lines": 100000'), add("  },")])),
+            card("guidance", `${dir}\\AGENTS.md`, told(1, 1, passage(false).map(add))),
+          ]
+        : [card("tools", `${dir}\\config\\mcp_config.json`, server("")), card("guidance", `${dir}\\AGENTS.md`, told(1, 1, passage(false).map(add)))];
+  return { agent, dir, into, files: [], fingerprint: "3c1e9a7b5d2f4068a1c3e5f7092b4d6e", cards, ...(agent === "cursor" ? { keeps_shell: true } : {}) };
 }
 
 function desktopAsIs(now: number): MachineLogins {
@@ -508,6 +572,7 @@ function disclosed(agent: string, dir: string, into: boolean): Pick<ChangePrevie
 export function specimenPreview(machine: string, agent: string, dir: string, into: boolean, workbench?: boolean): Promise<ChangePreview> {
   void machine;
   if (workbench !== undefined) return Promise.resolve(benchPreview(agent, dir, workbench));
+  if (agent !== "codex" && agent !== "claude") return Promise.resolve(otherPreview(agent, dir, into));
   // As the node gives them: the World's own values, any other key named
   // with its values withheld, and the World's section of the guidance file.
   const way = (value: string) => (into ? { after: value } : { before: value });
@@ -557,7 +622,10 @@ export function specimenPreview(machine: string, agent: string, dir: string, int
 
 export function specimenChange(machine: string, agent: string, dir: string, into: boolean, workbench?: boolean): Promise<LoginChange> {
   void machine;
-  void agent;
+  if (agent !== "codex" && agent !== "claude") {
+    (into ? otherIn : otherOut).add(agent);
+    (into ? otherOut : otherIn).delete(agent);
+  }
   if (workbench === true && into) benches.add(dir);
   else if (workbench === false || !into) benches.delete(dir);
   return new Promise((done) =>

@@ -490,6 +490,10 @@ pub struct ChangePreview {
     /// when the files moved on since: what was shown is what is done.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fingerprint: Option<String>,
+    /// Connecting cannot turn the agent's own shell off: it runs commands
+    /// both ways, and only those through `run` are in the activity.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub keeps_shell: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

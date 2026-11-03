@@ -59,13 +59,21 @@ export function discloseCards(preview: ChangePreview, words: DiscloseWords, open
   });
   const same = cards.length || bench !== undefined ? "" : `<li class="dc-same">${escape(words.same)}</li>`;
   const last = bench === undefined ? (preview.into ? { said: words.never, mark: "shield" as const } : null) : { said: bench ? words.bench : words.benchClosed, mark: bench ? ("home" as const) : ("pause" as const) };
+  // Said where connecting cannot turn the agent's own shell off.
+  const shell =
+    preview.into && preview.keeps_shell && bench === undefined
+      ? `<li class="dc-card dc-never">
+        <span class="dc-mark" aria-hidden="true">${glyph(MARK.shell, 18)}</span>
+        <div class="dc-text"><h3 class="dc-title">${escape(words.keepsShell.title)}</h3><p class="dc-line">${escape(words.keepsShell.line)}</p></div>
+      </li>`
+      : "";
   const never = last
     ? `<li class="dc-card dc-never">
         <span class="dc-mark" aria-hidden="true">${glyph(last.mark, 18)}</span>
         <div class="dc-text"><h3 class="dc-title">${escape(last.said.title)}</h3><p class="dc-line">${escape(last.said.line)}</p></div>
       </li>`
     : "";
-  return `<ol class="dc-cards">${cards.join("")}${same}${never}</ol>`;
+  return `<ol class="dc-cards">${cards.join("")}${same}${shell}${never}</ol>`;
 }
 
 /** A file's line: its short name and how many lines change, which unfolds

@@ -21477,7 +21477,8 @@
             "location": "config.toml: features.shell_tool",
             "reason": "changed since apply; left untouched"
           }
-        ]
+        ],
+        "keeps_shell": true
       },
       {
         "reply": "agent_login_changed",

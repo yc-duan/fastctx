@@ -33,15 +33,23 @@ export function reachDrawing(reach: Reach, width: number, more: (n: number) => s
   const screen = { x: narrow ? 14 : 36, y: 30, w: narrow ? 116 : 150, h: narrow ? 76 : 92 };
   const extra: string[] = [];
   drawMachine(sketch, reach.machine.form, screen);
-  // The agents' marks on its screen, in a row.
+  // The agents' marks on its screen, in a row: as many as it holds, the
+  // connected ones first, and in the last place how many more there are.
   const size = narrow ? 18 : 22;
   const gap = narrow ? 8 : 10;
-  const row = reach.agents.length * size + (reach.agents.length - 1) * gap;
-  reach.agents.forEach(({ agent, connected }, index) => {
-    const x = screen.x + (screen.w - row) / 2 + index * (size + gap);
-    const y = screen.y + (screen.h - size) / 2;
+  const holds = Math.max(1, Math.floor((screen.w - 12 + gap) / (size + gap)));
+  const ordered = [...reach.agents.filter((one) => one.connected), ...reach.agents.filter((one) => !one.connected)];
+  const marks = ordered.length > holds ? ordered.slice(0, holds - 1) : ordered;
+  const over = ordered.length - marks.length;
+  const places = marks.length + (over ? 1 : 0);
+  const row = places * size + (places - 1) * gap;
+  const start = screen.x + (screen.w - row) / 2;
+  const y = screen.y + (screen.h - size) / 2;
+  marks.forEach(({ agent, connected }, index) => {
+    const x = start + index * (size + gap);
     extra.push(`<g class="ao-reach-mark${connected ? "" : " faint"}" transform="translate(${x} ${y})">${agentGlyph(agent, size)}</g>`);
   });
+  if (over) extra.push(`<text class="ao-reach-more" x="${start + marks.length * (size + gap) + size / 2}" y="${y + size / 2}" text-anchor="middle" dominant-baseline="central">+${over}</text>`);
   extra.push(`<text class="ao-reach-name here" x="${screen.x + screen.w / 2}" y="${HEIGHT - 6}" text-anchor="middle">${escape(reach.machine.written)}</text>`);
 
   const reaching = reach.agents.some((one) => one.connected);

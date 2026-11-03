@@ -39,6 +39,7 @@ pub fn preview(places: &Places, host: Host, into: bool, edits: Edits) -> Result<
         kept: Vec::new(),
         cards: Vec::new(),
         fingerprint: None,
+        keeps_shell: false,
     };
     let mut steps = Steps::default();
     match host {

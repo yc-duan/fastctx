@@ -137,6 +137,7 @@ pub fn agent_preview(
             .unwrap_or_default(),
         cards: planned.as_ref().map(|planned| planned.steps.cards()).unwrap_or_default(),
         fingerprint: Some(fingerprint_of(&read)),
+        keeps_shell: into && agent.shell.is_none(),
     })
 }
 

@@ -358,6 +358,7 @@ pub fn fixtures() -> Fixtures {
             commands: vec![],
         }],
         fingerprint: Some("0f3c9a1b2d4e5f60718293a4b5c6d7e8".into()),
+        keeps_shell: false,
     };
     let codex_preview = ChangePreview {
         agent: codex.clone(),
@@ -376,6 +377,7 @@ pub fn fixtures() -> Fixtures {
         }],
         cards: vec![],
         fingerprint: None,
+        keeps_shell: true,
     };
     let change = LoginChange {
         into: false,

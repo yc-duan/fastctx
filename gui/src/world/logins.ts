@@ -265,6 +265,8 @@ export interface ChangePreview {
   /** What it was worked out from: the change is refused when the files
    *  moved on since. */
   fingerprint?: string;
+  /** The agent's own shell cannot be turned off: it runs commands both ways. */
+  keeps_shell?: boolean;
 }
 
 /** One kind of change connecting a login makes (`world-layers.md`). */
