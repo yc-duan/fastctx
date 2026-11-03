@@ -32,6 +32,7 @@ mod record_following;
 mod report;
 mod scenarios;
 mod skill_folders;
+mod stalls;
 mod world;
 
 use std::path::{Path, PathBuf};
@@ -153,6 +154,7 @@ fn drill(args: &[String]) -> anyhow::Result<bool> {
             said.text()
         );
     }
+    stalls::watch();
     let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
     let (mut passed, mut failed, mut skipped) = (0, 0, 0);
     for name in SCENARIOS {
@@ -210,16 +212,21 @@ fn drill(args: &[String]) -> anyhow::Result<bool> {
 /// Checks that the hubs of this release a scenario ran broke none of the
 /// threads' rules (`specs/world-engine.md`, 线程的三种角色), as each told in
 /// its health before it was stopped. A development build runs many times
-/// slower than the numbers the timed ones are set for: there, those are told
-/// and only blocking where a thread must not, or a nested read, fails.
+/// slower than the numbers the timed ones are set for, and a machine that
+/// held threads back past the slow poll's mark tells its load in them
+/// (`stalls`): there, those are told, and only blocking where a thread must
+/// not, or a nested read, fails.
 fn rules_kept(report: &mut Report, violated: Vec<(PathBuf, serde_json::Value)>) {
     let mut broken = Vec::new();
+    let held_back = stalls::held_back();
     for (dir, places) in &violated {
         for place in places.as_array().into_iter().flatten() {
             let told = format!("{}: {} {} x{}", dir.display(), place["kind"], place["place"], place["count"]);
             let timed = !matches!(place["kind"].as_str(), Some("blocking" | "nested-read"));
             if timed && cfg!(debug_assertions) {
                 report.note(format!("in a development build: {told}"));
+            } else if let Some(held_back) = held_back.filter(|_| timed) {
+                report.note(format!("on a machine that held a thread back {} ms: {told}", held_back.as_millis()));
             } else {
                 broken.push(told);
             }
