@@ -200,17 +200,15 @@ pub(crate) fn start(node: &Arc<Node>) -> io::Result<()> {
 fn recover_book(node: &Arc<Node>) {
     let paths: Vec<_> = node.disk_due.lock().expect("never poisoned").iter().cloned().collect();
     for path in paths {
-        let reading = {
+        let lease = {
             let _gate = node.disk.lock();
-            match record::read(&path) {
-                Ok(record) if record.end.is_some() => {
-                    node.disk_due.lock().expect("never poisoned").remove(&path);
-                    Some((record, crate::job_reader::hold(node, &path)))
-                }
-                _ => None,
-            }
+            crate::job_reader::hold(node, &path)
         };
-        let Some((record, lease)) = reading else { continue };
+        let record = match record::read(&path) {
+            Ok(record) if record.end.is_some() => record,
+            _ => continue,
+        };
+        node.disk_due.lock().expect("never poisoned").remove(&path);
         match crate::activity_book::consumed(node, &record) {
             Ok(true) => {}
             Ok(false) => {

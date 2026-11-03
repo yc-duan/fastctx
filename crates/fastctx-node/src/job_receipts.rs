@@ -595,7 +595,6 @@ fn snapshot_here(
 /// A consumed end is durable even while its owner is offline. This phase
 /// suppresses notification; it contains no retention timestamp.
 pub(crate) fn consumed(node: &Node, owner: &Address, acting: &Acting, id: NoticeId, notice: Notice) -> io::Result<()> {
-    let _gate = node.disk.lock();
     enqueue(
         node,
         Sending {

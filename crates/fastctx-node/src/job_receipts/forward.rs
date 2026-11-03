@@ -56,7 +56,6 @@ async fn retry(node: &Arc<Node>, path: &Path, reason: String) -> io::Result<()> 
 async fn finish(node: &Arc<Node>, path: &Path, bytes: Vec<u8>, outcome: Outcome, reason: String) -> io::Result<bool> {
     let (node, path) = (node.clone(), path.to_path_buf());
     task::spawn_blocking(move || {
-        let _gate = node.disk.lock();
         let done = obligations::finish_record(&node, &path, &bytes, outcome, &reason)?;
         if !done {
             node.receipts_changed.notify_one();
@@ -120,7 +119,6 @@ fn prepare(node: &Arc<Node>, path: &Path) -> io::Result<Prepared> {
     let sending: Sending = serde_json::from_slice(&bytes)?;
     let destination = Written { name: sending.machine.clone(), hub: sending.hub.clone() };
     if obligations::finished_record(path, &bytes)? {
-        let _gate = node.disk.lock();
         return obligations::finish_record(
             node,
             path,
@@ -136,7 +134,6 @@ fn prepare(node: &Arc<Node>, path: &Path) -> io::Result<Prepared> {
         obligations::impossible(node, &sending.acting, &destination)?
     };
     if let Some(reason) = impossible {
-        let _gate = node.disk.lock();
         return obligations::finish_record(node, path, &bytes, Outcome::Impossible, &reason).map(Prepared::Done);
     }
     Ok(Prepared::Send(bytes, Box::new(sending), destination))
