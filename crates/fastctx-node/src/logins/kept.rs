@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 use fastctx_platform::{Permissions, publish};
 use fastctx_types::AgentName;
-use fastctx_types::agents::AgentModel;
+use fastctx_types::agents::{AgentModel, Fact};
 use fastctx_types::logins::{FolderSearch, Found, FoundProgram, Identified, Launcher, Scan};
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
@@ -112,19 +112,45 @@ pub(super) struct KeptLogin {
 
 impl KeptLogin {
     /// The login `dir`, found as `found`, as asking it gave while its
-    /// sign-in files stood as `signed`.
-    pub fn asked(dir: PathBuf, found: Found, asked: super::identify::Asked, signed: Vec<Option<FileStamp>>) -> Self {
-        let asked_file = asked.launcher.as_ref().and_then(|launcher| FileStamp::of(&launcher.path));
+    /// sign-in files stood as `signed`. What asking did not learn stays as
+    /// `before`, the login as last kept, had it: who is logged in, its
+    /// models, and its program's version while that file is the same.
+    pub fn asked(
+        dir: PathBuf,
+        found: Found,
+        asked: super::identify::Asked,
+        signed: Vec<Option<FileStamp>>,
+        before: Option<&KeptLogin>,
+    ) -> Self {
+        let mut launcher = asked.launcher;
+        let asked_file = launcher.as_ref().and_then(|launcher| FileStamp::of(&launcher.path));
+        if let (Some(launcher), Some(before)) = (&mut launcher, before)
+            && launcher.version.is_none()
+            && let Some(earlier) = &before.launcher
+            && earlier.path == launcher.path
+            && asked_file.is_some()
+            && before.asked_file == asked_file
+        {
+            launcher.version = earlier.version.clone();
+        }
+        let identified = match before {
+            Some(before) if !known(&asked.identified) && known(&before.identified) => before.identified.clone(),
+            _ => asked.identified,
+        };
         Self {
             dir,
             found,
-            identified: asked.identified,
-            launcher: asked.launcher,
+            identified,
+            launcher,
             asked_file,
-            models: asked.models,
+            models: asked.models.or_else(|| before.map(|before| before.models.clone())).unwrap_or_default(),
             signed: Some(signed),
         }
     }
+}
+
+fn known(identified: &Identified) -> bool {
+    matches!(identified.who, Fact::Known { .. })
 }
 
 /// A file as it stood: its length and when it was last written.

@@ -145,10 +145,12 @@ async fn usual(node: &Arc<Node>, started_at: Timestamp) -> Result<(), Failure> {
         kept::change(node, |kept| {
             kept.codex.programs = programs.codex;
             kept.claude.programs = programs.claude;
-            kept.codex.logins.clear();
-            kept.claude.logins.clear();
+            let codex = std::mem::take(&mut kept.codex.logins);
+            let claude = std::mem::take(&mut kept.claude.logins);
             for (agent, dir, found, asked, signed) in answers {
-                kept.of_mut(agent).logins.push(KeptLogin::asked(dir, found, asked, signed));
+                let before = if agent == "codex" { &codex } else { &claude };
+                let before = before.iter().find(|login| crate::homes::same_dir(&login.dir, &dir));
+                kept.of_mut(agent).logins.push(KeptLogin::asked(dir, found, asked, signed, before));
             }
             for (agent, logins) in others {
                 kept.of_mut(agent).logins = logins;

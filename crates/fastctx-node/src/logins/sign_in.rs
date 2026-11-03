@@ -115,7 +115,7 @@ async fn again(node: &Arc<Node>) {
                 if let Some(known) = logins.iter_mut().find(|known| crate::homes::same_dir(&known.dir, &login.dir))
                     && asked.identified.at >= known.identified.at
                 {
-                    *known = KeptLogin::asked(login.dir, login.found, asked, login.signed);
+                    *known = KeptLogin::asked(login.dir, login.found, asked, login.signed, Some(known));
                 }
             }
         })

@@ -450,8 +450,12 @@ pub(crate) async fn take_up(node: &Arc<Node>, agent: AgentName, dir: PathBuf) ->
         fastctx_platform::task::spawn_blocking(move || {
             kept::change(&node, |kept| {
                 let logins = &mut kept.of_mut(agent).logins;
+                let before = logins
+                    .iter()
+                    .position(|known| crate::homes::same_dir(&known.dir, &dir))
+                    .map(|at| logins.remove(at));
                 logins.retain(|known| !crate::homes::same_dir(&known.dir, &dir));
-                logins.push(kept::KeptLogin::asked(dir, found, asked, signed));
+                logins.push(kept::KeptLogin::asked(dir, found, asked, signed, before.as_ref()));
             })
             .map_err(|error| Failure::new(format!("keeping the login: {error}")))
         })

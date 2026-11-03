@@ -22,7 +22,9 @@ use crate::Node;
 pub(super) struct Asked {
     pub identified: Identified,
     pub launcher: Option<Launcher>,
-    pub models: Vec<AgentModel>,
+    /// The models its program said; none where it was not asked or did not
+    /// say them.
+    pub models: Option<Vec<AgentModel>>,
     /// Codex's limits as read, and when.
     pub limits: Option<(Timestamp, serde_json::Value)>,
 }
@@ -51,7 +53,11 @@ pub(super) async fn asked(
         // The files say who; the program only where they cannot, a sign-in
         // kept in the system's keyring.
         identified: if matches!(read.identified.who, Fact::Known { .. }) { read.identified } else { said.identified },
-        launcher: said.launcher.or(read.launcher),
+        // The program's own version where it gave one, else as found on disk.
+        launcher: match said.launcher {
+            Some(launcher) if launcher.version.is_some() => Some(launcher),
+            said => read.launcher.or(said),
+        },
         models: said.models,
         limits: None,
     }
@@ -89,7 +95,7 @@ fn on_disk(
         path,
         desktop_app,
     });
-    Asked { identified: Identified { at, who }, launcher, models: Vec::new(), limits: None }
+    Asked { identified: Identified { at, who }, launcher, models: None, limits: None }
 }
 
 /// Asks the Codex login in `dir` through its program who is logged in, its
@@ -136,7 +142,7 @@ pub(super) async fn codex(node: &Arc<Node>, dir: &Path, limits: bool) -> Asked {
         Err(error) => Asked {
             identified: Identified { at, who: Fact::failed(error) },
             launcher: Some(launcher),
-            models: Vec::new(),
+            models: None,
             limits: None,
         },
     }
@@ -152,15 +158,15 @@ fn asked_codex(at: Timestamp, said: fastctx_hosts::codex::identify::Said, launch
         identified: Identified { at, who: said.who },
         launcher,
         models: match said.models {
-            Fact::Known { value } => value,
-            _ => Vec::new(),
+            Fact::Known { value } => Some(value),
+            _ => None,
         },
         limits,
     }
 }
 
 fn failed(at: Timestamp, reason: String) -> Asked {
-    Asked { identified: Identified { at, who: Fact::failed(reason) }, launcher: None, models: Vec::new(), limits: None }
+    Asked { identified: Identified { at, who: Fact::failed(reason) }, launcher: None, models: None, limits: None }
 }
 
 /// The limits a Codex read gave, as the node records them.
