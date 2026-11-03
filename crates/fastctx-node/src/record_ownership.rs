@@ -110,6 +110,12 @@ pub(crate) async fn project_origin(
             let link = node
                 .link_of(&scope.hub)
                 .ok_or_else(|| fastctx_types::ipc::Failure::new("the project's hub is unavailable"))?;
+            // A hub or a conversation's machine from before the records
+            // keeps none of its ownership: the project is its account's
+            // own, as before them.
+            if !link.view().shared_records {
+                return Ok(None);
+            }
             let response = link
                 .owned_records(
                     &scope.account,
@@ -117,10 +123,11 @@ pub(crate) async fn project_origin(
                 )
                 .await
                 .map_err(fastctx_types::ipc::Failure::new)?;
-            let fastctx_types::owned_records::Response::Conversation { conversation } = response else {
-                return Err(fastctx_types::ipc::Failure::new("the conversation ownership was not returned"));
-            };
-            conversation.shared_on
+            match response {
+                fastctx_types::owned_records::Response::Conversation { conversation } => conversation.shared_on,
+                fastctx_types::owned_records::Response::Unregistered => None,
+                _ => return Err(fastctx_types::ipc::Failure::new("the conversation ownership was not returned")),
+            }
         }
         _ => None,
     })
