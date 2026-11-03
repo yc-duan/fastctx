@@ -196,19 +196,28 @@ pub(crate) async fn open(
     acting: &Acting,
     focus: &Focus,
 ) -> Result<(), Failure> {
-    let room = directory.clone();
-    let selection = allowed(node, acting, focus);
-    let generation =
-        task::spawn_blocking(move || storage::begin(&room, &selection)).await.map_err(failed)?.map_err(failed)?;
-    let note = note(node, acting, focus).await;
-    let visible = allowed(node, acting, focus);
-    let opening = Opening { focus: visible.clone(), note: note.clone().unwrap_or_default() };
-    let room = directory.clone();
-    task::spawn_blocking(move || storage::keep(&room, generation, note.as_deref(), &visible, Some(&opening)))
-        .await
-        .map_err(failed)?
-        .map_err(failed)?;
-    Ok(())
+    // A refresh begun meanwhile (`refresh`) works the same focus out from
+    // the conversation's own and keeps it first; what is opened with is
+    // then worked out again, so the conversation never starts without it.
+    for _ in 0..3 {
+        let room = directory.clone();
+        let selection = allowed(node, acting, focus);
+        let generation =
+            task::spawn_blocking(move || storage::begin(&room, &selection)).await.map_err(failed)?.map_err(failed)?;
+        let note = note(node, acting, focus).await;
+        let visible = allowed(node, acting, focus);
+        let opening = Opening { focus: visible.clone(), note: note.clone().unwrap_or_default() };
+        let room = directory.clone();
+        let kept =
+            task::spawn_blocking(move || storage::keep(&room, generation, note.as_deref(), &visible, Some(&opening)))
+                .await
+                .map_err(failed)?
+                .map_err(failed)?;
+        if kept {
+            return Ok(());
+        }
+    }
+    Err(Failure::new("what the conversation is pointed at kept changing while it was opened"))
 }
 
 fn failed(error: impl std::fmt::Display) -> Failure {

@@ -175,9 +175,7 @@ fn insert(
         budget.bytes.checked_add(body.len() as u64).ok_or_else(|| Error::new("attachment size exhausted"))?;
     if budget.rows > MAX_ROWS || budget.bytes > MAX_BYTES {
         fastctx_platform::readings::counter("node.attachments.at_capacity").add(1);
-        return Err(Error::new(
-            "this conversation's attachment references are full; existing originals remain available",
-        ));
+        return Err(Error::new(FULL));
     }
     rows.put_raw_ordered(FAMILY, &identity, body, original)?;
     rows.connection().execute(
@@ -185,6 +183,25 @@ fn insert(
         (rows.conversation(), FAMILY, identity, category),
     )?;
     rows.put(BUDGET, "current", &budget)
+}
+
+/// Said when a conversation's attachment references can take no more.
+pub(super) const FULL: &str = "this conversation's attachment references are full; existing originals remain available";
+
+/// Whether `file` can be pinned here as an original: it is already, or the
+/// conversation's references have room for it. Asked before an upload puts
+/// anything in place, so that a full conversation refuses it whole rather
+/// than keeping an original and a receipt nothing points to.
+pub(super) fn admits(directory: &ConversationDir, file: &Attachment) -> io::Result<bool> {
+    let (identity, _, body) = encoded(file)?;
+    prepare(directory)?;
+    records::read(directory, move |rows| {
+        if rows.exists(FAMILY, &format!("original:{identity}"))? {
+            return Ok(true);
+        }
+        let budget = rows.get::<Budget>(BUDGET, "current")?.unwrap_or_default();
+        Ok(budget.rows < MAX_ROWS && budget.bytes.saturating_add(body.len() as u64) <= MAX_BYTES)
+    })
 }
 
 pub(super) fn put(directory: &ConversationDir, file: &Attachment, reference: bool) -> io::Result<()> {

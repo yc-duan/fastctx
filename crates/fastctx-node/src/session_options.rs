@@ -58,13 +58,18 @@ fn current(directory: &ConversationDir) -> io::Result<SessionOptions> {
     records::read(directory, |rows| Ok(rows.get(FAMILY, "current")?.unwrap_or_default()))
 }
 
-/// Creates the initial selection without overwriting another successful birth.
+/// Creates the initial selection without overwriting another successful
+/// birth. One a birth left that failed before the conversation was recorded
+/// is replaced: its draft is opened again under the same name.
 pub async fn keep(node: &Arc<Node>, id: &ResidentId, options: &SessionOptions) -> Result<(), Failure> {
-    let (directory, bytes) = (node.world.conversation(id), encoded(options)?);
-    fastctx_platform::task::spawn_blocking(move || store(&directory, bytes, true))
-        .await
-        .map_err(failed)?
-        .map_err(failed)
+    let (working, resident, bytes) = (node.clone(), id.clone(), encoded(options)?);
+    fastctx_platform::task::spawn_blocking(move || {
+        let born = working.residents.about(&resident).is_some();
+        store(&working.world.conversation(&resident), bytes, born)
+    })
+    .await
+    .map_err(failed)?
+    .map_err(failed)
 }
 
 /// Reads on a blocking worker. The resident's current MCP choice is authoritative.

@@ -823,6 +823,9 @@ impl Arriving {
             return Err(failure("the file's SHA-256 does not match the uploaded bytes"));
         }
         index::prepare(&self.room).map_err(failure)?;
+        if !index::admits(&self.room, &self.attachment).map_err(failure)? {
+            return Err(failure(index::FULL));
+        }
         self.output.take().expect("upload is open").sync_all().map_err(failure)?;
         if fastctx_platform::disk::is_there(&self.path) {
             // A crash can publish the bytes before their receipt.
