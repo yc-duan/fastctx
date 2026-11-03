@@ -19,10 +19,19 @@ use super::Context;
 use crate::Node;
 
 /// The places of an apply of the login `dir`, as this node sees them.
-fn places(node: &Node, agent: &AgentName, dir: &Path) -> Result<(Places, apply::Host), Failure> {
+/// The login's places, holding what the workbench needs where `workbench`
+/// opens it or it is open there, and only what connecting needs where
+/// `workbench` closes it or it is not.
+fn places(
+    node: &Node,
+    agent: &AgentName,
+    dir: &Path,
+    workbench: Option<bool>,
+) -> Result<(Places, apply::Host), Failure> {
     let host = super::host(agent.as_str())?;
     let context = Context::of(node)?;
-    let places = context.places.at_home(host, dir).map_err(|error| Failure::new(error.to_string()))?;
+    let mut places = context.places.at_home(host, dir).map_err(|error| Failure::new(error.to_string()))?;
+    places.workbench = workbench.or_else(|| super::workbench::known(node, agent.as_str(), dir));
     Ok((places, host))
 }
 
@@ -37,7 +46,6 @@ pub(crate) async fn preview(
     take_back: bool,
     workbench: Option<bool>,
 ) -> Result<ChangePreview, Failure> {
-    let _ = workbench;
     let node = node.clone();
     fastctx_platform::task::spawn_blocking(move || {
         super::known(&node, &agent, &dir)?;
@@ -49,7 +57,7 @@ pub(crate) async fn preview(
                 apply::agent_preview(&context.places, other, &dir, into, take_back)
             }
             None => {
-                let (places, host) = places(&node, &agent, &dir)?;
+                let (places, host) = places(&node, &agent, &dir, workbench)?;
                 apply::preview(&places, host, into, edits(take_back))
             }
         }
@@ -105,7 +113,7 @@ pub(crate) async fn change(
                 };
                 return Ok::<_, Failure>(done);
             }
-            let (places, host) = places(&node, &agent, &dir)?;
+            let (places, host) = places(&node, &agent, &dir, workbench)?;
             let approval = if raise_output_limit { Approval::RaiseOutputLimit } else { Approval::Require };
             let progress = Some(progress);
             let done = match (into, expected.as_deref()) {

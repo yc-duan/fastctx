@@ -380,6 +380,12 @@ pub fn unapply_legacy(config: File<'_>, agents: File<'_>, old: &legacy::Receipt)
 }
 
 impl Receipt {
+    /// Whether the server it records was written with the colleagues'
+    /// tools, as for a login the workbench is open in.
+    pub(crate) fn colleagues(&self) -> bool {
+        self.server.as_ref().is_some_and(|server| server.body.windows(13).any(|window| window == b"ask_colleague"))
+    }
+
     pub(crate) fn guidance_path(&self) -> Option<&Path> {
         self.guidance.as_ref().map(|guidance| Path::new(&guidance.path))
     }
@@ -438,7 +444,7 @@ fn validate_plan(plan: &CodexPlan) -> Result<(), Error> {
 fn server_body(plan: &CodexPlan, command: &str, inline: bool, nl: &str) -> Vec<u8> {
     let command = toml_edit::Value::from(command).to_string();
     let args = toml_edit::Array::from_iter(plan.args.iter().cloned()).to_string();
-    let tools = ["run", "apply_patch", "ask_colleague", "message_colleague"];
+    let tools: &[&str] = if plan.workbench { &["run", "ask_colleague", "message_colleague"] } else { &["run"] };
     let omit = r#"omit_tools_from = ["deferred"]"#;
     if inline {
         let limits = tools

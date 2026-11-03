@@ -179,11 +179,11 @@ fn owned_output_limits_follow_the_plan_and_restore_user_values() {
             value["tool_output_token_limit"].as_integer(),
             Some(sufficient.unwrap_or(current.output_token_limit) as i64)
         );
-        for name in ["run", "apply_patch", "ask_colleague", "message_colleague"] {
-            assert_eq!(
-                value["mcp_servers"]["fastctx"]["tools"][name]["output_token_limit"].as_integer(),
-                Some(current.output_token_limit as i64)
-            );
+        let tools = &value["mcp_servers"]["fastctx"]["tools"];
+        assert_eq!(tools["run"]["output_token_limit"].as_integer(), Some(current.output_token_limit as i64));
+        // Connected alone, a login's sessions are given `run` and nothing more.
+        for name in ["apply_patch", "ask_colleague", "message_colleague"] {
+            assert!(tools.get(name).is_none(), "{name}");
         }
         assert_eq!(serde_json::to_value(&next.receipt).unwrap()["limit"].is_null(), sufficient.is_some());
         let repeated = codex::apply(

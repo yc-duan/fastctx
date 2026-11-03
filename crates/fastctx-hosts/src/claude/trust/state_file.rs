@@ -36,14 +36,12 @@ pub(super) fn publish(path: &Path, before: Option<&[u8]>, after: &[u8], lease: &
     staged.write_all(after)?;
     lease.check()?;
     if read(path)?.as_deref() != before || (before.is_some() && fs::canonicalize(path)? != target) {
-        return Err(io::Error::other(
-            "Claude global state changed without respecting its lock; trust was not published",
-        ));
+        return Err(io::Error::other("Claude global state changed without respecting its lock; nothing was published"));
     }
     staged.commit().map_err(|error| {
         io::Error::new(
             error.kind(),
-            format!("Claude trust publication failed (replacement may already be visible): {error}"),
+            format!("publishing Claude global state failed (replacement may already be visible): {error}"),
         )
     })
 }

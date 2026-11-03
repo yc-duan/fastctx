@@ -107,8 +107,14 @@ pub(crate) fn places(node: &Node, env: &[(OsString, OsString)], home: &Path, cla
         world: node.world.path().into(),
         codex_home: node.codex.default().config_home().into(),
         claude_home: crate::homes::claude_default(env, home),
+        claude_config_dir: env
+            .iter()
+            .find(|(name, _)| name.eq_ignore_ascii_case("CLAUDE_CONFIG_DIR"))
+            .filter(|(_, value)| !value.is_empty())
+            .map(|(_, value)| PathBuf::from(value)),
         claude,
         fastctx: node.fastctx.clone(),
+        workbench: None,
     }
 }
 

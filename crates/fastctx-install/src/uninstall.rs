@@ -80,8 +80,10 @@ impl Installation {
             world: self.root.join("world"),
             codex_home: self.codex_home.clone(),
             claude_home: self.claude_home.clone(),
+            claude_config_dir: self.claude_override.clone().filter(|dir| !dir.as_os_str().is_empty()),
             claude: crate::claude::find(std::env::var_os("PATH").as_ref()),
             fastctx: executable,
+            workbench: None,
         }
     }
 

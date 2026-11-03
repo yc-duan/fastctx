@@ -8,7 +8,7 @@
 //! receipt in a record file of its own (`apply::agent_apply_expecting`).
 
 mod gemini;
-mod json;
+pub(crate) mod json;
 mod plan;
 mod spec;
 

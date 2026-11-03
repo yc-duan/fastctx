@@ -28,6 +28,9 @@ struct Step {
     path: PathBuf,
     before: Option<Vec<u8>>,
     after: Option<Vec<u8>>,
+    /// Told without the lines around it: a file of the agent's own whose
+    /// other lines are none of the change's business.
+    bare: bool,
 }
 
 /// The steps of one change, in the order its planners make them, and the
@@ -42,14 +45,32 @@ impl Steps {
     /// Notes that `change` took `path` from `before` to `after` (`None`: no
     /// file). A step that changes nothing is not one.
     pub fn record(&mut self, change: Change, path: impl Into<PathBuf>, before: Option<&[u8]>, after: Option<&[u8]>) {
+        self.push(change, path.into(), before, after, false);
+    }
+
+    /// `record`, told with the changed lines alone: for the agent's own
+    /// state, which holds the user's account and every other server's
+    /// settings beside Fastctx's entry.
+    pub fn record_bare(
+        &mut self,
+        change: Change,
+        path: impl Into<PathBuf>,
+        before: Option<&[u8]>,
+        after: Option<&[u8]>,
+    ) {
+        self.push(change, path.into(), before, after, true);
+    }
+
+    fn push(&mut self, change: Change, path: PathBuf, before: Option<&[u8]>, after: Option<&[u8]>, bare: bool) {
         if before == after {
             return;
         }
         self.steps.push(Step {
             change,
-            path: path.into(),
+            path,
             before: before.map(<[u8]>::to_vec),
             after: after.map(<[u8]>::to_vec),
+            bare,
         });
     }
 
@@ -112,12 +133,15 @@ impl Steps {
                 && spans.last().is_some_and(|span| span.path == step.path && span.after == step.before);
             if step.change == change {
                 if joins {
-                    spans.last_mut().expect("the span joined").after = step.after.clone();
+                    let span = spans.last_mut().expect("the span joined");
+                    span.after = step.after.clone();
+                    span.bare |= step.bare;
                 } else {
                     spans.push(Span {
                         path: step.path.clone(),
                         before: step.before.clone(),
                         after: step.after.clone(),
+                        bare: step.bare,
                     });
                 }
             }
@@ -129,13 +153,13 @@ impl Steps {
         spans
             .into_iter()
             .filter(|span| span.before != span.after)
-            .map(|Span { path, before, after }| {
+            .map(|Span { path, before, after, bare }| {
                 let how = match (&before, &after) {
                     (None, _) => FileHow::Created,
                     (_, None) => FileHow::Removed,
                     _ => FileHow::Changed,
                 };
-                let (lines, more) = diff(before.as_deref(), after.as_deref());
+                let (lines, more) = diff(before.as_deref(), after.as_deref(), if bare { 0 } else { CONTEXT });
                 FileDiff { path, how, lines, more }
             })
             .collect()
@@ -147,11 +171,12 @@ struct Span {
     path: PathBuf,
     before: Option<Vec<u8>>,
     after: Option<Vec<u8>>,
+    bare: bool,
 }
 
-/// The lines `before` and `after` differ in, with `CONTEXT` lines around
+/// The lines `before` and `after` differ in, with `context` lines around
 /// each change, and how many were left off past `MOST_LINES`.
-fn diff(before: Option<&[u8]>, after: Option<&[u8]>) -> (Vec<DiffLine>, Option<u64>) {
+fn diff(before: Option<&[u8]>, after: Option<&[u8]>, context: usize) -> (Vec<DiffLine>, Option<u64>) {
     let before = String::from_utf8_lossy(before.unwrap_or_default());
     let after = String::from_utf8_lossy(after.unwrap_or_default());
     let old: Vec<&str> = before.split_inclusive('\n').collect();
@@ -188,10 +213,10 @@ fn diff(before: Option<&[u8]>, after: Option<&[u8]>) -> (Vec<DiffLine>, Option<u
     let mut previous_after = 0;
     for (index, hunk) in hunks.iter().enumerate() {
         let (old_start, new_start) = (hunk.before.start as usize, hunk.after.start as usize);
-        let context = CONTEXT.min(old_start).min(new_start.saturating_sub(previous_after));
-        row(DiffLineKind::Hunk, Some(old_start - context), Some(new_start - context), "");
-        for offset in 0..context {
-            let (at_old, at_new) = (old_start - context + offset, new_start - context + offset);
+        let leading = context.min(old_start).min(new_start.saturating_sub(previous_after));
+        row(DiffLineKind::Hunk, Some(old_start - leading), Some(new_start - leading), "");
+        for offset in 0..leading {
+            let (at_old, at_new) = (old_start - leading + offset, new_start - leading + offset);
             row(DiffLineKind::Context, Some(at_old), Some(at_new), old[at_old]);
         }
         for at in hunk.before.clone() {
@@ -201,14 +226,14 @@ fn diff(before: Option<&[u8]>, after: Option<&[u8]>) -> (Vec<DiffLine>, Option<u
             row(DiffLineKind::Added, None, Some(at as usize), new[at as usize]);
         }
         let (old_end, new_end) = (hunk.before.end as usize, hunk.after.end as usize);
-        let context = CONTEXT.min(old.len() - old_end).min(new.len() - new_end);
-        let context = hunks.get(index + 1).map_or(context, |next| {
-            context.min(next.before.start as usize - old_end).min(next.after.start as usize - new_end)
+        let trailing = context.min(old.len() - old_end).min(new.len() - new_end);
+        let trailing = hunks.get(index + 1).map_or(trailing, |next| {
+            trailing.min(next.before.start as usize - old_end).min(next.after.start as usize - new_end)
         });
-        for offset in 0..context {
+        for offset in 0..trailing {
             row(DiffLineKind::Context, Some(old_end + offset), Some(new_end + offset), new[new_end + offset]);
         }
-        previous_after = new_end + context;
+        previous_after = new_end + trailing;
     }
     (lines, (more > 0).then_some(more))
 }

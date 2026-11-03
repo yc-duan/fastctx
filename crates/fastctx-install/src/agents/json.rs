@@ -37,6 +37,20 @@ pub struct Placed {
     file_made: bool,
 }
 
+impl Placed {
+    /// This placing with what was there before taken as Fastctx's own, as
+    /// an earlier change that stopped before its receipt was kept left it:
+    /// taking it out removes it.
+    pub fn owned(self) -> Self {
+        Self { before: None, ..self }
+    }
+
+    /// The value Fastctx wrote.
+    pub fn written(&self) -> &Json {
+        &self.written
+    }
+}
+
 /// An item Fastctx added to an array.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

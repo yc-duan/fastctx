@@ -51,9 +51,12 @@ pub fn preview(places: &Places, host: Host, into: bool, edits: Edits) -> Result<
 }
 
 /// The fingerprint of what a change of `host`'s selected home is worked out
-/// from: the record of earlier changes and each file its planners read.
+/// from: the record of earlier changes and each file its planners read. Of
+/// Claude Code's global state, which it rewrites with every session, only
+/// Fastctx's entry counts.
 pub fn fingerprint(places: &Places, host: Host) -> Result<String, Error> {
     let mut files = vec![Snapshot::read(places.record())?];
+    let mut state = None;
     match host {
         Host::Codex => {
             files.push(Snapshot::read(places.codex_home.join("config.toml"))?);
@@ -66,9 +69,14 @@ pub fn fingerprint(places: &Places, host: Host) -> Result<String, Error> {
             files.push(Snapshot::read(places.claude_home.join("settings.json"))?);
             files.push(Snapshot::read(places.claude_home.join("CLAUDE.md"))?);
             files.push(Snapshot::read(homes::plugin_record(places)?)?);
+            files.push(Snapshot::read(homes::entry_record(places)?)?);
+            state = Some(state::print(places)?);
         }
     }
-    let inputs: Vec<_> = files.iter().map(|file| (file.path(), file.bytes())).collect();
+    let mut inputs: Vec<_> = files.iter().map(|file| (file.path(), file.bytes())).collect();
+    if let Some((path, entry)) = &state {
+        inputs.push((path.as_path(), entry.as_deref()));
+    }
     Ok(crate::connect::fingerprint(&inputs))
 }
 
@@ -97,7 +105,7 @@ fn codex(
             (None, Some(receipt)) => Ownership::Legacy(receipt),
             (None, None) => Ownership::None,
         };
-        let plan = CodexPlan::new(&places.installed());
+        let plan = codex_plan(places, &places.installed(), record.codex.as_ref());
         let guidance = briefing::guidance(true);
         let planned = |approval| codex::apply(config_file, agents_file, &plan, &guidance, ownership, approval);
         let applied = match planned(Approval::Require) {
@@ -151,20 +159,42 @@ fn claude(
         plugins::snapshot(&mut host).map_err(Error::Claude)
     };
     let settings_at = settings_file.path();
+    let (_, entry_receipt) = state::receipt(places)?;
     if into {
-        let claude = places.claude.clone().ok_or(Error::NoClaude)?;
-        let state = listings(claude)?;
-        let planned =
-            PluginApply::prepare(&plan, state, previous.as_ref().map(|r| &r.receipt)).map_err(Error::Claude)?;
-        preview.commands =
-            planned.commands().iter().map(|command| format!("claude {}", command.args.join(" "))).collect();
+        let workbench = claude_workbench(places, record);
+        let withdrawal = |claude: PathBuf| -> Result<Vec<String>, Error> {
+            Ok(plugins::withdrawal(&plan, &listings(claude)?)
+                .map_err(Error::Claude)?
+                .iter()
+                .map(|command| format!("claude {}", command.args.join(" ")))
+                .collect())
+        };
+        if workbench {
+            let claude = places.claude.clone().ok_or(Error::NoClaude)?;
+            let state = listings(claude)?;
+            let planned =
+                PluginApply::prepare(&plan, state, previous.as_ref().map(|r| &r.receipt)).map_err(Error::Claude)?;
+            preview.commands =
+                planned.commands().iter().map(|command| format!("claude {}", command.args.join(" "))).collect();
+        } else if previous.as_ref().is_some_and(|record| record.receipt.has_work())
+            && let Some(claude) = places.claude.clone()
+        {
+            // Connected alone, a login keeps no plugin an earlier change put in.
+            preview.commands = withdrawal(claude)?;
+        }
         for line in &preview.commands {
             steps.command(Change::Plugin, line.clone());
         }
         let take_back = edits == Edits::TakeBack;
-        let output = settings::apply(settings_file.bytes(), &plan, record.settings.as_ref(), take_back)
-            .map_err(Error::Claude)?;
-        steps.record(Change::Limits, settings_at, settings_file.bytes(), output.bytes.as_deref());
+        let start = if workbench {
+            settings_file.bytes().map(<[u8]>::to_vec)
+        } else {
+            crate::claude::registration::remove(settings_file.bytes(), &plan, true, true).map_err(Error::Claude)?
+        };
+        steps.record(Change::Plugin, settings_at, settings_file.bytes(), start.as_deref());
+        let output =
+            settings::apply(start.as_deref(), &plan, record.settings.as_ref(), take_back).map_err(Error::Claude)?;
+        steps.record(Change::Limits, settings_at, start.as_deref(), output.bytes.as_deref());
         kept_limit(preview, settings_at, Limit::output(&plan).key, &output);
         let described = settings::apply_limit(
             output.bytes.as_deref(),
@@ -183,8 +213,18 @@ fn claude(
         .map_err(Error::Claude)?;
         steps.record(Change::Shell, settings_at, described.bytes.as_deref(), tools.bytes.as_deref());
         preview.kept.extend(tools.notices.into_iter().map(kept));
-        let (after, _) =
-            crate::claude::consent::grant(tools.bytes.as_deref(), record.consent.as_ref()).map_err(Error::Claude)?;
+        let after = if workbench {
+            crate::claude::consent::grant(tools.bytes.as_deref(), record.consent.as_ref()).map_err(Error::Claude)?.0
+        } else if let Some(receipt) = &record.consent {
+            let (restored, left) =
+                crate::claude::consent::restore(tools.bytes.as_deref(), receipt).map_err(Error::Claude)?;
+            if left {
+                preview.kept.push(kept(consent_kept(settings_at)));
+            }
+            restored
+        } else {
+            tools.bytes.clone()
+        };
         steps.record(Change::Consent, settings_at, tools.bytes.as_deref(), after.as_deref());
         file(preview, settings_at, settings_file.bytes(), after.as_deref(), Kind::Json(items::claude_keys))?;
         let guide = if take_back { guidance::take_back } else { guidance::apply };
@@ -195,9 +235,21 @@ fn claude(
         )?;
         steps.record(Change::Guidance, claude_md.path(), claude_md.bytes(), Some(&guidance.bytes));
         file(preview, claude_md.path(), claude_md.bytes(), Some(&guidance.bytes), Kind::Guidance)?;
+        // The World's server: from the plugin with the workbench, and
+        // otherwise entered in Claude Code's global state.
+        let planned = if workbench {
+            entry_receipt.as_ref().map(state::plan_take).transpose()?
+        } else {
+            Some(state::plan_put(places, entry_receipt.as_ref(), take_back)?)
+        };
+        if let Some(planned) = planned {
+            entry_file(preview, steps, &planned)?;
+        }
         return Ok(());
     }
-    match places.claude.clone() {
+    // A login that never had the plugin starts none of Claude Code's
+    // programs to be taken out.
+    match places.claude.clone().filter(|_| previous.is_some()) {
         Some(claude) => {
             let state = listings(claude)?;
             preview.commands = plugins::withdrawal(&plan, &state)
@@ -222,16 +274,16 @@ fn claude(
         steps.record(Change::Shell, settings_at, bytes.as_deref(), edit.bytes.as_deref());
         bytes = edit.bytes;
     }
-    if let Some(receipt) = &record.settings {
-        let edit = settings::unapply(bytes.as_deref(), Some(receipt)).map_err(Error::Claude)?;
-        kept_limit(preview, settings_at, Limit::output(&plan).key, &edit);
-        steps.record(Change::Limits, settings_at, bytes.as_deref(), edit.bytes.as_deref());
-        bytes = edit.bytes;
-    }
     if let Some(receipt) = &record.description {
         let key = Limit::description(&plan).key;
         let edit = settings::unapply_limit(bytes.as_deref(), key, Some(receipt)).map_err(Error::Claude)?;
         kept_limit(preview, settings_at, key, &edit);
+        steps.record(Change::Limits, settings_at, bytes.as_deref(), edit.bytes.as_deref());
+        bytes = edit.bytes;
+    }
+    if let Some(receipt) = &record.settings {
+        let edit = settings::unapply(bytes.as_deref(), Some(receipt)).map_err(Error::Claude)?;
+        kept_limit(preview, settings_at, Limit::output(&plan).key, &edit);
         steps.record(Change::Limits, settings_at, bytes.as_deref(), edit.bytes.as_deref());
         bytes = edit.bytes;
     }
@@ -255,7 +307,18 @@ fn claude(
         steps.record(Change::Guidance, claude_md.path(), claude_md.bytes(), taken.bytes.as_deref());
         file(preview, claude_md.path(), claude_md.bytes(), taken.bytes.as_deref(), Kind::Guidance)?;
     }
+    if let Some(receipt) = &entry_receipt {
+        entry_file(preview, steps, &state::plan_take(receipt)?)?;
+    }
     Ok(())
+}
+
+/// Fastctx's entry in Claude Code's global state, put in or taken out: told
+/// on the tools' card with its own lines alone, and by its own keys.
+fn entry_file(preview: &mut ChangePreview, steps: &mut Steps, planned: &state::Planned) -> Result<(), Error> {
+    let (before, after) = (planned.before.as_deref(), planned.after.as_deref());
+    steps.record_bare(Change::Tools, &planned.path, before, after);
+    file(preview, &planned.path, before, after, Kind::Json(crate::claude::entry::shown))
 }
 
 enum Kind {

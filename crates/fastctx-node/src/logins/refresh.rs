@@ -129,10 +129,12 @@ fn every(node: &Node) -> Option<(Waiting, bool)> {
         })
         .expect("an agent name");
         let dir = fastctx_hosts::inventory::plain(&integration.home);
-        let refreshed = context
-            .places
-            .at_home(integration.host, &integration.home)
-            .and_then(|places| apply::refresh(&places, integration.host));
+        // Each login holds what the workbench needs where it is open there,
+        // and only what connecting needs where it is not.
+        let refreshed = context.places.at_home(integration.host, &integration.home).and_then(|mut places| {
+            places.workbench = super::workbench::known(node, agent.as_str(), &dir);
+            apply::refresh(&places, integration.host)
+        });
         (agent, dir, refreshed)
     });
     let others = others.into_iter().filter_map(|(name, home)| {

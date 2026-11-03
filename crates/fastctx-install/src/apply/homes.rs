@@ -281,6 +281,19 @@ pub(super) fn plugin_record(places: &Places) -> Result<PathBuf, Error> {
     Ok(current)
 }
 
+/// Where the receipt of Fastctx's entry in the selected Claude home's global
+/// state is kept (`super::state`): beside the apply record, a file each home.
+pub(super) fn entry_record(places: &Places) -> Result<PathBuf, Error> {
+    let spelling = identity::spelling(&places.claude_home)?;
+    let digest = Sha256::digest(spelling.as_bytes());
+    Ok(places.root.join(format!("applied-claude-entry-{digest:x}.json")))
+}
+
+/// Whether two homes are one directory, however each is spelled.
+pub(super) fn same_home(a: &Path, b: &Path) -> Result<bool, Error> {
+    Ok(key(a)? == key(b)?)
+}
+
 pub(super) fn old_plugin_home(places: &Places) -> Result<PathBuf, Error> {
     let snapshot = Snapshot::read(places.record())?;
     let record = match snapshot.bytes() {

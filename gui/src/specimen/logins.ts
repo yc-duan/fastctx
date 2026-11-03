@@ -346,15 +346,20 @@ function benchPreview(agent: string, dir: string, open: boolean): ChangePreview 
                 path: "C:\\Users\\me\\.claude.json",
                 how: "changed",
                 lines: (open ? undone : (lines: DiffLine[]) => lines)(
-                  told(41, 41, [
-                    ctx('  "mcpServers": {'),
+                  told(2, 2, [
+                    add('  "mcpServers": {'),
                     add('    "fastctx": {'),
-                    add('      "type": "stdio",'),
-                    add('      "command": "C:\\\\Users\\\\me\\\\.fastctx\\\\bin\\\\fastctx.exe",'),
-                    add('      "args": ["serve"],'),
-                    add('      "env": { "FASTCTX_HOME": "C:\\\\Users\\\\me\\\\.fastctx", "FASTCTX_AGENT_HOME": "" }'),
+                    add('      "args": ['),
+                    add('        "serve"'),
+                    add("      ],"),
+                    add('      "command": "C:/Users/me/.fastctx/bin/fastctx.exe",'),
+                    add('      "env": {'),
+                    add('        "FASTCTX_AGENT_HOME": "",'),
+                    add('        "FASTCTX_HOME": "C:/Users/me/.fastctx"'),
+                    add("      },"),
+                    add('      "type": "stdio"'),
                     add("    }"),
-                    ctx("  },"),
+                    add("  },"),
                   ]),
                 ),
               },
@@ -442,23 +447,25 @@ function disclosed(agent: string, dir: string, into: boolean): Pick<ChangePrevie
   return {
     fingerprint,
     cards: [
+      // Fastctx's entry alone: the rest of the state is the user's account
+      // and history, and the node tells none of it.
       card(
         "tools",
         `${home}\\.claude.json`,
-        told(4, 4, [
-          ctx('  "numStartups": 214,'),
-          ctx('  "theme": "dark",'),
+        told(2, 2, [
           add('  "mcpServers": {'),
           add('    "fastctx": {'),
-          add('      "type": "stdio",'),
-          add('      "command": "C:\\\\Users\\\\me\\\\.fastctx\\\\bin\\\\fastctx.exe",'),
           add('      "args": ['),
           add('        "serve"'),
-          add("      ]"),
+          add("      ],"),
+          add('      "command": "C:/Users/me/.fastctx/bin/fastctx.exe",'),
+          add('      "env": {'),
+          add('        "FASTCTX_AGENT_HOME": "",'),
+          add('        "FASTCTX_HOME": "C:/Users/me/.fastctx"'),
+          add("      },"),
+          add('      "type": "stdio"'),
           add("    }"),
           add("  },"),
-          ctx('  "projects": {'),
-          ctx('    "C:/Users/me/work/site": {'),
         ]),
       ),
       card(

@@ -18,6 +18,7 @@
 //! registration cleanup removes only this product's declarations in that case.
 
 pub mod consent;
+pub mod entry;
 pub mod history;
 mod limit;
 pub mod plugins;

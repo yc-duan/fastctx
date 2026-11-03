@@ -55,7 +55,11 @@ pub(super) fn delegate(
     if crate::renewal::build().map_err(|error| Error::Io(error.to_string()))? == selected {
         return Ok(None);
     }
-    if !supports_host_change(places)? {
+    let Some(help) = host_change_help(places)? else { return Ok(None) };
+    // A kernel that cannot be told what the logins are to hold, or which
+    // Claude Code home the user's environment opens, leaves the change here.
+    let told = help.contains("--workbench");
+    if !told && (places.workbench.is_some() || places.claude_config_dir.is_some()) {
         return Ok(None);
     }
     let mut command = crate::program::command(&installed);
@@ -75,6 +79,12 @@ pub(super) fn delegate(
     }
     if edits == Edits::TakeBack {
         command.arg("--take-back");
+    }
+    if told {
+        if let Some(workbench) = places.workbench {
+            command.arg("--workbench").arg(workbench.to_string());
+        }
+        command.arg("--claude-config-dir").arg(places.claude_config_dir.as_deref().unwrap_or(std::path::Path::new("")));
     }
     // A delegated mutation must end with its caller.
     #[cfg(windows)]
@@ -111,7 +121,8 @@ pub(super) fn delegate(
     result.map(Some).map_err(Into::into)
 }
 
-fn supports_host_change(places: &Places) -> Result<bool, Error> {
+/// What the selected kernel says of its host change, none where it has none.
+fn host_change_help(places: &Places) -> Result<Option<String>, Error> {
     // The maintenance protocol predates host-change. Probe the parser without
     // attempting a mutation; only its explicit unknown-command rejection
     // proves absence. Startup failures and other errors must remain errors.
@@ -122,14 +133,14 @@ fn supports_host_change(places: &Places) -> Result<bool, Error> {
         .output()
         .map_err(|error| Error::Io(format!("probing the selected kernel's host change: {error}")))?;
     if output.status.success() {
-        return Ok(true);
+        return Ok(Some(String::from_utf8_lossy(&output.stdout).into_owned()));
     }
     if output.status.code() == Some(2)
         && output.stdout.is_empty()
         && String::from_utf8_lossy(&output.stderr).lines().next()
             == Some("error: unrecognized subcommand 'host-change'")
     {
-        return Ok(false);
+        return Ok(None);
     }
     Err(Error::Io(format!(
         "the selected kernel's host change probe exited {}: {}{}",

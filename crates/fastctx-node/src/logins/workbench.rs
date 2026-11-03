@@ -60,6 +60,17 @@ pub(crate) fn is_open(node: &Node, acting: &Acting, agent: &str, home: Option<&P
     state.dirs.iter().any(|(name, open)| name == agent && crate::homes::same_dir(open, dir))
 }
 
+/// Whether the workbench is open in `agent`'s login `dir`, once the logins it
+/// was open in by account were worked out; before that, nothing is said, and
+/// a change leaves the login holding what it holds.
+pub(crate) fn known(node: &Node, agent: &str, dir: &Path) -> Option<bool> {
+    if !matches!(agent, "codex" | "claude") {
+        return None;
+    }
+    let state = state(node);
+    state.seeded.then(|| state.dirs.iter().any(|(name, open)| name == agent && crate::homes::same_dir(open, dir)))
+}
+
 /// Refuses to start a conversation in a login the workbench is not open in.
 pub(crate) fn may_start(node: &Node, acting: &Acting, agent: &str, home: Option<&Path>) -> Result<(), Failure> {
     if is_open(node, acting, agent, home) { Ok(()) } else { Err(Failure::refused(CLOSED)) }

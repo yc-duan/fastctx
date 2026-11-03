@@ -64,12 +64,24 @@ pub fn refresh(places: &Places, host: Host) -> Result<Refresh, Error> {
 }
 
 /// Copies of `files` as they are now, in a folder of their own under
-/// fastctx's directory named for the moment and the agent.
+/// fastctx's directory named for the moment and the agent. Of Claude Code's
+/// global state only Fastctx's entry is kept: the rest of it is the user's
+/// account and history.
 pub(super) fn keep(places: &Places, agent: &str, files: &[PathBuf]) -> Result<PathBuf, Error> {
     let folder =
         places.root.join("kept").join(format!("{}-{agent}", jiff::Timestamp::now().strftime("%Y-%m-%d-%H%M%S")));
     std::fs::create_dir_all(&folder).map_err(io("keeping the files taken back"))?;
+    let state = if agent == "claude" { Some(state::print(places)?) } else { None };
     for file in files {
+        if let Some((path, entry)) = &state
+            && path == file
+        {
+            if let Some(entry) = entry {
+                std::fs::write(folder.join("mcpServers.fastctx.json"), entry)
+                    .map_err(io("keeping the files taken back"))?;
+            }
+            continue;
+        }
         let Some(name) = file.file_name() else { continue };
         match std::fs::copy(file, folder.join(name)) {
             Ok(_) => {}

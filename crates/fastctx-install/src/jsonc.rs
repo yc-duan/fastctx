@@ -203,6 +203,17 @@ impl<'a> Document<'a> {
         {
             trivia.replace_range(token.range.start - start..token.range.end - start, "");
         }
+        // With nothing of the user's in it, the pair goes with its line: from
+        // the line break before it, where only its indentation stands between.
+        let start = if trivia.trim().is_empty() {
+            trivia.clear();
+            self.source[..start]
+                .rfind('\n')
+                .filter(|&line| self.source[line + 1..start].trim().is_empty())
+                .map_or(start, |line| line - usize::from(self.source[..line].ends_with('\r')))
+        } else {
+            start
+        };
         if let Some(comma) = comma.filter(|c| c.range.start >= end) {
             result.replace_range(comma.range.start..comma.range.end, "");
         }
