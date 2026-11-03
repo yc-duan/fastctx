@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "lab-echo": {
+      "command": "node",
+      "args": ["/lab/mcp-echo.cjs"],
+      "env": {"LAB_QODER_IDE": "1"}
+    }
+  }
+}

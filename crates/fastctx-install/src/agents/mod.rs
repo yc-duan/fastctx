@@ -19,6 +19,8 @@ pub(crate) mod json;
 mod kiro;
 mod opencode;
 mod plan;
+mod qoder;
+mod qoder_ide;
 mod qwen;
 mod roo;
 mod spec;
@@ -46,6 +48,8 @@ static AGENTS: &[&Agent] = &[
     &vscode_copilot::AGENT,
     &trae::AGENT,
     &continue_ide::AGENT,
+    &qoder::AGENT,
+    &qoder_ide::AGENT,
 ];
 
 pub fn all() -> &'static [&'static Agent] {
