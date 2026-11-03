@@ -133,6 +133,26 @@ fn start(node: &std::sync::Arc<crate::Node>) {
     });
     let node = node.clone();
     fastctx_platform::task::spawn(async move {
+        // What this release's migrations found is not looked for again at
+        // every start, each look reading every conversation's place and
+        // every job's path: only an import, which clears the mark
+        // (`conversation_store::transfer`), or a release adding a migration,
+        // which raises `BORN`, has discovery look again.
+        let reading = node.clone();
+        let discovered = fastctx_platform::task::spawn_blocking(move || {
+            reading.database.read_background_now(|db| {
+                use fastctx_storage::rusqlite::OptionalExtension;
+                db.query_row("SELECT value FROM node_record_state WHERE name='legacy-discovery-complete'", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .optional()
+                .map_err(Into::into)
+            })
+        })
+        .await;
+        if matches!(discovered, Ok(Ok(Some(generation))) if generation >= scheduler::BORN) {
+            return;
+        }
         let mut again = crate::again::Again::default();
         let mut catalog = catalog::Catalog::default();
         loop {
@@ -183,7 +203,10 @@ fn start(node: &std::sync::Arc<crate::Node>) {
             let working = node.clone();
             let result = fastctx_platform::task::spawn_blocking(move || {
                 working.database.write_now_at(fastctx_storage::Priority::Background, 64, |db| {
-                    db.execute("INSERT INTO node_record_state(name,value) VALUES('legacy-discovery-complete',1) ON CONFLICT(name) DO UPDATE SET value=1", [])?;
+                    db.execute(
+                        "INSERT INTO node_record_state(name,value) VALUES('legacy-discovery-complete',?1) ON CONFLICT(name) DO UPDATE SET value=?1",
+                        [scheduler::BORN],
+                    )?;
                     Ok(())
                 }).map_err(std::io::Error::other)?;
                 maintenance::collect(&working.database)
