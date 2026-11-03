@@ -104,16 +104,29 @@ pub(super) fn commit<T: Send + 'static>(
 ) -> io::Result<T> {
     let directory = prepare(world, id)?;
     crate::conversation_store::with_live_files(&directory, || {
-        let result = families::write_at(&directory, fastctx_storage::Priority::Interactive, bytes, move |rows| {
-            let result = action(rows)?;
-            rows.connection().execute(
-                "INSERT OR IGNORE INTO context_projection_dirty(conversation) VALUES(?1)",
-                [rows.conversation()],
-            )?;
-            Ok(result)
-        })?;
+        let (result, dirty) =
+            families::write_at(&directory, fastctx_storage::Priority::Interactive, bytes, move |rows| {
+                let before = rows.connection().total_changes();
+                let result = action(rows)?;
+                // Decide on the writer: a preceding write may still commit after
+                // its caller timed out. An unchanged record leaves no dirty pages.
+                let changed = rows.connection().total_changes() != before;
+                if changed {
+                    rows.connection().execute(
+                        "INSERT OR IGNORE INTO context_projection_dirty(conversation) VALUES(?1)",
+                        [rows.conversation()],
+                    )?;
+                }
+                let dirty = changed
+                    || rows.connection().query_row(
+                        "SELECT EXISTS(SELECT 1 FROM context_projection_dirty WHERE conversation=?1)",
+                        [rows.conversation()],
+                        |row| row.get::<_, bool>(0),
+                    )?;
+                Ok((result, dirty))
+            })?;
         after(&result);
-        if project_live(world, id, &directory).is_err() {
+        if dirty && project_live(world, id, &directory).is_err() {
             notify(world);
         }
         Ok(result)
