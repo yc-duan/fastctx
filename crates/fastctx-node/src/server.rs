@@ -2162,6 +2162,9 @@ pub async fn who_here(
     })
     .await?;
     for resident in &mut reply.residents {
+        resident.benched = resident.about.world_managed()
+            && !resident.in_progress()
+            && !crate::logins::workbench::drives(node, &resident.about);
         resident.tools = node.watchers.tools(&resident.about.id);
         if let Some(now) = &mut resident.now {
             // Persisted occupancy predates a restarted node. Only the desk's

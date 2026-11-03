@@ -138,6 +138,9 @@ export interface ResidentNow {
   /** Another account opened it, on a machine shared whole with this one
    *  (`world-network.md`, 共享机器与智能体协助); absent for one's own. */
   openedBy?: { account: string } | null;
+  /** It rests in a login the workbench is closed in, no turn of it under
+   *  way: put away until the workbench opens there again. */
+  benched?: boolean;
 }
 
 /** A machine in one network, and how this computer writes it: `name.hub`

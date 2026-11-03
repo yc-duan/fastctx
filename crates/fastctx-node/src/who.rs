@@ -54,6 +54,7 @@ pub fn who(
             tools: Vec::new(),
             moved: None,
             removed: resident.removed,
+            benched: false,
         });
     }
     // Those who moved away are listed in the town they left, with all: once,
@@ -99,6 +100,7 @@ pub fn who(
                 tools: Vec::new(),
                 removed: crate::residents::removal(world, &former.id)?,
                 moved: Some(Moved { to: former.to, at: former.at }),
+                benched: false,
             });
         }
     }

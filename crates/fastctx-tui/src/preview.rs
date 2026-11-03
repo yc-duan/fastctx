@@ -91,6 +91,7 @@ fn resident(
         tools: Vec::new(),
         moved: None,
         removed: None,
+        benched: false,
     }
 }
 

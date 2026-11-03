@@ -302,6 +302,11 @@ pub struct ResidentNow {
     /// Removed from the World, with records preserved in its archive.
     #[serde(default)]
     pub removed: Option<Timestamp>,
+    /// The World holds it in a login the workbench is closed in, and no turn
+    /// of it is under way: it rests, its records kept, and the interface
+    /// puts it away until the workbench opens there again.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub benched: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

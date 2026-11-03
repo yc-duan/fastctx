@@ -494,6 +494,12 @@ impl Residents {
         self.changed.subscribe()
     }
 
+    /// Moves `changes` though no resident changed: what is shown of them
+    /// did, as when the workbench opened or closed in their login.
+    pub(crate) fn touch(&self) {
+        self.changed.send_modify(|changes| *changes = changes.wrapping_add(1));
+    }
+
     /// Reconnects a known session or admits one the local user opened without a World identity.
     pub fn arrive(
         &self,

@@ -176,6 +176,7 @@ fn residents() -> Vec<ResidentNow> {
                 result: "exit 0".into(),
             }),
             removed: None,
+            benched: false,
             moved: match i {
                 0 => None,
                 1 => Some(Moved { to: Some("project-2".parse().unwrap()), at: at() }),

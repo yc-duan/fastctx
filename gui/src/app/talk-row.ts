@@ -52,13 +52,14 @@ export interface RowActs {
 /** The conversations of the World a list shows, as the user's acts on them
  *  show them: those on a machine away as it last answered, the ones asked in
  *  to help another left out, since they hang under the one that asked them,
- *  and the sessions the user opened on their own and never brought in, which
- *  are theirs and show in the activity (`world-layers.md`). Those listed
- *  apart from those archived, most recently stirred first. */
+ *  the sessions the user opened on their own and never brought in, which
+ *  are theirs and show in the activity, and those resting in a login the
+ *  workbench is closed in (`world-layers.md`). Those listed apart from those
+ *  archived, most recently stirred first. */
 export function talksOf(world: WorldNow | null, acts: TalkActs): { listed: ResidentNow[]; archived: ResidentNow[] } {
   const every = byRecent(
     [...residentsOf(world, true), ...unreachedOf(world, true)]
-      .filter((r) => r.about.origin.kind !== "colleague" && !r.about.side && (r.about.world_started || r.about.native_resumed))
+      .filter((r) => r.about.origin.kind !== "colleague" && !r.about.side && (r.about.world_started || r.about.native_resumed) && !r.benched)
       .map((r) => acts.view(r)),
   );
   return { listed: every.filter((r) => !r.removed), archived: every.filter((r) => r.removed) };

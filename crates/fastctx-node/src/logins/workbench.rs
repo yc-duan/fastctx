@@ -152,6 +152,8 @@ pub(super) fn prune(node: &Node, connected: &[(&str, PathBuf)]) {
 /// is tried at once, and the login asked again, its models too.
 pub(crate) fn changed(node: &Arc<Node>) {
     node.shown_changed();
+    // Whether each of its conversations rests is told the hubs too.
+    node.residents.touch();
     for held in node.residents.everyone().filter(|held| held.about.world_managed()) {
         crate::lifecycle::retry::changed(node, &held.id);
     }

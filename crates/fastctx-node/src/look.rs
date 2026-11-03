@@ -127,6 +127,7 @@ pub(crate) fn read_here(
                 tools,
                 moved: None,
                 removed: record.removed,
+                benched: false,
             },
             records: directory.path().to_string_lossy().into_owned(),
             actions,
