@@ -4,7 +4,11 @@
 // this follows every one from outside: before the press is handled it notes
 // where the chosen side stood, and once the page has drawn the switch again
 // it slides a wash of the same colour from there to the side now chosen,
-// then leaves the chosen side its own. Where motion is off, nothing slides.
+// then leaves the chosen side its own. A switch that is a row of a place's
+// tabs comes back with the page of the place pressed, a few frames on. The
+// sides hold their own easing back while the wash travels and as it lands,
+// or the wash would pale and come again under it. Where motion is off,
+// nothing slides.
 
 import { reducedMotion } from "../motion";
 
@@ -12,6 +16,10 @@ import { reducedMotion } from "../motion";
  *  side, the chosen one washed. */
 const TRACKS =
   ".segmented, .model-speeds, .picker-kinds, .ml-views, .map-roles, .mp-ranges, .logins-tabs, .data-tabs, .mp-tabs, .ledger-switch";
+
+/** How many frames a switch drawn anew is waited for: a place's page,
+ *  tabs and all, comes once its address has changed. */
+const WAITED = 20;
 
 /** How a switch marks its chosen side. */
 const CHOSEN = ":scope > .chosen, :scope > .current, :scope > [aria-selected='true'], :scope > [aria-checked='true'], :scope > [aria-pressed='true']";
@@ -41,14 +49,16 @@ export function followSwitches(): void {
       const where = track.getBoundingClientRect();
       const centre = { x: where.left + where.width / 2, y: where.top + where.height / 2 };
       const wash = { colour: look.backgroundColor, radius: look.borderRadius };
-      requestAnimationFrame(() => {
+      let frames = 0;
+      const landed = () => {
         // The page may have drawn the switch anew where it stood.
         const now = document.elementsFromPoint(centre.x, centre.y).find((element): element is HTMLElement => element instanceof HTMLElement && element.matches(TRACKS));
         const after = now ? chosenIn(now) : null;
-        // Not chosen yet, or chosen where it was: nothing to slide.
-        if (!now || !after || after === before) return;
-        slide(now, from, boxIn(after, now), wash);
-      });
+        if (now && after && after !== before) slide(now, from, boxIn(after, now), wash);
+        // Not chosen yet: a page still on its way; given up when none comes.
+        else if (++frames < WAITED) requestAnimationFrame(landed);
+      };
+      requestAnimationFrame(landed);
     },
     true,
   );
@@ -90,8 +100,12 @@ function slide(track: HTMLElement, from: Box, to: Box, wash: { colour: string; r
   const end = () => {
     if (done) return;
     done = true;
+    // The side chosen takes its wash back at once, its own easing held a
+    // little longer.
+    track.classList.add("seg-landing");
     thumb.remove();
     if (!track.querySelector(":scope > .seg-thumb")) track.classList.remove("seg-sliding");
+    requestAnimationFrame(() => requestAnimationFrame(() => track.classList.remove("seg-landing")));
   };
   thumb.addEventListener("transitionend", (event) => {
     if (event.propertyName === "--thumb-x" || event.propertyName === "--thumb-y") end();

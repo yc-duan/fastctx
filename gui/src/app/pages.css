@@ -1124,6 +1124,14 @@ a.details-job {
   background-color: transparent !important;
 }
 
+/* The sides' own easing is held back while the wash travels and as it
+   lands: easing out from under it, then in again, the wash would pale and
+   come back. */
+.seg-sliding > :not(.seg-thumb),
+.seg-landing > :not(.seg-thumb) {
+  transition: none !important;
+}
+
 /* A file chosen through the system's picker, by a button of the page's own;
    the name of the one chosen beside it. */
 .pick-file {
