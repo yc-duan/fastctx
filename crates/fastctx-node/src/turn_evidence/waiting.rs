@@ -23,18 +23,23 @@ pub(crate) trait SentinelWaits: Send + Sync {
     ) -> Pin<Box<dyn std::future::Future<Output = Result<Vec<WaitHandle>, Failure>> + Send + 'a>>;
 }
 
-/// Reads only this owner's completion debts, even when the owner lives elsewhere.
+/// Reads only this owner's completion debts, even when the owner lives
+/// elsewhere; without the machine's jobs lock, as `super::records::jobs`
+/// reads: a job collected meanwhile owes nothing any more.
 pub(crate) fn jobs_here(
     node: &Node,
     owner: &Address,
     asker: Option<&crate::admission::Asker>,
 ) -> io::Result<Vec<WaitHandle>> {
     let names = node.names();
-    let _disk = node.disk.lock();
     let mut result = Vec::new();
     for directory in node.world.job_directories(&names, owner)? {
         for path in owed_paths(&directory)? {
-            let record = fastctx_hands::run::record::read(&path)?;
+            let record = match fastctx_hands::run::record::read(&path) {
+                Ok(record) => record,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+                Err(error) => return Err(error),
+            };
             if !record.owner.resident().is_some_and(|recorded| super::identity::same(&names, recorded, owner)) {
                 continue;
             }
@@ -70,7 +75,11 @@ pub(crate) fn jobs_here(
                     None => Liveness::Unknown { reason: "the supervisor has not been identified".into() },
                 }
             };
-            let bytes = fastctx_platform::disk::metadata(&record.output)?.len();
+            let bytes = match fastctx_platform::disk::metadata(&record.output) {
+                Ok(metadata) => metadata.len(),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+                Err(error) => return Err(error),
+            };
             result.push(WaitHandle {
                 id: record.id.to_string(),
                 completion: Some(crate::inbox::job_notice_id(&record)),

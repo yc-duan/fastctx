@@ -10,10 +10,12 @@ pub(super) fn actions(node: &Node, resident: &ResidentId) -> io::Result<Vec<Acti
     crate::residents::activity::lines(&node.world.conversation(resident).actions())
 }
 
+/// The jobs the resident started here, read without the machine's jobs lock:
+/// each record is replaced whole, and one collected while the jobs are read
+/// is a job long over, left out as if read a moment later.
 pub(super) fn jobs(node: &Node, resident: &ResidentId) -> io::Result<Vec<JobEvidence>> {
     let owner = Address { machine: node.machine(), resident: resident.clone() };
     let names = node.names();
-    let _disk = node.disk.lock();
     let mut result = Vec::new();
     for directory in node.world.job_directories(&names, &owner)? {
         let entries = match fastctx_platform::disk::read_dir(directory) {
@@ -26,7 +28,11 @@ pub(super) fn jobs(node: &Node, resident: &ResidentId) -> io::Result<Vec<JobEvid
             if path.extension().is_none_or(|extension| extension != "json") {
                 continue;
             }
-            let record = fastctx_hands::run::record::read(&path)?;
+            let record = match fastctx_hands::run::record::read(&path) {
+                Ok(record) => record,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+                Err(error) => return Err(error),
+            };
             if record.owner.resident().is_some_and(|recorded| super::identity::same(&names, recorded, &owner)) {
                 result.push(JobEvidence { source: path.to_string_lossy().into_owned(), record });
             }
