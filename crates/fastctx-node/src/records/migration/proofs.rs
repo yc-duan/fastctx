@@ -28,6 +28,10 @@ pub(super) fn bytes(row: &LegacyRow) -> usize {
         + 384
 }
 
+/// What a row's source said: its body and the fields kept with it. The
+/// time its file was last written is not among them: it is not what the
+/// file says, and a copy or a restore changes it between an import and a
+/// later run's reread of the same bytes.
 pub(super) fn digest(row: &LegacyRow) -> Result<Vec<u8>> {
     let mut hash = Sha256::new();
     hash.update((row.body.len() as u64).to_be_bytes());
@@ -36,7 +40,6 @@ pub(super) fn digest(row: &LegacyRow) -> Result<Vec<u8>> {
         serde_json::to_vec(&(
             &row.key,
             &row.conversation,
-            row.modified,
             &row.arrival,
             &row.category,
             row.expires,
@@ -98,7 +101,15 @@ pub(super) fn verify(context: &Context, rows: Vec<LegacyRow>) -> io::Result<()> 
                 return Err(Error::new("the legacy ordinal has no committed verification proof"));
             };
             if stored_owner!=owner || expected!=digest(&row)? {
-                return Ok(Some(format!("legacy source row {} differs when reread",file.ordinal)));
+                // Said apart, for whoever reads why the original was set aside.
+                let what = if stored_owner != owner {
+                    "the conversation it belongs to"
+                } else if body_digest.as_deref().is_some_and(|stored| stored != Sha256::digest(&row.body).as_slice()) {
+                    "its body"
+                } else {
+                    "the fields kept with it"
+                };
+                return Ok(Some(format!("legacy source row {} differs when reread, in {what}",file.ordinal)));
             }
             if let Some(identity)=identity {
                 let body:Vec<u8>=snapshot.query_row("SELECT body FROM conversation_records WHERE conversation=?1 AND family=?2 AND identity=?3",(owner,&context.family,&identity),|row|row.get(0))?;
