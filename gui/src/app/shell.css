@@ -119,6 +119,21 @@ html.gripping-y * {
   display: flex;
   flex-direction: column;
   padding: calc(var(--space-2) + var(--safe-top)) var(--space-2) calc(var(--space-2) + var(--safe-bottom));
+  /* A press on a row opens it: no text of the sidebar is chosen by a hand
+     that moves a little as it clicks, nor is a link carried off as a link
+     (WebKit does both for a mouse; a row is carried only past its own
+     threshold, `talk-drag.ts`). */
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.sidebar :is(a, img) {
+  -webkit-user-drag: none;
+}
+
+.sidebar :is(input, textarea) {
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 .sidebar ul {

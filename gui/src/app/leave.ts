@@ -77,7 +77,7 @@ export function leaving(element: HTMLElement): boolean {
 }
 
 /** The longest of the times an `animation-duration` lists, in ms. */
-function longest(durations: string): number {
+export function longest(durations: string): number {
   return Math.max(0, ...durations.split(",").map((one) => {
     const value = parseFloat(one);
     if (!Number.isFinite(value)) return 0;

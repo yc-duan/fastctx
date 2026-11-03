@@ -8,6 +8,7 @@
 import { glyph, type GlyphName } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import { layerOpened, type Layer } from "./back";
+import { longest } from "./leave";
 import { stepped } from "./menu-keys";
 
 export interface MenuAct {
@@ -152,8 +153,17 @@ export class ActsMenu {
     this.element.classList.add("leaving");
     this.shade.classList.add("leaving");
     // Where motion is off it goes at once.
-    const after = getComputedStyle(this.element).animationName;
-    if (after === "none" || after === before) this.settle();
+    const style = getComputedStyle(this.element);
+    if (style.animationName === "none" || style.animationName === before) {
+      this.settle();
+      return;
+    }
+    // A window put away as it leaves may play no keyframes and say no end:
+    // its shade would then lie over the whole page. It goes when they would
+    // have ended, a frame later, whatever comes.
+    window.setTimeout(() => {
+      if (!this.shown && !this.element.hidden) this.settle();
+    }, longest(style.animationDuration) + 32);
   }
 
   private settle(): void {

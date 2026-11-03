@@ -37,8 +37,9 @@ export function placeForDrops(place: DropPlace): () => void {
   };
 }
 
-/** How far the pointer moves, in pixels, before a press becomes carrying. */
-const BEGIN = 5;
+/** How far the pointer moves, in pixels, before a press becomes carrying:
+ *  past what a hand drifts as it clicks a trackpad, so a click opens. */
+const BEGIN = 8;
 
 export interface CarryOptions {
   /** The conversation a pressed row stands for, when it can be carried. */
