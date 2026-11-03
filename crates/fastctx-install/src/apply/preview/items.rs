@@ -25,7 +25,13 @@ pub(super) fn codex_keys(path: &[String]) -> bool {
         | ["tools", "update_plan", "enabled"] => true,
         ["mcp_servers", "fastctx", rest @ ..] => matches!(
             rest,
-            ["command" | "args" | "env_vars" | "startup_timeout_sec" | "tool_timeout_sec" | "omit_tools_from"]
+            ["command"
+                | "args"
+                | "env_vars"
+                | "startup_timeout_sec"
+                | "tool_timeout_sec"
+                | "default_tools_approval_mode"
+                | "omit_tools_from"]
                 | ["env", "FASTCTX_LOGIN_IDENTITY"]
                 | ["tools", _, "output_token_limit"]
         ),

@@ -441,6 +441,10 @@ fn validate_plan(plan: &CodexPlan) -> Result<(), Error> {
 /// The server entry. Its tools are never deferred: a model whose tools are
 /// deferred sees only their names, and `run` takes the place of a shell whose
 /// description it always saw. In Code Mode they stay callable from scripts.
+/// They are called without asking, as the user's own hands (`world-layers.md`):
+/// with the shell off they are all the agent has, and a Codex that may ask
+/// no one, as `codex exec` never does, would refuse them and be left with
+/// none.
 fn server_body(plan: &CodexPlan, command: &str, inline: bool, nl: &str) -> Vec<u8> {
     let command = toml_edit::Value::from(command).to_string();
     let args = toml_edit::Array::from_iter(plan.args.iter().cloned()).to_string();
@@ -452,7 +456,7 @@ fn server_body(plan: &CodexPlan, command: &str, inline: bool, nl: &str) -> Vec<u
             .map(|name| format!("{name} = {{ output_token_limit = {} }}", plan.output_token_limit))
             .collect::<Vec<_>>()
             .join(", ");
-        format!("fastctx = {{ command = {command}, args = {args}, env_vars = [\"CODEX_HOME\"], env = {{ FASTCTX_LOGIN_IDENTITY = \"1\" }}, startup_timeout_sec = {}, tool_timeout_sec = {}, {omit}, tools = {{ {limits} }} }}", plan.startup_timeout_sec, plan.tool_timeout_sec).into_bytes()
+        format!("fastctx = {{ command = {command}, args = {args}, env_vars = [\"CODEX_HOME\"], env = {{ FASTCTX_LOGIN_IDENTITY = \"1\" }}, startup_timeout_sec = {}, tool_timeout_sec = {}, default_tools_approval_mode = \"approve\", {omit}, tools = {{ {limits} }} }}", plan.startup_timeout_sec, plan.tool_timeout_sec).into_bytes()
     } else {
         let limits = tools
             .iter()
@@ -463,7 +467,7 @@ fn server_body(plan: &CodexPlan, command: &str, inline: bool, nl: &str) -> Vec<u
                 )
             })
             .collect::<String>();
-        format!("[mcp_servers.fastctx]{nl}command = {command}{nl}args = {args}{nl}env_vars = [\"CODEX_HOME\"]{nl}env = {{ FASTCTX_LOGIN_IDENTITY = \"1\" }}{nl}startup_timeout_sec = {}{nl}tool_timeout_sec = {}{nl}{omit}{nl}{limits}", plan.startup_timeout_sec, plan.tool_timeout_sec).into_bytes()
+        format!("[mcp_servers.fastctx]{nl}command = {command}{nl}args = {args}{nl}env_vars = [\"CODEX_HOME\"]{nl}env = {{ FASTCTX_LOGIN_IDENTITY = \"1\" }}{nl}startup_timeout_sec = {}{nl}tool_timeout_sec = {}{nl}default_tools_approval_mode = \"approve\"{nl}{omit}{nl}{limits}", plan.startup_timeout_sec, plan.tool_timeout_sec).into_bytes()
     }
 }
 
