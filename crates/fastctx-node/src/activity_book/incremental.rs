@@ -1,5 +1,7 @@
 //! Consume durable executor journals in bounded batches. Contributions and their
 //! cursors commit together; segment retention waits for this independent reader.
+//! One thread reads a journal at a time, and no other waits for it: one asking
+//! meanwhile leaves its newer record, which the reader reads with before it stops.
 
 use super::*;
 use fastctx_storage::{
@@ -8,10 +10,33 @@ use fastctx_storage::{
 };
 use fastctx_types::run_facts::RunStep;
 use serde::{Deserialize, Serialize};
-use std::{io, path::Path, sync::LazyLock};
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::{LazyLock, Mutex, MutexGuard, PoisonError};
+use std::{io, path::Path};
 
-static GATES: LazyLock<crate::record_gates::Gates> =
-    LazyLock::new(|| crate::record_gates::Gates::new(fastctx_platform::doing::Rank::EMITTING, "activity book journal"));
+/// The journals being read now, by path, each with the newest record of its
+/// job asked to be observed while it was read.
+static READING: LazyLock<Mutex<HashMap<PathBuf, Option<JobRecord>>>> = LazyLock::new(Default::default);
+
+fn reading() -> MutexGuard<'static, HashMap<PathBuf, Option<JobRecord>>> {
+    READING.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// A journal's reader: a reader that unwinds lets go of the journal, so the
+/// next observation reads it.
+struct Reader<'a> {
+    path: &'a Path,
+    done: bool,
+}
+
+impl Drop for Reader<'_> {
+    fn drop(&mut self) {
+        if !self.done {
+            reading().remove(self.path);
+        }
+    }
+}
 
 #[derive(Default, Clone, Serialize, Deserialize)]
 pub(crate) struct Cursor {
@@ -69,8 +94,34 @@ pub(crate) fn observe(node: &Node, path: &Path, record: &JobRecord) -> io::Resul
     if let Some(error) = node.book_database.fault() {
         return Err(io::Error::other(error.clone()));
     }
-    let gate = GATES.get(path);
-    let _reading = gate.lock();
+    {
+        let mut reading = reading();
+        if let Some(waiting) = reading.get_mut(path) {
+            *waiting = Some(record.clone());
+            return Ok(());
+        }
+        reading.insert(path.to_path_buf(), None);
+    }
+    let mut reader = Reader { path, done: false };
+    let mut record = record.clone();
+    loop {
+        let read = read(node, path, &record);
+        // Whether to read again and letting go are decided together, so a
+        // record left meanwhile is never left unread.
+        let mut reading = reading();
+        match reading.get_mut(path).and_then(Option::take) {
+            Some(newer) if read.is_ok() => record = newer,
+            _ => {
+                reading.remove(path);
+                reader.done = true;
+                return read;
+            }
+        }
+    }
+}
+
+/// Reads what `record`'s journal holds past the book's cursor into the book.
+fn read(node: &Node, path: &Path, record: &JobRecord) -> io::Result<()> {
     let key = deed(record);
     super::migrate::deed(node, &key)?;
     if node.book_database.read_now(|db| super::frozen(db, &key)).map_err(io::Error::other)? {
