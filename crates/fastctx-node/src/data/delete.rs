@@ -647,6 +647,9 @@ async fn claude_temp(node: &Arc<Node>, measured: &Measured) -> Result<(), Stop> 
 }
 
 /// Deletes every place that holds something of the conversation here.
+/// How long the deletion waits for retention to let go of one of its jobs.
+const COLLECTED_WITHIN: std::time::Duration = std::time::Duration::from_secs(30);
+
 async fn remove_places(node: &Arc<Node>, measured: &Measured) -> Result<(u64, u64), Stop> {
     let remote = crate::attachments::lifetime::remote_retained(node, &measured.places)
         .await
@@ -665,13 +668,34 @@ async fn remove_places(node: &Arc<Node>, measured: &Measured) -> Result<(u64, u6
                 deleted_scopes.push(conversation);
             }
         }
-        let _collecting = node.disk.lock();
-        if places
-            .iter()
-            .any(|place| node.job_readers.lock().expect("never poisoned").keys().any(|path| path.starts_with(place)))
-        {
-            return Err(std::io::Error::new(std::io::ErrorKind::WouldBlock, "its command output is being read"));
-        }
+        // Marked under the jobs' gate as nothing reads them, and let go of
+        // after it (`crate::collecting`). A job of theirs that retention lets
+        // go of just now is waited for, as briefly as that takes.
+        let waited = std::time::Instant::now();
+        let _collecting = loop {
+            let marked = {
+                let _gate = node.disk.lock();
+                crate::collecting::begin(&node, places.clone())
+            };
+            match marked {
+                Ok(collecting) => break collecting,
+                Err(crate::collecting::Held::Read) => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::WouldBlock,
+                        "its command output is being read",
+                    ));
+                }
+                Err(crate::collecting::Held::Collecting) if waited.elapsed() < COLLECTED_WITHIN => {
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+                Err(crate::collecting::Held::Collecting) => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::WouldBlock,
+                        "a command's files of it are still being let go of",
+                    ));
+                }
+            }
+        };
         let mut aliases = Vec::new();
         let mut directories = Vec::new();
         for place in places {

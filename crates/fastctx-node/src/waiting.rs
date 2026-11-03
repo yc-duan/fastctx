@@ -35,15 +35,23 @@ pub async fn wait(
         let mut paths = Vec::new();
         let mut readers = Vec::new();
         for job in wanted {
+            let missing = || {
+                Failure::new(format!(
+                    "{here} has no job {job}; `fastctx w {job}` says where it runs, and `on` that machine waits there"
+                ))
+            };
             let path = crate::stop::find(&registering.world, &job)
                 .map_err(|error| Failure::new(format!("looking for {job}: {error}")))?
-                .ok_or_else(|| Failure::new(format!("{here} has no job {job}; `fastctx w {job}` says where it runs, and `on` that machine waits there")))?;
+                .ok_or_else(missing)?;
+            let reader = crate::job_reader::hold(&registering, &path).ok_or_else(missing)?;
             fastctx_hands::run::record::read(&path).map_err(|error| Failure::new(error.to_string()))?;
-            readers.push(crate::job_reader::hold(&registering, &path));
+            readers.push(reader);
             paths.push(path);
         }
         Ok::<_, Failure>((paths, readers))
-    }).await.map_err(|error| Failure::new(error.to_string()))??;
+    })
+    .await
+    .map_err(|error| Failure::new(error.to_string()))??;
     let mut held = Held { node: node.clone(), jobs: Vec::new(), followers: Vec::new(), _readers: readers, done: false };
     for (job, path) in jobs.iter().zip(&paths) {
         let _delivery = node.job_ends.lock(path).await;

@@ -200,9 +200,11 @@ pub(crate) fn start(node: &Arc<Node>) -> io::Result<()> {
 fn recover_book(node: &Arc<Node>) {
     let paths: Vec<_> = node.disk_due.lock().expect("never poisoned").iter().cloned().collect();
     for path in paths {
-        let lease = {
+        let Some(lease) = ({
             let _gate = node.disk.lock();
             crate::job_reader::hold(node, &path)
+        }) else {
+            continue;
         };
         let record = match record::read(&path) {
             Ok(record) if record.end.is_some() => record,
@@ -227,33 +229,11 @@ fn collect_immediate(node: &Arc<Node>) -> io::Result<()> {
     let paths: Vec<_> = node.disk_due.lock().expect("never poisoned").drain().collect();
     let mut failures = Vec::new();
     for path in paths {
-        // The gate is held for one job at a time: on a slow disk, as long as
-        // one job's files take, not every due job's.
-        let _gate = node.disk.lock();
-        match record::read(&path) {
-            Ok(job) if program::in_use(&job)? => {
+        match collect_due(node, &path) {
+            Ok(true) => {}
+            Ok(false) => {
                 node.disk_due.lock().expect("never poisoned").insert(path);
-                continue;
             }
-            Ok(_) => {}
-            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
-            Err(error) => {
-                failures.push(format!("{}: {error}", path.display()));
-                node.disk_due.lock().expect("never poisoned").insert(path);
-                continue;
-            }
-        }
-        if node.job_readers.lock().expect("never poisoned").contains_key(&path) {
-            node.disk_due.lock().expect("never poisoned").insert(path);
-            continue;
-        }
-        let collected = if crate::job_metadata::exists(&path.with_extension("delivered"))? {
-            crate::job_watch::collect(node, &path)
-        } else {
-            Ok(())
-        };
-        match collected {
-            Ok(()) => {}
             Err(error) => {
                 failures.push(format!("{}: {error}", path.display()));
                 node.disk_due.lock().expect("never poisoned").insert(path);
@@ -261,6 +241,33 @@ fn collect_immediate(node: &Arc<Node>) -> io::Result<()> {
         }
     }
     if failures.is_empty() { Ok(()) } else { Err(io::Error::other(failures.join("\n"))) }
+}
+
+/// Lets go of a due job's files once its end was delivered and nothing uses
+/// or reads it; false while something still does. What it is decided by
+/// stays so once it is (an end delivered, the job's processes gone), so it
+/// is read off the jobs' gate; the gate is held only to look for readers
+/// and mark the job, and its files go after (`crate::collecting`): on a slow
+/// disk, as long as they take, no other job waits for them.
+fn collect_due(node: &Arc<Node>, path: &Path) -> io::Result<bool> {
+    let job = match record::read(path) {
+        Ok(job) => job,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(true),
+        Err(error) => return Err(error),
+    };
+    if program::in_use(&job)? {
+        return Ok(false);
+    }
+    if !crate::job_metadata::exists(&path.with_extension("delivered"))? {
+        return Ok(true);
+    }
+    let marked = {
+        let _gate = node.disk.lock();
+        crate::collecting::begin(node, vec![path.to_path_buf()])
+    };
+    let Ok(_marked) = marked else { return Ok(false) };
+    crate::job_watch::collect(node, path)?;
+    Ok(true)
 }
 
 fn collect(node: &Arc<Node>, now: Timestamp) -> io::Result<()> {
@@ -271,6 +278,7 @@ fn collect(node: &Arc<Node>, now: Timestamp) -> io::Result<()> {
         now,
         lifetime,
         || node.disk.lock(),
+        |path| crate::collecting::begin(node, vec![path.to_path_buf()]).ok(),
         |path| {
             crate::on::unfollowed(node, path) && !node.job_readers.lock().expect("never poisoned").contains_key(path)
         },
@@ -286,21 +294,32 @@ fn collect(node: &Arc<Node>, now: Timestamp) -> io::Result<()> {
 }
 
 /// Each job's record, and each scratch and output directory, is looked at
-/// and let go under `hold`, the jobs' gate, taken for that one alone: a
-/// pass costs as much as history holds, a hold as much as one job.
-fn collect_records<G>(
+/// under `hold`, the jobs' gate, taken for that one alone: a pass costs as
+/// much as history holds, a hold as little as one job's look. What is to
+/// go is marked under it (`mark`) and let go of once it is let go
+/// (`crate::collecting`).
+#[allow(clippy::too_many_arguments)]
+fn collect_records<G, M>(
     world: &fastctx_types::layout::WorldDir,
     now: Timestamp,
     lifetime: i64,
     hold: impl Fn() -> G,
+    mark: impl Fn(&Path) -> Option<M>,
     unfollowed: impl Fn(&Path) -> bool,
     forget: impl Fn(&Path) -> io::Result<()>,
     idle: impl Fn(&Path) -> bool,
 ) -> io::Result<()> {
-    // A job still in use is left for a later pass, as the rest go on.
-    let forget = |path: &Path| match forget(path) {
-        Err(error) if error.kind() == io::ErrorKind::WouldBlock => Ok(false),
-        result => result.map(|()| true),
+    // A job still in use, or read since it was looked at, is left for a
+    // later pass, as the rest go on.
+    let forget = |path: &Path, held: G| {
+        let Some(marked) = mark(path) else { return Ok(false) };
+        drop(held);
+        let forgotten = match forget(path) {
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => Ok(false),
+            result => result.map(|()| true),
+        };
+        drop(marked);
+        forgotten
     };
     for parent in world.job_parents()? {
         for directory in entries(&parent)? {
@@ -313,7 +332,7 @@ fn collect_records<G>(
                 if path.extension().is_none_or(|extension| extension != "json") {
                     continue;
                 }
-                let _held = hold();
+                let held = hold();
                 let job = record::read(&path)?;
                 if job.is_sentinel()
                     && let Some(end) = &job.end
@@ -321,7 +340,7 @@ fn collect_records<G>(
                     && !program::in_use(&job)?
                     && unfollowed(&path)
                 {
-                    if !forget(&path)? {
+                    if !forget(&path, held)? {
                         pending = true;
                     }
                     continue;
@@ -346,7 +365,7 @@ fn collect_records<G>(
                                         || !unfollowed(&path)
                                         || crate::job_metadata::exists(&path.with_extension("owed"))?
                                         || !expired(now, delivery.at, lifetime)
-                                        || !forget(&path)?
+                                        || !forget(&path, held)?
                                     {
                                         pending = true;
                                     }
@@ -375,7 +394,7 @@ fn collect_records<G>(
                 }
                 // Watches still read the record after the supervisor exits.
                 // Their own forgetting mechanism serializes that last reader.
-                if !(delivery.shown_whole || expired(now, delivery.at, lifetime)) || !forget(&path)? {
+                if !(delivery.shown_whole || expired(now, delivery.at, lifetime)) || !forget(&path, held)? {
                     pending = true;
                 }
             }
@@ -388,7 +407,7 @@ fn collect_records<G>(
                 else {
                     continue;
                 };
-                let _held = hold();
+                let held = hold();
                 if !fastctx_platform::disk::is_dir(&scratch)
                     || fastctx_platform::owned_directory::is_link(&fs::symlink_metadata(&scratch)?)
                     || fastctx_platform::disk::exists(directory.join("jobs").join(format!("{job}.json")))?
@@ -398,7 +417,9 @@ fn collect_records<G>(
                 if fastctx_install::renewal::read_json::<Timestamp>(&scratch.join(".delivered"))?.is_some()
                     && retired_owner(world, &directory)?
                     && idle(&directory)
+                    && let Some(_marked) = mark(&scratch)
                 {
+                    drop(held);
                     fastctx_platform::owned_directory::delete(&scratch)?;
                 }
             }
@@ -407,8 +428,12 @@ fn collect_records<G>(
                 && retired_owner(world, &directory)?
                 && let Some(delivered) = latest
             {
-                let _held = hold();
-                collect_out(&directory.join("out"), delivered)?;
+                let held = hold();
+                let out = directory.join("out");
+                if let Some(_marked) = mark(&out) {
+                    drop(held);
+                    collect_out(&out, delivered)?;
+                }
             }
         }
     }

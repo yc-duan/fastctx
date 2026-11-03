@@ -1373,17 +1373,24 @@ pub(crate) struct Follower {
 }
 
 impl Follower {
-    pub(crate) fn reserved(node: &Arc<Node>, path: &Path, internal: bool) -> Self {
+    /// Under the jobs' gate; none for a job being let go of
+    /// (`crate::collecting`).
+    pub(crate) fn reserved(node: &Arc<Node>, path: &Path, internal: bool) -> Option<Self> {
+        let reader = crate::job_reader::hold(node, path)?;
         *node.following.lock().expect("never poisoned").entry(path.to_path_buf()).or_default() += 1;
-        Self { node: node.clone(), path: path.to_path_buf(), _reader: crate::job_reader::hold(node, path), internal }
+        Some(Self { node: node.clone(), path: path.to_path_buf(), _reader: reader, internal })
     }
 
     async fn new(node: &Arc<Node>, path: &Path) -> Result<Self, Failure> {
         let (node, path) = (node.clone(), path.to_path_buf());
         fastctx_platform::task::spawn_blocking(move || {
             let _gate = node.disk.lock();
+            if crate::collecting::gone(&node, &path) {
+                return Err(Failure::new(crate::job_reader::gone().to_string()));
+            }
             let record = fastctx_hands::run::record::read(&path).map_err(|error| Failure::new(error.to_string()))?;
-            Ok(Self::reserved(&node, &path, record.is_sentinel()))
+            Self::reserved(&node, &path, record.is_sentinel())
+                .ok_or_else(|| Failure::new(crate::job_reader::gone().to_string()))
         })
         .await
         .map_err(|error| Failure::new(error.to_string()))?

@@ -1,9 +1,14 @@
 //! Old per-node programs retire after their processes and reserved jobs do.
+//!
+//! None of it is done under the jobs' gate: a job started while the jobs'
+//! uses are read runs this node's own program, which is in use while the
+//! node runs, and a program is let go of only while the system says no
+//! process runs it, with a handle held meanwhile that keeps any from
+//! starting it (`fastctx_platform::image_usage`).
 
 use crate::Node;
 
 pub(crate) fn collect(node: &Node) -> anyhow::Result<()> {
-    let _collecting = node.disk.lock();
     collect_legacy(&node.world)?;
     fastctx_install::program_collection::collect(&node.root)?;
     let Some(_apply) = fastctx_platform::FileLock::try_acquire(&node.root.join("apply.lock"))? else { return Ok(()) };

@@ -231,6 +231,9 @@ fn received_here(
         paths
     };
     for path in paths {
+        if crate::collecting::gone(node, &path) {
+            continue;
+        }
         let job = match record::read(&path) {
             Ok(job) => job,
             Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
@@ -356,6 +359,7 @@ pub(crate) fn wait_taken(
     let parent = parent
         .map(|parent| {
             let path = crate::stop::find(&node.world, parent)?
+                .filter(|path| !crate::collecting::gone(node, path))
                 .ok_or_else(|| io::Error::other("the enclosing wait job disappeared"))?;
             let record = record::read(&path)?;
             if record.owner != *caller {
@@ -366,6 +370,7 @@ pub(crate) fn wait_taken(
         .transpose()?;
     for completed in jobs {
         let path = crate::stop::find(&node.world, &completed.job)?
+            .filter(|path| !crate::collecting::gone(node, path))
             .ok_or_else(|| io::Error::other("waited job disappeared"))?;
         let record = record::read(&path)?;
         if record.machine != completed.machine || record.output != completed.output || record.end.is_none() {
@@ -520,7 +525,7 @@ fn snapshot_here(
     seen: &mut HashSet<PathBuf>,
     receipts: &mut Vec<NoticeId>,
 ) -> io::Result<()> {
-    if !seen.insert(path.to_path_buf()) {
+    if !seen.insert(path.to_path_buf()) || crate::collecting::gone(node, path) {
         return Ok(());
     }
     let record = match record::read(path) {
@@ -543,6 +548,9 @@ fn snapshot_here(
             for parent in node.world.job_parents()? {
                 for directory in crate::retention::entries(&parent)? {
                     let path = directory.join("jobs").join(format!("{}.json", child.completed.job));
+                    if crate::collecting::gone(node, &path) {
+                        continue;
+                    }
                     let target = match record::read(&path) {
                         Ok(record) => record,
                         Err(error) if error.kind() == io::ErrorKind::NotFound => continue,

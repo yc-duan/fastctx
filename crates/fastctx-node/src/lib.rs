@@ -36,6 +36,7 @@ mod codex;
 mod codex_title;
 mod collab;
 mod colleagues;
+mod collecting;
 mod completion_debt;
 mod completion_delivery;
 mod composer;
@@ -254,6 +255,8 @@ pub(crate) struct Node {
     disk_changed: tokio::sync::Notify,
     disk_due: std::sync::Mutex<std::collections::HashSet<PathBuf>>,
     job_readers: std::sync::Mutex<std::collections::HashMap<PathBuf, usize>>,
+    /// Jobs' files let go of off the jobs' gate (`collecting`).
+    collecting: std::sync::Mutex<Vec<PathBuf>>,
     residents: residents::Residents,
     contexts: context::Updates,
     context_deliveries: context::Deliveries,
@@ -818,6 +821,7 @@ pub async fn run_prepared(
                 disk_changed: Default::default(),
                 disk_due: Default::default(),
                 job_readers: Default::default(),
+                collecting: Default::default(),
                 residents,
                 codex,
                 logins: logins::Logins::default(),

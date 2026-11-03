@@ -192,11 +192,13 @@ impl Jobs {
                     crate::run_stops::register(&registering, path, dispatch)?;
                 }
                 if let Some(registration) = registration {
-                    *registration.lock() = Some(crate::on::Follower::reserved(
+                    let follower = crate::on::Follower::reserved(
                         &registering,
                         path,
                         on.as_ref().is_some_and(|on| on.sentinel.is_some()),
-                    ));
+                    )
+                    .ok_or_else(|| failure("following the job", crate::job_reader::gone()))?;
+                    *registration.lock() = Some(follower);
                 }
                 Ok(())
             })?;

@@ -45,6 +45,9 @@ pub(crate) async fn restore(node: &Arc<Node>, path: &Path, record: &JobRecord) -
 /// scratch await the enclosing answer's host receipt.
 pub(crate) fn copied(node: &Arc<Node>, path: &Path) -> std::io::Result<()> {
     let _gate = node.disk.lock();
+    if crate::collecting::gone(node, path) {
+        return Ok(());
+    }
     crate::job_metadata::put_raw(&path.with_extension("copied"), b"")?;
     {
         let mut watched = node.job_watches.0.lock().expect("never poisoned");
