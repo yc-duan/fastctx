@@ -19,9 +19,11 @@ pub struct Agent {
     pub title: &'static str,
     /// Its user-level configuration directory.
     pub home: Home,
-    /// What only it keeps in its home, any one of which shows it is there,
-    /// where another agent keeps the same home (Qoder's CLI and its editor
-    /// both keep `.qoder`); none: its home being there is enough.
+    /// What only it keeps, any one of which shows it is there, relative to
+    /// its home as a place's file is and `.` the home itself: where another
+    /// agent keeps the same home (Qoder's CLI and its editor both keep
+    /// `.qoder`), or it may keep what it writes beside it (Claude Desktop's
+    /// Store package); none: its home being there is enough.
     pub marks: &'static [&'static str],
     /// How it is known to be installed, and its version read.
     pub programs: &'static [Program],
@@ -105,10 +107,11 @@ impl To {
 /// Which of several places the agent reads, and so where a change goes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Pick {
-    /// The first whose file is there, else the first: the agent reads that
-    /// one alone (Amp's `settings.json`, else its `settings.jsonc`). A file
-    /// only Fastctx made is not counted.
-    Present,
+    /// The first whose file is there, in the order the agent looks for
+    /// them, else the one at `made`: the agent reads that one alone (Amp's
+    /// `settings.json`, else its `settings.jsonc`). A file only Fastctx made
+    /// is not counted.
+    Present { made: usize },
     /// The first that holds a server besides Fastctx's, else the first: the
     /// agent reads that one alone (ZCode's own file while it holds any
     /// server, else the one it shares).
@@ -226,5 +229,5 @@ pub fn located(home: &Path, file: &str) -> PathBuf {
         base.pop();
         rest = after;
     }
-    base.join(rest)
+    if rest.is_empty() || rest == "." { base } else { base.join(rest) }
 }

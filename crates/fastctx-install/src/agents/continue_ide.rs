@@ -5,7 +5,7 @@
 
 use serde_json::{Value, json};
 
-use super::spec::{Agent, Format, Home, Mcp, Place, Server, Slot, To};
+use super::spec::{Agent, Format, Guidance, Home, Mcp, Place, Server, Slot, To};
 
 pub(super) const AGENT: Agent = Agent {
     name: "continue-ide",
@@ -18,7 +18,9 @@ pub(super) const AGENT: Agent = Agent {
         slot: Slot::Named,
         entry,
     },
-    guidance: None,
+    // A rule with no header applies always only on a path holding
+    // `.continue/`, which a Windows path never spells so.
+    guidance: Some(Guidance { file: "rules/fastctx.md", head: Some("---\nalwaysApply: true\n---\n"), most: None }),
     shell: &[],
     limits: &[],
     data: None,

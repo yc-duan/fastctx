@@ -18,10 +18,10 @@ pub(super) const AGENT: Agent = Agent {
     home: Home { env: &[("XDG_CONFIG_HOME", "amp")], default: ".config/amp" },
     marks: &[],
     programs: &[Program::Command("amp"), Program::Npm("@ampcode/cli")],
-    mcp: Mcp { to: To::Among(SERVERS, Pick::Present), slot: Slot::Named, entry },
+    mcp: Mcp { to: To::Among(SERVERS, Pick::Present { made: 0 }), slot: Slot::Named, entry },
     guidance: Some(Guidance { file: "AGENTS.md", head: None, most: None }),
     shell: &[Edit::Add {
-        to: To::Among(DISABLED, Pick::Present),
+        to: To::Among(DISABLED, Pick::Present { made: 0 }),
         item: || json!("builtin:{Bash,shell_command,async_shell_command}"),
     }],
     limits: &[],

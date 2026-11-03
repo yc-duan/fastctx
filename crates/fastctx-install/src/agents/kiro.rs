@@ -21,7 +21,7 @@ pub(super) const AGENT: Agent = Agent {
     },
     guidance: Some(Guidance { file: "steering/fastctx.md", head: None, most: None }),
     shell: &[Edit::Add {
-        to: To::Among(PERMISSIONS, Pick::Present),
+        to: To::Among(PERMISSIONS, Pick::Present { made: 0 }),
         item: || json!({ "capability": "shell", "effect": "deny" }),
     }],
     limits: &[],

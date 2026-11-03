@@ -154,9 +154,16 @@ pub fn connect(
 
     let entry = (agent.mcp.entry)(server);
     let place = choose(&agent.mcp.to, files, &alone, &agent.mcp.slot)?;
-    let before = previous.and_then(|previous| previous.server.as_ref());
-    let before = moved(&mut work, Change::Tools, before, place, &mut notices)?;
+    let held = previous.and_then(|previous| previous.server.as_ref());
+    let before = moved(&mut work, Change::Tools, held, place, &mut notices)?;
     let owned = match agent.mcp.slot {
+        // The agent may have copied Fastctx's entry to the file it reads now.
+        Slot::Named if held.is_some() && before.is_none() => {
+            match set(&mut work, place, "fastctx", &entry, None, take_back, false)? {
+                (Owned::Set(placed), next) => (Owned::Set(placed.over_own_copy()), next),
+                owned => owned,
+            }
+        }
         Slot::Named => set(&mut work, place, "fastctx", &entry, before, take_back, false)?,
         Slot::Listed { key, value } => {
             let ours = move |item: &Json| at_key(item, key).and_then(Json::as_str) == Some(value);
@@ -328,12 +335,16 @@ fn choose<'p>(to: &'p To, files: &Files, alone: &BTreeSet<&str>, slot: &Slot) ->
         To::One(place) => return Ok(place),
         To::Among(places, pick) => (*places, *pick),
     };
-    let first = places.first().ok_or_else(|| Error::at("an agent", "names no place for a change"))?;
+    let made = match pick {
+        Pick::Present { made } => made,
+        Pick::Holding => 0,
+    };
+    let first = places.get(made).ok_or_else(|| Error::at("an agent", "names no place for a change"))?;
     for place in places {
         let (path, bytes) =
             files.get(place.file).map_or((place.file, None), |(path, bytes)| (path.as_str(), bytes.as_deref()));
         let chosen = match pick {
-            Pick::Present => bytes.is_some() && !alone.contains(place.file),
+            Pick::Present { .. } => bytes.is_some() && !alone.contains(place.file),
             Pick::Holding => servers_besides(place, path, bytes, slot)? > 0,
         };
         if chosen {

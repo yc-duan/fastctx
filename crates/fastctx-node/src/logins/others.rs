@@ -25,12 +25,15 @@ pub(super) fn default_home(context: &Context, agent: &Agent) -> PathBuf {
     })
 }
 
-/// Whether `agent` is in `home`: the home is there, and where another
-/// agent keeps the same home, what only it keeps there too.
+/// Whether `agent` is in `home`: the home is there, or where it says what
+/// only it keeps, one of those.
 fn present(agent: &Agent, home: &Path) -> bool {
-    fastctx_platform::disk::is_dir(home)
-        && (agent.marks.is_empty()
-            || agent.marks.iter().any(|mark| fastctx_platform::disk::exists(home.join(mark)).unwrap_or(false)))
+    if agent.marks.is_empty() {
+        return fastctx_platform::disk::is_dir(home);
+    }
+    agent.marks.iter().any(|mark| {
+        fastctx_platform::disk::exists(fastctx_install::agents::located(home, mark)).unwrap_or(false)
+    })
 }
 
 /// Where `agent` keeps who is logged in: its data directory where it keeps

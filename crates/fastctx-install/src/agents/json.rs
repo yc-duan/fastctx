@@ -51,6 +51,13 @@ impl Placed {
         Self { before: None, ..self }
     }
 
+    /// This placing over a copy of Fastctx's own entry the agent made, in
+    /// the file it reads now: the copy is Fastctx's, taken out with it.
+    pub fn over_own_copy(self) -> Self {
+        let copy = self.before.as_deref().and_then(|before| serde_json::from_str::<Json>(before).ok());
+        if copy.as_ref() == Some(&self.written) { Self { before: None, ..self } } else { self }
+    }
+
     /// The value Fastctx wrote.
     pub fn written(&self) -> &Json {
         &self.written

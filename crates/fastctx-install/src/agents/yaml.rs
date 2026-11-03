@@ -132,6 +132,8 @@ pub fn place(
     let placed = match previous {
         Some(previous) if ours || take_back => Placed { written: value.clone(), ..previous.clone() },
         Some(_) => return Err(Error::at(place, "changed since Fastctx wrote it")),
+        // An entry exactly as Fastctx writes it is taken as Fastctx's.
+        None if current == *value && !adopt => fresh(None, 0, None),
         None if current == *value || adopt || take_back => {
             fresh(Some(Outline::of(&text).scalar_text(at, name, &place)?), 0, None)
         }
