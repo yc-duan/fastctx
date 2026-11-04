@@ -23,6 +23,21 @@ use crate::Node;
 /// reloaded ends its helper before the next one names itself.
 const FOLLOWED_WITHIN: Duration = Duration::from_secs(60);
 
+/// Where a session the plugin was gone from tells Claude Code's own account
+/// of itself the next time it is woken, and what says it is to: so that, if
+/// it goes again, why is on record, which the session's record never says.
+/// Claude Code turns the file over at ten megabytes; only such a session
+/// writes one.
+pub(super) const DEBUG_LOG: &str = "claude-debug.log";
+const DEBUG_NEXT: &str = "debug-next";
+
+/// Whether the session in `session_directory` is to be woken telling its
+/// account of itself to `DEBUG_LOG`; asked once, as it is woken.
+pub(super) fn debugged(session_directory: &Path) -> bool {
+    let marker = session_directory.join(DEBUG_NEXT);
+    fastctx_platform::disk::is_there(&marker) && fastctx_platform::disk::remove_file(&marker).is_ok()
+}
+
 /// What the people who look at the session are told; the interface knows it
 /// by its beginning.
 pub(crate) const UNLOADED: &str =
@@ -80,6 +95,9 @@ async fn restart(node: &Arc<Node>, host: &Host, session_directory: &Path) -> boo
     node.log.line(format_args!(
         "the World's plugin is gone from Claude session {session} of {resident}, whose Claude Code runs on; it is stopped, to start again with the plugin"
     ));
+    if let Err(error) = fastctx_platform::disk::write(session_directory.join(DEBUG_NEXT), b"") {
+        node.log.line(format_args!("asking that {session} be woken with Claude Code's account kept: {error}"));
+    }
     let turn = node.residents.now(&resident).and_then(|now| now.turn);
     let health = Health { kind: HealthKind::ToolsMissing, text: UNLOADED.to_string() };
     if let Err(error) = crate::turns::health(node, &resident, turn, health) {
