@@ -186,10 +186,26 @@ struct Opened {
     afoot_pending: bool,
 }
 
+/// How long each way after the first waits before it is dialed too, in its
+/// order: the way that took last, or the hub's own, answers first where it can.
+const STAGGER: Duration = Duration::from_millis(250);
+
+/// How soon a way that failed is dialed again while others are still being
+/// dialed, at first; it doubles after each. A hub restarting refuses for a
+/// moment and takes a second later, while a way through another machine that
+/// cannot be reached hangs for its whole silence: the hub's own way is not
+/// left waiting behind it (11-04: a second's restart kept a machine offline
+/// for 61).
+const AGAIN: Duration = Duration::from_secs(2);
+
 /// Opens a session by the first way to the hub that takes it, the way that
-/// last did tried first. The ways before the one it opens on, in their own
-/// order, are asked again while it is on (`ask_preferred`), so a machine on
-/// another machine's forwarding goes back to its own line once that works.
+/// last did tried first. The ways are dialed together, each a little after the
+/// one before it, and one that fails is dialed again while others are still
+/// being dialed; only the first dialed through says hello, the rest are let go
+/// before they do, for two sessions that said it would replace each other.
+/// The ways before the one it opens on, in their own order, are asked again
+/// while it is on (`ask_preferred`), so a machine on another machine's
+/// forwarding goes back to its own line once that works.
 async fn connect(inner: &Arc<Inner>, online_since: &mut Option<Instant>) -> Ended {
     let upstreams = inner.upstreams();
     let last = inner.last_way.lock().expect("never poisoned").clone();
@@ -199,26 +215,75 @@ async fn connect(inner: &Arc<Inner>, online_since: &mut Option<Instant>) -> Ende
         order.insert(0, first);
     }
     let mut failures = Vec::new();
-    for index in order {
-        let upstream = &upstreams[index];
-        match open(inner, upstream).await {
-            Ok(opened) => {
-                *inner.last_way.lock().expect("never poisoned") = Some(upstream.clone());
-                return connected(inner, online_since, &upstreams[..=index], opened).await;
-            }
-            Err(Ended::Retry(reason)) => failures.push(format!("{upstream}: {reason}")),
-            Err(ended) => return ended,
+    let Some((index, dialed)) = dial_any(inner, &upstreams, &order, &mut failures).await else {
+        return Ended::Retry(failures.join("; "));
+    };
+    let upstream = &upstreams[index];
+    match greet(inner, upstream, dialed).await {
+        Ok(opened) => {
+            *inner.last_way.lock().expect("never poisoned") = Some(upstream.clone());
+            connected(inner, online_since, &upstreams[..=index], opened).await
         }
+        Err(Ended::Retry(reason)) => {
+            failures.push(format!("{upstream}: {reason}"));
+            Ended::Retry(failures.join("; "))
+        }
+        Err(ended) => ended,
     }
-    Ended::Retry(failures.join("; "))
 }
 
-async fn open(inner: &Arc<Inner>, upstream: &Upstream) -> Result<Opened, Ended> {
+/// The first of `upstreams` dialed through, as `connect` dials them; none
+/// where each failed, with why in `failures`.
+async fn dial_any(
+    inner: &Arc<Inner>,
+    upstreams: &[Upstream],
+    order: &[usize],
+    failures: &mut Vec<String>,
+) -> Option<(usize, dial::Dialed)> {
     let membership = inner.membership();
-    let dialed =
-        dial::dial_upstream(upstream, &membership.id, membership.cert, wire::CONTROL_PATH, wire::MAX_CONTROL_FRAME)
-            .await
-            .map_err(Ended::Retry)?;
+    let dial_one = |index: usize, after: Duration| {
+        let (upstream, membership) = (&upstreams[index], &membership);
+        async move {
+            tokio::time::sleep(after).await;
+            let dialed = dial::dial_upstream(
+                upstream,
+                &membership.id,
+                membership.cert,
+                wire::CONTROL_PATH,
+                wire::MAX_CONTROL_FRAME,
+            )
+            .await;
+            (index, dialed)
+        }
+    };
+    let began = Instant::now();
+    let mut dialing = futures_util::stream::FuturesUnordered::new();
+    for (position, &index) in order.iter().enumerate() {
+        dialing.push(dial_one(index, STAGGER * u32::try_from(position).unwrap_or(u32::MAX)));
+    }
+    let mut again: std::collections::HashMap<usize, Duration> = std::collections::HashMap::new();
+    while let Some((index, dialed)) = dialing.next().await {
+        match dialed {
+            // Those still being dialed are let go with `dialing`, before any
+            // of them says hello.
+            Ok(dialed) => return Some((index, dialed)),
+            Err(reason) => {
+                let wait = *again.entry(index).or_insert(AGAIN);
+                if !dialing.is_empty() && began.elapsed() + wait < SILENCE {
+                    again.insert(index, wait * 2);
+                    dialing.push(dial_one(index, wait));
+                } else {
+                    failures.push(format!("{}: {reason}", upstreams[index]));
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Says hello on a way dialed through, and takes the hub's welcome.
+async fn greet(inner: &Arc<Inner>, upstream: &Upstream, dialed: dial::Dialed) -> Result<Opened, Ended> {
+    let membership = inner.membership();
     let (address, route) = (dialed.address, dialed.route.clone());
     let mut socket = dialed.socket;
     let proof = inner.key.sign(Domain::Session, &dialed.binding);
