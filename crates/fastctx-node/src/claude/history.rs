@@ -7,6 +7,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use fastctx_hosts::claude::{self, exchange, transcript};
 use fastctx_types::session::{Happened, Health, HealthKind, SessionEvent};
@@ -14,6 +15,16 @@ use fastctx_types::{ProcessIdentity, ResidentId};
 use jiff::Timestamp;
 
 use crate::Node;
+
+/// How long a reading waits for Claude Code to write what its mod saw it
+/// keep: past it, the record is read as its file holds it then, a reading
+/// not kept for the viewers who come next. Well within the 30 s a viewer on
+/// this machine waits for its whole opening (`watch_ipc::TIMEOUT`).
+const WRITTEN_WITHIN: Duration = Duration::from_secs(10);
+
+/// How many times a reading a session at work overtook is made again before
+/// it is given up, each a little later than the one before.
+const OVERTAKEN_MOST: u32 = 10;
 
 /// What Claude Code kept of the resident's sessions, oldest first, placed
 /// in the World's turns of `recorded` where the World saw them happen; and
@@ -34,12 +45,16 @@ pub async fn hosted(node: &Arc<Node>, resident: &ResidentId, recorded: &[Session
     // earlier one only there (`continuing`): by the ids of their records.
     let mut earlier = HashSet::new();
     for Session { id, began, process, kept } in sessions {
-        let read = read_whole(root.join(&id), kept, process, earlier.clone()).await;
-        if let Ok(read) = &read {
+        let _doing = fastctx_platform::doing::doing(format!("reading Claude session {id}'s record"));
+        let read = read_whole(node, &id, root.join(&id), kept, process, earlier.clone()).await;
+        if let Ok((read, _)) = &read {
             earlier.extend(read.uuids.iter().cloned());
         }
         match read {
-            Ok(read) => {
+            Ok((read, whole)) => {
+                // Read before it held all its mod saw kept: read again next
+                // time, not kept.
+                unread |= !whole;
                 // The title belongs to the session, so it takes the session's
                 // time: read again, the history reads the same.
                 if let Some(title) = read.title {
@@ -120,7 +135,14 @@ pub(super) async fn wait_stored(node: &Arc<Node>, session: &str) -> Result<(), S
     if kept.is_none() {
         return Ok(());
     }
-    let read = read_whole(exchange::sessions(node.world.path()).join(session), kept, process, HashSet::new()).await?;
+    let directory = exchange::sessions(node.world.path()).join(session);
+    let (read, whole) = read_whole(node, session, directory, kept, process, HashSet::new()).await?;
+    if !whole {
+        return Err(format!(
+            "Claude Code did not write the last of what it kept to its record within {} s",
+            WRITTEN_WITHIN.as_secs()
+        ));
+    }
     if read.problems.is_empty() { Ok(()) } else { Err(read.problems.join("; ")) }
 }
 
@@ -186,17 +208,22 @@ fn sessions(node: &Node, resident: &ResidentId) -> (Vec<Session>, Vec<String>) {
     (sessions, problems)
 }
 
-/// Reads a session's record once it holds `kept`. Claude Code writes its
-/// file a while after it keeps a record, with no bound on how long and no
-/// sign when it has (2.1.289): what was kept just before is waited for,
-/// read again at each change to the file, until it is there or the
-/// session's process has ended.
+/// Reads a session's record once it holds `kept`, and whether it did.
+/// Claude Code writes its file a while after it keeps a record, with no
+/// bound on how long and no sign when it has (2.1.289): what was kept just
+/// before is waited for, read again at each change to the file, until it is
+/// there, or a record its mod saw kept since is, as the file holds them in
+/// the order they were kept; until the session's process has ended; or for
+/// `WRITTEN_WITHIN` at most, as a record the mod saw may reach the file
+/// under another UUID or never.
 async fn read_whole(
+    node: &Arc<Node>,
+    session: &str,
     directory: PathBuf,
     kept: Option<String>,
     process: Option<ProcessIdentity>,
     earlier: HashSet<String>,
-) -> Result<transcript::Transcript, String> {
+) -> Result<(transcript::Transcript, bool), String> {
     let (cuts, path) = {
         let directory = directory.clone();
         fastctx_platform::task::blocking(move || {
@@ -208,7 +235,13 @@ async fn read_whole(
         })
         .await?
     };
-    let Some(kept) = kept else { return read_now(path, cuts, earlier).await };
+    let Some(kept) = kept else { return read_now(path, cuts, earlier).await.map(|read| (read, true)) };
+    let _waiting = fastctx_platform::doing::waiting_outside(
+        format!("Claude Code to write {kept} to session {session}'s record"),
+        WRITTEN_WITHIN,
+    );
+    let gave_up = tokio::time::sleep(WRITTEN_WITHIN);
+    tokio::pin!(gave_up);
     // Watched before it is read, so no change between the two goes unseen.
     // The record is on disk whether or not its folder can be watched: one
     // that cannot is read again every two seconds instead.
@@ -226,31 +259,49 @@ async fn read_whole(
     };
     loop {
         let read = read_now(path.clone(), cuts.clone(), earlier.clone()).await?;
-        if read.uuids.contains(&kept) {
-            return Ok(read);
+        let latest = node.claude.state.lock().expect("never poisoned").stored.get::<String>(session);
+        if read.uuids.contains(&kept) || latest.is_some_and(|latest| read.uuids.contains(&latest)) {
+            return Ok((read, true));
         }
         tokio::select! {
             Some(()) = changes.recv() => {}
-            () = tokio::time::sleep(std::time::Duration::from_secs(2)), if !watched => {}
+            () = tokio::time::sleep(Duration::from_secs(2)), if !watched => {}
+            () = &mut gave_up => {
+                // Waited for in vain: the readings after this take the file as
+                // it is, until the mod sees another record kept.
+                {
+                    let state = node.claude.state.lock().expect("never poisoned");
+                    if state.stored.get::<String>(session).as_deref() == Some(kept.as_str()) {
+                        state.stored.remove(&session);
+                    }
+                }
+                node.log.line(format_args!(
+                    "Claude Code did not write {kept} to session {session}'s record within {} s; it is read as its file holds it",
+                    WRITTEN_WITHIN.as_secs()
+                ));
+                return Ok((read, false));
+            }
             result = &mut ended => {
                 result.map_err(|error| format!("observing Claude's process: {error}"))?;
                 let mut read = read_now(path.clone(), cuts.clone(), earlier.clone()).await?;
                 if !read.uuids.contains(&kept) {
                     read.problems.push("its process ended before its file held the last of what it kept".to_string());
                 }
-                return Ok(read);
+                return Ok((read, true));
             }
         }
     }
 }
 
 /// The record as the file holds it now. A session at work adds to its file
-/// as it goes; a read it overtook is read again, until one sees it whole.
+/// as it goes; a read it overtook is read again a little later, until one
+/// sees it whole, `OVERTAKEN_MOST` times at most.
 async fn read_now(
     path: PathBuf,
     cuts: Vec<transcript::HistoryCut>,
     earlier: HashSet<String>,
 ) -> Result<transcript::Transcript, String> {
+    let mut overtaken = 0;
     loop {
         let reading = path.clone();
         let cuts = cuts.clone();
@@ -261,7 +312,14 @@ async fn read_now(
                 .map_err(|error| format!("reading it: {error}"))?;
         match read {
             Ok(read) => return Ok(read),
-            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted && overtaken < OVERTAKEN_MOST => {
+                overtaken += 1;
+                // The writing that overtook it comes in bursts: let one end.
+                tokio::time::sleep(Duration::from_millis(100) * overtaken.min(10)).await;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {
+                return Err(format!("{} changed each of the {OVERTAKEN_MOST} times it was read", path.display()));
+            }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 return Err(format!("{} is gone; Claude Code removes old sessions itself", path.display()));
             }

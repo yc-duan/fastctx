@@ -33,7 +33,9 @@ pub struct Transcript {
     pub events: Vec<SessionEvent>,
     pub problems: Vec<String>,
     /// Every record's UUID the file holds, shown or not: whether a record
-    /// the session is known to have kept has reached the file yet.
+    /// the session is known to have kept has reached the file yet. A
+    /// message queued while a turn ran is kept in a row of its own, which
+    /// names the message's UUID as its source: that UUID counts too.
     pub uuids: HashSet<String>,
     /// The agents the session started, as the files beside its record tell
     /// them.
@@ -159,6 +161,7 @@ fn read_rows(
     let mut reader = BufReader::new(file);
     let mut rows: Vec<Row> = Vec::new();
     let mut by_uuid = HashMap::new();
+    let mut queued = HashSet::new();
     let mut transcript = Transcript {
         title: None,
         pending_cuts: false,
@@ -235,6 +238,16 @@ fn read_rows(
         if bookkeeping(row.kind().expect("type checked")) {
             continue;
         }
+        // A message queued while a turn ran (a background task's notice, words
+        // sent meanwhile) reaches the file as an attachment of its own UUID
+        // that names the message's as its source (2.1.303).
+        if row.kind() == Some("attachment")
+            && row.value.pointer("/attachment/type").and_then(Value::as_str) == Some("queued_command")
+            && let Some(source) = row.value.pointer("/attachment/source_uuid").and_then(Value::as_str)
+            && !source.is_empty()
+        {
+            queued.insert(source.to_string());
+        }
         if let Some(uuid) = row.value.get("uuid") {
             let Some(uuid) = uuid.as_str().filter(|uuid| !uuid.is_empty()) else {
                 transcript.problem(&row, "uuid is not a nonempty string");
@@ -259,7 +272,7 @@ fn read_rows(
     {
         return Err(io::Error::new(io::ErrorKind::Interrupted, "Claude transcript changed while it was being read"));
     }
-    transcript.uuids = by_uuid.keys().cloned().collect();
+    transcript.uuids = by_uuid.keys().cloned().chain(queued).collect();
     transcript.title = titles.title();
     transcript.tail_uuid = rows
         .iter()
