@@ -71,16 +71,9 @@ impl CodexHost {
         if self.lock().threads.get(thread).is_some_and(|entry| entry.turn.is_some() || entry.submitted) {
             return Err("this Codex thread is running a turn".into());
         }
-        // Codex says it does not know the thread in either of these ways:
-        // 0.160 names the thread, later versions the rollout it lacks.
         let deleted = match server.ask("thread/delete", json!({"threadId":thread})).await {
             Ok(_) => true,
-            Err(super::server::Unanswered::Rpc { code: -32600, message, .. })
-                if message == format!("thread not found: {thread}")
-                    || message == format!("no rollout found for thread id {thread}") =>
-            {
-                false
-            }
+            Err(unanswered) if unknown(&unanswered, thread) => false,
             Err(error) => return Err(error.to_string()),
         };
         self.lock().threads.remove(thread);
@@ -88,11 +81,18 @@ impl CodexHost {
     }
 
     /// Archiving also closes a loaded runtime. Failure may follow closure;
-    /// keep the official error and the host's reported events intact.
+    /// keep the official error and the host's reported events intact. A
+    /// thread Codex keeps no rollout of, as one archived already, counts as
+    /// archived: deleting a conversation its forks still need archives its
+    /// thread, and one archived before must not hold that deletion back.
     pub async fn archive(self: &Arc<Self>, thread: &str) -> Result<(), String> {
         let server = self.server().await?;
         let _loading = self.loading.lock().await;
-        server.request("thread/archive", json!({"threadId":thread})).await?;
+        match server.ask("thread/archive", json!({"threadId":thread})).await {
+            Ok(_) => {}
+            Err(unanswered) if unknown(&unanswered, thread) => {}
+            Err(error) => return Err(error.to_string()),
+        }
         if let Some(entry) = self.lock().threads.get_mut(thread) {
             entry.loaded = false;
             entry.subscribed = false;
@@ -108,4 +108,15 @@ impl CodexHost {
         server.request("thread/unarchive", json!({"threadId":thread})).await?;
         Ok(())
     }
+}
+
+/// Whether Codex answered that it does not know `thread`: 0.160 names the
+/// thread or the rollout it lacks, later versions the rollout.
+fn unknown(unanswered: &super::server::Unanswered, thread: &str) -> bool {
+    matches!(
+        unanswered,
+        super::server::Unanswered::Rpc { code: -32600, message, .. }
+            if *message == format!("thread not found: {thread}")
+                || *message == format!("no rollout found for thread id {thread}")
+    )
 }
