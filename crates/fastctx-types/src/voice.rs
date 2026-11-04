@@ -6,6 +6,13 @@ use serde::{Deserialize, Serialize};
 /// The tool's name, as hosts list it.
 pub const TOOL: &str = "message_user";
 
+/// The tool's description as a colleague reads it: the same person, the one
+/// the agent that asked it works for, whom it answers when they speak to it;
+/// what that agent wants goes to it (`world-colleagues.md`, 两个工具).
+pub const COLLEAGUE_DESCRIPTION: &str = "Talk to the user: the person the agent that asked you works for. They read what you send here, as messages from you; nothing else you write reaches them, and the last thing you say in a turn goes to the agent that asked you, not to them. Use it to answer the user when they speak to you; what the agent that asked you wants goes to it.
+
+status \"reply\" answers what the user just said; \"info\" can wait until they look; \"urgent\" means they should know soon. message is Markdown. attachments shows files with it: images, diffs, logs, each on its machine.";
+
 /// The tool's description: how a session talks to the person it works for,
 /// as that person, not as a log of its work (`world-voice.md`).
 pub const DESCRIPTION: &str = "Talk to the user. You are doing work for a person, and this is the only way your words reach them: they read what you send here, as messages from you. Everything else you write stays on your side: your notes and updates between steps, and the final answer that ends a turn. They see those only if they open the full record of your work, and most never do. They may be away or asleep; nothing waits for them.

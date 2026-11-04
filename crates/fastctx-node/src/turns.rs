@@ -21,7 +21,7 @@ pub(crate) use settlement::settle_terminal_locked;
 use std::sync::Arc;
 
 use fastctx_types::layout::ConversationDir;
-use fastctx_types::residents::{Delivery, LAST_SAID_CHARS, Notice, Origin, Owing, Pending, TellStatus, Trouble};
+use fastctx_types::residents::{Delivery, LAST_SAID_CHARS, Notice, Origin, Owing, Pending, Trouble};
 use fastctx_types::session::{Happened, Health, SessionChange, SessionEvent, TurnEnd, TurnHow};
 use fastctx_types::{Address, ResidentId};
 use jiff::Timestamp;
@@ -156,7 +156,7 @@ async fn apply_inner(node: &Arc<Node>, id: &ResidentId, mut event: SessionEvent)
             if let Some(said) = crate::asked::asked_without_stopping(item)
                 && !crate::goals::questions::route(node, id, item, event.at).await?
                 && crate::voice::speaks(node, id)
-                && let Err(error) = crate::voice::say(node, id, &said, TellStatus::Info, &[]).await
+                && let Err(error) = crate::voice::asked_without_stopping(node, id, &said).await
             {
                 node.log.line(format_args!("keeping what {id} asked without stopping: {}", error.message));
             }

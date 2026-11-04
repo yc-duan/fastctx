@@ -463,15 +463,16 @@ pub async fn thread_spec(
         ("FASTCTX_RESIDENT".to_string(), address.tag()),
         ("FASTCTX_AGENT_HOME".to_string(), home.map(|home| home.to_string_lossy().into_owned()).unwrap_or_default()),
     ];
-    // Every session the World starts speaks with message_user, a colleague
-    // to the agent that asked it; only one the user opened asks colleagues.
-    let mut tools = vec!["run", fastctx_types::voice::TOOL];
+    // Every session the World starts speaks to the user with message_user;
+    // a colleague messages the agent that asked it, and only one the user
+    // opened asks colleagues.
+    let mut tools = vec!["run", fastctx_types::voice::TOOL, "message_colleague"];
     // A colleague's thread is listed under its task; a session the user
     // opens is named by whichever client shows it first, as Codex does.
     let name = match origin {
         Origin::Colleague { label, .. } => Some(label.clone()).filter(|label| !label.trim().is_empty()),
         Origin::User => {
-            tools.extend(["ask_colleague", "message_colleague"]);
+            tools.push("ask_colleague");
             None
         }
     };
@@ -616,6 +617,8 @@ fn words(id: &ResidentId, town: Option<&TownName>, origin: &Origin, record: bool
 }
 
 /// Words from `from`, a resident of this machine, to `to`, on any machine.
+/// A colleague's go to the agent that asked it alone, and owe nothing back
+/// (`crate::voice::tell_asker`).
 pub async fn message(
     node: &Arc<Node>,
     from: ResidentId,
@@ -624,6 +627,24 @@ pub async fn message(
     text: String,
     login: Option<&fastctx_types::collab::Caller>,
 ) -> Result<(Address, Landed), Failure> {
+    if let Some((asker, _)) = crate::voice::asker_of(node, &from) {
+        if to != asker.resident || to_machine.as_ref().is_some_and(|machine| machine.name != asker.machine) {
+            return Err(Failure::not_run(fastctx_types::collab_prompt::only_asker(&asker.resident)));
+        }
+        let at = Timestamp::now();
+        let turn = node.residents.now(&from).and_then(|now| now.turn);
+        let asker = crate::voice::tell_asker(node, &from, &text, &[]).await?;
+        let action = Action {
+            turn,
+            at,
+            machine: asker.machine.clone(),
+            hand: "message_colleague".to_string(),
+            what: asker.resident.to_string(),
+            result: "sent".to_string(),
+        };
+        record(node, &from, action).await;
+        return Ok((asker, Landed::Sent));
+    }
     let choices = crate::collab::require(node, &from, login).await?;
     let here = node.machine();
     let at = Timestamp::now();

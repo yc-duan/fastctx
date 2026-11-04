@@ -22,6 +22,9 @@ pub struct Machines {
     pub scratch: fastctx_types::scratch::Descriptions,
     /// Whether the session speaks to the user through `message_user`.
     pub speaks: bool,
+    /// For a colleague, the agent that asked it, which its
+    /// `message_colleague` reaches.
+    pub asker: Option<fastctx_types::Address>,
 }
 
 impl Machines {
@@ -53,8 +56,10 @@ pub fn list_changed() -> Value {
 }
 
 /// The tools this session lists: the shell, and the colleague tools where
-/// an account enabled for this caller, which a
-/// colleague never has: the World is one level deep (`world-colleagues.md`).
+/// an account enabled for this caller, which a colleague never has: the
+/// World is one level deep (`world-colleagues.md`). A colleague messages the
+/// agent that asked it instead, and its `message_user` reaches the user as
+/// everyone's does.
 /// Writing files and going to other machines are commands in the shell
 /// (`world-run.md`, `world-write.md`). `woken` says whether the World can
 /// start a turn here when a job ends or an answer comes; elsewhere they come
@@ -62,12 +67,15 @@ pub fn list_changed() -> Value {
 /// the tools from Codex's `exec` must set.
 pub fn definitions(writes_off: bool, woken: bool, codex: bool, machines: Option<&Machines>) -> Value {
     let mut tools = vec![run_definition(writes_off, woken, codex, machines)];
+    let colleague = machines.is_some_and(|machines| machines.asker.is_some());
     if let Some(collab) = machines.and_then(|machines| machines.collab.as_ref()) {
         tools.push(ask_colleague_definition(collab));
         tools.push(message_colleague_definition());
+    } else if colleague {
+        tools.push(message_asker_definition());
     }
     if machines.is_some_and(|machines| machines.speaks) {
-        tools.push(message_user_definition());
+        tools.push(message_user_definition(colleague));
     }
     for tool in &mut tools {
         // Claude Code counts UTF-16 code units here. An answer of BUDGET
@@ -359,10 +367,41 @@ fn message_colleague_definition() -> Value {
     })
 }
 
-fn message_user_definition() -> Value {
+/// A colleague's `message_colleague`: to the agent that asked it, the only
+/// one it messages.
+fn message_asker_definition() -> Value {
+    json!({
+        "name": "message_colleague",
+        "description": fastctx_types::collab_prompt::MESSAGE_ASKER_DESCRIPTION,
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "message": {
+                    "type": "string",
+                    "description": "What to tell it, delivered word for word."
+                }
+            },
+            "required": ["message"]
+        },
+        "annotations": {
+            "title": "Message the agent that asked you",
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": false,
+            "openWorldHint": true
+        }
+    })
+}
+
+/// `message_user`, as a colleague reads it where `colleague`: the same
+/// person, whose words it answers, while its work goes to the agent that
+/// asked it.
+fn message_user_definition(colleague: bool) -> Value {
+    let description =
+        if colleague { fastctx_types::voice::COLLEAGUE_DESCRIPTION } else { fastctx_types::voice::DESCRIPTION };
     json!({
         "name": fastctx_types::voice::TOOL,
-        "description": fastctx_types::voice::DESCRIPTION,
+        "description": description,
         "inputSchema": {
             "type": "object",
             "properties": {

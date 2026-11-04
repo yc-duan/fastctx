@@ -1930,6 +1930,7 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                     collab: None,
                     scratch: Default::default(),
                     speaks: false,
+                    asker: None,
                 });
             }
             machines(node, resident.as_ref(), login.as_ref(), scratch).await
@@ -2263,6 +2264,7 @@ async fn machines(
                     collab: None,
                     scratch: Default::default(),
                     speaks: false,
+                    asker: None,
                 });
             }
         },
@@ -2292,7 +2294,8 @@ async fn machines(
         None => Default::default(),
     };
     let speaks = resident.is_some_and(|id| crate::voice::speaks(node, id));
-    Ok(Reply::Machines { here, others, groups, collab, scratch, speaks })
+    let asker = resident.filter(|_| speaks).and_then(|id| crate::voice::asker_of(node, id)).map(|(asker, _)| asker);
+    Ok(Reply::Machines { here, others, groups, collab, scratch, speaks, asker })
 }
 
 /// `fastctx nodes`: this computer, and hub by hub the machines whoever asks
