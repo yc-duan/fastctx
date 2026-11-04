@@ -346,7 +346,7 @@
    own agents that went on in the background ended, as a quiet line on the
    left, small and leaning, a hand's mark before it; what it holds folded
    under it in the same quiet voice, under the words rather than the
-   mark. */
+   mark, save a colleague's own words, read upright once opened. */
 .block-heard.from-world,
 .block-agent-told {
   display: flex;
@@ -386,11 +386,23 @@
 }
 
 .notice-said {
+  flex: 0 1 auto;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   /* Room for the italic's last stroke, which leans past its box. */
   padding-right: 0.15em;
+}
+
+/* What it says begins with, in a quieter ink: it gives way first. */
+.notice-first {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding-right: 0.15em;
+  color: var(--text-3);
 }
 
 .notice-mark {
@@ -485,6 +497,21 @@
   font-size: inherit;
   line-height: inherit;
   color: inherit;
+}
+
+/* A colleague's answer or words, opened: read upright, a step darker than
+   the line, a long one scrolling in its own room. */
+.notice-box .notice-answer {
+  max-height: min(60vh, 36rem);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  font-style: normal;
+  color: var(--text-2);
+}
+
+/* Opened, what it begins with is there in full below. */
+.notice-open[aria-expanded="true"] .notice-first {
+  display: none;
 }
 
 .notice-box .prose :is(h1, h2, h3, h4, strong) {

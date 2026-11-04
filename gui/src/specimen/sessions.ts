@@ -336,6 +336,19 @@ let i = (self.ki.widen() * self.integral).narrow();
   s.heard("t3", { kind: "world" }, gone, 600, { kind: "world", fact: { fact: "delivery_failed", id: "delivery-failed-6c1e0a93b2d4f5a7c8e9" }, text: gone });
   s.heard("t3", { kind: "world" }, unstopped, 1, { kind: "world", fact: { fact: "delivery_failed", id: "delivery-failed-0b7d2e4f6a8c1e3d5f7a" }, text: unstopped });
 
+  // What it said as it worked, before it handed back.
+  s.heard(
+    "t3",
+    { kind: "resident", address: { machine: "laptop", resident: "codex-91c0" } },
+    "=== from colleague codex-91c0 ===\nBefore I go on, one thing that changes where the fix goes: the overflow is not in the integrator. `narrow()` truncates on the way from Q32 to Q16, so any value past i16 wraps instead of saturating.\n\nWhat I checked:\n- `integrate()` saturates as meant, after 65 538 steps at a constant error of 32767.\n- `narrow()` has no clamp; it came in with a7c91e2 three weeks ago.\n- The bench log of 10-30 shows the same jump once, at step 71 204.\n\nIf you would rather clamp in the integrator than in `narrow()`, say so now; otherwise I build the repro against `narrow()`.\n=== what it is doing: fastctx w codex-91c0 ===",
+    120,
+    {
+      kind: "words",
+      from: { kind: "resident", address: { machine: "laptop", resident: "codex-91c0" } },
+      text: "Before I go on, one thing that changes where the fix goes: the overflow is not in the integrator. `narrow()` truncates on the way from Q32 to Q16, so any value past i16 wraps instead of saturating.\n\nWhat I checked:\n- `integrate()` saturates as meant, after 65 538 steps at a constant error of 32767.\n- `narrow()` has no clamp; it came in with a7c91e2 three weeks ago.\n- The bench log of 10-30 shows the same jump once, at step 71 204.\n\nIf you would rather clamp in the integrator than in `narrow()`, say so now; otherwise I build the repro against `narrow()`.",
+      told: { colleague: { machine: "laptop", resident: "codex-91c0" }, label: "GPT-6.1-Sol · laptop" },
+    },
+  );
   s.heard(
     "t3",
     { kind: "resident", address: { machine: "laptop", resident: "codex-91c0" } },

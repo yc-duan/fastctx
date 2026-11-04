@@ -1721,12 +1721,13 @@ export class ConversationView {
   }
 
   /** The notice a heard entry carries, when it is one the page draws as a
-   *  line of its own: the World's facts, a colleague's answer or trouble.
-   *  Words another agent wrote stay words; a job's end is not drawn. */
+   *  line of its own: the World's facts, a colleague's answer, what it said
+   *  as it worked, or trouble. Words another agent wrote stay words; a
+   *  job's end is not drawn. */
   private noticeOf(entry: HeardEntry): Notice | null {
     const notice = entry.notice;
     if (!notice || entry.from?.kind === "user") return null;
-    if (notice.kind === "words") return notice.goal_report?.shown || notice.goal_question ? notice : null;
+    if (notice.kind === "words") return notice.goal_report?.shown || notice.goal_question || notice.told ? notice : null;
     return notice.kind === "answer" || notice.kind === "health" || notice.kind === "question" || notice.kind === "world" ? notice : null;
   }
 
@@ -1758,12 +1759,14 @@ export class ConversationView {
   }
 
   /** A notice as one quiet line on the left, a mark before it; what it
-   *  holds (last lines, an answer) folded under it until opened. */
+   *  holds (last lines, an answer) folded under it until opened, its first
+   *  line beside it. */
   private noticeLine(entry: HeardEntry, notice: Notice): string {
     const { words } = this.context;
     let said: string;
     let ok = true;
     let more = "";
+    let first = "";
     // Why, where the line itself cannot say it: under the pointer.
     let why = "";
     switch (notice.kind) {
@@ -1772,6 +1775,7 @@ export class ConversationView {
         ok = !failed;
         said = failed ? words.answerFailed(notice.label) : words.answered(notice.label, notice.end.duration_ms ? words.took(notice.end.duration_ms) : null);
         more = notice.end.last_message ? "answer" : "";
+        first = firstLine(notice.end.last_message ?? "");
         break;
       }
       case "health":
@@ -1783,6 +1787,13 @@ export class ConversationView {
         more = "text";
         break;
       case "words": {
+        // What a colleague said as it worked: who, and its first line.
+        if (notice.told) {
+          said = words.colleagueSaid(notice.told.label || notice.told.colleague.resident);
+          more = "text";
+          first = firstLine(notice.text);
+          break;
+        }
         // A colleague's goal settled, or it asks on the side.
         const report = notice.goal_report?.shown;
         if (report) {
@@ -1837,11 +1848,12 @@ export class ConversationView {
       default:
         said = "";
     }
-    const asks = notice.kind === "question" || (notice.kind === "words" && !notice.goal_report);
+    const told = notice.kind === "words" && !!notice.told;
+    const asks = notice.kind === "question" || (notice.kind === "words" && !notice.goal_report && !told);
     const paused = notice.kind === "words" && notice.goal_report?.shown?.status === "paused";
     const woke = notice.kind === "world" && notice.fact.fact === "woke";
-    const mark = woke ? glyph("sentinel", 14) : asks ? glyph("ask", 14) : paused ? glyph("pause", 14) : ok ? glyph("check", 14) : glyph("cross", 14);
-    const line = `<span class="notice-mark${ok ? "" : " wrong"}">${mark}</span><span class="notice-said">${escape(said)}</span>`;
+    const mark = told ? glyph("colleague", 14) : woke ? glyph("sentinel", 14) : asks ? glyph("ask", 14) : paused ? glyph("pause", 14) : ok ? glyph("check", 14) : glyph("cross", 14);
+    const line = `<span class="notice-mark${ok ? "" : " wrong"}">${mark}</span><span class="notice-said">${escape(said)}</span>${first ? `<span class="notice-first">${escape(first)}</span>` : ""}`;
     if (!more) return `<div class="notice-line${ok ? "" : " failed"}"${why ? ` title="${escape(why)}"` : ""}>${line}</div>`;
     const open = this.openRows.has(entry.key);
     return `<div class="notice-line${ok ? "" : " failed"}"><button class="notice-open" type="button" data-open="${escape(entry.key)}" aria-expanded="${open}">${line}${glyph("chevron", 14)}</button></div><div class="fold-box notice-box"${open ? "" : " style=\"height:0\" inert"}><div class="fold-content"></div></div>`;
@@ -1858,6 +1870,8 @@ export class ConversationView {
       into.innerHTML = `<div class="told-plain">${plain(entry.text)}</div>`;
     } else if (notice.kind === "question") {
       into.innerHTML = `<div class="told-plain">${plain(notice.text)}</div>`;
+    } else if (notice.kind === "words" && notice.told) {
+      into.innerHTML = `<div class="prose notice-answer">${render(notice.text)}</div>`;
     } else if (notice.kind === "words" && notice.goal_report?.shown) {
       into.innerHTML = `<div class="prose notice-answer">${render(notice.goal_report.shown.text)}</div>`;
     } else if (notice.kind === "words" && notice.goal_question) {
@@ -3591,11 +3605,26 @@ function turnInfo(end: TurnEnd, words: Words, english: boolean): TurnInfoRow[] {
   return rows;
 }
 
+/** The first line a colleague wrote, as a line beside who wrote it: its
+ *  first words, without the marks that make them a heading or an item. */
+function firstLine(text: string): string {
+  const line = text.split("\n").map((one) => one.trim()).find(Boolean) ?? "";
+  return line
+    .replace(/^(?:#{1,6}\s+|[-*+>]\s+|\d+[.)]\s+)+/, "")
+    .replace(/`/g, "")
+    .replace(/\*\*(.+?)\*\*/g, "$1");
+}
+
+/** How the node begins saying Claude Code unloaded the World's plugin
+ *  (`claude::plugin_gone::UNLOADED`). */
+const PLUGIN_UNLOADED = "Claude Code unloaded the World's plugin";
+
 /** A host's word on the session's health, in a plain line: a turn stopped
  *  at an assistance's allowance says so and until when. */
 function healthSaid(health: Health, words: Words): string {
   const allowance = health.kind === "warning" ? allowanceOf(health.text) : null;
   if (allowance) return words.allowanceUsed(allowance);
+  if (health.kind === "tools_missing" && health.text.startsWith(PLUGIN_UNLOADED)) return words.pluginUnloaded;
   return words.health[health.kind] ?? health.text;
 }
 
