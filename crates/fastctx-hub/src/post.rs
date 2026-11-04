@@ -124,6 +124,10 @@ pub(crate) enum Command {
     Flush {
         reply: oneshot::Sender<Result<()>>,
     },
+    /// Counts what waits in the mailbox, once the hub has started.
+    Tally {
+        reply: oneshot::Sender<Result<()>>,
+    },
 }
 
 #[derive(Clone)]
@@ -178,6 +182,7 @@ impl Post {
             })
             .collect();
         post.members.store(Arc::new(members));
+        fastctx_platform::task::spawn_on(&post.runtime, tally(post.clone()));
         post
     }
 
@@ -295,5 +300,23 @@ impl Member {
         fastctx_platform::task::spawn(async move {
             let _ = member.send.send(queued).await;
         });
+    }
+}
+
+/// Each member's waiting letters, counted one member at a time after the hub
+/// starts: a member's count was otherwise known only once it connected or
+/// was written to, and one offline with nothing new said 0 for as long as the
+/// hub ran. Each count waits in its member's own queue behind what it does,
+/// so no member's mail waits on another's count; one already counted, as one
+/// that connected first, costs nothing.
+async fn tally(post: Arc<Post>) {
+    let members: Vec<Arc<Member>> = post.members.load_full().values().cloned().collect();
+    for member in members {
+        if member.backlog.counted.load(std::sync::atomic::Ordering::Relaxed) {
+            continue;
+        }
+        if member.request(|reply| Command::Tally { reply }).await.is_err() {
+            continue;
+        }
     }
 }

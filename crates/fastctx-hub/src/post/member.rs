@@ -1,7 +1,7 @@
 //! One member's ordered mail state. No shared guard survives a disk await.
 
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock, Weak};
 
 use arc_swap::ArcSwapOption;
@@ -19,6 +19,9 @@ pub(crate) struct Backlog {
     pub on_way: AtomicUsize,
     pub writing: AtomicUsize,
     pub pending: AtomicUsize,
+    /// Whether `held` was counted from the mailbox in this run of the hub:
+    /// until then it says nothing, not that none wait.
+    pub counted: AtomicBool,
 }
 
 struct Sending {
@@ -152,6 +155,7 @@ impl State {
             self.files = blocking(move || Ok(crate::store::letter_numbers(&directory)?.into_iter().collect())).await?;
             self.loaded = true;
             self.backlog.held.store(self.files.len(), Ordering::Relaxed);
+            self.backlog.counted.store(true, Ordering::Relaxed);
         }
         Ok(())
     }
@@ -285,10 +289,23 @@ impl State {
         .await?;
         self.backlog.held.store(0, Ordering::Relaxed);
         self.backlog.on_way.store(0, Ordering::Relaxed);
+        self.backlog.counted.store(true, Ordering::Relaxed);
         Ok(())
     }
 
     async fn perform(&mut self, command: Command) -> Result<()> {
+        // Counted as the hub starts: a member that never had mail has no
+        // mailbox to count, and is given none for it.
+        if let Command::Tally { reply } = command {
+            let result = if self.letters.is_some() {
+                self.load().await
+            } else {
+                self.backlog.counted.store(true, Ordering::Relaxed);
+                Ok(())
+            };
+            let _ = reply.send(result.clone());
+            return result;
+        }
         if let Command::Retire { reply } = command {
             let result = self.retire().await;
             let _ = reply.send(result.clone());
@@ -393,6 +410,9 @@ impl State {
             Command::Put { message, reply } => {
                 let result = async {
                     self.current()?;
+                    // Counted first, so what is held is told whole, not as
+                    // the one letter added to a mailbox never read.
+                    self.load().await?;
                     let seq = self.record().next;
                     let path = self.directory().join(format!("{seq:020}"));
                     let size = blocking(move || crate::store::write_letter(&path, &message)).await?;
@@ -468,7 +488,9 @@ impl State {
                 self.record_mut().any_names = true;
                 let _ = reply.send(self.persist().await);
             }
-            Command::Flush { .. } | Command::Retire { .. } => unreachable!("handled before initialization"),
+            Command::Flush { .. } | Command::Retire { .. } | Command::Tally { .. } => {
+                unreachable!("handled before initialization")
+            }
             Command::Close { .. } | Command::Heard { .. } => {}
         }
         self.pump().await
