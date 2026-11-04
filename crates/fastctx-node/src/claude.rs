@@ -1870,7 +1870,10 @@ pub(crate) async fn wake(
     let session_directory = node.world.path().join("claude").join(session);
     if plugin_gone::debugged(&session_directory) {
         let at = args.iter().position(|arg| arg == "--").unwrap_or(args.len());
-        args.splice(at..at, [std::ffi::OsString::from("--debug-file"), session_directory.join(plugin_gone::DEBUG_LOG).into()]);
+        args.splice(
+            at..at,
+            [std::ffi::OsString::from("--debug-file"), session_directory.join(plugin_gone::DEBUG_LOG).into()],
+        );
     }
     let (launch_node, launch_resident, launch_id) = (node.clone(), resident.clone(), id.clone());
     // A session that reports while this runs waits to learn whether it is a copy.
