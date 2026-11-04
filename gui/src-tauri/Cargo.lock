@@ -6935,7 +6935,7 @@ dependencies = [
 
 [[package]]
 name = "tauri-plugin-world-pages"
-version = "1.0.1-beta.15"
+version = "1.0.1-beta.16"
 dependencies = [
  "serde",
  "serde_json",
