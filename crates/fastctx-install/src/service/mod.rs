@@ -253,6 +253,19 @@ impl Service {
         linux::main_pid(&self.normalized()?)
     }
 
+    /// Whether the service's process runs the program `digest` now; none
+    /// where that cannot be told, as on macOS.
+    pub fn runs(&self, digest: &str) -> anyhow::Result<Option<bool>> {
+        self.validate()?;
+        #[cfg(target_os = "linux")]
+        return linux::runs(&self.normalized()?, digest);
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = digest;
+            Ok(None)
+        }
+    }
+
     /// Whether the protected guardian already runs this image. Linux's
     /// guardian is systemd itself, so a node image needs no privileged update.
     pub fn guardian_current(&self, digest: &str) -> anyhow::Result<bool> {

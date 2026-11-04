@@ -552,6 +552,12 @@ fn follow_hub(hub: &fastctx_install::service::Service, digest: &str) -> anyhow::
             return Ok(());
         }
     } else {
+        // A hub that saw its program replaced and followed it by itself
+        // (`fastctx_hub::renewal`) runs on it already: starting it again
+        // would cut its machines off once more.
+        if hub.runs(digest)? == Some(true) {
+            return Ok(());
+        }
         hub.may_restart()?;
     }
     hub.restart_guardian(digest)

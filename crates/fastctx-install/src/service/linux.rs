@@ -234,6 +234,28 @@ pub(super) fn main_pid(service: &Service) -> anyhow::Result<u64> {
     pid.as_u64().context("systemd omitted the service's MainPID")
 }
 
+/// Whether the service's main process runs the program whose SHA-256 is
+/// `digest`, read from the file it was started from, which `/proc` holds on
+/// to after the program at its path was replaced; none while it runs none,
+/// or where that file is not this account's to read.
+pub(super) fn runs(service: &Service, digest: &str) -> anyhow::Result<Option<bool>> {
+    use sha2::Digest as _;
+    let pid = main_pid(service)?;
+    if pid == 0 {
+        return Ok(None);
+    }
+    let mut file = match fs::File::open(format!("/proc/{pid}/exe")) {
+        Ok(file) => file,
+        Err(error) if matches!(error.kind(), std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::NotFound) => {
+            return Ok(None);
+        }
+        Err(error) => return Err(error).context("reading the program the service runs"),
+    };
+    let mut hash = sha2::Sha256::new();
+    std::io::copy(&mut file, &mut hash).context("reading the program the service runs")?;
+    Ok(Some(format!("{:x}", hash.finalize()) == digest))
+}
+
 pub(super) fn install(service: &Service) -> anyhow::Result<Status> {
     let version = manager_version()?;
     let reg = Registration::new(service);
