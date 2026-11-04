@@ -41,6 +41,8 @@ pub use hub_registry::registered_hubs;
 pub use inventory::{Registration, registrations};
 pub use keep::{Kept, Released, keep_connected, stop_keeping};
 #[cfg(windows)]
+pub use keep::install_elevated;
+#[cfg(windows)]
 pub use local_network::{install_local_network, keep_local_network};
 #[cfg(windows)]
 #[path = "windows_guardian/mod.rs"]

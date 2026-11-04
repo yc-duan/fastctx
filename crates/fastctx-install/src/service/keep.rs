@@ -81,6 +81,14 @@ pub fn stop_keeping(places: &Places) -> anyhow::Result<Released> {
     })
 }
 
+/// Installs the node's service for `root` with administrator rights, the
+/// system asking whoever is at the screen to confirm, as a repair does where
+/// it is not run as one; `Declined` where they did not.
+#[cfg(windows)]
+pub fn install_elevated(root: &Path, executable: &Path) -> anyhow::Result<Kept> {
+    elevated("install", root, executable)
+}
+
 /// Runs `fastctx service node <action>` for this user with administrator
 /// rights; `Installed` means the action was done.
 #[cfg(windows)]

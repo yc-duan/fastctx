@@ -77,6 +77,23 @@ pub(super) fn run(
     // transactions. An inspection failure is retained, never called absent.
     journal.action(format!("restore boot service {description}; definition {definition:?}; guardian {guardian:?}"))?;
     let _manager = fastctx_platform::FileLock::acquire(&store::directory(root).join("manager-gate.lock"))?;
+    // Not an administrator on Windows: the service is installed by the same
+    // step as keeping the node connected, the system asking whoever sits at
+    // the screen to confirm, before the node serving is asked to hand over,
+    // so that a declined confirmation leaves it serving as it was.
+    #[cfg(windows)]
+    if !adopted && !fastctx_platform::elevation::is_elevated()? {
+        use fastctx_install::service::Kept;
+        return match fastctx_install::service::install_elevated(root, &store::installed(root))? {
+            Kept::Installed | Kept::Already => {
+                Ok(format!("restored {description} with an administrator's confirmation"))
+            }
+            Kept::Declined => {
+                bail!("repairing {description} requires administrator rights; the confirmation was declined")
+            }
+            other => bail!("repairing {description} came to {other:?}"),
+        };
+    }
     if disruptive {
         match runtime.block_on(crate::renew::observing(&world))? {
             Probe::Running(node) => {
