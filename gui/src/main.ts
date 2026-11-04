@@ -486,11 +486,11 @@ const WORKBENCH_PLACES: Place["kind"][] = ["home", "new", "project", "projects",
 function inner(at: Place): boolean {
   // The parts of the conversations' settings are tabs of one row, gone
   // between on the row itself; a subagent's page is a step in from them.
-  if (settingsTabOf(at) !== null && at.kind !== "subagents") return false;
+  if (settingsTabOf(at) !== null && at.kind !== "subagents" && at.kind !== "prompt") return false;
   // An agent's own page is a step in from the agents' overview, which the
   // sidebar names; the agents themselves it does not.
   if (at.kind === "agents" && (at.section === "claude" || at.section === "codex")) return true;
-  return ["feature", "data", "history", "talk-history", "page", "file", "login", "talks", "archived", "machine", "usage", "subagents", "sentinel", "sentinels"].includes(at.kind);
+  return ["feature", "data", "history", "talk-history", "page", "file", "login", "talks", "archived", "machine", "usage", "subagents", "prompt", "sentinel", "sentinels"].includes(at.kind);
 }
 
 /** Where a page's back goes when it was not come into from another page,
@@ -503,6 +503,8 @@ function parentOf(at: Place): Place {
       return { kind: "agents", machine: at.machine };
     case "subagents":
       return { kind: "agents", machine: null, section: "claude", tab: "prefs" };
+    case "prompt":
+      return { kind: "agents", machine: null, section: at.agent, tab: "prefs" };
     case "feature":
       return { kind: "features" };
     case "data":
@@ -2953,10 +2955,6 @@ function show(next: Place): void {
       keepSection(section);
       const profile = english ? enProfile : zhProfile;
       const settings = english ? enTalkSettings : zhTalkSettings;
-      if (section === "prompt") {
-        page = new PromptPage({ store, words: profile, head: settingsHead(head, settings, "prompt"), calls: profileCalls });
-        break;
-      }
       if (section === "skills") {
         page = new SkillsPage({ store, words: profile, head: settingsHead(head, settings, "skills"), calls: live ? skillCalls : specimenSkillCalls, confirm: accountConfirm, close: pageWords.close });
         break;
@@ -2979,6 +2977,9 @@ function show(next: Place): void {
               english,
               calls: profileCalls,
               models: agentModels,
+              prompt: () => {
+                location.hash = link({ kind: "prompt", agent });
+              },
               subagents:
                 agent === "claude"
                   ? {
@@ -3035,6 +3036,12 @@ function show(next: Place): void {
         confirm: accountConfirm,
       });
       });
+      break;
+    }
+    case "prompt": {
+      const settings = english ? enTalkSettings : zhTalkSettings;
+      keepSection(next.agent);
+      page = new PromptPage({ store, words: english ? enProfile : zhProfile, agent: next.agent, name: settings.agents[next.agent], head, calls: profileCalls });
       break;
     }
     case "subagents":

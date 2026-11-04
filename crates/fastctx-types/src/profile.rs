@@ -29,9 +29,15 @@ pub struct Profile {
     /// chooses.
     #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::tolerant::read_option")]
     pub layer: Option<crate::layers::Layer>,
-    /// What the account writes to every agent that works for it.
+    /// What the account writes to every agent that works for it, where its
+    /// family has none of its own (`prompts`).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub prompt: String,
+    /// What it writes to the agents of one family. A client that knows it
+    /// always writes it, one from before never does: a hub keeps what it
+    /// had where a write has none (`Change::Profile`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompts: Option<Prompts>,
     /// Claude Code settings from `CLAUDE_SETTINGS` alone.
     #[serde(default, skip_serializing_if = "Map::is_empty")]
     pub claude: Map<String, Value>,
@@ -44,6 +50,16 @@ pub struct Profile {
     /// None follows this version's defaults; Some may deliberately contain no agents.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subagents: Option<Subagents>,
+}
+
+/// The account's own prompt for each family; one not written follows the
+/// prompt every agent is given. One written empty gives that family none.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Prompts {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claude: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codex: Option<String>,
 }
 
 /// One server in the account's list.
@@ -151,6 +167,7 @@ impl Default for Profile {
             memory: on(),
             layer: None,
             prompt: String::new(),
+            prompts: None,
             claude: Map::new(),
             codex: Map::new(),
             servers: BTreeMap::new(),
@@ -168,10 +185,32 @@ fn is_on(value: &bool) -> bool {
 }
 
 impl Profile {
+    /// What the agents of the family `agent` are given: its own prompt, or
+    /// the one every agent is.
+    pub fn prompt_for(&self, agent: &str) -> &str {
+        let own = self.prompts.as_ref().and_then(|prompts| match agent {
+            "claude" => prompts.claude.as_deref(),
+            "codex" => prompts.codex.as_deref(),
+            _ => None,
+        });
+        own.unwrap_or(&self.prompt)
+    }
+
     /// Whether this is a profile an account may keep.
     pub fn validate(&self) -> Result<(), String> {
         if self.prompt.len() > PROMPT_MOST {
             return Err(format!("the prompt is {} bytes; at most {PROMPT_MOST}", self.prompt.len()));
+        }
+        let prompts = self.prompts.as_ref();
+        for (family, prompt) in [
+            ("Claude Code", prompts.and_then(|one| one.claude.as_ref())),
+            ("Codex", prompts.and_then(|one| one.codex.as_ref())),
+        ] {
+            if let Some(prompt) = prompt
+                && prompt.len() > PROMPT_MOST
+            {
+                return Err(format!("the prompt for {family} is {} bytes; at most {PROMPT_MOST}", prompt.len()));
+            }
         }
         if let Some(subagents) = &self.subagents {
             subagents.validate()?;

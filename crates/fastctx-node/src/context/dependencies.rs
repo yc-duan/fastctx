@@ -19,7 +19,8 @@ struct AccountInputs {
     authority: u64,
     presence: u64,
     plan: u64,
-    user: u64,
+    /// The account's prompts, each family's read from them.
+    user: fastctx_types::profile::Profile,
     skills: u64,
 }
 
@@ -47,7 +48,7 @@ impl Scan {
         let authors = node.contexts.routes.authors(node, &about.id, &about.acting);
         let mut inputs = [0; COUNT];
         inputs[Part::Focus as usize] = focus;
-        inputs[Part::User as usize] = account.user;
+        inputs[Part::User as usize] = hash(&account.user.prompt_for(about.host.agent.as_str()));
         inputs[Part::Project as usize] = hash(&project);
         inputs[Part::Guide as usize] = if about.world_managed() {
             hash(&(identity, account.plan, guide_route.unwrap_or_else(|| hash(&(account.authority, account.presence)))))
@@ -129,7 +130,10 @@ fn accounts(node: &Node, acting: &Acting) -> AccountInputs {
         authority: hash(&(authority, node.works_here(acting).is_ok(), node.links().is_empty())),
         presence: hash(&presence),
         plan: hash(&plan),
-        user: hash(&crate::profile::session::prompt(node, acting)),
+        user: {
+            let profile = crate::profile::session::get(node, acting);
+            fastctx_types::profile::Profile { prompt: profile.prompt, prompts: profile.prompts, ..Default::default() }
+        },
         skills: hash(&skills),
     }
 }

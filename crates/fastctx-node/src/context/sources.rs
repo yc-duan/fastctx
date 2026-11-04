@@ -46,7 +46,9 @@ fn local_part(
     use super::parts::Part;
     match part {
         Part::User => {
-            let prompt = crate::profile::session::text(&crate::profile::session::prompt(node, acting));
+            let agent =
+                node.residents.about(id).map(|(about, _)| about.host.agent.as_str().to_string()).unwrap_or_default();
+            let prompt = crate::profile::session::text(&crate::profile::session::prompt(node, acting, &agent));
             storage::set(
                 &node.world,
                 id,

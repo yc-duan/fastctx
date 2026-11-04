@@ -221,6 +221,10 @@ fn apply(
             profile.subagents = current.subagents.clone();
             profile.memory = current.memory;
             profile.layer = current.layer;
+            // A client from before each family's prompt sends none.
+            if profile.prompts.is_none() {
+                profile.prompts = current.prompts.clone();
+            }
             profile.validate()?;
             // A server a command starts is kept on a machine the account may
             // run commands on; one it was given before stays until removed.

@@ -780,6 +780,10 @@ pub struct View {
     /// The hub accepts account-level Claude subagent changes.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub subagents: bool,
+    /// The hub keeps each family's own prompt (`Profile::prompts`); an
+    /// earlier one writes it away.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub family_prompts: bool,
     /// Whether this hub keeps the network's versions: it takes
     /// `Up::Versions`, answers `Question::Package`, takes `Change::Updates`
     /// and the data connections of packages. Earlier hubs omit it, and would
@@ -878,6 +882,7 @@ impl View {
             scratch_locations: false,
             goal_commands: false,
             subagents: false,
+            family_prompts: false,
             versions: false,
             package_progress: false,
             due: false,

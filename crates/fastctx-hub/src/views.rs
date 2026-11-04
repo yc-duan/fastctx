@@ -222,6 +222,7 @@ pub(crate) fn view_for_in(
         scratch_locations: true,
         goal_commands: true,
         subagents: true,
+        family_prompts: true,
         versions: true,
         package_progress: true,
         due: true,

@@ -21,6 +21,10 @@ pub(crate) struct ProfileArgs {
     prompt: Option<String>,
     #[arg(long)]
     prompt_file: Option<std::path::PathBuf>,
+    /// The instructions given to this agent alone; without it, those every
+    /// agent without its own is given.
+    #[arg(long, value_parser = ["claude", "codex"])]
+    agent: Option<String>,
     /// Replace the allowed Claude Code settings with this JSON object.
     #[arg(long)]
     claude: Option<String>,
@@ -30,6 +34,7 @@ pub(crate) struct ProfileArgs {
     #[command(subcommand)]
     command: Option<ProfileCommand>,
 }
+
 pub(crate) fn run(args: ProfileArgs) -> anyhow::Result<()> {
     if let Some(ProfileCommand::Subagents(command)) = args.command {
         if args.prompt.is_some() || args.prompt_file.is_some() || args.claude.is_some() || args.codex.is_some() {
@@ -45,11 +50,29 @@ pub(crate) fn run(args: ProfileArgs) -> anyhow::Result<()> {
         anyhow::bail!("upgrade hub {} to use user-level configuration", view.hub);
     }
     let writing = args.prompt.is_some() || args.prompt_file.is_some() || args.claude.is_some() || args.codex.is_some();
-    if let Some(prompt) = args.prompt {
-        view.profile.prompt = prompt;
+    let prompt = match (args.prompt, args.prompt_file) {
+        (Some(prompt), _) => Some(prompt),
+        (None, Some(path)) => Some(std::fs::read_to_string(path)?),
+        (None, None) => None,
+    };
+    if args.agent.is_some() && prompt.is_none() {
+        anyhow::bail!("--agent names whose instructions --prompt or --prompt-file give");
     }
-    if let Some(path) = args.prompt_file {
-        view.profile.prompt = std::fs::read_to_string(path)?;
+    if let Some(prompt) = prompt {
+        match args.agent.as_deref() {
+            Some(agent) => {
+                if !view.families {
+                    anyhow::bail!("upgrade hub {} to give each agent instructions of its own", view.hub);
+                }
+                let prompts = view.profile.prompts.get_or_insert_default();
+                if agent == "claude" {
+                    prompts.claude = Some(prompt);
+                } else {
+                    prompts.codex = Some(prompt);
+                }
+            }
+            None => view.profile.prompt = prompt,
+        }
     }
     if let Some(settings) = args.claude {
         view.profile.claude = serde_json::from_str(&settings)?;

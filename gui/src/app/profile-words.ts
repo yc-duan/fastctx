@@ -30,10 +30,19 @@ export interface ProfileWords {
   /** When what is saved reaches the sessions, said on hover. */
   takesEffect: string;
   prompt: {
-    placeholder: string;
+    /** The page of one family's prompt. */
+    title(agent: string): string;
+    /** Before its name, where its way back names no family. */
+    of(agent: string): string;
+    placeholder(agent: string): string;
     save: string;
     /** Said on hover over saving it. */
-    reaches: string;
+    reaches(agent: string): string;
+    /** On the family's row of its card where none is written. */
+    none: string;
+    /** The hub writes each family's own prompt away: it runs an earlier
+     *  Fastctx. */
+    olderHub: string;
     /** How much of the most it holds, near the end. */
     size(used: string, most: string): string;
     tooLong: string;
@@ -262,9 +271,13 @@ export const zhProfile: ProfileWords = {
   loadTheirs: "载入那一版",
   takesEffect: "新开的对话马上带上；开着的对话下次被唤醒时换上",
   prompt: {
-    placeholder: "写给替你干活的每一个智能体",
+    title: (agent) => `${agent} 的提示词`,
+    of: (agent) => `${agent} 的`,
+    placeholder: (agent) => `写给替你干活的 ${agent}`,
     save: "保存",
-    reaches: "替你干活的每个智能体都会读到；正在干活的，下一次调用世界的工具时换上",
+    reaches: (agent) => `替你干活的 ${agent} 都会读到；正在干活的，下一次调用世界的工具时换上`,
+    none: "无",
+    olderHub: "这个网络的中枢服务器要先升级，才能给两家分别写提示词",
     size: (used, most) => `${used} / ${most}`,
     tooLong: "太长了",
   },
@@ -459,9 +472,13 @@ export const enProfile: ProfileWords = {
   loadTheirs: "Load that version",
   takesEffect: "New conversations take it at once; open ones at their next wake",
   prompt: {
-    placeholder: "To every agent that works for you",
+    title: (agent) => `${agent} prompt`,
+    of: (agent) => `${agent} `,
+    placeholder: (agent) => `To ${agent} working for you`,
     save: "Save",
-    reaches: "Every agent working for you reads it; one at work takes it at its next call to the World's tools",
+    reaches: (agent) => `${agent} reads it wherever it works for you; one at work takes it at its next call to the World's tools`,
+    none: "None",
+    olderHub: "This network's hub server needs an update before each agent can have its own prompt",
     size: (used, most) => `${used} / ${most}`,
     tooLong: "Too long",
   },

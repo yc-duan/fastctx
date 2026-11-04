@@ -1205,6 +1205,9 @@
           "memory": false,
           "layer": "workbench",
           "prompt": "Use concise answers.",
+          "prompts": {
+            "claude": "Answer in English."
+          },
           "claude": {
             "language": "English"
           },
@@ -1256,6 +1259,9 @@
           "memory": false,
           "layer": "workbench",
           "prompt": "Use concise answers.",
+          "prompts": {
+            "claude": "Answer in English."
+          },
           "claude": {
             "language": "English"
           },
@@ -1276,7 +1282,8 @@
             }
           }
         },
-        "kept": true
+        "kept": true,
+        "families": true
       },
       {
         "reply": "profile_written",

@@ -26,6 +26,7 @@ pub fn fixtures() -> Fixtures {
         layer: Some(fastctx_types::layers::Layer::Workbench),
         subagents: None,
         prompt: "Use concise answers.".into(),
+        prompts: Some(Prompts { claude: Some("Answer in English.".into()), codex: None }),
         claude: serde_json::json!({"language":"English"}).as_object().unwrap().clone(),
         codex: serde_json::json!({"model_verbosity":"low"}).as_object().unwrap().clone(),
         servers: BTreeMap::from([
@@ -63,6 +64,7 @@ pub fn fixtures() -> Fixtures {
             account: "ada".parse().unwrap(),
             profile,
             kept: true,
+            families: true,
         })),
         Reply::ProfileWritten { version: 5 },
         Reply::Mcp { result: McpReply::Listed { servers: listed } },

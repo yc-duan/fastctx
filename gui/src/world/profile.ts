@@ -34,7 +34,11 @@ export interface Profile {
   /** The account's layer (`world-layers.md`); absent until it chooses. Its
    *  own commands read and change it. */
   layer?: "connect" | "workbench";
+  /** What every agent is given where its family has none of its own. */
   prompt?: string;
+  /** Each family's own; one not written follows `prompt`, one written
+   *  empty gives that family none. */
+  prompts?: { claude?: string; codex?: string };
   /** Claude Code settings, of `CLAUDE_SETTINGS` alone. */
   claude?: Record<string, unknown>;
   /** Codex settings, of `CODEX_SETTINGS` alone. */
@@ -49,6 +53,14 @@ export interface ProfileView {
   profile: Profile;
   /** Whether the hub keeps profiles at all: an older one does not. */
   kept: boolean;
+  /** Whether it keeps each family's own prompt; an older one writes it
+   *  away. */
+  families?: boolean;
+}
+
+/** The prompt the agents of `agent`'s family are given. */
+export function promptOf(profile: Profile, agent: "claude" | "codex"): string {
+  return profile.prompts?.[agent] ?? profile.prompt ?? "";
 }
 
 /** One server as an `mcpServers` entry describes it. */
