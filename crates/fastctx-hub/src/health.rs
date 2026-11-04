@@ -168,6 +168,8 @@ fn now(hub: &Hub) -> serde_json::Value {
             })).collect::<Vec<_>>(),
         },
         "keeping_a_letter_ms": percentiles(kept),
+        // Machines whose earlier records last stood set aside or failing.
+        "migrations": hub.troubles.migrations(),
         "packages": crate::updates::health(hub),
         "account_records": hub.account_records.health(),
     })

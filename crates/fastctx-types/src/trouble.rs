@@ -33,6 +33,11 @@ pub struct Trouble {
     /// The version a stopped rollout was of.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
+    /// When what it told of was over: the earlier files the machine had set
+    /// aside are all put away. None while it holds, and for the kinds that
+    /// are only ever told.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved: Option<Timestamp>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]

@@ -4505,7 +4505,8 @@
                 "id": 11,
                 "at": "2026-10-09T08:30:00Z",
                 "machine": "server",
-                "kind": "damaged"
+                "kind": "damaged",
+                "resolved": "2026-10-09T08:30:00Z"
               },
               {
                 "id": 12,

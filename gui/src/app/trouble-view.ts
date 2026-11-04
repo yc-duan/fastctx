@@ -28,10 +28,11 @@ export interface TroublesNow {
   when(at: Date, now: Date): string;
 }
 
-/** How many troubles of the network shown fall within `span` of now. */
+/** How many troubles of the network shown fall within `span` of now, but
+ *  those over. */
 export function troublesIn(world: WorldNow, now: Date, span = WEEK_MS): number {
   const from = now.getTime() - span;
-  return world.accounts.hubs.reduce((sum, hub) => sum + (hub.troubles ?? []).filter((trouble) => Date.parse(trouble.at) >= from).length, 0);
+  return world.accounts.hubs.reduce((sum, hub) => sum + (hub.troubles ?? []).filter((trouble) => !trouble.resolved && Date.parse(trouble.at) >= from).length, 0);
 }
 
 /** Whether a hub of the network shown tells troubles at all. */
@@ -85,7 +86,7 @@ export function troubleView(now: TroublesNow, words: TroubleWords): string {
   // The network's own first, then whichever had trouble last.
   const ordered = [...rows.values()].sort((a, b) => Number(!b.href) - Number(!a.href) || latest(b) - latest(a));
   const x = (at: number) => `${(((Math.min(Math.max(at, start), end) - start) / (end - start)) * 100).toFixed(2)}%`;
-  const said = (trouble: Trouble) => `${now.when(new Date(trouble.at), now.now)}　${words.what(trouble)}`;
+  const said = (trouble: Trouble) => `${now.when(new Date(trouble.at), now.now)}　${words.what(trouble)}${trouble.resolved ? `，${words.over}` : ""}`;
   const body = ordered
     .map((row) => {
       const newest = [...row.troubles].sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
@@ -95,7 +96,7 @@ export function troubleView(now: TroublesNow, words: TroubleWords): string {
           const detail = words.detail(trouble);
           const random = seeded(`trouble:${trouble.id}:${trouble.at}`);
           const stroke = outline([[4, 1.5], [4, 14.5]], 2.6, random, { pressure: 0.2, taper: 0.15 });
-          return `<span class="tv-mark ${troubleTone(trouble.kind)}" style="left:${x(Date.parse(trouble.at))}" title="${escape([said(trouble), detail].filter(Boolean).join("\n"))}"><svg viewBox="0 0 8 16" width="8" height="16" aria-hidden="true"><path d="${stroke}"/></svg></span>`;
+          return `<span class="tv-mark ${troubleTone(trouble)}" style="left:${x(Date.parse(trouble.at))}" title="${escape([said(trouble), detail].filter(Boolean).join("\n"))}"><svg viewBox="0 0 8 16" width="8" height="16" aria-hidden="true"><path d="${stroke}"/></svg></span>`;
         })
         .join("");
       const inner = `<span class="tv-who">${row.icon}<span class="tv-name">${escape(row.label)}</span></span><span class="tv-strip">${rule(row.key)}${marks}</span>`;

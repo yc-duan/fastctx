@@ -56,6 +56,7 @@ fn hub() -> HubAccounts {
                 seconds: Some(75),
                 near: None,
                 version: None,
+                resolved: None,
             },
             fastctx_types::trouble::Trouble {
                 id: 8,
@@ -66,6 +67,7 @@ fn hub() -> HubAccounts {
                 seconds: None,
                 near: Some(fastctx_types::health::Near { bound: "log.waiting".into(), used: 93 }),
                 version: None,
+                resolved: None,
             },
             fastctx_types::trouble::Trouble {
                 id: 9,
@@ -76,6 +78,7 @@ fn hub() -> HubAccounts {
                 seconds: None,
                 near: None,
                 version: None,
+                resolved: None,
             },
             fastctx_types::trouble::Trouble {
                 id: 10,
@@ -86,6 +89,7 @@ fn hub() -> HubAccounts {
                 seconds: None,
                 near: None,
                 version: Some("1.0.2".into()),
+                resolved: None,
             },
             fastctx_types::trouble::Trouble {
                 id: 11,
@@ -96,6 +100,7 @@ fn hub() -> HubAccounts {
                 seconds: None,
                 near: None,
                 version: None,
+                resolved: Some(at()),
             },
             fastctx_types::trouble::Trouble {
                 id: 12,
@@ -106,6 +111,7 @@ fn hub() -> HubAccounts {
                 seconds: None,
                 near: None,
                 version: None,
+                resolved: None,
             },
         ],
         health: true,
