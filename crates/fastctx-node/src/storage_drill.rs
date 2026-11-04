@@ -80,10 +80,7 @@ pub(crate) fn reopen(world: &fastctx_types::layout::WorldDir) -> fastctx_storage
         let database = crate::record_database::open(world);
         match database.fault().cloned() {
             None => return Ok(database),
-            Some(error)
-                if error.kind() == fastctx_storage::ErrorKind::Busy
-                    && started.elapsed() < CLOSING =>
-            {
+            Some(error) if error.kind() == fastctx_storage::ErrorKind::Busy && started.elapsed() < CLOSING => {
                 drop(database);
                 std::thread::sleep(std::time::Duration::from_millis(10));
             }
