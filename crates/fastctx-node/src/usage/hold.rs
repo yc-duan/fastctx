@@ -82,8 +82,9 @@ pub(super) fn refresh(node: &Arc<Node>, login: Option<(&str, &Path)>) -> Option<
 /// says when the first hold ends.
 fn refresh_login(node: &Arc<Node>, records: Vec<(ResidentId, About)>) -> Option<Timestamp> {
     let mut next = None;
+    let mut restrictions = allowance::Restrictions::default();
     for (id, about) in records {
-        let restriction = allowance::restriction(node, &about);
+        let restriction = restrictions.of(node, &about);
         if let Err(error) = publish(node, &about, restriction.as_ref()) {
             node.log.line(format_args!("publishing {id}'s usage hold: {error}"));
         }
@@ -118,8 +119,15 @@ fn refresh_login(node: &Arc<Node>, records: Vec<(ResidentId, About)>) -> Option<
     next
 }
 
+/// How long after the hub's view changed the holds are checked again: views
+/// change in bursts as machines come and go, and each check reads every
+/// conversation here.
+const VIEWS_SETTLE: std::time::Duration = std::time::Duration::from_secs(5);
+
 /// Rechecks on hub-view changes, and at an active hold's expiry. The periodic
 /// pass also covers a new session registered while no usage report was arriving.
+/// Each check goes through every conversation here: heavy work, done on a
+/// thread that may block.
 pub(crate) fn watch(node: &Arc<Node>) {
     let mut views = node.views.subscribe();
     let weak = Arc::downgrade(node);
@@ -127,13 +135,19 @@ pub(crate) fn watch(node: &Arc<Node>) {
         loop {
             let delay = {
                 let Some(node) = weak.upgrade() else { return };
-                let until = refresh(&node, None);
+                let until = fastctx_platform::task::blocking(move || refresh(&node, None)).await;
                 until
                     .map(|until| until.duration_since(Timestamp::now()).as_millis().clamp(1, 30_000) as u64)
                     .unwrap_or(30_000)
             };
             tokio::select! {
-                result = views.changed() => if result.is_err() { return; },
+                result = views.changed() => {
+                    if result.is_err() {
+                        return;
+                    }
+                    tokio::time::sleep(VIEWS_SETTLE).await;
+                    views.borrow_and_update();
+                }
                 _ = tokio::time::sleep(std::time::Duration::from_millis(delay)) => {},
             }
         }

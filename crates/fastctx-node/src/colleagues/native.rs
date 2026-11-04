@@ -221,7 +221,7 @@ pub(super) async fn open(node: &Arc<Node>, id: &ResidentId, deadline: Instant) -
     let mut unavailable = Vec::new();
     let events = match tokio::time::timeout_at(deadline, crate::talk::history_quietly(node, id)).await {
         Ok(Ok(mut history)) => {
-            fold.events(&history.history, None);
+            fold = folded(fold, std::mem::take(&mut history.history), None).await;
             let mut lagged = false;
             loop {
                 match history.events.try_recv() {
@@ -259,7 +259,7 @@ pub(super) async fn open(node: &Arc<Node>, id: &ResidentId, deadline: Instant) -
                         activity.events.first().map_or_else(Timestamp::now, |event| event.at),
                     );
                 }
-                fold.events(&activity.events, Some(&agent));
+                fold = folded(fold, activity.events, Some(agent.clone())).await;
                 if let Some(error) = activity.unavailable {
                     fold.entry(&agent).agent.unavailable = Some(error);
                 }
@@ -285,4 +285,15 @@ pub(super) async fn open(node: &Arc<Node>, id: &ResidentId, deadline: Instant) -
     // tells a new agent with its call.
     fold.recent_only();
     Read { fold, unavailable, events }
+}
+
+/// `fold` with `events` folded in, as told by `parent`'s loop, or by the
+/// conversation's own without one. A whole history at a time is heavy work,
+/// done on a thread that may block.
+async fn folded(mut fold: Fold, events: Vec<SessionEvent>, parent: Option<String>) -> Fold {
+    fastctx_platform::task::blocking(move || {
+        fold.events(&events, parent.as_deref());
+        fold
+    })
+    .await
 }

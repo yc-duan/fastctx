@@ -69,21 +69,9 @@ pub(super) async fn start(node: &Arc<Node>, resident: &ResidentId, directory: &P
                 node.claude.title_files.lock().expect("never poisoned").remove(&path);
                 return;
             }
-            let mut restarted = false;
-            let mut thoughts = Vec::new();
-            let read = tail.read(&path, |found| {
-                match found {
-                    Found::Restarted => {
-                        titles = Titles::default();
-                        restarted = true;
-                    }
-                    Found::Row(row) => {
-                        titles.row(row)?;
-                        thoughts.extend(Thought::read(row));
-                    }
-                }
-                Ok(())
-            });
+            let (read_tail, read_titles, read, restarted, thoughts) =
+                follow(path.clone(), std::mem::take(&mut tail), std::mem::take(&mut titles)).await;
+            (tail, titles) = (read_tail, read_titles);
             if restarted {
                 node.claude.thoughts.restarted(&path);
             }
@@ -122,6 +110,43 @@ pub(super) async fn start(node: &Arc<Node>, resident: &ResidentId, directory: &P
         }
     });
     Ok(())
+}
+
+/// What a follow of the record at `path` read since `tail` last stood:
+/// `tail` and `titles` moved on, how the read ended, whether the record was
+/// rewritten, and the thinking its new rows ended. Reading and parsing the
+/// rows is heavy work, the whole record on the first read: it is done on a
+/// thread that may block, a few records at once.
+async fn follow(
+    path: PathBuf,
+    mut tail: Tail,
+    mut titles: Titles,
+) -> (Tail, Titles, std::io::Result<()>, bool, Vec<Thought>) {
+    static READING: std::sync::LazyLock<Arc<tokio::sync::Semaphore>> = std::sync::LazyLock::new(|| {
+        Arc::new(tokio::sync::Semaphore::new(
+            std::thread::available_parallelism().map_or(2, |cores| cores.get().clamp(2, 8)),
+        ))
+    });
+    let _permit = READING.clone().acquire_owned().await.expect("title reading slots remain open");
+    fastctx_platform::task::blocking(move || {
+        let mut restarted = false;
+        let mut thoughts = Vec::new();
+        let read = tail.read(&path, |found| {
+            match found {
+                Found::Restarted => {
+                    titles = Titles::default();
+                    restarted = true;
+                }
+                Found::Row(row) => {
+                    titles.row(row)?;
+                    thoughts.extend(Thought::read(row));
+                }
+            }
+            Ok(())
+        });
+        (tail, titles, read, restarted, thoughts)
+    })
+    .await
 }
 
 pub(super) type Files = std::sync::Mutex<HashSet<PathBuf>>;
