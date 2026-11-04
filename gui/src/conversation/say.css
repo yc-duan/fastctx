@@ -85,15 +85,21 @@
   initial-value: 0;
 }
 
+/* How far the ground hangs out past the words: into the page's margin,
+   less where the margin is narrow and none where it is narrower still, as
+   with the side open beside the conversation. The words keep a room of
+   their own within the ground all the same, moving inward by what the
+   ground could not hang out. */
 .transcript {
-  --hang-x: min(var(--space-4), calc(var(--gutter) - var(--space-3)));
+  --hang-x: max(0px, min(var(--space-4), calc(var(--gutter) - var(--space-3))));
+  --ground-x: max(var(--hang-x), var(--space-3));
   --hang-y: var(--space-2);
 }
 
 .transcript > .block-say > .say,
 .transcript > .block-prose.prose-message > .prose {
   margin: calc(-1 * var(--hang-y)) calc(-1 * var(--hang-x));
-  padding: var(--hang-y) var(--hang-x);
+  padding: var(--hang-y) var(--ground-x);
   border-radius: var(--radius-l);
   background: color-mix(in srgb, var(--ground, var(--fill)) calc(var(--said) * 100%), transparent);
   transition: --said var(--glide) var(--glide-easing);
