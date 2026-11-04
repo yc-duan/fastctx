@@ -46,9 +46,9 @@
 .sp-split > .sp-panel,
 .sp-split > .desk-panes,
 .sp-panel > .sp-sheet,
-.desk-panes > .desk-pane.dk-corner,
-.desk-pane.dk-corner > :is(.conversation-page, .dk-fork-page),
-.desk-pane.dk-corner > :is(.conversation-page, .dk-fork-page) > .page-head {
+.desk-panes > .desk-pane:is(.dk-corner, .dk-turning),
+.desk-pane:is(.dk-corner, .dk-turning) > :is(.conversation-page, .dk-fork-page),
+.desk-pane:is(.dk-corner, .dk-turning) > :is(.conversation-page, .dk-fork-page) > .page-head {
   --sp-open: inherit;
   --side-width: inherit;
   --side-height: inherit;
@@ -278,9 +278,11 @@ html.framed .sp-panel.sp-over .sp-line {
 }
 
 /* With the side open beside them, the conversations keep a narrow margin:
-   room is short, and the side's cards stand close. */
+   room is short, and the side's cards stand close. It narrows as the side
+   opens and widens back as it folds, by --sp-open, so nothing in them moves
+   at once where the side begins or ends its way. */
 .sp-split:not([data-dock="bottom"]):has(> .sp-panel:not([hidden]):not(.sp-over)) > .desk-panes {
-  --gutter: var(--space-2);
+  --gutter: calc(var(--gutter-wide) + (var(--space-2) - var(--gutter-wide)) * var(--sp-open));
 }
 
 .sp-page[hidden] {

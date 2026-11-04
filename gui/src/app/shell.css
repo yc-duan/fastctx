@@ -1091,12 +1091,6 @@ html[data-frame="macos"] .shell.folded .page-head {
   background: var(--mac-zoom);
 }
 
-/* On the desk the window's buttons stand over the top row's last pane
-   alone: the others' heads end at their own edge (`desk/desk.css`). */
-html.framed .desk-pane:not(.dk-corner) > :is(.conversation-page, .dk-fork-page) > .page-head {
-  padding-right: var(--space-4);
-}
-
 /* What a pointer shows on hover, raised by a long press on a touch screen. */
 .touch-hint,
 .pointer-hint {

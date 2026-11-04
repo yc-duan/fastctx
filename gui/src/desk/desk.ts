@@ -24,11 +24,11 @@ import { glyph } from "../conversation/glyphs";
 import type { KeepablePage } from "../conversation/kept";
 import type { ConversationPage } from "../conversation/page";
 import { escape } from "../conversation/prose";
-import { msOf, reducedMotion } from "../motion";
 import { OVER, SideFrame } from "../side/frame";
 import type { SideWords } from "../side/words";
 import type { Address } from "../world/wire";
 import { fly } from "./flight";
+import { Morph, type Places, type Rows } from "./morph";
 import type { DeskWords } from "./words";
 import "./desk.css";
 
@@ -98,6 +98,8 @@ export class Desk implements Page {
   private readonly box: HTMLElement;
   private readonly drop: HTMLElement;
   private readonly frame: SideFrame;
+  /** The panes moving to their places as one opens or closes. */
+  private readonly morph: Morph;
   private panes: Pane[] = [];
   private focusKey: string | null = null;
   /** Keys in the order they were last in focus, the latest at the end. */
@@ -111,13 +113,16 @@ export class Desk implements Page {
   private shape = "";
   /** Only the one in focus is drawn. */
   private single = false;
+  /** How many stand in the top row. */
+  private top = 0;
 
   constructor(private readonly seams: DeskSeams) {
     this.element = document.createElement("div");
     this.element.className = "desk";
     this.box = document.createElement("div");
     this.box.className = "desk-panes";
-    this.frame = new SideFrame(this.element, this.box, seams.side, { beside: (address) => this.open(address) });
+    this.morph = new Morph(this.box);
+    this.frame = new SideFrame(this.element, this.box, seams.side, { beside: (address) => this.open(address, undefined, true) });
     this.drop = document.createElement("div");
     this.drop.className = "desk-drop";
     this.drop.setAttribute("aria-hidden", "true");
@@ -175,8 +180,9 @@ export class Desk implements Page {
   /** Opens `address` in a place of its own: before or after one shown, or
    *  after the one in focus. Where it is shown already it is put there, or
    *  only comes into focus. With ten shown, the one in focus longest ago
-   *  gives way. */
-  open(address: Address, where?: { key: string; side: "before" | "after" }): void {
+   *  gives way. Opened `aside`, as from the side, the one in focus stays in
+   *  focus, the side with it, until the other is pressed or typed in. */
+  open(address: Address, where?: { key: string; side: "before" | "after" }, aside = false): void {
     if (OVER.matches) {
       this.seams.go(address);
       return;
@@ -186,19 +192,22 @@ export class Desk implements Page {
     const there = this.find(key);
     if (there && where) this.move(there, where);
     if (there) {
-      this.focus(there, true);
+      if (!aside) this.focus(there, true);
       return;
     }
+    let pane: Pane;
     if (this.panes.length >= MOST) {
       const oldest = this.oldest();
       if (!oldest) return;
       this.replace(oldest, address);
-      this.focus(oldest, true);
-      return;
+      pane = oldest;
+    } else {
+      const anchor = where ? this.find(where.key) : this.current();
+      const index = anchor ? this.panes.indexOf(anchor) + (where?.side === "before" ? 0 : 1) : this.panes.length;
+      pane = this.insert(address, index, true);
     }
-    const anchor = where ? this.find(where.key) : this.current();
-    const index = anchor ? this.panes.indexOf(anchor) + (where?.side === "before" ? 0 : 1) : this.panes.length;
-    this.focus(this.insert(address, index, true), true);
+    if (aside) this.keep();
+    else this.focus(pane, true);
   }
 
   /** Brings a turn of a conversation shown into view, once it is drawn. */
@@ -249,10 +258,7 @@ export class Desk implements Page {
     element.dataset.key = `fork:${(this.forks += 1)}`;
     element.innerHTML = `<div class="dk-fork-page"><div class="page-head dk-fork-head"><div class="who"><h1 class="who-name">${escape(named.name)}</h1></div><div class="page-head-actions">${this.closer().outerHTML}</div></div><div class="dk-fork-body">${forkCard(origin, words.backTo(named.name))}<p class="dk-fork-status" role="status">${escape(words.forking)}</p></div></div>`;
     const pane: Pane = { key: element.dataset.key, address: null, talk: null, element, fork: { source: sourceKey, origin, status: element.querySelector(".dk-fork-status")! } };
-    this.panes.splice(this.panes.indexOf(from) + 1, 0, pane);
-    this.box.append(element);
-    this.grow(pane);
-    this.lay();
+    this.enter(pane, this.panes.indexOf(from) + 1, true);
     fly(at?.element ?? null, element.querySelector<HTMLElement>(".fk-card")!);
   }
 
@@ -290,6 +296,7 @@ export class Desk implements Page {
   /** Lets go of every conversation on it, as when an account is logged out
    *  of this device: none is put back next time. */
   forget(): void {
+    this.morph.finish();
     for (const pane of this.panes.splice(0)) {
       pane.element.remove();
       if (pane.address && pane.talk) this.seams.release(pane.address);
@@ -343,11 +350,19 @@ export class Desk implements Page {
     element.className = "desk-pane";
     const pane: Pane = { key: keyOf(address), address, talk: null, element, fork: null };
     this.fill(pane, address);
-    this.panes.splice(index, 0, pane);
-    this.box.append(element);
-    if (grow) this.grow(pane);
-    this.lay();
+    this.enter(pane, index, grow);
     return pane;
+  }
+
+  /** Puts `pane` on the desk at `index`; `grow`, it opens from nothing as
+   *  the others give way to it. */
+  private enter(pane: Pane, index: number, grow: boolean): void {
+    const was = grow ? this.moment() : null;
+    this.morph.finish();
+    this.panes.splice(index, 0, pane);
+    this.box.append(pane.element);
+    this.lay();
+    if (was) this.morph.run({ ...was, after: this.rows(), coming: pane.element });
   }
 
   /** Puts the page of `address` in `pane`, with the desk's own buttons in
@@ -380,6 +395,7 @@ export class Desk implements Page {
   private move(pane: Pane, where: { key: string; side: "before" | "after" }): void {
     const target = this.find(where.key);
     if (!target || target === pane) return;
+    this.morph.finish();
     this.panes.splice(this.panes.indexOf(pane), 1);
     this.panes.splice(this.panes.indexOf(target) + (where.side === "after" ? 1 : 0), 0, pane);
     this.lay();
@@ -393,17 +409,19 @@ export class Desk implements Page {
     this.remove(pane, true);
   }
 
+  /** Takes `pane` off the desk; `gently`, it folds to nothing as the others
+   *  take its room. */
   private remove(pane: Pane, gently: boolean): void {
     const index = this.panes.indexOf(pane);
     if (index < 0) return;
+    const was = gently ? this.moment() : null;
+    this.morph.finish();
     this.panes.splice(index, 1);
     this.used = this.used.filter((key) => key !== pane.key);
     const gone = () => {
       pane.element.remove();
       if (pane.address && pane.talk) this.seams.release(pane.address);
     };
-    if (gently) this.shrink(pane, gone);
-    else gone();
     if (this.focusKey === pane.key) {
       const back = [...this.used].reverse().map((key) => this.find(key)).find((one): one is Pane => !!one && !one.fork) ?? this.panes[Math.min(index, this.panes.length - 1)] ?? null;
       this.focusKey = null;
@@ -411,6 +429,8 @@ export class Desk implements Page {
     }
     this.lay();
     this.keep();
+    if (was) this.morph.run({ ...was, after: this.rows(), going: pane.element, gone });
+    else gone();
   }
 
   /** `pane` in focus: its words are the ones the keys go to, the side shows
@@ -459,9 +479,13 @@ export class Desk implements Page {
   private lay(width = this.box.clientWidth): void {
     const n = this.panes.length;
     const { single, top } = this.arrangement(width);
-    this.shape = `${n}|${single}|${top}`;
+    const shape = `${n}|${single}|${top}`;
+    // A move under way ends at once where the panes come to stand otherwise.
+    if (shape !== this.shape) this.morph.finish();
+    this.shape = shape;
     const two = !single && top < n;
     this.single = single;
+    this.top = top;
     this.element.classList.toggle("desk-single", single);
     this.element.classList.toggle("desk-two", two);
     this.element.classList.toggle("desk-many", n > 1 && !OVER.matches);
@@ -475,40 +499,17 @@ export class Desk implements Page {
     });
   }
 
-  /** A pane coming in grows from nothing, the others giving way to it. */
-  private grow(pane: Pane): void {
-    if (reducedMotion()) return;
-    pane.element.style.setProperty("--dk-grow", "0");
-    pane.element.classList.add("dk-moving");
-    void pane.element.offsetWidth;
-    requestAnimationFrame(() => {
-      pane.element.style.removeProperty("--dk-grow");
-      this.settled(pane, () => pane.element.classList.remove("dk-moving"));
-    });
+  /** Where the panes stand now and in what rows, for a move from here. */
+  private moment(): { from: Places; before: Rows } {
+    return { from: this.morph.places(this.panes.map((one) => one.element)), before: this.rows() };
   }
 
-  /** A pane going shrinks to nothing, then `gone`. */
-  private shrink(pane: Pane, gone: () => void): void {
-    if (reducedMotion()) return gone();
-    pane.element.classList.add("dk-moving", "dk-leaving");
-    pane.element.style.setProperty("--dk-grow", "0");
-    this.settled(pane, gone);
-  }
-
-  /** Calls `done` once the pane's size has stopped moving. */
-  private settled(pane: Pane, done: () => void): void {
-    let finished = false;
-    const finish = () => {
-      if (finished) return;
-      finished = true;
-      pane.element.removeEventListener("transitionend", ended);
-      done();
-    };
-    const ended = (event: TransitionEvent) => {
-      if (event.target === pane.element && event.propertyName === "--dk-grow") finish();
-    };
-    pane.element.addEventListener("transitionend", ended);
-    window.setTimeout(finish, msOf(getComputedStyle(pane.element).getPropertyValue("--glide")) + 120);
+  /** The rows the panes stand in, each in its order; none where only the
+   *  one in focus is drawn. */
+  private rows(): Rows {
+    if (this.single) return null;
+    const elements = this.panes.map((one) => one.element);
+    return [elements.slice(0, this.top), elements.slice(this.top)].filter((row) => row.length > 0);
   }
 
   /** The cross that closes a pane. */

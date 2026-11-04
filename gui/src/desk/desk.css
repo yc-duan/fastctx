@@ -1,15 +1,25 @@
 /* The desk (`desk.ts`): conversations side by side, each a pane as tall as
    its row, set apart by lines ruled by hand down the edge two share and
    across the top of the second row, midway between their words, as the
-   sidebar's edge is ruled; the one in focus with its name in full ink. A
-   pane coming in grows from nothing as the others give way, and one going
-   shrinks back to nothing, by --dk-grow; each takes its share of its row,
-   so the rows break where they should with nothing between them. */
+   sidebar's edge is ruled; the one in focus with its name in full ink.
+   Each takes its share of its row, so the rows break where they should
+   with nothing between them. A pane coming in opens from nothing as the
+   others give way, and one going folds back to nothing as they take its
+   room (`morph.ts`). */
 
-@property --dk-grow {
+/* How much of a pane coming or going is seen, as it moves. */
+@property --dk-shown {
   syntax: "<number>";
   inherits: false;
   initial-value: 1;
+}
+
+/* How far a head keeps clear of the corner: all the way in the pane that
+   has it, none elsewhere, and between while it changes hands. */
+@property --dk-corner {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 0;
 }
 
 @property --fk-wash {
@@ -41,10 +51,9 @@
   position: relative;
   display: flex;
   flex-direction: column;
-  flex: var(--dk-grow) 1 calc((100% / var(--dk-row) - 1px) * var(--dk-grow));
+  flex: 1 1 calc(100% / var(--dk-row) - 1px);
   min-width: 0;
   height: 100%;
-  transition: --dk-grow var(--glide) var(--glide-easing);
 }
 
 .desk-two .desk-pane {
@@ -59,9 +68,27 @@
 
 /* What does not fit a pane is cut at its edges, its line left whole. */
 .desk-many .desk-pane,
-.desk-pane.dk-moving {
+.desk-panes.dk-morphing > .desk-pane,
+.desk-pane.dk-going {
   overflow: clip;
   overflow-clip-margin: 4px;
+}
+
+/* On the move each pane stands where it passes through; one coming or
+   going fades in or out, its page held at its own size against the edges
+   it rides on. */
+.desk-panes.dk-morphing > .desk-pane,
+.desk-pane.dk-going {
+  position: absolute;
+}
+
+.desk-pane:is(.dk-going, .dk-coming) {
+  opacity: var(--dk-shown);
+}
+
+.desk-pane > .dk-pinned {
+  position: absolute;
+  flex: none;
 }
 
 .desk-single .desk-pane:not(.focused) {
@@ -110,15 +137,19 @@
 }
 
 /* The top row's last keeps clear of the corner, where the window's own
-   buttons and the side's switch stand, until the side takes it over. */
-.desk-pane.dk-corner > .conversation-page > .page-head,
-.desk-pane.dk-corner > .dk-fork-page > .page-head {
-  padding-right: var(--sp-corner);
+   buttons and the side's switch stand, until the side takes it over; the
+   others' heads end at their own edge. */
+.desk-pane > :is(.conversation-page, .dk-fork-page) > .page-head {
+  --dk-room: var(--sp-corner);
+  padding-right: calc(var(--space-4) + (var(--dk-room) - var(--space-4)) * var(--dk-corner));
 }
 
-.sp-split[data-dock="right"] .desk-pane.dk-corner > .conversation-page > .page-head,
-.sp-split[data-dock="right"] .desk-pane.dk-corner > .dk-fork-page > .page-head {
-  padding-right: max(var(--space-4), calc(var(--sp-corner) - var(--side-width) * var(--sp-open)));
+.sp-split[data-dock="right"] .desk-pane > :is(.conversation-page, .dk-fork-page) > .page-head {
+  --dk-room: max(var(--space-4), calc(var(--sp-corner) - var(--side-width) * var(--sp-open)));
+}
+
+.desk-pane.dk-corner > :is(.conversation-page, .dk-fork-page) > .page-head {
+  --dk-corner: 1;
 }
 
 /* The cross at the end of a conversation's head, while the desk shows more
