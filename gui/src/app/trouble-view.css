@@ -130,6 +130,10 @@ a.tv-row:focus-visible {
   fill: var(--caution);
 }
 
+.tv-mark.over {
+  fill: var(--text-3);
+}
+
 .tv-none {
   margin: auto;
   color: var(--text-3);

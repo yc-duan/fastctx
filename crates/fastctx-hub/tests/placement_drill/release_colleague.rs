@@ -1,6 +1,6 @@
 //! Asking a colleague, which works toward no goal in any build: it opens
-//! no goal; what it tells with message_user reaches the conversation that
-//! asked it and wakes it; the end of its turn comes back too; and that
+//! no goal; what it tells with message_colleague reaches the conversation
+//! that asked it and wakes it; the end of its turn comes back too; and that
 //! conversation no longer waits for it once the turn ended
 //! (`world-colleagues.md`, 两个工具). Then its callee works on one at a
 //! time: colleagues asked together wait their turns, and a restart while
@@ -81,7 +81,7 @@ pub(super) async fn exercise(
     let reply = ask(
         &root,
         json!({"call":"ask","resident":parent,"label":"release colleague",
-               "prompt":"RELEASE_COLLEAGUE [[tell: RELEASE_TOLD]]","callee":"release-helper","login":null}),
+               "prompt":"RELEASE_COLLEAGUE [[note: RELEASE_TOLD]]","callee":"release-helper","login":null}),
     )
     .await?;
     let colleague: fastctx_types::Address =

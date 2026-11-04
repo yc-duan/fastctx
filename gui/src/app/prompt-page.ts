@@ -1,13 +1,16 @@
-// The account's own prompt (`world-user-config.md`, 用户级提示词): what it
-// writes to every agent that works for it, a sheet of its own filling the
-// page. It is written over the version it was read at; written elsewhere in
+// The account's own prompt for one family (`world-user-config.md`, 用户级
+// 提示词): what it writes to Claude Code, or to Codex, wherever they work for
+// it, a sheet of its own filling the page, come into from that family's card
+// of the models' settings. A family not written yet shows the prompt every
+// agent was given before the two were apart, which it follows until it is
+// saved. It is written over the version it was read at; written elsewhere in
 // the meantime, the page says so and offers that version in place of its
 // own. What is typed and not yet saved stays on this device until it is.
 
 import { escape } from "../conversation/prose";
 import { glyph } from "../conversation/glyphs";
 import type { Login } from "../world/accounts";
-import { PROMPT_MOST, type ProfileView } from "../world/profile";
+import { PROMPT_MOST, promptOf, type ProfileView } from "../world/profile";
 import { AccountChoice, loginKey, type ProfileCalls } from "./profile-account";
 import type { ProfileWords } from "./profile-words";
 import { detailOf } from "./problem";
@@ -18,6 +21,9 @@ import type { Store } from "./store";
 export interface PromptPageOptions {
   store: Store;
   words: ProfileWords;
+  agent: "claude" | "codex";
+  /** The family's name, as its card heads it. */
+  name: string;
   head(title: string, actions?: string): string;
   calls: ProfileCalls;
 }
@@ -51,11 +57,13 @@ export class PromptPage implements Page {
 
   constructor(private readonly options: PromptPageOptions) {
     const { words } = options;
-    this.title = words.sections.prompt;
+    this.title = words.prompt.title(options.name);
     this.account = new AccountChoice(words, (login) => void this.load(login));
     this.element = document.createElement("div");
     this.element.className = "prof-page prompt-page";
-    this.element.innerHTML = `${options.head(`<h1 class="page-title">${escape(words.sections.prompt)}</h1><span class="prof-account-place"></span>`)}
+    // Its way back names the family, and where that keeps its arrow alone,
+    // as on a phone, the head does (`profile.css`).
+    this.element.innerHTML = `${options.head(`<h1 class="page-title"><span class="pp-of">${escape(words.prompt.of(options.name))}</span>${escape(words.sections.prompt)}</h1><span class="prof-account-place"></span>`)}
       <div class="prof-body"></div>`;
     this.element.querySelector(".prof-account-place")!.replaceWith(this.account.element);
     this.body = this.element.querySelector<HTMLElement>(".prof-body")!;
@@ -101,7 +109,7 @@ export class PromptPage implements Page {
     try {
       const view = await this.options.calls.read(login.hubName, login.account);
       if (this.shownLogin !== key) return;
-      this.setState(view.kept ? { kind: "ready", view } : { kind: "older" });
+      this.setState(view.kept && view.families ? { kind: "ready", view } : { kind: "older" });
     } catch (error) {
       if (this.shownLogin === key) this.setState({ kind: "failed", detail: detailOf(error) });
     }
@@ -122,13 +130,14 @@ export class PromptPage implements Page {
         this.body.innerHTML = `<p class="prof-quiet" title="${escape(state.detail)}">${escape(words.readFailed)}</p>`;
         return;
       case "older":
-        this.body.innerHTML = `<div class="prof-empty">${glyph("server", 40)}<p class="prof-quiet">${escape(words.olderHub)}</p></div>`;
+        this.body.innerHTML = `<div class="prof-empty">${glyph("server", 40)}<p class="prof-quiet">${escape(words.prompt.olderHub)}</p></div>`;
         return;
       case "ready": {
-        const saved = state.view.profile.prompt ?? "";
+        const saved = this.saved();
+        const { name } = this.options;
         this.body.innerHTML = `<div class="prompt-sheet">
-            <div class="prompt-paper"><textarea class="prompt-text" spellcheck="false" placeholder="${escape(words.prompt.placeholder)}" aria-label="${escape(words.sections.prompt)}"></textarea></div>
-            <footer class="prompt-foot"><span class="prompt-size"></span><span class="prompt-note" role="status"></span><button class="sheet-go prompt-save" type="button" data-save title="${escape(words.prompt.reaches)}">${escape(words.prompt.save)}</button></footer>
+            <div class="prompt-paper"><textarea class="prompt-text" spellcheck="false" placeholder="${escape(words.prompt.placeholder(name))}" aria-label="${escape(this.title)}"></textarea></div>
+            <footer class="prompt-foot"><span class="prompt-size"></span><span class="prompt-note" role="status"></span><button class="sheet-go prompt-save" type="button" data-save title="${escape(words.prompt.reaches(name))}">${escape(words.prompt.save)}</button></footer>
           </div>`;
         this.text = this.body.querySelector<HTMLTextAreaElement>(".prompt-text")!;
         this.text.value = this.draft() ?? saved;
@@ -137,13 +146,13 @@ export class PromptPage implements Page {
     }
   }
 
-  /** The saved prompt of the account shown. */
+  /** The saved prompt of the account shown, for this family. */
   private saved(): string {
-    return this.state.kind === "ready" ? (this.state.view.profile.prompt ?? "") : "";
+    return this.state.kind === "ready" ? promptOf(this.state.view.profile, this.options.agent) : "";
   }
 
   private draftKey(): string | null {
-    return this.shownLogin === null ? null : `profile.prompt.${this.shownLogin}`;
+    return this.shownLogin === null ? null : `profile.prompt.${this.options.agent}.${this.shownLogin}`;
   }
 
   private draft(): string | null {
@@ -207,8 +216,9 @@ export class PromptPage implements Page {
     this.note = null;
     this.drawFoot();
     try {
-      const version = await this.options.calls.write(login.hubName, login.account, { ...view.profile, prompt });
-      view.profile = { ...view.profile, prompt, version };
+      const prompts = { ...view.profile.prompts, [this.options.agent]: prompt };
+      const version = await this.options.calls.write(login.hubName, login.account, { ...view.profile, prompts });
+      view.profile = { ...view.profile, prompts, version };
       this.keepDraft();
       this.saidUntil = Date.now() + SAID_MS;
       clearTimeout(this.saidTimer);

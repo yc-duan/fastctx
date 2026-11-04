@@ -61,6 +61,8 @@ pub(crate) struct Said {
     pub conversation_deletions: bool,
     /// Whether it reads the records of profiles written.
     pub profiles: bool,
+    /// Whether it reads the records of machines' update settings changed.
+    pub machine_updates: bool,
     pub account_records: bool,
     pub record_keys: bool,
     pub skill_files: bool,
@@ -1204,6 +1206,36 @@ fn echoes_work(store: &crate::store::Snapshot, message: &Envelope) -> bool {
         && store.worked.contains(&(from, resident))
 }
 
+/// Notes a change of the update settings of the machine a call goes to, as
+/// another device asks it, in the machine log: who, from where and when, as a
+/// rename or a share is.
+fn note_updates(hub: &Hub, message: &Envelope, standing: &Standing) {
+    use fastctx_types::update::UpdateCall;
+    let Some(fastctx_types::remote::RemoteCall::Updates { update }) = carried_call(message) else { return };
+    let (auto, relays) = match update {
+        UpdateCall::Preferences { auto, relays } => (auto, relays),
+        UpdateCall::Set { settings } => (Some(settings.auto), Some(settings.relays)),
+        _ => return,
+    };
+    if message.from == standing.to {
+        return;
+    }
+    let mut store = hub.edit_store();
+    let before = store.book.directory.clone();
+    let actor = fastctx_types::machine_log::Actor {
+        account: Some(standing.account.clone()),
+        authenticated: true,
+        member: Some(message.from.clone()),
+        peer: None,
+    };
+    let action = fastctx_types::machine_log::Action::MachineUpdates { machine: standing.to.clone(), auto, relays };
+    if let Err(reason) =
+        crate::machine_log::keep(&mut store, &before, actor, action, fastctx_types::machine_log::Outcome::Done)
+    {
+        hub.log.line(format_args!("noting {}'s update settings changed: {reason}", standing.to));
+    }
+}
+
 /// The call a message carries, when it carries one.
 fn carried_call(message: &Envelope) -> Option<fastctx_types::remote::RemoteCall> {
     match message.body::<fastctx_net::message::Body>().ok()? {
@@ -1344,6 +1376,7 @@ fn call(
     if let Err(reason) = use_agent(hub, &message, &standing, &details) {
         return CallStatus::Refused { reason };
     }
+    note_updates(hub, &message, &standing);
     if let Some(resident) = details.resident.map(|resident| canonical_address(hub, resident))
         && let Err(error) = hub.store().worked.note(&to, resident)
     {
@@ -1504,6 +1537,7 @@ fn ask(
                     due: letters.due,
                     project_deletes: letters.project_deletes,
                     profiles: letters.profiles,
+                    machine_updates: letters.machine_updates,
                 });
             store
                 .book

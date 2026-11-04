@@ -228,6 +228,9 @@ export interface Trouble {
   near?: { bound: string; used: number };
   /** The version a stopped rollout was of. */
   version?: string;
+  /** When what it told of was over: the files a machine set aside are all
+   *  put away. */
+  resolved?: Timestamp;
 }
 
 export interface Arrival {

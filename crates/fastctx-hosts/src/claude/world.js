@@ -373,7 +373,7 @@ function entered(context) {
 // Says that `acceptedTurn` took what was submitted.
 async function submitted($, context, deliveries, acceptedTurn) {
   const report = handed($, context, deliveries, acceptedTurn, 'submitted')
-  await Promise.all([report, ...deliveries.map((delivery) => receipt($, context, delivery, 'submitted', acceptedTurn))])
+  await within($, Promise.all([report, ...deliveries.map((delivery) => receipt($, context, delivery, 'submitted', acceptedTurn))]))
 }
 
 // Hands everything held to the model in one new turn; on failure it is
@@ -590,7 +590,7 @@ async function staleTurn($, context, turn) {
   await completeControlTurn($, { turnId: turn })
   const completed = event($, context, 'turn_complete', { turn, aborted: true, reason: 'aborted', refusal: null, ms: null, answer: null, streamed: true })
   const saved = activity($, context)
-  await Promise.all([completed, saved])
+  await within($, Promise.all([completed, saved]))
   await flush($, context, 'submitted at the end of a turn')
 }
 
@@ -863,7 +863,7 @@ async function startTurn($, context, e, next) {
   if (along.length > 0) took.push(along)
   const started = event($, context, 'turn_start', { turn: context.turn, activation: context.registration.instance })
   const saved = activity($, context)
-  await Promise.all([started, saved])
+  await within($, Promise.all([started, saved]))
   for (const deliveries of took) await submitted($, context, deliveries, e.turnId)
   for (const prior of context.stopTaken) await $.fs.write(context.dir + '/told-stops/' + encodeURIComponent(prior), '')
   context.stopTaken = []
@@ -923,7 +923,7 @@ async function completeTurn($, context, e, next) {
     streamed: true,
   })
   const saved = activity($, context)
-  await Promise.all([completed, saved])
+  await within($, Promise.all([completed, saved]))
   await flush($, context, 'submitted at the end of a turn')
   return next(e)
 }
@@ -1207,7 +1207,10 @@ export function register(on) {
     if (await aside($)) return next(e)
     const context = await route($, registry, 'turn.complete', e)
     const result = await completeTurn($, context, e, next)
-    await clearNativeGoal($, context)
+    // Cleared once the session is idle, not waited for here: `/goal clear`
+    // runs only after the turn, and waiting for a promise of our own spends
+    // the hook's budget, two overruns in a row unloading the plugin.
+    if (e.agentId === undefined) scheduleNativeGoalClear($, context)
     return result
   }).catch(($, e, next) => continueWithoutWorld($, 'turn.complete', e, next))
   on('turn.step', async function* ($, e, next) {

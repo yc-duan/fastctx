@@ -19,6 +19,7 @@ impl Link {
             account: account.clone(),
             profile: found.profile.clone().unwrap_or_default(),
             kept: view.profiles,
+            families: view.family_prompts,
         })
     }
 
@@ -27,9 +28,15 @@ impl Link {
         if !current.kept {
             return Err(format!("upgrade hub {} to use user-level configuration", self.hub_name()));
         }
+        if profile.prompts.is_some() && !current.families && profile.prompts != current.profile.prompts {
+            return Err(format!("upgrade hub {} to give each family a prompt of its own", self.hub_name()));
+        }
         profile.subagents = current.profile.subagents;
         profile.memory = current.profile.memory;
         profile.layer = current.profile.layer;
+        if profile.prompts.is_none() {
+            profile.prompts = current.profile.prompts;
+        }
         profile.validate()?;
         let confirmed = profile.clone();
         let told =

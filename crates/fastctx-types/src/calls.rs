@@ -1207,6 +1207,10 @@ pub enum Reply {
         /// one the World started for them (`world-voice.md`).
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         speaks: bool,
+        /// For a colleague, the agent that asked it, the one its
+        /// `message_colleague` reaches (`world-colleagues.md`, 两个工具).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        asker: Option<crate::Address>,
     },
     /// A job stopped, or found already ended: on `machine`, as its record
     /// now stands.

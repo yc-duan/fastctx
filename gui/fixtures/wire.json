@@ -1205,6 +1205,9 @@
           "memory": false,
           "layer": "workbench",
           "prompt": "Use concise answers.",
+          "prompts": {
+            "claude": "Answer in English."
+          },
           "claude": {
             "language": "English"
           },
@@ -1256,6 +1259,9 @@
           "memory": false,
           "layer": "workbench",
           "prompt": "Use concise answers.",
+          "prompts": {
+            "claude": "Answer in English."
+          },
           "claude": {
             "language": "English"
           },
@@ -1276,7 +1282,8 @@
             }
           }
         },
-        "kept": true
+        "kept": true,
+        "families": true
       },
       {
         "reply": "profile_written",
@@ -1343,7 +1350,7 @@
     {
       "records": [
         {
-          "id": 43,
+          "id": 44,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1360,7 +1367,7 @@
           }
         },
         {
-          "id": 42,
+          "id": 43,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1380,7 +1387,7 @@
           }
         },
         {
-          "id": 41,
+          "id": 42,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1402,7 +1409,7 @@
           }
         },
         {
-          "id": 40,
+          "id": 41,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1428,7 +1435,7 @@
           }
         },
         {
-          "id": 39,
+          "id": 40,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1448,7 +1455,7 @@
           }
         },
         {
-          "id": 38,
+          "id": 39,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1468,7 +1475,7 @@
           }
         },
         {
-          "id": 37,
+          "id": 38,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1485,7 +1492,7 @@
           }
         },
         {
-          "id": 36,
+          "id": 37,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1510,7 +1517,7 @@
           }
         },
         {
-          "id": 35,
+          "id": 36,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1528,7 +1535,7 @@
           }
         },
         {
-          "id": 34,
+          "id": 35,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1548,7 +1555,7 @@
           }
         },
         {
-          "id": 33,
+          "id": 34,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1566,7 +1573,7 @@
           }
         },
         {
-          "id": 32,
+          "id": 33,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": null,
@@ -1584,7 +1591,7 @@
           }
         },
         {
-          "id": 31,
+          "id": 32,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1603,7 +1610,7 @@
           }
         },
         {
-          "id": 30,
+          "id": 31,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1623,7 +1630,7 @@
           }
         },
         {
-          "id": 29,
+          "id": 30,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1641,7 +1648,7 @@
           }
         },
         {
-          "id": 28,
+          "id": 29,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1658,7 +1665,7 @@
           }
         },
         {
-          "id": 27,
+          "id": 28,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1678,7 +1685,7 @@
           }
         },
         {
-          "id": 26,
+          "id": 27,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1696,7 +1703,7 @@
           }
         },
         {
-          "id": 25,
+          "id": 26,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1714,7 +1721,7 @@
           }
         },
         {
-          "id": 24,
+          "id": 25,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1732,7 +1739,7 @@
           }
         },
         {
-          "id": 23,
+          "id": 24,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1748,7 +1755,7 @@
           }
         },
         {
-          "id": 22,
+          "id": 23,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1768,7 +1775,7 @@
           }
         },
         {
-          "id": 21,
+          "id": 22,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1792,7 +1799,7 @@
           }
         },
         {
-          "id": 20,
+          "id": 21,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1811,7 +1818,7 @@
           }
         },
         {
-          "id": 19,
+          "id": 20,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1827,7 +1834,7 @@
           }
         },
         {
-          "id": 18,
+          "id": 19,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1845,7 +1852,7 @@
           }
         },
         {
-          "id": 17,
+          "id": 18,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1862,7 +1869,7 @@
           }
         },
         {
-          "id": 16,
+          "id": 17,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1879,7 +1886,7 @@
           }
         },
         {
-          "id": 15,
+          "id": 16,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1896,7 +1903,7 @@
           }
         },
         {
-          "id": 14,
+          "id": 15,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1913,7 +1920,7 @@
           }
         },
         {
-          "id": 13,
+          "id": 14,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1931,7 +1938,7 @@
           }
         },
         {
-          "id": 12,
+          "id": 13,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1948,7 +1955,7 @@
           }
         },
         {
-          "id": 11,
+          "id": 12,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1965,7 +1972,7 @@
           }
         },
         {
-          "id": 10,
+          "id": 11,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1982,7 +1989,7 @@
           }
         },
         {
-          "id": 9,
+          "id": 10,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -2000,7 +2007,7 @@
           }
         },
         {
-          "id": 8,
+          "id": 9,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -2020,7 +2027,7 @@
           }
         },
         {
-          "id": 7,
+          "id": 8,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -2039,7 +2046,7 @@
           }
         },
         {
-          "id": 6,
+          "id": 7,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -2059,7 +2066,7 @@
           }
         },
         {
-          "id": 5,
+          "id": 6,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -2079,7 +2086,7 @@
           }
         },
         {
-          "id": 4,
+          "id": 5,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -2100,7 +2107,7 @@
           }
         },
         {
-          "id": 3,
+          "id": 4,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -2113,6 +2120,24 @@
             "machine": "laptop",
             "agent": "claude",
             "home": null
+          },
+          "outcome": {
+            "kind": "done"
+          }
+        },
+        {
+          "id": 3,
+          "at": "2026-10-10T12:00:00Z",
+          "actor": {
+            "account": "ada",
+            "authenticated": true,
+            "member": "laptop",
+            "peer": null
+          },
+          "action": {
+            "change": "machine_updates",
+            "machine": "laptop",
+            "auto": true
           },
           "outcome": {
             "kind": "done"
@@ -4498,7 +4523,8 @@
                 "id": 11,
                 "at": "2026-10-09T08:30:00Z",
                 "machine": "server",
-                "kind": "damaged"
+                "kind": "damaged",
+                "resolved": "2026-10-09T08:30:00Z"
               },
               {
                 "id": 12,

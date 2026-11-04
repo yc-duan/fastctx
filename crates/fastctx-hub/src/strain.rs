@@ -35,6 +35,8 @@ pub(crate) struct Heard {
     damaged: bool,
     /// How many earlier files it had set aside as unreadable when last heard.
     set_aside: u32,
+    /// Whether how its migration goes was heard on this connection yet.
+    migration_heard: bool,
     /// Since when some of its earlier records fail to move, and whether that was told.
     migration: Option<(Instant, bool)>,
     /// Since when this window runs, the rules broken by its start, and in how
@@ -112,6 +114,13 @@ impl Heard {
             );
         }
         self.set_aside = set_aside;
+        // A release that tells how its migration goes tells it whole, set
+        // aside or not: kept, and what it said before closed once it is over.
+        if let Some(migrating) = &health.migrating {
+            let first = !self.migration_heard;
+            self.migration_heard = true;
+            hub.troubles.migrating(hub, name, key, migrating, first);
+        }
         match health.migrating.as_ref().map(|migrating| migrating.failed).filter(|failed| *failed > 0) {
             Some(failed) => {
                 let (since, told) = self.migration.get_or_insert((now, false));

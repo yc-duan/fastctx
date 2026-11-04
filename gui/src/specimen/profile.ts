@@ -60,7 +60,7 @@ function listed(): Listed[] {
 }
 
 function view(): ProfileView {
-  return { hub: "home", account: "me", profile: structuredClone(profile), kept: true };
+  return { hub: "home", account: "me", profile: structuredClone(profile), kept: true, families: true };
 }
 
 function keep(name: string, server: Server, machine: string | undefined): McpReply {

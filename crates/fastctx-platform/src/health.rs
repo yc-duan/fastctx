@@ -160,7 +160,8 @@ pub fn summary() -> Health {
 }
 
 /// How the move of earlier records goes, from what the node's migration reads
-/// (`migration.*`): told while any are left, failed or set aside.
+/// (`migration.*`): told always, nothing left, failing or set aside too, so
+/// that the hub hears one gone back to nothing.
 fn migrating() -> Option<Migrating> {
     // Looked up once: a heartbeat takes no lock the readings' registry has.
     static GAUGES: std::sync::LazyLock<[&'static crate::readings::Gauge; 3]> = std::sync::LazyLock::new(|| {
@@ -177,5 +178,5 @@ fn migrating() -> Option<Migrating> {
         failed: read(failed).min(u64::from(u32::MAX)) as u32,
         damaged: read(damaged).min(u64::from(u32::MAX)) as u32,
     };
-    (migrating != Migrating::default()).then_some(migrating)
+    Some(migrating)
 }

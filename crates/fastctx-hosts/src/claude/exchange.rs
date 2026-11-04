@@ -563,9 +563,12 @@ fn translate(event: ModEvent, recorded_at: Timestamp) -> Vec<Reported> {
                 };
                 reported.push(happened(at, Happened::Finished { turn: turn.clone(), item }));
             }
-            let error = error.or_else(|| refusal.as_ref().map(|refusal| serde_json::json!({
+            let error =
+                error.or_else(|| {
+                    refusal.as_ref().map(|refusal| serde_json::json!({
                 "category": refusal.category.as_deref().unwrap_or("refusal"), "message": refusal.explanation,
-            })));
+            }))
+                });
             // Cancellation determines how the turn ended, even when it also carries a diagnostic.
             let how = match reason.as_deref() {
                 _ if aborted => TurnHow::Interrupted,
@@ -738,32 +741,40 @@ pub fn acknowledge_handover(directory: &Path, ids: &[String], turn: &str) -> io:
     Ok(())
 }
 
-/// Receipts are a second durable copy of the consuming-turn proof.
-pub fn receipts(directory: &Path) -> io::Result<Vec<(String, String)>> {
-    let mut accepted = Vec::new();
+/// The names of the receipts the mod wrote, a second durable copy of the
+/// consuming-turn proof. Each is written once and never changes.
+pub fn receipt_names(directory: &Path) -> io::Result<Vec<String>> {
+    let mut names = Vec::new();
     let entries = match std::fs::read_dir(directory.join("receipts")) {
         Ok(entries) => entries,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(accepted),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(names),
         Err(error) => return Err(error),
     };
     for entry in entries {
-        let entry = entry?;
-        let name = entry.file_name().to_string_lossy().into_owned();
-        if name.starts_with('.') {
-            continue;
-        }
-        let value: Value = serde_json::from_slice(&std::fs::read(entry.path())?).map_err(io::Error::other)?;
-        let turn = value.get("turn").and_then(Value::as_str).filter(|turn| !turn.is_empty()).map(str::to_string);
-        if let Some(turn) = turn {
-            accepted.push((name, turn));
+        let name = entry?.file_name().to_string_lossy().into_owned();
+        if !name.starts_with('.') {
+            names.push(name);
         }
     }
-    Ok(accepted)
+    Ok(names)
 }
 
-/// The ids the mod has handed over; their inbox files and assembled parts
-/// are gone once this returns. Receipts remain as duplicate-delivery proof.
-pub fn handed_over(directory: &Path) -> io::Result<Vec<String>> {
+/// The turn the receipt `name` says its input was taken into; none where it
+/// names none, or is gone.
+pub fn receipt(directory: &Path, name: &str) -> io::Result<Option<String>> {
+    let bytes = match std::fs::read(directory.join("receipts").join(name)) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    let value: Value = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
+    Ok(value.get("turn").and_then(Value::as_str).filter(|turn| !turn.is_empty()).map(str::to_string))
+}
+
+/// The ids the mod has handed over, but those `skip` names; their inbox
+/// files and assembled parts are gone once this returns. Receipts remain as
+/// duplicate-delivery proof.
+pub fn handed_over(directory: &Path, skip: impl Fn(&str) -> bool) -> io::Result<Vec<String>> {
     let receipts = directory.join("receipts");
     let mut ids = Vec::new();
     let entries = match std::fs::read_dir(&receipts) {
@@ -773,7 +784,7 @@ pub fn handed_over(directory: &Path) -> io::Result<Vec<String>> {
     };
     for entry in entries {
         let name = entry?.file_name().to_string_lossy().into_owned();
-        if name.starts_with('.') {
+        if name.starts_with('.') || skip(&name) {
             continue;
         }
         remove(&directory.join("inbox").join(format!("{name}.json")))?;

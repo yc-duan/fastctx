@@ -23,12 +23,17 @@ export interface TroubleWords {
   title(trouble: Trouble): string;
   /** How long, how many, or which bound; empty where there is no more. */
   detail(trouble: Trouble): string;
+  /** After what it was, once it is over. */
+  over: string;
   /** The bounds the hub names, by their plain names. */
   bounds: Record<string, string>;
 }
 
-/** Whether a trouble is a fault, drawn in its colour, or a warning. */
-export function troubleTone(kind: Trouble["kind"]): "fault" | "warning" {
+/** Whether a trouble is a fault, drawn in its colour, or a warning; one
+ *  over steps back into the paper's ink. */
+export function troubleTone(trouble: Trouble): "fault" | "warning" | "over" {
+  if (trouble.resolved) return "over";
+  const kind = trouble.kind;
   return kind === "silent" || kind === "stuck" || kind === "outage" || kind === "damaged" ? "fault" : "warning";
 }
 
@@ -84,6 +89,7 @@ const enTitle = (trouble: Trouble, what: string): string => {
 export const zhTroubles: TroubleWords = {
   view: "告警",
   bounds: zhBounds,
+  over: "已恢复",
   none: "近 7 天没有告警",
   today: "今天",
   weekday: (day) => `周${"日一二三四五六"[day] ?? ""}`,
@@ -145,6 +151,7 @@ export const zhTroubles: TroubleWords = {
 export const enTroubles: TroubleWords = {
   view: "Alerts",
   bounds: enBounds,
+  over: "Recovered",
   none: "No alerts in the last 7 days",
   today: "Today",
   weekday: (day) => ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][day] ?? "",

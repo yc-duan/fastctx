@@ -426,6 +426,13 @@ export interface SettingsWords {
   notify: string;
   notifyOn: string;
   notifyOff: string;
+  /** Whether this device's interface shows the workbench's places
+   *  (`world-layers.md`): the row, its two choices, and what those places
+   *  are, where the pointer rests. */
+  workbench: string;
+  workbenchOn: string;
+  workbenchOff: string;
+  workbenchWhat: string;
   /** How long this computer keeps a command's output once its end was
    *  delivered. */
   retention: string;
@@ -541,6 +548,10 @@ export const zhSettings: SettingsWords = {
   notify: "通知",
   notifyOn: "开启",
   notifyOff: "关闭",
+  workbench: "工作台",
+  workbenchOn: "显示",
+  workbenchOff: "隐藏",
+  workbenchWhat: "侧栏里的新对话、世界、项目与对话",
   retention: "命令输出保留",
   data: "本机数据",
   dataOpen: "查看与管理",
@@ -663,6 +674,10 @@ export const enSettings: SettingsWords = {
   notify: "Notifications",
   notifyOn: "On",
   notifyOff: "Off",
+  workbench: "Workbench",
+  workbenchOn: "Shown",
+  workbenchOff: "Hidden",
+  workbenchWhat: "New conversation, Home, projects and conversations in the sidebar",
   retention: "Keep command output",
   data: "Data",
   dataOpen: "View and manage",

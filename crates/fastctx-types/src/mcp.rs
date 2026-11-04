@@ -152,6 +152,10 @@ pub struct ProfileView {
     /// Whether the hub keeps profiles at all; an older one does not, and
     /// takes no change to one.
     pub kept: bool,
+    /// Whether it keeps each family's own prompt; an older one writes it
+    /// away.
+    #[serde(default)]
+    pub families: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

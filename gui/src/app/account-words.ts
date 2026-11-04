@@ -1096,6 +1096,10 @@ export const zhMachines: MachinesWords = {
         return `${a.name} 离开`;
       case "allow_acting":
         return `${a.machine} 上的 ${agentName(a.agent)} 获准访问`;
+      case "machine_updates": {
+        const parts = [a.auto === undefined ? null : a.auto ? "自动更新" : "不自动更新", a.relays === undefined ? null : a.relays ? "替别的机器取安装包" : "不替别的机器取安装包"].filter(Boolean);
+        return `把 ${a.machine} 的更新设为${parts.join("、")}`;
+      }
       case "allow_sentinel_home":
         return `${a.machine} 上的观测获准访问`;
       case "acting_stopped":
@@ -1436,6 +1440,10 @@ export const enMachines: MachinesWords = {
         return `${a.name} left`;
       case "allow_acting":
         return `${agentName(a.agent)} on ${a.machine} was allowed access`;
+      case "machine_updates": {
+        const parts = [a.auto === undefined ? null : a.auto ? "updates by itself" : "does not update by itself", a.relays === undefined ? null : a.relays ? "fetches packages for others" : "fetches no packages for others"].filter(Boolean);
+        return `Set ${a.machine} so it ${parts.join(" and ")}`;
+      }
       case "allow_sentinel_home":
         return `Watchers on ${a.machine} were allowed access`;
       case "acting_stopped":

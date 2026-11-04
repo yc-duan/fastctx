@@ -209,6 +209,23 @@ pub(crate) fn recent_actions(directory: &ConversationDir, limit: usize) -> io::R
         Ok((actions, count as usize))
     })
 }
+/// How many times the actions at `path` were written: the same number, the
+/// same actions.
+pub(crate) fn actions_version(path: &Path) -> io::Result<u64> {
+    let directory = directory(path)?;
+    prepare(&directory, "actions")?;
+    records::read(&directory, |rows| {
+        Ok(rows
+            .connection()
+            .query_row(
+                "SELECT version FROM conversation_record_versions WHERE conversation=?1 AND family='actions'",
+                [rows.conversation()],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()?
+            .unwrap_or(0) as u64)
+    })
+}
 pub(crate) fn asked(path: &Path, target: Option<&str>) -> io::Result<Vec<Action>> {
     let directory = directory(path)?;
     prepare(&directory, "actions")?;

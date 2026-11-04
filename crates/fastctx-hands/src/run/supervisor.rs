@@ -21,6 +21,12 @@ use tokio::sync::mpsc;
 
 use super::{control, output, record, shell};
 
+/// How long a job's end is written again while the disk refuses it, and how
+/// often: first soon, then every ten seconds at most.
+const END_KEPT_WITHIN: std::time::Duration = std::time::Duration::from_secs(60 * 60);
+const END_RETRY_FIRST: std::time::Duration = std::time::Duration::from_millis(250);
+const END_RETRY_MOST: std::time::Duration = std::time::Duration::from_secs(10);
+
 /// Runs the job at `record_path` until nothing of it runs any more.
 pub fn supervise(world: &Path, record_path: &Path, fastctx_dir: &Path) -> io::Result<()> {
     supervise_with(world, record_path, |_, record| {
@@ -90,7 +96,7 @@ pub fn supervise_with(
             .await;
         if let Err(error) = &result {
             job.record.end = Some(Ended { at: Timestamp::now(), how: EndedHow::Failed { error: error.to_string() } });
-            job.publish().await?;
+            job.publish_end().await?;
         }
         // Closing is the receipt: each caller reads the final record. The
         // supervisor never depends on a caller consuming response bytes.
@@ -160,7 +166,7 @@ impl Job {
                     },
                 });
                 self.record.end = Some(Ended { at: Timestamp::now(), how: EndedHow::Stopped });
-                return self.publish().await;
+                return self.publish_end().await;
             }
         }
         let (tree, output) = if self.record.is_sentinel() {
@@ -324,7 +330,7 @@ impl Job {
                             self.record.remaining = Some(0);
                             let how = if self.record.stop.is_some() { EndedHow::Stopped } else { EndedHow::Finished };
                             self.record.end = Some(Ended { at: Timestamp::now(), how });
-                            return self.publish().await;
+                            return self.publish_end().await;
                         }
                         // The record is a snapshot. Include events already queued
                         // before publishing it, without delaying for future events.
@@ -342,9 +348,15 @@ impl Job {
     async fn stop(&mut self, tree: &ProcessTree, request: StopRequest) -> io::Result<()> {
         if self.record.stop.is_none() {
             self.record.stop = Some(StopRequested { at: Timestamp::now(), request });
-            // Attribution survives even a failure while terminating the tree.
-            self.publish().await?;
+            // Attribution survives even a failure while terminating the tree,
+            // and a record not written now, as on a disk full for a while,
+            // does not keep the tree from being stopped: it is written with
+            // the end.
+            let published = self.publish().await;
             tree.kill()?;
+            if let Err(error) = published {
+                eprintln!("recording who stopped the job: {error}; it is recorded with its end");
+            }
         }
         Ok(())
     }
@@ -353,6 +365,27 @@ impl Job {
         record::write(&self.path, &self.record)?;
         tell_node(&self.world, &self.record).await;
         Ok(())
+    }
+
+    /// Writes the job's end, again while the disk refuses it, as one filled
+    /// for a while does: a supervisor that left without it would leave its
+    /// job running in every reader's eyes until the node next starts.
+    async fn publish_end(&self) -> io::Result<()> {
+        let began = tokio::time::Instant::now();
+        let mut wait = END_RETRY_FIRST;
+        loop {
+            match record::write(&self.path, &self.record) {
+                Ok(()) => {
+                    tell_node(&self.world, &self.record).await;
+                    return Ok(());
+                }
+                Err(error) if began.elapsed() >= END_KEPT_WITHIN => return Err(error),
+                Err(_) => {
+                    tokio::time::sleep(wait).await;
+                    wait = (wait * 2).min(END_RETRY_MOST);
+                }
+            }
+        }
     }
 }
 

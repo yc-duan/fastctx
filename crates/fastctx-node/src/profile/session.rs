@@ -56,8 +56,9 @@ pub(crate) fn get(node: &Node, acting: &Acting) -> Profile {
         .map(|v| v.profile)
         .unwrap_or_default()
 }
-pub(crate) fn prompt(node: &Node, acting: &Acting) -> String {
-    get(node, acting).prompt
+/// What the agents of the family `agent` working for `acting` are given.
+pub(crate) fn prompt(node: &Node, acting: &Acting, agent: &str) -> String {
+    get(node, acting).prompt_for(agent).to_string()
 }
 pub(crate) fn hash(prompt: &str) -> String {
     use sha2::Digest as _;

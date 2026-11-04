@@ -356,6 +356,7 @@ fn as_deleted(node: &Node, resident: &ResidentId, failure: Failure) -> Failure {
 }
 
 async fn read_here(node: &Arc<Node>, resident: &ResidentId, hearing: Hearing) -> Result<HistoryRead, Failure> {
+    let _doing = fastctx_platform::doing::doing(format!("reading {resident}'s history"));
     let (about, _) = node.residents.about(resident).ok_or_else(|| crate::forget::gone(node, resident))?;
     // A session the user opened on their own is theirs to read, in their
     // own program (`world-layers.md`).

@@ -18,7 +18,7 @@ import { escape } from "../conversation/prose";
 import type { AgentModel } from "../world/agents";
 import type { Login } from "../world/accounts";
 import type { WorldNow } from "../world/bridge";
-import type { Profile, ProfileView } from "../world/profile";
+import { promptOf, type Profile, type ProfileView } from "../world/profile";
 import { AccountChoice, loginKey, type ProfileCalls } from "./profile-account";
 import type { ProfileWords } from "./profile-words";
 import { detailOf } from "./problem";
@@ -40,6 +40,8 @@ export interface HostPrefsOptions {
     names(login: Login): Promise<string[] | null>;
     open(): void;
   } | undefined;
+  /** The way to this agent's own prompt. */
+  prompt(): void;
 }
 
 /** A preference laid out as a slider of steps, and how it sits in the
@@ -118,7 +120,11 @@ export class HostPrefs {
       { title: p.contextSection, rows: [this.context.window, this.context.compact] },
       {
         title: p.otherSection,
-        rows: [...(options.subagents ? [{ kind: "link" as const, id: "subagents", label: words.subagents.agents }] : []), ...otherRows(agent, p)],
+        rows: [
+          { kind: "link" as const, id: "prompt", label: words.sections.prompt },
+          ...(options.subagents ? [{ kind: "link" as const, id: "subagents", label: words.subagents.agents }] : []),
+          ...otherRows(agent, p),
+        ],
       },
     ];
     this.choice = new AccountChoice(words, (login) => void this.load(login));
@@ -157,6 +163,13 @@ export class HostPrefs {
   }
 
   /** The tab is shown: what it shows is read the first time. */
+  /** This agent's prompt on its row: its first line, or that it has none. */
+  private promptLine(): string {
+    if (this.state.kind !== "ready") return "";
+    const line = promptOf(this.state.view.profile, this.options.agent).split("\n").map((one) => one.trim()).find(Boolean);
+    return line ?? this.options.words.prompt.none;
+  }
+
   shown(): void {
     this.visible = true;
     const login = this.choice.chosen();
@@ -370,7 +383,14 @@ export class HostPrefs {
         }
         case "link": {
           const s = words.subagents;
-          const what = this.names === null ? "" : this.names.length ? s.names(this.names) : s.none;
+          const what =
+            row.id === "prompt"
+              ? this.promptLine()
+              : this.names === null
+                ? ""
+                : this.names.length
+                  ? s.names(this.names)
+                  : s.none;
           const place = this.element.querySelector<HTMLElement>(`[data-hp-what="${row.id}"]`)!;
           if (place.textContent !== what) place.textContent = what;
           place.title = what;
@@ -385,8 +405,10 @@ export class HostPrefs {
   private click(event: Event): void {
     const target = event.target as HTMLElement;
     if (this.state.kind !== "ready") return;
-    if (target.closest("[data-hp-link]")) {
-      this.options.subagents?.open();
+    const linked = target.closest<HTMLElement>("[data-hp-link]");
+    if (linked) {
+      if (linked.dataset.hpLink === "prompt") this.options.prompt();
+      else this.options.subagents?.open();
       return;
     }
     const reset = target.closest<HTMLElement>("[data-hp-reset]");

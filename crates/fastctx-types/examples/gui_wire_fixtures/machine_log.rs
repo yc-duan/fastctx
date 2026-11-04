@@ -124,6 +124,7 @@ pub fn fixtures() -> Vec<Page> {
             managed: true,
         },
         Action::AllowActing { machine: machine(), agent: "claude".parse().unwrap(), home: None },
+        Action::MachineUpdates { machine: machine(), auto: Some(true), relays: None },
         Action::ActingStopped { machine: machine(), account: account() },
         Action::Left {
             name: machine(),

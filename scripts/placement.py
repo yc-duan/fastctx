@@ -70,7 +70,7 @@ def verify(requests, expectations):
         check(bool(asked) and all("THE GOAL" not in body for body in asked),
               "in a release, the colleague's model input carries no goal")
         check(any(f"=== from colleague {colleague} ===" in body and "RELEASE_TOLD" in body for body in serialized),
-              "what the colleague told with message_user reached the model of the conversation that asked it")
+              "what the colleague told with message_colleague reached the model of the conversation that asked it")
         check(any(f"=== colleague {colleague} (turn completed" in body for body in serialized),
               "the end of the colleague's turn reached the model of the conversation that asked it")
     colleagues = [body for body in serialized if "COLLEAGUE_CASE" in body]

@@ -61,28 +61,26 @@ pub fn transfer(root: &std::path::Path) -> Result<(), Box<dyn std::error::Error>
 /// a shared Windows runner's disk took longer than ten seconds.
 const CLOSING: std::time::Duration = std::time::Duration::from_secs(60);
 
+/// How long it waits for the WAL to go before opening with it there: two
+/// handles closing together can each find the other's lock at its final
+/// checkpoint, which waits for none, and leave the WAL behind them with no
+/// connection left to remove it, as a killed process does.
+const WAL_GONE: std::time::Duration = std::time::Duration::from_secs(10);
+
 /// In-process restarts wait for the old connections' final checkpoint and WAL
-/// removal. A killed process has no surviving closer and uses normal recovery.
+/// removal, a while; a WAL left without them is recovered as after a killed
+/// process, and a connection still open is told by the database being busy.
 pub(crate) fn reopen(world: &fastctx_types::layout::WorldDir) -> fastctx_storage::Result<fastctx_storage::Database> {
     let started = std::time::Instant::now();
     loop {
-        if fastctx_platform::disk::exists(world.path().join("node.sqlite3-wal"))? {
-            if started.elapsed() >= CLOSING {
-                return Err(fastctx_storage::Error::with_kind(
-                    fastctx_storage::ErrorKind::Busy,
-                    "the old database connections have not closed",
-                ));
-            }
+        if started.elapsed() < WAL_GONE && fastctx_platform::disk::exists(world.path().join("node.sqlite3-wal"))? {
             std::thread::sleep(std::time::Duration::from_millis(10));
             continue;
         }
         let database = crate::record_database::open(world);
         match database.fault().cloned() {
             None => return Ok(database),
-            Some(error)
-                if error.kind() == fastctx_storage::ErrorKind::Busy
-                    && started.elapsed() < CLOSING =>
-            {
+            Some(error) if error.kind() == fastctx_storage::ErrorKind::Busy && started.elapsed() < CLOSING => {
                 drop(database);
                 std::thread::sleep(std::time::Duration::from_millis(10));
             }

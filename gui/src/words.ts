@@ -271,6 +271,8 @@ export interface Words {
   colleagueAsks(question: string): string;
   /** A colleague asked, in a shape older nodes do not tell. */
   colleagueAsked: string;
+  /** Who of the colleagues said what follows, while it worked. */
+  colleagueSaid(label: string): string;
   /** A colleague's goal settled: done after how long, blocked, or paused. */
   goalReported(label: string, status: "active" | "complete" | "blocked" | "paused", took: string): string;
   /** The watch on the session ended: the node ended it, or the connection
@@ -300,6 +302,9 @@ export interface Words {
   /** An assistance's allowance reached, and until when: a turn stopped
    *  for it says so. */
   allowanceUsed(reached: Reached): string;
+  /** Claude Code unloaded the World's plugin from the session, which the
+   *  World starts again with it (`claude::plugin_gone`). */
+  pluginUnloaded: string;
   /** Links an agent writes to files. */
   files: FileLinkWords;
   /** The conversation's pictures, small and over the whole window. */
@@ -680,6 +685,7 @@ export const zh: Words = {
   answered: (label, took) => (took ? `${label} 交回　${took}` : `${label} 交回`),
   answerFailed: (label) => `${label} 本轮失败`,
   colleagueAsks: (question) => `同事问：${question}`,
+  colleagueSaid: (label) => `${label} 说`,
   colleagueAsked: "同事有一个问题",
   goalReported: (label, status, took) =>
     status === "blocked" ? `${label} 受阻` : status === "paused" ? `${label} 暂停了` : `${label} 完成　${took}`,
@@ -703,6 +709,7 @@ export const zh: Words = {
     error: "这一轮出错了",
   },
   allowanceUsed: zhProblems.allowanceUsed,
+  pluginUnloaded: "Claude Code 卸下了 Fastctx 的插件，会话会重新打开",
   files: {
     reveal: "在文件夹中显示",
     copyPath: "复制路径",
@@ -1064,6 +1071,7 @@ export const en: Words = {
   answered: (label, took) => (took ? `${label} handed back after ${took}` : `${label} handed back`),
   answerFailed: (label) => `${label}: turn failed`,
   colleagueAsks: (question) => `A colleague asks: ${question}`,
+  colleagueSaid: (label) => `${label} says`,
   colleagueAsked: "A colleague asks a question",
   goalReported: (label, status, took) =>
     status === "blocked" ? `${label} is blocked` : status === "paused" ? `${label} paused` : `${label} done after ${took}`,
@@ -1087,6 +1095,7 @@ export const en: Words = {
     error: "This turn hit an error",
   },
   allowanceUsed: enProblems.allowanceUsed,
+  pluginUnloaded: "Claude Code unloaded Fastctx's plugin; the session starts again",
   files: {
     reveal: "Show in folder",
     copyPath: "Copy path",

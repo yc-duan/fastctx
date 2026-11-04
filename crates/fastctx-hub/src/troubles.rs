@@ -19,7 +19,7 @@ use fastctx_net::directory::Level;
 use fastctx_net::directory_index::Indexed;
 use fastctx_net::sign::PublicKey;
 use fastctx_platform::doing::Rank;
-use fastctx_types::health::Near;
+use fastctx_types::health::{Migrating, Near};
 use fastctx_types::trouble::{Trouble, TroubleKind};
 use fastctx_types::update::Kind;
 use fastctx_types::{AccountName, MachineName};
@@ -141,6 +141,24 @@ struct Recent {
     staying: Option<(Instant, usize)>,
     /// When `told` and `connected` last let go of what no longer counts.
     pruned: Option<Instant>,
+    /// How the move of each machine's earlier records last went, by its key,
+    /// as kept in `MIGRATIONS`.
+    migrations: HashMap<PublicKey, Migrated>,
+}
+
+/// The rows each machine's last migration summary is kept in.
+const MIGRATIONS: &str = "migrations";
+
+/// How the move of a machine's earlier records last went, and since when it
+/// stood so: kept for each machine that had anything set aside or failing,
+/// so that a count gone back to nothing is on record too.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct Migrated {
+    machine: MachineName,
+    remaining: u64,
+    failed: u32,
+    damaged: u32,
+    since: Timestamp,
 }
 
 impl Recent {
@@ -180,13 +198,139 @@ impl Troubles {
             shelf.write(changes)?;
         }
         let next = all.last().map_or(1, |kept| kept.trouble.id + 1);
-        let told = all.iter().map(|kept| ((kept.key, kept.trouble.kind), kept.trouble.at)).collect();
+        // One over is not quiet: should it come again, it is told.
+        let told = all
+            .iter()
+            .filter(|kept| kept.trouble.resolved.is_none())
+            .map(|kept| ((kept.key, kept.trouble.kind), kept.trouble.at))
+            .collect();
+        let mut migrations = HashMap::new();
+        for (key, _, migrated) in shelf.rows::<Migrated>(MIGRATIONS)? {
+            if let Ok(key) = key.parse::<PublicKey>() {
+                migrations.insert(key, migrated);
+            }
+        }
         Ok(Self {
             shelf,
             kept: ArcSwap::from_pointee(Shelved::of(all)),
             next: AtomicU64::new(next),
-            recent: Mutex::new("hub troubles", Rank::HUB_TROUBLES, Recent { told, ..Recent::default() }),
+            recent: Mutex::new("hub troubles", Rank::HUB_TROUBLES, Recent { told, migrations, ..Recent::default() }),
         })
+    }
+
+    /// Keeps how the move of `name`'s earlier records goes, as it told it,
+    /// where that changed; and once nothing it set aside is left, marks what
+    /// was told of them as over: looked into as it changes, and `first` in a
+    /// connection, for what was told before the hub kept it.
+    pub(crate) fn migrating(&self, hub: &Hub, name: &MachineName, key: PublicKey, migrating: &Migrating, first: bool) {
+        let now = Timestamp::now();
+        let changed = {
+            let Ok(mut recent) = self.recent.lock();
+            let before = recent.migrations.get(&key);
+            let same = before.is_some_and(|before| {
+                (before.remaining, before.failed, before.damaged)
+                    == (migrating.remaining, migrating.failed, migrating.damaged)
+            });
+            let nothing = migrating.failed == 0 && migrating.damaged == 0;
+            if same || (before.is_none() && nothing) {
+                None
+            } else {
+                let migrated = Migrated {
+                    machine: name.clone(),
+                    remaining: migrating.remaining,
+                    failed: migrating.failed,
+                    damaged: migrating.damaged,
+                    since: now,
+                };
+                recent.migrations.insert(key, migrated.clone());
+                Some(migrated)
+            }
+        };
+        let looked = first || changed.is_some();
+        if let Some(migrated) = changed {
+            let mut changes = Changes::default();
+            match body(&migrated) {
+                Ok(body) => changes.put.push(Put { kind: MIGRATIONS, key: key.to_string().into(), position: 0, body }),
+                Err(error) => hub.log.line(format_args!("keeping {name}'s migration: {error}")),
+            }
+            let (shelf, log, name) = (self.shelf.clone(), hub.log.clone(), name.clone());
+            fastctx_platform::task::spawn(async move {
+                if let Err(error) = shelf.write_async(changes).await {
+                    log.line(format_args!("keeping {name}'s migration: {error}"));
+                }
+            });
+        }
+        if migrating.damaged == 0 && looked {
+            // The files it had set aside, told with how many there were;
+            // a damaged store, told without a count, is not over by it.
+            self.resolve(hub, key, TroubleKind::Damaged, |trouble| trouble.count.is_some());
+        }
+    }
+
+    /// The machines whose earlier records last stood set aside or failing,
+    /// with since when.
+    pub(crate) fn migrations(&self) -> Vec<serde_json::Value> {
+        let Ok(recent) = self.recent.lock();
+        let mut found: Vec<&Migrated> =
+            recent.migrations.values().filter(|migrated| migrated.failed > 0 || migrated.damaged > 0).collect();
+        found.sort_by_key(|migrated| std::cmp::Reverse(migrated.damaged));
+        found
+            .into_iter()
+            .take(SHOWN)
+            .map(|migrated| {
+                serde_json::json!({
+                    "member": migrated.machine.to_string(),
+                    "set_aside": migrated.damaged,
+                    "failed": migrated.failed,
+                    "remaining": migrated.remaining,
+                    "since": migrated.since,
+                })
+            })
+            .collect()
+    }
+
+    /// Marks what `kind` told of the machine of `key`, those `of` picks, as
+    /// over, and tells those who heard of them; should it come again, it is
+    /// told at once.
+    fn resolve(&self, hub: &Hub, key: PublicKey, kind: TroubleKind, of: impl Fn(&Trouble) -> bool) {
+        let now = Timestamp::now();
+        let mut over = Vec::new();
+        self.kept.rcu(|shelved| {
+            over.clear();
+            let all = shelved
+                .all
+                .iter()
+                .map(|kept| {
+                    if kept.key == Some(key)
+                        && kept.trouble.kind == kind
+                        && kept.trouble.resolved.is_none()
+                        && of(&kept.trouble)
+                    {
+                        let mut ended = (**kept).clone();
+                        ended.trouble.resolved = Some(now);
+                        let ended = Arc::new(ended);
+                        over.push(ended.clone());
+                        ended
+                    } else {
+                        kept.clone()
+                    }
+                })
+                .collect();
+            Shelved::of(all)
+        });
+        if over.is_empty() {
+            return;
+        }
+        {
+            let Ok(mut recent) = self.recent.lock();
+            recent.told.remove(&(Some(key), kind));
+        }
+        let store = hub.store();
+        for kept in &over {
+            hub.log.line(format_args!("trouble {} is over", kept.trouble.id));
+            self.keep(hub, kept, Vec::new());
+            self.tell(hub, kept, &store);
+        }
     }
 
     pub(crate) fn measurements(&self) -> serde_json::Value {
@@ -345,6 +489,7 @@ impl Troubles {
             seconds: detail.seconds,
             near: detail.near,
             version: detail.version,
+            resolved: None,
         };
         hub.log.line(format_args!(
             "trouble {}: {:?}{}",

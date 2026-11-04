@@ -53,12 +53,13 @@ not both stand. A wish that matters most can go to several at once, each from it
 the one that gets there. Keep each colleague's id and its wish in your plan, where they all see
 what the others want and where the whole stands.
 
-It messages you as it goes, whenever something comes up you should know, and that wakes you:
-answer it, turn it, or tell it what is still not it. When it comes back short, with a compromise,
-with "it is a trade-off", or with "I found B, which does not settle A", do not give ground: say
-plainly what is still missing and send it on; going on is what it does best. Tell it that how far
-it got and what stands in the way is an honest answer, so a shortfall never comes back dressed as
-success.
+While it works it messages you only with what you would act on differently knowing now, and that
+wakes you. Not every message needs an answer: reply when it asks you something or must turn, and
+send it nothing to acknowledge, nor your passing thoughts. Do not ask it to tell you of every
+finding; it tells you what matters. When it comes back short, with a compromise, with "it is a
+trade-off", or with "I found B, which does not settle A", do not give ground: say plainly what is
+still missing and send it on; going on is what it does best. Tell it that how far it got and what
+stands in the way is an honest answer, so a shortfall never comes back dressed as success.
 
 The wanting is yours because it starts with the user. What they are really after, which you can
 read and it cannot, is what you turn into the wish; that, the direction, what things are called,
@@ -75,6 +76,22 @@ A colleague is not a subagent inside this conversation. It lives in the World, k
 /// The line `ASK_DESCRIPTION` gains when a callee below has a limit.
 pub const ASK_LIMITS: &str = "- Each callee below works on at most as many requests at once as it says; past that, a new colleague waits for a place, and the call says so.";
 
+/// A colleague's message_colleague: to the agent that asked it.
+pub const MESSAGE_ASKER_DESCRIPTION: &str = "Send a message to the agent that asked you, while you work: it reaches it at once and wakes it. Send what it would act on differently knowing now; the rest waits for the last thing you say in your turn, which reaches it by itself.";
+
+/// A colleague names someone else in message_colleague.
+pub fn only_asker(asker: &crate::ResidentId) -> String {
+    format!("A colleague messages only the agent that asked it, {asker}.")
+}
+
+/// What a colleague's message_colleague answers once its words are kept for
+/// the agent that asked it.
+pub fn told_asker(asker: &crate::ResidentId) -> String {
+    format!(
+        "=== message to {asker} (sent) ===\nIt reaches it now; an answer, if one comes, reaches you at your next tool call."
+    )
+}
+
 /// message_colleague's description.
 pub const MESSAGE_DESCRIPTION: &str = "Send a message to a colleague: one you started, or any other that `fastctx w` shows, including one that is idle or asleep.
 - If it is working, the message joins its current turn at its next tool call, so it can change course mid-turn; otherwise it starts a new turn.
@@ -84,10 +101,21 @@ pub const MESSAGE_DESCRIPTION: &str = "Send a message to a colleague: one you st
 pub const COLLEAGUE_RULES: &str = r#"You work for the agent that asked you. Work on what it asks for on your own until it is done or
 you truly cannot go on. Hold yourself to what it asked for, at the level it asked for it; a partial
 or "good enough" result is not done.
-- message_user reaches the agent that asked you, and wakes it. Use it whenever something comes up
-  that it should know: a finding that changes the way, a premise that does not hold, a conflict
-  with what another colleague is doing, a question, real progress. Do not save these for the end.
-  Then keep going; its answer reaches you at your next tool call.
+- The last thing you say in a turn reaches the agent whose words the turn answers. Make it what
+  was asked for: when it asked for code, what is done and where it is; when it asked a question,
+  the answer; when it asked you to look into something, what you found. If you cannot finish, say
+  how far you got, what stands in the way, what you tried and what would clear it: that is an
+  honest answer, not a failure to hide.
+- message_colleague reaches the agent that asked you while you work, and wakes it. Send it what it
+  would act on differently knowing now rather than at the end: a finding that changes the way, a
+  question or a choice only it can settle, a premise of the request that does not hold, a clash
+  with what another colleague is doing, a part done that it can use at once. The rest waits for
+  the end. Then keep going; its answer reaches you at your next tool call.
+- Send nothing to acknowledge: what is sent is known to have arrived, so "received" or "on it" only
+  interrupts. Send no account of your steps either: what you are reading or checking shows in
+  `fastctx w` and in your plan.
+- message_user reaches the user, the person the agent that asked you works for. When the user
+  speaks to you, answer them there: your last words in a turn do not reach them.
 - When you must choose without it, take the choice that holds up best, say which and why, and
   keep working.
 - If the idea you were given does not hold, say so with evidence: a counterexample, an
@@ -96,12 +124,7 @@ or "good enough" result is not done.
 - When the work splits into parts that can run at once, hand them to your own subagents.
 - Check your work in proportion to what you changed: show that what was asked for holds; do not
   write tests that only mirror the implementation, or repeat checks that have passed unless
-  something changed.
-- When it is done, end your turn with your report, the last thing you say, which is what reaches
-  it: what you did and what failed, why it now holds (facts, paths, experiments), what you are
-  unsure of, what else you touched and why. If you cannot finish, say how far you got, what stands
-  in the way, what you tried and what would clear it: that is an honest answer, not a failure to
-  hide."#;
+  something changed."#;
 
 /// What the asker is told of a colleague it started: where it lives, when
 /// that is not where the asker does, and how many wait ahead of it when it
@@ -110,10 +133,10 @@ pub fn started(id: &crate::ResidentId, elsewhere: Option<&crate::MachineName>, w
     let on = elsewhere.map(|machine| format!(" on {machine}")).unwrap_or_default();
     match waiting {
         None => format!(
-            "=== colleague {id}{on} (started) ===\nWhat it says as it goes and its report come back to you by themselves. See what it is doing: fastctx w {id}"
+            "=== colleague {id}{on} (started) ===\nWhat it says as it goes and its answer come back to you by themselves. See what it is doing: fastctx w {id}"
         ),
         Some(ahead) => format!(
-            "=== colleague {id}{on} (waiting, {ahead} ahead) ===\nIt begins once there is room for it. What it says as it goes and its report come back to you by themselves. See where it is: fastctx w {id}"
+            "=== colleague {id}{on} (waiting, {ahead} ahead) ===\nIt begins once there is room for it. What it says as it goes and its answer come back to you by themselves. See where it is: fastctx w {id}"
         ),
     }
 }

@@ -41,6 +41,8 @@ pub use hub_registry::registered_hubs;
 pub use inventory::{Registration, registrations};
 pub use keep::{Kept, Released, keep_connected, stop_keeping};
 #[cfg(windows)]
+pub use keep::install_elevated;
+#[cfg(windows)]
 pub use local_network::{install_local_network, keep_local_network};
 #[cfg(windows)]
 #[path = "windows_guardian/mod.rs"]
@@ -251,6 +253,19 @@ impl Service {
     pub fn main_pid(&self) -> anyhow::Result<u64> {
         self.validate()?;
         linux::main_pid(&self.normalized()?)
+    }
+
+    /// Whether the service's process runs the program `digest` now; none
+    /// where that cannot be told, as on macOS.
+    pub fn runs(&self, digest: &str) -> anyhow::Result<Option<bool>> {
+        self.validate()?;
+        #[cfg(target_os = "linux")]
+        return linux::runs(&self.normalized()?, digest);
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = digest;
+            Ok(None)
+        }
     }
 
     /// Whether the protected guardian already runs this image. Linux's

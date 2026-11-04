@@ -197,6 +197,7 @@ impl History {
             | Action::RelayAt { machine, .. }
             | Action::Direct { machine, .. }
             | Action::AllowActing { machine, .. }
+            | Action::MachineUpdates { machine, .. }
             | Action::AllowSentinelHome { machine } => {
                 names.insert(machine.clone());
             }

@@ -69,6 +69,8 @@ export class NodeTray {
     private readonly document: ComposerDocument,
     private readonly failed: Failed,
     private readonly assistantFiles: AssistantFiles | null = null,
+    /** Whether a file is on its way changed. */
+    private readonly changed: () => void = () => {},
   ) {
     this.element = window.document.createElement("ul");
     this.element.className = "attach-tray";
@@ -121,6 +123,12 @@ export class NodeTray {
   get count(): number {
     const draft = this.draft();
     return (draft?.attachments.length ?? 0) + (draft?.uploads.length ?? 0) + this.sending.size;
+  }
+
+  /** Whether a file is still on its way, or failed and is not yet taken
+   *  away or tried again: the words wait for it. */
+  get uploading(): boolean {
+    return (this.draft()?.uploads.length ?? 0) > 0 || this.sending.size > 0;
   }
 
   /** Files other than images among those attached. */
@@ -287,5 +295,6 @@ export class NodeTray {
     this.element.hidden = rows.length === 0;
     const html = rows.join("");
     if (this.element.innerHTML !== html) this.element.innerHTML = html;
+    this.changed();
   }
 }

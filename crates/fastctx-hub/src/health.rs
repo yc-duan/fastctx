@@ -158,6 +158,9 @@ fn now(hub: &Hub) -> serde_json::Value {
             "being_written": letters.iter().map(|waiting| waiting.writing).sum::<usize>(),
             "on_their_way": letters.iter().map(|waiting| waiting.on_way).sum::<usize>(),
             "records_behind": behind,
+            // Members whose mailbox is not counted yet: what they hold is
+            // not in `held`.
+            "not_counted": letters.iter().filter(|waiting| !waiting.counted).count(),
             "most_waiting": backlog.iter().take(NAMED).filter(|waiting| waiting.held > 0).map(|waiting| json!({
                 "member": waiting.member.to_string(),
                 "held": waiting.held,
@@ -165,6 +168,8 @@ fn now(hub: &Hub) -> serde_json::Value {
             })).collect::<Vec<_>>(),
         },
         "keeping_a_letter_ms": percentiles(kept),
+        // Machines whose earlier records last stood set aside or failing.
+        "migrations": hub.troubles.migrations(),
         "packages": crate::updates::health(hub),
         "account_records": hub.account_records.health(),
     })

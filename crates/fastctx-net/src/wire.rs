@@ -226,6 +226,11 @@ pub enum Intent {
         /// page with one.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         profiles: bool,
+        /// The member reads the records of machines' update settings changed.
+        /// Earlier releases do not say so, and could read nothing of a
+        /// machine log page with one.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        machine_updates: bool,
         /// Reads account record invalidations independently of the directory.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         account_records: bool,

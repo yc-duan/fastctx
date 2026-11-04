@@ -70,8 +70,9 @@ try {{
             "exit 0".into()
         } else {
             format!(
-                "if (-not $process.WaitForExit({})) {{ $process.Kill(); $process.WaitForExit(); throw 'interactive program exceeded its deadline' }}; exit $process.ExitCode",
-                timeout.as_millis()
+                "if (-not $process.WaitForExit({})) {{ $process.Kill(); $process.WaitForExit(); throw 'interactive program exceeded its deadline' }}; if ($process.ExitCode -ne 0) {{ [IO.File]::WriteAllText({}, ('the program exited ' + $process.ExitCode + ' after ' + [int]([DateTime]::Now - $process.StartTime).TotalSeconds + ' s')) }}; exit $process.ExitCode",
+                timeout.as_millis(),
+                quoted(&failure.display().to_string())
             )
         },
     );

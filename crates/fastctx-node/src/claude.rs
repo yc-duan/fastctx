@@ -45,8 +45,10 @@ pub mod management;
 mod oldest;
 pub(crate) mod pairing;
 mod plugin_check;
+mod plugin_gone;
 mod process;
 mod queued;
+mod receipts;
 mod rewind;
 mod settle;
 mod startup;
@@ -96,6 +98,9 @@ pub struct Claude {
     /// changed again meanwhile; and room for how many are looked at at once.
     looking: Mutex<HashMap<PathBuf, bool>>,
     looks: Arc<tokio::sync::Semaphore>,
+    /// Each session's receipts, as far as this run of the node has read and
+    /// settled them.
+    receipts: receipts::Receipts,
 }
 
 /// How many sessions' reports are read and applied at once.
@@ -146,6 +151,7 @@ impl Claude {
             settling: Default::default(),
             looking: Default::default(),
             looks: Arc::new(tokio::sync::Semaphore::new(LOOKS)),
+            receipts: Default::default(),
         }
     }
 
@@ -439,16 +445,17 @@ async fn policy(node: &Arc<Node>, resident: &ResidentId, directory: &Path) -> st
 }
 fn prepare_policy(node: &Node, resident: &ResidentId, directory: &Path) -> std::io::Result<Option<Vec<u8>>> {
     node.residents.about(resident).ok_or_else(|| std::io::Error::other("unknown Claude resident"))?;
-    let options = crate::session_options::read(node, resident).map_err(|error| std::io::Error::other(error.message))?;
     let path = directory.join("policy.json");
     let registration =
         exchange::registration(directory)?.ok_or_else(|| std::io::Error::other("Claude registration is incomplete"))?;
-    let transcript = exchange::transcript(directory)?;
+    // Published for this activation already: nothing it is made of is read.
     if let Some(prior) = claude::control::read::<serde_json::Value>(&path)?
         && prior["instance"] == serde_json::to_value(&registration.instance).map_err(std::io::Error::other)?
     {
         return Ok(None);
     }
+    let options = crate::session_options::read(node, resident).map_err(|error| std::io::Error::other(error.message))?;
+    let transcript = exchange::transcript(directory)?;
     let mut last_uuid = None;
     let mut context_tail = None;
     let mut context_uuids = None;
@@ -708,31 +715,50 @@ async fn look(node: &Arc<Node>, directory: &Path) -> bool {
             return false;
         }
     }
-    match exchange::receipts(directory) {
-        Ok(receipts) => {
-            for (id, turn) in receipts {
-                if let Err(error) =
-                    crate::inbox::reclaim(&node.world.conversation(&resident), std::slice::from_ref(&id))
-                {
-                    node.log.line(format_args!("taking back the doubt about {id}: {error}"));
-                    settled = false;
-                }
-                if let Err(error) =
-                    taken(node, &resident, &session, &turn, |pending| Ok(pending.delivery.id.as_str() == id)).await
-                {
-                    node.log.line(format_args!("applying the receipt for {id}: {error}"));
-                    return false;
-                }
-            }
-        }
+    // Each receipt is settled once in this run, and again only while what it
+    // names still waits in the inbox (`receipts`).
+    let receipts = match node.claude.receipts.listed(directory) {
+        Ok(receipts) => receipts,
         Err(error) => {
             node.log.line(format_args!("reading consumption receipts for {session}: {error}"));
             return false;
         }
+    };
+    let conversation = node.world.conversation(&resident);
+    let ids: Vec<String> = receipts.iter().map(|(id, _)| id.clone()).collect();
+    let waiting = match crate::inbox::waiting_among(&conversation, &ids) {
+        Ok(waiting) => waiting,
+        Err(error) => {
+            node.log.line(format_args!("reading what waits for {session}: {error}"));
+            return false;
+        }
+    };
+    for (id, turn) in receipts {
+        if !waiting.contains(&id) && node.claude.receipts.settled(directory, &id) {
+            continue;
+        }
+        let mut whole = true;
+        if let Err(error) = crate::inbox::reclaim(&conversation, std::slice::from_ref(&id)) {
+            node.log.line(format_args!("taking back the doubt about {id}: {error}"));
+            settled = false;
+            whole = false;
+        }
+        if let Err(error) =
+            taken(node, &resident, &session, &turn, |pending| Ok(pending.delivery.id.as_str() == id)).await
+        {
+            node.log.line(format_args!("applying the receipt for {id}: {error}"));
+            return false;
+        }
+        if whole {
+            node.claude.receipts.settle(directory, &id);
+        }
     }
-    if let Err(error) = exchange::handed_over(directory) {
-        node.log.line(format_args!("clearing what {session}'s mod handed over: {error}"));
-        settled = false;
+    match exchange::handed_over(directory, |id| !waiting.contains(id) && node.claude.receipts.cleared(directory, id)) {
+        Ok(cleared) => node.claude.receipts.clear(directory, cleared),
+        Err(error) => {
+            node.log.line(format_args!("clearing what {session}'s mod handed over: {error}"));
+            settled = false;
+        }
     }
     settle::consider(node, &resident, &session, directory);
     // Its end is settled under its own reading lock alone: it ends only the
@@ -767,6 +793,7 @@ async fn look(node: &Arc<Node>, directory: &Path) -> bool {
     let mut state = node.claude.state.lock().expect("never poisoned");
     if state.sessions.get(&session).is_some_and(|entry| entry.registration == registration) {
         state.sessions.remove(&session);
+        node.claude.receipts.forget(directory);
     }
     if state.sessions.is_empty() {
         state.sessions = HashMap::new();
@@ -1837,7 +1864,17 @@ pub(crate) async fn wake(
     if let Some(resident) = node.residents.resident_of_thread(session) {
         crate::profile::session::load_claude(node, &resident, false).await?;
     }
-    let args = background::wake_args(session, &words);
+    let mut args = background::wake_args(session, &words);
+    // A session the plugin was gone from keeps Claude Code's account of
+    // itself this time (`plugin_gone`): the option goes before the words.
+    let session_directory = node.world.path().join("claude").join(session);
+    if plugin_gone::debugged(&session_directory) {
+        let at = args.iter().position(|arg| arg == "--").unwrap_or(args.len());
+        args.splice(
+            at..at,
+            [std::ffi::OsString::from("--debug-file"), session_directory.join(plugin_gone::DEBUG_LOG).into()],
+        );
+    }
     let (launch_node, launch_resident, launch_id) = (node.clone(), resident.clone(), id.clone());
     // A session that reports while this runs waits to learn whether it is a copy.
     let waking = node.claude.copies.waking();

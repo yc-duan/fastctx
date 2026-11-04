@@ -1,16 +1,16 @@
 // The agents' sections (`world-gui.md`, 智能体页): each agent on a page of
 // its own, its logins and, beside them on a tab, the account's preferences
-// for it, Claude Code's leading on to its subagents; then the rest of the
-// account's own layer of configuration
-// (`world-user-config.md`): its prompt, its skills and its MCP servers,
-// which are the workbench conversations' settings (`./talk-settings`). The
-// one last open is kept on this device.
+// for it, leading on to its prompt and, for Claude Code, its subagents; then
+// the rest of the account's own layer of configuration
+// (`world-user-config.md`): its skills and its MCP servers, which are the
+// workbench conversations' settings (`./talk-settings`). The one last open
+// is kept on this device.
 
 import type { Place } from "./places";
 import type { AgentSection, AgentTab } from "./profile-words";
 
 export const HOSTS = ["claude", "codex"] as const satisfies readonly AgentSection[];
-export const OWN = ["prompt", "skills", "mcp"] as const satisfies readonly AgentSection[];
+export const OWN = ["skills", "mcp"] as const satisfies readonly AgentSection[];
 
 const SECTION = "agents.section";
 const VIEW = "agents.view";
@@ -70,7 +70,9 @@ export function keepTab(tab: AgentTab): void {
 export function sectionOf(place: Place): AgentSection | null {
   if (place.kind === "usage") return place.agent;
   if (place.kind === "subagents") return "claude";
+  if (place.kind === "prompt") return place.agent;
   if (place.kind !== "agents") return null;
+  if (place.section === "prompt") return keptHost();
   if (place.section) return place.section;
   if (place.tab === "prefs" || place.machine !== null) return keptHost();
   return keptSection();

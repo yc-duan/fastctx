@@ -73,6 +73,7 @@ async fn cancelling_a_call_during_its_probe_keeps_the_original_arrival() {
                 others: vec![],
                 collab: None,
                 speaks: false,
+                asker: None,
             }),
         };
         let sent = connection.send(&serde_json::to_vec(&machines).unwrap()).await.map_err(|error| error.to_string());
@@ -93,6 +94,7 @@ async fn cancelling_a_call_during_its_probe_keeps_the_original_arrival() {
                 groups: vec![],
                 collab: None,
                 speaks: false,
+                asker: None,
             },
         )
         .await;

@@ -140,18 +140,39 @@ pub(super) async fn exercise(
         )
         .await?;
     let project = Scope::Project { project: town.clone() };
-    bob.history(HistoryCall::Save {
-        scope: project.clone(),
-        name: "shared-project".into(),
-        text: text("shared-project", "PROJECT_COOWNED"),
-        expected: None,
-    })
-    .await?;
-    record(
-        "a project opened on a shared machine belongs to its holders",
-        owner.history(HistoryCall::Read { scope: project, name: "shared-project".into(), version: None }).await.is_ok(),
-        json!(null),
-    );
+    // Bob's device learns of the project with the hub's next view, which may
+    // come after the machine that opened it was answered.
+    let mut tries = 0;
+    loop {
+        let saved = bob
+            .history(HistoryCall::Save {
+                scope: project.clone(),
+                name: "shared-project".into(),
+                text: text("shared-project", "PROJECT_COOWNED"),
+                expected: None,
+            })
+            .await;
+        match saved {
+            Err(error) if tries < 240 && error.to_string().contains("no signed-in account has the project") => {
+                tries += 1;
+                pause().await;
+            }
+            saved => {
+                saved?;
+                break;
+            }
+        }
+    }
+    let mut read = false;
+    for _ in 0..240 {
+        let reading = HistoryCall::Read { scope: project.clone(), name: "shared-project".into(), version: None };
+        if owner.history(reading).await.is_ok() {
+            read = true;
+            break;
+        }
+        pause().await;
+    }
+    record("a project opened on a shared machine belongs to its holders", read, json!(null));
     owner.history(HistoryCall::Retire { scope: scope.clone(), name: "shared-record".into(), expected: 2 }).await?;
     let HistoryReply::Document { document } =
         bob.history(HistoryCall::Read { scope: scope.clone(), name: "shared-record".into(), version: None }).await?

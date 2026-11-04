@@ -97,14 +97,26 @@ fn accept_from(
     Ok(())
 }
 
+/// How long ago a repair ended for its receipt to be no news to a node
+/// that starts and finds it: a repair that started this node again ended
+/// moments before.
+const ENDED_BEFORE: jiff::SignedDuration = jiff::SignedDuration::from_secs(600);
+
 fn log_progress(node: &Node, report: &Report) {
     let mark = serde_json::to_string(report).unwrap_or_default();
     let mut previous = node.updates.repair_logged.lock().expect("repair progress log");
     if *previous == mark {
         return;
     }
+    let first = previous.is_empty();
     let earlier = serde_json::from_str::<Report>(&previous).ok().filter(|r| r.id == report.id);
     *previous = mark;
+    // The receipt of a repair that ended long before this run of the node
+    // was told as it ran: told again, its old versions and processes would
+    // read as checked just now.
+    if first && report.finished.is_some_and(|finished| jiff::Timestamp::now().duration_since(finished) > ENDED_BEFORE) {
+        return;
+    }
     for step in &report.steps {
         if step.outcome != Outcome::Checking && !earlier.as_ref().is_some_and(|r| r.steps.contains(step)) {
             node.log

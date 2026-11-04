@@ -3,13 +3,17 @@
 use crate::Node;
 use fastctx_types::{
     Address, ResidentId,
-    access::{Acting, Purpose, Written},
+    access::{Acting, HubAccount, Purpose, Written},
     collaboration::{Branch, Tree},
     ipc::Failure,
     remote::{RemoteCall, RemoteReply},
     residents::Origin,
 };
-use std::{collections::BTreeMap, sync::Arc, time::Duration};
+use std::{
+    collections::{BTreeMap, HashMap},
+    sync::Arc,
+    time::Duration,
+};
 use tokio::time::Instant;
 
 /// How long one read of a conversation's collaboration answers every ask
@@ -261,30 +265,82 @@ pub(super) async fn asked(
     owner: &Address,
     acting: &Acting,
 ) -> Result<BTreeMap<Address, String>, Failure> {
-    let path = node.world.conversation(&owner.resident).actions();
-    let actions = fastctx_platform::task::spawn_blocking(move || crate::residents::activity::asked(&path, None))
-        .await
-        .map_err(|error| Failure::new(error.to_string()))?
-        .map_err(|error| Failure::new(error.to_string()))?;
     let mut found = BTreeMap::new();
-    for action in actions.into_iter().filter(|action| action.hand == "ask_colleague") {
-        let address = Address {
-            machine: action.machine,
-            resident: action
-                .result
-                .parse()
-                .map_err(|error| Failure::new(fastctx_types::collab_prompt::recorded_colleague(error)))?,
-        };
-        if let Some(account) = crate::collab::asked_account(node, &owner.resident, &address).await?
+    for (address, what, account) in recorded(node, owner).await? {
+        if let Some(account) = account
             && !node
                 .link_of(&account.hub)
                 .is_some_and(|link| node.accounts_on(&link, acting).contains(&account.account))
         {
             continue;
         }
-        found.insert(address, action.what);
+        found.insert(address, what);
     }
     Ok(found)
+}
+
+/// One colleague asked, what it was asked to do, and the account it was
+/// asked for where one is recorded.
+type Recorded = (Address, String, Option<HubAccount>);
+
+/// What each conversation's actions said it asked, as last read, by the
+/// version of its actions then.
+type Remembered = std::sync::Mutex<HashMap<std::path::PathBuf, (u64, Vec<Recorded>)>>;
+
+static RECORDED: std::sync::LazyLock<Remembered> = std::sync::LazyLock::new(Default::default);
+
+/// The conversations whose asks are remembered at most: past it, all are
+/// read again.
+const RECORDED_MOST: usize = 4096;
+
+/// The colleagues `owner` asked, as its actions record them. A page follows
+/// a conversation's collaboration again at every turn's end, and reading
+/// every ask and each one's account again cost a read of the database for
+/// each colleague ever asked; now its actions are read again only once they
+/// changed, and an account only while none is recorded for it.
+async fn recorded(node: &Arc<Node>, owner: &Address) -> Result<Vec<Recorded>, Failure> {
+    let path = node.world.conversation(&owner.resident).actions();
+    let reading = path.clone();
+    let version = fastctx_platform::task::spawn_blocking(move || crate::residents::activity::actions_version(&reading))
+        .await
+        .map_err(|error| Failure::new(error.to_string()))?
+        .map_err(|error| Failure::new(error.to_string()))?;
+    let kept =
+        RECORDED.lock().expect("never poisoned").get(&path).filter(|kept| kept.0 == version).map(|kept| kept.1.clone());
+    let mut recorded = match kept {
+        Some(kept) => kept,
+        None => {
+            let reading = path.clone();
+            let actions =
+                fastctx_platform::task::spawn_blocking(move || crate::residents::activity::asked(&reading, None))
+                    .await
+                    .map_err(|error| Failure::new(error.to_string()))?
+                    .map_err(|error| Failure::new(error.to_string()))?;
+            let mut recorded = Vec::new();
+            for action in actions.into_iter().filter(|action| action.hand == "ask_colleague") {
+                let address = Address {
+                    machine: action.machine,
+                    resident: action
+                        .result
+                        .parse()
+                        .map_err(|error| Failure::new(fastctx_types::collab_prompt::recorded_colleague(error)))?,
+                };
+                recorded.push((address, action.what, None));
+            }
+            recorded
+        }
+    };
+    for (address, _, account) in &mut recorded {
+        if account.is_none() {
+            *account = crate::collab::asked_account(node, &owner.resident, address).await?;
+        }
+    }
+    let mut remembered = RECORDED.lock().expect("never poisoned");
+    if remembered.len() >= RECORDED_MOST && !remembered.contains_key(&path) {
+        remembered.clear();
+    }
+    remembered.insert(path, (version, recorded.clone()));
+    Ok(recorded)
 }
 
 /// The colleagues of `owner` that live on this machine and `acting` may see.

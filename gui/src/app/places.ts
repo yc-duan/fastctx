@@ -39,6 +39,9 @@ export type Place =
   /** The account's Claude subagents, come into from Claude Code's
    *  preferences. */
   | { kind: "subagents" }
+  /** The account's prompt for one family, come into from its card of the
+   *  models' settings. */
+  | { kind: "prompt"; agent: "claude" | "codex" }
   /** What an agent's login on a machine was used for; opened on one
    *  turn's requests when a conversation asks for them. */
   | { kind: "usage"; machine: string; agent: "codex" | "claude"; dir: string; turn?: { conversation: string; turn: string } }
@@ -103,6 +106,8 @@ export function link(place: Place): string {
       return place.machine === null ? "#/agents" : `#/agents/${part(place.machine)}`;
     case "subagents":
       return "#/agents/subagents";
+    case "prompt":
+      return `#/agents/prompt/${place.agent}`;
     case "usage":
       return `#/agents/${part(place.machine)}/${place.agent}/${part(place.dir)}${place.turn ? `/calls/${part(place.turn.conversation)}/${part(place.turn.turn)}` : ""}`;
     case "features":
@@ -179,6 +184,9 @@ export function placeOf(hash: string): Place {
       // own section, now the last host's.
       if (parts[1] === "prefs") return { kind: "agents", machine: null, tab: "prefs", ...(parts[2] === "claude" || parts[2] === "codex" ? { section: parts[2] } : {}) };
       if (parts[1] === "subagents") return { kind: "subagents" };
+      // A family's prompt; the prompt every agent shared had a tab of its
+      // own, now each family's card.
+      if (parts[1] === "prompt") return parts[2] === "claude" || parts[2] === "codex" ? { kind: "prompt", agent: parts[2] } : { kind: "agents", machine: null, tab: "prefs" };
       if (sections.includes(parts[1] as AgentSection)) return { kind: "agents", section: parts[1] as AgentSection, machine: parts[2] || null };
       return { kind: "agents", machine: parts[1] || null };
     case "activity":

@@ -19,6 +19,7 @@
 //! then does the marker go; a node that stopped in between finds the marker
 //! when it starts and finishes the telling.
 
+use std::collections::HashSet;
 use std::io::{self, BufRead as _};
 use std::ops::ControlFlow;
 use std::path::Path;
@@ -75,6 +76,24 @@ pub fn retain_uncertain(directory: &ConversationDir, pending: &Pending) -> io::R
         }
         rows.delete("pending-inputs", key)?;
         Ok(())
+    })
+}
+/// Which of `ids` still wait here, kept or in doubt: the only ones what the
+/// host says of them can still settle. Read at once, however many.
+pub fn waiting_among(directory: &ConversationDir, ids: &[String]) -> io::Result<HashSet<String>> {
+    if ids.is_empty() {
+        return Ok(HashSet::new());
+    }
+    read_rows(directory, |rows| {
+        let mut waiting = HashSet::new();
+        for id in ids {
+            if rows.get::<Pending>("pending-inputs", id)?.is_some()
+                || rows.get::<Pending>("uncertain-inputs", id)?.is_some()
+            {
+                waiting.insert(id.clone());
+            }
+        }
+        Ok(waiting)
     })
 }
 pub fn reclaim(directory: &ConversationDir, ids: &[String]) -> io::Result<()> {

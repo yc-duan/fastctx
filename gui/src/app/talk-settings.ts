@@ -1,7 +1,7 @@
 // The settings of the workbench's conversations (`world-gui.md`, 接入与工作台):
-// what the account writes to every agent working for it (its prompt, its
-// skills, its MCP servers), the model each agent begins a conversation on,
-// and model collaboration. They reach only the conversations Fastctx holds,
+// what the account gives every agent working for it (its skills, its MCP
+// servers), each agent's own (the model it begins a conversation on, and
+// its prompt, a step in from its card), and model collaboration. They reach only the conversations Fastctx holds,
 // never an agent that is only connected, so they stand in the sidebar's
 // workbench group as one place, its parts on tabs; connecting agents is the
 // agents page's alone. The tab last open is kept on this device.
@@ -15,18 +15,18 @@ import { effect } from "./signals";
 import type { Store } from "./store";
 import type { TalkSettingsWords } from "./talk-settings-words";
 
-export type SettingsTab = "prompt" | "skills" | "mcp" | "models" | "collab";
+export type SettingsTab = "skills" | "mcp" | "models" | "collab";
 export type Host = "claude" | "codex";
 
-const TABS: SettingsTab[] = ["prompt", "skills", "mcp", "models", "collab"];
+const TABS: SettingsTab[] = ["skills", "mcp", "models", "collab"];
 const HOSTS: Host[] = ["claude", "codex"];
 const KEPT_TAB = "talk.settings";
 
 /** The part of the settings a place shows; none where it is no part of them. */
 export function settingsTabOf(place: Place): SettingsTab | null {
-  if (place.kind === "agents" && (place.section === "prompt" || place.section === "skills" || place.section === "mcp")) return place.section;
-  if (place.kind === "agents" && place.tab === "prefs") return "models";
-  if (place.kind === "subagents") return "models";
+  if (place.kind === "agents" && (place.section === "skills" || place.section === "mcp")) return place.section;
+  if (place.kind === "agents" && (place.tab === "prefs" || place.section === "prompt")) return "models";
+  if (place.kind === "subagents" || place.kind === "prompt") return "models";
   if (place.kind === "feature" && (place.feature === "collaboration" || place.feature === "conversations")) return "collab";
   return null;
 }
@@ -34,7 +34,6 @@ export function settingsTabOf(place: Place): SettingsTab | null {
 /** Where a part of the settings is. */
 export function settingsPlace(tab: SettingsTab): Place {
   switch (tab) {
-    case "prompt":
     case "skills":
     case "mcp":
       return { kind: "agents", machine: null, section: tab };
@@ -51,9 +50,9 @@ export function keptSettings(): Place {
     const kept = localStorage.getItem(KEPT_TAB) as SettingsTab | null;
     if (kept && TABS.includes(kept)) return settingsPlace(kept);
   } catch {
-    // A device that keeps nothing opens the prompt.
+    // A device that keeps nothing opens the models.
   }
-  return settingsPlace("prompt");
+  return settingsPlace("models");
 }
 
 /** The head of one part of the settings: their name and the tabs, then

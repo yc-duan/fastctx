@@ -636,3 +636,15 @@
     width: 100%;
   }
 }
+
+/* A family's prompt names the family in its head where its way back keeps
+   its arrow alone (`shell.css`, .page-back). */
+.pp-of {
+  display: none;
+}
+
+@media (max-width: 640px) {
+  .pp-of {
+    display: inline;
+  }
+}

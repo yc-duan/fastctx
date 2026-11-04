@@ -20,6 +20,9 @@ pub struct Bridge {
     calls: Mutex<HashSet<String>>,
     requests: Mutex<HashMap<String, Request>>,
     observed: Mutex<HashSet<(String, String, fastctx_types::ProcessIdentity)>>,
+    /// The activations, by session and instance, the plugin was found gone
+    /// from (`super::plugin_gone`).
+    pub(super) gone: Mutex<HashSet<(String, String)>>,
     /// The conversations whose mod is being asked what it offers now.
     offering: Mutex<HashSet<ResidentId>>,
 }
@@ -642,6 +645,12 @@ fn observe_activation(node: &Arc<Node>, host: &Host, directory: &Path) {
         match result {
             Ok(()) => {
                 super::look(&node, &directory).await;
+                // The helper may have ended with the plugin, the session's
+                // Claude Code running on without it.
+                let (looking, host, directory) = (node.clone(), host.clone(), directory.clone());
+                fastctx_platform::task::spawn(async move {
+                    super::plugin_gone::check(&looking, &host, &directory).await;
+                });
             }
             result => node.log.line(format_args!("observing Claude's control activation: {result:?}")),
         }
@@ -653,7 +662,7 @@ fn observe_activation(node: &Arc<Node>, host: &Host, directory: &Path) {
     });
 }
 
-fn session_present(node: &Node, directory: &Path) -> std::io::Result<bool> {
+pub(super) fn session_present(node: &Node, directory: &Path) -> std::io::Result<bool> {
     match fastctx_hosts::claude::exchange::registration(directory)? {
         Some(registration) => super::pairing::present(node, &registration),
         None => Ok(false),

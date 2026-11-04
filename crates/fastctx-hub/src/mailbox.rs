@@ -17,6 +17,8 @@ pub(crate) struct Backlog {
     pub writing: usize,
     pub pending: usize,
     pub on_way: usize,
+    /// Whether `held` was counted yet in this run of the hub.
+    pub counted: bool,
 }
 
 pub(crate) fn backlog(hub: &Hub) -> Vec<Backlog> {
@@ -34,6 +36,7 @@ pub(crate) fn backlog(hub: &Hub) -> Vec<Backlog> {
                 writing: member.backlog.writing.load(Ordering::Relaxed),
                 pending: member.backlog.pending.load(Ordering::Relaxed),
                 on_way: member.backlog.on_way.load(Ordering::Relaxed),
+                counted: member.backlog.counted.load(Ordering::Relaxed),
             })
         })
         .collect()

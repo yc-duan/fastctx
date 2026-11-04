@@ -14,11 +14,24 @@ const wakes = new Map()
 // controls make and watch nothing there before that is done.
 const reservations = new Map()
 
-async function controlReserved(sessionId) {
+// What a hook waits on of the plugin's own counts against the ten seconds
+// Claude Code 2.1.303 gives it, as waiting on its methods does not, and two
+// hooks over that in a row unload the plugin: such a wait is let go after
+// `ms`, what it waited for going on behind. Undefined where it was let go.
+const OWN_WAIT_MS = 2000
+
+function within($, promise, ms = OWN_WAIT_MS) {
+  return new Promise((resolve, reject) => {
+    const timer = $.clock.after(ms, () => resolve(undefined))
+    promise.then((value) => { timer.cancel(); resolve(value) }, (error) => { timer.cancel(); reject(error) })
+  })
+}
+
+async function controlReserved($, sessionId) {
   const reserving = reservations.get(sessionId)
   // 2026-10-21: an early control hook must not recreate a directory while the node moves it.
   if (!reserving) throw new Error('the Claude session directory has not been reserved yet')
-  await reserving
+  if (!(await within($, reserving.then(() => true)))) throw new Error('the Claude session directory is still being reserved')
 }
 
 function controlWake(sessionId, look) {
@@ -55,8 +68,9 @@ async function controlBegin($, sessions) {
   const sessionId = await $.session.id()
   const known = sessions.get(sessionId)
   if (known && !known.closed) return known
+  // Another hook opens them: this one goes on without them a while later.
   const pending = controlStarting.get(sessionId)
-  if (pending) return pending
+  if (pending) return (await within($, pending)) ?? null
   const creating = controlOpen($, sessions, sessionId)
   controlStarting.set(sessionId, creating)
   try { return await creating } finally { controlStarting.delete(sessionId) }
@@ -66,7 +80,7 @@ async function controlBegin($, sessions) {
 // started, whose program the removal must delete.
 async function controlOpen($, sessions, sessionId) {
   if (await removed($, true)) return null
-  await controlReserved(sessionId)
+  await controlReserved($, sessionId)
   const directory = WORLD + '/claude/' + sessionId + '/control'
   await $.fs.write(directory + '/inbox/.created', '')
   await $.fs.write(directory + '/replies/.created', '')
@@ -579,7 +593,9 @@ async function endControls($, e) {
       state.timer?.cancel()
       // Native precondition refusals release their claim before its witness
       // ends. Self-ending commands remove themselves before invoking the end.
-      await Promise.all([...state.starting])
+      // One that waits for its turn to end, as a native goal's clearing
+      // does, is not waited for long.
+      await within($, Promise.all([...state.starting]))
       try {
         await controlWrite($, state.directory + '/closed/' + state.host.instance + '.json', { reason: e.reason })
       } finally {

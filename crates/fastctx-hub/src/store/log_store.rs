@@ -64,14 +64,23 @@ fn need(needs: Needs) -> i64 {
         Needs::Due => 8,
         Needs::ProjectDeletes => 16,
         Needs::Profiles => 32,
+        Needs::MachineUpdates => 64,
     }
 }
 fn mask(reads: Reads) -> i64 {
-    [Needs::Renames, Needs::Forgets, Needs::Versions, Needs::Due, Needs::ProjectDeletes, Needs::Profiles]
-        .into_iter()
-        .filter(|n| reads.covers(*n))
-        .map(need)
-        .sum()
+    [
+        Needs::Renames,
+        Needs::Forgets,
+        Needs::Versions,
+        Needs::Due,
+        Needs::ProjectDeletes,
+        Needs::Profiles,
+        Needs::MachineUpdates,
+    ]
+    .into_iter()
+    .filter(|n| reads.covers(*n))
+    .map(need)
+    .sum()
 }
 
 /// Maps the complete unsigned log sequence into SQLite's signed order.

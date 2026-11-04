@@ -480,9 +480,23 @@ impl Session {
     /// `message_colleague`: words from this session's resident to another.
     pub async fn message(self: &Arc<Self>, arguments: &Value, meta: Option<&Value>) -> Answer {
         let failed = |error: String| Answer::error(format!("=== message_colleague (not sent: {error}) ==="));
-        let (to, message) = match (text_argument(arguments, "to"), text_argument(arguments, "message")) {
-            (Ok(to), Ok(message)) => (to, message),
-            (Err(error), _) | (_, Err(error)) => return failed(error),
+        let message = match text_argument(arguments, "message") {
+            Ok(message) => message,
+            Err(error) => return failed(error),
+        };
+        // A colleague's tool names no one: what it says goes to the agent
+        // that asked it, which the node names.
+        if arguments.get("to").is_none() {
+            let asker = match self.machines(meta).await {
+                Ok(machines) => machines.and_then(|machines| machines.asker),
+                Err(error) => return failed(error),
+            };
+            let Some(asker) = asker else { return failed("name the colleague with `to`".to_string()) };
+            return self.tell_asker(asker, message, meta).await;
+        }
+        let to = match text_argument(arguments, "to") {
+            Ok(to) => to,
+            Err(error) => return failed(error),
         };
         let (to, machine) = match to.split_once('@') {
             Some((to, machine)) => match (ResidentId::try_from(to), fastctx_types::access::Written::parse(machine)) {
@@ -538,6 +552,53 @@ impl Session {
                     completed: None,
                 }
             }
+            Ok(other) => {
+                Answer::error(format!("=== message_colleague (the node answered something else: {other:?}) ==="))
+            }
+            Err(error) => failed(error),
+        };
+        self.add_waiting_words(&whereabouts, &mut answer, meta).await;
+        answer
+    }
+
+    /// A colleague's words to the agent that asked it, which owe nothing back.
+    async fn tell_asker(
+        self: &Arc<Self>,
+        asker: fastctx_types::Address,
+        message: String,
+        meta: Option<&Value>,
+    ) -> Answer {
+        let failed = |error: String| Answer::error(format!("=== message_colleague (not sent: {error}) ==="));
+        let whereabouts = match self.whereabouts(meta).await {
+            Ok(whereabouts) => whereabouts,
+            Err(error) => return failed(error),
+        };
+        let machine = match fastctx_types::access::Written::parse(asker.machine.as_str()) {
+            Ok(machine) => machine,
+            Err(error) => return failed(error.to_string()),
+        };
+        let reply = async {
+            let mut client = self.client(meta).await?;
+            let call = Call::Message {
+                resident: whereabouts.resident.clone(),
+                to: asker.resident.clone(),
+                machine: Some(machine),
+                text: message,
+                login: self.login(&self.host(meta)?),
+            };
+            client.call(call).await.map_err(|error| error.to_string())
+        }
+        .await;
+        let mut answer = match reply {
+            Ok(Reply::Spoken { to, .. }) => Answer {
+                facts: None,
+                content: vec![Content::Text(fastctx_types::collab_prompt::told_asker(&to.resident))],
+                is_error: false,
+                receipt: None,
+                source: None,
+                shown: None,
+                completed: None,
+            },
             Ok(other) => {
                 Answer::error(format!("=== message_colleague (the node answered something else: {other:?}) ==="))
             }
@@ -708,7 +769,7 @@ impl Session {
             })
             .await
         {
-            Ok(Reply::Machines { here, others, groups, collab, mut scratch, speaks }) => {
+            Ok(Reply::Machines { here, others, groups, collab, mut scratch, speaks, asker }) => {
                 if !client.scratch_locations {
                     scratch = here
                         .iter()
@@ -717,7 +778,7 @@ impl Session {
                         .map(|name| (name, Err(fastctx_types::scratch::words::OLD_NODE.into())))
                         .collect();
                 }
-                Ok(Some(crate::tools::Machines { here, others, groups, collab, scratch, speaks }))
+                Ok(Some(crate::tools::Machines { here, others, groups, collab, scratch, speaks, asker }))
             }
             Ok(other) => Err(format!("the node answered something else: {other:?}")),
             Err(error) => Err(error.to_string()),

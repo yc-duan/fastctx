@@ -8,6 +8,8 @@ What the "model" does is said in the latest user input, by markers:
     [[later: COMMAND]] the same, asking the World to wait only a second: the command goes on, and its
                        end comes back later as a notice of its own
     [[tell: TEXT]]     call the World's `message_user` with TEXT, then answer
+    [[note: TEXT]]     call the World's `message_colleague` with TEXT and no one named, as a
+                       colleague tells the agent that asked it, then answer
     [[slow: SECONDS]]  wait that long before answering
     [[hang]]           never answer: the stream opens and nothing comes on it
     [[fail]]           answer with an HTTP 500
@@ -27,7 +29,7 @@ import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-MARKER = re.compile(r"\[\[(run|later|slow|hang|fail|tell)(?::\s*(.*?))?\]\]", re.S)
+MARKER = re.compile(r"\[\[(run|later|slow|hang|fail|tell|note)(?::\s*(.*?))?\]\]", re.S)
 
 
 class Quiet(ThreadingHTTPServer):
@@ -115,12 +117,13 @@ class Mock:
         if kind == "slow":
             time.sleep(float(argument or "5"))
             return stream(handler, [message("ok")])
-        wanted = "message_user" if kind == "tell" else "run"
+        wanted = {"tell": "message_user", "note": "message_colleague"}.get(kind, "run")
         tool = world_tool(request.get("tools") or [], wanted)
         if tool is None:
             return stream(handler, [message(f"no {wanted} tool was offered")])
         namespace, name = tool
         arguments = ({"message": argument, "status": "info"} if kind == "tell"
+                     else {"message": argument} if kind == "note"
                      else {"command": argument, "wait": 1 if kind == "later" else 600})
         call = {"type": "function_call", "call_id": f"call_{uuid.uuid4().hex[:12]}", "name": name,
                 "arguments": json.dumps(arguments)}
