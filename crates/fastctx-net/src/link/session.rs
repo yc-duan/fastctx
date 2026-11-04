@@ -257,6 +257,7 @@ async fn open(inner: &Arc<Inner>, upstream: &Upstream) -> Result<Opened, Ended> 
             conversation_deletions: true,
             forgets_accounts: true,
             profiles: true,
+            machine_updates: true,
             account_records: true,
             record_keys: computer,
             skill_files: true,

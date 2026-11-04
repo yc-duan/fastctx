@@ -343,6 +343,7 @@ impl State {
                 record.project_deletes = caps.project_deletes;
                 record.conversation_deletions = caps.conversation_deletions;
                 record.profiles = caps.profiles;
+                record.machine_updates = caps.machine_updates;
                 record.connected_at = Some(jiff::Timestamp::now());
                 let taken = fastctx_net::window::standing(letters.taken, record.out_epoch);
                 let result = async {

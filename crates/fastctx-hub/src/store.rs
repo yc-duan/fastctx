@@ -358,6 +358,10 @@ pub struct Letters {
     /// written.
     #[serde(default)]
     pub profiles: bool,
+    /// The member's last session said it reads the records of machines'
+    /// update settings changed.
+    #[serde(default)]
+    pub machine_updates: bool,
     /// Why the hub refused letters of the member's that it may send again,
     /// by number: kept in its count's file (`Taken`), not here.
     #[serde(skip)]
@@ -390,6 +394,7 @@ impl Letters {
             project_deletes: false,
             conversation_deletions: false,
             profiles: false,
+            machine_updates: false,
             refused,
         })
     }

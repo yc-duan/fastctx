@@ -141,6 +141,7 @@ pub(crate) struct Capabilities {
     pub project_deletes: bool,
     pub conversation_deletions: bool,
     pub profiles: bool,
+    pub machine_updates: bool,
 }
 
 impl From<&crate::control::Said> for Capabilities {
@@ -155,6 +156,7 @@ impl From<&crate::control::Said> for Capabilities {
             project_deletes: said.project_deletes,
             conversation_deletions: said.conversation_deletions,
             profiles: said.profiles,
+            machine_updates: said.machine_updates,
         }
     }
 }

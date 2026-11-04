@@ -51,6 +51,8 @@ export type MachineLogAction =
   | { change: "delete_project"; town: string; name: string | null }
   | { change: "joined"; name: MachineName; kind: MemberKind; registered: boolean; via: "password" | "token"; managed?: boolean }
   | { change: "allow_acting"; machine: MachineName; agent: string; home: string | null }
+  /** A machine's update settings changed from another device. */
+  | { change: "machine_updates"; machine: MachineName; auto?: boolean; relays?: boolean }
   | { change: "allow_sentinel_home"; machine: MachineName }
   | { change: "acting_stopped"; machine: MachineName; account: AccountName }
   | { change: "left"; name: MachineName; account: AccountName; kind: MemberKind; unregistered: boolean; reason: string }

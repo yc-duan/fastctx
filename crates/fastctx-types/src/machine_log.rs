@@ -260,6 +260,16 @@ pub enum Action {
         machine: MachineName,
         to: MachineName,
     },
+    /// A machine's update settings changed from a device of the network:
+    /// whether it updates by itself, and fetches packages for the others.
+    /// Changed on a link between two machines, it is not heard of here.
+    MachineUpdates {
+        machine: MachineName,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        auto: Option<bool>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        relays: Option<bool>,
+    },
     /// A machine put in a group, or in none.
     Group {
         machine: MachineName,
@@ -325,6 +335,7 @@ impl Action {
             Self::UpdateDue { .. } | Self::Updated { .. } | Self::UninstallLeft { .. } => Needs::Due,
             Self::DeleteProject { .. } => Needs::ProjectDeletes,
             Self::Profile { .. } => Needs::Profiles,
+            Self::MachineUpdates { .. } => Needs::MachineUpdates,
             Self::Collab { .. }
             | Self::Share { .. }
             | Self::Assist { .. }
@@ -382,6 +393,9 @@ pub enum Needs {
     /// A reader of the records of profiles written, which came in
     /// 1.0.1-beta.7.
     Profiles,
+    /// A reader of the records of machines' update settings changed, which
+    /// came in 1.0.1-beta.16.
+    MachineUpdates,
 }
 
 /// What one reader of the machine log says it reads.
@@ -393,6 +407,7 @@ pub struct Reads {
     pub due: bool,
     pub project_deletes: bool,
     pub profiles: bool,
+    pub machine_updates: bool,
 }
 
 impl Reads {
@@ -406,6 +421,7 @@ impl Reads {
             Needs::Due => self.due,
             Needs::ProjectDeletes => self.project_deletes,
             Needs::Profiles => self.profiles,
+            Needs::MachineUpdates => self.machine_updates,
         }
     }
 }
