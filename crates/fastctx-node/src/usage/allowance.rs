@@ -5,11 +5,13 @@ use fastctx_types::access::{Acting, HubAccount};
 use fastctx_types::residents::About;
 use fastctx_types::usage::Usd;
 use jiff::{SignedDuration, Timestamp};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 const DAY: SignedDuration = SignedDuration::from_hours(24);
 
+#[derive(Clone)]
 pub(crate) enum UsedUp {
     Weekly { allowance: Usd, until: Timestamp },
     Daily { allowance: Usd, until: Timestamp },
@@ -208,17 +210,34 @@ fn rolling(costs: &[(Timestamp, Usd)], allowance: Usd, span: SignedDuration, now
     Some(now + span)
 }
 
-/// All conversations are checked, including idle roots with busy background agents.
+/// All conversations are checked, including idle roots with busy background
+/// agents: heavy work, done on a thread that may block.
 pub(crate) async fn after_reading(node: &Arc<Node>, agent: &str, dir: &std::path::Path) {
-    super::hold::refresh(node, Some((agent, dir)));
+    let (node, agent, dir) = (node.clone(), agent.to_string(), dir.to_path_buf());
+    fastctx_platform::task::blocking(move || super::hold::refresh(&node, Some((&agent, &dir)))).await;
 }
 
-pub(super) fn restriction(node: &Node, about: &About) -> Option<(HubAccount, UsedUp)> {
-    let Acting::Accounts { accounts } = &about.acting else {
-        return None;
-    };
-    accounts
-        .iter()
-        .filter_map(|account| used_up(node, about, account, None).map(|used| (account.clone(), used)))
-        .max_by_key(|(_, used)| (!used.fable(), used.until()))
+/// What the accounts a login's conversations act for have used up, each
+/// account read once for all of them: what an account has used up depends
+/// only on it and the login, and a login may hold hundreds of conversations.
+#[derive(Default)]
+pub(super) struct Restrictions(HashMap<(HubAccount, Option<PathBuf>), Option<UsedUp>>);
+
+impl Restrictions {
+    /// The restriction on `about`, a conversation of the login these are for.
+    pub(super) fn of(&mut self, node: &Node, about: &About) -> Option<(HubAccount, UsedUp)> {
+        let Acting::Accounts { accounts } = &about.acting else {
+            return None;
+        };
+        accounts
+            .iter()
+            .filter_map(|account| {
+                let used = self
+                    .0
+                    .entry((account.clone(), about.home.clone()))
+                    .or_insert_with(|| used_up(node, about, account, None));
+                used.clone().map(|used| (account.clone(), used))
+            })
+            .max_by_key(|(_, used)| (!used.fable(), used.until()))
+    }
 }
