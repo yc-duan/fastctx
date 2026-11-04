@@ -2,6 +2,7 @@
 // the scroll bar does not lie, and set right the moment it is drawn.
 
 import type { Block } from "./model";
+import { agentWords } from "./told";
 
 /** How tall a block not yet drawn is taken to be, from what it holds and
  *  the column's width: near enough that the scroll bar does not lie, and
@@ -33,7 +34,7 @@ export function estimate(block: Block, line: number, chars: number, acts: number
     case "activity-group":
       return 28;
     case "heard":
-      if (block.notice) return 24;
+      if (block.notice || agentWords(block)) return 24;
       return prose(block.text, Math.floor(chars * 0.78)) + 20 + (block.attached?.length ? 120 : 0) + acts;
     case "prose":
       return prose(block.text, chars) + acts;

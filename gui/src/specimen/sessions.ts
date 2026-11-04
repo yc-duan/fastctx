@@ -894,4 +894,25 @@ function controls(): Specimen {
   return { title: "迁移说明", agent: "claude", resident: "claude-c0ntrols", machine: "laptop", model: "claude-opus-5-5", town: "ingest", here: "desktop", events: s.recent() };
 }
 
-export const specimens: Record<string, () => Specimen> = { claude, codex, asking, steps, trips, tour, deeds, controls, voice };
+/** A colleague's own conversation: what the agent that asked it sent in,
+ *  its task first and a word after, and its work between. */
+function colleague(): Specimen {
+  const s = new Script("2026-10-04T09:10:00Z");
+  const asker = { kind: "resident" as const, address: { machine: "laptop", resident: "claude-2b1c" } };
+  s.heard(
+    "c1",
+    asker,
+    "=== from claude-2b1c on laptop ===\n## 要做的\n\n造一组让积分项溢出的输入，在 lab 上复现 `step_response` 卡住的那一下。\n\n## 先读\n\n- `ctrl/src/fixed.rs` 里的 `integrate()` 与 `narrow()`\n- 10-30 那份 bench 日志\n\n## 交回\n\n- 能复现的最小输入，和跑它的那条命令\n- 溢出出在哪一步\n\n只读 lab 上的仓库，改动放在你自己的分支上。",
+    4,
+  );
+  s.started("c1");
+  s.say("c1", "thinking", "**Reading the integrator**\n\n`integrate()` accumulates in Q32 and `narrow()` brings it back to Q16 for the output.", 2);
+  s.tool("c1", run("fastctx view -- /home/me/ctrl/src/fixed.rs", "=== run on laptop (exited 0) ===", "=== view (1 file: 1 shown) ===\n…", { duration_ms: 60 }));
+  s.say("c1", "message", "`narrow()` 没有截到 i16 的边界，越界时直接回绕。我先照它造输入。", 3);
+  s.heard("c1", asker, "=== from claude-2b1c on laptop ===\n用户想先看 `narrow()` 这边。复现做在 `colleague/q16-edge` 分支上就好，不用等测试全跑完再交回。", 90);
+  s.say("c1", "message", "好，复现已经在 `colleague/q16-edge` 上：`cargo test -p ctrl overflow_repro`。", 40);
+  s.ended("c1", "completed");
+  return { title: "造出让 Q32 积分溢出的输入", agent: "codex", resident: "codex-91c0", machine: "laptop", model: "gpt-6.1-sol", town: "ctrl", here: "desktop", events: s.recent() };
+}
+
+export const specimens: Record<string, () => Specimen> = { claude, codex, asking, steps, trips, tour, deeds, controls, voice, colleague };

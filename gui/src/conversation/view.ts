@@ -68,7 +68,7 @@ import { bunched, cardsIn, type Bunch } from "./cards/bunch";
 import { lineHtml, lineText } from "./cards/lines";
 import { headline, onlyWrites, tenseOf, writeHeadline } from "./tool";
 import { drawDiagrams } from "./diagrams";
-import { readTold, undelivered, worldSaid, type UndeliveredWhy, type WorldSaid } from "./told";
+import { agentWords, readTold, undelivered, worldSaid, type AgentWords, type UndeliveredWhy, type WorldSaid } from "./told";
 import { allowanceOf, detailOf, heldOf } from "../app/problem";
 import { AnchorLayout, AnchoredHeight, MemoryLines, type LinePaint, type ViewerSource } from "../longview";
 import { FEW, LongText, type LongTextWords, type OpenedText, type OtherSource } from "./long-text";
@@ -368,7 +368,7 @@ export class ConversationView {
       entry: (entry) => {
         const slot = this.slots.get(entry.key);
         if (slot?.signature !== null && slot?.element.isConnected) {
-          const root = entry.kind === "heard" && this.noticeOf(entry) ? slot.element.querySelector<HTMLElement>(".notice-line") : slot.prose?.element;
+          const root = entry.kind === "heard" && (this.noticeOf(entry) || agentWords(entry)) ? slot.element.querySelector<HTMLElement>(".notice-line") : slot.prose?.element;
           return displayedText(root ?? slot.element).text;
         }
         if (entry.kind === "prose") {
@@ -1743,6 +1743,8 @@ export class ConversationView {
     }
     const notice = this.noticeOf(entry);
     if (notice) return this.noticeLine(entry, notice);
+    const agent = agentWords(entry);
+    if (agent) return this.attached(entry.attached ?? []) + this.agentLine(entry, agent);
     const mine = !entry.from || entry.from.kind === "user";
     const acts = mine && entry.turn && !entry.sending && this.conversation.turnEnded(entry.turn) ? this.userActs(entry) : "";
     // Words sent into the turn under way are said: the turn takes them in
@@ -1855,15 +1857,35 @@ export class ConversationView {
     const mark = told ? glyph("colleague", 14) : woke ? glyph("sentinel", 14) : asks ? glyph("ask", 14) : paused ? glyph("pause", 14) : ok ? glyph("check", 14) : glyph("cross", 14);
     const line = `<span class="notice-mark${ok ? "" : " wrong"}">${mark}</span><span class="notice-said">${escape(said)}</span>${first ? `<span class="notice-first">${escape(first)}</span>` : ""}`;
     if (!more) return `<div class="notice-line${ok ? "" : " failed"}"${why ? ` title="${escape(why)}"` : ""}>${line}</div>`;
-    const open = this.openRows.has(entry.key);
-    return `<div class="notice-line${ok ? "" : " failed"}"><button class="notice-open" type="button" data-open="${escape(entry.key)}" aria-expanded="${open}">${line}${glyph("chevron", 14)}</button></div><div class="fold-box notice-box"${open ? "" : " style=\"height:0\" inert"}><div class="fold-content"></div></div>`;
+    return this.openingLine(entry.key, line, ok);
+  }
+
+  /** Words another agent sent in, drawn as a colleague's are where they are
+   *  heard (user 2026-11-04): who, and the first line, the whole folded
+   *  under it until opened. */
+  private agentLine(entry: HeardEntry, agent: AgentWords): string {
+    const { words } = this.context;
+    const said = agent.answer ? words.answered(agent.label, null) : words.colleagueSaid(agent.label);
+    const first = firstLine(agent.body);
+    const line = `<span class="notice-mark">${glyph("colleague", 14)}</span><span class="notice-said">${escape(said)}</span>${first ? `<span class="notice-first">${escape(first)}</span>` : ""}`;
+    return this.openingLine(entry.key, line, true);
+  }
+
+  /** A quiet line that opens what it holds under it. */
+  private openingLine(key: string, line: string, ok: boolean): string {
+    const open = this.openRows.has(key);
+    return `<div class="notice-line${ok ? "" : " failed"}"><button class="notice-open" type="button" data-open="${escape(key)}" aria-expanded="${open}">${line}${glyph("chevron", 14)}</button></div><div class="fold-box notice-box"${open ? "" : " style=\"height:0\" inert"}><div class="fold-content"></div></div>`;
   }
 
   /** What a notice holds, opened: a colleague's answer, what the World
    *  handed over. */
   private noticeDetails(entry: HeardEntry, into: HTMLElement): void {
-    const notice = entry.notice;
-    if (!notice) return;
+    const notice = this.noticeOf(entry);
+    if (!notice) {
+      const agent = agentWords(entry);
+      if (agent) into.innerHTML = `<div class="prose notice-answer">${render(agent.body)}</div>`;
+      return;
+    }
     if (notice.kind === "answer" && notice.end.last_message) {
       into.innerHTML = `<div class="prose notice-answer">${render(notice.end.last_message)}</div>`;
     } else if (notice.kind === "world") {
@@ -3606,9 +3628,11 @@ function turnInfo(end: TurnEnd, words: Words, english: boolean): TurnInfoRow[] {
 }
 
 /** The first line a colleague wrote, as a line beside who wrote it: its
- *  first words, without the marks that make them a heading or an item. */
+ *  first words, without the marks that make them a heading or an item; a
+ *  heading only where nothing else is written. */
 function firstLine(text: string): string {
-  const line = text.split("\n").map((one) => one.trim()).find(Boolean) ?? "";
+  const lines = text.split("\n").map((one) => one.trim()).filter(Boolean);
+  const line = lines.find((one) => !/^#{1,6}\s/.test(one)) ?? lines[0] ?? "";
   return line
     .replace(/^(?:#{1,6}\s+|[-*+>]\s+|\d+[.)]\s+)+/, "")
     .replace(/`/g, "")

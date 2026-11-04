@@ -3,6 +3,8 @@
 // the forms it writes are recognised here and said in the interface's own
 // words. Text in any other form is shown as it came.
 
+import type { Speaker } from "../world/events";
+
 export type Told =
   | { kind: "job"; job: string; machine: string; how: string; at: string; output: string }
   | { kind: "colleague"; colleague: string; machine: string; how: string; body: string }
@@ -92,4 +94,23 @@ export function readTold(text: string): Told {
   const words = /^=== from (.+) ===$/.exec(first);
   if (words) return { kind: "words", from: words[1], body: lines.slice(1).join("\n") };
   return { kind: "plain", body: text };
+}
+
+/** Words another agent sent into a conversation, as the page draws them
+ *  where no notice of its own is drawn for them: who sent them, what they
+ *  say, and whether they hand an answer back. A job's end it tells of is
+ *  drawn as its own. */
+export interface AgentWords {
+  label: string;
+  body: string;
+  answer: boolean;
+}
+
+export function agentWords(entry: { from?: Speaker | null; text: string }): AgentWords | null {
+  const from = entry.from;
+  if (from?.kind !== "resident") return null;
+  const told = readTold(entry.text);
+  if (told.kind === "job") return null;
+  if (told.kind === "colleague") return { label: `${told.colleague} ${told.machine}`, body: told.body, answer: true };
+  return { label: `${from.address.resident} ${from.address.machine}`, body: told.body, answer: false };
 }
