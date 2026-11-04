@@ -285,8 +285,9 @@ type Recorded = (Address, String, Option<HubAccount>);
 
 /// What each conversation's actions said it asked, as last read, by the
 /// version of its actions then.
-static RECORDED: std::sync::LazyLock<std::sync::Mutex<HashMap<std::path::PathBuf, (u64, Vec<Recorded>)>>> =
-    std::sync::LazyLock::new(Default::default);
+type Remembered = std::sync::Mutex<HashMap<std::path::PathBuf, (u64, Vec<Recorded>)>>;
+
+static RECORDED: std::sync::LazyLock<Remembered> = std::sync::LazyLock::new(Default::default);
 
 /// The conversations whose asks are remembered at most: past it, all are
 /// read again.
