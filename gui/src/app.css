@@ -603,17 +603,18 @@
   transition: background-color var(--hover) var(--ease), --press var(--settle) var(--spring);
 }
 
-.composer-action:hover:not(:disabled) {
+.composer-action:hover:not(:disabled, [aria-disabled="true"]) {
   background: var(--accent-bright);
 }
 
-.composer-action:active:not(:disabled) {
+.composer-action:active:not(:disabled, [aria-disabled="true"]) {
   --press: 0.94;
   transition-duration: var(--hover), var(--quick);
   transition-timing-function: var(--ease), var(--ease-out);
 }
 
-.composer-action:disabled {
+.composer-action:disabled,
+.composer-action[aria-disabled="true"] {
   background: var(--hairline);
   color: var(--text-3);
 }

@@ -171,7 +171,8 @@ export function specimenComposer(who: Address, busy: () => boolean, queued: stri
       listeners.set(serial, onPiece);
       return Promise.resolve({ id: serial, watch: "specimen", composer: snapshot });
     },
-    attachFile: (scope, file) => Promise.resolve(attachment(scope.target, file.name, file.type, file.size)),
+    // A slow node takes a file as long as it takes words.
+    attachFile: (scope, file) => (slow ? later(slow.taken, () => Promise.resolve(attachment(scope.target, file.name, file.type, file.size))) : Promise.resolve(attachment(scope.target, file.name, file.type, file.size))),
     attachPath: (scope, path) => Promise.resolve(attachment(scope.target, path.split(/[\\/]/).pop() ?? path, "", 0)),
     update: (mutation) => (slow ? later(mutation.do === "send" ? (slow.sent ?? slow.taken) : slow.taken, () => apply(mutation)) : apply(mutation)),
   };

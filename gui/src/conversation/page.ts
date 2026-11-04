@@ -1059,7 +1059,7 @@ export class ConversationPage {
       this.syncControls();
     }
     if (this.options.attach && this.tray) {
-      this.nodeTray = new NodeTray(this.options.attach.words, session, session.draft, say, assistantFiles);
+      this.nodeTray = new NodeTray(this.options.attach.words, session, session.draft, say, assistantFiles, () => this.drawAction());
       this.tray.element.replaceWith(this.nodeTray.element);
     }
     session.subscribe((state) => {
@@ -1242,9 +1242,15 @@ export class ConversationPage {
       || !!this.session?.state.onTheirWay;
   }
 
+  /** Whether a file attached is still on its way, or failed and is not
+   *  taken away: nothing is sent until it is there (user 2026-11-04). */
+  private uploading(): boolean {
+    return this.session ? !!this.nodeTray?.uploading : !!(this.tray?.sending || this.tray?.failed);
+  }
+
   private submit(): void {
     const text = this.input.value.trim();
-    if (!this.session && this.tray?.sending) {
+    if (this.uploading()) {
       this.say(this.options.attach!.words.wait);
       return;
     }
@@ -2474,12 +2480,17 @@ export class ConversationPage {
     const stop = !typed && busy;
     this.action.innerHTML = glyph(stop ? "stop" : "send", 18);
     const waits = this.released !== null || (this.session ? this.queues() : busy);
-    const label = stop ? (this.stopping ? words.stopping : words.stop) : typed && waits ? words.queue.queue : words.send;
+    // Files still on their way hold the words back; the button says why on
+    // hover, which a disabled one would not.
+    const held = !stop && typed && this.uploading();
+    const label = stop ? (this.stopping ? words.stopping : words.stop) : held ? this.options.attach!.words.wait : typed && waits ? words.queue.queue : words.send;
     this.action.setAttribute("aria-label", label);
     this.action.title = label;
     this.action.classList.toggle("stop", stop);
     this.action.classList.toggle("stopping", stop && this.stopping);
     this.action.disabled = !typed && !stop;
+    if (held) this.action.setAttribute("aria-disabled", "true");
+    else this.action.removeAttribute("aria-disabled");
   }
 }
 
