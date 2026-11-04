@@ -1207,7 +1207,10 @@ export function register(on) {
     if (await aside($)) return next(e)
     const context = await route($, registry, 'turn.complete', e)
     const result = await completeTurn($, context, e, next)
-    await clearNativeGoal($, context)
+    // Cleared once the session is idle, not waited for here: `/goal clear`
+    // runs only after the turn, and waiting for a promise of our own spends
+    // the hook's budget, two overruns in a row unloading the plugin.
+    if (e.agentId === undefined) scheduleNativeGoalClear($, context)
     return result
   }).catch(($, e, next) => continueWithoutWorld($, 'turn.complete', e, next))
   on('turn.step', async function* ($, e, next) {

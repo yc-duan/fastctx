@@ -45,6 +45,7 @@ pub mod management;
 mod oldest;
 pub(crate) mod pairing;
 mod plugin_check;
+mod plugin_gone;
 mod process;
 mod queued;
 mod rewind;
