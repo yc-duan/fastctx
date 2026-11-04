@@ -1,26 +1,13 @@
-//! The account's layer (`world-layers.md`), through a node or directly from
-//! a device's hub connection.
+//! The activity book, and bringing a session the user opened on their own
+//! into Fastctx (`world-layers.md`), through a node or directly from a
+//! device's hub connection.
 
 use crate::{Error, World};
 use fastctx_types::access::Written;
 use fastctx_types::activity_book::{BookAnswer, BookQuery};
-use fastctx_types::layers::{Chosen, Layer};
-use fastctx_types::{AccountName, Call, HubName, Reply, ResidentId};
+use fastctx_types::{Call, Reply, ResidentId};
 
 impl World {
-    /// The layer chosen, changed to `layer` when given.
-    pub async fn layer(
-        &self,
-        hub: Option<HubName>,
-        account: Option<AccountName>,
-        layer: Option<Layer>,
-    ) -> Result<Chosen, Error> {
-        match self.ask(Call::Layer { hub, account, layer }).await? {
-            Reply::Layer(chosen) => Ok(chosen),
-            other => Err(Error::Unexpected(format!("{other:?}"))),
-        }
-    }
-
     /// The activity book of `machine`, or of this computer.
     pub async fn book(&self, machine: Option<Written>, query: BookQuery) -> Result<BookAnswer, Error> {
         match self.ask(Call::Book { machine, query }).await? {

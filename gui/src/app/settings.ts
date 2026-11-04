@@ -35,13 +35,13 @@ import { link } from "./places";
 import { inNoNetwork, machinesOf } from "./reach";
 import { RenameField, renamerOf } from "./rename";
 import { hubLine, type HubReach } from "./hub-line";
-import { accountLayer } from "./layer";
+import { workbenchShown } from "./workbench-shown";
 
 export interface SettingsOptions {
   store: Store;
   words: SettingsWords;
-  /** The account's rows: its mode, and on the workbench where the settings
-   *  of what it brings are (`world-layers.md`). */
+  /** The account's rows: on the workbench, where the settings of what it
+   *  brings are (`world-layers.md`). */
   account(): string;
   removalWords: RemovalWords;
   head(title: string, actions?: string): string;
@@ -115,6 +115,7 @@ export class SettingsPage implements Page {
   readonly element: HTMLElement;
   readonly title: string;
   private stop: () => void;
+  private stopLook: () => void;
   private updateLine: UpdateLine | null = null;
   private device: HTMLElement;
   /** This computer's name: the way to its page, and renaming it there. */
@@ -192,7 +193,6 @@ export class SettingsPage implements Page {
       if ((event.target as HTMLElement).closest("[data-rename]")) this.rename();
     });
     this.service = this.element.querySelector<HTMLElement>(".settings-service")!;
-    this.drawLook();
     this.askService();
     const updates = options.updates;
     if (updates) {
@@ -239,20 +239,30 @@ export class SettingsPage implements Page {
           chooseNotifying(value === "on");
           options.notifyChanged?.(value === "on");
           break;
+        case "workbench":
+          // Drawn again as the switch says, below.
+          workbenchShown.choose(value === "on", options.store.world.peek());
+          return;
       }
       redrawKeepingFocus(this.element, () => this.drawLook());
     });
     this.stop = effect(() => {
       const world = options.store.world.get();
-      accountLayer.chosen.get();
+      workbenchShown.on.get();
       this.element.querySelector(".settings-mode")!.innerHTML = options.account();
       this.drawName(world);
       this.drawDevice(world, options.store.clock.get());
+    });
+    // The workbench's row follows its switch, which also turns itself on.
+    this.stopLook = effect(() => {
+      workbenchShown.on.get();
+      redrawKeepingFocus(this.element, () => this.drawLook());
     });
   }
 
   leave(): void {
     this.stop();
+    this.stopLook();
     this.updateLine?.leave();
     this.renaming?.dispose();
   }
@@ -379,8 +389,8 @@ export class SettingsPage implements Page {
 
   private drawLook(): void {
     const { words, language } = this.options;
-    const row = (kind: string, label: string, choices: [string, string][], chosen: string) =>
-      `<div class="choice-row" role="radiogroup" aria-label="${escape(label)}"><span class="choice-label">${escape(label)}</span><div class="choice-options">${choices
+    const row = (kind: string, label: string, choices: [string, string][], chosen: string, said?: string) =>
+      `<div class="choice-row" role="radiogroup" aria-label="${escape(label)}"><span class="choice-label"${said ? ` title="${escape(said)}"` : ""}>${escape(label)}</span><div class="choice-options">${choices
         .map(
           ([value, name]) =>
             `<button type="button" class="choice${value === chosen ? " chosen" : ""}" role="radio" aria-checked="${value === chosen}" data-choice="${kind}" data-value="${escape(value)}">${escape(name)}</button>`,
@@ -391,6 +401,7 @@ export class SettingsPage implements Page {
       row("size", words.textSize, [["", words.sizeDefault], ...textSizes.map((size): [string, string] => [size, words.sizes[size]!])], chosenSize() ?? ""),
       row("motion", words.motion, motions.map((motion): [string, string] => [motion, words.motions[motion]]), chosenMotion()),
       row("language", words.language, [["zh", "中文"], ["en", "English"]], language),
+      row("workbench", words.workbench, [["on", words.workbenchOn], ["off", words.workbenchOff]], workbenchShown.on.peek() ? "on" : "off", words.workbenchWhat),
       // Only where the shell can call the user from outside the window.
       desktopAvailable() || this.options.phone
         ? row("notify", words.notify, [["on", words.notifyOn], ["off", words.notifyOff]], notifying() ? "on" : "off")

@@ -23,7 +23,7 @@ import "./sidebar-drag.css";
 import { ActsMenu, type MenuAct, type MenuEntry } from "./acts-menu";
 import { Popover } from "../conversation/popover";
 import { escape } from "../conversation/prose";
-import { accountLayer } from "./layer";
+import { workbenchShown } from "./workbench-shown";
 import { networksOf, shownNetwork } from "./network";
 import { redrawKeepingFocus } from "./focus";
 import { loginsOf, type Login } from "../world/accounts";
@@ -231,7 +231,7 @@ export class Sidebar {
     effect(() => {
       options.store.world.get();
       options.acts.changed.get();
-      accountLayer.workbench.get();
+      workbenchShown.on.get();
       options.store.trouble.get();
       options.store.clock.get();
       options.store.unanswered.get();
@@ -269,7 +269,7 @@ export class Sidebar {
     const now = store.clock.peek();
     // The new conversation outside any project is a place of the
     // workbench's, among its others.
-    const talking = accountLayer.workbench.peek();
+    const talking = workbenchShown.on.peek();
     this.drawSwitcher();
     const begin = this.element.querySelector<HTMLElement>(".new-talk");
     if (begin) begin.hidden = true;

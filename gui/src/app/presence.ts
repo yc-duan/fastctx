@@ -21,7 +21,7 @@ import type { Address } from "../world/events";
 import type { Asked, ResidentNow } from "../world/world";
 import type { MachineNotice, Trouble } from "../world/accounts";
 import { link, placeOf, talkLink } from "./places";
-import { accountLayer } from "./layer";
+import { workbenchShown } from "./workbench-shown";
 import { effect } from "./signals";
 import { residentsOf, type Store } from "./store";
 import type { TroubleWords } from "./trouble-words";
@@ -312,7 +312,7 @@ export function startPresence(options: PresenceOptions): void {
   async function call(id: string, notice: { title: string; body: string; route: string; actions: { id: string; title: string; quiet?: boolean }[] }, about?: Address): Promise<void> {
     // What a conversation asks or answers is the workbench's (`world-layers.md`);
     // what happens to the networks and machines is called about in Connect too.
-    if (about && !accountLayer.workbench.peek()) return;
+    if (about && !workbenchShown.on.peek()) return;
     const presence = await getWindowPresence();
     if (presence.focused && (!about || viewing(about))) return;
     const previous = shown.get(id);

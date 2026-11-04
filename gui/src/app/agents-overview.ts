@@ -274,7 +274,9 @@ export class AgentsOverview implements Page {
       const side = sideOf(record, agent);
       return !!side && (side.programs.length || side.listed.length || side.candidates.length);
     });
-    const missing = HOSTS.filter((agent) => !found.includes(agent)).map((agent) => logins[agent]);
+    // A machine that assists the user tells only the logins it lends, so
+    // what else is there, or not, is not known here.
+    const missing = machine.hold === "assist" ? [] : HOSTS.filter((agent) => !found.includes(agent)).map((agent) => logins[agent]);
     return `${this.reach(machine, record, found)}<div class="ao-cards">${found.map((agent) => this.card(machine, record, agent)).join("")}</div>
       ${missing.length ? `<p class="ao-missing">${escape(words.missing(missing, machine.here))}</p>` : ""}`;
   }
@@ -335,11 +337,14 @@ export class AgentsOverview implements Page {
       byLogin && login.workbench ? { text: words.workbench } : null,
     ].filter((tag): tag is LineTag => !!tag);
     const at = `data-machine="${escape(machine.name)}" data-agent="${escape(agent)}" data-dir="${escape(login.dir)}"`;
+    // A login the workbench is open in begins a conversation: one of the
+    // user's own, and one that assists them as well.
+    const talk = isHost(agent) && byLogin && login.workbench ? `<button class="text-button ll-quiet" type="button" data-ao="talk" ${at}>${escape(words.talk)}</button>` : "";
     const act =
       standing === "busy"
         ? `<span class="ll-busy">${escape(login.change?.into === false ? logins.removing : logins.applying)}</span>`
         : !this.mine(machine)
-          ? ""
+          ? machine.hold === "assist" ? talk : ""
           : standing === "found"
             ? `<button class="text-button ll-go" type="button" data-ao="connect" ${at}>${escape(logins.apply)}</button>`
             : standing === "renew"
@@ -347,9 +352,7 @@ export class AgentsOverview implements Page {
               : !isHost(agent)
                 ? // Another agent has no page of its own: it is taken out here.
                   `<button class="text-button ll-quiet" type="button" data-ao="remove" ${at}>${escape(logins.remove)}</button>`
-                : byLogin && login.workbench
-                  ? `<button class="text-button ll-quiet" type="button" data-ao="talk" ${at}>${escape(words.talk)}</button>`
-                  : "";
+                : talk;
     // A card holds a login to one line: who it is and its deed. What is
     // known of it is said where the pointer rests, under its directory.
     const said = [login.dir, ...tags.map((tag) => (tag.warn && tag.said ? tag.said : tag.text))].join("\n");
