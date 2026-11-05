@@ -705,12 +705,15 @@ export class AgentLoginsPage implements Page {
     // World conversations, so only such a login shows it.
     const switches: MenuEntry[] = [];
     if (this.agent === "codex" && found.machine.mine && login.integration === "in") {
-      switches.push({ act: `title:${!login.auto_title}`, icon: "edit", label: words.autoTitle, on: !!login.auto_title, hint: words.autoTitleWhy });
+      switches.push({ act: "title", icon: "edit", label: words.autoTitle, on: !!login.auto_title, hint: words.autoTitleWhy,
+        toggle: { key: `title:${machineName}:${this.agent}:${dir}`, busy: () => this.changing.has(`s:${machineName}:${dir}`), problem: () => this.notes.get(`s:${machineName}:${dir}`), change: (on) => this.quietly(null, `s:${machineName}:${dir}`, () => this.calls.setTitle(machineName, "codex", dir, on)) } });
     }
     // The week's start is the owner's to choose, where the workbench keeps
     // the login's usage (`world-usage.md`).
     if (found.machine.mine && benched) {
-      switches.push({ act: `reset:${!login.reset_in_place}`, icon: "reread", label: words.resetInPlace, on: !!login.reset_in_place, hint: words.resetInPlaceWhy });
+      const agent = this.agent;
+      switches.push({ act: "reset", icon: "reread", label: words.resetInPlace, on: !!login.reset_in_place, hint: words.resetInPlaceWhy,
+        toggle: { key: `reset:${machineName}:${agent}:${dir}`, busy: () => this.changing.has(`s:${machineName}:${dir}`), problem: () => this.notes.get(`s:${machineName}:${dir}`), change: (on) => this.quietly(null, `s:${machineName}:${dir}`, () => this.calls.setResetInPlace(machineName, agent, dir, on)) } });
     }
     if (switches.length) entries.push({ rule: true }, ...switches);
     if (identity?.method === "oauth_token" && admin) {
@@ -746,12 +749,7 @@ export class AgentLoginsPage implements Page {
       case "limits":
         await this.quietly(null, key, () => this.calls.limits(machineName, this.agent, dir));
         return;
-      case "title":
-        await this.quietly(null, key, () => this.calls.setTitle(machineName, this.agent, dir, value === "true"));
-        return;
-      case "reset":
-        await this.quietly(null, key, () => this.calls.setResetInPlace(machineName, this.agent, dir, value === "true"));
-        return;
+
       case "copy":
         await navigator.clipboard.writeText(dir).catch(() => {});
         this.notes.set(key, { text: options.words.copied, detail: dir });
@@ -874,15 +872,17 @@ export class AgentLoginsPage implements Page {
 
   /** Does `act`, says on the machine or row what went wrong if it did,
    *  and reads the record again. */
-  private async quietly(button: HTMLButtonElement | null, key: string, act: () => Promise<MachineLogins | void>): Promise<void> {
-    if (this.left || this.changing.has(key)) return;
+  private async quietly(button: HTMLButtonElement | null, key: string, act: () => Promise<MachineLogins | void>): Promise<boolean> {
+    if (this.left || this.changing.has(key)) return false;
     this.changing.add(key);
     const asked = readerNow();
+    let saved = false;
     if (button) button.disabled = true;
     this.notes.delete(key);
     try {
       const record = await act();
-      if (this.left || readerNow() !== asked) return;
+      saved = true;
+      if (this.left || readerNow() !== asked) return true;
       // A read begun before this acknowledgement must not undo it.
       this.readRevision += 1;
       this.reading = null;
@@ -900,7 +900,8 @@ export class AgentLoginsPage implements Page {
       this.changing.delete(key);
       if (button) button.disabled = false;
     }
-    await this.read(true);
+    void this.read(true);
+    return saved;
   }
 }
 

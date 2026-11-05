@@ -26,7 +26,7 @@ import type { Point } from "../map-canvas";
 import type { AccountChange, HubAccounts, Login, MemberSeen } from "../world/accounts";
 import { MachineCards, type Renaming } from "./machine-cards";
 import { moreEntries, nameOf, spotActs, SpotViews, type Act, type Spot } from "./machine-spot";
-import { ActsMenu } from "./acts-menu";
+import { ActsMenu, type MenuEntry } from "./acts-menu";
 import { MachineUpdates, type UpdatesAccess } from "./machine-updates";
 import { copyFrom } from "./copy-button";
 import { loginsOf, names } from "../world/accounts";
@@ -566,6 +566,13 @@ export class MachinesPage implements Page {
       else if (target.closest("[data-choose=cancel]")) this.stopChoosing();
     });
     this.element.addEventListener("keydown", (event) => {
+      const toggle = (event.target as HTMLElement).closest<HTMLElement>("[data-uv-auto], [data-uv-managed]");
+      if (toggle && (event.key === " " || event.key === "Enter")) {
+        event.preventDefault();
+        event.stopPropagation();
+        this.updateView?.press(toggle);
+        return;
+      }
       if (event.key === "Escape" && this.cards.open) {
         event.stopPropagation();
         this.cards.close();
@@ -1337,7 +1344,7 @@ export class MachinesPage implements Page {
         words,
       );
       this.listRows = rows;
-      if (html !== this.listed) {
+      if (html !== this.listed && !(updating && this.updateView?.deferDraw(() => this.redraw()))) {
         this.listed = html;
         // The update view's machines scroll on their own, and are where
         // they were after each drawing.
@@ -1612,11 +1619,58 @@ export class MachinesPage implements Page {
     if (!world || !spot) return;
     const { more } = spotActs(this.actsOf(key, world));
     if (!more.length) return;
-    menuOf().open(anchor, nameOf(spot), moreEntries(more, this.options.words, this.options.people), (act) => this.runAct(key, act));
+    menuOf().open(anchor, nameOf(spot), this.menuEntries(key, more), (act, on) => this.runAct(key, act, on));
+  }
+
+  /** Immediate off switches save in their menu; opening access still uses
+   *  its existing confirmation or address-selection card. */
+  private menuEntries(key: string, acts: Act[]): MenuEntry[] {
+    return moreEntries(acts, this.options.words, this.options.people).map((entry) => {
+      if (!("act" in entry) || entry.on !== true || (entry.act !== "relay" && entry.act !== "signup")) return entry;
+      return { ...entry, toggle: {
+        key: `${key}:${entry.act}`,
+        change: (on: boolean) => this.setMenuSwitch(key, entry.act, on),
+        problem: () => this.note ? { text: this.note.text, detail: this.note.text } : undefined,
+      } };
+    });
+  }
+
+  private async setMenuSwitch(key: string, act: string, on: boolean): Promise<boolean> {
+    if (on) {
+      this.closeMenu();
+      this.runAct(key, act, true);
+      return false;
+    }
+    const world = this.options.store.world.peek();
+    const spot = world ? this.spots(world).get(key) : undefined;
+    if (!world || !spot) return false;
+    this.note = null;
+    let saved = false;
+    try {
+      if (act === "signup" && spot.kind === "hub") {
+        const login = this.superLogin(spot.hub, world);
+        if (!login) return false;
+        await this.options.change(login, { change: "settings", self_registration: false });
+        this.offerUndo(this.options.people.signUpClosed, () => this.options.change(login, { change: "settings", self_registration: true }));
+      } else if (act === "relay" && spot.kind === "machine") {
+        const login = this.holdersOf(spot.machine, world)[0];
+        const member = login ? this.memberOf(spot.machine, login, world) : undefined;
+        if (!login || !member) return false;
+        await this.cards.stopRelay(login, spot.machine, member.relay ?? []);
+      } else return false;
+      saved = true;
+      await this.options.store.refresh();
+      this.redraw();
+      return true;
+    } catch (error) {
+      this.note = { machine: key.replace(/^m:/, ""), text: this.options.access.failed(error instanceof Error ? error.message : String(error)) };
+      this.redraw();
+      return saved;
+    }
   }
 
   /** Does `act` to `key`. */
-  private runAct(key: string, act: string): void {
+  private runAct(key: string, act: string, on?: boolean): void {
     const world = this.options.store.world.peek();
     if (!world) return;
     if (act === "fit") return this.map.fit();
@@ -1634,7 +1688,7 @@ export class MachinesPage implements Page {
     if (spot.kind === "hub") {
       const login = this.hubLogin(spot.hub.hub);
       if (act === "invite" && login) this.invite(login);
-      else if (act === "signup") this.people.signUp(spot.hub.hub);
+      else if (act === "signup") this.people.signUp(spot.hub.hub, on);
       else if (act === "updates") this.show("updates");
       else if (act === "dissolve") {
         const top = this.superLogin(spot.hub, world);
@@ -1692,16 +1746,16 @@ export class MachinesPage implements Page {
         const admin = this.adminOf(machine, world);
         const member = admin ? this.memberOf(machine, admin, world) : undefined;
         if (!admin || !member) return;
-        if (member.direct?.length) this.cards.stopDirect(admin, machine, key, member.direct);
-        else this.cards.direct(admin, machine, key, member);
+        if (on ?? !member.direct?.length) this.cards.direct(admin, machine, key, member);
+        else if (member.direct?.length) this.cards.stopDirect(admin, machine, key, member.direct);
         return;
       }
       case "relay": {
         const own = this.holdersOf(machine, world)[0];
         const member = own ? this.memberOf(machine, own, world) : undefined;
         if (!own || !member) return;
-        if (member.relay?.length) void this.cards.stopRelay(own, machine, member.relay);
-        else this.cards.relay(own, machine, key, member);
+        if (on ?? !member.relay?.length) this.cards.relay(own, machine, key, member);
+        else void this.setMenuSwitch(key, act, false);
         return;
       }
     }
@@ -1929,8 +1983,8 @@ export class MachinesPage implements Page {
     menuOf().openAt(
       [box.left + at[0], box.top + at[1]],
       alone ?? (spot ? nameOf(spot) : ""),
-      moreEntries(acts, words, this.options.people),
-      (act) => this.runAct(key ?? "", act),
+      this.menuEntries(key ?? "", acts),
+      (act, on) => this.runAct(key ?? "", act, on),
       () => {
         // Closed however it was, the bar of the one chosen is back.
         if (this.menuFor === null) return;

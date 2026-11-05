@@ -317,9 +317,10 @@ export function specimenSetTitle(machine: string, agent: string, dir: string, on
   void machine;
   void agent;
   base = at.getTime();
-  if (on) untitled.delete(dir);
-  else untitled.add(dir);
-  return new Promise((resolve) => setTimeout(() => resolve(desktop(Date.now())), 200));
+  return saveSetting(() => {
+    if (on) untitled.delete(dir);
+    else untitled.add(dir);
+  });
 }
 
 /** Turns counting a week cleared before its reset anew on or off in the
@@ -328,9 +329,20 @@ export function specimenSetResetInPlace(machine: string, agent: string, dir: str
   void machine;
   void agent;
   base = at.getTime();
-  if (on) resetting.add(dir);
-  else resetting.delete(dir);
-  return new Promise((resolve) => setTimeout(() => resolve(desktop(Date.now())), 200));
+  return saveSetting(() => {
+    if (on) resetting.add(dir);
+    else resetting.delete(dir);
+  });
+}
+
+/** Slow and failed acknowledgements, without a production connection. */
+async function saveSetting(change: () => void): Promise<MachineLogins> {
+  const params = new URLSearchParams(location.search);
+  const delay = Number(params.get("settingDelay")) || 200;
+  await new Promise((resolve) => setTimeout(resolve, delay));
+  if (params.has("settingFails")) throw new Error("the specimen could not save the setting");
+  change();
+  return desktop(Date.now());
 }
 
 /** What a folder's search found, taken up as a candidate. */
