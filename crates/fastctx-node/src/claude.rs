@@ -530,7 +530,7 @@ async fn look(node: &Arc<Node>, directory: &Path) -> bool {
     if node.residents.deleted_session(&session).is_some() {
         return true;
     }
-    match exchange::registration(directory) {
+    match fastctx_platform::roles::in_place("reading Claude registration", || exchange::registration(directory)) {
         Ok(Some(registration)) if registration.session == session => hear(node, registration).await,
         Ok(Some(_)) => {
             node.log.line(format_args!("{} contains a registration for a different session", directory.display()));
@@ -704,7 +704,9 @@ async fn look(node: &Arc<Node>, directory: &Path) -> bool {
                     }
                 }
             }
-            exchange::acknowledge(directory, &report.name)
+            fastctx_platform::roles::in_place("acknowledging Claude report", || {
+                exchange::acknowledge(directory, &report.name)
+            })
         }
         .await;
         if let Err(error) = applied {
@@ -717,13 +719,14 @@ async fn look(node: &Arc<Node>, directory: &Path) -> bool {
     }
     // Each receipt is settled once in this run, and again only while what it
     // names still waits in the inbox (`receipts`).
-    let receipts = match node.claude.receipts.listed(directory) {
-        Ok(receipts) => receipts,
-        Err(error) => {
-            node.log.line(format_args!("reading consumption receipts for {session}: {error}"));
-            return false;
-        }
-    };
+    let receipts =
+        match fastctx_platform::roles::in_place("reading Claude receipts", || node.claude.receipts.listed(directory)) {
+            Ok(receipts) => receipts,
+            Err(error) => {
+                node.log.line(format_args!("reading consumption receipts for {session}: {error}"));
+                return false;
+            }
+        };
     let conversation = node.world.conversation(&resident);
     let ids: Vec<String> = receipts.iter().map(|(id, _)| id.clone()).collect();
     let waiting = match crate::inbox::waiting_among(&conversation, &ids) {
@@ -753,7 +756,9 @@ async fn look(node: &Arc<Node>, directory: &Path) -> bool {
             node.claude.receipts.settle(directory, &id);
         }
     }
-    match exchange::handed_over(directory, |id| !waiting.contains(id) && node.claude.receipts.cleared(directory, id)) {
+    match fastctx_platform::roles::in_place("clearing Claude handovers", || {
+        exchange::handed_over(directory, |id| !waiting.contains(id) && node.claude.receipts.cleared(directory, id))
+    }) {
         Ok(cleared) => node.claude.receipts.clear(directory, cleared),
         Err(error) => {
             node.log.line(format_args!("clearing what {session}'s mod handed over: {error}"));

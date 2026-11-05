@@ -408,10 +408,11 @@ impl Flow {
         packet: Packet,
         consumed: &mut tokio::sync::watch::Receiver<Option<u64>>,
     ) -> Result<(), Failure> {
-        let bytes = fastctx_net::watch_queue::size(&packet);
-        self.0.ready(bytes, consumed).await?;
         let number = packet.number;
-        send(link, output, packet).await?;
+        let encoded = watch_mux::encode(link.clone(), packet).await.map_err(Failure::new)?;
+        let bytes = encoded.bytes();
+        self.0.ready(bytes, consumed).await?;
+        send_encoded(output, encoded).await?;
         self.0.sent(number, bytes);
         Ok(())
     }
@@ -419,6 +420,10 @@ impl Flow {
 
 async fn send(link: &Arc<Link>, output: &mpsc::Sender<Output>, packet: Packet) -> Result<(), Failure> {
     let encoded = watch_mux::encode(link.clone(), packet).await.map_err(Failure::new)?;
+    send_encoded(output, encoded).await
+}
+
+async fn send_encoded(output: &mpsc::Sender<Output>, encoded: watch_mux::Encoded) -> Result<(), Failure> {
     let (sent, written) = oneshot::channel();
     tokio::time::timeout(Duration::from_secs(30), output.send(Output::Packet { encoded, sent }))
         .await

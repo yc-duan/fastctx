@@ -4,7 +4,10 @@
 //! placed in the turns the World saw. The World's own record says who spoke
 //! and how each turn ended; it keeps no copy of the conversation.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
+
+mod placement;
+pub(super) use placement::place;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -46,40 +49,43 @@ pub async fn hosted(node: &Arc<Node>, resident: &ResidentId, recorded: &[Session
     let mut earlier = HashSet::new();
     for Session { id, began, process, kept } in sessions {
         let _doing = fastctx_platform::doing::doing(format!("reading Claude session {id}'s record"));
-        let read = read_whole(node, &id, root.join(&id), kept, process, earlier.clone()).await;
-        if let Ok((read, _)) = &read {
-            earlier.extend(read.uuids.iter().cloned());
-        }
-        match read {
-            Ok((read, whole)) => {
-                // Read before it held all its mod saw kept: read again next
-                // time, not kept.
-                unread |= !whole;
-                // The title belongs to the session, so it takes the session's
-                // time: read again, the history reads the same.
-                if let Some(title) = read.title {
-                    events.push(SessionEvent { at: began, happened: Happened::Titled { title } });
+        let prior = fastctx_platform::roles::in_place("copying Claude record identities", || earlier.clone());
+        let read = read_whole(node, &id, root.join(&id), kept, process, prior).await;
+        fastctx_platform::roles::in_place("preparing Claude history", || {
+            if let Ok((read, _)) = &read {
+                earlier.extend(read.uuids.iter().cloned());
+            }
+            match read {
+                Ok((read, whole)) => {
+                    // Read before it held all its mod saw kept: read again next
+                    // time, not kept.
+                    unread |= !whole;
+                    // The title belongs to the session, so it takes the session's
+                    // time: read again, the history reads the same.
+                    if let Some(title) = read.title {
+                        events.push(SessionEvent { at: began, happened: Happened::Titled { title } });
+                    }
+                    events.extend(read.events.into_iter().map(|mut event| {
+                        crate::user_images::claude(node, resident, &mut event);
+                        event
+                    }));
+                    if !read.problems.is_empty() {
+                        let text = format!(
+                            "{} part(s) of Claude Code's record of session {id} could not be read: {}",
+                            read.problems.len(),
+                            read.problems.join("; ")
+                        );
+                        events.push(note(began, text));
+                    }
                 }
-                events.extend(read.events.into_iter().map(|mut event| {
-                    crate::user_images::claude(node, resident, &mut event);
-                    event
-                }));
-                if !read.problems.is_empty() {
-                    let text = format!(
-                        "{} part(s) of Claude Code's record of session {id} could not be read: {}",
-                        read.problems.len(),
-                        read.problems.join("; ")
-                    );
-                    events.push(note(began, text));
+                Err(why) => {
+                    unread = true;
+                    events.push(note(began, format!("Claude Code's record of session {id}: {why}")));
                 }
             }
-            Err(why) => {
-                unread = true;
-                events.push(note(began, format!("Claude Code's record of session {id}: {why}")));
-            }
-        }
+        });
     }
-    (place(events, recorded), unread)
+    (fastctx_platform::roles::in_place("placing Claude history", || place(events, recorded)), unread)
 }
 
 /// What `hosted` would read, as cheaply as it can be told: the sessions the
@@ -335,82 +341,4 @@ fn hidden(event: &SessionEvent) -> bool {
 
 fn note(at: Timestamp, text: String) -> SessionEvent {
     SessionEvent { at, happened: Happened::Health { turn: None, health: Health { kind: HealthKind::Warning, text } } }
-}
-
-/// Puts each event of Claude Code's record in the World's turn it happened
-/// in: the turn running at its time, and for words heard just before a turn
-/// started with nothing else between, that turn, as they are what started
-/// it. What the World did not see stays where it is, in no turn. Words the
-/// World itself handed over are told by the World's record, which knows
-/// who said them, and are left out here.
-pub(super) fn place(mut events: Vec<SessionEvent>, recorded: &[SessionEvent]) -> Vec<SessionEvent> {
-    let mut turns: Vec<(Timestamp, Option<Timestamp>, String)> = Vec::new();
-    let mut ends: HashMap<&str, Timestamp> = HashMap::new();
-    let mut heard: HashMap<&str, Vec<&str>> = HashMap::new();
-    for event in recorded {
-        match &event.happened {
-            Happened::TurnEnded { turn, .. } => {
-                ends.insert(turn, event.at);
-            }
-            Happened::Heard { turn: Some(turn), text, .. } => heard.entry(turn).or_default().push(text),
-            _ => {}
-        }
-    }
-    for event in recorded {
-        if let Happened::TurnStarted { turn } = &event.happened {
-            turns.push((event.at, ends.get(turn.as_str()).copied(), turn.clone()));
-        }
-    }
-    turns.sort_by_key(|(start, ..)| *start);
-    events.sort_by_key(|event| event.at);
-    let within = |at: Timestamp| {
-        turns
-            .iter()
-            .rev()
-            .find(|(start, end, _)| *start <= at && end.is_none_or(|end| at <= end))
-            .map(|(.., turn)| turn)
-    };
-    let mut placed = Vec::with_capacity(events.len());
-    for (index, mut event) in events.iter().cloned().enumerate() {
-        let turn = within(event.at).cloned().or_else(|| match event.happened {
-            Happened::Heard { .. } => {
-                let (start, _, turn) = turns.iter().find(|(start, ..)| *start >= event.at)?;
-                // What the host keeps out of its conversation, such as the
-                // context it gives the model with the words, is not between.
-                let next = events[index + 1..].iter().find(|next| !hidden(next)).map(|next| next.at);
-                next.is_none_or(|next| next >= *start).then(|| turn.clone())
-            }
-            _ => None,
-        });
-        if let Some(turn) = turn {
-            match &mut event.happened {
-                Happened::Heard { turn: slot, .. }
-                | Happened::Health { turn: slot, .. }
-                | Happened::Changed { turn: slot, .. } => *slot = Some(turn),
-                Happened::Began { turn: slot, .. }
-                | Happened::Grew { turn: slot, .. }
-                | Happened::Finished { turn: slot, .. }
-                | Happened::Steps { turn: slot, .. } => *slot = turn,
-                _ => {}
-            }
-        }
-        // Words the World's telling went in beside are the speaker's alone.
-        if let Happened::Heard { text, .. } = &mut event.happened
-            && let Some(words) = claude::beside_framed(text)
-        {
-            *text = words.to_string();
-        }
-        if let Happened::Heard { turn, text, message, .. } = &event.happened {
-            let told = claude::is_framed(text)
-                || turn.as_deref().and_then(|turn| heard.get(turn)).is_some_and(|said| said.contains(&text.as_str()));
-            if told
-                && fastctx_types::session::attachments::Envelope::read(text).is_none()
-                && message.as_ref().is_none_or(|message| message.images.is_empty())
-            {
-                continue;
-            }
-        }
-        placed.push(event);
-    }
-    placed
 }
