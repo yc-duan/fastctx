@@ -131,6 +131,9 @@ export class AgentLoginsPage implements Page {
   private record: MachineLogins | null = null;
   private problem: { machine: string; detail: string; offline: boolean } | null = null;
   private reading: string | null = null;
+  private readRevision = 0;
+  private left = false;
+  private readonly changing = new Set<string>();
   /** The machine whose record was asked for since it was shown. */
   private fetched: string | null = null;
   private following = 0;
@@ -218,6 +221,9 @@ export class AgentLoginsPage implements Page {
   }
 
   leave(): void {
+    this.left = true;
+    this.readRevision += 1;
+    this.reading = null;
     this.stop();
     clearTimeout(this.following);
     this.machines?.element.remove();
@@ -260,16 +266,18 @@ export class AgentLoginsPage implements Page {
 
   /** Reads what the machine shown recorded; while a scan or a change runs
    *  there, reads again until it ends. Then its logins' usage. */
-  private async read(): Promise<void> {
+  private async read(force = false): Promise<void> {
     const machine = this.current(this.options.store.world.peek()).machine;
-    if (!machine || this.reading === machine.name) return;
+    if (this.left || !machine || (!force && this.reading === machine.name)) return;
     const name = machine.name;
     this.reading = name;
+    const revision = ++this.readRevision;
     const asked = readerNow();
+    const current = () => !this.left && this.readRevision === revision && readerNow() === asked;
     try {
       const world = await this.calls.read(name);
       const heard = world.machines.find((one) => (one.kind === "answered" ? one.logins.machine : one.machine) === name) ?? world.machines[0];
-      if (this.reading !== name) return;
+      if (!current()) return;
       if (heard?.kind === "answered") {
         this.record = heard.logins;
         keepRecord(heard.logins, asked);
@@ -279,11 +287,11 @@ export class AgentLoginsPage implements Page {
         this.problem = { machine: name, detail: heard.kind === "no_answer" ? heard.reason : "", offline: heard.kind === "offline" };
       }
     } catch (error) {
-      if (this.reading === name) this.problem = { machine: name, detail: detailOf(error), offline: false };
+      if (current()) this.problem = { machine: name, detail: detailOf(error), offline: false };
     } finally {
-      if (this.reading === name) this.reading = null;
+      if (this.readRevision === revision) this.reading = null;
     }
-    if (this.current(this.options.store.world.peek()).machine?.name !== name) return;
+    if (!current() || this.current(this.options.store.world.peek()).machine?.name !== name) return;
     this.draw();
     clearTimeout(this.following);
     if (this.running()) this.following = window.setTimeout(() => void this.read(), FOLLOW_MS);
@@ -697,12 +705,12 @@ export class AgentLoginsPage implements Page {
     // World conversations, so only such a login shows it.
     const switches: MenuEntry[] = [];
     if (this.agent === "codex" && found.machine.mine && login.integration === "in") {
-      switches.push({ act: "title", icon: "edit", label: words.autoTitle, on: !!login.auto_title, hint: words.autoTitleWhy });
+      switches.push({ act: `title:${!login.auto_title}`, icon: "edit", label: words.autoTitle, on: !!login.auto_title, hint: words.autoTitleWhy });
     }
     // The week's start is the owner's to choose, where the workbench keeps
     // the login's usage (`world-usage.md`).
     if (found.machine.mine && benched) {
-      switches.push({ act: "reset", icon: "reread", label: words.resetInPlace, on: !!login.reset_in_place, hint: words.resetInPlaceWhy });
+      switches.push({ act: `reset:${!login.reset_in_place}`, icon: "reread", label: words.resetInPlace, on: !!login.reset_in_place, hint: words.resetInPlaceWhy });
     }
     if (switches.length) entries.push({ rule: true }, ...switches);
     if (identity?.method === "oauth_token" && admin) {
@@ -716,12 +724,12 @@ export class AgentLoginsPage implements Page {
     }
     if (found.machine.mine) entries.push({ rule: true }, { act: "remove", icon: "archive", label: words.remove, danger: true });
     this.menu.open(anchor, identity?.email ?? dirName(login.dir), entries, (act) => {
-      if (act.startsWith("plan:")) void this.menuAct("plan", act.slice("plan:".length), machineName, dir);
-      else void this.menuAct(act, "", machineName, dir);
+      const [name, value = ""] = act.split(":");
+      void this.menuAct(name!, value, machineName, dir);
     });
   }
 
-  private async menuAct(act: string, plan: string, machineName: string, dir: string): Promise<void> {
+  private async menuAct(act: string, value: string, machineName: string, dir: string): Promise<void> {
     const { options } = this;
     const found = this.find(machineName, dir);
     if (!found?.login) return;
@@ -739,10 +747,10 @@ export class AgentLoginsPage implements Page {
         await this.quietly(null, key, () => this.calls.limits(machineName, this.agent, dir));
         return;
       case "title":
-        await this.quietly(null, key, () => this.calls.setTitle(machineName, this.agent, dir, !found.login!.auto_title));
+        await this.quietly(null, key, () => this.calls.setTitle(machineName, this.agent, dir, value === "true"));
         return;
       case "reset":
-        await this.quietly(null, key, () => this.calls.setResetInPlace(machineName, this.agent, dir, !found.login!.reset_in_place));
+        await this.quietly(null, key, () => this.calls.setResetInPlace(machineName, this.agent, dir, value === "true"));
         return;
       case "copy":
         await navigator.clipboard.writeText(dir).catch(() => {});
@@ -757,7 +765,7 @@ export class AgentLoginsPage implements Page {
         const owner = found.machine.ownerLogin;
         if (!owner) return;
         await this.quietly(null, key, async () => {
-          await options.change_(owner, { change: "plan", machine: machineName, agent: this.agent, ...(found.login!.default ? {} : { home: dir }), plan: (plan || null) as PlanLabel | null });
+          await options.change_(owner, { change: "plan", machine: machineName, agent: this.agent, ...(found.login!.default ? {} : { home: dir }), plan: (value || null) as PlanLabel | null });
           await options.store.refresh();
         });
         return;
@@ -866,17 +874,33 @@ export class AgentLoginsPage implements Page {
 
   /** Does `act`, says on the machine or row what went wrong if it did,
    *  and reads the record again. */
-  private async quietly(button: HTMLButtonElement | null, key: string, act: () => Promise<unknown>): Promise<void> {
+  private async quietly(button: HTMLButtonElement | null, key: string, act: () => Promise<MachineLogins | void>): Promise<void> {
+    if (this.left || this.changing.has(key)) return;
+    this.changing.add(key);
+    const asked = readerNow();
     if (button) button.disabled = true;
     this.notes.delete(key);
     try {
-      await act();
+      const record = await act();
+      if (this.left || readerNow() !== asked) return;
+      // A read begun before this acknowledgement must not undo it.
+      this.readRevision += 1;
+      this.reading = null;
+      if (record) {
+        keepRecord(record, asked);
+        if (this.current(this.options.store.world.peek()).machine?.name === record.machine) {
+          this.record = record;
+          this.problem = null;
+          this.draw();
+        }
+      }
     } catch (error) {
-      this.notes.set(key, { text: this.options.words.failed, detail: detailOf(error) });
+      if (!this.left && readerNow() === asked) this.notes.set(key, { text: this.options.words.failed, detail: detailOf(error) });
     } finally {
+      this.changing.delete(key);
       if (button) button.disabled = false;
     }
-    await this.read();
+    await this.read(true);
   }
 }
 
