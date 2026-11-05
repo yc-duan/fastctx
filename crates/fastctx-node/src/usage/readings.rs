@@ -13,10 +13,10 @@ use std::path::Path;
 /// The minutes of a week, the window whose usage only rises until it resets.
 const WEEK_MINUTES: u32 = 10_080;
 
-/// How long news below the kept figure holds before the week counts as
-/// cleared: longer than any answer takes, so by then a figure that an
-/// answer carried and that came late has been overtaken.
-const LATE: SignedDuration = SignedDuration::from_secs(30 * 60);
+/// How long changed readings below the kept figure must persist before
+/// the week counts as cleared; unchanged and first-source readings still
+/// cannot confirm a reset.
+const LATE: SignedDuration = SignedDuration::from_secs(5 * 60);
 
 /// The most sources a weekly window remembers the last figure of; past it
 /// they are forgotten, and each one's next figure is news again.
