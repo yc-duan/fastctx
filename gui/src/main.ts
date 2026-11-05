@@ -1699,7 +1699,7 @@ function specimenTalk(address: Address): DeskTalk {
   const name = address.resident;
   const sample: Specimen & { later?: SessionEvent[]; rate?: number; timed?: boolean } = specimenForks.get(talkKey(address)) ?? (name.startsWith("stream")
     ? streamSpecimen(params)
-    : (specimens[name === "codex-a51c" ? "asking" : name === "claude-5teps" ? "steps" : name === "trips-1" ? "trips" : name === "deeds-1" ? "deeds" : name === "claude-t0ur" ? "tour" : name === "claude-c0ntrols" ? "controls" : name === "claude-v01c" ? "voice" : name === "codex-91c0" ? "colleague" : name.startsWith("codex") ? "codex" : "claude"] ?? specimens.claude!)());
+    : (specimens[name === "codex-a51c" ? "asking" : name === "claude-5teps" ? "steps" : name === "trips-1" ? "trips" : name === "deeds-1" ? "deeds" : name === "claude-t0ur" ? "tour" : name === "claude-c0ntrols" ? "controls" : name === "claude-v01c" ? "voice" : name === "codex-91c0" ? "colleague" : name === "codex-order" ? "interruptions" : name.startsWith("codex") ? "codex" : "claude"] ?? specimens.claude!)());
   const conversation = new Conversation();
   conversation.thoughtWords = sample.agent !== "codex";
   // A specimen keeps its whole history as a shell would, and its page holds
@@ -3391,6 +3391,8 @@ function specimenPlace(): Place | null {
       return { kind: "talk", address: { resident: "stream-1", machine: "laptop" } };
     case "steps":
       return { kind: "talk", address: { resident: "claude-5teps", machine: "laptop" } };
+    case "interruptions":
+      return { kind: "talk", address: { resident: "codex-order", machine: "laptop" } };
     case "trips":
       return { kind: "talk", address: { resident: "trips-1", machine: "desktop" } };
     case "deeds":

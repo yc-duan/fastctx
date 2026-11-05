@@ -1541,7 +1541,8 @@ export class Fold {
 
   /** The entries as they are laid out: what a turn did between the things
    *  it said, folded into activity stretches. Thinking belongs to the
-   *  stretch it sits in; words in between are prose and divide stretches.
+   *  stretch it sits in; each standalone entry divides stretches so later
+   *  tools cannot appear before an intervening notice or compaction.
    *  A stretch keeps its key while it lasts, whatever comes and goes in it;
    *  thinking shows the moment it begins, whether or not its words are
    *  given, so a stretch and its heading are there from its first member.
@@ -1591,10 +1592,7 @@ export class Fold {
         if (entry.stamp > group.stamp) group.stamp = entry.stamp;
         if (entry.kind === "tool" && (entry.tool.does.as === "agent" || startsAgent(entry.tool))) group.agents = true;
       } else {
-        // Only words said, the model's or a person's, begin a new stretch
-        // (walkthrough item 33); a note, a notice or a request in between
-        // stands after the stretch it came in.
-        if ((entry.kind === "heard" && !entry.notice) || (entry.kind === "prose" && entry.prose === "message")) group = null;
+        group = null;
         blocks.push(entry);
       }
     }
