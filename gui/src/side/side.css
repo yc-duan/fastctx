@@ -9,13 +9,13 @@
 /* The desk in two columns: the conversations, and the side as tall as the
    window. --sp-open goes from nothing to one as the side opens: the side
    widens by it from the right, the conversations giving way beside it, and
-   back as it shuts. None of the three is inherited: each is passed down
-   only along the way to what reads it (below), so the side opening, and the
-   sidebar moving the side's width with it, restyle those few elements each
-   frame rather than everything on the desk. */
+   back as it shuts. These properties inherit normally: WebKit can reuse
+   stale descendant values when non-inherited registered properties are
+   explicitly inherited (WebKit 325900, reproduced 2026-11-05). Descendants
+   that do not use them need no layout change. */
 @property --sp-open {
   syntax: "<number>";
-  inherits: false;
+  inherits: true;
   initial-value: 0;
 }
 
@@ -23,13 +23,13 @@
    room that the side takes over. */
 @property --side-width {
   syntax: "<length>";
-  inherits: false;
+  inherits: true;
   initial-value: 0px;
 }
 
 @property --side-height {
   syntax: "<length>";
-  inherits: false;
+  inherits: true;
   initial-value: 0px;
 }
 
@@ -42,17 +42,6 @@
   --sp-open: 1;
 }
 
-.sp-split,
-.sp-split > .sp-panel,
-.sp-split > .desk-panes,
-.sp-panel > .sp-sheet,
-.desk-panes > .desk-pane:is(.dk-corner, .dk-turning),
-.desk-pane:is(.dk-corner, .dk-turning) > :is(.conversation-page, .dk-fork-page),
-.desk-pane:is(.dk-corner, .dk-turning) > :is(.conversation-page, .dk-fork-page) > .page-head {
-  --sp-open: inherit;
-  --side-width: inherit;
-  --side-height: inherit;
-}
 
 .sp-split {
   position: relative;

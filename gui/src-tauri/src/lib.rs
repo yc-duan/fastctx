@@ -97,10 +97,10 @@ mod reading;
 mod save_as;
 mod uploading;
 
-#[cfg(windows)]
-mod titlebar;
 #[cfg(target_os = "macos")]
 mod mac_window;
+#[cfg(windows)]
+mod titlebar;
 #[cfg(all(unix, desktop))]
 mod unix_instance;
 
@@ -1200,6 +1200,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             startup::startup_state,
+            startup::startup_frontend_failed,
             startup::startup_retry,
             #[cfg(desktop)]
             local_repair::repair_here,

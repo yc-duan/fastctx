@@ -25,6 +25,9 @@ pub fn run(receipt: PathBuf, profile: PathBuf) -> Result<(), String> {
                 tauri::WebviewWindowBuilder::new(app, "repair-probe", tauri::WebviewUrl::App("index.html".into()))
                     .visible(false)
                     .data_directory(profile.clone())
+                    // WKWebView ignores data_directory; its probe must not open
+                    // the user's persistent website store (2026-11-05).
+                    .incognito(cfg!(target_os = "macos"))
                     .on_page_load(move |window, payload| {
                         if payload.event() == tauri::webview::PageLoadEvent::Finished {
                             let result = fastctx_install::renewal::write_json(

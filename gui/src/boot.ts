@@ -6,6 +6,8 @@
 // An older engine would draw a page out of joint, or nothing; it is told
 // so plainly instead, with what to update.
 
+import { showStartupFailure } from "./startup/failed";
+
 const MINIMUM = 111;
 
 function canDraw(): boolean {
@@ -73,5 +75,6 @@ if (canDraw())
     .then(({ untilStarted }) => untilStarted())
     .then(() => import("./language"))
     .then(({ settleLanguage }) => settleLanguage())
-    .then(() => import("./main"));
+    .then(() => import("./main"))
+    .catch(showStartupFailure);
 else tooOld();
