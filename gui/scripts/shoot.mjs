@@ -80,6 +80,7 @@ async function json(path) {
   throw new Error("the browser did not answer");
 }
 
+try {
 const [target] = (await json("/json/list")).filter((entry) => entry.type === "page");
 const socket = new WebSocket(target.webSocketDebuggerUrl);
 await new Promise((resolve) => socket.addEventListener("open", resolve, { once: true }));
@@ -92,6 +93,7 @@ socket.addEventListener("message", (message) => {
     const { resolve, reject } = pending.get(data.id);
     pending.delete(data.id);
     if (data.error) reject(new Error(data.error.message));
+    else if (data.result?.exceptionDetails) reject(new Error(data.result.exceptionDetails.exception?.description ?? data.result.exceptionDetails.text));
     else resolve(data.result);
   } else if (data.method) {
     for (const listener of listeners) listener(data);
@@ -475,12 +477,11 @@ for (const session of sessions) {
             const dt = new DataTransfer();
             dt.items.add(new File([png], "bode-plot.png", { type: "image/png" }));
             dt.items.add(new File(["x".repeat(64000)], "tuning-run-07.log", { type: "text/plain" }));
-            document.querySelector(".new-talk-sheet form").dispatchEvent(new DragEvent("drop", { dataTransfer: dt, bubbles: true, cancelable: true }));
-            const t = document.querySelector(".first-words");
+            document.querySelector(".new-talk-page form").dispatchEvent(new DragEvent("drop", { dataTransfer: dt, bubbles: true, cancelable: true }));
+            const t = document.querySelector(".new-talk-page textarea");
             t.value = "照着这张伯德图和这份调参日志，把相位裕度拉回 45 度以上";
             t.dispatchEvent(new Event("input"));
-            document.querySelector(".new-talk-sheet .sheet-go").click();
-            await new Promise((r) => setTimeout(r, 2400));
+            await new Promise((r) => setTimeout(r, 300));
           })()`,
         });
       }
@@ -703,3 +704,6 @@ socket.close();
 if (code !== 0) throw new Error(`Chromium shutdown exited ${code}: ${closeError ?? ""}`);
 if (closeError) console.log("Chromium exited normally before acknowledging Browser.close");
 rmSync(profile, { recursive: true, force: true });
+} finally {
+  chrome.kill();
+}

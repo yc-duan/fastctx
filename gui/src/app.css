@@ -1092,6 +1092,23 @@ button.composer-context[hidden] {
 }
 
 @media (pointer: coarse) {
+  .attach-item {
+    padding-right: calc(var(--touch-target) + var(--space-2));
+  }
+
+  .attach-remove {
+    top: 0;
+    bottom: 0;
+    margin-block: auto;
+    width: var(--touch-target);
+    height: var(--touch-target);
+  }
+
+  .attach-act {
+    min-width: var(--touch-target);
+    min-height: var(--touch-target);
+  }
+
   .queue-row {
     min-height: 44px;
   }

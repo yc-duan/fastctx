@@ -990,8 +990,9 @@ export class ConversationPage {
     this.unbindShared?.();
     this.fileLinks?.release();
     this.pictures?.release();
-    this.nodeTray?.close();
-    void this.session?.close();
+    const removed = Promise.all([this.nodeTray?.close(), this.nodeQueue?.leave()]);
+    this.tray?.close();
+    void removed.then(() => this.session?.close());
   }
 
   private left = false;
@@ -1019,6 +1020,9 @@ export class ConversationPage {
       session = await open();
     } catch (error) {
       console.warn("the shared input could not be opened; this page keeps its own", error);
+      this.openingComposer = false;
+      this.tray?.resume();
+      this.drawAction();
       return;
     }
     if (this.left) {
@@ -1026,6 +1030,7 @@ export class ConversationPage {
       return;
     }
     this.session = session;
+    this.openingComposer = false;
     const typed = this.input.value;
     const caret = this.input.selectionStart ?? typed.length;
     try {
@@ -1060,7 +1065,9 @@ export class ConversationPage {
     }
     if (this.options.attach && this.tray) {
       this.nodeTray = new NodeTray(this.options.attach.words, session, session.draft, say, assistantFiles, () => this.drawAction());
+      const held = this.tray.release();
       this.tray.element.replaceWith(this.nodeTray.element);
+      this.nodeTray.adopt(held);
     }
     session.subscribe((state) => {
       this.sharedState = state;
@@ -1245,7 +1252,7 @@ export class ConversationPage {
   /** Whether a file attached is still on its way, or failed and is not
    *  taken away: nothing is sent until it is there (user 2026-11-04). */
   private uploading(): boolean {
-    return this.session ? !!this.nodeTray?.uploading : !!(this.tray?.sending || this.tray?.failed);
+    return this.session ? !!this.nodeTray?.uploading : !!(this.tray?.sending || this.tray?.failed || (this.openingComposer && this.tray?.count));
   }
 
   private submit(): void {
@@ -1617,6 +1624,7 @@ export class ConversationPage {
     field.addEventListener("blur", () => finish(true));
   }
   private tray: AttachTray | null = null;
+  private openingComposer = false;
   private queue!: SendQueue;
   /** How many turns had ended when the last queued words were sent. */
   private released: number | null = null;
@@ -1628,7 +1636,8 @@ export class ConversationPage {
   /** Files come with the words: picked with the paperclip, pasted, or
    *  dropped anywhere on the page. */
   private attaching(attach: NonNullable<PageOptions["attach"]>): void {
-    const tray = new AttachTray(attach.words, attach.seam, () => this.drawAction());
+    this.openingComposer = !!this.options.composer;
+    const tray = new AttachTray(attach.words, attach.seam, () => this.drawAction(), this.openingComposer);
     tray.onlyImages(() => this.imagesOnly(), (why) => this.say(why, "", true));
     this.tray = tray;
     this.element.querySelector(".composer-tray")!.replaceWith(tray.element);

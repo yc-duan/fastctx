@@ -77,6 +77,7 @@
      pointer, stand this far apart, so two filled rows never run together
      into one shape. */
   --row-gap: 2px;
+  --touch-target: 44px;
 
   --radius-s: 6px;
   --radius-m: 10px;
