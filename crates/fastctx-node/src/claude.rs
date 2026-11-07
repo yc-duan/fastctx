@@ -26,6 +26,7 @@ pub(crate) mod control_outcome;
 mod copies;
 mod fork;
 mod fork_attachments;
+mod fork_carried;
 mod fork_history;
 mod fork_ready;
 mod fork_source;

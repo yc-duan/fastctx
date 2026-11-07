@@ -149,7 +149,7 @@ pub async fn fork(
             }
             None => session.clone(),
         };
-        let expected_attachments = super::fork_attachments::expected(node, &session, snapshot.as_deref()).await?;
+        let expected = super::fork_carried::expected(node, &session, snapshot.as_deref()).await?;
         let selected_model = model.clone();
         let selected_effort = effort.clone();
 
@@ -222,7 +222,9 @@ pub async fn fork(
             )
             .await
             .map_err(failure)?;
-            if let Some(checkpoints) = checkpoints {
+            let carried = super::fork_carried::confirm(node, &id, &expected).await?;
+            if let Some(mut checkpoints) = checkpoints {
+                super::fork_carried::without(&mut checkpoints, &carried.left_out);
                 let imported =
                     super::control::invoke(node, &id, json!({"do":"checkpoint_import", "checkpoints":checkpoints}))
                         .await;
@@ -232,7 +234,7 @@ pub async fn fork(
                 node,
                 resident,
                 &id,
-                &expected_attachments,
+                carried,
                 super::fork_attachments::Inheritance {
                     _source_gate: gate.clone(),
                     _source: source_guard.clone(),

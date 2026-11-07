@@ -44,8 +44,27 @@ pub struct Transcript {
     agents: HashMap<String, HostAgentStart>,
 }
 
+/// The reply Claude Code adds as it loads a context that ends on the user's
+/// side, as a fork's does: no model said it.
+fn synthetic_reply(row: &Value) -> bool {
+    row["type"] == "assistant"
+        && row.pointer("/message/model").and_then(Value::as_str) == Some("<synthetic>")
+        && row.pointer("/message/content") == Some(&json!([{"type":"text","text":"No response requested."}]))
+}
+
 pub fn same_projection(left: &Value, right: &Value) -> bool {
     super::context::same(left, right)
+}
+
+/// Whether a message projection is an assistant's without words, calls or
+/// results. Claude Code leaves such messages out as it loads a transcript, as
+/// one a stop cut off while the model was still thinking (2.1.303), so a
+/// session resumed or forked from a file holds fewer messages than the file.
+pub fn says_nothing(message: &Value) -> bool {
+    message["role"] == "assistant"
+        && message["text"].as_str().is_some_and(|text| text.trim().is_empty())
+        && message["toolUses"].as_array().is_some_and(Vec::is_empty)
+        && message["toolResults"].as_array().is_some_and(Vec::is_empty)
 }
 
 impl Transcript {
@@ -56,6 +75,58 @@ impl Transcript {
                 .iter()
                 .zip(self.context_messages.iter().skip(self.context_messages.len().saturating_sub(tail.len())))
                 .all(|(expected, actual)| super::context::same(expected, actual))
+    }
+
+    /// Lines the context up with `held`, the message projections a session
+    /// holds, oldest first, passing over the rows that say nothing and that
+    /// the session does not hold. With `whole`, `held` is all the session's
+    /// context; without it the file may hold only its latest messages, as it
+    /// does after a compaction. On success the context keeps only the rows
+    /// lined up; otherwise it is left as it was.
+    pub fn line_up(&mut self, held: &[Value], whole: bool) -> bool {
+        let mut kept = vec![false; self.context_messages.len()];
+        let mut held = held.iter().rev().peekable();
+        for (index, message) in self.context_messages.iter().enumerate().rev() {
+            match held.peek() {
+                Some(expected) if super::context::same(message, expected) => {
+                    kept[index] = true;
+                    held.next();
+                }
+                _ if says_nothing(message) => {}
+                _ => return false,
+            }
+        }
+        if whole && held.peek().is_some() {
+            return false;
+        }
+        self.keep_context(&kept);
+        true
+    }
+
+    /// Drops the context rows that say nothing and whose UUIDs `held` lacks.
+    pub fn pass_over(&mut self, held: impl Fn(&str) -> bool) {
+        let kept: Vec<bool> = self
+            .context_uuids
+            .iter()
+            .zip(&self.context_messages)
+            .map(|(uuid, message)| held(uuid) || !says_nothing(message))
+            .collect();
+        self.keep_context(&kept);
+    }
+
+    fn keep_context(&mut self, kept: &[bool]) {
+        fn keep<T>(values: &mut Vec<T>, kept: &[bool]) {
+            if values.len() == kept.len() {
+                let mut index = 0;
+                values.retain(|_| {
+                    index += 1;
+                    kept[index - 1]
+                });
+            }
+        }
+        keep(&mut self.context_uuids, kept);
+        keep(&mut self.context_times, kept);
+        keep(&mut self.context_messages, kept);
     }
 }
 
@@ -298,12 +369,7 @@ fn read_rows(
         .rev()
         .map(|&index| &rows[index])
         .find(|row| matches!(row.kind(), Some("user" | "assistant")))
-        .is_some_and(|row| {
-            row.kind() == Some("assistant")
-                && row.value.pointer("/message/model").and_then(Value::as_str) == Some("<synthetic>")
-                && row.value.pointer("/message/content")
-                    == Some(&json!([{"type":"text","text":"No response requested."}]))
-        });
+        .is_some_and(|row| synthetic_reply(&row.value));
 
     let mut cut_rows = HashSet::new();
     for cut in cuts {
@@ -458,6 +524,10 @@ fn read_rows(
         if let Some(problem) = row.message_problem() {
             transcript.problem(row, problem);
             transcript.other(row, at, 0, "record", row.value.clone());
+            continue;
+        }
+        if synthetic_reply(&row.value) {
+            transcript.hidden(row, at);
             continue;
         }
         if row.kind() == Some("assistant")
