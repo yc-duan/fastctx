@@ -35,6 +35,8 @@ use crate::Node;
 use names::Place;
 
 pub(crate) mod alone;
+pub(crate) mod carry;
+mod carry_source;
 pub(crate) mod deletion;
 pub(crate) mod letgo;
 pub(crate) mod metadata;
@@ -126,6 +128,9 @@ async fn write_for(
     let place = names::place(&node.world, town)
         .map_err(|error| Failure::new(format!("reading {town}: {error}")))?
         .ok_or_else(|| Failure::new(format!("there is no project {town} on this machine")))?;
+    if carry::writing(&node.world, town).map_err(|error| Failure::new(error.to_string()))? {
+        return Err(Failure::not_run("the project's ledger is being imported; try writing again shortly"));
+    }
     match node.link_of(&place.hub) {
         Some(link) => {
             let entry = link.entry(&place.town, machines, files);
@@ -148,6 +153,9 @@ async fn write_for(
         None if place.hub == alone(&node.world).map_err(|error| Failure::new(error.to_string()))? => {
             let (world, here, town) = (node.world.clone(), node.machine(), town.clone());
             let _writing = node.syncing.lock().await;
+            if carry::writing(&world, &town).map_err(|error| Failure::new(error.to_string()))? {
+                return Err(Failure::not_run("the project's ledger is being imported; try writing again shortly"));
+            }
             if names::place(&world, &town).map_err(|error| Failure::new(error.to_string()))?.as_ref() != Some(&place) {
                 return Err(Failure::new(
                     "the project's ledger moved while the write was being prepared; read it again",
@@ -160,6 +168,10 @@ async fn write_for(
             .await
             .map_err(|error| Failure::new(format!("writing the ledger: {error}")))?
             .map_err(Failure::new)?;
+            // A local creation can finish after the first login's discovery pass.
+            for link in node.links() {
+                joined(node, link.hub());
+            }
             // The projects as the interfaces show them may have changed.
             node.shown_changed();
             Ok(())
@@ -336,6 +348,9 @@ pub(crate) async fn take(
 
 /// Rechecks local identity and current replication rights after every network wait.
 fn check_place(node: &Node, link: &Link, name: &TownName, town: &TownId) -> Result<(), String> {
+    if carry::originals(&node.world, name).map_err(|error| error.to_string())?.is_some() {
+        return Err("the project's standalone ledger is still being archived".into());
+    }
     let expected = Place { hub: link.membership().id.clone(), town: town.clone() };
     if names::place(&node.world, name).map_err(|error| error.to_string())?.as_ref() != Some(&expected) {
         return Err(format!("{name}'s ledger identity changed during synchronization"));
@@ -351,187 +366,6 @@ fn check_place(node: &Node, link: &Link, name: &TownName, town: &TownId) -> Resu
 /// what the hub has for it is taken.
 pub fn joined(node: &Arc<Node>, hub: &HubId) {
     syncing::changed(node, hub, None);
-}
-
-/// Carries the projects this computer kept on no hub into the account it is
-/// registered under at `hub`: each entry written to the hub again, in
-/// order, by this machine under the name it has now. Returns what could
-/// not be carried.
-pub(crate) async fn carry(node: &Arc<Node>, hub: &HubId) -> Vec<String> {
-    let Some(link) = node.link_of(hub) else { return Vec::new() };
-    if let Err(error) = link.refresh().await {
-        return vec![format!("asking the hub: {error}")];
-    }
-    let Some(home) = link.view().me().and_then(|me| me.home.clone()) else { return Vec::new() };
-    let world = node.world.clone();
-    let read = fastctx_platform::task::blocking(move || -> Result<_, String> {
-        let alone = alone(&world).map_err(|error| format!("reading this computer's own id: {error}"))?;
-        let towns = world.towns().map_err(|error| format!("reading the projects: {error}"))?;
-        let key = own_key(&world).map_err(|error| format!("this computer's key: {error}"))?;
-        Ok((alone, towns, key))
-    })
-    .await;
-    let (alone, towns, key) = match read {
-        Ok(read) => read,
-        Err(problem) => return vec![problem],
-    };
-    let mut problems = Vec::new();
-    for town in towns {
-        let snapshot = node.syncing.lock().await;
-        let directory = node.world.town(&town);
-        let read = {
-            let (world, town, directory, alone) = (node.world.clone(), town.clone(), directory.clone(), alone.clone());
-            fastctx_platform::task::blocking(move || -> Result<Option<_>, String> {
-                let place = match names::place(&world, &town) {
-                    Ok(Some(place)) if place.hub == alone => place,
-                    Ok(_) => return Ok(None),
-                    Err(error) => return Err(format!("reading {town}: {error}")),
-                };
-                let entries =
-                    read_all(&world, &directory).map_err(|error| format!("reading {town}'s ledger: {error}"))?;
-                Ok(Some((place, entries)))
-            })
-            .await
-        };
-        let (place, entries) = match read {
-            Ok(Some(read)) => read,
-            Ok(None) => continue,
-            Err(problem) => {
-                problems.push(problem);
-                continue;
-            }
-        };
-        drop(snapshot);
-        if let Err(error) = carry_town(node, &link, &home, &town, &place.town, &entries, &key.public()).await {
-            problems.push(error);
-            continue;
-        }
-        let _syncing = node.syncing.lock().await;
-        let unchanged = {
-            let home_now = link.view().me().and_then(|me| me.home.clone());
-            let (world, checking, place, directory, home, entries) =
-                (node.world.clone(), town.clone(), place.clone(), directory.clone(), home.clone(), entries.clone());
-            fastctx_platform::task::blocking(move || -> io::Result<bool> {
-                if names::place(&world, &checking)?.as_ref() != Some(&place) || home_now.as_ref() != Some(&home) {
-                    return Ok(false);
-                }
-                let current = read_all(&world, &directory)?;
-                Ok(current.len() == entries.len()
-                    && current
-                        .iter()
-                        .zip(&entries)
-                        .all(|(a, b)| a.0 == b.0 && a.2.data == b.2.data && a.2.sig == b.2.sig))
-            })
-            .await
-        };
-        match unchanged {
-            Ok(true) => {}
-            Ok(false) => {
-                problems.push(format!(
-                    "{town} changed while it was carried; its local ledger was retained for another pass"
-                ));
-                continue;
-            }
-            Err(error) => {
-                problems.push(format!("rechecking {town} after carrying it: {error}"));
-                continue;
-            }
-        }
-        // The hub's copy is taken afresh: it may call this machine by
-        // another name than the files here do.
-        let moved = {
-            let (world, town, place, directory) = (
-                node.world.clone(),
-                town.clone(),
-                Place { hub: hub.clone(), town: place.town.clone() },
-                directory.clone(),
-            );
-            fastctx_platform::task::blocking(move || {
-                names::set_place(&world, &town, &place)
-                    .and_then(|()| remove(&directory.signed()))
-                    .and_then(|()| remove(&directory.ledger()))
-            })
-            .await
-        };
-        if let Err(error) = moved {
-            problems.push(format!("letting go of {town}'s own ledger: {error}"));
-            continue;
-        }
-        node.log.line(format_args!("carried {town} into the account {home}: {} entries", entries.len()));
-    }
-    problems
-}
-
-/// Entries this computer wrote, signed with `own`, are carried under the
-/// name it has now; those of other machines, kept from the network's third
-/// version (`third`), as their authors wrote them. Several computers may
-/// carry one such project at once: each writes an entry only when the
-/// hub has the ones before it, and one another wrote first is theirs.
-async fn carry_town(
-    node: &Arc<Node>,
-    link: &Link,
-    home: &fastctx_types::AccountName,
-    town: &TownName,
-    id: &TownId,
-    entries: &[(u64, Entry, Signed)],
-    own: &fastctx_net::sign::PublicKey,
-) -> Result<(), String> {
-    let here = node.machine();
-    let open = fastctx_net::wire::Change::OpenProject {
-        town: id.clone(),
-        name: town.clone(),
-        shared_on: link.view().shared_records.then(|| here.clone()),
-    };
-    if let Err(error) = link.manage(home, open).await
-        && link.view().project(id).is_none_or(|project| project.name != *town)
-    {
-        return Err(format!("{town} was not carried: {error}"));
-    }
-    let latest = |catalog: Vec<(TownId, u64)>| {
-        catalog.into_iter().find(|(town, _)| town == id).map(|(_, latest)| latest).unwrap_or(0)
-    };
-    // A carry cut short, or another computer's, wrote some of them already.
-    let mut written = latest(link.ledger_catalog().await?);
-    for (index, (_, entry, _)) in entries.iter().enumerate() {
-        let index = index as u64;
-        if index < written {
-            continue;
-        }
-        // Each entry as the hub gets it: by this machine; one it wrote, under
-        // the name it has now.
-        let old = &entry.author;
-        let ours = entry.key == *own && *old != here;
-        let renamed = |name: &MachineName| if ours && name == old { here.clone() } else { name.clone() };
-        let mut files = Vec::new();
-        for file in &entry.files {
-            let bytes = if ours {
-                Bytes(crate::town::rename::file(&file.path, &file.bytes.0, old, &here)?)
-            } else {
-                file.bytes.clone()
-            };
-            files.push(File { path: file.path.clone(), bytes });
-        }
-        if ours {
-            crate::town::rename::memory(&mut files, old, &here)?;
-        }
-        let mut carried =
-            link.entry(id, entry.machines.as_ref().map(|machines| machines.iter().map(renamed).collect()), files);
-        carried.at = entry.at;
-        let written_entry = if fastctx_net::memory::has_memory(&carried.files) {
-            link.memory_write(home, id, link.sign_entry(&carried)).await
-        } else {
-            link.ledger_write(id, link.sign_entry(&carried)).await
-        };
-        if let Err(error) = written_entry {
-            written = latest(link.ledger_catalog().await?);
-            if written > index {
-                continue;
-            }
-            return Err(format!("carrying {town}: {error}"));
-        }
-        written = index + 1;
-    }
-    Ok(())
 }
 
 /// Removes a directory of ledger files, read-only as they are.
@@ -586,6 +420,10 @@ fn write_files(directory: &TownDir, entry: &Entry) -> io::Result<()> {
 pub fn finish(world: &WorldDir) -> io::Result<Vec<String>> {
     let mut problems = Vec::new();
     for town in world.towns()? {
+        if let Err(error) = carry::recover(world, &town) {
+            problems.push(format!("finishing the import of {town}: {error}"));
+            continue;
+        }
         let directory = world.town(&town);
         for (seq, path) in numbered(&directory.signed())? {
             let finished = read_entry(world, &path).and_then(|(entry, _)| write_files(&directory, &entry));
@@ -610,6 +448,9 @@ pub fn seq(world: &WorldDir, town: &TownName) -> io::Result<u64> {
 
 /// The entry of `town` numbered `seq`, when this machine has it.
 pub(crate) fn entry(world: &WorldDir, town: &TownName, seq: u64) -> io::Result<Option<Entry>> {
+    if let Some(entries) = carry_source::entries(world, town)? {
+        return Ok(entries.into_iter().find(|(number, _)| *number == seq).map(|(_, entry)| entry));
+    }
     let directory = world.town(town).signed();
     let path = directory.join(format!("{seq:020}.json"));
     let path = match fastctx_platform::disk::exists(&path)? {
@@ -624,6 +465,9 @@ pub(crate) fn entry(world: &WorldDir, town: &TownName, seq: u64) -> io::Result<O
 
 /// The full copy's cursor; an index-only cache is never a replicated entry.
 pub(crate) fn replica_seq(world: &WorldDir, town: &TownName) -> io::Result<u64> {
+    if let Some(entries) = carry_source::entries(world, town)? {
+        return Ok(entries.last().map_or(0, |(seq, _)| *seq));
+    }
     let directory = world.town(town);
     cursor(&directory, &refused(&directory)?)
 }
@@ -631,6 +475,9 @@ pub(crate) fn replica_seq(world: &WorldDir, town: &TownName) -> io::Result<u64> 
 /// The entries of `town` this machine has after the one numbered `after`,
 /// in order.
 pub fn entries_after(world: &WorldDir, town: &TownName, after: u64) -> io::Result<Vec<(u64, Entry)>> {
+    if let Some(entries) = carry_source::entries(world, town)? {
+        return Ok(entries.into_iter().filter(|(seq, _)| *seq > after).collect());
+    }
     let mut entries = Vec::new();
     for (seq, path) in numbered(&world.town(town).signed())? {
         if seq > after {

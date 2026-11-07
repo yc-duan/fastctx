@@ -3,6 +3,7 @@
 pub(crate) mod api;
 pub(crate) mod context;
 pub(crate) mod identity;
+pub(crate) mod import;
 pub(crate) mod local;
 pub(crate) mod local_copy;
 pub(crate) mod offered;

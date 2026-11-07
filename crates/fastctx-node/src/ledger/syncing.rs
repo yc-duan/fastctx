@@ -54,7 +54,7 @@ async fn run(node: Arc<Node>, hub: HubId, wake: Arc<Notify>) {
         };
         let mut errors = Vec::new();
         if all {
-            errors.extend(super::carry(&node, &hub).await);
+            errors.extend(super::carry::run(&node, &hub).await);
             crate::own_collab::carry(&node, &hub).await;
             if let Err(error) = super::sync(&node, &hub, None).await {
                 errors.push(error);

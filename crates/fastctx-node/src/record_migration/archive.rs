@@ -81,7 +81,12 @@ pub(crate) fn verified_path(
 
 pub(crate) fn verified(world: &Path, conversation: &str, source: &Path, expected: &Signature) -> io::Result<()> {
     let target = verified_path(world, conversation, source, expected)?;
-    match fingerprint(&target) {
+    verified_at(source, &target, expected)
+}
+
+/// Completes an archive at the destination recorded before a restart or upgrade.
+pub(crate) fn verified_at(source: &Path, target: &Path, expected: &Signature) -> io::Result<()> {
+    match fingerprint(target) {
         Ok(stored) if stored != *expected => {
             return Err(io::Error::other("the archived source no longer matches its verified bytes"));
         }
@@ -108,7 +113,7 @@ pub(crate) fn verified(world: &Path, conversation: &str, source: &Path, expected
     fastctx_platform::ensure_private_dir(target.parent().expect("archive parent"))?;
     // Retention starts at archival, independently of how old the original was.
     disk::open_with(std::fs::OpenOptions::new().write(true), source)?.set_modified(SystemTime::now())?;
-    disk::rename(source, &target)?;
+    disk::rename(source, target)?;
     ARCHIVED.add(1);
     Ok(())
 }
