@@ -43,6 +43,7 @@ import { escape, render } from "./prose";
 import { shownOf, skillsHtml } from "./said";
 import { Finder } from "./find";
 import { FarFind } from "./find-far";
+import { contextOf, type ModelRequest } from "./requests";
 import { UsageBadge, ring } from "./usage-badge";
 import { UsagePop } from "./usage-pop";
 import { ContextSheet } from "./context-sheet";
@@ -1869,8 +1870,20 @@ export class ConversationPage {
     if (!this.usagePop) return false;
     const { conversation } = this.options;
     const requests = conversation.requests;
-    this.usageDrawn = `${requests.length}:${requests[requests.length - 1]?.at}:${conversation.context?.used}`;
-    return this.usagePop.fill({ context: conversation.context ?? this.offered?.usage?.context ?? null, usage: this.offered?.usage ?? null, requests });
+    const context = this.contextNow(requests);
+    this.usageDrawn = `${requests.length}:${requests[requests.length - 1]?.at}:${context?.used}`;
+    return this.usagePop.fill({ context, usage: this.offered?.usage ?? null, requests });
+  }
+
+  /** How much of the context is in use now: the host's latest report,
+   *  unless a request answered after it says so more lately, as the ones
+   *  after a compaction in the middle of a turn do; else what the host
+   *  offers when it says. */
+  private contextNow(requests: readonly ModelRequest[]): { used: number; window: number | null } | null {
+    const report = this.options.conversation.context;
+    const latest = requests[requests.length - 1];
+    if (report && latest && latest.at > report.at && contextOf(latest) > 0) return { used: contextOf(latest), window: report.window };
+    return report ?? this.offered?.usage?.context ?? null;
   }
 
   /** Starting again from the user's words: said plainly first, done once
@@ -2448,18 +2461,17 @@ export class ConversationPage {
       : this.goneWhy;
     if (why) this.state.title = why;
     else this.state.removeAttribute("title");
-    // How much of the context is used: the host's latest report, from the
-    // conversation's events, or from what it offers when it says; with it
-    // how the cache served the last request and how long it stays.
-    const used = conversation.context ?? this.offered?.usage?.context ?? null;
+    // How much of the context is used now (`contextNow`); with it how the
+    // cache served the last request and how long it stays.
+    const requests = conversation.requests;
+    const used = this.contextNow(requests);
     if (this.badge) {
-      const requests = conversation.requests;
       this.badge.draw(used, requests);
       // Without anything to measure, the limits still have a way in.
       this.context.hidden = !this.badge.shows && !this.offered?.usage?.limits.length;
       // The pop-up open follows each new request.
       const pop = this.element.querySelector<HTMLElement>(".usage-pop")!;
-      if (!pop.hidden && this.usageDrawn !== `${requests.length}:${requests[requests.length - 1]?.at}:${conversation.context?.used}`) this.fillUsage();
+      if (!pop.hidden && this.usageDrawn !== `${requests.length}:${requests[requests.length - 1]?.at}:${used?.used}`) this.fillUsage();
     } else if (used && used.window) {
       const share = Math.min(1, used.used / used.window);
       const percent = Math.round(share * 100);

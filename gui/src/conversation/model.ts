@@ -266,7 +266,8 @@ export class Fold {
   entries: Entry[] = [];
   /** What names this fold's own keys apart from every other fold's. */
   constructor(private readonly scope = "") {}
-  context: { used: number; window: number | null } | null = null;
+  /** How much of the context the host last reported in use, and when. */
+  context: { used: number; window: number | null; at: number } | null = null;
   title: string | null = null;
   /** The model the host last answered with, where it says (Claude's
    *  answers do): what the conversation shows, not the one chosen. */
@@ -652,7 +653,7 @@ export class Fold {
         return;
       }
       case "context":
-        this.context = { used: event.used, window: event.window };
+        this.context = { used: event.used, window: event.window, at };
         return;
       case "titled":
         this.title = event.title;

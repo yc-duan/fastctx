@@ -356,7 +356,17 @@ fn read_rows(
         .checked_sub(1)
         .and_then(|index| rows[index].value["logicalParentUuid"].as_str())
         .map(str::to_owned);
-    let context_order = super::context::order(&rows.iter().map(|row| &row.value).collect::<Vec<_>>())?;
+    // A compaction whose kept messages are missing from the file leaves the
+    // context it holds unknown, not the conversation unreadable: what it
+    // shows is read as ever, and what needs that context refuses on the
+    // problem.
+    let context_order = match super::context::order(&rows.iter().map(|row| &row.value).collect::<Vec<_>>()) {
+        Ok(order) => order,
+        Err(error) => {
+            transcript.problems.push(format!("the context its last compaction left: {error}"));
+            Vec::new()
+        }
+    };
     transcript.context_tail = context_order
         .iter()
         .rev()
@@ -479,6 +489,20 @@ fn read_rows(
                 .and_then(|id| by_uuid.get(id))
                 .is_some_and(|index| cut_rows.contains(index))
     };
+    // Claude Code names the summary a compaction begins with as the anchor
+    // of what it kept (`compactMetadata`).
+    let anchors: HashMap<&str, usize> = rows
+        .iter()
+        .enumerate()
+        .filter(|(_, row)| row.compaction())
+        .flat_map(|(index, row)| {
+            let metadata = &row.value["compactMetadata"];
+            [&metadata["preservedSegment"]["anchorUuid"], &metadata["preservedMessages"]["anchorUuid"]]
+                .into_iter()
+                .filter_map(Value::as_str)
+                .map(move |uuid| (uuid, index))
+        })
+        .collect();
     let mut pairs: HashMap<&str, Pair> = HashMap::new();
     let mut summaries: HashMap<&str, Vec<usize>> = HashMap::new();
     for (row_index, row) in rows.iter().enumerate().filter(|(index, row)| times[*index].is_some() && visible(row)) {
@@ -487,13 +511,12 @@ fn read_rows(
         }
         if row.kind() == Some("user")
             && row.value["isCompactSummary"] == true
-            && let Some(parent) = row.value.get("parentUuid").and_then(Value::as_str)
-            && let Some(&boundary) = by_uuid.get(parent)
-            && rows[boundary].compaction()
+            && let Some(boundary) = summarized(&rows, &by_uuid, &anchors, row)
             && times[boundary].is_some()
             && visible(&rows[boundary])
+            && let Some(uuid) = rows[boundary].value.get("uuid").and_then(Value::as_str)
         {
-            summaries.entry(parent).or_default().push(row_index);
+            summaries.entry(uuid).or_default().push(row_index);
         }
         for (index, block) in row.blocks().into_iter().flatten().enumerate() {
             let reference = Block { row: row_index, index };
@@ -710,6 +733,34 @@ fn read_rows(
         }
     }
     Ok(transcript)
+}
+
+/// The row of the compaction a summary row belongs to: the one whose record
+/// names it as its anchor, else the first boundary above it along its
+/// parents, past the attachments Claude Code writes between the two and
+/// never across a message.
+fn summarized(
+    rows: &[Row],
+    by_uuid: &HashMap<String, usize>,
+    anchors: &HashMap<&str, usize>,
+    row: &Row,
+) -> Option<usize> {
+    if let Some(&boundary) = row.value.get("uuid").and_then(Value::as_str).and_then(|uuid| anchors.get(uuid)) {
+        return Some(boundary);
+    }
+    let mut parent = row.value.get("parentUuid").and_then(Value::as_str);
+    for _ in 0..32 {
+        let index = *by_uuid.get(parent?)?;
+        let above = &rows[index];
+        if above.compaction() {
+            return Some(index);
+        }
+        if matches!(above.kind(), Some("user" | "assistant")) {
+            return None;
+        }
+        parent = above.value.get("parentUuid").and_then(Value::as_str);
+    }
+    None
 }
 
 impl Row {
