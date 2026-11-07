@@ -208,12 +208,10 @@ pub(crate) fn delete(world: &fastctx_types::layout::WorldDir, copy: &Route) -> i
         super::files::withdraw(path)?;
     }
     let id = identity(&copy.account, &copy.head);
-    match fastctx_platform::disk::remove_file(root(world).join("copies").join(format!("{id}.json"))) {
-        Ok(()) => {}
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-        Err(error) => return Err(error),
-    }
-    bodies::remove(world, &id)
+    bodies::remove(world, &id)?;
+    super::legacy::delete(world, &id)?;
+    // The record remains the cleanup task until all its texts are gone.
+    super::files::delete(&root(world).join("copies").join(format!("{id}.json")))
 }
 
 impl State {

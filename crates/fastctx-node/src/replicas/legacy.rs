@@ -39,6 +39,22 @@ struct LegacyCopy {
     pending: Vec<LegacyPending>,
 }
 
+/// Removes the original records of a withdrawn copy from every release's archive.
+pub(crate) fn delete(world: &WorldDir, id: &str) -> io::Result<()> {
+    let versions = match fastctx_platform::disk::read_dir(world.path().join("archive")) {
+        Ok(versions) => versions,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    for version in versions {
+        let version = version?;
+        if version.file_type()?.is_dir() {
+            super::files::delete(&version.path().join("replicas").join("copies").join(format!("{id}.json")))?;
+        }
+    }
+    Ok(())
+}
+
 /// The copy kept at `path`, in this release's form.
 pub(crate) fn read(world: &WorldDir, path: &Path) -> io::Result<Copy> {
     let bytes = fastctx_platform::disk::read(path)?;
