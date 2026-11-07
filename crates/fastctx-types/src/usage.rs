@@ -97,6 +97,34 @@ pub struct UsageReport {
     /// nodes do not say.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub weeks: Vec<UsageSpan>,
+    /// Confirmed weekly resets, newest first, visible only to the login's
+    /// owner. Absence means this reader is not its owner or the node is older.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resets: Option<Vec<UsageReset>>,
+}
+
+/// A recorded start of weekly accounting. Confirmation never deletes use;
+/// it changes the weekly boundary for the login and every assisted account.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UsageReset {
+    pub window: String,
+    pub since: Timestamp,
+    pub confirmed_at: Timestamp,
+    pub resets_at: Timestamp,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub before_used_tenths: Option<u32>,
+    pub used_tenths: u32,
+    pub source: UsageResetSource,
+}
+
+/// How the boundary was established. Older records do not identify whether
+/// a person or the earlier detector confirmed them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UsageResetSource {
+    Automatic,
+    Scheduled,
+    Recorded,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

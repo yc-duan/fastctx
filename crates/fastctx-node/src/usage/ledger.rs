@@ -2,7 +2,7 @@
 use super::recent::Charge;
 use fastctx_types::access::HubAccount;
 use fastctx_types::agents::LimitWindow;
-use fastctx_types::usage::{KindsUsd, Tokens, Usd};
+use fastctx_types::usage::{KindsUsd, Tokens, UsageReset, Usd};
 use jiff::{SignedDuration, Timestamp};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -94,6 +94,9 @@ pub(super) enum Entry {
         windows: Vec<LimitWindow>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         account: Option<String>,
+        /// Conclusions committed atomically with the quota snapshot.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        resets: Vec<UsageReset>,
     },
     Account {
         at: Timestamp,
@@ -205,11 +208,10 @@ pub(super) struct Book {
     pub keys: HashSet<String>,
     pub reading: Option<Reading>,
     pub readings: HashMap<Option<String>, Reading>,
-    /// Of each account, what tells a weekly figure that came late from the
-    /// week cleared in place (`readings::merge`).
+    /// Pending detection and source observations, separate for each account.
     pub lowered: HashMap<Option<String>, super::readings::Lowered>,
-    /// Whether the login's owner chose to have a week cleared in place count
-    /// anew from then (`super::resets_in_place`).
+    pub resets: HashMap<Option<String>, Vec<UsageReset>>,
+    /// Whether future early weekly resets are detected automatically.
     pub follow: bool,
     pub accounts: Vec<(Timestamp, String)>,
     pub recent: Vec<Charge>,
@@ -278,19 +280,21 @@ impl Book {
                     if let Some(legacy) = self.lowered.remove(&None) {
                         self.lowered.insert(Some(account.clone()), legacy);
                     }
+                    if let Some(legacy) = self.resets.remove(&None) {
+                        self.resets.insert(Some(account.clone()), legacy);
+                    }
                 }
                 self.accounts.push((*at, account.clone()));
                 self.accounts.sort_by_key(|(at, _)| *at);
                 self.reading = self.readings.get(&self.account_at(Timestamp::MAX)).cloned();
             }
-            Entry::Reading { at, windows, account } => {
+            Entry::Reading { at, windows, account, resets } => {
                 let account = account.clone().or_else(|| self.account_at(*at));
                 let old = self.readings.get(&account);
                 let mut merged = old.map_or_else(Vec::new, |(_, windows)| windows.clone());
                 if old.is_none_or(|(seen, _)| *seen <= *at) {
-                    let lowered = self.lowered.entry(account.clone()).or_default();
-                    let source = super::readings::Source::Ledger;
-                    super::readings::merge(&mut merged, windows.clone(), *at, lowered, source, self.follow);
+                    let history = self.resets.entry(account.clone()).or_default();
+                    super::resets::merge_recorded(&mut merged, windows, *at, resets, history);
                     self.readings.insert(account, (*at, merged));
                 }
                 self.reading = self.readings.get(&self.account_at(Timestamp::MAX)).cloned();
@@ -311,6 +315,15 @@ impl Book {
             }
         }
         self.recent.retain(|charge| charge.at >= recent);
+    }
+    pub fn reset_history(&self) -> Vec<(Option<String>, UsageReset)> {
+        let mut resets: Vec<_> = self
+            .resets
+            .iter()
+            .flat_map(|(account, resets)| resets.iter().map(move |reset| (account.clone(), reset.clone())))
+            .collect();
+        resets.sort_by_key(|(_, reset)| reset.confirmed_at);
+        resets
     }
     pub fn balances(&self) -> Vec<Entry> {
         self.meters.values().flat_map(super::meter::Meter::balances).collect()

@@ -61,6 +61,7 @@ import { LoginPage } from "./app/login";
 import { LoginUsagePage } from "./app/usage/login-page";
 import { enUsage, zhUsage } from "./app/usage/words";
 import "./app/usage/usage.css";
+import "./app/usage/resets.css";
 import { enCalls, zhCalls } from "./app/usage/calls-words";
 import "./app/usage/calls.css";
 import { keepLoginsFor, keptRecord } from "./app/usage/kept";

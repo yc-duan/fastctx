@@ -290,7 +290,7 @@ pub(crate) async fn usage(
     dir: PathBuf,
 ) -> Result<UsageReport, Failure> {
     if node.is_here(&machine) {
-        return here_usage(node, agent, dir, None).await;
+        return here_usage(node, agent, dir, None, true).await;
     }
     match ask(node, &machine, Purpose::Look, RemoteCall::AgentUsage { agent, dir }).await? {
         RemoteReply::AgentUsage(report) => Ok(*report),
@@ -342,12 +342,15 @@ async fn here_usage(
     agent: AgentName,
     dir: PathBuf,
     only: Option<HubAccount>,
+    owner: bool,
 ) -> Result<UsageReport, Failure> {
     let node = node.clone();
-    fastctx_platform::task::spawn_blocking(move || crate::usage::report(&node, agent.as_str(), &dir, only.as_ref()))
-        .await
-        .map_err(|error| Failure::new(error.to_string()))?
-        .map_err(|error| Failure::new(format!("reading what the login was used for: {error}")))
+    fastctx_platform::task::spawn_blocking(move || {
+        crate::usage::report(&node, agent.as_str(), &dir, only.as_ref(), owner)
+    })
+    .await
+    .map_err(|error| Failure::new(error.to_string()))?
+    .map_err(|error| Failure::new(format!("reading what the login was used for: {error}")))
 }
 
 /// Answers another machine's call about this machine's logins, for
@@ -412,7 +415,8 @@ pub(crate) async fn answer(
                     Failure::not_run(format!("no {agent} login {} here is the account's to see", dir.display()))
                 })?;
             let only = (!asker.hands).then(|| HubAccount { hub: asker.hub.clone(), account: asker.account.clone() });
-            here_usage(node, agent, login.dir.clone(), only)
+            let owner = crate::placement::owned(view.member(&view.me), &asker.account);
+            here_usage(node, agent, login.dir.clone(), only, owner)
                 .await
                 .map(|report| RemoteReply::AgentUsage(Box::new(report)))
         }

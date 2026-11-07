@@ -25384,6 +25384,17 @@
               }
             ]
           }
+        ],
+        "resets": [
+          {
+            "window": "seven_day",
+            "since": "2026-10-08T18:00:00Z",
+            "confirmed_at": "2026-10-08T18:05:00Z",
+            "resets_at": "2026-10-15T18:00:00Z",
+            "before_used_tenths": 730,
+            "used_tenths": 10,
+            "source": "scheduled"
+          }
         ]
       },
       {
@@ -25604,6 +25615,17 @@
                 "quota_tenths": 36
               }
             ]
+          }
+        ],
+        "resets": [
+          {
+            "window": "seven_day",
+            "since": "2026-10-08T18:00:00Z",
+            "confirmed_at": "2026-10-08T18:05:00Z",
+            "resets_at": "2026-10-15T18:00:00Z",
+            "before_used_tenths": 730,
+            "used_tenths": 10,
+            "source": "scheduled"
           }
         ]
       }
