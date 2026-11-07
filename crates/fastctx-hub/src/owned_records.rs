@@ -64,7 +64,10 @@ pub(crate) fn born_there<L: fastctx_net::authorization::Lookup + ?Sized>(
 
 /// A conversation as it is told to others: its birth machine only while
 /// that machine is still the one it was born on.
-pub(crate) fn verified(directory: &fastctx_net::directory::Directory, conversation: &Conversation) -> Conversation {
+pub(crate) fn verified<L: fastctx_net::authorization::Lookup + ?Sized>(
+    directory: &L,
+    conversation: &Conversation,
+) -> Conversation {
     let mut told = conversation.clone();
     if born_on(directory, conversation).is_none() {
         told.shared_on = None;

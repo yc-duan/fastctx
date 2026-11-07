@@ -77,6 +77,16 @@ struct Prepared {
     bytes: Vec<u8>,
 }
 
+impl Prepared {
+    fn check_author(&self, hub: &Hub, store: &crate::store::Snapshot, from: &MachineName) -> Result<(), String> {
+        if let Some(history) = &self.history {
+            let account = self.account.as_ref().ok_or("project history writes require an explicit account")?;
+            crate::history_author::check(hub, store, from, &self.entry.key, account, &history.revision.author)?;
+        }
+        Ok(())
+    }
+}
+
 pub struct Checked {
     seq: u64,
     prepared: Arc<Prepared>,
@@ -377,6 +387,7 @@ pub(crate) async fn write_as(
     let _one = writing.lock().await;
     let checked = {
         let store = hub.store();
+        prepared.check_author(hub, &store, from)?;
         hub.ledgers.lock().expect("never poisoned").check(&store, from, &town, &prepared)?
     };
     let (path, proposed) = (checked.path.clone(), prepared.clone());
@@ -386,6 +397,9 @@ pub(crate) async fn write_as(
         ensure_private_dir(folder).map_err(|error| PublishFailure { error, published: false }).and_then(|()| {
             publish_checked(&path, &proposed.bytes, Permissions::Private, false, || {
                 let store = publishing.edit_store();
+                proposed
+                    .check_author(&publishing, &store, &author)
+                    .map_err(|why| io::Error::new(io::ErrorKind::PermissionDenied, why))?;
                 publishing
                     .ledgers
                     .lock()

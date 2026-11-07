@@ -352,10 +352,20 @@ pub(crate) async fn ask_as(
                     return Err(words::kind_limit());
                 }
                 let version = before.map_or(0, |entry| entry.metadata.version).checked_add(1).ok_or(words::REVISION)?;
+                let mut history_author = None;
                 if kind == fastctx_types::history::RECORD_KIND && !deleted {
                     let stored: fastctx_types::history::stored::Stored =
                         serde_json::from_value(body.clone()).map_err(|error| error.to_string())?;
                     stored.validate()?;
+                    crate::history_author::check(
+                        &hub,
+                        &hub.store(),
+                        &from,
+                        &member_key,
+                        access.as_ref().map_or(&account, |access| &access.actor),
+                        &stored.revision.author,
+                    )?;
+                    history_author = Some(stored.revision.author.clone());
                     fastctx_types::history::markdown::parse_written(&stored.revision.name, &stored.text)?;
                     crate::history_limits::conversation(&records, &key)?;
                     if stored.revision.version != version
@@ -424,6 +434,17 @@ pub(crate) async fn ask_as(
                             let store = publishing.edit_store();
                             permitted(&publishing, &store, &author, &member_key, &owner, opened, access.as_ref())
                                 .map_err(std::io::Error::other)?;
+                            if let Some(history_author) = &history_author {
+                                crate::history_author::check(
+                                    &publishing,
+                                    &store,
+                                    &author,
+                                    &member_key,
+                                    access.as_ref().map_or(&owner, |access| &access.actor),
+                                    history_author,
+                                )
+                                .map_err(std::io::Error::other)?;
+                            }
                             Ok(store)
                         },
                     );

@@ -111,13 +111,13 @@ impl Index {
         found.next().is_none().then_some(conversation)
     }
 
-    pub(crate) fn resolve(
+    pub(crate) fn resolve<L: fastctx_net::authorization::Lookup + ?Sized>(
         &self,
-        directory: &fastctx_net::directory::Directory,
+        directory: &L,
         account: &AccountName,
         address: &Address,
     ) -> Result<Conversation, String> {
-        let member = directory.member(&address.machine);
+        let member = directory.find_member(&address.machine);
         let names: Vec<_> = match member {
             Some(member) => std::iter::once(&member.name).chain(&member.was).collect(),
             None => vec![&address.machine],
@@ -129,7 +129,7 @@ impl Index {
             }
         }
         let mut found = candidates.into_iter().filter_map(|identity| {
-            if directory.account(&identity.0).is_none_or(|owner| owner.opened != identity.1) {
+            if directory.find_account(&identity.0).is_none_or(|owner| owner.opened != identity.1) {
                 return None;
             }
             let conversation = self.conversations.get(&identity)?;
