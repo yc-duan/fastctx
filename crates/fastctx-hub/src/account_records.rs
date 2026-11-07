@@ -2,6 +2,7 @@
 //! serializes its own operations; disk work never holds the registry lock.
 
 pub(crate) mod history;
+mod history_submission;
 pub(crate) mod revisions;
 pub(crate) mod storage;
 
@@ -239,6 +240,13 @@ pub(crate) async fn ask_as(
                         }
                         let _ = before;
                     }
+                }
+                if kind == fastctx_types::history::RECORD_KIND
+                    && !deleted
+                    && let Some(metadata) = history_submission::accepted(&slot, &records, &key, &body)?
+                {
+                    permitted(&hub, &hub.store(), &from, &member_key, &account, opened, access.as_ref())?;
+                    return Ok(Told::AccountRecords { response: Response::Written { metadata } });
                 }
                 let version = before.map(|entry| entry.metadata.version);
                 if expected != version {
