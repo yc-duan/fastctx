@@ -159,8 +159,11 @@ pub(crate) async fn intercept(
     let Some(slot) = locate(node, path).await? else { return Ok(None) };
     let author = crate::history::api::author(node, caller).await?;
     let mut copy = slot.lock().await;
-    if matches!(copy.head.document, Document::History { .. }) {
+    if let Document::History { scope, .. } = &copy.head.document {
         crate::history::offered::check(node, caller)?;
+        if crate::history::import::settling(node, scope) {
+            return Err(crate::history::import::writing());
+        }
     }
     authorize(node, caller, &copy)?;
     if copy.head.retired {
@@ -330,7 +333,7 @@ pub(crate) async fn flush(node: &Arc<Node>, link: &fastctx_net::link::Link, copy
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(55);
     while let Some(pending) = copy.pending.first().cloned() {
         if !sync::enabled(node, &copy.account, &copy.head.document) {
-            return Err("notes synchronization is off for this account".into());
+            return Err("notes synchronization is paused for this document".into());
         }
         sync::permitted(node, copy)?;
         if super::backend::accepted(link, copy, &pending).await? {

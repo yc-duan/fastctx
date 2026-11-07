@@ -240,7 +240,8 @@ pub(crate) fn folder_now(node: &Node, folder: Folder) -> Result<(), String> {
     }
     // The folder also names the conversation whose plan this computer keeps;
     // its directory is made only where history is offered.
-    if crate::history::switch::enabled(node, &folder.account) {
+    if crate::history::switch::enabled(node, &folder.account) && !crate::history::import::settling(node, &folder.scope)
+    {
         fastctx_platform::ensure_private_dir(&folder.path).map_err(|error| error.to_string())?;
     }
     if node.replicas.state.folders.lock().expect("never poisoned").get(&folder.path) == Some(&folder) {

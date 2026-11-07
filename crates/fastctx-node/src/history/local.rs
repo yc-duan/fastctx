@@ -79,9 +79,10 @@ pub(crate) async fn call(
     let shelf = node.history_shelves.of(&identity);
     let mut shelf = shelf.lock().await;
     let working = node.clone();
+    let copies_scope = scope.clone();
     let ((), at) = on_shelf(&mut shelf, place(node, &scope), move |shelf, place| {
         shelf.refresh(place)?;
-        if super::switch::alone(&working) {
+        if super::import::copies::enabled(&working, &copies_scope)? {
             shelf.keep_copies(place)?;
         }
         Ok(())

@@ -39,7 +39,12 @@ pub(crate) fn folder(node: &Node, link: &Link, scope: &Scope) -> Result<PathBuf,
 }
 
 pub(crate) fn enabled(node: &Node, account: &HubAccount, document: &Document) -> bool {
-    !matches!(document, Document::History { .. }) || crate::history::switch::enabled(node, account)
+    match document {
+        Document::History { scope, .. } => {
+            crate::history::switch::enabled(node, account) && !crate::history::import::settling(node, scope)
+        }
+        Document::Plan { .. } => true,
+    }
 }
 
 pub(crate) fn permitted(node: &Node, copy: &Copy) -> Result<(), String> {
@@ -229,7 +234,7 @@ pub(crate) async fn refresh(node: &Arc<Node>, link: &Link, copy: &mut Copy) -> R
 /// keeps the copy.
 pub(crate) async fn fetch(node: &Arc<Node>, link: &Link, copy: &mut Copy) -> Result<(), String> {
     if !enabled(node, &copy.account, &copy.head.document) {
-        return Err("notes synchronization is off for this account".into());
+        return Err("notes synchronization is paused for this document".into());
     }
     let (text, version, retired, history) = match &copy.head.document {
         Document::Plan { owner } => {
@@ -258,7 +263,7 @@ pub(crate) async fn fetch(node: &Arc<Node>, link: &Link, copy: &mut Copy) -> Res
     };
     permitted(node, copy)?;
     if !enabled(node, &copy.account, &copy.head.document) {
-        return Err("notes synchronization is off for this account".into());
+        return Err("notes synchronization is paused for this document".into());
     }
     copy.body = if retired && copy.pending.is_empty() { Text::default() } else { keep(node, copy, &text).await? };
     copy.head.version = version;
@@ -323,7 +328,9 @@ pub(crate) async fn project(
         return all(node, link).await;
     }
     for folder in folders {
-        if !crate::history::switch::enabled(node, &folder.account) {
+        if !crate::history::switch::enabled(node, &folder.account)
+            || crate::history::import::settling(node, &folder.scope)
+        {
             continue;
         }
         let view = crate::authorization::current_view(link).map_err(failure)?;
@@ -461,7 +468,7 @@ pub(crate) async fn conversation(
         },
     )
     .await?;
-    if !crate::history::switch::enabled(node, &account) {
+    if !crate::history::switch::enabled(node, &account) || crate::history::import::settling(node, &scope) {
         return Ok(());
     }
     let catalog = link.conversation_history_catalog(&account.account, &conversation.address).await?;

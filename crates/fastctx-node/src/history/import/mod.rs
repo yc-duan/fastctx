@@ -3,6 +3,7 @@
 mod access;
 pub(crate) use access::authorize;
 pub(crate) mod archive;
+pub(crate) mod copies;
 pub(crate) mod limits;
 mod replay;
 pub(crate) mod state;
