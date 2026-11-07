@@ -12,6 +12,11 @@ use std::sync::Arc;
 /// for that network goes, whatever the last view said.
 fn left(link: &fastctx_net::link::Link) -> bool {
     matches!(link.status(), fastctx_net::link::Status::Stopped { .. })
+        || fastctx_net::link::state::read_or::<Option<fastctx_net::link::state::Ended>>(
+            &fastctx_net::link::NetDir::new(link.dir().to_path_buf()).ended(),
+            None,
+        )
+        .is_ok_and(|ended| ended.is_some())
 }
 
 /// Whether what this computer knows of a hub's view is unknown for now: a
