@@ -1,4 +1,4 @@
-//! Replay immutable local versions using durable submission receipts.
+//! Replay immutable local versions, reserving a different name when the hub already has one.
 
 use super::state::{self, Transfer};
 use crate::Node;
@@ -17,6 +17,36 @@ fn identity(owner: &Address, source: &Stored) -> Result<String, String> {
     let bytes = serde_json::to_vec(&("standalone-history-v1", &owner.resident, &source.revision, &source.text))
         .map_err(|error| error.to_string())?;
     Ok(fastctx_net::sign::sha256(&bytes).iter().map(|byte| format!("{byte:02x}")).collect())
+}
+
+fn renamed(source: &Stored, name: &str) -> String {
+    if source.revision.name == name {
+        return source.text.clone();
+    }
+    let mut result = String::with_capacity(source.text.len() + name.len());
+    let mut header = true;
+    for (index, raw) in source.text.split_inclusive('\n').enumerate() {
+        let line = raw.trim_end_matches(['\r', '\n']);
+        if index > 0 && header && line == "---" {
+            header = false;
+        }
+        if header && line.starts_with("name:") {
+            result.push_str("name: ");
+            result.push_str(name);
+            result.push_str(&raw[line.len()..]);
+        } else {
+            result.push_str(raw);
+        }
+    }
+    result
+}
+
+fn candidate(name: &str, number: u64) -> String {
+    if number == 0 {
+        return name.into();
+    }
+    let suffix = if number == 1 { "-imported".into() } else { format!("-imported-{number}") };
+    format!("{}{}", &name[..name.len().min(240 - suffix.len())], suffix)
 }
 
 async fn accepted(
@@ -46,7 +76,7 @@ async fn accepted(
     kept.validate()?;
     // The reader's rights may redact machine coordinates, but never these original fields.
     if kept.submission.as_deref() != Some(&id)
-        || kept.text != source.text
+        || kept.text != renamed(source, name)
         || kept.revision.name != name
         || kept.revision.retired != source.revision.retired
         || kept.revision.description != source.revision.description
@@ -68,7 +98,7 @@ pub(super) async fn topic(
     transfer: &mut Transfer,
     name: &str,
     versions: &[(u64, PathBuf)],
-    _all: &BTreeMap<String, Vec<(u64, PathBuf)>>,
+    all: &BTreeMap<String, Vec<(u64, PathBuf)>>,
     known: &mut BTreeSet<String>,
 ) -> Result<(), String> {
     if transfer.skipped.contains_key(name) {
@@ -81,30 +111,61 @@ pub(super) async fn topic(
         }
     }
     let first = state::stored(&versions[0].1, name, versions[0].0)?;
-    let destination = name.to_owned();
-    if !accepted(link, transfer, owner, &destination, &first).await? {
-        if link.conversation_history_stored(&transfer.account.account, owner, &destination, None).await?.is_some() {
-            return Err("the hub already has an unrelated history with this name".into());
+    let mut number = 0u64;
+    let destination = loop {
+        let destination = transfer.names.get(name).cloned().unwrap_or_else(|| candidate(name, number));
+        if accepted(link, transfer, owner, &destination, &first).await? {
+            known.insert(destination.clone());
+            break destination;
         }
-        if known.len() >= super::limits::DOCUMENTS {
-            return skip(
-                node,
-                records,
-                transfer,
-                name,
-                format!("the history already has {} documents", super::limits::DOCUMENTS),
-            );
+        let reserved = destination != name
+            && (all.contains_key(&destination)
+                || transfer.names.iter().any(|(source, target)| source != name && target == &destination));
+        if !reserved
+            && link.conversation_history_stored(&transfer.account.account, owner, &destination, None).await?.is_none()
+        {
+            if known.len() >= super::limits::DOCUMENTS {
+                return skip(
+                    node,
+                    records,
+                    transfer,
+                    name,
+                    format!("the history already has {} documents", super::limits::DOCUMENTS),
+                );
+            }
+            // Check every renamed version before creating even the first one.
+            for (version, path) in versions {
+                let stored = state::stored(path, name, *version)?;
+                if renamed(&stored, &destination).len() > fastctx_types::history::MAX_DOCUMENT_BYTES {
+                    let reason = format!("renaming to {destination} exceeds the history size limit");
+                    return skip(node, records, transfer, name, reason);
+                }
+            }
+            transfer.names.insert(name.into(), destination.clone());
+            state::keep(records, transfer).map_err(|error| error.to_string())?;
+            if destination != name {
+                node.log.line(format_args!(
+                    "importing {} history {name} as {destination}: the hub already has that name",
+                    owner.resident
+                ));
+            }
+            break destination;
         }
-        transfer.names.insert(name.into(), destination.clone());
-        state::keep(records, transfer).map_err(|error| error.to_string())?;
-    }
+        // Another importer may have claimed the name between the receipt and head reads.
+        if accepted(link, transfer, owner, &destination, &first).await? {
+            known.insert(destination.clone());
+            break destination;
+        }
+        transfer.names.remove(name);
+        number = number.checked_add(1).ok_or("history import names are exhausted")?;
+    };
     for (index, (version, path)) in versions.iter().enumerate() {
         let stored = state::stored(path, name, *version)?;
         if accepted(link, transfer, owner, &destination, &stored).await? {
             known.insert(destination.clone());
             continue;
         }
-        let text = stored.text.clone();
+        let text = renamed(&stored, &destination);
         let mut saved = false;
         for _ in 0..8 {
             let current =
