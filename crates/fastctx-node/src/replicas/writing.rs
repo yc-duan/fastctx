@@ -326,8 +326,8 @@ pub(crate) async fn flush(node: &Arc<Node>, link: &fastctx_net::link::Link, copy
     while let Some(pending) = copy.pending.first().cloned() {
         sync::permitted(node, copy)?;
         if super::backend::accepted(link, copy, &pending).await? {
-            copy.pending.remove(0);
             sync::fetch(node, link, copy).await?;
+            copy.pending.remove(0);
             continue;
         }
         // A new history name has no body yet; a catalog distinguishes absence from a failed read.
@@ -398,8 +398,10 @@ pub(crate) async fn flush(node: &Arc<Node>, link: &fastctx_net::link::Link, copy
         sync::permitted(node, copy)?;
         match super::backend::submit(link, copy, &pending, text).await? {
             Some(taken) => {
+                let body = sync::keep(node, copy, &taken.text).await?;
+                copy.head = taken.head;
+                copy.body = body;
                 copy.pending.remove(0);
-                copy.body = sync::keep(node, copy, &taken).await?;
             }
             None if tokio::time::Instant::now() >= deadline => {
                 return Err("the document keeps changing; this edit remains pending".into());
