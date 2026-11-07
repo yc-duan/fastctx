@@ -170,13 +170,16 @@ pub(crate) async fn apply(node: &Arc<Node>, link: &Arc<Link>, account: &HubAccou
     }
     copy.head.document = head.document.clone();
     permitted(node, &copy)?;
-    if !stale && head.retired && copy.pending.is_empty() {
-        copy.head = head;
-        copy.body = Text::default();
-    } else if copy.head.version != head.version || copy.head.retired != head.retired || !copy.pending.is_empty() {
-        refresh(node, link, &mut copy).await?;
-    } else if !stale {
-        copy.head = head;
+    // Flush reads its own base, including the absence of a new history topic.
+    if copy.pending.is_empty() {
+        if !stale && head.retired {
+            copy.head = head;
+            copy.body = Text::default();
+        } else if copy.head.version != head.version || copy.head.retired != head.retired {
+            refresh(node, link, &mut copy).await?;
+        } else if !stale {
+            copy.head = head;
+        }
     }
     // What went to the hub, and an edit it refused, are kept even when the
     // rest could not go.
