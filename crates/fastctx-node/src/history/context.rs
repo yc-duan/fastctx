@@ -178,7 +178,10 @@ pub(crate) async fn refresh(
             location.machine.as_str(),
             town.is_some(),
         ),
-        None => "HISTORY\nThe history remains in the user's account. No eligible computer is online for its files; the app can still read and edit it.".into(),
+        None => format!(
+            "HISTORY\nThe history remains in the user's account. No eligible computer is online for its files; the app can still read and edit it.\n\n{}",
+            prepared.listing
+        ),
     };
     if town.is_some()
         && let Some(account) = &account
