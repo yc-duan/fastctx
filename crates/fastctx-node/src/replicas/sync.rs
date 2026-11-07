@@ -168,6 +168,8 @@ pub(crate) async fn apply(node: &Arc<Node>, link: &Arc<Link>, account: &HubAccou
         let left = std::mem::replace(&mut copy.path, path);
         copy.left.push(left);
     }
+    let current_path = state::path_key(&copy.path);
+    copy.left.retain(|path| state::path_key(path) != current_path);
     copy.head.document = head.document.clone();
     permitted(node, &copy)?;
     // Flush reads its own base, including the absence of a new history topic.
