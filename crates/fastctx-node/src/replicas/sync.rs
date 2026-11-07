@@ -190,6 +190,10 @@ pub(crate) async fn apply(node: &Arc<Node>, link: &Arc<Link>, account: &HubAccou
     if copy.head.retired && copy.pending.is_empty() {
         copy.body = Text::default();
     }
+    if flushed.is_err() && copy.pending.len() < kept.pending.len() {
+        super::publication::save(node, &mut copy, false, None).await?;
+        *kept = copy.clone();
+    }
     super::publication::save(node, &mut copy, true, Some(&previous)).await?;
     *kept = copy;
     super::publication::leave(node, &mut kept, shown.as_ref(), &previous).await?;

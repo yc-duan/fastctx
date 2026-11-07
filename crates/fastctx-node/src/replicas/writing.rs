@@ -264,6 +264,11 @@ pub(crate) async fn intercept(
         next.observed.insert(owner.key(), Observed { version: next.head.version, hash: Some(after.hash.clone()) });
     }
     let shown = copy.effective().clone();
+    if submitted.is_err() && next.pending.len() < copy.pending.len() {
+        // A known refusal must not become pending again if projection fails.
+        super::publication::save(node, &mut next, false, None).await.map_err(failure)?;
+        *copy = next.clone();
+    }
     super::publication::save(node, &mut next, true, Some(&shown)).await.map_err(failure)?;
     *copy = next;
     let after = sync::text(node, &copy, &after).await.map_err(failure)?;
