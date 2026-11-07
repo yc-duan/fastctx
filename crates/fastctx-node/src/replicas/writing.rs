@@ -7,12 +7,14 @@ use super::{
 };
 use crate::{Node, town::caller::Caller};
 use fastctx_types::{
-    Address, JobId, TownName, history,
+    JobId, TownName, history,
     ipc::Failure,
     replicas::{Document, Head, Scope},
     write::{ChangeKind, FileChange, WriteError, WriteOp, WriteOutcome, WriteResult},
 };
 use std::{path::Path, sync::Arc};
+
+pub(crate) use super::observations::saw;
 
 /// How many edits of one document wait for its hub at most. Each becomes a
 /// revision of its own, so none is folded into another; past this many an
@@ -197,12 +199,7 @@ pub(crate) async fn intercept(
                                 .into(),
                         )));
                     }
-                    before = super::backend::base(&link, &copy, base).await.map_err(failure)?;
-                    // What was seen held edits made offline that reached the hub
-                    // since: the revision under them is the common base.
-                    if Text::of(&before).hash != *expected && !observed.local {
-                        return Err(failure("the observed base is unavailable; view the latest copy before writing"));
-                    }
+                    before = super::observations::base(node, &link, &copy, observed).await.map_err(failure)?;
                 }
             }
         }
@@ -257,10 +254,10 @@ pub(crate) async fn intercept(
         node.log.line(format_args!("keeping an edit of {} for its hub: {error}", next.path.display()));
     }
     let after = next.effective().clone();
-    if (submitted.is_ok() || waiting) && let Caller::Resident(owner) = caller {
-        let local = next.pending.iter().any(|pending| pending.offline);
-        next.observed
-            .insert(owner.key(), Observed { version: next.head.version, hash: Some(after.hash.clone()), local });
+    if (submitted.is_ok() || waiting)
+        && let Caller::Resident(owner) = caller
+    {
+        next.observed.insert(owner.key(), Observed { version: next.head.version, hash: Some(after.hash.clone()) });
     }
     let shown = copy.effective().clone();
     super::publication::save(node, &mut next, true, Some(&shown)).await.map_err(failure)?;
@@ -413,35 +410,4 @@ pub(crate) async fn flush(node: &Arc<Node>, link: &fastctx_net::link::Link, copy
 fn reject(copy: &mut Copy, reason: &str) -> Result<(), String> {
     copy.pending.remove(0);
     Err(reason.into())
-}
-
-pub(crate) async fn saw(
-    node: &Arc<Node>,
-    owner: &Address,
-    seen: &[fastctx_types::residents::Seen],
-) -> Result<(), Failure> {
-    node.replicas.state.load(&node.world).map_err(failure)?;
-    for seen in seen {
-        let Some(slot) = node.replicas.state.at(Path::new(&seen.path)) else { continue };
-        let mut copy = slot.lock().await;
-        let shown = copy.effective().clone();
-        let same = seen.sha256.as_ref().map_or_else(
-            || {
-                fastctx_platform::disk::metadata(&copy.path).ok().is_some_and(|metadata| {
-                    metadata.len() == seen.size
-                        && metadata.modified().ok().and_then(|time| jiff::Timestamp::try_from(time).ok())
-                            == seen.modified
-                })
-            },
-            |seen| *seen == shown.hash,
-        );
-        let local = copy.pending.iter().any(|pending| pending.offline);
-        let observed = Observed { version: copy.head.version, hash: same.then_some(shown.hash), local };
-        if copy.observed.get(&owner.key()) == Some(&observed) {
-            continue;
-        }
-        copy.observed.insert(owner.key(), observed);
-        super::publication::save(node, &mut copy, false, None).await.map_err(failure)?;
-    }
-    Ok(())
 }

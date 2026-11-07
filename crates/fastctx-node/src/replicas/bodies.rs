@@ -50,8 +50,20 @@ pub(crate) fn read(world: &WorldDir, id: &str, text: &Text) -> io::Result<String
     if text.len == 0 {
         return Ok(String::new());
     }
-    let bytes = fastctx_platform::disk::read(folder(world, id).join(&text.hash))?;
-    if bytes.len() as u64 != text.len || format!("{:x}", Sha256::digest(&bytes)) != text.hash {
+    let body = read_hash(world, id, &text.hash)?;
+    if body.len() as u64 != text.len {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "a kept replica text does not match its length"));
+    }
+    Ok(body)
+}
+
+/// Reads a retained observation, whose record names its hash alone.
+pub(crate) fn read_hash(world: &WorldDir, id: &str, hash: &str) -> io::Result<String> {
+    if hash == Text::of("").hash {
+        return Ok(String::new());
+    }
+    let bytes = fastctx_platform::disk::read(folder(world, id).join(hash))?;
+    if format!("{:x}", Sha256::digest(&bytes)) != hash {
         return Err(io::Error::new(io::ErrorKind::InvalidData, "a kept replica text does not match its hash"));
     }
     String::from_utf8(bytes).map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "a kept replica text is not UTF-8"))
@@ -61,6 +73,7 @@ pub(crate) fn read(world: &WorldDir, id: &str, text: &Text) -> io::Result<String
 pub(crate) fn tidy(world: &WorldDir, copy: &Copy) -> io::Result<()> {
     let mut named: BTreeSet<&str> = BTreeSet::new();
     named.insert(&copy.body.hash);
+    named.extend(copy.observed.values().filter_map(|observed| observed.hash.as_deref()));
     for pending in &copy.pending {
         named.insert(&pending.before.hash);
         named.insert(&pending.text.hash);

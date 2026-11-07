@@ -35,15 +35,12 @@ pub(crate) struct Pending {
     pub offline: bool,
 }
 
-/// What a conversation last saw of a copy: the hub revision under it, and
-/// the hash of the text it read. `local` when that text held edits made
-/// offline, whose revisions the hub numbers only once they reach it.
+/// The exact text a conversation saw, retained as a body. The hub revision
+/// lets older records recover a missing body when it was already synchronized.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Observed {
     pub version: Option<u64>,
     pub hash: Option<String>,
-    #[serde(default)]
-    pub local: bool,
 }
 
 /// What this computer last wrote at a copy's path: the file still holds it

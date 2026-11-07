@@ -5,6 +5,7 @@ pub(crate) mod bodies;
 pub(crate) mod files;
 mod legacy;
 pub(crate) mod location;
+mod observations;
 pub(crate) mod publication;
 mod removal;
 pub(crate) mod state;

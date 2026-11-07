@@ -87,11 +87,11 @@ pub(crate) fn read(world: &WorldDir, path: &Path) -> io::Result<Copy> {
             offline: pending.offline,
         });
     }
-    let local = copy.pending.iter().any(|pending| pending.offline);
+
     copy.observed = legacy
         .observed
         .into_iter()
-        .map(|(owner, seen)| (owner, Observed { version: seen.version, hash: seen.hash, local }))
+        .map(|(owner, seen)| (owner, Observed { version: seen.version, hash: seen.hash }))
         .collect();
     let archived = crate::record_migration::archive::root(world.path())
         .join("replicas")
