@@ -9,10 +9,16 @@ use sha2::{Digest, Sha256};
 use std::{collections::BTreeSet, io, path::PathBuf};
 
 /// A text by its SHA-256 and length; the empty text is never stored.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Text {
     pub hash: String,
     pub len: u64,
+}
+
+impl Default for Text {
+    fn default() -> Self {
+        Self::of("")
+    }
 }
 
 impl Text {

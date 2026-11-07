@@ -60,7 +60,11 @@ pub(crate) fn read(world: &WorldDir, path: &Path) -> io::Result<Copy> {
     let bytes = fastctx_platform::disk::read(path)?;
     let value: serde_json::Value = serde_json::from_slice(&bytes)?;
     if value.get("body").is_some() {
-        return Ok(serde_json::from_value(value)?);
+        let mut copy: Copy = serde_json::from_value(value)?;
+        if copy.body.len == 0 {
+            copy.body = Text::default();
+        }
+        return Ok(copy);
     }
     let legacy: LegacyCopy = serde_json::from_value(value)?;
     let mut copy = Copy {
