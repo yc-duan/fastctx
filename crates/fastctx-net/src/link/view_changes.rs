@@ -91,8 +91,10 @@ impl Inner {
             let records_changed = view.records_changed(&current);
             let ways_changed = view.ways_changed(&current);
             *current = Arc::from(view);
+            let catalog_view = current.clone();
             drop(current);
             if records_changed {
+                self.history_catalogs.view(&catalog_view);
                 let _ = self.record_changes.send(None);
             }
             if let Some(this) = self.this.upgrade() {

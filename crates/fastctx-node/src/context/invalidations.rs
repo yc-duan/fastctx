@@ -24,21 +24,20 @@ pub(crate) fn project(node: &Node, town: &TownName) {
     }
 }
 
-pub(crate) fn project_at(node: &Node, hub: &HubId, town: &TownId) {
+pub(crate) fn history_at(node: &Node, hub: &HubId, town: &TownId) {
     let mut names = std::collections::BTreeSet::new();
     for resident in node.residents.everyone().filter(|resident| resident.removed.is_none()) {
         if let Some(name) = resident.town {
             names.insert(name);
         }
     }
-    for name in names {
-        if crate::ledger::names::place(&node.world, &name)
+    for project in names.into_iter().filter(|name| {
+        crate::ledger::names::place(&node.world, name)
             .ok()
             .flatten()
             .is_some_and(|place| place.hub == *hub && place.town == *town)
-        {
-            project(node, &name);
-        }
+    }) {
+        history(node, &Scope::Project { project });
     }
 }
 
@@ -124,7 +123,7 @@ pub(crate) fn document(node: &Node, hub: &HubId, document: &Document) {
             }
         }
         Document::History { scope, .. } => match scope {
-            fastctx_types::replicas::Scope::Project { town, .. } => project_at(node, hub, town),
+            fastctx_types::replicas::Scope::Project { town, .. } => history_at(node, hub, town),
             fastctx_types::replicas::Scope::Conversation { conversation } => history(
                 node,
                 &Scope::Conversation {

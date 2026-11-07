@@ -89,7 +89,10 @@ impl Link {
     pub async fn history_write(&self, account: &AccountName, town: &TownId, entry: Signed) -> Result<u64, String> {
         self.history_supported()?;
         match self.inner.ask(Question::HistoryWrite { town: town.clone(), account: account.clone(), entry }).await? {
-            Told::Written { seq } => Ok(seq),
+            Told::Written { seq } => {
+                self.inner.history_catalogs.project(town);
+                Ok(seq)
+            }
             _ => Err("the hub did not confirm the history write".into()),
         }
     }

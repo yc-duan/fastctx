@@ -1498,7 +1498,7 @@ impl fastctx_net::link::Node for Handler {
                 &self.hub,
                 crate::replicas::updates::Change::History { town: town.clone(), name, version },
             );
-            crate::context::invalidations::project_at(&node, &self.hub, &town);
+            crate::context::invalidations::history_at(&node, &self.hub, &town);
             node.memory_changed();
         }
     }

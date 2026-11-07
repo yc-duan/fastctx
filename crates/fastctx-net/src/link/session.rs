@@ -530,6 +530,8 @@ async fn connected(
             let _ = view_ready.send(true);
             // Records may have changed while disconnected even when the directory
             // itself is identical. Readers reconcile once this view is current.
+            inner.history_catalogs.ownership();
+            inner.history_catalogs.invalidate(|_| true);
             let _ = inner.record_changes.send(None);
             // The directory and the initial status snapshot complete independently.
             inner.afoot_synced(generation);
@@ -848,10 +850,18 @@ async fn handle_frame(
                 inner.node.directory_changed();
             });
         }
-        Down::HistoryChanged { town, name, version } => inner.node.history_changed(town, name, version),
-        Down::ReplicasChanged => inner.node.replicas_changed(),
+        Down::HistoryChanged { town, name, version } => {
+            inner.history_catalogs.project(&town);
+            inner.node.history_changed(town, name, version);
+        }
+        Down::ReplicasChanged => {
+            // Ownership removal can hide its own tombstone from former readers.
+            inner.history_catalogs.ownership();
+            inner.node.replicas_changed();
+        }
         Down::LedgerChanged { town } => inner.node.ledger_changed(Some(town)),
         Down::AccountRecordChanged { changed } => {
+            inner.history_catalogs.record(&changed);
             inner.node.account_record_changed(&changed);
             let _ = inner.record_changes.send(Some(changed));
         }

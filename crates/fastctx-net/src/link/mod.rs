@@ -28,6 +28,7 @@ mod collab;
 mod conversation_history;
 mod direct;
 mod history_api;
+mod history_catalogs;
 mod kernel;
 mod layer;
 mod ledger;
@@ -378,6 +379,7 @@ pub(crate) struct Inner {
     kept_at: Mutex<Option<std::time::Instant>>,
     status: watch::Sender<Status>,
     record_changes: tokio::sync::broadcast::Sender<Option<fastctx_types::account_records::Changed>>,
+    history_catalogs: history_catalogs::Catalogs,
     connection: Mutex<Option<Connection>>,
     calls: Mutex<HashMap<u64, Waiter>>,
     watching: watching::Pools,
@@ -563,6 +565,7 @@ impl Link {
             kept_at: Mutex::new(None),
             status,
             record_changes: tokio::sync::broadcast::channel(1024).0,
+            history_catalogs: history_catalogs::Catalogs::default(),
             connection: Mutex::new(None),
             calls: Mutex::new(HashMap::new()),
             watching: Mutex::new(HashMap::new()),

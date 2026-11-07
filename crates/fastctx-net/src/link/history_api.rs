@@ -85,8 +85,14 @@ impl Link {
 impl Target<'_> {
     async fn catalog(&self) -> Result<Catalog, String> {
         match &self.scope {
-            Source::Project(town) => self.link.history_catalog(self.account, town).await,
-            Source::Conversation(address) => self.link.conversation_history_catalog(self.account, address).await,
+            Source::Project(town) => {
+                self.link.shared_history_catalog(self.account, town).await.map(|catalog| (*catalog).clone())
+            }
+            Source::Conversation(address) => self
+                .link
+                .shared_conversation_history_catalog(self.account, address)
+                .await
+                .map(|catalog| (*catalog).clone()),
         }
     }
 

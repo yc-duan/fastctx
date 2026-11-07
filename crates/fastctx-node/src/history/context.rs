@@ -1,6 +1,8 @@
 //! History is a host context block; durable receipts contain hashes, never its catalog text.
 
+pub(crate) mod catalog;
 pub(crate) mod heard;
+
 use crate::{Node, context::Change};
 use fastctx_platform::task;
 use fastctx_types::{
@@ -66,7 +68,7 @@ pub(crate) async fn refresh(
         None => Scope::Conversation { resident: owner.resident.clone(), machine: owner.machine.clone() },
     };
     let account = crate::plan::load_account(node, id, acting).await?;
-    let (mut catalog, location) = if let Some(account) = &account {
+    let (catalog, location) = if let Some(account) = &account {
         let Some(link) = node.link_of(&account.hub) else { return Ok(()) };
         if !link.view().shared_records {
             return unavailable(node, id, &me, "HISTORY\nUpdate the hub to use history and copies on every computer.")
@@ -80,10 +82,10 @@ pub(crate) async fn refresh(
                     .map_err(failure)?
                     .map_err(failure)?
                     .ok_or_else(|| failure("the history's project identity is unavailable"))?;
-                link.history_catalog(&account.account, &place.town).await
+                link.shared_history_catalog(&account.account, &place.town).await
             }
             Scope::Conversation { resident, machine } => {
-                link.conversation_history_catalog(
+                link.shared_conversation_history_catalog(
                     &account.account,
                     &Address { resident: resident.clone(), machine: machine.clone() },
                 )
@@ -114,7 +116,7 @@ pub(crate) async fn refresh(
         .await?;
         (catalog, location)
     } else if node.links().is_empty() {
-        let HistoryReply::Catalog { catalog } =
+        let HistoryReply::Catalog { mut catalog } =
             super::local::call(node, HistoryCall::List { scope: scope.clone() }, None).await?
         else {
             return Err(failure("the local history catalog was not returned"));
@@ -132,19 +134,23 @@ pub(crate) async fn refresh(
             .await
             .map_err(failure)?
             .map_err(failure)?;
+        catalog.sort();
         (
-            catalog,
+            Arc::new(catalog),
             Some(fastctx_types::placement::Location { machine: node.machine(), path: crate::world::native(&path) }),
         )
     } else {
         return Ok(());
     };
-    catalog.sort();
+    let prepared = node.contexts.history_catalogs.prepare(&catalog);
+    let mut catalog = (*catalog).clone();
     {
-        let authors = std::cell::RefCell::new(std::collections::BTreeSet::new());
+        let authors = std::cell::RefCell::new(BTreeMap::new());
         let usable = |machine: &fastctx_types::MachineName| {
-            authors.borrow_mut().insert(machine.clone());
-            node.authorize_machine(acting, &machine.into()).is_ok()
+            *authors
+                .borrow_mut()
+                .entry(machine.clone())
+                .or_insert_with(|| node.authorize_machine(acting, &machine.into()).is_ok())
         };
         for revision in &mut catalog.documents {
             let own = matches!(&revision.author.stamp.by, Writer::Resident { address } if address.resident == *id && node.is_me(&address.machine));
@@ -154,33 +160,26 @@ pub(crate) async fn refresh(
                 revision.author.stamp.by = writer;
             }
         }
-        node.contexts.routes.remember_authors(id, authors.into_inner().into_iter().collect());
+        node.contexts.routes.remember_authors(id, authors.into_inner().into_keys().collect());
     }
     let scope_id = hash(&serde_json::to_string(&(&scope, &account)).map_err(failure)?);
-    let cursor = Cursor {
-        scope: scope_id,
-        topics: catalog
-            .documents
-            .iter()
-            .map(|revision| (hash(&revision.name), hash(&format!("{}:{}", revision.retired, revision.description))))
-            .collect(),
-        versions: catalog.documents.iter().map(|revision| (hash(&revision.name), revision.version)).collect(),
-    };
+    let cursor = Cursor { scope: scope_id, topics: prepared.topics.clone(), versions: prepared.versions.clone() };
     let directory = node.world.conversation(id);
     let before = task::spawn_blocking(move || heard::read(&directory)).await.map_err(failure)?.map_err(failure)?;
-    let changed = before.as_ref().filter(|before| before.scope == cursor.scope).map(|before| {
-        catalog.documents.iter().filter(|revision| before.topics.get(&hash(&revision.name)) != cursor.topics.get(&hash(&revision.name)) || before.versions.get(&hash(&revision.name)).is_some_and(|version| Some(version) != cursor.versions.get(&hash(&revision.name))))
-            .filter(|revision| !matches!(&revision.author.stamp.by, Writer::Resident { address } if address.resident == *id && node.is_me(&address.machine)))
-            .map(fastctx_hands::history::changed).collect::<Vec<_>>()
-    });
-    let mut text = match location {
-        Some(location) => fastctx_hands::history::context(&catalog, &location.path, location.machine.as_str(), town.is_some()),
+    let changed = changes(before.as_ref(), &cursor, &catalog, &prepared.names, id, |machine| node.is_me(machine));
+    let mut text = match &location {
+        Some(location) => fastctx_hands::history::context_with_topics(
+            &prepared.listing,
+            &location.path,
+            location.machine.as_str(),
+            town.is_some(),
+        ),
         None => "HISTORY\nThe history remains in the user's account. No eligible computer is online for its files; the app can still read and edit it.".into(),
     };
     if town.is_some()
         && let Some(account) = &account
         && let Some(link) = node.link_of(&account.hub)
-        && let Ok(earlier) = link.conversation_history_catalog(&account.account, &owner).await
+        && let Ok(earlier) = link.shared_conversation_history_catalog(&account.account, &owner).await
         && !earlier.documents.is_empty()
     {
         let previous = Scope::Conversation { resident: owner.resident.clone(), machine: owner.machine.clone() };
@@ -216,6 +215,26 @@ pub(crate) async fn refresh(
     )
     .await
     .map_err(failure)
+}
+
+fn changes(
+    before: Option<&Cursor>,
+    cursor: &Cursor,
+    catalog: &fastctx_types::history::Catalog,
+    names: &[String],
+    id: &ResidentId,
+    is_me: impl Fn(&fastctx_types::MachineName) -> bool,
+) -> Option<Vec<String>> {
+    before.filter(|before| before.scope == cursor.scope).map(|before| {
+        catalog.documents.iter().zip(names)
+            .filter(|(_, name)| {
+                before.topics.get(*name) != cursor.topics.get(*name)
+                    || before.versions.get(*name).is_some_and(|version| Some(version) != cursor.versions.get(*name))
+            })
+            .map(|(revision, _)| revision)
+            .filter(|revision| !matches!(&revision.author.stamp.by, Writer::Resident { address } if address.resident == *id && is_me(&address.machine)))
+            .map(fastctx_hands::history::changed).collect()
+    })
 }
 
 async fn unavailable(node: &Arc<Node>, id: &ResidentId, me: &Address, text: &str) -> Result<(), Failure> {

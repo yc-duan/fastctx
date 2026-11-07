@@ -126,6 +126,9 @@ impl Link {
             Response::Record { response: RecordResponse::Written { metadata } }
                 if metadata.version == revision.version =>
             {
+                self.inner.history_catalogs.invalidate(|(_, source)| {
+                    matches!(source, super::history_catalogs::Source::Conversation(address) if address.resident == conversation.resident)
+                });
                 Ok(revision)
             }
             Response::Record { response: RecordResponse::Conflict { current } } => {
