@@ -78,9 +78,7 @@ pub(crate) async fn intercept(
     }
     let Some(path) = paths.first() else { return Ok(None) };
     let Some((scope, name)) = locate(node, path)? else { return Ok(None) };
-    if !fastctx_platform::preview() {
-        return Err(Failure::not_run("history is not enabled in this release"));
-    }
+    super::offered::check(node, caller)?;
     let author = super::api::author(node, caller).await?;
     super::api::network(node, caller, &scope).await?;
     let latest = super::local::call(node, HistoryCall::List { scope: scope.clone() }, None).await?;
@@ -198,7 +196,7 @@ pub(crate) async fn intercept(
 }
 
 pub(crate) async fn repair(node: &Arc<Node>) -> Result<(), Failure> {
-    if !node.links().is_empty() || !fastctx_platform::preview() {
+    if !node.links().is_empty() || !fastctx_platform::history() {
         return Ok(());
     }
     let mut scopes =

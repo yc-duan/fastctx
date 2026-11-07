@@ -157,8 +157,8 @@ pub(crate) async fn intercept(
     let Some(slot) = locate(node, path).await? else { return Ok(None) };
     let author = crate::history::api::author(node, caller).await?;
     let mut copy = slot.lock().await;
-    if matches!(copy.head.document, Document::History { .. }) && !fastctx_platform::preview() {
-        return Err(Failure::not_run("history is not enabled in this release"));
+    if matches!(copy.head.document, Document::History { .. }) {
+        crate::history::offered::check(node, caller)?;
     }
     authorize(node, caller, &copy)?;
     if copy.head.retired {

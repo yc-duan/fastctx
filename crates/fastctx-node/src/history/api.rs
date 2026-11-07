@@ -75,9 +75,7 @@ pub(crate) async fn network(
 }
 
 pub(crate) async fn call(node: &Arc<Node>, caller: &Caller, request: HistoryCall) -> Result<HistoryReply, Failure> {
-    if !fastctx_platform::preview() {
-        return Err(Failure::not_run("history is not enabled in this release"));
-    }
+    super::offered::check(node, caller)?;
     let changed = request.writes();
     let scope = request.scope().clone();
     let author = if request.writes() { Some(author(node, caller).await?) } else { None };

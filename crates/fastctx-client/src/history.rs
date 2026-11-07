@@ -80,7 +80,7 @@ impl HistoryWatch {
 }
 
 pub(crate) fn enabled() -> Result<(), Error> {
-    if fastctx_platform::preview() {
+    if fastctx_platform::history() {
         Ok(())
     } else {
         Err(CallError::Failed(fastctx_types::ipc::Failure::not_run("history is not enabled in this release")).into())

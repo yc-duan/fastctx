@@ -25,7 +25,7 @@ impl Link {
         request: HistoryCall,
         author: Option<Author>,
     ) -> Result<HistoryReply, String> {
-        if !fastctx_platform::preview() {
+        if !fastctx_platform::history() {
             return Err("history is not enabled in this release".into());
         }
         let scope = match request.scope() {

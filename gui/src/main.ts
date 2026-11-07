@@ -139,7 +139,7 @@ import { SettingsPage } from "./app/settings";
 import { DataPage, enData, totalOf, zhData } from "./app/data-page";
 import { data } from "./world/data";
 import { keptForget, keptUsage, keptClear, seenDissolved, unwatch } from "./world/bridge";
-import { PREVIEW } from "./app/preview";
+import { HISTORY, PREVIEW } from "./app/preview";
 import { talksOf } from "./app/talk-row";
 import { ProjectsPage, enProjects, zhProjects } from "./app/projects-page";
 import "./app/projects.css";
@@ -936,9 +936,8 @@ const historyForm = new HistoryForm({
   },
 });
 
-/** Whether histories are offered: the development build's until the
- *  release turns them on (`world.md`, 这一版不发的). */
-const historyOffered = PREVIEW;
+/** Whether histories are offered (`app/preview.ts`). */
+const historyOffered = HISTORY;
 
 /** Follows a history's catalog as it changes; returns how to stop. A
  *  World without the watch still answers a single read. */

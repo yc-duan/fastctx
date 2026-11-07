@@ -44,7 +44,7 @@ pub(crate) async fn refresh(
     )
     .await
     .map_err(failure)?;
-    if !fastctx_platform::preview() {
+    if !node.residents.about(id).is_some_and(|(about, _)| super::offered::to(node, &about)) {
         return crate::context::blocking::set_account(
             node,
             id,

@@ -127,6 +127,10 @@ pub(crate) async fn all(node: &Arc<Node>, link: &Arc<Link>) -> Result<(), String
 }
 
 pub(crate) async fn apply(node: &Arc<Node>, link: &Arc<Link>, account: &HubAccount, head: Head) -> Result<(), String> {
+    // Copies kept from a build that offered history stay as they are.
+    if matches!(head.document, Document::History { .. }) && !fastctx_platform::history() {
+        return Ok(());
+    }
     if let Document::Plan { owner } = &head.document {
         crate::placement::copies::upgrade::take(node, link, &head.owner, owner).await.map_err(failure)?;
     }

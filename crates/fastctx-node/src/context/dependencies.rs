@@ -57,7 +57,7 @@ impl Scan {
         };
         inputs[Part::Plan as usize] = hash(&(node.machine(), account.plan));
         inputs[Part::Skills as usize] = account.skills;
-        inputs[Part::History as usize] = if fastctx_platform::preview() {
+        inputs[Part::History as usize] = if crate::history::offered::to(node, about) {
             hash(&(
                 identity,
                 project,

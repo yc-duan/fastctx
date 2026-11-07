@@ -215,7 +215,11 @@ pub(crate) fn folder_now(node: &Node, folder: Folder) -> Result<(), String> {
     if !scope_allowed(node, &folder) {
         return Err("this computer no longer keeps this history".into());
     }
-    fastctx_platform::ensure_private_dir(&folder.path).map_err(|error| error.to_string())?;
+    // The folder also names the conversation whose plan this computer keeps;
+    // its directory is made only where history is offered.
+    if fastctx_platform::history() {
+        fastctx_platform::ensure_private_dir(&folder.path).map_err(|error| error.to_string())?;
+    }
     if node.replicas.state.folders.lock().expect("never poisoned").get(&folder.path) == Some(&folder) {
         return Ok(());
     }
