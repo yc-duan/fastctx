@@ -1830,6 +1830,21 @@ async fn running(node: &Arc<Node>, home: Option<&Path>, session: &str) -> Result
     .map_err(Failure::new)
 }
 
+/// Writes again the instructions a session the World started launches with,
+/// as this version words them: Claude Code reads them from the file each
+/// time it starts the session's process, a wake and a continuation too.
+fn reword(node: &Node, resident: &ResidentId) -> std::io::Result<()> {
+    let Some((about, town)) = node.residents.about(resident) else { return Ok(()) };
+    let path = node.world.conversation(resident).claude_instructions();
+    let kept = match fastctx_platform::disk::read_to_string(&path) {
+        Ok(kept) => kept,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    let words = crate::colleagues::words(resident, town.as_ref(), &about.origin, false);
+    if kept == words { Ok(()) } else { fastctx_platform::disk::write(&path, words) }
+}
+
 pub(crate) async fn wake(
     node: &Arc<Node>,
     resident: &ResidentId,
@@ -1838,6 +1853,9 @@ pub(crate) async fn wake(
     words: String,
     id: fastctx_types::NoticeId,
 ) -> Result<Landed, crate::lifecycle::wake::WakeFailure> {
+    if let Err(error) = reword(node, resident) {
+        node.log.line(format_args!("rewording {resident}'s instructions before it wakes: {error}"));
+    }
     if let Some(source) = isolation::source(node, resident)? {
         let _waking = node.claude.copies.waking();
         crate::inbox::unbind(&node.world.conversation(resident), &id)

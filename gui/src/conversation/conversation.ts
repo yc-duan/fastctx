@@ -138,7 +138,7 @@ export class Conversation {
   set title(title: string | null) {
     this.live.title = title;
   }
-  get context(): { used: number; window: number | null } | null {
+  get context(): { used: number; window: number | null; at: number } | null {
     return this.live.context;
   }
   get answeredBy(): string | null {
@@ -396,17 +396,15 @@ export class Conversation {
   }
 
   /** What the conversation's own view shows (`world-voice.md`, 两种看法):
-   *  the user's words, each turn's answer, what waits on them, and a turn
-   *  that failed. A turn's answer is its last words once it has ended,
-   *  whoever began it; a colleague's turn that spoke to the user through
-   *  `message_user` shows what it said instead, and its last words too only
-   *  when it worked on after saying it. */
+   *  the user's words, each turn's answer, what waits on them, what it asked
+   *  without stopping, and a turn that failed. A turn's answer is its last
+   *  words once it has ended, whoever began it; a colleague's turn that
+   *  spoke to the user through `message_user` shows what it said instead,
+   *  and its last words too only when it worked on after saying it. */
   chatBlocks(): Block[] {
     const blocks = this.blocks();
     const version = this.cache!.version;
     if (this.chatCache?.version === version) return this.chatCache.blocks;
-    const spoke = new Set<string>();
-    for (const block of blocks) if (block.kind === "say") spoke.add(block.turn);
     const shown = blocks.filter((block) => {
       switch (block.kind) {
         case "say":
@@ -420,7 +418,7 @@ export class Conversation {
         case "heard":
           return !block.notice && (!block.from || block.from.kind === "user");
         case "prose":
-          return block.prose === "message" && (!spoke.has(block.turn) || this.answersAfterSaying(block.turn)) && this.turnEnded(block.turn) && this.lastMessageOf(block.turn) === block.key;
+          return block.prose === "message" && (!this.spokeIn(block.turn) || this.answersAfterSaying(block.turn)) && this.turnEnded(block.turn) && this.lastMessageOf(block.turn) === block.key;
         case "ended":
           return block.end.how === "failed";
         default:

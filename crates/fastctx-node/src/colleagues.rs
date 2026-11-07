@@ -580,7 +580,7 @@ pub(crate) async fn instructions(
     Ok((text, heard))
 }
 
-fn words(id: &ResidentId, town: Option<&TownName>, origin: &Origin, record: bool) -> String {
+pub(crate) fn words(id: &ResidentId, town: Option<&TownName>, origin: &Origin, record: bool) -> String {
     let given = if record { "Its record follows" } else { "Its record comes with your context" };
     let place = match (town, origin) {
         (Some(town), _) => format!(
