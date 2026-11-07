@@ -150,7 +150,7 @@ function clock(ms: number, now: number, locale: string, today: string, tomorrow:
 }
 
 export const zhSide: SideWords = {
-  pages: { plan: "计划", goal: "目标", collab: "协作", history: "历史" },
+  pages: { plan: "计划", goal: "目标", collab: "协作", history: "笔记" },
   home: { name: "概览", none: "还没有计划与协作", all: (n) => `全部 ${n} 个` },
   file: { outside: "用默认程序打开", reading: "读取中…", missing: "找不到这个文件", failed: "读取失败", interrupted: "连接中断，正在重连…" },
   panel: "侧面板",
@@ -238,7 +238,7 @@ export const zhSide: SideWords = {
 };
 
 export const enSide: SideWords = {
-  pages: { plan: "Plan", goal: "Goal", collab: "Team", history: "History" },
+  pages: { plan: "Plan", goal: "Goal", collab: "Team", history: "Notes" },
   home: { name: "Overview", none: "No plan or helpers yet", all: (n) => `All ${n}` },
   file: { outside: "Open with default app", reading: "Reading…", missing: "File not found", failed: "Couldn't read this file", interrupted: "Disconnected, reconnecting…" },
   panel: "Side panel",

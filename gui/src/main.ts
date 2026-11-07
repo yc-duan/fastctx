@@ -2068,7 +2068,14 @@ function liveTalk(address: Address): DeskTalk {
   // Goals are not offered in a release yet (`app/preview.ts`); nor can the
   // World drive one in a conversation Codex's own app holds.
   const noGoal = !PREVIEW || (!!known && /^codex/i.test(known.about.host.agent) && !known.about.world_started);
-  const ownHistory = sideHistory(address, known?.town ?? listedAt(world, address)?.town ?? null);
+  // The history its side shows follows its project and whether history is
+  // on for it: either changing, the conversation is drawn anew.
+  const historyOf = (now: WorldNow | null) => {
+    const town = residentAt(now, address)?.town ?? listedAt(now, address)?.town ?? null;
+    return { town, shown: !!sideHistory(address, town) };
+  };
+  const historyWas = historyOf(world);
+  const ownHistory = sideHistory(address, historyWas.town);
   const here = world?.here ?? null;
   const conversation = new Conversation();
   // The agent by its name, or, not yet listed, its resident's id.
@@ -2339,6 +2346,7 @@ function liveTalk(address: Address): DeskTalk {
   // its project and model as they change; asleep or not.
   let shown = listed;
   let suspended = false;
+  let renewing = false;
   const named = !world
     ? effect(() => {
         if (!store.world.get()) return;
@@ -2368,6 +2376,16 @@ function liveTalk(address: Address): DeskTalk {
           page.update();
         }
         if (!known || !who || left) return;
+        const history = historyOf(now);
+        if (!renewing && (history.town !== historyWas.town || history.shown !== historyWas.shown)) {
+          renewing = true;
+          queueMicrotask(() => {
+            if (left) return;
+            keptTalks.drop(talkKey(address));
+            desk().renew(address);
+          });
+          return;
+        }
         if (shown && who.agent === shown.agent && who.project === shown.project && who.model === shown.model) return;
         shown = who;
         page.identify(who);

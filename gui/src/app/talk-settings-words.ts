@@ -11,12 +11,12 @@ export interface TalkSettingsWords {
 
 export const zhTalkSettings: TalkSettingsWords = {
   title: "对话设置",
-  tabs: { skills: "技能", mcp: "MCP", models: "模型", history: "历史", collab: "模型协作" },
+  tabs: { skills: "技能", mcp: "MCP", models: "模型", history: "笔记", collab: "模型协作" },
   agents: { claude: "Claude Code", codex: "Codex" },
 };
 
 export const enTalkSettings: TalkSettingsWords = {
   title: "Conversation settings",
-  tabs: { skills: "Skills", mcp: "MCP", models: "Models", history: "History", collab: "Collaboration" },
+  tabs: { skills: "Skills", mcp: "MCP", models: "Models", history: "Notes", collab: "Collaboration" },
   agents: { claude: "Claude Code", codex: "Codex" },
 };

@@ -148,16 +148,16 @@ export const zhFeatures: FeaturesWords = {
     offWhat: "智能体的对话里不再有请 GPT 的工具；这里的设置留着，再开时照旧。",
   },
   history: {
-    name: "历史",
+    name: "笔记",
     line: "项目与对话留给后来者的记录",
-    film: { captions: ["对话把经过、定下的、否掉的，写进历史", "第二天醒来的，不论是哪一家的模型", "一搜就找到那一行，接着往下做", "每台电脑上都是一份纯文本"] },
+    film: { captions: ["对话把经过、定下的、否掉的，写进笔记", "第二天醒来的，不论是哪一家的模型", "一搜就找到那一行，接着往下做", "每台电脑上都是一份纯文本"] },
     gives: [
-      ["history", "每个项目一份，每段不在项目里的对话一份；模型自己写，你也能写"],
+      ["journal", "每个项目一本，每段不在项目里的对话一本；模型自己写，你也能写"],
       ["search", "纯文本放在你的每台电脑上，哪一家的模型都用\u00a0rg\u00a0读"],
     ],
-    after: "对话的角上与项目页里有了历史；模型从下一轮起拿到它的名单",
-    offWhat: "对话里的模型不再拿到历史，界面上收起它的入口；已经写下的每一篇都留着，再开时照旧。",
-    unread: "读不到历史的开关",
+    after: "对话的角上与项目页里有了笔记；模型从下一轮起拿到它的名单",
+    offWhat: "对话里的模型不再拿到笔记，界面上收起它的入口；已经写下的每一篇都留着，再开时照旧。",
+    unread: "读不到笔记的开关",
     hubOld: "这个网络的中枢还存不了这个开关，更新中枢后可用",
   },
   reading: "正在读取设置",
@@ -266,7 +266,7 @@ export const enFeatures: FeaturesWords = {
     offWhat: "Conversations no longer get the tools to ask a GPT; these settings stay for when you turn it on again.",
   },
   history: {
-    name: "History",
+    name: "Notes",
     line: "What projects and conversations leave for whoever comes next",
     film: {
       captions: [
@@ -277,12 +277,12 @@ export const enFeatures: FeaturesWords = {
       ],
     },
     gives: [
-      ["history", "One for each project and one for each conversation outside a project; models write it, and so can you"],
+      ["journal", "One for each project and one for each conversation outside a project; models write them, and so can you"],
       ["search", "Plain text on each of your computers, read with rg by any vendor's model"],
     ],
-    after: "Conversations and projects show their history; models get its list from their next turn",
-    offWhat: "Models in conversations no longer get the history, and its ways in fold away; every document written stays, as it is, for when you turn it on again.",
-    unread: "Couldn't read the history switch",
+    after: "Conversations and projects show their notes; models get their list from their next turn",
+    offWhat: "Models in conversations no longer get the notes, and their ways in fold away; every note written stays, as it is, for when you turn them on again.",
+    unread: "Couldn't read the notes switch",
     hubOld: "This network's hub can't keep this switch yet; update the hub to use it",
   },
   reading: "Reading the settings",

@@ -287,7 +287,7 @@ export class ProjectPage {
       .map((one) => {
         const said = words.changed(history.writer(one.author), this.options.home.ago(now.getTime() - changed(one)));
         return `<li><a class="page-link history-link" href="${escape(history.link(town, one.name))}" title="${escape(said)}">
-          <span class="page-link-glyph">${glyph("history", 18)}</span>
+          <span class="page-link-glyph">${glyph("journal", 18)}</span>
           <span class="page-link-body">
             <span class="page-link-title">${escape(one.name)}${one.retired ? `<span class="tag">${escape(words.retired)}</span>` : ""}</span>
             <span class="page-link-about">${escape(one.description)}</span>

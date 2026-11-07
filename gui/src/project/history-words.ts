@@ -68,7 +68,7 @@ function shortDate(at: string, now: Date, locale: string): string {
 }
 
 export const zhHistory: HistoryWords = {
-  history: "历史",
+  history: "笔记",
   noDocuments: "还没有记下什么",
   newDocument: "写一篇",
   edit: "编辑",
@@ -102,13 +102,13 @@ export const zhHistory: HistoryWords = {
   taken: "已经有同名的一篇",
   changed: (who, ago) => `${who}　${ago}`,
   date: (at, now) => shortDate(at, now, "zh-CN"),
-  of: (project) => `${project}${/[A-Za-z0-9]$/.test(project) ? " " : ""}的历史`,
-  earlier: "此前的历史",
+  of: (project) => `${project}${/[A-Za-z0-9]$/.test(project) ? " " : ""}的笔记`,
+  earlier: "此前的笔记",
   untitled: "对话",
 };
 
 export const enHistory: HistoryWords = {
-  history: "History",
+  history: "Notes",
   noDocuments: "Nothing recorded yet",
   newDocument: "Write one",
   edit: "Edit",
@@ -142,7 +142,7 @@ export const enHistory: HistoryWords = {
   taken: "One by that name already exists",
   changed: (who, ago) => `${who}　${ago}`,
   date: (at, now) => shortDate(at, now, "en-GB"),
-  of: (project) => `History of ${project}`,
-  earlier: "Earlier history",
+  of: (project) => `Notes of ${project}`,
+  earlier: "Earlier notes",
   untitled: "Conversation",
 };

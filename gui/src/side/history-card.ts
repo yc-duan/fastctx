@@ -76,7 +76,7 @@ function rows(documents: HistoryRevision[], link: (name: string) => string, reti
   return `<ul class="page-links">${sorted
     .map(
       (one) => `<li><a class="page-link" href="${escape(link(one.name))}" title="${escape(one.description)}">
-          <span class="page-link-glyph">${glyph("history", 18)}</span>
+          <span class="page-link-glyph">${glyph("journal", 18)}</span>
           <span class="page-link-body">
             <span class="page-link-title">${escape(one.name)}${one.retired ? `<span class="tag">${escape(retired)}</span>` : ""}</span>
             <span class="page-link-about">${escape(one.description)}</span>

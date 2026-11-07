@@ -104,7 +104,7 @@ export function historyFilm(words: HistoryFilmWords, shape: Shape): Built {
   reel.group([d.x, line(FOUND)], [{ t: 0, o: 0 }, { t: 9300, o: 0 }, { t: 9700, o: 0.55 }], () =>
     reel.wash(d.x + 22, line(FOUND) - L.label * 1.15, d.w - 44, L.label * 1.75, "clay", 9300, 420, 12),
   );
-  reel.mark("history", [d.x + 30, d.y + 34], 34, "graphite", 1500);
+  reel.mark("journal", [d.x + 30, d.y + 34], 34, "graphite", 1500);
   reel.text([d.x + 80, d.y + 62], "q16-fixed-point.md", L.label, "ink", 1600, { mono: true });
   reel.line([d.x + 30, d.y + 92], [d.x + d.w - 30, d.y + 92], 2.2, "graphite", 1800, 360);
   DAYS.forEach((day, index) => {

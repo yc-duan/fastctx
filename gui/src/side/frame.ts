@@ -133,7 +133,7 @@ export class SideFrame implements PartsFrame {
     this.historyMark.type = "button";
     this.historyMark.className = "icon-button sp-history-mark";
     this.historyMark.hidden = true;
-    this.historyMark.innerHTML = glyph("history", 18);
+    this.historyMark.innerHTML = glyph("journal", 18);
     // Pressed again on its history, the side goes back to the overview.
     this.historyMark.addEventListener("click", () => this.pane.turnToHistory());
     this.corner.append(this.whereSlot, this.historyMark, this.pane.more, this.opener);

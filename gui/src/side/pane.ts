@@ -89,7 +89,7 @@ export class SidePane {
     this.element.className = "sp-panel";
     this.element.hidden = true;
     this.element.setAttribute("aria-label", words.panel);
-    this.element.innerHTML = `<div class="sp-sheet"><div class="sp-margin" aria-hidden="true"></div><header class="sp-head"><div class="sp-line"><div class="sp-where"></div><div class="sp-acts"><button class="icon-button sp-history-mark" type="button" hidden>${glyph("history", 18)}</button><button class="icon-button sp-shut" type="button" aria-label="${escape(words.shut)}" title="${escape(words.shut)}">${glyph("close", 18)}</button></div></div></header><div class="sp-back" hidden></div><div class="sp-body"></div></div>`;
+    this.element.innerHTML = `<div class="sp-sheet"><div class="sp-margin" aria-hidden="true"></div><header class="sp-head"><div class="sp-line"><div class="sp-where"></div><div class="sp-acts"><button class="icon-button sp-history-mark" type="button" hidden>${glyph("journal", 18)}</button><button class="icon-button sp-shut" type="button" aria-label="${escape(words.shut)}" title="${escape(words.shut)}">${glyph("close", 18)}</button></div></div></header><div class="sp-back" hidden></div><div class="sp-body"></div></div>`;
     // Where the side stands is the side's own to choose: its "⋯" is there
     // while the side is.
     this.more = document.createElement("div");
