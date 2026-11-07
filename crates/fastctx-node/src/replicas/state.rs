@@ -162,26 +162,24 @@ pub(crate) fn root(world: &fastctx_types::layout::WorldDir) -> PathBuf {
 
 /// Keeps a copy's metadata, then lets go of the texts it no longer names.
 /// The texts it names were put before.
-pub(crate) fn save(world: &fastctx_types::layout::WorldDir, copy: &Copy) -> io::Result<()> {
+pub(crate) fn save(world: &fastctx_types::layout::WorldDir, copy: &Copy) -> io::Result<Option<String>> {
     let directory = root(world).join("copies");
     fastctx_platform::ensure_private_dir(&directory)?;
-    fastctx_platform::publish(
-        &directory.join(format!("{}.json", copy.id())),
-        &serde_json::to_vec(copy)?,
-        fastctx_platform::Permissions::Private,
-    )?;
-    bodies::tidy(world, copy)
+    let warning = super::storage::publish(&directory.join(format!("{}.json", copy.id())), &serde_json::to_vec(copy)?)?;
+    if warning.is_some() {
+        // The previous record may survive a power loss; retain its bodies too.
+        return Ok(warning);
+    }
+    Ok(bodies::tidy(world, copy)
+        .err()
+        .map(|error| format!("replica {} was saved, but removing unused bodies failed: {error}", copy.id())))
 }
 
-pub(crate) fn save_folder(world: &fastctx_types::layout::WorldDir, folder: &Folder) -> io::Result<()> {
+pub(crate) fn save_folder(world: &fastctx_types::layout::WorldDir, folder: &Folder) -> io::Result<Option<String>> {
     let directory = root(world).join("folders");
     fastctx_platform::ensure_private_dir(&directory)?;
     let id = folder_id(folder);
-    fastctx_platform::publish(
-        &directory.join(format!("{id}.json")),
-        &serde_json::to_vec(folder)?,
-        fastctx_platform::Permissions::Private,
-    )
+    super::storage::publish(&directory.join(format!("{id}.json")), &serde_json::to_vec(folder)?)
 }
 
 fn folder_id(folder: &Folder) -> String {

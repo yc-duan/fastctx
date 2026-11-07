@@ -151,16 +151,17 @@ pub(crate) async fn apply(node: &Arc<Node>, link: &Arc<Link>, account: &HubAccou
             left: Vec::new(),
         })
     });
-    let mut copy = slot.lock().await;
+    let mut kept = slot.lock().await;
+    let mut copy = kept.clone();
     let current = known && copy.path == path && copy.left.is_empty() && copy.pending.is_empty();
     // A catalog read before a newer revision arrived does not take it back.
     let stale = known && copy.head.version.zip(head.version).is_some_and(|(kept, told)| told < kept);
     if current && (copy.head == head || stale) {
         // A kept text that was lost is fetched again.
-        if super::publication::repair(node, &mut copy).await.is_ok() {
+        if super::publication::repair(node, &mut kept).await.is_ok() {
             return Ok(());
         }
-        return refresh(node, link, &mut copy).await;
+        return refresh(node, link, &mut kept).await;
     }
     let previous = copy.effective().clone();
     let shown = copy.projected.clone();
@@ -178,7 +179,7 @@ pub(crate) async fn apply(node: &Arc<Node>, link: &Arc<Link>, account: &HubAccou
             copy.head = head;
             copy.body = Text::default();
         } else if copy.head.version != head.version || copy.head.retired != head.retired {
-            refresh(node, link, &mut copy).await?;
+            fetch(node, link, &mut copy).await?;
         } else if !stale {
             copy.head = head;
         }
@@ -190,7 +191,8 @@ pub(crate) async fn apply(node: &Arc<Node>, link: &Arc<Link>, account: &HubAccou
         copy.body = Text::default();
     }
     super::publication::save(node, &mut copy, true, Some(&previous)).await?;
-    super::publication::leave(node, &mut copy, shown.as_ref(), &previous).await?;
+    *kept = copy;
+    super::publication::leave(node, &mut kept, shown.as_ref(), &previous).await?;
     flushed
 }
 
@@ -208,8 +210,11 @@ pub(crate) async fn text(node: &Arc<Node>, copy: &Copy, text: &Text) -> Result<S
 
 pub(crate) async fn refresh(node: &Arc<Node>, link: &Link, copy: &mut Copy) -> Result<(), String> {
     let previous = copy.effective().clone();
-    fetch(node, link, copy).await?;
-    super::publication::save(node, copy, true, Some(&previous)).await
+    let mut next = copy.clone();
+    fetch(node, link, &mut next).await?;
+    super::publication::save(node, &mut next, true, Some(&previous)).await?;
+    *copy = next;
+    Ok(())
 }
 
 /// Takes the hub's current revision into the copy in memory; its caller

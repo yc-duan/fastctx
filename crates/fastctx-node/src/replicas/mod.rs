@@ -10,6 +10,7 @@ mod observations;
 pub(crate) mod publication;
 mod removal;
 pub(crate) mod state;
+mod storage;
 pub(crate) mod sync;
 pub(crate) mod updates;
 pub(crate) mod writing;

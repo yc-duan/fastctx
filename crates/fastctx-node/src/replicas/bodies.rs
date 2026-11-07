@@ -46,7 +46,9 @@ pub(crate) fn put(world: &WorldDir, id: &str, text: &str) -> io::Result<Text> {
         return Ok(named);
     }
     fastctx_platform::ensure_private_dir(&directory)?;
-    fastctx_platform::publish(&path, text.as_bytes(), fastctx_platform::Permissions::Private)?;
+    if let Some(warning) = super::storage::publish(&path, text.as_bytes())? {
+        eprintln!("fastctx: {warning}");
+    }
     Ok(named)
 }
 

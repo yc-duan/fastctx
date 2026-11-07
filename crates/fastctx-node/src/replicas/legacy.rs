@@ -107,6 +107,8 @@ pub(crate) fn read(world: &WorldDir, path: &Path) -> io::Result<Copy> {
         Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
         Err(error) => return Err(error),
     }
-    state::save(world, &copy)?;
+    if let Some(warning) = state::save(world, &copy)? {
+        eprintln!("fastctx: {warning}");
+    }
     Ok(copy)
 }

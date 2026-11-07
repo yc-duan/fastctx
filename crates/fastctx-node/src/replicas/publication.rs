@@ -112,12 +112,14 @@ pub(crate) fn save_now(
         .expect("never poisoned")
         .get(&copy.id())
         .is_none_or(|before| before.head != route.head || before.path != route.path);
-    node.replicas.state.relocated(copy);
     let mut kept = copy.clone();
     if publish {
         kept.projected = project(node, copy, previous)?;
     }
-    state::save(&node.world, &kept).map_err(|error| error.to_string())?;
+    if let Some(warning) = state::save(&node.world, &kept).map_err(|error| error.to_string())? {
+        node.log.line(warning);
+    }
+    node.replicas.state.relocated(copy);
     node.replicas.state.routes.lock().expect("never poisoned").insert(copy.id(), route);
     drop(_publication);
     if changed {
@@ -181,7 +183,9 @@ pub(crate) fn repair_now(node: &Node, copy: &Copy) -> Result<Option<Option<Proje
     }
     let mut kept = copy.clone();
     kept.projected = projected.clone();
-    state::save(&node.world, &kept).map_err(|error| error.to_string())?;
+    if let Some(warning) = state::save(&node.world, &kept).map_err(|error| error.to_string())? {
+        node.log.line(warning);
+    }
     Ok(Some(projected))
 }
 
@@ -207,8 +211,11 @@ pub(crate) async fn leave(
     })
     .await
     .map_err(|error| error.to_string())?;
-    copy.left.clear();
-    save(node, copy, false, None).await
+    let mut kept = copy.clone();
+    kept.left.clear();
+    save(node, &mut kept, false, None).await?;
+    *copy = kept;
+    Ok(())
 }
 
 /// `folder_now`, where writing the disk may block.
@@ -230,7 +237,9 @@ pub(crate) fn folder_now(node: &Node, folder: Folder) -> Result<(), String> {
     if node.replicas.state.folders.lock().expect("never poisoned").get(&folder.path) == Some(&folder) {
         return Ok(());
     }
-    state::save_folder(&node.world, &folder).map_err(|error| error.to_string())?;
+    if let Some(warning) = state::save_folder(&node.world, &folder).map_err(|error| error.to_string())? {
+        node.log.line(warning);
+    }
     let mut folders = node.replicas.state.folders.lock().expect("never poisoned");
     folders.retain(|path, existing| {
         path == &folder.path
