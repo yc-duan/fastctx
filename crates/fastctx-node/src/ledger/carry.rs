@@ -4,6 +4,8 @@ use super::*;
 use crate::history::import::archive::{self, Original};
 use fastctx_types::{AccountName, history::Scope};
 use serde::{Deserialize, Serialize};
+#[path = "carry_history.rs"]
+mod history;
 #[path = "carry_retained.rs"]
 mod retained;
 #[path = "carry_topics.rs"]
@@ -303,6 +305,7 @@ fn translated(node: &Node, link: &Link, entry: &Entry, own: &fastctx_net::sign::
     if ours {
         crate::town::rename::memory(&mut files, old, &here)?;
     }
+    history::stamp(entry, &mut files)?;
     let mut carried =
         link.entry(&entry.town, entry.machines.as_ref().map(|machines| machines.iter().map(renamed).collect()), files);
     carried.at = entry.at;
@@ -331,9 +334,10 @@ async fn prefix(
                 break;
             }
             let entry = item.entry.ok_or_else(|| item.refused.unwrap_or_else(|| "unreadable carried entry".into()))?;
-            let expected = translated(node, link, &source[selected[through]].1, own)?;
+            let original = &source[selected[through]].1;
+            let expected = translated(node, link, original, own)?;
             if item.seq != through as u64 + 1
-                || entry.files != expected.files
+                || !history::matches(original, &expected.files, &entry.files)
                 || entry.at != expected.at
                 || entry.machines != expected.machines
             {

@@ -364,8 +364,9 @@ pub(crate) async fn ask_as(
                         &member_key,
                         access.as_ref().map_or(&account, |access| &access.actor),
                         &stored.revision.author,
+                        stored.submission.is_some(),
                     )?;
-                    history_author = Some(stored.revision.author.clone());
+                    history_author = Some((stored.revision.author.clone(), stored.submission.is_some()));
                     fastctx_types::history::markdown::parse_written(&stored.revision.name, &stored.text)?;
                     crate::history_limits::conversation(&records, &key)?;
                     if stored.revision.version != version
@@ -434,7 +435,7 @@ pub(crate) async fn ask_as(
                             let store = publishing.edit_store();
                             permitted(&publishing, &store, &author, &member_key, &owner, opened, access.as_ref())
                                 .map_err(std::io::Error::other)?;
-                            if let Some(history_author) = &history_author {
+                            if let Some((history_author, submitted)) = &history_author {
                                 crate::history_author::check(
                                     &publishing,
                                     &store,
@@ -442,6 +443,7 @@ pub(crate) async fn ask_as(
                                     &member_key,
                                     access.as_ref().map_or(&owner, |access| &access.actor),
                                     history_author,
+                                    *submitted,
                                 )
                                 .map_err(std::io::Error::other)?;
                             }

@@ -81,7 +81,15 @@ impl Prepared {
     fn check_author(&self, hub: &Hub, store: &crate::store::Snapshot, from: &MachineName) -> Result<(), String> {
         if let Some(history) = &self.history {
             let account = self.account.as_ref().ok_or("project history writes require an explicit account")?;
-            crate::history_author::check(hub, store, from, &self.entry.key, account, &history.revision.author)?;
+            crate::history_author::check(
+                hub,
+                store,
+                from,
+                &self.entry.key,
+                account,
+                &history.revision.author,
+                history.submission.is_some(),
+            )?;
         }
         Ok(())
     }

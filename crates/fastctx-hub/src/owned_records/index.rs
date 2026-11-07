@@ -111,6 +111,24 @@ impl Index {
         found.next().is_none().then_some(conversation)
     }
 
+    /// Whether an address belongs to a current account, regardless of the reader's access.
+    pub(crate) fn registered_at<L: fastctx_net::authorization::Lookup + ?Sized>(
+        &self,
+        directory: &L,
+        address: &Address,
+    ) -> bool {
+        let names: Vec<_> = match directory.find_member(&address.machine) {
+            Some(member) => std::iter::once(&member.name).chain(&member.was).collect(),
+            None => vec![&address.machine],
+        };
+        names.into_iter().any(|name| {
+            self.addresses.get(&(name.clone(), address.resident.clone())).is_some_and(|keys| {
+                keys.iter()
+                    .any(|identity| directory.find_account(&identity.0).is_some_and(|owner| owner.opened == identity.1))
+            })
+        })
+    }
+
     pub(crate) fn resolve<L: fastctx_net::authorization::Lookup + ?Sized>(
         &self,
         directory: &L,
