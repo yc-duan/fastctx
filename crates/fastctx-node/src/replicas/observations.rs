@@ -46,8 +46,11 @@ pub(crate) async fn saw(
             || {
                 fastctx_platform::disk::metadata(&copy.path).ok().is_some_and(|metadata| {
                     metadata.len() == seen.size
+                        && metadata.len() == shown.len
                         && metadata.modified().ok().and_then(|time| jiff::Timestamp::try_from(time).ok())
                             == seen.modified
+                        && fastctx_platform::disk::read(&copy.path)
+                            .is_ok_and(|bytes| bodies::Text::of_bytes(&bytes) == shown)
                 })
             },
             |seen| *seen == shown.hash,
