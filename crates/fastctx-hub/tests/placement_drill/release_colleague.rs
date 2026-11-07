@@ -93,11 +93,7 @@ pub(super) async fn exercise(
         ask(&root, json!({"call":"turn_evidence","resident":parent,"turn":null,"refresh_limits":false})).await?;
     let waited = evidence["evidence"]["waiting"].to_string().contains(&id);
     anyhow::ensure!(idle_after(&root, &id, None).await, "the release colleague did not settle");
-    record(
-        "a colleague opens no goal",
-        block(&root, &id, "goal").is_empty(),
-        json!(block(&root, &id, "goal")),
-    );
+    record("a colleague opens no goal", block(&root, &id, "goal").is_empty(), json!(block(&root, &id, "goal")));
     // What it told wakes the conversation that asked it, and so does the end
     // of its turn: the asker takes a turn after the one it asked in.
     let woke = idle_after(&root, parent.as_str(), asked_turn).await;
