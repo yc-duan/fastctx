@@ -139,7 +139,10 @@ pub(crate) async fn intercept(
             }
             Some(fastctx_types::files::SeenVersion::Partial { size, modified }) => {
                 let unchanged = fastctx_platform::disk::metadata(&canonical).is_ok_and(|metadata| {
-                    metadata.len() == *size && metadata.modified().is_ok_and(|time| time == *modified)
+                    metadata.len() == *size
+                        && metadata.len() == before.len() as u64
+                        && metadata.modified().is_ok_and(|time| time == *modified)
+                        && fastctx_platform::disk::read(&canonical).is_ok_and(|bytes| bytes == before.as_bytes())
                 });
                 if !unchanged {
                     return Err(failure("the file changed since it was viewed; view it again before writing"));
