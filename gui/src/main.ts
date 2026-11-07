@@ -139,7 +139,8 @@ import { SettingsPage } from "./app/settings";
 import { DataPage, enData, totalOf, zhData } from "./app/data-page";
 import { data } from "./world/data";
 import { keptForget, keptUsage, keptClear, seenDissolved, unwatch } from "./world/bridge";
-import { HISTORY, PREVIEW } from "./app/preview";
+import { PREVIEW } from "./app/preview";
+import { historyForProject, historyForTalk } from "./app/history-offered";
 import { talksOf } from "./app/talk-row";
 import { ProjectsPage, enProjects, zhProjects } from "./app/projects-page";
 import "./app/projects.css";
@@ -900,7 +901,9 @@ function historyLink(scope: HistoryScope, name: string, from?: Address): string 
  *  wrote before it joined the project after it, or else its own
  *  (`world-history.md`, 项目一份，对话一份). */
 function sideHistory(address: Address, town: string | null) {
-  if (!historyOffered) return undefined;
+  const world = live ? store.world.peek() : specimen.world;
+  const acting = residentsOf(world).find((r) => sameAddress(addressOf(r), address))?.about.acting ?? null;
+  if (town ? !historyForProject(world, town, live) : !historyForTalk(world, acting, live)) return undefined;
   const seam = (scope: HistoryScope) => ({
     watch: (show: (catalog: HistoryCatalog | null) => void) => followHistoryOf(scope, show),
     link: (name: string) => historyLink(scope, name, address),
@@ -908,7 +911,6 @@ function sideHistory(address: Address, town: string | null) {
   });
   const own = seam({ kind: "conversation", resident: address.resident, machine: address.machine });
   if (!town) return { words: historyWords, ...own };
-  const world = live ? store.world.peek() : specimen.world;
   const name = world?.towns.find((one) => one.town === town)?.record.name ?? town;
   return {
     words: historyWords,
@@ -935,9 +937,6 @@ const historyForm = new HistoryForm({
     return `${at.getFullYear()}-${String(at.getMonth() + 1).padStart(2, "0")}-${String(at.getDate()).padStart(2, "0")}`;
   },
 });
-
-/** Whether histories are offered (`app/preview.ts`). */
-const historyOffered = HISTORY;
 
 /** Follows a history's catalog as it changes; returns how to stop. A
  *  World without the watch still answers a single read. */
@@ -2524,7 +2523,7 @@ function projectPage(town: string): Page {
   let historyWatch: number | null = null;
   const followHistory = async () => {
     const scope: HistoryScope = { kind: "project", project: town };
-    if (!historyOffered) return page.showHistory(null);
+    if (!historyForProject(store.world.peek(), town, live)) return page.showHistory(null);
     if (!live) return page.showHistory(specimenHistory(scope, specimen.now));
     try {
       const id = await historySeam.watch(scope, (catalog) => {
@@ -3117,7 +3116,7 @@ function show(next: Place): void {
       });
       break;
     case "feature":
-      page = new FeaturesPage({ store, words: english ? enFeatures : zhFeatures, homeWords: agentHomeWords, english, head: next.feature === "collaboration" || next.feature === "conversations" ? settingsHead(head, english ? enTalkSettings : zhTalkSettings, "collab") : head, feature: next.feature === "conversations" ? "collaboration" : next.feature, agents: () => agentsOn(null), confirm: accountConfirm, sentinels: { seam: sentinelSeam, machines: sentinelHomes } });
+      page = new FeaturesPage({ store, words: english ? enFeatures : zhFeatures, homeWords: agentHomeWords, english, head: next.feature === "collaboration" || next.feature === "conversations" ? settingsHead(head, english ? enTalkSettings : zhTalkSettings, "collab") : next.feature === "history" ? settingsHead(head, english ? enTalkSettings : zhTalkSettings, "history") : head, feature: next.feature === "conversations" ? "collaboration" : next.feature, agents: () => agentsOn(null), confirm: accountConfirm, sentinels: { seam: sentinelSeam, machines: sentinelHomes } });
       break;
     case "activity":
       page = new ActivityPage({

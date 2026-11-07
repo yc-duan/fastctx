@@ -3,6 +3,7 @@
 
 import type { GlyphName } from "../conversation/glyphs";
 import type { CollaborationWords } from "../film/collaboration";
+import type { HistoryFilmWords } from "../film/history";
 import type { SentinelFilmWords } from "../film/sentinel";
 import type { WorkbenchWords } from "../film/workbench";
 
@@ -28,6 +29,9 @@ export interface FeaturesWords {
    *  away and what carries on once it is off. */
   conversations: { name: string; line: string; film: WorkbenchWords; after: string; offWhat: string };
   collaboration: { name: string; line: string; film: CollaborationWords; gives: [GlyphName, string][]; after: string; offWhat: string };
+  /** History (`world-history.md`): a switch, and no settings. `unread`
+   *  when the switch cannot be read; `hubOld` where the hub cannot keep it. */
+  history: { name: string; line: string; film: HistoryFilmWords; gives: [GlyphName, string][]; after: string; offWhat: string; unread: string; hubOld: string };
   /** While the settings are being read. */
   reading: string;
   retry: string;
@@ -143,6 +147,19 @@ export const zhFeatures: FeaturesWords = {
     after: "选中的调用方，对话里有了请 GPT 的工具",
     offWhat: "智能体的对话里不再有请 GPT 的工具；这里的设置留着，再开时照旧。",
   },
+  history: {
+    name: "历史",
+    line: "项目与对话留给后来者的记录",
+    film: { captions: ["对话把经过、定下的、否掉的，写进历史", "第二天醒来的，不论是哪一家的模型", "一搜就找到那一行，接着往下做", "每台电脑上都是一份纯文本"] },
+    gives: [
+      ["history", "每个项目一份，每段不在项目里的对话一份；模型自己写，你也能写"],
+      ["search", "纯文本放在你的每台电脑上，哪一家的模型都用\u00a0rg\u00a0读"],
+    ],
+    after: "对话的角上与项目页里有了历史；模型从下一轮起拿到它的名单",
+    offWhat: "对话里的模型不再拿到历史，界面上收起它的入口；已经写下的每一篇都留着，再开时照旧。",
+    unread: "读不到历史的开关",
+    hubOld: "这个网络的中枢还存不了这个开关，更新中枢后可用",
+  },
   reading: "正在读取设置",
   retry: "重试",
   sentinels: {
@@ -247,6 +264,26 @@ export const enFeatures: FeaturesWords = {
     ],
     after: "The callers you choose get the tools to ask a GPT in their conversations",
     offWhat: "Conversations no longer get the tools to ask a GPT; these settings stay for when you turn it on again.",
+  },
+  history: {
+    name: "History",
+    line: "What projects and conversations leave for whoever comes next",
+    film: {
+      captions: [
+        "A conversation writes down what happened, what was decided and what was let go",
+        "The next day a model wakes to the same work, from whichever vendor",
+        "One search finds the line, and it carries on",
+        "On every computer, a plain text file",
+      ],
+    },
+    gives: [
+      ["history", "One for each project and one for each conversation outside a project; models write it, and so can you"],
+      ["search", "Plain text on each of your computers, read with rg by any vendor's model"],
+    ],
+    after: "Conversations and projects show their history; models get its list from their next turn",
+    offWhat: "Models in conversations no longer get the history, and its ways in fold away; every document written stays, as it is, for when you turn it on again.",
+    unread: "Couldn't read the history switch",
+    hubOld: "This network's hub can't keep this switch yet; update the hub to use it",
   },
   reading: "Reading the settings",
   retry: "Retry",
