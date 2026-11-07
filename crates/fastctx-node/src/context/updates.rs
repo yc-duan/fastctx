@@ -22,6 +22,7 @@ pub(crate) struct Updates {
     wake: tokio::sync::Notify,
     pub(crate) routes: super::routes::Routes,
     pub(crate) projects: super::projects::Projects,
+    pub(crate) reading: super::reading::Reading,
     pub(crate) history_catalogs: crate::history::context::catalog::Catalogs,
     refreshing: crate::leases::Registry<ResidentId, fastctx_platform::doing::Mutex<()>>,
     background: tokio::sync::Semaphore,
@@ -33,6 +34,7 @@ impl Default for Updates {
             pending: Mutex::default(),
             routes: super::routes::Routes::default(),
             projects: super::projects::Projects::default(),
+            reading: super::reading::Reading::default(),
             history_catalogs: crate::history::context::catalog::Catalogs::default(),
             wake: tokio::sync::Notify::new(),
             refreshing: crate::leases::Registry::default(),
@@ -158,7 +160,7 @@ pub(crate) async fn refresh(node: &Arc<Node>, id: &ResidentId) -> Result<(), Fai
         if revision[index] == loaded[index] {
             continue;
         }
-        let generation = (*node.views.borrow(), *node.ways.borrow(), *node.memory_changes.borrow());
+        let reading = node.contexts.reading.start(node, &about, town.as_ref(), part);
         part.record();
         match part {
             Part::Focus => {
@@ -179,7 +181,7 @@ pub(crate) async fn refresh(node: &Arc<Node>, id: &ResidentId) -> Result<(), Fai
             Part::Skills => super::sources::skills(node, id, &about.acting).await?,
             Part::History => super::map(node, id, town.as_ref(), &about.origin, &about.acting).await?,
         }
-        if generation != (*node.views.borrow(), *node.ways.borrow(), *node.memory_changes.borrow()) {
+        if !reading.current(node) {
             continue;
         }
         // A later source may fail; the successful ones need not run again.

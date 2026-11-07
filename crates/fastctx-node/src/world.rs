@@ -158,7 +158,8 @@ pub fn start(node: &Arc<Node>, membership: Membership) -> io::Result<Arc<Link>> 
         .is_some_and(|ended| ended.dissolved);
     let handler = Arc::new(Handler { node: Arc::downgrade(node), hub: hub.clone(), changes: Arc::default() });
     let link = Arc::new(Link::start(net, membership, key, handler)?);
-    if let Some(old) = node.links.write().expect("never poisoned").insert(hub.clone(), link.clone()) {
+    let previous = node.links.write().expect("never poisoned").insert(hub.clone(), link.clone());
+    if let Some(old) = previous {
         old.stop();
     }
     // What the link said of its ways before it was among the links was not

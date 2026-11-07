@@ -16,6 +16,7 @@ impl Inner {
     /// The hub told how `machine` is connected now, its `rev`th change of
     /// who is online.
     pub(super) fn heard_presence(&self, machine: MachineName, mut presence: Presence, rev: u64) {
+        let _publishing = self.publishing_view.lock().expect("publishing view");
         presence.since = presence.since.map(|at| self.local(at));
         {
             let mut presences = self.presences.lock().expect("never poisoned");

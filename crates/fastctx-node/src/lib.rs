@@ -415,6 +415,7 @@ impl Node {
     /// A hub's view may have changed, or this computer's name did: what is
     /// afoot here, and what an interface shows, may change with it.
     pub(crate) fn views_changed(&self) {
+        self.contexts.reading.changed(self);
         self.views.send_modify(|changes| *changes = changes.wrapping_add(1));
         self.shown_changed();
     }

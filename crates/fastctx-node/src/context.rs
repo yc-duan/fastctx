@@ -11,6 +11,7 @@ pub(crate) mod migration_drill;
 pub(crate) mod parts;
 mod projection;
 mod projects;
+mod reading;
 pub(crate) mod records;
 pub(crate) mod routes;
 pub(crate) mod sources;

@@ -365,6 +365,8 @@ pub(crate) struct Inner {
     held_now: AtomicU64,
     /// Replaced whole on each refresh, so a reader holds it as it was.
     view: Mutex<Arc<View>>,
+    /// Publish a view and notify its readers before another view supersedes it.
+    publishing_view: Mutex<()>,
     /// One refresh of the view at a time, or one change to it; others wait,
     /// and one that waited takes what a refresh begun meanwhile found.
     refreshing: tokio::sync::Mutex<Refreshed>,
@@ -558,6 +560,7 @@ impl Link {
             letters: Mutex::new(Letters { file: letters_file, next }),
             letters_writing: Mutex::new(()),
             view: Mutex::new(Arc::new(view)),
+            publishing_view: Mutex::new(()),
             refreshing: tokio::sync::Mutex::new(Refreshed::default()),
             refreshes: AtomicU64::new(0),
             view_synced: AtomicU64::new(0),

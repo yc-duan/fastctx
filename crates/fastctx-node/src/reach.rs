@@ -40,6 +40,7 @@ impl Node {
     /// The ways to other machines may have changed: a link said so, or one
     /// came or went with a login.
     pub(crate) fn ways_changed(&self) {
+        self.contexts.reading.changed(self);
         self.ways.send_modify(|changes| *changes = changes.wrapping_add(1));
     }
 
