@@ -121,15 +121,31 @@ pub(crate) async fn intercept(
     {
         let seen = crate::write::load_seen(&node.world.owner(&node.names(), owner).seen()).map_err(failure)?;
         let canonical = fastctx_hands::files::canonical_path(path).map_err(failure)?;
-        if let Some(seen) = seen.get(&canonical)
-            && let fastctx_types::files::SeenVersion::Full { sha256 } = &seen.version
-            && fastctx_hands::files::content_hash(before.as_bytes()) != *sha256
-        {
-            let found = match &document {
-                Some(_) => super::local::seen(node, &scope, &name, sha256).await?,
-                None => None,
-            };
-            before = found.ok_or_else(|| failure("the observed history version is unavailable; read it again"))?;
+        match seen.get(&canonical).map(|seen| &seen.version) {
+            None if document.is_some() => {
+                return Ok(Some(Err("write replaces this whole history document; view it with fastctx view \
+                     before replacing it, or change part of it with edit"
+                    .to_string()
+                    .into())));
+            }
+            Some(fastctx_types::files::SeenVersion::Full { sha256 })
+                if fastctx_hands::files::content_hash(before.as_bytes()) != *sha256 =>
+            {
+                let found = match &document {
+                    Some(_) => super::local::seen(node, &scope, &name, sha256).await?,
+                    None => None,
+                };
+                before = found.ok_or_else(|| failure("the observed history version is unavailable; read it again"))?;
+            }
+            Some(fastctx_types::files::SeenVersion::Partial { size, modified }) => {
+                let unchanged = fastctx_platform::disk::metadata(&canonical).is_ok_and(|metadata| {
+                    metadata.len() == *size && metadata.modified().is_ok_and(|time| time == *modified)
+                });
+                if !unchanged {
+                    return Err(failure("the file changed since it was viewed; view it again before writing"));
+                }
+            }
+            _ => {}
         }
     }
     let proposed = fastctx_hands::write::candidate::prepare(operation, document.as_ref().map(|_| before.as_bytes()))
