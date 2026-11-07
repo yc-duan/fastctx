@@ -314,6 +314,17 @@ pub(crate) fn prune_now(node: &Node) -> Result<(), String> {
 }
 
 fn delete_folder(node: &Node, folder: &Folder) -> std::io::Result<()> {
+    let scope = state::scope_key(&folder.scope);
+    let has_copies = node.replicas.state.routes.lock().expect("never poisoned").values().any(|route| {
+        route.account.hub == folder.account.hub
+            && match &route.head.document {
+                Document::History { scope: kept, .. } => state::scope_key(kept) == scope,
+                Document::Plan { owner } => format!("conversation:{}:{}", route.head.owner, owner.resident) == scope,
+            }
+    });
+    if has_copies {
+        return Err(std::io::Error::new(std::io::ErrorKind::WouldBlock, "the folder still has copies to withdraw"));
+    }
     super::removal::delete(&node.world, &folder.path)?;
     release(node, folder)?;
     state::delete_folder(&node.world, folder)?;
