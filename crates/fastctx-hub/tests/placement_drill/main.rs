@@ -586,6 +586,15 @@ async fn main() -> Result<()> {
         idle_after(&alice_pc, writer.to.resident.as_str(), None).await,
         "the offline writer did not settle"
     );
+    // Notes are off until each account turns them on.
+    for (world, account) in [(&wa, "alice"), (&wo, "owner"), (&wb, "bob")] {
+        world.history_switch_write(None, Some(name(account)), true).await?;
+        record(
+            "the account's notes switch reads back on",
+            world.history_switch_read(None, Some(name(account))).await?.on,
+            json!(account),
+        );
+    }
     let offline_scope = fastctx_types::history::Scope::Conversation {
         resident: sa.to.resident.clone(),
         machine: sa.to.machine.clone(),
@@ -600,6 +609,8 @@ async fn main() -> Result<()> {
     .await?;
     let offline_path = pa.parent().unwrap().join("history/offline-history.md");
     anyhow::ensure!(file_is(&offline_path, offline_original).await, "offline history did not reach its computer");
+    // A whole history document is replaced only by one who has seen it.
+    saw_as(&alice_pc, &writer.to, &offline_path).await?;
     hub.kill()?;
     hub.wait()?;
     for _ in 0..120 {
@@ -753,7 +764,17 @@ async fn main() -> Result<()> {
                 .is_ok(),
         json!(null),
     );
-    lifecycle::exercise(&base, &wa, &alice_pc, &alice_two, &mut alice_node, &mut alice_two_node, listen).await?;
+    lifecycle::exercise(
+        &base,
+        &wa,
+        &alice_pc,
+        &alice_two,
+        &mut alice_node,
+        &mut alice_two_node,
+        listen,
+        &mock_configuration,
+    )
+    .await?;
     std::fs::write(
         base.join("expectations.json"),
         serde_json::to_vec(
@@ -784,6 +805,28 @@ async fn online_now(root: &Path, label: &str) -> bool {
 
 async fn write_as(root: &Path, owner: &fastctx_types::Address, path: &Path, text: &str) -> Result<()> {
     operation_as(root, owner, json!({"tool":"write","file_path":path,"content":text})).await
+}
+
+/// Records that `owner` read `path` whole, as `fastctx view` does.
+async fn saw_as(root: &Path, owner: &fastctx_types::Address, path: &Path) -> Result<()> {
+    use sha2::Digest as _;
+    let bytes = tokio::fs::read(path).await?;
+    let seen = fastctx_types::residents::Seen {
+        path: path.to_string_lossy().into_owned(),
+        at: jiff::Timestamp::now(),
+        sha256: Some(format!("{:x}", sha2::Sha256::digest(&bytes))),
+        size: bytes.len() as u64,
+        modified: None,
+        encoding: Some("utf-8".into()),
+        encoding_selection: None,
+    };
+    let mut client = fastctx_client::Client::connect(
+        &WorldDir::under(root),
+        Peer::Command { resident: Some(owner.clone()), session: None },
+    )
+    .await?;
+    client.call(fastctx_types::Call::Saw { owner: owner.clone(), town: None, seen: vec![seen] }).await?;
+    Ok(())
 }
 
 async fn operation_as(root: &Path, owner: &fastctx_types::Address, operation: Value) -> Result<()> {
