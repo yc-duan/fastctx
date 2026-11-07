@@ -28,6 +28,20 @@ pub(crate) struct Account {
     pub bytes: usize,
 }
 
+impl Account {
+    pub fn history(&self, resident: &str) -> impl Iterator<Item = &Entry> {
+        let kind = fastctx_types::history::RECORD_KIND;
+        let prefix = format!("{resident}/");
+        self.entries
+            .range((kind.to_owned(), prefix.clone())..)
+            .take_while(move |((entry_kind, key), _)| entry_kind == kind && key.starts_with(&prefix))
+            .filter(|((_, key), _)| {
+                key.split_once('/').is_some_and(|(_, name)| fastctx_types::history::markdown::check_name(name).is_ok())
+            })
+            .map(|(_, entry)| entry)
+    }
+}
+
 pub(crate) struct Slot {
     dir: PathBuf,
     pub records: Arc<tokio::sync::Mutex<Account>>,

@@ -248,9 +248,7 @@ pub(crate) async fn ask(
             check(hub, &hub.store(), &from, &key, &access.conversation.account, opened, &access)?;
             let mut catalog = fastctx_types::history::Catalog {
                 documents: records
-                    .entries
-                    .values()
-                    .filter(|entry| record_key(&access.conversation, &entry.metadata.kind, &entry.metadata.key).is_ok())
+                    .history(access.conversation.address.resident.as_str())
                     .filter_map(|entry| entry.history.clone())
                     .collect(),
             };

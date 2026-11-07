@@ -76,10 +76,7 @@ pub(super) async fn catalog(
             history: None,
         });
         let scope = Scope::Conversation { conversation: conversation.clone() };
-        for entry in records.entries.values().filter(|entry| {
-            entry.metadata.kind == fastctx_types::history::RECORD_KIND
-                && super::record_key(&conversation, &entry.metadata.kind, &entry.metadata.key).is_ok()
-        }) {
+        for entry in records.history(address.resident.as_str()) {
             if let Some(revision) = &entry.history {
                 catalog.documents.push(Head {
                     owner: conversation.account.clone(),
@@ -134,13 +131,39 @@ pub(super) async fn catalog(
         ),
     };
     catalog.scopes.retain(keeps);
+    let conversations: std::collections::HashSet<_> = catalog
+        .scopes
+        .iter()
+        .filter_map(|scope| match scope {
+            Scope::Conversation { conversation } => Some(&conversation.address),
+            Scope::Project { .. } => None,
+        })
+        .collect();
+    let histories: std::collections::HashSet<_> = catalog
+        .scopes
+        .iter()
+        .filter_map(|scope| match scope {
+            Scope::Conversation { conversation } => Some((&conversation.account, &conversation.address)),
+            Scope::Project { .. } => None,
+        })
+        .collect();
+    let projects: std::collections::HashSet<_> = catalog
+        .scopes
+        .iter()
+        .filter_map(|scope| match scope {
+            Scope::Project { town, .. } => Some(town),
+            Scope::Conversation { .. } => None,
+        })
+        .collect();
+    let indexed = store.indexed();
     catalog.documents.retain(|head| {
-        directory.account(&head.owner).is_some_and(|owner| owner.opened == head.opened)
+        indexed.account(&head.owner).is_some_and(|owner| owner.opened == head.opened)
             && match &head.document {
-                Document::Plan { owner } => catalog.scopes.iter().any(
-                    |scope| matches!(scope, Scope::Conversation { conversation } if &conversation.address == owner),
-                ),
-                Document::History { scope, .. } => keeps(scope),
+                Document::Plan { owner } => conversations.contains(owner),
+                Document::History { scope: Scope::Conversation { conversation }, .. } => {
+                    histories.contains(&(&conversation.account, &conversation.address))
+                }
+                Document::History { scope: Scope::Project { town, .. }, .. } => projects.contains(town),
             }
     });
     Ok(catalog)
