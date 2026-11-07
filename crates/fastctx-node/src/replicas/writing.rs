@@ -240,6 +240,10 @@ pub(crate) async fn intercept(
     };
     let edit_id = edit.id.clone();
     next.pending.push(edit);
+    if !offline {
+        super::publication::save(node, &mut next, false, None).await.map_err(failure)?;
+        *copy = next.clone();
+    }
     let submitted = if offline { Ok(()) } else { flush(node, &link, &mut next).await };
     if submitted.is_err() {
         for pending in &mut next.pending {
