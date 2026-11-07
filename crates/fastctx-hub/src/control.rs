@@ -20,6 +20,7 @@ use tokio::sync::mpsc;
 
 pub(crate) mod diagnostics;
 mod encoding;
+mod sending;
 mod transport;
 
 use crate::outq::Outq;
@@ -230,7 +231,9 @@ pub(crate) async fn session(
         out.afoot_started();
     }
 
-    let mut transport = transport::Transport::start(socket, &hub.network);
+    let pulse = crate::pulse_of(&socket);
+    let socket = sending::Socket::new(socket, &hub, name.clone(), key);
+    let mut transport = transport::Transport::start(socket, pulse, &hub.network);
     let output = transport.outgoing.clone();
     let (stopped, mut writer_stopped) = tokio::sync::oneshot::channel::<()>();
     let (telling, member, member_name, queue) = (hub.clone(), key, name.clone(), out.clone());
@@ -256,10 +259,10 @@ pub(crate) async fn session(
                     return;
                 }
             };
-            for (bytes, dissolved) in frames {
+            for (outgoing, dissolved) in frames {
                 let (written, received) = tokio::sync::oneshot::channel();
                 tokio::select! {
-                    sent = output.send(transport::Packet { bytes, last, written: dissolved.then_some(written) }) => {
+                    sent = output.send(transport::Packet { outgoing, last, written: dissolved.then_some(written) }) => {
                         if sent.is_err() { return; }
                     }
                     why = queue.overflowed() => {

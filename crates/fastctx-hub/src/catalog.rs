@@ -44,6 +44,10 @@ impl Catalog {
         Ok(Self { current, edits })
     }
 
+    pub(crate) fn reader(&self) -> Arc<ArcSwap<Snapshot>> {
+        self.current.clone()
+    }
+
     pub(crate) fn read(&self) -> Arc<Snapshot> {
         self.current.load_full()
     }

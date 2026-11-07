@@ -1,6 +1,7 @@
 //! Resource-level record access keeps the reader separate from the opener.
 
 mod deletion;
+pub(crate) mod hints;
 pub(crate) mod index;
 mod plans;
 mod projection;
@@ -334,7 +335,7 @@ async fn revisions(
     Ok(records)
 }
 
-/// Rechecked immediately before sending, so queued hints cannot outlive a grant.
+/// Selects recipients before the hint enters their outgoing queues.
 pub(crate) fn hint<L: fastctx_net::authorization::Lookup + ?Sized>(
     hub: &Hub,
     directory: &L,
