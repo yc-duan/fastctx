@@ -91,7 +91,7 @@ pub(crate) struct Folder {
     pub path: PathBuf,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Route {
     pub epoch: u64,
     pub account: HubAccount,

@@ -261,7 +261,9 @@ pub(crate) fn prune_now(node: &Node) -> Result<(), String> {
         .collect();
     for (id, route) in routes {
         let _publication = node.replicas.state.publication.write().expect("never poisoned");
-        if unknown(node, &route.account.hub) {
+        if node.replicas.state.routes.lock().expect("never poisoned").get(&id) != Some(&route)
+            || unknown(node, &route.account.hub)
+        {
             continue;
         }
         if permitted(node, &route).is_err() {
@@ -349,7 +351,7 @@ pub(crate) fn catalog_now(
             .lock()
             .expect("never poisoned")
             .get(&id)
-            .is_some_and(|current| current.epoch == route.epoch)
+            .is_some_and(|current| current == &route)
         {
             state::delete(&node.world, &route).map_err(|error| error.to_string())?;
             node.replicas.state.remove(&id);
