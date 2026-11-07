@@ -28,6 +28,7 @@ fn validate(cursor: &Cursor) -> io::Result<()> {
     if cursor.topics.len() > TOPICS
         || !digest(&cursor.scope)
         || cursor.topics.iter().any(|(key, value)| !digest(key) || !digest(value))
+        || cursor.versions.keys().any(|key| !cursor.topics.contains_key(key))
     {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,

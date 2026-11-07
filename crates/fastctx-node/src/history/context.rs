@@ -19,6 +19,8 @@ use std::{collections::BTreeMap, io, sync::Arc};
 struct Cursor {
     scope: String,
     topics: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    versions: BTreeMap<String, u64>,
 }
 fn hash(text: &str) -> String {
     format!("{:x}", Sha256::digest(text.as_bytes()))
@@ -162,11 +164,12 @@ pub(crate) async fn refresh(
             .iter()
             .map(|revision| (hash(&revision.name), hash(&format!("{}:{}", revision.retired, revision.description))))
             .collect(),
+        versions: catalog.documents.iter().map(|revision| (hash(&revision.name), revision.version)).collect(),
     };
     let directory = node.world.conversation(id);
     let before = task::spawn_blocking(move || heard::read(&directory)).await.map_err(failure)?.map_err(failure)?;
     let changed = before.as_ref().filter(|before| before.scope == cursor.scope).map(|before| {
-        catalog.documents.iter().filter(|revision| before.topics.get(&hash(&revision.name)) != cursor.topics.get(&hash(&revision.name)))
+        catalog.documents.iter().filter(|revision| before.topics.get(&hash(&revision.name)) != cursor.topics.get(&hash(&revision.name)) || before.versions.get(&hash(&revision.name)).is_some_and(|version| Some(version) != cursor.versions.get(&hash(&revision.name))))
             .filter(|revision| !matches!(&revision.author.stamp.by, Writer::Resident { address } if address.resident == *id && node.is_me(&address.machine)))
             .map(fastctx_hands::history::changed).collect::<Vec<_>>()
     });
