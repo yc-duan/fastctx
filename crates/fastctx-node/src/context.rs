@@ -107,6 +107,11 @@ pub(crate) fn clear(node: &Node, id: &ResidentId, name: &str, change: Change<'_>
 
 pub(crate) use sources::{map, plan, plan_unavailable, prepare, refresh_local_now};
 
+/// The latest prepared source version, which may not have been acknowledged yet.
+pub(crate) fn current_version(rows: &crate::records::Rows<'_>, name: &str) -> fastctx_storage::Result<Option<String>> {
+    storage::current_version(rows, name)
+}
+
 /// The revision the current context epoch records as heard, in the caller's transaction.
 pub(crate) fn seen_revision(rows: &crate::records::Rows<'_>, name: &str) -> fastctx_storage::Result<Option<u64>> {
     storage::seen_revision(rows, name)

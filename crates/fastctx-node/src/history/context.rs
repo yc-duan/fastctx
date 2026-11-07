@@ -23,6 +23,13 @@ struct Cursor {
     topics: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     versions: BTreeMap<String, u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    location: Option<String>,
+}
+impl Cursor {
+    fn location_changed(&self, before: Option<&Self>) -> bool {
+        before.is_some_and(|before| before.scope == self.scope && before.location != self.location)
+    }
 }
 fn hash(text: &str) -> String {
     format!("{:x}", Sha256::digest(text.as_bytes()))
@@ -163,10 +170,7 @@ pub(crate) async fn refresh(
         node.contexts.routes.remember_authors(id, authors.into_inner().into_keys().collect());
     }
     let scope_id = hash(&serde_json::to_string(&(&scope, &account)).map_err(failure)?);
-    let cursor = Cursor { scope: scope_id, topics: prepared.topics.clone(), versions: prepared.versions.clone() };
-    let directory = node.world.conversation(id);
-    let before = task::spawn_blocking(move || heard::read(&directory)).await.map_err(failure)?.map_err(failure)?;
-    let changed = changes(before.as_ref(), &cursor, &catalog, &prepared.names, id, |machine| node.is_me(machine));
+    let mut previous_location = None;
     let mut text = match &location {
         Some(location) => fastctx_hands::history::context_with_topics(
             &prepared.listing,
@@ -197,24 +201,59 @@ pub(crate) async fn refresh(
                 "\n\nThis conversation's earlier history is in {} on {}.",
                 location.path, location.machine
             ));
+            previous_location = Some(location);
         }
     }
-    let fact = changed
-        .as_ref()
-        .filter(|facts| !facts.is_empty())
-        .map(|facts| facts.join("\n"))
-        .unwrap_or_else(|| "The history available to this conversation changed.".into());
-    let own = changed.as_ref().is_some_and(Vec::is_empty);
+    let cursor = Cursor {
+        scope: scope_id,
+        topics: prepared.topics.clone(),
+        versions: prepared.versions.clone(),
+        location: Some(hash(&serde_json::to_string(&(&location, &previous_location)).map_err(failure)?)),
+    };
+    let directory = node.world.conversation(id);
+    let (before, previous) =
+        task::spawn_blocking(move || heard::read(&directory)).await.map_err(failure)?.map_err(failure)?;
+    let changed = changes(before.as_ref(), &cursor, &catalog, &prepared.names, id, |machine| node.is_me(machine));
+    // A path can change back while the receipt for the intervening path is in flight.
+    let moved = cursor.location_changed(before.as_ref()) || cursor.location_changed(previous.as_ref());
+    let notice = announcement(changed, moved, location.as_ref());
     let version = serde_json::to_string(&cursor).map_err(failure)?;
     crate::context::blocking::set_account(
         node,
         id,
         "history",
         &text,
-        Change { by: own.then_some(&me), version: &version, fact: &fact, full: changed.is_none() },
+        Change { by: notice.own.then_some(&me), version: &version, fact: &notice.fact, full: notice.full },
     )
     .await
     .map_err(failure)
+}
+
+struct Announcement {
+    fact: String,
+    own: bool,
+    full: bool,
+}
+fn announcement(
+    changed: Option<Vec<String>>,
+    location_changed: bool,
+    location: Option<&fastctx_types::placement::Location>,
+) -> Announcement {
+    let full = changed.is_none() || location_changed;
+    let own = !location_changed && changed.as_ref().is_some_and(Vec::is_empty);
+    let mut facts = changed.unwrap_or_default();
+    if location_changed {
+        facts.push(match location {
+            Some(location) => format!("This history is in {} on {}.", location.path, location.machine),
+            None => {
+                "No eligible computer is online for this history's files; the history remains in the user's account."
+                    .into()
+            }
+        });
+    }
+    let fact =
+        if facts.is_empty() { "The history available to this conversation changed.".into() } else { facts.join("\n") };
+    Announcement { fact, own, full }
 }
 
 fn changes(

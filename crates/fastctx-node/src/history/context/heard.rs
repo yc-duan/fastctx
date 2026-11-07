@@ -29,6 +29,7 @@ fn validate(cursor: &Cursor) -> io::Result<()> {
         || !digest(&cursor.scope)
         || cursor.topics.iter().any(|(key, value)| !digest(key) || !digest(value))
         || cursor.versions.keys().any(|key| !cursor.topics.contains_key(key))
+        || cursor.location.as_ref().is_some_and(|location| !digest(location))
     {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
@@ -83,9 +84,16 @@ pub(crate) fn prepare(directory: &ConversationDir) -> io::Result<()> {
     })
 }
 
-pub(super) fn read(directory: &ConversationDir) -> io::Result<Option<Cursor>> {
+pub(super) fn read(directory: &ConversationDir) -> io::Result<(Option<Cursor>, Option<Cursor>)> {
     prepare(directory)?;
-    current(directory)
+    records::read_background(directory, |rows| {
+        let heard = rows.get::<Value>(FAMILY, "current")?.map(|value| value.read(rows)).transpose()?;
+        let prepared = crate::context::current_version(rows, "history")?
+            .filter(|version| !version.is_empty())
+            .map(|version| records::decode(version.as_bytes()))
+            .transpose()?;
+        Ok((heard, prepared))
+    })
 }
 
 pub(super) fn keep(directory: &ConversationDir, cursor: &Cursor, revision: u64) -> io::Result<()> {

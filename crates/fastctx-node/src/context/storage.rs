@@ -356,6 +356,9 @@ pub(super) fn collect(
         Ok((notes, Receipt { epoch: state.epoch, revisions, versions, reserved: false, shown }))
     })
 }
+pub(super) fn current_version(rows: &crate::records::Rows<'_>, name: &str) -> fastctx_storage::Result<Option<String>> {
+    Ok(rows.get::<Block>(super::records::BLOCKS, name)?.map(|block| block.version))
+}
 
 pub(super) fn seen_revision(rows: &crate::records::Rows<'_>, name: &str) -> fastctx_storage::Result<Option<u64>> {
     Ok(rows.get::<State>(super::records::STATE, "current")?.and_then(|state| state.seen.get(name).copied()))
