@@ -126,9 +126,12 @@ pub(crate) async fn run(node: &Arc<Node>, hub: &HubId) -> Vec<String> {
     };
     let mut problems = Vec::new();
     for town in towns {
+        let scope = Scope::Project { project: town.clone() };
+        crate::history::import::pending(node, &scope);
         if let Err(error) = one(node, &link, &home, &town).await.and_then(|()| report(node, &town)) {
             problems.push(format!("carrying {town}: {error}"));
         }
+        crate::history::import::pending(node, &scope);
     }
     problems
 }

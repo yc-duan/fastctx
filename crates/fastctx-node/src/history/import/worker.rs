@@ -71,7 +71,7 @@ async fn one(node: &Arc<Node>, resident: &ResidentId) -> Result<(), String> {
     let owner = Address { resident: resident.clone(), machine: node.machine() };
     let scope = Scope::Conversation { resident: resident.clone(), machine: owner.machine.clone() };
     let records = super::super::local::directory(node, &scope);
-    if !state::pending(&records) {
+    if !super::pending(node, &scope) {
         return Ok(());
     }
     let (mut transfer, inventory) = {
@@ -207,6 +207,7 @@ async fn one(node: &Arc<Node>, resident: &ResidentId) -> Result<(), String> {
         state::keep(&records, &transfer).map_err(|error| error.to_string())?;
     }
     state::finish(&records, &mut transfer).map_err(|error| error.to_string())?;
+    super::pending(node, &scope);
     crate::context::invalidations::history(node, &scope);
     crate::replicas::updates::schedule(node, &transfer.account.hub, crate::replicas::updates::Change::All);
     node.memory_changed();

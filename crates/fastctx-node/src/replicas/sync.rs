@@ -80,6 +80,7 @@ pub(crate) async fn all(node: &Arc<Node>, link: &Arc<Link>) -> Result<(), String
         .map(|(id, route)| (id.clone(), route.clone()))
         .collect();
     let known_folders: Vec<_> = node.replicas.state.folders.lock().expect("never poisoned").values().cloned().collect();
+    let catalog_view = crate::authorization::current_view(link).map_err(failure)?;
     let Response::Replicas { catalog } = link.owned_records(&account, Request::Replicas).await? else {
         return Err("the hub did not return the replica catalog".into());
     };
@@ -126,7 +127,7 @@ pub(crate) async fn all(node: &Arc<Node>, link: &Arc<Link>) -> Result<(), String
             failed.push((head, error));
         }
     }
-    super::publication::catalog(node, account.hub.clone(), catalog, known, known_folders).await?;
+    super::publication::catalog(node, catalog_view, catalog, known, known_folders).await?;
     super::publication::prune(node).await?;
     node.memory_changed();
     if let Some(error) = super::updates::retry_later(node, &account, failed) {
@@ -277,9 +278,7 @@ pub(crate) async fn repair(node: &Arc<Node>) -> Result<(), String> {
 }
 
 async fn repair_now(node: Arc<Node>) -> Result<(), String> {
-    if node.links().is_empty() {
-        crate::history::local_copy::repair(&node).await.map_err(|error| error.message)?;
-    }
+    crate::history::local_copy::repair(&node).await.map_err(|error| error.message)?;
     // What this computer may no longer keep is withdrawn as its views
     // change (`directory_changes`), not here on every command.
     fastctx_platform::task::spawn_blocking(move || {
@@ -409,9 +408,7 @@ pub(crate) async fn record(
 }
 
 pub(crate) async fn repair_paths(node: &Arc<Node>, paths: &[PathBuf]) -> Result<(), String> {
-    if node.links().is_empty() {
-        crate::history::local_copy::repair(node).await.map_err(|error| error.message)?;
-    }
+    crate::history::local_copy::repair(node).await.map_err(|error| error.message)?;
     super::state::loaded(node).await.map_err(failure)?;
     for path in paths {
         let native = fastctx_platform::local_path(path).map_err(failure)?;

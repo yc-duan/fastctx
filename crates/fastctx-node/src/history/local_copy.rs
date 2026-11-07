@@ -226,18 +226,37 @@ pub(crate) async fn intercept(
 }
 
 pub(crate) async fn repair(node: &Arc<Node>) -> Result<(), Failure> {
-    if !super::switch::alone(node) {
+    if !fastctx_platform::history() || (!node.connected_anywhere() && !super::switch::alone(node)) {
         return Ok(());
     }
-    let mut scopes =
-        node.world.towns().map_err(failure)?.into_iter().map(|project| Scope::Project { project }).collect::<Vec<_>>();
-    scopes.extend(
-        node.residents
-            .everyone()
-            .filter(|resident| resident.removed.is_none())
-            .map(|resident| Scope::Conversation { resident: resident.id, machine: node.machine() }),
-    );
+    let scopes = if node.connected_anywhere() {
+        super::import::copies::scopes(node)
+    } else {
+        let mut scopes = node
+            .world
+            .towns()
+            .map_err(failure)?
+            .into_iter()
+            .map(|project| Scope::Project { project })
+            .collect::<Vec<_>>();
+        scopes.extend(
+            node.residents
+                .everyone()
+                .filter(|resident| resident.removed.is_none())
+                .map(|resident| Scope::Conversation { resident: resident.id, machine: node.machine() }),
+        );
+        scopes
+    };
     for scope in scopes {
+        if !super::import::copies::enabled(node, &scope).map_err(failure)? {
+            continue;
+        }
+        let _history = super::import::lock(node, &scope).await;
+        if node.connected_anywhere()
+            && super::import::authorize(node, &fastctx_types::access::Acting::Here, &scope).is_err()
+        {
+            continue;
+        }
         super::local::call(node, HistoryCall::List { scope }, None).await?;
     }
     Ok(())

@@ -376,23 +376,38 @@ fn release(node: &Node, folder: &Folder) -> std::io::Result<()> {
 /// `catalog_now`, where writing the disk may block.
 pub(crate) async fn catalog(
     node: &Arc<Node>,
-    hub: fastctx_types::access::HubId,
+    view: Arc<fastctx_net::directory::View>,
     catalog: fastctx_types::replicas::Catalog,
     known: Vec<(String, Route)>,
     folders: Vec<Folder>,
 ) -> Result<(), String> {
     let node = node.clone();
-    fastctx_platform::task::blocking(move || catalog_now(&node, &hub, &catalog, known, folders)).await
+    fastctx_platform::task::blocking(move || catalog_now(&node, &view, &catalog, known, folders)).await
 }
 
 /// Removes records absent from an authoritative catalog, without confusing a concurrent new topic with deletion.
 pub(crate) fn catalog_now(
     node: &Node,
-    hub: &fastctx_types::access::HubId,
+    view: &fastctx_net::directory::View,
     catalog: &fastctx_types::replicas::Catalog,
     known: Vec<(String, Route)>,
     folders: Vec<Folder>,
 ) -> Result<(), String> {
+    let hub = &view.hub;
+    // A catalog read before a permission change cannot withdraw the newly allowed copies.
+    let mut checked = None;
+    let mut stale = || {
+        let Some(link) = node.link_of(hub).filter(|link| link.view_current()) else { return true };
+        let current = link.view();
+        if checked.as_ref().is_some_and(|before| Arc::ptr_eq(before, &current)) {
+            return false;
+        }
+        if current.records_changed(view) {
+            return true;
+        }
+        checked = Some(current);
+        false
+    };
     let scopes: std::collections::BTreeSet<_> = catalog.scopes.iter().map(state::scope_key).collect();
     let contains = |route: &Route| match &route.head.document {
         Document::History { scope, .. } => scopes.contains(&state::scope_key(scope)),
@@ -403,6 +418,9 @@ pub(crate) fn catalog_now(
             continue;
         }
         let _publication = node.replicas.state.publication.write().expect("never poisoned");
+        if stale() {
+            return Ok(());
+        }
         if node.replicas.state.routes.lock().expect("never poisoned").get(&id).is_some_and(|current| current == &route)
         {
             state::delete(&node.world, &route).map_err(|error| error.to_string())?;
@@ -414,6 +432,9 @@ pub(crate) fn catalog_now(
             continue;
         }
         let _publication = node.replicas.state.publication.write().expect("never poisoned");
+        if stale() {
+            return Ok(());
+        }
         // The path may since hold another hub's history: only the folder as
         // it was seen is withdrawn.
         if !current(node, &folder) {
