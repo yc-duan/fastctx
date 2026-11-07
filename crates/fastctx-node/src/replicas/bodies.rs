@@ -106,9 +106,5 @@ pub(crate) fn tidy(world: &WorldDir, copy: &Copy) -> io::Result<()> {
 
 /// Removes every text of the copy `id`.
 pub(crate) fn remove(world: &WorldDir, id: &str) -> io::Result<()> {
-    match fastctx_platform::disk::remove_dir_all(folder(world, id)) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error),
-    }
+    super::removal::delete(world, &folder(world, id))
 }

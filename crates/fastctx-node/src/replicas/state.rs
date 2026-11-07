@@ -194,7 +194,7 @@ fn folder_id(folder: &Folder) -> String {
 
 pub(crate) fn delete_folder(world: &fastctx_types::layout::WorldDir, folder: &Folder) -> io::Result<()> {
     super::removal::delete(world, &folder.path)?;
-    super::files::delete(&root(world).join("folders").join(format!("{}.json", folder_id(folder))))
+    super::removal::delete(world, &root(world).join("folders").join(format!("{}.json", folder_id(folder))))
 }
 
 pub(crate) fn delete(world: &fastctx_types::layout::WorldDir, copy: &Route) -> io::Result<()> {
@@ -206,7 +206,7 @@ pub(crate) fn delete(world: &fastctx_types::layout::WorldDir, copy: &Route) -> i
     bodies::remove(world, &id)?;
     super::legacy::delete(world, &id)?;
     // The record remains the cleanup task until all its texts are gone.
-    super::files::delete(&root(world).join("copies").join(format!("{id}.json")))
+    super::removal::delete(world, &root(world).join("copies").join(format!("{id}.json")))
 }
 
 impl State {

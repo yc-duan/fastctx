@@ -41,6 +41,9 @@ struct LegacyCopy {
 
 /// Removes the original records of a withdrawn copy from every release's archive.
 pub(crate) fn delete(world: &WorldDir, id: &str) -> io::Result<()> {
+    if super::removal::redirected(world, &world.path().join("archive").join("replicas"))? {
+        return Ok(());
+    }
     let versions = match fastctx_platform::disk::read_dir(world.path().join("archive")) {
         Ok(versions) => versions,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
@@ -49,7 +52,7 @@ pub(crate) fn delete(world: &WorldDir, id: &str) -> io::Result<()> {
     for version in versions {
         let version = version?;
         if version.file_type()?.is_dir() {
-            super::files::delete(&version.path().join("replicas").join("copies").join(format!("{id}.json")))?;
+            super::removal::delete(world, &version.path().join("replicas").join("copies").join(format!("{id}.json")))?;
         }
     }
     Ok(())
