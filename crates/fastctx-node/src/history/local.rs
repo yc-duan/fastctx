@@ -128,6 +128,10 @@ pub(crate) async fn call(
     if expected != current {
         return Err(failure(fastctx_types::history::conflict(current)));
     }
+    // A new document takes one of the scope's places, as on a hub.
+    if current.is_none() && shelf.count() >= fastctx_types::history::MAX_DOCUMENTS {
+        return Err(failure(fastctx_types::history::full()));
+    }
     // What the local copy held, so writing the new text over it leaves no
     // trace of tampering.
     let previous = match current {

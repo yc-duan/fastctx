@@ -141,6 +141,11 @@ pub enum Watched {
     Catalog { catalog: Catalog },
 }
 
+/// Why a new document was refused in a history that holds `MAX_DOCUMENTS`.
+pub fn full() -> String {
+    format!("this history has reached its limit of {MAX_DOCUMENTS} documents")
+}
+
 pub fn conflict(current: Option<u64>) -> String {
     match current {
         Some(version) => format!("the document changed; its latest version is {version}; read it before saving again"),

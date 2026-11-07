@@ -285,6 +285,11 @@ impl Shelf {
         shelved.latest = shelved.versions.last().expect("a version was put").clone();
     }
 
+    /// How many documents the scope holds, retired ones included.
+    pub(crate) fn count(&self) -> usize {
+        self.documents.len()
+    }
+
     pub(crate) fn document(&self, name: &str) -> Option<&Shelved> {
         self.documents.get(name)
     }

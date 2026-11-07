@@ -95,6 +95,23 @@ async fn locate_inner(node: &Arc<Node>, path: &Path, refresh: bool) -> Result<Op
         }
         Scope::Conversation { conversation } => conversation.account.clone(),
     };
+    // A new document takes one of the scope's places, offline too: the hub
+    // would refuse it on arrival, after the writer was told it was kept.
+    let held = node
+        .replicas
+        .state
+        .routes
+        .lock()
+        .expect("never poisoned")
+        .values()
+        .filter(|route| {
+            route.account == folder.account
+                && matches!(&route.head.document, Document::History { scope, .. } if *scope == folder.scope)
+        })
+        .count();
+    if held >= history::MAX_DOCUMENTS {
+        return Err(Failure::not_run(history::full()));
+    }
     let opened = view.account(&owner).ok_or_else(|| failure("the history's owning account is unavailable"))?.opened;
     let head = Head {
         owner,

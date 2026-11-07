@@ -1,10 +1,6 @@
 //! New documents consume a scope's allowance; revisions and retired documents keep their place.
 
-use fastctx_types::history::{MAX_DOCUMENTS, RECORD_KIND};
-
-fn full() -> String {
-    format!("this history has reached its limit of {MAX_DOCUMENTS} documents")
-}
+use fastctx_types::history::{MAX_DOCUMENTS, RECORD_KIND, full};
 
 pub(crate) fn conversation(records: &crate::account_records::storage::Account, key: &str) -> Result<(), String> {
     if records.entries.get(&(RECORD_KIND.into(), key.into())).is_some_and(|entry| !entry.metadata.deleted) {
