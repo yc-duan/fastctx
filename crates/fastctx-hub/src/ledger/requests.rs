@@ -1,7 +1,7 @@
 //! Account-scoped metadata and document reads, independent of online computers.
 
 use std::path::PathBuf;
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 use std::time::Duration;
 
 use fastctx_net::authorization::Action;
@@ -15,8 +15,6 @@ use fastctx_types::project::{Record, Stamp, version_of};
 
 use crate::outq::Outq;
 use crate::{Hub, Out};
-
-static READERS: LazyLock<Arc<tokio::sync::Semaphore>> = LazyLock::new(|| Arc::new(tokio::sync::Semaphore::new(8)));
 
 pub(super) fn authorize(
     directory: &Directory,
@@ -56,86 +54,72 @@ pub(crate) fn ask(hub: &Arc<Hub>, from: &crate::origin::Origin, out: &Outq, id: 
         _ => unreachable!("only project reads"),
     };
     let body = wanted.is_some();
-    let prepare = || {
-        let store = hub.store();
-        authorize(&store.book.directory, from, &account, &town, body)?;
-        let ledgers = hub.ledgers.lock().expect("never poisoned");
-        let ledger = ledgers.towns.get(&town).ok_or(fastctx_types::memory::words::NO_LEDGER)?;
-        let path = |seq: u64| ledgers.dir.join(town.as_str()).join(format!("{seq:020}.json"));
-        let plan = if let Some((name, version)) = &wanted {
-            let versions = ledger.memory.versions(name);
-            let revision = match version {
-                Some(version) => versions.iter().find(|revision| revision.version == *version),
-                None => versions.last(),
-            }
-            .ok_or(fastctx_types::memory::words::NO_DOCUMENT)?;
-            let seq = *ledger
-                .sequences
-                .get(&revision.path("md"))
-                .ok_or(fastctx_types::memory::words::MISSING_REVISION_ENTRY)?;
-            Plan::Document { path: path(seq), evidence: ledger.memory.evidence(&revision.name), versions }
-        } else {
-            let mut records: Vec<_> = ledger
-                .sequences
-                .range("project/".to_owned()..)
-                .take_while(|(path, _)| path.starts_with("project/"))
-                .filter_map(|(file, seq)| {
-                    let name = file.strip_prefix("project/")?;
-                    Some((version_of(name)?, file.clone(), path(*seq)))
-                })
-                .collect();
-            records.sort_by_key(|(version, _, _)| *version);
-            let (_, first, first_path) = records.first().ok_or(fastctx_types::memory::words::MISSING_OPENING)?;
-            let (_, last, last_path) = records.last().expect("has a first record");
-            Plan::Index {
-                seq: ledger.next - 1,
-                catalog: ledger.memory.catalog(),
-                first: (first.clone(), first_path.clone()),
-                last: (last.clone(), last_path.clone()),
-                pages: ledger
-                    .sequences
-                    .range("pages/".to_owned()..)
-                    .take_while(|(path, _)| path.starts_with("pages/"))
-                    .filter(|(file, _)| file.ends_with("/page.json"))
-                    .map(|(file, seq)| (file.clone(), path(*seq)))
-                    .collect(),
-            }
-        };
-        Ok::<_, String>((plan, store.hub.id.clone()))
-    };
-    let (plan, hub_id) = match prepare() {
-        Ok(prepared) => prepared,
-        Err(why) => {
-            let _ = out.send(Out::Frame(Down::Told { id, answer: Err(why) }));
-            return;
-        }
-    };
     let (hub, from, out) = (hub.clone(), from.clone(), out.clone());
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(55);
     fastctx_platform::task::spawn(async move {
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(55);
-        // A read waits its turn among the others, within its own time.
-        let permit = tokio::select! {
-            biased;
-            () = out.closed() => return,
-            permit = tokio::time::timeout_at(deadline, READERS.clone().acquire_owned()) => match permit {
-                Ok(Ok(permit)) => permit,
-                _ => {
-                    let answer = Err(fastctx_types::memory::words::BUSY_READING.to_string());
-                    let _ = out.send(Out::Frame(Down::Told { id, answer }));
-                    return;
-                }
-            },
+        let permit = match crate::readers::account(&hub, &from, &account, &out, deadline).await {
+            Ok(permit) => permit,
+            Err(why) => {
+                let _ = out.send(Out::Frame(Down::Told { id, answer: Err(why) }));
+                return;
+            }
         };
-        let project = town.clone();
-        let reading = fastctx_platform::task::spawn_blocking(move || {
-            let _permit = permit;
-            plan.read(&hub_id, &project)
-        });
-        let answer = match tokio::time::timeout_at(deadline, reading).await {
-            Ok(Ok(answer)) => answer,
-            Ok(Err(error)) => Err(format!("reading project memory: {error}")),
-            Err(_) => Err(fastctx_types::memory::words::READ_DEADLINE.into()),
-        };
+        let answer = crate::readers::run(permit, &out, deadline, async {
+            let prepare = || {
+                let store = hub.store();
+                authorize(&store.book.directory, &from, &account, &town, body)?;
+                let ledgers = hub.ledgers.lock().expect("never poisoned");
+                let ledger = ledgers.towns.get(&town).ok_or(fastctx_types::memory::words::NO_LEDGER)?;
+                let path = |seq: u64| ledgers.dir.join(town.as_str()).join(format!("{seq:020}.json"));
+                let plan = if let Some((name, version)) = &wanted {
+                    let versions = ledger.memory.versions(name);
+                    let revision = match version {
+                        Some(version) => versions.iter().find(|revision| revision.version == *version),
+                        None => versions.last(),
+                    }
+                    .ok_or(fastctx_types::memory::words::NO_DOCUMENT)?;
+                    let seq = *ledger
+                        .sequences
+                        .get(&revision.path("md"))
+                        .ok_or(fastctx_types::memory::words::MISSING_REVISION_ENTRY)?;
+                    Plan::Document { path: path(seq), evidence: ledger.memory.evidence(&revision.name), versions }
+                } else {
+                    let mut records: Vec<_> = ledger
+                        .sequences
+                        .range("project/".to_owned()..)
+                        .take_while(|(path, _)| path.starts_with("project/"))
+                        .filter_map(|(file, seq)| {
+                            let name = file.strip_prefix("project/")?;
+                            Some((version_of(name)?, file.clone(), path(*seq)))
+                        })
+                        .collect();
+                    records.sort_by_key(|(version, _, _)| *version);
+                    let (_, first, first_path) =
+                        records.first().ok_or(fastctx_types::memory::words::MISSING_OPENING)?;
+                    let (_, last, last_path) = records.last().expect("has a first record");
+                    Plan::Index {
+                        seq: ledger.next - 1,
+                        catalog: ledger.memory.catalog(),
+                        first: (first.clone(), first_path.clone()),
+                        last: (last.clone(), last_path.clone()),
+                        pages: ledger
+                            .sequences
+                            .range("pages/".to_owned()..)
+                            .take_while(|(path, _)| path.starts_with("pages/"))
+                            .filter(|(file, _)| file.ends_with("/page.json"))
+                            .map(|(file, seq)| (file.clone(), path(*seq)))
+                            .collect(),
+                    }
+                };
+                Ok::<_, String>((plan, store.hub.id.clone()))
+            };
+            let (plan, hub_id) = prepare()?;
+            let project = town.clone();
+            crate::readers::blocking(move || plan.read(&hub_id, &project))
+                .await
+                .map_err(|error| format!("reading project memory: {error}"))?
+        })
+        .await;
         let answer = authorize(&hub.store().book.directory, &from, &account, &town, body).and(answer);
         let _ = out.send(Out::Frame(Down::Told { id, answer }));
     });

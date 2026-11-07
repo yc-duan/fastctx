@@ -185,7 +185,7 @@ pub(crate) async fn ask(
             check(hub, &hub.store(), &from, &key, &access.conversation.account, opened, &access)?;
             let exists = records.entries.contains_key(&(kind.clone(), record_key_name.clone()));
             let (path, history) = (slot.path(&kind, &record_key_name), slot.history(&kind, &record_key_name));
-            let record = fastctx_platform::task::spawn_blocking(move || {
+            let record = crate::readers::blocking(move || {
                 let current = if exists { Some(storage::read(&path)?) } else { None };
                 account_records::history::submitted(current.as_ref(), &history, &submission)
             })
@@ -280,7 +280,7 @@ pub(crate) async fn ask(
                 drop(records);
                 None
             };
-            let record = fastctx_platform::task::spawn_blocking(move || storage::read(&path))
+            let record = crate::readers::blocking(move || storage::read(&path))
                 .await
                 .map_err(|error| error.to_string())??;
             check(hub, &hub.store(), &from, &key, &access.conversation.account, opened, &access)?;
@@ -321,7 +321,7 @@ async fn revisions(
         })
     };
     let history = slot.history(kind, name);
-    let mut records = fastctx_platform::task::spawn_blocking(move || account_records::revisions::list(&history))
+    let mut records = crate::readers::blocking(move || account_records::revisions::list(&history))
         .await
         .map_err(|error| error.to_string())??;
     // A concurrent writer may have archived revisions beyond the captured end.

@@ -4,7 +4,7 @@
 
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 use std::time::Duration;
 
 use fastctx_net::sign::Signed;
@@ -16,7 +16,6 @@ use crate::outq::Outq;
 use crate::{Hub, Out};
 
 const READ_WITHIN: Duration = Duration::from_secs(55);
-static READERS: LazyLock<Arc<tokio::sync::Semaphore>> = LazyLock::new(|| Arc::new(tokio::sync::Semaphore::new(32)));
 
 /// The committed end never advances during a page, even if new entries
 /// reach disk while it is being read.
@@ -57,23 +56,17 @@ fn serve(
         return;
     }
     let deadline = tokio::time::Instant::now() + READ_WITHIN;
+
+    let account =
+        store.indexed().member(name).and_then(|member| member.home.as_ref().or_else(|| member.logins.first())).cloned();
     let (hub, name, out) = (hub.clone(), name.clone(), out.clone());
     fastctx_platform::task::spawn(async move {
-        // A read waits its turn among the others, within its own time.
-        let place = tokio::select! {
-            biased;
-            () = out.closed() => return,
-            place = tokio::time::timeout_at(deadline, READERS.clone().acquire_owned()) => match place {
-                Ok(Ok(place)) => place,
-                _ => {
-                    let answer = Err(format!(
-                        "the hub was too busy reading ledgers to read {town}'s within {} seconds",
-                        READ_WITHIN.as_secs()
-                    ));
-                    let _ = out.send(Out::Frame(Down::Told { id, answer }));
-                    return;
-                }
-            },
+        let place = match crate::readers::PAGES.enter(account.as_ref(), &out, deadline).await {
+            Ok(place) => place,
+            Err(why) => {
+                let _ = out.send(Out::Frame(Down::Told { id, answer: Err(why) }));
+                return;
+            }
         };
         let page = hub.ledgers.lock().expect("never poisoned").page(town.clone(), after);
         // Dropping the receiver stops a running read between files. Aborting
@@ -138,9 +131,7 @@ impl Page {
             // A projection reads history on demand. A reader of a release before
             // history takes a history append as any entry: it keeps its two files
             // and reads on, where refusing the page would stop the whole project.
-            if projection
-                && let Some(end) = self.history.through(seq, self.last)
-            {
+            if projection && let Some(end) = self.history.through(seq, self.last) {
                 through = end;
                 continue;
             }

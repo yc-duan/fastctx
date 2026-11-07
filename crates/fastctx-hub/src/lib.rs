@@ -57,6 +57,7 @@ mod presence;
 mod project_deletions;
 mod project_entry;
 mod question_parts;
+mod readers;
 mod record_subscriptions;
 mod records;
 mod releases;
