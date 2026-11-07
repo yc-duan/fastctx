@@ -396,32 +396,17 @@ export class Conversation {
   }
 
   /** What the conversation's own view shows (`world-voice.md`, 两种看法):
-   *  the user's words, what the agent said to them, what waits on them,
-   *  and a failure of what they asked. A turn the user began that ended
-   *  with nothing said to them shows its last words instead, as the answer
-   *  they were. */
+   *  the user's words, each turn's answer, what waits on them, and a turn
+   *  that failed. A turn's answer is its last words once it has ended,
+   *  whoever began it; a colleague's turn that spoke to the user through
+   *  `message_user` shows what it said instead, and its last words too only
+   *  when it worked on after saying it. */
   chatBlocks(): Block[] {
     const blocks = this.blocks();
     const version = this.cache!.version;
     if (this.chatCache?.version === version) return this.chatCache.blocks;
-    const asked = new Set<string>();
     const spoke = new Set<string>();
-    // A command the user gave begins the next turn, unless words do: the
-    // host keeps its own line for the command out of the conversation.
-    let commanded = false;
-    for (const block of blocks) {
-      if (block.kind === "command") {
-        commanded ||= block.row.control.do === "command";
-        continue;
-      }
-      if (block.kind === "heard" && block.turn && !block.notice && (!block.from || block.from.kind === "user")) asked.add(block.turn);
-      if (block.kind === "say") spoke.add(block.turn);
-      const turn = "turn" in block ? block.turn : null;
-      if (commanded && turn) {
-        if (block.kind !== "heard") asked.add(turn);
-        commanded = false;
-      }
-    }
+    for (const block of blocks) if (block.kind === "say") spoke.add(block.turn);
     const shown = blocks.filter((block) => {
       switch (block.kind) {
         case "say":
@@ -435,9 +420,9 @@ export class Conversation {
         case "heard":
           return !block.notice && (!block.from || block.from.kind === "user");
         case "prose":
-          return block.prose === "message" && asked.has(block.turn) && (!spoke.has(block.turn) || this.answersAfterSaying(block.turn)) && this.turnEnded(block.turn) && this.lastMessageOf(block.turn) === block.key;
+          return block.prose === "message" && (!spoke.has(block.turn) || this.answersAfterSaying(block.turn)) && this.turnEnded(block.turn) && this.lastMessageOf(block.turn) === block.key;
         case "ended":
-          return block.end.how === "failed" && asked.has(block.turn);
+          return block.end.how === "failed";
         default:
           return false;
       }
@@ -496,7 +481,7 @@ export class Conversation {
   /** Whether `turn` went on working after the last thing it said to the
    *  user and ended in words of its own: those words are its answer too,
    *  said after it, as a model's that said it would look and then wrote
-   *  what it found as its final words (`world-voice.md`, 漏了怎么办). */
+   *  what it found as its final words (`world-voice.md`, 两种看法). */
   answersAfterSaying(turn: string): boolean {
     const fold = this.foldOf(turn);
     if (!fold?.spokeIn(turn) || !this.turnEnded(turn)) return false;

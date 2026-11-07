@@ -2036,7 +2036,7 @@ pub async fn open_here(
     let (id, _opening) = crate::attachments::opening(node, &agent, &opened.acting, town.as_ref(), &attachments).await?;
     crate::placement::location::speaking(node, &id, typed_on)?;
     crate::focus::open(node, &node.world.conversation(&id), &opened.acting, &opened.focus).await?;
-    let _birth = crate::here::born(node, &id, opened.acting.clone());
+    let _birth = crate::here::born(node, &id, opened.acting.clone(), Origin::User);
     // A login assisting another account starts without the browser of this
     // machine (`background::Start::assisting`), as kept now.
     crate::profile::session::ready(node, &opened.acting).await?;
@@ -2295,9 +2295,9 @@ pub(crate) fn settings_json(id: &ResidentId) -> String {
         },
         "permissions": {
             // The World's own tools take these places: its shell and files,
-            // the plan, the goal, `message_user` (`world-voice.md`), which
-            // asks without stopping as well, and a sentinel for any later
-            // wake-up (`world-senses.md`).
+            // the plan, the goal, and a sentinel or an alarm for any later
+            // wake-up (`world-senses.md`). A session asks the user in its
+            // answer, a colleague with `message_user` (`world-voice.md`).
             "deny": ["Bash", "PowerShell", "Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "Grep", "Glob",
                 "TodoWrite", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet", "ProposeGoal",
                 "SendUserMessage", "AskUserQuestion", "PushNotification", "CronCreate", "CronDelete", "CronList",

@@ -295,7 +295,7 @@ async fn fork(
     let gate = node.residents.management(parent)?;
     let source_guard = crate::gate_waits::shared_owned(node, parent, &gate).await?;
     node.residents.active(parent)?;
-    let _birth = crate::here::born(node, &id, source.acting.clone());
+    let _birth = crate::here::born(node, &id, source.acting.clone(), Origin::User);
     {
         // Its host mode is recorded on its disk.
         let (recording, assisted, child) = (node.clone(), codex.assisted_cwd().is_some(), id.clone());

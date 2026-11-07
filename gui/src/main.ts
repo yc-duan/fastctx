@@ -215,7 +215,6 @@ import { history as historySeam, type HistoryAuthor, type HistoryCatalog, type H
 import { specimenHistory, specimenHistoryDocument } from "./specimen/history";
 import { sentinelList, sentinelListAll, sentinelOverview, sentinelRecord, sentinelStop, sentinels as liveSentinels, type SentinelSummary } from "./world/sentinels";
 import { planRead } from "./world/plan";
-import { sawTold, toldSeen } from "./app/told-seen";
 import { specimenHubPlans, specimenHubSenses } from "./specimen/hub";
 import type { Job as PanelJob } from "./conversation/jobs-panel";
 import { specimenSentinels } from "./specimen/sentinels";
@@ -1484,7 +1483,6 @@ function home(): Page {
     newTalk: () => beginTalk(),
     stopJob: live ? (job, machine) => stopJob(job, machine) : async () => {},
     updates: () => updateCard.open(),
-    seenTold: toldSeen,
   });
   let away: Away | null = live ? null : specimen.away;
   // What happened while the reader was away is asked of every machine when
@@ -1947,27 +1945,18 @@ function specimenTalk(address: Address): DeskTalk {
     }
   }
   // Archived from its "⋯", as a live page follows it.
-  let suspended = false;
   const following = effect(() => {
     const now = store.world.get();
     talkActs.changed.get();
     if (!left) page.presence(presenceOf(now, address));
-    if (!left && !suspended) noteTold(now, address);
   });
   return {
     page,
     element: page.element,
     title: sample.title,
-    suspend: () => {
-      suspended = true;
-      page.suspend();
-    },
+    suspend: () => page.suspend(),
     reach: (turn: string) => page.showTurn(turn),
-    resume: () => {
-      suspended = false;
-      noteTold(store.world.peek(), address);
-      page.resume();
-    },
+    resume: () => page.resume(),
     leave() {
       left = true;
       runningJobs();
@@ -2345,7 +2334,6 @@ function liveTalk(address: Address): DeskTalk {
   // reading the conversation again: named once listed, as one just started;
   // its project and model as they change; asleep or not.
   let shown = listed;
-  let suspended = false;
   let renewing = false;
   const named = !world
     ? effect(() => {
@@ -2362,7 +2350,6 @@ function liveTalk(address: Address): DeskTalk {
         if (!left) page.presence(deleted ? "deleted" : presenceOf(now, address));
         const known = residentAt(now, address);
         const who = someoneOf(now, address);
-        if (!left && !suspended) noteTold(now, address);
         if (
           !left &&
           !nowTold &&
@@ -2394,16 +2381,9 @@ function liveTalk(address: Address): DeskTalk {
     page,
     element: page.element,
     title: `${someone.agent} ${someone.machine}`,
-    suspend: () => {
-      suspended = true;
-      page.suspend();
-    },
+    suspend: () => page.suspend(),
     reach: (turn: string) => page.showTurn(turn),
-    resume: () => {
-      suspended = false;
-      noteTold(store.world.peek(), address);
-      page.resume();
-    },
+    resume: () => page.resume(),
     leave() {
       left = true;
       named();
@@ -2414,13 +2394,6 @@ function liveTalk(address: Address): DeskTalk {
       reading.close();
     },
   };
-}
-
-/** What a conversation told the user counts as seen while its page is in
- *  view on this device (`world-voice.md`, 要紧的事). */
-function noteTold(world: ReturnType<typeof store.world.peek>, address: Address): void {
-  const told = residentAt(world, address)?.now?.told;
-  if (told && document.visibilityState === "visible") sawTold(talkKey(address), told.id);
 }
 
 /** Opens what one of the world's ids names: a conversation, or a job's
@@ -2525,7 +2498,6 @@ function projectPage(town: string): Page {
     machineLink: (name) => link({ kind: "machine", name }),
     senseLink: (one) => link({ kind: "sentinel", home: one.definition.home, id: one.definition.id, generation: one.definition.generation }),
     phase: (phase) => words.sentinelPhase(phase),
-    seenTold: toldSeen,
     more: {
       label: projectActsWords.more,
       shown: (town) => projectActs.acts(town).length > 0,

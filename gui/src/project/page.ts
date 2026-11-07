@@ -54,9 +54,6 @@ export interface ProjectOptions {
   senseLink(sense: SentinelSummary): string;
   /** How a sense stands, in a word. */
   phase(phase: SentinelPhase): string;
-  /** The last thing a conversation (`resident@machine`) told that this
-   *  device has shown the user. */
-  seenTold(key: string): string | null;
 }
 
 type Tab = "instructions" | "history" | "pages" | "places";
@@ -187,7 +184,7 @@ export class ProjectPage {
     const facts = `<p class="project-facts">${factRow(
       [...record.machines, words.opened(this.writer(map.opened.by), map.opened.on, words.day(new Date(map.opened.at))), ...(sharedBy ? [sharedBy] : [])].map(escape),
     )}</p>`;
-    const hub = hubOf(residents, jobs, record.machines, this.plans, this.senses, (key) => this.options.seenTold(key));
+    const hub = hubOf(residents, jobs, record.machines, this.plans, this.senses);
     const sections: [Tab, string, string][] = [
       [
         "instructions",

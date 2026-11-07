@@ -1220,7 +1220,7 @@ pub enum Reply {
         #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
         scratch: crate::scratch::Descriptions,
         /// Whether the session speaks to the user through `message_user`:
-        /// one the World started for them (`world-voice.md`).
+        /// a colleague the World started (`world-voice.md`).
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         speaks: bool,
         /// For a colleague, the agent that asked it, the one its

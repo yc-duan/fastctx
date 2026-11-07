@@ -1061,7 +1061,7 @@ pub async fn open_here(
         .await?;
     }
     let origin = Origin::User;
-    let _birth = crate::here::born(node, &id, opened.acting.clone());
+    let _birth = crate::here::born(node, &id, opened.acting.clone(), origin.clone());
     crate::session_options::keep(node, &id, &options).await?;
     // What it is told of its machines and folders goes into the instructions
     // its thread starts with.

@@ -1,9 +1,9 @@
 // When the World calls the user from outside the window: an agent asked
-// them something, told them something through `message_user` (a reply, or
-// something urgent; what can wait is not pushed), a turn the user's words
-// began ended without telling them anything, or a device or a machine came
-// into one of their accounts, while the window is not in front of them
-// (`world-voice.md`). The title says who; the body is what the agent said,
+// them something, a turn the user's words began ended with its answer, a
+// colleague told them something through `message_user` (a reply, or
+// something urgent; what can wait is not pushed), or a device or a machine
+// came into one of their accounts, while the window is not in front of them
+// (`world-voice.md`, 送到哪里). The title says who; the body is what the agent said,
 // its question or its reply, never a summary. A question asked without waiting
 // with a few answers to choose from carries them as buttons, answered from
 // the notification without opening the window. A notification is taken
@@ -266,9 +266,10 @@ export function startPresence(options: PresenceOptions): void {
           actions: [{ id: "open", title: words.open }],
         }, address);
       } else if (was && now.told && now.told !== was.told && r.now?.told && r.now.told.status !== "info") {
-        // What can wait is not pushed: it waits on the home page. Only what
-        // is said while the conversation is in view of this window: one that
-        // first appears is learned, not called about.
+        // What a colleague told the user; what can wait is not pushed, it
+        // waits in the conversation. Only what is said while the
+        // conversation is in view of this window: one that first appears is
+        // learned, not called about.
         const told = r.now.told;
         void call(`${id}:told`, {
           title: told.status === "urgent" ? words.urgent(options.someone(r)) : words.finished(options.someone(r)),
@@ -289,9 +290,10 @@ export function startPresence(options: PresenceOptions): void {
     }
   });
 
-  /** Whether the turn that just ended stands for an answer: one the user's
-   *  words began that told them nothing through `message_user`. A node that
-   *  does not say whose words began it is taken as before. */
+  /** Whether the turn that just ended is an answer the user is called
+   *  about: one the user's words began, unless a colleague answered them in
+   *  it through `message_user`. A node that does not say whose words began
+   *  it is taken as before. */
   function endedUntold(now: ResidentNow["now"]): boolean {
     if (!now || now.last_heard_user === false) return false;
     return !now.told?.turn || now.told.turn !== now.last_turn;

@@ -4,8 +4,9 @@
 //! A colleague is a Codex resident the World starts, on the asker's machine
 //! or another, as a thread of that machine's app-server. The asker's words
 //! become its first turn, and its goal where goals are offered; what it
-//! tells with `message_user` and the end of each turn the asker's words
-//! went into return to the asker, and so does its goal's report. Asking is
+//! tells with `message_colleague` and the end of each turn the asker's
+//! words went into return to the asker, and so does its goal's report; it
+//! answers the user with `message_user`. Asking is
 //! recorded as one of the asker's actions: where the colleague lives, and
 //! its id; speaking to it later starts from that record.
 
@@ -275,7 +276,7 @@ pub async fn ask_here(
         node.log.line(format_args!("starting {id} where its requester works: {}", error.message));
     }
     let origin = Origin::Colleague { asked_by: asker.clone(), label };
-    let _birth = crate::here::born(node, &id, acting.clone());
+    let _birth = crate::here::born(node, &id, acting.clone(), origin.clone());
     let (spec, heard) = thread_spec(node, &id, &origin, town.as_ref(), &acting, home.as_deref()).await?;
     // Until it is claimed below, reports of threads nobody claims are kept.
     let _starting = crate::codex::starting(node);
@@ -463,14 +464,17 @@ pub async fn thread_spec(
         ("FASTCTX_RESIDENT".to_string(), address.tag()),
         ("FASTCTX_AGENT_HOME".to_string(), home.map(|home| home.to_string_lossy().into_owned()).unwrap_or_default()),
     ];
-    // Every session the World starts speaks to the user with message_user;
-    // a colleague messages the agent that asked it, and only one the user
-    // opened asks colleagues.
-    let mut tools = vec!["run", fastctx_types::voice::TOOL, "message_colleague"];
+    // A colleague's last words go to the agent that asked it, so it answers
+    // the user with message_user; a session the user opened answers in its
+    // own last words, and only it asks colleagues.
+    let mut tools = vec!["run", "message_colleague"];
     // A colleague's thread is listed under its task; a session the user
     // opens is named by whichever client shows it first, as Codex does.
     let name = match origin {
-        Origin::Colleague { label, .. } => Some(label.clone()).filter(|label| !label.trim().is_empty()),
+        Origin::Colleague { label, .. } => {
+            tools.push(fastctx_types::voice::TOOL);
+            Some(label.clone()).filter(|label| !label.trim().is_empty())
+        }
         Origin::User => {
             tools.push("ask_colleague");
             None
@@ -591,21 +595,10 @@ fn words(id: &ResidentId, town: Option<&TownName>, origin: &Origin, record: bool
             asked_by.resident,
             fastctx_types::collab_prompt::COLLEAGUE_RULES
         ),
-        // Who the session is to the user, and what of it reaches them
-        // (`world-voice.md`, 交给模型的话). Codex's own instructions for its
-        // models ask for frequent updates and a self-contained final answer,
-        // which here would reach no one or, sent as messages, become chatter;
-        // a Codex thread is the one given its record here.
-        Origin::User => {
-            let channels = if record {
-                "\n\nCodex's own instructions speak of updates in a commentary channel and of a final answer. Here both stay on your side: write them as you like, but they do not reach the user, and the frequent updates those instructions ask for are not wanted from you. Whatever the user should read, send with `message_user`, when you have something for them."
-            } else {
-                ""
-            };
-            format!(
-                "The user started this conversation from fastctx and gave you the work in it. You do it for them the way a capable colleague does work handed over: on your own, while they are elsewhere, and in touch when there is something to say. They do not watch you work. Only what you send with `message_user` reaches them, as messages from you; everything else you write, between tool calls and at the end of a turn, is your own scratch paper, which they seldom open.{channels}"
-            )
-        }
+        // Who the session is to the user: an agent whose last words in a
+        // turn are its answer, whoever began the turn (`world-voice.md`,
+        // 交给模型的话).
+        Origin::User => "The user started this conversation from fastctx and gave you the work in it. Do it for them the way a capable colleague does work handed over. They read this conversation: what you write at the end of a turn is your answer to them. Some turns start without them: a job you left running ends, a sentinel you left reports, a colleague hands back its answer. Carry the work on; what you end such a turn with is what they find when they come back.".to_string(),
     };
     // Where scripts run is said by the machines `run`'s description lists,
     // never by where the session lives (`world-run.md`, 脚本在哪台机器上跑).
