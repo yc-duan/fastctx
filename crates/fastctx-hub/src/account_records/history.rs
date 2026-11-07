@@ -4,14 +4,14 @@
 use fastctx_types::account_records::Record;
 use std::{io, path::Path};
 
-fn location(directory: &Path) -> io::Result<std::path::PathBuf> {
+pub(super) fn location(directory: &Path) -> io::Result<std::path::PathBuf> {
     // Canonical parents carry the Windows extended-length prefix. Submission
     // paths are deeper than ordinary records and must not inherit MAX_PATH.
     Ok(fastctx_platform::disk::canonicalize(directory.parent().expect("account directory"))?
         .join(directory.file_name().expect("history directory")))
 }
 
-fn immutable(path: &Path, bytes: &[u8]) -> io::Result<()> {
+pub(super) fn immutable(path: &Path, bytes: &[u8]) -> io::Result<()> {
     fastctx_platform::ensure_private_dir(path.parent().expect("history directory"))?;
     match fastctx_platform::disk::read(path) {
         Ok(old) if old == bytes => Ok(()),
@@ -32,6 +32,7 @@ pub(super) fn preserve(current: &Path, directory: &Path) -> io::Result<()> {
     let directory = location(directory)?;
     let record: Record = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
     immutable(&directory.join(format!("{}.json", record.metadata.version)), &bytes)?;
+    super::revisions::preserve(&directory, &record)?;
     if !record.metadata.deleted
         && let Some(id) = record.body.get("submission").and_then(serde_json::Value::as_str)
     {

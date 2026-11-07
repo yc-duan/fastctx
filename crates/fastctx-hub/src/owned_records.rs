@@ -266,14 +266,21 @@ pub(crate) async fn ask(
             let slot = hub.account_records.account(&access.conversation.account, opened);
             let records = slot.records.lock().await;
             check(hub, &hub.store(), &from, &key, &access.conversation.account, opened, &access)?;
-            let path = if records
+            let current = records
                 .entries
                 .get(&(kind.clone(), record_key_name.clone()))
-                .is_some_and(|entry| entry.metadata.version == version)
-            {
+                .is_some_and(|entry| entry.metadata.version == version);
+            let path = if current {
                 slot.path(&kind, &record_key_name)
             } else {
                 slot.history(&kind, &record_key_name).join(format!("{version}.json"))
+            };
+            // Only the current file can be replaced while it is being read.
+            let _current = if current {
+                Some(records)
+            } else {
+                drop(records);
+                None
             };
             let record = fastctx_platform::task::spawn_blocking(move || storage::read(&path))
                 .await
@@ -307,39 +314,25 @@ async fn revisions(
     name: &str,
 ) -> Result<Vec<fastctx_types::owned_records::Version>, String> {
     let slot = hub.account_records.account(&access.conversation.account, opened);
-    let _gate = slot.records.lock().await;
-    check(hub, &hub.store(), from, key, &access.conversation.account, opened, access)?;
-    let (path, history) = (slot.path(kind, name), slot.history(kind, name));
-    let records = fastctx_platform::task::spawn_blocking(move || {
-        let mut records = Vec::new();
-        let summary = |path: &std::path::Path| {
-            let record = storage::read(path)?;
-            let history = storage::history_head(&record).map_err(|error| error.to_string())?;
-            Ok::<_, String>(fastctx_types::owned_records::Version { metadata: record.metadata, history })
-        };
-        match fastctx_platform::disk::metadata(&path) {
-            Ok(_) => records.push(summary(&path)?),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error.to_string()),
-        }
-        match fastctx_platform::disk::read_dir(history) {
-            Ok(files) => {
-                for file in files {
-                    let path = file.map_err(|error| error.to_string())?.path();
-                    if path.extension().is_some_and(|extension| extension == "json") {
-                        records.push(summary(&path)?);
-                    }
-                }
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error.to_string()),
-        }
-        records.sort_by_key(|record| record.metadata.version);
-        records.dedup_by_key(|record| record.metadata.version);
-        Ok::<_, String>(records)
-    })
-    .await
-    .map_err(|error| error.to_string())??;
+    let current = {
+        let records = slot.records.lock().await;
+        check(hub, &hub.store(), from, key, &access.conversation.account, opened, access)?;
+        records.entries.get(&(kind.to_owned(), name.to_owned())).map(|entry| fastctx_types::owned_records::Version {
+            metadata: entry.metadata.clone(),
+            history: entry.history.clone(),
+        })
+    };
+    let history = slot.history(kind, name);
+    let mut records = fastctx_platform::task::spawn_blocking(move || account_records::revisions::list(&history))
+        .await
+        .map_err(|error| error.to_string())??;
+    // A concurrent writer may have archived revisions beyond the captured end.
+    if let Some(current) = current {
+        records.retain(|record| record.metadata.version <= current.metadata.version);
+        records.push(current);
+    }
+    records.sort_by_key(|record| record.metadata.version);
+    records.dedup_by_key(|record| record.metadata.version);
     check(hub, &hub.store(), from, key, &access.conversation.account, opened, access)?;
     Ok(records)
 }

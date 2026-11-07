@@ -2,6 +2,7 @@
 //! serializes its own operations; disk work never holds the registry lock.
 
 pub(crate) mod history;
+pub(crate) mod revisions;
 pub(crate) mod storage;
 
 use std::sync::Arc;
