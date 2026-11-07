@@ -20,15 +20,15 @@ pub(super) fn prepare(hub: &Hub, name: &MachineName, key: PublicKey, next: Next)
         if let Down::HistoryChanged { town, .. } = &frame {
             let store = hub.store();
             if store.indexed().member(name).is_none_or(|member| member.key != key)
-                || !store.book.directory.member_in_project(name, town)
+                || !store.indexed().member_in_project(name, town)
             {
                 continue;
             }
         }
         if let Down::AccountRecordChanged { changed } = &mut frame {
             let store = hub.store();
-            let directory = &store.book.directory;
-            if !crate::owned_records::hint(hub, directory, name, &key, &changed.account, &changed.metadata) {
+            let directory = store.indexed();
+            if !crate::owned_records::hint(hub, &directory, name, &key, &changed.account, &changed.metadata) {
                 continue;
             }
             if crate::record_subscriptions::replica_reader(hub, name, &key)

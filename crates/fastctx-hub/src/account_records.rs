@@ -479,19 +479,40 @@ pub(crate) async fn ask_as(
 }
 
 pub(crate) fn tell(hub: &Hub, account: &AccountName, opened: Timestamp, metadata: &Metadata) {
-    let readers: Vec<_> = hub
-        .sessions()
-        .iter()
-        .filter(|(_, session)| {
-            session.account_records && session.record_keys.as_ref().is_none_or(|keys| keys.wants(account, metadata))
-        })
-        .map(|(name, session)| (name.clone(), session.key, session.out.clone()))
-        .collect();
     let store = hub.store();
+    let directory = store.indexed();
+    if directory.account(account).is_none_or(|owner| owner.opened != opened) {
+        return;
+    }
+    let conversation = hub
+        .account_records
+        .owners
+        .lock()
+        .expect("never poisoned")
+        .of_record(account, opened, &metadata.kind, &metadata.key)
+        .cloned();
+    let mut candidates = directory.acting_members(account);
+    if let Some(conversation) = &conversation {
+        candidates.extend(directory.record_readers(
+            std::slice::from_ref(&conversation.account),
+            crate::owned_records::born_on(&directory, conversation),
+        ));
+    }
+    let readers: Vec<_> = {
+        let sessions = hub.sessions();
+        fastctx_net::directory_index::ordered(candidates)
+            .into_iter()
+            .filter_map(|at| {
+                let name = &directory.all.members[at].name;
+                let session = sessions.get(name)?;
+                (session.account_records
+                    && session.record_keys.as_ref().is_none_or(|keys| keys.wants(account, metadata)))
+                .then(|| (name.clone(), session.key, session.out.clone()))
+            })
+            .collect()
+    };
     for (reader, key, out) in readers {
-        if store.book.directory.account(account).is_some_and(|owner| owner.opened == opened)
-            && crate::owned_records::hint(hub, &store.book.directory, &reader, &key, account, metadata)
-        {
+        if crate::owned_records::hint(hub, &directory, &reader, &key, account, metadata) {
             let changed = Changed { account: account.clone(), metadata: metadata.clone() };
             let _ = out.send(crate::Out::Frame(Down::AccountRecordChanged { changed }));
         }

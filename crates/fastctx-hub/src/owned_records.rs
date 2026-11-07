@@ -27,8 +27,8 @@ pub(crate) struct Access {
     pub conversation: Conversation,
 }
 
-pub(crate) fn allows(
-    directory: &fastctx_net::directory::Directory,
+pub(crate) fn allows<L: fastctx_net::authorization::Lookup + ?Sized>(
+    directory: &L,
     actor: &AccountName,
     conversation: &Conversation,
 ) -> bool {
@@ -43,21 +43,21 @@ pub(crate) fn allows(
 /// The machine a conversation was born on, while the member of that name is
 /// the very machine it was born on: one that took the name after the first
 /// left the network (or was renamed to it) holds none of its records.
-pub(crate) fn born_on<'a>(
-    directory: &fastctx_net::directory::Directory,
+pub(crate) fn born_on<'a, L: fastctx_net::authorization::Lookup + ?Sized>(
+    directory: &L,
     conversation: &'a Conversation,
 ) -> Option<&'a MachineName> {
     let machine = conversation.shared_on.as_ref()?;
     born_there(directory, machine, conversation.born_seal.as_deref()).then_some(machine)
 }
 
-pub(crate) fn born_there(
-    directory: &fastctx_net::directory::Directory,
+pub(crate) fn born_there<L: fastctx_net::authorization::Lookup + ?Sized>(
+    directory: &L,
     machine: &MachineName,
     seal: Option<&str>,
 ) -> bool {
     seal.is_some_and(|seal| {
-        directory.member(machine).and_then(fastctx_net::record_ownership::seal).is_some_and(|now| now == seal)
+        directory.find_member(machine).and_then(fastctx_net::record_ownership::seal).is_some_and(|now| now == seal)
     })
 }
 
@@ -280,9 +280,8 @@ pub(crate) async fn ask(
                 drop(records);
                 None
             };
-            let record = crate::readers::blocking(move || storage::read(&path))
-                .await
-                .map_err(|error| error.to_string())??;
+            let record =
+                crate::readers::blocking(move || storage::read(&path)).await.map_err(|error| error.to_string())??;
             check(hub, &hub.store(), &from, &key, &access.conversation.account, opened, &access)?;
             Response::Revision { record }
         }
@@ -336,22 +335,22 @@ async fn revisions(
 }
 
 /// Rechecked immediately before sending, so queued hints cannot outlive a grant.
-pub(crate) fn hint(
+pub(crate) fn hint<L: fastctx_net::authorization::Lookup + ?Sized>(
     hub: &Hub,
-    directory: &fastctx_net::directory::Directory,
+    directory: &L,
     from: &MachineName,
     key: &PublicKey,
     account: &AccountName,
     metadata: &fastctx_types::account_records::Metadata,
 ) -> bool {
-    let Some(member) = directory.member(from).filter(|member| member.key == *key) else { return false };
-    if directory.authorize(account, Action::ActFor(from)).is_ok() {
+    let Some(member) = directory.find_member(from).filter(|member| member.key == *key) else { return false };
+    if fastctx_net::authorization::authorize(directory, account, Action::ActFor(from)).is_ok() {
         return true;
     }
     if !crate::record_subscriptions::replica_reader(hub, from, key) {
         return false;
     }
-    let Some(owner) = directory.account(account) else { return false };
+    let Some(owner) = directory.find_account(account) else { return false };
     let owners = hub.account_records.owners.lock().expect("never poisoned");
     let Some(conversation) = owners.of_record(account, owner.opened, &metadata.kind, &metadata.key) else {
         return false;
@@ -383,13 +382,11 @@ pub(crate) fn legacy_plan(
 pub(crate) fn notify(hub: &Hub, conversation: &Conversation) {
     let recipients: Vec<_> = {
         let store = hub.store();
-        store
-            .book
-            .directory
-            .members
-            .iter()
-            .filter(|member| member.logins.iter().any(|account| allows(&store.book.directory, account, conversation)))
-            .map(|member| member.name.clone())
+        let directory = store.indexed();
+        directory
+            .record_readers(std::slice::from_ref(&conversation.account), born_on(&directory, conversation))
+            .into_iter()
+            .map(|at| directory.all.members[at].name.clone())
             .collect()
     };
     for machine in recipients {

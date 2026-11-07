@@ -420,12 +420,8 @@ pub(crate) async fn write_as(
             return Err(format!("the project {town} was deleted"));
         }
         let seq = hub.ledgers.lock().expect("never poisoned").commit(&town, checked);
-        let tell: Vec<_> = directory
-            .members
-            .iter()
-            .filter(|member| directory.member_in_project(&member.name, &town))
-            .map(|member| member.name.clone())
-            .collect();
+        let tell: Vec<_> =
+            store.indexed().project_readers(&town).into_iter().map(|at| directory.members[at].name.clone()).collect();
         (seq, tell)
     };
     hub.log.line(format_args!("{from} wrote entry {seq} of {town}"));
