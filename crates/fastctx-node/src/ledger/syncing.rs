@@ -56,6 +56,7 @@ async fn run(node: Arc<Node>, hub: HubId, wake: Arc<Notify>) {
         if all {
             errors.extend(super::carry::run(&node, &hub).await);
             crate::own_collab::carry(&node, &hub).await;
+            crate::history::own_switch::carry(&node, &hub).await;
             if let Err(error) = super::sync(&node, &hub, None).await {
                 errors.push(error);
             }

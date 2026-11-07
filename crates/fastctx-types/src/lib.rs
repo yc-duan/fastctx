@@ -35,6 +35,7 @@ pub mod focus;
 pub mod goals;
 pub mod health;
 pub mod history;
+pub mod history_switch;
 pub mod hub_move;
 pub mod ipc;
 pub mod kernel;

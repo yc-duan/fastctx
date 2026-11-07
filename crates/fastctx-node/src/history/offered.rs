@@ -1,19 +1,25 @@
-//! Where history is offered (`world-history.md`): in a build that offers it
-//! (`fastctx_platform::history`), to the conversations of the logins the
-//! workbench is open in (`world-layers.md`, 工作台：在一个登录上打开).
+//! History requires the build's support, the acting account's opt-in, and
+//! an open workbench in the conversation's login.
 
 use crate::{Node, town::caller::Caller};
 use fastctx_types::{ipc::Failure, residents::About};
 
 /// Said where this build does not offer history.
 const UNOFFERED: &str = "history is not enabled in this release";
-/// Said to a conversation of a login the workbench is not open in.
-const CLOSED: &str = "history is part of the workbench; open the workbench in this login to use it";
+/// Said when the account or the login does not offer history.
+const CLOSED: &str =
+    "history is off for this conversation; enable history for its account and open the workbench in this login";
 
 /// Whether the conversation `about` is offered history.
 pub(crate) fn to(node: &Node, about: &About) -> bool {
-    fastctx_platform::history()
-        && crate::logins::workbench::is_open(node, &about.acting, about.host.agent.as_str(), about.home.as_deref())
+    let enabled = if node.connected_anywhere() {
+        node.links()
+            .iter()
+            .any(|link| node.accounts_on(link, &about.acting).iter().any(|account| super::switch::on(link, account)))
+    } else {
+        super::switch::alone(node)
+    };
+    enabled && crate::logins::workbench::is_open(node, &about.acting, about.host.agent.as_str(), about.home.as_deref())
 }
 
 /// Refuses `caller` history where it is not offered. A conversation of

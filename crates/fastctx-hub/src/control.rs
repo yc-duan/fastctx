@@ -64,6 +64,7 @@ pub(crate) struct Said {
     pub profiles: bool,
     /// Whether it reads the records of machines' update settings changed.
     pub machine_updates: bool,
+    pub history_switch: bool,
     pub account_records: bool,
     pub record_keys: bool,
     pub skill_files: bool,
@@ -1597,6 +1598,7 @@ fn ask(
                     project_deletes: letters.project_deletes,
                     profiles: letters.profiles,
                     machine_updates: letters.machine_updates,
+                    history_switch: letters.history_switch,
                 });
             store
                 .book

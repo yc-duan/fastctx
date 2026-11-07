@@ -314,7 +314,10 @@ async fn logged_in(node: &Arc<Node>, joined: Joined) -> Result<Reply, Failure> {
             crate::ledger::joined(node, &hub);
             crate::history::import::schedule(node);
             let (carrying, at) = (node.clone(), hub.clone());
-            fastctx_platform::task::spawn(async move { crate::own_collab::carry(&carrying, &at).await });
+            fastctx_platform::task::spawn(async move {
+                crate::own_collab::carry(&carrying, &at).await;
+                crate::history::own_switch::carry(&carrying, &at).await;
+            });
         }
     }
     node.log.line(format_args!("logged in to {account} on {hub_name} as {name}"));
@@ -530,6 +533,7 @@ async fn put_aside(node: &Arc<Node>, link: &Arc<Link>) -> Result<std::path::Path
     // that named it as its own (`own_collab`).
     if node.links().iter().all(|other| other.membership().id == hub) {
         crate::own_collab::take_back(node, link);
+        crate::history::own_switch::take_back(node, link);
     }
     link.stop();
     crate::replicas::cleanup::schedule(node);
@@ -573,7 +577,13 @@ pub fn accounts(node: &Node) -> AccountsReply {
         })
         .collect();
     let names = node.machine_names();
-    AccountsReply { machine: names.name, was: names.was, hubs, dissolved }
+    AccountsReply {
+        machine: names.name,
+        was: names.was,
+        hubs,
+        dissolved,
+        history: !node.connected_anywhere() && crate::history::own_switch::read(node).is_ok_and(|setting| setting.on),
+    }
 }
 
 /// What this machine is like.

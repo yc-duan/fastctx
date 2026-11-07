@@ -372,6 +372,7 @@ pub(crate) struct Node {
     /// Who watches the interface's optional parts (`features`).
     features: features::Switches,
     own_collab: own_collab::Keeping,
+    own_history: history::own_switch::Keeping,
     renewal: renewal::Startup,
     /// New versions of Fastctx here (`updates`).
     updates: updates::Updates,
@@ -871,6 +872,7 @@ pub async fn run_prepared(
                 handoff: Arc::new(handoff::Handoff::default()),
                 features: features::Switches::default(),
                 own_collab: own_collab::Keeping::default(),
+                own_history: history::own_switch::Keeping::default(),
                 renewal,
                 updates: Default::default(),
                 supervised,

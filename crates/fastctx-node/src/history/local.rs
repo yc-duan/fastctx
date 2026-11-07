@@ -78,9 +78,13 @@ pub(crate) async fn call(
     let identity = serde_json::to_string(&scope).map_err(failure)?;
     let shelf = node.history_shelves.of(&identity);
     let mut shelf = shelf.lock().await;
-    let ((), at) = on_shelf(&mut shelf, place(node, &scope), |shelf, place| {
+    let working = node.clone();
+    let ((), at) = on_shelf(&mut shelf, place(node, &scope), move |shelf, place| {
         shelf.refresh(place)?;
-        shelf.keep_copies(place)
+        if super::switch::alone(&working) {
+            shelf.keep_copies(place)?;
+        }
+        Ok(())
     })
     .await?;
     let (name, text, expected, retired) = match request {
@@ -171,7 +175,11 @@ pub(crate) async fn call(
     }
     let saved = revision.clone();
     let written = (!retired).then_some(text);
+    let working = node.clone();
     on_shelf(&mut shelf, place(node, &scope), move |shelf, place| {
+        if !super::switch::alone(&working) {
+            return Ok(());
+        }
         let path = place.copies.join(format!("{}.md", saved.name));
         shelf.write_copy(&path, &saved.name, &saved, written.as_deref(), previous.as_deref())
     })

@@ -286,6 +286,9 @@ pub struct Account {
     pub opened: Timestamp,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub collab: Option<fastctx_types::collab::Collab>,
+    /// Whether this account offers history to its conversations and keeps copies.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub history: bool,
     /// Its own layer of configuration for the sessions that work for it
     /// (`world-user-config.md`). A machine that does not work for it is
     /// given only the servers on that machine (`Profile::located`).
@@ -639,6 +642,9 @@ pub struct View {
     /// Relays collaboration-tree calls with their authorization facts.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub collaboration_tree: bool,
+    /// The hub keeps each account's history switch.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub history_switch: bool,
     /// The hub authorizes large calls from control-frame facts and requires a verifying receiver.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub call_details: bool,
@@ -844,6 +850,7 @@ impl View {
             ledger_parts: false,
             project_memory: false,
             collaboration_tree: false,
+            history_switch: false,
             call_details: false,
             machine_log: false,
             layers: false,

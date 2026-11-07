@@ -38,6 +38,10 @@ pub(crate) fn folder(node: &Node, link: &Link, scope: &Scope) -> Result<PathBuf,
     })
 }
 
+pub(crate) fn enabled(node: &Node, account: &HubAccount, document: &Document) -> bool {
+    !matches!(document, Document::History { .. }) || crate::history::switch::enabled(node, account)
+}
+
 pub(crate) fn permitted(node: &Node, copy: &Copy) -> Result<(), String> {
     super::publication::permitted(node, &state::Route::from(copy))
 }
@@ -127,8 +131,8 @@ pub(crate) async fn all(node: &Arc<Node>, link: &Arc<Link>) -> Result<(), String
 }
 
 pub(crate) async fn apply(node: &Arc<Node>, link: &Arc<Link>, account: &HubAccount, head: Head) -> Result<(), String> {
-    // Copies kept from a build that offered history stay as they are.
-    if matches!(head.document, Document::History { .. }) && !fastctx_platform::history() {
+    // Pausing history leaves existing copies and pending edits untouched.
+    if !enabled(node, account, &head.document) {
         return Ok(());
     }
     if let Document::Plan { owner } = &head.document {
@@ -224,6 +228,9 @@ pub(crate) async fn refresh(node: &Arc<Node>, link: &Link, copy: &mut Copy) -> R
 /// Takes the hub's current revision into the copy in memory; its caller
 /// keeps the copy.
 pub(crate) async fn fetch(node: &Arc<Node>, link: &Link, copy: &mut Copy) -> Result<(), String> {
+    if !enabled(node, &copy.account, &copy.head.document) {
+        return Err("notes synchronization is off for this account".into());
+    }
     let (text, version, retired, history) = match &copy.head.document {
         Document::Plan { owner } => {
             let page = link.owned_plan_read(&copy.account.account, owner).await?;
@@ -250,6 +257,9 @@ pub(crate) async fn fetch(node: &Arc<Node>, link: &Link, copy: &mut Copy) -> Res
         }
     };
     permitted(node, copy)?;
+    if !enabled(node, &copy.account, &copy.head.document) {
+        return Err("notes synchronization is off for this account".into());
+    }
     copy.body = if retired && copy.pending.is_empty() { Text::default() } else { keep(node, copy, &text).await? };
     copy.head.version = version;
     copy.head.retired = retired;
@@ -313,6 +323,9 @@ pub(crate) async fn project(
         return all(node, link).await;
     }
     for folder in folders {
+        if !crate::history::switch::enabled(node, &folder.account) {
+            continue;
+        }
         let view = crate::authorization::current_view(link).map_err(failure)?;
         if !view.member_keeps_project(&view.me, town) {
             return all(node, link).await;
@@ -448,6 +461,9 @@ pub(crate) async fn conversation(
         },
     )
     .await?;
+    if !crate::history::switch::enabled(node, &account) {
+        return Ok(());
+    }
     let catalog = link.conversation_history_catalog(&account.account, &conversation.address).await?;
     for revision in catalog.documents {
         apply(

@@ -142,6 +142,7 @@ pub(crate) struct Capabilities {
     pub conversation_deletions: bool,
     pub profiles: bool,
     pub machine_updates: bool,
+    pub history_switch: bool,
 }
 
 impl From<&crate::control::Said> for Capabilities {
@@ -157,6 +158,7 @@ impl From<&crate::control::Said> for Capabilities {
             conversation_deletions: said.conversation_deletions,
             profiles: said.profiles,
             machine_updates: said.machine_updates,
+            history_switch: said.history_switch,
         }
     }
 }

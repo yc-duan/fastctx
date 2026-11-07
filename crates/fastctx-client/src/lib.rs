@@ -31,6 +31,7 @@ mod frozen_lines;
 mod frozen_output;
 pub mod goals;
 pub mod history;
+mod history_switch;
 pub mod host;
 mod layers;
 mod line_rows;

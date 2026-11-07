@@ -20,6 +20,7 @@ mod features;
 mod goals;
 mod held_events;
 mod history;
+mod history_switch;
 mod hub_moving;
 mod item_details;
 mod kept;
@@ -1275,6 +1276,8 @@ pub fn run() {
             profile::profile_subagents,
             profile::profile_write,
             profile::mcp,
+            history_switch::history_switch_read,
+            history_switch::history_switch_write,
             collab::collab_read,
             collab::collab_write,
             collaboration::collaboration_tree,

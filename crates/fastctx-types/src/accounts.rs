@@ -341,6 +341,9 @@ pub struct AccountsReply {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub was: Vec<MachineName>,
     pub hubs: Vec<HubAccounts>,
+    /// This computer's history switch while it is in no network.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub history: bool,
     /// The networks it was on that were dissolved, not yet seen.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dissolved: Vec<Dissolution>,
@@ -423,6 +426,12 @@ pub struct HubAccounts {
     pub uninstalls: bool,
     /// The accounts this computer is logged in to there.
     pub logins: Vec<AccountName>,
+    /// Whether the hub keeps the account history switch.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub history_switch: bool,
+    /// Accounts logged in here that have history on.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub history: Vec<AccountName>,
     /// The account this computer is registered under there, as a machine.
     pub home: Option<AccountName>,
     /// Whether anyone who reaches the hub may open an account.

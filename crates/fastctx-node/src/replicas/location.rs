@@ -84,9 +84,14 @@ pub(crate) async fn prepare(
                 account: account.account.clone(),
                 hands: true,
             };
-            let location = crate::placement::prepare_copy(node, &asker, owner.clone(), 0, resource.clone()).await?;
-            remember(Some(machine.name.clone()));
-            return Ok(Some(location));
+            match crate::placement::prepare_copy(node, &asker, owner.clone(), 0, resource.clone()).await {
+                Ok(location) => {
+                    remember(Some(machine.name.clone()));
+                    return Ok(Some(location));
+                }
+                Err(error) if error.message == crate::history::switch::COPIES_OFF => continue,
+                Err(error) => return Err(error),
+            }
         }
         match node.call(&subject, &machine, Purpose::Look, RemoteCall::Facts).await {
             Ok(Ok(RemoteReply::Facts(facts))) if facts.replicated_records => {}
@@ -109,6 +114,7 @@ pub(crate) async fn prepare(
                 remember(Some(machine.name.clone()));
                 return Ok(Some(location));
             }
+            Ok(Err(error)) if error.message == crate::history::switch::COPIES_OFF => continue,
             Ok(Err(error)) => return Err(error),
             Err(error) => return Err(failure(error)),
             _ => return Err(failure("the computer did not return the replica location")),
@@ -131,6 +137,14 @@ pub(crate) async fn prepare_here(
     let link = node.link_of(&asker.hub).ok_or_else(|| failure("the records' hub is unavailable"))?;
     let view = crate::authorization::current_view(&link)?;
     view.authorize(&asker.account, fastctx_net::authorization::Action::Work(&view.me)).map_err(Failure::from)?;
+    if matches!(resource, Resource::History { .. })
+        && !view
+            .me()
+            .and_then(|member| member.home.as_ref())
+            .is_some_and(|account| crate::history::switch::on(&link, account))
+    {
+        return Err(Failure::not_run(crate::history::switch::COPIES_OFF));
+    }
     let path = match resource {
         Resource::History { scope: fastctx_types::history::Scope::Project { project } } => {
             let project = view
@@ -143,7 +157,7 @@ pub(crate) async fn prepare_here(
                 fastctx_types::replicas::Scope::Project { town: project.town.clone(), name: project.name.clone() };
             let path = super::sync::folder(node, &link, &scope).map_err(failure)?;
             let known = node.replicas.state.folders.lock().expect("never poisoned").contains_key(&path);
-            if !known {
+            if !known || !fastctx_platform::disk::is_dir(&path) {
                 let account = view
                     .me()
                     .and_then(|member| member.home.clone())
@@ -187,7 +201,10 @@ pub(crate) async fn prepare_here(
             let root = node.world.owner(&node.names(), &conversation.address);
             let known =
                 node.replicas.state.folders.lock().expect("never poisoned").contains_key(&root.path().join("history"));
-            if !known {
+            if !known
+                || (matches!(resource, Resource::History { .. })
+                    && !fastctx_platform::disk::is_dir(root.path().join("history")))
+            {
                 super::sync::conversation(node, &link, conversation).await.map_err(failure)?;
             }
             if matches!(resource, Resource::History { .. }) {

@@ -308,6 +308,17 @@ impl Device {
                 let version = session.link.profile_write(&account, profile).await.map_err(failed)?;
                 return Ok((Reply::ProfileWritten { version }, here()));
             }
+            Call::HistorySwitchRead { hub, account } => {
+                let account = account.ok_or_else(|| failed("a device changes notes for a named account"))?;
+                let session = self.on_hub(hub.as_ref())?;
+                return Ok((Reply::HistorySwitch(session.link.history_switch_read(&account).map_err(failed)?), here()));
+            }
+            Call::HistorySwitchWrite { hub, account, on } => {
+                let account = account.ok_or_else(|| failed("a device changes notes for a named account"))?;
+                let session = self.on_hub(hub.as_ref())?;
+                session.link.history_switch_write(&account, on).await.map_err(failed)?;
+                return Ok((Reply::Done, here()));
+            }
             Call::CollabRead { hub, account } => {
                 let account = account.ok_or_else(|| failed(NO_OWN_COLLAB))?;
                 let session = self.on_hub(hub.as_ref())?;
@@ -348,7 +359,13 @@ impl Device {
                 }
                 let dissolved = self.store.dissolutions().map_err(failed)?;
                 return Ok((
-                    Reply::Accounts(AccountsReply { machine: here(), was: Vec::new(), hubs, dissolved }),
+                    Reply::Accounts(AccountsReply {
+                        machine: here(),
+                        was: Vec::new(),
+                        hubs,
+                        dissolved,
+                        history: false,
+                    }),
                     here(),
                 ));
             }

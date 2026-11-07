@@ -61,7 +61,7 @@ pub(crate) async fn refresh(
             id,
             "history",
             "",
-            Change { by: Some(&me), version: "", fact: "", full: false },
+            Change { by: None, version: "", fact: "History is off for this conversation.", full: false },
         )
         .await
         .map_err(failure);
@@ -229,8 +229,11 @@ pub(crate) async fn refresh(
         location: Some(hash(&serde_json::to_string(&(&location, &previous_location)).map_err(failure)?)),
     };
     let directory = node.world.conversation(id);
-    let (before, previous) =
-        task::spawn_blocking(move || heard::read(&directory)).await.map_err(failure)?.map_err(failure)?;
+    let (before, previous) = if node.context_bodies.has_text(id, "history") {
+        task::spawn_blocking(move || heard::read(&directory)).await.map_err(failure)?.map_err(failure)?
+    } else {
+        (None, None)
+    };
     let changed = changes(before.as_ref(), &cursor, &catalog, &prepared.names, id, |machine| node.is_me(machine));
     // A path can change back while the receipt for the intervening path is in flight.
     let moved = cursor.location_changed(before.as_ref()) || cursor.location_changed(previous.as_ref());

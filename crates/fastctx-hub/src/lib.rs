@@ -156,6 +156,7 @@ pub fn init(dir: &Path, new: New) -> anyhow::Result<CertPin> {
         locked: false,
         opened: Timestamp::now(),
         collab: None,
+        history: false,
         profile: None,
         promotion: false,
     }));
@@ -1131,6 +1132,7 @@ async fn intended(
                 conversation_deletions,
                 profiles,
                 machine_updates,
+                history_switch,
                 account_records,
                 record_keys,
                 skill_files,
@@ -1164,6 +1166,7 @@ async fn intended(
                 conversation_deletions,
                 profiles,
                 machine_updates,
+                history_switch,
                 account_records,
                 record_keys,
                 skill_files,

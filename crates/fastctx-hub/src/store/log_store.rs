@@ -65,6 +65,7 @@ fn need(needs: Needs) -> i64 {
         Needs::ProjectDeletes => 16,
         Needs::Profiles => 32,
         Needs::MachineUpdates => 64,
+        Needs::HistorySwitch => 128,
     }
 }
 fn mask(reads: Reads) -> i64 {
@@ -76,6 +77,7 @@ fn mask(reads: Reads) -> i64 {
         Needs::ProjectDeletes,
         Needs::Profiles,
         Needs::MachineUpdates,
+        Needs::HistorySwitch,
     ]
     .into_iter()
     .filter(|n| reads.covers(*n))

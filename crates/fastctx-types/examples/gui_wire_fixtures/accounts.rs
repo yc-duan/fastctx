@@ -32,6 +32,8 @@ fn online() -> LinkState {
 
 fn hub() -> HubAccounts {
     HubAccounts {
+        history_switch: false,
+        history: Vec::new(),
         hub: "w-0123456789abcdef".parse().unwrap(),
         name: "home".parse().unwrap(),
         addresses: vec!["203.0.113.10:7443".parse().unwrap()],
@@ -349,8 +351,9 @@ pub fn fixtures() -> Fixtures {
     let account = || "ada".parse().unwrap();
     Fixtures {
         replies: vec![
-            AccountsReply { machine: machine(), was: vec![], hubs: vec![hub()], dissolved: vec![] },
+            AccountsReply { machine: machine(), was: vec![], hubs: vec![hub()], dissolved: vec![], history: false },
             AccountsReply {
+                history: false,
                 machine: machine(),
                 was: vec!["desktop-7q2m9x".parse().unwrap()],
                 hubs: vec![],

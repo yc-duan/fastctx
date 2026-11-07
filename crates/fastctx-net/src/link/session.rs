@@ -323,6 +323,7 @@ async fn greet(inner: &Arc<Inner>, upstream: &Upstream, dialed: dial::Dialed) ->
             forgets_accounts: true,
             profiles: true,
             machine_updates: true,
+            history_switch: true,
             account_records: true,
             record_keys: computer,
             skill_files: true,

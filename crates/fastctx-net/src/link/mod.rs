@@ -29,6 +29,7 @@ mod conversation_history;
 mod direct;
 mod history_api;
 mod history_catalogs;
+mod history_switch;
 mod kernel;
 mod layer;
 mod ledger;

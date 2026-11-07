@@ -118,7 +118,8 @@ pub(crate) fn save_now(
         .get(&copy.id())
         .is_none_or(|before| before.head != route.head || before.path != route.path);
     let mut kept = copy.clone();
-    if publish {
+    // An edit already accepted or queued stays durable when history is paused.
+    if publish && super::sync::enabled(node, &copy.account, &copy.head.document) {
         kept.projected = project(node, copy, previous)?;
     }
     if let Some(warning) = state::save(&node.world, &kept).map_err(|error| error.to_string())? {
@@ -162,6 +163,9 @@ pub(crate) async fn repair(node: &Arc<Node>, copy: &mut Copy) -> Result<(), Stri
 /// telling it only by the file's length and time while those have not
 /// moved. What the path holds afterwards, when that changed and was kept.
 pub(crate) fn repair_now(node: &Node, copy: &Copy) -> Result<Option<Option<Projected>>, String> {
+    if !super::sync::enabled(node, &copy.account, &copy.head.document) {
+        return Ok(None);
+    }
     if node.link_of(&copy.account.hub).is_some_and(|link| !link.view().shared_records) {
         return Ok(None);
     }
@@ -204,7 +208,7 @@ pub(crate) async fn leave(
     shown: Option<&Projected>,
     previous: &Text,
 ) -> Result<(), String> {
-    if copy.left.is_empty() {
+    if copy.left.is_empty() || !super::sync::enabled(node, &copy.account, &copy.head.document) {
         return Ok(());
     }
     let (left, shown, previous) = (copy.left.clone(), shown.cloned(), previous.clone());
@@ -236,7 +240,7 @@ pub(crate) fn folder_now(node: &Node, folder: Folder) -> Result<(), String> {
     }
     // The folder also names the conversation whose plan this computer keeps;
     // its directory is made only where history is offered.
-    if fastctx_platform::history() {
+    if crate::history::switch::enabled(node, &folder.account) {
         fastctx_platform::ensure_private_dir(&folder.path).map_err(|error| error.to_string())?;
     }
     if node.replicas.state.folders.lock().expect("never poisoned").get(&folder.path) == Some(&folder) {

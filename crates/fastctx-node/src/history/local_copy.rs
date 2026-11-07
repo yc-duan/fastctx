@@ -226,7 +226,7 @@ pub(crate) async fn intercept(
 }
 
 pub(crate) async fn repair(node: &Arc<Node>) -> Result<(), Failure> {
-    if !node.links().is_empty() || !fastctx_platform::history() {
+    if !super::switch::alone(node) {
         return Ok(());
     }
     let mut scopes =

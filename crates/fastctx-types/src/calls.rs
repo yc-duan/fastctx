@@ -164,6 +164,21 @@ pub enum Call {
         account: crate::AccountName,
         before: Option<u64>,
     },
+    /// The account's history switch, or this computer's with neither name.
+    HistorySwitchRead {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        hub: Option<crate::HubName>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        account: Option<crate::AccountName>,
+    },
+    /// Sets only the history switch; with no account or hub, this computer's own.
+    HistorySwitchWrite {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        hub: Option<crate::HubName>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        account: Option<crate::AccountName>,
+        on: bool,
+    },
     /// Model collaboration as `account` has it at `hub`, or at the one hub
     /// when none is named; with no account, this computer's own, which
     /// applies while it is in no network.
@@ -990,6 +1005,7 @@ pub enum Reply {
         url: Option<String>,
     },
     MachineLog(crate::machine_log::Page),
+    HistorySwitch(crate::history_switch::HistorySwitch),
     CollabRead(crate::collab::CollabView),
     CollabWritten {
         version: u64,

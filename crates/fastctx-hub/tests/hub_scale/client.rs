@@ -346,6 +346,7 @@ pub fn greeting(identity: &Identity, binding: &[u8; 32], position: Letters, addr
             forgets_accounts: false,
             profiles: true,
             machine_updates: true,
+            history_switch: true,
             account_records: false,
             record_keys: false,
             skill_files: false,

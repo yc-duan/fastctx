@@ -1790,6 +1790,15 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                 crate::profile::scope(node, &caller::of(node, peer)?, hub.as_ref(), account.as_ref())?;
             crate::sentinels::keys::set(node, &link, &account, key, value).await.map(|_| Reply::Done)
         }
+        Call::HistorySwitchRead { hub, account } => {
+            users_voice(node, peer)?;
+            crate::history::switch::read(node, hub.as_ref(), account.as_ref()).map(Reply::HistorySwitch)
+        }
+        Call::HistorySwitchWrite { hub, account, on } => {
+            users_voice(node, peer)?;
+            crate::history::switch::write(node, hub.as_ref(), account.as_ref(), on).await?;
+            Ok(Reply::Done)
+        }
         Call::CollabRead { hub, account } => {
             users_voice(node, peer)?;
             match account {

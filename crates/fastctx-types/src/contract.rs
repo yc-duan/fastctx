@@ -377,6 +377,7 @@ impl Call {
             | Self::McpRelay { .. }
             | Self::MachineLog { .. }
             | Self::CollabRead { .. }
+            | Self::HistorySwitchRead { .. }
             | Self::ProfileRead { .. }
             | Self::Mcp {
                 mcp: McpCall::List | McpCall::Test { .. } | McpCall::Found { .. } | McpCall::Candidates { .. },
@@ -429,6 +430,7 @@ impl Call {
             | Self::TurnEvidence { .. }
             | Self::CompactBetweenTurns { .. }
             | Self::CollabWrite { .. }
+            | Self::HistorySwitchWrite { .. }
             | Self::ProfileWrite { .. }
             | Self::ProfileSubagents { .. }
             | Self::ClaudeSubagents { .. }

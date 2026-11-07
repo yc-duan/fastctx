@@ -320,6 +320,13 @@ impl Link {
             due: view.due,
             uninstalls: view.uninstalls,
             logins: me.map(|me| me.logins.iter().cloned().collect()).unwrap_or_default(),
+            history_switch: view.history_switch,
+            history: me
+                .into_iter()
+                .flat_map(|me| &me.logins)
+                .filter(|name| view.account(name).is_some_and(|account| account.history))
+                .cloned()
+                .collect(),
             home: me.and_then(|me| me.home.clone()),
             self_registration: view.self_registration,
             accounts: view
