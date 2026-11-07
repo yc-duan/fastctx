@@ -163,6 +163,7 @@ pub(crate) async fn apply(node: &Arc<Node>, link: &Arc<Link>, account: &HubAccou
         return refresh(node, link, &mut copy).await;
     }
     let previous = copy.effective().clone();
+    let shown = copy.projected.clone();
     if copy.path != path {
         let left = std::mem::replace(&mut copy.path, path);
         copy.left.push(left);
@@ -184,7 +185,7 @@ pub(crate) async fn apply(node: &Arc<Node>, link: &Arc<Link>, account: &HubAccou
         copy.body = Text::default();
     }
     super::publication::save(node, &mut copy, true, Some(&previous)).await?;
-    super::publication::leave(node, &mut copy).await?;
+    super::publication::leave(node, &mut copy, shown.as_ref(), &previous).await?;
     flushed
 }
 

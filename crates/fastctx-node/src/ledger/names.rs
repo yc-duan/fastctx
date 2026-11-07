@@ -6,7 +6,7 @@
 use std::io;
 
 use fastctx_net::ids::HubId;
-use fastctx_platform::{Permissions, ensure_private_dir, publish};
+use fastctx_platform::{Permissions, ensure_private_dir, publish, publish_new};
 use fastctx_types::TownName;
 use fastctx_types::access::TownId;
 use fastctx_types::layout::WorldDir;
@@ -40,9 +40,26 @@ pub fn place(world: &WorldDir, town: &TownName) -> io::Result<Option<Place>> {
 
 pub fn set_place(world: &WorldDir, town: &TownName, place: &Place) -> io::Result<()> {
     ensure_private_dir(world.town(town).path())?;
+    publish(&path(world, town), &bytes(place)?, Permissions::Private)
+}
+
+/// Keeps `town` for `place` unless it is kept already, at once, so that two
+/// hubs naming a project alike never both take it; where it is kept after.
+pub fn claim(world: &WorldDir, town: &TownName, place: &Place) -> io::Result<Place> {
+    ensure_private_dir(world.town(town).path())?;
+    match publish_new(&path(world, town), &bytes(place)?, Permissions::Private) {
+        Ok(()) => Ok(place.clone()),
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+            self::place(world, town)?.ok_or_else(|| io::Error::other("a project's place vanished as it was claimed"))
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn bytes(place: &Place) -> io::Result<Vec<u8>> {
     let mut bytes = serde_json::to_vec_pretty(place).map_err(io::Error::other)?;
     bytes.push(b'\n');
-    publish(&path(world, town), &bytes, Permissions::Private)
+    Ok(bytes)
 }
 
 /// The id of the project `town` at its hub.

@@ -228,18 +228,19 @@ pub(crate) fn local_name(node: &Node, link: &Link, id: &TownId) -> Result<TownNa
     let view = link.view();
     let project = view.project(id).ok_or_else(|| format!("the hub {} names no project {id}", link.hub_name()))?;
     let place = Place { hub: link.membership().id.clone(), town: id.clone() };
-    match names::place(&node.world, &project.name).map_err(|error| format!("reading {}: {error}", project.name))? {
-        Some(kept) if kept == place => {}
-        Some(kept) => {
-            return Err(format!(
-                "this machine keeps another project named {} (of the hub {}); the hub {}'s is not taken here",
-                project.name,
-                kept.hub,
-                link.hub_name()
-            ));
-        }
-        None => names::set_place(&node.world, &project.name, &place)
-            .map_err(|error| format!("recording {}: {error}", project.name))?,
+    let kept =
+        match names::place(&node.world, &project.name).map_err(|error| format!("reading {}: {error}", project.name))? {
+            Some(kept) => kept,
+            None => names::claim(&node.world, &project.name, &place)
+                .map_err(|error| format!("recording {}: {error}", project.name))?,
+        };
+    if kept != place {
+        return Err(format!(
+            "this machine keeps another project named {} (of the hub {}); the hub {}'s is not taken here",
+            project.name,
+            kept.hub,
+            link.hub_name()
+        ));
     }
     Ok(project.name.clone())
 }

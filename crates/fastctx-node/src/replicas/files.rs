@@ -119,14 +119,10 @@ fn set_aside(
         quarantine(path, None)?;
         return Ok(true);
     }
-    let unmoved = projected.is_some_and(|projected| intact(path, projected));
-    let (held, bytes) = if unmoved {
-        (projected.map(|projected| projected.text.clone()).expect("unmoved implies projected"), None)
-    } else {
-        let bytes = fastctx_platform::disk::read(path)?;
-        let held = Text::of_bytes(&bytes);
-        (held, Some(bytes))
-    };
+    // Read whole: a change that kept the file's length and time is still a
+    // change, and replacing a projection is rare enough to afford it.
+    let bytes = fastctx_platform::disk::read(path)?;
+    let held = Text::of_bytes(&bytes);
     if text.is_some_and(|text| *text == held) {
         return Ok(false);
     }
@@ -134,7 +130,7 @@ fn set_aside(
         projected.is_some_and(|projected| projected.text == held) || previous.is_some_and(|previous| *previous == held);
     writable(path)?;
     if !ours {
-        quarantine(path, bytes.as_deref())?;
+        quarantine(path, Some(&bytes[..]))?;
     }
     Ok(true)
 }

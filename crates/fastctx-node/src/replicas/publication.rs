@@ -186,15 +186,22 @@ pub(crate) fn repair_now(node: &Node, copy: &Copy) -> Result<Option<Option<Proje
 }
 
 /// Takes the projections away from the paths the copy moved from, then
-/// forgets them.
-pub(crate) async fn leave(node: &Arc<Node>, copy: &mut Copy) -> Result<(), String> {
+/// forgets them. A move withdraws nothing: what was changed in one out of
+/// band is kept aside there, as when a document is retired. `shown` is what
+/// the copy last projected and `previous` the text it showed.
+pub(crate) async fn leave(
+    node: &Arc<Node>,
+    copy: &mut Copy,
+    shown: Option<&Projected>,
+    previous: &Text,
+) -> Result<(), String> {
     if copy.left.is_empty() {
         return Ok(());
     }
-    let left = copy.left.clone();
+    let (left, shown, previous) = (copy.left.clone(), shown.cloned(), previous.clone());
     fastctx_platform::task::blocking(move || {
         for path in &left {
-            super::files::withdraw(path)?;
+            super::files::retire(path, shown.as_ref(), Some(&previous))?;
         }
         Ok::<_, std::io::Error>(())
     })
@@ -265,7 +272,7 @@ pub(crate) fn prune_now(node: &Node) -> Result<(), String> {
     let folders: Vec<_> = node.replicas.state.folders.lock().expect("never poisoned").values().cloned().collect();
     for folder in folders {
         let _publication = node.replicas.state.publication.write().expect("never poisoned");
-        if unknown(node, &folder.account.hub) {
+        if unknown(node, &folder.account.hub) || !current(node, &folder) {
             continue;
         }
         if !scope_allowed(node, &folder) {
@@ -275,6 +282,11 @@ pub(crate) fn prune_now(node: &Node) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// Whether `folder` is still what is kept at its path.
+fn current(node: &Node, folder: &Folder) -> bool {
+    node.replicas.state.folders.lock().expect("never poisoned").get(&folder.path) == Some(folder)
 }
 
 /// Lets go of the directory a conversation of another computer had here
@@ -348,6 +360,11 @@ pub(crate) fn catalog_now(
             continue;
         }
         let _publication = node.replicas.state.publication.write().expect("never poisoned");
+        // The path may since hold another hub's history: only the folder as
+        // it was seen is withdrawn.
+        if !current(node, &folder) {
+            continue;
+        }
         state::delete_folder(&node.world, &folder).map_err(|error| error.to_string())?;
         node.replicas.state.folders.lock().expect("never poisoned").remove(&folder.path);
         release(node, &folder).map_err(|error| error.to_string())?;
