@@ -7,8 +7,11 @@
 //! app uses, gives every thread the app's Computer Use, plugins and
 //! connectors. The app moves the binary when it upgrades and renames the
 //! Computer Use pipe when it restarts, rewriting the configuration each
-//! time, so the configuration is read again before every start. Without the
-//! app, a standalone `codex` on the search path speaks the same protocol.
+//! time, so the configuration is read again before every start. Until an
+//! upgraded app first runs, the paths it wrote name the removed version;
+//! they follow the app to its installed version (`super::app_package`).
+//! Without the app, a standalone `codex` on the search path speaks the same
+//! protocol.
 
 use fastctx_types::agents::ProgramSource;
 use std::ffi::OsString;
@@ -63,28 +66,24 @@ pub fn resolve(codex_home: &Path, path: Option<&OsString>) -> Result<Launch, Str
     })
 }
 
-/// Selection is independent of executability: a stale app path must be
-/// reported and fail on use, never silently select another installation.
+/// Selection is independent of executability: the app's path follows only
+/// the app's own upgrades, and a path that leads nowhere is reported and
+/// fails on use, never silently replaced by another installation.
 pub fn discover(codex_home: &Path, path: Option<&OsString>) -> Result<Option<Launch>, String> {
     let config = read_config(codex_home)?;
-    let computer_use = config.get("mcp_servers").and_then(|servers| servers.get("node_repl")).cloned();
-    if let Some(binary) = app_binary(codex_home, computer_use.as_ref())? {
-        return Ok(Some(Launch {
-            binary,
-            source: ProgramSource::DesktopApp,
-            args: vec![
-                "-c".to_string(),
-                "features.code_mode_host=true".to_string(),
-                // Both Computer Use services name their tool `js`, and Codex
-                // keeps whichever registers first; only the Windows-native
-                // one stays.
-                "-c".to_string(),
-                "plugins.unified-computer-use@openai-bundled.mcp_servers.cua_repl.enabled=false".to_string(),
-                "app-server".to_string(),
-            ],
-            computer_use,
-            assisted_config: None,
-        }));
+    let mut computer_use = config.get("mcp_servers").and_then(|servers| servers.get("node_repl")).cloned();
+    if let Some(recorded) = app_binary(codex_home, computer_use.as_ref())? {
+        let Some((from, to)) = super::app_package::moved(&recorded) else {
+            return Ok(Some(app_launch(recorded, computer_use, Vec::new())));
+        };
+        let binary = recorded.strip_prefix(&from).map_or_else(|_| recorded.clone(), |within| to.join(within));
+        // Codex reads its Computer Use server from the same configuration:
+        // its paths are given again for the installed version.
+        let overrides = computer_use
+            .as_mut()
+            .map(|server| super::app_package::rebase(server, &from, &to, "mcp_servers.node_repl"))
+            .unwrap_or_default();
+        return Ok(Some(app_launch(binary, computer_use, overrides)));
     }
     let names: &[&str] = if cfg!(windows) { &["codex.exe", "codex.cmd"] } else { &["codex"] };
     let binary = path.and_then(|path| {
@@ -117,11 +116,28 @@ pub fn discover_for(
     let Some(program_home) = program_home.filter(|program_home| *program_home != codex_home) else { return Ok(own) };
     match discover(program_home, path)? {
         Some(app) if app.source == ProgramSource::DesktopApp => {
-            let computer_use = own.and_then(|own| own.computer_use);
-            Ok(Some(Launch { computer_use, ..app }))
+            Ok(Some(app_launch(app.binary, own.and_then(|own| own.computer_use), Vec::new())))
         }
         _ => Ok(own),
     }
+}
+
+/// The desktop app's program, started as the app starts it; `overrides`
+/// are further `-c` settings.
+fn app_launch(binary: PathBuf, computer_use: Option<toml::Value>, overrides: Vec<String>) -> Launch {
+    let mut args = vec![
+        "-c".to_string(),
+        "features.code_mode_host=true".to_string(),
+        // Both Computer Use services name their tool `js`, and Codex keeps
+        // whichever registers first; only the Windows-native one stays.
+        "-c".to_string(),
+        "plugins.unified-computer-use@openai-bundled.mcp_servers.cua_repl.enabled=false".to_string(),
+    ];
+    for setting in overrides {
+        args.extend(["-c".to_string(), setting]);
+    }
+    args.push("app-server".to_string());
+    Launch { binary, source: ProgramSource::DesktopApp, args, computer_use, assisted_config: None }
 }
 
 /// `discover_for`, with nothing found an error.

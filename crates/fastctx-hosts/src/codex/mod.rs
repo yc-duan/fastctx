@@ -19,6 +19,7 @@ mod accounting;
 mod requests;
 pub use accounting::recorded_turn_facts;
 mod answers;
+mod app_package;
 mod cache;
 mod children;
 mod commands;
