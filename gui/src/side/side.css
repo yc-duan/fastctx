@@ -266,6 +266,13 @@ html.framed .sp-panel.sp-over .sp-line {
   display: none;
 }
 
+/* It has a line of its own, so a phone keeps its name too. */
+@media (max-width: 640px) {
+  .sp-back .page-back span {
+    display: inline;
+  }
+}
+
 /* With the side open beside them, the conversations keep a narrow margin:
    room is short, and the side's cards stand close. It narrows as the side
    opens and widens back as it folds, by --sp-open, so nothing in them moves
@@ -501,8 +508,7 @@ html.framed .sp-panel.sp-over .sp-line {
 }
 
 .sh-open:hover,
-.sh-ask:hover,
-.sh-doc:hover {
+.sh-ask:hover {
   background: var(--fill-strong);
 }
 
@@ -580,31 +586,6 @@ html.framed .sp-panel.sp-over .sp-line {
   padding-left: var(--space-2);
 }
 
-.sh-doc {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-width: 0;
-  margin: 0 var(--space-1);
-  padding: 2px var(--space-2);
-  border-radius: var(--radius-s);
-  color: var(--text);
-  text-decoration: none;
-  transition: background-color var(--hover) var(--ease);
-}
-
-.sh-doc > .glyph {
-  flex: none;
-  color: var(--text-3);
-}
-
-.sh-doc > span {
-  min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
 /* Under the lines, where they begin. */
 .sh-all {
   align-self: flex-start;
@@ -620,8 +601,7 @@ html.framed .sp-panel.sp-over .sp-line {
 @media (pointer: coarse) {
   .sh-head,
   .sh-open,
-  .sh-ask,
-  .sh-doc {
+  .sh-ask {
     min-height: 44px;
   }
 }
@@ -668,12 +648,38 @@ html.framed .sp-panel.sp-over .sp-line {
   flex: none;
 }
 
-/* A conversation's own history, where it is in no project: its documents
-   one to a line, and the way to write one under them. */
+/* The history a conversation's model works with: its documents one to a
+   line, and the way to write one under them. In a project, under the
+   project's name, which leads there; what the conversation wrote before it
+   joined, under its own title after them. */
 .sp-history {
   display: flex;
   flex-direction: column;
   min-height: 0;
+}
+
+.sp-history-title a {
+  color: inherit;
+  text-decoration: none;
+  transition: color var(--hover) var(--ease);
+}
+
+.sp-history-title a:hover {
+  color: var(--accent-bright);
+}
+
+.sp-history-write + .sp-history-title {
+  margin-top: var(--space-6);
+}
+
+/* Each line says what its document covers in two lines at most; the rest
+   is where the pointer rests. */
+.sp-history .page-link-about {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
 }
 
 .sp-history .page-links {
@@ -718,8 +724,15 @@ html.framed .sp-panel.sp-over .sp-line {
   flex: none;
 }
 
-.sp-toggle[aria-pressed="true"] {
+.sp-toggle[aria-pressed="true"],
+.sp-history-mark[aria-pressed="true"] {
   color: var(--text);
+}
+
+/* The side's own mark for the history is for where it lies over the desk
+   and the corner's line is not drawn. */
+.sp-panel:not(.sp-over) .sp-acts .sp-history-mark {
+  display: none;
 }
 
 /* On the desk the window's buttons stand on the paper's own ground too, so

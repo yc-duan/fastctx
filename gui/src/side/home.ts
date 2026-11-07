@@ -3,16 +3,15 @@
 // of its parts with anything to say, each folding away under its name: the
 // goal, what it is and how it stands; the plan, read whole in its card,
 // which takes what height the others leave; the colleagues it asked and the
-// host's agents it sent, those at work first, a short line each; its
-// history, the latest written. Pressing what a card shows opens it: the goal
-// and the history as pages of the side, a colleague beside the
-// conversation, one of the host's agents, or everyone who works with it, in
-// a sheet.
+// host's agents it sent, those at work first, a short line each. Pressing
+// what a card shows opens it: the goal as a page of the side, a colleague
+// beside the conversation, one of the host's agents, or everyone who works
+// with it, in a sheet. The history is no card: what is kept to look things up
+// in has its own mark in the desk's corner.
 
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import type { PlanShape } from "../plan/shape";
-import type { HistoryCatalog } from "../world/history";
 import { anyGoing, going, order, shortLine, workedFor } from "./collab-page";
 import type { SidePage } from "./pane";
 import type { CollabNode, GoalShown } from "./types";
@@ -21,24 +20,20 @@ import type { SideWords } from "./words";
 /** The lines a card of those who work with the conversation shows, before
  *  the rest are left to the sheet. */
 const SHORT = 4;
-/** The documents the history's card names. */
-const LATEST = 3;
 /** Where this device keeps the cards folded away. */
 const FOLDED = "side-home-folded";
 
 export interface HomeSeams {
-  /** One of the side's pages: the goal's, the history. */
-  page(part: "goal" | "history"): void;
+  /** The goal's page of the side. */
+  page(part: "goal"): void;
   /** One who works with the conversation: a colleague beside it, one of the
    *  host's agents read in a sheet. */
   node(node: CollabNode): void;
   /** Everyone who works with it, in a sheet. */
   team(): void;
-  /** Where a document of the history is read. */
-  link(name: string): string;
 }
 
-type Card = "goal" | "plan" | "colleagues" | "agents" | "history";
+type Card = "goal" | "plan" | "colleagues" | "agents";
 
 function folded(): Set<string> {
   try {
@@ -64,7 +59,6 @@ export class SideHome implements SidePage {
   private planShown: PlanShape | null = null;
   private planned = false;
   private nodes: CollabNode[] = [];
-  private catalog: HistoryCatalog | null = null;
   private readonly fold = folded();
   /** Those on short lines, in the order their times stand on the page. */
   private lined: CollabNode[] = [];
@@ -99,7 +93,7 @@ export class SideHome implements SidePage {
       }
       const open = target.closest<HTMLElement>("[data-open]")?.dataset.open;
       if (open === "team") return this.seams.team();
-      if (open === "goal" || open === "history") return this.seams.page(open);
+      if (open === "goal") return this.seams.page(open);
       const id = target.closest<HTMLElement>("[data-id]")?.dataset.id;
       const node = id ? this.find(this.nodes, id) : null;
       if (node) this.seams.node(node);
@@ -131,11 +125,6 @@ export class SideHome implements SidePage {
     this.draw();
   }
 
-  history(catalog: HistoryCatalog | null): void {
-    this.catalog = catalog;
-    this.draw();
-  }
-
   private draw(): void {
     const now = Date.now();
     this.lined = [];
@@ -145,7 +134,6 @@ export class SideHome implements SidePage {
       this.planCard(),
       this.teamCard("colleagues", ordered.filter((node) => node.kind === "colleague" || node.kind === "side"), now),
       this.teamCard("agents", ordered.filter((node) => node.kind === "subagent"), now),
-      this.historyCard(),
     ].filter(Boolean);
     // Said where no card stands, the goal's left to its bar among them.
     this.element.innerHTML = `${cards.join("")}<p class="sh-none">${escape(this.words.home.none)}</p>`;
@@ -204,17 +192,6 @@ export class SideHome implements SidePage {
     const name = card === "colleagues" ? words.collab.groups.colleagues : words.collab.groups.agents;
     const state = working ? words.collab.atWork(working) : "";
     return this.card(card, name, state, `<div class="sh-lines">${lines}</div>${all}`, waiting ? words.collab.states.waiting : "");
-  }
-
-  private historyCard(): string {
-    const documents = [...(this.catalog?.documents ?? [])].filter((one) => !one.retired).slice(0, LATEST);
-    if (!this.catalog) return "";
-    const words = this.words;
-    const lines = documents.length
-      ? documents.map((one) => `<a class="sh-doc" href="${escape(this.seams.link(one.name))}">${glyph("history", 16)}<span>${escape(one.name)}</span></a>`).join("")
-      : "";
-    const all = `<button class="text-button sh-all" type="button" data-open="history">${escape(words.home.allHistory)}</button>`;
-    return this.card("history", words.pages.history, "", lines + all);
   }
 
   /** Each second while the page is seen and one works: their times. */

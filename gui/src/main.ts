@@ -513,6 +513,7 @@ function parentOf(at: Place): Place {
     case "machine":
       return { kind: "machines" };
     case "history":
+      return at.from ? { kind: "talk", address: at.from } : { kind: "project", town: at.town };
     case "page":
       return { kind: "project", town: at.town };
     case "talk-history":
@@ -550,8 +551,10 @@ function placeName(at: Place): string {
       return shellWords.settings;
     case "account":
       return shellWords.account;
-    case "project":
-      return at.town;
+    case "project": {
+      const world = live ? store.world.peek() : specimen.world;
+      return world?.towns.find((one) => one.town === at.town)?.record.name ?? at.town;
+    }
     case "talks":
       return at.town ?? (english ? enTalks : zhTalks).title;
     case "sentinel":
@@ -885,11 +888,34 @@ const removal = (() => {
 })();
 
 const historyWords = english ? enHistory : zhHistory;
-/** Where a document of a history is read. */
-function historyLink(scope: HistoryScope, name: string): string {
+/** Where a document of a history is read; one of a project's read from a
+ *  conversation in it leads back to that conversation. */
+function historyLink(scope: HistoryScope, name: string, from?: Address): string {
   return scope.kind === "project"
-    ? link({ kind: "history", town: scope.project, name })
+    ? link({ kind: "history", town: scope.project, name, ...(from ? { from } : {}) })
     : link({ kind: "talk-history", address: { resident: scope.resident, machine: scope.machine }, name });
+}
+
+/** The history a conversation's side shows: its project's, with what it
+ *  wrote before it joined the project after it, or else its own
+ *  (`world-history.md`, 项目一份，对话一份). */
+function sideHistory(address: Address, town: string | null) {
+  if (!historyOffered) return undefined;
+  const seam = (scope: HistoryScope) => ({
+    watch: (show: (catalog: HistoryCatalog | null) => void) => followHistoryOf(scope, show),
+    link: (name: string) => historyLink(scope, name, address),
+    write: () => historyForm.open(scope),
+  });
+  const own = seam({ kind: "conversation", resident: address.resident, machine: address.machine });
+  if (!town) return { words: historyWords, ...own };
+  const world = live ? store.world.peek() : specimen.world;
+  const name = world?.towns.find((one) => one.town === town)?.record.name ?? town;
+  return {
+    words: historyWords,
+    ...seam({ kind: "project", project: town }),
+    project: { name, href: link({ kind: "project", town }) },
+    earlier: own,
+  };
 }
 const historyForm = new HistoryForm({
   words: historyWords,
@@ -903,7 +929,11 @@ const historyForm = new HistoryForm({
     if (location.hash === there) show(placeOf(there));
     else location.hash = there;
   },
-  today: () => (live ? new Date() : specimen.now).toISOString().slice(0, 10),
+  // The user's own day, not the one at Greenwich.
+  today: () => {
+    const at = live ? new Date() : specimen.now;
+    return `${at.getFullYear()}-${String(at.getMonth() + 1).padStart(2, "0")}-${String(at.getDate()).padStart(2, "0")}`;
+  },
 });
 
 /** Whether histories are offered: the development build's until the
@@ -1744,8 +1774,7 @@ function specimenTalk(address: Address): DeskTalk {
     side: specimenSide(sideWords, planWords, { ...planSample, facts: (id) => planSample.facts[id] ?? null }, english, {
       self: address,
       goal: params.get("goal"),
-      // As the World lists it: one in no project keeps its own history.
-      ...(historyOffered && !(known ? known.town : sample.town) ? { history: specimenOwnHistory(address) } : {}),
+      history: sideHistory(address, known ? known.town : sample.town),
       where: () => whereOf(specimen.world, address, (name) => link({ kind: "machine", name })),
     }),
     opening: { open: notLive, reveal: notLive },
@@ -2041,17 +2070,7 @@ function liveTalk(address: Address): DeskTalk {
   // Goals are not offered in a release yet (`app/preview.ts`); nor can the
   // World drive one in a conversation Codex's own app holds.
   const noGoal = !PREVIEW || (!!known && /^codex/i.test(known.about.host.agent) && !known.about.world_started);
-  // A conversation in no project keeps its own history (`world-history.md`).
-  const historyScope: HistoryScope = { kind: "conversation", resident: address.resident, machine: address.machine };
-  const ownHistory =
-    historyOffered && !someone.project
-      ? {
-          words: historyWords,
-          watch: (show: (catalog: HistoryCatalog | null) => void) => followHistoryOf(historyScope, show),
-          link: (name: string) => historyLink(historyScope, name),
-          write: () => historyForm.open(historyScope),
-        }
-      : undefined;
+  const ownHistory = sideHistory(address, known?.town ?? listedAt(world, address)?.town ?? null);
   const here = world?.here ?? null;
   const conversation = new Conversation();
   // The agent by its name, or, not yet listed, its resident's id.
@@ -2596,7 +2615,8 @@ function projectPage(town: string): Page {
 
 const historyConfirm = new Confirm({ close: projectWords.close, working: talkMenuWords.working, failed: talkMenuWords.failed });
 
-/** One document of a project's history, or of a conversation's. */
+/** One document of a project's history, or of a conversation's, under the
+ *  name of what it belongs to. */
 function historyPage(scope: HistoryScope, name: string): Page {
   const world = live ? store.world.peek() : specimen.world;
   let back: { href: string; name: string };
@@ -2606,7 +2626,7 @@ function historyPage(scope: HistoryScope, name: string): Page {
     const address = { resident: scope.resident, machine: scope.machine };
     const known = residentsOf(world).find((r) => sameAddress(addressOf(r), address));
     // Named as the list names it: its title, else who and where.
-    back = { href: talkLink(address), name: listedTitle(address) ?? (known ? someoneSaid(known, homeWords) : scope.resident) };
+    back = { href: talkLink(address), name: listedTitle(address) ?? (known ? someoneSaid(known, homeWords) : historyWords.untitled) };
   }
   const notHere = () => Promise.reject(new Error("specimen"));
   const page = new HistoryPage({
@@ -2633,21 +2653,10 @@ function historyPage(scope: HistoryScope, name: string): Page {
   return { element: page.element, title: name };
 }
 
-/** A specimen conversation's own history, for its side. */
-function specimenOwnHistory(address: Address) {
-  const scope: HistoryScope = { kind: "conversation", resident: address.resident, machine: address.machine };
-  return {
-    words: historyWords,
-    watch: (show: (catalog: HistoryCatalog | null) => void) => followHistoryOf(scope, show),
-    link: (name: string) => historyLink(scope, name),
-    write: () => historyForm.open(scope),
-  };
-}
-
 /** Who wrote a version of a document, and where their conversation is. */
 function historyWriter(author: HistoryAuthor): { name: string; href: string | null } {
   const by = author.by;
-  if (by.kind === "user") return { name: historyWords.you, href: null };
+  if (by.kind === "user") return { name: author.on ? historyWords.youOn(author.on) : historyWords.you, href: null };
   if (by.kind === "resident") {
     const known = residentsOf(live ? store.world.peek() : specimen.world).find((r) => sameAddress(addressOf(r), by.address));
     // A conversation gone from the World is still named by its host.
@@ -3386,6 +3395,9 @@ function specimenPlace(): Place | null {
       return { kind: "data" };
     case "codex":
       return { kind: "talk", address: { resident: "codex-7f3a", machine: "laptop" } };
+    // `?s=solo`: a conversation in no project.
+    case "solo":
+      return { kind: "talk", address: { resident: "codex-6b19", machine: "desktop" } };
     case "asks":
       return { kind: "talk", address: { resident: "codex-a51c", machine: "laptop" } };
     case "stream":

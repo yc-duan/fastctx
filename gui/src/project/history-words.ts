@@ -28,6 +28,8 @@ export interface HistoryWords {
   notSaved: string;
   unreadable: string;
   you: string;
+  /** The user, as who wrote a version on a machine they may see. */
+  youOn(machine: string): string;
   /** A conversation, or a page, on a machine this device's account may
    *  not use, as who wrote something. */
   elsewhere(page: boolean): string;
@@ -49,6 +51,14 @@ export interface HistoryWords {
   changed(who: string, ago: string): string;
   /** A day, short: the month and the day, with the year where not this one. */
   date(at: string, now: Date): string;
+  /** A project's history, as the mark that opens it in a conversation's
+   *  side names it. */
+  of(project: string): string;
+  /** What a conversation wrote in its own history before it joined its
+   *  project. */
+  earlier: string;
+  /** A conversation the World no longer lists, as the way back names it. */
+  untitled: string;
 }
 
 function shortDate(at: string, now: Date, locale: string): string {
@@ -77,6 +87,7 @@ export const zhHistory: HistoryWords = {
   notSaved: "没存上",
   unreadable: "读不到这一篇",
   you: "你",
+  youOn: (machine) => `${machine} 上的你`,
   elsewhere: (page) => (page ? "一个页面" : "一段对话"),
   retire: "撤下",
   retireTitle: (name) => `撤下「${name}」？`,
@@ -91,6 +102,9 @@ export const zhHistory: HistoryWords = {
   taken: "已经有同名的一篇",
   changed: (who, ago) => `${who}　${ago}`,
   date: (at, now) => shortDate(at, now, "zh-CN"),
+  of: (project) => `${project}${/[A-Za-z0-9]$/.test(project) ? " " : ""}的历史`,
+  earlier: "此前的历史",
+  untitled: "对话",
 };
 
 export const enHistory: HistoryWords = {
@@ -113,6 +127,7 @@ export const enHistory: HistoryWords = {
   notSaved: "Not saved",
   unreadable: "This one can't be read",
   you: "You",
+  youOn: (machine) => `You on ${machine}`,
   elsewhere: (page) => (page ? "A page" : "A conversation"),
   retire: "Take down",
   retireTitle: (name) => `Take down “${name}”?`,
@@ -127,4 +142,7 @@ export const enHistory: HistoryWords = {
   taken: "One by that name already exists",
   changed: (who, ago) => `${who}　${ago}`,
   date: (at, now) => shortDate(at, now, "en-GB"),
+  of: (project) => `History of ${project}`,
+  earlier: "Earlier history",
+  untitled: "Conversation",
 };

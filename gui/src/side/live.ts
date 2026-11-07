@@ -149,7 +149,7 @@ export interface LiveSide {
   address: Address;
   /** No goal is set here (`SideSeams.noGoal`). */
   noGoal?: boolean;
-  /** Its own history, where it is in no project (`SideSeams.history`). */
+  /** The history its model works with (`SideSeams.history`). */
   history?: SideSeams["history"];
   /** A span of time, short. */
   took(ms: number): string;

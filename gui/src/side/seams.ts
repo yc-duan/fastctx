@@ -52,12 +52,21 @@ export interface SideSeams {
   /** Shows a folder of this computer in the system's own window, where this
    *  is a computer. */
   reveal?: (path: string) => void;
-  /** Its own history, where it is in no project (`world-history.md`). */
-  history?: {
+  /** The history its model works with (`world-history.md`): its project's,
+   *  or, in no project, its own. */
+  history?: HistorySeam & {
     words: HistoryWords;
-    watch(show: (catalog: HistoryCatalog | null) => void): () => void;
-    /** Where a document is read. */
-    link(name: string): string;
-    write(): void;
+    /** The project whose history it is, for one in a project. */
+    project?: { name: string; href: string };
+    /** Its own history from before it joined its project. */
+    earlier?: HistorySeam;
   };
+}
+
+/** One history, followed as it changes. */
+export interface HistorySeam {
+  watch(show: (catalog: HistoryCatalog | null) => void): () => void;
+  /** Where a document is read. */
+  link(name: string): string;
+  write(): void;
 }

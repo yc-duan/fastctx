@@ -110,6 +110,9 @@ export class SideParts implements PartSet {
   fresh = false;
   /** The side showing these parts, while their conversation is in focus. */
   frame: PartsFrame | null = null;
+  /** Its history's part, and what the mark that opens it is named; none
+   *  without a history. */
+  history: { part: string; label: string } | null = null;
   private readonly bar: GoalBar;
   private readonly home: SideHome;
   private readonly collab: CollabPage;
@@ -165,10 +168,9 @@ export class SideParts implements PartSet {
     this.home = new SideHome(
       words,
       {
-        page: (part) => this.frame?.show(part === "goal" ? PART.goal : PART.history),
+        page: () => this.frame?.show(PART.goal),
         node: (node) => this.openNode(node),
         team: () => this.openTeam(),
-        link: (name) => seams.history?.link(name) ?? "",
       },
       !seams.noGoal,
       this.planPage.element,
@@ -177,17 +179,25 @@ export class SideParts implements PartSet {
       { id: PART.home, name: words.home.name, page: this.home },
       ...(seams.noGoal ? [] : [{ id: PART.goal, name: words.pages.goal, page: this.goalPage }]),
     ];
-    // A conversation in no project keeps its own history, a page of its own.
+    // The history its model works with, a page of its own that the mark in
+    // the desk's corner opens: its project's, else its own.
     if (seams.history) {
       const history = seams.history;
-      const card = new HistoryCard({ words: history.words, link: history.link, write: history.write });
+      const earlier = history.earlier;
+      const card = new HistoryCard({
+        words: history.words,
+        link: history.link,
+        write: history.write,
+        ...(history.project ? { project: history.project } : {}),
+        ...(earlier ? { earlier: (name: string) => earlier.link(name) } : {}),
+      });
       this.parts.push({ id: PART.history, name: words.pages.history, page: card });
-      this.stops.push(
-        history.watch((catalog) => {
-          card.show(catalog);
-          this.home.history(catalog);
-        }),
-      );
+      this.history = {
+        part: PART.history,
+        label: history.project ? history.words.of(history.project.name) : words.pages.history,
+      };
+      this.stops.push(history.watch((catalog) => card.show(catalog)));
+      if (earlier) this.stops.push(earlier.watch((catalog) => card.showEarlier(catalog)));
     }
     this.following = seams.colleagues((nodes) => {
       this.colleagues = nodes;
