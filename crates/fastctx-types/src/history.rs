@@ -8,6 +8,9 @@ use crate::{MachineName, ResidentId, TownName, project::Stamp, residents::Host};
 use serde::{Deserialize, Serialize};
 
 pub const MAX_DOCUMENT_BYTES: usize = 512 * 1024;
+/// A description is one line in the list every conversation holds, all of
+/// it, so each is kept short (`world-history.md`, 为 grep 写).
+pub const MAX_DESCRIPTION_BYTES: usize = 1024;
 pub const RECORD_KIND: &str = "history";
 
 /// The public scope uses project names and conversation addresses. Resolution
