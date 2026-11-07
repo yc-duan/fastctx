@@ -11,14 +11,27 @@ pub(crate) struct Cleanup {
 
 #[derive(Default)]
 struct Pending {
+    started: bool,
     asked: bool,
     running: bool,
+}
+
+pub(crate) fn start(node: &Arc<Node>) {
+    node.replicas.cleanup.pending.lock().expect("never poisoned").started = true;
+    schedule(node);
+}
+
+pub(crate) fn started(node: &Node) -> bool {
+    node.replicas.cleanup.pending.lock().expect("never poisoned").started
 }
 
 pub(crate) fn schedule(node: &Arc<Node>) {
     {
         let mut pending = node.replicas.cleanup.pending.lock().expect("never poisoned");
         pending.asked = true;
+        if !pending.started {
+            return;
+        }
         if pending.running {
             node.replicas.cleanup.wake.notify_one();
             return;

@@ -25,7 +25,7 @@ pub(crate) fn redirected(world: &WorldDir, path: &Path) -> io::Result<bool> {
         }
         match fastctx_platform::disk::symlink_metadata(&parent) {
             Ok(metadata) if fastctx_platform::owned_directory::is_link(&metadata) => {
-                if !inside(&parent) {
+                if !inside(&parent) || super::state::path_key(&parent) == root {
                     return Err(io::Error::other("a parent of the World was redirected"));
                 }
                 fastctx_platform::owned_directory::delete(&parent)?;

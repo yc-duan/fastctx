@@ -903,6 +903,7 @@ pub async fn run_prepared(
                 .line(format_args!("on the hub {} ({}) as {}", membership.hub_name, membership.id, membership.name));
             world::start(&node, membership).context("starting a link to a hub")?;
         }
+        replicas::cleanup::start(&node);
         Ok::<_, anyhow::Error>(())
     })
     .await??;

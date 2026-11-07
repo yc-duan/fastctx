@@ -252,6 +252,10 @@ pub(crate) fn folder_now(node: &Node, folder: Folder) -> Result<(), String> {
 
 /// `prune_now`, where reading and writing the disk may block.
 pub(crate) async fn prune(node: &Arc<Node>) -> Result<(), String> {
+    if !super::cleanup::started(node) {
+        super::cleanup::schedule(node);
+        return Ok(());
+    }
     let working = node.clone();
     let result = fastctx_platform::task::blocking(move || prune_now(&working)).await;
     if result.is_err() {
@@ -275,9 +279,13 @@ pub(crate) fn prune_now(node: &Node) -> Result<(), String> {
     let mut errors = Vec::new();
     for (id, route) in routes {
         let _publication = node.replicas.state.publication.write().expect("never poisoned");
-        if node.replicas.state.routes.lock().expect("never poisoned").get(&id) != Some(&route)
-            || unknown(node, &route.account.hub)
-        {
+        let current = node.replicas.state.routes.lock().expect("never poisoned").get(&id).cloned();
+        let Some(current) = current else { continue };
+        if current != route {
+            errors.push("a replica changed during withdrawal; its current route will be checked again".into());
+            continue;
+        }
+        if unknown(node, &route.account.hub) {
             continue;
         }
         if permitted(node, &route).is_err() {
