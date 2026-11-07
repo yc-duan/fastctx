@@ -110,7 +110,8 @@ fn choices_now(
     if !node.connected_anywhere() {
         return own(node, login);
     }
-    let acting = resident.and_then(|id| crate::here::acting(node, id)).unwrap_or_default();
+    // A session whose account is unknown is offered no account's colleagues.
+    let Some(acting) = resident.and_then(|id| crate::here::acting(node, id)) else { return Ok(None) };
     let mut applies = Vec::new();
     for link in node.links() {
         let view = link.view();

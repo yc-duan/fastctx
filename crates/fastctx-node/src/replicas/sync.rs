@@ -90,12 +90,36 @@ pub(crate) async fn all(node: &Arc<Node>, link: &Arc<Link>) -> Result<(), String
         }
         super::publication::folder(node, Folder { account: account.clone(), scope, path }).await?;
     }
+    // One document that cannot be brought up to date holds up no other: it
+    // is tried again on its own.
+    let mut failed = Vec::new();
+    let listed: std::collections::BTreeSet<_> =
+        catalog.documents.iter().map(|head| state::identity(&account, head)).collect();
     for head in catalog.documents.iter().cloned() {
-        apply(node, link, &account, head).await?;
+        if let Err(error) = apply(node, link, &account, head.clone()).await {
+            failed.push((head, error));
+        }
+    }
+    // Edits waiting for a document the hub has not heard of yet, as one
+    // started while this computer was offline, go up now.
+    for slot in node.replicas.state.slots() {
+        let head = {
+            let copy = slot.lock().await;
+            if copy.account != account || copy.pending.is_empty() || listed.contains(&copy.id()) {
+                continue;
+            }
+            copy.head.clone()
+        };
+        if let Err(error) = apply(node, link, &account, head.clone()).await {
+            failed.push((head, error));
+        }
     }
     super::publication::catalog(node, account.hub.clone(), catalog, known, known_folders).await?;
     super::publication::prune(node).await?;
     node.memory_changed();
+    if let Some(error) = super::updates::retry_later(node, &account, failed) {
+        node.log.line(format_args!("synchronizing document replicas: {error}"));
+    }
     Ok(())
 }
 
@@ -120,6 +144,10 @@ pub(crate) async fn apply(node: &Arc<Node>, link: &Arc<Link>, account: &HubAccou
     });
     let mut copy = slot.lock().await;
     if known && copy.path == path && copy.head == head && copy.pending.is_empty() {
+        return super::publication::repair(node, &copy).await;
+    }
+    // A catalog read before a newer revision arrived does not take it back.
+    if known && copy.head.version.zip(head.version).is_some_and(|(kept, told)| told < kept) {
         return super::publication::repair(node, &copy).await;
     }
     let old_path = copy.path.clone();
