@@ -257,7 +257,7 @@ pub(crate) async fn intercept(
         node.log.line(format_args!("keeping an edit of {} for its hub: {error}", next.path.display()));
     }
     let after = next.effective().clone();
-    if let Caller::Resident(owner) = caller {
+    if (submitted.is_ok() || waiting) && let Caller::Resident(owner) = caller {
         let local = next.pending.iter().any(|pending| pending.offline);
         next.observed
             .insert(owner.key(), Observed { version: next.head.version, hash: Some(after.hash.clone()), local });
