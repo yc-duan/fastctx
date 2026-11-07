@@ -111,63 +111,63 @@ async fn run(node: Arc<Node>, hub: HubId, wake: Arc<tokio::sync::Notify>) {
                 std::mem::take(&mut pending.documents),
             )
         };
-        let given = documents.clone();
-        let result = async {
-            if all {
-                super::sync::all(&node, &link).await?;
-            } else {
-                for project in &projects {
-                    super::sync::project(&node, &link, project).await?;
-                }
-                for ((town, name), version) in &topics {
-                    super::sync::topic(&node, &link, town, name, *version).await?;
-                }
-                for record in records.values() {
-                    super::sync::record(&node, &link, record).await?;
-                }
-            }
-            let mut failed: BTreeMap<String, (HubAccount, Vec<(Head, String)>)> = BTreeMap::new();
-            for (account, head) in documents.into_values() {
-                if let Err(error) = super::sync::apply(&node, &link, &account, head.clone()).await {
-                    let key = format!("{}/{}", account.hub, account.account);
-                    failed.entry(key).or_insert_with(|| (account, Vec::new())).1.push((head, error));
-                }
-            }
-            let mut first = None;
-            for (account, failed) in failed.into_values() {
-                first = first.or(retry_later(&node, &account, failed));
-            }
-            first.map_or(Ok(()), Err)
+        let mut retry = Pending::default();
+        let mut first = None;
+        if all && let Err(error) = super::sync::all(&node, &link).await {
+            retry.all = true;
+            first = Some(error);
         }
-        .await;
-        match result {
-            Ok(()) => {
-                previous = None;
-                again = crate::again::Again::default();
+        if !all || retry.all {
+            for project in projects {
+                if let Err(error) = super::sync::project(&node, &link, &project).await {
+                    retry.projects.insert(project);
+                    first = first.or(Some(error));
+                }
             }
-            Err(error) => {
-                if previous.as_ref() != Some(&error) {
-                    node.log.line(format_args!("synchronizing document replicas: {error}"));
-                    previous = Some(error);
+            for ((town, name), version) in topics {
+                if let Err(error) = super::sync::topic(&node, &link, &town, &name, version).await {
+                    retry.topics.insert((town, name), version);
+                    first = first.or(Some(error));
                 }
-                {
-                    let mut updates = node.replicas.updates.0.lock().expect("never poisoned");
-                    let pending = updates.get_mut(&hub).expect("worker entry");
-                    pending.all |= all;
-                    pending.projects.extend(projects);
-                    for (key, version) in topics {
-                        pending.topics.entry(key).and_modify(|kept| *kept = (*kept).max(version)).or_insert(version);
-                    }
-                    for (key, old) in records {
-                        pending.records.entry(key).or_insert(old);
-                    }
-                    for (key, document) in given {
-                        pending.documents.entry(key).or_insert(document);
-                    }
+            }
+            for (key, record) in records {
+                if let Err(error) = super::sync::record(&node, &link, &record).await {
+                    retry.records.insert(key, record);
+                    first = first.or(Some(error));
                 }
-                let mut ways = node.ways.subscribe();
-                tokio::select! { () = tokio::time::sleep(again.next()) => {}, () = wake.notified() => {}, _ = ways.changed() => {} }
             }
         }
+        for (id, (account, head)) in documents {
+            if let Err(error) = super::sync::apply(&node, &link, &account, head.clone()).await {
+                retry.documents.insert(id, (account, head));
+                first = first.or(Some(error));
+            }
+        }
+        let Some(error) = first else {
+            previous = None;
+            again.reset();
+            continue;
+        };
+        if previous.as_ref() != Some(&error) {
+            node.log.line(format_args!("synchronizing document replicas: {error}"));
+            previous = Some(error);
+        }
+        {
+            let mut updates = node.replicas.updates.0.lock().expect("never poisoned");
+            let pending = updates.get_mut(&hub).expect("worker entry");
+            pending.all |= retry.all;
+            pending.projects.extend(retry.projects);
+            for (key, version) in retry.topics {
+                pending.topics.entry(key).and_modify(|kept| *kept = (*kept).max(version)).or_insert(version);
+            }
+            for (key, old) in retry.records {
+                pending.records.entry(key).or_insert(old);
+            }
+            for (key, document) in retry.documents {
+                pending.documents.entry(key).or_insert(document);
+            }
+        }
+        let mut ways = node.ways.subscribe();
+        tokio::select! { () = tokio::time::sleep(again.next()) => {}, () = wake.notified() => {}, _ = ways.changed() => {} }
     }
 }

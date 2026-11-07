@@ -310,6 +310,7 @@ pub(crate) async fn project(
         let owner = project.owner.clone();
         let opened = view.account(&owner).ok_or("the project's account is unavailable")?.opened;
         let catalog = link.history_catalog(&folder.account.account, town).await?;
+        let mut failed = Vec::new();
         for revision in catalog.documents {
             let head = Head {
                 owner: owner.clone(),
@@ -319,7 +320,12 @@ pub(crate) async fn project(
                 retired: revision.retired,
                 history: Some(revision),
             };
-            apply(node, link, &folder.account, head).await?;
+            if let Err(error) = apply(node, link, &folder.account, head.clone()).await {
+                failed.push((head, error));
+            }
+        }
+        if let Some(error) = super::updates::retry_later(node, &folder.account, failed) {
+            node.log.line(format_args!("synchronizing project history: {error}"));
         }
     }
     node.memory_changed();
