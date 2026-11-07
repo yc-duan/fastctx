@@ -42,6 +42,7 @@ pub(crate) fn history_at(node: &Node, hub: &HubId, town: &TownId) {
 }
 
 pub(crate) fn history(node: &Node, scope: &Scope) {
+    node.contexts.history_changes.changed(scope);
     for resident in node.residents.everyone().filter(|resident| resident.removed.is_none()) {
         let relevant = match scope {
             Scope::Project { project } => resident.town.as_ref() == Some(project),

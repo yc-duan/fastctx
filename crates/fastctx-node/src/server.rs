@@ -245,12 +245,29 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
                 writer.send(&json(&NodeFrame::Reply { id, reply: Err(failure) })).await?;
                 return writer.drain().await;
             }
-            let mut changes = node.memory_changes.subscribe();
             let mut views = node.views.subscribe();
             let mut told = None;
             loop {
-                changes.borrow_and_update();
                 views.borrow_and_update();
+                let selection = crate::history::watch::readers(node, scope);
+                let network = match crate::history::api::network(node, &Caller::User, scope).await {
+                    Ok(network) => network,
+                    Err(failure) => {
+                        writer.send(&json(&NodeFrame::Reply { id, reply: Err(failure) })).await?;
+                        return writer.drain().await;
+                    }
+                };
+                let mut changes = match &network {
+                    Some((link, account)) => match link.history_catalog_changes(account, scope) {
+                        Ok(changes) => changes,
+                        Err(error) => {
+                            writer.send(&json(&NodeFrame::Reply { id, reply: Err(Failure::new(error)) })).await?;
+                            return writer.drain().await;
+                        }
+                    },
+                    None => node.contexts.history_changes.subscribe(scope),
+                };
+                let mut status = network.as_ref().map(|(link, _)| link.subscribe());
                 match crate::history::api::call(
                     node,
                     &Caller::User,
@@ -274,7 +291,17 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
                 }
                 tokio::select! {
                     changed = changes.changed() => if changed.is_err() { return Ok(()) },
-                    changed = views.changed() => if changed.is_err() { return Ok(()) },
+                    _ = async {
+                        match &mut status {
+                            Some(status) => { let _ = status.changed().await; }
+                            None => std::future::pending().await,
+                        }
+                    } => {},
+                    _ = async {
+                        loop {
+                            if views.changed().await.is_err() || crate::history::watch::readers(node, scope) != selection { break; }
+                        }
+                    } => {},
                     _ = reader.recv() => return Ok(()),
                 }
             }

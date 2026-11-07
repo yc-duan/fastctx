@@ -7,3 +7,4 @@ pub(crate) mod local;
 pub(crate) mod local_copy;
 pub(crate) mod offered;
 pub(crate) mod shelf;
+pub(crate) mod watch;

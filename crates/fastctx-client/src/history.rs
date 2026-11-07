@@ -20,10 +20,17 @@ impl World {
     pub async fn watch_history(&self, scope: Scope) -> Result<HistoryWatch, Error> {
         enabled()?;
         if let Some(device) = self.device() {
+            let (link, account) = device.history_network(&scope).await?;
+            let changes = link
+                .history_catalog_changes(&account, &scope)
+                .map_err(|error| CallError::Failed(fastctx_types::ipc::Failure::new(error)))?;
             return Ok(HistoryWatch::Device {
                 device: device.clone(),
-                scope,
-                changes: device.world_changes(),
+                scope: scope.clone(),
+                changes,
+                status: link.subscribe(),
+                world_changes: device.world_changes(),
+                readers: device.history_readers(&scope),
                 first: true,
                 told: None,
             });
@@ -42,6 +49,9 @@ pub enum HistoryWatch {
         device: Arc<crate::device::Device>,
         scope: Scope,
         changes: tokio::sync::watch::Receiver<u64>,
+        status: tokio::sync::watch::Receiver<fastctx_net::link::Status>,
+        world_changes: tokio::sync::watch::Receiver<u64>,
+        readers: Vec<(fastctx_types::access::HubId, Vec<fastctx_types::AccountName>)>,
         first: bool,
         told: Option<Catalog>,
     },
@@ -58,14 +68,29 @@ impl HistoryWatch {
                 },
                 other => Err(Error::Unexpected(format!("{other:?}"))),
             },
-            Self::Device { device, scope, changes, first, told } => loop {
+            Self::Device { device, scope, changes, status, world_changes, readers, first, told } => loop {
                 if !std::mem::take(first) {
-                    changes
-                        .changed()
-                        .await
-                        .map_err(|_| CallError::Broken(std::io::Error::other("the device closed")))?;
+                    tokio::select! {
+                        changed = changes.changed() => changed,
+                        changed = status.changed() => changed,
+                        changed = async {
+                            loop {
+                                world_changes.changed().await?;
+                                if device.history_readers(scope) != *readers { return Ok(()); }
+                            }
+                        } => changed,
+                    }
+                    .map_err(|_| CallError::Broken(std::io::Error::other("the device closed")))?;
                 }
+                world_changes.borrow_and_update();
+                *readers = device.history_readers(scope);
+                let (link, account) = device.history_network(scope).await?;
+                *changes = link
+                    .history_catalog_changes(&account, scope)
+                    .map_err(|error| CallError::Failed(fastctx_types::ipc::Failure::new(error)))?;
+                *status = link.subscribe();
                 changes.borrow_and_update();
+                status.borrow_and_update();
                 let (reply, _) = device.call(Call::History(HistoryCall::List { scope: scope.clone() })).await?;
                 let Reply::History(HistoryReply::Catalog { catalog }) = reply else {
                     return Err(Error::Unexpected(format!("{reply:?}")));
