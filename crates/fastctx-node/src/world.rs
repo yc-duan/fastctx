@@ -312,6 +312,7 @@ async fn logged_in(node: &Arc<Node>, joined: Joined) -> Result<Reply, Failure> {
                 .map_err(|error| Failure::new(format!("logged in, but recording the membership failed: {error}")))?;
             start(node, membership).map_err(|error| Failure::new(format!("starting the link to the hub: {error}")))?;
             crate::ledger::joined(node, &hub);
+            crate::history::import::schedule(node);
             let (carrying, at) = (node.clone(), hub.clone());
             fastctx_platform::task::spawn(async move { crate::own_collab::carry(&carrying, &at).await });
         }
@@ -1554,6 +1555,7 @@ impl fastctx_net::link::Node for Handler {
     fn connected(&self) {
         let Some(node) = self.node.upgrade() else { return };
         node.views_changed();
+        crate::history::import::schedule(&node);
         crate::context::invalidations::reconnected(&node, &self.hub);
         node.skill_index.invalidate(&self.hub, None);
         crate::placement::copies::refresh(&node, &self.hub);

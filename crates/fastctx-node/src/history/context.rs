@@ -74,8 +74,47 @@ pub(crate) async fn refresh(
         Some(project) => Scope::Project { project: project.clone() },
         None => Scope::Conversation { resident: owner.resident.clone(), machine: owner.machine.clone() },
     };
+    let _history = super::import::lock(node, &scope).await;
     let account = crate::plan::load_account(node, id, acting).await?;
-    let (catalog, location) = if let Some(account) = &account {
+    let pending = super::import::pending(node, &scope);
+    if pending {
+        if let Err(error) = super::import::authorize(node, acting, &scope) {
+            unavailable(
+                node,
+                id,
+                &me,
+                "HISTORY\nThe history is unavailable while its account access cannot be confirmed.",
+            )
+            .await?;
+            return Err(error);
+        }
+        super::import::schedule(node);
+    }
+    let (catalog, location) = if pending || (account.is_none() && node.links().is_empty()) {
+        let HistoryReply::Catalog { mut catalog } =
+            super::local::call(node, HistoryCall::List { scope: scope.clone() }, None).await?
+        else {
+            return Err(failure("the local history catalog was not returned"));
+        };
+        let path = match &scope {
+            Scope::Project { project } => node.world.town(project).path().join("history"),
+            Scope::Conversation { resident, machine } => node
+                .world
+                .owner(&node.names(), &Address { resident: resident.clone(), machine: machine.clone() })
+                .path()
+                .join("history"),
+        };
+        let creating = path.clone();
+        task::spawn_blocking(move || fastctx_platform::ensure_private_dir(&creating))
+            .await
+            .map_err(failure)?
+            .map_err(failure)?;
+        catalog.sort();
+        (
+            Arc::new(catalog),
+            Some(fastctx_types::placement::Location { machine: node.machine(), path: crate::world::native(&path) }),
+        )
+    } else if let Some(account) = &account {
         let Some(link) = node.link_of(&account.hub) else { return Ok(()) };
         if !link.view().shared_records {
             return unavailable(node, id, &me, "HISTORY\nUpdate the hub to use history and copies on every computer.")
@@ -122,30 +161,6 @@ pub(crate) async fn refresh(
         )
         .await?;
         (catalog, location)
-    } else if node.links().is_empty() {
-        let HistoryReply::Catalog { mut catalog } =
-            super::local::call(node, HistoryCall::List { scope: scope.clone() }, None).await?
-        else {
-            return Err(failure("the local history catalog was not returned"));
-        };
-        let path = match &scope {
-            Scope::Project { project } => node.world.town(project).path().join("history"),
-            Scope::Conversation { resident, machine } => node
-                .world
-                .owner(&node.names(), &Address { resident: resident.clone(), machine: machine.clone() })
-                .path()
-                .join("history"),
-        };
-        let creating = path.clone();
-        task::spawn_blocking(move || fastctx_platform::ensure_private_dir(&creating))
-            .await
-            .map_err(failure)?
-            .map_err(failure)?;
-        catalog.sort();
-        (
-            Arc::new(catalog),
-            Some(fastctx_types::placement::Location { machine: node.machine(), path: crate::world::native(&path) }),
-        )
     } else {
         return Ok(());
     };

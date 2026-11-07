@@ -28,14 +28,14 @@ pub(crate) fn folder(node: &Node, scope: &Scope) -> PathBuf {
 }
 
 fn locate(node: &Node, path: &Path) -> Result<Option<(Scope, String)>, Failure> {
-    if !node.links().is_empty() {
-        return Ok(None);
-    }
     let path = fastctx_platform::local_path(path).map_err(failure)?;
     let Some(name) = path.file_name().and_then(|name| name.to_str()).and_then(|name| name.strip_suffix(".md")) else {
         return Ok(None);
     };
     let Some(parent) = path.parent() else { return Ok(None) };
+    if parent.file_name().is_none_or(|name| name != "history") {
+        return Ok(None);
+    }
     let mut scopes =
         node.world.towns().map_err(failure)?.into_iter().map(|project| Scope::Project { project }).collect::<Vec<_>>();
     scopes.extend(
@@ -46,6 +46,9 @@ fn locate(node: &Node, path: &Path) -> Result<Option<(Scope, String)>, Failure> 
     );
     for scope in scopes {
         if crate::replicas::state::path_key(&folder(node, &scope)) == crate::replicas::state::path_key(parent) {
+            if !node.links().is_empty() && !super::import::pending(node, &scope) {
+                return Ok(None);
+            }
             fastctx_types::history::markdown::check_name(name).map_err(failure)?;
             if crate::replicas::state::path_key(&fastctx_hands::files::canonical_path(&path).map_err(failure)?)
                 != crate::replicas::state::path_key(&path)
@@ -79,6 +82,14 @@ pub(crate) async fn intercept(
     let Some(path) = paths.first() else { return Ok(None) };
     let Some((scope, name)) = locate(node, path)? else { return Ok(None) };
     super::offered::check(node, caller)?;
+    let _history = super::import::lock(node, &scope).await;
+    if super::import::pending(node, &scope) {
+        super::import::schedule(node);
+        return Err(super::import::writing());
+    }
+    if !node.links().is_empty() {
+        return Ok(None);
+    }
     let author = super::api::author(node, caller).await?;
     super::api::network(node, caller, &scope).await?;
     let latest = super::local::call(node, HistoryCall::List { scope: scope.clone() }, None).await?;

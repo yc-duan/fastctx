@@ -192,6 +192,16 @@ impl Shelf {
     }
 
     fn refresh_conversation(&mut self, records: &Path) -> Result<(), String> {
+        if let Some(paths) = super::import::state::archiving(records)? {
+            self.documents.clear();
+            self.folders.clear();
+            self.seen = Seen::default();
+            for path in paths {
+                let stored = read_stored(&path)?;
+                self.put(stored.revision, fastctx_net::sign::sha256(stored.text.as_bytes()), 0);
+            }
+            return Ok(());
+        }
         let now = changed(records)?;
         if now.is_none() {
             self.documents.clear();
@@ -308,7 +318,10 @@ impl Shelf {
                 let text = String::from_utf8(file.bytes.0.clone()).map_err(|error| error.to_string())?;
                 Ok(Stored { revision, text, submission: None })
             }
-            Of::Conversation { records } => read_stored(&records.join(name).join(format!("{version}.json"))),
+            Of::Conversation { records } => {
+                let path = records.join(name).join(format!("{version}.json"));
+                read_stored(&super::import::state::readable(&path)?)
+            }
         }
     }
 

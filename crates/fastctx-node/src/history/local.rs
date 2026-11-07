@@ -65,6 +65,16 @@ pub(crate) async fn call(
     author: Option<Author>,
 ) -> Result<HistoryReply, Failure> {
     let scope = request.scope().clone();
+    if request.writes() {
+        if super::import::pending(node, &scope) {
+            return Err(super::import::writing());
+        }
+        if matches!(scope, Scope::Conversation { .. })
+            && super::import::state::belongs_to_account(&directory(node, &scope)).map_err(failure)?
+        {
+            return Err(failure("this history belongs to its network account; sign in to continue writing"));
+        }
+    }
     let identity = serde_json::to_string(&scope).map_err(failure)?;
     let shelf = node.history_shelves.of(&identity);
     let mut shelf = shelf.lock().await;
@@ -168,6 +178,8 @@ pub(crate) async fn call(
     .await?;
     crate::context::invalidations::history(node, &scope);
     node.memory_changed();
+    // A standalone write may have begun just before its first link was installed.
+    super::import::schedule(node);
     Ok(HistoryReply::Saved { revision: Box::new(revision) })
 }
 
