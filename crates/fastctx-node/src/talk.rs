@@ -535,6 +535,19 @@ fn history(
             _ => None,
         })
         .collect();
+    // The words that open a turn are recorded once the host says the turn
+    // began, by this computer's clock, while the host's record keeps its own:
+    // a quick reply can bear an earlier time than the words it answers. The
+    // first words a turn heard soon after it began open it, whatever the
+    // times say; words sent into it later stand at their own time.
+    let began: std::collections::HashMap<String, jiff::Timestamp> = recorded
+        .iter()
+        .filter_map(|event| match &event.happened {
+            Happened::TurnStarted { turn } => Some((turn.clone(), event.at)),
+            _ => None,
+        })
+        .collect();
+    let mut opened = std::collections::HashSet::new();
     for mut event in recorded {
         if let Happened::Finished { turn, item } | Happened::Updated { turn, item } = &event.happened
             && (held.contains(&(turn.clone(), item.id.clone())) || drafts.contains(&(turn.clone(), item.id.clone())))
@@ -566,6 +579,26 @@ fn history(
             continue;
         }
         let turn = turn_of(&event.happened);
+        let opening = match (&event.happened, turn) {
+            (Happened::Heard { .. }, Some(turn)) if !opened.contains(turn) => began
+                .get(turn)
+                .is_some_and(|start| event.at.as_millisecond().saturating_sub(start.as_millisecond()) <= OPENING_MS),
+            _ => false,
+        };
+        let first = opening
+            .then(|| {
+                history.iter().position(|other| {
+                    turn == turn_of(&other.happened) && !matches!(other.happened, Happened::TurnStarted { .. })
+                })
+            })
+            .flatten();
+        if let Some(turn) = turn.filter(|_| opening) {
+            opened.insert(turn.to_string());
+        }
+        if let Some(index) = first {
+            history.insert(index, event);
+            continue;
+        }
         let index = history
             .iter()
             .position(|other| {
@@ -589,6 +622,9 @@ fn history(
     // items and steering input. Local facts were inserted at their source time.
     history
 }
+
+/// How soon after its turn began words count as the ones that opened it.
+const OPENING_MS: i64 = 2_000;
 
 fn recorded_history(mut history: Vec<SessionEvent>) -> Vec<SessionEvent> {
     use fastctx_types::session::Happened;
