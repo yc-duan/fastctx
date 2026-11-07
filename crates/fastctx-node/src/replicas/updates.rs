@@ -56,10 +56,9 @@ pub(crate) fn schedule(node: &Arc<Node>, hub: &HubId, change: Change) {
             pending.topics.entry((town, name)).and_modify(|kept| *kept = (*kept).max(version)).or_insert(version);
         }
         Change::Record(change) => {
-            pending.records.insert(
-                (change.account.clone(), change.metadata.kind.clone(), change.metadata.key.clone()),
-                change,
-            );
+            pending
+                .records
+                .insert((change.account.clone(), change.metadata.kind.clone(), change.metadata.key.clone()), change);
         }
     });
 }

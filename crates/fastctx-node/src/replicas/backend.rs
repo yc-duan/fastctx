@@ -64,8 +64,15 @@ pub(crate) async fn base(link: &Link, copy: &Copy, version: Option<u64>) -> Resu
     }
 }
 
-/// False is a CAS collision; an unknown outcome remains an error with its receipt pending.
-pub(crate) async fn submit(link: &Link, copy: &mut Copy, pending: &Pending, text: String) -> Result<bool, String> {
+/// The hub's text once it took `text`, its revision now the copy's head;
+/// none on a CAS collision. An unknown outcome remains an error with its
+/// receipt pending.
+pub(crate) async fn submit(
+    link: &Link,
+    copy: &mut Copy,
+    pending: &Pending,
+    text: String,
+) -> Result<Option<String>, String> {
     match &copy.head.document {
         Document::Plan { owner } => {
             let author = match &pending.author.stamp.by {
@@ -85,10 +92,10 @@ pub(crate) async fn submit(link: &Link, copy: &mut Copy, pending: &Pending, text
                 )
                 .await?;
             match result {
-                fastctx_types::plan::Result::Conflict { .. } => return Ok(false),
+                fastctx_types::plan::Result::Conflict { .. } => Ok(None),
                 fastctx_types::plan::Result::Page { page } => {
                     copy.head.version = page.version();
-                    copy.text = page.body.map_or(String::new(), |body| body.markdown);
+                    Ok(Some(page.body.map_or(String::new(), |body| body.markdown)))
                 }
             }
         }
@@ -122,13 +129,12 @@ pub(crate) async fn submit(link: &Link, copy: &mut Copy, pending: &Pending, text
             };
             let revision = match result {
                 Ok(revision) => revision,
-                Err(error) if error.starts_with("the document changed;") => return Ok(false),
+                Err(error) if error.starts_with("the document changed;") => return Ok(None),
                 Err(error) => return Err(error),
             };
             copy.head.version = Some(revision.version);
             copy.head.history = Some(revision);
-            copy.text = text;
+            Ok(Some(text))
         }
     }
-    Ok(true)
 }

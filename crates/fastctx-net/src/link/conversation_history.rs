@@ -99,7 +99,7 @@ impl Link {
         author: Author,
         submission: Option<String>,
     ) -> Result<HistoryRevision, String> {
-        let description = history::markdown::parse(name, &text)?.description;
+        let description = history::markdown::parse_written(name, &text)?.description;
         let revision = HistoryRevision {
             name: name.into(),
             description,

@@ -1,12 +1,30 @@
 //! Short local publication transactions never wait for a document's network operation.
 
-use super::state::{self, Copy, Folder, Route};
+use super::{
+    bodies::Text,
+    state::{self, Copy, Folder, Projected, Route},
+};
 use crate::Node;
 use fastctx_types::replicas::{Document, Scope};
 use std::sync::Arc;
 
+/// Whether the hub ended this computer's place in its network: what it kept
+/// for that network goes, whatever the last view said.
+fn left(link: &fastctx_net::link::Link) -> bool {
+    matches!(link.status(), fastctx_net::link::Status::Stopped { .. })
+}
+
+/// Whether what this computer knows of a hub's view is unknown for now: a
+/// line that is down is no revocation; a place the hub ended is.
+fn unknown(node: &Node, hub: &fastctx_types::access::HubId) -> bool {
+    node.link_of(hub).is_some_and(|link| !link.view_current() && !left(&link))
+}
+
 fn scope_allowed(node: &Node, folder: &Folder) -> bool {
     let Some(link) = node.link_of(&folder.account.hub) else { return false };
+    if left(&link) {
+        return false;
+    }
     let view = link.view();
     let Some(member) = view.me() else { return false };
     match &folder.scope {
@@ -22,6 +40,9 @@ fn scope_allowed(node: &Node, folder: &Folder) -> bool {
 
 pub(crate) fn permitted(node: &Node, route: &Route) -> Result<(), String> {
     let link = node.link_of(&route.account.hub).ok_or("the replica's account left this computer")?;
+    if left(&link) {
+        return Err("this computer left the replica's network".into());
+    }
     let view = link.view();
     if view.account(&route.head.owner).is_none_or(|owner| owner.opened != route.head.opened) {
         return Err("the replica's owning account was replaced or removed".into());
@@ -46,14 +67,29 @@ pub(crate) fn permitted(node: &Node, route: &Route) -> Result<(), String> {
     if allowed { Ok(()) } else { Err("this computer no longer keeps this record".into()) }
 }
 
-/// `save_now`, where writing the disk may block.
-pub(crate) async fn save(node: &Arc<Node>, copy: &Copy, publish: bool, previous: Option<&str>) -> Result<(), String> {
-    let (node, copy, previous) = (node.clone(), copy.clone(), previous.map(str::to_owned));
-    fastctx_platform::task::blocking(move || save_now(&node, &copy, publish, previous.as_deref())).await
+/// `save_now`, where writing the disk may block. `previous` is the text the
+/// copy showed before this change, for a copy that never kept what it
+/// projected.
+pub(crate) async fn save(
+    node: &Arc<Node>,
+    copy: &mut Copy,
+    publish: bool,
+    previous: Option<&Text>,
+) -> Result<(), String> {
+    let (node, saving, previous) = (node.clone(), copy.clone(), previous.cloned());
+    copy.projected =
+        fastctx_platform::task::blocking(move || save_now(&node, &saving, publish, previous.as_ref())).await?;
+    Ok(())
 }
 
-/// Checks again inside the same local transaction used by revocation.
-pub(crate) fn save_now(node: &Node, copy: &Copy, publish: bool, previous: Option<&str>) -> Result<(), String> {
+/// Checks again inside the same local transaction used by revocation. What
+/// the copy's path holds afterwards.
+pub(crate) fn save_now(
+    node: &Node,
+    copy: &Copy,
+    publish: bool,
+    previous: Option<&Text>,
+) -> Result<Option<Projected>, String> {
     let _publication = node.replicas.state.publication.read().expect("never poisoned");
     let route = Route::from(copy);
     permitted(node, &route)?;
@@ -77,44 +113,95 @@ pub(crate) fn save_now(node: &Node, copy: &Copy, publish: bool, previous: Option
         .get(&copy.id())
         .is_none_or(|before| before.head != route.head || before.path != route.path);
     node.replicas.state.relocated(copy);
-    state::save(&node.world, copy).map_err(|error| error.to_string())?;
-    node.replicas.state.routes.lock().expect("never poisoned").insert(copy.id(), route);
+    let mut kept = copy.clone();
     if publish {
-        project(copy, previous)?;
+        kept.projected = project(node, copy, previous)?;
     }
+    state::save(&node.world, &kept).map_err(|error| error.to_string())?;
+    node.replicas.state.routes.lock().expect("never poisoned").insert(copy.id(), route);
     drop(_publication);
     if changed {
         crate::context::invalidations::document(node, &copy.account.hub, &copy.head.document);
     }
+    Ok(kept.projected)
+}
+
+/// Brings the copy's path to what the copy shows. What it holds afterwards.
+fn project(node: &Node, copy: &Copy, previous: Option<&Text>) -> Result<Option<Projected>, String> {
+    if matches!(copy.head.document, Document::History { .. }) && copy.head.version.is_none() && copy.pending.is_empty()
+    {
+        return Ok(copy.projected.clone());
+    }
+    if copy.head.retired && copy.pending.is_empty() {
+        super::files::retire(&copy.path, copy.projected.as_ref(), previous).map_err(|error| error.to_string())?;
+        return Ok(None);
+    }
+    let text = super::bodies::read(&node.world, &copy.id(), copy.effective()).map_err(|error| error.to_string())?;
+    super::files::publish(&copy.path, &text, copy.projected.as_ref(), previous)
+        .map(Some)
+        .map_err(|error| error.to_string())
+}
+
+/// `repair_now`, where reading and writing the disk may block.
+pub(crate) async fn repair(node: &Arc<Node>, copy: &mut Copy) -> Result<(), String> {
+    let (node, repairing) = (node.clone(), copy.clone());
+    if let Some(projected) = fastctx_platform::task::blocking(move || repair_now(&node, &repairing)).await? {
+        copy.projected = projected;
+    }
     Ok(())
 }
 
-fn project(copy: &Copy, previous: Option<&str>) -> Result<(), String> {
-    if matches!(copy.head.document, Document::History { .. }) && copy.head.version.is_none() && copy.pending.is_empty()
-    {
-        return Ok(());
-    }
-    if copy.head.retired && copy.pending.is_empty() {
-        super::files::delete(&copy.path)
-    } else {
-        super::files::publish(&copy.path, copy.effective(), previous)
-    }
-    .map_err(|error| error.to_string())
-}
-
-/// `repair_now`, where writing the disk may block.
-pub(crate) async fn repair(node: &Arc<Node>, copy: &Copy) -> Result<(), String> {
-    let (node, copy) = (node.clone(), copy.clone());
-    fastctx_platform::task::blocking(move || repair_now(&node, &copy)).await
-}
-
-pub(crate) fn repair_now(node: &Node, copy: &Copy) -> Result<(), String> {
+/// Restores the copy's path when it no longer holds what the copy shows,
+/// telling it only by the file's length and time while those have not
+/// moved. What the path holds afterwards, when that changed and was kept.
+pub(crate) fn repair_now(node: &Node, copy: &Copy) -> Result<Option<Option<Projected>>, String> {
     if node.link_of(&copy.account.hub).is_some_and(|link| !link.view().shared_records) {
-        return Ok(());
+        return Ok(None);
+    }
+    let effective = copy.effective();
+    let shown = if copy.head.retired && copy.pending.is_empty() {
+        // A retired copy shows nothing.
+        fastctx_platform::disk::symlink_metadata(&copy.path).is_err()
+    } else {
+        copy.projected
+            .as_ref()
+            .is_some_and(|projected| projected.text == *effective && super::files::intact(&copy.path, projected))
+    };
+    if shown {
+        return Ok(None);
     }
     let _publication = node.replicas.state.publication.read().expect("never poisoned");
-    permitted(node, &Route::from(copy))?;
-    project(copy, Some(copy.effective()))
+    // One no longer kept here is withdrawn, not restored.
+    if permitted(node, &Route::from(copy)).is_err() {
+        return Ok(None);
+    }
+    let projected = project(node, copy, Some(effective))?;
+    if projected == copy.projected {
+        return Ok(None);
+    }
+    let mut kept = copy.clone();
+    kept.projected = projected.clone();
+    state::save(&node.world, &kept).map_err(|error| error.to_string())?;
+    Ok(Some(projected))
+}
+
+/// Takes the projections away from the paths the copy moved from, then
+/// forgets them.
+pub(crate) async fn leave(node: &Arc<Node>, copy: &mut Copy) -> Result<(), String> {
+    if copy.left.is_empty() {
+        return Ok(());
+    }
+    let left = copy.left.clone();
+    fastctx_platform::task::blocking(move || {
+        for path in &left {
+            super::files::withdraw(path)?;
+        }
+        Ok::<_, std::io::Error>(())
+    })
+    .await
+    .map_err(|error| error.to_string())?;
+    copy.left.clear();
+    save(node, copy, false, None).await
 }
 
 /// `folder_now`, where writing the disk may block.
@@ -163,7 +250,7 @@ pub(crate) fn prune_now(node: &Node) -> Result<(), String> {
         .collect();
     for (id, route) in routes {
         let _publication = node.replicas.state.publication.write().expect("never poisoned");
-        if node.link_of(&route.account.hub).is_some_and(|link| !link.view_current()) {
+        if unknown(node, &route.account.hub) {
             continue;
         }
         if permitted(node, &route).is_err() {
@@ -174,15 +261,39 @@ pub(crate) fn prune_now(node: &Node) -> Result<(), String> {
     let folders: Vec<_> = node.replicas.state.folders.lock().expect("never poisoned").values().cloned().collect();
     for folder in folders {
         let _publication = node.replicas.state.publication.write().expect("never poisoned");
-        if node.link_of(&folder.account.hub).is_some_and(|link| !link.view_current()) {
+        if unknown(node, &folder.account.hub) {
             continue;
         }
         if !scope_allowed(node, &folder) {
             state::delete_folder(&node.world, &folder).map_err(|error| error.to_string())?;
             node.replicas.state.folders.lock().expect("never poisoned").remove(&folder.path);
+            release(node, &folder).map_err(|error| error.to_string())?;
         }
     }
     Ok(())
+}
+
+/// Lets go of the directory a conversation of another computer had here
+/// only for its copies, binding and all, once nothing else is in it.
+fn release(node: &Node, folder: &Folder) -> std::io::Result<()> {
+    let Scope::Conversation { conversation } = &folder.scope else { return Ok(()) };
+    if node.residents.knows(&conversation.address.resident) {
+        return Ok(());
+    }
+    let Some(directory) = folder.path.parent() else { return Ok(()) };
+    let binding = directory.join(".working-copy-owner.json");
+    let entries = match fastctx_platform::disk::read_dir(directory) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    for entry in entries {
+        let path = entry?.path();
+        if path != binding && path != directory.join("tampering") {
+            return Ok(());
+        }
+    }
+    super::files::delete(directory)
 }
 
 /// `catalog_now`, where writing the disk may block.
@@ -235,6 +346,7 @@ pub(crate) fn catalog_now(
         let _publication = node.replicas.state.publication.write().expect("never poisoned");
         state::delete_folder(&node.world, &folder).map_err(|error| error.to_string())?;
         node.replicas.state.folders.lock().expect("never poisoned").remove(&folder.path);
+        release(node, &folder).map_err(|error| error.to_string())?;
     }
     Ok(())
 }

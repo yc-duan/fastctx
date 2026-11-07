@@ -1,6 +1,7 @@
 //! The only path from a mutable replica to a new authoritative revision.
 
 use super::{
+    bodies::Text,
     state::{self, Copy, Observed, Pending, Slot},
     sync,
 };
@@ -9,14 +10,14 @@ use fastctx_types::{
     Address, JobId, TownName, history,
     ipc::Failure,
     replicas::{Document, Head, Scope},
-    write::{ChangeKind, FileChange, WriteError, WriteOp, WriteOutcome, WriteRequest, WriteResult},
+    write::{ChangeKind, FileChange, WriteError, WriteOp, WriteOutcome, WriteResult},
 };
 use std::{path::Path, sync::Arc};
 
-/// How many edits of one document wait for its hub at most: past it, one
-/// made offline joins the last waiting, whoever made either. A guard against
-/// a document edited in turn by many for long offline.
-const WAITING_EDITS: usize = 16;
+/// How many edits of one document wait for its hub at most. Each becomes a
+/// revision of its own, so none is folded into another; past this many an
+/// edit is refused until the document reaches its hub.
+const WAITING_EDITS: usize = 64;
 
 fn failure(error: impl std::fmt::Display) -> Failure {
     Failure::new(error.to_string())
@@ -106,9 +107,11 @@ async fn locate_inner(node: &Arc<Node>, path: &Path, refresh: bool) -> Result<Op
         account: folder.account,
         head,
         path: native,
-        text: String::new(),
+        body: Text::default(),
+        projected: None,
         observed: Default::default(),
         pending: Vec::new(),
+        left: Vec::new(),
     })))
 }
 
@@ -161,32 +164,46 @@ pub(crate) async fn intercept(
     if copy.head.retired {
         return Ok(Some(Err("this document was retired; restore it in the app before editing".to_string().into())));
     }
-    let previous = copy.effective().to_string();
-    super::publication::repair(node, &copy).await.map_err(failure)?;
+    super::publication::repair(node, &mut copy).await.map_err(failure)?;
+    let previous = sync::text(node, &copy, copy.effective()).await.map_err(failure)?;
     let link = node.link_of(&copy.account.hub).ok_or_else(|| failure("the replica's hub is unavailable"))?;
     let offline = !matches!(link.status(), fastctx_net::link::Status::Online { .. }) || !link.view_current();
     let mut base = copy.head.version;
     let mut before = previous.clone();
     if matches!(operation, WriteOp::Write(_))
         && let Caller::Resident(owner) = caller
-        && let Some(observed) = copy.observed.get(&owner.key())
     {
-        let expected_hash = observed
-            .hash
-            .as_ref()
-            .ok_or_else(|| failure("the file changed while it was read; view it again before writing"))?;
-        if fastctx_hands::files::content_hash(before.as_bytes()) != *expected_hash {
-            base = observed.version;
-            if offline {
-                return Ok(Some(Err(
-                    "this local copy changed since it was viewed; read it again before writing offline"
-                        .to_string()
-                        .into(),
-                )));
+        match copy.observed.get(&owner.key()) {
+            // A history document is shared: replacing one unseen would drop
+            // what others wrote in it since.
+            None if matches!(copy.head.document, Document::History { .. }) && !previous.is_empty() => {
+                return Ok(Some(Err("write replaces this whole history document; view it with fastctx view \
+                     before replacing it, or change part of it with edit"
+                    .to_string()
+                    .into())));
             }
-            before = super::backend::base(&link, &copy, base).await.map_err(failure)?;
-            if fastctx_hands::files::content_hash(before.as_bytes()) != *expected_hash {
-                return Err(failure("the observed base is unavailable; view the latest copy before writing"));
+            None => {}
+            Some(observed) => {
+                let expected = observed
+                    .hash
+                    .as_ref()
+                    .ok_or_else(|| failure("the file changed while it was read; view it again before writing"))?;
+                if copy.effective().hash != *expected {
+                    base = observed.version;
+                    if offline {
+                        return Ok(Some(Err(
+                            "this local copy changed since it was viewed; read it again before writing offline"
+                                .to_string()
+                                .into(),
+                        )));
+                    }
+                    before = super::backend::base(&link, &copy, base).await.map_err(failure)?;
+                    // What was seen held edits made offline that reached the hub
+                    // since: the revision under them is the common base.
+                    if Text::of(&before).hash != *expected && !observed.local {
+                        return Err(failure("the observed base is unavailable; view the latest copy before writing"));
+                    }
+                }
             }
         }
     }
@@ -195,7 +212,7 @@ pub(crate) async fn intercept(
     match &copy.head.document {
         Document::Plan { .. } => fastctx_types::plan::validate(&text).map_err(failure)?,
         Document::History { name, .. } => {
-            history::markdown::parse(name, &text).map_err(failure)?;
+            history::markdown::parse_written(name, &text).map_err(failure)?;
         }
     }
     if text == previous && !matches!(operation, WriteOp::Write(_)) {
@@ -206,39 +223,55 @@ pub(crate) async fn intercept(
             changed_since_seen: Vec::new(),
         })));
     }
+    if copy.pending.len() >= WAITING_EDITS {
+        return Ok(Some(Err(format!(
+            "{WAITING_EDITS} edits of this document are waiting for its hub; connect before editing it again"
+        )
+        .into())));
+    }
     let id = fastctx_net::sign::random::<32>().map_err(failure)?.iter().map(|byte| format!("{byte:02x}")).collect();
-    let replica = copy.path.clone();
-    keep(
-        &mut copy.pending,
-        Pending { id, base, before, text, operation: operation.clone(), author, offline },
-        &replica,
-    );
-    super::publication::save(node, &copy, false, None).await.map_err(failure)?;
-    let mut submitted = if offline { Ok(()) } else { flush(node, &link, &mut copy).await };
+    // The edit lands on a copy of the state, kept only once it is saved.
+    let mut next = copy.clone();
+    let edit = Pending {
+        id,
+        base,
+        before: sync::keep(node, &next, &before).await.map_err(failure)?,
+        text: sync::keep(node, &next, &text).await.map_err(failure)?,
+        edit: (!matches!(operation, WriteOp::Write(_))).then(|| operation.clone()),
+        author,
+        offline,
+    };
+    let edit_id = edit.id.clone();
+    next.pending.push(edit);
+    let submitted = if offline { Ok(()) } else { flush(node, &link, &mut next).await };
     if submitted.is_err() {
-        for pending in &mut copy.pending {
+        for pending in &mut next.pending {
             pending.offline = true;
         }
-        super::publication::save(node, &copy, false, None).await.map_err(failure)?;
     }
-    let after = copy.effective().to_string();
-    super::publication::save(node, &copy, true, Some(&previous)).await.map_err(failure)?;
+    // An edit still waiting reaches the hub later; one the hub refused is gone.
+    let waiting = next.pending.iter().any(|pending| pending.id == edit_id);
+    if let Err(error) = &submitted
+        && waiting
+    {
+        node.log.line(format_args!("keeping an edit of {} for its hub: {error}", next.path.display()));
+    }
+    let after = next.effective().clone();
     if let Caller::Resident(owner) = caller {
-        let observed =
-            Observed { version: copy.head.version, hash: Some(fastctx_hands::files::content_hash(after.as_bytes())) };
-        copy.observed.insert(owner.key(), observed);
-        super::publication::save(node, &copy, false, None).await.map_err(failure)?;
+        let local = next.pending.iter().any(|pending| pending.offline);
+        next.observed
+            .insert(owner.key(), Observed { version: next.head.version, hash: Some(after.hash.clone()), local });
     }
-    let pending = !copy.pending.is_empty();
-    if pending && !link.view_current() {
-        submitted = Ok(());
-    }
+    let shown = copy.effective().clone();
+    super::publication::save(node, &mut next, true, Some(&shown)).await.map_err(failure)?;
+    *copy = next;
+    let after = sync::text(node, &copy, &after).await.map_err(failure)?;
     let path = copy.path.clone();
     let document = copy.head.document.clone();
     drop(copy);
     crate::context::invalidations::document(node, link.hub(), &document);
     node.memory_changed();
-    let text = if pending {
+    let text = if waiting {
         format!("{} {}: saved locally; the hub will receive it when connected", operation.tool(), path.display())
     } else {
         format!("{} {}: saved and synchronized", operation.tool(), path.display())
@@ -280,19 +313,20 @@ pub(crate) async fn intercept(
         result
     };
     Ok(Some(match submitted {
-        Ok(()) => Ok(result),
-        Err(error) => Err(WriteError { note_prefix: 0, message: error, changes: result.changes }),
+        Err(error) if !waiting => Err(WriteError { note_prefix: 0, message: error, changes: result.changes }),
+        _ => Ok(result),
     }))
 }
 
+/// Sends the copy's waiting edits to its hub, oldest first. It changes the
+/// copy in memory only: its caller keeps it, whether or not every edit went.
 pub(crate) async fn flush(node: &Arc<Node>, link: &fastctx_net::link::Link, copy: &mut Copy) -> Result<(), String> {
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(55);
     while let Some(pending) = copy.pending.first().cloned() {
         sync::permitted(node, copy)?;
         if super::backend::accepted(link, copy, &pending).await? {
             copy.pending.remove(0);
-            super::publication::save(node, copy, false, None).await?;
-            sync::refresh(node, link, copy).await?;
+            sync::fetch(node, link, copy).await?;
             continue;
         }
         // A new history name has no body yet; a catalog distinguishes absence from a failed read.
@@ -316,96 +350,68 @@ pub(crate) async fn flush(node: &Arc<Node>, link: &fastctx_net::link::Link, copy
             false
         };
         if !missing {
-            sync::refresh(node, link, copy).await?;
+            sync::fetch(node, link, copy).await?;
         }
         if copy.head.retired && !pending.offline {
-            return reject(node, copy, "the document was retired; restore it in the app before editing").await;
+            return reject(copy, "the document was retired; restore it in the app before editing");
         }
         if matches!(copy.head.document, Document::Plan { .. }) && copy.head.retired {
-            return reject(node, copy, "this conversation's plan was deleted").await;
+            return reject(copy, "this conversation's plan was deleted");
         }
-        let merged = if matches!(pending.operation, WriteOp::Write(_)) {
-            if pending.base.is_none()
-                && pending.before.is_empty()
+        let hub = sync::text(node, copy, &copy.body.clone()).await?;
+        let written = sync::text(node, copy, &pending.text).await?;
+        let merged = match &pending.edit {
+            None if pending.base.is_none()
+                && pending.before.len == 0
                 && copy.head.version.is_some()
-                && matches!(copy.head.document, Document::History { .. })
+                && matches!(copy.head.document, Document::History { .. }) =>
             {
                 None
-            } else {
-                fastctx_net::plan_merge::try_merge(&pending.before, &copy.text, &pending.text)
             }
-        } else {
-            fastctx_hands::write::candidate::prepare(&pending.operation, Some(copy.text.as_bytes()))
+            None => fastctx_net::plan_merge::try_merge(&sync::text(node, copy, &pending.before).await?, &hub, &written),
+            Some(edit) => fastctx_hands::write::candidate::prepare(edit, Some(hub.as_bytes()))
                 .ok()
-                .and_then(|bytes| String::from_utf8(bytes).ok())
+                .and_then(|bytes| String::from_utf8(bytes).ok()),
         };
         let mut text = match merged {
             Some(text) => text,
-            None if pending.offline => pending.text.clone(),
+            None if pending.offline => written.clone(),
             None => {
                 return reject(
-                    node,
                     copy,
                     "the document changed elsewhere and these edits conflict; read the latest copy before editing again",
-                )
-                .await;
+                );
             }
         };
         let valid = match &copy.head.document {
             Document::Plan { .. } => fastctx_types::plan::validate(&text),
-            Document::History { name, .. } => history::markdown::parse(name, &text).map(|_| ()),
+            Document::History { name, .. } => history::markdown::parse_written(name, &text).map(|_| ()),
         };
         if let Err(error) = valid {
             if pending.offline {
-                text = pending.text.clone();
+                text = written;
             } else {
-                return reject(node, copy, &error).await;
+                return reject(copy, &error);
             }
         }
         sync::permitted(node, copy)?;
-        let projected = copy.effective().to_string();
-        if super::backend::submit(link, copy, &pending, text).await? {
-            copy.pending.remove(0);
-            super::publication::save(node, copy, true, Some(&projected)).await?;
-        } else if tokio::time::Instant::now() >= deadline {
-            return Err("the document keeps changing; this edit remains pending".into());
+        match super::backend::submit(link, copy, &pending, text).await? {
+            Some(taken) => {
+                copy.pending.remove(0);
+                copy.body = sync::keep(node, copy, &taken).await?;
+            }
+            None if tokio::time::Instant::now() >= deadline => {
+                return Err("the document keeps changing; this edit remains pending".into());
+            }
+            None => {}
         }
     }
     Ok(())
 }
 
-/// Keeps an edit until its hub has it. One that follows an edit left
-/// waiting, made offline or not taken when it was sent, joins it where the
-/// writer is the same: the two go as one write from the earlier one's base,
-/// so a long time offline, or a hub that keeps failing to take them, keeps
-/// one candidate, not every step. Only the last of two or more joins, never
-/// the first, which the hub may have taken already.
-fn keep(waiting: &mut Vec<Pending>, edit: Pending, path: &Path) {
-    let crowded = waiting.len() >= WAITING_EDITS;
-    if waiting.len() >= 2
-        && let Some(last) = waiting.last_mut()
-        && last.offline
-        && (crowded || same_writer(&last.author, &edit.author))
-    {
-        last.operation =
-            WriteOp::Write(WriteRequest { file_path: path.to_path_buf(), content: edit.text.clone(), encoding: None });
-        last.text = edit.text;
-        last.author = edit.author;
-        return;
-    }
-    waiting.push(edit);
-}
-
-fn same_writer(one: &history::Author, other: &history::Author) -> bool {
-    one.stamp.by == other.stamp.by
-        && one.stamp.on == other.stamp.on
-        && one.host == other.host
-        && one.model == other.model
-}
-
-async fn reject(node: &Arc<Node>, copy: &mut Copy, reason: &str) -> Result<(), String> {
+/// Drops the first waiting edit, which the hub will not take.
+fn reject(copy: &mut Copy, reason: &str) -> Result<(), String> {
     copy.pending.remove(0);
-    super::publication::save(node, copy, false, None).await?;
     Err(reason.into())
 }
 
@@ -418,7 +424,7 @@ pub(crate) async fn saw(
     for seen in seen {
         let Some(slot) = node.replicas.state.at(Path::new(&seen.path)) else { continue };
         let mut copy = slot.lock().await;
-        let hash = fastctx_hands::files::content_hash(copy.effective().as_bytes());
+        let shown = copy.effective().clone();
         let same = seen.sha256.as_ref().map_or_else(
             || {
                 fastctx_platform::disk::metadata(&copy.path).ok().is_some_and(|metadata| {
@@ -427,11 +433,15 @@ pub(crate) async fn saw(
                             == seen.modified
                 })
             },
-            |seen| seen == &hash,
+            |seen| *seen == shown.hash,
         );
-        let observed = Observed { version: copy.head.version, hash: same.then_some(hash) };
+        let local = copy.pending.iter().any(|pending| pending.offline);
+        let observed = Observed { version: copy.head.version, hash: same.then_some(shown.hash), local };
+        if copy.observed.get(&owner.key()) == Some(&observed) {
+            continue;
+        }
         copy.observed.insert(owner.key(), observed);
-        super::publication::save(node, &copy, false, None).await.map_err(failure)?;
+        super::publication::save(node, &mut copy, false, None).await.map_err(failure)?;
     }
     Ok(())
 }

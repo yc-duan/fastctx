@@ -371,9 +371,13 @@ impl Shelf {
         text: Option<&str>,
         previous: Option<&str>,
     ) -> Result<(), String> {
+        let previous = previous.map(crate::replicas::bodies::Text::of);
         match text {
-            None => crate::replicas::files::delete(path).map_err(|error| error.to_string())?,
-            Some(text) => crate::replicas::files::publish(path, text, previous).map_err(|error| error.to_string())?,
+            None => crate::replicas::files::retire(path, None, previous.as_ref()).map_err(|error| error.to_string())?,
+            Some(text) => {
+                crate::replicas::files::publish(path, text, None, previous.as_ref())
+                    .map_err(|error| error.to_string())?;
+            }
         }
         let copy = Copy { version: latest.version, retired: latest.retired, stood: stood(path)? };
         self.copies.insert(name.to_string(), copy);
