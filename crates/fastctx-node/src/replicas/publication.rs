@@ -243,8 +243,12 @@ pub(crate) fn folder_now(node: &Node, folder: Folder) -> Result<(), String> {
 
 /// `prune_now`, where reading and writing the disk may block.
 pub(crate) async fn prune(node: &Arc<Node>) -> Result<(), String> {
-    let node = node.clone();
-    fastctx_platform::task::blocking(move || prune_now(&node)).await
+    let working = node.clone();
+    let result = fastctx_platform::task::blocking(move || prune_now(&working)).await;
+    if result.is_err() {
+        super::cleanup::schedule(node);
+    }
+    result
 }
 
 /// An absent current view is unknown, not a revocation. A removed membership is final.
@@ -259,6 +263,7 @@ pub(crate) fn prune_now(node: &Node) -> Result<(), String> {
         .iter()
         .map(|(id, route)| (id.clone(), route.clone()))
         .collect();
+    let mut errors = Vec::new();
     for (id, route) in routes {
         let _publication = node.replicas.state.publication.write().expect("never poisoned");
         if node.replicas.state.routes.lock().expect("never poisoned").get(&id) != Some(&route)
@@ -267,8 +272,10 @@ pub(crate) fn prune_now(node: &Node) -> Result<(), String> {
             continue;
         }
         if permitted(node, &route).is_err() {
-            state::delete(&node.world, &route).map_err(|error| error.to_string())?;
-            node.replicas.state.remove(&id);
+            match state::delete(&node.world, &route) {
+                Ok(()) => node.replicas.state.remove(&id),
+                Err(error) => errors.push(error.to_string()),
+            }
         }
     }
     let folders: Vec<_> = node.replicas.state.folders.lock().expect("never poisoned").values().cloned().collect();
@@ -277,12 +284,23 @@ pub(crate) fn prune_now(node: &Node) -> Result<(), String> {
         if unknown(node, &folder.account.hub) || !current(node, &folder) {
             continue;
         }
-        if !scope_allowed(node, &folder) {
-            state::delete_folder(&node.world, &folder).map_err(|error| error.to_string())?;
-            node.replicas.state.folders.lock().expect("never poisoned").remove(&folder.path);
-            release(node, &folder).map_err(|error| error.to_string())?;
+        if !scope_allowed(node, &folder)
+            && let Err(error) = delete_folder(node, &folder)
+        {
+            errors.push(error.to_string());
         }
     }
+    match errors.first() {
+        Some(first) => Err(format!("{} replica withdrawals failed; the first: {first}", errors.len())),
+        None => Ok(()),
+    }
+}
+
+fn delete_folder(node: &Node, folder: &Folder) -> std::io::Result<()> {
+    super::removal::delete(&node.world, &folder.path)?;
+    release(node, folder)?;
+    state::delete_folder(&node.world, folder)?;
+    node.replicas.state.folders.lock().expect("never poisoned").remove(&folder.path);
     Ok(())
 }
 
@@ -347,14 +365,7 @@ pub(crate) fn catalog_now(
             continue;
         }
         let _publication = node.replicas.state.publication.write().expect("never poisoned");
-        if node
-            .replicas
-            .state
-            .routes
-            .lock()
-            .expect("never poisoned")
-            .get(&id)
-            .is_some_and(|current| current == &route)
+        if node.replicas.state.routes.lock().expect("never poisoned").get(&id).is_some_and(|current| current == &route)
         {
             state::delete(&node.world, &route).map_err(|error| error.to_string())?;
             node.replicas.state.remove(&id);
@@ -370,9 +381,7 @@ pub(crate) fn catalog_now(
         if !current(node, &folder) {
             continue;
         }
-        state::delete_folder(&node.world, &folder).map_err(|error| error.to_string())?;
-        node.replicas.state.folders.lock().expect("never poisoned").remove(&folder.path);
-        release(node, &folder).map_err(|error| error.to_string())?;
+        delete_folder(node, &folder).map_err(|error| error.to_string())?;
     }
     Ok(())
 }

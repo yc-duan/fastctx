@@ -28,7 +28,6 @@ pub(crate) fn delete(path: &Path) -> io::Result<()> {
                     delete(&entry?.path())?;
                 }
                 fastctx_platform::disk::remove_dir(path)
-
             } else {
                 fastctx_platform::disk::remove_file(path)
             }

@@ -532,6 +532,7 @@ async fn put_aside(node: &Arc<Node>, link: &Arc<Link>) -> Result<std::path::Path
         crate::own_collab::take_back(node, link);
     }
     link.stop();
+    crate::replicas::cleanup::schedule(node);
     crate::mcp::store::leave(node, &hub).map_err(Failure::new)?;
     node.links.write().expect("never poisoned").remove(&hub);
     node.ways_changed();
@@ -1532,6 +1533,7 @@ impl fastctx_net::link::Node for Handler {
     /// more, whoever made it (`world-network.md`, 解散网络).
     fn place_ended(&self, dissolved: bool, then: Option<fastctx_types::uninstall::Then>) {
         let Some(node) = self.node.upgrade() else { return };
+        crate::replicas::cleanup::schedule(&node);
         let hub = self.hub.clone();
         if let Err(error) = crate::mcp::store::leave(&node, &hub) {
             node.log.line(format_args!("removing MCP commands after leaving the network: {error}"));

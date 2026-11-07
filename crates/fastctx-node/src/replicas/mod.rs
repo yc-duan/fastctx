@@ -2,6 +2,7 @@
 
 pub(crate) mod backend;
 pub(crate) mod bodies;
+pub(crate) mod cleanup;
 pub(crate) mod files;
 mod legacy;
 pub(crate) mod location;
@@ -18,6 +19,7 @@ pub(crate) struct Copies {
     pub state: state::State,
     pub updates: updates::Updates,
     pub repairs: Repairs,
+    pub cleanup: cleanup::Cleanup,
 }
 
 /// Restorings of every projection, asked for at once, run once for them

@@ -1,7 +1,10 @@
 //! Withdrawal never follows a redirected directory into someone else's files.
 
 use fastctx_types::layout::WorldDir;
-use std::{io, path::{Component, Path, PathBuf}};
+use std::{
+    io,
+    path::{Component, Path, PathBuf},
+};
 
 /// Removes the first redirected parent inside the World, without reading its target.
 /// Parents outside the World are never removed.
