@@ -34,6 +34,7 @@ pub mod dissolve;
 mod expiry;
 mod forget;
 mod health;
+mod history_limits;
 mod history_projection;
 mod hold_back;
 mod hub_machine;

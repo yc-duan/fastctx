@@ -348,6 +348,8 @@ pub(crate) async fn ask_as(
                     let stored: fastctx_types::history::stored::Stored =
                         serde_json::from_value(body.clone()).map_err(|error| error.to_string())?;
                     stored.validate()?;
+                    fastctx_types::history::markdown::parse_written(&stored.revision.name, &stored.text)?;
+                    crate::history_limits::conversation(&records, &key)?;
                     if stored.revision.version != version
                         || key.rsplit('/').next() != Some(stored.revision.name.as_str())
                     {

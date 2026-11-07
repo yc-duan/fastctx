@@ -25,6 +25,11 @@ pub struct Index {
 }
 
 impl Index {
+    /// The number of distinct documents, including retired ones.
+    pub fn document_count(&self) -> usize {
+        self.documents.len()
+    }
+
     pub fn latest(&self, name: &str) -> Option<&HistoryRevision> {
         self.documents.get(name).and_then(|versions| versions.last()).map(|stored| &stored.revision)
     }

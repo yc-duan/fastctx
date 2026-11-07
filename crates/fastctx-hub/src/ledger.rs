@@ -174,6 +174,9 @@ impl Ledgers {
                 .map(|ledger| &ledger.history)
                 .unwrap_or(&fastctx_net::topic_history::Index::default())
                 .check(revision)?;
+            if let Some(ledger) = ledger {
+                crate::history_limits::project(&ledger.history, &revision.revision.name)?;
+            }
         }
         let mut seen = BTreeSet::new();
         for file in &entry.files {
@@ -350,6 +353,18 @@ pub(crate) async fn write_as(
         let entry = fastctx_net::ledger::open(&signed, &hub_id, &project)?;
         let mutation = fastctx_net::memory::decode(&entry.files)?;
         let history = fastctx_net::topic_history::decode(&entry.files)?;
+        if let Some(stored) = &history {
+            let revision = &stored.revision;
+            let text = entry
+                .files
+                .iter()
+                .find(|file| file.path == fastctx_net::topic_history::path(&revision.name, revision.version, "md"))
+                .expect("decoded history text");
+            fastctx_types::history::markdown::parse_written(
+                &revision.name,
+                std::str::from_utf8(&text.bytes.0).map_err(|error| error.to_string())?,
+            )?;
+        }
         let bytes = json(&signed).map_err(|error| error.to_string())?;
         if account.is_some() && mutation.is_none() && history.is_none() {
             return Err("a memory write must contain a memory revision or evidence".into());
