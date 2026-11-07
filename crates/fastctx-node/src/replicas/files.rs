@@ -17,6 +17,9 @@ fn writable(path: &Path) -> io::Result<()> {
 pub(crate) fn delete(path: &Path) -> io::Result<()> {
     match fastctx_platform::disk::symlink_metadata(path) {
         Ok(metadata) => {
+            if fastctx_platform::owned_directory::is_link(&metadata) {
+                return fastctx_platform::owned_directory::delete(path);
+            }
             if metadata.file_type().is_file() {
                 writable(path)?;
             }
@@ -25,8 +28,7 @@ pub(crate) fn delete(path: &Path) -> io::Result<()> {
                     delete(&entry?.path())?;
                 }
                 fastctx_platform::disk::remove_dir(path)
-            } else if cfg!(windows) && metadata.file_type().is_symlink() && fastctx_platform::disk::is_dir(path) {
-                fastctx_platform::disk::remove_dir(path)
+
             } else {
                 fastctx_platform::disk::remove_file(path)
             }
@@ -165,13 +167,18 @@ fn quarantine(path: &Path, bytes: Option<&[u8]>) -> io::Result<()> {
 }
 
 /// Removes this projection and its quarantined edits when access is withdrawn.
-pub(crate) fn withdraw(path: &Path) -> io::Result<()> {
+pub(crate) fn withdraw(world: &fastctx_types::layout::WorldDir, path: &Path) -> io::Result<()> {
+    if super::removal::redirected(world, path)? {
+        return Ok(());
+    }
     delete(path)?;
     let Some(parent) = path.parent() else { return Ok(()) };
     let Some(name) = path.file_name() else { return Ok(()) };
     let prefix = format!("{}.", name.to_string_lossy());
     let archive = parent.join("tampering");
-    if fastctx_platform::disk::symlink_metadata(&archive).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
+    if fastctx_platform::disk::symlink_metadata(&archive)
+        .is_ok_and(|metadata| fastctx_platform::owned_directory::is_link(&metadata))
+    {
         return delete(&archive);
     }
     delete(&archive.join(name))?;

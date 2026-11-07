@@ -198,14 +198,14 @@ fn folder_id(folder: &Folder) -> String {
 }
 
 pub(crate) fn delete_folder(world: &fastctx_types::layout::WorldDir, folder: &Folder) -> io::Result<()> {
-    super::files::delete(&folder.path)?;
+    super::removal::delete(world, &folder.path)?;
     super::files::delete(&root(world).join("folders").join(format!("{}.json", folder_id(folder))))
 }
 
 pub(crate) fn delete(world: &fastctx_types::layout::WorldDir, copy: &Route) -> io::Result<()> {
-    super::files::withdraw(&copy.path)?;
+    super::files::withdraw(world, &copy.path)?;
     for path in &copy.left {
-        super::files::withdraw(path)?;
+        super::files::withdraw(world, path)?;
     }
     let id = identity(&copy.account, &copy.head);
     bodies::remove(world, &id)?;

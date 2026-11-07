@@ -300,6 +300,9 @@ fn release(node: &Node, folder: &Folder) -> std::io::Result<()> {
     }
     let Some(directory) = folder.path.parent() else { return Ok(()) };
     let binding = directory.join(".working-copy-owner.json");
+    if super::removal::redirected(&node.world, &binding)? {
+        return Ok(());
+    }
     let entries = match fastctx_platform::disk::read_dir(directory) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
@@ -311,7 +314,7 @@ fn release(node: &Node, folder: &Folder) -> std::io::Result<()> {
             return Ok(());
         }
     }
-    super::files::delete(directory)
+    super::removal::delete(&node.world, directory)
 }
 
 /// `catalog_now`, where writing the disk may block.
