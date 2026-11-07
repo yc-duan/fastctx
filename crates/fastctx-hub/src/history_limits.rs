@@ -12,7 +12,7 @@ pub(crate) fn conversation(records: &crate::account_records::storage::Account, k
     }
     let (resident, name) = key.split_once('/').ok_or("a history record must name its conversation and document")?;
     fastctx_types::history::markdown::check_name(name)?;
-    // Bound new allocations per history (2026-11-07), without scanning other conversations.
+    // Counted within this conversation's key range, never across others.
     if records.history(resident).filter(|entry| !entry.metadata.deleted).take(MAX_DOCUMENTS).count() >= MAX_DOCUMENTS {
         return Err(full());
     }

@@ -102,8 +102,8 @@ impl Readers {
     ) -> Result<Permit, String> {
         let connection = out.identity();
         let account = account.map_or(Account::Connection(connection), |name| Account::Named(name.clone()));
-        // Bound pathological queues by host memory (2026-11-07), separately
-        // from disk concurrency, so a stalled connection cannot exhaust the hub.
+        // Waiting requests are bounded by the host's memory, apart from disk
+        // concurrency, so a stalled connection cannot exhaust the hub.
         static WAITING: LazyLock<usize> = LazyLock::new(|| {
             (fastctx_platform::memory::physical().unwrap_or(1 << 30) / (64 << 10)).clamp(4096, 262_144) as usize
         });
