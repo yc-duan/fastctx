@@ -37,6 +37,7 @@ use fastctx_types::access::TownId;
 
 use crate::Hub;
 
+mod history_ranges;
 pub(crate) mod history_requests;
 mod page_index;
 mod reading;
@@ -55,6 +56,7 @@ pub struct TownLedger {
     memory: fastctx_net::memory::Index,
     pub(crate) history: fastctx_net::topic_history::Index,
     sequences: BTreeMap<String, u64>,
+    history_ranges: Arc<history_ranges::HistoryRanges>,
 }
 
 #[derive(Default)]
@@ -257,14 +259,7 @@ impl Ledgers {
     /// The committed range to read, without listing or copying the ledger.
     fn page(&self, town: TownId, after: u64) -> reading::Page {
         let last = self.towns.get(&town).map_or(0, |ledger| ledger.next - 1);
-        let history = self
-            .towns
-            .get(&town)
-            .into_iter()
-            .flat_map(|ledger| ledger.sequences.iter())
-            .filter(|(path, _)| path.starts_with("history/"))
-            .map(|(_, seq)| *seq)
-            .collect();
+        let history = self.towns.get(&town).map(|ledger| ledger.history_ranges.clone()).unwrap_or_default();
         reading::Page { dir: self.dir.join(town.as_str()), town, after, last, history }
     }
 }
@@ -273,6 +268,9 @@ impl TownLedger {
     fn add(&mut self, entry: &Entry, seq: u64) {
         self.paths.extend(entry.files.iter().map(|file| file.path.to_lowercase()));
         self.sequences.extend(entry.files.iter().map(|file| (file.path.clone(), seq)));
+        if entry.files.iter().any(|file| file.path.starts_with("history/")) {
+            self.history_ranges.append(seq);
+        }
     }
 
     /// Whether `path`, in lower case, cannot join the paths written: it is

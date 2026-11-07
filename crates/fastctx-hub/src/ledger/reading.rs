@@ -25,7 +25,7 @@ pub(super) struct Page {
     pub town: TownId,
     pub after: u64,
     pub last: u64,
-    pub history: std::collections::BTreeSet<u64>,
+    pub history: Arc<super::history_ranges::HistoryRanges>,
 }
 
 /// Answers a ledger read on this session's queue, independently of its
@@ -57,7 +57,6 @@ fn serve(
         return;
     }
     let deadline = tokio::time::Instant::now() + READ_WITHIN;
-    let page = hub.ledgers.lock().expect("never poisoned").page(town.clone(), after);
     let (hub, name, out) = (hub.clone(), name.clone(), out.clone());
     fastctx_platform::task::spawn(async move {
         // A read waits its turn among the others, within its own time.
@@ -76,6 +75,7 @@ fn serve(
                 }
             },
         };
+        let page = hub.ledgers.lock().expect("never poisoned").page(town.clone(), after);
         // Dropping the receiver stops a running read between files. Aborting
         // its task also stops a read still waiting for a blocking thread.
         let (wanted, reader) = oneshot::channel::<()>();
@@ -130,16 +130,18 @@ impl Page {
         };
         let mut entries = Vec::new();
         let mut through = self.after;
-        for previous in self.after..self.last {
+        while through < self.last {
             if wanted.is_closed() || tokio::time::Instant::now() >= deadline {
                 return Err("the ledger reader ended".into());
             }
-            let seq = previous + 1;
+            let seq = through + 1;
             // A projection reads history on demand. A reader of a release before
             // history takes a history append as any entry: it keeps its two files
             // and reads on, where refusing the page would stop the whole project.
-            if self.history.contains(&seq) && projection {
-                through = seq;
+            if projection
+                && let Some(end) = self.history.through(seq, self.last)
+            {
+                through = end;
                 continue;
             }
             let path = self.dir.join(format!("{seq:020}.json"));

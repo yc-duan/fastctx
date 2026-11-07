@@ -77,7 +77,8 @@ pub(crate) fn ask(hub: &Arc<Hub>, from: &crate::origin::Origin, out: &Outq, id: 
         } else {
             let mut records: Vec<_> = ledger
                 .sequences
-                .iter()
+                .range("project/".to_owned()..)
+                .take_while(|(path, _)| path.starts_with("project/"))
                 .filter_map(|(file, seq)| {
                     let name = file.strip_prefix("project/")?;
                     Some((version_of(name)?, file.clone(), path(*seq)))
@@ -93,8 +94,9 @@ pub(crate) fn ask(hub: &Arc<Hub>, from: &crate::origin::Origin, out: &Outq, id: 
                 last: (last.clone(), last_path.clone()),
                 pages: ledger
                     .sequences
-                    .iter()
-                    .filter(|(file, _)| file.starts_with("pages/") && file.ends_with("/page.json"))
+                    .range("pages/".to_owned()..)
+                    .take_while(|(path, _)| path.starts_with("pages/"))
+                    .filter(|(file, _)| file.ends_with("/page.json"))
                     .map(|(file, seq)| (file.clone(), path(*seq)))
                     .collect(),
             }
