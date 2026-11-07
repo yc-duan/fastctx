@@ -284,7 +284,9 @@ async fn logged_in(node: &Arc<Node>, joined: Joined) -> Result<Reply, Failure> {
             .map_err(|error| Failure::new(format!("renaming this computer to {name}: {error}")))?;
         node.set_names(names);
     }
-    match node.link_of(&hub) {
+    // A link the hub stopped, as when it removed this computer, is not asked
+    // again: the new membership starts one in its place.
+    match node.link_of(&hub).filter(|link| !matches!(link.status(), Status::Stopped { .. })) {
         // Logged in again where the hub is reached now, as after a move this
         // computer did not follow: the link connects there from now on.
         Some(link) if !addresses.is_empty() && link.hub_addresses() != addresses => {

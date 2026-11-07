@@ -405,6 +405,14 @@ async fn connected(
     let keeping = inner.clone();
     let kept = inner
         .blocking(move || -> Result<(), String> {
+            // The hub took this machine again, as after a removal and a new
+            // enrollment: its place has not ended.
+            match fastctx_platform::disk::remove_file(keeping.dir.ended()) {
+                Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+                    return Err(format!("forgetting that the hub ended this machine's place: {error}"));
+                }
+                _ => {}
+            }
             held(&keeping, taken).map_err(|error| format!("recording what the hub holds: {error}"))?;
             keeping
                 .change_letters(|letters| {

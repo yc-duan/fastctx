@@ -11,12 +11,17 @@ use std::sync::Arc;
 /// Whether the hub ended this computer's place in its network: what it kept
 /// for that network goes, whatever the last view said.
 fn left(link: &fastctx_net::link::Link) -> bool {
-    matches!(link.status(), fastctx_net::link::Status::Stopped { .. })
-        || fastctx_net::link::state::read_or::<Option<fastctx_net::link::state::Ended>>(
+    match link.status() {
+        fastctx_net::link::Status::Stopped { .. } => true,
+        // A hub that takes this computer again has not ended its place.
+        fastctx_net::link::Status::Online { .. } => false,
+        // Before it answers after a restart, what it said last stands.
+        _ => fastctx_net::link::state::read_or::<Option<fastctx_net::link::state::Ended>>(
             &fastctx_net::link::NetDir::new(link.dir().to_path_buf()).ended(),
             None,
         )
-        .is_ok_and(|ended| ended.is_some())
+        .is_ok_and(|ended| ended.is_some()),
+    }
 }
 
 /// Whether what this computer knows of a hub's view is unknown for now: a
