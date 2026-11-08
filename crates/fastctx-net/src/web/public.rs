@@ -1,11 +1,24 @@
-//! Public destinations only, with DNS answers pinned across connection setup.
+//! Public destinations only: a name resolved here must not lead to a private
+//! address, and a connection without a proxy goes only to the addresses
+//! checked.
 use super::{Failure, PATIENCE, Response};
 use hyper::Uri;
 use std::net::IpAddr;
 
-/// Reads one public HTTPS URL. Redirects remain the caller's to validate and log.
-/// Proxies receive a validated IP, so they cannot resolve a public-looking name
-/// to a private destination. TLS and HTTP still use the original hostname.
+/// Reads one public HTTPS URL. Redirects remain the caller's to validate and
+/// log. Before anything is sent, an address the name leads to is seen to be
+/// public: the addresses this machine resolves it to, every one public; or,
+/// where this machine cannot see them (it cannot resolve the name and a
+/// proxy will, or a fake-ip proxy such as Clash answers every name with its
+/// own block, 198.18.0.0/15, and every address it gives is in it), what
+/// public DNS answers (`super::public_dns`), and a name only a local network
+/// knows (`nas`, `router.lan`) is refused without asking. An address written
+/// in the URL must be public itself. Through a proxy the name is handed on
+/// for the proxy to resolve, as domain-routing proxies and networks whose
+/// own DNS answers wrongly need; a proxy that resolves a name otherwise than
+/// the view checked is the one way left past this check.
+/// Without a proxy, the connection goes to the addresses checked. TLS and
+/// HTTP use the original hostname either way.
 pub async fn get(url: &str, accept: &str) -> Result<Response, Failure> {
     let uri: Uri = url.parse().map_err(|e| format!("invalid public URL: {e}"))?;
     if uri.scheme_str() != Some("https") {
@@ -13,26 +26,44 @@ pub async fn get(url: &str, accept: &str) -> Result<Response, Failure> {
     }
     let host = uri.host().ok_or("public URL has no host")?.trim_matches(['[', ']']);
     let port = uri.port_u16().unwrap_or(443);
+    let written = host.parse::<IpAddr>().ok();
+    let proxy = crate::proxy::system_for(host);
     let operation = async {
-        let addresses: Vec<_> = tokio::net::lookup_host((host, port)).await.map_err(|e| e.to_string())?.collect();
-        if addresses.is_empty() || addresses.iter().any(|a| !is_public(a.ip())) {
+        if written.is_some_and(|ip| !is_public(ip)) {
             return Err(Failure::from("web destination is not public"));
         }
-        let tcp = if let Some(proxy) = crate::proxy::system_for(host) {
-            let mut last = String::new();
-            let mut connected = None;
-            for address in &addresses {
-                match crate::proxy::connect_to(&proxy, &address.to_string()).await {
-                    Ok(stream) => {
-                        connected = Some(stream);
-                        break;
-                    }
-                    Err(error) => last = error,
-                }
+        let addresses: Vec<_> = match tokio::net::lookup_host((host, port)).await {
+            Ok(addresses) => addresses.collect(),
+            Err(_) if proxy.is_some() && written.is_none() => Vec::new(),
+            Err(error) => return Err(Failure::from(error.to_string())),
+        };
+        let fakes = addresses.iter().filter(|address| fake(address.ip())).count();
+        let mixed = fakes > 0 && fakes < addresses.len();
+        if mixed || addresses.iter().any(|address| !is_public(address.ip()) && !fake(address.ip())) {
+            return Err(Failure::from("web destination is not public"));
+        }
+        let unseen = written.is_none() && (addresses.is_empty() || fakes > 0);
+        if unseen {
+            if local_name(host) {
+                return Err(Failure::from("web destination is a name of a local network, not a public one"));
             }
-            connected.ok_or(last)?
-        } else {
-            super::connect::addresses(host, port, addresses).await?
+            let public = super::public_dns::addresses(host)
+                .await
+                .map_err(|why| format!("could not learn from public DNS where {host} leads: {why}"))?;
+            if public.is_empty() {
+                return Err(Failure::from("public DNS knows no address for the web destination"));
+            }
+            if public.iter().any(|ip| !is_public(*ip)) {
+                return Err(Failure::from("web destination is not public"));
+            }
+        }
+        let tcp = match &proxy {
+            Some(proxy) => {
+                let target = if host.contains(':') { format!("[{host}]:{port}") } else { format!("{host}:{port}") };
+                crate::proxy::connect_to(proxy, &target).await?
+            }
+            None if addresses.is_empty() => return Err(Failure::from("the web destination has no address")),
+            None => super::connect::addresses(host, port, addresses).await?,
         };
         let name = rustls::pki_types::ServerName::try_from(host.to_string()).map_err(|e| e.to_string())?;
         let tls =
@@ -48,6 +79,31 @@ pub async fn get(url: &str, accept: &str) -> Result<Response, Failure> {
         })
     };
     tokio::time::timeout(PATIENCE, operation).await.map_err(|_| "public web request timed out")?
+}
+
+/// Whether `host` is a name only a local network gives an address: one
+/// without a dot, or under a suffix set aside for such names.
+fn local_name(host: &str) -> bool {
+    const LOCAL: &[&str] = &[
+        ".local",
+        ".localhost",
+        ".localdomain",
+        ".lan",
+        ".home",
+        ".home.arpa",
+        ".internal",
+        ".intranet",
+        ".corp",
+        ".private",
+    ];
+    let host = host.trim_end_matches('.').to_ascii_lowercase();
+    !host.contains('.') || LOCAL.iter().any(|suffix| host.ends_with(suffix))
+}
+
+/// Whether `ip` is in the block set aside for benchmarking networks
+/// (198.18.0.0/15), which fake-ip proxies hand out for every name.
+fn fake(ip: IpAddr) -> bool {
+    matches!(ip, IpAddr::V4(ip) if ip.octets()[0] == 198 && (ip.octets()[1] == 18 || ip.octets()[1] == 19))
 }
 fn is_public(ip: IpAddr) -> bool {
     match ip {

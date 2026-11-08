@@ -199,6 +199,7 @@ impl RemoteCall {
             | Self::ItemDetail { .. }
             | Self::AgentActivity { .. }
             | Self::Stats { .. }
+            | Self::Inspect { .. }
             | Self::MemoryRoom { bytes: None }
             | Self::Book { .. }
             | Self::Interfaces

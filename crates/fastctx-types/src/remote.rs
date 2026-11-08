@@ -564,6 +564,15 @@ pub enum RemoteCall {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         seen: Option<crate::stats::StatsSeen>,
     },
+    /// A read-only look at that machine for a World agent of the account
+    /// (`crate::inspect`): only for an account that may work on it. With
+    /// `evidence_of`, it may read in the folder where the World keeps that
+    /// conversation's evidence, as a goal's judge does.
+    Inspect {
+        inspect: crate::inspect::Inspect,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        evidence_of: Option<crate::Address>,
+    },
     /// What that machine keeps free in memory for its agents; sets it first
     /// when `bytes` is given. Only for an account that may work on it.
     MemoryRoom {
@@ -687,6 +696,7 @@ impl RemoteCall {
             | RemoteCall::UpdateWorld
             | RemoteCall::Updates { .. }
             | RemoteCall::Stats { .. }
+            | RemoteCall::Inspect { .. }
             | RemoteCall::MemoryRoom { .. }
             | RemoteCall::Book { .. } => Purpose::Hands,
             RemoteCall::Collaboration { .. }
@@ -851,6 +861,7 @@ pub enum RemoteReply {
         used: Vec<bool>,
     },
     Stats(Box<crate::stats::MachineStats>),
+    Inspected(crate::inspect::Inspected),
     MemoryRoom {
         bytes: u64,
     },

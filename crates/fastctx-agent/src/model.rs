@@ -1,5 +1,6 @@
 //! Protocol-neutral model messages and clients. Requests execute on this machine.
 mod anthropic;
+mod endpoint;
 mod http;
 mod openai;
 
@@ -95,7 +96,8 @@ pub trait Model: Send + Sync {
 }
 
 /// Credentials are supplied by the host and never serialized into run snapshots.
-pub fn client(settings: ModelSettings, key: String) -> Box<dyn Model> {
+pub fn client(mut settings: ModelSettings, key: String) -> Box<dyn Model> {
+    settings.endpoint = endpoint::of(settings.protocol, &settings.endpoint);
     match settings.protocol {
         ModelProtocol::OpenAi => Box::new(OpenAi::new(settings, key)),
         ModelProtocol::Anthropic => Box::new(Anthropic::new(settings, key)),

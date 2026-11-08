@@ -288,7 +288,7 @@ pub(crate) async fn here(
 
 /// The machine's NVIDIA graphics cards, as `nvidia-smi` tells; none where
 /// it is not installed.
-async fn gpus() -> Vec<Gpu> {
+pub(crate) async fn gpus() -> Vec<Gpu> {
     if let Some((at, gpus)) = &*GPUS.lock().expect("never poisoned")
         && at.elapsed() < GPU_FOR
     {

@@ -149,7 +149,7 @@ pub(crate) fn running_jobs(jobs: &Path, running: &mut Vec<RunningJob>) -> io::Re
             Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
             Err(error) => return Err(error),
         };
-        if job.end.is_none() && !job.is_sentinel() {
+        if job.end.is_none() {
             let account = job.on.and_then(|on| on.account).or(job.account);
             running.push(RunningJob {
                 source: None,

@@ -61,7 +61,6 @@ pub async fn wait(
             let owner = caller.as_ref().expect("checked owner");
             let origin = fastctx_types::on::OnOrigin {
                 turn: record.turn.clone(),
-                sentinel: None,
                 call_id: record.call_id.clone(),
                 resident: owner.clone(),
                 town: record.town.clone(),

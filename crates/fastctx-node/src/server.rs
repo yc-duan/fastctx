@@ -500,7 +500,6 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
                     };
                     let origin = fastctx_types::on::OnOrigin {
                         turn: None,
-                        sentinel: None,
                         call_id: None,
                         resident,
                         town,

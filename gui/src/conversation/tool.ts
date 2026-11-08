@@ -212,10 +212,13 @@ function call(tool: Tool, tense: Tense, say: (act: Act) => string, words: Words)
       return { glyph: "web", action: say("websearch"), object: input(tool, "query"), ...plain };
     case "TodoWrite":
       return { glyph: "tasks", action: say("tasks"), object: null, ...plain };
-    // A watcher's reflex, named by what it looks at.
+    // A watcher's reflex, named by what it looks at: a file, a page, a job,
+    // the words it looks for, or the look itself.
     case "install_reflex": {
       const probe = tool.input && typeof tool.input === "object" && !Array.isArray(tool.input) ? (tool.input as Record<string, unknown>).probe : null;
-      const looks = probe && typeof probe === "object" ? ((probe as Record<string, unknown>).command ?? (probe as Record<string, unknown>).url) : null;
+      const fields = probe && typeof probe === "object" ? (probe as Record<string, unknown>) : {};
+      const path = typeof fields.path === "string" ? basename(fields.path) : null;
+      const looks = [path, fields.url, fields.job, fields.matching, fields.tool].find((one) => typeof one === "string" && one !== "");
       return { glyph: "wake", action: say("reflex"), object: typeof looks === "string" ? firstLine(looks) : input(tool, "id"), ...plain };
     }
     default: {

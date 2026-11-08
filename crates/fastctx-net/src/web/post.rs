@@ -6,11 +6,18 @@ use hyper::{Request, Uri};
 use hyper_util::rt::TokioIo;
 use tokio::io::{AsyncRead, AsyncWrite};
 
-use super::{Failure, PATIENCE, Response, config, reach};
+use super::{Failure, Response, config, reach};
 
-/// Posts JSON to exactly `url`. Redirects are returned to the caller, never
-/// followed with credentials. TLS roots and proxy selection match web downloads.
-pub async fn json(url: &str, headers: &[(&str, &str)], bytes: Vec<u8>) -> Result<Response, Failure> {
+/// Posts JSON to exactly `url`, waiting `within` for its answer to begin: a
+/// model that answers whole only once it has thought may take minutes.
+/// Redirects are returned to the caller, never followed with credentials.
+/// TLS roots and proxy selection match web downloads.
+pub async fn json(
+    url: &str,
+    headers: &[(&str, &str)],
+    bytes: Vec<u8>,
+    within: std::time::Duration,
+) -> Result<Response, Failure> {
     let uri: Uri = url.parse().map_err(|error| format!("invalid URL: {error}"))?;
     let host = uri.host().ok_or("URL has no host")?.trim_matches(['[', ']']).to_string();
     let loopback = host == "localhost" || host.parse::<std::net::IpAddr>().is_ok_and(|ip| ip.is_loopback());
@@ -32,7 +39,7 @@ pub async fn json(url: &str, headers: &[(&str, &str)], bytes: Vec<u8>) -> Result
             send(tcp, authority, path, headers, bytes).await
         }
     };
-    let response = tokio::time::timeout(PATIENCE, request).await.map_err(|_| "web request timed out")??;
+    let response = tokio::time::timeout(within, request).await.map_err(|_| "web request timed out")??;
     Ok(Response {
         status: response.status().as_u16(),
         length: response

@@ -1,11 +1,16 @@
 //! Audited public-web reads and a replaceable search provider.
 use crate::ports::{ReadResult, Web};
-use fastctx_agent::{FutureResult, state::save};
+use fastctx_agent::{FutureResult, runtime::bounded, state::save};
 use serde_json::{Value, json};
 use std::{
     path::PathBuf,
     sync::atomic::{AtomicU64, Ordering},
 };
+
+/// How much of a page is read, in bytes.
+const PAGE_BYTES: usize = 2 * 1024 * 1024;
+/// How much of a page's text is kept, in bytes.
+const PAGE_TEXT: usize = 65_536 - 128;
 
 pub trait Search: Send + Sync {
     fn search<'a>(&'a self, query: &'a str) -> FutureResult<'a, ReadResult>;
@@ -48,6 +53,7 @@ impl Search for Tavily {
                 &self.endpoint,
                 &[("authorization", &auth)],
                 payload.to_string().into_bytes(),
+                std::time::Duration::from_secs(30),
             )
             .await
             .map_err(|e| e.why)?;
@@ -60,7 +66,7 @@ impl Search for Tavily {
             if !value["results"].is_array() {
                 return Err("search returned no results array".into());
             }
-            Ok(ReadResult { text: value.to_string(), exit_code: None, full_path: None })
+            Ok(ReadResult { text: value.to_string(), full_path: None, note: None })
         })
     }
 }
@@ -88,15 +94,26 @@ impl Web for PublicWeb {
                     continue;
                 }
                 let status = response.status;
-                let bytes = response.bytes(65_536).await?;
+                let content_type =
+                    response.headers.get("content-type").and_then(|v| v.to_str().ok()).map(str::to_string);
+                let (bytes, more) = response.first(PAGE_BYTES).await?;
+                let body = String::from_utf8_lossy(&bytes);
                 if !(200..300).contains(&status) {
-                    return Err(format!("web HTTP {status}: {}", String::from_utf8_lossy(&bytes)));
+                    return Err(format!("web HTTP {status}: {}", bounded(&body, 2048)));
                 }
-                return Ok(ReadResult {
-                    text: String::from_utf8_lossy(&bytes).into_owned(),
-                    exit_code: None,
-                    full_path: None,
-                });
+                let mut text = crate::page_text::of(content_type.as_deref(), &body);
+                if more {
+                    text.push_str(&format!("… the page goes on past its first {} bytes\n", PAGE_BYTES));
+                }
+                if text.len() > PAGE_TEXT {
+                    let mut end = PAGE_TEXT;
+                    while !text.is_char_boundary(end) {
+                        end -= 1;
+                    }
+                    text.truncate(end);
+                    text.push_str("\n… the rest of its text is not shown\n");
+                }
+                return Ok(ReadResult { text, full_path: None, note: None });
             }
             Err("too many web redirects".into())
         })

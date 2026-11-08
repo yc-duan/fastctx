@@ -73,7 +73,8 @@ impl Runtime for Effects {
                 })
             } else {
                 // Every machine its account works on, as the agents of that account are given them.
-                let link = node.link_of(&registration.scope.hub).ok_or("the observation account's hub is not connected")?;
+                let link =
+                    node.link_of(&registration.scope.hub).ok_or("the observation account's hub is not connected")?;
                 let view = crate::authorization::current_view(&link).map_err(|e| e.message)?;
                 let account = &registration.scope.account;
                 let machines = view
@@ -82,11 +83,7 @@ impl Runtime for Effects {
                     .map(|member| fastctx_sentinel::ports::Machine { name: member.name.clone(), online: member.online })
                     .collect();
                 Ok(Capabilities {
-                    look: Box::new(super::look::MachineLook {
-                        node,
-                        scope: registration.scope.clone(),
-                        directory: directory.join("observations"),
-                    }),
+                    look: Box::new(super::look::MachineLook { node, scope: registration.scope.clone() }),
                     web: Box::new(Disabled),
                     machines,
                 })
@@ -153,7 +150,7 @@ impl Look for Disabled {
         &'a self,
         _: &'a fastctx_types::sentinel::Definition,
         _: &'a MachineName,
-        _: &'a str,
+        _: &'a fastctx_types::inspect::Inspect,
     ) -> FutureResult<'a, ReadResult> {
         Box::pin(async { Err("machine observations are not available to this sentinel".into()) })
     }

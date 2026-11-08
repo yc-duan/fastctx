@@ -80,6 +80,7 @@ mod hub_arrival;
 mod hub_moving;
 mod inbox;
 mod initializing;
+mod inspect;
 mod intake;
 mod job_accounts;
 mod job_files;

@@ -145,9 +145,6 @@ impl Jobs {
             let home = user_home().map_err(|error| before_start("finding the home directory", error))?;
             let mut environment =
                 world_process_environment().map_err(|error| before_start("reading the user's environment", error))?;
-            if on.as_ref().is_some_and(|(on, _)| on.sentinel.is_some()) && fastctx_hands::run::sentinel::unwalled() {
-                environment.push(("FASTCTX_LAB_UNSANDBOXED_SENTINEL".into(), "1".into()));
-            }
             // Its supervisor joins its account's share of the processors.
             if let Some(shares) = &registering.cpu_shares {
                 match shares.of(&share) {
@@ -198,10 +195,7 @@ impl Jobs {
                 input.as_deref(),
                 |path| registering.job_files.hold(path),
                 |path| {
-                    if owner.resident().is_some()
-                        && on.as_ref().is_none_or(|on| on.sentinel.is_none())
-                        && (on.is_some() || answer_receipts)
-                    {
+                    if owner.resident().is_some() && (on.is_some() || answer_receipts) {
                         let debt: &[u8] = if on.is_none() && answer_receipts { b"answer" } else { b"" };
                         crate::job_metadata::put_raw(&path.with_extension("owed"), debt)
                             .map_err(|e| before_start("keeping completion debt", e))?;
@@ -210,12 +204,8 @@ impl Jobs {
                         crate::run_stops::register(&registering, path, dispatch)?;
                     }
                     if let Some(registration) = registration {
-                        let follower = crate::on::Follower::reserved(
-                            &registering,
-                            path,
-                            on.as_ref().is_some_and(|on| on.sentinel.is_some()),
-                        )
-                        .ok_or_else(|| failure("following the job", crate::job_reader::gone()))?;
+                        let follower = crate::on::Follower::reserved(&registering, path)
+                            .ok_or_else(|| failure("following the job", crate::job_reader::gone()))?;
                         *registration.lock() = Some(follower);
                     }
                     Ok(())

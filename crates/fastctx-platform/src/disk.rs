@@ -81,6 +81,11 @@ pub fn symlink_metadata(path: impl AsRef<Path>) -> io::Result<Metadata> {
 }
 
 #[track_caller]
+pub fn read_link(path: impl AsRef<Path>) -> io::Result<PathBuf> {
+    in_place(|| fs::read_link(path))
+}
+
+#[track_caller]
 pub fn canonicalize(path: impl AsRef<Path>) -> io::Result<PathBuf> {
     in_place(|| fs::canonicalize(path))
 }
@@ -121,6 +126,27 @@ pub fn open(path: impl AsRef<Path>) -> io::Result<File> {
 #[track_caller]
 pub fn create(path: impl AsRef<Path>) -> io::Result<File> {
     in_place(|| File::create(path))
+}
+
+/// Opens `path` for reading only when it is a regular file: a device, a
+/// pipe or a socket is refused before a byte of it is read, and opening one
+/// never waits for a writer.
+#[track_caller]
+pub fn open_regular(path: impl AsRef<Path>) -> io::Result<File> {
+    in_place(|| {
+        let mut options = OpenOptions::new();
+        options.read(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.custom_flags(libc::O_NONBLOCK | libc::O_NOCTTY);
+        }
+        let file = options.open(path)?;
+        if !file.metadata()?.is_file() {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "not a regular file"));
+        }
+        Ok(file)
+    })
 }
 
 /// Opens `path` as `options` say.

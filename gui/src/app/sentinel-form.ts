@@ -98,7 +98,7 @@ export class SentinelForm {
       <section class="feature-section"><h2 class="feature-heading">${escape(words.model)}</h2>
         <div class="feature-chips">${(["open_ai", "anthropic"] as const).map((one) => chip("data-protocol", one, words.protocols[one], model?.protocol === one)).join("")}</div>
         <div class="sf-fields">
-          <label class="feature-field"><span>${escape(words.endpoint)}</span><input type="url" data-field="endpoint" value="${escape(model?.endpoint ?? "")}" placeholder="${escape(model?.protocol === "anthropic" ? "https://…/v1/messages" : "https://…/v1/chat/completions")}" spellcheck="false" autocomplete="off"></label>
+          <label class="feature-field"><span>${escape(words.endpoint)}</span><input type="url" data-field="endpoint" value="${escape(model?.endpoint ?? "")}" placeholder="${escape(model?.protocol === "anthropic" ? "https://api.anthropic.com" : "https://api.openai.com/v1")}" spellcheck="false" autocomplete="off"></label>
           <label class="feature-field"><span>${escape(words.modelName)}</span><input type="text" data-field="model" value="${escape(model?.model ?? "")}" spellcheck="false" autocomplete="off"></label>
           <label class="feature-field" title="${escape(draft.home ? words.keyGoes(draft.home) : "")}"><span class="sf-key-label">${escape(words.key)}${keySaid(keys?.model)}</span><input type="password" data-field="model-key" placeholder="${escape(keys?.model ? words.keyReplace : "")}" autocomplete="off"></label>
         </div>

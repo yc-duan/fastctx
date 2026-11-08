@@ -139,10 +139,9 @@ def inside(args):
         verify(mock.requests, json.loads((base / "expectations.json").read_text()))
         if goal.errors:
             raise AssertionError(goal.errors)
-        goal_text=json.dumps(goal.requests)
-        if "WORLD_FACTS_READ" not in goal_text or "PLACEMENT_GOAL_CANARY" not in goal_text:
-            raise AssertionError("the goal sentinel did not receive the copied full evidence")
-        print("PASS the goal model received full working-computer evidence through the real look tool",flush=True)
+        if not goal.world_facts_read:
+            raise AssertionError("the goal sentinel did not read the copied full evidence")
+        print("PASS the goal model read full working-computer evidence through its read-only looks",flush=True)
         passed = True
     finally:
         if not passed:
@@ -174,8 +173,8 @@ def main():
     if args.inside:
         inside(args)
         return
-    # The sentinel's walls run root inside a user namespace, where it cannot pass a home directory
-    # closed to others (a runner's own is), so the drill lives in the system's temporary directory.
+    # The drill runs root inside a user namespace, where it cannot pass a home directory closed to
+    # others (a runner's own is), so it lives in the system's temporary directory.
     args.root = args.root.resolve() if args.root else Path(tempfile.mkdtemp(prefix="placement-"))
     args.root.mkdir(parents=True, exist_ok=True)
     command = ["unshare", "--net", "--mount", "--pid", "--fork", "--kill-child", "--mount-proc", sys.executable,

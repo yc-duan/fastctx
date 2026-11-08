@@ -74,9 +74,10 @@ pub struct MachineFacts {
     /// Understands sentinel account settings and lifecycle calls.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub sentinels: bool,
-    /// Preserves internal observation identity through on and its supervisor.
+    /// Answers `RemoteCall::Inspect`: the read-only looks of the World's own
+    /// agents.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub sentinel_look: bool,
+    pub inspects: bool,
     /// Keeps what arrived of a shared-input upload that broke, and takes it
     /// up again from there (`RemoteCall::Upload::resumes`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]

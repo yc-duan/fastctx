@@ -15,6 +15,7 @@ pub struct State {
     pub pending: Option<WakeIntent>,
     pub plan: String,
     pub notes: String,
+    #[serde(deserialize_with = "readable_reflexes")]
     pub reflexes: Vec<Reflex>,
     pub recent: Vec<Observation>,
     pub conclusion: Conclusion,
@@ -29,6 +30,27 @@ pub struct State {
     #[serde(default)]
     pub completed_at: i64,
 }
+/// The reflexes a state holds; one kept in a shape this build no longer
+/// reads, as an earlier build's look at a machine was, stands as an alarm
+/// due at once, so the sentinel wakes to set what it needs again and its
+/// state still loads, to be shown and withdrawn.
+fn readable_reflexes<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Vec<Reflex>, D::Error> {
+    let kept = Vec::<serde_json::Value>::deserialize(deserializer)?;
+    Ok(kept
+        .iter()
+        .map(|value| {
+            Reflex::deserialize(value).unwrap_or_else(|_| Reflex {
+                id: value["id"].as_str().unwrap_or("unreadable").to_string(),
+                at: 0,
+                every_ms: None,
+                probe: None,
+                predicate: None,
+                last_fingerprint: None,
+            })
+        })
+        .collect())
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct WakeIntent {
     pub id: String,

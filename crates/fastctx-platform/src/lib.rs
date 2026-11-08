@@ -54,6 +54,8 @@ pub mod owned_images;
 pub mod parent;
 pub mod privacy;
 pub mod private;
+#[cfg(any(target_os = "linux", target_os = "macos", windows))]
+pub mod processes;
 #[cfg(target_os = "linux")]
 pub mod procfs;
 #[cfg(windows)]

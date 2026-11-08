@@ -37,6 +37,7 @@ pub mod health;
 pub mod history;
 pub mod history_switch;
 pub mod hub_move;
+pub mod inspect;
 pub mod ipc;
 pub mod kernel;
 pub mod layers;

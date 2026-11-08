@@ -403,12 +403,6 @@ pub fn owe_job(record_path: &Path) -> io::Result<JobRecord> {
 /// has and the resident is owed that word.
 pub async fn tell_if_ended(node: &Arc<Node>, record_path: &Path, record: &JobRecord) -> io::Result<()> {
     crate::job_accounts::seen(node, record_path, record);
-    if record.is_sentinel() {
-        if record.end.is_none() {
-            crate::job_watch::restore(node, record_path, record).await?;
-        }
-        return Ok(());
-    }
     let Some(owner) = record.owner.resident() else { return Ok(()) };
     if record.end.is_none() {
         crate::job_watch::restore(node, record_path, record).await?;

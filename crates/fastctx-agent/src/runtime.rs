@@ -22,14 +22,17 @@ pub struct Limits {
 }
 impl Default for Limits {
     fn default() -> Self {
+        // A reasoning model may think for minutes before it answers, and its
+        // thinking counts as output: room for both, and for a few looks of
+        // eight kilobytes each in the context. Bytes are counted as tokens.
         Self {
-            duration: Duration::from_secs(120),
-            request_timeout: Duration::from_secs(30),
+            duration: Duration::from_secs(600),
+            request_timeout: Duration::from_secs(180),
             requests: 12,
-            tools: 16,
-            tokens: 64_000,
-            output_tokens: 2_048,
-            context_bytes: 32_768,
+            tools: 24,
+            tokens: 400_000,
+            output_tokens: 8_192,
+            context_bytes: 98_304,
             tool_bytes: 8_192,
         }
     }

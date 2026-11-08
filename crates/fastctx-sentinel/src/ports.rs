@@ -1,13 +1,28 @@
 //! Effects supplied by the resident node; no ambient machine or account access.
 use fastctx_agent::FutureResult;
-use fastctx_types::{MachineName, sentinel::Definition};
+use fastctx_types::{MachineName, inspect::Inspect, sentinel::Definition};
 use serde::{Deserialize, Serialize};
 
+/// What a look or a page read saw, and where it is kept whole where it is.
+/// A reflex's condition is tested against `text` alone; `note` says what the
+/// look did not find or did not show (`fastctx_types::inspect::Inspected`).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ReadResult {
     pub text: String,
-    pub exit_code: Option<i32>,
     pub full_path: Option<String>,
+    #[serde(default)]
+    pub note: Option<String>,
+}
+
+impl ReadResult {
+    /// What a model reads of it: the note, then the text.
+    pub fn shown(&self) -> String {
+        match &self.note {
+            Some(note) if self.text.is_empty() => format!("({note})"),
+            Some(note) => format!("({note})\n{}", self.text),
+            None => self.text.clone(),
+        }
+    }
 }
 /// A machine a sentinel may look at: one its account can work on, as the
 /// home sees it now, like the machines a World agent is given.
@@ -16,13 +31,14 @@ pub struct Machine {
     pub name: MachineName,
     pub online: bool,
 }
-/// Implementations enforce current account authority and a read-only offline sandbox.
+/// Takes the World's read-only looks at the account's machines, with the
+/// account's authority as it stands now (`fastctx_types::inspect`).
 pub trait Look: Send + Sync {
     fn look<'a>(
         &'a self,
         definition: &'a Definition,
         machine: &'a MachineName,
-        command: &'a str,
+        inspect: &'a Inspect,
     ) -> FutureResult<'a, ReadResult>;
 }
 pub trait Web: Send + Sync {
@@ -36,8 +52,16 @@ pub trait Credentials: Send + Sync {
         scope: &'a fastctx_types::access::HubAccount,
         home: &'a MachineName,
     ) -> FutureResult<'a, fastctx_types::sentinel_settings::KeyStatus>;
-    fn model_key<'a>(&'a self, scope: &'a fastctx_types::access::HubAccount, definition: &'a Definition) -> FutureResult<'a, String>;
-    fn search_key<'a>(&'a self, scope: &'a fastctx_types::access::HubAccount, definition: &'a Definition) -> FutureResult<'a, String>;
+    fn model_key<'a>(
+        &'a self,
+        scope: &'a fastctx_types::access::HubAccount,
+        definition: &'a Definition,
+    ) -> FutureResult<'a, String>;
+    fn search_key<'a>(
+        &'a self,
+        scope: &'a fastctx_types::access::HubAccount,
+        definition: &'a Definition,
+    ) -> FutureResult<'a, String>;
 }
 
 /// A node's resident worker. It verifies the authoritative account record and
