@@ -190,6 +190,10 @@ pub struct Offers {
     pub controls: Vec<ControlKind>,
     /// Its own commands, as its host lists them now.
     pub commands: Vec<CommandOffer>,
+    /// The skills of the account it works for, kept in Fastctx: a message
+    /// beginning with `$name` asks it to use one (`crate::skills`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skills: Vec<crate::skills::Listed>,
     /// The models it can be given, as its host lists them; empty when the
     /// host does not list them.
     pub models: Vec<ModelOffer>,

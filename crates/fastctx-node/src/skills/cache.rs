@@ -1,6 +1,7 @@
 //! One coalesced, memory-only skill index per account, invalidated by hub hints.
 use crate::Node;
 use fastctx_types::access::{HubAccount, HubId};
+use fastctx_types::skills::Index;
 use std::{
     collections::HashMap,
     sync::{
@@ -13,9 +14,18 @@ pub(crate) struct Cache(Mutex<HashMap<HubAccount, Arc<Entry>>>);
 #[derive(Default)]
 struct Entry {
     epoch: AtomicU64,
-    body: tokio::sync::Mutex<Option<(u64, String, String)>>,
+    body: tokio::sync::Mutex<Option<Held>>,
     /// Why reading the index last failed, while it keeps failing.
     failed: Mutex<Option<String>>,
+}
+
+/// The index as last read, what a session is told of it, and its version.
+#[derive(Clone)]
+pub(super) struct Held {
+    epoch: u64,
+    pub index: Index,
+    pub text: String,
+    pub version: String,
 }
 
 /// Why an index could not be read, and whether that is news since the last
@@ -37,16 +47,16 @@ pub(super) async fn get(
     node: &Node,
     link: &fastctx_net::link::Link,
     account: &fastctx_types::AccountName,
-) -> Result<(String, String), Failed> {
+) -> Result<Held, Failed> {
     let scope = HubAccount { hub: link.membership().id, account: account.clone() };
     let entry = node.skill_index.0.lock().expect("never poisoned").entry(scope).or_default().clone();
     let mut body = entry.body.lock().await;
     loop {
         let epoch = entry.epoch.load(Ordering::Acquire);
-        if let Some((held, text, version)) = &*body
-            && *held == epoch
+        if let Some(held) = &*body
+            && held.epoch == epoch
         {
-            return Ok((text.clone(), version.clone()));
+            return Ok(held.clone());
         }
         let (index, version) = match super::index(link, account).await {
             Ok(read) => {
@@ -62,7 +72,8 @@ pub(super) async fn get(
         if entry.epoch.load(Ordering::Acquire) != epoch {
             continue;
         }
-        *body = Some((epoch, text.clone(), version.clone()));
-        return Ok((text, version));
+        let held = Held { epoch, index, text, version };
+        *body = Some(held.clone());
+        return Ok(held);
     }
 }

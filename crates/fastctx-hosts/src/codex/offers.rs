@@ -249,6 +249,8 @@ impl CodexHost {
             automatic_model: None,
             controls,
             commands,
+            // The account's skills are the World's to add (`fastctx_node::control`).
+            skills: Vec::new(),
             models,
             model,
             effort,
