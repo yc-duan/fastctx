@@ -3,8 +3,8 @@ use fastctx_sync::{
     cursor::{ByteCount, HoldingPeriod},
     identity::{Digest, ObjectId},
     manifest::{
-        BlobId, Descriptor, DigestAlgorithm, DirectoryEntry, Encoding, FileContent, FileEntry, ManifestPage,
-        ManifestReply, PathName, RelativePath,
+        BlobId, ContentRef, Descriptor, DigestAlgorithm, DirectoryEntry, Encoding, FileEntry, ManifestPage,
+        ManifestReply, ManifestRoot, PathName, RelativePath,
     },
     transfer::Message,
 };
@@ -18,11 +18,11 @@ pub fn sample(holding: &HoldingPeriod) -> Result<Vec<Message>, Box<dyn std::erro
     let page = |value: ManifestPage| -> Result<ManifestReply, Box<dyn std::error::Error>> {
         let page_json = serde_json::to_string(&value)?;
         let reply = ManifestReply {
-            root: BlobId {
+            root: ManifestRoot(BlobId {
                 domain: scope.clone(),
                 algorithm: DigestAlgorithm::Sha256,
                 digest: Digest::of(page_json.as_bytes()),
-            },
+            }),
             page_json,
         };
         manifest::validate(scope, reply.clone())?;
@@ -40,7 +40,7 @@ pub fn sample(holding: &HoldingPeriod) -> Result<Vec<Message>, Box<dyn std::erro
                     path: RelativePath { components: vec![PathName::Utf8("small.json".into())] },
                     bytes: ByteCount(2),
                     executable: false,
-                    content: FileContent::Single { block: small.representation.content.id.clone(), decoded_bytes: 2 },
+                    content: ContentRef::Single { block: small.representation.content.id.clone(), decoded_bytes: 2 },
                 },
             },
             DirectoryEntry::File {
@@ -49,7 +49,7 @@ pub fn sample(holding: &HoldingPeriod) -> Result<Vec<Message>, Box<dyn std::erro
                     path: RelativePath { components: vec![PathName::Utf8("large.bin".into())] },
                     bytes: ByteCount(u64::from(fastctx_types::sync::BLOCK_BYTES) + 2),
                     executable: false,
-                    content: FileContent::Manifest { root: file.root.clone() },
+                    content: ContentRef::Manifest { root: file.root.clone() },
                 },
             },
         ],

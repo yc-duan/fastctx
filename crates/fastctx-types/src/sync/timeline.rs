@@ -4,7 +4,7 @@ use super::{
     catalog::SourceRecord,
     cursor::{Revision, Sequence, StreamCursor},
     identity::{Digest, ObjectId, ObjectKey},
-    manifest::BlobId,
+    manifest::{ContentRef, ManifestRoot},
     proof::SignedSourceBatch,
 };
 use serde::{Deserialize, Serialize};
@@ -62,14 +62,14 @@ pub struct TimelineItem {
     pub turn: ObjectId,
     pub parent: Option<ObjectId>,
     pub position: TimelinePosition,
-    pub body: BlobId,
+    pub body: ContentRef,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TimelineFence {
     pub conversation: ObjectKey,
     pub projection: Revision,
     pub through: StreamCursor,
-    pub root: BlobId,
+    pub root: ManifestRoot,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "from", content = "position", rename_all = "snake_case")]
@@ -99,5 +99,5 @@ pub struct TimelinePage {
 pub enum TimelineChange {
     Put { item: TimelineItem },
     Retract { item: ObjectId, revision: Revision },
-    SelectBranch { root: BlobId, projection: Revision },
+    SelectBranch { root: ManifestRoot, projection: Revision },
 }

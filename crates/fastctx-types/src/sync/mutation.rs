@@ -4,7 +4,7 @@ use super::{
     catalog::{Lifecycle, ObjectHead},
     cursor::{Count, LocalSequence, Revision, VersionRef},
     identity::{DeviceId, ObjectKey, OperationId},
-    manifest::{BlobId, FileEntry, RelativePath},
+    manifest::{ContentRef, FileEntry, ManifestRoot, RelativePath},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -16,7 +16,7 @@ pub const MAX_ATOMIC_BYTES: usize = 256 * 1024;
 #[serde(tag = "base", rename_all = "snake_case")]
 pub enum BaseVersion {
     Absent,
-    Version { state_revision: VersionRef, content_version: VersionRef, root: Option<BlobId> },
+    Version { state_revision: VersionRef, content_version: VersionRef, root: Option<ContentRef> },
 }
 
 /// An omitted field is untouched. Null is a value; deletion is explicit.
@@ -42,7 +42,7 @@ pub enum FileEdit {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "intent", rename_all = "snake_case")]
 pub enum OriginalIntent {
-    Write { content: BlobId, schema: u16 },
+    Write { content: ContentRef, schema: u16 },
     Edit { edits: Vec<TextEdit> },
     Fields { edits: Vec<FieldEdit> },
     Directory { edits: Vec<FileEdit> },
@@ -65,8 +65,8 @@ pub struct ProposedObject {
     pub kind: String,
     pub observed_acl: Revision,
     pub base: BaseVersion,
-    pub before: Option<BlobId>,
-    pub candidate: Option<BlobId>,
+    pub before: Option<ContentRef>,
+    pub candidate: Option<ContentRef>,
     pub predecessor: Option<OperationId>,
     pub original: OriginalIntent,
     pub resolves: Vec<OperationId>,
@@ -91,6 +91,20 @@ impl Submission {
         for object in &self.objects {
             if &object.key.scope.hub != hub || !keys.insert(&object.key) {
                 return Err("an atomic submission must name distinct objects in one hub".into());
+            }
+            let base = match &object.base {
+                BaseVersion::Absent => None,
+                BaseVersion::Version { root, .. } => root.as_ref(),
+            };
+            let written = match &object.original {
+                OriginalIntent::Write { content, .. } => Some(content),
+                _ => None,
+            };
+            for content in [base, object.before.as_ref(), object.candidate.as_ref(), written].into_iter().flatten() {
+                content.validate()?;
+                if content.id().domain != object.key.scope {
+                    return Err("a proposed content reference belongs to another scope".into());
+                }
             }
             if let OriginalIntent::Fields { edits } = &object.original {
                 let mut paths: Vec<&[String]> = edits
@@ -157,10 +171,10 @@ pub struct AcceptedObject {
     pub allocated: VersionRef,
     pub parents: Vec<VersionRef>,
     /// The newly retained body, including a conflicting alternative.
-    pub content: Option<BlobId>,
+    pub content: Option<ContentRef>,
     pub current_version: VersionRef,
-    pub current_content: Option<BlobId>,
-    pub history: Option<BlobId>,
+    pub current_content: Option<ContentRef>,
+    pub history: Option<ManifestRoot>,
     pub lifecycle: Lifecycle,
     pub acceptance: Acceptance,
 }
@@ -208,6 +222,6 @@ pub struct EffectiveObject {
     /// A bounded tail; the complete queue is available through pending pages.
     pub pending: Vec<PendingSummary>,
     pub pending_count: Count,
-    pub effective_content: Option<BlobId>,
+    pub effective_content: Option<ContentRef>,
     pub conflicts: Vec<OperationId>,
 }

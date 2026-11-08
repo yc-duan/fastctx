@@ -3,7 +3,7 @@
 use crate::{
     cursor::{Holder, HoldingPeriod, Revision},
     identity::{DeviceId, Digest, ScopeKey},
-    manifest::{BlobId, DirectoryEntry, FileContent, ManifestPage, ManifestReply, PathName, RelativePath},
+    manifest::{BlobId, ContentRef, DirectoryEntry, ManifestPage, ManifestReply, ManifestRoot, PathName, RelativePath},
     store::Error,
     transfer::Message,
 };
@@ -13,13 +13,13 @@ use std::collections::{BTreeMap, BTreeSet};
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Reference {
     Block { id: BlobId, decoded_bytes: u32 },
-    Manifest { root: BlobId },
+    Manifest { root: ManifestRoot },
 }
 impl Reference {
     pub fn id(&self) -> &BlobId {
         match self {
             Self::Block { id, .. } => id,
-            Self::Manifest { root } => root,
+            Self::Manifest { root } => &root.0,
         }
     }
 }
@@ -43,7 +43,7 @@ pub fn validate(scope: &ScopeKey, reply: ManifestReply) -> Result<CheckedManifes
     if reply.page_json.len() > PAGE_BYTES as usize {
         return Err(Error::Invalid("manifest page exceeds its metadata budget".into()));
     }
-    if &reply.root.domain != scope || Digest::of(reply.page_json.as_bytes()) != reply.root.digest {
+    if &reply.root.0.domain != scope || Digest::of(reply.page_json.as_bytes()) != reply.root.0.digest {
         return Err(Error::Invalid("manifest bytes differ from the scoped content identity".into()));
     }
     // Count JSON escaping and the longest V1 holding fields, not only raw JSON.
@@ -89,7 +89,7 @@ pub fn validate(scope: &ScopeKey, reply: ManifestReply) -> Result<CheckedManifes
                             return Err(Error::Invalid("a directory page repeats a file identity".into()));
                         }
                         match file.content {
-                            FileContent::Single { block, decoded_bytes } => {
+                            ContentRef::Single { block, decoded_bytes } => {
                                 if decoded_bytes > BLOCK_BYTES || file.bytes.0 != u64::from(decoded_bytes) {
                                     return Err(Error::Invalid(
                                         "single-block file length differs from its entry".into(),
@@ -97,7 +97,7 @@ pub fn validate(scope: &ScopeKey, reply: ManifestReply) -> Result<CheckedManifes
                                 }
                                 add(&mut references, Reference::Block { id: block, decoded_bytes })?;
                             }
-                            FileContent::Manifest { root } => add(&mut references, Reference::Manifest { root })?,
+                            ContentRef::Manifest { root } => add(&mut references, Reference::Manifest { root })?,
                         }
                     }
                     DirectoryEntry::Directory { root: Some(root), .. } => {
@@ -118,7 +118,7 @@ pub fn validate(scope: &ScopeKey, reply: ManifestReply) -> Result<CheckedManifes
             }
         }
     }
-    if references.values().any(|reference| &reference.id().domain != scope || reference.id() == &reply.root) {
+    if references.values().any(|reference| &reference.id().domain != scope || reference.id() == &reply.root.0) {
         return Err(Error::Invalid("manifest references must stay in their scope and exclude the page itself".into()));
     }
     Ok(CheckedManifest { reply, references: references.into_values().collect() })

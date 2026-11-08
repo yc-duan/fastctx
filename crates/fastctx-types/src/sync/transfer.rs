@@ -5,7 +5,7 @@ use super::{
     cursor::{BlockRange, ByteCount, DurableAck, HoldingPeriod, PageCursor, Revision, ScopeCursor, SnapshotFence},
     exposure::{ExposureIntent, ShareActivation, SignedExposureReceipt},
     identity::{Digest, FeedEpoch, HubId, ScopeKey, StreamId, ViewId},
-    manifest::{BlobId, Descriptor, Encoding, ManifestReply},
+    manifest::{BlobId, Descriptor, Encoding, ManifestReply, ManifestRoot},
     proof::{ConfirmedEpoch, SignedSourceBatch},
     timeline::{StreamPage, StreamRead},
 };
@@ -178,7 +178,7 @@ pub enum Message {
     },
     GetManifest {
         holding: HoldingPeriod,
-        root: BlobId,
+        root: ManifestRoot,
     },
     Manifest {
         holding: HoldingPeriod,
@@ -194,7 +194,7 @@ pub enum Message {
     },
     WantBlocks {
         holding: HoldingPeriod,
-        manifest: BlobId,
+        manifest: ManifestRoot,
         missing: Vec<BlockRange>,
     },
     Acknowledge {

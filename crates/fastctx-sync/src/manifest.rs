@@ -10,7 +10,7 @@ pub struct Pin {
     pub operation: OperationId,
     pub object: ObjectKey,
     pub kind: String,
-    pub root: BlobId,
+    pub root: ContentRef,
     pub generation: Revision,
     pub holding: HoldingPeriod,
 }
@@ -33,7 +33,7 @@ pub trait BlockStore: Send + Sync {
     /// page, its edges and pin. Missing descendants do not become complete.
     fn put_manifest(&self, custody: Custody, operation: OperationId, page: ManifestReply) -> FutureResult<'_, Pin>;
     fn descriptor(&self, custody: Custody, id: BlobId) -> FutureResult<'_, Descriptor>;
-    fn manifest(&self, custody: Custody, root: BlobId) -> FutureResult<'_, ManifestReply>;
+    fn manifest(&self, custody: Custody, root: ManifestRoot) -> FutureResult<'_, ManifestReply>;
     fn read(&self, custody: Custody, id: BlobId, representation: Digest) -> FutureResult<'_, Vec<u8>>;
     fn release(&self, custody: Custody, pin: Pin) -> FutureResult<'_, ()>;
     fn collect(&self, max_blocks: u32) -> FutureResult<'_, u32>;

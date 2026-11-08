@@ -2,7 +2,7 @@
 
 use crate::{
     catalog::ObjectHead,
-    manifest::BlobId,
+    manifest::ContentRef,
     store::{
         Error,
         mutation::{FieldEdit, ProposedObject},
@@ -51,7 +51,7 @@ pub struct MergeBodies<'a> {
 pub trait KindHandler: Send + Sync {
     fn kind(&self) -> &'static str;
     fn validate(&self, schema: u16, body: &[u8]) -> Result<(), Error>;
-    fn references(&self, schema: u16, body: &[u8]) -> Result<Vec<BlobId>, Error>;
+    fn references(&self, schema: u16, body: &[u8]) -> Result<Vec<ContentRef>, Error>;
     fn import_legacy(&self, shape: &str, body: &[u8]) -> Result<Vec<u8>, Error>;
     fn project_legacy(&self, head: &ObjectHead, body: &[u8], generation: u16) -> Result<Vec<u8>, Error>;
     fn project_local(&self, head: &ObjectHead, body: &[u8]) -> Result<Vec<u8>, Error>;

@@ -32,7 +32,8 @@ pub(super) fn source(value: &SourceBatch) -> Result<(), Error> {
         if record.sequence.0 != value.after.0 + index as u64 + 1
             || record.kind != value.kind
             || record.schema != value.schema
-            || record.payload.domain != value.scope
+            || record.payload.id.domain != value.scope
+            || record.payload.decoded_bytes > fastctx_types::sync::BLOCK_BYTES
             || !operations.insert(&record.operation)
         {
             return Err(Error::Invalid("source record differs from its signed range binding".into()));

@@ -12,7 +12,7 @@ use fastctx_sync::{
         AuthorityEpoch, DeviceId, Digest, FeedEpoch, HubId, ObjectId, ObjectKey, OperationId, ProducerEpoch, ScopeId,
         ScopeKey, StreamId,
     },
-    manifest::{BlobId, DigestAlgorithm},
+    manifest::{BlobId, ContentBlock, ContentRef, DigestAlgorithm, ManifestRoot},
     proof::{Bytes, ProofPurpose, Signature, SignedSourceBatch, SignedStatement, SigningKey},
     store::mutation::{BaseVersion, FieldEdit, OriginalIntent, ProposedObject, Submission, SubmissionMode},
     timeline::{StreamPosition, StreamRead, TimelineChange, TimelineItem, TimelinePosition},
@@ -54,13 +54,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         algorithm: DigestAlgorithm::Sha256,
         digest: Digest::from_bytes([byte; 32]),
     };
+    let content = |byte| ContentRef::Single { block: blob(byte), decoded_bytes: 1 };
     let records = (1_u8..=4)
         .map(|n| SourceRecord {
             sequence: Sequence(n.into()),
             operation: OperationId::from_bytes([n; 32]),
             kind: kind.kind.clone(),
             schema: 1,
-            payload: blob(n),
+            payload: ContentBlock { id: blob(n), decoded_bytes: 1 },
             causes: vec![],
         })
         .collect();
@@ -98,7 +99,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     accepted: Sequence(item.into()),
                     item: ObjectId::from_bytes([item; 32]),
                 },
-                body: blob(sequence),
+                body: content(sequence),
             },
         });
     }
@@ -120,10 +121,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     authority_epoch: AuthorityEpoch::from_bytes([31; 16]),
                     revision: Revision(7),
                 },
-                root: Some(blob(23)),
+                root: Some(content(23)),
             },
-            before: Some(blob(23)),
-            candidate: Some(blob(24)),
+            before: Some(content(23)),
+            candidate: Some(content(24)),
             predecessor: None,
             original: OriginalIntent::Fields {
                 edits: vec![FieldEdit::Set { path: vec!["theme".into()], value: serde_json::json!("dark") }],
@@ -179,7 +180,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
         Message::Submit { request: submission },
         Message::RestoreAccepted { proof: accepted },
-        Message::GetManifest { holding: holding.clone(), root: blob(25) },
+        Message::GetManifest { holding: holding.clone(), root: ManifestRoot(blob(25)) },
         Message::GetDescriptor { holding: holding.clone(), blob: blob(1) },
         Message::Acknowledge { durable: DurableAck::Catalog { holding: holding.clone(), cursor } },
         Message::Revoked { holding: holding.clone() },

@@ -8,7 +8,7 @@ use fastctx_types::sync::{
     catalog::{Authority, Lifecycle},
     cursor::{Revision, VersionRef},
     identity::{AccountId, AuthorityEpoch, DeviceId, Digest, ObjectId, ObjectKey, OperationId, ScopeKey},
-    manifest::{BlobId, DigestAlgorithm},
+    manifest::{BlobId, ContentRef, DigestAlgorithm},
     mutation::{Acceptance, AcceptedObject},
     proof::{Bytes, ProofPurpose, Signature, SignedStatement, SigningKey},
 };
@@ -19,8 +19,14 @@ pub fn sample(
 ) -> Result<(SignedAcceptanceFragment, CommittedFragment), Box<dyn std::error::Error>> {
     let epoch = AuthorityEpoch::from_bytes([31; 16]);
     let version = VersionRef { authority_epoch: epoch.clone(), revision: Revision(8) };
-    let content =
-        BlobId { domain: scope.clone(), algorithm: DigestAlgorithm::Sha256, digest: Digest::from_bytes([24; 32]) };
+    let content = ContentRef::Single {
+        block: BlobId {
+            domain: scope.clone(),
+            algorithm: DigestAlgorithm::Sha256,
+            digest: Digest::from_bytes([24; 32]),
+        },
+        decoded_bytes: 1,
+    };
     let fragment = AcceptanceFragment {
         binding: AcceptanceBinding {
             format: 1,

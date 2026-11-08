@@ -3,7 +3,7 @@
 use super::{
     cursor::{Completeness, Revision, ScopeCursor, Sequence, SnapshotFence, VersionRef},
     identity::{DeviceId, ObjectId, ObjectKey, OperationId, ProducerEpoch, ScopeKey, StreamId},
-    manifest::BlobId,
+    manifest::{ContentBlock, ContentRef, ManifestRoot},
 };
 use serde::{Deserialize, Serialize};
 
@@ -42,9 +42,9 @@ pub struct ObjectHead {
     pub revision: VersionRef,
     /// The selected body version; it need not be the largest allocated revision.
     pub current_version: VersionRef,
-    pub content: Option<BlobId>,
+    pub content: Option<ContentRef>,
     /// All retained versions remain discoverable after catalog feed compaction.
-    pub history: Option<BlobId>,
+    pub history: Option<ManifestRoot>,
     pub lifecycle: Lifecycle,
     pub completeness: Completeness,
 }
@@ -94,7 +94,7 @@ pub struct SourceRecord {
     pub operation: OperationId,
     pub kind: String,
     pub schema: u16,
-    pub payload: BlobId,
+    pub payload: ContentBlock,
     pub causes: Vec<RecordRef>,
 }
 

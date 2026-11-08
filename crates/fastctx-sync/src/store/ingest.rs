@@ -4,7 +4,7 @@ use super::{FutureResult, access::AccessContext};
 use crate::{
     cursor::{ByteCount, LocalSequence, Revision, StreamCursor},
     identity::{Digest, ProducerEpoch, SourceId},
-    manifest::BlobId,
+    manifest::ContentRef,
 };
 use fastctx_types::sync::proof::{ConfirmedEpoch, SignedSourceBatch};
 #[derive(Clone, Debug)]
@@ -14,7 +14,7 @@ pub struct SourceCheckpoint {
     pub revision: Revision,
     pub committed_offset: ByteCount,
     pub parser_version: u16,
-    pub state: Option<BlobId>,
+    pub state: Option<ContentRef>,
 }
 #[derive(Clone, Debug)]
 pub struct IngestBatch {

@@ -99,23 +99,48 @@ pub struct FileEntry {
     pub path: RelativePath,
     pub bytes: ByteCount,
     pub executable: bool,
-    pub content: FileContent,
+    pub content: ContentRef,
 }
 
-/// Small files directly reference a block. Larger files name a validated
-/// manifest; JSON-shaped file bytes never implicitly become a manifest.
+/// Variable-sized bodies directly reference a block or explicitly name a
+/// validated manifest. JSON-shaped bytes never implicitly become a manifest.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-pub enum FileContent {
+pub enum ContentRef {
     Single { block: BlobId, decoded_bytes: u32 },
-    Manifest { root: BlobId },
+    Manifest { root: ManifestRoot },
 }
+impl ContentRef {
+    pub fn id(&self) -> &BlobId {
+        match self {
+            Self::Single { block, .. } => block,
+            Self::Manifest { root } => &root.0,
+        }
+    }
+    pub fn validate(&self) -> Result<(), String> {
+        if matches!(self, Self::Single { decoded_bytes, .. } if *decoded_bytes > super::BLOCK_BYTES) {
+            return Err("a single content reference exceeds one MiB".into());
+        }
+        Ok(())
+    }
+}
+impl From<ContentBlock> for ContentRef {
+    fn from(block: ContentBlock) -> Self {
+        Self::Single { block: block.id, decoded_bytes: block.decoded_bytes }
+    }
+}
+
+/// A field of this type always requires a verified manifest closure. Its JSON
+/// identity remains a BlobId; interpretation comes from the declared field.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct ManifestRoot(pub BlobId);
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum DirectoryEntry {
     File { file: FileEntry },
-    Directory { path: RelativePath, root: Option<BlobId> },
+    Directory { path: RelativePath, root: Option<ManifestRoot> },
     Link { path: RelativePath, target: PathName },
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -129,7 +154,7 @@ pub enum ManifestPage {
 pub struct ManifestChild {
     pub first_key: String,
     pub last_key: String,
-    pub root: BlobId,
+    pub root: ManifestRoot,
     pub entries: Count,
 }
 
@@ -137,7 +162,7 @@ pub struct ManifestChild {
 /// do not hash a reserialized value, and may follow an unfamiliar history root.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ManifestReply {
-    pub root: BlobId,
+    pub root: ManifestRoot,
     pub page_json: String,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

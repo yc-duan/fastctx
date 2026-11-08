@@ -19,7 +19,7 @@ CREATE TABLE sync_objects (
     revision BLOB NOT NULL CHECK(length(revision)=8),
     current_authority_epoch BLOB NOT NULL CHECK(length(current_authority_epoch)=16),
     current_version BLOB NOT NULL CHECK(length(current_version)=8),
-    content TEXT, history TEXT, state TEXT NOT NULL,
+    content BLOB, history TEXT, state TEXT NOT NULL,
     completeness BLOB NOT NULL, PRIMARY KEY(hub,scope,object),
     FOREIGN KEY(hub,scope) REFERENCES sync_scopes(hub,scope)
 ) WITHOUT ROWID;
@@ -28,7 +28,7 @@ CREATE TABLE sync_object_versions (
     hub TEXT NOT NULL, scope TEXT NOT NULL, object TEXT NOT NULL,
     authority_epoch BLOB NOT NULL CHECK(length(authority_epoch)=16),
     revision BLOB NOT NULL CHECK(length(revision)=8),
-    actor TEXT NOT NULL, operation TEXT NOT NULL, content TEXT, parents BLOB NOT NULL,
+    actor TEXT NOT NULL, operation TEXT NOT NULL, content BLOB, parents BLOB NOT NULL,
     state TEXT NOT NULL, PRIMARY KEY(hub,scope,object,authority_epoch,revision)
 ) WITHOUT ROWID;
 CREATE TABLE sync_scope_heads (
@@ -68,7 +68,7 @@ CREATE TABLE sync_stream_heads (
 CREATE TABLE sync_stream_records (
     hub TEXT NOT NULL, scope TEXT NOT NULL, stream TEXT NOT NULL, epoch TEXT NOT NULL,
     sequence BLOB NOT NULL CHECK(length(sequence)=8), operation TEXT NOT NULL,
-    kind TEXT NOT NULL, schema INTEGER NOT NULL, payload TEXT NOT NULL,
+    kind TEXT NOT NULL, schema INTEGER NOT NULL, payload BLOB NOT NULL,
     causes BLOB NOT NULL, batch_proof TEXT NOT NULL,
     PRIMARY KEY(hub,scope,stream,epoch,sequence),
     UNIQUE(hub,scope,stream,epoch,operation)
@@ -91,7 +91,7 @@ CREATE INDEX sync_pending_order ON sync_pending_mutations(hub,origin,local_seque
 CREATE TABLE sync_pending_objects (
     hub TEXT NOT NULL, origin TEXT NOT NULL, operation TEXT NOT NULL,
     scope TEXT NOT NULL, object TEXT NOT NULL, kind TEXT NOT NULL,
-    base BLOB NOT NULL, before_root TEXT, candidate_root TEXT,
+    base BLOB NOT NULL, before_root BLOB, candidate_root BLOB,
     predecessor TEXT, original_intent BLOB NOT NULL,
     PRIMARY KEY(hub,origin,operation,scope,object),
     FOREIGN KEY(hub,origin,operation) REFERENCES sync_pending_mutations(hub,origin,operation)
@@ -153,7 +153,7 @@ CREATE TABLE sync_sources (
     hub TEXT NOT NULL, scope TEXT NOT NULL, source TEXT NOT NULL,
     generation TEXT NOT NULL, revision BLOB NOT NULL CHECK(length(revision)=8),
     committed_offset BLOB NOT NULL CHECK(length(committed_offset)=8),
-    parser_version INTEGER NOT NULL, state TEXT, PRIMARY KEY(hub,scope,source)
+    parser_version INTEGER NOT NULL, state BLOB, PRIMARY KEY(hub,scope,source)
 ) WITHOUT ROWID;
 CREATE TABLE sync_runtime (
     hub TEXT NOT NULL, scope TEXT NOT NULL, kind TEXT NOT NULL, record_key TEXT NOT NULL,
@@ -202,14 +202,20 @@ CREATE TABLE sync_asset_roots (
     hub TEXT NOT NULL, scope TEXT NOT NULL, object TEXT NOT NULL,
     authority_epoch BLOB NOT NULL CHECK(length(authority_epoch)=16),
     revision BLOB NOT NULL CHECK(length(revision)=8), hash TEXT NOT NULL,
-    PRIMARY KEY(hub,scope,object,authority_epoch,revision,hash)
+    root_kind TEXT NOT NULL CHECK(root_kind IN ('block','manifest')), decoded_bytes INTEGER,
+    CHECK((root_kind='block' AND decoded_bytes IS NOT NULL AND decoded_bytes BETWEEN 0 AND 1048576)
+       OR (root_kind='manifest' AND decoded_bytes IS NULL)),
+    PRIMARY KEY(hub,scope,object,authority_epoch,revision,hash,root_kind)
 ) WITHOUT ROWID;
 CREATE INDEX sync_asset_roots_hash ON sync_asset_roots(hub,scope,hash);
 CREATE TABLE sync_asset_pins (
     hub TEXT NOT NULL, scope TEXT NOT NULL, operation TEXT NOT NULL, object TEXT NOT NULL,
     kind TEXT NOT NULL, hash TEXT NOT NULL,
+    root_kind TEXT NOT NULL CHECK(root_kind IN ('block','manifest')), decoded_bytes INTEGER,
     generation BLOB NOT NULL CHECK(length(generation)=8), phase TEXT NOT NULL, holding BLOB NOT NULL,
-    PRIMARY KEY(hub,scope,operation,object,hash)
+    CHECK((root_kind='block' AND decoded_bytes IS NOT NULL AND decoded_bytes BETWEEN 0 AND 1048576)
+       OR (root_kind='manifest' AND decoded_bytes IS NULL)),
+    PRIMARY KEY(hub,scope,operation,object,hash,root_kind)
 ) WITHOUT ROWID;
 CREATE INDEX sync_asset_pins_hash ON sync_asset_pins(hub,scope,hash);
 CREATE TABLE sync_asset_transfers (
@@ -276,7 +282,7 @@ CREATE TABLE sync_peer_capabilities (
 CREATE TABLE sync_timeline_items (
     hub TEXT NOT NULL, scope TEXT NOT NULL, conversation TEXT NOT NULL, item TEXT NOT NULL,
     revision BLOB NOT NULL CHECK(length(revision)=8), accepted BLOB NOT NULL CHECK(length(accepted)=8),
-    position BLOB NOT NULL, body TEXT NOT NULL, turn TEXT NOT NULL, parent TEXT,
+    position BLOB NOT NULL, body BLOB NOT NULL, turn TEXT NOT NULL, parent TEXT,
     active INTEGER NOT NULL CHECK(active IN (0,1)),
     PRIMARY KEY(hub,scope,conversation,item,revision)
 ) WITHOUT ROWID;

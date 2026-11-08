@@ -91,10 +91,11 @@ impl CommittedFragment {
                 || object.schema != fragment.schema
                 || object.allocated.authority_epoch != binding.authority_epoch
                 || !objects.insert(&object.key.object)
-                || [&object.content, &object.current_content, &object.history]
+                || [&object.content, &object.current_content]
                     .into_iter()
                     .flatten()
-                    .any(|root| root.domain != object.key.scope)
+                    .any(|root| root.id().domain != object.key.scope || root.validate().is_err())
+                || object.history.as_ref().is_some_and(|root| root.0.domain != object.key.scope)
             {
                 return Err("accepted object differs from its scope or authority binding".into());
             }

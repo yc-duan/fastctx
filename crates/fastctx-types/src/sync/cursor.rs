@@ -71,7 +71,7 @@ pub struct StreamCursor {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SnapshotFence {
     pub cursor: ScopeCursor,
-    pub root: super::manifest::BlobId,
+    pub root: super::manifest::ManifestRoot,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -112,7 +112,7 @@ pub struct HoldingPeriod {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BlockProgress {
-    pub manifest: super::manifest::BlobId,
+    pub manifest: super::manifest::ManifestRoot,
     /// Verified, durable block indexes; sorted, disjoint half-open ranges.
     pub verified: Vec<BlockRange>,
     pub total_blocks: Count,
@@ -123,7 +123,7 @@ pub struct BlockProgress {
 pub enum Completeness {
     MetadataOnly,
     Pending { missing_records: Count, missing_bytes: ByteCount },
-    Complete { root: super::manifest::BlobId },
+    Complete { root: super::manifest::ContentRef },
     Unavailable { reason: String },
     LegacyIncomplete { source: super::identity::DeviceId, reason: String },
 }
