@@ -3,7 +3,7 @@
 //! This inventory is not permission to add another path under a broad prefix.
 //! Family and namespace containers require an explicit logical entry as well.
 
-use super::{DataClass, Stage};
+use super::{DataClass, DecisionState, Stage};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Surface {
@@ -29,6 +29,7 @@ pub struct LegacyEntry {
     pub classification: Classification,
     pub owner: &'static str,
     pub stage: Stage,
+    pub decision: DecisionState,
     pub note: &'static str,
 }
 

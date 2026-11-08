@@ -1,193 +1,193 @@
 # Logical selectors within generic physical containers. Angle brackets denote runtime identity, not arbitrary new kinds.
-Family	hub.rows/accounts	Asset	crates/fastctx-hub/src/store/book_rows.rs	Assets	Directory definitions; plans means login plans, not plan.md
-Family	hub.rows/members	Asset	crates/fastctx-hub/src/store/book_rows.rs	Assets	Directory definitions; plans means login plans, not plan.md
-Family	hub.rows/shares	Asset	crates/fastctx-hub/src/store/book_rows.rs	Assets	Directory definitions; plans means login plans, not plan.md
-Family	hub.rows/lends	Asset	crates/fastctx-hub/src/store/book_rows.rs	Assets	Directory definitions; plans means login plans, not plan.md
-Family	hub.rows/plans	Asset	crates/fastctx-hub/src/store/book_rows.rs	Assets	Directory definitions; plans means login plans, not plan.md
-Family	hub.rows/acting	Asset	crates/fastctx-hub/src/store/book_rows.rs	Assets	Directory definitions; plans means login plans, not plan.md
-Family	hub.rows/projects	Asset	crates/fastctx-hub/src/store/book_rows.rs	Assets	Directory definitions; plans means login plans, not plan.md
-Family	hub.rows/archived	Asset	crates/fastctx-hub/src/store/book_rows.rs	Assets	Directory definitions; plans means login plans, not plan.md
-Family	hub.rows/removed	Asset	crates/fastctx-hub/src/store/book_rows.rs	Assets	Directory definitions; plans means login plans, not plan.md
-Family	hub.rows/tokens	Runtime	crates/fastctx-hub/src/store/book_rows.rs	Foundation	Authentication material remains in the hub; only approved descriptions become assets
-Family	hub.rows/passwords	Runtime	crates/fastctx-hub/src/store/book_rows.rs	Foundation	Authentication material remains in the hub; only approved descriptions become assets
-Family	hub.rows/project_deletions	Runtime	crates/fastctx-hub/src/store/book_rows.rs	Maintenance	Deletion delivery work, distinct from the permanent deletion decision
-Family	hub.rows/forgetting	Runtime	crates/fastctx-hub/src/store/book_rows.rs	Maintenance	Deletion delivery work, distinct from the permanent deletion decision
-Family	hub.rows/account_forgetting	Runtime	crates/fastctx-hub/src/store/book_rows.rs	Maintenance	Deletion delivery work, distinct from the permanent deletion decision
-Family	hub.rows/due	Runtime	crates/fastctx-hub/src/store/hub_rows.rs	Maintenance	Update orchestration and package retention state
-Family	hub.rows/repairs	Runtime	crates/fastctx-hub/src/store/hub_rows.rs	Maintenance	Update orchestration and package retention state
-Family	hub.rows/package_targets	Runtime	crates/fastctx-hub/src/store/hub_rows.rs	Maintenance	Update orchestration and package retention state
-Family	hub.rows/letters	Runtime	crates/fastctx-hub/src/store/letter_rows.rs	Foundation	Durable mailbox counters
-Family	hub.rows/worked	Runtime	crates/fastctx-hub/src/worked.rs	Foundation	Return-path authorization and cleanup ownership
-Family	hub.rows/reports	Runtime	crates/fastctx-hub/src/updates/history.rs	Maintenance	Latest device version state
-Family	hub.rows/troubles	Asset	crates/fastctx-hub/src/troubles.rs	Assets	Alert facts and fixed recipients; preserve before existing expiry
-Family	hub.rows/migrations	Runtime	crates/fastctx-hub/src/troubles.rs	Migration	Latest migration status
-Family	hub.meta/hub.self_registration	Asset	crates/fastctx-hub/src/store/book_rows.rs	Assets	Network configuration and lifecycle decision
-Family	hub.meta/hub.updates	Asset	crates/fastctx-hub/src/store/book_rows.rs	Assets	Network configuration and lifecycle decision
-Family	hub.meta/hub.dissolved	Asset	crates/fastctx-hub/src/store/book_rows.rs	Assets	Network configuration and lifecycle decision
-Family	hub.meta/hub.id	Runtime	crates/fastctx-hub/src/store	Foundation	Identity, format, migration and sequence metadata
-Family	hub.meta/hub.name	Runtime	crates/fastctx-hub/src/store	Foundation	Identity, format, migration and sequence metadata
-Family	hub.meta/hub.public	Runtime	crates/fastctx-hub/src/store	Foundation	Identity, format, migration and sequence metadata
-Family	hub.meta/hub.listen	Runtime	crates/fastctx-hub/src/store	Foundation	Identity, format, migration and sequence metadata
-Family	hub.meta/format	Runtime	crates/fastctx-hub/src/store	Foundation	Identity, format, migration and sequence metadata
-Family	hub.meta/legacy_sources	Runtime	crates/fastctx-hub/src/store	Foundation	Identity, format, migration and sequence metadata
-Family	hub.meta/legacy_backed_up	Runtime	crates/fastctx-hub/src/store	Foundation	Identity, format, migration and sequence metadata
-Family	hub.meta/upgraded	Runtime	crates/fastctx-hub/src/store	Foundation	Identity, format, migration and sequence metadata
-Family	hub.meta/machine_log.next	Runtime	crates/fastctx-hub/src/store	Foundation	Identity, format, migration and sequence metadata
-Family	hub.meta/forgetting.last	Runtime	crates/fastctx-hub/src/store	Foundation	Identity, format, migration and sequence metadata
-Family	hub.meta/account_forgetting.last	Runtime	crates/fastctx-hub/src/store	Foundation	Identity, format, migration and sequence metadata
-Family	hub.meta/book.<legacy-field>	Runtime	crates/fastctx-hub/src/store/migrate.rs	Migration	Preserve unknown imported fields; not a permission for new business keys
-Family	hub.meta/hub.<legacy-field>	Runtime	crates/fastctx-hub/src/store/migrate.rs	Migration	Preserve unknown imported fields; not a permission for new business keys
-Family	hub.meta/machine_log.<legacy-field>	Runtime	crates/fastctx-hub/src/store/migrate.rs	Migration	Preserve unknown imported fields; not a permission for new business keys
-Family	hub.meta/forgetting.<legacy-field>	Runtime	crates/fastctx-hub/src/store/migrate.rs	Migration	Preserve unknown imported fields; not a permission for new business keys
-Family	account-records/conversation	Asset	crates/fastctx-hub/src/account_records.rs	Assets	Expected-version account records, including retained revisions
-Family	account-records/plan	Asset	crates/fastctx-hub/src/account_records.rs	Assets	Expected-version account records, including retained revisions
-Family	account-records/history	Asset	crates/fastctx-hub/src/account_records.rs	Assets	Expected-version account records, including retained revisions
-Family	account-records/working-place	Asset	crates/fastctx-hub/src/account_records.rs	Assets	Expected-version account records, including retained revisions
-Family	account-records/skill	Asset	crates/fastctx-hub/src/account_records.rs	Assets	Expected-version account records, including retained revisions
-Family	account-records/skill-index	Asset	crates/fastctx-hub/src/account_records.rs	Assets	Expected-version account records, including retained revisions
-Family	account-records/goal	Asset	crates/fastctx-hub/src/account_records.rs	Assets	Expected-version account records, including retained revisions
-Family	account-records/goal_past	Asset	crates/fastctx-hub/src/account_records.rs	Assets	Expected-version account records, including retained revisions
-Family	account-records/goal_text	Asset	crates/fastctx-hub/src/account_records.rs	Assets	Expected-version account records, including retained revisions
-Family	account-records/goal_history	Asset	crates/fastctx-hub/src/account_records.rs	Assets	Expected-version account records, including retained revisions
-Family	account-records/goal_writes	Asset	crates/fastctx-hub/src/account_records.rs	Assets	Expected-version account records, including retained revisions
-Family	account-records/sentinel	Asset	crates/fastctx-hub/src/account_records.rs	Assets	Expected-version account records, including retained revisions
-Family	account-records/sentinel-settings	ByKind:sentinel.settings-fields	crates/fastctx-node/src/sentinels/settings.rs	Assets	Public configuration is an asset; secret material has restricted runtime delivery
-Family	account-records/<unknown-existing-kind>	Runtime	crates/fastctx-hub/src/account_records/storage.rs	Migration	Quarantine and preserve original bytes; unknown legacy data is not published without classification
-Family	node.records/actions	Asset	crates/fastctx-node/src/records	Ingestion	Stable business facts and configuration
-Family	node.records/messages	Asset	crates/fastctx-node/src/records	Ingestion	Stable business facts and configuration
-Family	node.records/session-options	Asset	crates/fastctx-node/src/records	Ingestion	Stable business facts and configuration
-Family	node.records/callee-birth	Asset	crates/fastctx-node/src/records	Ingestion	Stable business facts and configuration
-Family	node.records/asked-accounts	Asset	crates/fastctx-node/src/records	Ingestion	Stable business facts and configuration
-Family	node.records/turn-sessions	Asset	crates/fastctx-node/src/records	Ingestion	Stable business facts and configuration
-Family	node.records/delivered-attachments	Asset	crates/fastctx-node/src/records	Ingestion	Stable business facts and configuration
-Family	node.records/goal-account	Asset	crates/fastctx-node/src/records	Ingestion	Stable business facts and configuration
-Family	node.records/goal-replies	Asset	crates/fastctx-node/src/records	Ingestion	Stable business facts and configuration
-Family	node.records/goal-reports	Asset	crates/fastctx-node/src/records	Ingestion	Stable business facts and configuration
-Family	node.records/asked-account-count	Derived	crates/fastctx-node/src/records	Projection	Rebuild only after the authoritative source and retention references are established
-Family	node.records/seen	Derived	crates/fastctx-node/src/records	Projection	Rebuild only after the authoritative source and retention references are established
-Family	node.records/native-context	Derived	crates/fastctx-node/src/records	Projection	Rebuild only after the authoritative source and retention references are established
-Family	node.records/history-heard	Derived	crates/fastctx-node/src/records	Projection	Rebuild only after the authoritative source and retention references are established
-Family	node.records/attachment-pins	Derived	crates/fastctx-node/src/records	Projection	Rebuild only after the authoritative source and retention references are established
-Family	node.records/attachment-pin-budget	Derived	crates/fastctx-node/src/records	Projection	Rebuild only after the authoritative source and retention references are established
-Family	node.records/focus	ByKind:node.record-fields	crates/fastctx-node/src/records	Assets	Split accepted settings/definitions from rendering and execution state
-Family	node.records/goal-local	ByKind:node.record-fields	crates/fastctx-node/src/records	Assets	Split accepted settings/definitions from rendering and execution state
-Family	node.records/timers	ByKind:node.record-fields	crates/fastctx-node/src/records	Assets	Split accepted settings/definitions from rendering and execution state
-Family	node.records/native-processes	Runtime	crates/fastctx-node/src/context	Foundation	Host processes, context and delivery checkpoints
-Family	node.records/native-lifetime	Runtime	crates/fastctx-node/src/context	Foundation	Host processes, context and delivery checkpoints
-Family	node.records/context-blocks	Runtime	crates/fastctx-node/src/context	Foundation	Host processes, context and delivery checkpoints
-Family	node.records/context-state	Runtime	crates/fastctx-node/src/context	Foundation	Host processes, context and delivery checkpoints
-Family	node.records/context-input-stamps	Runtime	crates/fastctx-node/src/context	Foundation	Host processes, context and delivery checkpoints
-Family	node.records/context-input-count	Runtime	crates/fastctx-node/src/context	Foundation	Host processes, context and delivery checkpoints
-Family	node.records/pending-inputs	Runtime	crates/fastctx-node/src/inbox	Foundation	Durable delivery queues; preserve user text until separately ingested as assets
-Family	node.records/uncertain-inputs	Runtime	crates/fastctx-node/src/inbox	Foundation	Durable delivery queues; preserve user text until separately ingested as assets
-Family	node.records/outgoing-answers	Runtime	crates/fastctx-node/src/inbox	Foundation	Durable delivery queues; preserve user text until separately ingested as assets
-Family	node.records/delivery-receipts	Runtime	crates/fastctx-node/src/inbox	Foundation	Durable delivery queues; preserve user text until separately ingested as assets
-Family	node.records/paid-answers	Runtime	crates/fastctx-node/src/inbox	Foundation	Durable delivery queues; preserve user text until separately ingested as assets
-Family	node.records/undeliverable-answers	Runtime	crates/fastctx-node/src/inbox	Foundation	Durable delivery queues; preserve user text until separately ingested as assets
-Family	node.records/answer-retries	Runtime	crates/fastctx-node/src/inbox	Foundation	Durable delivery queues; preserve user text until separately ingested as assets
-Family	node.records/answer-attempts	Runtime	crates/fastctx-node/src/inbox	Foundation	Durable delivery queues; preserve user text until separately ingested as assets
-Family	node.records/answer-outcomes	Runtime	crates/fastctx-node/src/inbox	Foundation	Durable delivery queues; preserve user text until separately ingested as assets
-Family	node.records/run-receipts	Runtime	crates/fastctx-node/src	Foundation	Execution and finalization state; never replay as commands during replication
-Family	node.records/host-refusals	Runtime	crates/fastctx-node/src	Foundation	Execution and finalization state; never replay as commands during replication
-Family	node.records/host-progress	Runtime	crates/fastctx-node/src	Foundation	Execution and finalization state; never replay as commands during replication
-Family	node.records/controls	Runtime	crates/fastctx-node/src	Foundation	Execution and finalization state; never replay as commands during replication
-Family	node.records/control-results	Runtime	crates/fastctx-node/src	Foundation	Execution and finalization state; never replay as commands during replication
-Family	node.records/control-requests	Runtime	crates/fastctx-node/src	Foundation	Execution and finalization state; never replay as commands during replication
-Family	node.records/input-stops	Runtime	crates/fastctx-node/src	Foundation	Execution and finalization state; never replay as commands during replication
-Family	node.records/terminal-heads	Runtime	crates/fastctx-node/src	Foundation	Execution and finalization state; never replay as commands during replication
-Family	node.records/terminal-end	Runtime	crates/fastctx-node/src	Foundation	Execution and finalization state; never replay as commands during replication
-Family	node.records/terminal-counter	Runtime	crates/fastctx-node/src	Foundation	Execution and finalization state; never replay as commands during replication
-Family	node.records/handovers	Runtime	crates/fastctx-node/src/delivery	Migration	Legacy families moved to dedicated tables
-Family	node.records/terminals	Runtime	crates/fastctx-node/src/delivery	Migration	Legacy families moved to dedicated tables
-Family	node.records/remote-running	Runtime	crates/fastctx-node/src/here/records.rs	Foundation	Remote execution routing and unacknowledged results
-Family	node.records/remote-whole-answers	Runtime	crates/fastctx-node/src/here/records.rs	Foundation	Remote execution routing and unacknowledged results
-Family	node.records/remote-route-budget	Runtime	crates/fastctx-node/src/here/records.rs	Foundation	Remote execution routing and unacknowledged results
-Family	node.records/remote-route-retries	Runtime	crates/fastctx-node/src/here/records.rs	Foundation	Remote execution routing and unacknowledged results
-Family	node.records/goal-hold	Runtime	crates/fastctx-node/src/goals	Foundation	Goal execution and recovery state
-Family	node.records/goal-frozen-inputs	Runtime	crates/fastctx-node/src/goals	Foundation	Goal execution and recovery state
-Family	node.records/goal-intents	Runtime	crates/fastctx-node/src/goals	Foundation	Goal execution and recovery state
-Family	node.records/goal-review-materials	Runtime	crates/fastctx-node/src/goals	Foundation	Goal execution and recovery state
-Family	node.records/books-lifecycle	Runtime	crates/fastctx-node/src/goals	Foundation	Goal execution and recovery state
-Family	node.records/scratch-known	Runtime	crates/fastctx-node/src/scratch/storage.rs	Foundation	Locations and observation generations only; never scratch file bytes
-Family	node.records/scratch-seen	Runtime	crates/fastctx-node/src/scratch/storage.rs	Foundation	Locations and observation generations only; never scratch file bytes
-Family	node.records/scratch-unseen	Runtime	crates/fastctx-node/src/scratch/storage.rs	Foundation	Locations and observation generations only; never scratch file bytes
-Family	node.records/scratch-state	Runtime	crates/fastctx-node/src/scratch/storage.rs	Foundation	Locations and observation generations only; never scratch file bytes
-Family	node.records/job-sequences	Runtime	crates/fastctx-node/src/job_metadata.rs	Ingestion	Job transport sequence allocation
-Family	node.records/host-reports/<thread>	Runtime	crates/fastctx-node/src/codex/report_store.rs	Ingestion	Durable host ingestion queue
-Family	node.records/claude-turn-facts/<turn>	Runtime	crates/fastctx-node/src/claude/turn_facts/storage.rs	Ingestion	Live accounting input and completion markers
-Family	node.records/claude-turn-facts-closed	Runtime	crates/fastctx-node/src/claude/turn_facts/storage.rs	Ingestion	Live accounting input and completion markers
-Family	node.jobs/writes	Asset	crates/fastctx-node/src/job_metadata.rs	Ingestion	Job-incarnation-scoped execution facts
-Family	node.jobs/visits	Asset	crates/fastctx-node/src/job_metadata.rs	Ingestion	Job-incarnation-scoped execution facts
-Family	node.jobs/scratch	Runtime	crates/fastctx-node/src/record_migration/catalog.rs	Foundation	Durable job consumption and delivery state
-Family	node.jobs/owed	Runtime	crates/fastctx-node/src/record_migration/catalog.rs	Foundation	Durable job consumption and delivery state
-Family	node.jobs/notice	Runtime	crates/fastctx-node/src/record_migration/catalog.rs	Foundation	Durable job consumption and delivery state
-Family	node.jobs/delivered	Runtime	crates/fastctx-node/src/record_migration/catalog.rs	Foundation	Durable job consumption and delivery state
-Family	node.jobs/wait-taken	Runtime	crates/fastctx-node/src/record_migration/catalog.rs	Foundation	Durable job consumption and delivery state
-Family	node.jobs/on-taken	Runtime	crates/fastctx-node/src/record_migration/catalog.rs	Foundation	Durable job consumption and delivery state
-Family	node.jobs/on-stopped	Runtime	crates/fastctx-node/src/record_migration/catalog.rs	Foundation	Durable job consumption and delivery state
-Family	node.jobs/on-piped	Runtime	crates/fastctx-node/src/record_migration/catalog.rs	Foundation	Durable job consumption and delivery state
-Family	node.jobs/answer-wait	Runtime	crates/fastctx-node/src/record_migration/catalog.rs	Foundation	Durable job consumption and delivery state
-Family	node.jobs/posted	Runtime	crates/fastctx-node/src/record_migration/catalog.rs	Foundation	Durable job consumption and delivery state
-Family	node.jobs/copied	Runtime	crates/fastctx-node/src/record_migration/catalog.rs	Foundation	Durable job consumption and delivery state
-Family	node.jobs/run-request	Runtime	crates/fastctx-node/src/record_migration/catalog.rs	Foundation	Durable job consumption and delivery state
-Family	node.jobs/done	Runtime	crates/fastctx-node/src/record_migration/catalog.rs	Foundation	Durable job consumption and delivery state
-Family	node.jobs/retry	Runtime	crates/fastctx-node/src/record_migration/catalog.rs	Foundation	Durable job consumption and delivery state
-Family	node.jobs/consumed	Runtime	crates/fastctx-node/src/record_migration/catalog.rs	Foundation	Durable job consumption and delivery state
-Family	node.jobs/waited	Runtime	crates/fastctx-node/src/record_migration/catalog.rs	Foundation	Durable job consumption and delivery state
-Family	node.jobs/exit-children	Runtime	crates/fastctx-node/src/record_migration/catalog.rs	Foundation	Durable job consumption and delivery state
-Family	node.jobs/exit-consumed	Runtime	crates/fastctx-node/src/record_migration/catalog.rs	Foundation	Durable job consumption and delivery state
-Family	node.jobs/exit-frozen	Runtime	crates/fastctx-node/src/record_migration/catalog.rs	Foundation	Durable job consumption and delivery state
-Family	node.jobs/facts-state	Runtime	crates/fastctx-node/src/run_facts	Ingestion	Fact delivery/ingestion queues; retain payload roots until accepted
-Family	node.jobs/facts-pending	Runtime	crates/fastctx-node/src/run_facts	Ingestion	Fact delivery/ingestion queues; retain payload roots until accepted
-Family	node.jobs/facts-output	Runtime	crates/fastctx-node/src/run_facts	Ingestion	Fact delivery/ingestion queues; retain payload roots until accepted
-Family	node.jobs/facts-queue	Runtime	crates/fastctx-node/src/run_facts	Ingestion	Fact delivery/ingestion queues; retain payload roots until accepted
-Family	node.jobs/facts-frames	Runtime	crates/fastctx-node/src/run_facts	Ingestion	Fact delivery/ingestion queues; retain payload roots until accepted
-Family	node.jobs/step-view	Derived	crates/fastctx-node/src/run_facts/step_view.rs	Projection	Indexed step display and its source cursor
-Family	node.jobs/step-view-cursor	Derived	crates/fastctx-node/src/run_facts/step_view.rs	Projection	Indexed step display and its source cursor
-Family	node.record-maps/waiting-output	Runtime	crates/fastctx-node/src/turn_evidence/growth.rs	Foundation	Waiting output state
-Family	node.record-maps/goal-review-observations	Derived	crates/fastctx-node/src/goals/engine/material_store.rs	Projection	Goal review material projection
-Family	node.payload-roots/run-notes	Asset	crates/fastctx-node/src/run_facts	Ingestion	Large execution fact bodies
-Family	node.payload-roots/run-spans	Asset	crates/fastctx-node/src/run_facts	Ingestion	Large execution fact bodies
-Family	node.payload-roots/run-job-notes	Asset	crates/fastctx-node/src/run_facts	Ingestion	Large execution fact bodies
-Family	node.payload-roots/goal-frozen-inputs	Runtime	crates/fastctx-node/src/record_payloads.rs	Foundation	Roots inherited from runtime owners
-Family	node.payload-roots/goal-review-materials	Runtime	crates/fastctx-node/src/record_payloads.rs	Foundation	Roots inherited from runtime owners
-Family	node.payload-roots/jobs/<incarnation>/facts-frames	Runtime	crates/fastctx-node/src/record_payloads.rs	Foundation	Roots inherited from runtime owners
-Family	node.payload-roots/focus	ByKind:node.record-fields	crates/fastctx-node/src/focus/storage.rs	Assets	Definition and rendered focus fields have different classes
-Family	node.metadata/books/user-stops/<input>	Runtime	crates/fastctx-node/src/turn_evidence	Foundation	Stop intents and execution failure state
-Family	node.metadata/books/turn-stops/<turn>.json	Runtime	crates/fastctx-node/src/turn_evidence	Foundation	Stop intents and execution failure state
-Family	node.metadata/books/turn-failures/<turn>.json	Runtime	crates/fastctx-node/src/turn_evidence	Foundation	Stop intents and execution failure state
-Family	node.metadata/books/goal-inputs/<id>	Runtime	crates/fastctx-node/src/goals	Foundation	Goal operation recovery
-Family	node.metadata/books/goal-compactions/<operation>.json	Runtime	crates/fastctx-node/src/goals	Foundation	Goal operation recovery
-Family	node.metadata/books/goal-retry.json	Runtime	crates/fastctx-node/src/goals	Foundation	Goal operation recovery
-Family	node.metadata/plan-seen.json	Derived	crates/fastctx-node/src/plan/observed.rs	Projection	Last observed plan fingerprint
-Family	node.record-fields/focus/opening	Asset	crates/fastctx-node/src	Assets	Accepted choices and definitions
-Family	node.record-fields/focus/visible	Asset	crates/fastctx-node/src	Assets	Accepted choices and definitions
-Family	node.record-fields/goal-local/definition	Asset	crates/fastctx-node/src	Assets	Accepted choices and definitions
-Family	node.record-fields/timers/definition	Asset	crates/fastctx-node/src	Assets	Accepted choices and definitions
-Family	node.record-fields/focus/text	Derived	crates/fastctx-node/src/focus/storage.rs	Projection	Rendered focus and projection generation
-Family	node.record-fields/focus/generation	Derived	crates/fastctx-node/src/focus/storage.rs	Projection	Rendered focus and projection generation
-Family	node.record-fields/goal-local/bridge	Runtime	crates/fastctx-node/src	Foundation	Execution metadata separated from its definition
-Family	node.record-fields/timers/execution	Runtime	crates/fastctx-node/src	Foundation	Execution metadata separated from its definition
-Family	node.deletion/decision	Asset	crates/fastctx-node/src/conversation_store	Foundation	Permanent deletion fence
-Family	node.deletion/progress	Runtime	crates/fastctx-node/src/conversation_store	Maintenance	Bounded deletion cleanup progress
-Family	storage.documents/composer	Asset	crates/fastctx-node/src/composer	Assets	Draft checkpoint and causal update history
-Family	storage.receipts/transport-key	Runtime	crates/fastctx-net/src/link/letters/receipts.rs	Foundation	Durable deduplication evidence
-Family	storage.receipts/transport-name	Runtime	crates/fastctx-net/src/link/letters/receipts.rs	Foundation	Durable deduplication evidence
-Family	book.legacy-summary/book_hour	Asset	crates/fastctx-node/src/activity_book	Migration	Preserve the only surviving old observation when details were already folded
-Family	run.legacy-summary/run_folded	Asset	crates/fastctx-node/src/run_facts	Migration	Preserve existing folded information; do not claim missing details can be recreated
-Family	sentinel.settings-fields/definition	Asset	crates/fastctx-node/src/sentinels/settings.rs	Assets	Public sentinel configuration
-Family	sentinel.settings-fields/secret	Runtime	crates/fastctx-node/src/sentinels/keys.rs	Foundation	Execution secret; not a replicated account blob
-Family	node.records/items/books/received	Runtime	crates/fastctx-node/src/records/items.rs	Foundation	Only registered queue suffixes: .json/.retry/.done/.posted/.reply/.answer/.stopped and sequence
-Family	node.records/items/books/received-controls	Runtime	crates/fastctx-node/src/records/items.rs	Foundation	Only registered queue suffixes: .json/.retry/.done/.posted/.reply/.answer/.stopped and sequence
-Family	node.records/items/books/job-deliveries	Runtime	crates/fastctx-node/src/records/items.rs	Foundation	Only registered queue suffixes: .json/.retry/.done/.posted/.reply/.answer/.stopped and sequence
-Family	node.records/items/books/on-deliveries	Runtime	crates/fastctx-node/src/records/items.rs	Foundation	Only registered queue suffixes: .json/.retry/.done/.posted/.reply/.answer/.stopped and sequence
-Family	node.records/items/books/on-stops	Runtime	crates/fastctx-node/src/records/items.rs	Foundation	Only registered queue suffixes: .json/.retry/.done/.posted/.reply/.answer/.stopped and sequence
-Family	node.records/items/books/run-stops	Runtime	crates/fastctx-node/src/records/items.rs	Foundation	Only registered queue suffixes: .json/.retry/.done/.posted/.reply/.answer/.stopped and sequence
-Family	node.records/items/books/run-requests	Runtime	crates/fastctx-node/src/records/items.rs	Foundation	Only registered queue suffixes: .json/.retry/.done/.posted/.reply/.answer/.stopped and sequence
-Family	node.records/items/received	Runtime	crates/fastctx-node/src/records/items.rs	Foundation	Only registered queue suffixes: .json/.retry/.done/.posted/.reply/.answer/.stopped and sequence
-Family	node.records/items/received-controls	Runtime	crates/fastctx-node/src/records/items.rs	Foundation	Only registered queue suffixes: .json/.retry/.done/.posted/.reply/.answer/.stopped and sequence
-Family	node.records/items/job-deliveries	Runtime	crates/fastctx-node/src/records/items.rs	Foundation	Only registered queue suffixes: .json/.retry/.done/.posted/.reply/.answer/.stopped and sequence
-Family	node.records/items/on-deliveries	Runtime	crates/fastctx-node/src/records/items.rs	Foundation	Only registered queue suffixes: .json/.retry/.done/.posted/.reply/.answer/.stopped and sequence
-Family	node.records/items/on-stops	Runtime	crates/fastctx-node/src/records/items.rs	Foundation	Only registered queue suffixes: .json/.retry/.done/.posted/.reply/.answer/.stopped and sequence
-Family	node.records/items/run-stops	Runtime	crates/fastctx-node/src/records/items.rs	Foundation	Only registered queue suffixes: .json/.retry/.done/.posted/.reply/.answer/.stopped and sequence
-Family	node.records/items/run-requests	Runtime	crates/fastctx-node/src/records/items.rs	Foundation	Only registered queue suffixes: .json/.retry/.done/.posted/.reply/.answer/.stopped and sequence
+Family	hub.rows/accounts	Asset	crates/fastctx-hub/src/store/book_rows.rs	Assets	Confirmed	Directory definitions; plans means login plans, not plan.md
+Family	hub.rows/members	Asset	crates/fastctx-hub/src/store/book_rows.rs	Assets	Confirmed	Directory definitions; plans means login plans, not plan.md
+Family	hub.rows/shares	Asset	crates/fastctx-hub/src/store/book_rows.rs	Assets	Confirmed	Directory definitions; plans means login plans, not plan.md
+Family	hub.rows/lends	Asset	crates/fastctx-hub/src/store/book_rows.rs	Assets	Confirmed	Directory definitions; plans means login plans, not plan.md
+Family	hub.rows/plans	Asset	crates/fastctx-hub/src/store/book_rows.rs	Assets	Confirmed	Directory definitions; plans means login plans, not plan.md
+Family	hub.rows/acting	Asset	crates/fastctx-hub/src/store/book_rows.rs	Assets	Confirmed	Directory definitions; plans means login plans, not plan.md
+Family	hub.rows/projects	Asset	crates/fastctx-hub/src/store/book_rows.rs	Assets	Confirmed	Directory definitions; plans means login plans, not plan.md
+Family	hub.rows/archived	Asset	crates/fastctx-hub/src/store/book_rows.rs	Assets	Confirmed	Directory definitions; plans means login plans, not plan.md
+Family	hub.rows/removed	Asset	crates/fastctx-hub/src/store/book_rows.rs	Assets	Confirmed	Directory definitions; plans means login plans, not plan.md
+Family	hub.rows/tokens	Runtime	crates/fastctx-hub/src/store/book_rows.rs	Foundation	Confirmed	Authentication material remains in the hub; only approved descriptions become assets
+Family	hub.rows/passwords	Runtime	crates/fastctx-hub/src/store/book_rows.rs	Foundation	Confirmed	Authentication material remains in the hub; only approved descriptions become assets
+Family	hub.rows/project_deletions	Runtime	crates/fastctx-hub/src/store/book_rows.rs	Maintenance	Confirmed	Deletion delivery work, distinct from the permanent deletion decision
+Family	hub.rows/forgetting	Runtime	crates/fastctx-hub/src/store/book_rows.rs	Maintenance	Confirmed	Deletion delivery work, distinct from the permanent deletion decision
+Family	hub.rows/account_forgetting	Runtime	crates/fastctx-hub/src/store/book_rows.rs	Maintenance	Confirmed	Deletion delivery work, distinct from the permanent deletion decision
+Family	hub.rows/due	Runtime	crates/fastctx-hub/src/store/hub_rows.rs	Maintenance	Confirmed	Update orchestration and package retention state
+Family	hub.rows/repairs	Runtime	crates/fastctx-hub/src/store/hub_rows.rs	Maintenance	Confirmed	Update orchestration and package retention state
+Family	hub.rows/package_targets	Runtime	crates/fastctx-hub/src/store/hub_rows.rs	Maintenance	Confirmed	Update orchestration and package retention state
+Family	hub.rows/letters	Runtime	crates/fastctx-hub/src/store/letter_rows.rs	Foundation	Confirmed	Durable mailbox counters
+Family	hub.rows/worked	Runtime	crates/fastctx-hub/src/worked.rs	Foundation	Confirmed	Return-path authorization and cleanup ownership
+Family	hub.rows/reports	Runtime	crates/fastctx-hub/src/updates/history.rs	Maintenance	Confirmed	Latest device version state
+Family	hub.rows/troubles	Asset	crates/fastctx-hub/src/troubles.rs	Assets	PendingUser	Synchronization policy awaits the user; current storage classification is not a decision to replicate. Alert facts and fixed recipients; preserve before existing expiry
+Family	hub.rows/migrations	Runtime	crates/fastctx-hub/src/troubles.rs	Migration	Confirmed	Latest migration status
+Family	hub.meta/hub.self_registration	Asset	crates/fastctx-hub/src/store/book_rows.rs	Assets	Confirmed	Network configuration and lifecycle decision
+Family	hub.meta/hub.updates	Asset	crates/fastctx-hub/src/store/book_rows.rs	Assets	Confirmed	Network configuration and lifecycle decision
+Family	hub.meta/hub.dissolved	Asset	crates/fastctx-hub/src/store/book_rows.rs	Assets	Confirmed	Network configuration and lifecycle decision
+Family	hub.meta/hub.id	Runtime	crates/fastctx-hub/src/store	Foundation	Confirmed	Identity, format, migration and sequence metadata
+Family	hub.meta/hub.name	Runtime	crates/fastctx-hub/src/store	Foundation	Confirmed	Identity, format, migration and sequence metadata
+Family	hub.meta/hub.public	Runtime	crates/fastctx-hub/src/store	Foundation	Confirmed	Identity, format, migration and sequence metadata
+Family	hub.meta/hub.listen	Runtime	crates/fastctx-hub/src/store	Foundation	Confirmed	Identity, format, migration and sequence metadata
+Family	hub.meta/format	Runtime	crates/fastctx-hub/src/store	Foundation	Confirmed	Identity, format, migration and sequence metadata
+Family	hub.meta/legacy_sources	Runtime	crates/fastctx-hub/src/store	Foundation	Confirmed	Identity, format, migration and sequence metadata
+Family	hub.meta/legacy_backed_up	Runtime	crates/fastctx-hub/src/store	Foundation	Confirmed	Identity, format, migration and sequence metadata
+Family	hub.meta/upgraded	Runtime	crates/fastctx-hub/src/store	Foundation	Confirmed	Identity, format, migration and sequence metadata
+Family	hub.meta/machine_log.next	Runtime	crates/fastctx-hub/src/store	Foundation	Confirmed	Identity, format, migration and sequence metadata
+Family	hub.meta/forgetting.last	Runtime	crates/fastctx-hub/src/store	Foundation	Confirmed	Identity, format, migration and sequence metadata
+Family	hub.meta/account_forgetting.last	Runtime	crates/fastctx-hub/src/store	Foundation	Confirmed	Identity, format, migration and sequence metadata
+Family	hub.meta/book.<legacy-field>	Runtime	crates/fastctx-hub/src/store/migrate.rs	Migration	Confirmed	Preserve unknown imported fields; not a permission for new business keys
+Family	hub.meta/hub.<legacy-field>	Runtime	crates/fastctx-hub/src/store/migrate.rs	Migration	Confirmed	Preserve unknown imported fields; not a permission for new business keys
+Family	hub.meta/machine_log.<legacy-field>	Runtime	crates/fastctx-hub/src/store/migrate.rs	Migration	Confirmed	Preserve unknown imported fields; not a permission for new business keys
+Family	hub.meta/forgetting.<legacy-field>	Runtime	crates/fastctx-hub/src/store/migrate.rs	Migration	Confirmed	Preserve unknown imported fields; not a permission for new business keys
+Family	account-records/conversation	Asset	crates/fastctx-hub/src/account_records.rs	Assets	Confirmed	Expected-version account records, including retained revisions
+Family	account-records/plan	Asset	crates/fastctx-hub/src/account_records.rs	Assets	Confirmed	Expected-version account records, including retained revisions
+Family	account-records/history	Asset	crates/fastctx-hub/src/account_records.rs	Assets	Confirmed	Expected-version account records, including retained revisions
+Family	account-records/working-place	Asset	crates/fastctx-hub/src/account_records.rs	Assets	Confirmed	Expected-version account records, including retained revisions
+Family	account-records/skill	Asset	crates/fastctx-hub/src/account_records.rs	Assets	Confirmed	Expected-version account records, including retained revisions
+Family	account-records/skill-index	Asset	crates/fastctx-hub/src/account_records.rs	Assets	Confirmed	Expected-version account records, including retained revisions
+Family	account-records/goal	Asset	crates/fastctx-hub/src/account_records.rs	Assets	Confirmed	Expected-version account records, including retained revisions
+Family	account-records/goal_past	Asset	crates/fastctx-hub/src/account_records.rs	Assets	Confirmed	Expected-version account records, including retained revisions
+Family	account-records/goal_text	Asset	crates/fastctx-hub/src/account_records.rs	Assets	Confirmed	Expected-version account records, including retained revisions
+Family	account-records/goal_history	Asset	crates/fastctx-hub/src/account_records.rs	Assets	Confirmed	Expected-version account records, including retained revisions
+Family	account-records/goal_writes	Asset	crates/fastctx-hub/src/account_records.rs	Assets	Confirmed	Expected-version account records, including retained revisions
+Family	account-records/sentinel	Asset	crates/fastctx-hub/src/account_records.rs	Assets	Confirmed	Expected-version account records, including retained revisions
+Family	account-records/sentinel-settings	ByKind:sentinel.settings-fields	crates/fastctx-node/src/sentinels/settings.rs	Assets	Confirmed	Public configuration is an asset; secret material has restricted runtime delivery
+Family	account-records/<unknown-existing-kind>	Runtime	crates/fastctx-hub/src/account_records/storage.rs	Migration	Confirmed	Quarantine and preserve original bytes; unknown legacy data is not published without classification
+Family	node.records/actions	Asset	crates/fastctx-node/src/records	Ingestion	Confirmed	Stable business facts and configuration
+Family	node.records/messages	Asset	crates/fastctx-node/src/records	Ingestion	Confirmed	Stable business facts and configuration
+Family	node.records/session-options	Asset	crates/fastctx-node/src/records	Ingestion	Confirmed	Stable business facts and configuration
+Family	node.records/callee-birth	Asset	crates/fastctx-node/src/records	Ingestion	Confirmed	Stable business facts and configuration
+Family	node.records/asked-accounts	Asset	crates/fastctx-node/src/records	Ingestion	Confirmed	Stable business facts and configuration
+Family	node.records/turn-sessions	Asset	crates/fastctx-node/src/records	Ingestion	Confirmed	Stable business facts and configuration
+Family	node.records/delivered-attachments	Asset	crates/fastctx-node/src/records	Ingestion	Confirmed	Stable business facts and configuration
+Family	node.records/goal-account	Asset	crates/fastctx-node/src/records	Ingestion	Confirmed	Stable business facts and configuration
+Family	node.records/goal-replies	Asset	crates/fastctx-node/src/records	Ingestion	Confirmed	Stable business facts and configuration
+Family	node.records/goal-reports	Asset	crates/fastctx-node/src/records	Ingestion	Confirmed	Stable business facts and configuration
+Family	node.records/asked-account-count	Derived	crates/fastctx-node/src/records	Projection	Confirmed	Rebuild only after the authoritative source and retention references are established
+Family	node.records/seen	Derived	crates/fastctx-node/src/records	Projection	Confirmed	Rebuild only after the authoritative source and retention references are established
+Family	node.records/native-context	Derived	crates/fastctx-node/src/records	Projection	Confirmed	Rebuild only after the authoritative source and retention references are established
+Family	node.records/history-heard	Derived	crates/fastctx-node/src/records	Projection	Confirmed	Rebuild only after the authoritative source and retention references are established
+Family	node.records/attachment-pins	Derived	crates/fastctx-node/src/records	Projection	Confirmed	Rebuild only after the authoritative source and retention references are established
+Family	node.records/attachment-pin-budget	Derived	crates/fastctx-node/src/records	Projection	Confirmed	Rebuild only after the authoritative source and retention references are established
+Family	node.records/focus	ByKind:node.record-fields	crates/fastctx-node/src/records	Assets	Confirmed	Split accepted settings/definitions from rendering and execution state
+Family	node.records/goal-local	ByKind:node.record-fields	crates/fastctx-node/src/records	Assets	Confirmed	Split accepted settings/definitions from rendering and execution state
+Family	node.records/timers	ByKind:node.record-fields	crates/fastctx-node/src/records	Assets	Confirmed	Split accepted settings/definitions from rendering and execution state
+Family	node.records/native-processes	Runtime	crates/fastctx-node/src/context	Foundation	Confirmed	Host processes, context and delivery checkpoints
+Family	node.records/native-lifetime	Runtime	crates/fastctx-node/src/context	Foundation	Confirmed	Host processes, context and delivery checkpoints
+Family	node.records/context-blocks	Runtime	crates/fastctx-node/src/context	Foundation	Confirmed	Host processes, context and delivery checkpoints
+Family	node.records/context-state	Runtime	crates/fastctx-node/src/context	Foundation	Confirmed	Host processes, context and delivery checkpoints
+Family	node.records/context-input-stamps	Runtime	crates/fastctx-node/src/context	Foundation	Confirmed	Host processes, context and delivery checkpoints
+Family	node.records/context-input-count	Runtime	crates/fastctx-node/src/context	Foundation	Confirmed	Host processes, context and delivery checkpoints
+Family	node.records/pending-inputs	Runtime	crates/fastctx-node/src/inbox	Foundation	Confirmed	Durable delivery queues; preserve user text until separately ingested as assets
+Family	node.records/uncertain-inputs	Runtime	crates/fastctx-node/src/inbox	Foundation	Confirmed	Durable delivery queues; preserve user text until separately ingested as assets
+Family	node.records/outgoing-answers	Runtime	crates/fastctx-node/src/inbox	Foundation	Confirmed	Durable delivery queues; preserve user text until separately ingested as assets
+Family	node.records/delivery-receipts	Runtime	crates/fastctx-node/src/inbox	Foundation	Confirmed	Durable delivery queues; preserve user text until separately ingested as assets
+Family	node.records/paid-answers	Runtime	crates/fastctx-node/src/inbox	Foundation	Confirmed	Durable delivery queues; preserve user text until separately ingested as assets
+Family	node.records/undeliverable-answers	Runtime	crates/fastctx-node/src/inbox	Foundation	Confirmed	Durable delivery queues; preserve user text until separately ingested as assets
+Family	node.records/answer-retries	Runtime	crates/fastctx-node/src/inbox	Foundation	Confirmed	Durable delivery queues; preserve user text until separately ingested as assets
+Family	node.records/answer-attempts	Runtime	crates/fastctx-node/src/inbox	Foundation	Confirmed	Durable delivery queues; preserve user text until separately ingested as assets
+Family	node.records/answer-outcomes	Runtime	crates/fastctx-node/src/inbox	Foundation	Confirmed	Durable delivery queues; preserve user text until separately ingested as assets
+Family	node.records/run-receipts	Runtime	crates/fastctx-node/src	Foundation	Confirmed	Execution and finalization state; never replay as commands during replication
+Family	node.records/host-refusals	Runtime	crates/fastctx-node/src	Foundation	Confirmed	Execution and finalization state; never replay as commands during replication
+Family	node.records/host-progress	Runtime	crates/fastctx-node/src	Foundation	Confirmed	Execution and finalization state; never replay as commands during replication
+Family	node.records/controls	Runtime	crates/fastctx-node/src	Foundation	Confirmed	Execution and finalization state; never replay as commands during replication
+Family	node.records/control-results	Runtime	crates/fastctx-node/src	Foundation	Confirmed	Execution and finalization state; never replay as commands during replication
+Family	node.records/control-requests	Runtime	crates/fastctx-node/src	Foundation	Confirmed	Execution and finalization state; never replay as commands during replication
+Family	node.records/input-stops	Runtime	crates/fastctx-node/src	Foundation	Confirmed	Execution and finalization state; never replay as commands during replication
+Family	node.records/terminal-heads	Runtime	crates/fastctx-node/src	Foundation	Confirmed	Execution and finalization state; never replay as commands during replication
+Family	node.records/terminal-end	Runtime	crates/fastctx-node/src	Foundation	Confirmed	Execution and finalization state; never replay as commands during replication
+Family	node.records/terminal-counter	Runtime	crates/fastctx-node/src	Foundation	Confirmed	Execution and finalization state; never replay as commands during replication
+Family	node.records/handovers	Runtime	crates/fastctx-node/src/delivery	Migration	Confirmed	Legacy families moved to dedicated tables
+Family	node.records/terminals	Runtime	crates/fastctx-node/src/delivery	Migration	Confirmed	Legacy families moved to dedicated tables
+Family	node.records/remote-running	Runtime	crates/fastctx-node/src/here/records.rs	Foundation	Confirmed	Remote execution routing and unacknowledged results
+Family	node.records/remote-whole-answers	Runtime	crates/fastctx-node/src/here/records.rs	Foundation	Confirmed	Remote execution routing and unacknowledged results
+Family	node.records/remote-route-budget	Runtime	crates/fastctx-node/src/here/records.rs	Foundation	Confirmed	Remote execution routing and unacknowledged results
+Family	node.records/remote-route-retries	Runtime	crates/fastctx-node/src/here/records.rs	Foundation	Confirmed	Remote execution routing and unacknowledged results
+Family	node.records/goal-hold	Runtime	crates/fastctx-node/src/goals	Foundation	Confirmed	Goal execution and recovery state
+Family	node.records/goal-frozen-inputs	Runtime	crates/fastctx-node/src/goals	Foundation	Confirmed	Goal execution and recovery state
+Family	node.records/goal-intents	Runtime	crates/fastctx-node/src/goals	Foundation	Confirmed	Goal execution and recovery state
+Family	node.records/goal-review-materials	Runtime	crates/fastctx-node/src/goals	Foundation	Confirmed	Goal execution and recovery state
+Family	node.records/books-lifecycle	Runtime	crates/fastctx-node/src/goals	Foundation	Confirmed	Goal execution and recovery state
+Family	node.records/scratch-known	Runtime	crates/fastctx-node/src/scratch/storage.rs	Foundation	Confirmed	Locations and observation generations only; never scratch file bytes
+Family	node.records/scratch-seen	Runtime	crates/fastctx-node/src/scratch/storage.rs	Foundation	Confirmed	Locations and observation generations only; never scratch file bytes
+Family	node.records/scratch-unseen	Runtime	crates/fastctx-node/src/scratch/storage.rs	Foundation	Confirmed	Locations and observation generations only; never scratch file bytes
+Family	node.records/scratch-state	Runtime	crates/fastctx-node/src/scratch/storage.rs	Foundation	Confirmed	Locations and observation generations only; never scratch file bytes
+Family	node.records/job-sequences	Runtime	crates/fastctx-node/src/job_metadata.rs	Ingestion	Confirmed	Job transport sequence allocation
+Family	node.records/host-reports/<thread>	Runtime	crates/fastctx-node/src/codex/report_store.rs	Ingestion	Confirmed	Durable host ingestion queue
+Family	node.records/claude-turn-facts/<turn>	Runtime	crates/fastctx-node/src/claude/turn_facts/storage.rs	Ingestion	Confirmed	Live accounting input and completion markers
+Family	node.records/claude-turn-facts-closed	Runtime	crates/fastctx-node/src/claude/turn_facts/storage.rs	Ingestion	Confirmed	Live accounting input and completion markers
+Family	node.jobs/writes	Asset	crates/fastctx-node/src/job_metadata.rs	Ingestion	Confirmed	Job-incarnation-scoped execution facts
+Family	node.jobs/visits	Asset	crates/fastctx-node/src/job_metadata.rs	Ingestion	Confirmed	Job-incarnation-scoped execution facts
+Family	node.jobs/scratch	Runtime	crates/fastctx-node/src/record_migration/catalog.rs	Foundation	Confirmed	Durable job consumption and delivery state
+Family	node.jobs/owed	Runtime	crates/fastctx-node/src/record_migration/catalog.rs	Foundation	Confirmed	Durable job consumption and delivery state
+Family	node.jobs/notice	Runtime	crates/fastctx-node/src/record_migration/catalog.rs	Foundation	Confirmed	Durable job consumption and delivery state
+Family	node.jobs/delivered	Runtime	crates/fastctx-node/src/record_migration/catalog.rs	Foundation	Confirmed	Durable job consumption and delivery state
+Family	node.jobs/wait-taken	Runtime	crates/fastctx-node/src/record_migration/catalog.rs	Foundation	Confirmed	Durable job consumption and delivery state
+Family	node.jobs/on-taken	Runtime	crates/fastctx-node/src/record_migration/catalog.rs	Foundation	Confirmed	Durable job consumption and delivery state
+Family	node.jobs/on-stopped	Runtime	crates/fastctx-node/src/record_migration/catalog.rs	Foundation	Confirmed	Durable job consumption and delivery state
+Family	node.jobs/on-piped	Runtime	crates/fastctx-node/src/record_migration/catalog.rs	Foundation	Confirmed	Durable job consumption and delivery state
+Family	node.jobs/answer-wait	Runtime	crates/fastctx-node/src/record_migration/catalog.rs	Foundation	Confirmed	Durable job consumption and delivery state
+Family	node.jobs/posted	Runtime	crates/fastctx-node/src/record_migration/catalog.rs	Foundation	Confirmed	Durable job consumption and delivery state
+Family	node.jobs/copied	Runtime	crates/fastctx-node/src/record_migration/catalog.rs	Foundation	Confirmed	Durable job consumption and delivery state
+Family	node.jobs/run-request	Runtime	crates/fastctx-node/src/record_migration/catalog.rs	Foundation	Confirmed	Durable job consumption and delivery state
+Family	node.jobs/done	Runtime	crates/fastctx-node/src/record_migration/catalog.rs	Foundation	Confirmed	Durable job consumption and delivery state
+Family	node.jobs/retry	Runtime	crates/fastctx-node/src/record_migration/catalog.rs	Foundation	Confirmed	Durable job consumption and delivery state
+Family	node.jobs/consumed	Runtime	crates/fastctx-node/src/record_migration/catalog.rs	Foundation	Confirmed	Durable job consumption and delivery state
+Family	node.jobs/waited	Runtime	crates/fastctx-node/src/record_migration/catalog.rs	Foundation	Confirmed	Durable job consumption and delivery state
+Family	node.jobs/exit-children	Runtime	crates/fastctx-node/src/record_migration/catalog.rs	Foundation	Confirmed	Durable job consumption and delivery state
+Family	node.jobs/exit-consumed	Runtime	crates/fastctx-node/src/record_migration/catalog.rs	Foundation	Confirmed	Durable job consumption and delivery state
+Family	node.jobs/exit-frozen	Runtime	crates/fastctx-node/src/record_migration/catalog.rs	Foundation	Confirmed	Durable job consumption and delivery state
+Family	node.jobs/facts-state	Runtime	crates/fastctx-node/src/run_facts	Ingestion	Confirmed	Fact delivery/ingestion queues; retain payload roots until accepted
+Family	node.jobs/facts-pending	Runtime	crates/fastctx-node/src/run_facts	Ingestion	Confirmed	Fact delivery/ingestion queues; retain payload roots until accepted
+Family	node.jobs/facts-output	Runtime	crates/fastctx-node/src/run_facts	Ingestion	Confirmed	Fact delivery/ingestion queues; retain payload roots until accepted
+Family	node.jobs/facts-queue	Runtime	crates/fastctx-node/src/run_facts	Ingestion	Confirmed	Fact delivery/ingestion queues; retain payload roots until accepted
+Family	node.jobs/facts-frames	Runtime	crates/fastctx-node/src/run_facts	Ingestion	Confirmed	Fact delivery/ingestion queues; retain payload roots until accepted
+Family	node.jobs/step-view	Derived	crates/fastctx-node/src/run_facts/step_view.rs	Projection	Confirmed	Indexed step display and its source cursor
+Family	node.jobs/step-view-cursor	Derived	crates/fastctx-node/src/run_facts/step_view.rs	Projection	Confirmed	Indexed step display and its source cursor
+Family	node.record-maps/waiting-output	Runtime	crates/fastctx-node/src/turn_evidence/growth.rs	Foundation	Confirmed	Waiting output state
+Family	node.record-maps/goal-review-observations	Derived	crates/fastctx-node/src/goals/engine/material_store.rs	Projection	Confirmed	Goal review material projection
+Family	node.payload-roots/run-notes	Asset	crates/fastctx-node/src/run_facts	Ingestion	Confirmed	Large execution fact bodies
+Family	node.payload-roots/run-spans	Asset	crates/fastctx-node/src/run_facts	Ingestion	Confirmed	Large execution fact bodies
+Family	node.payload-roots/run-job-notes	Asset	crates/fastctx-node/src/run_facts	Ingestion	Confirmed	Large execution fact bodies
+Family	node.payload-roots/goal-frozen-inputs	Runtime	crates/fastctx-node/src/record_payloads.rs	Foundation	Confirmed	Roots inherited from runtime owners
+Family	node.payload-roots/goal-review-materials	Runtime	crates/fastctx-node/src/record_payloads.rs	Foundation	Confirmed	Roots inherited from runtime owners
+Family	node.payload-roots/jobs/<incarnation>/facts-frames	Runtime	crates/fastctx-node/src/record_payloads.rs	Foundation	Confirmed	Roots inherited from runtime owners
+Family	node.payload-roots/focus	ByKind:node.record-fields	crates/fastctx-node/src/focus/storage.rs	Assets	Confirmed	Definition and rendered focus fields have different classes
+Family	node.metadata/books/user-stops/<input>	Runtime	crates/fastctx-node/src/turn_evidence	Foundation	Confirmed	Stop intents and execution failure state
+Family	node.metadata/books/turn-stops/<turn>.json	Runtime	crates/fastctx-node/src/turn_evidence	Foundation	Confirmed	Stop intents and execution failure state
+Family	node.metadata/books/turn-failures/<turn>.json	Runtime	crates/fastctx-node/src/turn_evidence	Foundation	Confirmed	Stop intents and execution failure state
+Family	node.metadata/books/goal-inputs/<id>	Runtime	crates/fastctx-node/src/goals	Foundation	Confirmed	Goal operation recovery
+Family	node.metadata/books/goal-compactions/<operation>.json	Runtime	crates/fastctx-node/src/goals	Foundation	Confirmed	Goal operation recovery
+Family	node.metadata/books/goal-retry.json	Runtime	crates/fastctx-node/src/goals	Foundation	Confirmed	Goal operation recovery
+Family	node.metadata/plan-seen.json	Derived	crates/fastctx-node/src/plan/observed.rs	Projection	Confirmed	Last observed plan fingerprint
+Family	node.record-fields/focus/opening	Asset	crates/fastctx-node/src	Assets	Confirmed	Accepted choices and definitions
+Family	node.record-fields/focus/visible	Asset	crates/fastctx-node/src	Assets	Confirmed	Accepted choices and definitions
+Family	node.record-fields/goal-local/definition	Asset	crates/fastctx-node/src	Assets	Confirmed	Accepted choices and definitions
+Family	node.record-fields/timers/definition	Asset	crates/fastctx-node/src	Assets	Confirmed	Accepted choices and definitions
+Family	node.record-fields/focus/text	Derived	crates/fastctx-node/src/focus/storage.rs	Projection	Confirmed	Rendered focus and projection generation
+Family	node.record-fields/focus/generation	Derived	crates/fastctx-node/src/focus/storage.rs	Projection	Confirmed	Rendered focus and projection generation
+Family	node.record-fields/goal-local/bridge	Runtime	crates/fastctx-node/src	Foundation	Confirmed	Execution metadata separated from its definition
+Family	node.record-fields/timers/execution	Runtime	crates/fastctx-node/src	Foundation	Confirmed	Execution metadata separated from its definition
+Family	node.deletion/decision	Asset	crates/fastctx-node/src/conversation_store	Foundation	Confirmed	Permanent deletion fence
+Family	node.deletion/progress	Runtime	crates/fastctx-node/src/conversation_store	Maintenance	Confirmed	Bounded deletion cleanup progress
+Family	storage.documents/composer	Asset	crates/fastctx-node/src/composer	Assets	Confirmed	Draft checkpoint and causal update history
+Family	storage.receipts/transport-key	Runtime	crates/fastctx-net/src/link/letters/receipts.rs	Foundation	Confirmed	Durable deduplication evidence
+Family	storage.receipts/transport-name	Runtime	crates/fastctx-net/src/link/letters/receipts.rs	Foundation	Confirmed	Durable deduplication evidence
+Family	book.legacy-summary/book_hour	Asset	crates/fastctx-node/src/activity_book	Migration	Confirmed	Preserve the only surviving old observation when details were already folded
+Family	run.legacy-summary/run_folded	Asset	crates/fastctx-node/src/run_facts	Migration	Confirmed	Preserve existing folded information; do not claim missing details can be recreated
+Family	sentinel.settings-fields/definition	Asset	crates/fastctx-node/src/sentinels/settings.rs	Assets	Confirmed	Public sentinel configuration
+Family	sentinel.settings-fields/secret	Runtime	crates/fastctx-node/src/sentinels/keys.rs	Foundation	Confirmed	Execution secret; not a replicated account blob
+Family	node.records/items/books/received	Runtime	crates/fastctx-node/src/records/items.rs	Foundation	Confirmed	Only registered queue suffixes: .json/.retry/.done/.posted/.reply/.answer/.stopped and sequence
+Family	node.records/items/books/received-controls	Runtime	crates/fastctx-node/src/records/items.rs	Foundation	Confirmed	Only registered queue suffixes: .json/.retry/.done/.posted/.reply/.answer/.stopped and sequence
+Family	node.records/items/books/job-deliveries	Runtime	crates/fastctx-node/src/records/items.rs	Foundation	Confirmed	Only registered queue suffixes: .json/.retry/.done/.posted/.reply/.answer/.stopped and sequence
+Family	node.records/items/books/on-deliveries	Runtime	crates/fastctx-node/src/records/items.rs	Foundation	Confirmed	Only registered queue suffixes: .json/.retry/.done/.posted/.reply/.answer/.stopped and sequence
+Family	node.records/items/books/on-stops	Runtime	crates/fastctx-node/src/records/items.rs	Foundation	Confirmed	Only registered queue suffixes: .json/.retry/.done/.posted/.reply/.answer/.stopped and sequence
+Family	node.records/items/books/run-stops	Runtime	crates/fastctx-node/src/records/items.rs	Foundation	Confirmed	Only registered queue suffixes: .json/.retry/.done/.posted/.reply/.answer/.stopped and sequence
+Family	node.records/items/books/run-requests	Runtime	crates/fastctx-node/src/records/items.rs	Foundation	Confirmed	Only registered queue suffixes: .json/.retry/.done/.posted/.reply/.answer/.stopped and sequence
+Family	node.records/items/received	Runtime	crates/fastctx-node/src/records/items.rs	Foundation	Confirmed	Only registered queue suffixes: .json/.retry/.done/.posted/.reply/.answer/.stopped and sequence
+Family	node.records/items/received-controls	Runtime	crates/fastctx-node/src/records/items.rs	Foundation	Confirmed	Only registered queue suffixes: .json/.retry/.done/.posted/.reply/.answer/.stopped and sequence
+Family	node.records/items/job-deliveries	Runtime	crates/fastctx-node/src/records/items.rs	Foundation	Confirmed	Only registered queue suffixes: .json/.retry/.done/.posted/.reply/.answer/.stopped and sequence
+Family	node.records/items/on-deliveries	Runtime	crates/fastctx-node/src/records/items.rs	Foundation	Confirmed	Only registered queue suffixes: .json/.retry/.done/.posted/.reply/.answer/.stopped and sequence
+Family	node.records/items/on-stops	Runtime	crates/fastctx-node/src/records/items.rs	Foundation	Confirmed	Only registered queue suffixes: .json/.retry/.done/.posted/.reply/.answer/.stopped and sequence
+Family	node.records/items/run-stops	Runtime	crates/fastctx-node/src/records/items.rs	Foundation	Confirmed	Only registered queue suffixes: .json/.retry/.done/.posted/.reply/.answer/.stopped and sequence
+Family	node.records/items/run-requests	Runtime	crates/fastctx-node/src/records/items.rs	Foundation	Confirmed	Only registered queue suffixes: .json/.retry/.done/.posted/.reply/.answer/.stopped and sequence
