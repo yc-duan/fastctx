@@ -1,10 +1,14 @@
 //! Durable signatures retain the exact bytes signed by the original producer.
 //! This module encodes evidence; verification remains in the network adapter.
 
+pub use super::acceptance::{
+    AcceptanceBinding, AcceptanceFragment, AcceptedActor, CommittedFragment, SignedAcceptanceFragment,
+};
 use super::{
     cursor::{Revision, Sequence, StreamCursor},
     identity::{DeviceId, HubId, OperationId, ProducerEpoch, ScopeKey, StreamId},
 };
+
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
@@ -23,8 +27,13 @@ impl<'de> Deserialize<'de> for Bytes {
 
 macro_rules! fixed_bytes {
     ($name:ident, $length:literal) => {
-        #[derive(Clone, Debug, PartialEq, Eq)]
+        #[derive(Clone, PartialEq, Eq)]
         pub struct $name(pub [u8; $length]);
+        impl std::fmt::Debug for $name {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str(concat!(stringify!($name), "(<redacted>)"))
+            }
+        }
         impl Serialize for $name {
             fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
                 s.serialize_str(&URL_SAFE_NO_PAD.encode(self.0))
@@ -49,6 +58,7 @@ fixed_bytes!(Signature, 64);
 #[serde(rename_all = "snake_case")]
 pub enum ProofPurpose {
     SourceBatchV1,
+    AcceptedOperationV1,
     ProducerReleaseV1,
     EpochHandoverV1,
     ExposureReceiptV1,
@@ -59,6 +69,7 @@ impl ProofPurpose {
     /// The network adapter maps these names to closed net::sign domain variants.
     pub const fn domain(self) -> &'static str {
         match self {
+            Self::AcceptedOperationV1 => "fastctx-sync/accepted-operation/v1",
             Self::SourceBatchV1 => "fastctx-sync/source-batch/v1",
             Self::ProducerReleaseV1 => "fastctx-sync/producer-release/v1",
             Self::EpochHandoverV1 => "fastctx-sync/epoch-handover/v1",

@@ -1,8 +1,8 @@
 //! Local accepted edits are pending operations, not authority-issued versions.
 
 use super::{
-    catalog::ObjectHead,
-    cursor::{Count, LocalSequence, Revision},
+    catalog::{Lifecycle, ObjectHead},
+    cursor::{Count, LocalSequence, Revision, VersionRef},
     identity::{DeviceId, ObjectKey, OperationId},
     manifest::{BlobId, FileEntry, RelativePath},
 };
@@ -16,7 +16,7 @@ pub const MAX_ATOMIC_BYTES: usize = 256 * 1024;
 #[serde(tag = "base", rename_all = "snake_case")]
 pub enum BaseVersion {
     Absent,
-    Version { state_revision: Revision, content_version: Revision, root: Option<BlobId> },
+    Version { state_revision: VersionRef, content_version: VersionRef, root: Option<BlobId> },
 }
 
 /// An omitted field is untouched. Null is a value; deletion is explicit.
@@ -146,26 +146,37 @@ pub enum Acceptance {
     /// silently replace the selected current version.
     Branched {
         conflict: OperationId,
-        alternative: Revision,
+        alternative: VersionRef,
     },
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AcceptedObject {
     pub key: ObjectKey,
-    pub allocated: Revision,
-    pub current_version: Revision,
+    pub kind: String,
+    pub schema: u16,
+    pub allocated: VersionRef,
+    pub parents: Vec<VersionRef>,
+    /// The newly retained body, including a conflicting alternative.
+    pub content: Option<BlobId>,
+    pub current_version: VersionRef,
+    pub current_content: Option<BlobId>,
+    pub history: Option<BlobId>,
+    pub lifecycle: Lifecycle,
     pub acceptance: Acceptance,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AuthorityReceipt {
     pub operation: OperationId,
-    pub objects: Vec<AcceptedObject>,
+    pub result_digest: super::identity::Digest,
+    /// Complete at the original authority; recovery may have only a subset.
+    pub fragments: Vec<super::proof::SignedAcceptanceFragment>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "outcome", rename_all = "snake_case")]
 pub enum OperationOutcome {
     Accepted { receipt: AuthorityReceipt },
-    Rejected { code: String, conflicts: Vec<(ObjectKey, Option<Revision>)> },
+    PartiallyRestored { receipt: AuthorityReceipt, expected_fragments: u32, received_fragments: Vec<u32> },
+    Rejected { code: String, conflicts: Vec<(ObjectKey, Option<VersionRef>)> },
 }
 
 /// Both acceptance and definitive rejection are durable and idempotent.

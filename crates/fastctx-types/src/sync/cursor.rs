@@ -1,6 +1,8 @@
 //! Durable progress, distinct from transport delivery and volatile UI updates.
 
-use super::identity::{DeviceId, FeedEpoch, ObjectId, ProducerEpoch, ScopeKey, StreamId, ViewId};
+use super::identity::{
+    AuthorityEpoch, DeviceId, Digest, FeedEpoch, ObjectId, ProducerEpoch, ScopeKey, StreamId, ViewId,
+};
 use serde::{Deserialize, Serialize};
 
 macro_rules! counter {
@@ -33,6 +35,15 @@ counter!(LocalSequence, "One database's change cursor, never a hub-assigned scop
 counter!(ByteCount, "A byte count that remains exact across the GUI boundary.");
 counter!(Count, "An exact cardinality or index, distinct from a byte offset.");
 
+/// Version identities are comparable for equality, not ordered across epochs.
+/// Only ObjectHead selects the current version. A new authority epoch alone
+/// never invalidates a feed cursor.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct VersionRef {
+    pub authority_epoch: AuthorityEpoch,
+    pub revision: Revision,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ScopeCursor {
     pub scope: ScopeKey,
@@ -41,7 +52,11 @@ pub struct ScopeCursor {
     /// Missing on an older cursor means that reconciliation is required.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub view: Option<ViewId>,
-    pub applied: Sequence,
+    #[serde(alias = "applied")]
+    pub through: Sequence,
+    /// The authority feed prefix at `through`; absence requires reconciliation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefix_digest: Option<Digest>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

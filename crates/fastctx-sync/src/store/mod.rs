@@ -8,7 +8,7 @@ pub mod schema;
 
 use crate::{
     catalog::ObjectHead,
-    cursor::{HoldingPeriod, LocalSequence, Revision},
+    cursor::{HoldingPeriod, LocalSequence, Revision, VersionRef},
     identity::{ObjectId, OperationId},
     registry::{Asset, Derived, Kind, Runtime},
 };
@@ -24,7 +24,8 @@ pub type FutureResult<'a, T> = Pin<Box<dyn Future<Output = Result<T, Error>> + S
 pub enum Error {
     Invalid(String),
     Denied(String),
-    Conflict { current: Revision },
+    Conflict { current: VersionRef },
+    LocalConflict { current: Revision },
     Revoked,
     Busy,
     Full,
@@ -70,7 +71,7 @@ pub struct Subscribe {
 pub struct Change {
     pub local: LocalSequence,
     pub object: ObjectId,
-    pub revision: Option<Revision>,
+    pub revision: Option<VersionRef>,
     pub origin: Origin,
 }
 pub trait Subscription: Send {
@@ -141,6 +142,13 @@ pub trait Backend: Send + Sync {
     ) -> FutureResult<'_, Vec<PendingMutation>>;
     /// Only the object's registered authority installs accepted versions.
     fn accept(&self, principal: Principal, mutation: AtomicMutation) -> FutureResult<'_, AuthorityReceipt>;
+    /// Verifies an original acceptance before installing old-epoch versions.
+    /// Missing receipts without this proof remain OutcomeUnknown after recovery.
+    fn restore_accepted(
+        &self,
+        principal: Principal,
+        proof: crate::proof::SignedAcceptanceFragment,
+    ) -> FutureResult<'_, AuthorityReceipt>;
     fn write_runtime(
         &self,
         context: AccessContext,

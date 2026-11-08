@@ -157,6 +157,9 @@ pub enum Message {
         hub: HubId,
         receipt: super::mutation::OperationReceipt,
     },
+    RestoreAccepted {
+        proof: super::proof::SignedAcceptanceFragment,
+    },
     StreamRange {
         holding: HoldingPeriod,
         request: StreamRead,
@@ -236,6 +239,7 @@ impl Message {
             | Self::Submit { .. }
             | Self::GetOperation { .. }
             | Self::Operation { .. }
+            | Self::RestoreAccepted { .. }
             | Self::StreamRange { .. }
             | Self::StreamPage { .. }
             | Self::GetEpoch { .. }

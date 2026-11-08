@@ -1,7 +1,7 @@
 //! Object heads, source facts and catalog pages carry separate revisions.
 
 use super::{
-    cursor::{Completeness, Revision, ScopeCursor, Sequence, SnapshotFence},
+    cursor::{Completeness, Revision, ScopeCursor, Sequence, SnapshotFence, VersionRef},
     identity::{DeviceId, ObjectId, ObjectKey, OperationId, ProducerEpoch, ScopeKey, StreamId},
     manifest::BlobId,
 };
@@ -39,9 +39,9 @@ pub struct ObjectHead {
     pub acl_revision: Revision,
     pub authority: Authority,
     /// Latest authority-allocated state revision, including retained conflicts.
-    pub revision: Revision,
+    pub revision: VersionRef,
     /// The selected body version; it need not be the largest allocated revision.
-    pub current_version: Revision,
+    pub current_version: VersionRef,
     pub content: Option<BlobId>,
     /// All retained versions remain discoverable after catalog feed compaction.
     pub history: Option<BlobId>,
@@ -68,12 +68,15 @@ pub struct CatalogChange {
 pub enum FeedEntry {
     Changed {
         change: Box<CatalogChange>,
+        prefix_digest: super::identity::Digest,
     },
     /// Explicitly covers excluded sequence numbers under exactly this view.
     Skipped {
         after: Sequence,
         through: Sequence,
         view: super::identity::ViewId,
+        /// The original feed anchor, independent of excluded kinds and schemas.
+        prefix_digest: super::identity::Digest,
     },
 }
 

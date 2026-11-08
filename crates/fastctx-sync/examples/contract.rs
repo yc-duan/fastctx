@@ -1,11 +1,14 @@
 //! Emits draft wire shapes. Zeroed signatures are deliberately not valid proofs.
 
+#[path = "contract/acceptance.rs"]
+mod acceptance;
+
 use fastctx_sync::{
     catalog::{ChangesPage, FeedEntry, SourceBatch, SourceRecord},
-    cursor::{ByteCount, DurableAck, Holder, HoldingPeriod, Revision, ScopeCursor, Sequence, StreamCursor},
+    cursor::{ByteCount, DurableAck, Holder, HoldingPeriod, Revision, ScopeCursor, Sequence, StreamCursor, VersionRef},
     identity::{
-        DeviceId, Digest, FeedEpoch, HubId, ObjectId, ObjectKey, OperationId, ProducerEpoch, ScopeId, ScopeKey,
-        StreamId,
+        AuthorityEpoch, DeviceId, Digest, FeedEpoch, HubId, ObjectId, ObjectKey, OperationId, ProducerEpoch, ScopeId,
+        ScopeKey, StreamId,
     },
     manifest::{BlobId, DigestAlgorithm},
     proof::{Bytes, ProofPurpose, Signature, SignedSourceBatch, SignedStatement, SigningKey},
@@ -29,7 +32,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         epoch: FeedEpoch::from_bytes([4; 32]),
         acl_revision: Revision(1),
         view: Some(view.id()?),
-        applied: Sequence(9_007_199_254_740_993),
+        through: Sequence(9_007_199_254_740_993),
+        prefix_digest: Some(Digest::from_bytes([30; 32])),
     };
     let holding = HoldingPeriod {
         holder: Holder::Device { device: device.clone() },
@@ -96,6 +100,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             },
         });
     }
+    let (accepted, accepted_binding) = acceptance::sample(scope.clone(), device.clone())?;
     let submission = Submission {
         operation: OperationId::from_bytes([21; 32]),
         origin: device,
@@ -105,8 +110,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             kind: "account.settings".into(),
             observed_acl: Revision(1),
             base: BaseVersion::Version {
-                state_revision: Revision(7),
-                content_version: Revision(7),
+                state_revision: VersionRef {
+                    authority_epoch: AuthorityEpoch::from_bytes([31; 16]),
+                    revision: Revision(7),
+                },
+                content_version: VersionRef {
+                    authority_epoch: AuthorityEpoch::from_bytes([31; 16]),
+                    revision: Revision(7),
+                },
                 root: Some(blob(23)),
             },
             before: Some(blob(23)),
@@ -139,11 +150,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             holding: holding.clone(),
             page: ChangesPage {
                 after: cursor.clone(),
-                through: ScopeCursor { applied: Sequence(cursor.applied.0 + 2), ..cursor.clone() },
+                through: ScopeCursor {
+                    through: Sequence(cursor.through.0 + 2),
+                    prefix_digest: Some(Digest::from_bytes([32; 32])),
+                    ..cursor.clone()
+                },
                 entries: vec![FeedEntry::Skipped {
-                    after: cursor.applied,
-                    through: Sequence(cursor.applied.0 + 2),
+                    after: cursor.through,
+                    through: Sequence(cursor.through.0 + 2),
                     view: view.id()?,
+                    prefix_digest: Digest::from_bytes([32; 32]),
                 }],
                 more: false,
             },
@@ -160,6 +176,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             },
         },
         Message::Submit { request: submission },
+        Message::RestoreAccepted { proof: accepted },
         Message::GetManifest { holding: holding.clone(), root: blob(25) },
         Message::GetDescriptor { holding: holding.clone(), blob: blob(1) },
         Message::Acknowledge { durable: DurableAck::Catalog { holding: holding.clone(), cursor } },
@@ -170,6 +187,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         serde_json::to_string_pretty(&serde_json::json!({
             "signature_status": "shape_only_not_validated",
             "messages": messages, "decoded_source_binding": batch, "timeline_payload_shapes": timeline,
+            "decoded_acceptance_binding": accepted_binding,
         }))?
     );
     Ok(())

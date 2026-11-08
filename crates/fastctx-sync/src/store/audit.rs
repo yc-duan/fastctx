@@ -5,26 +5,26 @@
 
 use super::Error;
 use crate::{
-    cursor::Revision,
+    cursor::VersionRef,
     identity::{Digest, ObjectKey, OperationId},
 };
-use std::collections::BTreeSet;
+use std::collections::HashSet;
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Effect {
     pub operation: OperationId,
     pub object: ObjectKey,
     pub request_hash: Digest,
     /// None identifies a pending edit, never an invented authority version.
-    pub revision: Option<Revision>,
+    pub revision: Option<VersionRef>,
 }
 
 #[derive(Default)]
 pub struct OperationAudit {
-    changed: BTreeSet<Effect>,
-    journaled: BTreeSet<Effect>,
-    outbound: BTreeSet<Effect>,
-    local: BTreeSet<Effect>,
+    changed: HashSet<Effect>,
+    journaled: HashSet<Effect>,
+    outbound: HashSet<Effect>,
+    local: HashSet<Effect>,
     poisoned: bool,
 }
 

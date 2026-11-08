@@ -8,13 +8,16 @@ pub use crate::access::HubId;
 
 macro_rules! identifier {
     ($name:ident, $prefix:literal, $description:literal) => {
+        identifier!($name, $prefix, $description, 32);
+    };
+    ($name:ident, $prefix:literal, $description:literal, $bytes:literal) => {
         #[doc = $description]
         #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
         #[serde(try_from = "String", into = "String")]
         pub struct $name(String);
 
         impl $name {
-            pub fn from_bytes(bytes: [u8; 32]) -> Self {
+            pub fn from_bytes(bytes: [u8; $bytes]) -> Self {
                 Self(format!("{}{}", $prefix, hex(&bytes)))
             }
             pub fn as_str(&self) -> &str {
@@ -27,7 +30,9 @@ macro_rules! identifier {
                 let Some(digest) = text.strip_prefix($prefix) else {
                     return Err(concat!("invalid ", stringify!($name)).into());
                 };
-                if digest.len() != 64 || !digest.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)) {
+                if digest.len() != 2 * $bytes
+                    || !digest.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+                {
                     return Err(concat!("invalid ", stringify!($name)).into());
                 }
                 Ok(Self(text))
@@ -55,7 +60,22 @@ identifier!(FeedEpoch, "f-", "A hub catalog incarnation, changed when its sequen
 identifier!(OperationId, "m-", "An idempotency key reused for every retry of one operation.");
 identifier!(SourceId, "i-", "A registered ingestion source, unrelated to its current filesystem path.");
 identifier!(Digest, "", "A lowercase SHA-256 digest.");
+identifier!(
+    AuthorityEpoch,
+    "e-",
+    "A random 128-bit incarnation persisted before an authority accepts writes after startup.",
+    16
+);
 identifier!(ViewId, "v-", "The negotiated kind/schema set and ACL projection of a scope.");
+
+impl AuthorityEpoch {
+    pub fn bytes(&self) -> [u8; 16] {
+        let text = self.0.strip_prefix("e-").expect("validated authority epoch");
+        std::array::from_fn(|index| {
+            u8::from_str_radix(&text[index * 2..index * 2 + 2], 16).expect("validated authority epoch")
+        })
+    }
+}
 
 impl AccountId {
     /// Maps legacy membership once. The mapping must be saved before publication;
@@ -73,6 +93,11 @@ impl AccountId {
 }
 
 impl Digest {
+    pub fn bytes(&self) -> [u8; 32] {
+        std::array::from_fn(|index| {
+            u8::from_str_radix(&self.0[index * 2..index * 2 + 2], 16).expect("validated digest")
+        })
+    }
     pub fn of(bytes: &[u8]) -> Self {
         Self::from_bytes(Sha256::digest(bytes).into())
     }

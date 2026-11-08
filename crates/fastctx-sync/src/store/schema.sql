@@ -1,5 +1,6 @@
 -- Sequence and revision columns are unsigned big-endian eight-byte values.
 -- Their lexicographic order agrees with the protocol's unsigned order.
+-- Authority epochs are random 16-byte identities and have no temporal order.
 CREATE TABLE sync_accounts (
     hub TEXT NOT NULL, account TEXT NOT NULL, legacy_name TEXT NOT NULL,
     opened TEXT NOT NULL, PRIMARY KEY(hub,account), UNIQUE(hub,legacy_name,opened)
@@ -14,7 +15,9 @@ CREATE TABLE sync_scopes (
 CREATE TABLE sync_objects (
     hub TEXT NOT NULL, scope TEXT NOT NULL, object TEXT NOT NULL,
     kind TEXT NOT NULL, schema INTEGER NOT NULL, authority BLOB NOT NULL,
+    authority_epoch BLOB NOT NULL CHECK(length(authority_epoch)=16),
     revision BLOB NOT NULL CHECK(length(revision)=8),
+    current_authority_epoch BLOB NOT NULL CHECK(length(current_authority_epoch)=16),
     current_version BLOB NOT NULL CHECK(length(current_version)=8),
     content TEXT, history TEXT, state TEXT NOT NULL,
     completeness BLOB NOT NULL, PRIMARY KEY(hub,scope,object),
@@ -23,20 +26,24 @@ CREATE TABLE sync_objects (
 CREATE INDEX sync_objects_kind ON sync_objects(hub,scope,kind,object);
 CREATE TABLE sync_object_versions (
     hub TEXT NOT NULL, scope TEXT NOT NULL, object TEXT NOT NULL,
+    authority_epoch BLOB NOT NULL CHECK(length(authority_epoch)=16),
     revision BLOB NOT NULL CHECK(length(revision)=8),
-    operation TEXT NOT NULL, content TEXT, parents BLOB NOT NULL,
-    state TEXT NOT NULL, PRIMARY KEY(hub,scope,object,revision)
+    actor TEXT NOT NULL, operation TEXT NOT NULL, content TEXT, parents BLOB NOT NULL,
+    state TEXT NOT NULL, PRIMARY KEY(hub,scope,object,authority_epoch,revision)
 ) WITHOUT ROWID;
 CREATE TABLE sync_scope_heads (
     hub TEXT NOT NULL, scope TEXT NOT NULL, epoch TEXT NOT NULL,
     sequence BLOB NOT NULL CHECK(length(sequence)=8), snapshot TEXT,
+    prefix_digest TEXT NOT NULL,
     PRIMARY KEY(hub,scope)
 ) WITHOUT ROWID;
 CREATE TABLE sync_changes (
     hub TEXT NOT NULL, scope TEXT NOT NULL, epoch TEXT NOT NULL,
     sequence BLOB NOT NULL CHECK(length(sequence)=8),
-    object TEXT NOT NULL, revision BLOB NOT NULL CHECK(length(revision)=8),
-    operation TEXT NOT NULL, PRIMARY KEY(hub,scope,epoch,sequence)
+    object TEXT NOT NULL, authority_epoch BLOB NOT NULL CHECK(length(authority_epoch)=16),
+    revision BLOB NOT NULL CHECK(length(revision)=8),
+    operation TEXT NOT NULL, canonical_change BLOB NOT NULL, prefix_digest TEXT NOT NULL,
+    PRIMARY KEY(hub,scope,epoch,sequence)
 ) WITHOUT ROWID;
 CREATE TABLE sync_local_head (
     singleton INTEGER PRIMARY KEY CHECK(singleton=1),
@@ -45,8 +52,10 @@ CREATE TABLE sync_local_head (
 CREATE TABLE sync_local_changes (
     sequence BLOB PRIMARY KEY CHECK(length(sequence)=8),
     hub TEXT NOT NULL, scope TEXT NOT NULL, object TEXT NOT NULL,
+    authority_epoch BLOB CHECK(authority_epoch IS NULL OR length(authority_epoch)=16),
     revision BLOB CHECK(revision IS NULL OR length(revision)=8),
-    origin BLOB NOT NULL, operation TEXT NOT NULL
+    origin BLOB NOT NULL, operation TEXT NOT NULL,
+    CHECK((authority_epoch IS NULL) = (revision IS NULL))
 ) WITHOUT ROWID;
 CREATE INDEX sync_local_changes_scope ON sync_local_changes(hub,scope,sequence);
 CREATE TABLE sync_stream_heads (
@@ -65,7 +74,9 @@ CREATE TABLE sync_stream_records (
 ) WITHOUT ROWID;
 CREATE TABLE sync_operations (
     hub TEXT NOT NULL, actor TEXT NOT NULL, operation TEXT NOT NULL,
-    request_hash TEXT NOT NULL, result BLOB NOT NULL,
+    request_hash TEXT NOT NULL, result BLOB NOT NULL, accepted_proofs BLOB,
+    expected_fragments INTEGER CHECK(expected_fragments BETWEEN 1 AND 256),
+    received_fragments BLOB, result_digest TEXT,
     PRIMARY KEY(hub,actor,operation)
 ) WITHOUT ROWID;
 CREATE TABLE sync_pending_mutations (
@@ -92,10 +103,14 @@ CREATE TABLE sync_pending_roots (
 ) WITHOUT ROWID;
 CREATE TABLE sync_conflicts (
     hub TEXT NOT NULL, scope TEXT NOT NULL, object TEXT NOT NULL, operation TEXT NOT NULL,
+    base_authority_epoch BLOB CHECK(base_authority_epoch IS NULL OR length(base_authority_epoch)=16),
     base_version BLOB CHECK(base_version IS NULL OR length(base_version)=8),
+    current_authority_epoch BLOB NOT NULL CHECK(length(current_authority_epoch)=16),
     current_version BLOB NOT NULL CHECK(length(current_version)=8),
+    alternative_authority_epoch BLOB NOT NULL CHECK(length(alternative_authority_epoch)=16),
     alternative_version BLOB NOT NULL CHECK(length(alternative_version)=8),
-    resolved_by TEXT, PRIMARY KEY(hub,scope,object,operation)
+    resolved_by TEXT, PRIMARY KEY(hub,scope,object,operation),
+    CHECK((base_authority_epoch IS NULL) = (base_version IS NULL))
 ) WITHOUT ROWID;
 CREATE TABLE sync_outbox (
     destination TEXT NOT NULL, hub TEXT NOT NULL, scope TEXT NOT NULL,
@@ -147,6 +162,7 @@ CREATE TABLE sync_projections (
 ) WITHOUT ROWID;
 CREATE TABLE sync_tombstones (
     hub TEXT NOT NULL, scope TEXT NOT NULL, object TEXT NOT NULL,
+    authority_epoch BLOB NOT NULL CHECK(length(authority_epoch)=16),
     revision BLOB NOT NULL CHECK(length(revision)=8), operation TEXT NOT NULL,
     PRIMARY KEY(hub,scope,object)
 ) WITHOUT ROWID;
@@ -174,8 +190,9 @@ CREATE TABLE sync_asset_edges (
 ) WITHOUT ROWID;
 CREATE TABLE sync_asset_roots (
     hub TEXT NOT NULL, scope TEXT NOT NULL, object TEXT NOT NULL,
+    authority_epoch BLOB NOT NULL CHECK(length(authority_epoch)=16),
     revision BLOB NOT NULL CHECK(length(revision)=8), hash TEXT NOT NULL,
-    PRIMARY KEY(hub,scope,object,revision,hash)
+    PRIMARY KEY(hub,scope,object,authority_epoch,revision,hash)
 ) WITHOUT ROWID;
 CREATE INDEX sync_asset_roots_hash ON sync_asset_roots(hub,scope,hash);
 CREATE TABLE sync_asset_pins (

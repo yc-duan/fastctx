@@ -3,9 +3,12 @@
 //! These types do not advertise a capability or enable a transport. A service
 //! may advertise them only after installing its durable storage and handlers.
 
+pub mod acceptance;
+mod canonical;
 pub mod catalog;
 pub mod cursor;
 pub mod exposure;
+pub mod feed;
 pub mod identity;
 pub mod manifest;
 pub mod mutation;
