@@ -1314,8 +1314,16 @@ export class ConversationPage {
       void this.run(picked, typed);
       return;
     }
-    // One of the account's skills is asked for in the words themselves.
-    const text = picked?.account ? `$${picked.name}${typed ? ` ${typed}` : ""}` : typed;
+    const command = this.options.controls && !picked ? commandTyped(typed) : null;
+    // One of the account's skills is asked for in the words themselves:
+    // picked from the menu, or its name written out after a slash.
+    const skill = picked?.account ? { name: picked.name, args: typed } : command && this.accountSkill(command.name) ? command : null;
+    const text = skill ? `$${skill.name}${skill.args ? ` ${skill.args}` : ""}` : typed;
+    // A command takes nothing attached, which stays for the words after it.
+    if (command && !skill) {
+      void this.typedCommand(command.name, command.args, typed);
+      return;
+    }
     if (this.uploading()) {
       this.say(this.options.attach!.words.wait);
       return;
@@ -1334,11 +1342,6 @@ export class ConversationPage {
       if (this.options.conversation.busy()) this.stop();
       return;
     }
-    const command = this.options.controls ? commandTyped(text) : null;
-    if (command) {
-      void this.typedCommand(command.name, command.args);
-      return;
-    }
     // What the last command did is behind the conversation now.
     this.say("");
     this.hideSaid();
@@ -1346,7 +1349,7 @@ export class ConversationPage {
     if (picked) this.pick(null);
     if (session) {
       // The shared draft is what is sent: the skill's name goes into it.
-      if (picked?.account) this.setWords(text);
+      if (skill) this.setWords(text);
       this.commandMenu?.hide();
       this.fileMenu?.hide();
       this.nodeTray?.settle();
@@ -1777,10 +1780,9 @@ export class ConversationPage {
    *  Where the page has not read what it offers yet, or what it read names
    *  no such command, it is read again first; a command is never sent on
    *  to the agent as words. */
-  private async typedCommand(name: string, args: string): Promise<void> {
+  private async typedCommand(name: string, args: string, typed: string): Promise<void> {
     const controls = this.options.controls!;
-    const listed = (moving: boolean) => commandsOf(this.offered, controls.words.commands, moving, this.side?.goals ?? false);
-    const find = (moving: boolean) => commandFor(listed(moving), name, args);
+    const find = (moving: boolean) => commandFor(commandsOf(this.offered, controls.words.commands, moving, this.side?.goals ?? false), name, args);
     if (!find(this.options.conversation.moving())) await this.askOffers();
     if (this.left) return;
     if (!this.offered) {
@@ -1797,17 +1799,23 @@ export class ConversationPage {
       void this.run(command, args);
       return;
     }
-    // One of the account's skills written out by name is asked for in words.
-    if (listed(false).some((one) => one.account && one.name === name)) {
-      const words = `$${name}${args ? ` ${args}` : ""}`;
-      if (this.session) this.setWords(words);
-      else this.input.value = words;
-      this.submit();
+    // One of the account's skills, known only now: the words go as asked
+    // for it, unless they changed meanwhile.
+    if (this.accountSkill(name)) {
+      if (this.input.value.trim() === typed && !this.picked) this.submit();
       return;
     }
     // One that waits for the turn is named as waiting, not unknown.
     const waiting = this.options.conversation.moving() && find(false);
     this.say(waiting ? controls.words.afterTurn(name) : controls.words.unknown(name));
+  }
+
+  /** Whether `name` is one of the account's skills, and no command. */
+  private accountSkill(name: string): boolean {
+    const controls = this.options.controls;
+    if (!controls) return false;
+    const listed = commandsOf(this.offered, controls.words.commands, false, this.side?.goals ?? false);
+    return listed.some((one) => one.account && one.name === name) && !commandFor(listed, name, "");
   }
 
   /** Asks what the conversation offers, one asking at a time. Its commands
