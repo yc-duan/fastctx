@@ -169,6 +169,8 @@ impl RemoteCall {
             }
             Self::SentinelSettings { change: Some(_) } => Contract::CHANGE,
             Self::SentinelKeys => Contract { within: Some(Duration::from_secs(30)), ..Contract::QUERY },
+            // The model has up to 90 s to answer a try.
+            Self::SentinelTry => Contract { within: Some(Duration::from_secs(120)), ..Contract::QUERY },
             Self::SentinelKey { .. } => Contract::CHANGE,
             Self::Mcp {
                 mcp:
@@ -374,6 +376,7 @@ impl Call {
             Self::SentinelSettings { change: None, .. } => Leaving::Stop,
             Self::SentinelSettings { change: Some(_), .. } => Leaving::Finish,
             Self::SentinelKey { .. } => Leaving::Finish,
+            Self::SentinelTry { .. } => Leaving::Stop,
             Self::AttachmentPlaces { .. }
             | Self::McpRelay { .. }
             | Self::MachineLog { .. }

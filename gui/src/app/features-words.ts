@@ -103,6 +103,16 @@ export interface SentinelWords {
   save: string;
   notSaved: string;
   changedElsewhere: string;
+  /** Trying what is saved, from the machine they live on. */
+  tryIt: string;
+  trying: string;
+  tryWhat: string;
+  trySaveFirst: string;
+  searchName: string;
+  worked: string;
+  failed: string;
+  seconds(ms: number): string;
+  tryFailed: string;
 }
 
 export const zhFeatures: FeaturesWords = {
@@ -185,6 +195,15 @@ export const zhFeatures: FeaturesWords = {
     save: "保存",
     notSaved: "未能保存",
     changedElsewhere: "已在别处修改，现已载入最新版本",
+    tryIt: "试一下",
+    trying: "正在试",
+    tryWhat: "由所在机器用保存的设置与钥匙，向模型和搜索各发一次请求",
+    trySaveFirst: "保存后再试",
+    searchName: "搜索",
+    worked: "可用",
+    failed: "不可用",
+    seconds: (ms) => `${(ms / 1000).toFixed(1)} 秒`,
+    tryFailed: "没能试成",
   },
   callers: "调用方",
   callersSaid: "这些智能体的对话里会有请 GPT 的工具",
@@ -310,6 +329,15 @@ export const enFeatures: FeaturesWords = {
     save: "Save",
     notSaved: "Not saved",
     changedElsewhere: "Changed elsewhere; that version is loaded",
+    tryIt: "Try it",
+    trying: "Trying",
+    tryWhat: "The machine they live on asks the model and the search once, with the saved settings and keys",
+    trySaveFirst: "Save first",
+    searchName: "Search",
+    worked: "Works",
+    failed: "Doesn't work",
+    seconds: (ms) => `${(ms / 1000).toFixed(1)} s`,
+    tryFailed: "Couldn't try",
   },
   callers: "Callers",
   callersSaid: "Conversations with these agents get the tools to ask a GPT",

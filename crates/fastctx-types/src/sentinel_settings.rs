@@ -75,3 +75,24 @@ pub enum SettingsReply {
     View { view: SettingsView },
     Conflict { current_version: Option<u64> },
 }
+
+/// What trying the sentinels' model or their search once from their home
+/// found, with the key kept there and that machine's own way out.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Tried {
+    /// Whether it answered as it should.
+    pub ok: bool,
+    /// How long it took, in milliseconds.
+    pub ms: u64,
+    /// What came back: the model's reply or how many results the search
+    /// found, or what went wrong, in the provider's words where it gave any.
+    pub said: String,
+}
+
+/// A try of the sentinels' model and of their search, each where it is set
+/// up.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TryReport {
+    pub model: Option<Tried>,
+    pub search: Option<Tried>,
+}

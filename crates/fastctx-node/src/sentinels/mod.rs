@@ -14,6 +14,7 @@ pub(crate) mod look;
 mod records;
 mod settings;
 pub(crate) mod timers;
+pub(crate) mod trial;
 mod transport;
 pub(crate) use control::{control, list_all, overview_all, record_any, scope};
 use fastctx_sentinel::{ports::Credentials, records::Records};

@@ -1272,6 +1272,7 @@ pub fn run() {
             skills::skill_folder_pick,
             sentinels::sentinel_settings_write,
             sentinels::sentinel_key_set,
+            sentinels::sentinel_try,
             profile::profile_read,
             profile::profile_subagents,
             profile::profile_write,

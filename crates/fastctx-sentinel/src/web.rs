@@ -38,7 +38,9 @@ impl Audit {
 pub struct Tavily {
     pub endpoint: String,
     pub key: String,
-    pub audit: Audit,
+    /// Where a sentinel's searches are recorded; a try of the settings,
+    /// whose words are fixed, is not.
+    pub audit: Option<Audit>,
 }
 impl Search for Tavily {
     fn search<'a>(&'a self, query: &'a str) -> FutureResult<'a, ReadResult> {
@@ -47,7 +49,9 @@ impl Search for Tavily {
                 return Err("invalid search query".into());
             }
             let payload = json!({"query":query,"search_depth":"basic","max_results":5,"include_answer":false,"include_raw_content":false,"include_usage":true});
-            self.audit.record("POST", &self.endpoint, &payload)?;
+            if let Some(audit) = &self.audit {
+                audit.record("POST", &self.endpoint, &payload)?;
+            }
             let auth = format!("Bearer {}", self.key);
             let response = fastctx_net::web::post::json(
                 &self.endpoint,

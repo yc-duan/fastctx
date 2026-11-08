@@ -265,22 +265,7 @@ impl Device {
                 // The key goes from this device straight to the home, through the hub alone.
                 let session = self.on_hub(hub.as_ref())?;
                 let account = profile_account(&session, account)?;
-                let request = fastctx_types::account_records::Request::Read {
-                    kind: fastctx_types::sentinel_settings::RECORD_KIND.into(),
-                    key: fastctx_types::sentinel_settings::RECORD_KEY.into(),
-                };
-                let home = match session.link.account_records(&account, request).await.map_err(failed)? {
-                    fastctx_types::account_records::Response::Read { record: Some(record) }
-                        if !record.metadata.deleted =>
-                    {
-                        serde_json::from_value::<fastctx_types::sentinel_settings::Settings>(record.body)
-                            .map_err(failed)?
-                            .home
-                    }
-                    fastctx_types::account_records::Response::Read { .. } => None,
-                    _ => return Err(failed("the hub answered another account-records reply")),
-                };
-                let home = home.ok_or_else(|| failed("choose the sentinel home first"))?;
+                let home = sentinel_home(&session, &account).await?;
                 let call = RemoteCall::SentinelKey { key, value };
                 return match session
                     .link
@@ -291,6 +276,22 @@ impl Device {
                 {
                     RemoteReply::SentinelKeys(_) => Ok((Reply::Done, home)),
                     _ => Err(failed("the sentinel home did not answer the key")),
+                };
+            }
+            Call::SentinelTry { hub, account } => {
+                let session = self.on_hub(hub.as_ref())?;
+                let account = profile_account(&session, account)?;
+                let home = sentinel_home(&session, &account).await?;
+                let call = RemoteCall::SentinelTry;
+                return match session
+                    .link
+                    .call(&home, &account, call.purpose(), call)
+                    .await
+                    .map_err(failed)?
+                    .map_err(failed)?
+                {
+                    RemoteReply::SentinelTried(report) => Ok((Reply::SentinelTried(report), home)),
+                    _ => Err(failed("the sentinel home did not answer the try")),
                 };
             }
             Call::ProfileRead { hub, account } => {
@@ -910,6 +911,23 @@ fn actors(session: &Session) -> Vec<(MachineName, fastctx_types::AccountName)> {
                 .map(|account| (machine.name.clone(), account.clone()))
         })
         .collect()
+}
+
+/// The machine the account's sentinels live on, as its settings record on
+/// the hub names it.
+async fn sentinel_home(session: &Session, account: &fastctx_types::AccountName) -> Result<MachineName, Error> {
+    let request = fastctx_types::account_records::Request::Read {
+        kind: fastctx_types::sentinel_settings::RECORD_KIND.into(),
+        key: fastctx_types::sentinel_settings::RECORD_KEY.into(),
+    };
+    let home = match session.link.account_records(account, request).await.map_err(failed)? {
+        fastctx_types::account_records::Response::Read { record: Some(record) } if !record.metadata.deleted => {
+            serde_json::from_value::<fastctx_types::sentinel_settings::Settings>(record.body).map_err(failed)?.home
+        }
+        fastctx_types::account_records::Response::Read { .. } => None,
+        _ => return Err(failed("the hub answered another account-records reply")),
+    };
+    home.ok_or_else(|| failed("choose the sentinel home first"))
 }
 
 pub(super) fn profile_account(

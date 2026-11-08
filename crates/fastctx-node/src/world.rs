@@ -1232,6 +1232,13 @@ impl fastctx_net::link::Node for Handler {
                             .await
                             .map(RemoteReply::SentinelKeys)
                     }
+                    RemoteCall::SentinelTry => {
+                        let scope =
+                            fastctx_types::access::HubAccount { hub: hub.clone(), account: caller.account.clone() };
+                        crate::sentinels::trial::here(&node, &scope)
+                            .await
+                            .map(|report| RemoteReply::SentinelTried(Box::new(report)))
+                    }
                     RemoteCall::SentinelKeys => {
                         let scope =
                             fastctx_types::access::HubAccount { hub: hub.clone(), account: caller.account.clone() };

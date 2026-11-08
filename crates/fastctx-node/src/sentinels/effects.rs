@@ -138,7 +138,7 @@ impl Search for NodeSearch {
             )
             .await
             .map_err(|_| "reading the sentinel search key timed out")??;
-            Tavily { endpoint: search.endpoint, key, audit: Audit::new(self.directory.join("web-audit")) }
+            Tavily { endpoint: search.endpoint, key, audit: Some(Audit::new(self.directory.join("web-audit"))) }
                 .search(query)
                 .await
         })

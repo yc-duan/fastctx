@@ -157,6 +157,11 @@ pub enum Call {
         key: crate::sentinel_settings::KeyName,
         value: Option<crate::sentinel_settings::Secret>,
     },
+    /// Has the account's sentinel home try its model and search once.
+    SentinelTry {
+        hub: Option<crate::HubName>,
+        account: Option<crate::AccountName>,
+    },
     /// The selected account's machine changes, before a previous page's
     /// cursor when supplied. The hub checks visibility on every read.
     MachineLog {
@@ -1000,6 +1005,7 @@ pub enum Reply {
     },
     Sentinel(Box<crate::sentinel_control::Reply>),
     SentinelSettings(Box<crate::sentinel_settings::SettingsReply>),
+    SentinelTried(Box<crate::sentinel_settings::TryReport>),
     /// The HTTP proxy chosen in Fastctx, if one is (`Call::HubProxy`).
     HubProxy {
         url: Option<String>,

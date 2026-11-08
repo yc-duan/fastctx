@@ -3,11 +3,13 @@
 // kind of interface, its address and name, and its key; and, for the few
 // that watch something only on the open web, the search they use. A key is
 // typed here and handed to the machine they live on alone; only whether it
-// is set is ever shown again.
+// is set is ever shown again. What is saved can be tried: that machine asks
+// the model and the search once, and the page says whether each answered,
+// how fast, and what it said.
 
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
-import type { ModelProtocol, SentinelSeam, SentinelSettings, SentinelSettingsView } from "../world/sentinels";
+import type { ModelProtocol, SentinelSeam, SentinelSettings, SentinelSettingsView, SentinelTried, SentinelTryReport } from "../world/sentinels";
 import type { SentinelWords } from "./features-words";
 import { detailOf } from "./problem";
 
@@ -30,6 +32,8 @@ export class SentinelForm {
   private keys: { model: string; search: string } = { model: "", search: "" };
   private problem: { text: string; detail: string } | null = null;
   private busy = false;
+  /** The last try of what is saved: under way, found, or failed whole. */
+  private trial: { kind: "trying" } | { kind: "found"; report: SentinelTryReport } | { kind: "failed"; detail: string } | null = null;
 
   constructor(private readonly options: SentinelFormOptions) {
     this.element = document.createElement("div");
@@ -47,6 +51,7 @@ export class SentinelForm {
         return this.draw();
       }
       if (target.closest("[data-act='save']")) void this.save();
+      if (target.closest("[data-act='try']")) void this.tryOut();
     });
     this.element.addEventListener("input", (event) => {
       const input = event.target as HTMLInputElement;
@@ -61,6 +66,7 @@ export class SentinelForm {
       } else if (field === "model-key") this.keys.model = value;
       else if (field === "search-key") this.keys.search = value;
       this.drawSave();
+      this.drawTrial();
     });
   }
 
@@ -68,6 +74,7 @@ export class SentinelForm {
     this.view = view;
     this.draft = structuredClone(view.settings);
     this.keys = { model: "", search: "" };
+    this.trial = null;
     this.draw();
   }
 
@@ -109,8 +116,55 @@ export class SentinelForm {
           <label class="feature-field" title="${escape(draft.home ? words.keyGoes(draft.home) : "")}"><span class="sf-key-label">${escape(words.key)}${keySaid(keys?.search)}</span><input type="password" data-field="search-key" placeholder="${escape(keys?.search ? words.keyReplace : "")}" autocomplete="off"></label>
         </div>
       </section>
+      <section class="feature-section sf-try"><button class="feature-chip sf-try-go" type="button" data-act="try"></button><div class="sf-tried"></div></section>
       <div class="feature-save-bar"><span class="feature-problem"></span><button class="sheet-go feature-save" type="button" data-act="save">${escape(words.save)}</button></div>`;
     this.drawSave();
+    this.drawTrial();
+  }
+
+  /** The try: offered once the settings are saved, on a home that is
+   *  ready, and what it last found. */
+  private drawTrial(): void {
+    const { words } = this.options;
+    const section = this.element.querySelector<HTMLElement>(".sf-try");
+    if (!section) return;
+    const view = this.view;
+    const offered = !!view?.settings.home && !!view.settings.model && view.home_status.kind === "ready";
+    section.hidden = !offered;
+    const go = section.querySelector<HTMLButtonElement>(".sf-try-go")!;
+    const trying = this.trial?.kind === "trying";
+    go.innerHTML = `${glyph("send", 14)}<span>${escape(trying ? words.trying : words.tryIt)}</span>`;
+    go.classList.toggle("trying", trying);
+    go.disabled = trying || this.busy || this.dirty();
+    go.title = this.dirty() ? words.trySaveFirst : words.tryWhat;
+    const line = (what: string, tried: SentinelTried) => `
+      <p class="sf-tried-line ${tried.ok ? "ok" : "bad"}">
+        <span class="sf-tried-what">${escape(what)}</span>
+        <span class="sf-tried-verdict">${tried.ok ? glyph("check", 14) : ""}${escape(tried.ok ? words.worked : words.failed)}</span>
+        ${tried.ms > 0 ? `<span class="sf-tried-time">${escape(words.seconds(tried.ms))}</span>` : ""}
+      </p>
+      <p class="sf-tried-said">${escape(tried.said)}</p>`;
+    const trial = this.trial;
+    section.querySelector<HTMLElement>(".sf-tried")!.innerHTML =
+      trial?.kind === "found"
+        ? [trial.report.model && line(words.model, trial.report.model), trial.report.search && line(words.searchName, trial.report.search)].filter(Boolean).join("")
+        : trial?.kind === "failed"
+          ? `<p class="sf-tried-line bad"><span class="sf-tried-verdict">${escape(words.tryFailed)}</span></p><p class="sf-tried-said">${escape(trial.detail)}</p>`
+          : "";
+  }
+
+  /** Has the home try the saved model and search once. */
+  private async tryOut(): Promise<void> {
+    if (this.trial?.kind === "trying" || this.busy || this.dirty()) return;
+    const { seam, login } = this.options;
+    this.trial = { kind: "trying" };
+    this.drawTrial();
+    try {
+      this.trial = { kind: "found", report: await seam.tryOut(login.hub, login.account) };
+    } catch (error) {
+      this.trial = { kind: "failed", detail: detailOf(error) };
+    }
+    this.drawTrial();
   }
 
   /** How the machine they live on stands, where it is not simply ready. */
@@ -150,6 +204,7 @@ export class SentinelForm {
     this.busy = true;
     this.problem = null;
     this.drawSave();
+    this.drawTrial();
     try {
       const settings: SentinelSettings = {
         ...this.draft,

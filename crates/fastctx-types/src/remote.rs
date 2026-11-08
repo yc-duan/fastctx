@@ -83,6 +83,9 @@ pub enum RemoteCall {
     },
     /// Which of the account's sentinel keys its home holds.
     SentinelKeys,
+    /// Has the account's sentinel home try its model and search once, with
+    /// the keys it holds.
+    SentinelTry,
     /// A running job returns its resident's project selection to its home.
     /// This call is relayed and authorized by a hub supporting project entry.
     EnterProject {
@@ -634,7 +637,8 @@ impl RemoteCall {
             Self::Goal { .. } | Self::GoalCommand { .. } => Purpose::Agents,
             Self::EnterProject { .. } | Self::Plan { .. } => Purpose::Echo,
             Self::SentinelSettings { .. } | Self::SentinelControl { .. } | Self::SentinelKeys => Purpose::Look,
-            Self::SentinelKey { .. } => Purpose::Hands,
+            // A try spends the account's key on the home, as a sentinel would.
+            Self::SentinelKey { .. } | Self::SentinelTry => Purpose::Hands,
             Self::SentinelHome { request: crate::sentinel_control::HomeRequest::Conversation { request, .. } } => {
                 if matches!(request.as_ref(), crate::sentinel_control::HomeRequest::Withdraw { .. }) {
                     Purpose::Hands
@@ -763,6 +767,7 @@ pub enum RemoteReply {
     SentinelHome(Box<crate::sentinel_control::HomeReply>),
     SentinelSettings(Box<crate::sentinel_settings::SettingsReply>),
     SentinelKeys(crate::sentinel_settings::KeyStatus),
+    SentinelTried(Box<crate::sentinel_settings::TryReport>),
     Entered {
         town: TownName,
         map: Box<crate::project::MapView>,

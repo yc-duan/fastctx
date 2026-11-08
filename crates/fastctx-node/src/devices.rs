@@ -38,6 +38,7 @@ pub fn admit(view: &View, from: &MachineName, call: &RemoteCall) -> Result<(), F
             | RemoteCall::SentinelControl { .. }
             // The user's own key, handed straight to the sentinel home.
             | RemoteCall::SentinelKey { .. }
+            | RemoteCall::SentinelTry
             | RemoteCall::Mcp { .. }
             | RemoteCall::Talk { .. }
             | RemoteCall::Goal { .. }

@@ -329,7 +329,13 @@ impl Client {
             return Err(CallError::Failed(Failure::not_run(why)));
         }
         if !self.sentinels
-            && matches!(call, Call::SentinelSettings { .. } | Call::SentinelKey { .. } | Call::Sentinel { .. })
+            && matches!(
+                call,
+                Call::SentinelSettings { .. }
+                    | Call::SentinelKey { .. }
+                    | Call::SentinelTry { .. }
+                    | Call::Sentinel { .. }
+            )
         {
             let why = if offered {
                 format!("upgrade {} to use sentinels", self.machine)

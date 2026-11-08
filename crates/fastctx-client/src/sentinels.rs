@@ -32,9 +32,26 @@ impl World {
             _ => Err(Error::Unexpected("sentinel key".into())),
         }
     }
-    pub async fn sentinel(&self,hub:Option<HubName>,account:Option<AccountName>,request:fastctx_types::sentinel_control::Request)->Result<fastctx_types::sentinel_control::Reply,Error> {
-        match self.ask(Call::Sentinel{hub,account,request}).await? {
-            Reply::Sentinel(reply)=>Ok(*reply),_=>Err(Error::Unexpected("sentinel reply".into())),
+    /// Has the account's sentinel home try its model and search once.
+    pub async fn sentinel_try(
+        &self,
+        hub: Option<HubName>,
+        account: Option<AccountName>,
+    ) -> Result<fastctx_types::sentinel_settings::TryReport, Error> {
+        match self.ask(Call::SentinelTry { hub, account }).await? {
+            Reply::SentinelTried(report) => Ok(*report),
+            _ => Err(Error::Unexpected("sentinel try".into())),
+        }
+    }
+    pub async fn sentinel(
+        &self,
+        hub: Option<HubName>,
+        account: Option<AccountName>,
+        request: fastctx_types::sentinel_control::Request,
+    ) -> Result<fastctx_types::sentinel_control::Reply, Error> {
+        match self.ask(Call::Sentinel { hub, account, request }).await? {
+            Reply::Sentinel(reply) => Ok(*reply),
+            _ => Err(Error::Unexpected("sentinel reply".into())),
         }
     }
 }
