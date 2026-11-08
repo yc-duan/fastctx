@@ -130,7 +130,7 @@ fn state(record: &JobRecord) -> String {
             let at = super::machine::moment(end.at);
             match &end.how {
                 EndedHow::Finished => match &record.exit {
-                    Some(exited) => format!("ended {at}, exit {}", exited.status),
+                    Some(exited) => format!("ended {at}, {}", exited.status),
                     None => format!("ended {at}"),
                 },
                 EndedHow::Stopped => format!("stopped {at}"),

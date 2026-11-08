@@ -113,7 +113,11 @@ async fn evaluate_inner(
             observation: Observation {
                 id: format!("reflex-{}-{now}", reflex.id),
                 at: now,
-                source: serde_json::to_string(&reflex.probe).expect("reflex probe serializes"),
+                source: match &reflex.probe {
+                    Some(Probe::Look { machine, inspect }) => crate::tools::source(machine, inspect),
+                    Some(Probe::Web { url }) => url.clone(),
+                    None => String::new(),
+                },
                 text: result.shown(),
                 full_path: result.full_path,
             },
