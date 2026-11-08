@@ -2040,16 +2040,20 @@ pub async fn open_here(
     opened: crate::talk::Opened,
     town: Option<TownName>,
     text: String,
-    options: fastctx_types::agents::SessionOptions,
+    mut options: fastctx_types::agents::SessionOptions,
     attachments: Vec<fastctx_types::attachments::Attachment>,
 ) -> Result<(ResidentId, Landed), Failure> {
     if let Some(town) = &town {
         crate::town::access::ready(node, &opened.acting, town).await?;
     }
     // Nothing of the conversation is made for a Claude Code that cannot
-    // run it.
+    // run it, nor on a model its login does not offer.
     let launching = command(node, opened.home.as_deref())?;
     oldest::check(node, &launching).await?;
+    let offering = crate::logins::models::Offering::of(node, opened.home.as_deref())?;
+    if let Some(model) = &options.model {
+        offering.require(model)?;
+    }
     let agent = AgentName::try_from("claude").expect("a valid agent name");
     let (id, _opening) = crate::attachments::opening(node, &agent, &opened.acting, town.as_ref(), &attachments).await?;
     crate::placement::location::speaking(node, &id, typed_on)?;
@@ -2058,6 +2062,14 @@ pub async fn open_here(
     // A login assisting another account starts without the browser of this
     // machine (`background::Start::assisting`), as kept now.
     crate::profile::session::ready(node, &opened.acting).await?;
+    // It starts on a model named in full (`world-gui.md`, 对话): with none
+    // asked for, the account's own choice when the login offers it, else
+    // the login's first.
+    if options.model.is_none() {
+        let profile = crate::profile::session::get(node, &opened.acting);
+        let preferred = profile.claude.get("model").and_then(serde_json::Value::as_str);
+        options.model = offering.starting(preferred);
+    }
     crate::assists::host::starting(node, &id, &opened.acting)?;
     let (words, heard) =
         crate::colleagues::instructions(node, &id, town.as_ref(), &Origin::User, &opened.acting, false).await?;

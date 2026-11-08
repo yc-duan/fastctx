@@ -323,6 +323,13 @@ pub enum RemoteCall {
         dir: std::path::PathBuf,
         on: bool,
     },
+    /// Change the models offered in a Claude Code login there; only for
+    /// those who hold the machine.
+    ChangeAgentModels {
+        agent: AgentName,
+        dir: std::path::PathBuf,
+        change: crate::logins::models::ModelChange,
+    },
     /// What a change of a login there would do; only for the machine's
     /// owner.
     PreviewAgentChange {
@@ -695,6 +702,7 @@ impl RemoteCall {
             | RemoteCall::AgentFolder { .. }
             | RemoteCall::SetAgentTitle { .. }
             | RemoteCall::SetAgentResetInPlace { .. }
+            | RemoteCall::ChangeAgentModels { .. }
             | RemoteCall::PreviewAgentChange { .. }
             | RemoteCall::ChangeAgentLogin { .. }
             | RemoteCall::UpdateWorld

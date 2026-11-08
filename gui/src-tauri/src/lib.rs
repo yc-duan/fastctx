@@ -1313,6 +1313,7 @@ pub fn run() {
             logins::change_agent_login,
             logins::read_agent_limits,
             logins::set_agent_title,
+            logins::change_agent_models,
             logins::set_agent_reset_in_place,
             logins::agent_usage,
             logins::agent_calls,

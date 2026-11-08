@@ -132,8 +132,9 @@ pub fn observed_aliases(directory: &Path) -> io::Result<Option<Vec<String>>> {
         .map(|reading| reading.models.into_iter().map(|model| model.id).collect()))
 }
 
-/// The models each session's login offers, from the aliases its mod observed, attributed by transcript home.
-pub fn models(world: &Path) -> io::Result<Vec<(PathBuf, Timestamp, Vec<fastctx_types::agents::AgentModel>)>> {
+/// The model aliases each session's mod observed its login to offer, with
+/// the session's transcript, which says whose login it is; newest first.
+pub fn aliases(world: &Path) -> io::Result<Vec<(PathBuf, Timestamp, Vec<String>)>> {
     let mut readings = Vec::new();
     let entries = match std::fs::read_dir(sessions(world)) {
         Ok(entries) => entries,
@@ -148,8 +149,7 @@ pub fn models(world: &Path) -> io::Result<Vec<(PathBuf, Timestamp, Vec<fastctx_t
         }
         let Some(transcript) = transcript(&directory)? else { continue };
         let aliases: Vec<String> = reading.models.into_iter().map(|model| model.id).collect();
-        let models = super::models::agent_models(Some(&aliases));
-        readings.push((transcript, reading.at, models));
+        readings.push((transcript, reading.at, aliases));
     }
     readings.sort_by(|(_, a, _), (_, b, _)| b.cmp(a));
     Ok(readings)

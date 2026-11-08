@@ -20697,6 +20697,25 @@
         "machine": "desktop",
         "agent": "codex",
         "dir": "C:/Users/me/.codex"
+      },
+      {
+        "call": "change_agent_models",
+        "machine": "desktop",
+        "agent": "claude",
+        "dir": "/home/me/.claude-work",
+        "change": {
+          "do": "add",
+          "model": "deepseek-flash"
+        }
+      },
+      {
+        "call": "change_agent_models",
+        "machine": "desktop",
+        "agent": "claude",
+        "dir": "/home/me/.claude-work",
+        "change": {
+          "do": "reset"
+        }
       }
     ],
     "replies": [
@@ -20929,6 +20948,14 @@
                     "launcher": {
                       "path": "/home/me/.local/bin/claude",
                       "desktop_app": false
+                    },
+                    "model_edits": {
+                      "removed": [
+                        "claude-haiku-4-5-20251001"
+                      ],
+                      "added": [
+                        "deepseek-flash"
+                      ]
                     },
                     "change": {
                       "into": true,
@@ -21303,6 +21330,14 @@
                 "path": "/home/me/.local/bin/claude",
                 "desktop_app": false
               },
+              "model_edits": {
+                "removed": [
+                  "claude-haiku-4-5-20251001"
+                ],
+                "added": [
+                  "deepseek-flash"
+                ]
+              },
               "change": {
                 "into": true,
                 "started_at": "2026-10-11T12:00:00Z",
@@ -21557,6 +21592,15 @@
         }
       },
       {
+        "call": "change_agent_models",
+        "agent": "claude",
+        "dir": "/home/me/.claude-work",
+        "change": {
+          "do": "remove",
+          "model": "claude-opus-4-6"
+        }
+      },
+      {
         "call": "preview_agent_change",
         "agent": "claude",
         "dir": "/home/me/.claude-work",
@@ -21800,6 +21844,14 @@
               "launcher": {
                 "path": "/home/me/.local/bin/claude",
                 "desktop_app": false
+              },
+              "model_edits": {
+                "removed": [
+                  "claude-haiku-4-5-20251001"
+                ],
+                "added": [
+                  "deepseek-flash"
+                ]
               },
               "change": {
                 "into": true,

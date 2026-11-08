@@ -21,7 +21,7 @@ import { glyph } from "../conversation/glyphs";
 import type { AccountChange, HubAccounts, Login as AccountLogin, PlanLabel } from "../world/accounts";
 import type { WorldNow } from "../world/bridge";
 import type { Folders } from "../world/focus";
-import type { AgentLogins, ChangePreview, FolderChange, Login, LoginChange, MachineLogins, WorldLogins } from "../world/logins";
+import type { AgentLogins, ChangePreview, FolderChange, Login, LoginChange, MachineLogins, ModelChange, WorldLogins } from "../world/logins";
 import type { UsageReport } from "../world/usage";
 import type { AccessWords } from "./account-words";
 import { ActsMenu, type MenuEntry } from "./acts-menu";
@@ -35,6 +35,7 @@ import { AssistSheet, assistChange, assistancesIn, fiveHourWindow, namesOn, type
 import type { Confirm } from "./confirm";
 import { FolderPicker } from "./folder-picker";
 import { redrawKeepingFocus } from "./focus";
+import { LoginModelsSheet } from "./login-models-sheet";
 import { detailOf } from "./problem";
 import { isVisitor } from "./reach";
 import type { Page } from "./shell";
@@ -86,6 +87,8 @@ export interface AgentLoginsOptions {
   /** Codex only: turns naming new conversations in a login on or off. */
   setTitle(machine: string, agent: Agent, dir: string, on: boolean): Promise<MachineLogins>;
   setResetInPlace(machine: string, agent: Agent, dir: string, on: boolean): Promise<MachineLogins>;
+  /** Claude Code only: changes the models a login offers. */
+  changeModels(machine: string, agent: Agent, dir: string, change: ModelChange): Promise<MachineLogins>;
   usageOf(machine: string, agent: Agent, dir: string): Promise<UsageReport>;
   change_(login: AccountLogin, change: AccountChange): Promise<void>;
   confirm: Confirm;
@@ -153,7 +156,8 @@ export class AgentLoginsPage implements Page {
   private drawn = "";
 
   /** The calls that name a machine, as `options` makes them. */
-  private readonly calls: Pick<AgentLoginsOptions, "read" | "scan" | "add" | "folder" | "folders" | "preview" | "change" | "limits" | "setTitle" | "setResetInPlace" | "usageOf">;
+  private readonly calls: Pick<AgentLoginsOptions, "read" | "scan" | "add" | "folder" | "folders" | "preview" | "change" | "limits" | "setTitle" | "setResetInPlace" | "changeModels" | "usageOf">;
+  private readonly modelsSheet: LoginModelsSheet;
 
   constructor(private readonly options: AgentLoginsOptions) {
     // Every call names the machine shown as this computer writes it, its
@@ -173,8 +177,10 @@ export class AgentLoginsPage implements Page {
       limits: (machine, agent, dir) => options.limits(as(machine), agent, dir),
       setTitle: (machine, agent, dir, on) => options.setTitle(as(machine), agent, dir, on),
       setResetInPlace: (machine, agent, dir, on) => options.setResetInPlace(as(machine), agent, dir, on),
+      changeModels: (machine, agent, dir, change) => options.changeModels(as(machine), agent, dir, change),
       usageOf: (machine, agent, dir) => options.usageOf(as(machine), agent, dir),
     };
+    this.modelsSheet = new LoginModelsSheet(options.words);
     const { words } = options;
     this.agent = options.agent;
     this.title = options.agent === "claude" ? words.claude : words.codex;
@@ -700,6 +706,11 @@ export class AgentLoginsPage implements Page {
     const benched = !!record && this.benched(record, login);
     if (benched && found.machine.hold !== "assist") entries.push({ act: "limits", icon: "reread", label: words.rereadLimits });
     entries.push({ act: "copy", icon: "folder", label: words.copyDir });
+    // Those who hold the machine choose the models a connected Claude Code
+    // login offers, where its node can change them.
+    if (this.agent === "claude" && found.machine.mine && login.integration === "in" && login.model_edits) {
+      entries.push({ act: "models", icon: "tune", label: words.models });
+    }
     // Codex names its own conversations when the login's owner asks it to;
     // Claude Code does its own. Only a login the World's tools are in hosts
     // World conversations, so only such a login shows it.
@@ -746,6 +757,20 @@ export class AgentLoginsPage implements Page {
       case "assist":
         this.openAssist(machineName, dir, null);
         return;
+      case "models": {
+        const identity = found.login.identity?.who.kind === "known" ? found.login.identity.who.value : null;
+        this.modelsSheet.open({
+          title: options.words.modelsOf(identity?.email ?? dirName(dir)),
+          login: found.login,
+          change: async (change) => {
+            const asked = readerNow();
+            const record = await this.calls.changeModels(machineName, "claude", dir, change);
+            this.took(record, asked);
+            return record;
+          },
+        });
+        return;
+      }
       case "limits":
         await this.quietly(null, key, () => this.calls.limits(machineName, this.agent, dir));
         return;
@@ -870,6 +895,20 @@ export class AgentLoginsPage implements Page {
     }, FRESH_MS);
   }
 
+  /** Shows the record a change was answered with, for the reader `asked`
+   *  it was made for; a read begun before it must not undo it. */
+  private took(record: MachineLogins, asked: string): void {
+    if (this.left || readerNow() !== asked) return;
+    this.readRevision += 1;
+    this.reading = null;
+    keepRecord(record, asked);
+    if (this.current(this.options.store.world.peek()).machine?.name === record.machine) {
+      this.record = record;
+      this.problem = null;
+      this.draw();
+    }
+  }
+
   /** Does `act`, says on the machine or row what went wrong if it did,
    *  and reads the record again. */
   private async quietly(button: HTMLButtonElement | null, key: string, act: () => Promise<MachineLogins | void>): Promise<boolean> {
@@ -883,17 +922,7 @@ export class AgentLoginsPage implements Page {
       const record = await act();
       saved = true;
       if (this.left || readerNow() !== asked) return true;
-      // A read begun before this acknowledgement must not undo it.
-      this.readRevision += 1;
-      this.reading = null;
-      if (record) {
-        keepRecord(record, asked);
-        if (this.current(this.options.store.world.peek()).machine?.name === record.machine) {
-          this.record = record;
-          this.problem = null;
-          this.draw();
-        }
-      }
+      if (record) this.took(record, asked);
     } catch (error) {
       if (!this.left && readerNow() === asked) this.notes.set(key, { text: this.options.words.failed, detail: detailOf(error) });
     } finally {

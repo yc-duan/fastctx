@@ -7,7 +7,8 @@
 // becomes a candidate; what a search found is taken up as a candidate.
 // Times are told from `at`, the specimen's own morning.
 
-import type { AgentLogins, ChangeCard, ChangePreview, Folder, FolderChange, FoundIn, Login, LoginChange, MachineLogins, WorldLogins } from "../world/logins";
+import type { AgentModel } from "../world/agents";
+import type { AgentLogins, ChangeCard, ChangePreview, Folder, FolderChange, FoundIn, Login, LoginChange, MachineLogins, ModelChange, ModelEdits, WorldLogins } from "../world/logins";
 import type { DiffLine } from "../world/run-facts";
 import { specimenLimits } from "./usage";
 
@@ -74,6 +75,20 @@ let scanUntil = 0;
  *  toggle sets: naming is on unless turned off. */
 const untitled = new Set<string>();
 const resetting = new Set<string>();
+/** The World's table of Claude models (`fastctx-hosts`, claude/models.rs)
+ *  as the specimen's node offers it, and what its holders changed in each
+ *  Claude Code login's models; `?modelsEdited` opens on a changed list. */
+const CLAUDE_TABLE: [string, string, string][] = [
+  ["claude-opus-5-5", "Opus 5.5", "medium"],
+  ["claude-fable-5-1", "Fable 5.1", "high"],
+  ["claude-sonnet-5-5", "Sonnet 5.5", "medium"],
+  ["claude-sonnet-5", "Sonnet 5", "high"],
+  ["claude-opus-5", "Opus 5", "high"],
+  ["claude-haiku-5-5", "Haiku 5.5", "medium"],
+];
+const modelEdits = new Map<string, ModelEdits>(
+  new URLSearchParams(location.search).has("modelsEdited") ? [["C:\\Users\\me\\.claude", { removed: ["claude-opus-5"], added: ["deepseek-flash", "claude-opus-5-6"] }]] : [],
+);
 /** The logins the workbench is open in, as opening and closing it set. */
 const benches = new Set<string>(["C:\\Users\\me\\.codex"]);
 /** When the laptop was scanned, finding nothing; never, at first. */
@@ -113,7 +128,28 @@ function desktop(now: number): MachineLogins {
   for (const side of [record.codex, record.claude]) {
     side.listed = side.listed.map((login) => ({ ...login, ...(benches.has(login.dir) ? { workbench: true } : {}), ...(resetting.has(login.dir) ? { reset_in_place: true } : {}) }));
   }
+  record.claude.listed = record.claude.listed.map((login) => ({ ...login, ...claudeModels(login.dir) }));
   return { ...record, by_login: true, others: otherAgents() };
+}
+
+/** A Claude Code login's models as its node offers them: the table less
+ *  the rows taken out, then the ids added, with no efforts. */
+function claudeModels(dir: string): Pick<Login, "models" | "model_edits"> {
+  const edits = modelEdits.get(dir) ?? {};
+  const efforts = ["low", "medium", "high", "xhigh", "max"].map((effort) => ({ effort, description: "" }));
+  const rows: AgentModel[] = CLAUDE_TABLE.filter(([id]) => !(edits.removed ?? []).includes(id)).map(([id, name, effort]) => ({
+    id,
+    model: id,
+    display_name: name,
+    description: "",
+    is_default: false,
+    default_reasoning_effort: effort,
+    reasoning_efforts: efforts,
+    context_window: 1_000_000,
+    max_context_window: 1_000_000,
+  }));
+  const added: AgentModel[] = (edits.added ?? []).map((id) => ({ id, model: id, display_name: id, description: "", is_default: false, default_reasoning_effort: "", reasoning_efforts: [] }));
+  return { models: [...rows, ...added].map((model, at) => ({ ...model, is_default: at === 0 })), model_edits: edits };
 }
 
 /** The other agents a node with their adapters finds on the desktop, as it
@@ -332,6 +368,31 @@ export function specimenSetResetInPlace(machine: string, agent: string, dir: str
   return saveSetting(() => {
     if (on) resetting.add(dir);
     else resetting.delete(dir);
+  });
+}
+
+/** Changes a Claude Code login's models in the specimen, as its node would:
+ *  never to none. */
+export function specimenChangeModels(machine: string, agent: string, dir: string, change: ModelChange, at: Date): Promise<MachineLogins> {
+  void machine;
+  void agent;
+  base = at.getTime();
+  return saveSetting(() => {
+    const before = modelEdits.get(dir) ?? {};
+    const edits = { removed: [...(before.removed ?? [])], added: [...(before.added ?? [])] };
+    if (change.do === "reset") {
+      modelEdits.delete(dir);
+      return;
+    }
+    const inTable = CLAUDE_TABLE.some(([id]) => id === change.model);
+    if (change.do === "add") {
+      if (inTable) edits.removed = edits.removed.filter((id) => id !== change.model);
+      else if (!edits.added.includes(change.model)) edits.added.push(change.model);
+    } else if (inTable) {
+      if (!edits.removed.includes(change.model)) edits.removed.push(change.model);
+    } else edits.added = edits.added.filter((id) => id !== change.model);
+    if (CLAUDE_TABLE.length - edits.removed.length + edits.added.length < 1) throw new Error("a login offers at least one model; add another before taking this one out");
+    modelEdits.set(dir, edits);
   });
 }
 

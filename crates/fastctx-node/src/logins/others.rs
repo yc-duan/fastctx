@@ -128,6 +128,7 @@ pub(super) fn side(
             reset_in_place: false,
             launcher: None,
             models: Vec::new(),
+            model_edits: None,
             change: change_of(changes, agent, &dir),
             drift: if connected { super::refresh::of(node, agent.name, &dir) } else { None },
             workbench: false,

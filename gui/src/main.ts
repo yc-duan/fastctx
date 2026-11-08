@@ -30,6 +30,7 @@ import "./app/accounts.css";
 import "./app/me.css";
 import "./app/when.css";
 import "./app/assist.css";
+import "./app/login-models.css";
 import "./app/machines.css";
 import "./app/machine-framed.css";
 import "./app/machine-list.css";
@@ -97,7 +98,7 @@ import { ServerLists } from "./app/mcp-switches";
 import { enAgentChange, zhAgentChange } from "./app/agent-change";
 import "./app/agent-logins.css";
 import "./app/disclose.css";
-import { specimenChange as specimenLoginChange, specimenFolder, specimenLogins, specimenPreview, specimenScan, specimenSetResetInPlace, specimenSetTitle, specimenTakeUp } from "./specimen/logins";
+import { specimenChange as specimenLoginChange, specimenChangeModels, specimenFolder, specimenLogins, specimenPreview, specimenScan, specimenSetResetInPlace, specimenSetTitle, specimenTakeUp } from "./specimen/logins";
 import { TalksPage, enTalks, zhTalks } from "./app/talks";
 import { FeaturesPage } from "./app/features";
 import { workbenchShown } from "./app/workbench-shown";
@@ -272,6 +273,7 @@ import {
   readAgentLimits,
   setAgentTitle,
   setAgentResetInPlace,
+  changeAgentModels,
   scanAgents,
   control,
   offers,
@@ -3029,6 +3031,7 @@ function show(next: Place): void {
         limits: (machine, agent, dir) => (live ? readAgentLimits(machine, agent, dir) : notLive()),
         setTitle: (machine, agent, dir, on) => (live ? setAgentTitle(machine, agent, dir, on) : specimenSetTitle(machine, agent, dir, on, specimen.now)),
         setResetInPlace: (machine, agent, dir, on) => (live ? setAgentResetInPlace(machine, agent, dir, on) : specimenSetResetInPlace(machine, agent, dir, on, specimen.now)),
+        changeModels: (machine, agent, dir, change) => (live ? changeAgentModels(machine, agent, dir, change) : specimenChangeModels(machine, agent, dir, change, specimen.now)),
         usageOf: (machine, agent, dir) => (live ? agentUsage(machine, agent, dir) : specimenUsage(machine, agent, dir, specimen.now)),
         change_: change,
         confirm: accountConfirm,

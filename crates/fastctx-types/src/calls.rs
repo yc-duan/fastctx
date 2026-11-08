@@ -573,6 +573,15 @@ pub enum Call {
         dir: std::path::PathBuf,
         on: bool,
     },
+    /// Changes the models the World offers in the Claude Code login `dir` on
+    /// `machine`; changed by whoever may manage the login, offered to
+    /// everyone who uses it, those it assists too (`world-gui.md`, 对话).
+    ChangeAgentModels {
+        machine: Written,
+        agent: AgentName,
+        dir: std::path::PathBuf,
+        change: crate::logins::models::ModelChange,
+    },
     /// What putting the World's tools into a login on `machine` (`into`),
     /// or taking them out, would change, with nothing written; with
     /// `take_back`, what the user changed of them is rewritten too.

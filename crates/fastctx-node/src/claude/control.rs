@@ -73,6 +73,18 @@ pub async fn control(node: &Arc<Node>, resident: &ResidentId, control: Control) 
     if let Control::Answer { request, answer } = control {
         return answer_request(node, resident, request, answer).await;
     }
+    // The model is one its login offers, as those who hold it listed them.
+    if let Control::Model { model: Some(model), .. } = &control {
+        let aliases = match &about.session {
+            Some(session) => fastctx_hosts::claude::exchange::observed_aliases(
+                &fastctx_hosts::claude::exchange::sessions(node.world.path()).join(session),
+            )
+            .map_err(failure)?,
+            None => None,
+        };
+        let edits = crate::logins::models::edits_of(node, about.home.as_deref())?;
+        crate::logins::models::Offering { aliases, edits }.require(model)?;
+    }
     // What has the model work in a session between turns, a compaction or a
     // skill, takes a turn of its login, as words do (`turn_slots`), before
     // the session is woken for it.
@@ -185,9 +197,11 @@ pub async fn offers(node: &Arc<Node>, resident: &ResidentId) -> Result<Offers, F
     let mut offers = if let Ok(mut offers) = asked {
         super::catalog::keep(node, resident, &offers)?;
         // The mod lists the aliases this login's Claude Code offers; the
-        // World offers its own table's rows of those families.
+        // World offers its own table's rows of those families, as those who
+        // hold the login changed them.
         let aliases: Vec<String> = offers.models.drain(..).map(|model| model.id).collect();
-        offers.models = fastctx_hosts::claude::models::model_offers(Some(&aliases));
+        let edits = crate::logins::models::edits_of(node, about.home.as_deref())?;
+        offers.models = fastctx_hosts::claude::models::model_offers(Some(&aliases), &edits);
         if !offers.controls.contains(&ControlKind::Model) {
             offers.controls.push(ControlKind::Model);
         }
@@ -259,7 +273,10 @@ pub async fn offers(node: &Arc<Node>, resident: &ResidentId) -> Result<Offers, F
                 .and_then(|value| value["effort"].as_str())
                 .map(str::to_owned)
                 .or(initial.reasoning_effort),
-            models: fastctx_hosts::claude::models::model_offers(aliases.as_deref()),
+            models: fastctx_hosts::claude::models::model_offers(
+                aliases.as_deref(),
+                &crate::logins::models::edits_of(node, about.home.as_deref())?,
+            ),
             ..Default::default()
         }
     };

@@ -86,6 +86,16 @@ pub(super) struct KeptAgent {
     /// kept apart from the login list as well.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub workbench: Vec<PathBuf>,
+    /// What those who hold the machine changed in each login's models
+    /// (`super::models`), kept apart from the login list as well.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub models: Vec<KeptModels>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub(super) struct KeptModels {
+    pub dir: PathBuf,
+    pub edits: fastctx_types::logins::models::ModelEdits,
 }
 
 /// What a login's agent said when last asked. Which program the login

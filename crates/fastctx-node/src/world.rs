@@ -994,6 +994,7 @@ impl fastctx_net::link::Node for Handler {
                     | RemoteCall::AgentFolder { .. }
                     | RemoteCall::SetAgentTitle { .. }
                     | RemoteCall::SetAgentResetInPlace { .. }
+                    | RemoteCall::ChangeAgentModels { .. }
                     | RemoteCall::PreviewAgentChange { .. }
                     | RemoteCall::ChangeAgentLogin { .. }
                     | RemoteCall::ReadAgentLimits { .. }
