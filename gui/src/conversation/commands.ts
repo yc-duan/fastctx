@@ -106,6 +106,14 @@ export function commandsOf(offers: Offers | null, words: CommandWords, moving = 
   return [...world, ...skills, ...own.filter((command) => command.path || !standing.has(command.name))];
 }
 
+/** A command typed at the head of the words: `/NAME`, the name of letters,
+ *  digits, `-`, `_` and `:` as the hosts write theirs, then its arguments.
+ *  Words that begin with a path, such as `/Users/me/notes.md`, are words. */
+export function commandTyped(text: string): { name: string; args: string } | null {
+  const typed = /^\/([A-Za-z0-9_:-]+)(?:\s+([\s\S]*))?$/.exec(text);
+  return typed ? { name: typed[1]!, args: (typed[2] ?? "").trim() } : null;
+}
+
 /** What runs for `/name args`: the World's control, unless words follow that
  *  it takes none of and the host's command of that name takes them. */
 export function commandFor(commands: MenuCommand[], name: string, args: string): MenuCommand | null {

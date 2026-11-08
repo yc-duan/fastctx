@@ -19,7 +19,7 @@ import { NodeQueue } from "./node-queue";
 import { ControlQueue, controlName } from "./control-queue";
 import type { PendingControl } from "../world/control";
 import { NodeTray, type AssistantFiles } from "./node-tray";
-import { Menu, commandFor, commandRow, commandsOf, isSkill, usageOf, type MenuCommand } from "./commands";
+import { Menu, commandFor, commandRow, commandTyped, commandsOf, isSkill, usageOf, type MenuCommand } from "./commands";
 import { ModelPanel, enModelPanel, zhModelPanel } from "./model-panel";
 import { effortLabel } from "./effort-slider";
 import { fileRow, mentionAt, mentioned, type FileWords, type FoundFile } from "./mention";
@@ -1334,8 +1334,9 @@ export class ConversationPage {
       if (this.options.conversation.busy()) this.stop();
       return;
     }
-    if (this.options.controls && text.startsWith("/")) {
-      void this.typedCommand(text);
+    const command = this.options.controls ? commandTyped(text) : null;
+    if (command) {
+      void this.typedCommand(command.name, command.args);
       return;
     }
     // What the last command did is behind the conversation now.
@@ -1776,12 +1777,10 @@ export class ConversationPage {
    *  Where the page has not read what it offers yet, or what it read names
    *  no such command, it is read again first; a command is never sent on
    *  to the agent as words. */
-  private async typedCommand(text: string): Promise<void> {
+  private async typedCommand(name: string, args: string): Promise<void> {
     const controls = this.options.controls!;
-    const space = text.indexOf(" ");
-    const name = (space < 0 ? text.slice(1) : text.slice(1, space)).trim();
-    const args = space < 0 ? "" : text.slice(space + 1).trim();
-    const find = (moving: boolean) => commandFor(commandsOf(this.offered, controls.words.commands, moving, this.side?.goals ?? false), name, args);
+    const listed = (moving: boolean) => commandsOf(this.offered, controls.words.commands, moving, this.side?.goals ?? false);
+    const find = (moving: boolean) => commandFor(listed(moving), name, args);
     if (!find(this.options.conversation.moving())) await this.askOffers();
     if (this.left) return;
     if (!this.offered) {
@@ -1796,6 +1795,14 @@ export class ConversationPage {
     if (command) {
       this.clear();
       void this.run(command, args);
+      return;
+    }
+    // One of the account's skills written out by name is asked for in words.
+    if (listed(false).some((one) => one.account && one.name === name)) {
+      const words = `$${name}${args ? ` ${args}` : ""}`;
+      if (this.session) this.setWords(words);
+      else this.input.value = words;
+      this.submit();
       return;
     }
     // One that waits for the turn is named as waiting, not unknown.
@@ -2034,7 +2041,7 @@ export class ConversationPage {
     const menu = this.commandMenu;
     if (!menu || !this.options.controls) return;
     // With a chip picked the words are its own, a leading `/` among them.
-    const typed = this.picked ? null : /^\/(\S*)$/.exec(this.input.value);
+    const typed = this.picked ? null : /^\/([A-Za-z0-9_:-]*)$/.exec(this.input.value);
     if (!typed) return menu.hide();
     const prefix = typed[1]!.toLowerCase();
     const found = commandsOf(this.offered, this.options.controls.words.commands, this.options.conversation.moving(), this.side?.goals ?? false).filter((command) =>
