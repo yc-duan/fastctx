@@ -95,7 +95,8 @@ Answer with one of:
 {"sound": false, "looked": "...", "saw": "...", "thinks": "..."}"#;
 pub const READ_FILE: &str = "Read a file on one of the user's machines: whole, its last lines (tail), or the lines that \
      hold some words (matching). Paths are absolute, as that machine writes them (C:/… on Windows). Files that \
-     hold credentials, a World's own files and the kernel's are not read.";
+     hold credentials, a World's own files and the kernel's are not read; a job's output, kept among the World's \
+     files, is read with job_output.";
 pub const LIST_DIRECTORY: &str =
     "List a directory on one of the user's machines: each entry's name, kind, size and when it last changed.";
 pub const PROCESSES: &str = "See the processes running on one of the user's machines, those holding the most memory \
