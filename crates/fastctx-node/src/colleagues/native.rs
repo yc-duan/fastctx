@@ -1,5 +1,7 @@
 //! Build native-agent trees from existing host facts and child histories.
 
+mod history;
+
 use crate::Node;
 use fastctx_types::{
     ResidentId,
@@ -229,11 +231,26 @@ pub(super) struct Read {
     pub(super) unavailable: Vec<String>,
     pub(super) events: Option<crate::watch::Events>,
     pub(super) goal_changed: bool,
+    history: history::History,
+    history_seen: bool,
 }
 
 impl Read {
     pub(super) fn reading(&self) -> bool {
-        self.events.is_none() || self.fold.agents.values().any(|kept| kept.agent.reading)
+        self.history.incomplete() || self.agents_reading()
+    }
+
+    pub(super) fn agents_reading(&self) -> bool {
+        self.fold.agents.values().any(|kept| kept.agent.reading)
+    }
+
+    pub(super) fn history_again(&self) -> Option<Instant> {
+        self.history.again()
+    }
+
+    pub(super) fn lost(&mut self) {
+        self.events = None;
+        self.history.lost();
     }
 
     pub(super) fn event(&mut self, event: &SessionEvent) {
@@ -247,7 +264,7 @@ impl Read {
                 Ok(event) => self.event(&event),
                 Err(fastctx_net::watch_queue::TryRecvError::Empty) => break,
                 Err(_) => {
-                    self.events = None;
+                    self.lost();
                     break;
                 }
             }
@@ -264,28 +281,52 @@ pub(super) async fn open(
 ) -> Read {
     progress(&read.fold, &read.unavailable, true);
     read.drain();
-    // A healthy stream already covers the parent history. Only an initial
-    // read or a lost stream needs that history rebuilt.
-    if read.events.is_none() {
+    // Catching up the parent history has its own backoff. Its old stream
+    // continues delivering events until a complete replacement is ready.
+    if read.history.due() {
         read.fold.recent = false;
-        match tokio::time::timeout_at(deadline, crate::talk::history_quietly(node, id)).await {
+        let history = tokio::time::timeout_at(deadline, crate::talk::history_quietly(node, id));
+        tokio::pin!(history);
+        let result = loop {
+            tokio::select! {
+                result = &mut history => break result,
+                event = async { read.events.as_mut().expect("stream present").recv().await }, if read.events.is_some() => {
+                    match event {
+                        Ok(Some(event)) => read.event(&event),
+                        Ok(None) | Err(_) => read.lost(),
+                    }
+                }
+            }
+        };
+        match result {
             Ok(Ok(history)) => {
+                let reconnecting = read.events.is_none();
                 read.fold = folded(read.fold, history.history, None).await;
-                read.unavailable.clear();
-                read.goal_changed = true;
-                read.events = (!history.unread).then_some(history.events);
+                read.unavailable = history.unavailable;
+                read.goal_changed |= reconnecting && read.history_seen;
+                read.history_seen = true;
+                if reconnecting || !history.unread {
+                    read.events = Some(history.events);
+                }
                 read.drain();
-                for kept in read.fold.agents.values_mut() {
-                    if !kept.ended() {
-                        kept.agent.reading = true;
+                if history.unsettled || read.events.is_none() {
+                    read.history.retry();
+                } else {
+                    read.history.settled();
+                }
+                if reconnecting {
+                    for kept in read.fold.agents.values_mut() {
+                        if !kept.ended() {
+                            kept.agent.reading = true;
+                        }
                     }
                 }
             }
             Ok(Err(error)) => {
                 read.unavailable = vec![error.message];
-                return read;
+                read.history.settled();
             }
-            Err(_) => return read,
+            Err(_) => read.history.retry(),
         }
     }
     progress(&read.fold, &read.unavailable, read.reading());
@@ -306,7 +347,7 @@ pub(super) async fn open(
                 event = async { read.events.as_mut().expect("stream present").recv().await }, if read.events.is_some() => {
                     match event {
                         Ok(Some(event)) => read.event(&event),
-                        Ok(None) | Err(_) => read.events = None,
+                        Ok(None) | Err(_) => read.lost(),
                     }
                 }
             }

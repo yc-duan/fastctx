@@ -280,6 +280,10 @@ pub(crate) struct HistoryRead {
     /// Some record the history is read from could not be read now: this is
     /// not the history as its files hold it, and is not to be kept as such.
     pub unread: bool,
+    /// The host has not written all it reported keeping yet.
+    pub unsettled: bool,
+    /// Actual history-read problems, distinct from records still being written.
+    pub unavailable: Vec<String>,
     /// For a read heard apart (`history_apart`): what was under way as its
     /// events began, and the mark of the last event told before them.
     pub snapshots: Vec<Arc<crate::watch::Marked>>,
@@ -386,6 +390,8 @@ async fn read_here(node: &Arc<Node>, resident: &ResidentId, hearing: Hearing) ->
     }
     let owner = Address { machine: node.machine(), resident: resident.clone() };
     let mut unread = false;
+    let mut unsettled = false;
+    let mut unavailable = Vec::new();
     // A session the user opened, or one in a login the workbench is closed
     // in, has its host neither started nor read: the conversation reads as
     // the World recorded it.
@@ -424,9 +430,11 @@ async fn read_here(node: &Arc<Node>, resident: &ResidentId, hearing: Hearing) ->
                 })
                 .collect();
             recorded.retain(|event| turn_of(&event.happened).is_none_or(|turn| !removed.contains(turn)));
-            let (hosted, missing) = crate::claude::history::hosted(node, resident, &recorded).await;
-            unread = missing;
-            (recorded, Some(hosted))
+            let hosted = crate::claude::history::hosted(node, resident, &recorded).await;
+            unread = hosted.unread;
+            unsettled = hosted.unsettled;
+            unavailable = hosted.unavailable;
+            (recorded, Some(hosted.events))
         }
         _ => (recorded(&directory).await?, None),
     };
@@ -468,7 +476,7 @@ async fn read_here(node: &Arc<Node>, resident: &ResidentId, hearing: Hearing) ->
         }
         _ => Vec::new(),
     };
-    Ok(HistoryRead { history, pending, events, unread, snapshots, at })
+    Ok(HistoryRead { history, pending, events, unread, unsettled, unavailable, snapshots, at })
 }
 
 /// A session's history: what the World kept of it, and what its host keeps

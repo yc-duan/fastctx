@@ -141,14 +141,25 @@ impl Native {
 
     /// Waits for the next event and folds it in.
     async fn next(&mut self) -> Next {
-        let reading = self.read.reading();
+        let history = self.read.history_again();
+        let again = if self.read.agents_reading() {
+            Some(history.map_or(self.again, |at| at.min(self.again)))
+        } else {
+            history
+        };
+        let wait = async {
+            match again {
+                Some(at) => tokio::time::sleep_until(at).await,
+                None => std::future::pending().await,
+            }
+        };
         let Some(events) = &mut self.read.events else {
-            tokio::time::sleep_until(self.again).await;
+            wait.await;
             return Next::Read;
         };
         let event = tokio::select! {
             event = events.recv() => event,
-            () = tokio::time::sleep_until(self.again), if reading => return Next::Read,
+            () = wait => return Next::Read,
         };
         match event {
             Ok(Some(event)) => {
@@ -156,7 +167,7 @@ impl Native {
                 Next::Folded { goal: std::mem::take(&mut self.read.goal_changed) }
             }
             Ok(None) | Err(_) => {
-                self.read.events = None;
+                self.read.lost();
                 Next::Read
             }
         }
@@ -169,7 +180,7 @@ impl Native {
                 Ok(event) => self.read.event(&event),
                 Err(TryRecvError::Empty) => break,
                 Err(TryRecvError::Lagged | TryRecvError::Disconnected) => {
-                    self.read.events = None;
+                    self.read.lost();
                     return Next::Read;
                 }
             }

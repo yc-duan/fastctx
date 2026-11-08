@@ -29,12 +29,19 @@ const WRITTEN_WITHIN: Duration = Duration::from_secs(10);
 /// it is given up, each a little later than the one before.
 const OVERTAKEN_MOST: u32 = 10;
 
+pub(crate) struct Read {
+    pub events: Vec<SessionEvent>,
+    pub unread: bool,
+    pub unsettled: bool,
+    pub unavailable: Vec<String>,
+}
+
 /// What Claude Code kept of the resident's sessions, oldest first, placed
 /// in the World's turns of `recorded` where the World saw them happen; and
 /// whether some session or its record could not be read, so that this
 /// reading is not the history as its files hold it. A record that holds a
 /// line it cannot make out reads the same each time, and is no such failure.
-pub async fn hosted(node: &Arc<Node>, resident: &ResidentId, recorded: &[SessionEvent]) -> (Vec<SessionEvent>, bool) {
+pub(crate) async fn hosted(node: &Arc<Node>, resident: &ResidentId, recorded: &[SessionEvent]) -> Read {
     let root = exchange::sessions(node.world.path());
     let (sessions, problems) = {
         let (reading, whose) = (node.clone(), resident.clone());
@@ -43,7 +50,9 @@ pub async fn hosted(node: &Arc<Node>, resident: &ResidentId, recorded: &[Session
     // A session that could not be told for a failed read may be one of its
     // own, missing from this reading.
     let mut unread = !problems.is_empty();
-    let mut events: Vec<_> = problems.into_iter().map(|problem| note(Timestamp::now(), problem)).collect();
+    let mut unsettled = false;
+    let mut unavailable = problems;
+    let mut events: Vec<_> = unavailable.iter().map(|problem| note(Timestamp::now(), problem.clone())).collect();
     // A session the conversation continued in shows what it copied from an
     // earlier one only there (`continuing`): by the ids of their records.
     let mut earlier = HashSet::new();
@@ -60,6 +69,7 @@ pub async fn hosted(node: &Arc<Node>, resident: &ResidentId, recorded: &[Session
                     // Read before it held all its mod saw kept: read again next
                     // time, not kept.
                     unread |= !whole;
+                    unsettled |= !whole;
                     // The title belongs to the session, so it takes the session's
                     // time: read again, the history reads the same.
                     if let Some(title) = read.title {
@@ -75,17 +85,25 @@ pub async fn hosted(node: &Arc<Node>, resident: &ResidentId, recorded: &[Session
                             read.problems.len(),
                             read.problems.join("; ")
                         );
-                        events.push(note(began, text));
+                        events.push(note(began, text.clone()));
+                        unavailable.push(text);
                     }
                 }
                 Err(why) => {
                     unread = true;
-                    events.push(note(began, format!("Claude Code's record of session {id}: {why}")));
+                    let text = format!("Claude Code's record of session {id}: {why}");
+                    events.push(note(began, text.clone()));
+                    unavailable.push(text);
                 }
             }
         });
     }
-    (fastctx_platform::roles::in_place("placing Claude history", || place(events, recorded)), unread)
+    Read {
+        events: fastctx_platform::roles::in_place("placing Claude history", || place(events, recorded)),
+        unread,
+        unsettled,
+        unavailable,
+    }
 }
 
 /// What `hosted` would read, as cheaply as it can be told: the sessions the
