@@ -101,33 +101,26 @@ fn words(line: &str) -> Vec<(&str, &str)> {
     found
 }
 
-/// One argument as it is shown, and how many words after it are secrets. A
-/// quoted argument holding several words, a script handed to a shell, is
-/// itself a command line.
+/// One argument as it is shown, and how many words after it are secrets: a
+/// secret's name and its value, whole however many words the value holds,
+/// are judged first; past that, a quoted argument holding several words, a
+/// script handed to a shell, is itself a command line.
 fn argument(word: &str, depth: u8) -> (String, usize) {
     let quote = word.chars().next().filter(|first| *first == '"' || *first == '\'');
-    if let Some(quote) = quote
-        && depth < NESTED
-        && word.len() > 1
-        && word.ends_with(quote)
-        && word[1..word.len() - 1].contains(char::is_whitespace)
-    {
-        return (format!("{quote}{}{quote}", within(&word[1..word.len() - 1], depth + 1)), 0);
-    }
     let closed = |shown: String| match quote {
         Some(quote) if word.len() > 1 && word.ends_with(quote) => format!("{shown}{quote}"),
         _ => shown,
     };
     if let Some((name, _)) = word.split_once('=')
         && secret_name(name)
-        && !name.contains(':')
+        && !name.contains([':', ' ', '\t'])
     {
         return (closed(format!("{name}={HIDDEN}{}", ending(word))), 0);
     }
     let bare = unquoted(word);
     if let Some((name, value)) = bare.split_once(':')
         && !name.is_empty()
-        && !name.contains(['/', ' '])
+        && !name.contains(['/', ' ', '\t'])
         && secret_name(name)
         && !value.starts_with("//")
     {
@@ -137,6 +130,14 @@ fn argument(word: &str, depth: u8) -> (String, usize) {
             return (closed(format!("{opened}{name}:")), 1);
         }
         return (closed(format!("{opened}{name}: {HIDDEN}")), 0);
+    }
+    if let Some(quote) = quote
+        && depth < NESTED
+        && word.len() > 1
+        && word.ends_with(quote)
+        && word[1..word.len() - 1].contains(char::is_whitespace)
+    {
+        return (format!("{quote}{}{quote}", within(&word[1..word.len() - 1], depth + 1)), 0);
     }
     if bare.starts_with('-') && secret_name(bare) {
         return (word.to_string(), 1);

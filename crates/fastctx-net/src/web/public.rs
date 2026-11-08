@@ -42,6 +42,9 @@ pub async fn get(url: &str, accept: &str) -> Result<Response, Failure> {
         if mixed || addresses.iter().any(|address| !is_public(address.ip()) && !fake(address.ip())) {
             return Err(Failure::from("web destination is not public"));
         }
+        if fakes > 0 && !fake_resolver().await {
+            return Err(Failure::from("web destination is not public"));
+        }
         let unseen = written.is_none() && (addresses.is_empty() || fakes > 0);
         if unseen {
             if local_name(host) {
@@ -98,6 +101,17 @@ fn local_name(host: &str) -> bool {
     ];
     let host = host.trim_end_matches('.').to_ascii_lowercase();
     !host.contains('.') || LOCAL.iter().any(|suffix| host.ends_with(suffix))
+}
+
+/// Whether this machine's resolver is a fake-ip proxy's, which answers every
+/// name from its block: `example.com`, which no network keeps a name of its
+/// own for, is answered from it too. Otherwise an answer in that block is a
+/// local network's own host, as a lab may number one.
+async fn fake_resolver() -> bool {
+    tokio::net::lookup_host(("example.com", 443)).await.is_ok_and(|found| {
+        let found: Vec<_> = found.collect();
+        !found.is_empty() && found.iter().all(|address| fake(address.ip()))
+    })
 }
 
 /// Whether `ip` is in the block set aside for benchmarking networks

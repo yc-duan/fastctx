@@ -77,7 +77,10 @@ pub(super) fn output(
     let text = match errors {
         None => output,
         Some(errors) => {
-            let (output, errors) = (last_of(&output, MOST_BYTES / 2), last_of(&errors, MOST_BYTES / 2));
+            // Each within half of what a look shows, the line break it may
+            // gain counted.
+            let half = MOST_BYTES / 2 - 1;
+            let (output, errors) = (last_of(&output, half), last_of(&errors, half));
             let first = output.lines().count() + 1;
             notes.push(format!("from line {first} on, what it wrote to its errors"));
             format!("{output}{errors}")
