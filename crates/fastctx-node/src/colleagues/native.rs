@@ -19,6 +19,12 @@ struct Kept {
     parent: Option<String>,
     observed: Option<Timestamp>,
 }
+
+impl Kept {
+    fn ended(&self) -> bool {
+        matches!(self.agent.state.as_deref(), Some("completed" | "failed" | "interrupted" | "killed" | "stopped"))
+    }
+}
 /// How many of the latest calls a followed conversation keeps the start of:
 /// an agent's start is told with the call that started it, so only a recent
 /// call is still looked for once the history has been read.
@@ -40,7 +46,7 @@ pub(super) struct Fold {
 impl Fold {
     fn entry(&mut self, id: &str) -> &mut Kept {
         self.agents.entry(id.into()).or_insert_with(|| Kept {
-            agent: NativeAgent { id: id.into(), ..Default::default() },
+            agent: NativeAgent { id: id.into(), reading: true, ..Default::default() },
             ..Default::default()
         })
     }
@@ -83,10 +89,14 @@ impl Fold {
                     self.call((parent.map(str::to_string), item.id.clone()), started);
                 }
             }
-            Happened::TurnStarted { .. } if live && parent.is_some() => {
+            Happened::TurnStarted { .. } if parent.is_some() => {
                 let kept = self.entry(parent.expect("matched"));
                 if kept.observed.is_none_or(|old| old <= at) {
-                    kept.agent.state = Some("running".into());
+                    // A historical start does not prove it still runs, but
+                    // does supersede the completion of an earlier turn.
+                    kept.agent.state = live.then(|| "running".into());
+                    kept.agent.ended_at = None;
+                    kept.agent.duration_ms = None;
                     kept.observed = Some(at);
                 }
             }
@@ -207,113 +217,136 @@ pub(super) async fn read(
     id: &ResidentId,
     deadline: Instant,
 ) -> (Vec<NativeAgent>, Vec<String>, bool) {
-    let read = open(node, id, deadline, Fold::default(), |_, _, _| {}).await;
-    (read.fold.finish(), read.unavailable, read.reading)
+    let read = open(node, id, deadline, Read::default(), |_, _, _| {}).await;
+    let reading = read.reading();
+    (read.fold.finish(), read.unavailable, reading)
 }
 
-/// A conversation's native agents as read now, what could not be read of
-/// them, and the conversation's events from then on, when its history was
-/// read.
+/// The folded history, its live stream, and which agents still need a read.
+#[derive(Default)]
 pub(super) struct Read {
     pub(super) fold: Fold,
     pub(super) unavailable: Vec<String>,
     pub(super) events: Option<crate::watch::Events>,
-    pub(super) reading: bool,
+    pub(super) goal_changed: bool,
+}
+
+impl Read {
+    pub(super) fn reading(&self) -> bool {
+        self.events.is_none() || self.fold.agents.values().any(|kept| kept.agent.reading)
+    }
+
+    pub(super) fn event(&mut self, event: &SessionEvent) {
+        self.fold.event(&event.happened, event.at, None, true);
+        self.goal_changed |= crate::goals::watch::is_goal(event);
+    }
+
+    fn drain(&mut self) {
+        while let Some(events) = &mut self.events {
+            match events.try_recv() {
+                Ok(event) => self.event(&event),
+                Err(fastctx_net::watch_queue::TryRecvError::Empty) => break,
+                Err(_) => {
+                    self.events = None;
+                    break;
+                }
+            }
+        }
+    }
 }
 
 pub(super) async fn open(
     node: &Arc<Node>,
     id: &ResidentId,
     deadline: Instant,
-    mut fold: Fold,
+    mut read: Read,
     mut progress: impl FnMut(&Fold, &[String], bool),
 ) -> Read {
-    // Retry unfinished agents first, so completed histories cannot consume
-    // every later query's budget before the unread ones are reached.
-    let unfinished: BTreeSet<_> =
-        fold.agents.iter().filter(|(_, kept)| kept.agent.reading).map(|(id, _)| id.clone()).collect();
-    fold.recent = false;
-    for kept in fold.agents.values_mut() {
-        kept.agent.reading = true;
-    }
-    let unavailable = Vec::new();
-    let mut reading;
-    progress(&fold, &unavailable, true);
-    let events = match tokio::time::timeout_at(deadline, crate::talk::history_quietly(node, id)).await {
-        Ok(Ok(mut history)) => {
-            fold = folded(fold, std::mem::take(&mut history.history), None).await;
-            reading = history.unread;
-            let mut lagged = false;
-            loop {
-                match history.events.try_recv() {
-                    Ok(event) => fold.event(&event.happened, event.at, None, true),
-                    Err(fastctx_net::watch_queue::TryRecvError::Lagged) => {
-                        reading = true;
-                        lagged = true;
-                        break;
+    progress(&read.fold, &read.unavailable, true);
+    read.drain();
+    // A healthy stream already covers the parent history. Only an initial
+    // read or a lost stream needs that history rebuilt.
+    if read.events.is_none() {
+        read.fold.recent = false;
+        match tokio::time::timeout_at(deadline, crate::talk::history_quietly(node, id)).await {
+            Ok(Ok(history)) => {
+                read.fold = folded(read.fold, history.history, None).await;
+                read.unavailable.clear();
+                read.goal_changed = true;
+                read.events = (!history.unread).then_some(history.events);
+                read.drain();
+                for kept in read.fold.agents.values_mut() {
+                    if !kept.ended() {
+                        kept.agent.reading = true;
                     }
-                    Err(_) => break,
                 }
             }
-            (!lagged).then_some(history.events)
+            Ok(Err(error)) => {
+                read.unavailable = vec![error.message];
+                return read;
+            }
+            Err(_) => return read,
         }
-        Ok(Err(error)) => return Read { fold, unavailable: vec![error.message], events: None, reading: true },
-        Err(_) => return Read { fold, unavailable, events: None, reading: true },
-    };
-    for kept in fold.agents.values_mut() {
-        kept.agent.reading = true;
     }
-    progress(&fold, &unavailable, reading || !fold.agents.is_empty());
-    let mut read = BTreeSet::new();
-    let mut queue: VecDeque<_> = unfinished.into_iter().chain(fold.agents.keys().cloned()).collect();
-    let mut scheduled: BTreeSet<_> = fold.agents.keys().cloned().collect();
+    progress(&read.fold, &read.unavailable, read.reading());
+    let mut queue: VecDeque<_> =
+        read.fold.agents.iter().filter(|(_, kept)| kept.agent.reading).map(|(id, _)| id.clone()).collect();
+    let mut scheduled: BTreeSet<_> = read.fold.agents.keys().cloned().collect();
     while let Some(agent) = queue.pop_front() {
-        if !read.insert(agent.clone()) {
-            continue;
+        if Instant::now() >= deadline {
+            break;
         }
-        match tokio::time::timeout_at(deadline, crate::agent_activity::here(node, id, &agent)).await {
+        let activity = tokio::time::timeout_at(deadline, crate::agent_activity::here(node, id, &agent));
+        tokio::pin!(activity);
+        // Keep consuming live events while a child history is slow, so a
+        // backlog of child reads does not itself lose the parent's stream.
+        let result = loop {
+            tokio::select! {
+                result = &mut activity => break result,
+                event = async { read.events.as_mut().expect("stream present").recv().await }, if read.events.is_some() => {
+                    match event {
+                        Ok(Some(event)) => read.event(&event),
+                        Ok(None) | Err(_) => read.events = None,
+                    }
+                }
+            }
+        };
+        match result {
             Ok(Ok(activity)) => {
                 if let Some(start) = activity.agent {
-                    let parent = fold.agents.get(&agent).and_then(|kept| kept.parent.clone());
-                    fold.start(
+                    let parent = read.fold.agents.get(&agent).and_then(|kept| kept.parent.clone());
+                    read.fold.start(
                         &start,
                         parent.as_deref(),
                         activity.events.first().map_or_else(Timestamp::now, |event| event.at),
                     );
                 }
-                fold = folded(fold, activity.events, Some(agent.clone())).await;
-                let kept = fold.entry(&agent);
+                read.fold = folded(read.fold, activity.events, Some(agent.clone())).await;
+                let kept = read.fold.entry(&agent);
                 kept.agent.unavailable = activity.unavailable;
                 kept.agent.reading = false;
-                for (id, kept) in &mut fold.agents {
-                    if scheduled.insert(id.clone()) {
-                        kept.agent.reading = true;
-                        queue.push_back(id.clone());
-                    }
-                }
             }
             Ok(Err(error)) => {
-                let kept = fold.entry(&agent);
+                let kept = read.fold.entry(&agent);
                 kept.agent.reading = !error.is_refused() && !error.is_deleted();
-                reading |= kept.agent.reading;
                 kept.agent.unavailable = Some(error.message);
             }
-            Err(_) => {
-                reading = true;
-                break;
+            Err(_) => break,
+        }
+        for (id, kept) in &read.fold.agents {
+            if kept.agent.reading && scheduled.insert(id.clone()) {
+                queue.push_back(id.clone());
             }
         }
-        progress(&fold, &unavailable, reading || fold.agents.values().any(|kept| kept.agent.reading));
+        progress(&read.fold, &read.unavailable, read.reading());
     }
-    if !reading {
-        fold.recent_only();
+    if !read.reading() {
+        read.fold.recent_only();
     }
-    Read { fold, unavailable, events, reading }
+    read
 }
 
-/// `fold` with `events` folded in, as told by `parent`'s loop, or by the
-/// conversation's own without one. A whole history at a time is heavy work,
-/// done on a thread that may block.
+/// A whole history is folded on a thread that may block.
 async fn folded(mut fold: Fold, events: Vec<SessionEvent>, parent: Option<String>) -> Fold {
     fastctx_platform::task::blocking(move || {
         fold.events(&events, parent.as_deref());
