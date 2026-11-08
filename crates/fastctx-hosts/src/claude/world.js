@@ -302,10 +302,11 @@ function framed(delivery) {
 
 // The user's own words as a plugin submits them. Claude Code refuses a
 // plugin's prompt that begins with "/", which typed would run a command;
-// words that only begin so, with a path most often, go in behind a
-// zero-width space, which the model reads past.
+// words that only begin so, with a path most often, go in behind one more
+// zero-width space, which the model reads past and the node takes away
+// again (`claude::as_said`).
 function asTyped(text) {
-  return text.startsWith('/') ? '\u200B' + text : text
+  return /^\u200B*\//.test(text) ? '\u200B' + text : text
 }
 
 // The user's own words, sent into a turn already running: the model reads

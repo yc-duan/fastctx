@@ -628,7 +628,12 @@ fn read_rows(
                         }
                         _ => None,
                     };
-                    if let Some(text) = words.map(|text| super::as_said(&text).to_owned()) {
+                    // The user's words the World's plugin submitted, as they were said.
+                    let words = match words {
+                        Some(text) if row.value["origin"]["kind"] == "plugin" => Some(super::as_said(&text).to_owned()),
+                        words => words,
+                    };
+                    if let Some(text) = words {
                         transcript.events.push(SessionEvent {
                             at,
                             happened: Happened::Heard {

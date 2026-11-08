@@ -91,12 +91,18 @@ const FRAME_V1: &str = "The fastctx plugin delivers a message from the World.";
 const USER_FRAME: &str = "The user sent a new message while you were working:";
 
 /// What the World's plugin puts before the user's words that begin with "/",
-/// which Claude Code refuses from a plugin as a command (`world.js`, `asTyped`).
+/// after any already there, which Claude Code refuses from a plugin as a
+/// command: a zero-width space, which the model reads past (`world.js`,
+/// `asTyped`).
 const BEFORE_SLASH: char = '\u{200B}';
 
-/// The user's words as they were said, from the prompt a session holds.
+/// The user's words as they were said, from a prompt the World's plugin
+/// submitted for the user.
 pub fn as_said(prompt: &str) -> &str {
-    prompt.strip_prefix(BEFORE_SLASH).filter(|rest| rest.starts_with('/')).unwrap_or(prompt)
+    match prompt.strip_prefix(BEFORE_SLASH) {
+        Some(rest) if rest.trim_start_matches(BEFORE_SLASH).starts_with('/') => rest,
+        _ => prompt,
+    }
 }
 
 /// Words the World says on its own account, as the model reads them.
