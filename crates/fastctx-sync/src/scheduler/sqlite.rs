@@ -15,6 +15,7 @@ use fastctx_storage::{
 };
 use std::time::Duration;
 
+mod due;
 mod rows;
 mod update;
 use rows::{Row, get, save};
@@ -81,36 +82,13 @@ impl Scheduler for SqliteScheduler {
             let expires = now_millis
                 .checked_add(self.lease_millis)
                 .ok_or_else(|| Error::Invalid("lease deadline overflow".into()))?;
-            self.db.write(256 * 4096, move |db| {
-                let _boundary = boundary::enter_typed_write(Role::Scheduling);
-                let mut candidates = Vec::new();
-                for priority in 0..4 {
-                    for state in ["ready", "leased"] {
-                        let mut query = db.prepare_cached("SELECT kind,hub,scope,task_key,wanted,completed,state,priority,next_due,lease_generation,lease_owner,attempts,dependency,reason,holding,lease_wanted FROM sync_tasks WHERE state=?1 AND priority=?2 AND next_due<=?3 ORDER BY next_due,hub,scope,kind,task_key LIMIT ?4")?;
-                        let rows = query.query_map(params![state,priority,now_millis,max_tasks], rows::read)?;
-                        candidates.extend(rows.collect::<rusqlite::Result<Vec<_>>>()?);
-                    }
-                    if candidates.len() >= max_tasks as usize { break; }
-                }
-                candidates.sort_by(|a,b| (number(a.task.priority),a.task.next_due_millis,&a.task.key.scope,&a.task.key.kind,&a.task.key.key).cmp(&(number(b.task.priority),b.task.next_due_millis,&b.task.key.scope,&b.task.key.kind,&b.task.key.key)));
-                let mut leases = Vec::new();
-                for mut row in candidates.into_iter().take(max_tasks as usize) {
-                    if !current_holding(db, &holder, row.task.holding.as_ref())? {
-                        row.state = "superseded".into(); row.owner = None;
-                        save(db,&row)?;
-                        continue;
-                    }
-                    row.generation = next(row.generation)?;
-                    row.owner = Some(owner.clone());
-                    row.lease_wanted = Some(row.task.wanted);
-                    row.state = "leased".into();
-                    row.task.next_due_millis = expires;
-                    row.attempts = row.attempts.saturating_add(1);
-                    save(db,&row)?;
-                    leases.push(Lease { task:row.task, generation:row.generation, owner:owner.clone() });
-                }
-                Ok(leases)
-            }).await.map_err(|error| sql::error(error, self.worker.clone()))
+            self.db
+                .write(max_tasks as usize * 16 * 1024, move |db| {
+                    let _boundary = boundary::enter_typed_write(Role::Scheduling);
+                    due::claim(db, &owner, &holder, now_millis, expires, max_tasks)
+                })
+                .await
+                .map_err(|error| sql::error(error, self.worker.clone()))
         })
     }
     fn finish(&self, lease: Lease, outcome: Outcome) -> FutureResult<'_, ()> {

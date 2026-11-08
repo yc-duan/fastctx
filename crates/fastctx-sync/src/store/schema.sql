@@ -47,7 +47,8 @@ CREATE TABLE sync_changes (
 ) WITHOUT ROWID;
 CREATE TABLE sync_local_head (
     singleton INTEGER PRIMARY KEY CHECK(singleton=1),
-    sequence BLOB NOT NULL CHECK(length(sequence)=8)
+    sequence BLOB NOT NULL CHECK(length(sequence)=8),
+    scheduler_slot INTEGER NOT NULL DEFAULT 0 CHECK(scheduler_slot BETWEEN 0 AND 7)
 );
 CREATE TABLE sync_local_changes (
     sequence BLOB PRIMARY KEY CHECK(length(sequence)=8),

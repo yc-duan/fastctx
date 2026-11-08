@@ -191,6 +191,25 @@ pub async fn run(root: &Path) -> Result<()> {
         ours.iter().chain(&theirs).map(|lease| lease.task.key.key.as_str()).collect();
     assert_eq!(ours.len() + theirs.len(), 256);
     assert_eq!(identities.len(), 256);
+    for n in 0..16 {
+        let mut control = task(&format!("control-{n}"), 1, 3);
+        control.priority = Priority::Control;
+        regranted.dirty(control).await?;
+    }
+    let mut background_claimed = false;
+    for _ in 0..8 {
+        let lease = regranted.due(6000, 1).await?.pop().unwrap();
+        background_claimed |= matches!(lease.task.priority, Priority::Background);
+    }
+    assert!(background_claimed, "continuous control work starved background progress");
+    assert_eq!(
+        db.read_now(|db| {
+            let value: Vec<u8> =
+                db.query_row("SELECT sequence FROM sync_local_head WHERE singleton=1", [], |row| row.get(0))?;
+            Ok(value)
+        })?,
+        0u64.to_be_bytes()
+    );
     println!(
         "scheduler lifecycle: coalescing, leases, restart, holding fences, bounded wake and architecture refusals passed"
     );

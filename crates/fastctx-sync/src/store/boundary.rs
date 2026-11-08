@@ -2,7 +2,7 @@
 use fastctx_storage::{
     Guard, Result,
     authorization::{Write, WritePolicy},
-    guard::Change,
+    guard::{Action, Change},
     rusqlite::Connection,
 };
 use std::{cell::Cell, marker::PhantomData, rc::Rc, sync::Arc};
@@ -28,17 +28,25 @@ fn permits(table: &str) -> bool {
         return true;
     }
     match ACTIVE.get() {
-        Some(Role::Scheduling) => table == "sync_tasks",
+        Some(Role::Scheduling) => matches!(table, "sync_tasks" | "sync_local_head"),
         None => false,
     }
 }
 impl WritePolicy for Rules {
     fn permits(&self, write: Write<'_>) -> bool {
-        permits(write.table)
+        permits(write.table) && (write.table != "sync_local_head" || write.action == Action::Update)
     }
 }
 impl Guard for Rules {
     fn check(&mut self, change: &Change<'_>) -> Result<()> {
+        if change.table() == "sync_local_head"
+            && matches!(ACTIVE.get(), Some(Role::Scheduling))
+            && (change.action() != Action::Update
+                || change.before(0)? != change.after(0)?
+                || change.before(1)? != change.after(1)?)
+        {
+            return Err(super::sql::invalid("the scheduler cannot advance a local change cursor"));
+        }
         if permits(change.table()) {
             Ok(())
         } else {
