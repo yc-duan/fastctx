@@ -13,6 +13,7 @@ pub mod identity;
 pub mod manifest;
 pub mod mutation;
 pub mod proof;
+pub mod scope;
 pub mod timeline;
 pub mod transfer;
 

@@ -6,6 +6,8 @@ mod acceptance;
 mod hub_source;
 #[path = "contract/manifests.rs"]
 mod manifests;
+#[path = "contract/scopes.rs"]
+mod scopes;
 
 use fastctx_sync::{
     catalog::{ChangesPage, FeedEntry, SourceBatch, SourceRecord},
@@ -184,10 +186,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Message::RestoreAccepted { proof: accepted },
         Message::GetManifest { holding: holding.clone(), root: ManifestRoot(blob(25)) },
         Message::GetDescriptor { holding: holding.clone(), blob: blob(1) },
-        Message::Acknowledge { durable: DurableAck::Catalog { holding: holding.clone(), cursor } },
+        Message::Acknowledge { durable: DurableAck::Catalog { holding: holding.clone(), cursor: cursor.clone() } },
         Message::Revoked { holding: holding.clone() },
     ];
     messages.extend(manifests::sample(&holding)?);
+    messages.extend(scopes::sample(&cursor, DeviceId::from_bytes([3; 32]))?);
     let (hub_message, hub_batch) = hub_source::sample(&holding)?;
     messages.push(hub_message);
     println!(

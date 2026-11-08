@@ -99,6 +99,13 @@
   },
   {
     "type": "crates/fastctx-types/src/sync/transfer.rs::Message",
+    "variant": "GetScopes",
+    "purpose": "AssetSync",
+    "capability": "asset_sync",
+    "mapping": "crates/fastctx-types/src/sync/transfer.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/sync/transfer.rs::Message",
     "variant": "Hello",
     "purpose": "AssetSync",
     "capability": "asset_sync",
@@ -142,6 +149,13 @@
   {
     "type": "crates/fastctx-types/src/sync/transfer.rs::Message",
     "variant": "Revoked",
+    "purpose": "AssetSync",
+    "capability": "asset_sync",
+    "mapping": "crates/fastctx-types/src/sync/transfer.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/sync/transfer.rs::Message",
+    "variant": "ScopesPage",
     "purpose": "AssetSync",
     "capability": "asset_sync",
     "mapping": "crates/fastctx-types/src/sync/transfer.rs"

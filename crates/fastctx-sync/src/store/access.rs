@@ -78,6 +78,12 @@ pub enum Decision {
 pub trait AccessPolicy: Send + Sync {
     fn can_read(&self, context: &AccessContext, kind: RegisteredKind) -> Decision;
     fn can_write(&self, context: &AccessContext, kind: RegisteredKind) -> Decision;
-    fn can_keep(&self, context: &AccessContext, kind: RegisteredKind, purpose: &HoldingUse) -> Decision;
+    fn can_keep(
+        &self,
+        context: &AccessContext,
+        kind: RegisteredKind,
+        object: &ObjectKey,
+        purpose: &HoldingUse,
+    ) -> Decision;
     fn can_execute(&self, context: &AccessContext, target: &DeviceId) -> Decision;
 }

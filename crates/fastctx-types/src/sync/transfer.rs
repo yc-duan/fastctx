@@ -116,6 +116,12 @@ pub enum Message {
     Selected {
         selection: Selection,
     },
+    GetScopes {
+        request: super::scope::ScopeDiscoveryRead,
+    },
+    ScopesPage {
+        page: super::scope::ScopesPage,
+    },
     Cursors {
         entries: Vec<ScopeCursor>,
         more: bool,
@@ -229,6 +235,8 @@ impl Message {
             }
             Self::Hello { .. }
             | Self::Selected { .. }
+            | Self::GetScopes { .. }
+            | Self::ScopesPage { .. }
             | Self::Cursors { .. }
             | Self::ViewChanged { .. }
             | Self::Catalog { .. }

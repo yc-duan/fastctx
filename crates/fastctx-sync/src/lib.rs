@@ -14,6 +14,7 @@ pub mod migration;
 pub mod proof;
 pub mod registry;
 pub mod scheduler;
+pub mod scope;
 pub mod store;
 pub mod timeline;
 pub mod transfer;
