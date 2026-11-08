@@ -140,9 +140,13 @@ CREATE TABLE sync_tasks (
     state TEXT NOT NULL, priority INTEGER NOT NULL CHECK(priority BETWEEN 0 AND 3),
     next_due INTEGER NOT NULL, lease_generation BLOB NOT NULL CHECK(length(lease_generation)=8),
     lease_owner TEXT, attempts INTEGER NOT NULL, dependency TEXT, reason TEXT, holding BLOB,
+    lease_wanted BLOB CHECK(lease_wanted IS NULL OR length(lease_wanted)=8),
+    CHECK(completed<=wanted),
+    CHECK((state='leased' AND lease_owner IS NOT NULL AND lease_wanted IS NOT NULL)
+       OR (state!='leased' AND lease_owner IS NULL AND lease_wanted IS NULL)),
     PRIMARY KEY(kind,hub,scope,task_key)
 ) WITHOUT ROWID;
-CREATE INDEX sync_tasks_due ON sync_tasks(state,next_due,priority);
+CREATE INDEX sync_tasks_due ON sync_tasks(state,priority,next_due,hub,scope,kind,task_key);
 CREATE INDEX sync_tasks_dependency ON sync_tasks(dependency,state,next_due);
 CREATE TABLE sync_sources (
     hub TEXT NOT NULL, scope TEXT NOT NULL, source TEXT NOT NULL,
@@ -186,8 +190,13 @@ CREATE TABLE sync_asset_manifests (
 ) WITHOUT ROWID;
 CREATE TABLE sync_asset_edges (
     hub TEXT NOT NULL, scope TEXT NOT NULL, parent TEXT NOT NULL, child TEXT NOT NULL,
-    PRIMARY KEY(hub,scope,parent,child)
+    child_kind TEXT NOT NULL CHECK(child_kind IN ('block','manifest')),
+    decoded_bytes INTEGER,
+    CHECK((child_kind='block' AND decoded_bytes IS NOT NULL AND decoded_bytes BETWEEN 0 AND 1048576)
+       OR (child_kind='manifest' AND decoded_bytes IS NULL)),
+    PRIMARY KEY(hub,scope,parent,child,child_kind)
 ) WITHOUT ROWID;
+CREATE INDEX sync_asset_edges_child ON sync_asset_edges(hub,scope,child,parent);
 CREATE TABLE sync_asset_roots (
     hub TEXT NOT NULL, scope TEXT NOT NULL, object TEXT NOT NULL,
     authority_epoch BLOB NOT NULL CHECK(length(authority_epoch)=16),
@@ -196,9 +205,10 @@ CREATE TABLE sync_asset_roots (
 ) WITHOUT ROWID;
 CREATE INDEX sync_asset_roots_hash ON sync_asset_roots(hub,scope,hash);
 CREATE TABLE sync_asset_pins (
-    hub TEXT NOT NULL, scope TEXT NOT NULL, operation TEXT NOT NULL, hash TEXT NOT NULL,
+    hub TEXT NOT NULL, scope TEXT NOT NULL, operation TEXT NOT NULL, object TEXT NOT NULL,
+    kind TEXT NOT NULL, hash TEXT NOT NULL,
     generation BLOB NOT NULL CHECK(length(generation)=8), phase TEXT NOT NULL, holding BLOB NOT NULL,
-    PRIMARY KEY(hub,scope,operation,hash)
+    PRIMARY KEY(hub,scope,operation,object,hash)
 ) WITHOUT ROWID;
 CREATE INDEX sync_asset_pins_hash ON sync_asset_pins(hub,scope,hash);
 CREATE TABLE sync_asset_transfers (

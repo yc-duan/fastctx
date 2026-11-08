@@ -3,6 +3,7 @@
 //! The contracts are independent of a node, a hub and a mobile application.
 //! Storage implementations own their databases; consumers receive typed handles.
 
+pub mod blocks;
 pub mod catalog;
 pub mod cursor;
 pub mod exposure;

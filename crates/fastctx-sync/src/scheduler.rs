@@ -1,5 +1,8 @@
 //! Persisted coalescing tasks; a wake never substitutes for the due index.
 
+mod sqlite;
+pub use sqlite::SqliteScheduler;
+
 use crate::{
     cursor::{HoldingPeriod, LocalSequence, Revision},
     identity::{OperationId, ScopeKey},

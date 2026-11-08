@@ -2,6 +2,8 @@
 
 #[path = "contract/acceptance.rs"]
 mod acceptance;
+#[path = "contract/manifests.rs"]
+mod manifests;
 
 use fastctx_sync::{
     catalog::{ChangesPage, FeedEntry, SourceBatch, SourceRecord},
@@ -130,7 +132,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }],
     };
     submission.validate_bounds()?;
-    let messages = vec![
+    let mut messages = vec![
         Message::Hello {
             capabilities: Capabilities {
                 protocols: vec!["fastctx-sync/v1".into(), "future-protocol".into()],
@@ -180,8 +182,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Message::GetManifest { holding: holding.clone(), root: blob(25) },
         Message::GetDescriptor { holding: holding.clone(), blob: blob(1) },
         Message::Acknowledge { durable: DurableAck::Catalog { holding: holding.clone(), cursor } },
-        Message::Revoked { holding },
+        Message::Revoked { holding: holding.clone() },
     ];
+    messages.extend(manifests::sample(&holding)?);
     println!(
         "{}",
         serde_json::to_string_pretty(&serde_json::json!({

@@ -518,6 +518,128 @@
         }
       },
       "message": "revoked"
+    },
+    {
+      "holding": {
+        "acl_revision": "1",
+        "holder": {
+          "device": "d-0303030303030303030303030303030303030303030303030303030303030303",
+          "holder": "device"
+        },
+        "publication_epoch": "1",
+        "scope": {
+          "hub": "w-0101010101010101",
+          "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+        }
+      },
+      "message": "manifest",
+      "reply": {
+        "page_json": "{\"kind\":\"directory\",\"entries\":[{\"kind\":\"file\",\"file\":{\"object\":\"o-2828282828282828282828282828282828282828282828282828282828282828\",\"path\":{\"components\":[{\"encoding\":\"utf8\",\"value\":\"small.json\"}]},\"bytes\":\"2\",\"executable\":false,\"content\":{\"kind\":\"single\",\"block\":{\"domain\":{\"hub\":\"w-0101010101010101\",\"scope\":\"s-0202020202020202020202020202020202020202020202020202020202020202\"},\"algorithm\":\"sha256\",\"digest\":\"44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a\"},\"decoded_bytes\":2}}},{\"kind\":\"file\",\"file\":{\"object\":\"o-2929292929292929292929292929292929292929292929292929292929292929\",\"path\":{\"components\":[{\"encoding\":\"utf8\",\"value\":\"large.bin\"}]},\"bytes\":\"1048578\",\"executable\":false,\"content\":{\"kind\":\"manifest\",\"root\":{\"domain\":{\"hub\":\"w-0101010101010101\",\"scope\":\"s-0202020202020202020202020202020202020202020202020202020202020202\"},\"algorithm\":\"sha256\",\"digest\":\"3833fc01ab67818e7035adc6a2d76549476ca6b6ad4f4282b70000636dc635d1\"}}}}]}",
+        "root": {
+          "algorithm": "sha256",
+          "digest": "984d1d4ac0094f0e3f47dd9263cf98b56fb630b437c767ab0ef07c3b14b1b88d",
+          "domain": {
+            "hub": "w-0101010101010101",
+            "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+          }
+        }
+      }
+    },
+    {
+      "holding": {
+        "acl_revision": "1",
+        "holder": {
+          "device": "d-0303030303030303030303030303030303030303030303030303030303030303",
+          "holder": "device"
+        },
+        "publication_epoch": "1",
+        "scope": {
+          "hub": "w-0101010101010101",
+          "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+        }
+      },
+      "message": "manifest",
+      "reply": {
+        "page_json": "{\"kind\":\"blocks\",\"offset\":\"0\",\"blocks\":[{\"id\":{\"domain\":{\"hub\":\"w-0101010101010101\",\"scope\":\"s-0202020202020202020202020202020202020202020202020202020202020202\"},\"algorithm\":\"sha256\",\"digest\":\"8f990ba0b577b51cf009ea049368c16bbda1b21e1b93be07a824758bb253c39b\"},\"decoded_bytes\":1048576},{\"id\":{\"domain\":{\"hub\":\"w-0101010101010101\",\"scope\":\"s-0202020202020202020202020202020202020202020202020202020202020202\"},\"algorithm\":\"sha256\",\"digest\":\"44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a\"},\"decoded_bytes\":2}]}",
+        "root": {
+          "algorithm": "sha256",
+          "digest": "3833fc01ab67818e7035adc6a2d76549476ca6b6ad4f4282b70000636dc635d1",
+          "domain": {
+            "hub": "w-0101010101010101",
+            "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+          }
+        }
+      }
+    },
+    {
+      "descriptor": {
+        "content": {
+          "decoded_bytes": 1048576,
+          "id": {
+            "algorithm": "sha256",
+            "digest": "8f990ba0b577b51cf009ea049368c16bbda1b21e1b93be07a824758bb253c39b",
+            "domain": {
+              "hub": "w-0101010101010101",
+              "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+            }
+          }
+        },
+        "representations": [
+          {
+            "content": {
+              "decoded_bytes": 1048576,
+              "id": {
+                "algorithm": "sha256",
+                "digest": "8f990ba0b577b51cf009ea049368c16bbda1b21e1b93be07a824758bb253c39b",
+                "domain": {
+                  "hub": "w-0101010101010101",
+                  "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+                }
+              }
+            },
+            "encoded_bytes": 1048576,
+            "encoded_digest": "8f990ba0b577b51cf009ea049368c16bbda1b21e1b93be07a824758bb253c39b",
+            "envelope": {
+              "encoding": "raw",
+              "protection": "plain",
+              "version": 1
+            }
+          },
+          {
+            "content": {
+              "decoded_bytes": 1048576,
+              "id": {
+                "algorithm": "sha256",
+                "digest": "8f990ba0b577b51cf009ea049368c16bbda1b21e1b93be07a824758bb253c39b",
+                "domain": {
+                  "hub": "w-0101010101010101",
+                  "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+                }
+              }
+            },
+            "encoded_bytes": 50,
+            "encoded_digest": "013c5fec242b737a7de946d52c3b0b7304b74875480696bf60c432cfc0e7d5b3",
+            "envelope": {
+              "encoding": "zstd",
+              "protection": "plain",
+              "version": 1
+            }
+          }
+        ]
+      },
+      "holding": {
+        "acl_revision": "1",
+        "holder": {
+          "device": "d-0303030303030303030303030303030303030303030303030303030303030303",
+          "holder": "device"
+        },
+        "publication_epoch": "1",
+        "scope": {
+          "hub": "w-0101010101010101",
+          "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+        }
+      },
+      "message": "descriptor"
     }
   ],
   "signature_status": "shape_only_not_validated",

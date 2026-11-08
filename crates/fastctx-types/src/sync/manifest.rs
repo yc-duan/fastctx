@@ -99,8 +99,18 @@ pub struct FileEntry {
     pub path: RelativePath,
     pub bytes: ByteCount,
     pub executable: bool,
-    pub content: BlobId,
+    pub content: FileContent,
 }
+
+/// Small files directly reference a block. Larger files name a validated
+/// manifest; JSON-shaped file bytes never implicitly become a manifest.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum FileContent {
+    Single { block: BlobId, decoded_bytes: u32 },
+    Manifest { root: BlobId },
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum DirectoryEntry {

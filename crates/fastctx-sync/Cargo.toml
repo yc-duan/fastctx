@@ -13,8 +13,17 @@ fastctx-types = { path = "../fastctx-types" }
 fastctx-storage = { path = "../fastctx-storage" }
 fastctx-platform = { path = "../fastctx-platform" }
 sha2 = "0.10"
+zstd = { version = "0.14", default-features = false }
 serde.workspace = true
 serde_json.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "time"] }
+
+[[test]]
+name = "sync_drill"
+path = "tests/sync_drill.rs"
+harness = false
 
 [lints]
 workspace = true
