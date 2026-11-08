@@ -1276,6 +1276,9 @@ export class ConversationPage {
         // input or still in the queue: they leave the conversation, and the
         // reason is said by the input, once for words sent after them too.
         if (key) conversation.unsend(key);
+        // Words back in the input are not the words of a chip picked after
+        // they were sent.
+        if (this.picked) this.pick(null);
         if (!(error instanceof Withdrawn)) this.say(this.options.words.notSent(why), why, true);
         this.update();
       },
