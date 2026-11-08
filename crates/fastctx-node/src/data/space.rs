@@ -117,7 +117,8 @@ pub(super) fn measure(node: &Node) -> io::Result<Space> {
         root_bytes,
         kinds,
         conversations: listed,
-        output_days: crate::retention::days(world)?,
+        output_days: 30,
+        output_retention: Some("unlimited".into()),
         claude_logins: claude_logins(&measured)?,
     })
 }

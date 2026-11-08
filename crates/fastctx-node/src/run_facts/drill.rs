@@ -18,8 +18,11 @@ pub fn run(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let database = Database::open_guarded(
         &root.join("node.sqlite3"),
         &format!("{}{}{}", sql::SCHEMA, crate::record_payloads::SCHEMA, crate::records::SCHEMA),
-        crate::conversation_store::fences::guard,
-        crate::conversation_store::schema::initialize,
+        crate::asset_preservation::guard,
+        |db| {
+            fastctx_sync::migration::initialize(db)?;
+            crate::conversation_store::schema::initialize(db)
+        },
     )?;
     let machine: MachineName = "executor".parse()?;
     let job: JobId = "j-123456".parse()?;

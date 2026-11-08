@@ -41,8 +41,7 @@ pub(crate) async fn restore(node: &Arc<Node>, path: &Path, record: &JobRecord) -
     Ok(())
 }
 
-/// Releases transferred bytes after the final reader leaves. Metadata and
-/// scratch await the enclosing answer's host receipt.
+/// Records completed transfer; the output remains an asset after its reader leaves.
 pub(crate) fn copied(node: &Arc<Node>, path: &Path) -> std::io::Result<()> {
     let Some(_files) = node.job_files.hold(path) else { return Ok(()) };
     crate::job_metadata::put_raw(&path.with_extension("copied"), b"")?;
@@ -57,8 +56,7 @@ pub(crate) fn copied(node: &Arc<Node>, path: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-/// A maintenance pass already runs off the control loop. Remove settled
-/// jobs sequentially rather than queueing one blocking task per old record.
+/// A maintenance pass retires settled execution state without deleting assets.
 pub(crate) fn collect(node: &Node, path: &Path) -> std::io::Result<()> {
     let mut watched = node.job_watches.0.lock().expect("never poisoned");
     if watched.watching.contains(path) {
@@ -81,7 +79,7 @@ pub(crate) fn collect(node: &Node, path: &Path) -> std::io::Result<()> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(error) => return Err(error),
     }
-    crate::jobs::remove(path)
+    crate::jobs::retire(path)
 }
 
 fn remove(node: &Arc<Node>, path: PathBuf) {

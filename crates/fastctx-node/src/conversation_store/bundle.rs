@@ -128,10 +128,15 @@ pub(super) fn manifest(source: &Connection, conversation: &str, target: &[Table]
     if manifest.format != FORMAT || manifest.conversation != conversation {
         return Err(invalid("conversation bundle format or identity differs"));
     }
-    if manifest.tables.len() != target.len() {
+    let offered: std::collections::BTreeSet<_> = manifest.tables.iter().map(|proof| proof.name.as_str()).collect();
+    if offered.len() != manifest.tables.len()
+        || target.iter().any(|table| !offered.contains(table.name.as_str()) && table.name != "sync_legacy_pins")
+        || offered.iter().any(|name| !target.iter().any(|table| table.name == *name))
+    {
         return Err(invalid("conversation bundle table set differs from this node"));
     }
-    for (proof, table) in manifest.tables.iter().zip(target) {
+    for proof in &manifest.tables {
+        let table = target.iter().find(|table| table.name == proof.name).expect("checked offered table");
         if proof.name != table.name
             || proof.columns != table.writable
             || proof.primary != table.primary

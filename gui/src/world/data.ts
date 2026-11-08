@@ -11,7 +11,7 @@ export type DataReply =
   | { data: "cache_cleared"; bytes: number }
   | ({ data: "listed" } & Space)
   | { data: "deleted"; deletions: Deletion[] }
-  | { data: "output_days"; days: number }
+  | { data: "output_days"; days: number; output_retention?: string }
   | { data: "cache_cleared"; bytes: number };
 
 /** The days full command output may be kept for, to choose from. */
@@ -25,6 +25,7 @@ export interface Space {
   kinds: Kinds;
   conversations: ConversationSpace[];
   output_days: number;
+  output_retention?: string;
   claude_logins?: ClaudeKeeping[];
 }
 

@@ -21,7 +21,10 @@ impl AtomicMutation {
             .iter()
             .map(|object| {
                 let kind = REGISTRY.asset(&object.kind).map_err(Error::Invalid)?;
-                if kind.registration().conflict == crate::registry::ConflictRule::LocalPending {
+                if matches!(
+                    kind.registration().conflict,
+                    crate::registry::ConflictRule::LocalPending | crate::registry::ConflictRule::MigrationSource
+                ) {
                     return Err(Error::Invalid(
                         "the pending carrier is maintained by submission, not edited as an authority version".into(),
                     ));

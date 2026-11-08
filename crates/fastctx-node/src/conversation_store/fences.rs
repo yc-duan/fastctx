@@ -172,6 +172,9 @@ impl Guard for Fences {
         }
     }
     fn check(&mut self, change: &Change<'_>) -> Result<()> {
+        if fastctx_sync::migration::is_summary(change)? {
+            return Ok(());
+        }
         if let Some(&column) = self.scoped.get(change.table()) {
             return self.scoped(change, column);
         }

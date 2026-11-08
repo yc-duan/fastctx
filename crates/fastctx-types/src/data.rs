@@ -28,9 +28,17 @@ pub enum DataCall {
 #[serde(rename_all = "snake_case", tag = "data")]
 pub enum DataReply {
     Listed(Box<Space>),
-    Deleted { deletions: Vec<Deletion> },
-    OutputDays { days: u32 },
-    CacheCleared { bytes: u64 },
+    Deleted {
+        deletions: Vec<Deletion>,
+    },
+    OutputDays {
+        days: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        output_retention: Option<String>,
+    },
+    CacheCleared {
+        bytes: u64,
+    },
 }
 
 /// The days full command output may be kept for: what the user chooses from.
@@ -51,6 +59,9 @@ pub struct Space {
     /// How many days full command output stays after the model got its
     /// answer.
     pub output_days: u32,
+    /// An explicit policy overrides the legacy days field when recognized.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_retention: Option<String>,
     /// How long each Claude Code login here keeps its own session records.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub claude_logins: Vec<ClaudeKeeping>,

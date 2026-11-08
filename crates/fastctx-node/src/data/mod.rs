@@ -10,7 +10,7 @@ mod space;
 
 use std::sync::Arc;
 
-use fastctx_types::data::{DataCall, DataReply, OUTPUT_DAYS};
+use fastctx_types::data::{DataCall, DataReply};
 use fastctx_types::ipc::Failure;
 
 use crate::Node;
@@ -46,19 +46,10 @@ pub(crate) async fn answer(node: &Arc<Node>, call: DataCall) -> Result<DataReply
             Ok(DataReply::CacheCleared { bytes })
         }
         DataCall::OutputDays { days } => {
-            if let Some(days) = days {
-                if !OUTPUT_DAYS.contains(&days) {
-                    return Err(Failure::not_run(format!(
-                        "command output can be kept {} days",
-                        OUTPUT_DAYS.map(|days| days.to_string()).join(", ")
-                    )));
-                }
-                crate::retention::set_days(&node.world, days)
-                    .map_err(|error| Failure::new(format!("keeping the setting: {error}")))?;
+            if days.is_some() {
+                return Err(Failure::not_run("Job output is an asset and has no retention deadline."));
             }
-            let days = crate::retention::days(&node.world)
-                .map_err(|error| Failure::new(format!("reading the setting: {error}")))?;
-            Ok(DataReply::OutputDays { days })
+            Ok(DataReply::OutputDays { days: 30, output_retention: Some("unlimited".into()) })
         }
     }
 }

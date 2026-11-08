@@ -1,0 +1,2 @@
+# Temporary migration carriers; remove each row only with its emptied table.
+sync_legacy_pins	Asset	migration.legacy-pins	crates/fastctx-sync/src/migration.rs	Migration	Canonical import and reference verification, then empty and drop

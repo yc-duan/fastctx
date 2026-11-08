@@ -25,6 +25,7 @@ const json = readFileSync(fixturePath, "utf8");
 const fixture = JSON.parse(json);
 const virtualFile = path.join(gui, "fixtures/contract.ts");
 const source = `
+import type { DataReply } from "../src/world/data";
 import type { SessionEvent, Watched, SessionChange, Health } from "../src/world/events";
 import type { WorldWho, NodesReply, TownSummary, JournalSummary } from "../src/world/world";
 import type { WorldSince } from "../src/world/since";
@@ -54,6 +55,7 @@ import type { UsageReport } from "../src/world/usage";
 import type { McpReply, ProfileView } from "../src/world/profile";
 import type { UpdateState, UpdateCall, CheckFailure, FailureReason, UpdatesViewCall, UpdatesViewReply } from "../src/world/updates";
 export const fixture = ${json.trimEnd()} satisfies {
+  data: DataReply[];
   updates: { device_calls: UpdateCall[]; states: UpdateState[]; checks: CheckFailure[]; reasons: FailureReason[]; calls: UpdatesViewCall[]; replies: UpdatesViewReply[] };
   // An account's own configuration as its pages read and change it.
   profile: { calls: unknown; replies: (({ reply: "profile" } & ProfileView) | { reply: "profile_written"; version: number } | { reply: "mcp"; result: McpReply })[] };

@@ -9,6 +9,7 @@ pub mod exposure;
 pub mod identity;
 pub mod manifest;
 pub mod metrics;
+pub mod migration;
 pub mod proof;
 pub mod registry;
 pub mod scheduler;

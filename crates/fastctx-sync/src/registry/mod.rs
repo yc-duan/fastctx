@@ -35,6 +35,7 @@ pub enum ConflictRule {
     Rebuild,
     LocalOwner,
     LocalPending,
+    MigrationSource,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Retention {

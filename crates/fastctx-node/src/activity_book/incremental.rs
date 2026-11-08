@@ -58,18 +58,6 @@ fn cursor(db: &Connection, deed: &str) -> fastctx_storage::Result<Cursor> {
     body.map(|body| crate::records::decode(&body)).transpose().map(|row| row.unwrap_or_default())
 }
 
-/// How far into a job's step journal the book has read, below which the
-/// journal may let segments go. A damaged book reads nothing until it is
-/// mended, so it holds none back: a long job's steps would otherwise fill
-/// their budget and stop being kept, and the book shows the gap once it
-/// reads again. Collecting the whole job still waits for it (`consumed`).
-pub(crate) fn segment(node: &Node, record: &JobRecord) -> io::Result<u64> {
-    if node.book_database.fault().is_some() {
-        return Ok(u64::MAX);
-    }
-    node.book_database.read_now(|db| Ok(cursor(db, &deed(record))?.steps_segment)).map_err(io::Error::other)
-}
-
 /// Whole-job collection obeys the same independent consumer as segment retention.
 /// A failed database is never evidence that its source has been consumed.
 pub(crate) fn consumed(node: &Node, record: &JobRecord) -> io::Result<bool> {

@@ -72,13 +72,6 @@ pub(super) fn refresh_locked(record: &Path) -> io::Result<()> {
     }
 }
 
-/// The journal may discard a segment only after every reader has consumed it.
-pub(super) fn segment(record: &Path) -> io::Result<u64> {
-    Ok(Job::open(record)?
-        .read(CURSOR, |rows, family| rows.get::<Cursor>(family, "value"))?
-        .map_or(0, |cursor| cursor.segment))
-}
-
 pub(super) fn read(record: &Path) -> io::Result<(Vec<RunStep>, Vec<StepSummary>)> {
     let job = Job::open(record)?;
     let cursor_family = job.family(CURSOR);

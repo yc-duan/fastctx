@@ -1,4 +1,50 @@
 {
+  "data": [
+    {
+      "data": "listed",
+      "machine": "local",
+      "at": "2026-01-01T00:00:00Z",
+      "root": "/world",
+      "root_bytes": 0,
+      "kinds": {
+        "conversations": 0,
+        "host_records": 0,
+        "command_output": 0,
+        "cache": 0,
+        "program": 0,
+        "other": 0
+      },
+      "conversations": [],
+      "output_days": 30
+    },
+    {
+      "data": "listed",
+      "machine": "local",
+      "at": "2026-01-01T00:00:00Z",
+      "root": "/world",
+      "root_bytes": 0,
+      "kinds": {
+        "conversations": 0,
+        "host_records": 0,
+        "command_output": 0,
+        "cache": 0,
+        "program": 0,
+        "other": 0
+      },
+      "conversations": [],
+      "output_days": 30,
+      "output_retention": "unlimited"
+    },
+    {
+      "data": "output_days",
+      "days": 30
+    },
+    {
+      "data": "output_days",
+      "days": 30,
+      "output_retention": "unlimited"
+    }
+  ],
   "updates": {
     "states": [
       {

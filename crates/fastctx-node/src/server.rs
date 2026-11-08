@@ -1465,9 +1465,13 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
         }
         Call::DoctorReadings => {
             users_voice(node, peer)?;
-            let scenes = fastctx_platform::task::spawn_blocking(fastctx_platform::scene::kept)
-                .await
-                .map_err(|error| Failure::new(error.to_string()))?;
+            let working = node.clone();
+            let scenes = fastctx_platform::task::spawn_blocking(move || {
+                crate::asset_preservation::report(&working);
+                fastctx_platform::scene::kept()
+            })
+            .await
+            .map_err(|error| Failure::new(error.to_string()))?;
             Ok(Reply::DoctorReadings {
                 readings: Box::new(fastctx_platform::readings::snapshot()),
                 health: fastctx_platform::health::summary(),

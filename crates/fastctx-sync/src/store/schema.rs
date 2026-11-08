@@ -7,4 +7,20 @@ pub use tables::TABLES;
 
 pub const COMPONENT: &str = "sync.shadow";
 pub const VERSION: u32 = 1;
-pub const SCHEMA: &str = include_str!("schema.sql");
+pub const SCHEMA: &str = concat!(include_str!("schema.sql"), include_str!("legacy_pins.sql"));
+
+/// Installs the shadow component inside the service's startup transaction.
+/// The independently installed legacy carrier is never created twice.
+pub fn initialize(db: &fastctx_storage::rusqlite::Connection) -> fastctx_storage::Result<()> {
+    fastctx_storage::versions::apply(
+        db,
+        COMPONENT,
+        &[fastctx_storage::versions::Migration { version: VERSION, sql: include_str!("schema.sql") }],
+    )?;
+    crate::migration::initialize_carrier(db)?;
+    db.execute(
+        "INSERT INTO sync_local_head(singleton,sequence) VALUES(1,X'0000000000000000') ON CONFLICT(singleton) DO NOTHING",
+        [],
+    )?;
+    Ok(())
+}

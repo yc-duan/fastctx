@@ -253,15 +253,28 @@ pub(super) fn steps(db: &Connection, conversation: &str, call: &str, incoming: &
         let previous: Option<(String, bool, bool)> = query
             .query_row((conversation, call, &step.id), |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
             .optional()?;
-        if previous
-            .as_ref()
-            .is_some_and(|(hash, finished, _)| *hash == fingerprint || (*finished && step.ended.is_none()))
-        {
-            continue;
+        if let Some((hash, finished, folded)) = &previous {
+            if *hash == fingerprint {
+                if *folded {
+                    fastctx_sync::migration::preserve_step(db, conversation, call, &step.id, &bytes)?;
+                }
+                continue;
+            }
+            if *finished && step.ended.is_none() {
+                continue;
+            }
+        }
+        if previous.as_ref().is_some_and(|(_, _, folded)| !folded) {
+            let previous_body: Vec<u8> = db
+                .prepare_cached("SELECT body FROM run_steps WHERE conversation=?1 AND call=?2 AND id=?3")?
+                .query_row((conversation, call, &step.id), |row| row.get(0))?;
+            fastctx_sync::migration::preserve_step(db, conversation, call, &step.id, &previous_body)?;
         }
         let first = step.began.as_microsecond();
         let last = step.ended.unwrap_or(step.began).as_microsecond();
         if previous.is_some_and(|(_, _, folded)| folded) {
+            // The cold projection would otherwise discard this complete revision (2026-11-08).
+            fastctx_sync::migration::preserve_step(db, conversation, call, &step.id, &bytes)?;
             db.prepare_cached("UPDATE run_folded SET last=max(last,?4),first=min(first,?5)
                 WHERE conversation=?1 AND call=?2 AND (machine,kind)=(SELECT machine,kind FROM run_steps WHERE conversation=?1 AND call=?2 AND id=?3)")?
                 .execute((conversation,call,&step.id,last,first))?;
@@ -323,6 +336,13 @@ fn fold(db: &Connection, conversation: &str, call: &str) -> Result<()> {
         fold.execute(params![conversation, call, machine, kind, count, first, last])?;
     }
     if let Some(through) = through {
+        let mut sources = db.prepare_cached("SELECT id,body FROM run_steps INDEXED BY run_steps_hot WHERE conversation=?1 AND call=?2 AND body IS NOT NULL AND position<=?3 ORDER BY position")?;
+        let mut rows = sources.query((conversation, call, through))?;
+        while let Some(row) = rows.next()? {
+            let id: String = row.get(0)?;
+            let body: Vec<u8> = row.get(1)?;
+            fastctx_sync::migration::preserve_step(db, conversation, call, &id, &body)?;
+        }
         db.prepare_cached("UPDATE run_steps INDEXED BY run_steps_hot SET body=NULL WHERE conversation=?1 AND call=?2 AND body IS NOT NULL AND position<=?3")?
             .execute((conversation, call, through))?;
     }

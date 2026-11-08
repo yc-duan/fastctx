@@ -25,6 +25,8 @@ pub enum Gauge {
     TransferBytes,
     TemporaryBytes,
     GarbageCandidates,
+    LegacyPinnedRecords,
+    LegacyPinnedBytes,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Latency {

@@ -138,7 +138,7 @@ WHERE NOT EXISTS(SELECT 1 FROM book_deeds_began);
 /// Opens the node schema on a blocking thread before registering its writer.
 pub(crate) fn open(world: &WorldDir) -> Database {
     let path = world.path().join("node.sqlite3");
-    let guard = crate::conversation_store::fences::guard;
+    let guard = crate::asset_preservation::guard;
     fastctx_storage::Database::open_guarded_or_unavailable(&path, crate::composer::SCHEMA, guard, |db| {
         upgrade::payloads(db)?;
         upgrade::records(db)?;
@@ -179,6 +179,7 @@ pub(crate) fn open(world: &WorldDir) -> Database {
             "node.older-releases",
             &[fastctx_storage::versions::Migration { version: 1, sql: OLDER_RELEASES }],
         )?;
+        fastctx_sync::migration::initialize(db)?;
         crate::conversation_store::schema::initialize(db)?;
         crate::conversation_store::transfer::prepare(db, world)
     })

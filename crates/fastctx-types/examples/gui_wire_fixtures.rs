@@ -18,6 +18,8 @@ mod composer;
 mod composer_sync;
 #[path = "gui_wire_fixtures/control.rs"]
 mod control;
+#[path = "gui_wire_fixtures/data.rs"]
+mod data;
 #[path = "gui_wire_fixtures/file_read.rs"]
 mod file_read;
 #[path = "gui_wire_fixtures/file_search.rs"]
@@ -57,6 +59,7 @@ mod run_facts;
 
 #[derive(Serialize)]
 struct Fixtures {
+    data: Vec<fastctx_types::data::DataReply>,
     updates: updates::Fixtures,
     profile: profile::Fixtures,
     machine_log: Vec<fastctx_types::machine_log::Page>,
@@ -85,6 +88,7 @@ struct Fixtures {
 
 fn main() {
     let fixtures = Fixtures {
+        data: data::fixtures(),
         updates: updates::fixtures(),
         profile: profile::fixtures(),
         machine_log: machine_log::fixtures(),

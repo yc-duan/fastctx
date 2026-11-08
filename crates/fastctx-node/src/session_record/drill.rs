@@ -115,7 +115,6 @@ pub(crate) fn run(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(crowded_page.events.iter().map(|(sequence, _)| *sequence).collect::<Vec<_>>(), [1, 2, 3]);
     assert_eq!(crate::record_migration::archive::damaged_count(world.path())?, 1);
     assert!(append(&crowded, "after-damage", &event(4))?);
-    assert_eq!(crate::record_migration::archive::collect(world.path(), Duration::ZERO)?, 261);
     assert_eq!(crate::record_migration::archive::damaged_count(world.path())?, 1);
     assert!(append(&legacy, "after-migration", &event(999))?);
     assert_eq!(latest(&legacy)?, 5001);

@@ -19,7 +19,7 @@ macro_rules! kind {
             handler: $id,
             codec: Codec::$codec,
             exportable: matches!(DataClass::$class, DataClass::Asset | DataClass::Derived)
-                && !matches!(ConflictRule::$conflict, ConflictRule::LocalPending),
+                && !matches!(ConflictRule::$conflict, ConflictRule::LocalPending | ConflictRule::MigrationSource),
             export: ExportPolicy::GenericRootClosure,
             delete: DeletePolicy::$delete,
             assisted_host: $assisted,
@@ -30,6 +30,20 @@ macro_rules! kind {
 }
 
 pub(super) const KINDS: &[Registration] = &[
+    kind!(
+        "migration.legacy-pins",
+        Asset,
+        Local,
+        MigrationSource,
+        UntilDeleted,
+        LocalOnly,
+        "fastctx-sync::migration",
+        Migration,
+        Bytes,
+        false,
+        Confirmed,
+        HandlerWithTombstone
+    ),
     kind!(
         "account.directory",
         Asset,

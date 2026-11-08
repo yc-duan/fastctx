@@ -43,4 +43,5 @@ pub const TABLES: &[&str] = &[
     "sync_peer_capabilities",
     "sync_timeline_items",
     "sync_timeline_heads",
+    "sync_legacy_pins",
 ];

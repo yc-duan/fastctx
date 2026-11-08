@@ -1,17 +1,15 @@
 //! This machine's activity book (`world-layers.md`, 活动账本): one deed for
 //! each script `run` ran here, written as its job changes, with the files
-//! it touched. Deeds are kept 90 days, then folded into counts by the hour,
-//! kept a year. Its independent database keeps maintenance off the state writer.
+//! it touched. Full deeds and existing hourly counts survive until explicit
+//! deletion. Its independent database keeps maintenance off the state writer.
 
 mod incremental;
 mod legacy;
-mod maintenance;
 mod migrate;
 #[cfg(feature = "storage-drill")]
 pub(crate) mod migration_drill;
 mod query;
-pub(crate) use incremental::{Cursor, consumed, observe, segment};
-pub(crate) use maintenance::fold;
+pub(crate) use incremental::{Cursor, consumed, observe};
 mod sealing;
 pub(crate) use sealing::{ACCOUNTS as SEALED_ACCOUNTS, SCHEMA as SEALS, seal, seal_account, seal_elsewhere};
 mod seen;
@@ -27,8 +25,7 @@ use fastctx_types::write::ChangeKind;
 
 use crate::Node;
 
-/// Detail lasts 90 days; hourly counts last a year. Journal identities and
-/// cursors live until their deed is folded, so replay never counts twice.
+/// Detail, historical summaries and replay identities survive until deletion.
 /// What was taken from the book's files before it was a database is marked
 /// once, a row for each deed it held.
 pub(crate) const SCHEMA: &str = "
@@ -83,10 +80,6 @@ CREATE TABLE IF NOT EXISTS book_complete(deed TEXT PRIMARY KEY) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS book_retired(deed TEXT PRIMARY KEY,at INTEGER NOT NULL) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS book_folding(deed TEXT PRIMARY KEY,applied INTEGER NOT NULL DEFAULT 0) WITHOUT ROWID;
 ";
-
-/// How long deeds are kept whole, and how long their hourly counts.
-const DEEDS_KEPT: jiff::SignedDuration = jiff::SignedDuration::from_hours(90 * 24);
-const HOURS_KEPT: jiff::SignedDuration = jiff::SignedDuration::from_hours(366 * 24);
 
 /// The longest script kept; the rest is the job's own record while it lasts.
 const SCRIPT: usize = 2000;

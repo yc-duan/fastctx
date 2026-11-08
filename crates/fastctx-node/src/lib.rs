@@ -57,6 +57,7 @@ mod ending;
 #[cfg(test)]
 mod future_sizes;
 pub use ending::flush_log;
+mod asset_preservation;
 mod conversation_store;
 mod facts;
 mod features;

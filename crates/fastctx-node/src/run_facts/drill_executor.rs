@@ -84,7 +84,7 @@ pub(crate) fn run(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
         let _writing = gate.lock();
         let mut bytes = serde_json::to_vec(&step(100_000))?;
         bytes.push(b'\n');
-        journal::append(&path, &bytes, 0)?;
+        journal::append(&path, &bytes)?;
         step_view::refresh_locked(&path)?;
     }
     let (steps, folded) = step_view::read(&path)?;

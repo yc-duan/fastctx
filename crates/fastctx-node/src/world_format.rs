@@ -12,7 +12,8 @@ use std::io;
 /// Format 2 keeps the records in databases; the release before it, which
 /// never wrote this file, kept them in files. Format 3 keeps the texts of
 /// plan and history copies apart from their metadata (`replicas::bodies`).
-pub(crate) const CURRENT: u32 = 3;
+/// Format 4 retains source assets for the unified synchronization foundation.
+pub(crate) const CURRENT: u32 = 4;
 
 #[derive(Serialize, Deserialize)]
 struct Format {

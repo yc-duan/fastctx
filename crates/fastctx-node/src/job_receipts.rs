@@ -325,6 +325,7 @@ fn received_in(
             create(&marker, &confirmed)?;
         }
         crate::completion_debt::paid(path)?;
+        crate::jobs::retain_scratch(path, confirmed.at)?;
         if confirmed.shown_whole {
             node.job_files.due.lock().expect("never poisoned").insert(path.clone());
         }

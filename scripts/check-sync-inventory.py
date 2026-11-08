@@ -71,11 +71,19 @@ def check(registry):
                 raise ValueError(f"unregistered production table {table}: {path.relative_to(ROOT)}")
     schema = ROOT / "crates/fastctx-sync/src/store"
     connection = sqlite3.connect(":memory:")
-    connection.executescript((schema / "schema.sql").read_text())
+    connection.executescript((schema / "schema.sql").read_text() + (schema / "legacy_pins.sql").read_text())
     actual = {r[0] for r in connection.execute("SELECT name FROM sqlite_schema WHERE type='table'")}
     declared = set(re.findall(r'"(sync_[a-z_]+)"', (schema / "schema_tables.rs").read_text()))
     if actual != declared:
         raise ValueError(f"shadow schema differs from its closed set: {actual ^ declared}")
+    carriers = rows(registry / "transitional.tsv")
+    approved = {("sync_legacy_pins", "Asset", "migration.legacy-pins",
+                 "crates/fastctx-sync/src/migration.rs", "Migration",
+                 "Canonical import and reference verification, then empty and drop")}
+    if len(carriers) != len({tuple(row) for row in carriers}) or not {tuple(row) for row in carriers} <= approved:
+        raise ValueError("unregistered transitional carrier")
+    if {row[0] for row in carriers} != actual & {row[0] for row in approved}:
+        raise ValueError("a transitional carrier must leave the inventory with its table")
     print(f"sync inventory: {len(entries)} entries; {len(actual)} shadow tables; baseline evidence verified")
 
 if __name__ == "__main__":

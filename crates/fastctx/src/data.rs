@@ -74,10 +74,15 @@ pub fn run(args: DataArgs) -> anyhow::Result<()> {
         }
         DataCommand::Delete { names, yes } => delete(names, yes),
         DataCommand::Output { days } => {
-            let Reply::Data(DataReply::OutputDays { days }) = call(DataCall::OutputDays { days })? else {
+            let Reply::Data(DataReply::OutputDays { days, output_retention }) = call(DataCall::OutputDays { days })?
+            else {
                 anyhow::bail!("the node answered something other than the days");
             };
-            println!("full command output is kept {days} days after the model got its answer");
+            if output_retention.as_deref() == Some("unlimited") {
+                println!("full command output is kept indefinitely");
+            } else {
+                println!("full command output is kept {days} days after the model got its answer");
+            }
             Ok(())
         }
     }
@@ -168,7 +173,14 @@ fn render(space: &Space, now: Timestamp) -> String {
             size(kinds.host_records)
         ));
     }
-    text.push_str(&format!("full command output is kept {} days after the model got its answer\n", space.output_days));
+    if space.output_retention.as_deref() == Some("unlimited") {
+        text.push_str("full command output is kept indefinitely\n");
+    } else {
+        text.push_str(&format!(
+            "full command output is kept {} days after the model got its answer\n",
+            space.output_days
+        ));
+    }
     for login in &space.claude_logins {
         let whose =
             login.home.as_deref().map_or_else(|| "Claude Code".to_string(), |home| format!("Claude Code ({home})"));

@@ -350,9 +350,6 @@ impl Book {
         self.valid = true;
         Ok(())
     }
-    pub fn invalidate(&mut self) {
-        self.valid = false;
-    }
 }
 
 pub(super) fn day_file(path: &Path, at: Timestamp) -> PathBuf {
@@ -415,13 +412,4 @@ pub(super) fn days(path: &Path, since: Timestamp) -> io::Result<Vec<PathBuf>> {
 
 pub(super) fn read(path: &Path) -> io::Result<Vec<Entry>> {
     super::quarantine::read(path)
-}
-
-pub(super) fn entries(path: &Path, since: Timestamp) -> io::Result<Vec<Entry>> {
-    let mut rows = Vec::new();
-    for path in days(path, since)? {
-        rows.extend(read(&path)?.into_iter().filter(|row| row.at() >= since));
-    }
-    rows.sort_by_key(Entry::at);
-    Ok(rows)
 }

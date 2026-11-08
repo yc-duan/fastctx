@@ -9939,6 +9939,7 @@ Used by:
 - fastctx-sentinel 1.0.1-beta.16 (https://github.com/yc-duan/fastctx)
 - fastctx-serve 1.0.1-beta.16 (https://github.com/yc-duan/fastctx)
 - fastctx-storage 1.0.1-beta.16 (https://github.com/yc-duan/fastctx)
+- fastctx-sync 1.0.1-beta.16 (https://github.com/yc-duan/fastctx)
 - fastctx-tui 1.0.1-beta.16 (https://github.com/yc-duan/fastctx)
 - fastctx-types 1.0.1-beta.16 (https://github.com/yc-duan/fastctx)
 - fastctx-uninstall 1.0.1-beta.16
@@ -87068,4 +87069,4 @@ Source archives for the crates.io dependencies recorded by this build follow. Ea
 - zvariant_derive 5.15.0: https://static.crates.io/crates/zvariant_derive/zvariant_derive-5.15.0.crate
 - zvariant_utils 4.2.0: https://static.crates.io/crates/zvariant_utils/zvariant_utils-4.2.0.crate
 
-<!-- fastctx-notices-inputs: 8bdbf02f76db2083bd48d02b11dcd100cabd62e357bcdb756166ad910e6b44c6 -->
+<!-- fastctx-notices-inputs: eef49027f5203617c02ce2e9c4c4d19559ce8f7a55ef93c5ff98976bb62dc927 -->

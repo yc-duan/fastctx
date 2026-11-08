@@ -5,7 +5,6 @@ mod calls;
 pub(crate) use calls::calls;
 mod claude;
 mod codex;
-mod compact;
 mod health;
 mod history;
 mod hold;
@@ -20,7 +19,6 @@ pub(crate) mod terminal_record;
 
 use crate::Node;
 pub(crate) use allowance::{after_reading, used_up};
-pub(crate) use compact::collect;
 use fastctx_types::ResidentId;
 use fastctx_types::access::{Acting, HubAccount};
 use fastctx_types::agents::AgentLimits;

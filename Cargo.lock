@@ -1551,6 +1551,7 @@ dependencies = [
  "fastctx-ripgrep",
  "fastctx-sentinel",
  "fastctx-storage",
+ "fastctx-sync",
  "fastctx-types",
  "fastctx-uninstall",
  "fastctx-update",
@@ -1665,9 +1666,12 @@ dependencies = [
 name = "fastctx-sync"
 version = "1.0.1-beta.16"
 dependencies = [
+ "fastctx-platform",
+ "fastctx-storage",
  "fastctx-types",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
 ]
 
 [[package]]

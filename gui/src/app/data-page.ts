@@ -44,6 +44,7 @@ export interface DataWords {
   refused(name: string, why: string): string;
   output: string;
   outputSaid: string;
+  outputUnlimited: string;
   days(n: number): string;
   cache: string;
   cacheSaid: string;
@@ -90,6 +91,7 @@ export const zhData: DataWords = {
   refused: (name, why) => `${name} 没删${known(why, zhProblems) ? `：${known(why, zhProblems)}` : ""}`,
   output: "命令输出",
   outputSaid: "模型拿到之后，完整输出再留",
+  outputUnlimited: "长期保留。作业输出是资产，不设保留期。",
   days: (n) => `${n} 天`,
   cache: "缓存",
   cacheSaid: "点开过的文件、拍照留下的图与看过的对话；到期也会自己删",
@@ -132,6 +134,7 @@ export const enData: DataWords = {
   refused: (name, why) => `${name} not deleted${known(why, enProblems) ? `: ${known(why, enProblems)}` : ""}`,
   output: "Command output",
   outputSaid: "After the model has its answer, keep the full output for",
+  outputUnlimited: "Kept indefinitely. Job output is an asset with no retention deadline.",
   days: (n) => (n === 1 ? "1 day" : `${n} days`),
   cache: "Cache",
   cacheSaid: "Files opened, photos taken and conversations viewed; they expire on their own too",
@@ -319,6 +322,9 @@ export class DataPage implements Page {
 
   private output(space: Space): string {
     const { words } = this.options;
+    if (space.output_retention === "unlimited") {
+      return `<section class="home-section data-section"><h2 class="section-title">${escape(words.output)}</h2><p class="data-said">${escape(words.outputUnlimited)}</p></section>`;
+    }
     return `<section class="home-section data-section"><h2 class="section-title">${escape(words.output)}</h2>
       <p class="data-said">${escape(words.outputSaid)}</p>
       <div class="choice-options" role="radiogroup" aria-label="${escape(words.outputSaid)}">${OUTPUT_DAYS.map(
@@ -353,7 +359,11 @@ export class DataPage implements Page {
     if (days && this.space && this.options.data) {
       try {
         const reply = await this.options.data({ do: "output_days", days: Number(days) });
-        if (reply.data === "output_days") this.space.output_days = reply.days;
+        if (reply.data === "output_days") {
+          this.space.output_days = reply.days;
+          if (reply.output_retention === undefined) delete this.space.output_retention;
+          else this.space.output_retention = reply.output_retention;
+        }
       } catch (error) {
         this.said = { text: this.options.words.failed, detail: detailOf(error) };
       }
