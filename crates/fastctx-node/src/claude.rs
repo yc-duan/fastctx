@@ -2052,21 +2052,22 @@ pub async fn open_here(
     let launching = command(node, opened.home.as_deref())?;
     oldest::check(node, &launching).await?;
     let offering = crate::logins::models::Offering::of(node, opened.home.as_deref())?;
-    match &options.model {
+    // It starts on a model named in full (`world-gui.md`, 对话): the one
+    // asked for, which the login must offer, else the account's own choice
+    // when the login offers it, else the login's first.
+    let model = match options.model.take() {
         Some(model) => {
-            offering.require(model)?;
-            options.reasoning_effort = crate::logins::models::effort_for(model, options.reasoning_effort.take());
+            offering.require(&model)?;
+            model
         }
-        // It starts on a model named in full (`world-gui.md`, 对话): the
-        // account's own choice when the login offers it, else the login's
-        // first.
         None => {
             crate::profile::session::ready(node, &opened.acting).await?;
             let profile = crate::profile::session::get(node, &opened.acting);
-            let preferred = profile.claude.get("model").and_then(serde_json::Value::as_str);
-            options.model = Some(offering.starting(preferred)?);
+            offering.starting(profile.claude.get("model").and_then(serde_json::Value::as_str))?
         }
-    }
+    };
+    options.reasoning_effort = crate::logins::models::effort_for(&model, options.reasoning_effort.take());
+    options.model = Some(model);
     let agent = AgentName::try_from("claude").expect("a valid agent name");
     let (id, _opening) = crate::attachments::opening(node, &agent, &opened.acting, town.as_ref(), &attachments).await?;
     crate::placement::location::speaking(node, &id, typed_on)?;
