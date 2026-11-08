@@ -202,9 +202,13 @@ impl Fold {
     }
 }
 
-pub(super) async fn read(node: &Arc<Node>, id: &ResidentId, deadline: Instant) -> (Vec<NativeAgent>, Vec<String>) {
-    let read = open(node, id, deadline).await;
-    (read.fold.finish(), read.unavailable)
+pub(super) async fn read(
+    node: &Arc<Node>,
+    id: &ResidentId,
+    deadline: Instant,
+) -> (Vec<NativeAgent>, Vec<String>, bool) {
+    let read = open(node, id, deadline, Fold::default(), |_, _, _| {}).await;
+    (read.fold.finish(), read.unavailable, read.reading)
 }
 
 /// A conversation's native agents as read now, what could not be read of
@@ -214,20 +218,37 @@ pub(super) struct Read {
     pub(super) fold: Fold,
     pub(super) unavailable: Vec<String>,
     pub(super) events: Option<crate::watch::Events>,
+    pub(super) reading: bool,
 }
 
-pub(super) async fn open(node: &Arc<Node>, id: &ResidentId, deadline: Instant) -> Read {
-    let mut fold = Fold::default();
-    let mut unavailable = Vec::new();
+pub(super) async fn open(
+    node: &Arc<Node>,
+    id: &ResidentId,
+    deadline: Instant,
+    mut fold: Fold,
+    mut progress: impl FnMut(&Fold, &[String], bool),
+) -> Read {
+    // Retry unfinished agents first, so completed histories cannot consume
+    // every later query's budget before the unread ones are reached.
+    let unfinished: BTreeSet<_> =
+        fold.agents.iter().filter(|(_, kept)| kept.agent.reading).map(|(id, _)| id.clone()).collect();
+    fold.recent = false;
+    for kept in fold.agents.values_mut() {
+        kept.agent.reading = true;
+    }
+    let unavailable = Vec::new();
+    let mut reading;
+    progress(&fold, &unavailable, true);
     let events = match tokio::time::timeout_at(deadline, crate::talk::history_quietly(node, id)).await {
         Ok(Ok(mut history)) => {
             fold = folded(fold, std::mem::take(&mut history.history), None).await;
+            reading = history.unread;
             let mut lagged = false;
             loop {
                 match history.events.try_recv() {
                     Ok(event) => fold.event(&event.happened, event.at, None, true),
                     Err(fastctx_net::watch_queue::TryRecvError::Lagged) => {
-                        unavailable.push(fastctx_net::watch_queue::Lagged.to_string());
+                        reading = true;
                         lagged = true;
                         break;
                     }
@@ -236,14 +257,15 @@ pub(super) async fn open(node: &Arc<Node>, id: &ResidentId, deadline: Instant) -
             }
             (!lagged).then_some(history.events)
         }
-        Ok(Err(error)) => return Read { fold, unavailable: vec![error.message], events: None },
-        Err(_) => {
-            let unavailable = vec![fastctx_types::collab_prompt::NATIVE_DEADLINE.into()];
-            return Read { fold, unavailable, events: None };
-        }
+        Ok(Err(error)) => return Read { fold, unavailable: vec![error.message], events: None, reading: true },
+        Err(_) => return Read { fold, unavailable, events: None, reading: true },
     };
+    for kept in fold.agents.values_mut() {
+        kept.agent.reading = true;
+    }
+    progress(&fold, &unavailable, reading || !fold.agents.is_empty());
     let mut read = BTreeSet::new();
-    let mut queue: VecDeque<_> = fold.agents.keys().cloned().collect();
+    let mut queue: VecDeque<_> = unfinished.into_iter().chain(fold.agents.keys().cloned()).collect();
     let mut scheduled: BTreeSet<_> = fold.agents.keys().cloned().collect();
     while let Some(agent) = queue.pop_front() {
         if !read.insert(agent.clone()) {
@@ -260,31 +282,33 @@ pub(super) async fn open(node: &Arc<Node>, id: &ResidentId, deadline: Instant) -
                     );
                 }
                 fold = folded(fold, activity.events, Some(agent.clone())).await;
-                if let Some(error) = activity.unavailable {
-                    fold.entry(&agent).agent.unavailable = Some(error);
-                }
-                for id in fold.agents.keys() {
+                let kept = fold.entry(&agent);
+                kept.agent.unavailable = activity.unavailable;
+                kept.agent.reading = false;
+                for (id, kept) in &mut fold.agents {
                     if scheduled.insert(id.clone()) {
+                        kept.agent.reading = true;
                         queue.push_back(id.clone());
                     }
                 }
             }
-            Ok(Err(error)) => fold.entry(&agent).agent.unavailable = Some(error.message),
+            Ok(Err(error)) => {
+                let kept = fold.entry(&agent);
+                kept.agent.reading = !error.is_refused() && !error.is_deleted();
+                reading |= kept.agent.reading;
+                kept.agent.unavailable = Some(error.message);
+            }
             Err(_) => {
-                unavailable.push(fastctx_types::collab_prompt::NATIVE_DEADLINE.into());
-                for (id, kept) in &mut fold.agents {
-                    if !read.contains(id) || *id == agent {
-                        kept.agent.unavailable = Some(fastctx_types::collab_prompt::NATIVE_HISTORY_DEADLINE.into());
-                    }
-                }
+                reading = true;
                 break;
             }
         }
+        progress(&fold, &unavailable, reading || fold.agents.values().any(|kept| kept.agent.reading));
     }
-    // Every agent the history tells of has found its call; what follows
-    // tells a new agent with its call.
-    fold.recent_only();
-    Read { fold, unavailable, events }
+    if !reading {
+        fold.recent_only();
+    }
+    Read { fold, unavailable, events, reading }
 }
 
 /// `fold` with `events` folded in, as told by `parent`'s loop, or by the

@@ -31,6 +31,9 @@ pub struct Branch {
     pub goal: Result<Option<GoalSummary>, String>,
     pub plan: Option<PlanAccess>,
     pub agents: Vec<NativeAgent>,
+    /// More of this branch is being read; the agents already known remain.
+    #[serde(default)]
+    pub reading: bool,
     pub unavailable: Vec<String>,
 }
 
@@ -53,5 +56,8 @@ pub struct NativeAgent {
     pub ended_at: Option<Timestamp>,
     pub duration_ms: Option<u64>,
     pub children: Vec<NativeAgent>,
+    /// Its history has not finished being read.
+    #[serde(default)]
+    pub reading: bool,
     pub unavailable: Option<String>,
 }

@@ -12,6 +12,8 @@ mod agents;
 mod attachments;
 #[path = "gui_wire_fixtures/claude.rs"]
 mod claude;
+#[path = "gui_wire_fixtures/collaboration.rs"]
+mod collaboration;
 #[path = "gui_wire_fixtures/composer.rs"]
 mod composer;
 #[path = "gui_wire_fixtures/composer_sync.rs"]
@@ -73,6 +75,7 @@ struct Fixtures {
     file_search: file_search::Fixtures,
     focus: focus::Fixtures,
     attachments: attachments::Fixtures,
+    collaboration: Vec<fastctx_types::collaboration::Tree>,
     composer: composer::Fixtures,
     composer_sync: composer_sync::Fixtures,
     claude: claude::Fixtures,
@@ -101,6 +104,7 @@ fn main() {
         file_search: file_search::fixtures(),
         focus: focus::fixtures(),
         attachments: attachments::fixtures(),
+        collaboration: collaboration::fixtures(),
         composer: composer::fixtures(),
         composer_sync: composer_sync::fixtures(),
         claude: claude::fixtures(),

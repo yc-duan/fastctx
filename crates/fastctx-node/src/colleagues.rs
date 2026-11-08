@@ -12,6 +12,7 @@
 
 pub(crate) mod live;
 mod native;
+mod partial;
 pub(crate) mod plan;
 pub(crate) mod stopping;
 pub(crate) mod tree;

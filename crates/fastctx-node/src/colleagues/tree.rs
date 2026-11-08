@@ -73,12 +73,28 @@ async fn shared(
     };
     let mut held = kept.lock().await;
     if let Some((at, took, result)) = held.as_ref()
-        && at.elapsed() < FRESH.max(*took * 4)
+        && at.elapsed()
+            < if result
+                .as_ref()
+                .is_ok_and(|tree| tree.conversation.reading || tree.colleagues.iter().any(|branch| branch.reading))
+            {
+                FRESH
+            } else {
+                FRESH.max(*took * 4)
+            }
     {
         return result.clone();
     }
     let began = Instant::now();
-    let result = read.await;
+    let mut result = read.await;
+    if let (Ok(tree), Some((_, _, Ok(previous)))) = (&mut result, held.as_ref()) {
+        super::partial::retain_agents(&mut tree.conversation, &previous.conversation);
+        for branch in &mut tree.colleagues {
+            if let Some(old) = previous.colleagues.iter().find(|old| old.address == branch.address) {
+                super::partial::retain_agents(branch, old);
+            }
+        }
+    }
     *held = Some((Instant::now(), began.elapsed(), result.clone()));
     result
 }
@@ -190,6 +206,8 @@ pub(crate) async fn here(
                     match tokio::time::timeout_at(deadline, query).await {
                         Ok(Ok(branch)) => branch,
                         result => {
+                            let reading =
+                                !matches!(&result, Ok(Err(error)) if error.is_refused() || error.is_deleted());
                             let why = match result {
                                 Ok(Err(error)) => error.message,
                                 _ => fastctx_types::collab_prompt::TREE_DEADLINE.into(),
@@ -202,6 +220,7 @@ pub(crate) async fn here(
                                 goal: Err(why.clone()),
                                 plan: None,
                                 agents: Vec::new(),
+                                reading,
                                 unavailable: vec![why],
                             }
                         }
@@ -238,7 +257,7 @@ async fn branch(node: &Arc<Node>, id: &ResidentId, acting: &Acting, deadline: In
             Err(_) => Err(fastctx_types::collab_prompt::GOAL_DEADLINE.into()),
         }
     };
-    let ((agents, unavailable), goal) = tokio::join!(super::native::read(node, id, deadline), goal);
+    let ((agents, unavailable, reading), goal) = tokio::join!(super::native::read(node, id, deadline), goal);
     visible(node, acting, id)?;
     Ok(Branch {
         address: Address { machine: node.machine(), resident: id.clone() },
@@ -248,6 +267,7 @@ async fn branch(node: &Arc<Node>, id: &ResidentId, acting: &Acting, deadline: In
         goal,
         plan: Some(super::plan::access(&about)),
         agents,
+        reading,
         unavailable,
     })
 }

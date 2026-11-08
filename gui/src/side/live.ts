@@ -59,6 +59,7 @@ function branchNode(branch: Branch, agent: "claude" | "codex", store: Store, now
     task: branch.label ?? branch.now?.title ?? "",
     state,
     why: why || null,
+    reading: Boolean(branch.reading),
     goal: treeGoal(branch.goal),
     branchOf: "Ok" in branch.goal ? (branch.goal.Ok?.parent ?? null) : null,
     took: Number.isFinite(born) ? Math.max(0, (busy ? now : Number.isFinite(since) ? since : now) - born) : 0,
@@ -84,6 +85,8 @@ function agentNode(agent: NativeAgent, parent: "claude" | "codex", now: number):
     name: agent.name ?? agent.id,
     task: agent.task ?? "",
     state,
+    reading: Boolean(agent.reading),
+    why: agent.unavailable ?? null,
     goal: null,
     took: agent.duration_ms ?? (Number.isFinite(started) ? Math.max(0, now - started) : 0),
     began: Number.isFinite(started) ? started : null,
@@ -380,7 +383,8 @@ export function liveSide(options: LiveSide): SideSeams {
         const colleagues = told
           ? broken === null ? told : told.map((node) => ({ ...node, state: "unknown" as const, why: broken }))
           : worldColleagues(options.store, options.address, now);
-        show([...colleagues, ...sideNodes(options.store, options.address, options.words, now)]);
+        const reading = detail && (tree === null || Boolean(tree.conversation.reading) || tree.colleagues.some((branch) => branch.reading));
+        show([...colleagues, ...sideNodes(options.store, options.address, options.words, now)], reading);
       };
       const follow = () => {
         const mine = ++following;
@@ -430,8 +434,10 @@ export function liveSide(options: LiveSide): SideSeams {
         detail: (shown) => {
           if (shown === detail) return;
           detail = shown;
-          if (shown) follow();
-          else {
+          if (shown) {
+            follow();
+            draw();
+          } else {
             letGo();
             draw();
           }
