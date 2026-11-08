@@ -24,6 +24,9 @@ export interface SentinelFormOptions {
   saved(view: SentinelSettingsView): void;
 }
 
+/** A try of what is saved: under way, found, or failed whole. */
+type Trial = { kind: "trying" } | { kind: "found"; report: SentinelTryReport } | { kind: "failed"; detail: string };
+
 export class SentinelForm {
   readonly element: HTMLElement;
   private view: SentinelSettingsView | null = null;
@@ -32,8 +35,10 @@ export class SentinelForm {
   private keys: { model: string; search: string } = { model: "", search: "" };
   private problem: { text: string; detail: string } | null = null;
   private busy = false;
-  /** The last try of what is saved: under way, found, or failed whole. */
-  private trial: { kind: "trying" } | { kind: "found"; report: SentinelTryReport } | { kind: "failed"; detail: string } | null = null;
+  private trial: Trial | null = null;
+  /** Counts the settings shown, so a try's answer about settings since
+   *  replaced is dropped. */
+  private shown = 0;
 
   constructor(private readonly options: SentinelFormOptions) {
     this.element = document.createElement("div");
@@ -75,6 +80,7 @@ export class SentinelForm {
     this.draft = structuredClone(view.settings);
     this.keys = { model: "", search: "" };
     this.trial = null;
+    this.shown += 1;
     this.draw();
   }
 
@@ -157,13 +163,17 @@ export class SentinelForm {
   private async tryOut(): Promise<void> {
     if (this.trial?.kind === "trying" || this.busy || this.dirty()) return;
     const { seam, login } = this.options;
+    const tried = this.shown;
     this.trial = { kind: "trying" };
     this.drawTrial();
+    let trial: Trial;
     try {
-      this.trial = { kind: "found", report: await seam.tryOut(login.hub, login.account) };
+      trial = { kind: "found", report: await seam.tryOut(login.hub, login.account) };
     } catch (error) {
-      this.trial = { kind: "failed", detail: detailOf(error) };
+      trial = { kind: "failed", detail: detailOf(error) };
     }
+    if (tried !== this.shown) return;
+    this.trial = trial;
     this.drawTrial();
   }
 

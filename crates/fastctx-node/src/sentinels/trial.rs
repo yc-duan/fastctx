@@ -95,7 +95,8 @@ async fn answer(settings: fastctx_agent::model::ModelSettings, key: String) -> R
     match client(settings, key).complete(&request).await {
         Ok(response) => match response.message {
             Message::Assistant { text, .. } if !text.trim().is_empty() => Ok(text.trim().to_string()),
-            _ => Ok(format!("an answer with no words ({})", response.stop_reason)),
+            // A model that spends its whole answer thinking cannot watch.
+            _ => Err(format!("the model answered with no words (it stopped: {})", response.stop_reason)),
         },
         Err(error) => Err(error.reason),
     }

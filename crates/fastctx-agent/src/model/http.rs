@@ -39,7 +39,7 @@ pub async fn post(endpoint: &str, headers: &[(&str, &str)], body: Value) -> Resu
         if !request_id.is_empty() {
             reason.push_str(&format!(", request {request_id}"));
         }
-        let body = crate::runtime::bounded(String::from_utf8_lossy(&bytes).trim(), 2048);
+        let body = crate::runtime::bounded(&without_credentials(&String::from_utf8_lossy(&bytes), headers), 2048);
         if !body.is_empty() {
             reason.push_str(&format!(": {body}"));
         } else if status == 404 {
@@ -52,6 +52,22 @@ pub async fn post(endpoint: &str, headers: &[(&str, &str)], body: Value) -> Resu
         return Err(error);
     }
     parsed.map_err(|e| Error::protocol(format!("invalid model JSON: {e}")))
+}
+
+/// `text` with the credentials sent in `headers` hidden, before anything
+/// cuts it short: a provider may write the key back, and a key cut in half
+/// would no longer be found.
+fn without_credentials(text: &str, headers: &[(&str, &str)]) -> String {
+    let mut text = text.trim().to_string();
+    for (name, value) in headers {
+        if name.eq_ignore_ascii_case("authorization") || name.eq_ignore_ascii_case("x-api-key") {
+            let secret = value.strip_prefix("Bearer ").unwrap_or(value).trim();
+            if !secret.is_empty() {
+                text = text.replace(secret, "***");
+            }
+        }
+    }
+    text
 }
 
 pub fn number(value: &Value, key: &str) -> Result<u64, Error> {
