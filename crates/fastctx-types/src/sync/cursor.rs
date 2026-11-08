@@ -1,0 +1,104 @@
+//! Durable progress, distinct from transport delivery and volatile UI updates.
+
+use super::identity::{FeedEpoch, ObjectId, ProducerEpoch, ScopeKey, StreamId};
+use serde::{Deserialize, Serialize};
+
+macro_rules! counter {
+    ($name:ident, $description:literal) => {
+        #[doc = $description]
+        #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+        #[serde(try_from = "String", into = "String")]
+        pub struct $name(pub u64);
+        impl TryFrom<String> for $name {
+            type Error = String;
+            fn try_from(text: String) -> Result<Self, Self::Error> {
+                let value = text.parse::<u64>().map_err(|_| concat!("invalid ", stringify!($name)).to_string())?;
+                if value.to_string() != text {
+                    return Err("a counter must use canonical decimal notation".into());
+                }
+                Ok(Self(value))
+            }
+        }
+        impl From<$name> for String {
+            fn from(value: $name) -> String {
+                value.0.to_string()
+            }
+        }
+    };
+}
+
+counter!(Sequence, "A protocol position, encoded as a decimal string to preserve all 64 bits in JavaScript.");
+counter!(Revision, "An object or authorization revision; only its authority advances it.");
+counter!(LocalSequence, "One database's change cursor, never a hub-assigned scope sequence.");
+counter!(ByteCount, "A byte count that remains exact across the GUI boundary.");
+counter!(Count, "An exact cardinality or index, distinct from a byte offset.");
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScopeCursor {
+    pub scope: ScopeKey,
+    pub epoch: FeedEpoch,
+    pub acl_revision: Revision,
+    pub applied: Sequence,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StreamCursor {
+    pub scope: ScopeKey,
+    pub stream: StreamId,
+    pub epoch: ProducerEpoch,
+    /// The last contiguous committed record, not the largest number observed.
+    pub committed: Sequence,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SnapshotFence {
+    pub cursor: ScopeCursor,
+    pub root: super::manifest::BlobId,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PageCursor {
+    pub snapshot: SnapshotFence,
+    pub after: Option<ObjectId>,
+}
+
+/// A half-open range of storage block indexes, never byte offsets.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BlockRange {
+    pub start: Count,
+    pub end: Count,
+}
+
+impl BlockRange {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.start >= self.end { Err("a range must be nonempty and increasing".into()) } else { Ok(()) }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BlockProgress {
+    pub manifest: super::manifest::BlobId,
+    /// Verified, durable block indexes; sorted, disjoint half-open ranges.
+    pub verified: Vec<BlockRange>,
+    pub total_blocks: Count,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum Completeness {
+    MetadataOnly,
+    Pending { missing_records: Count, missing_bytes: ByteCount },
+    Complete { root: super::manifest::BlobId },
+    Unavailable { reason: String },
+    LegacyIncomplete { source: super::identity::DeviceId, reason: String },
+}
+
+/// Sent only after FULL commit. A catalog ACK does not acknowledge referenced
+/// bodies; a stream ACK does not claim that all of its images are downloaded.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum DurableAck {
+    Catalog { cursor: ScopeCursor },
+    Stream { cursor: StreamCursor },
+    Blocks { progress: BlockProgress },
+}
