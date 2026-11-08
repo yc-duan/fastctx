@@ -156,6 +156,21 @@ impl Fences {
 }
 
 impl Guard for Fences {
+    fn check_migration(
+        &mut self,
+        change: &Change<'_>,
+        purpose: fastctx_storage::guard::MigrationPurpose,
+    ) -> Result<()> {
+        match purpose {
+            fastctx_storage::guard::MigrationPurpose::ConversationTransfer
+                if self.scoped.contains_key(change.table()) =>
+            {
+                // Transfer admission owns scoped rows, not the fence metadata (2026-11-08).
+                Ok(())
+            }
+            fastctx_storage::guard::MigrationPurpose::ConversationTransfer => self.check(change),
+        }
+    }
     fn check(&mut self, change: &Change<'_>) -> Result<()> {
         if let Some(&column) = self.scoped.get(change.table()) {
             return self.scoped(change, column);

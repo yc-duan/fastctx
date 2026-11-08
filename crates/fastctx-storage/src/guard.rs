@@ -8,6 +8,9 @@
 //! the workspace's `LIBSQLITE3_FLAGS` (`.cargo/config.toml`); a build without
 //! it fails to link rather than run unguarded.
 
+mod composite;
+pub use composite::CompositeGuard;
+
 use crate::Error;
 use rusqlite::ffi;
 use rusqlite::types::ValueRef;
@@ -106,6 +109,18 @@ pub trait Guard: Send {
     /// Refuses the change with why, or lets it be. A refused change fails
     /// its whole operation, which is undone with its savepoint.
     fn check(&mut self, change: &Change<'_>) -> Result<(), Error>;
+    /// A registered transfer may relax its own lifecycle fence, never every guard.
+    fn check_migration(&mut self, change: &Change<'_>, _purpose: MigrationPurpose) -> Result<(), Error> {
+        self.check(change)
+    }
+    /// Performs bounded, read-only checks before this operation's savepoint commits.
+    fn validate_operation(&mut self, _connection: &rusqlite::Connection) -> Result<(), Error> {
+        Ok(())
+    }
+    /// Supplies preparation-time policy without reentering this guard's mutex.
+    fn write_policy(&self) -> Option<Arc<dyn crate::authorization::WritePolicy>> {
+        None
+    }
     /// The operation's changes stand in its transaction, or were undone.
     fn ended(&mut self, kept: bool);
     /// The transaction committed, or failed and undid all it held.
@@ -117,27 +132,50 @@ pub(crate) type Shared = Arc<Mutex<Box<dyn Guard>>>;
 thread_local! {
     /// Why the writer's operation in progress was refused, first reason only.
     static REFUSED: RefCell<Option<Error>> = const { RefCell::new(None) };
-    /// Whether the guard is set aside on this writer.
-    static SUSPENDED: Cell<bool> = const { Cell::new(false) };
+    static PANICKED: Cell<bool> = const { Cell::new(false) };
+    static VALIDATING: Cell<bool> = const { Cell::new(false) };
+    static MIGRATION: Cell<Option<MigrationPurpose>> = const { Cell::new(None) };
 }
 
-/// Sets the guard aside on this writer while held: its changes are still
-/// followed, none is refused. For an operation that writes rows the rules
-/// fence on purpose, as an import into a conversation fenced for it.
-pub struct Suspended {
-    was: bool,
+/// Closed purposes whose constructors are restricted by the architecture gate.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MigrationPurpose {
+    ConversationTransfer,
 }
 
-/// Sets the guard aside until the returned value is dropped; called inside a
-/// write on the writer.
-pub fn suspend() -> Suspended {
-    Suspended { was: SUSPENDED.replace(true) }
+pub struct MigrationScope {
+    previous: Option<MigrationPurpose>,
+    _thread: PhantomData<std::rc::Rc<()>>,
 }
 
-impl Drop for Suspended {
+/// Only the registered conversation-transfer adapter may enter this scope.
+/// Every guard independently decides which rules this purpose may relax.
+pub fn enter_migration(purpose: MigrationPurpose) -> MigrationScope {
+    MigrationScope { previous: MIGRATION.replace(Some(purpose)), _thread: PhantomData }
+}
+impl Drop for MigrationScope {
     fn drop(&mut self) {
-        SUSPENDED.set(self.was);
+        MIGRATION.set(self.previous);
     }
+}
+pub(crate) fn migration() -> Option<MigrationPurpose> {
+    MIGRATION.get()
+}
+pub(crate) fn validating() -> bool {
+    VALIDATING.get()
+}
+pub(crate) fn mark_panicked() {
+    PANICKED.set(true);
+}
+
+pub(crate) fn validate(guard: &Shared, connection: &rusqlite::Connection) -> Result<(), Error> {
+    VALIDATING.set(true);
+    let result = catch_unwind(AssertUnwindSafe(|| lock(guard).validate_operation(connection)));
+    VALIDATING.set(false);
+    result.unwrap_or_else(|_| {
+        mark_panicked();
+        Err(Error::new("the database guard failed while validating an operation"))
+    })
 }
 
 /// The hook on the writer's connection; dropped before the connection, it
@@ -180,7 +218,7 @@ unsafe extern "C" fn changing(
     _: i64,
 ) {
     // Nothing unwinds into SQLite.
-    let _ = catch_unwind(AssertUnwindSafe(|| {
+    let result = catch_unwind(AssertUnwindSafe(|| {
         // SAFETY: SQLite calls with the argument `install` gave and the
         // names of the change's database and table.
         let (guard, database, table) =
@@ -196,25 +234,48 @@ unsafe extern "C" fn changing(
             // neither to be had: it is refused, never let by.
             _ => Action::Update,
         };
-        let checked = lock(guard).check(&Change { table, action, db, call: PhantomData });
-        if let Err(why) = checked
-            && !SUSPENDED.get()
-        {
+        let change = Change { table, action, db, call: PhantomData };
+        let checked = if VALIDATING.get() {
+            Err(Error::new("operation validation cannot write rows"))
+        } else if let Some(purpose) = MIGRATION.get() {
+            lock(guard).check_migration(&change, purpose)
+        } else {
+            lock(guard).check(&change)
+        };
+        if let Err(why) = checked {
             REFUSED.with(|refused| {
                 refused.borrow_mut().get_or_insert(why);
             });
         }
     }));
+    // A failed guard cannot authorize the row, including transfers (2026-11-08).
+    if result.is_err() {
+        mark_panicked();
+    }
 }
 
 /// Begins an operation with nothing refused.
 pub(crate) fn begin() {
     REFUSED.with(|refused| refused.borrow_mut().take());
+    PANICKED.set(false);
+    VALIDATING.set(false);
+    MIGRATION.set(None);
 }
 
-/// Why the operation that just ran was refused, if it was.
+/// Keeps a preparation-time refusal even if its caller ignores the SQL error.
+pub(crate) fn refuse(why: Error) {
+    REFUSED.with(|refused| {
+        refused.borrow_mut().get_or_insert(why);
+    });
+}
+
 pub(crate) fn refused() -> Option<Error> {
-    REFUSED.with(|refused| refused.borrow_mut().take())
+    let reason = REFUSED.with(|refused| refused.borrow_mut().take());
+    if PANICKED.replace(false) {
+        Some(Error::new("the database guard failed unexpectedly; the operation was refused"))
+    } else {
+        reason
+    }
 }
 
 pub(crate) fn lock(guard: &Shared) -> std::sync::MutexGuard<'_, Box<dyn Guard>> {

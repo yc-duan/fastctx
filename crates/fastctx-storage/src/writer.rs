@@ -130,8 +130,10 @@ pub(super) fn run(
                 // A busy reader may retain a WAL snapshot. Do not wait for it:
                 // another idle pass retries the truncation.
                 let _ = connection.busy_timeout(Duration::ZERO);
-                let checkpoint =
-                    connection.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| row.get::<_, i64>(0));
+                let checkpoint = {
+                    let _maintenance = crate::authorization::maintenance();
+                    connection.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| row.get::<_, i64>(0))
+                };
                 dirty = !matches!(checkpoint, Ok(0));
                 let _ = connection.busy_timeout(super::ADMISSION);
             }
@@ -173,6 +175,7 @@ fn synchronous(connection: &Connection, full: &mut bool, durable: bool) -> Resul
     if *full == durable {
         return Ok(());
     }
+    let _maintenance = crate::authorization::maintenance();
     match connection.pragma_update(None, "synchronous", if durable { "FULL" } else { "NORMAL" }) {
         Ok(()) => {
             *full = durable;
@@ -195,6 +198,7 @@ fn commit(
     carried: &mut Option<Job>,
     guard: Option<&guard::Shared>,
 ) -> Result<()> {
+    let _control = crate::authorization::transaction_control(true);
     let mut transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let started = Instant::now();
     loop {
@@ -202,11 +206,23 @@ fn commit(
         let mut savepoint = transaction.savepoint()?;
         let operation = Instant::now();
         guard::begin();
+        let business = crate::authorization::transaction_control(false);
         let mut success = job.apply(&savepoint);
         if let Some(why) = guard::refused() {
             job.refuse(why);
             success = false;
         }
+        if success && let Some(guard) = guard {
+            if let Err(why) = guard::validate(guard, &savepoint) {
+                job.refuse(why);
+                success = false;
+            }
+            if let Some(why) = guard::refused() {
+                job.refuse(why);
+                success = false;
+            }
+        }
+        drop(business);
         if success {
             savepoint.commit()?;
         } else {
@@ -216,6 +232,7 @@ fn commit(
             savepoint.rollback()?;
         }
         if let Some(guard) = guard {
+            let _business = crate::authorization::transaction_control(false);
             guard::lock(guard).ended(success);
         }
         metrics.operation(operation.elapsed(), !success);

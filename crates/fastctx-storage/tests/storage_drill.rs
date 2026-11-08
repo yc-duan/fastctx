@@ -1,5 +1,8 @@
 //! Storage performance and process-death drill. All state lives below --root.
 
+#[path = "storage_drill/guards.rs"]
+mod guards;
+
 use fastctx_storage::{
     Database, Error, ErrorKind, Priority,
     versions::{self, Migration},
@@ -27,6 +30,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("the drill root must not exist".into());
     }
     std::fs::create_dir_all(root)?;
+    guards::run(root)?;
+    if args.len() == 5 && args[3] == "--only" && args[4] == "guards" {
+        return Ok(());
+    }
     performance(root)?;
     tokio::runtime::Builder::new_current_thread().enable_all().build()?.block_on(concurrency(root))?;
     relaxed(root)?;
@@ -76,7 +83,13 @@ fn performance(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
         database.read_now(|db| Ok(db.query_row("SELECT count(*) FROM events", [], |row| row.get::<_, i64>(0))?))?,
         100000
     );
-    database.write_now(0, |db| {
+    let rejected = database.write_now(0, |db| {
+        db.execute_batch("CREATE TABLE undeclared_runtime_table(value INTEGER)")?;
+        Ok(())
+    });
+    assert!(rejected.is_err(), "a running writer accepted undeclared DDL");
+    let migration_path = root.join("migration.sqlite3");
+    let migrated = Database::open_initialized(&migration_path, "", |db| {
         versions::apply(
             db,
             "drill",
@@ -86,26 +99,33 @@ fn performance(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
             ],
         )
     })?;
-    let rejected = database.write_now(0, |db| {
+    drop(migrated);
+    let rejected = Database::open_initialized(&migration_path, "", |db| {
         versions::apply(
             db,
             "drill",
             &[
                 Migration { version: 1, sql: "" },
                 Migration { version: 2, sql: "" },
-                Migration { version: 3, sql: "INVALID SQL" },
+                Migration { version: 3, sql: "CREATE TABLE incomplete_schema(value INTEGER); INVALID SQL" },
             ],
         )
     });
     assert!(rejected.is_err());
+    let preserved = Database::open(&migration_path, "")?;
     assert_eq!(
-        database.read_now(|db| Ok(db.query_row(
+        preserved.read_now(|db| Ok(db.query_row(
             "SELECT version FROM storage_versions WHERE component='drill'",
             [],
             |row| row.get::<_, u32>(0)
         )?))?,
         2
     );
+    assert!(!preserved.read_now(|db| Ok(db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE name='incomplete_schema')",
+        [],
+        |row| row.get::<_, bool>(0)
+    )?))?);
     Ok(())
 }
 

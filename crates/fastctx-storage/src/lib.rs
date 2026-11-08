@@ -2,6 +2,7 @@
 //! A successful write has committed; a reply timeout has an unknown outcome and
 //! must be reconciled using the caller's durable operation key.
 
+pub mod authorization;
 mod blocking;
 pub mod documents;
 mod error;
@@ -216,15 +217,19 @@ impl Database {
             Some(make) => Some(Arc::new(Mutex::new(make(&connection)?))),
             None => None,
         };
+        let tables = authorization::tables(&connection)?;
+        let policy = guard.as_ref().and_then(|guard| guard::lock(guard).write_policy());
+        authorization::install(&mut connection, tables.clone(), true, policy.clone())?;
         let count = READERS;
         let mut readers = Vec::with_capacity(count);
         for _ in 0..count {
-            let reader = rusqlite::Connection::open_with_flags(
+            let mut reader = rusqlite::Connection::open_with_flags(
                 path,
                 rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
             )?;
             reader.busy_timeout(ADMISSION)?;
             reader.set_prepared_statement_cache_capacity(64);
+            authorization::install(&mut reader, tables.clone(), false, policy.clone())?;
             readers.push(reader);
         }
         let writes = Arc::new(queue::Queue::new());
