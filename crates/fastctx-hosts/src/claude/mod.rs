@@ -90,6 +90,15 @@ const FRAME_V1: &str = "The fastctx plugin delivers a message from the World.";
 /// them beside a tool's result (`world.js`, `userFramed`).
 const USER_FRAME: &str = "The user sent a new message while you were working:";
 
+/// What the World's plugin puts before the user's words that begin with "/",
+/// which Claude Code refuses from a plugin as a command (`world.js`, `asTyped`).
+const BEFORE_SLASH: char = '\u{200B}';
+
+/// The user's words as they were said, from the prompt a session holds.
+pub fn as_said(prompt: &str) -> &str {
+    prompt.strip_prefix(BEFORE_SLASH).filter(|rest| rest.starts_with('/')).unwrap_or(prompt)
+}
+
 /// Words the World says on its own account, as the model reads them.
 pub fn framed(text: &str) -> String {
     format!("{FRAME}\n\n{text}")

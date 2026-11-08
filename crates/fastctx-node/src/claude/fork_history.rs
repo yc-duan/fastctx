@@ -79,7 +79,8 @@ pub(super) fn retained(
                     Happened::Heard { text, .. } => read.context_messages.iter().any(|message| {
                         message["role"] == "user"
                             && message["text"].as_str().is_some_and(|stored| {
-                                stored == text || stored.contains(&fastctx_hosts::claude::framed(text))
+                                fastctx_hosts::claude::as_said(stored) == text
+                                    || stored.contains(&fastctx_hosts::claude::framed(text))
                             })
                     }),
                     _ => true,
