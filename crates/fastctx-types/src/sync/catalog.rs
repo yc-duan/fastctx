@@ -38,7 +38,10 @@ pub struct ObjectHead {
     pub schema: u16,
     pub acl_revision: Revision,
     pub authority: Authority,
+    /// Latest authority-allocated state revision, including retained conflicts.
     pub revision: Revision,
+    /// The selected body version; it need not be the largest allocated revision.
+    pub current_version: Revision,
     pub content: Option<BlobId>,
     /// All retained versions remain discoverable after catalog feed compaction.
     pub history: Option<BlobId>,
@@ -61,10 +64,24 @@ pub struct CatalogChange {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "entry", rename_all = "snake_case")]
+pub enum FeedEntry {
+    Changed {
+        change: Box<CatalogChange>,
+    },
+    /// Explicitly covers excluded sequence numbers under exactly this view.
+    Skipped {
+        after: Sequence,
+        through: Sequence,
+        view: super::identity::ViewId,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChangesPage {
     pub after: ScopeCursor,
     pub through: ScopeCursor,
-    pub changes: Vec<CatalogChange>,
+    pub entries: Vec<FeedEntry>,
     pub more: bool,
 }
 
@@ -89,10 +106,15 @@ pub struct RecordRef {
 /// replace the scope, producer or sequence range of a signed batch.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SourceBatch {
+    pub format: u16,
     pub scope: ScopeKey,
     pub stream: StreamId,
     pub producer: DeviceId,
     pub epoch: ProducerEpoch,
+    /// A stream is bound to one registered kind/schema for its whole epoch.
+    pub kind: String,
+    pub schema: u16,
     pub after: Sequence,
+    pub through: Sequence,
     pub records: Vec<SourceRecord>,
 }

@@ -1,13 +1,12 @@
-//! Source checkpoints advance in the same transaction as their accepted facts.
+//! A source checkpoint, signed evidence and accepted facts commit together.
 
-use super::{CommitReceipt, FutureResult, access::AccessContext};
+use super::{FutureResult, access::AccessContext};
 use crate::{
-    catalog::SourceBatch,
-    cursor::{ByteCount, Revision},
-    identity::{ProducerEpoch, SourceId},
+    cursor::{ByteCount, LocalSequence, Revision, StreamCursor},
+    identity::{Digest, ProducerEpoch, SourceId},
     manifest::BlobId,
 };
-
+use fastctx_types::sync::proof::{ConfirmedEpoch, SignedSourceBatch};
 #[derive(Clone, Debug)]
 pub struct SourceCheckpoint {
     pub source: SourceId,
@@ -17,17 +16,24 @@ pub struct SourceCheckpoint {
     pub parser_version: u16,
     pub state: Option<BlobId>,
 }
-
 #[derive(Clone, Debug)]
 pub struct IngestBatch {
-    pub expected: SourceCheckpoint,
+    pub expected: Option<SourceCheckpoint>,
     pub next: SourceCheckpoint,
-    pub facts: SourceBatch,
+    pub facts: SignedSourceBatch,
 }
-
-/// The adapter supplies facts, not SQL or UI patches. A rejected source batch
-/// leaves both its checkpoint and its accepted sequence unchanged.
+#[derive(Clone, Debug)]
+pub enum IngestStatus {
+    Applied { cursor: StreamCursor },
+    AwaitingEpoch { proof: Digest },
+}
+#[derive(Clone, Debug)]
+pub struct IngestReceipt {
+    pub local: LocalSequence,
+    pub status: IngestStatus,
+}
 pub trait SourceIngest: Send + Sync {
     fn checkpoint(&self, context: AccessContext, source: SourceId) -> FutureResult<'_, Option<SourceCheckpoint>>;
-    fn ingest(&self, context: AccessContext, batch: IngestBatch) -> FutureResult<'_, CommitReceipt>;
+    fn ingest(&self, context: AccessContext, batch: IngestBatch) -> FutureResult<'_, IngestReceipt>;
+    fn confirm_epoch(&self, context: AccessContext, epoch: ConfirmedEpoch) -> FutureResult<'_, ()>;
 }

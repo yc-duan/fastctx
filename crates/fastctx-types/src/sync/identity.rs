@@ -55,6 +55,7 @@ identifier!(FeedEpoch, "f-", "A hub catalog incarnation, changed when its sequen
 identifier!(OperationId, "m-", "An idempotency key reused for every retry of one operation.");
 identifier!(SourceId, "i-", "A registered ingestion source, unrelated to its current filesystem path.");
 identifier!(Digest, "", "A lowercase SHA-256 digest.");
+identifier!(ViewId, "v-", "The negotiated kind/schema set and ACL projection of a scope.");
 
 impl AccountId {
     /// Maps legacy membership once. The mapping must be saved before publication;

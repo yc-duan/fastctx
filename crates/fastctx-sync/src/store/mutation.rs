@@ -1,39 +1,55 @@
-//! A mutation carries its precondition, root references and idempotency key.
+//! Registered local proposals and authority-owned accepted versions are distinct.
 
+use super::Error;
 use crate::{
     cursor::{LocalSequence, Revision},
     identity::{ObjectId, OperationId, SourceId},
-    manifest::BlobId,
+    registry::{Asset, Kind, REGISTRY},
 };
+pub use fastctx_types::sync::mutation::*;
+
+/// Constructed by the common gate, not by a feature-specific storage backend.
+pub struct AtomicMutation {
+    request: Submission,
+    kinds: Vec<Kind<Asset>>,
+}
+impl AtomicMutation {
+    pub fn new(request: Submission) -> Result<Self, Error> {
+        request.validate_bounds().map_err(Error::Invalid)?;
+        let kinds = request
+            .objects
+            .iter()
+            .map(|object| {
+                let kind = REGISTRY.asset(&object.kind).map_err(Error::Invalid)?;
+                if kind.registration().conflict == crate::registry::ConflictRule::LocalPending {
+                    return Err(Error::Invalid(
+                        "the pending carrier is maintained by submission, not edited as an authority version".into(),
+                    ));
+                }
+                Ok(kind)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self { request, kinds })
+    }
+    pub fn request(&self) -> &Submission {
+        &self.request
+    }
+    pub fn kinds(&self) -> &[Kind<Asset>] {
+        &self.kinds
+    }
+}
 
 #[derive(Clone, Debug)]
 pub enum Expected {
     Absent,
     Revision(Revision),
 }
-
-#[derive(Clone, Debug)]
-pub enum AssetChange {
-    Put { content: BlobId, history: Option<BlobId>, schema: u16 },
-    Remove,
-    Delete,
-}
-
-#[derive(Clone, Debug)]
-pub struct Mutation {
-    pub operation: OperationId,
-    pub object: ObjectId,
-    pub expected: Expected,
-    pub change: AssetChange,
-}
-
 #[derive(Clone, Debug)]
 pub enum Origin {
     Local,
     Replicated { source: crate::identity::DeviceId },
     Imported { source: SourceId },
 }
-
 #[derive(Clone, Debug)]
 pub struct RuntimeChange {
     pub operation: OperationId,
@@ -41,12 +57,10 @@ pub struct RuntimeChange {
     pub expected: Expected,
     pub body: Vec<u8>,
 }
-
 #[derive(Clone, Debug)]
 pub struct ProjectionChange {
     pub operation: OperationId,
     pub object: ObjectId,
-    /// The asset input covered by this projection, committed with its cursor.
     pub source: LocalSequence,
     pub body: Vec<u8>,
 }

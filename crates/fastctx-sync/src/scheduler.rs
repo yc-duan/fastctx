@@ -1,7 +1,7 @@
 //! Persisted coalescing tasks; a wake never substitutes for the due index.
 
 use crate::{
-    cursor::{LocalSequence, Revision},
+    cursor::{HoldingPeriod, LocalSequence, Revision},
     identity::{OperationId, ScopeKey},
     store::FutureResult,
 };
@@ -27,6 +27,8 @@ pub struct Task {
     pub priority: Priority,
     pub next_due_millis: i64,
     pub dependency: Option<String>,
+    /// Required for every download and publication task; checked on completion.
+    pub holding: Option<HoldingPeriod>,
 }
 #[derive(Clone, Debug)]
 pub struct Lease {

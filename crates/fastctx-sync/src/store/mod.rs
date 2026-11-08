@@ -1,5 +1,4 @@
-//! Typed service interfaces. Backend implementations must enforce authorization
-//! again inside writes and immediately before publishing data to a reader.
+//! Typed handles keep authority writes, local pending edits and runtime state apart.
 
 pub mod access;
 pub mod audit;
@@ -9,36 +8,33 @@ pub mod schema;
 
 use crate::{
     catalog::ObjectHead,
-    cursor::{LocalSequence, Revision},
-    identity::{ObjectId, OperationId, ScopeKey},
+    cursor::{HoldingPeriod, LocalSequence, Revision},
+    identity::{ObjectId, OperationId},
     registry::{Asset, Derived, Kind, Runtime},
 };
-use access::AccessContext;
-use mutation::{AssetChange, Expected, Origin, ProjectionChange, RuntimeChange};
+use access::{AccessContext, Principal};
+use mutation::{
+    AtomicMutation, AuthorityReceipt, EffectiveObject, OperationReceipt, Origin, PendingMutation, ProjectionChange,
+    ProposedObject, RuntimeChange, Submission, SubmissionMode, SubmissionReceipt,
+};
 use std::{future::Future, pin::Pin, sync::Arc};
 
 pub type FutureResult<'a, T> = Pin<Box<dyn Future<Output = Result<T, Error>> + Send + 'a>>;
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Error {
     Invalid(String),
     Denied(String),
-    Conflict {
-        current: Revision,
-    },
+    Conflict { current: Revision },
     Revoked,
     Busy,
     Full,
     Corrupt(String),
     Unavailable(String),
-    /// Retry with the original operation ID; do not invent a second mutation.
-    OutcomeUnknown {
-        operation: OperationId,
-    },
+    OutcomeUnknown { operation: OperationId },
 }
 impl std::fmt::Display for Error {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(formatter, "{self:?}")
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{self:?}")
     }
 }
 impl std::error::Error for Error {}
@@ -53,7 +49,6 @@ impl Default for PageLimit {
         Self { items: 100, bytes: fastctx_types::sync::PAGE_BYTES }
     }
 }
-
 #[derive(Clone, Debug)]
 pub struct ReadRequest {
     pub after: Option<ObjectId>,
@@ -75,36 +70,40 @@ pub struct Subscribe {
 pub struct Change {
     pub local: LocalSequence,
     pub object: ObjectId,
-    pub revision: Revision,
+    pub revision: Option<Revision>,
     pub origin: Origin,
 }
-
-/// Wakes are hints. `next` replays persisted changes after the subscriber's
-/// cursor and never treats a lagged in-memory queue as an empty history.
 pub trait Subscription: Send {
     fn next(&mut self, limit: PageLimit) -> FutureResult<'_, Vec<Change>>;
 }
 
-/// Constructed by storage only after a durable commit. The hub cursor is absent
-/// until a hub has accepted the change; local sequence numbers cannot fill it.
+/// Runtime and projection versions are assigned by their local owner. This
+/// receipt is never returned as an accepted asset revision for a pending edit.
 #[derive(Clone, Debug)]
-pub struct CommitReceipt {
+pub struct LocalCommitReceipt {
     pub operation: OperationId,
     pub local: LocalSequence,
     pub revision: Revision,
-    pub hub: Option<crate::cursor::ScopeCursor>,
 }
-
 #[derive(Clone, Debug)]
 pub struct LocalRecord {
     pub revision: Revision,
     pub body: Vec<u8>,
 }
+#[derive(Clone, Debug)]
+pub struct RevocationStarted {
+    pub invalidated: HoldingPeriod,
+    pub cleanup: OperationId,
+}
 
-/// Services install one backend at their composition root. No implementation
-/// may expose a raw connection through the typed handles it returns.
 pub trait Backend: Send + Sync {
     fn get(&self, context: AccessContext, kind: Kind<Asset>, object: ObjectId) -> FutureResult<'_, Option<ObjectHead>>;
+    fn effective(
+        &self,
+        context: AccessContext,
+        kind: Kind<Asset>,
+        object: ObjectId,
+    ) -> FutureResult<'_, EffectiveObject>;
     fn get_runtime(
         &self,
         context: AccessContext,
@@ -129,25 +128,33 @@ pub trait Backend: Send + Sync {
         kind: Kind<Asset>,
         request: Subscribe,
     ) -> FutureResult<'_, Box<dyn Subscription>>;
-    fn commit(
+    /// Persists pending objects, their pins and outbox together; no authority
+    /// revision is allocated here unless this service is the confirmed authority.
+    fn submit_atomic(&self, principal: Principal, mutation: AtomicMutation) -> FutureResult<'_, SubmissionReceipt>;
+    /// Receipt lookup precedes rebase or expected-version evaluation on retry.
+    fn receipt(&self, principal: Principal, operation: OperationId) -> FutureResult<'_, Option<OperationReceipt>>;
+    fn pending(
         &self,
         context: AccessContext,
-        kind: Kind<Asset>,
-        mutation: mutation::Mutation,
-    ) -> FutureResult<'_, CommitReceipt>;
+        after: LocalSequence,
+        limit: PageLimit,
+    ) -> FutureResult<'_, Vec<PendingMutation>>;
+    /// Only the object's registered authority installs accepted versions.
+    fn accept(&self, principal: Principal, mutation: AtomicMutation) -> FutureResult<'_, AuthorityReceipt>;
     fn write_runtime(
         &self,
         context: AccessContext,
         kind: Kind<Runtime>,
         change: RuntimeChange,
-    ) -> FutureResult<'_, CommitReceipt>;
+    ) -> FutureResult<'_, LocalCommitReceipt>;
     fn write_projection(
         &self,
         context: AccessContext,
         kind: Kind<Derived>,
         change: ProjectionChange,
-    ) -> FutureResult<'_, CommitReceipt>;
-    fn revoke(&self, scope: ScopeKey, revision: Revision) -> FutureResult<'_, ()>;
+    ) -> FutureResult<'_, LocalCommitReceipt>;
+    /// Logical invalidation, not a physical exposure-cleanup receipt.
+    fn revoke(&self, holding: HoldingPeriod) -> FutureResult<'_, RevocationStarted>;
 }
 
 pub struct Stores<B> {
@@ -160,11 +167,31 @@ impl<B: Backend> Stores<B> {
     pub fn assets(&self, context: AccessContext, kind: Kind<Asset>) -> AssetStore<B> {
         AssetStore { backend: self.backend.clone(), context, kind }
     }
+    pub fn atomic(&self, principal: Principal) -> AtomicStore<B> {
+        AtomicStore { backend: self.backend.clone(), principal }
+    }
     pub fn runtime(&self, context: AccessContext, kind: Kind<Runtime>) -> RuntimeStore<B> {
         RuntimeStore { backend: self.backend.clone(), context, kind }
     }
     pub fn projection(&self, context: AccessContext, kind: Kind<Derived>) -> ProjectionStore<B> {
         ProjectionStore { backend: self.backend.clone(), context, kind }
+    }
+}
+
+pub struct AtomicStore<B> {
+    backend: Arc<B>,
+    principal: Principal,
+}
+impl<B: Backend> AtomicStore<B> {
+    pub fn submit(&self, request: Submission) -> FutureResult<'_, SubmissionReceipt> {
+        let mutation = match AtomicMutation::new(request) {
+            Ok(mutation) => mutation,
+            Err(error) => return Box::pin(async { Err(error) }),
+        };
+        self.backend.submit_atomic(self.principal.clone(), mutation)
+    }
+    pub fn receipt(&self, operation: OperationId) -> FutureResult<'_, Option<OperationReceipt>> {
+        self.backend.receipt(self.principal.clone(), operation)
     }
 }
 
@@ -177,20 +204,36 @@ impl<B: Backend> AssetStore<B> {
     pub fn get(&self, object: ObjectId) -> FutureResult<'_, Option<ObjectHead>> {
         self.backend.get(self.context.clone(), self.kind, object)
     }
+    pub fn effective(&self, object: ObjectId) -> FutureResult<'_, EffectiveObject> {
+        self.backend.effective(self.context.clone(), self.kind, object)
+    }
     pub fn read(&self, request: ReadRequest) -> FutureResult<'_, ReadPage<ObjectHead>> {
         self.backend.read(self.context.clone(), self.kind, request)
     }
     pub fn subscribe(&self, request: Subscribe) -> FutureResult<'_, Box<dyn Subscription>> {
         self.backend.subscribe(self.context.clone(), self.kind, request)
     }
-    pub fn commit(
+    pub fn submit(
         &self,
         operation: OperationId,
-        object: ObjectId,
-        expected: Expected,
-        change: AssetChange,
-    ) -> FutureResult<'_, CommitReceipt> {
-        self.backend.commit(self.context.clone(), self.kind, mutation::Mutation { operation, object, expected, change })
+        object: ProposedObject,
+        mode: SubmissionMode,
+    ) -> FutureResult<'_, SubmissionReceipt> {
+        if object.key.scope != self.context.scope || object.kind != self.kind.registration().id {
+            return Box::pin(async { Err(Error::Invalid("the proposal differs from its bound handle".into())) });
+        }
+        let origin = match &self.context.principal {
+            Principal::Account { device, .. } | Principal::Agent { device, .. } => device.clone(),
+            Principal::LocalService => {
+                return Box::pin(async { Err(Error::Denied("local maintenance cannot impersonate an editor".into())) });
+            }
+        };
+        let request = Submission { operation, origin, mode, objects: vec![object] };
+        let mutation = match AtomicMutation::new(request) {
+            Ok(mutation) => mutation,
+            Err(error) => return Box::pin(async { Err(error) }),
+        };
+        self.backend.submit_atomic(self.context.principal.clone(), mutation)
     }
 }
 
@@ -203,11 +246,10 @@ impl<B: Backend> RuntimeStore<B> {
     pub fn get(&self, key: String) -> FutureResult<'_, Option<LocalRecord>> {
         self.backend.get_runtime(self.context.clone(), self.kind, key)
     }
-    pub fn write(&self, change: RuntimeChange) -> FutureResult<'_, CommitReceipt> {
+    pub fn write(&self, change: RuntimeChange) -> FutureResult<'_, LocalCommitReceipt> {
         self.backend.write_runtime(self.context.clone(), self.kind, change)
     }
 }
-
 pub struct ProjectionStore<B> {
     backend: Arc<B>,
     context: AccessContext,
@@ -217,7 +259,7 @@ impl<B: Backend> ProjectionStore<B> {
     pub fn get(&self, object: ObjectId) -> FutureResult<'_, Option<LocalRecord>> {
         self.backend.get_projection(self.context.clone(), self.kind, object)
     }
-    pub fn replace(&self, change: ProjectionChange) -> FutureResult<'_, CommitReceipt> {
+    pub fn replace(&self, change: ProjectionChange) -> FutureResult<'_, LocalCommitReceipt> {
         self.backend.write_projection(self.context.clone(), self.kind, change)
     }
 }

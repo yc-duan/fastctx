@@ -1,9 +1,12 @@
 //! Logical kinds own policy; physical containers do not grant an asset class.
 
-use super::{Codec, ConflictRule, DataClass, Lightweight, Registration, Retention, ScopePolicy, Stage};
+use super::{
+    Codec, ConflictRule, DataClass, DecisionState, DeletePolicy, ExportPolicy, Lightweight, Registration, Retention,
+    ScopePolicy, Stage,
+};
 
 macro_rules! kind {
-    ($id:literal, $class:ident, $scope:ident, $conflict:ident, $retention:ident, $mobile:ident, $owner:literal, $stage:ident, $codec:ident) => {
+    ($id:literal, $class:ident, $scope:ident, $conflict:ident, $retention:ident, $mobile:ident, $owner:literal, $stage:ident, $codec:ident, $assisted:expr, $decision:ident, $delete:ident) => {
         Registration {
             id: $id,
             schema: 1,
@@ -15,7 +18,12 @@ macro_rules! kind {
             owner: $owner,
             handler: $id,
             codec: Codec::$codec,
-            exportable: matches!(DataClass::$class, DataClass::Asset | DataClass::Derived),
+            exportable: matches!(DataClass::$class, DataClass::Asset | DataClass::Derived)
+                && !matches!(ConflictRule::$conflict, ConflictRule::LocalPending),
+            export: ExportPolicy::GenericRootClosure,
+            delete: DeletePolicy::$delete,
+            assisted_host: $assisted,
+            decision: DecisionState::$decision,
             stage: Stage::$stage,
         }
     };
@@ -31,9 +39,25 @@ pub(super) const KINDS: &[Registration] = &[
         Complete,
         "fastctx-hub::store",
         Assets,
-        Json
+        Json,
+        false,
+        Confirmed,
+        GenericTombstone
     ),
-    kind!("account.profile", Asset, Account, Expected, UntilDeleted, Complete, "fastctx-hub::manage", Assets, Json),
+    kind!(
+        "account.profile",
+        Asset,
+        Account,
+        Expected,
+        UntilDeleted,
+        Complete,
+        "fastctx-hub::manage",
+        Assets,
+        Json,
+        false,
+        Confirmed,
+        GenericTombstone
+    ),
     kind!(
         "account.collaboration",
         Asset,
@@ -43,7 +67,10 @@ pub(super) const KINDS: &[Registration] = &[
         Complete,
         "fastctx-hub::manage",
         Assets,
-        Json
+        Json,
+        false,
+        Confirmed,
+        GenericTombstone
     ),
     kind!(
         "account.settings",
@@ -54,7 +81,10 @@ pub(super) const KINDS: &[Registration] = &[
         Complete,
         "fastctx-hub::account_records",
         Assets,
-        Json
+        Json,
+        false,
+        Confirmed,
+        GenericTombstone
     ),
     kind!(
         "account.skill",
@@ -65,7 +95,10 @@ pub(super) const KINDS: &[Registration] = &[
         Metadata,
         "fastctx-hub::skill_files",
         Assets,
-        ManifestV1
+        ManifestV1,
+        false,
+        Confirmed,
+        GenericTombstone
     ),
     kind!(
         "conversation.metadata",
@@ -76,7 +109,10 @@ pub(super) const KINDS: &[Registration] = &[
         Complete,
         "fastctx-node::residents",
         Assets,
-        Json
+        Json,
+        true,
+        Confirmed,
+        HandlerWithTombstone
     ),
     kind!(
         "conversation.timeline",
@@ -87,7 +123,10 @@ pub(super) const KINDS: &[Registration] = &[
         Recent,
         "fastctx-node::session_record",
         Ingestion,
-        SourceRecords
+        SourceRecords,
+        true,
+        Confirmed,
+        GenericTombstone
     ),
     kind!(
         "conversation.agents",
@@ -98,7 +137,10 @@ pub(super) const KINDS: &[Registration] = &[
         Complete,
         "fastctx-node::colleagues",
         Ingestion,
-        Json
+        Json,
+        true,
+        Confirmed,
+        GenericTombstone
     ),
     kind!(
         "conversation.draft",
@@ -109,7 +151,10 @@ pub(super) const KINDS: &[Registration] = &[
         Complete,
         "fastctx-node::composer",
         Assets,
-        YrsV1
+        YrsV1,
+        false,
+        Confirmed,
+        GenericTombstone
     ),
     kind!(
         "conversation.plan",
@@ -120,7 +165,10 @@ pub(super) const KINDS: &[Registration] = &[
         Metadata,
         "fastctx-node::plan",
         Assets,
-        Utf8
+        Utf8,
+        false,
+        Confirmed,
+        GenericTombstone
     ),
     kind!(
         "conversation.history",
@@ -131,7 +179,10 @@ pub(super) const KINDS: &[Registration] = &[
         Metadata,
         "fastctx-node::history",
         Assets,
-        Utf8
+        Utf8,
+        false,
+        Confirmed,
+        GenericTombstone
     ),
     kind!(
         "conversation.goal",
@@ -142,7 +193,10 @@ pub(super) const KINDS: &[Registration] = &[
         Complete,
         "fastctx-node::goals",
         Assets,
-        Json
+        Json,
+        false,
+        Confirmed,
+        GenericTombstone
     ),
     kind!(
         "conversation.sentinel",
@@ -153,7 +207,10 @@ pub(super) const KINDS: &[Registration] = &[
         Complete,
         "fastctx-node::sentinels",
         Assets,
-        Json
+        Json,
+        false,
+        Confirmed,
+        HandlerWithTombstone
     ),
     kind!(
         "conversation.timer",
@@ -164,7 +221,10 @@ pub(super) const KINDS: &[Registration] = &[
         Complete,
         "fastctx-node::timers",
         Assets,
-        Json
+        Json,
+        false,
+        Confirmed,
+        GenericTombstone
     ),
     kind!(
         "conversation.artifact",
@@ -175,7 +235,10 @@ pub(super) const KINDS: &[Registration] = &[
         Metadata,
         "fastctx-node::placement",
         Assets,
-        ManifestV1
+        ManifestV1,
+        false,
+        Confirmed,
+        GenericTombstone
     ),
     kind!(
         "conversation.attachment",
@@ -186,7 +249,10 @@ pub(super) const KINDS: &[Registration] = &[
         Metadata,
         "fastctx-node::attachments",
         Assets,
-        ManifestV1
+        ManifestV1,
+        false,
+        Confirmed,
+        GenericTombstone
     ),
     kind!(
         "conversation.picture",
@@ -197,7 +263,10 @@ pub(super) const KINDS: &[Registration] = &[
         Metadata,
         "fastctx-node::attachments",
         Assets,
-        ManifestV1
+        ManifestV1,
+        true,
+        Confirmed,
+        GenericTombstone
     ),
     kind!(
         "job.facts",
@@ -208,7 +277,10 @@ pub(super) const KINDS: &[Registration] = &[
         Recent,
         "fastctx-node::run_facts",
         Ingestion,
-        SourceRecords
+        SourceRecords,
+        true,
+        Confirmed,
+        GenericTombstone
     ),
     kind!(
         "job.output",
@@ -219,11 +291,53 @@ pub(super) const KINDS: &[Registration] = &[
         Metadata,
         "fastctx-hands::run",
         Ingestion,
-        ManifestV1
+        ManifestV1,
+        false,
+        Confirmed,
+        GenericTombstone
     ),
-    kind!("project.ledger", Asset, Project, SingleWriter, UntilDeleted, Metadata, "fastctx-hub::ledger", Assets, Json),
-    kind!("project.history", Asset, Project, TextMerge, UntilDeleted, Metadata, "fastctx-node::history", Assets, Utf8),
-    kind!("project.page", Asset, Project, Expected, UntilDeleted, Metadata, "fastctx-node::pages", Assets, Json),
+    kind!(
+        "project.ledger",
+        Asset,
+        Project,
+        SingleWriter,
+        UntilDeleted,
+        Metadata,
+        "fastctx-hub::ledger",
+        Assets,
+        Json,
+        false,
+        Confirmed,
+        HandlerWithTombstone
+    ),
+    kind!(
+        "project.history",
+        Asset,
+        Project,
+        TextMerge,
+        UntilDeleted,
+        Metadata,
+        "fastctx-node::history",
+        Assets,
+        Utf8,
+        false,
+        Confirmed,
+        GenericTombstone
+    ),
+    kind!(
+        "project.page",
+        Asset,
+        Project,
+        Expected,
+        UntilDeleted,
+        Metadata,
+        "fastctx-node::pages",
+        Assets,
+        Json,
+        false,
+        Confirmed,
+        GenericTombstone
+    ),
     kind!(
         "account.activity",
         Asset,
@@ -233,9 +347,25 @@ pub(super) const KINDS: &[Registration] = &[
         Recent,
         "fastctx-node::activity_book",
         Ingestion,
-        Json
+        Json,
+        false,
+        Confirmed,
+        GenericTombstone
     ),
-    kind!("account.usage", Asset, Account, SingleWriter, UntilDeleted, Recent, "fastctx-node::usage", Ingestion, Json),
+    kind!(
+        "account.usage",
+        Asset,
+        Account,
+        SingleWriter,
+        UntilDeleted,
+        Recent,
+        "fastctx-node::usage",
+        Ingestion,
+        Json,
+        false,
+        Confirmed,
+        GenericTombstone
+    ),
     kind!(
         "account.notice",
         Asset,
@@ -245,10 +375,39 @@ pub(super) const KINDS: &[Registration] = &[
         Complete,
         "fastctx-hub::troubles",
         Assets,
-        Json
+        Json,
+        false,
+        PendingUser,
+        GenericTombstone
     ),
-    kind!("account.read-position", Asset, Account, Expected, UntilDeleted, Complete, "fastctx-client", Client, Json),
-    kind!("machine.settings", Asset, Machine, Expected, UntilDeleted, Complete, "fastctx-node::logins", Assets, Json),
+    kind!(
+        "account.read-position",
+        Asset,
+        Account,
+        Expected,
+        UntilDeleted,
+        Complete,
+        "fastctx-client",
+        Client,
+        Json,
+        false,
+        Confirmed,
+        GenericTombstone
+    ),
+    kind!(
+        "machine.settings",
+        Asset,
+        Machine,
+        Expected,
+        UntilDeleted,
+        Complete,
+        "fastctx-node::logins",
+        Assets,
+        Json,
+        false,
+        Confirmed,
+        GenericTombstone
+    ),
     kind!(
         "machine.audit",
         Asset,
@@ -258,10 +417,39 @@ pub(super) const KINDS: &[Registration] = &[
         Recent,
         "fastctx-hub::machine_log",
         Assets,
-        Json
+        Json,
+        false,
+        Confirmed,
+        GenericTombstone
     ),
-    kind!("device.preferences", Asset, Device, SingleWriter, UntilDeleted, Complete, "fastctx-client", Client, Json),
-    kind!("device.pending-edit", Asset, Device, Expected, UntilDeleted, Complete, "fastctx-client", Client, Json),
+    kind!(
+        "device.preferences",
+        Asset,
+        Device,
+        SingleWriter,
+        UntilDeleted,
+        Complete,
+        "fastctx-client",
+        Client,
+        Json,
+        false,
+        Confirmed,
+        GenericTombstone
+    ),
+    kind!(
+        "device.pending-edit",
+        Asset,
+        Device,
+        LocalPending,
+        UntilDeleted,
+        LocalOnly,
+        "fastctx-client",
+        Client,
+        Json,
+        false,
+        Confirmed,
+        GenericTombstone
+    ),
     kind!(
         "runtime.delivery",
         Runtime,
@@ -271,11 +459,53 @@ pub(super) const KINDS: &[Registration] = &[
         LocalOnly,
         "fastctx-node::delivery",
         Foundation,
-        Bytes
+        Bytes,
+        true,
+        Confirmed,
+        GenericTombstone
     ),
-    kind!("runtime.host", Runtime, Machine, LocalOwner, UntilResolved, LocalOnly, "fastctx-hosts", Ingestion, Bytes),
-    kind!("runtime.transport", Runtime, Device, LocalOwner, UntilResolved, LocalOnly, "fastctx-net", Foundation, Bytes),
-    kind!("runtime.identity", Runtime, Local, LocalOwner, UntilResolved, LocalOnly, "fastctx-net", Foundation, Bytes),
+    kind!(
+        "runtime.host",
+        Runtime,
+        Machine,
+        LocalOwner,
+        UntilResolved,
+        LocalOnly,
+        "fastctx-hosts",
+        Ingestion,
+        Bytes,
+        true,
+        Confirmed,
+        GenericTombstone
+    ),
+    kind!(
+        "runtime.transport",
+        Runtime,
+        Device,
+        LocalOwner,
+        UntilResolved,
+        LocalOnly,
+        "fastctx-net",
+        Foundation,
+        Bytes,
+        false,
+        Confirmed,
+        GenericTombstone
+    ),
+    kind!(
+        "runtime.identity",
+        Runtime,
+        Local,
+        LocalOwner,
+        UntilResolved,
+        LocalOnly,
+        "fastctx-net",
+        Foundation,
+        Bytes,
+        false,
+        Confirmed,
+        GenericTombstone
+    ),
     kind!(
         "runtime.maintenance",
         Runtime,
@@ -285,7 +515,10 @@ pub(super) const KINDS: &[Registration] = &[
         LocalOnly,
         "fastctx-install",
         Maintenance,
-        Bytes
+        Bytes,
+        false,
+        Confirmed,
+        GenericTombstone
     ),
     kind!(
         "runtime.sentinel",
@@ -296,7 +529,10 @@ pub(super) const KINDS: &[Registration] = &[
         LocalOnly,
         "fastctx-sentinel",
         Foundation,
-        Bytes
+        Bytes,
+        true,
+        Confirmed,
+        GenericTombstone
     ),
     kind!(
         "runtime.migration",
@@ -307,7 +543,10 @@ pub(super) const KINDS: &[Registration] = &[
         LocalOnly,
         "fastctx-node::record_migration",
         Migration,
-        Bytes
+        Bytes,
+        false,
+        Confirmed,
+        GenericTombstone
     ),
     kind!(
         "runtime.diagnostics",
@@ -318,7 +557,10 @@ pub(super) const KINDS: &[Registration] = &[
         LocalOnly,
         "fastctx-platform",
         Maintenance,
-        Bytes
+        Bytes,
+        false,
+        PendingUser,
+        GenericTombstone
     ),
     kind!(
         "derived.timeline",
@@ -329,7 +571,10 @@ pub(super) const KINDS: &[Registration] = &[
         LocalOnly,
         "fastctx-node::timeline",
         Projection,
-        Json
+        Json,
+        true,
+        Confirmed,
+        GenericTombstone
     ),
     kind!(
         "derived.thumbnail",
@@ -340,9 +585,25 @@ pub(super) const KINDS: &[Registration] = &[
         Recent,
         "fastctx-node::thumbnail",
         Projection,
-        Json
+        Json,
+        true,
+        Confirmed,
+        GenericTombstone
     ),
-    kind!("derived.directory", Derived, Device, Rebuild, Rebuildable, LocalOnly, "fastctx-net::link", Projection, Json),
+    kind!(
+        "derived.directory",
+        Derived,
+        Device,
+        Rebuild,
+        Rebuildable,
+        LocalOnly,
+        "fastctx-net::link",
+        Projection,
+        Json,
+        false,
+        Confirmed,
+        GenericTombstone
+    ),
     kind!(
         "derived.statistics",
         Derived,
@@ -352,10 +613,39 @@ pub(super) const KINDS: &[Registration] = &[
         LocalOnly,
         "fastctx-node::activity_book",
         Projection,
-        Json
+        Json,
+        false,
+        Confirmed,
+        GenericTombstone
     ),
-    kind!("derived.software", Derived, Local, Rebuild, Rebuildable, LocalOnly, "fastctx-update", Maintenance, Json),
-    kind!("scratch.work", Scratch, Local, LocalOwner, Temporary, LocalOnly, "fastctx-node::scratch", Foundation, Bytes),
+    kind!(
+        "derived.software",
+        Derived,
+        Local,
+        Rebuild,
+        Rebuildable,
+        LocalOnly,
+        "fastctx-update",
+        Maintenance,
+        Json,
+        false,
+        Confirmed,
+        GenericTombstone
+    ),
+    kind!(
+        "scratch.work",
+        Scratch,
+        Local,
+        LocalOwner,
+        Temporary,
+        LocalOnly,
+        "fastctx-node::scratch",
+        Foundation,
+        Bytes,
+        false,
+        Confirmed,
+        GenericTombstone
+    ),
     kind!(
         "scratch.transfer",
         Scratch,
@@ -365,6 +655,9 @@ pub(super) const KINDS: &[Registration] = &[
         LocalOnly,
         "fastctx-sync::transfer",
         Foundation,
-        Bytes
+        Bytes,
+        false,
+        Confirmed,
+        GenericTombstone
     ),
 ];

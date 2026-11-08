@@ -5,8 +5,12 @@
 
 pub mod catalog;
 pub mod cursor;
+pub mod exposure;
 pub mod identity;
 pub mod manifest;
+pub mod mutation;
+pub mod proof;
+pub mod timeline;
 pub mod transfer;
 
 /// The proposed first generation, advertised only by a complete implementation.

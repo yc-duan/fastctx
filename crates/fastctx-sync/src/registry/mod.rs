@@ -34,6 +34,7 @@ pub enum ConflictRule {
     Yrs,
     Rebuild,
     LocalOwner,
+    LocalPending,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Retention {
@@ -59,6 +60,22 @@ pub enum Codec {
     Bytes,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DecisionState {
+    Confirmed,
+    PendingUser,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExportPolicy {
+    GenericRootClosure,
+    Handler,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DeletePolicy {
+    GenericTombstone,
+    HandlerWithTombstone,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct Registration {
     pub id: &'static str,
@@ -73,6 +90,10 @@ pub struct Registration {
     pub handler: &'static str,
     pub codec: Codec,
     pub exportable: bool,
+    pub export: ExportPolicy,
+    pub delete: DeletePolicy,
+    pub assisted_host: bool,
+    pub decision: DecisionState,
     pub stage: Stage,
 }
 
@@ -96,6 +117,17 @@ impl<C> Kind<C> {
     pub fn registration(&self) -> &'static Registration {
         self.registration
     }
+    pub fn registered(&self) -> RegisteredKind {
+        RegisteredKind(self.registration)
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct RegisteredKind(&'static Registration);
+impl RegisteredKind {
+    pub fn registration(&self) -> &'static Registration {
+        self.0
+    }
 }
 
 pub struct Registry {
@@ -114,6 +146,9 @@ impl Registry {
             .iter()
             .find(|entry| entry.id == id)
             .ok_or_else(|| format!("unregistered data kind: {id}"))?;
+        if found.decision == DecisionState::PendingUser {
+            return Err(format!("the retention and replication policy for {id} is not decided"));
+        }
         if found.class != class {
             return Err(format!("data kind {id} has a different storage class"));
         }

@@ -4,13 +4,19 @@
 //! all object effects of one operation, even when many operations share a commit.
 
 use super::Error;
-use crate::identity::{ObjectKey, OperationId};
+use crate::{
+    cursor::Revision,
+    identity::{Digest, ObjectKey, OperationId},
+};
 use std::collections::BTreeSet;
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Effect {
     pub operation: OperationId,
     pub object: ObjectKey,
+    pub request_hash: Digest,
+    /// None identifies a pending edit, never an invented authority version.
+    pub revision: Option<Revision>,
 }
 
 #[derive(Default)]
@@ -19,9 +25,14 @@ pub struct OperationAudit {
     journaled: BTreeSet<Effect>,
     outbound: BTreeSet<Effect>,
     local: BTreeSet<Effect>,
+    poisoned: bool,
 }
 
 impl OperationAudit {
+    /// A caught hook panic makes absence of evidence a refusal, not success.
+    pub fn poison(&mut self) {
+        self.poisoned = true;
+    }
     pub fn authoritative_row(&mut self, effect: Effect, produces_outbound: bool) {
         self.changed.insert(effect.clone());
         if produces_outbound {
@@ -35,6 +46,9 @@ impl OperationAudit {
         self.outbound.insert(effect);
     }
     pub fn validate(&self) -> Result<(), Error> {
+        if self.poisoned {
+            return Err(Error::Invalid("the operation audit did not complete".into()));
+        }
         if !self.changed.is_subset(&self.journaled) {
             return Err(Error::Invalid("an authoritative change has no durable changefeed entry".into()));
         }

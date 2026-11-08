@@ -1,80 +1,534 @@
-[
-  {
-    "message": "hello",
-    "capabilities": {
-      "protocol": 1,
+{
+  "decoded_source_binding": {
+    "after": "0",
+    "epoch": "p-0606060606060606060606060606060606060606060606060606060606060606",
+    "format": 1,
+    "kind": "conversation.timeline",
+    "producer": "d-0303030303030303030303030303030303030303030303030303030303030303",
+    "records": [
+      {
+        "causes": [],
+        "kind": "conversation.timeline",
+        "operation": "m-0101010101010101010101010101010101010101010101010101010101010101",
+        "payload": {
+          "algorithm": "sha256",
+          "digest": "0101010101010101010101010101010101010101010101010101010101010101",
+          "domain": {
+            "hub": "w-0101010101010101",
+            "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+          }
+        },
+        "schema": 1,
+        "sequence": "1"
+      },
+      {
+        "causes": [],
+        "kind": "conversation.timeline",
+        "operation": "m-0202020202020202020202020202020202020202020202020202020202020202",
+        "payload": {
+          "algorithm": "sha256",
+          "digest": "0202020202020202020202020202020202020202020202020202020202020202",
+          "domain": {
+            "hub": "w-0101010101010101",
+            "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+          }
+        },
+        "schema": 1,
+        "sequence": "2"
+      },
+      {
+        "causes": [],
+        "kind": "conversation.timeline",
+        "operation": "m-0303030303030303030303030303030303030303030303030303030303030303",
+        "payload": {
+          "algorithm": "sha256",
+          "digest": "0303030303030303030303030303030303030303030303030303030303030303",
+          "domain": {
+            "hub": "w-0101010101010101",
+            "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+          }
+        },
+        "schema": 1,
+        "sequence": "3"
+      },
+      {
+        "causes": [],
+        "kind": "conversation.timeline",
+        "operation": "m-0404040404040404040404040404040404040404040404040404040404040404",
+        "payload": {
+          "algorithm": "sha256",
+          "digest": "0404040404040404040404040404040404040404040404040404040404040404",
+          "domain": {
+            "hub": "w-0101010101010101",
+            "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+          }
+        },
+        "schema": 1,
+        "sequence": "4"
+      }
+    ],
+    "schema": 1,
+    "scope": {
+      "hub": "w-0101010101010101",
+      "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+    },
+    "stream": "r-0505050505050505050505050505050505050505050505050505050505050505",
+    "through": "4"
+  },
+  "messages": [
+    {
+      "capabilities": {
+        "encodings": [
+          "raw",
+          "zstd",
+          "future-encoding"
+        ],
+        "envelopes": [
+          "plain/v1"
+        ],
+        "exposure_cleanup": [
+          "physical/v1"
+        ],
+        "hub_signing": null,
+        "kinds": [
+          {
+            "kind": "conversation.timeline",
+            "schema": 1
+          }
+        ],
+        "max_page_bytes": 262144,
+        "protocols": [
+          "fastctx-sync/v1",
+          "future-protocol"
+        ],
+        "receive_window": "4194304"
+      },
+      "message": "hello"
+    },
+    {
+      "entries": [
+        {
+          "acl_revision": "1",
+          "applied": "9007199254740993",
+          "epoch": "f-0404040404040404040404040404040404040404040404040404040404040404",
+          "scope": {
+            "hub": "w-0101010101010101",
+            "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+          },
+          "view": "v-b7d517755f34a2e7789965294788622749ac6526583eec49b58f6eec5abccc42"
+        }
+      ],
+      "message": "cursors",
+      "more": false
+    },
+    {
+      "cursor": null,
+      "holding": {
+        "acl_revision": "1",
+        "holder": {
+          "device": "d-0303030303030303030303030303030303030303030303030303030303030303",
+          "holder": "device"
+        },
+        "publication_epoch": "1",
+        "scope": {
+          "hub": "w-0101010101010101",
+          "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+        }
+      },
       "kinds": [
         {
-          "kind": "conversation.metadata",
+          "kind": "conversation.timeline",
           "schema": 1
         }
       ],
-      "envelope": 1,
-      "encodings": [
-        "raw",
-        "zstd"
-      ],
-      "receive_window": "4194304",
-      "max_page_bytes": 262144
-    }
-  },
-  {
-    "message": "cursors",
-    "entries": [
-      {
-        "scope": {
-          "hub": "w-0101010101010101",
-          "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
-        },
-        "epoch": "f-0303030303030303030303030303030303030303030303030303030303030303",
-        "acl_revision": "1",
-        "applied": "9007199254740993"
-      }
-    ],
-    "more": false
-  },
-  {
-    "message": "catalog",
-    "cursor": null,
-    "scope": {
-      "hub": "w-0101010101010101",
-      "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
-    }
-  },
-  {
-    "message": "changes",
-    "after": {
+      "message": "catalog",
       "scope": {
         "hub": "w-0101010101010101",
         "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
-      },
-      "epoch": "f-0303030303030303030303030303030303030303030303030303030303030303",
-      "acl_revision": "1",
-      "applied": "9007199254740993"
+      }
     },
-    "max_bytes": 262144
-  },
-  {
-    "message": "acknowledge",
-    "durable": {
-      "kind": "catalog",
-      "cursor": {
+    {
+      "after": {
+        "acl_revision": "1",
+        "applied": "9007199254740993",
+        "epoch": "f-0404040404040404040404040404040404040404040404040404040404040404",
         "scope": {
           "hub": "w-0101010101010101",
           "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
         },
-        "epoch": "f-0303030303030303030303030303030303030303030303030303030303030303",
+        "view": "v-b7d517755f34a2e7789965294788622749ac6526583eec49b58f6eec5abccc42"
+      },
+      "holding": {
         "acl_revision": "1",
-        "applied": "9007199254740993"
+        "holder": {
+          "device": "d-0303030303030303030303030303030303030303030303030303030303030303",
+          "holder": "device"
+        },
+        "publication_epoch": "1",
+        "scope": {
+          "hub": "w-0101010101010101",
+          "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+        }
+      },
+      "max_bytes": 262144,
+      "message": "changes"
+    },
+    {
+      "holding": {
+        "acl_revision": "1",
+        "holder": {
+          "device": "d-0303030303030303030303030303030303030303030303030303030303030303",
+          "holder": "device"
+        },
+        "publication_epoch": "1",
+        "scope": {
+          "hub": "w-0101010101010101",
+          "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+        }
+      },
+      "message": "changes_page",
+      "page": {
+        "after": {
+          "acl_revision": "1",
+          "applied": "9007199254740993",
+          "epoch": "f-0404040404040404040404040404040404040404040404040404040404040404",
+          "scope": {
+            "hub": "w-0101010101010101",
+            "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+          },
+          "view": "v-b7d517755f34a2e7789965294788622749ac6526583eec49b58f6eec5abccc42"
+        },
+        "entries": [
+          {
+            "after": "9007199254740993",
+            "entry": "skipped",
+            "through": "9007199254740995",
+            "view": "v-b7d517755f34a2e7789965294788622749ac6526583eec49b58f6eec5abccc42"
+          }
+        ],
+        "more": false,
+        "through": {
+          "acl_revision": "1",
+          "applied": "9007199254740995",
+          "epoch": "f-0404040404040404040404040404040404040404040404040404040404040404",
+          "scope": {
+            "hub": "w-0101010101010101",
+            "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+          },
+          "view": "v-b7d517755f34a2e7789965294788622749ac6526583eec49b58f6eec5abccc42"
+        }
+      }
+    },
+    {
+      "batch": {
+        "proof": {
+          "data": "eyJmb3JtYXQiOjEsInNjb3BlIjp7Imh1YiI6InctMDEwMTAxMDEwMTAxMDEwMSIsInNjb3BlIjoicy0wMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyIn0sInN0cmVhbSI6InItMDUwNTA1MDUwNTA1MDUwNTA1MDUwNTA1MDUwNTA1MDUwNTA1MDUwNTA1MDUwNTA1MDUwNTA1MDUwNTA1MDUwNSIsInByb2R1Y2VyIjoiZC0wMzAzMDMwMzAzMDMwMzAzMDMwMzAzMDMwMzAzMDMwMzAzMDMwMzAzMDMwMzAzMDMwMzAzMDMwMzAzMDMwMzAzIiwiZXBvY2giOiJwLTA2MDYwNjA2MDYwNjA2MDYwNjA2MDYwNjA2MDYwNjA2MDYwNjA2MDYwNjA2MDYwNjA2MDYwNjA2MDYwNjA2MDYiLCJraW5kIjoiY29udmVyc2F0aW9uLnRpbWVsaW5lIiwic2NoZW1hIjoxLCJhZnRlciI6IjAiLCJ0aHJvdWdoIjoiNCIsInJlY29yZHMiOlt7InNlcXVlbmNlIjoiMSIsIm9wZXJhdGlvbiI6Im0tMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMSIsImtpbmQiOiJjb252ZXJzYXRpb24udGltZWxpbmUiLCJzY2hlbWEiOjEsInBheWxvYWQiOnsiZG9tYWluIjp7Imh1YiI6InctMDEwMTAxMDEwMTAxMDEwMSIsInNjb3BlIjoicy0wMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyIn0sImFsZ29yaXRobSI6InNoYTI1NiIsImRpZ2VzdCI6IjAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEifSwiY2F1c2VzIjpbXX0seyJzZXF1ZW5jZSI6IjIiLCJvcGVyYXRpb24iOiJtLTAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIiLCJraW5kIjoiY29udmVyc2F0aW9uLnRpbWVsaW5lIiwic2NoZW1hIjoxLCJwYXlsb2FkIjp7ImRvbWFpbiI6eyJodWIiOiJ3LTAxMDEwMTAxMDEwMTAxMDEiLCJzY29wZSI6InMtMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMiJ9LCJhbGdvcml0aG0iOiJzaGEyNTYiLCJkaWdlc3QiOiIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyIn0sImNhdXNlcyI6W119LHsic2VxdWVuY2UiOiIzIiwib3BlcmF0aW9uIjoibS0wMzAzMDMwMzAzMDMwMzAzMDMwMzAzMDMwMzAzMDMwMzAzMDMwMzAzMDMwMzAzMDMwMzAzMDMwMzAzMDMwMzAzIiwia2luZCI6ImNvbnZlcnNhdGlvbi50aW1lbGluZSIsInNjaGVtYSI6MSwicGF5bG9hZCI6eyJkb21haW4iOnsiaHViIjoidy0wMTAxMDEwMTAxMDEwMTAxIiwic2NvcGUiOiJzLTAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIifSwiYWxnb3JpdGhtIjoic2hhMjU2IiwiZGlnZXN0IjoiMDMwMzAzMDMwMzAzMDMwMzAzMDMwMzAzMDMwMzAzMDMwMzAzMDMwMzAzMDMwMzAzMDMwMzAzMDMwMzAzMDMwMyJ9LCJjYXVzZXMiOltdfSx7InNlcXVlbmNlIjoiNCIsIm9wZXJhdGlvbiI6Im0tMDQwNDA0MDQwNDA0MDQwNDA0MDQwNDA0MDQwNDA0MDQwNDA0MDQwNDA0MDQwNDA0MDQwNDA0MDQwNDA0MDQwNCIsImtpbmQiOiJjb252ZXJzYXRpb24udGltZWxpbmUiLCJzY2hlbWEiOjEsInBheWxvYWQiOnsiZG9tYWluIjp7Imh1YiI6InctMDEwMTAxMDEwMTAxMDEwMSIsInNjb3BlIjoicy0wMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyIn0sImFsZ29yaXRobSI6InNoYTI1NiIsImRpZ2VzdCI6IjA0MDQwNDA0MDQwNDA0MDQwNDA0MDQwNDA0MDQwNDA0MDQwNDA0MDQwNDA0MDQwNDA0MDQwNDA0MDQwNDA0MDQifSwiY2F1c2VzIjpbXX1dfQ",
+          "purpose": "source_batch_v1",
+          "signature": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+          "signer": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM"
+        }
+      },
+      "holding": {
+        "acl_revision": "1",
+        "holder": {
+          "device": "d-0303030303030303030303030303030303030303030303030303030303030303",
+          "holder": "device"
+        },
+        "publication_epoch": "1",
+        "scope": {
+          "hub": "w-0101010101010101",
+          "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+        }
+      },
+      "message": "source"
+    },
+    {
+      "holding": {
+        "acl_revision": "1",
+        "holder": {
+          "device": "d-0303030303030303030303030303030303030303030303030303030303030303",
+          "holder": "device"
+        },
+        "publication_epoch": "1",
+        "scope": {
+          "hub": "w-0101010101010101",
+          "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+        }
+      },
+      "message": "stream_range",
+      "request": {
+        "max_bytes": 262144,
+        "max_records": 100,
+        "position": {
+          "from": "latest"
+        },
+        "stream": {
+          "committed": "4",
+          "epoch": "p-0606060606060606060606060606060606060606060606060606060606060606",
+          "scope": {
+            "hub": "w-0101010101010101",
+            "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+          },
+          "stream": "r-0505050505050505050505050505050505050505050505050505050505050505"
+        },
+        "through": "4"
+      }
+    },
+    {
+      "message": "submit",
+      "request": {
+        "mode": "offline",
+        "objects": [
+          {
+            "base": {
+              "base": "version",
+              "content_version": "7",
+              "root": {
+                "algorithm": "sha256",
+                "digest": "1717171717171717171717171717171717171717171717171717171717171717",
+                "domain": {
+                  "hub": "w-0101010101010101",
+                  "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+                }
+              },
+              "state_revision": "7"
+            },
+            "before": {
+              "algorithm": "sha256",
+              "digest": "1717171717171717171717171717171717171717171717171717171717171717",
+              "domain": {
+                "hub": "w-0101010101010101",
+                "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+              }
+            },
+            "candidate": {
+              "algorithm": "sha256",
+              "digest": "1818181818181818181818181818181818181818181818181818181818181818",
+              "domain": {
+                "hub": "w-0101010101010101",
+                "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+              }
+            },
+            "key": {
+              "object": "o-1616161616161616161616161616161616161616161616161616161616161616",
+              "scope": {
+                "hub": "w-0101010101010101",
+                "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+              }
+            },
+            "kind": "account.settings",
+            "observed_acl": "1",
+            "original": {
+              "edits": [
+                {
+                  "change": "set",
+                  "path": [
+                    "theme"
+                  ],
+                  "value": "dark"
+                }
+              ],
+              "intent": "fields"
+            },
+            "predecessor": null,
+            "resolves": []
+          }
+        ],
+        "operation": "m-1515151515151515151515151515151515151515151515151515151515151515",
+        "origin": "d-0303030303030303030303030303030303030303030303030303030303030303"
+      }
+    },
+    {
+      "holding": {
+        "acl_revision": "1",
+        "holder": {
+          "device": "d-0303030303030303030303030303030303030303030303030303030303030303",
+          "holder": "device"
+        },
+        "publication_epoch": "1",
+        "scope": {
+          "hub": "w-0101010101010101",
+          "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+        }
+      },
+      "message": "get_manifest",
+      "root": {
+        "algorithm": "sha256",
+        "digest": "1919191919191919191919191919191919191919191919191919191919191919",
+        "domain": {
+          "hub": "w-0101010101010101",
+          "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+        }
+      }
+    },
+    {
+      "blob": {
+        "algorithm": "sha256",
+        "digest": "0101010101010101010101010101010101010101010101010101010101010101",
+        "domain": {
+          "hub": "w-0101010101010101",
+          "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+        }
+      },
+      "holding": {
+        "acl_revision": "1",
+        "holder": {
+          "device": "d-0303030303030303030303030303030303030303030303030303030303030303",
+          "holder": "device"
+        },
+        "publication_epoch": "1",
+        "scope": {
+          "hub": "w-0101010101010101",
+          "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+        }
+      },
+      "message": "get_descriptor"
+    },
+    {
+      "durable": {
+        "cursor": {
+          "acl_revision": "1",
+          "applied": "9007199254740993",
+          "epoch": "f-0404040404040404040404040404040404040404040404040404040404040404",
+          "scope": {
+            "hub": "w-0101010101010101",
+            "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+          },
+          "view": "v-b7d517755f34a2e7789965294788622749ac6526583eec49b58f6eec5abccc42"
+        },
+        "holding": {
+          "acl_revision": "1",
+          "holder": {
+            "device": "d-0303030303030303030303030303030303030303030303030303030303030303",
+            "holder": "device"
+          },
+          "publication_epoch": "1",
+          "scope": {
+            "hub": "w-0101010101010101",
+            "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+          }
+        },
+        "kind": "catalog"
+      },
+      "message": "acknowledge"
+    },
+    {
+      "holding": {
+        "acl_revision": "1",
+        "holder": {
+          "device": "d-0303030303030303030303030303030303030303030303030303030303030303",
+          "holder": "device"
+        },
+        "publication_epoch": "1",
+        "scope": {
+          "hub": "w-0101010101010101",
+          "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+        }
+      },
+      "message": "revoked"
+    }
+  ],
+  "signature_status": "shape_only_not_validated",
+  "timeline_payload_shapes": [
+    {
+      "change": "put",
+      "item": {
+        "body": {
+          "algorithm": "sha256",
+          "digest": "0101010101010101010101010101010101010101010101010101010101010101",
+          "domain": {
+            "hub": "w-0101010101010101",
+            "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+          }
+        },
+        "id": "o-0101010101010101010101010101010101010101010101010101010101010101",
+        "parent": null,
+        "position": {
+          "accepted": "1",
+          "display_ancestry": [
+            "1"
+          ],
+          "item": "o-0101010101010101010101010101010101010101010101010101010101010101",
+          "turn": "1"
+        },
+        "revision": "1",
+        "turn": "o-1414141414141414141414141414141414141414141414141414141414141414"
+      }
+    },
+    {
+      "change": "put",
+      "item": {
+        "body": {
+          "algorithm": "sha256",
+          "digest": "0202020202020202020202020202020202020202020202020202020202020202",
+          "domain": {
+            "hub": "w-0101010101010101",
+            "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+          }
+        },
+        "id": "o-0202020202020202020202020202020202020202020202020202020202020202",
+        "parent": null,
+        "position": {
+          "accepted": "2",
+          "display_ancestry": [
+            "2"
+          ],
+          "item": "o-0202020202020202020202020202020202020202020202020202020202020202",
+          "turn": "1"
+        },
+        "revision": "1",
+        "turn": "o-1414141414141414141414141414141414141414141414141414141414141414"
+      }
+    },
+    {
+      "change": "put",
+      "item": {
+        "body": {
+          "algorithm": "sha256",
+          "digest": "0303030303030303030303030303030303030303030303030303030303030303",
+          "domain": {
+            "hub": "w-0101010101010101",
+            "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+          }
+        },
+        "id": "o-0303030303030303030303030303030303030303030303030303030303030303",
+        "parent": null,
+        "position": {
+          "accepted": "3",
+          "display_ancestry": [
+            "3"
+          ],
+          "item": "o-0303030303030303030303030303030303030303030303030303030303030303",
+          "turn": "1"
+        },
+        "revision": "1",
+        "turn": "o-1414141414141414141414141414141414141414141414141414141414141414"
+      }
+    },
+    {
+      "change": "put",
+      "item": {
+        "body": {
+          "algorithm": "sha256",
+          "digest": "0404040404040404040404040404040404040404040404040404040404040404",
+          "domain": {
+            "hub": "w-0101010101010101",
+            "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+          }
+        },
+        "id": "o-0202020202020202020202020202020202020202020202020202020202020202",
+        "parent": null,
+        "position": {
+          "accepted": "2",
+          "display_ancestry": [
+            "2"
+          ],
+          "item": "o-0202020202020202020202020202020202020202020202020202020202020202",
+          "turn": "1"
+        },
+        "revision": "2",
+        "turn": "o-1414141414141414141414141414141414141414141414141414141414141414"
       }
     }
-  },
-  {
-    "message": "revoked",
-    "scope": {
-      "hub": "w-0101010101010101",
-      "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
-    },
-    "acl_revision": "2"
-  }
-]
+  ]
+}

@@ -1,6 +1,6 @@
 //! Durable progress, distinct from transport delivery and volatile UI updates.
 
-use super::identity::{FeedEpoch, ObjectId, ProducerEpoch, ScopeKey, StreamId};
+use super::identity::{DeviceId, FeedEpoch, ObjectId, ProducerEpoch, ScopeKey, StreamId, ViewId};
 use serde::{Deserialize, Serialize};
 
 macro_rules! counter {
@@ -38,6 +38,9 @@ pub struct ScopeCursor {
     pub scope: ScopeKey,
     pub epoch: FeedEpoch,
     pub acl_revision: Revision,
+    /// Missing on an older cursor means that reconciliation is required.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub view: Option<ViewId>,
     pub applied: Sequence,
 }
 
@@ -76,6 +79,23 @@ impl BlockRange {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "holder", rename_all = "snake_case")]
+pub enum Holder {
+    Hub { hub: super::identity::HubId },
+    Device { device: DeviceId },
+}
+
+/// One replica's current right to retain a scope. Regrant creates a new
+/// publication epoch; neither old queues nor old ACKs complete the new tenure.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HoldingPeriod {
+    pub holder: Holder,
+    pub scope: ScopeKey,
+    pub acl_revision: Revision,
+    pub publication_epoch: Revision,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BlockProgress {
     pub manifest: super::manifest::BlobId,
     /// Verified, durable block indexes; sorted, disjoint half-open ranges.
@@ -98,7 +118,7 @@ pub enum Completeness {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum DurableAck {
-    Catalog { cursor: ScopeCursor },
-    Stream { cursor: StreamCursor },
-    Blocks { progress: BlockProgress },
+    Catalog { holding: HoldingPeriod, cursor: ScopeCursor },
+    Stream { holding: HoldingPeriod, cursor: StreamCursor },
+    Blocks { holding: HoldingPeriod, progress: BlockProgress },
 }
