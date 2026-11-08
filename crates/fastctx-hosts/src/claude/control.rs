@@ -162,13 +162,7 @@ pub fn read_message_if_present(path: &Path) -> io::Result<Option<Value>> {
 }
 
 pub fn read_message(path: &Path) -> io::Result<Value> {
-    let value = read::<Value>(path)?.ok_or_else(|| io::Error::other("Claude marked a missing reply complete"))?;
-    let Some(count) = value.get("parts").and_then(Value::as_u64) else { return Ok(value) };
-    let mut body = Vec::new();
-    for index in 0..count {
-        body.extend(fastctx_platform::disk::read(path.with_extension("parts").join(index.to_string()))?);
-    }
-    serde_json::from_slice(&body).map_err(io::Error::other)
+    read_message_if_present(path)?.ok_or_else(|| io::Error::other("Claude marked a missing reply complete"))
 }
 
 pub fn answer(directory: &Path, answer: &Answer) -> io::Result<()> {
