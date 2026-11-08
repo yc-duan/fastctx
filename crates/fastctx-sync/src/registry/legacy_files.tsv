@@ -1,0 +1,214 @@
+# R=application home, W=world, H=hub, N=one net link, C=conversation/guest, A=App data, V=viewed cache, Q=Claude session exchange. Angle brackets are typed identity components.
+File	W/format.json	Runtime	crates/fastctx-node/src/world_format.rs	Foundation	Forward-only world format ownership
+File	W/net/proxy.json	Runtime	crates/fastctx-node/src/proxy_setting.rs	Foundation	Local network proxy setting; credentials, if any, are not account assets
+Container	W/{node,book}.sqlite3	ByKind:registered-tables	crates/fastctx-node/src/record_database.rs	Foundation	Classify rows by registered table and family
+Container	H/hub.sqlite3	ByKind:registered-tables	crates/fastctx-hub/src/store/shelf.rs	Foundation	Classify rows by table and hub row kind
+Container	N/node.sqlite3	ByKind:registered-tables	crates/fastctx-net/src/link/state.rs	Foundation	Device transport database; nodes share their existing database
+File	<database>{-wal,-shm,-journal,-keeper}	Runtime	crates/fastctx-storage/src	Foundation	Database journals and exclusive ownership
+File	<database>.{damaged,unavailable,salvage}	Runtime	crates/fastctx-storage/src/recovery.rs	Migration	Recovery intent and active salvage; preserve evidence
+File	<database>.quarantine/<id>/**	Runtime	crates/fastctx-storage/src/recovery.rs	Migration	Damaged original and salvaged.txt; no automatic asset disposal
+File	H/hub.json	Runtime	crates/fastctx-hub/src/store.rs	Foundation	Hub bootstrap identity and addresses
+File	H/tls/{certificate,key}.der	Runtime	crates/fastctx-hub/src/store.rs	Foundation	Local authentication material; never replicated as assets
+File	H/login.secret	Runtime	crates/fastctx-hub/src/store.rs	Foundation	Local authentication material
+File	H/hub.sqlite3.format-<generation>{,.partial}	Runtime	crates/fastctx-hub/src/store/format.rs	Migration	Verified format backups and active staging
+File	H/{directory,hub,letters,worked}.before-sqlite.json	ByKind:legacy-originals	crates/fastctx-hub/src/store/migrate.rs	Migration	Preserve original logical classes during migration
+File	H/updates/reports.before-sqlite.json	Runtime	crates/fastctx-hub/src/store/migrate.rs	Migration	Version report migration source
+File	H/{directory,letters,worked,members}.json	ByKind:legacy-originals	crates/fastctx-hub/src/store/migrate.rs	Migration	Earlier hub layouts; unknown fields preserved
+File	H/updates/reports.json	Runtime	crates/fastctx-hub/src/store/migrate.rs	Migration	Earlier version-state source
+File	H/account-records/<account>/<opened>/<digest>.json	ByKind:account-records	crates/fastctx-hub/src/account_records/storage.rs	Assets	Exact metadata.kind selects its registered logical kind
+File	H/account-records/<account>/<opened>/<digest>.versions/<revision>.json	Asset	crates/fastctx-hub/src/account_records/history.rs	Assets	Retained document versions
+File	H/account-records/<account>/<opened>/<digest>.versions/summaries/<revision>.json	Derived	crates/fastctx-hub/src/account_records/revisions.rs	Projection	Version summaries
+File	H/account-records/<account>/<opened>/<digest>.versions/submissions/<operation>.json	Runtime	crates/fastctx-hub/src/account_records/history.rs	Foundation	Idempotent submission receipts
+File	H/account-records/<account>/<opened>/skill-edit.json	Runtime	crates/fastctx-hub/src/skill_storage.rs	Assets	Durable skill commit decision; recover before retirement
+File	H/ledger/<town>/<sequence>.json	Asset	crates/fastctx-hub/src/ledger.rs	Assets	Project ledger facts and referenced page/history resources
+File	H/outboxes/<epoch>/<sequence>	Runtime	crates/fastctx-hub/src/post/member.rs	Foundation	Unacknowledged delivery envelopes
+File	H/counts/{<epoch>,.legacy-imported}	Runtime	crates/fastctx-hub/src/store/counts.rs	Foundation	Durable receive watermarks
+File	H/{outbox/<machine>/<sequence>,taken/<machine>}	Runtime	crates/fastctx-hub/src/store.rs	Migration	Legacy mailboxes
+File	H/outbox-trash/**	Scratch	crates/fastctx-hub/src/post/member.rs	Maintenance	Completed mailbox removal staging
+File	H/outbox-conflicts/<epoch>/<sequence>/**	Asset	crates/fastctx-hub/src/store/conflicts.rs	Migration	Conflicting source evidence
+File	H/{moving-out,arriving,moves,called-off,retired}.json	Runtime	crates/fastctx-hub/src/moving/mod.rs	Maintenance	Hub move decisions and fencing
+File	H/.hub-handover.sqlite3	Runtime	crates/fastctx-hub/src/moving/snapshot.rs	Maintenance	Snapshot pinned by the active move; disposable only after termination
+File	H/updates/{looked,github-list}.json	Derived	crates/fastctx-hub/src/updates/discovery.rs	Maintenance	Release discovery state
+File	H/releases/v<version>/**	Runtime	crates/fastctx-hub/src/releases/mod.rs	Maintenance	Administrator-supplied distribution material; not necessarily reproducible
+File	H/hub.log	Runtime	crates/fastctx-hub/src/lib.rs	Maintenance	Local mixed-account diagnostics; publish only separately scoped audit facts
+File	H/health.json	Runtime	crates/fastctx-hub/src/health.rs	Maintenance	Latest health state
+File	N/membership.json	Runtime	crates/fastctx-net/src/link/state.rs	Foundation	Device membership and pinned hub identity
+File	N/view.json	Derived	crates/fastctx-net/src/link/view_changes.rs	Projection	Last authorized directory view
+File	N/{counter,letters}.json	Runtime	crates/fastctx-net/src/link/state.rs	Foundation	Reserved delivery numbers and acknowledgement state
+File	N/outbox/<sequence>	Runtime	crates/fastctx-net/src/link/letters.rs	Foundation	Durable transport outbox
+File	N/{received/<sender>,received-by-key/<hash>}/<id>	Runtime	crates/fastctx-net/src/link/letters/receipts.rs	Migration	Legacy receipt sources
+File	N/failures/letter-<digest>.json	Asset	crates/fastctx-net/src/link/letters/failures.rs	Assets	Delivery failure evidence
+File	N/failures/.identified	Runtime	crates/fastctx-net/src/link/letters/failures.rs	Migration	Failure identity migration marker
+File	N/posting-refusals/<epoch>-<sequence>.json	Asset	crates/fastctx-net/src/link/posting.rs	Assets	Refusal outcome
+File	N/ended.json	Runtime	crates/fastctx-net/src/link/state.rs	Maintenance	Membership removal decision and pending action
+File	N/line.json	Asset	crates/fastctx-net/src/link/line.rs	Assets	Connection state changes, not heartbeats
+File	N/update-policy.json	Asset	crates/fastctx-net/src/link/update_policy.rs	Assets	Device update preferences
+File	N/arrivals.json	Runtime	crates/fastctx-net/src/arrivals.rs	Foundation	Arrival notice acknowledgements
+File	C/{about,town,removed,moved*}	Asset	crates/fastctx-node/src/residents	Assets	Conversation metadata, project relation and lifecycle
+File	C/now	Runtime	crates/fastctx-node/src/residents	Foundation	Current execution state
+File	W/{deleted,departed}/<identity>	Asset	crates/fastctx-node/src/data/delete.rs	Migration	Deletion and departure fences
+File	W/{resident-cache,residents}/<identity>	Derived	crates/fastctx-node/src/residents/cache.rs	Projection	Resident projections and older cache layout
+File	C/{actions,messages,session-events,calls,session-events-sequence.json}	Asset	crates/fastctx-node/src/record_migration	Migration	Legacy fact sources; preserve accepted identity and sequence
+File	C/books/seen/**	Derived	crates/fastctx-node/src/residents/activity.rs	Migration	Legacy file observations
+File	C/{turns,handovers,inbox,uncertain,outbox}/**	Runtime	crates/fastctx-node/src/inbox	Migration	Delivery source material; text retained until separately ingested
+File	C/books/{delivered,delivery-receipts,paid,turn-sessions}/**	Runtime	crates/fastctx-node/src/delivery.rs	Migration	Delivery receipts and turn bindings
+File	C/composer.json	Asset	crates/fastctx-node/src/composer	Assets	Legacy draft checkpoint
+File	C/books/composer-{receipts,ended,uploads}/**	Runtime	crates/fastctx-node/src/composer	Migration	Legacy draft operation and send receipts
+File	C/attachments/<slot>/{original,receipt.json,reference.json}	Asset	crates/fastctx-node/src/attachments	Assets	Original name is recorded by the receipt, not fixed to original
+File	C/attachments/<slot>/preview.json	Derived	crates/fastctx-node/src/attachments	Projection	Image preview
+File	C/attachments/<slot>/{upload.part,reservation.json,destination.json,forwarded.json,given.json,*.lock}	Runtime	crates/fastctx-node/src/attachments	Foundation	Active upload and forwarding state; release after explicit terminal evidence
+File	C/attachments/{inherited.json,delivered.json}	Asset	crates/fastctx-node/src/attachments	Migration	Legacy attachment relationships
+File	C/retained-attachments.json	Asset	crates/fastctx-node/src/attachments/lifetime.rs	Migration	Retained attachment roots
+File	C/jobs/<job>.{json,sh,writes.jsonl,steps.jsonl}	Asset	crates/fastctx-node/src/jobs.rs	Ingestion	Job record, script and execution facts
+File	C/jobs/<job>.{writes,steps}/**	Asset	crates/fastctx-node/src/jobs.rs	Ingestion	Legacy execution fact files
+File	C/out/<job>.log	Asset	crates/fastctx-node/src/jobs.rs	Ingestion	Complete job output; custom stderr/output paths resolved through JobRecord
+File	C/jobs/<job>.{lock,on,stdin,state,control}	Runtime	crates/fastctx-node/src/job_files.rs	Foundation	Supervisor and routing state; never delete the job assets with it
+File	C/out/<job>.tmp/**	Scratch	crates/fastctx-node/src/jobs.rs	Maintenance	Job temporary output and delivery marker
+File	C/scratch/**	Scratch	crates/fastctx-node/src/scratch	Foundation	Explicitly excluded from replication
+File	C/artifacts/**	Asset	crates/fastctx-node/src/placement/artifacts.rs	Assets	Published outputs; do not follow links outside the root
+File	C/artifacts/.arriving/**	Scratch	crates/fastctx-node/src/placement/artifacts.rs	Maintenance	Incomplete materialization
+File	C/plan.md	Asset	crates/fastctx-node/src/replicas	Assets	Document materialization and possibly pending edits
+File	C/history/**	Asset	crates/fastctx-node/src/history/local_copy.rs	Assets	Document materialization
+File	W/replicas/{copies,folders}/*.json	ByKind:replica-state	crates/fastctx-node/src/replicas/state.rs	Assets	Asset revisions/pending edits plus local publication state
+File	W/replicas/bodies/<copy>/<hash>	Asset	crates/fastctx-node/src/replicas/bodies.rs	Assets	Content-addressed document bytes
+File	W/working-copies/*.json	Runtime	crates/fastctx-node/src/placement	Migration	Legacy working copy state
+File	C/{working-from.json,working-place.json,.working-copy-owner.json}	Runtime	crates/fastctx-node/src/placement	Migration	Legacy placement ownership
+File	W/skill-copies/<account>/{account.json,generations.json}	Runtime	crates/fastctx-node/src/skills/copies.rs	Assets	Materialization ownership and active generation leases
+File	W/skill-copies/<account>/<name>-<version>/**	Asset	crates/fastctx-node/src/skills/copies.rs	Assets	Skill folder replica; .arriving has separate temporary lifetime
+File	W/skill-copies/<account>/.arriving/**	Scratch	crates/fastctx-node/src/skills/copies.rs	Maintenance	Unpublished skill generation
+File	C/history-records/**	Asset	crates/fastctx-node/src/history/local.rs	Assets	Local history records
+File	C/history-import.json	Runtime	crates/fastctx-node/src/history/import/state.rs	Migration	History migration state
+File	C/{context/**,context-state.json,context.json}	Runtime	crates/fastctx-node/src/context/records.rs	Projection	Host context delivery and compatibility projection
+File	C/books/{context-inputs.json,context-heard.json}	Runtime	crates/fastctx-node/src/context	Migration	Legacy context input receipts
+File	C/books/{options.json,callee.json,asked/**,choices.json,focus.md,focus-opening.json}	Asset	crates/fastctx-node/src/record_migration	Assets	Legacy configuration and conversation relations
+File	C/{focus-visible.json,plan-seen.json}	Derived	crates/fastctx-node/src/focus	Projection	Local observation and rendered state
+File	C/books/{goal-local.json,goal-replies.json,goal-account.json,goal-reports/**}	Asset	crates/fastctx-node/src/goals	Assets	Goal definitions and reports
+File	C/books/{goal-hold.json,goal-operations/**,goal-reviews/**,goal-inputs/**,goal-compactions/**,goal-retry.json}	Runtime	crates/fastctx-node/src/goals	Foundation	Goal execution state
+File	C/goal.json	Asset	crates/fastctx-node/src/goals	Migration	Legacy goal source
+File	C/books/{control-queue.json,user-stops/**,turn-stops/**,turn-failures/**,host-reports.json*,native-hosts.json,scratch-locations.json,elsewhere/**}	Runtime	crates/fastctx-node/src/record_migration	Migration	Legacy execution queues and checkpoints
+File	W/timers/*.json	ByKind:node.record-fields	crates/fastctx-node/src/timers/store.rs	Assets	Definitions and execution state are separated on import
+File	W/usage/<login>/<day>.jsonl	Asset	crates/fastctx-node/src/usage/ledger.rs	Assets	Usage ledger, confirmations and resets
+File	W/usage/<login>/quarantine/**	Asset	crates/fastctx-node/src/usage/quarantine.rs	Migration	Damaged ledger evidence
+File	W/usage/{claude-costs.json,follow-clearings}	Asset	crates/fastctx-node/src/usage	Migration	Legacy accounting observations and settings
+File	W/{sentinel-deleted-owners,sentinel-owner-removals}/**	Runtime	crates/fastctx-node/src/sentinels	Foundation	Sentinel ownership and deletion fences
+File	W/sentinels/**/web-audit/**	Asset	crates/fastctx-node/src/sentinels	Assets	Scoped web audit evidence
+File	W/{sentinel-keys/*,device.key,seal.key}	Runtime	crates/fastctx-node/src/sentinels/keys.rs	Foundation	Local credentials, never general asset replicas
+File	W/{agent-scan.json,agent-homes.json}	ByKind:login-record-fields	crates/fastctx-node/src/logins/kept.rs	Assets	Visible settings separated from local login paths and credentials
+File	W/{collab.json,history-switch.json,features.json,limits.json,layer.json,retention.json}	Asset	crates/fastctx-node/src	Assets	Account or device configuration; asset expiry is retired
+File	W/*.carried.json	Runtime	crates/fastctx-node/src	Migration	Existing configuration carry receipts only; not a wildcard for new files
+File	W/mcp/<hub>/<account>.json	Runtime	crates/fastctx-node/src/mcp/store.rs	Foundation	Command MCP local settings/environment; publish only approved descriptions
+File	W/mcp/<hub>/logs/<account>/<name>.log	Asset	crates/fastctx-node/src/mcp/store.rs	Assets	Account-scoped execution diagnostics
+File	W/towns/<town>/{project.json,index.json,alone.json,signed/**,ledger/**,attachments/**}	Asset	crates/fastctx-node/src/ledger	Assets	Project definitions, signed ledger and attachments
+File	W/towns/<town>/history/**	Asset	crates/fastctx-node/src/history	Assets	Project document materialization
+File	W/towns/<town>/history-records/**	Asset	crates/fastctx-node/src/history/local.rs	Assets	Local project history
+File	W/towns/<town>/{journals/**,specs/**,projection-through.json}	Derived	crates/fastctx-node/src/ledger	Projection	Legacy ledger projections; retain unique old material until compared
+File	W/towns/<town>/{refused*.json,tampering/**,not-imported/**}	Asset	crates/fastctx-node/src/ledger	Migration	Rejected or modified original content; preserve evidence
+File	W/towns/<town>/{found.json,ledger-import.json}	Runtime	crates/fastctx-node/src/ledger	Migration	Project migration state
+File	W/towns/<town>/pages/<page>/**	ByKind:page-files	crates/fastctx-types/src/layout.rs	Assets	Page/resources are assets; jobs/out/scratch follow registered job layouts
+File	W/{net-left-*,net-third-version}/**	Runtime	crates/fastctx-node/src/world.rs	Migration	Left or previous network identity and transport state
+File	W/{received,received-controls,job-deliveries,on-deliveries,on-stops,run-stops,run-requests}/**	Runtime	crates/fastctx-node/src/record_migration/catalog.rs	Migration	Legacy shared delivery queues
+File	W/letter-parts/<id>/**	Runtime	crates/fastctx-node/src/letters/receiving.rs	Foundation	Active message assembly; release after terminal acknowledgement
+File	W/letter-receipts/*	Runtime	crates/fastctx-node/src/letters	Foundation	Durable deduplication receipts
+File	W/forget-outcomes/*	Runtime	crates/fastctx-node/src/forget.rs	Foundation	Deletion outcomes
+File	C/books/forget-asks.json	Runtime	crates/fastctx-node/src/obligations.rs	Foundation	Outstanding deletion obligations
+File	W/codex-reports/*	Runtime	crates/fastctx-node/src/codex/report_store.rs	Ingestion	Legacy report queue
+File	W/{local-stop-recovery,outgoing-stop-recovery}/**	Runtime	crates/fastctx-node/src/on_stop.rs	Migration	Execution recovery material
+File	W/{node.lock,node.service,node.successor,claude-controller.json,node.sock}	Runtime	crates/fastctx-node/src/lib.rs	Foundation	Process ownership, service coordination and IPC
+File	W/node.log	Runtime	crates/fastctx-node/src/lib.rs	Maintenance	Local mixed-account operational diagnostics
+File	W/image-reading/**	Scratch	crates/fastctx-node/src/attachment_files.rs	Maintenance	Image extraction staging
+File	W/bin/**	Derived	crates/fastctx-node/src/program_collection.rs	Maintenance	Installed program copies managed by the updater
+File	W/archive/<version>/**	ByKind:legacy-originals	crates/fastctx-node/src/record_migration/archive.rs	Migration	Preserve verified and damaged source bytes; no 30-day deletion
+File	W/released/<conversation>-<at>/**	ByKind:legacy-originals	crates/fastctx-node/src/conversation_store	Migration	Released conversation snapshot and provenance
+File	C/records.sqlite3	ByKind:registered-tables	crates/fastctx-node/src/conversation_store/bundle.rs	Migration	Conversation export bundle plus transfer_manifest
+File	C/{aliases.json,.plan.json,.record-generation,.queue-origins.json,.queue-rejections.json}	Runtime	crates/fastctx-node/src/gather	Migration	Legacy layout and queue provenance
+File	C/{legacy,recovered/queues}/**	ByKind:legacy-originals	crates/fastctx-node/src/gather	Migration	Classify original data before retiring it
+File	W/{outside/residents,removed-residents,elsewhere}/**	ByKind:legacy-originals	crates/fastctx-node/src/gather.rs	Migration	Earlier conversation and guest layouts
+File	W/towns/<town>/residents/**	ByKind:legacy-originals	crates/fastctx-node/src/gather.rs	Migration	Earlier project resident layout
+File	V/conversations/<address>/{index.json,*.zst,live.jsonl,live-sequence.json}	Derived	crates/fastctx-client/src/cache/conversation.rs	Client	Legacy viewed data may be the sole surviving observation; compare before deletion
+File	V/pictures/<key>-<size>.thumb	Derived	crates/fastctx-client/src/cache/pictures.rs	Client	Thumbnail representation
+File	V/originals/<key>/{<name>,.file.json}	ByKind:client-originals	crates/fastctx-client/src/cache/pictures.rs	Client	Attachment assets versus ordinary external-file observations
+File	V/blobs/<key>/{index.json,parts.jsonl,parts/**}	Derived	crates/fastctx-client/src/cache/lines.rs	Client	Legacy long-output observation; preserve unique bytes during import
+File	V/files/world-file-*/<name>	Derived	gui/src-tauri/src/local_files.rs	Client	File materialized for external application opening
+File	V/.incoming/world-file-*	Scratch	gui/src-tauri/src/local_files.rs	Maintenance	Download staging
+File	V/{.lock,.generation,.requests/<hash>}	Runtime	crates/fastctx-platform/src/viewed_cache.rs	Client	Cache coherence markers
+File	V/conversations/<address>/.lock	Runtime	crates/fastctx-client/src/cache/conversation.rs	Client	Conversation cache writer ownership
+File	A/connection.json	Asset	gui/src-tauri/src/connection.rs	Client	Device transport preference
+File	A/device/{device.key,device.lock}	Runtime	crates/fastctx-client/src/device/store.rs	Foundation	Device credential and exclusive ownership
+File	A/device/hubs/<hub>/**	ByKind:net-layout	crates/fastctx-client/src/device/store.rs	Client	Uses registered N layout, not an unrestricted file prefix
+File	A/device/dissolved.json	Runtime	crates/fastctx-client/src/device/store.rs	Client	Pending network dissolution notice
+File	A/device/left-<hub>-<timestamp>/**	Runtime	crates/fastctx-client/src/device/store.rs	Migration	Retired link data must not remain an active replica
+File	A/notification-observations.json	Runtime	gui/src-tauri/src/android/observer.rs	Client	Mobile notification observation cursor
+File	A/notifications/*	Runtime	gui/src-tauri/src/desktop_presence/notifications.rs	Client	Desktop notification activation records
+File	A/updated.json	Runtime	gui/src-tauri/src/updates.rs	Maintenance	Application update handover marker
+File	R/updates/{startup-error.json,app.json,repair.json,repair.lock}	Runtime	gui/src-tauri/src/local_repair.rs	Maintenance	Application startup repair and handover
+File	<codex-work>/runtime-threads/<hash>.json	Runtime	crates/fastctx-hosts/src/codex/cache.rs	Ingestion	Current host process/thread projection
+File	<codex-work>/runtime-finished/**	Runtime	crates/fastctx-hosts/src/codex/cache.rs	Migration	Earlier runtime state
+File	<codex-work>/{app-server.sock,choices,config,assisted/**}	Runtime	crates/fastctx-hosts/src/codex	Foundation	Host startup and assisted-account isolation
+File	Q/{session.json,resident.json,transcript.json,host.json,host.done,closed/<instance>.json,activity.json}	Runtime	crates/fastctx-hosts/src/claude/exchange.rs	Ingestion	Host ownership, transcript pointer and activation state
+File	Q/{events/**,damaged/**,accounting/**,calls/*.json,applied/**}	Runtime	crates/fastctx-hosts/src/claude/exchange.rs	Ingestion	Durable ingestion input and receipts; preserve until facts accepted
+File	Q/{inbox/**,inbox-parts/**,receipts/**,stop.json,control/**,answer.json}	Runtime	crates/fastctx-hosts/src/claude/control.rs	Foundation	Host delivery/control protocol
+File	Q/{context.json,context-heard.json,presentation.json,goal-stop.json,models.json,policy.json,selection.json,routing.json,checkpoints/**,hold*}	Runtime	crates/fastctx-hosts/src/claude	Projection	Host configuration/context projection and runtime checkpoints
+File	W/claude-calls/**	Runtime	crates/fastctx-hosts/src/claude/calls.rs	Migration	Earlier host calls
+File	W/claude-plugins/**	Derived	crates/fastctx-hosts/src/claude/mod.rs	Maintenance	Bundled plugin materialization
+File	W/codex/{homes,assisted,identify}/**	Runtime	crates/fastctx-node/src/codex/hosts.rs	Foundation	Local host homes and identity discovery; no credential replication
+File	C/{claude-settings.json,claude-instructions.md,claude-mcp.json,host-isolation*.json,retained-host.json}	Runtime	crates/fastctx-node/src/profile/session.rs	Projection	Per-conversation host configuration projection
+External	<CODEX_HOME>/**	Runtime	crates/fastctx-hosts/src/codex	Ingestion	External host source and credentials, not a copied asset directory
+External	<CLAUDE_CONFIG_DIR>/**	Runtime	crates/fastctx-hosts/src/claude	Ingestion	External host source and credentials, publish authorized timeline only
+File	<sentinel>/<id>/assignment.json	Derived	crates/fastctx-sentinel/src/resident/storage.rs	Assets	Assignment discovery projection
+File	<sentinel>/<id>/<generation>/state.json	Runtime	crates/fastctx-sentinel/src/state.rs	Foundation	Sentinel execution state and pending wake
+File	<sentinel>/<id>/<generation>/{history,runs}/<sequence>.json	Asset	crates/fastctx-sentinel/src/state.rs	Ingestion	Completed observation and execution evidence
+File	<sentinel>/<id>/<generation>/evidence/*.txt	Asset	crates/fastctx-sentinel/src/wake.rs	Ingestion	Observation evidence
+File	<sentinel>/<id>/<generation>/tally.json	Derived	crates/fastctx-sentinel/src/state.rs	Projection	Usage tally; retain unique historical values during migration
+File	<sentinel>/<id>/<generation>/home.json	Runtime	crates/fastctx-sentinel/src/resident/storage.rs	Foundation	Notification delivery state
+File	<sentinel>/<id>/<generation>/judgments/<key>.json	Runtime	crates/fastctx-sentinel/src/resident/goal.rs	Foundation	Goal judgment receipt
+File	<job-runtime>/{prelude.bash,state.bash}	Derived	crates/fastctx-hands/src/run/shell.rs	Foundation	Generated shell state
+File	W/out/answers/<hash>.txt	Derived	crates/fastctx-serve/src/answer.rs	Projection	Long result presentation; preserve unique content before rebuilding
+File	<update-cache>/v<version>/<target>	Derived	crates/fastctx-update/src/cache.rs	Maintenance	Verified redistributable package
+File	<update-cache>/v<version>/<manifest>	Derived	crates/fastctx-update/src/cache.rs	Maintenance	Release manifest
+File	<update-cache>/{*.part,*.N.part,.retired-*}	Scratch	crates/fastctx-update/src/cache.rs	Maintenance	Download and retirement staging; active acquisitions are pinned
+File	<release-query-cache>	Derived	crates/fastctx-update/src/github.rs	Maintenance	Caller-owned registered release discovery path
+File	R/{applied*.json,applied-agent-*.json,apply-history/**}	Runtime	crates/fastctx-install/src/apply.rs	Maintenance	Host integration receipts and original restoration material
+File	R/{uninstalled*.json,uninstall-progress.json}	Runtime	crates/fastctx-uninstall/src/execute.rs	Maintenance	Uninstall progress and recovery
+File	R/updates/{attempt.json,take.json}	Runtime	crates/fastctx-install/src/renewal.rs	Maintenance	Upgrade handover control
+File	R/upgrade-clean.json	Runtime	crates/fastctx-install/src/upgrade/mod.rs	Migration	Installation migration cleanup state
+File	<installation-archive>/copy-manifest.json	Runtime	crates/fastctx-install/src/upgrade/archive/tree.rs	Migration	Verified archive copy manifest
+File	<installation-archive>/content/**	ByKind:legacy-originals	crates/fastctx-install/src/upgrade/archive	Migration	Original data retain their class and credentials stay local
+File	<diagnostic-directory>/scene-<millis>.txt	Runtime	crates/fastctx-platform/src/scene.rs	Maintenance	Local mixed-scope operational scene
+File	<publish-parent>/.fastctx-<pid>-<sequence>.tmp	Scratch	crates/fastctx-platform/src/atomic.rs	Maintenance	Atomic publication staging
+File	<alias-root>/.aliases/<name>	Scratch	crates/fastctx-platform/src/directory_alias.rs	Maintenance	Temporary directory alias
+External	<system>/{cgroup,service,IPC-endpoint}	Runtime	crates/fastctx-platform/src	Foundation	OS lifecycle resources, not user assets
+External	<user-workspace>/**	Runtime	crates/fastctx-hands/src	Foundation	External workspace excluded until explicitly delivered; this does not grant deletion authority
+File	R/renewal/plan.json	Runtime	crates/fastctx-install/src/renewal.rs	Maintenance	Upgrade plan
+File	R/renewal/coordinator-<digest>.json	Runtime	crates/fastctx-install/src/renewal.rs	Maintenance	Upgrade coordinator recovery
+File	R/renewal/{collection,worker,node-entry,activation,request}.lock	Runtime	crates/fastctx-install/src/renewal.rs	Maintenance	Upgrade lifecycle locks
+File	R/apply.lock	Runtime	crates/fastctx-install/src/apply.rs	Maintenance	Integration ownership
+File	R/upgrade-clean.lock	Runtime	crates/fastctx-install/src/upgrade/mod.rs	Migration	Archive cleanup ownership
+File	R/cache/digests/<path-hash>	Derived	crates/fastctx-install/src/renewal.rs	Maintenance	Program digest cache
+File	R/renewal/images/<digest>/{fastctx,fastctx.exe,*.sig}	Runtime	crates/fastctx-install/src/renewal.rs	Maintenance	Pinned replacement programs and official signatures
+File	<program-path>.sig	Runtime	crates/fastctx-install/src/renewal.rs	Maintenance	Program signature, including the installed executable
+File	<program-path>.with_extension(renewal-files.json)	Runtime	crates/fastctx-install/src/renewal.rs	Maintenance	Program-specific handover manifest
+File	R/renewal/prepared-<digest>.json	Runtime	crates/fastctx-install/src/repair/records.rs	Migration	Recognized old preparation receipts
+File	R/updates/application.lock	Runtime	crates/fastctx-install/src/repair/application.rs	Maintenance	Application repair ownership
+File	R/updates/application-probe-<pid>.json	Runtime	crates/fastctx-install/src/repair/application.rs	Maintenance	Repair probe receipt
+File	R/updates/application-probe-<pid>/**	Scratch	crates/fastctx-install/src/repair/application.rs	Maintenance	Isolated repair probe profile
+File	<application-parent>/.fastctx-repair-<pid>/**	Runtime	crates/fastctx-install/src/repair/application.rs	Maintenance	Active repair backup including previous.app
+File	R/claude-command-history/command-<id>/{command,before,before-metadata,after,after-metadata}.json	Runtime	crates/fastctx-install/src/claude/history.rs	Migration	Legacy installation restoration material; credentials remain local
+File	W/machine.json	Runtime	crates/fastctx-node/src/machine.rs	Foundation	Current machine name and historical aliases used by legacy identity resolution
+File	W/alone.json	Runtime	crates/fastctx-node/src/ledger.rs	Foundation	Stable offline-world hub identity
+File	W/memory-room.json	Asset	crates/fastctx-node/src/memory_room/mod.rs	Assets	Device memory reservation preference
+File	W/dissolved.json	Runtime	crates/fastctx-node/src/world.rs	Client	Network dissolution notice awaiting acknowledgement
+File	N/machine-facts.json	Derived	crates/fastctx-node/src/facts.rs	Projection	Last remote machine capabilities
+File	W/uninstalled.json	Runtime	crates/fastctx-node/src/lib.rs	Maintenance	Node uninstall fence
+File	W/control-requests/*.json	Runtime	crates/fastctx-node/src/control_posts/requests.rs	Migration	Legacy control-request source
+Reference	JobRecord.output	Asset	crates/fastctx-types/src/run.rs	Ingestion	Only a path from an owned registered job; not an arbitrary caller-supplied path
+Reference	JobRecord.stderr	Asset	crates/fastctx-types/src/run.rs	Ingestion	Only a path from an owned registered job
+Reference	JobRecord.stdin	Runtime	crates/fastctx-types/src/run.rs	Foundation	Execution input path
+Reference	JobRecord.on.state	Runtime	crates/fastctx-types/src/run.rs	Foundation	Execution routing state path
+Reference	AttachmentReceipt.original	Asset	crates/fastctx-node/src/attachments	Assets	Original path/name comes from the authorized receipt, not a fixed original filename
+File	C/books/turn-facts/*.json	Runtime	crates/fastctx-node/src/claude/turn_facts/storage.rs	Migration	Legacy turn accounting source
+File	C/books/run-receipts/*.json	Runtime	crates/fastctx-node/src/run_receipts.rs	Migration	Legacy job consumption receipts
+File	C/books-retired	Runtime	crates/fastctx-node/src/books/cleanup.rs	Maintenance	Runtime retirement marker; does not authorize asset deletion
+File	C/artifacts-delivered.json	Runtime	crates/fastctx-node/src/job_receipts.rs	Maintenance	Artifact delivery state; does not authorize asset deletion
+File	R/updates/settings.json	Asset	crates/fastctx-node/src/updates/mod.rs	Assets	Device update preferences
+File	R/updates/{looked.json,github-list.json,github-speed.json,doctor-seen.json}	Derived	crates/fastctx-node/src/updates	Maintenance	Local release discovery and diagnostics observations
+File	R/updates/{repair-request.json,repair-request.lock}	Runtime	crates/fastctx-node/src/updates/repair.rs	Maintenance	Repair request state and ownership

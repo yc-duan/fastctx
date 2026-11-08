@@ -1,0 +1,65 @@
+# Browser keys are scoped by the existing store namespace; these entries never authorize arbitrary new keys.
+Browser	IndexedDB/world-composer-outbox/edits	Asset	gui/src/conversation/composer/journal.ts	Client	Unacknowledged edits; retain until durable acceptance
+Browser	sessionStorage/JSON.stringify([world-composer-writer,machine,resident])	Runtime	gui/src/conversation/composer/writer.ts	Client	Local live writer identity
+Browser	localStorage/draft:<resident>@<machine>	Asset	gui/src/conversation/page.ts	Client	Device draft and epoch-bound selected skill
+Browser	localStorage/draft:<resident>@<machine>:picked	Asset	gui/src/conversation/page.ts	Client	Device draft and epoch-bound selected skill
+Browser	localStorage/profile.prompt.<agent>.<login>	Asset	gui/src/app/prompt-page.ts	Client	Unsubmitted user prompt
+Browser	localStorage/profile.subagents.<login>	Asset	gui/src/app/subagents-page.ts	Client	Unsubmitted subagent configuration
+Browser	localStorage/new-draft:<town-or-empty>	Asset	gui/src/app/new-talk.ts	Client	New-conversation draft; exact key is issued by existing NewTalk
+Browser	localStorage/theme	Asset	gui/src/theme.ts	Client	Device appearance preference
+Browser	localStorage/bodySize	Asset	gui/src/theme.ts	Client	Device appearance preference
+Browser	localStorage/motion	Asset	gui/src/motion.ts	Client	Device motion preference
+Browser	localStorage/lang	Asset	gui/src/language.ts	Client	Device language
+Browser	localStorage/notify	Asset	gui/src/app/presence.ts	Client	Device notification preference
+Browser	localStorage/model:<agent>	Asset	gui/src/app/model-memory.ts	Client	Device model selection memory, not account profile authority
+Browser	localStorage/effort:<agent>[:<model>]	Asset	gui/src/app/model-memory.ts	Client	Device model selection memory, not account profile authority
+Browser	localStorage/agent	Asset	gui/src/app/new-talk.ts	Client	Device new-conversation choices
+Browser	localStorage/pick[:<kind>]	Asset	gui/src/app/new-talk.ts	Client	Device new-conversation choices
+Browser	localStorage/account[:<kind>]	Asset	gui/src/app/new-talk.ts	Client	Device new-conversation choices
+Browser	localStorage/pickerFolds	Asset	gui/src/app/new-talk.ts	Client	Device new-conversation choices
+Browser	localStorage/desk	Asset	gui/src/desk/desk.ts	Client	Device workspace layout
+Browser	localStorage/sidebar	Asset	gui/src/app/shell.ts	Client	Sidebar layout
+Browser	localStorage/sidebar-width	Asset	gui/src/app/shell.ts	Client	Sidebar layout
+Browser	localStorage/folded	Asset	gui/src/app/sidebar.ts	Client	Collapsed sections
+Browser	localStorage/side-share	Asset	gui/src/side/frame.ts	Client	Device side panel layout
+Browser	localStorage/side-dock	Asset	gui/src/side/frame.ts	Client	Device side panel layout
+Browser	localStorage/side-open	Asset	gui/src/side/frame.ts	Client	Device side panel layout
+Browser	localStorage/side-home-folded	Asset	gui/src/side/home.ts	Client	Device overview layout
+Browser	localStorage/machines.view	Asset	gui/src/app/machines.ts	Client	Device machine view
+Browser	localStorage/machines.folds	Asset	gui/src/app/machines.ts	Client	Device machine view
+Browser	localStorage/machines-map	Asset	gui/src/app/machine-map.ts	Client	Device map layout
+Browser	localStorage/focusFolds	Asset	gui/src/app/machine-choice.ts	Client	Device machine picker groups
+Browser	localStorage/machine.range	Asset	gui/src/app/machine-page.ts	Client	Device metrics range
+Browser	localStorage/watchers.span	Asset	gui/src/sentinel/overview.ts	Client	Device sentinel range
+Browser	localStorage/agents.section	Asset	gui/src/app/agent-sections.ts	Client	Device agent page state
+Browser	localStorage/agents.view	Asset	gui/src/app/agent-sections.ts	Client	Device agent page state
+Browser	localStorage/agents.tab	Asset	gui/src/app/agent-sections.ts	Client	Device agent page state
+Browser	localStorage/agents.machine	Asset	gui/src/app/agent-machines.ts	Client	Device agent page state
+Browser	localStorage/profile.account	Asset	gui/src/app/profile-account.ts	Client	Device selected settings page/account
+Browser	localStorage/network	Asset	gui/src/app/network.ts	Client	Device selected settings page/account
+Browser	localStorage/settings.tab	Asset	gui/src/app/settings.ts	Client	Device selected settings page/account
+Browser	localStorage/talk.settings	Asset	gui/src/app/talk-settings.ts	Client	Device selected settings page/account
+Browser	localStorage/me.tab	Asset	gui/src/app/me.ts	Client	Device selected settings page/account
+Browser	localStorage/front-view	Asset	gui/src/home/page.ts	Client	Home display preference
+Browser	localStorage/project-view:<town>	Asset	gui/src/project/page.ts	Client	Project display preference
+Browser	localStorage/view:<resident>@<machine>	Asset	gui/src/conversation/page.ts	Client	Conversation display preference
+Browser	localStorage/activity.view	Asset	gui/src/activity/page.ts	Client	Activity display preferences
+Browser	localStorage/activity.span	Asset	gui/src/activity/page.ts	Client	Activity display preferences
+Browser	localStorage/usage.view	Asset	gui/src/app/usage/login-page.ts	Client	Usage display preference
+Browser	localStorage/workbench.shown	Asset	gui/src/app/workbench-shown.ts	Client	Device layer preference and legacy alias
+Browser	localStorage/layer	Asset	gui/src/app/workbench-shown.ts	Client	Device layer preference and legacy alias
+Browser	localStorage/fastctx.last-answered	Asset	gui/src/app/store.ts	Client	Device read/notice positions
+Browser	localStorage/lastSeen	Asset	gui/src/main.ts	Client	Device read/notice positions
+Browser	localStorage/troubles.told	Asset	gui/src/app/presence.ts	Client	Device read/notice positions
+Browser	localStorage/welcomed	Asset	gui/src/main.ts	Client	Device read/notice positions
+Browser	localStorage/path-notice	Asset	gui/src/app/path-notice.ts	Client	Device path notice acknowledgement
+Browser	localStorage/kept-logins	Derived	gui/src/app/usage/kept.ts	Client	Recent login presentation snapshots
+Browser	localStorage/kept-logins:<key>	Derived	gui/src/app/usage/kept.ts	Client	Recent login presentation snapshots
+Browser	SharedPreferences/world/notificationPolicy	Asset	gui/src-tauri	Client	Android device preferences
+Browser	SharedPreferences/world/theme	Asset	gui/src-tauri	Client	Android device preferences
+Browser	SharedPreferences/world/themeChosen	Asset	gui/src-tauri	Client	Android device preferences
+Browser	SharedPreferences/world/keepConnected	Runtime	gui/src-tauri	Client	Android service lifecycle preference
+Browser	SharedPreferences/world-notices/notice:<tag>	Runtime	gui/src-tauri	Client	Notification delivery and pending activation
+Browser	SharedPreferences/world-notices/activation:<id>	Runtime	gui/src-tauri	Client	Notification delivery and pending activation
+Browser	SharedPreferences/world-notices/pending	Runtime	gui/src-tauri	Client	Notification delivery and pending activation
+Browser	Android/cacheDir/updates/Fastctx.apk	Derived	gui/src-tauri	Client	Verified mobile application package cache

@@ -1,0 +1,370 @@
+//! Logical kinds own policy; physical containers do not grant an asset class.
+
+use super::{Codec, ConflictRule, DataClass, Lightweight, Registration, Retention, ScopePolicy, Stage};
+
+macro_rules! kind {
+    ($id:literal, $class:ident, $scope:ident, $conflict:ident, $retention:ident, $mobile:ident, $owner:literal, $stage:ident, $codec:ident) => {
+        Registration {
+            id: $id,
+            schema: 1,
+            class: DataClass::$class,
+            scope: ScopePolicy::$scope,
+            conflict: ConflictRule::$conflict,
+            retention: Retention::$retention,
+            mobile: Lightweight::$mobile,
+            owner: $owner,
+            handler: $id,
+            codec: Codec::$codec,
+            exportable: matches!(DataClass::$class, DataClass::Asset | DataClass::Derived),
+            stage: Stage::$stage,
+        }
+    };
+}
+
+pub(super) const KINDS: &[Registration] = &[
+    kind!(
+        "account.directory",
+        Asset,
+        Account,
+        SingleWriter,
+        UntilDeleted,
+        Complete,
+        "fastctx-hub::store",
+        Assets,
+        Json
+    ),
+    kind!("account.profile", Asset, Account, Expected, UntilDeleted, Complete, "fastctx-hub::manage", Assets, Json),
+    kind!(
+        "account.collaboration",
+        Asset,
+        Account,
+        Expected,
+        UntilDeleted,
+        Complete,
+        "fastctx-hub::manage",
+        Assets,
+        Json
+    ),
+    kind!(
+        "account.settings",
+        Asset,
+        Account,
+        Expected,
+        UntilDeleted,
+        Complete,
+        "fastctx-hub::account_records",
+        Assets,
+        Json
+    ),
+    kind!(
+        "account.skill",
+        Asset,
+        Account,
+        Expected,
+        UntilDeleted,
+        Metadata,
+        "fastctx-hub::skill_files",
+        Assets,
+        ManifestV1
+    ),
+    kind!(
+        "conversation.metadata",
+        Asset,
+        Conversation,
+        Expected,
+        UntilDeleted,
+        Complete,
+        "fastctx-node::residents",
+        Assets,
+        Json
+    ),
+    kind!(
+        "conversation.timeline",
+        Asset,
+        Conversation,
+        SingleWriter,
+        UntilDeleted,
+        Recent,
+        "fastctx-node::session_record",
+        Ingestion,
+        SourceRecords
+    ),
+    kind!(
+        "conversation.agents",
+        Asset,
+        Conversation,
+        SingleWriter,
+        UntilDeleted,
+        Complete,
+        "fastctx-node::colleagues",
+        Ingestion,
+        Json
+    ),
+    kind!(
+        "conversation.draft",
+        Asset,
+        Conversation,
+        Yrs,
+        UntilDeleted,
+        Complete,
+        "fastctx-node::composer",
+        Assets,
+        YrsV1
+    ),
+    kind!(
+        "conversation.plan",
+        Asset,
+        Conversation,
+        TextMerge,
+        UntilDeleted,
+        Metadata,
+        "fastctx-node::plan",
+        Assets,
+        Utf8
+    ),
+    kind!(
+        "conversation.history",
+        Asset,
+        Conversation,
+        TextMerge,
+        UntilDeleted,
+        Metadata,
+        "fastctx-node::history",
+        Assets,
+        Utf8
+    ),
+    kind!(
+        "conversation.goal",
+        Asset,
+        Conversation,
+        Expected,
+        UntilDeleted,
+        Complete,
+        "fastctx-node::goals",
+        Assets,
+        Json
+    ),
+    kind!(
+        "conversation.sentinel",
+        Asset,
+        Conversation,
+        Expected,
+        UntilDeleted,
+        Complete,
+        "fastctx-node::sentinels",
+        Assets,
+        Json
+    ),
+    kind!(
+        "conversation.timer",
+        Asset,
+        Conversation,
+        Expected,
+        UntilDeleted,
+        Complete,
+        "fastctx-node::timers",
+        Assets,
+        Json
+    ),
+    kind!(
+        "conversation.artifact",
+        Asset,
+        Conversation,
+        Expected,
+        UntilDeleted,
+        Metadata,
+        "fastctx-node::placement",
+        Assets,
+        ManifestV1
+    ),
+    kind!(
+        "conversation.attachment",
+        Asset,
+        Conversation,
+        Expected,
+        UntilDeleted,
+        Metadata,
+        "fastctx-node::attachments",
+        Assets,
+        ManifestV1
+    ),
+    kind!(
+        "conversation.picture",
+        Asset,
+        Conversation,
+        Expected,
+        UntilDeleted,
+        Metadata,
+        "fastctx-node::attachments",
+        Assets,
+        ManifestV1
+    ),
+    kind!(
+        "job.facts",
+        Asset,
+        Conversation,
+        SingleWriter,
+        UntilDeleted,
+        Recent,
+        "fastctx-node::run_facts",
+        Ingestion,
+        SourceRecords
+    ),
+    kind!(
+        "job.output",
+        Asset,
+        Conversation,
+        SingleWriter,
+        UntilDeleted,
+        Metadata,
+        "fastctx-hands::run",
+        Ingestion,
+        ManifestV1
+    ),
+    kind!("project.ledger", Asset, Project, SingleWriter, UntilDeleted, Metadata, "fastctx-hub::ledger", Assets, Json),
+    kind!("project.history", Asset, Project, TextMerge, UntilDeleted, Metadata, "fastctx-node::history", Assets, Utf8),
+    kind!("project.page", Asset, Project, Expected, UntilDeleted, Metadata, "fastctx-node::pages", Assets, Json),
+    kind!(
+        "account.activity",
+        Asset,
+        Account,
+        SingleWriter,
+        UntilDeleted,
+        Recent,
+        "fastctx-node::activity_book",
+        Ingestion,
+        Json
+    ),
+    kind!("account.usage", Asset, Account, SingleWriter, UntilDeleted, Recent, "fastctx-node::usage", Ingestion, Json),
+    kind!(
+        "account.notice",
+        Asset,
+        Account,
+        SingleWriter,
+        UntilDeleted,
+        Complete,
+        "fastctx-hub::troubles",
+        Assets,
+        Json
+    ),
+    kind!("account.read-position", Asset, Account, Expected, UntilDeleted, Complete, "fastctx-client", Client, Json),
+    kind!("machine.settings", Asset, Machine, Expected, UntilDeleted, Complete, "fastctx-node::logins", Assets, Json),
+    kind!(
+        "machine.audit",
+        Asset,
+        Machine,
+        SingleWriter,
+        UntilDeleted,
+        Recent,
+        "fastctx-hub::machine_log",
+        Assets,
+        Json
+    ),
+    kind!("device.preferences", Asset, Device, SingleWriter, UntilDeleted, Complete, "fastctx-client", Client, Json),
+    kind!("device.pending-edit", Asset, Device, Expected, UntilDeleted, Complete, "fastctx-client", Client, Json),
+    kind!(
+        "runtime.delivery",
+        Runtime,
+        Conversation,
+        LocalOwner,
+        UntilResolved,
+        LocalOnly,
+        "fastctx-node::delivery",
+        Foundation,
+        Bytes
+    ),
+    kind!("runtime.host", Runtime, Machine, LocalOwner, UntilResolved, LocalOnly, "fastctx-hosts", Ingestion, Bytes),
+    kind!("runtime.transport", Runtime, Device, LocalOwner, UntilResolved, LocalOnly, "fastctx-net", Foundation, Bytes),
+    kind!("runtime.identity", Runtime, Local, LocalOwner, UntilResolved, LocalOnly, "fastctx-net", Foundation, Bytes),
+    kind!(
+        "runtime.maintenance",
+        Runtime,
+        Local,
+        LocalOwner,
+        UntilResolved,
+        LocalOnly,
+        "fastctx-install",
+        Maintenance,
+        Bytes
+    ),
+    kind!(
+        "runtime.sentinel",
+        Runtime,
+        Conversation,
+        LocalOwner,
+        UntilResolved,
+        LocalOnly,
+        "fastctx-sentinel",
+        Foundation,
+        Bytes
+    ),
+    kind!(
+        "runtime.migration",
+        Runtime,
+        Local,
+        LocalOwner,
+        UntilResolved,
+        LocalOnly,
+        "fastctx-node::record_migration",
+        Migration,
+        Bytes
+    ),
+    kind!(
+        "runtime.diagnostics",
+        Runtime,
+        Local,
+        LocalOwner,
+        UntilResolved,
+        LocalOnly,
+        "fastctx-platform",
+        Maintenance,
+        Bytes
+    ),
+    kind!(
+        "derived.timeline",
+        Derived,
+        Conversation,
+        Rebuild,
+        Rebuildable,
+        LocalOnly,
+        "fastctx-node::timeline",
+        Projection,
+        Json
+    ),
+    kind!(
+        "derived.thumbnail",
+        Derived,
+        Conversation,
+        Rebuild,
+        Rebuildable,
+        Recent,
+        "fastctx-node::thumbnail",
+        Projection,
+        Json
+    ),
+    kind!("derived.directory", Derived, Device, Rebuild, Rebuildable, LocalOnly, "fastctx-net::link", Projection, Json),
+    kind!(
+        "derived.statistics",
+        Derived,
+        Account,
+        Rebuild,
+        Rebuildable,
+        LocalOnly,
+        "fastctx-node::activity_book",
+        Projection,
+        Json
+    ),
+    kind!("derived.software", Derived, Local, Rebuild, Rebuildable, LocalOnly, "fastctx-update", Maintenance, Json),
+    kind!("scratch.work", Scratch, Local, LocalOwner, Temporary, LocalOnly, "fastctx-node::scratch", Foundation, Bytes),
+    kind!(
+        "scratch.transfer",
+        Scratch,
+        Local,
+        LocalOwner,
+        Temporary,
+        LocalOnly,
+        "fastctx-sync::transfer",
+        Foundation,
+        Bytes
+    ),
+];

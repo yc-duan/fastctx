@@ -1,0 +1,100 @@
+# surface	selector	class	owner	stage	disposition
+Table	hub_rows	ByKind:hub.rows	crates/fastctx-hub/src/store/shelf.rs	Foundation	Preserve until its registered adapter is authoritative; logical families are registered separately
+Table	hub_meta	ByKind:hub.meta	crates/fastctx-hub/src/store/shelf.rs	Foundation	Preserve until its registered adapter is authoritative; logical families are registered separately
+Table	machine_log	Asset	crates/fastctx-hub/src/store/shelf.rs	Foundation	Retain existing owner until typed storage takes over; no age-based asset deletion
+Table	machine_log_readers	Asset	crates/fastctx-hub/src/store/shelf.rs	Foundation	Retain existing owner until typed storage takes over; no age-based asset deletion
+Table	machine_log_notified	Runtime	crates/fastctx-hub/src/store/shelf.rs	Foundation	Retain existing owner until typed storage takes over; no age-based asset deletion
+Table	machine_log_updated	Derived	crates/fastctx-hub/src/store/shelf.rs	Projection	Retain existing owner until typed storage takes over; no age-based asset deletion
+Table	book_deeds	Asset	crates/fastctx-node/src/activity_book/mod.rs	Foundation	Retain existing owner until typed storage takes over; no age-based asset deletion
+Table	book_touches	Asset	crates/fastctx-node/src/activity_book/mod.rs	Foundation	Retain existing owner until typed storage takes over; no age-based asset deletion
+Table	book_hour	ByKind:book.legacy-summary	crates/fastctx-node/src/activity_book/mod.rs	Foundation	Preserve until its registered adapter is authoritative; logical families are registered separately
+Table	book_migration_proofs	Runtime	crates/fastctx-node/src/activity_book/mod.rs	Migration	Retain existing owner until typed storage takes over; no age-based asset deletion
+Table	book_imports	Runtime	crates/fastctx-node/src/activity_book/mod.rs	Migration	Retain existing owner until typed storage takes over; no age-based asset deletion
+Table	book_visits	Asset	crates/fastctx-node/src/activity_book/mod.rs	Foundation	Retain existing owner until typed storage takes over; no age-based asset deletion
+Table	book_cursors	Runtime	crates/fastctx-node/src/activity_book/mod.rs	Foundation	Retain existing owner until typed storage takes over; no age-based asset deletion
+Table	book_steps	Derived	crates/fastctx-node/src/activity_book/mod.rs	Projection	Retain existing owner until typed storage takes over; no age-based asset deletion
+Table	book_writes	Derived	crates/fastctx-node/src/activity_book/mod.rs	Projection	Retain existing owner until typed storage takes over; no age-based asset deletion
+Table	book_complete	Derived	crates/fastctx-node/src/activity_book/mod.rs	Projection	Retain existing owner until typed storage takes over; no age-based asset deletion
+Table	book_retired	Runtime	crates/fastctx-node/src/activity_book/mod.rs	Foundation	Retain existing owner until typed storage takes over; no age-based asset deletion
+Table	book_folding	Runtime	crates/fastctx-node/src/activity_book/mod.rs	Foundation	Retain existing owner until typed storage takes over; no age-based asset deletion
+Table	book_sealed	Asset	crates/fastctx-node/src/activity_book/sealing.rs	Foundation	Retain existing owner until typed storage takes over; no age-based asset deletion
+Table	book_sealed_accounts	Asset	crates/fastctx-node/src/activity_book/sealing.rs	Foundation	Retain existing owner until typed storage takes over; no age-based asset deletion
+Table	composers	Asset	crates/fastctx-node/src/composer/persistence.rs	Foundation	Retain existing owner until typed storage takes over; no age-based asset deletion
+Table	composer_records	Asset	crates/fastctx-node/src/composer/persistence.rs	Foundation	Retain existing owner until typed storage takes over; no age-based asset deletion
+Table	context_archive_withdrawals	Runtime	crates/fastctx-node/src/context/archived.rs	Foundation	Retain existing owner until typed storage takes over; no age-based asset deletion
+Table	transfer_manifest	Runtime	crates/fastctx-node/src/conversation_store/bundle.rs	Migration	Conversation export bundle only; not a node service table
+Table	node_conversation_deletions	ByKind:node.deletion	crates/fastctx-node/src/conversation_store/schema.rs	Foundation	Preserve until its registered adapter is authoritative; logical families are registered separately
+Table	node_conversation_transfers	Runtime	crates/fastctx-node/src/conversation_store/transfer.rs	Migration	Retain existing owner until typed storage takes over; no age-based asset deletion
+Table	node_conversation_transfer_progress	Runtime	crates/fastctx-node/src/conversation_store/transfer.rs	Migration	Retain existing owner until typed storage takes over; no age-based asset deletion
+Table	node_conversation_import_rows	Runtime	crates/fastctx-node/src/conversation_store/transfer.rs	Migration	Retain existing owner until typed storage takes over; no age-based asset deletion
+Table	node_record_state	Runtime	crates/fastctx-node/src/conversation_store/transfer.rs	Foundation	Retain existing owner until typed storage takes over; no age-based asset deletion
+Table	node_conversation_arrivals	Asset	crates/fastctx-node/src/conversation_store/transfer.rs	Foundation	Retain existing owner until typed storage takes over; no age-based asset deletion
+Table	node_conversation_releases	Asset	crates/fastctx-node/src/conversation_store/transfer.rs	Foundation	Retain existing owner until typed storage takes over; no age-based asset deletion
+Table	handover_heads	Runtime	crates/fastctx-node/src/delivery/handovers.rs	Foundation	Retain existing owner until typed storage takes over; no age-based asset deletion
+Table	handover_inputs	Runtime	crates/fastctx-node/src/delivery/handovers.rs	Foundation	Retain existing owner until typed storage takes over; no age-based asset deletion
+Table	terminal_reader_heads	Runtime	crates/fastctx-node/src/delivery/terminals.rs	Foundation	Retain existing owner until typed storage takes over; no age-based asset deletion
+Table	terminal_reader_revisions	Runtime	crates/fastctx-node/src/delivery/terminals.rs	Foundation	Retain existing owner until typed storage takes over; no age-based asset deletion
+Table	terminal_readers	Runtime	crates/fastctx-node/src/delivery/terminals.rs	Foundation	Retain existing owner until typed storage takes over; no age-based asset deletion
+Table	terminal_usage	Runtime	crates/fastctx-node/src/delivery/terminals.rs	Foundation	Retain existing owner until typed storage takes over; no age-based asset deletion
+Table	terminal_work	Runtime	crates/fastctx-node/src/delivery/terminals.rs	Foundation	Retain existing owner until typed storage takes over; no age-based asset deletion
+Table	conversation_record_gathering	Runtime	crates/fastctx-node/src/gather/records.rs	Migration	Retain existing owner until typed storage takes over; no age-based asset deletion
+Table	goal_projection_dirty	Derived	crates/fastctx-node/src/goals/local.rs	Projection	Retain existing owner until typed storage takes over; no age-based asset deletion
+Table	input_membership_heads	Runtime	crates/fastctx-node/src/inbox/presence.rs	Foundation	Retain existing owner until typed storage takes over; no age-based asset deletion
+Table	input_memberships	Runtime	crates/fastctx-node/src/inbox/presence.rs	Foundation	Retain existing owner until typed storage takes over; no age-based asset deletion
+Table	input_freezes	Runtime	crates/fastctx-node/src/inbox/presence.rs	Foundation	Retain existing owner until typed storage takes over; no age-based asset deletion
+Migration	temp.legacy_position_scopes	Runtime	crates/fastctx-node/src/record_database/upgrade/positions.rs	Migration	Connection-local migration staging; not a persistent asset
+Table	book_deeds_began	Runtime	crates/fastctx-node/src/record_database.rs	Foundation	Node downgrade fence table; the same name in book.sqlite3 is an index
+Table	migration_content_keys	Runtime	crates/fastctx-node/src/record_migration/mod.rs	Migration	Retain existing owner until typed storage takes over; no age-based asset deletion
+Table	migration_files	Runtime	crates/fastctx-node/src/record_migration/mod.rs	Migration	Retain existing owner until typed storage takes over; no age-based asset deletion
+Table	migration_born	Runtime	crates/fastctx-node/src/record_migration/mod.rs	Migration	Retain existing owner until typed storage takes over; no age-based asset deletion
+Table	record_payload_chunks	ByKind:node.payload-roots	crates/fastctx-node/src/record_payloads.rs	Foundation	Preserve until its registered adapter is authoritative; logical families are registered separately
+Table	record_payload_manifests	ByKind:node.payload-roots	crates/fastctx-node/src/record_payloads.rs	Foundation	Preserve until its registered adapter is authoritative; logical families are registered separately
+Table	record_payload_roots	ByKind:node.payload-roots	crates/fastctx-node/src/record_payloads.rs	Foundation	Preserve until its registered adapter is authoritative; logical families are registered separately
+Table	record_payload_leases	Runtime	crates/fastctx-node/src/record_payloads.rs	Foundation	Retain existing owner until typed storage takes over; no age-based asset deletion
+Table	record_payload_versions	Derived	crates/fastctx-node/src/record_payloads.rs	Projection	Retain existing owner until typed storage takes over; no age-based asset deletion
+Table	record_payload_members	ByKind:node.payload-roots	crates/fastctx-node/src/record_payloads.rs	Foundation	Preserve until its registered adapter is authoritative; logical families are registered separately
+Table	record_map_heads	ByKind:node.record-maps	crates/fastctx-node/src/records/maps.rs	Foundation	Preserve until its registered adapter is authoritative; logical families are registered separately
+Table	record_map_revisions	ByKind:node.record-maps	crates/fastctx-node/src/records/maps.rs	Foundation	Preserve until its registered adapter is authoritative; logical families are registered separately
+Table	record_map_keys	ByKind:node.record-maps	crates/fastctx-node/src/records/maps.rs	Foundation	Preserve until its registered adapter is authoritative; logical families are registered separately
+Table	record_map_entries	ByKind:node.record-maps	crates/fastctx-node/src/records/maps.rs	Foundation	Preserve until its registered adapter is authoritative; logical families are registered separately
+Table	record_map_roots	ByKind:node.record-maps	crates/fastctx-node/src/records/maps.rs	Foundation	Preserve until its registered adapter is authoritative; logical families are registered separately
+Table	record_map_pins	ByKind:node.record-maps	crates/fastctx-node/src/records/maps.rs	Foundation	Preserve until its registered adapter is authoritative; logical families are registered separately
+Table	migration_row_proofs	Runtime	crates/fastctx-node/src/records/migration/proofs.rs	Migration	Retain existing owner until typed storage takes over; no age-based asset deletion
+Table	context_projection_dirty	Derived	crates/fastctx-node/src/records/mod.rs	Projection	Retain existing owner until typed storage takes over; no age-based asset deletion
+Table	conversation_records	ByKind:node.records	crates/fastctx-node/src/records/mod.rs	Foundation	Preserve until its registered adapter is authoritative; logical families are registered separately
+Table	conversation_record_positions	ByKind:node.records	crates/fastctx-node/src/records/mod.rs	Foundation	Preserve until its registered adapter is authoritative; logical families are registered separately
+Table	conversation_record_links	Derived	crates/fastctx-node/src/records/mod.rs	Projection	Retain existing owner until typed storage takes over; no age-based asset deletion
+Table	conversation_record_versions	ByKind:node.records	crates/fastctx-node/src/records/mod.rs	Foundation	Preserve until its registered adapter is authoritative; logical families are registered separately
+Table	conversation_record_imports	Runtime	crates/fastctx-node/src/records/mod.rs	Migration	Retain existing owner until typed storage takes over; no age-based asset deletion
+Table	run_calls	Asset	crates/fastctx-node/src/run_facts/sql.rs	Foundation	Retain existing owner until typed storage takes over; no age-based asset deletion
+Table	run_scripts	Asset	crates/fastctx-node/src/run_facts/sql.rs	Foundation	Retain existing owner until typed storage takes over; no age-based asset deletion
+Table	run_job_sources	Asset	crates/fastctx-node/src/run_facts/sql.rs	Foundation	Retain existing owner until typed storage takes over; no age-based asset deletion
+Table	run_versions	Derived	crates/fastctx-node/src/run_facts/sql.rs	Projection	Retain existing owner until typed storage takes over; no age-based asset deletion
+Table	run_inline_budget	Derived	crates/fastctx-node/src/run_facts/sql.rs	Projection	Retain existing owner until typed storage takes over; no age-based asset deletion
+Table	run_inline_hashes	Derived	crates/fastctx-node/src/run_facts/sql.rs	Projection	Retain existing owner until typed storage takes over; no age-based asset deletion
+Table	run_writes	Asset	crates/fastctx-node/src/run_facts/sql.rs	Foundation	Retain existing owner until typed storage takes over; no age-based asset deletion
+Table	run_visits	Asset	crates/fastctx-node/src/run_facts/sql.rs	Foundation	Retain existing owner until typed storage takes over; no age-based asset deletion
+Table	run_steps	Asset	crates/fastctx-node/src/run_facts/sql.rs	Foundation	Retain existing owner until typed storage takes over; no age-based asset deletion
+Table	run_folded	ByKind:run.legacy-summary	crates/fastctx-node/src/run_facts/sql.rs	Foundation	Preserve until its registered adapter is authoritative; logical families are registered separately
+Table	run_jobs	Asset	crates/fastctx-node/src/run_facts/sql.rs	Foundation	Retain existing owner until typed storage takes over; no age-based asset deletion
+Table	run_imported	Runtime	crates/fastctx-node/src/run_facts/sql.rs	Migration	Retain existing owner until typed storage takes over; no age-based asset deletion
+Table	session_sources	Runtime	crates/fastctx-node/src/session_record/legacy.rs	Foundation	Retain existing owner until typed storage takes over; no age-based asset deletion
+Table	session_migration_state	Runtime	crates/fastctx-node/src/session_record/legacy.rs	Migration	Retain existing owner until typed storage takes over; no age-based asset deletion
+Table	session_search_heads	Derived	crates/fastctx-node/src/session_record/sql.rs	Projection	Retain existing owner until typed storage takes over; no age-based asset deletion
+Table	session_event_tags	Derived	crates/fastctx-node/src/session_record/sql.rs	Projection	Retain existing owner until typed storage takes over; no age-based asset deletion
+Table	session_heads	Asset	crates/fastctx-node/src/session_record/sql.rs	Foundation	Retain existing owner until typed storage takes over; no age-based asset deletion
+Table	session_events	Asset	crates/fastctx-node/src/session_record/sql.rs	Foundation	Retain existing owner until typed storage takes over; no age-based asset deletion
+Table	documents	ByKind:storage.documents	crates/fastctx-storage/src/documents.rs	Foundation	Preserve until its registered adapter is authoritative; logical families are registered separately
+Table	document_updates	ByKind:storage.documents	crates/fastctx-storage/src/documents.rs	Foundation	Preserve until its registered adapter is authoritative; logical families are registered separately
+Table	receipts	Runtime	crates/fastctx-storage/src/receipts.rs	Foundation	Retain existing owner until typed storage takes over; no age-based asset deletion
+Table	receipt_references	Runtime	crates/fastctx-storage/src/receipts.rs	Foundation	Retain existing owner until typed storage takes over; no age-based asset deletion
+Table	receipt_watermarks	Runtime	crates/fastctx-storage/src/receipts.rs	Foundation	Retain existing owner until typed storage takes over; no age-based asset deletion
+Table	storage_salvaged	Runtime	crates/fastctx-storage/src/recovery.rs	Foundation	Retain existing owner until typed storage takes over; no age-based asset deletion
+Table	storage_versions	Runtime	crates/fastctx-storage/src/versions.rs	Foundation	Retain existing owner until typed storage takes over; no age-based asset deletion
+Migration	session_legacy	Runtime	crates/fastctx-node/src/record_database/upgrade	Migration	Legacy or transaction-local replacement table; verify before retirement
+Migration	conversation_records_conversation_key	Runtime	crates/fastctx-node/src/record_database/upgrade	Migration	Legacy or transaction-local replacement table; verify before retirement
+Migration	run_writes_conversation_key	Runtime	crates/fastctx-node/src/record_database/upgrade	Migration	Legacy or transaction-local replacement table; verify before retirement
+Migration	run_visits_conversation_key	Runtime	crates/fastctx-node/src/record_database/upgrade	Migration	Legacy or transaction-local replacement table; verify before retirement
+Migration	run_steps_conversation_key	Runtime	crates/fastctx-node/src/record_database/upgrade	Migration	Legacy or transaction-local replacement table; verify before retirement
+Migration	sqlite_sequence	Runtime	crates/fastctx-node/src/record_database/upgrade	Migration	Legacy or transaction-local replacement table; verify before retirement
+# LOGICAL_ENTRIES
