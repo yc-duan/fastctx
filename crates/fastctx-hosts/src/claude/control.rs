@@ -149,6 +149,18 @@ pub fn write_message(path: &Path, value: &impl Serialize) -> io::Result<()> {
     write(path, &serde_json::json!({"parts":count}))
 }
 
+/// Reads an optional control message, including its numbered parts.
+/// Only a missing header returns `None`; missing parts and malformed data are errors.
+pub fn read_message_if_present(path: &Path) -> io::Result<Option<Value>> {
+    let Some(value) = read::<Value>(path)? else { return Ok(None) };
+    let Some(count) = value.get("parts").and_then(Value::as_u64) else { return Ok(Some(value)) };
+    let mut body = Vec::new();
+    for index in 0..count {
+        body.extend(fastctx_platform::disk::read(path.with_extension("parts").join(index.to_string()))?);
+    }
+    serde_json::from_slice(&body).map(Some).map_err(io::Error::other)
+}
+
 pub fn read_message(path: &Path) -> io::Result<Value> {
     let value = read::<Value>(path)?.ok_or_else(|| io::Error::other("Claude marked a missing reply complete"))?;
     let Some(count) = value.get("parts").and_then(Value::as_u64) else { return Ok(value) };

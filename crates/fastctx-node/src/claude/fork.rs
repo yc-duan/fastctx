@@ -50,11 +50,7 @@ pub async fn fork(
         Some(super::control::invoke(node, resident, json!({"do":"checkpoint_export"})).await?)
     } else {
         let path = fastctx_hosts::claude::control::directory(node.world.path(), &session).join("checkpoints.json");
-        match fastctx_hosts::claude::control::read_message(&path) {
-            Ok(value) => Some(value),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-            Err(error) => return Err(failure(error)),
-        }
+        fastctx_hosts::claude::control::read_message_if_present(&path).map_err(failure)?
     }
     .filter(|value| value["full"] == true);
     let checkpoint = match &through {
