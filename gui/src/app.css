@@ -390,8 +390,14 @@
    input's first line, its words typed after it (the line is indented by
    its width): a pill in the accent's wash, the skill's book or the
    command's mark, its name, and a cross that takes it away. */
+.composer-field {
+  position: relative;
+}
+
 .composer-picked {
   position: absolute;
+  top: 0;
+  left: 0;
   z-index: 1;
   display: inline-flex;
   align-items: center;

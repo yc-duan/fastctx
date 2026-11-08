@@ -285,6 +285,10 @@ export class ConversationPage {
    *  words. */
   private picked: MenuCommand | null = null;
   private readonly pickedChip: HTMLElement;
+  /** The shared draft the chip stands with, by the epoch its words go under
+   *  once those sent from here before it are taken: the draft moved past
+   *  it, sent from any device, took the chip along. */
+  private pickedEpoch: number | null = null;
   /** The note says what a command typed wants: typing again takes it away. */
   private hinting = false;
   private modelPanel: ModelPanel | null = null;
@@ -336,8 +340,7 @@ export class ConversationPage {
           <div class="composer-menus"><div class="composer-menu usage-pop" hidden></div><div class="composer-menu said-pop" role="dialog" hidden></div><div class="jobs-pop" role="dialog" hidden></div></div>
           <div class="composer-confirm" hidden></div>
           <div class="composer-tray"></div>
-          <span class="composer-picked" hidden></span>
-          <textarea rows="1" enterkeyhint="send" placeholder="${escape(words.sendPlaceholder(someone.agent))}" aria-label="${escape(words.sendPlaceholder(someone.agent))}"></textarea>
+          <div class="composer-field"><span class="composer-picked" hidden></span><textarea rows="1" enterkeyhint="send" placeholder="${escape(words.sendPlaceholder(someone.agent))}" aria-label="${escape(words.sendPlaceholder(someone.agent))}"></textarea></div>
           <div class="composer-row">
             <div class="composer-tools"><button class="icon-button composer-attach" type="button" hidden></button><input class="composer-pick" type="file" multiple hidden><input class="composer-shot" type="file" accept="image/*" capture="environment" hidden><button class="composer-chip" type="button" hidden></button><button class="composer-jobs" type="button" hidden></button></div>
             <span class="composer-note" aria-live="polite"></span>
@@ -451,7 +454,8 @@ export class ConversationPage {
     this.chip = this.element.querySelector<HTMLButtonElement>(".composer-chip")!;
     this.input.value = this.draft() ?? "";
     if (options.controls) this.menus();
-    this.pick(this.keptPick());
+    const kept = this.keptPick();
+    this.pick(kept?.command ?? null, kept?.epoch ?? null);
     if (options.files) this.fileMenuOf();
     this.context.addEventListener("click", () => this.toggleUsage());
     this.element.addEventListener("keydown", (event) => {
@@ -631,7 +635,7 @@ export class ConversationPage {
         }
       }
       // Backspace at the head of the words takes the chip before them away.
-      if (event.key === "Backspace" && this.picked && this.input.selectionStart === 0 && this.input.selectionEnd === 0) {
+      if (event.key === "Backspace" && this.picked && !composing(event) && this.input.selectionStart === 0 && this.input.selectionEnd === 0) {
         event.preventDefault();
         this.pick(null);
         return;
@@ -1068,6 +1072,15 @@ export class ConversationPage {
     }
     this.unbindShared = bindComposer(this.input, session.draft);
     if (typed.trim() && !this.input.value.trim()) this.setWords(typed, caret);
+    // A chip kept here went with its draft if that was sent meanwhile.
+    if (this.picked) {
+      const now = this.draftEpoch()!;
+      if (this.pickedEpoch !== null && now > this.pickedEpoch) this.pick(null);
+      else {
+        this.pickedEpoch = now;
+        this.keepPick();
+      }
+    }
     // What could not be done to waiting words is said in the interface's
     // words, the node's own on the pointer's rest.
     const say = (why: string, said?: string) => this.say(said ?? this.options.words.notDone(why), why, true);
@@ -1099,6 +1112,7 @@ export class ConversationPage {
     }
     session.subscribe((state) => {
       this.sharedState = state;
+      if (this.picked && this.pickedEpoch !== null && session.draft.view.state.epoch > this.pickedEpoch) this.pick(null);
       this.showOnTheirWay(state.composer);
       this.nodeQueue?.draw(state);
       this.nodeTray?.draw(state);
@@ -1327,7 +1341,10 @@ export class ConversationPage {
     this.placeSent();
     if (picked) this.pick(null);
     if (session) {
+      // The shared draft is what is sent: the skill's name goes into it.
+      if (picked?.account) this.setWords(text);
       this.commandMenu?.hide();
+      this.fileMenu?.hide();
       this.nodeTray?.settle();
       this.sendShared(session, text);
       return;
@@ -1978,6 +1995,8 @@ export class ConversationPage {
               return;
             }
             if (words !== null && !this.input.value.trim()) {
+              // They come back as they were sent, with no chip before them.
+              this.pick(null);
               if (this.session) this.setWords(words);
               else this.input.value = words;
               // What came with the words comes back with them.
@@ -2011,7 +2030,8 @@ export class ConversationPage {
   private slash(): void {
     const menu = this.commandMenu;
     if (!menu || !this.options.controls) return;
-    const typed = /^\/(\S*)$/.exec(this.input.value);
+    // With a chip picked the words are its own, a leading `/` among them.
+    const typed = this.picked ? null : /^\/(\S*)$/.exec(this.input.value);
     if (!typed) return menu.hide();
     const prefix = typed[1]!.toLowerCase();
     const found = commandsOf(this.offered, this.options.controls.words.commands, this.options.conversation.moving(), this.side?.goals ?? false).filter((command) =>
@@ -2325,12 +2345,14 @@ export class ConversationPage {
 
   /** Puts `command` at the head of the input as a chip, or takes the chip
    *  away; the input's hint says what its words are for meanwhile. */
-  private pick(command: MenuCommand | null): void {
+  private pick(command: MenuCommand | null, epoch = this.draftEpoch()): void {
     this.picked = command;
+    this.pickedEpoch = command ? epoch : null;
     const chip = this.pickedChip;
     const words = this.options.controls?.words.commands;
     if (!command || !words) {
       this.picked = null;
+      this.pickedEpoch = null;
       chip.hidden = true;
       chip.replaceChildren();
       this.input.placeholder = this.options.words.sendPlaceholder(this.options.someone.agent);
@@ -2346,17 +2368,21 @@ export class ConversationPage {
     this.drawAction();
   }
 
-  /** Lays the chip over the head of the input's first line, and indents
-   *  that line by its width. */
+  /** Indents the input's first line by the width of the chip over its head,
+   *  and fits the input to its words so indented. */
   private indent(): void {
     const chip = this.pickedChip;
-    if (chip.hidden) {
-      this.input.style.textIndent = "";
-      return;
-    }
-    chip.style.top = `${this.input.offsetTop}px`;
-    chip.style.left = `${this.input.offsetLeft}px`;
-    this.input.style.textIndent = `${chip.offsetWidth + 6}px`;
+    const indent = chip.hidden ? "" : `${chip.offsetWidth + 6}px`;
+    if (this.input.style.textIndent === indent) return;
+    this.input.style.textIndent = indent;
+    this.fit();
+  }
+
+  /** The epoch of the shared draft that words typed now are sent under:
+   *  past those sent from here that the node has not taken yet. */
+  private draftEpoch(): number | null {
+    const draft = this.session?.draft;
+    return draft ? draft.view.state.epoch + draft.onTheirWay : null;
   }
 
   /** Says what a command typed wants, until the words change. */
@@ -2369,19 +2395,19 @@ export class ConversationPage {
     if (!this.options.draftKey) return;
     try {
       const key = `${this.options.draftKey}:picked`;
-      if (this.picked) localStorage.setItem(key, JSON.stringify(this.picked));
+      if (this.picked) localStorage.setItem(key, JSON.stringify({ command: this.picked, epoch: this.pickedEpoch }));
       else localStorage.removeItem(key);
     } catch {
       // Not kept: the chip is gone if the page is left.
     }
   }
 
-  private keptPick(): MenuCommand | null {
+  private keptPick(): { command: MenuCommand; epoch: number | null } | null {
     if (!this.options.draftKey || !this.options.controls) return null;
     try {
       const kept = localStorage.getItem(`${this.options.draftKey}:picked`);
-      const command = kept ? (JSON.parse(kept) as MenuCommand) : null;
-      return command && typeof command.name === "string" ? command : null;
+      const { command, epoch } = kept ? (JSON.parse(kept) as { command?: MenuCommand; epoch?: number | null }) : {};
+      return command && typeof command.name === "string" ? { command, epoch: typeof epoch === "number" ? epoch : null } : null;
     } catch {
       return null;
     }
