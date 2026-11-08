@@ -2,6 +2,7 @@
 
 pub mod access;
 pub mod audit;
+pub mod authorize;
 pub mod boundary;
 pub mod ingest;
 pub mod mutation;

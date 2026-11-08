@@ -10,6 +10,9 @@ spec = importlib.util.spec_from_file_location("sync_wire", ROOT / "scripts/check
 wire = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(wire)
 CALLERS = {
+    "from_authenticated": {
+        "crates/fastctx-net/src/sync_access/mod.rs",
+    },
     "enter_typed_write": {
         "crates/fastctx-sync/src/store/boundary.rs",
         "crates/fastctx-sync/src/scheduler/sqlite.rs",
