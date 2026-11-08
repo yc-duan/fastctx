@@ -102,6 +102,10 @@ pub struct Registration {
     pub export: ExportPolicy,
     pub delete: DeletePolicy,
     pub assisted_host: bool,
+    /// Only facts and output produced by this job's verified executor.
+    pub job_source: bool,
+    /// Only artifacts ingested from this machine's registered workspace.
+    pub workspace_source: bool,
     pub decision: DecisionState,
     pub stage: Stage,
 }
@@ -183,6 +187,14 @@ impl Registry {
             }
             if entry.class == DataClass::Asset && entry.retention != Retention::UntilDeleted {
                 return Err(format!("asset {} has an automatic eviction policy", entry.id));
+            }
+            if (entry.job_source || entry.workspace_source)
+                && (entry.class != DataClass::Asset
+                    || entry.scope != ScopePolicy::Conversation
+                    || entry.authority != AuthorityRule::SourceDevice
+                    || entry.conflict != ConflictRule::SingleWriter)
+            {
+                return Err(format!("source custody for {} lacks a conversation source authority", entry.id));
             }
         }
         Ok(())

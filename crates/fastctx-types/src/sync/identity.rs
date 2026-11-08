@@ -59,6 +59,7 @@ identifier!(ProducerEpoch, "p-", "A durable producer incarnation, changed on tra
 identifier!(FeedEpoch, "f-", "A hub catalog incarnation, changed when its sequence space changes.");
 identifier!(OperationId, "m-", "An idempotency key reused for every retry of one operation.");
 identifier!(SourceId, "i-", "A registered ingestion source, unrelated to its current filesystem path.");
+identifier!(WorkspaceEpoch, "x-", "A workspace incarnation bound by authenticated dispatch, not by its path.");
 identifier!(Digest, "", "A lowercase SHA-256 digest.");
 identifier!(
     AuthorityEpoch,

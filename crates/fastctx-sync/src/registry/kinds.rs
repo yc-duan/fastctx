@@ -6,7 +6,7 @@ use super::{
 };
 
 macro_rules! kind {
-    ($id:literal, $class:ident, $scope:ident, $authority:ident, $conflict:ident, $retention:ident, $mobile:ident, $owner:literal, $stage:ident, $codec:ident, $assisted:expr, $decision:ident, $delete:ident) => {
+    ($id:literal, $class:ident, $scope:ident, $authority:ident, $conflict:ident, $retention:ident, $mobile:ident, $owner:literal, $stage:ident, $codec:ident, $assisted:expr, $job:expr, $workspace:expr, $decision:ident, $delete:ident) => {
         Registration {
             id: $id,
             schema: 1,
@@ -24,6 +24,8 @@ macro_rules! kind {
             export: ExportPolicy::GenericRootClosure,
             delete: DeletePolicy::$delete,
             assisted_host: $assisted,
+            job_source: $job,
+            workspace_source: $workspace,
             decision: DecisionState::$decision,
             stage: Stage::$stage,
         }
@@ -43,6 +45,8 @@ pub(super) const KINDS: &[Registration] = &[
         Migration,
         Bytes,
         false,
+        false,
+        false,
         Confirmed,
         HandlerWithTombstone
     ),
@@ -57,6 +61,8 @@ pub(super) const KINDS: &[Registration] = &[
         "fastctx-hub::store",
         Assets,
         Json,
+        false,
+        false,
         false,
         Confirmed,
         GenericTombstone
@@ -73,6 +79,8 @@ pub(super) const KINDS: &[Registration] = &[
         Assets,
         Json,
         false,
+        false,
+        false,
         Confirmed,
         GenericTombstone
     ),
@@ -87,6 +95,8 @@ pub(super) const KINDS: &[Registration] = &[
         "fastctx-hub::manage",
         Assets,
         Json,
+        false,
+        false,
         false,
         Confirmed,
         GenericTombstone
@@ -103,6 +113,8 @@ pub(super) const KINDS: &[Registration] = &[
         Assets,
         Json,
         false,
+        false,
+        false,
         Confirmed,
         GenericTombstone
     ),
@@ -117,6 +129,8 @@ pub(super) const KINDS: &[Registration] = &[
         "fastctx-hub::skill_files",
         Assets,
         ManifestV1,
+        false,
+        false,
         false,
         Confirmed,
         GenericTombstone
@@ -133,6 +147,8 @@ pub(super) const KINDS: &[Registration] = &[
         Assets,
         Json,
         true,
+        false,
+        false,
         Confirmed,
         HandlerWithTombstone
     ),
@@ -148,6 +164,8 @@ pub(super) const KINDS: &[Registration] = &[
         Ingestion,
         SourceRecords,
         true,
+        false,
+        false,
         Confirmed,
         GenericTombstone
     ),
@@ -163,6 +181,8 @@ pub(super) const KINDS: &[Registration] = &[
         Ingestion,
         Json,
         true,
+        false,
+        false,
         Confirmed,
         GenericTombstone
     ),
@@ -177,6 +197,8 @@ pub(super) const KINDS: &[Registration] = &[
         "fastctx-node::composer",
         Assets,
         YrsV1,
+        false,
+        false,
         false,
         Confirmed,
         GenericTombstone
@@ -193,6 +215,8 @@ pub(super) const KINDS: &[Registration] = &[
         Assets,
         Utf8,
         false,
+        false,
+        false,
         Confirmed,
         GenericTombstone
     ),
@@ -207,6 +231,8 @@ pub(super) const KINDS: &[Registration] = &[
         "fastctx-node::history",
         Assets,
         Utf8,
+        false,
+        false,
         false,
         Confirmed,
         GenericTombstone
@@ -223,6 +249,8 @@ pub(super) const KINDS: &[Registration] = &[
         Assets,
         Json,
         false,
+        false,
+        false,
         Confirmed,
         GenericTombstone
     ),
@@ -237,6 +265,8 @@ pub(super) const KINDS: &[Registration] = &[
         "fastctx-node::sentinels",
         Assets,
         Json,
+        false,
+        false,
         false,
         Confirmed,
         HandlerWithTombstone
@@ -253,6 +283,8 @@ pub(super) const KINDS: &[Registration] = &[
         Assets,
         Json,
         false,
+        false,
+        false,
         Confirmed,
         GenericTombstone
     ),
@@ -268,6 +300,8 @@ pub(super) const KINDS: &[Registration] = &[
         Assets,
         ManifestV1,
         false,
+        false,
+        true,
         Confirmed,
         GenericTombstone
     ),
@@ -282,6 +316,8 @@ pub(super) const KINDS: &[Registration] = &[
         "fastctx-node::attachments",
         Assets,
         ManifestV1,
+        false,
+        false,
         false,
         Confirmed,
         GenericTombstone
@@ -298,6 +334,8 @@ pub(super) const KINDS: &[Registration] = &[
         Assets,
         ManifestV1,
         true,
+        false,
+        false,
         Confirmed,
         GenericTombstone
     ),
@@ -312,7 +350,9 @@ pub(super) const KINDS: &[Registration] = &[
         "fastctx-node::run_facts",
         Ingestion,
         SourceRecords,
+        false,
         true,
+        false,
         Confirmed,
         GenericTombstone
     ),
@@ -327,6 +367,8 @@ pub(super) const KINDS: &[Registration] = &[
         "fastctx-hands::run",
         Ingestion,
         ManifestV1,
+        false,
+        true,
         false,
         Confirmed,
         GenericTombstone
@@ -343,6 +385,8 @@ pub(super) const KINDS: &[Registration] = &[
         Assets,
         Json,
         false,
+        false,
+        false,
         Confirmed,
         HandlerWithTombstone
     ),
@@ -357,6 +401,8 @@ pub(super) const KINDS: &[Registration] = &[
         "fastctx-node::history",
         Assets,
         Utf8,
+        false,
+        false,
         false,
         Confirmed,
         GenericTombstone
@@ -373,6 +419,8 @@ pub(super) const KINDS: &[Registration] = &[
         Assets,
         Json,
         false,
+        false,
+        false,
         Confirmed,
         GenericTombstone
     ),
@@ -387,6 +435,8 @@ pub(super) const KINDS: &[Registration] = &[
         "fastctx-node::activity_book",
         Ingestion,
         Json,
+        false,
+        false,
         false,
         Confirmed,
         GenericTombstone
@@ -403,6 +453,8 @@ pub(super) const KINDS: &[Registration] = &[
         Ingestion,
         Json,
         false,
+        false,
+        false,
         Confirmed,
         GenericTombstone
     ),
@@ -417,6 +469,8 @@ pub(super) const KINDS: &[Registration] = &[
         "fastctx-hub::troubles",
         Assets,
         Json,
+        false,
+        false,
         false,
         PendingUser,
         GenericTombstone
@@ -433,6 +487,8 @@ pub(super) const KINDS: &[Registration] = &[
         Client,
         Json,
         false,
+        false,
+        false,
         Confirmed,
         GenericTombstone
     ),
@@ -447,6 +503,8 @@ pub(super) const KINDS: &[Registration] = &[
         "fastctx-node::logins",
         Assets,
         Json,
+        false,
+        false,
         false,
         Confirmed,
         GenericTombstone
@@ -463,6 +521,8 @@ pub(super) const KINDS: &[Registration] = &[
         Assets,
         Json,
         false,
+        false,
+        false,
         Confirmed,
         GenericTombstone
     ),
@@ -477,6 +537,8 @@ pub(super) const KINDS: &[Registration] = &[
         "fastctx-client",
         Client,
         Json,
+        false,
+        false,
         false,
         Confirmed,
         GenericTombstone
@@ -493,6 +555,8 @@ pub(super) const KINDS: &[Registration] = &[
         Client,
         Json,
         false,
+        false,
+        false,
         Confirmed,
         GenericTombstone
     ),
@@ -508,6 +572,8 @@ pub(super) const KINDS: &[Registration] = &[
         Foundation,
         Bytes,
         true,
+        false,
+        false,
         Confirmed,
         GenericTombstone
     ),
@@ -523,6 +589,8 @@ pub(super) const KINDS: &[Registration] = &[
         Ingestion,
         Bytes,
         true,
+        false,
+        false,
         Confirmed,
         GenericTombstone
     ),
@@ -537,6 +605,8 @@ pub(super) const KINDS: &[Registration] = &[
         "fastctx-net",
         Foundation,
         Bytes,
+        false,
+        false,
         false,
         Confirmed,
         GenericTombstone
@@ -553,6 +623,8 @@ pub(super) const KINDS: &[Registration] = &[
         Foundation,
         Bytes,
         false,
+        false,
+        false,
         Confirmed,
         GenericTombstone
     ),
@@ -567,6 +639,8 @@ pub(super) const KINDS: &[Registration] = &[
         "fastctx-install",
         Maintenance,
         Bytes,
+        false,
+        false,
         false,
         Confirmed,
         GenericTombstone
@@ -583,6 +657,8 @@ pub(super) const KINDS: &[Registration] = &[
         Foundation,
         Bytes,
         true,
+        false,
+        false,
         Confirmed,
         GenericTombstone
     ),
@@ -597,6 +673,8 @@ pub(super) const KINDS: &[Registration] = &[
         "fastctx-node::record_migration",
         Migration,
         Bytes,
+        false,
+        false,
         false,
         Confirmed,
         GenericTombstone
@@ -613,6 +691,8 @@ pub(super) const KINDS: &[Registration] = &[
         Maintenance,
         Bytes,
         false,
+        false,
+        false,
         PendingUser,
         GenericTombstone
     ),
@@ -628,6 +708,8 @@ pub(super) const KINDS: &[Registration] = &[
         Projection,
         Json,
         true,
+        false,
+        false,
         Confirmed,
         GenericTombstone
     ),
@@ -643,6 +725,8 @@ pub(super) const KINDS: &[Registration] = &[
         Projection,
         Json,
         true,
+        false,
+        false,
         Confirmed,
         GenericTombstone
     ),
@@ -657,6 +741,8 @@ pub(super) const KINDS: &[Registration] = &[
         "fastctx-net::link",
         Projection,
         Json,
+        false,
+        false,
         false,
         Confirmed,
         GenericTombstone
@@ -673,6 +759,8 @@ pub(super) const KINDS: &[Registration] = &[
         Projection,
         Json,
         false,
+        false,
+        false,
         Confirmed,
         GenericTombstone
     ),
@@ -687,6 +775,8 @@ pub(super) const KINDS: &[Registration] = &[
         "fastctx-update",
         Maintenance,
         Json,
+        false,
+        false,
         false,
         Confirmed,
         GenericTombstone
@@ -703,6 +793,8 @@ pub(super) const KINDS: &[Registration] = &[
         Foundation,
         Bytes,
         false,
+        false,
+        false,
         Confirmed,
         GenericTombstone
     ),
@@ -717,6 +809,8 @@ pub(super) const KINDS: &[Registration] = &[
         "fastctx-sync::transfer",
         Foundation,
         Bytes,
+        false,
+        false,
         false,
         Confirmed,
         GenericTombstone
