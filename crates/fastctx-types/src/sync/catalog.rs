@@ -2,7 +2,7 @@
 
 use super::{
     cursor::{Completeness, Revision, ScopeCursor, Sequence, SnapshotFence, VersionRef},
-    identity::{DeviceId, ObjectId, ObjectKey, OperationId, ProducerEpoch, ScopeKey, StreamId},
+    identity::{DeviceId, ObjectId, ObjectKey, OperationId, Producer, ProducerEpoch, ScopeKey, StreamId},
     manifest::{ContentBlock, ContentRef, ManifestRoot},
 };
 use serde::{Deserialize, Serialize};
@@ -112,7 +112,7 @@ pub struct SourceBatch {
     pub format: u16,
     pub scope: ScopeKey,
     pub stream: StreamId,
-    pub producer: DeviceId,
+    pub producer: Producer,
     pub epoch: ProducerEpoch,
     /// A stream is bound to one registered kind/schema for its whole epoch.
     pub kind: String,

@@ -27,6 +27,13 @@ pub enum ScopePolicy {
     Local,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AuthorityRule {
+    Hub,
+    SourceDevice,
+    LoginDevice,
+    Local,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ConflictRule {
     SingleWriter,
     Expected,
@@ -83,6 +90,7 @@ pub struct Registration {
     pub schema: u16,
     pub class: DataClass,
     pub scope: ScopePolicy,
+    pub authority: AuthorityRule,
     pub conflict: ConflictRule,
     pub retention: Retention,
     pub mobile: Lightweight,

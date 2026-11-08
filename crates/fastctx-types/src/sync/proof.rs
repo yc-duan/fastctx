@@ -6,7 +6,7 @@ pub use super::acceptance::{
 };
 use super::{
     cursor::{Revision, Sequence, StreamCursor},
-    identity::{DeviceId, HubId, OperationId, ProducerEpoch, ScopeKey, StreamId},
+    identity::{DeviceId, HubId, OperationId, Producer, ProducerEpoch, ScopeKey, StreamId},
 };
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -58,6 +58,7 @@ fixed_bytes!(Signature, 64);
 #[serde(rename_all = "snake_case")]
 pub enum ProofPurpose {
     SourceBatchV1,
+    HubSourceBatchV1,
     AcceptedOperationV1,
     ProducerReleaseV1,
     EpochHandoverV1,
@@ -71,6 +72,7 @@ impl ProofPurpose {
         match self {
             Self::AcceptedOperationV1 => "fastctx-sync/accepted-operation/v1",
             Self::SourceBatchV1 => "fastctx-sync/source-batch/v1",
+            Self::HubSourceBatchV1 => "fastctx-sync/hub-source-batch/v1",
             Self::ProducerReleaseV1 => "fastctx-sync/producer-release/v1",
             Self::EpochHandoverV1 => "fastctx-sync/epoch-handover/v1",
             Self::ExposureReceiptV1 => "fastctx-sync/exposure-receipt/v1",
@@ -98,7 +100,7 @@ pub struct SignedStatement {
 }
 
 /// `data` encodes SourceBatch. Forwarders preserve all four proof fields, not a
-/// decoded and reserialized batch. Its purpose must be SourceBatchV1.
+/// decoded and reserialized batch. Device and hub batches have distinct domains.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SignedSourceBatch {
     pub proof: SignedStatement,
@@ -121,7 +123,7 @@ pub struct EpochDescriptor {
     pub kind: String,
     pub schema: u16,
     pub epoch: ProducerEpoch,
-    pub producer: DeviceId,
+    pub producer: Producer,
     pub predecessor: Option<StreamCursor>,
     pub closed_through: Option<Sequence>,
     pub operation: OperationId,

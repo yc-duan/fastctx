@@ -1,23 +1,41 @@
 use super::open;
 use crate::sign::PublicKey;
 use fastctx_sync::{
-    catalog::SourceBatch,
+    catalog::{Authority, SourceBatch},
+    identity::Producer,
     proof::{EpochDescriptor, HandoverBasis, ProducerRelease, ProofPurpose},
-    registry::{ConflictRule, REGISTRY, ScopePolicy},
+    registry::{AuthorityRule, ConflictRule, REGISTRY},
     store::Error,
 };
 use std::collections::BTreeSet;
 
-pub(super) fn device_kind(kind: &str) -> Result<(), Error> {
+pub(super) fn record_authority(kind: &str, schema: u16, authority: &Authority) -> Result<(), Error> {
     let kind = REGISTRY.asset(kind).map_err(Error::Invalid)?;
-    if !matches!(kind.registration().scope, ScopePolicy::Device | ScopePolicy::Machine)
+    let expected = match authority {
+        Authority::Hub => AuthorityRule::Hub,
+        Authority::Device { .. } => AuthorityRule::LoginDevice,
+    };
+    if kind.registration().authority != expected
+        || kind.registration().schema != schema
         || !matches!(kind.registration().conflict, ConflictRule::Expected | ConflictRule::TextMerge | ConflictRule::Yrs)
     {
-        return Err(Error::Denied("a device cannot arbitrate this registered kind".into()));
+        return Err(Error::Denied("this authority cannot arbitrate the registered record kind".into()));
+    }
+    Ok(())
+}
+fn producer(kind: &str, producer: &Producer) -> Result<(), Error> {
+    let authority = REGISTRY.asset(kind).map_err(Error::Invalid)?.registration().authority;
+    let allowed = match producer {
+        Producer::Hub => authority == AuthorityRule::Hub,
+        Producer::Device { .. } => matches!(authority, AuthorityRule::SourceDevice | AuthorityRule::LoginDevice),
+    };
+    if !allowed {
+        return Err(Error::Denied("producer role differs from the registered source authority".into()));
     }
     Ok(())
 }
 pub(super) fn source(value: &SourceBatch) -> Result<(), Error> {
+    producer(&value.kind, &value.producer)?;
     let kind = REGISTRY.asset(&value.kind).map_err(Error::Invalid)?;
     if value.format != 1
         || value.schema != kind.registration().schema
@@ -42,6 +60,7 @@ pub(super) fn source(value: &SourceBatch) -> Result<(), Error> {
     Ok(())
 }
 pub(super) fn epoch(value: &EpochDescriptor) -> Result<(), Error> {
+    producer(&value.kind, &value.producer)?;
     let kind = REGISTRY.asset(&value.kind).map_err(Error::Invalid)?;
     if kind.registration().conflict != ConflictRule::SingleWriter || kind.registration().schema != value.schema {
         return Err(Error::Invalid("producer epoch names a different registered stream schema".into()));
@@ -69,7 +88,7 @@ pub(super) fn epoch(value: &EpochDescriptor) -> Result<(), Error> {
             )?;
             if operation != &value.operation
                 || Some(&release.predecessor) != value.predecessor.as_ref()
-                || release.successor != value.producer
+                || value.producer != (Producer::Device { device: release.successor })
                 || release.epoch != value.epoch
                 || release.operation != value.operation
             {

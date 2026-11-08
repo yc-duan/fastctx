@@ -2,7 +2,7 @@ use super::{open, validation};
 use crate::sign::PublicKey;
 use fastctx_sync::{
     catalog::{Authority, SourceBatch},
-    identity::{DeviceId, HubId},
+    identity::{DeviceId, HubId, Producer},
     metrics::{Latency, Metrics},
     proof::{
         CommittedFragment, ConfirmedEpoch, EpochDescriptor, HubKeyRotation, HubSigningIdentity, ProofPurpose,
@@ -48,9 +48,7 @@ impl ProofVerifier for IdentityVerifier {
             if value.fragment.binding.hub != self.hub || &value.fragment.binding.authority != authority {
                 return Err(Error::Denied("accepted proof differs from the confirmed authority".into()));
             }
-            if matches!(authority, Authority::Device { .. }) {
-                validation::device_kind(&value.fragment.kind)?;
-            }
+            validation::record_authority(&value.fragment.kind, value.fragment.schema, authority)?;
             value.validate().map_err(Error::Invalid)?;
             Ok(value)
         })
@@ -60,7 +58,13 @@ impl ProofVerifier for IdentityVerifier {
             if epoch.scope.hub != self.hub {
                 return Err(Error::Denied("source epoch belongs to another hub".into()));
             }
-            let value: SourceBatch = open(&signed.proof, ProofPurpose::SourceBatchV1, device_key(&epoch.producer))?;
+            let (purpose, key) = match &epoch.producer {
+                Producer::Hub => {
+                    (ProofPurpose::HubSourceBatchV1, self.hub_key(&epoch.scope.hub, &signed.proof.signer)?)
+                }
+                Producer::Device { device } => (ProofPurpose::SourceBatchV1, device_key(device)),
+            };
+            let value: SourceBatch = open(&signed.proof, purpose, key)?;
             if value.scope != epoch.scope
                 || value.stream != epoch.stream
                 || value.epoch != epoch.epoch

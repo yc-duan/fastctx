@@ -61,7 +61,7 @@ CREATE TABLE sync_local_changes (
 CREATE INDEX sync_local_changes_scope ON sync_local_changes(hub,scope,sequence);
 CREATE TABLE sync_stream_heads (
     hub TEXT NOT NULL, scope TEXT NOT NULL, stream TEXT NOT NULL,
-    producer TEXT NOT NULL, epoch TEXT NOT NULL, kind TEXT NOT NULL, schema INTEGER NOT NULL,
+    producer BLOB NOT NULL, epoch TEXT NOT NULL, kind TEXT NOT NULL, schema INTEGER NOT NULL,
     sequence BLOB NOT NULL CHECK(length(sequence)=8), epoch_proof TEXT NOT NULL,
     PRIMARY KEY(hub,scope,stream,epoch)
 ) WITHOUT ROWID;
@@ -233,7 +233,7 @@ CREATE TABLE sync_asset_gc (
 CREATE INDEX sync_asset_gc_due ON sync_asset_gc(next_due);
 CREATE TABLE sync_source_proofs (
     hub TEXT NOT NULL, scope TEXT NOT NULL, proof TEXT NOT NULL,
-    stream TEXT NOT NULL, epoch TEXT NOT NULL, producer TEXT NOT NULL,
+    stream TEXT NOT NULL, epoch TEXT NOT NULL, producer BLOB NOT NULL,
     first_sequence BLOB NOT NULL CHECK(length(first_sequence)=8),
     last_sequence BLOB NOT NULL CHECK(length(last_sequence)=8),
     purpose TEXT NOT NULL, signer BLOB NOT NULL CHECK(length(signer)=32),
@@ -243,7 +243,7 @@ CREATE TABLE sync_source_proofs (
 CREATE INDEX sync_source_waiting_epoch ON sync_source_proofs(hub,scope,stream,epoch,state);
 CREATE TABLE sync_epoch_descriptors (
     hub TEXT NOT NULL, scope TEXT NOT NULL, stream TEXT NOT NULL, epoch TEXT NOT NULL,
-    producer TEXT NOT NULL, kind TEXT NOT NULL, schema INTEGER NOT NULL,
+    producer BLOB NOT NULL, kind TEXT NOT NULL, schema INTEGER NOT NULL,
     predecessor BLOB, closed_through BLOB CHECK(closed_through IS NULL OR length(closed_through)=8),
     proof TEXT NOT NULL, signed_bytes BLOB NOT NULL,
     signer BLOB NOT NULL CHECK(length(signer)=32), signature BLOB NOT NULL CHECK(length(signature)=64),

@@ -103,6 +103,15 @@ impl Digest {
     }
 }
 
+/// A source is either this scope's hub or an explicitly identified device.
+/// A hub signing key is never represented as a device identity.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Producer {
+    Hub,
+    Device { device: DeviceId },
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct ScopeKey {
     pub hub: HubId,

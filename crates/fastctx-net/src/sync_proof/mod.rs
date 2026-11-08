@@ -19,6 +19,7 @@ const MAX_PROOF_BYTES: usize = fastctx_types::sync::PAGE_BYTES as usize * 3 / 4 
 fn domain(purpose: ProofPurpose) -> Domain {
     match purpose {
         ProofPurpose::SourceBatchV1 => Domain::SyncSourceBatch,
+        ProofPurpose::HubSourceBatchV1 => Domain::SyncHubSourceBatch,
         ProofPurpose::AcceptedOperationV1 => Domain::SyncAcceptedOperation,
         ProofPurpose::ProducerReleaseV1 => Domain::SyncProducerRelease,
         ProofPurpose::EpochHandoverV1 => Domain::SyncEpochHandover,

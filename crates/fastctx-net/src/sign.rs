@@ -39,6 +39,7 @@ pub enum Domain {
     /// move's key, bound to one TLS connection.
     Handover,
     SyncSourceBatch,
+    SyncHubSourceBatch,
     SyncAcceptedOperation,
     SyncProducerRelease,
     SyncEpochHandover,
@@ -56,6 +57,7 @@ impl Domain {
             Domain::Peer => "peer",
             Domain::Handover => "handover",
             Domain::SyncSourceBatch => "fastctx-sync/source-batch/v1",
+            Domain::SyncHubSourceBatch => "fastctx-sync/hub-source-batch/v1",
             Domain::SyncAcceptedOperation => "fastctx-sync/accepted-operation/v1",
             Domain::SyncProducerRelease => "fastctx-sync/producer-release/v1",
             Domain::SyncEpochHandover => "fastctx-sync/epoch-handover/v1",

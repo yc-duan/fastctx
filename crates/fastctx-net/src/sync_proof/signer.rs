@@ -3,7 +3,7 @@ use crate::sign::SecretKey;
 use fastctx_sync::{
     catalog::{Authority, SourceBatch},
     exposure::{ExposureReceipt, SignedExposureReceipt},
-    identity::{DeviceId, HubId},
+    identity::{DeviceId, HubId, Producer},
     metrics::{Latency, Metrics},
     proof::{
         Bytes, CommittedFragment, ConfirmedEpoch, EpochDescriptor, HubKeyRotation, ProducerRelease, ProofPurpose,
@@ -72,22 +72,31 @@ impl ProofSigner for IdentitySigner {
                 if device != &self.device_id() {
                     return Err(Error::Denied("accepted result names another device authority".into()));
                 }
-                validation::device_kind(&value.fragment.kind)?;
             }
         }
+        validation::record_authority(&value.fragment.kind, value.fragment.schema, &value.fragment.binding.authority)?;
         let data = encode(value)?;
         value.validate().map_err(Error::Invalid)?;
         Ok(SignedAcceptanceFragment { proof: self.signed(ProofPurpose::AcceptedOperationV1, data) })
     }
     fn source(&self, value: &SourceBatch) -> Result<SignedSourceBatch, Error> {
-        self.require_role(false)?;
         self.require_hub(&value.scope.hub)?;
-        if value.producer != self.device_id() {
-            return Err(Error::Denied("source batch names another producer".into()));
-        }
+        let purpose = match &value.producer {
+            Producer::Hub => {
+                self.require_role(true)?;
+                ProofPurpose::HubSourceBatchV1
+            }
+            Producer::Device { device } => {
+                self.require_role(false)?;
+                if device != &self.device_id() {
+                    return Err(Error::Denied("source batch names another producer".into()));
+                }
+                ProofPurpose::SourceBatchV1
+            }
+        };
         let data = encode(value)?;
         validation::source(value)?;
-        Ok(SignedSourceBatch { proof: self.signed(ProofPurpose::SourceBatchV1, data) })
+        Ok(SignedSourceBatch { proof: self.signed(purpose, data) })
     }
     fn epoch(&self, value: &EpochDescriptor) -> Result<ConfirmedEpoch, Error> {
         self.require_role(true)?;

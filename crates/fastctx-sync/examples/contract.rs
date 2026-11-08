@@ -2,6 +2,8 @@
 
 #[path = "contract/acceptance.rs"]
 mod acceptance;
+#[path = "contract/hub_source.rs"]
+mod hub_source;
 #[path = "contract/manifests.rs"]
 mod manifests;
 
@@ -9,8 +11,8 @@ use fastctx_sync::{
     catalog::{ChangesPage, FeedEntry, SourceBatch, SourceRecord},
     cursor::{ByteCount, DurableAck, Holder, HoldingPeriod, Revision, ScopeCursor, Sequence, StreamCursor, VersionRef},
     identity::{
-        AuthorityEpoch, DeviceId, Digest, FeedEpoch, HubId, ObjectId, ObjectKey, OperationId, ProducerEpoch, ScopeId,
-        ScopeKey, StreamId,
+        AuthorityEpoch, DeviceId, Digest, FeedEpoch, HubId, ObjectId, ObjectKey, OperationId, Producer, ProducerEpoch,
+        ScopeId, ScopeKey, StreamId,
     },
     manifest::{BlobId, ContentBlock, ContentRef, DigestAlgorithm, ManifestRoot},
     proof::{Bytes, ProofPurpose, Signature, SignedSourceBatch, SignedStatement, SigningKey},
@@ -69,7 +71,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         format: 1,
         scope: scope.clone(),
         stream: stream.stream.clone(),
-        producer: device.clone(),
+        producer: Producer::Device { device: device.clone() },
         epoch: stream.epoch.clone(),
         kind: kind.kind.clone(),
         schema: 1,
@@ -186,12 +188,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Message::Revoked { holding: holding.clone() },
     ];
     messages.extend(manifests::sample(&holding)?);
+    let (hub_message, hub_batch) = hub_source::sample(&holding)?;
+    messages.push(hub_message);
     println!(
         "{}",
         serde_json::to_string_pretty(&serde_json::json!({
             "signature_status": "shape_only_not_validated",
             "messages": messages, "decoded_source_binding": batch, "timeline_payload_shapes": timeline,
             "decoded_acceptance_binding": accepted_binding,
+            "decoded_hub_source_binding": hub_batch,
         }))?
     );
     Ok(())
