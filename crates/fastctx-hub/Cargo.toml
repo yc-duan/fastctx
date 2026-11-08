@@ -52,6 +52,10 @@ tokio-util = { version = "0.7", features = ["io"] }
 
 [dev-dependencies]
 fastctx-client = { path = "../fastctx-client" }
+fastctx-hosts = { path = "../fastctx-hosts" }
+fastctx-install = { path = "../fastctx-install" }
+serde_json = { workspace = true, features = ["raw_value"] }
+flate2 = "1"
 # The network drill runs its machines on a pool of threads.
 tokio = { workspace = true, features = ["rt-multi-thread"] }
 

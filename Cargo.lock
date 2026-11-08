@@ -1429,6 +1429,8 @@ dependencies = [
  "arc-swap",
  "bytes",
  "fastctx-client",
+ "fastctx-hosts",
+ "fastctx-install",
  "fastctx-net",
  "fastctx-platform",
  "fastctx-ripgrep",

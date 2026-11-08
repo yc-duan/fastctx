@@ -7,12 +7,26 @@
 mod attachments;
 mod colleagues;
 mod controls;
+#[path = "../../../../gui/src-tauri/src/conversation_piece.rs"]
+#[allow(dead_code)]
+mod conversation_piece;
 mod earlier;
 mod goals;
+#[path = "../../../../gui/src-tauri/src/held_events.rs"]
+#[allow(unused_imports)]
+mod held_events;
 mod history;
 mod lifecycle;
+mod read_scale;
 mod release_colleague;
 mod resume;
+#[path = "../../../../gui/src-tauri/src/transcript/core.rs"]
+#[allow(dead_code)]
+mod transcript;
+use conversation_piece::Piece;
+fn epoch_ms(at: std::time::SystemTime) -> u64 {
+    at.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64
+}
 mod scale;
 mod shared_controls;
 mod sharing;
@@ -75,6 +89,9 @@ fn command(root: &Path, bin: &Path) -> Command {
         .env("LANG", "C.UTF-8")
         .current_dir(base.join("user"))
         .stdin(Stdio::null());
+    if base.join("scale-config.json").is_file() {
+        c.env("TMPDIR", base.join("tmp"));
+    }
     strictly(&mut c);
     c
 }
@@ -284,6 +301,21 @@ async fn main() -> Result<()> {
     let base = PathBuf::from(std::env::args().nth(1).context("base")?);
     KERNEL.set(PathBuf::from(std::env::args().nth(2).context("kernel")?)).expect("one kernel");
     std::fs::create_dir_all(&base)?;
+    if std::env::args().any(|argument| argument == "--calibrate-scale") {
+        return read_scale::calibrate::run(&base, std::env::args().any(|argument| argument == "--all"));
+    }
+    if std::env::args().any(|argument| argument == "--scale-page") {
+        let request = PathBuf::from(std::env::args().nth(4).context("page request")?);
+        let result = read_scale::page_worker::run(&base, &request).await;
+        if let Err(error) = &result {
+            eprintln!("page worker: {error:#}");
+        }
+        // The probe owns this process; detached blocking work must end with its result.
+        std::process::exit(if result.is_ok() { 0 } else { 1 });
+    }
+    if std::env::args().any(|argument| argument == "--read-scale") {
+        return read_scale::run(&base).await;
+    }
     if std::env::args().any(|argument| argument == "--scale") {
         return scale::run(&base).await;
     }
