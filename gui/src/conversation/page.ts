@@ -2024,10 +2024,13 @@ export class ConversationPage {
    *  agent begins with (`app/model-memory.ts`). */
   private async setModel(model: string | null, effort: string | null): Promise<void> {
     const before = this.offered;
-    if (before) this.choose({ ...before, model: model ?? before.model, effort: effort ?? before.effort });
+    // A model with no efforts listed goes on with none named, not the last one's.
+    const chosen = before?.models.find((one) => one.id === (model ?? before.model));
+    const kept = chosen && !chosen.efforts.length ? null : (effort ?? before?.effort ?? null);
+    if (before) this.choose({ ...before, model: model ?? before.model, effort: kept });
     const done = await this.run({ name: "model", description: "", args: null, arguments: "optional", control: "model", source: null }, "", { do: "model", model, effort }, true);
     if (!done && before) this.unchoose(before);
-    else if (done) keepChoice(this.options.someone.agent, model ?? before?.model ?? null, effort ?? before?.effort ?? null);
+    else if (done) keepChoice(this.options.someone.agent, model ?? before?.model ?? null, kept);
   }
 
   private async setTier(id: string): Promise<void> {

@@ -36,8 +36,16 @@ pub async fn fork(
     // to the fork. The same selection is passed through the official CLI.
     let running = super::control::running(node, resident)?;
     let selection = super::control::selection(node, resident, running).await?;
-    let model = selection.model;
-    let effort = selection.reasoning_effort;
+    // It goes on with the source's model while its login offers it, else
+    // with the one the login starts on (`world-gui.md`, 对话).
+    let offering = crate::logins::models::Offering::of(node, source.home.as_deref())?;
+    let profile = crate::profile::session::get(node, &source.acting);
+    let (model, effort) = offering.kept_or_starting(
+        selection.model,
+        selection.reasoning_effort,
+        profile.claude.get("model").and_then(serde_json::Value::as_str),
+    )?;
+    let (model, effort) = (Some(model), effort);
     let mut checkpoints = if running {
         Some(super::control::invoke(node, resident, json!({"do":"checkpoint_export"})).await?)
     } else {

@@ -1,11 +1,12 @@
 //! The models each Claude Code login here offers (`world-gui.md`, 对话): the
 //! World's own table, by the families the login's newest session saw it
 //! offer, as those who hold the machine changed it. The agents' pages, a
-//! conversation's model panel and the model the World starts a conversation
-//! on all read it here, so everyone who uses the login, those it assists
-//! too, is offered the same models, and the World uses no other.
+//! conversation's model panel and the model the World starts or moves a
+//! conversation to all read it here, so everyone who uses the login, those
+//! it assists too, is offered the same models, and the World uses no other.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use fastctx_hosts::claude::models as table;
 use fastctx_types::AgentName;
@@ -42,6 +43,12 @@ pub(super) fn aliases(
         .map(|(_, _, aliases)| aliases.clone())
 }
 
+/// The effort a conversation on `model` is started or moved with: none for
+/// a model whose efforts the World does not know.
+pub(crate) fn effort_for(model: &str, effort: Option<String>) -> Option<String> {
+    effort.filter(|_| !table::efforts_of(model).is_empty())
+}
+
 /// What a login offers: the aliases its Claude Code was last seen to offer,
 /// and what those who hold it changed.
 pub(crate) struct Offering {
@@ -60,8 +67,7 @@ impl Offering {
             .into_iter()
             .map(|(dir, _)| AgentHome { dir, found: HomeFound::Added })
             .collect();
-        let readings = fastctx_hosts::claude::exchange::aliases(node.world.path())
-            .map_err(|error| Failure::new(format!("reading the models Claude Code offered: {error}")))?;
+        let readings = fastctx_hosts::claude::exchange::aliases(node.world.path());
         Ok(Self { aliases: aliases(&readings, &homes, dir), edits: edits(&kept, dir) })
     }
 
@@ -69,26 +75,55 @@ impl Offering {
         table::offered(self.aliases.as_deref(), &self.edits).iter().map(|model| model.id().to_owned()).collect()
     }
 
+    pub fn offers(&self, model: &str) -> bool {
+        table::offers(self.aliases.as_deref(), &self.edits, model)
+    }
+
     /// Refuses a model the login does not offer, naming those it does.
     pub fn require(&self, model: &str) -> Result<(), Failure> {
-        if table::offers(self.aliases.as_deref(), &self.edits, model) {
+        if self.offers(model) {
             return Ok(());
         }
-        Err(Failure::not_run(format!(
-            "this Claude Code login does not offer {model}; it offers {}",
-            self.ids().join(", ")
-        )))
+        let ids = self.ids();
+        if ids.is_empty() {
+            return Err(none_offered());
+        }
+        Err(Failure::not_run(format!("this Claude Code login does not offer {model}; it offers {}", ids.join(", "))))
     }
 
     /// The model a conversation starts on when none was named: `preferred`
     /// (the account's own choice) when the login offers it, else its first.
-    pub fn starting(&self, preferred: Option<&str>) -> Option<String> {
+    pub fn starting(&self, preferred: Option<&str>) -> Result<String, Failure> {
         let ids = self.ids();
         preferred
             .filter(|preferred| ids.iter().any(|id| id == preferred))
             .map(str::to_owned)
             .or_else(|| ids.into_iter().next())
+            .ok_or_else(none_offered)
     }
+
+    /// The model and effort a conversation goes on with: `model` while the
+    /// login offers it, else the one it starts on, with no effort named.
+    pub fn kept_or_starting(
+        &self,
+        model: Option<String>,
+        effort: Option<String>,
+        preferred: Option<&str>,
+    ) -> Result<(String, Option<String>), Failure> {
+        match model {
+            Some(model) if self.offers(&model) => {
+                let effort = effort_for(&model, effort);
+                Ok((model, effort))
+            }
+            _ => Ok((self.starting(preferred)?, None)),
+        }
+    }
+}
+
+fn none_offered() -> Failure {
+    Failure::not_run(
+        "this Claude Code login offers no model now; whoever holds its machine adds one under the login's 「⋯」 on the agents page",
+    )
 }
 
 /// What those who hold the machine changed in the models of the login a
@@ -100,25 +135,30 @@ pub(crate) fn edits_of(node: &Node, home: Option<&Path>) -> Result<ModelEdits, F
 }
 
 /// Changes the models the Claude Code login `dir` here offers. A change
-/// that would leave it none is refused.
-pub(crate) fn change(node: &Node, agent: &AgentName, dir: &Path, change: &ModelChange) -> Result<(), Failure> {
+/// that would leave it none is refused. Its conversations on a model it no
+/// longer offers move to the one it starts on.
+pub(crate) fn change(node: &Arc<Node>, agent: &AgentName, dir: &Path, change: &ModelChange) -> Result<(), Failure> {
     if agent.as_str() != "claude" {
         return Err(Failure::not_run("only Claude Code's models are the World's to list; Codex lists its own"));
     }
     super::known(node, agent, dir)?;
     let aliases = Offering::of(node, Some(dir))?.aliases;
-    let dir = dir.to_path_buf();
+    let kept_dir = dir.to_path_buf();
     kept::change(node, move |kept| {
-        let mut changed = edits(kept, &dir);
-        changed.apply(change, |id| table::find(id).is_some()).map_err(Failure::not_run)?;
+        let mut changed = edits(kept, &kept_dir);
+        changed
+            .apply(change, |id| table::find(id).is_some(), |id| table::by_family(aliases.as_deref(), id))
+            .map_err(Failure::not_run)?;
         if table::offered(aliases.as_deref(), &changed).is_empty() {
             return Err(Failure::not_run("a login offers at least one model; add another before taking this one out"));
         }
-        kept.claude.models.retain(|kept| !crate::homes::same_dir(&kept.dir, &dir));
+        kept.claude.models.retain(|kept| !crate::homes::same_dir(&kept.dir, &kept_dir));
         if !changed.is_empty() {
-            kept.claude.models.push(KeptModels { dir, edits: changed });
+            kept.claude.models.push(KeptModels { dir: kept_dir, edits: changed });
         }
         Ok(())
     })
-    .map_err(|error| Failure::new(format!("keeping the login's models: {error}")))?
+    .map_err(|error| Failure::new(format!("keeping the login's models: {error}")))??;
+    crate::claude::model_list::follow(node, dir.to_path_buf());
+    Ok(())
 }

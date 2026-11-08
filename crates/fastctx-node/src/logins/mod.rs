@@ -199,8 +199,7 @@ fn assemble(node: &Node) -> Result<MachineLogins, Failure> {
     {
         scan.usual = Stage::Failed { at: jiff::Timestamp::now(), reason: "the node stopped during it".into() };
     }
-    let claude_aliases = fastctx_hosts::claude::exchange::aliases(node.world.path())
-        .map_err(|error| Failure::new(format!("reading the models Claude Code offered: {error}")))?;
+    let claude_aliases = fastctx_hosts::claude::exchange::aliases(node.world.path());
     let changes = node.logins.changes.lock().expect("never poisoned").clone();
     let mut logins = MachineLogins {
         machine: node.machine(),

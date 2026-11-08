@@ -1200,7 +1200,6 @@ export const zhComposer: ComposerWords = {
   commands: {
     world: "Fastctx",
     compact: "压缩对话",
-    model: "切换模型",
     rename: "重命名",
     fork: "分叉对话",
     stop: "停止",
@@ -1414,7 +1413,6 @@ export const enComposer: ComposerWords = {
   commands: {
     world: "Fastctx",
     compact: "Compact conversation",
-    model: "Switch model",
     rename: "Rename",
     fork: "Fork conversation",
     stop: "Stop",

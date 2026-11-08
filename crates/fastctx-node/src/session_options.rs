@@ -103,6 +103,24 @@ pub(crate) async fn set_mcp(
     .map_err(failed)?
 }
 
+/// Replaces the model and effort a conversation starts again with.
+pub(crate) async fn set_model(
+    node: &Arc<Node>,
+    id: &ResidentId,
+    model: String,
+    effort: Option<String>,
+) -> Result<(), Failure> {
+    let (node, id) = (node.clone(), id.clone());
+    fastctx_platform::task::spawn_blocking(move || {
+        let mut options = read(&node, &id)?;
+        options.model = Some(model);
+        options.reasoning_effort = effort;
+        store(&node.world.conversation(&id), encoded(&options)?, false).map_err(failed)
+    })
+    .await
+    .map_err(failed)?
+}
+
 pub fn configure(config: &mut serde_json::Value, options: SessionOptions) {
     if let Some(model) = options.model {
         config["model"] = model.into();

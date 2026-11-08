@@ -134,25 +134,23 @@ pub fn observed_aliases(directory: &Path) -> io::Result<Option<Vec<String>>> {
 
 /// The model aliases each session's mod observed its login to offer, with
 /// the session's transcript, which says whose login it is; newest first.
-pub fn aliases(world: &Path) -> io::Result<Vec<(PathBuf, Timestamp, Vec<String>)>> {
+/// A session whose files cannot be read, as one its mod is writing, says
+/// nothing: the others still do.
+pub fn aliases(world: &Path) -> Vec<(PathBuf, Timestamp, Vec<String>)> {
     let mut readings = Vec::new();
-    let entries = match std::fs::read_dir(sessions(world)) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(readings),
-        Err(error) => return Err(error),
-    };
-    for entry in entries {
-        let directory = entry?.path();
-        let Some(reading) = super::control::read_mod::<Reading>(&directory.join("models.json"))? else { continue };
+    let Ok(entries) = std::fs::read_dir(sessions(world)) else { return readings };
+    for entry in entries.flatten() {
+        let directory = entry.path();
+        let Ok(Some(reading)) = super::control::read_mod::<Reading>(&directory.join("models.json")) else { continue };
         if !reading.available {
             continue;
         }
-        let Some(transcript) = transcript(&directory)? else { continue };
+        let Ok(Some(transcript)) = transcript(&directory) else { continue };
         let aliases: Vec<String> = reading.models.into_iter().map(|model| model.id).collect();
         readings.push((transcript, reading.at, aliases));
     }
     readings.sort_by(|(_, a, _), (_, b, _)| b.cmp(a));
-    Ok(readings)
+    readings
 }
 
 /// What the mod reported, in the World's terms.

@@ -43,6 +43,7 @@ pub(crate) use image_flush::wait_for_image;
 pub(crate) mod lifecycle;
 mod listing;
 pub mod management;
+pub(crate) mod model_list;
 mod oldest;
 pub(crate) mod pairing;
 mod plugin_check;
@@ -2051,8 +2052,20 @@ pub async fn open_here(
     let launching = command(node, opened.home.as_deref())?;
     oldest::check(node, &launching).await?;
     let offering = crate::logins::models::Offering::of(node, opened.home.as_deref())?;
-    if let Some(model) = &options.model {
-        offering.require(model)?;
+    match &options.model {
+        Some(model) => {
+            offering.require(model)?;
+            options.reasoning_effort = crate::logins::models::effort_for(model, options.reasoning_effort.take());
+        }
+        // It starts on a model named in full (`world-gui.md`, 对话): the
+        // account's own choice when the login offers it, else the login's
+        // first.
+        None => {
+            crate::profile::session::ready(node, &opened.acting).await?;
+            let profile = crate::profile::session::get(node, &opened.acting);
+            let preferred = profile.claude.get("model").and_then(serde_json::Value::as_str);
+            options.model = Some(offering.starting(preferred)?);
+        }
     }
     let agent = AgentName::try_from("claude").expect("a valid agent name");
     let (id, _opening) = crate::attachments::opening(node, &agent, &opened.acting, town.as_ref(), &attachments).await?;
@@ -2062,14 +2075,6 @@ pub async fn open_here(
     // A login assisting another account starts without the browser of this
     // machine (`background::Start::assisting`), as kept now.
     crate::profile::session::ready(node, &opened.acting).await?;
-    // It starts on a model named in full (`world-gui.md`, 对话): with none
-    // asked for, the account's own choice when the login offers it, else
-    // the login's first.
-    if options.model.is_none() {
-        let profile = crate::profile::session::get(node, &opened.acting);
-        let preferred = profile.claude.get("model").and_then(serde_json::Value::as_str);
-        options.model = offering.starting(preferred);
-    }
     crate::assists::host::starting(node, &id, &opened.acting)?;
     let (words, heard) =
         crate::colleagues::instructions(node, &id, town.as_ref(), &Origin::User, &opened.acting, false).await?;

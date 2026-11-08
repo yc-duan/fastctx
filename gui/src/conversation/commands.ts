@@ -16,7 +16,6 @@ import { composing } from "../typing";
 export interface CommandWords {
   world: string;
   compact: string;
-  model: string;
   rename: string;
   fork: string;
   stop: string;
@@ -57,7 +56,9 @@ export interface MenuCommand {
 export function commandsOf(offers: Offers | null, words: CommandWords, moving = false, goal = false): MenuCommand[] {
   // A node that keeps them until the turn ends takes them at any time.
   const waits = (name: string) => moving && !offers?.control_queue && (name === "compact" || name === "review");
-  const own: MenuCommand[] = (offers?.commands ?? []).filter((command) => command.path || !waits(command.name)).map((command: CommandOffer) => ({
+  // The model is chosen in the model panel alone: no `/model`, the World's
+  // or the host's.
+  const own: MenuCommand[] = (offers?.commands ?? []).filter((command) => command.path || (command.name !== "model" && !waits(command.name))).map((command: CommandOffer) => ({
     name: command.name,
     description: (command.source === "codex" && !command.path && words.host[command.name]) || command.description,
     args: command.args,
@@ -74,7 +75,6 @@ export function commandsOf(offers: Offers | null, words: CommandWords, moving = 
   const world: MenuCommand[] = (
     [
       { name: "compact", description: words.compact, args: null, arguments: "none", control: "compact" },
-      { name: "model", description: words.model, args: null, arguments: "optional", control: "model" },
       { name: "rename", description: words.rename, args: words.renameArgs, arguments: "required", control: "rename" },
       { name: "fork", description: words.fork, args: null, arguments: "none", control: "fork" },
       { name: "stop", description: words.stop, args: null, arguments: "none", control: "stop" },

@@ -115,23 +115,9 @@ pub async fn control(node: &Arc<Node>, resident: &ResidentId, mut control: Contr
                 no_args(args)?;
                 Control::Compact
             }
-            "model" => {
-                let words: Vec<_> = args.split_whitespace().collect();
-                match words.as_slice() {
-                    [] => {
-                        let offers = offers(node, resident).await?;
-                        return Ok(Controlled::ModelMenu {
-                            models: offers.models,
-                            model: offers.model,
-                            effort: offers.effort,
-                            service_tier: offers.service_tier,
-                        });
-                    }
-                    [model] => Control::Model { model: Some((*model).into()), effort: None },
-                    [model, effort] => Control::Model { model: Some((*model).into()), effort: Some((*effort).into()) },
-                    _ => return Err(Failure::new("/model takes <model> [effort]")),
-                }
-            }
+            // The model is chosen in the conversation's model panel alone
+            // (`world-gui.md`, 对话).
+            "model" => return Err(Failure::not_run(crate::control::MODEL_COMMAND)),
             "rename" => Control::Rename { name: args.clone() },
             "fork" => {
                 no_args(args)?;

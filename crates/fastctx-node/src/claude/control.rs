@@ -73,8 +73,16 @@ pub async fn control(node: &Arc<Node>, resident: &ResidentId, control: Control) 
     if let Control::Answer { request, answer } = control {
         return answer_request(node, resident, request, answer).await;
     }
-    // The model is one its login offers, as those who hold it listed them.
+    // The model is chosen in the conversation's model panel alone, never
+    // with `/model` (`world-gui.md`, 对话), and is one its login offers, as
+    // those who hold it listed them. One whose efforts the World does not
+    // know goes on with none named.
+    if matches!(&control, Control::Command { name, path: None, .. } if name == "model") {
+        return Err(Failure::not_run(crate::control::MODEL_COMMAND));
+    }
+    let mut control = control;
     if let Control::Model { model: Some(model), .. } = &control {
+        let model = model.clone();
         let aliases = match &about.session {
             Some(session) => fastctx_hosts::claude::exchange::observed_aliases(
                 &fastctx_hosts::claude::exchange::sessions(node.world.path()).join(session),
@@ -83,7 +91,10 @@ pub async fn control(node: &Arc<Node>, resident: &ResidentId, control: Control) 
             None => None,
         };
         let edits = crate::logins::models::edits_of(node, about.home.as_deref())?;
-        crate::logins::models::Offering { aliases, edits }.require(model)?;
+        crate::logins::models::Offering { aliases, edits }.require(&model)?;
+        if fastctx_hosts::claude::models::efforts_of(&model).is_empty() {
+            control = Control::Model { model: Some(model), effort: Some(String::new()) };
+        }
     }
     // What has the model work in a session between turns, a compaction or a
     // skill, takes a turn of its login, as words do (`turn_slots`), before

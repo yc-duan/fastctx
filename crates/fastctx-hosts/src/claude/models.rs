@@ -89,10 +89,11 @@ impl Offered<'_> {
 
 /// The models a login offers. `aliases` are the model aliases its Claude
 /// Code listed in a session (`None` before any session has run there, when
-/// every family is offered); `edits` what those who hold it changed.
+/// every family is offered); `edits` what those who hold it changed. An id
+/// added that the table holds is offered as its row, once.
 pub fn offered<'a>(aliases: Option<&[String]>, edits: &'a ModelEdits) -> Vec<Offered<'a>> {
     let families: Option<Vec<String>> = aliases.map(|aliases| aliases.iter().map(|alias| family_of(alias)).collect());
-    MODELS
+    let mut offered: Vec<Offered<'a>> = MODELS
         .iter()
         .filter(|model| match &families {
             Some(families) => families.iter().any(|family| family == model.family),
@@ -100,8 +101,24 @@ pub fn offered<'a>(aliases: Option<&[String]>, edits: &'a ModelEdits) -> Vec<Off
         })
         .filter(|model| !edits.removed.iter().any(|id| id == model.id))
         .map(Offered::Row)
-        .chain(edits.added.iter().map(|id| Offered::Added(id)))
-        .collect()
+        .collect();
+    for id in &edits.added {
+        if !offered.iter().any(|model| model.id() == id) {
+            offered.push(find(id).map_or(Offered::Added(id), Offered::Row));
+        }
+    }
+    offered
+}
+
+/// Whether the table offers `id` to a login by itself, its family being
+/// one the login offers.
+pub fn by_family(aliases: Option<&[String]>, id: &str) -> bool {
+    offers(aliases, &ModelEdits::default(), id)
+}
+
+/// The efforts `id` takes among a login's models: none for an id added.
+pub fn efforts_of(id: &str) -> &'static [&'static str] {
+    find(id).map_or(NONE, |model| model.efforts)
 }
 
 /// Whether a login offers the full model id `id`.

@@ -2,7 +2,9 @@
 //! one of its Claude Code logins (`world-gui.md`, 对话): the World's own
 //! table less the rows they took out, then the model ids they added. The
 //! change is kept against the table, so a row a later release adds is
-//! offered without anyone adding it, and a row taken out stays out.
+//! offered without anyone adding it, and a row taken out stays out. An id
+//! added stays offered when a later table holds it, or holds it under a
+//! family the login is not seen to offer.
 
 use serde::{Deserialize, Serialize};
 
@@ -39,29 +41,34 @@ impl ModelEdits {
         self.removed.is_empty() && self.added.is_empty()
     }
 
-    /// Applies `change`; `in_table` says whether a model id is a row of the
-    /// World's table.
-    pub fn apply(&mut self, change: &ModelChange, in_table: impl Fn(&str) -> bool) -> Result<(), String> {
+    /// Applies `change`. `in_table` says whether a model id is a row of the
+    /// World's table, `by_family` whether the table offers it to this login
+    /// by itself, its family being one the login offers.
+    pub fn apply(
+        &mut self,
+        change: &ModelChange,
+        in_table: impl Fn(&str) -> bool,
+        by_family: impl Fn(&str) -> bool,
+    ) -> Result<(), String> {
         match change {
             ModelChange::Add { model } => {
                 check(model)?;
-                if in_table(model) {
-                    self.removed.retain(|id| id != model);
-                } else if !self.added.contains(model) {
+                self.removed.retain(|id| id != model);
+                if !by_family(model) && !self.added.contains(model) {
                     if self.added.len() >= MOST_ADDED {
-                        return Err(format!("a login takes at most {MOST_ADDED} models of its own"));
+                        return Err(format!("a login takes at most {MOST_ADDED} custom models"));
                     }
                     self.added.push(model.clone());
                 }
             }
             ModelChange::Remove { model } => {
+                let added = self.added.contains(model);
+                self.added.retain(|id| id != model);
                 if in_table(model) {
                     if !self.removed.contains(model) {
                         self.removed.push(model.clone());
                     }
-                } else if self.added.contains(model) {
-                    self.added.retain(|id| id != model);
-                } else {
+                } else if !added {
                     return Err(format!("{model} is not among this login's models"));
                 }
             }

@@ -136,7 +136,10 @@ impl Evidence {
             && (model.is_some() || effort.is_some())
             && let Some(selection) = files::read_mod::<Value>(&directory.join("selection.json"))?
             && model.is_none_or(|model| selection["model"] == model)
-            && effort.is_none_or(|effort| selection["effort"] == effort)
+            // An empty effort asked that none be named.
+            && effort.is_none_or(|effort| {
+                if effort.is_empty() { selection["effort"].is_null() } else { selection["effort"] == effort }
+            })
             && (model.is_none() || files::read_mod::<Value>(&directory.join("routing.json"))? == Some(Value::Null))
         {
             return Ok(Some(json!({"kind":"selected", "model":selection["model"], "effort":selection["effort"]})));
