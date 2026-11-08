@@ -2064,6 +2064,7 @@ dependencies = [
  "ed25519-dalek",
  "fastctx-platform",
  "fastctx-storage",
+ "fastctx-sync",
  "fastctx-types",
  "futures-util",
  "getrandom 0.3.4",
@@ -2153,6 +2154,19 @@ dependencies = [
  "fastctx-platform",
  "rusqlite",
  "tokio",
+]
+
+[[package]]
+name = "fastctx-sync"
+version = "1.0.1-beta.16"
+dependencies = [
+ "fastctx-platform",
+ "fastctx-storage",
+ "fastctx-types",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "zstd",
 ]
 
 [[package]]

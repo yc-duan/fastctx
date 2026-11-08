@@ -38,6 +38,12 @@ pub enum Domain {
     /// An old hub proving to the place its hub moves to that it holds the
     /// move's key, bound to one TLS connection.
     Handover,
+    SyncSourceBatch,
+    SyncAcceptedOperation,
+    SyncProducerRelease,
+    SyncEpochHandover,
+    SyncExposureReceipt,
+    SyncHubKeyRotation,
 }
 
 impl Domain {
@@ -49,6 +55,12 @@ impl Domain {
             Domain::Ledger => "ledger",
             Domain::Peer => "peer",
             Domain::Handover => "handover",
+            Domain::SyncSourceBatch => "fastctx-sync/source-batch/v1",
+            Domain::SyncAcceptedOperation => "fastctx-sync/accepted-operation/v1",
+            Domain::SyncProducerRelease => "fastctx-sync/producer-release/v1",
+            Domain::SyncEpochHandover => "fastctx-sync/epoch-handover/v1",
+            Domain::SyncExposureReceipt => "fastctx-sync/exposure-receipt/v1",
+            Domain::SyncHubKeyRotation => "fastctx-sync/hub-key-rotation/v1",
         }
     }
 }
@@ -114,12 +126,6 @@ impl SecretKey {
         let file = KeyFile { kind: "ed25519".to_string(), seed: Zeroizing::new(URL_SAFE_NO_PAD.encode(*self.seed())) };
         let bytes = Zeroizing::new(serde_json::to_vec(&file).map_err(io::Error::other)?);
         publish_new(path, &bytes, Permissions::Private)
-    }
-}
-
-impl fmt::Debug for SecretKey {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "SecretKey({})", self.public())
     }
 }
 

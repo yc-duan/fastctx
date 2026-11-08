@@ -14,9 +14,10 @@ imara-diff = { version = "0.2", default-features = false }
 argon2 = { version = "0.5", default-features = false, features = ["alloc"] }
 base64 = "0.22"
 bytes = "1"
-ed25519-dalek = "3.0.0"
+ed25519-dalek = { version = "3.0.0", features = ["zeroize"] }
 fastctx-platform = { path = "../fastctx-platform" }
 fastctx-storage = { path = "../fastctx-storage" }
+fastctx-sync = { path = "../fastctx-sync" }
 fastctx-types = { path = "../fastctx-types" }
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 getrandom = { version = "0.3", features = ["std"] }
