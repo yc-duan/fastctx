@@ -64,7 +64,9 @@ impl Search for Tavily {
             let status = response.status;
             let bytes = response.bytes(65_536).await?;
             if !(200..300).contains(&status) {
-                return Err(format!("search HTTP {status}: {}", String::from_utf8_lossy(&bytes)));
+                // What the provider says goes on; the key it may say back does not.
+                let said = String::from_utf8_lossy(&bytes).replace(&self.key, "***");
+                return Err(format!("search HTTP {status}: {}", bounded(&said, 2048)));
             }
             let value: Value = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
             if !value["results"].is_array() {

@@ -72,12 +72,12 @@ pub(crate) async fn here(node: &Arc<Node>, scope: &HubAccount) -> Result<TryRepo
     let model = async {
         let model = settings.model?;
         let Some(key) = keys.0 else { return Some(missing("the model has no key yet")) };
-        Some(timed(MODEL_WITHIN, answer(model, key)).await)
+        Some(timed(MODEL_WITHIN, &key, answer(model, key.clone())).await)
     };
     let search = async {
         let search = settings.search?;
         let Some(key) = keys.1 else { return Some(missing("the search has no key yet")) };
-        Some(timed(SEARCH_WITHIN, found(search.endpoint, key)).await)
+        Some(timed(SEARCH_WITHIN, &key, found(search.endpoint, key.clone())).await)
     };
     let (model, search) = tokio::join!(model, search);
     Ok(TryReport { model, search })
@@ -108,14 +108,17 @@ async fn found(endpoint: String, key: String) -> Result<String, String> {
     Ok(format!("{} results", value["results"].as_array().map_or(0, Vec::len)))
 }
 
-/// `trying` within `within`, how long it took and what came of it.
-async fn timed(within: Duration, trying: impl Future<Output = Result<String, String>>) -> Tried {
+/// `trying` within `within`, how long it took and what came of it, with
+/// `key` hidden wherever the provider wrote it back: what a try says leaves
+/// the home, and the key never does.
+async fn timed(within: Duration, key: &str, trying: impl Future<Output = Result<String, String>>) -> Tried {
     let started = Instant::now();
     let outcome = tokio::time::timeout(within, trying).await;
     let ms = started.elapsed().as_millis() as u64;
+    let shown = |text: &str| shortened(&if key.is_empty() { text.to_string() } else { text.replace(key, "***") });
     match outcome {
-        Ok(Ok(said)) => Tried { ok: true, ms, said: shortened(&said) },
-        Ok(Err(why)) => Tried { ok: false, ms, said: shortened(&why) },
+        Ok(Ok(said)) => Tried { ok: true, ms, said: shown(&said) },
+        Ok(Err(why)) => Tried { ok: false, ms, said: shown(&why) },
         Err(_) => Tried { ok: false, ms, said: format!("no answer within {} s", within.as_secs()) },
     }
 }

@@ -169,8 +169,9 @@ impl RemoteCall {
             }
             Self::SentinelSettings { change: Some(_) } => Contract::CHANGE,
             Self::SentinelKeys => Contract { within: Some(Duration::from_secs(30)), ..Contract::QUERY },
-            // The model has up to 90 s to answer a try.
-            Self::SentinelTry => Contract { within: Some(Duration::from_secs(120)), ..Contract::QUERY },
+            // The home may take a minute to read the settings, and the model
+            // has 90 s more to answer.
+            Self::SentinelTry => Contract { within: Some(Duration::from_secs(180)), ..Contract::QUERY },
             Self::SentinelKey { .. } => Contract::CHANGE,
             Self::Mcp {
                 mcp:
