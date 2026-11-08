@@ -24,6 +24,7 @@ pub mod disk;
 pub mod disk_usage;
 pub mod disks;
 pub mod doing;
+pub mod durable_file;
 pub mod elevation;
 pub mod environment;
 pub mod event_queue;

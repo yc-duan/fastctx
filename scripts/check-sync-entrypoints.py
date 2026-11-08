@@ -10,6 +10,14 @@ spec = importlib.util.spec_from_file_location("sync_wire", ROOT / "scripts/check
 wire = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(wire)
 CALLERS = {
+    "write_unpublished": {
+        "crates/fastctx-platform/src/durable_file.rs",
+        "crates/fastctx-sync/src/blocks/files.rs",
+    },
+    "delete_unreferenced": {
+        "crates/fastctx-platform/src/durable_file.rs",
+        "crates/fastctx-sync/src/blocks/files.rs",
+    },
     "from_authenticated": {
         "crates/fastctx-net/src/sync_access/mod.rs",
     },
