@@ -18,7 +18,7 @@ name: Release
 # compiled dependencies come from the caches `warm.yml` leaves on main after a release, since a tag's
 # run reads only its own caches and the default branch's; this workflow saves none.
 #
-# Independent compilation starts together. Only bundling waits for the kernels and the prepared
+# Independent compilation starts together after the storage architecture gate. Bundling waits for the kernels and prepared
 # application, through same-run artifacts and `needs`; no job polls the Actions API. Native drills
 # run beside bundling, and every check must pass before the run can be published.
 # The machines that compile fastest compile for their slower siblings: both Mac kernels and applications
@@ -44,9 +44,23 @@ env:
   DRILLS: ${{ github.ref_type == 'branch' }}
 
 jobs:
+  sync-architecture:
+    if: github.ref_type == 'branch'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: python scripts/check-sync-inventory.py
+      - run: python scripts/check-sync-dependencies.py
+      - run: python scripts/check-sync-wire.py
+      - run: python scripts/check-sync-entrypoints.py
+
   # The notices in the tree must be the ones scripts/notices.py writes for it; when they are not,
   # nothing is released and the ones to commit are uploaded.
   notices:
+    needs: sync-architecture
     if: github.ref_type == 'branch'
     runs-on: ubuntu-24.04
     steps:
@@ -78,6 +92,7 @@ jobs:
           if-no-files-found: ignore
 
   kernel-windows:
+    needs: sync-architecture
     if: github.ref_type == 'branch'
     name: kernel ${{ matrix.target }}
     strategy:
@@ -304,6 +319,7 @@ jobs:
           if-no-files-found: ignore
 
   kernel-linux:
+    needs: sync-architecture
     if: github.ref_type == 'branch'
     name: kernel ${{ matrix.target }}
     strategy:
@@ -454,6 +470,7 @@ jobs:
   # steps of a job written and read (`world-engine.md`, 验证的设施). The records drill needs the
   # node's drill feature, so both are built here, beside the kernel rather than with it.
   storage-linux:
+    needs: sync-architecture
     if: github.ref_type == 'branch'
     name: storage drills
     runs-on: ubuntu-24.04
@@ -474,6 +491,7 @@ jobs:
   # The same on Windows, under a directory long enough that the archive of a moved record passes the
   # length Windows' own calls take, and with a record another program holds open as a scanner does.
   storage-windows:
+    needs: sync-architecture
     if: github.ref_type == 'branch'
     name: storage drills on Windows
     runs-on: windows-2025
@@ -501,6 +519,7 @@ jobs:
   # link and the node; `specs/world-engine.md`, 线程的三种角色), on every system: each has code paths
   # no other system's build reaches.
   clippy:
+    needs: sync-architecture
     if: github.ref_type == 'branch'
     name: clippy ${{ matrix.os }}
     strategy:
@@ -628,6 +647,7 @@ jobs:
           if-no-files-found: warn
 
   kernel-macos:
+    needs: sync-architecture
     if: github.ref_type == 'branch'
     name: kernel ${{ matrix.target }}
     strategy:
@@ -879,6 +899,7 @@ jobs:
           if-no-files-found: error
 
   gui-windows:
+    needs: sync-architecture
     if: github.ref_type == 'branch'
     name: gui ${{ matrix.target }}
     strategy:
@@ -1032,6 +1053,7 @@ jobs:
           if-no-files-found: error
 
   gui-macos:
+    needs: sync-architecture
     if: github.ref_type == 'branch'
     name: gui ${{ matrix.target }}
     strategy:
@@ -1221,6 +1243,7 @@ jobs:
           if-no-files-found: error
 
   gui-linux:
+    needs: sync-architecture
     if: github.ref_type == 'branch'
     name: gui x86_64-unknown-linux-gnu
     runs-on: ubuntu-22.04
@@ -1387,6 +1410,7 @@ jobs:
           if-no-files-found: error
 
   android:
+    needs: sync-architecture
     if: github.ref_type == 'branch'
     runs-on: ubuntu-24.04
     steps:
@@ -1495,6 +1519,7 @@ jobs:
   # kernel keeps a hub and a node as Windows services; the same source, built as a later release and
   # signed as one, goes to the renewal, and the protected guardians take it with no administrator.
   renewal-build-windows:
+    needs: sync-architecture
     if: github.ref_type == 'branch'
     runs-on: windows-11-arm
     defaults:

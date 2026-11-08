@@ -1,0 +1,205 @@
+[
+  {
+    "type": "crates/fastctx-types/src/sync/transfer.rs::Message",
+    "variant": "Acknowledge",
+    "purpose": "AssetSync",
+    "capability": "asset_sync",
+    "mapping": "crates/fastctx-types/src/sync/transfer.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/sync/transfer.rs::Message",
+    "variant": "Advanced",
+    "purpose": "AssetSync",
+    "capability": "asset_sync",
+    "mapping": "crates/fastctx-types/src/sync/transfer.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/sync/transfer.rs::Message",
+    "variant": "Catalog",
+    "purpose": "AssetSync",
+    "capability": "asset_sync",
+    "mapping": "crates/fastctx-types/src/sync/transfer.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/sync/transfer.rs::Message",
+    "variant": "CatalogPage",
+    "purpose": "AssetSync",
+    "capability": "asset_sync",
+    "mapping": "crates/fastctx-types/src/sync/transfer.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/sync/transfer.rs::Message",
+    "variant": "Changes",
+    "purpose": "AssetSync",
+    "capability": "asset_sync",
+    "mapping": "crates/fastctx-types/src/sync/transfer.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/sync/transfer.rs::Message",
+    "variant": "ChangesPage",
+    "purpose": "AssetSync",
+    "capability": "asset_sync",
+    "mapping": "crates/fastctx-types/src/sync/transfer.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/sync/transfer.rs::Message",
+    "variant": "Cursors",
+    "purpose": "AssetSync",
+    "capability": "asset_sync",
+    "mapping": "crates/fastctx-types/src/sync/transfer.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/sync/transfer.rs::Message",
+    "variant": "Descriptor",
+    "purpose": "AssetSync",
+    "capability": "asset_sync",
+    "mapping": "crates/fastctx-types/src/sync/transfer.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/sync/transfer.rs::Message",
+    "variant": "Epoch",
+    "purpose": "AssetSync",
+    "capability": "asset_sync",
+    "mapping": "crates/fastctx-types/src/sync/transfer.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/sync/transfer.rs::Message",
+    "variant": "ExposureCleaned",
+    "purpose": "ExecutionControl",
+    "capability": "asset_sync",
+    "mapping": "crates/fastctx-types/src/sync/transfer.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/sync/transfer.rs::Message",
+    "variant": "GetDescriptor",
+    "purpose": "AssetSync",
+    "capability": "asset_sync",
+    "mapping": "crates/fastctx-types/src/sync/transfer.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/sync/transfer.rs::Message",
+    "variant": "GetEpoch",
+    "purpose": "AssetSync",
+    "capability": "asset_sync",
+    "mapping": "crates/fastctx-types/src/sync/transfer.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/sync/transfer.rs::Message",
+    "variant": "GetManifest",
+    "purpose": "AssetSync",
+    "capability": "asset_sync",
+    "mapping": "crates/fastctx-types/src/sync/transfer.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/sync/transfer.rs::Message",
+    "variant": "GetOperation",
+    "purpose": "AssetSync",
+    "capability": "asset_sync",
+    "mapping": "crates/fastctx-types/src/sync/transfer.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/sync/transfer.rs::Message",
+    "variant": "Hello",
+    "purpose": "AssetSync",
+    "capability": "asset_sync",
+    "mapping": "crates/fastctx-types/src/sync/transfer.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/sync/transfer.rs::Message",
+    "variant": "Manifest",
+    "purpose": "AssetSync",
+    "capability": "asset_sync",
+    "mapping": "crates/fastctx-types/src/sync/transfer.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/sync/transfer.rs::Message",
+    "variant": "Operation",
+    "purpose": "AssetSync",
+    "capability": "asset_sync",
+    "mapping": "crates/fastctx-types/src/sync/transfer.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/sync/transfer.rs::Message",
+    "variant": "PrepareExposure",
+    "purpose": "ExecutionControl",
+    "capability": "asset_sync",
+    "mapping": "crates/fastctx-types/src/sync/transfer.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/sync/transfer.rs::Message",
+    "variant": "Reset",
+    "purpose": "AssetSync",
+    "capability": "asset_sync",
+    "mapping": "crates/fastctx-types/src/sync/transfer.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/sync/transfer.rs::Message",
+    "variant": "RestoreAccepted",
+    "purpose": "AssetSync",
+    "capability": "asset_sync",
+    "mapping": "crates/fastctx-types/src/sync/transfer.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/sync/transfer.rs::Message",
+    "variant": "Revoked",
+    "purpose": "AssetSync",
+    "capability": "asset_sync",
+    "mapping": "crates/fastctx-types/src/sync/transfer.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/sync/transfer.rs::Message",
+    "variant": "Selected",
+    "purpose": "AssetSync",
+    "capability": "asset_sync",
+    "mapping": "crates/fastctx-types/src/sync/transfer.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/sync/transfer.rs::Message",
+    "variant": "ShareState",
+    "purpose": "ExecutionControl",
+    "capability": "asset_sync",
+    "mapping": "crates/fastctx-types/src/sync/transfer.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/sync/transfer.rs::Message",
+    "variant": "Source",
+    "purpose": "AssetSync",
+    "capability": "asset_sync",
+    "mapping": "crates/fastctx-types/src/sync/transfer.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/sync/transfer.rs::Message",
+    "variant": "StreamPage",
+    "purpose": "AssetSync",
+    "capability": "asset_sync",
+    "mapping": "crates/fastctx-types/src/sync/transfer.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/sync/transfer.rs::Message",
+    "variant": "StreamRange",
+    "purpose": "AssetSync",
+    "capability": "asset_sync",
+    "mapping": "crates/fastctx-types/src/sync/transfer.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/sync/transfer.rs::Message",
+    "variant": "Submit",
+    "purpose": "AssetSync",
+    "capability": "asset_sync",
+    "mapping": "crates/fastctx-types/src/sync/transfer.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/sync/transfer.rs::Message",
+    "variant": "ViewChanged",
+    "purpose": "AssetSync",
+    "capability": "asset_sync",
+    "mapping": "crates/fastctx-types/src/sync/transfer.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/sync/transfer.rs::Message",
+    "variant": "WantBlocks",
+    "purpose": "AssetSync",
+    "capability": "asset_sync",
+    "mapping": "crates/fastctx-types/src/sync/transfer.rs"
+  }
+]
