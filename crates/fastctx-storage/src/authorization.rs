@@ -147,6 +147,7 @@ fn pragma(writer: bool, engine: u32, name: &str, value: Option<&str>) -> bool {
     }
     if value.is_none()
         && [
+            "pragma_list",
             "application_id",
             "user_version",
             "page_count",
