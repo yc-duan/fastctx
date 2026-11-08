@@ -19,7 +19,7 @@ import { NodeQueue } from "./node-queue";
 import { ControlQueue, controlName } from "./control-queue";
 import type { PendingControl } from "../world/control";
 import { NodeTray, type AssistantFiles } from "./node-tray";
-import { Menu, commandFor, commandRow, commandsOf, usageOf, type MenuCommand } from "./commands";
+import { Menu, commandFor, commandRow, commandsOf, isSkill, usageOf, type MenuCommand } from "./commands";
 import { ModelPanel, enModelPanel, zhModelPanel } from "./model-panel";
 import { effortLabel } from "./effort-slider";
 import { fileRow, mentionAt, mentioned, type FileWords, type FoundFile } from "./mention";
@@ -280,6 +280,13 @@ export class ConversationPage {
   private offersFailed = 0;
   private wasMoving = false;
   private commandMenu: Menu<MenuCommand> | null = null;
+  /** A command or skill picked from the menu that takes words: it stands at
+   *  the head of the input as a chip, and what is typed after it are its
+   *  words. */
+  private picked: MenuCommand | null = null;
+  private readonly pickedChip: HTMLElement;
+  /** The note says what a command typed wants: typing again takes it away. */
+  private hinting = false;
   private modelPanel: ModelPanel | null = null;
   private fileMenu: Menu<FoundFile> | null = null;
   /** The latest `@` question; an answer to an earlier one is not shown. */
@@ -329,6 +336,7 @@ export class ConversationPage {
           <div class="composer-menus"><div class="composer-menu usage-pop" hidden></div><div class="composer-menu said-pop" role="dialog" hidden></div><div class="jobs-pop" role="dialog" hidden></div></div>
           <div class="composer-confirm" hidden></div>
           <div class="composer-tray"></div>
+          <span class="composer-picked" hidden></span>
           <textarea rows="1" enterkeyhint="send" placeholder="${escape(words.sendPlaceholder(someone.agent))}" aria-label="${escape(words.sendPlaceholder(someone.agent))}"></textarea>
           <div class="composer-row">
             <div class="composer-tools"><button class="icon-button composer-attach" type="button" hidden></button><input class="composer-pick" type="file" multiple hidden><input class="composer-shot" type="file" accept="image/*" capture="environment" hidden><button class="composer-chip" type="button" hidden></button><button class="composer-jobs" type="button" hidden></button></div>
@@ -417,6 +425,14 @@ export class ConversationPage {
       this.usagePopover = new Popover(usagePop, this.context, () => this.usageSteady?.free());
     }
     this.input = this.element.querySelector("textarea")!;
+    this.pickedChip = this.element.querySelector<HTMLElement>(".composer-picked")!;
+    this.pickedChip.addEventListener("click", (event) => {
+      if (!(event.target as HTMLElement).closest(".composer-unpick")) return;
+      this.pick(null);
+      this.input.focus();
+    });
+    // The words begin after the chip: its width indents their first line.
+    new ResizeObserver(() => this.indent()).observe(this.pickedChip);
     this.fitter = new DraftFit(this.input);
     this.action = this.element.querySelector<HTMLButtonElement>(".composer-action")!;
     this.note = this.element.querySelector<HTMLElement>(".composer-note")!;
@@ -435,6 +451,7 @@ export class ConversationPage {
     this.chip = this.element.querySelector<HTMLButtonElement>(".composer-chip")!;
     this.input.value = this.draft() ?? "";
     if (options.controls) this.menus();
+    this.pick(this.keptPick());
     if (options.files) this.fileMenuOf();
     this.context.addEventListener("click", () => this.toggleUsage());
     this.element.addEventListener("keydown", (event) => {
@@ -592,6 +609,10 @@ export class ConversationPage {
       this.submit();
     });
     this.input.addEventListener("input", () => {
+      if (this.hinting) {
+        this.hinting = false;
+        this.say("");
+      }
       this.fit();
       this.drawAction();
       this.keepDraft();
@@ -608,6 +629,12 @@ export class ConversationPage {
           event.preventDefault();
           return;
         }
+      }
+      // Backspace at the head of the words takes the chip before them away.
+      if (event.key === "Backspace" && this.picked && this.input.selectionStart === 0 && this.input.selectionEnd === 0) {
+        event.preventDefault();
+        this.pick(null);
+        return;
       }
       // Enter sends where there is a keyboard; on a touch screen it is a new
       // line, and the button sends.
@@ -1257,7 +1284,21 @@ export class ConversationPage {
   }
 
   private submit(): void {
-    const text = this.input.value.trim();
+    const typed = this.input.value.trim();
+    const picked = this.picked;
+    // A command picked from the menu runs with the words typed after it.
+    if (picked && !picked.account && this.options.controls) {
+      if (picked.arguments === "required" && !typed) {
+        this.hint(this.options.controls.words.commands.needsArgs(usageOf(picked)));
+        return;
+      }
+      this.clear();
+      this.pick(null);
+      void this.run(picked, typed);
+      return;
+    }
+    // One of the account's skills is asked for in the words themselves.
+    const text = picked?.account ? `$${picked.name}${typed ? ` ${typed}` : ""}` : typed;
     if (this.uploading()) {
       this.say(this.options.attach!.words.wait);
       return;
@@ -1284,6 +1325,7 @@ export class ConversationPage {
     this.say("");
     this.hideSaid();
     this.placeSent();
+    if (picked) this.pick(null);
     if (session) {
       this.commandMenu?.hide();
       this.nodeTray?.settle();
@@ -1487,12 +1529,15 @@ export class ConversationPage {
     const holder = this.element.querySelector<HTMLElement>(".composer-menus")!;
     this.commandMenu = new Menu<MenuCommand>("commands", (command) => commandRow(command), (command) => {
       this.commandMenu!.hide();
-      if (command.arguments === "required" || (command.arguments === "optional" && !command.control)) {
-        if (this.session) this.setWords(`/${command.name} `);
-        else this.input.value = `/${command.name} `;
+      if (command.account || command.arguments === "required" || (command.arguments === "optional" && !command.control)) {
+        // What was typed to find it gives way to its chip.
+        if (this.session) this.setWords("");
+        else this.input.value = "";
+        this.pick(command);
+        this.fit();
+        this.keepDraft();
         this.input.focus();
         this.drawAction();
-        if (command.args) this.say(usageOf(command));
       } else {
         this.clear();
         void this.run(command, "");
@@ -1725,7 +1770,7 @@ export class ConversationPage {
     }
     const command = find(this.options.conversation.moving());
     if (command?.arguments === "required" && !args) {
-      this.say(controls.words.commands.needsArgs(usageOf(command)));
+      this.hint(controls.words.commands.needsArgs(usageOf(command)));
       return;
     }
     if (command) {
@@ -2273,9 +2318,73 @@ export class ConversationPage {
   identify(who: Someone): void {
     Object.assign(this.options.someone, who);
     const said = this.options.words.sendPlaceholder(who.agent);
-    this.input.placeholder = said;
+    if (!this.picked) this.input.placeholder = said;
     this.input.setAttribute("aria-label", said);
     this.drawState();
+  }
+
+  /** Puts `command` at the head of the input as a chip, or takes the chip
+   *  away; the input's hint says what its words are for meanwhile. */
+  private pick(command: MenuCommand | null): void {
+    this.picked = command;
+    const chip = this.pickedChip;
+    const words = this.options.controls?.words.commands;
+    if (!command || !words) {
+      this.picked = null;
+      chip.hidden = true;
+      chip.replaceChildren();
+      this.input.placeholder = this.options.words.sendPlaceholder(this.options.someone.agent);
+    } else {
+      const skill = isSkill(command);
+      chip.innerHTML = `${glyph(skill ? "skill" : "command", 14)}<span class="composer-picked-name">${escape(command.account ? command.name : `/${command.name}`)}</span><button class="composer-unpick" type="button" aria-label="${escape(words.unpick)}" title="${escape(words.unpick)}">${glyph("close", 12)}</button>`;
+      chip.title = command.description;
+      chip.hidden = false;
+      this.input.placeholder = command.args ?? (skill ? words.skillWords : "");
+    }
+    this.indent();
+    this.keepPick();
+    this.drawAction();
+  }
+
+  /** Lays the chip over the head of the input's first line, and indents
+   *  that line by its width. */
+  private indent(): void {
+    const chip = this.pickedChip;
+    if (chip.hidden) {
+      this.input.style.textIndent = "";
+      return;
+    }
+    chip.style.top = `${this.input.offsetTop}px`;
+    chip.style.left = `${this.input.offsetLeft}px`;
+    this.input.style.textIndent = `${chip.offsetWidth + 6}px`;
+  }
+
+  /** Says what a command typed wants, until the words change. */
+  private hint(text: string): void {
+    this.say(text);
+    this.hinting = true;
+  }
+
+  private keepPick(): void {
+    if (!this.options.draftKey) return;
+    try {
+      const key = `${this.options.draftKey}:picked`;
+      if (this.picked) localStorage.setItem(key, JSON.stringify(this.picked));
+      else localStorage.removeItem(key);
+    } catch {
+      // Not kept: the chip is gone if the page is left.
+    }
+  }
+
+  private keptPick(): MenuCommand | null {
+    if (!this.options.draftKey || !this.options.controls) return null;
+    try {
+      const kept = localStorage.getItem(`${this.options.draftKey}:picked`);
+      const command = kept ? (JSON.parse(kept) as MenuCommand) : null;
+      return command && typeof command.name === "string" ? command : null;
+    } catch {
+      return null;
+    }
   }
 
   /** The watch on the session is over: what is shown stays, and the bar
@@ -2498,7 +2607,7 @@ export class ConversationPage {
 
   private drawAction(): void {
     const { words, conversation } = this.options;
-    const typed = this.input.value.trim() !== "" || ((this.session ? this.nodeTray?.count : this.tray?.count) ?? 0) > 0;
+    const typed = this.input.value.trim() !== "" || !!this.picked || ((this.session ? this.nodeTray?.count : this.tray?.count) ?? 0) > 0;
     const busy = conversation.busy();
     if (!busy) this.stopping = false;
     const stop = !typed && busy;

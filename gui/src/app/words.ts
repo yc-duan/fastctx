@@ -1210,6 +1210,9 @@ export const zhComposer: ComposerWords = {
     current: "当前",
     renameArgs: "<名称>",
     needsArgs: (usage) => `需要参数：${usage}`,
+    skill: "技能",
+    skillWords: "要它做什么，也可以不写",
+    unpick: "去掉",
     host: {
       compact: "压缩对话",
       model: "切换模型与推理强度",
@@ -1423,6 +1426,9 @@ export const enComposer: ComposerWords = {
     current: "current",
     renameArgs: "<name>",
     needsArgs: (usage) => `Needs arguments: ${usage}`,
+    skill: "Skill",
+    skillWords: "What to do with it, if anything",
+    unpick: "Remove",
     host: {
       compact: "Compact conversation",
       model: "Switch model and reasoning",

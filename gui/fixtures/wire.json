@@ -22225,6 +22225,12 @@
             "source": "builtin"
           }
         ],
+        "skills": [
+          {
+            "name": "deploy-checklist",
+            "description": "Before deploying a service"
+          }
+        ],
         "models": [
           {
             "id": "model",

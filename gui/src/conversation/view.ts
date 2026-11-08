@@ -52,6 +52,7 @@ import { AgentBox } from "./agent-box";
 import { toldSaid, type AgentRun } from "./agents";
 import type { Conversation } from "./conversation";
 import { escape, plain, render } from "./prose";
+import { askedSkill } from "./commands";
 import { askedHtml, askedOf } from "./goal-notice";
 import { numbered, parse } from "./diff";
 import { DiffLines, RemoteDiff, diffPaint, encodeRow, keptDiff, memoryDiff } from "./diff-lines";
@@ -1941,9 +1942,9 @@ export class ConversationView {
       // A long message shows its first lines, the rest a press away.
       if (key && longWords(text)) {
         const open = this.unfolded.has(key);
-        return `${who}<div class="bubble long${open ? " open" : ""}${state}" data-own-press><div class="bubble-text">${plain(text)}</div><button class="bubble-more" type="button" data-unfold="${escape(key)}" aria-expanded="${open}">${escape(open ? words.bubbleLess : words.bubbleMore)}</button></div>${note}`;
+        return `${who}<div class="bubble long${open ? " open" : ""}${state}" data-own-press><div class="bubble-text">${userWords(text)}</div><button class="bubble-more" type="button" data-unfold="${escape(key)}" aria-expanded="${open}">${escape(open ? words.bubbleLess : words.bubbleMore)}</button></div>${note}`;
       }
-      return `${who}<div class="bubble${state}" data-own-press>${plain(text)}</div>${note}`;
+      return `${who}<div class="bubble${state}" data-own-press>${userWords(text)}</div>${note}`;
     }
     // Words from another resident, or the World's own telling from a node
     // too old to say it as facts: never in the user's bubble. The head notes
@@ -3693,4 +3694,14 @@ function msOf(time: string): number {
   const value = parseFloat(time);
   if (!Number.isFinite(value)) return 0;
   return time.trim().endsWith("ms") ? value : value * 1000;
+}
+
+/** The user's words, one of the account's skills they ask for (`$name` at
+ *  their head) drawn as its chip, as the composer showed it. */
+function userWords(text: string): string {
+  const asked = askedSkill(text);
+  if (!asked) return plain(text);
+  const chip = `<span class="bubble-skill">${glyph("skill", 13)}<span>${escape(asked.name)}</span></span>`;
+  const rest = plain(asked.rest);
+  return rest.startsWith("<p>") ? `<p>${chip}${rest.slice(3)}` : `<p>${chip}</p>`;
 }

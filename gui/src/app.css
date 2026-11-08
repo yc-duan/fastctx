@@ -386,6 +386,57 @@
   flex: none;
 }
 
+/* A command or skill picked from the slash menu stands at the head of the
+   input's first line, its words typed after it (the line is indented by
+   its width): a pill in the accent's wash, the skill's book or the
+   command's mark, its name, and a cross that takes it away. */
+.composer-picked {
+  position: absolute;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 60%;
+  height: calc(var(--body-size) * var(--leading-prose));
+  margin-top: 2px;
+  padding: 0 2px 0 8px;
+  border-radius: var(--radius-full);
+  background: var(--accent-wash);
+  color: var(--text-strong);
+  font-size: var(--size-text);
+  white-space: nowrap;
+}
+
+.composer-picked[hidden] {
+  display: none;
+}
+
+.composer-picked > .glyph {
+  flex: none;
+  color: var(--text-2);
+}
+
+.composer-picked-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.composer-unpick {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  color: var(--text-3);
+}
+
+.composer-unpick:hover {
+  color: var(--text);
+  background: var(--hairline);
+}
+
 .composer-chip {
   display: inline-flex;
   align-items: center;
@@ -562,6 +613,17 @@
 .menu-name {
   color: var(--text-strong);
   white-space: nowrap;
+}
+
+/* One of the account's own skills: its book before its name. */
+.menu-skill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.menu-skill > .glyph {
+  color: var(--text-2);
 }
 
 .menu-args,

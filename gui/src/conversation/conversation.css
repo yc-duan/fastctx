@@ -157,6 +157,21 @@
   margin: 0;
 }
 
+/* One of the account's skills the words asked for, as the composer showed
+   it: a small pill at their head. */
+.bubble-skill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: 6px;
+  padding: 0 8px;
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--on-bubble) 10%, transparent);
+  font-size: var(--size-text);
+  line-height: 1.6;
+  vertical-align: middle;
+}
+
 /* A long message of the user's: its first ten lines, fading out under
    them, and the way to the rest at its foot. */
 .bubble.long:not(.open) > .bubble-text {
