@@ -86,9 +86,10 @@ const CLAUDE_TABLE: [string, string, string][] = [
   ["claude-opus-5", "Opus 5", "high"],
   ["claude-haiku-5-5", "Haiku 5.5", "medium"],
 ];
-const modelEdits = new Map<string, ModelEdits>(
-  new URLSearchParams(location.search).has("modelsEdited") ? [["C:\\Users\\me\\.claude", { removed: ["claude-opus-5"], added: ["deepseek-flash", "claude-opus-5-6"] }]] : [],
-);
+const modelEdits = new Map<string, ModelEdits>();
+if (import.meta.env.DEV && new URLSearchParams(location.search).has("modelsEdited")) {
+  modelEdits.set("C:\\Users\\me\\.claude", { removed: ["claude-opus-5"], added: ["deepseek-flash", "claude-opus-5-6"] });
+}
 /** The logins the workbench is open in, as opening and closing it set. */
 const benches = new Set<string>(["C:\\Users\\me\\.codex"]);
 /** When the laptop was scanned, finding nothing; never, at first. */
@@ -121,7 +122,7 @@ function candidate(agent: "codex" | "claude", dir: string): Login {
 
 // `?drift`: the World's tools in the desktop's two Codex logins wait for
 // the user, one changed since, one for its output limit.
-const drifting = new URLSearchParams(location.search).has("drift");
+const drifting = import.meta.env.DEV && new URLSearchParams(location.search).has("drift");
 
 function desktop(now: number): MachineLogins {
   const record = desktopAsIs(now);
