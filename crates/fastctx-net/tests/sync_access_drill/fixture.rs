@@ -2,7 +2,7 @@
 use fastctx_net::{
     directory::{Account, Directory, Level, Member, Share},
     sign::{self, SecretKey},
-    sync_access::{AccessState, DirectoryPolicy, DirectorySnapshot, MachineGrant, Snapshot},
+    sync_access::{AccessState, DirectoryPolicy, DirectorySnapshot, MachineGrant, Snapshot, SourceCustody},
     sync_proof::{IdentitySigner, IdentityVerifier},
 };
 use fastctx_sync::{
@@ -23,7 +23,7 @@ pub struct World {
     pub hub: HubId,
     pub identities: Vec<AccountIdentity>,
     pub directory: Directory,
-    pub devices: [DeviceId; 2],
+    pub devices: [DeviceId; 3],
     signer: IdentitySigner,
     identity: HubSigningIdentity,
     verifier: IdentityVerifier,
@@ -48,9 +48,9 @@ impl World {
         let verifier = IdentityVerifier::new(hub.clone(), [public], metrics);
         let mut directory = Directory::default();
         let mut identities = Vec::new();
-        let keys = [SecretKey::generate()?, SecretKey::generate()?];
+        let keys = [SecretKey::generate()?, SecretKey::generate()?, SecretKey::generate()?];
         let devices = keys.each_ref().map(|k| DeviceId::from_bytes(*k.public().as_bytes()));
-        for (index, name) in ["owner", "reader"].into_iter().enumerate() {
+        for (index, name) in ["owner", "reader", "executor"].into_iter().enumerate() {
             let name: fastctx_types::AccountName = name.parse()?;
             let opened = "2026-01-01T00:00:00Z".parse()?;
             identities.push(AccountIdentity {
@@ -158,6 +158,15 @@ impl World {
         Ok(fastctx_sync::scope::verify(&descriptor.scope, proof, &self.identity, &self.verifier)?)
     }
     pub fn policy(&self, scope: VerifiedScope, holder: Holder, reader_grant: Option<u64>) -> Result<DirectoryPolicy> {
+        self.policy_with_source(scope, holder, reader_grant, None)
+    }
+    pub fn policy_with_source(
+        &self,
+        scope: VerifiedScope,
+        holder: Holder,
+        reader_grant: Option<u64>,
+        source: Option<SourceCustody>,
+    ) -> Result<DirectoryPolicy> {
         let mut grants = vec![MachineGrant {
             machine: self.devices[0].clone(),
             account: self.identities[0].id.clone(),
@@ -178,7 +187,7 @@ impl World {
             scope: Arc::new(scope),
             holder,
             enabled: true,
-            source: None,
+            source,
         }))))
     }
 }

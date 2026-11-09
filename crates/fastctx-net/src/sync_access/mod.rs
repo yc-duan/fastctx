@@ -105,6 +105,9 @@ pub enum SourcePhase {
 
 /// Supplied from the trusted source registry, never from the transfer request.
 /// `AwaitingHub` is persistent and ends only after complete hub content ACKs.
+/// Job provenance includes its old reader routing, verified from dispatch/job
+/// and PageSource/consent where applicable. Project membership alone does not
+/// authorize routing a private page job's output into the whole project scope.
 #[derive(Clone)]
 pub struct SourceCustody {
     pub object: ObjectKey,

@@ -1,5 +1,6 @@
 //! Permission lifecycle uses real scope signatures and current membership snapshots.
 mod fixture;
+mod jobs;
 use fastctx_net::directory::Level;
 use fastctx_sync::{
     cursor::{Holder, Revision},
@@ -20,6 +21,7 @@ fn main() -> Result<()> {
         return Err("the drill root must not exist".into());
     }
     fastctx_platform::ensure_private_dir(&root)?;
+    REGISTRY.validate()?;
     let mut world = World::new()?;
     let owner = ScopeOwner::Account { identity: world.identities[0].clone() };
     let audit = REGISTRY.asset("machine.audit")?.registered();
@@ -105,8 +107,9 @@ fn main() -> Result<()> {
     assert!(!allowed(policy.can_read_object(&context, timer, &object)));
     context.principal = Principal::LocalService;
     assert!(!allowed(policy.can_read_object(&context, timer, &object)));
+    jobs::run()?;
     println!(
-        "scope lifecycle: real signatures, grant segments, revocation/regrant, administrator transfer and user-only reads passed"
+        "scope lifecycle: real signatures, grant segments, revocation/regrant, administrator transfer, user-only reads and page job custody passed"
     );
     Ok(())
 }

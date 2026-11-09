@@ -33,13 +33,23 @@ pub struct HostBinding {
     pub host: DeviceId,
     pub epoch: ProducerEpoch,
 }
+/// Page jobs retain their real project/page owner rather than inventing a
+/// conversation. Coordinates are checked against authenticated dispatch, the
+/// durable PageSource/job and its consent before source provenance is registered.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum JobSourceOwner {
+    Resident { conversation: ObjectKey },
+    Page { project: ObjectKey, page: ObjectKey },
+}
+
 /// Verified against authenticated dispatch and the durable job record. Finishing
 /// the job does not end source custody; revocation and deletion still apply.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct JobBinding {
     pub job: ObjectKey,
     pub epoch: ProducerEpoch,
-    pub conversation: ObjectKey,
+    pub owner: JobSourceOwner,
     pub account: AccountId,
     pub executor: DeviceId,
     pub dispatcher: DeviceId,

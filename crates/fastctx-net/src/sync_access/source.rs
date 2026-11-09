@@ -1,6 +1,10 @@
 use super::{Snapshot, SourcePhase};
 use fastctx_sync::{
-    cursor::Holder, identity::ObjectKey, registry::RegisteredKind, scope::ScopeSubject, store::access::HoldingUse,
+    cursor::Holder,
+    identity::ObjectKey,
+    registry::RegisteredKind,
+    scope::ScopeSubject,
+    store::access::{HoldingUse, JobBinding, JobSourceOwner},
 };
 
 pub(super) fn keeps(state: &Snapshot, kind: RegisteredKind, object: &ObjectKey, purpose: &HoldingUse) -> bool {
@@ -21,11 +25,11 @@ pub(super) fn keeps(state: &Snapshot, kind: RegisteredKind, object: &ObjectKey, 
         return false;
     }
     let descriptor = state.scope.descriptor();
-    let Some(owner) = descriptor.owner.account() else {
-        return false;
+    let Some(owner) = descriptor.owner.account() else { return false };
+    let matches_conversation = |key: &ObjectKey| {
+        matches!(&descriptor.subject, ScopeSubject::Conversation { conversation, .. }
+            if key.scope == descriptor.scope && key.object == *conversation)
     };
-    let ScopeSubject::Conversation { conversation, .. } = &descriptor.subject else { return false };
-    let matches_conversation = |key: &ObjectKey| key.scope == descriptor.scope && key.object == *conversation;
     match purpose {
         HoldingUse::Replica => false,
         HoldingUse::RuntimeSource { host } => {
@@ -37,15 +41,46 @@ pub(super) fn keeps(state: &Snapshot, kind: RegisteredKind, object: &ObjectKey, 
         HoldingUse::JobSource { job } => {
             kind.registration().job_source
                 && job.executor == *device
-                && job.account == owner.id
                 && job.job.scope == descriptor.scope
-                && matches_conversation(&job.conversation)
+                && state.directory.identity(&job.account).is_some()
+                && job_owner(state, job)
         }
         HoldingUse::WorkspaceSource { workspace } => {
             kind.registration().workspace_source
                 && workspace.machine == *device
                 && workspace.account == owner.id
                 && matches_conversation(&workspace.conversation)
+        }
+    }
+}
+
+fn job_owner(state: &Snapshot, job: &JobBinding) -> bool {
+    let descriptor = state.scope.descriptor();
+    let Some(owner) = descriptor.owner.account() else { return false };
+    match &job.owner {
+        JobSourceOwner::Resident { conversation } => {
+            conversation.scope.hub == descriptor.scope.hub
+                && job.account == owner.id
+                && match &descriptor.subject {
+                    ScopeSubject::Conversation { conversation: id, .. } => {
+                        conversation.scope == descriptor.scope && conversation.object == *id
+                    }
+                    ScopeSubject::Account => true,
+                    _ => false,
+                }
+        }
+        JobSourceOwner::Page { project, page } => {
+            if project.scope.hub != descriptor.scope.hub || page.scope != project.scope {
+                return false;
+            }
+            // A project's owner can differ from the consenting job account.
+            // SourceCustody already records the authenticated audience routing;
+            // a caller-supplied PageSource cannot grant project-wide retention.
+            match &descriptor.subject {
+                ScopeSubject::Account => job.account == owner.id,
+                ScopeSubject::Project { project: id, .. } => project.scope == descriptor.scope && project.object == *id,
+                _ => false,
+            }
         }
     }
 }

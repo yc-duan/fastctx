@@ -40,6 +40,10 @@ pub enum ConflictRule {
     SingleWriter,
     Expected,
     TextMerge,
+    /// Positions are comparable only within the same identified stream.
+    ReadPositionMax,
+    /// Merge disjoint path edits relative to the supplied directory base.
+    DirectoryMerge,
     Yrs,
     Rebuild,
     LocalOwner,
@@ -212,11 +216,20 @@ impl Registry {
             }
             if (entry.job_source || entry.workspace_source)
                 && (entry.class != DataClass::Asset
-                    || entry.scopes != [ScopePolicy::Conversation]
                     || entry.authority != AuthorityRule::SourceDevice
                     || entry.conflict != ConflictRule::SingleWriter)
             {
-                return Err(format!("source custody for {} lacks a conversation source authority", entry.id));
+                return Err(format!("source custody for {} lacks a source authority", entry.id));
+            }
+            if entry.workspace_source && entry.scopes != [ScopePolicy::Conversation] {
+                return Err(format!("workspace source {} requires a conversation scope", entry.id));
+            }
+            if entry.job_source
+                && entry.scopes.iter().any(|scope| {
+                    !matches!(scope, ScopePolicy::Conversation | ScopePolicy::Account | ScopePolicy::Project)
+                })
+            {
+                return Err(format!("job source {} has an unsupported audience scope", entry.id));
             }
         }
         Ok(())

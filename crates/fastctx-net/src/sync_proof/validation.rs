@@ -17,7 +17,14 @@ pub(super) fn record_authority(kind: &str, schema: u16, authority: &Authority) -
     };
     if kind.registration().authority != expected
         || kind.registration().schema != schema
-        || !matches!(kind.registration().conflict, ConflictRule::Expected | ConflictRule::TextMerge | ConflictRule::Yrs)
+        || !matches!(
+            kind.registration().conflict,
+            ConflictRule::Expected
+                | ConflictRule::TextMerge
+                | ConflictRule::ReadPositionMax
+                | ConflictRule::DirectoryMerge
+                | ConflictRule::Yrs
+        )
     {
         return Err(Error::Denied("this authority cannot arbitrate the registered record kind".into()));
     }
