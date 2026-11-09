@@ -1,0 +1,954 @@
+{
+  "schema": 1,
+  "contract": "Description-only schemas. Exact bytes, parsed history metadata and root/version fences are verified by bounded semantic preparation before acceptance. Metadata and runtime integration remain disabled.",
+  "cases": [
+    {
+      "kind": "conversation.plan",
+      "name": "referenced-plan",
+      "body": {
+        "target": {
+          "kind": "conversation",
+          "conversation": {
+            "scope": {
+              "hub": "w-0102030405060708",
+              "scope": "s-1111111111111111111111111111111111111111111111111111111111111111"
+            },
+            "object": "o-2222222222222222222222222222222222222222222222222222222222222222"
+          }
+        },
+        "text": {
+          "root": {
+            "kind": "single",
+            "block": {
+              "domain": {
+                "hub": "w-0102030405060708",
+                "scope": "s-1111111111111111111111111111111111111111111111111111111111111111"
+              },
+              "algorithm": "sha256",
+              "digest": "bcb6b3f45a63678cad76e733e15d6cec719757d0ce6f6b8de4b9acd9c1e0664c"
+            },
+            "decoded_bytes": 6
+          },
+          "bytes": "6",
+          "digest": "bcb6b3f45a63678cad76e733e15d6cec719757d0ce6f6b8de4b9acd9c1e0664c",
+          "utf8_bom": false
+        },
+        "details": {
+          "kind": "plan",
+          "author": {
+            "kind": "user"
+          },
+          "submission": null
+        }
+      },
+      "valid": true
+    },
+    {
+      "kind": "conversation.plan",
+      "name": "utf8-bom-plan",
+      "body": {
+        "target": {
+          "kind": "conversation",
+          "conversation": {
+            "scope": {
+              "hub": "w-0102030405060708",
+              "scope": "s-1111111111111111111111111111111111111111111111111111111111111111"
+            },
+            "object": "o-2222222222222222222222222222222222222222222222222222222222222222"
+          }
+        },
+        "text": {
+          "root": {
+            "kind": "single",
+            "block": {
+              "domain": {
+                "hub": "w-0102030405060708",
+                "scope": "s-1111111111111111111111111111111111111111111111111111111111111111"
+              },
+              "algorithm": "sha256",
+              "digest": "dd8bd4354a07e24088a21ca5cc67290a2c84d2660897d32a3a4f015210549f9e"
+            },
+            "decoded_bytes": 9
+          },
+          "bytes": "9",
+          "digest": "dd8bd4354a07e24088a21ca5cc67290a2c84d2660897d32a3a4f015210549f9e",
+          "utf8_bom": true
+        },
+        "details": {
+          "kind": "plan",
+          "author": {
+            "kind": "user"
+          },
+          "submission": null
+        }
+      },
+      "valid": true
+    },
+    {
+      "kind": "conversation.plan",
+      "name": "empty-plan-is-not-tombstone",
+      "body": {
+        "target": {
+          "kind": "conversation",
+          "conversation": {
+            "scope": {
+              "hub": "w-0102030405060708",
+              "scope": "s-1111111111111111111111111111111111111111111111111111111111111111"
+            },
+            "object": "o-2222222222222222222222222222222222222222222222222222222222222222"
+          }
+        },
+        "text": {
+          "root": {
+            "kind": "single",
+            "block": {
+              "domain": {
+                "hub": "w-0102030405060708",
+                "scope": "s-1111111111111111111111111111111111111111111111111111111111111111"
+              },
+              "algorithm": "sha256",
+              "digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "decoded_bytes": 0
+          },
+          "bytes": "0",
+          "digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "utf8_bom": false
+        },
+        "details": {
+          "kind": "plan",
+          "author": {
+            "kind": "user"
+          },
+          "submission": null
+        }
+      },
+      "valid": true
+    },
+    {
+      "kind": "conversation.plan",
+      "name": "inline-text-is-not-description",
+      "body": {
+        "target": {
+          "kind": "conversation",
+          "conversation": {
+            "scope": {
+              "hub": "w-0102030405060708",
+              "scope": "s-1111111111111111111111111111111111111111111111111111111111111111"
+            },
+            "object": "o-2222222222222222222222222222222222222222222222222222222222222222"
+          }
+        },
+        "text": {
+          "root": {
+            "kind": "single",
+            "block": {
+              "domain": {
+                "hub": "w-0102030405060708",
+                "scope": "s-1111111111111111111111111111111111111111111111111111111111111111"
+              },
+              "algorithm": "sha256",
+              "digest": "bcb6b3f45a63678cad76e733e15d6cec719757d0ce6f6b8de4b9acd9c1e0664c"
+            },
+            "decoded_bytes": 6
+          },
+          "bytes": "6",
+          "digest": "bcb6b3f45a63678cad76e733e15d6cec719757d0ce6f6b8de4b9acd9c1e0664c",
+          "utf8_bom": false
+        },
+        "details": {
+          "kind": "plan",
+          "author": {
+            "kind": "user"
+          },
+          "submission": null
+        },
+        "markdown": "Plan"
+      },
+      "valid": false
+    },
+    {
+      "kind": "conversation.plan",
+      "name": "cross-scope-reference",
+      "body": {
+        "target": {
+          "kind": "conversation",
+          "conversation": {
+            "scope": {
+              "hub": "w-0102030405060708",
+              "scope": "s-1111111111111111111111111111111111111111111111111111111111111111"
+            },
+            "object": "o-2222222222222222222222222222222222222222222222222222222222222222"
+          }
+        },
+        "text": {
+          "root": {
+            "kind": "single",
+            "block": {
+              "domain": {
+                "hub": "w-0102030405060708",
+                "scope": "s-3333333333333333333333333333333333333333333333333333333333333333"
+              },
+              "algorithm": "sha256",
+              "digest": "bcb6b3f45a63678cad76e733e15d6cec719757d0ce6f6b8de4b9acd9c1e0664c"
+            },
+            "decoded_bytes": 6
+          },
+          "bytes": "6",
+          "digest": "bcb6b3f45a63678cad76e733e15d6cec719757d0ce6f6b8de4b9acd9c1e0664c",
+          "utf8_bom": false
+        },
+        "details": {
+          "kind": "plan",
+          "author": {
+            "kind": "user"
+          },
+          "submission": null
+        }
+      },
+      "valid": false
+    },
+    {
+      "kind": "conversation.plan",
+      "name": "extent-disagrees",
+      "body": {
+        "target": {
+          "kind": "conversation",
+          "conversation": {
+            "scope": {
+              "hub": "w-0102030405060708",
+              "scope": "s-1111111111111111111111111111111111111111111111111111111111111111"
+            },
+            "object": "o-2222222222222222222222222222222222222222222222222222222222222222"
+          }
+        },
+        "text": {
+          "root": {
+            "kind": "single",
+            "block": {
+              "domain": {
+                "hub": "w-0102030405060708",
+                "scope": "s-1111111111111111111111111111111111111111111111111111111111111111"
+              },
+              "algorithm": "sha256",
+              "digest": "bcb6b3f45a63678cad76e733e15d6cec719757d0ce6f6b8de4b9acd9c1e0664c"
+            },
+            "decoded_bytes": 6
+          },
+          "bytes": "9",
+          "digest": "bcb6b3f45a63678cad76e733e15d6cec719757d0ce6f6b8de4b9acd9c1e0664c",
+          "utf8_bom": false
+        },
+        "details": {
+          "kind": "plan",
+          "author": {
+            "kind": "user"
+          },
+          "submission": null
+        }
+      },
+      "valid": false
+    },
+    {
+      "kind": "conversation.plan",
+      "name": "digest-disagrees",
+      "body": {
+        "target": {
+          "kind": "conversation",
+          "conversation": {
+            "scope": {
+              "hub": "w-0102030405060708",
+              "scope": "s-1111111111111111111111111111111111111111111111111111111111111111"
+            },
+            "object": "o-2222222222222222222222222222222222222222222222222222222222222222"
+          }
+        },
+        "text": {
+          "root": {
+            "kind": "single",
+            "block": {
+              "domain": {
+                "hub": "w-0102030405060708",
+                "scope": "s-1111111111111111111111111111111111111111111111111111111111111111"
+              },
+              "algorithm": "sha256",
+              "digest": "bcb6b3f45a63678cad76e733e15d6cec719757d0ce6f6b8de4b9acd9c1e0664c"
+            },
+            "decoded_bytes": 6
+          },
+          "bytes": "6",
+          "digest": "4444444444444444444444444444444444444444444444444444444444444444",
+          "utf8_bom": false
+        },
+        "details": {
+          "kind": "plan",
+          "author": {
+            "kind": "user"
+          },
+          "submission": null
+        }
+      },
+      "valid": false
+    },
+    {
+      "kind": "conversation.plan",
+      "name": "version-does-not-belong-in-body",
+      "body": {
+        "target": {
+          "kind": "conversation",
+          "conversation": {
+            "scope": {
+              "hub": "w-0102030405060708",
+              "scope": "s-1111111111111111111111111111111111111111111111111111111111111111"
+            },
+            "object": "o-2222222222222222222222222222222222222222222222222222222222222222"
+          }
+        },
+        "text": {
+          "root": {
+            "kind": "single",
+            "block": {
+              "domain": {
+                "hub": "w-0102030405060708",
+                "scope": "s-1111111111111111111111111111111111111111111111111111111111111111"
+              },
+              "algorithm": "sha256",
+              "digest": "bcb6b3f45a63678cad76e733e15d6cec719757d0ce6f6b8de4b9acd9c1e0664c"
+            },
+            "decoded_bytes": 6
+          },
+          "bytes": "6",
+          "digest": "bcb6b3f45a63678cad76e733e15d6cec719757d0ce6f6b8de4b9acd9c1e0664c",
+          "utf8_bom": false
+        },
+        "details": {
+          "kind": "plan",
+          "author": {
+            "kind": "user"
+          },
+          "submission": null
+        },
+        "version": 1
+      },
+      "valid": false
+    },
+    {
+      "kind": "conversation.plan",
+      "name": "project-is-not-plan-owner",
+      "body": {
+        "target": {
+          "kind": "project",
+          "project": {
+            "scope": {
+              "hub": "w-0102030405060708",
+              "scope": "s-1111111111111111111111111111111111111111111111111111111111111111"
+            },
+            "object": "o-2222222222222222222222222222222222222222222222222222222222222222"
+          }
+        },
+        "text": {
+          "root": {
+            "kind": "single",
+            "block": {
+              "domain": {
+                "hub": "w-0102030405060708",
+                "scope": "s-1111111111111111111111111111111111111111111111111111111111111111"
+              },
+              "algorithm": "sha256",
+              "digest": "bcb6b3f45a63678cad76e733e15d6cec719757d0ce6f6b8de4b9acd9c1e0664c"
+            },
+            "decoded_bytes": 6
+          },
+          "bytes": "6",
+          "digest": "bcb6b3f45a63678cad76e733e15d6cec719757d0ce6f6b8de4b9acd9c1e0664c",
+          "utf8_bom": false
+        },
+        "details": {
+          "kind": "plan",
+          "author": {
+            "kind": "user"
+          },
+          "submission": null
+        }
+      },
+      "valid": false
+    },
+    {
+      "kind": "conversation.history",
+      "name": "history-description",
+      "body": {
+        "target": {
+          "kind": "conversation",
+          "conversation": {
+            "scope": {
+              "hub": "w-0102030405060708",
+              "scope": "s-1111111111111111111111111111111111111111111111111111111111111111"
+            },
+            "object": "o-2222222222222222222222222222222222222222222222222222222222222222"
+          }
+        },
+        "text": {
+          "root": {
+            "kind": "single",
+            "block": {
+              "domain": {
+                "hub": "w-0102030405060708",
+                "scope": "s-1111111111111111111111111111111111111111111111111111111111111111"
+              },
+              "algorithm": "sha256",
+              "digest": "8d870616adec0a8420cb420e26c202eebf3a77d248136a829a29dee96d47dbeb"
+            },
+            "decoded_bytes": 49
+          },
+          "bytes": "49",
+          "digest": "8d870616adec0a8420cb420e26c202eebf3a77d248136a829a29dee96d47dbeb",
+          "utf8_bom": false
+        },
+        "details": {
+          "kind": "history",
+          "name": "topic",
+          "description": "topic text",
+          "retired": false,
+          "author": {
+            "by": {
+              "kind": "user"
+            },
+            "on": "machine",
+            "at": "2026-01-01T00:00:00Z"
+          },
+          "submission": null
+        }
+      },
+      "valid": true
+    },
+    {
+      "kind": "conversation.history",
+      "name": "retired-keeps-content",
+      "body": {
+        "target": {
+          "kind": "conversation",
+          "conversation": {
+            "scope": {
+              "hub": "w-0102030405060708",
+              "scope": "s-1111111111111111111111111111111111111111111111111111111111111111"
+            },
+            "object": "o-2222222222222222222222222222222222222222222222222222222222222222"
+          }
+        },
+        "text": {
+          "root": {
+            "kind": "single",
+            "block": {
+              "domain": {
+                "hub": "w-0102030405060708",
+                "scope": "s-1111111111111111111111111111111111111111111111111111111111111111"
+              },
+              "algorithm": "sha256",
+              "digest": "8d870616adec0a8420cb420e26c202eebf3a77d248136a829a29dee96d47dbeb"
+            },
+            "decoded_bytes": 49
+          },
+          "bytes": "49",
+          "digest": "8d870616adec0a8420cb420e26c202eebf3a77d248136a829a29dee96d47dbeb",
+          "utf8_bom": false
+        },
+        "details": {
+          "kind": "history",
+          "name": "topic",
+          "description": "topic text",
+          "retired": true,
+          "author": {
+            "by": {
+              "kind": "user"
+            },
+            "on": "machine",
+            "at": "2026-01-01T00:00:00Z"
+          },
+          "submission": null
+        }
+      },
+      "valid": true
+    },
+    {
+      "kind": "conversation.history",
+      "name": "old-long-description",
+      "body": {
+        "target": {
+          "kind": "conversation",
+          "conversation": {
+            "scope": {
+              "hub": "w-0102030405060708",
+              "scope": "s-1111111111111111111111111111111111111111111111111111111111111111"
+            },
+            "object": "o-2222222222222222222222222222222222222222222222222222222222222222"
+          }
+        },
+        "text": {
+          "root": {
+            "kind": "single",
+            "block": {
+              "domain": {
+                "hub": "w-0102030405060708",
+                "scope": "s-1111111111111111111111111111111111111111111111111111111111111111"
+              },
+              "algorithm": "sha256",
+              "digest": "8d870616adec0a8420cb420e26c202eebf3a77d248136a829a29dee96d47dbeb"
+            },
+            "decoded_bytes": 49
+          },
+          "bytes": "49",
+          "digest": "8d870616adec0a8420cb420e26c202eebf3a77d248136a829a29dee96d47dbeb",
+          "utf8_bom": false
+        },
+        "details": {
+          "kind": "history",
+          "name": "topic",
+          "description": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "retired": false,
+          "author": {
+            "by": {
+              "kind": "user"
+            },
+            "on": "machine",
+            "at": "2026-01-01T00:00:00Z"
+          },
+          "submission": null
+        }
+      },
+      "valid": true
+    },
+    {
+      "kind": "conversation.history",
+      "name": "empty-description",
+      "body": {
+        "target": {
+          "kind": "conversation",
+          "conversation": {
+            "scope": {
+              "hub": "w-0102030405060708",
+              "scope": "s-1111111111111111111111111111111111111111111111111111111111111111"
+            },
+            "object": "o-2222222222222222222222222222222222222222222222222222222222222222"
+          }
+        },
+        "text": {
+          "root": {
+            "kind": "single",
+            "block": {
+              "domain": {
+                "hub": "w-0102030405060708",
+                "scope": "s-1111111111111111111111111111111111111111111111111111111111111111"
+              },
+              "algorithm": "sha256",
+              "digest": "8d870616adec0a8420cb420e26c202eebf3a77d248136a829a29dee96d47dbeb"
+            },
+            "decoded_bytes": 49
+          },
+          "bytes": "49",
+          "digest": "8d870616adec0a8420cb420e26c202eebf3a77d248136a829a29dee96d47dbeb",
+          "utf8_bom": false
+        },
+        "details": {
+          "kind": "history",
+          "name": "topic",
+          "description": "",
+          "retired": false,
+          "author": {
+            "by": {
+              "kind": "user"
+            },
+            "on": "machine",
+            "at": "2026-01-01T00:00:00Z"
+          },
+          "submission": null
+        }
+      },
+      "valid": false
+    },
+    {
+      "kind": "conversation.history",
+      "name": "multiline-description",
+      "body": {
+        "target": {
+          "kind": "conversation",
+          "conversation": {
+            "scope": {
+              "hub": "w-0102030405060708",
+              "scope": "s-1111111111111111111111111111111111111111111111111111111111111111"
+            },
+            "object": "o-2222222222222222222222222222222222222222222222222222222222222222"
+          }
+        },
+        "text": {
+          "root": {
+            "kind": "single",
+            "block": {
+              "domain": {
+                "hub": "w-0102030405060708",
+                "scope": "s-1111111111111111111111111111111111111111111111111111111111111111"
+              },
+              "algorithm": "sha256",
+              "digest": "8d870616adec0a8420cb420e26c202eebf3a77d248136a829a29dee96d47dbeb"
+            },
+            "decoded_bytes": 49
+          },
+          "bytes": "49",
+          "digest": "8d870616adec0a8420cb420e26c202eebf3a77d248136a829a29dee96d47dbeb",
+          "utf8_bom": false
+        },
+        "details": {
+          "kind": "history",
+          "name": "topic",
+          "description": "a\nb",
+          "retired": false,
+          "author": {
+            "by": {
+              "kind": "user"
+            },
+            "on": "machine",
+            "at": "2026-01-01T00:00:00Z"
+          },
+          "submission": null
+        }
+      },
+      "valid": false
+    },
+    {
+      "kind": "conversation.history",
+      "name": "reserved-name",
+      "body": {
+        "target": {
+          "kind": "conversation",
+          "conversation": {
+            "scope": {
+              "hub": "w-0102030405060708",
+              "scope": "s-1111111111111111111111111111111111111111111111111111111111111111"
+            },
+            "object": "o-2222222222222222222222222222222222222222222222222222222222222222"
+          }
+        },
+        "text": {
+          "root": {
+            "kind": "single",
+            "block": {
+              "domain": {
+                "hub": "w-0102030405060708",
+                "scope": "s-1111111111111111111111111111111111111111111111111111111111111111"
+              },
+              "algorithm": "sha256",
+              "digest": "8d870616adec0a8420cb420e26c202eebf3a77d248136a829a29dee96d47dbeb"
+            },
+            "decoded_bytes": 49
+          },
+          "bytes": "49",
+          "digest": "8d870616adec0a8420cb420e26c202eebf3a77d248136a829a29dee96d47dbeb",
+          "utf8_bom": false
+        },
+        "details": {
+          "kind": "history",
+          "name": "com0",
+          "description": "topic text",
+          "retired": false,
+          "author": {
+            "by": {
+              "kind": "user"
+            },
+            "on": "machine",
+            "at": "2026-01-01T00:00:00Z"
+          },
+          "submission": null
+        }
+      },
+      "valid": false
+    },
+    {
+      "kind": "conversation.history",
+      "name": "uppercase-name",
+      "body": {
+        "target": {
+          "kind": "conversation",
+          "conversation": {
+            "scope": {
+              "hub": "w-0102030405060708",
+              "scope": "s-1111111111111111111111111111111111111111111111111111111111111111"
+            },
+            "object": "o-2222222222222222222222222222222222222222222222222222222222222222"
+          }
+        },
+        "text": {
+          "root": {
+            "kind": "single",
+            "block": {
+              "domain": {
+                "hub": "w-0102030405060708",
+                "scope": "s-1111111111111111111111111111111111111111111111111111111111111111"
+              },
+              "algorithm": "sha256",
+              "digest": "8d870616adec0a8420cb420e26c202eebf3a77d248136a829a29dee96d47dbeb"
+            },
+            "decoded_bytes": 49
+          },
+          "bytes": "49",
+          "digest": "8d870616adec0a8420cb420e26c202eebf3a77d248136a829a29dee96d47dbeb",
+          "utf8_bom": false
+        },
+        "details": {
+          "kind": "history",
+          "name": "Topic",
+          "description": "topic text",
+          "retired": false,
+          "author": {
+            "by": {
+              "kind": "user"
+            },
+            "on": "machine",
+            "at": "2026-01-01T00:00:00Z"
+          },
+          "submission": null
+        }
+      },
+      "valid": false
+    },
+    {
+      "kind": "conversation.history",
+      "name": "old-uppercase-submission",
+      "body": {
+        "target": {
+          "kind": "conversation",
+          "conversation": {
+            "scope": {
+              "hub": "w-0102030405060708",
+              "scope": "s-1111111111111111111111111111111111111111111111111111111111111111"
+            },
+            "object": "o-2222222222222222222222222222222222222222222222222222222222222222"
+          }
+        },
+        "text": {
+          "root": {
+            "kind": "single",
+            "block": {
+              "domain": {
+                "hub": "w-0102030405060708",
+                "scope": "s-1111111111111111111111111111111111111111111111111111111111111111"
+              },
+              "algorithm": "sha256",
+              "digest": "8d870616adec0a8420cb420e26c202eebf3a77d248136a829a29dee96d47dbeb"
+            },
+            "decoded_bytes": 49
+          },
+          "bytes": "49",
+          "digest": "8d870616adec0a8420cb420e26c202eebf3a77d248136a829a29dee96d47dbeb",
+          "utf8_bom": false
+        },
+        "details": {
+          "kind": "history",
+          "name": "topic",
+          "description": "topic text",
+          "retired": false,
+          "author": {
+            "by": {
+              "kind": "user"
+            },
+            "on": "machine",
+            "at": "2026-01-01T00:00:00Z"
+          },
+          "submission": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        }
+      },
+      "valid": true
+    },
+    {
+      "kind": "conversation.history",
+      "name": "invalid-submission",
+      "body": {
+        "target": {
+          "kind": "conversation",
+          "conversation": {
+            "scope": {
+              "hub": "w-0102030405060708",
+              "scope": "s-1111111111111111111111111111111111111111111111111111111111111111"
+            },
+            "object": "o-2222222222222222222222222222222222222222222222222222222222222222"
+          }
+        },
+        "text": {
+          "root": {
+            "kind": "single",
+            "block": {
+              "domain": {
+                "hub": "w-0102030405060708",
+                "scope": "s-1111111111111111111111111111111111111111111111111111111111111111"
+              },
+              "algorithm": "sha256",
+              "digest": "8d870616adec0a8420cb420e26c202eebf3a77d248136a829a29dee96d47dbeb"
+            },
+            "decoded_bytes": 49
+          },
+          "bytes": "49",
+          "digest": "8d870616adec0a8420cb420e26c202eebf3a77d248136a829a29dee96d47dbeb",
+          "utf8_bom": false
+        },
+        "details": {
+          "kind": "history",
+          "name": "topic",
+          "description": "topic text",
+          "retired": false,
+          "author": {
+            "by": {
+              "kind": "user"
+            },
+            "on": "machine",
+            "at": "2026-01-01T00:00:00Z"
+          },
+          "submission": "xyz"
+        }
+      },
+      "valid": false
+    },
+    {
+      "kind": "project.history",
+      "name": "project-history",
+      "body": {
+        "target": {
+          "kind": "project",
+          "project": {
+            "scope": {
+              "hub": "w-0102030405060708",
+              "scope": "s-1111111111111111111111111111111111111111111111111111111111111111"
+            },
+            "object": "o-2222222222222222222222222222222222222222222222222222222222222222"
+          }
+        },
+        "text": {
+          "root": {
+            "kind": "single",
+            "block": {
+              "domain": {
+                "hub": "w-0102030405060708",
+                "scope": "s-1111111111111111111111111111111111111111111111111111111111111111"
+              },
+              "algorithm": "sha256",
+              "digest": "8d870616adec0a8420cb420e26c202eebf3a77d248136a829a29dee96d47dbeb"
+            },
+            "decoded_bytes": 49
+          },
+          "bytes": "49",
+          "digest": "8d870616adec0a8420cb420e26c202eebf3a77d248136a829a29dee96d47dbeb",
+          "utf8_bom": false
+        },
+        "details": {
+          "kind": "history",
+          "name": "topic",
+          "description": "topic text",
+          "retired": false,
+          "author": {
+            "by": {
+              "kind": "user"
+            },
+            "on": "machine",
+            "at": "2026-01-01T00:00:00Z"
+          },
+          "submission": null
+        }
+      },
+      "valid": true
+    },
+    {
+      "kind": "conversation.history",
+      "name": "wrong-handler-kind",
+      "body": {
+        "target": {
+          "kind": "project",
+          "project": {
+            "scope": {
+              "hub": "w-0102030405060708",
+              "scope": "s-1111111111111111111111111111111111111111111111111111111111111111"
+            },
+            "object": "o-2222222222222222222222222222222222222222222222222222222222222222"
+          }
+        },
+        "text": {
+          "root": {
+            "kind": "single",
+            "block": {
+              "domain": {
+                "hub": "w-0102030405060708",
+                "scope": "s-1111111111111111111111111111111111111111111111111111111111111111"
+              },
+              "algorithm": "sha256",
+              "digest": "8d870616adec0a8420cb420e26c202eebf3a77d248136a829a29dee96d47dbeb"
+            },
+            "decoded_bytes": 49
+          },
+          "bytes": "49",
+          "digest": "8d870616adec0a8420cb420e26c202eebf3a77d248136a829a29dee96d47dbeb",
+          "utf8_bom": false
+        },
+        "details": {
+          "kind": "history",
+          "name": "topic",
+          "description": "topic text",
+          "retired": false,
+          "author": {
+            "by": {
+              "kind": "user"
+            },
+            "on": "machine",
+            "at": "2026-01-01T00:00:00Z"
+          },
+          "submission": null
+        }
+      },
+      "valid": false
+    },
+    {
+      "kind": "project.history",
+      "name": "no-inline-history",
+      "body": {
+        "target": {
+          "kind": "project",
+          "project": {
+            "scope": {
+              "hub": "w-0102030405060708",
+              "scope": "s-1111111111111111111111111111111111111111111111111111111111111111"
+            },
+            "object": "o-2222222222222222222222222222222222222222222222222222222222222222"
+          }
+        },
+        "text": {
+          "root": {
+            "kind": "single",
+            "block": {
+              "domain": {
+                "hub": "w-0102030405060708",
+                "scope": "s-1111111111111111111111111111111111111111111111111111111111111111"
+              },
+              "algorithm": "sha256",
+              "digest": "8d870616adec0a8420cb420e26c202eebf3a77d248136a829a29dee96d47dbeb"
+            },
+            "decoded_bytes": 49
+          },
+          "bytes": "49",
+          "digest": "8d870616adec0a8420cb420e26c202eebf3a77d248136a829a29dee96d47dbeb",
+          "utf8_bom": false,
+          "inline": "body"
+        },
+        "details": {
+          "kind": "history",
+          "name": "topic",
+          "description": "topic text",
+          "retired": false,
+          "author": {
+            "by": {
+              "kind": "user"
+            },
+            "on": "machine",
+            "at": "2026-01-01T00:00:00Z"
+          },
+          "submission": null
+        }
+      },
+      "valid": false
+    }
+  ]
+}
