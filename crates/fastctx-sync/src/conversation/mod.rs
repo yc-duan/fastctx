@@ -19,8 +19,12 @@ mod item;
 mod model;
 mod placement;
 pub mod presentation;
+mod routing;
 
 pub use alias::{AliasReduction, bind_alias, redirect_observation};
-pub use control::{AgentState, BranchReduction, RewriteReduction, SourceState, agent, branch, picture, rewrite, turn};
+pub use control::{
+    AgentState, BranchReduction, PictureReduction, RewriteReduction, SourceState, agent, branch, picture, rewrite, turn,
+};
 pub use item::{AppendOutcome, AppendPlan, append, observe, place, run};
 pub use model::*;
+pub use routing::redirect_fact;

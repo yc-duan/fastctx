@@ -21,11 +21,24 @@ pub fn turn(
     Ok((TurnState { declaration: declaration.clone(), evidence: evidence.clone() }, effects))
 }
 
+#[derive(Clone, Debug)]
+pub struct PictureReduction {
+    pub state: Option<Versioned<PictureLink>>,
+    pub effects: Effects,
+}
+
 pub fn picture(
+    item: &ItemState,
     old: Option<&Versioned<PictureLink>>,
     link: &PictureLink,
     evidence: &Evidence,
-) -> Result<(Versioned<PictureLink>, Effects), Error> {
+) -> Result<PictureReduction, Error> {
+    if item.id() != link.item {
+        return Err(Error::WrongKey);
+    }
+    if let Some(redirect) = routing::redirected(item) {
+        return Ok(PictureReduction { state: old.cloned(), effects: redirect.effects });
+    }
     if let PictureTarget::Owned { content } = &link.target {
         content.validate().map_err(Error::InvalidContent)?;
     }
@@ -35,12 +48,12 @@ pub fn picture(
             return Err(Error::WrongKey);
         }
         if !old.accepts(&value)? {
-            return Ok((old.clone(), Effects::default()));
+            return Ok(PictureReduction { state: Some(old.clone()), effects: Effects::default() });
         }
     }
     let mut effects = Effects::default();
     effects.indexes.push(IndexEffect::Picture(Box::new(value.clone())));
-    Ok((value, effects))
+    Ok(PictureReduction { state: Some(value), effects })
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -135,7 +148,7 @@ pub fn rewrite(old: &SourceState, change: &HostRewritten, evidence: &Evidence) -
 
 #[derive(Clone, Debug)]
 pub struct BranchReduction {
-    pub state: Versioned<BranchChange>,
+    pub state: Option<Versioned<BranchChange>>,
     pub item: Option<ItemState>,
     pub effects: Effects,
 }
@@ -148,6 +161,21 @@ pub fn branch(
     change: &BranchChange,
     evidence: &Evidence,
 ) -> Result<BranchReduction, Error> {
+    if let BranchChange::Membership { item: id, .. } = change {
+        let Some(state) = item else {
+            return Ok(BranchReduction {
+                state: old.cloned(),
+                item: None,
+                effects: Effects { pending: vec![Dependency::Item(id.clone())], ..Effects::default() },
+            });
+        };
+        if &state.id() != id {
+            return Err(Error::WrongKey);
+        }
+        if let Some(redirect) = routing::redirected(state) {
+            return Ok(BranchReduction { state: old.cloned(), item: Some(redirect.state), effects: redirect.effects });
+        }
+    }
     let value = Versioned { evidence: evidence.clone(), value: change.clone() };
     if let Some(old) = old {
         let same_key = match (&old.value, change) {
@@ -162,7 +190,7 @@ pub fn branch(
             return Err(Error::WrongKey);
         }
         if !old.accepts(&value)? && (old != &value || matches!(change, BranchChange::Select { .. })) {
-            return Ok(BranchReduction { state: old.clone(), item: item.cloned(), effects: Effects::default() });
+            return Ok(BranchReduction { state: Some(old.clone()), item: item.cloned(), effects: Effects::default() });
         }
     }
     let mut effects = Effects::default();
@@ -197,5 +225,5 @@ pub fn branch(
             }
         }
     }
-    Ok(BranchReduction { state: value, item: result, effects })
+    Ok(BranchReduction { state: Some(value), item: result, effects })
 }

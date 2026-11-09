@@ -45,6 +45,9 @@ pub fn place(
     evidence: &Evidence,
     neighbors: Neighbors<'_>,
 ) -> Result<ItemReduction, Error> {
+    if let Some(redirect) = routing::redirected(old) {
+        return Ok(redirect);
+    }
     let mut state = old.clone();
     let mut effects = Effects::default();
     placement::choose(&mut state.placement, Versioned { evidence: evidence.clone(), value: placed.clone() })?;
@@ -54,6 +57,9 @@ pub fn place(
 }
 
 pub fn run(old: &ItemState, link: &RunLink, evidence: &Evidence) -> Result<ItemReduction, Error> {
+    if let Some(redirect) = routing::redirected(old) {
+        return Ok(redirect);
+    }
     use fastctx_types::sync::conversation_identity::ItemRole;
     if !matches!(old.identity.role(), ItemRole::ToolCall | ItemRole::ToolResult)
         || old.run.as_ref().is_some_and(|run| run.value.call != link.call)
