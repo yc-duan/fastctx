@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) fn dirty(row: &mut Row, task: Task) -> Result<()> {
+pub(super) fn dirty(db: &Connection, row: &mut Row, task: Task) -> Result<()> {
     let was_blocked = row.state == "blocked";
     if row.task.holding != task.holding {
         row.generation = next(row.generation)?;
@@ -20,6 +20,7 @@ pub(super) fn dirty(row: &mut Row, task: Task) -> Result<()> {
         if newer {
             row.task.wanted = task.wanted;
             row.task.dependency_revision = task.dependency_revision;
+            row.task.dependency_sequence = task.dependency_sequence;
             row.input_dependency = task.dependency.clone();
             row.task.dependency = task.dependency;
             row.blocked_attempts = 0;
@@ -38,13 +39,25 @@ pub(super) fn dirty(row: &mut Row, task: Task) -> Result<()> {
         }
         .into();
         row.reason = None;
-        if row.state == "blocked" && (!was_blocked || row.blocked_attempts == 0) {
-            defer_blocked(row);
+        if row.state == "blocked" {
+            block(db, row, row.task.dependency_sequence, !was_blocked || row.blocked_attempts == 0)?;
         }
     }
     Ok(())
 }
 
+fn block(db: &Connection, row: &mut Row, observed: LocalSequence, restart_delay: bool) -> Result<()> {
+    let dependency = row.task.dependency.as_deref().ok_or_else(|| sql::invalid("blocked task lacks a dependency"))?;
+    if dependencies::since(db, dependency, observed)? {
+        row.task.dependency = None;
+        row.task.next_due_millis = 0;
+        row.state = "ready".into();
+        row.reason = None;
+    } else if restart_delay {
+        defer_blocked(row);
+    }
+    Ok(())
+}
 fn defer_blocked(row: &mut Row) {
     let delay = (15 * 60 * 1000_i64).saturating_mul(1_i64 << row.blocked_attempts.min(4)).min(4 * 60 * 60 * 1000);
     row.blocked_attempts = row.blocked_attempts.saturating_add(1);
@@ -82,7 +95,7 @@ pub(super) fn finish(db: &Connection, row: &mut Row, outcome: Outcome) -> Result
         row.state = if row.task.dependency.is_some() { "blocked" } else { "ready" }.into();
         row.reason = None;
         if row.state == "blocked" {
-            defer_blocked(row);
+            block(db, row, row.task.dependency_sequence, true)?;
         }
         return Ok(());
     }
@@ -103,7 +116,7 @@ pub(super) fn finish(db: &Connection, row: &mut Row, outcome: Outcome) -> Result
             .into();
             row.reason = None;
             if row.state == "blocked" {
-                defer_blocked(row);
+                block(db, row, row.task.dependency_sequence, true)?;
             } else {
                 row.blocked_attempts = 0;
             }
@@ -114,17 +127,10 @@ pub(super) fn finish(db: &Connection, row: &mut Row, outcome: Outcome) -> Result
             row.reason = Some(reason);
         }
         Outcome::Blocked { dependency, reason } => {
-            if dependencies::since(db, &dependency, changed)? {
-                row.task.dependency = None;
-                row.task.next_due_millis = 0;
-                row.state = "ready".into();
-                row.reason = None;
-            } else {
-                row.task.dependency = Some(dependency);
-                row.state = "blocked".into();
-                row.reason = Some(reason);
-                defer_blocked(row);
-            }
+            row.task.dependency = Some(dependency);
+            row.state = "blocked".into();
+            row.reason = Some(reason);
+            block(db, row, changed, true)?;
         }
         Outcome::Superseded => {
             row.state = "superseded".into();

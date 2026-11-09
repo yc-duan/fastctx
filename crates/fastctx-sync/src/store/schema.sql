@@ -155,6 +155,7 @@ CREATE TABLE sync_tasks (
     lease_dependency_revision BLOB CHECK(lease_dependency_revision IS NULL OR length(lease_dependency_revision)=8),
     lease_dependency_sequence BLOB CHECK(lease_dependency_sequence IS NULL OR length(lease_dependency_sequence)=8),
     blocked_attempts INTEGER NOT NULL CHECK(blocked_attempts>=0),
+    dependency_sequence BLOB NOT NULL CHECK(length(dependency_sequence)=8),
     CHECK(completed<=wanted),
     CHECK((state='leased' AND lease_owner IS NOT NULL AND lease_wanted IS NOT NULL
             AND lease_dependency_revision IS NOT NULL AND lease_dependency_sequence IS NOT NULL)

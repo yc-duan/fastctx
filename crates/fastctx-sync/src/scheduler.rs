@@ -33,6 +33,9 @@ pub struct Task {
     pub dependency: Option<String>,
     /// Origin-local observation order for dependency changes at the same wanted version.
     pub dependency_revision: LocalSequence,
+    /// Read from Scheduler before observing the dependency, independent of the
+    /// observer's ordering revision. Different observations may share this stamp.
+    pub dependency_sequence: LocalSequence,
     /// Required for every download and publication task; checked on completion.
     pub holding: Option<HoldingPeriod>,
 }
@@ -57,5 +60,6 @@ pub trait Scheduler: Send + Sync {
     fn dirty(&self, task: Task) -> FutureResult<'_, ()>;
     fn due(&self, now_millis: i64, max_tasks: u32) -> FutureResult<'_, Vec<Lease>>;
     fn finish(&self, lease: Lease, outcome: Outcome) -> FutureResult<'_, ()>;
+    fn dependency_sequence(&self) -> FutureResult<'_, LocalSequence>;
     fn dependency_changed(&self, dependency: String) -> FutureResult<'_, ()>;
 }

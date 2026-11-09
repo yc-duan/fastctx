@@ -24,6 +24,7 @@ fn task(key: &str, wanted: u64, publication: u64) -> Task {
         next_due_millis: 0,
         dependency: None,
         dependency_revision: LocalSequence(wanted),
+        dependency_sequence: LocalSequence(0),
         holding: Some(HoldingPeriod {
             holder: holder(),
             scope: scope(),

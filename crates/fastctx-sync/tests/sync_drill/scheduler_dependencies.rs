@@ -14,6 +14,41 @@ pub(super) async fn run(root: &Path) -> Result<()> {
     let again = queue.due(1, 1).await?.pop().unwrap();
     queue.finish(again, Outcome::Completed { through: LocalSequence(1) }).await?;
 
+    let observed = queue.dependency_sequence().await?;
+    queue.dependency_changed("dirty-recovered".into()).await?;
+    let mut delayed = task("late-dirty", 1, 1);
+    delayed.dependency = Some("dirty-recovered".into());
+    delayed.dependency_sequence = observed;
+    queue.dirty(delayed).await?;
+    let lease = queue.due(1, 1).await?.pop().unwrap();
+    assert_eq!(lease.task.key.key, "late-dirty");
+    queue.finish(lease, Outcome::Completed { through: LocalSequence(1) }).await?;
+
+    queue.dirty(task("updated-lease", 1, 1)).await?;
+    let old_lease = queue.due(1, 1).await?.pop().unwrap();
+    let mut updated = task("updated-lease", 2, 1);
+    updated.dependency_sequence = queue.dependency_sequence().await?;
+    updated.dependency = Some("replacement-recovered".into());
+    queue.dirty(updated).await?;
+    queue.dependency_changed("replacement-recovered".into()).await?;
+    queue.finish(old_lease, Outcome::Failed { reason: "obsolete result".into() }).await?;
+    let lease = queue.due(1, 1).await?.pop().unwrap();
+    assert_eq!(lease.task.key.key, "updated-lease");
+    assert!(lease.task.dependency.is_none());
+    queue.finish(lease, Outcome::Completed { through: LocalSequence(2) }).await?;
+
+    let stamp = queue.dependency_sequence().await?;
+    let mut peers = task("same-stamp", 1, 1);
+    peers.dependency_sequence = stamp;
+    peers.dependency = Some("peer-a".into());
+    queue.dirty(peers.clone()).await?;
+    peers.dependency_revision = LocalSequence(2);
+    peers.dependency = Some("peer-b".into());
+    queue.dirty(peers).await?;
+    queue.dependency_changed("peer-b".into()).await?;
+    let lease = queue.due(1, 1).await?.pop().unwrap();
+    queue.finish(lease, Outcome::Completed { through: LocalSequence(1) }).await?;
+
     let mut latest = task("delayed-observation", 2, 1);
     latest.dependency = Some("new-peer".into());
     queue.dirty(latest.clone()).await?;

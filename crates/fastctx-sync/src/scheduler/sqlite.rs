@@ -66,7 +66,10 @@ impl Scheduler for SqliteScheduler {
                         return Err(sql::invalid("task holding period is no longer current"));
                     }
                     let mut row = get(db, &task.key)?.unwrap_or_else(|| Row::new(task.clone()));
-                    update::dirty(&mut row, task)?;
+                    if task.dependency_sequence > dependencies::sequence(db)? {
+                        return Err(sql::invalid("dependency observation claims a future sequence"));
+                    }
+                    update::dirty(db, &mut row, task)?;
                     save(db, &row)
                 })
                 .await
@@ -120,6 +123,11 @@ impl Scheduler for SqliteScheduler {
                 .map_err(|error| sql::error(error, self.worker.clone()))
         })
     }
+    fn dependency_sequence(&self) -> FutureResult<'_, LocalSequence> {
+        Box::pin(async move {
+            self.db.read_now(dependencies::sequence).map_err(|error| sql::error(error, self.worker.clone()))
+        })
+    }
     fn dependency_changed(&self, dependency: String) -> FutureResult<'_, ()> {
         Box::pin(async move {
             if dependency.is_empty() || dependency.len() > 1024 {
@@ -171,11 +179,12 @@ pub(crate) fn content_changed(db: &Connection, holding: &HoldingPeriod, key: Str
         next_due_millis: 0,
         dependency: None,
         dependency_revision: LocalSequence(wanted),
+        dependency_sequence: dependencies::sequence(db)?,
         holding: Some(holding.clone()),
     };
     validate(&task).map_err(|error| sql::invalid(error.to_string()))?;
     let mut row = existing.unwrap_or_else(|| Row::new(task.clone()));
-    update::dirty(&mut row, task)?;
+    update::dirty(db, &mut row, task)?;
     save(db, &row)
 }
 
