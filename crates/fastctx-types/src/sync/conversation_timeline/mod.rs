@@ -14,6 +14,9 @@
 //! scope and alias-receipt verification precede the pure reducer.
 
 mod body;
+mod display;
+mod display_validation;
+pub use display::*;
 mod fact;
 pub use body::*;
 pub use fact::*;

@@ -47,7 +47,10 @@ pub enum BodyAuthority {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BodySnapshot {
+    /// Original host evidence. Public readers never parse this representation.
     pub original: ContentRef,
+    /// Encoded ItemDisplayV1, at most 16 KiB. Timeline pages inline the decoded
+    /// descriptor; part bodies and original evidence are fetched only on demand.
     pub display: ContentRef,
     pub complete: bool,
     /// The appendable channel inside the projected body, if it has one.

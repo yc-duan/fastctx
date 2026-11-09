@@ -1,0 +1,170 @@
+//! Public, host-independent item bodies. Timeline pages inline the bounded V1
+//! descriptor; expanding a part uses a range read, never the host's original JSON.
+use super::PictureTarget;
+use crate::sync::{
+    conversation_identity::ImageSelector,
+    cursor::{ByteCount, Count},
+    manifest::{ContentRef, ManifestRoot},
+};
+use serde::{Deserialize, Serialize};
+
+pub const DISPLAY_VERSION: u16 = 1;
+pub const DISPLAY_BYTES: usize = 16 * 1024;
+pub const DISPLAY_PREVIEW_BYTES: usize = 4 * 1024;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DisplayKind {
+    User,
+    Message,
+    Thinking,
+    Plan,
+    Tool,
+    System,
+    Compaction,
+    Agent,
+    Hidden,
+    Unknown,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DisplayStatus {
+    Pending,
+    Running,
+    Complete,
+    Failed,
+    Interrupted,
+    Declined,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ActionKind {
+    Command,
+    Edit,
+    Read,
+    Search,
+    Image,
+    Colleague,
+    Agent,
+    Call,
+}
+
+/// Extracted at ingestion/merge time. These are bounded display summaries, not
+/// complete command arguments or paths to use as authorities for later actions.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ActionSummary {
+    pub kind: ActionKind,
+    pub text: Option<String>,
+    pub command: Option<String>,
+    pub path: Option<String>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ToolSummary {
+    pub name: String,
+    pub server: Option<String>,
+    pub machine: Option<String>,
+    pub does: ActionSummary,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DisplayChannel {
+    Text,
+    Thinking,
+    Plan,
+    ToolInput,
+    ToolOutput,
+    Image,
+    Audio,
+    Video,
+    File,
+}
+impl DisplayChannel {
+    pub fn is_text(self) -> bool {
+        matches!(self, Self::Text | Self::Thinking | Self::Plan | Self::ToolInput | Self::ToolOutput)
+    }
+    pub fn accepts_append(self, channel: crate::session::Part) -> bool {
+        match channel {
+            crate::session::Part::Text => matches!(self, Self::Text | Self::Thinking | Self::Plan),
+            crate::session::Part::Output => self == Self::ToolOutput,
+        }
+    }
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DisplayPicture {
+    pub selector: ImageSelector,
+    pub target: PictureTarget,
+}
+
+/// Text channels contain UTF-8; ToolInput contains UTF-8 JSON. Media contains
+/// original bytes. `preview` is a UTF-8 prefix, truncated at a character boundary;
+/// it is not a second body. The producer verifies the prefix against content.
+/// Parts keep their zero-based order across inline and overflow pages.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DisplayPart {
+    pub index: Count,
+    pub channel: DisplayChannel,
+    pub content: ContentRef,
+    pub bytes: ByteCount,
+    pub preview: Option<String>,
+    pub media_type: Option<String>,
+    pub picture: Option<DisplayPicture>,
+}
+/// Selects one exact growing part, including when it is in an overflow page.
+/// BodySnapshot.text_part/text_bytes describe this part, not a whole descriptor.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DisplayAppend {
+    pub channel: crate::session::Part,
+    pub index: Count,
+}
+
+/// A manifest containing subsequent ItemDisplayPartsV1 pages in index order.
+/// It contains descriptors and index child pages only. Referenced part bodies
+/// remain independently fetched assets, never physical dependencies of this
+/// lightweight description tree. The writer validates exact contiguous coverage.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DisplayPartsRef {
+    pub root: ManifestRoot,
+    pub start: Count,
+    pub count: Count,
+}
+
+/// The only public body descriptor for GUI, mobile and export. Unknown host JSON
+/// belongs exclusively in BodySnapshot.original. Use encode/decode to enforce the
+/// 16 KiB encoded bound and 4 KiB aggregate preview budget before publication.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ItemDisplayV1 {
+    pub version: u16,
+    pub kind: DisplayKind,
+    pub tool: Option<ToolSummary>,
+    pub status: Option<DisplayStatus>,
+    pub append: Option<DisplayAppend>,
+    pub parts: Vec<DisplayPart>,
+    pub more: Option<DisplayPartsRef>,
+}
+/// One overflow leaf. Previews are absent here, so the entire item's preview
+/// budget is enforced by its root descriptor without scanning all parts.
+/// Each leaf obeys the same encoded 16 KiB bound and never carries host JSON.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ItemDisplayPartsV1 {
+    pub version: u16,
+    pub start: Count,
+    pub parts: Vec<DisplayPart>,
+}
+
+/// A byte budget still ends at a Unicode scalar boundary. The caller shares the
+/// 4 KiB budget across parts; JSON escaping is charged by descriptor encoding.
+pub fn display_preview(text: &str, bytes: usize) -> String {
+    let mut end = bytes.min(text.len());
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    text[..end].to_owned()
+}
