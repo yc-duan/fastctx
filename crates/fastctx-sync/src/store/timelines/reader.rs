@@ -84,6 +84,26 @@ impl SqliteTimelines {
         Ok(())
     }
     pub(super) fn authorize(&self, context: &AccessContext, conversation: &ObjectKey) -> Result<(), Error> {
+        self.authorize_principal(context, conversation)?;
+        let deleted = self
+            .blocks
+            .database()
+            .read_now(|db| {
+                db.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM sync_tombstones WHERE hub=?1 AND scope=?2 AND object=?3)",
+                    fastctx_storage::rusqlite::params![
+                        conversation.scope.hub.to_string(),
+                        conversation.scope.scope.as_str(),
+                        conversation.object.as_str()
+                    ],
+                    |r| r.get::<_, bool>(0),
+                )
+                .map_err(Into::into)
+            })
+            .map_err(|e| sql::error(e, self.blocks.worker().clone()))?;
+        if deleted { Err(Error::Denied("the conversation was deleted".into())) } else { Ok(()) }
+    }
+    fn authorize_principal(&self, context: &AccessContext, conversation: &ObjectKey) -> Result<(), Error> {
         self.scope_current(context)?;
         if context.scope != conversation.scope {
             return Err(Error::Denied("the reader's scope differs from the conversation's".into()));
@@ -100,7 +120,7 @@ impl SqliteTimelines {
     /// Ends the snapshot hold behind a fence once its reader is done with it.
     /// Only the exact fence releases its hold; a stale one is already gone.
     pub async fn release(&self, context: AccessContext, fence: TimelineFence) -> Result<(), Error> {
-        self.authorize(&context, &fence.conversation)?;
+        self.authorize_principal(&context, &fence.conversation)?;
         if !self.held(&fence).await? {
             return Ok(());
         }
@@ -146,7 +166,7 @@ impl SqliteTimelines {
     }
 
     async fn read_item(&self, context: AccessContext, fence: TimelineFence, id: ObjectId) -> Result<ItemRead, Error> {
-        self.authorize(&context, &fence.conversation)?;
+        self.authorize_principal(&context, &fence.conversation)?;
         if !self.held(&fence).await? {
             return Ok(ItemRead::ReanchorNeeded);
         }

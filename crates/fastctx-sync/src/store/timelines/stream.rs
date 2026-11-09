@@ -38,6 +38,7 @@ impl SqliteTimelines {
         let object =
             ObjectKey { scope: cursor.scope.clone(), object: ObjectId::try_from(owner.0).map_err(Error::Invalid)? };
         self.authorize(&context, &object)?;
+        let returned_object = object.clone();
         let head = Sequence(owner.1);
         let through = request.through.map_or(head, |through| Sequence(through.0.min(head.0)));
         let (direction, low, high, descending) = match request.position {
@@ -118,6 +119,7 @@ impl SqliteTimelines {
             records.reverse();
         }
         let proofs = used.into_keys().map(|id| proofs[&id].clone()).collect();
+        self.authorize(&context, &returned_object)?;
         Ok(StreamPage { fence, direction, records, proofs, next })
     }
 }

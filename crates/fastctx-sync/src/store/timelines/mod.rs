@@ -2,6 +2,7 @@
 //! immutable TimelineV1 snapshots and a local position index. Input facts in
 //! the same stream only advance the installed cursor; replicas never re-merge.
 mod commit;
+mod epochs;
 mod install;
 mod notices;
 mod pages;

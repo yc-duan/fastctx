@@ -45,15 +45,19 @@ pub(super) async fn process(timelines: &SqliteTimelines, lease: Lease) -> Result
         .database()
         .read(move |db| {
             let head = state::head(db, &read)?;
-            let Some(stream) = state::stream(db, &read)? else {
+            let Some(stream) = super::epochs::stream(db, &read)? else {
                 return Ok(None);
             };
             if let Some(found) = &head
                 && (found.through.stream != stream.stream || found.through.epoch != stream.epoch)
+                && !super::epochs::follows(db, &found.through, &stream)?
             {
                 return Err(sql::invalid("the installed timeline follows another stream"));
             }
-            let after = head.as_ref().map_or(Sequence(0), |found| found.through.committed);
+            let after = head
+                .as_ref()
+                .filter(|found| found.through.epoch == stream.epoch)
+                .map_or(Sequence(0), |found| found.through.committed);
             let records = state::records(db, &read, &stream, after, RECORDS)?;
             Ok(Some((head, stream, records, state::custody(db, &holder, &read)?)))
         })
@@ -63,11 +67,57 @@ pub(super) async fn process(timelines: &SqliteTimelines, lease: Lease) -> Result
         return Ok(Outcome::Completed { through: lease.task.wanted });
     };
     if records.is_empty() {
+        if stream.sequence.0 == 0 && head.as_ref().is_none_or(|head| head.through.epoch != stream.epoch) {
+            let next = Next {
+                projection: head.as_ref().map_or(Revision(0), |h| h.projection),
+                through: StreamCursor {
+                    scope: conversation.scope.clone(),
+                    stream: stream.stream.clone(),
+                    epoch: stream.epoch.clone(),
+                    committed: Sequence(0),
+                },
+                root: head.as_ref().and_then(|h| h.root.clone()),
+                indexed: head.as_ref().and_then(|h| h.indexed),
+                applied: stream.local,
+            };
+            let operation = operation(&conversation, next.projection, Sequence(0));
+            blocks
+                .database()
+                .write(8192, move |db| {
+                    let _role = boundary::enter_typed_write(Role::Projection);
+                    commit::install(db, &custody, &operation, &head, &next, &[])
+                })
+                .await
+                .map_err(|e| sql::error(e, blocks.worker().clone()))?;
+            return Ok(Outcome::Retry { next_due_millis: 0, reason: "empty confirmed epoch installed".into() });
+        }
         return Ok(Outcome::Completed { through: lease.task.wanted });
     }
-    let prepared = decode(timelines, &records)?;
+    let prepared = match decode(timelines, &records) {
+        Ok(prepared) => prepared,
+        Err(Error::Unavailable(_)) => {
+            return Ok(Outcome::Blocked {
+                dependency: format!(
+                    "timeline-content:{}:{}:{}",
+                    conversation.scope.hub,
+                    conversation.scope.scope.as_str(),
+                    conversation.object.as_str()
+                ),
+                reason: "waiting for replicated timeline payloads".into(),
+            });
+        }
+        Err(error) => return Err(error),
+    };
+    for (_, change) in &prepared {
+        if let Some(TimelineChange::Put { item }) = change {
+            blocks.require_adopted(&custody, &item.body)?;
+        }
+    }
     let projection = Revision(head.as_ref().map_or(0, |found| found.projection.0) + 1);
-    let after = head.as_ref().map_or(Sequence(0), |found| found.through.committed);
+    let after = head
+        .as_ref()
+        .filter(|found| found.through.epoch == stream.epoch)
+        .map_or(Sequence(0), |found| found.through.committed);
     let operation = operation(&conversation, projection, after);
     let proofs = proofs(timelines, &custody, &operation, &prepared).await?;
     let previous = head.as_ref().and_then(|found| found.root.clone());
@@ -84,7 +134,21 @@ pub(super) async fn process(timelines: &SqliteTimelines, lease: Lease) -> Result
         let budget = Budget { work_bytes: WORK_BYTES, max_pages: 4096, max_changes: updates.len() };
         match plan_update(&loaded, previous.as_ref(), &target, &updates, budget) {
             Ok(Planned::Ready(plan)) => break Some(plan),
-            Ok(Planned::Pending { missing }) => loaded.load(blocks, &missing)?,
+            Ok(Planned::Pending { missing }) => match loaded.load(blocks, &missing) {
+                Ok(()) => {}
+                Err(Error::Unavailable(_)) => {
+                    return Ok(Outcome::Blocked {
+                        dependency: format!(
+                            "timeline-content:{}:{}:{}",
+                            conversation.scope.hub,
+                            conversation.scope.scope.as_str(),
+                            conversation.object.as_str()
+                        ),
+                        reason: "waiting for replicated timeline content".into(),
+                    });
+                }
+                Err(error) => return Err(error),
+            },
             Err(Error::Busy) if take > 1 => take /= 2,
             // The budget is fixed, so one record that does not fit alone never will;
             // stop with a reason rather than retrying it forever.
@@ -101,6 +165,7 @@ pub(super) async fn process(timelines: &SqliteTimelines, lease: Lease) -> Result
     let staged = plan.is_some() || !proofs.is_empty();
     let through = cursor(&conversation, &stream, slice);
     let caught_up = through.committed == stream.sequence;
+    let installed_cursor = through.clone();
     let next = next(&head, plan.as_ref(), projection, through, caught_up.then_some(stream.local));
     let changes = plan.map(|plan| plan.indexes).unwrap_or_default();
     let commit_custody = custody.clone();
@@ -121,9 +186,19 @@ pub(super) async fn process(timelines: &SqliteTimelines, lease: Lease) -> Result
     if staged {
         while blocks.cancel_upload(custody.clone(), operation.clone(), 128).await? != 0 {}
     }
+    let ready = blocks
+        .database()
+        .read_now(|db| {
+            Ok(super::epochs::stream(db, &conversation)?.is_some_and(|next| {
+                next.stream != installed_cursor.stream
+                    || next.epoch != installed_cursor.epoch
+                    || next.sequence > installed_cursor.committed
+            }))
+        })
+        .map_err(|e| sql::error(e, operation.clone()))?;
     Ok(match installed {
         Installed::Moved => Outcome::Retry { next_due_millis: 0, reason: "the timeline head moved".into() },
-        Installed::Committed if !caught_up => {
+        Installed::Committed if !caught_up || ready => {
             Outcome::Retry { next_due_millis: 0, reason: "more committed records to install".into() }
         }
         Installed::Committed => Outcome::Completed { through: lease.task.wanted },

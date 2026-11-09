@@ -10,6 +10,23 @@ use crate::{
 use fastctx_storage::rusqlite::{OptionalExtension, params};
 
 impl SqliteBlocks {
+    /// A projected body's root must come from an adopted fact of this object;
+    /// knowing a local hash or staging a pin does not authorize installation.
+    pub(crate) fn require_adopted(
+        &self,
+        custody: &crate::store::access::Custody,
+        root: &crate::manifest::ContentRef,
+    ) -> Result<(), Error> {
+        self.db
+            .read_now(|db| {
+                crate::blocks::pins::authorize(db, &self.holder, self.policy.as_ref(), custody)?;
+                if !crate::blocks::access::has_grant(db, custody, root)? {
+                    return Err(sql::invalid("timeline body is outside the object's adopted source roots"));
+                }
+                Ok(())
+            })
+            .map_err(|e| sql::error(e, self.worker.clone()))
+    }
     /// A stored manifest page, or None while it is not here.
     pub(crate) fn stored_page(&self, root: &ManifestRoot) -> Result<Option<ManifestReply>, Error> {
         let _lease = self.leases.read(&root.0)?;

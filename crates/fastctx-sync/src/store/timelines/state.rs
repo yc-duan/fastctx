@@ -92,28 +92,6 @@ pub(super) fn head(db: &Connection, conversation: &ObjectKey) -> Result<Option<H
     .transpose()
 }
 
-/// The single timeline stream of the conversation. A second epoch means a
-/// producer handover, which installation follows only through the hub's path.
-pub(super) fn stream(db: &Connection, conversation: &ObjectKey) -> Result<Option<Stream>> {
-    let scope = &conversation.scope;
-    let rows = db
-        .prepare_cached("SELECT stream,epoch,sequence,local FROM sync_stream_heads WHERE hub=?1 AND scope=?2 AND object=?3 AND kind='conversation.timeline' LIMIT 2")?
-        .query_map(params![scope.hub.to_string(), scope.scope.as_str(), conversation.object.as_str()], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, sql::counter(row, 2)?, sql::counter(row, 3)?))
-        })?
-        .collect::<fastctx_storage::rusqlite::Result<Vec<_>>>()?;
-    match rows.as_slice() {
-        [] => Ok(None),
-        [(stream, epoch, sequence, local)] => Ok(Some(Stream {
-            stream: StreamId::try_from(stream.clone()).map_err(sql::invalid)?,
-            epoch: ProducerEpoch::try_from(epoch.clone()).map_err(sql::invalid)?,
-            sequence: Sequence(*sequence),
-            local: LocalSequence(*local),
-        })),
-        _ => Err(sql::invalid("a conversation timeline with a producer handover installs through the hub's path")),
-    }
-}
-
 /// Up to `max` committed records after `after`, in stream order.
 pub(super) fn records(
     db: &Connection,
@@ -206,7 +184,7 @@ pub(super) fn custody(
 pub(super) fn progress(db: &Connection, conversation: &ObjectKey, through: &StreamCursor) -> Result<StreamProgress> {
     let scope = &conversation.scope;
     let confirmed = db
-        .prepare_cached("SELECT h.epoch_proof,r.prefix_digest FROM sync_stream_heads h JOIN sync_stream_records r ON r.hub=h.hub AND r.scope=h.scope AND r.stream=h.stream AND r.epoch=h.epoch WHERE h.hub=?1 AND h.scope=?2 AND h.stream=?3 AND h.epoch=?4 AND r.sequence=?5")?
+        .prepare_cached("SELECT h.epoch_proof,r.prefix_digest FROM sync_stream_heads h LEFT JOIN sync_stream_records r ON r.hub=h.hub AND r.scope=h.scope AND r.stream=h.stream AND r.epoch=h.epoch AND r.sequence=?5 WHERE h.hub=?1 AND h.scope=?2 AND h.stream=?3 AND h.epoch=?4")?
         .query_row(
             params![
                 scope.hub.to_string(),
@@ -224,6 +202,14 @@ pub(super) fn progress(db: &Connection, conversation: &ObjectKey, through: &Stre
             epoch_proof: Digest::try_from(proof).map_err(sql::invalid)?,
             prefix_digest: Digest::try_from(prefix).map_err(sql::invalid)?,
         },
+        Some((Some(proof), None)) if through.committed.0 == 0 => {
+            let epoch_proof = Digest::try_from(proof).map_err(sql::invalid)?;
+            StreamProgress::Confirmed {
+                cursor: through.clone(),
+                prefix_digest: fastctx_types::sync::feed::stream_genesis(&epoch_proof),
+                epoch_proof,
+            }
+        }
         _ => StreamProgress::LocalPending { cursor: through.clone() },
     })
 }
