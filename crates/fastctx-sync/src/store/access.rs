@@ -7,8 +7,17 @@ use crate::{
 };
 #[derive(Clone, Debug)]
 pub enum Principal {
-    Account { account: AccountId, device: DeviceId },
-    Agent { account: AccountId, device: DeviceId, conversation: ObjectKey },
+    /// A real user request, whose device login is checked by the adapter.
+    Account {
+        account: AccountId,
+        device: DeviceId,
+    },
+    /// Delegated execution remains an agent even on a device logged into the account.
+    Agent {
+        account: AccountId,
+        device: DeviceId,
+        conversation: ObjectKey,
+    },
     LocalService,
 }
 #[derive(Clone, Debug)]
@@ -77,6 +86,8 @@ pub enum Decision {
 }
 pub trait AccessPolicy: Send + Sync {
     fn can_read(&self, context: &AccessContext, kind: RegisteredKind) -> Decision;
+    /// Final object/body gate, including authenticated derived-source inheritance.
+    fn can_read_object(&self, context: &AccessContext, kind: RegisteredKind, object: &ObjectKey) -> Decision;
     fn can_write(&self, context: &AccessContext, kind: RegisteredKind) -> Decision;
     fn can_keep(
         &self,

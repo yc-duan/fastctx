@@ -21,6 +21,38 @@ pub struct AccountIdentity {
     pub opened: Timestamp,
 }
 
+/// Hub-owned administrator scopes outlive any one administrator account.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "owner", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ScopeOwner {
+    Account { identity: AccountIdentity },
+    Hub,
+}
+impl ScopeOwner {
+    pub fn account(&self) -> Option<&AccountIdentity> {
+        match self {
+            Self::Account { identity } => Some(identity),
+            Self::Hub => None,
+        }
+    }
+    pub fn same_identity(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Hub, Self::Hub) => true,
+            (Self::Account { identity: a }, Self::Account { identity: b }) => a.id == b.id && a.opened == b.opened,
+            _ => false,
+        }
+    }
+}
+
+/// A machine segment's opening fence is immutable. Regrant starts another
+/// segment rather than exposing facts committed before the new grant.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "visibility", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ScopeVisibility {
+    Current,
+    SinceGrant { opened_acl: Revision },
+}
+
 /// Runtime addresses, previous hosts, titles and record bodies are deliberately
 /// absent. Projects use the grants already projected in the authenticated View.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -31,6 +63,7 @@ pub enum ScopeSubject {
     Project { project: ObjectId, town: TownId },
     Machine { device: DeviceId },
     Device { device: DeviceId },
+    Administrators,
 }
 
 /// A single account.directory source record binds this ownership description.
@@ -40,8 +73,9 @@ pub enum ScopeSubject {
 pub struct ScopeDescriptor {
     pub format: u16,
     pub scope: ScopeKey,
-    pub owner: AccountIdentity,
+    pub owner: ScopeOwner,
     pub subject: ScopeSubject,
+    pub visibility: ScopeVisibility,
     pub revision: VersionRef,
     pub acl_revision: Revision,
     pub lifecycle: Lifecycle,

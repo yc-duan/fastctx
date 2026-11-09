@@ -1,17 +1,17 @@
-use super::{DirectoryPolicy, Snapshot};
-use crate::{
-    authorization::{Action, Lookup},
-    record_ownership,
+use super::{
+    DirectoryPolicy, Snapshot,
+    readers::{readable, replica},
 };
+use crate::authorization::Action;
 use fastctx_sync::{
     catalog::Lifecycle,
-    cursor::{Holder, Revision},
+    cursor::Revision,
     identity::{DeviceId, ObjectKey},
-    registry::{ConflictRule, DataClass, RegisteredKind, ScopePolicy},
-    scope::{AccountIdentity, ScopeSubject},
+    registry::{ConflictRule, DataClass, MachineVisibilityRule, ReaderClass, RegisteredKind, ScopePolicy},
+    scope::{AccountIdentity, ScopeDescriptor, ScopeOwner, ScopeSubject, ScopeVisibility},
     store::access::{AccessContext, AccessPolicy, Decision, HoldingUse, Principal},
 };
-use fastctx_types::{MachineName, access::Purpose};
+use fastctx_types::access::Purpose;
 
 impl DirectoryPolicy {
     fn decide(
@@ -24,7 +24,7 @@ impl DirectoryPolicy {
         let Some(snapshot) = self.state.current(&context.scope, object) else { return Decision::Unavailable };
         let descriptor = snapshot.scope.descriptor();
         let revision = descriptor.acl_revision;
-        let applicable = kind.is_none_or(|kind| scope_matches(kind, &descriptor.subject));
+        let applicable = kind.is_none_or(|kind| scope_matches(kind, descriptor));
         if descriptor.scope != context.scope
             || snapshot.directory.hub != context.scope.hub
             || !snapshot.enabled
@@ -32,7 +32,10 @@ impl DirectoryPolicy {
             || context.observed_acl != revision
             || object.is_some_and(|key| key.scope != context.scope)
             || !applicable
-            || snapshot.directory.identity(&descriptor.owner.id) != Some(&descriptor.owner)
+            || match &descriptor.owner {
+                ScopeOwner::Account { identity } => snapshot.directory.identity(&identity.id) != Some(identity),
+                ScopeOwner::Hub => !matches!(descriptor.subject, ScopeSubject::Administrators),
+            }
             || !check(&snapshot)
         {
             return denied(revision);
@@ -43,8 +46,29 @@ impl DirectoryPolicy {
 impl AccessPolicy for DirectoryPolicy {
     fn can_read(&self, context: &AccessContext, kind: RegisteredKind) -> Decision {
         self.decide(context, Some(kind), None, |state| {
-            actor(state, context)
-                .is_some_and(|(account, device)| kind_reader(state, account, device, kind) && readable(state, account))
+            if matches!(context.principal, Principal::LocalService) {
+                return reader_class(context, kind);
+            }
+            actor(state, context).is_some_and(|(account, device)| {
+                kind_reader(state, context, account, device, kind)
+                    && readable(state, account, matches!(context.principal, Principal::Account { .. }))
+            })
+        })
+    }
+    fn can_read_object(&self, context: &AccessContext, kind: RegisteredKind, object: &ObjectKey) -> Decision {
+        self.decide(context, Some(kind), Some(object), |state| {
+            if matches!(context.principal, Principal::LocalService) {
+                return reader_class(context, kind)
+                    && (replica(state)
+                        || state
+                            .source
+                            .as_ref()
+                            .is_some_and(|source| super::source::keeps(state, kind, object, &source.binding)));
+            }
+            actor(state, context).is_some_and(|(account, device)| {
+                kind_reader(state, context, account, device, kind)
+                    && readable(state, account, matches!(context.principal, Principal::Account { .. }))
+            })
         })
     }
     fn can_write(&self, context: &AccessContext, kind: RegisteredKind) -> Decision {
@@ -56,7 +80,9 @@ impl AccessPolicy for DirectoryPolicy {
                 return false;
             }
             let Some((account, device)) = actor(state, context) else { return false };
-            if !kind_reader(state, account, device, kind) || !readable(state, account) {
+            if !kind_reader(state, context, account, device, kind)
+                || !readable(state, account, matches!(context.principal, Principal::Account { .. }))
+            {
                 return false;
             }
             match &state.scope.descriptor().subject {
@@ -107,15 +133,19 @@ fn denied(revision: Revision) -> Decision {
     }
 }
 
-fn scope_matches(kind: RegisteredKind, subject: &ScopeSubject) -> bool {
-    matches!(
-        (kind.registration().scope, subject),
-        (ScopePolicy::Account, ScopeSubject::Account)
-            | (ScopePolicy::Conversation, ScopeSubject::Conversation { .. })
-            | (ScopePolicy::Project, ScopeSubject::Project { .. })
-            | (ScopePolicy::Machine, ScopeSubject::Machine { .. })
-            | (ScopePolicy::Device, ScopeSubject::Device { .. })
-    )
+fn scope_matches(kind: RegisteredKind, descriptor: &ScopeDescriptor) -> bool {
+    let class = match descriptor.subject {
+        ScopeSubject::Account => ScopePolicy::Account,
+        ScopeSubject::Conversation { .. } => ScopePolicy::Conversation,
+        ScopeSubject::Project { .. } => ScopePolicy::Project,
+        ScopeSubject::Machine { .. } => ScopePolicy::Machine,
+        ScopeSubject::Device { .. } => ScopePolicy::Device,
+        ScopeSubject::Administrators => ScopePolicy::Administrators,
+    };
+    kind.registration().scopes.contains(&class)
+        && (class != ScopePolicy::Machine
+            || kind.registration().machine_visibility != MachineVisibilityRule::SinceGrant
+            || matches!(descriptor.visibility, ScopeVisibility::SinceGrant { .. }))
 }
 fn actor<'a>(state: &'a Snapshot, context: &'a AccessContext) -> Option<(&'a AccountIdentity, &'a DeviceId)> {
     let (id, device, agent) = match &context.principal {
@@ -132,81 +162,29 @@ fn actor<'a>(state: &'a Snapshot, context: &'a AccessContext) -> Option<(&'a Acc
     };
     allowed.then_some((account, device))
 }
-fn kind_reader(state: &Snapshot, account: &AccountIdentity, device: &DeviceId, kind: RegisteredKind) -> bool {
+fn reader_class(context: &AccessContext, kind: RegisteredKind) -> bool {
+    let class = match context.principal {
+        Principal::Account { .. } => ReaderClass::User,
+        Principal::Agent { .. } => ReaderClass::Agent,
+        Principal::LocalService => ReaderClass::Service,
+    };
+    kind.registration().readers.is_none_or(|allowed| allowed.contains(&class))
+}
+fn kind_reader(
+    state: &Snapshot,
+    context: &AccessContext,
+    account: &AccountIdentity,
+    device: &DeviceId,
+    kind: RegisteredKind,
+) -> bool {
+    if !reader_class(context, kind) {
+        return false;
+    }
+
     match kind.registration().id {
         "account.collaboration" | "account.directory" | "account.read-position" => {
             state.directory.member(device).is_some_and(|member| member.logins.contains(&account.name))
         }
         _ => true,
-    }
-}
-fn readable(state: &Snapshot, account: &AccountIdentity) -> bool {
-    let owner = &state.scope.descriptor().owner;
-    let directory = state.directory.indexed();
-    match &state.scope.descriptor().subject {
-        ScopeSubject::Conversation { .. } => {
-            record_ownership::allows(&directory, &account.name, std::slice::from_ref(&owner.name), born_on(state))
-        }
-        ScopeSubject::Project { town, .. } => {
-            directory.find_project(town).is_some_and(|project| project.owner == owner.name)
-                && directory.authorize(&account.name, Action::Project(town)).is_ok()
-        }
-        ScopeSubject::Account => account.id == owner.id,
-        ScopeSubject::Machine { device } => state
-            .directory
-            .member(device)
-            .is_some_and(|member| directory.authorize(&account.name, Action::Hold(&member.name)).is_ok()),
-        ScopeSubject::Device { .. } => account.id == owner.id,
-    }
-}
-fn born_on(state: &Snapshot) -> Option<&MachineName> {
-    let ScopeSubject::Conversation { shared_on: Some(name), born_seal: Some(seal), .. } =
-        &state.scope.descriptor().subject
-    else {
-        return None;
-    };
-    state.directory.indexed().member(name).and_then(record_ownership::seal).filter(|now| now == seal).map(|_| name)
-}
-fn replica(state: &Snapshot) -> bool {
-    let Holder::Device { device } = &state.holder else { return true };
-    let Some(member) = state.directory.member(device) else { return false };
-    let descriptor = state.scope.descriptor();
-    let owner = std::slice::from_ref(&descriptor.owner.name);
-    if member.kind == crate::directory::Kind::Phone {
-        return member.logins.iter().any(|name| {
-            let Some(account) = state.directory.names.get(name).and_then(|id| state.directory.account(id)) else {
-                return false;
-            };
-            // Phone filtering uses the same object readers, without execution custody.
-            readable(state, account)
-        });
-    }
-    if member.kind != crate::directory::Kind::Computer || !member.is_machine() {
-        return false;
-    }
-    match &descriptor.subject {
-        ScopeSubject::Project { town, .. } => {
-            state.directory.indexed().find_project(town).is_some_and(|project| project.owner == descriptor.owner.name)
-                && state.directory.directory.member_keeps_project(&member.name, town)
-        }
-        ScopeSubject::Conversation { .. } => {
-            record_ownership::keeps(&state.directory.directory, member, owner, born_on(state))
-        }
-        ScopeSubject::Account | ScopeSubject::Device { .. } => {
-            record_ownership::keeps(&state.directory.directory, member, owner, None)
-        }
-        ScopeSubject::Machine { device } => state.directory.member(device).is_some_and(|target| {
-            member.home.as_ref().is_some_and(|home| {
-                member.logins.contains(home)
-                    && state.directory.indexed().authorize(home, Action::Hold(&target.name)).is_ok()
-            }) && !member.managed
-                && state.directory.indexed().shares_by_machine(&member.name).iter().all(|&index| {
-                    state
-                        .directory
-                        .indexed()
-                        .authorize(&state.directory.directory.shares[index].account, Action::Hold(&target.name))
-                        .is_ok()
-                })
-        }),
     }
 }

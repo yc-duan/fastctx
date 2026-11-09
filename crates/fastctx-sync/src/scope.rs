@@ -38,8 +38,8 @@ impl VerifiedScope {
             return Ok(());
         }
         if next.scope != old.scope
-            || next.owner.id != old.owner.id
-            || next.owner.opened != old.owner.opened
+            || !next.owner.same_identity(&old.owner)
+            || next.visibility != old.visibility
             || next.revision == old.revision
             || next.acl_revision <= old.acl_revision
             || old.lifecycle == Lifecycle::Deleted
@@ -90,6 +90,16 @@ pub fn verify(
     {
         return Err(Error::Invalid("invalid scope identity or revision".into()));
     }
+    if matches!(descriptor.subject, ScopeSubject::Administrators) != matches!(descriptor.owner, ScopeOwner::Hub) {
+        return Err(Error::Invalid("only administrator scopes are hub-owned".into()));
+    }
+    if let ScopeVisibility::SinceGrant { opened_acl } = descriptor.visibility
+        && (!matches!(descriptor.subject, ScopeSubject::Machine { .. })
+            || opened_acl.0 == 0
+            || opened_acl > descriptor.acl_revision)
+    {
+        return Err(Error::Invalid("grant visibility requires a valid immutable machine segment fence".into()));
+    }
     if let ScopeSubject::Conversation { shared_on, born_seal, .. } = &descriptor.subject
         && (shared_on.is_some() != born_seal.is_some() || born_seal.as_ref().is_some_and(|seal| seal.len() > 4096))
     {
@@ -104,7 +114,8 @@ pub fn verify(
 
 fn same_subject(one: &ScopeSubject, other: &ScopeSubject) -> bool {
     match (one, other) {
-        (ScopeSubject::Account, ScopeSubject::Account) => true,
+        (ScopeSubject::Account, ScopeSubject::Account)
+        | (ScopeSubject::Administrators, ScopeSubject::Administrators) => true,
         (ScopeSubject::Conversation { conversation: a, .. }, ScopeSubject::Conversation { conversation: b, .. }) => {
             a == b
         }

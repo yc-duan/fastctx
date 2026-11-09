@@ -103,7 +103,9 @@ impl SqliteBackend {
         self.db
             .read(move |db| {
                 access::read(db, policy.as_ref(), &context, kind.registered())?;
-                let head = rows::get(db, &ObjectKey { scope: context.scope, object })?;
+                let key = ObjectKey { scope: context.scope.clone(), object };
+                access::allowed(policy.can_read_object(&context, kind.registered(), &key), context.observed_acl)?;
+                let head = rows::get(db, &key)?;
                 if head.as_ref().is_some_and(|head| head.kind != kind.registration().id) {
                     return Err(super::sql::invalid("requested object has another kind"));
                 }

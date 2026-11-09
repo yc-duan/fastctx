@@ -73,5 +73,10 @@ name = "letter_drill"
 path = "tests/letter_drill/main.rs"
 harness = false
 
+[[test]]
+name = "sync_access_drill"
+path = "tests/sync_access_drill/main.rs"
+harness = false
+
 [lints]
 workspace = true

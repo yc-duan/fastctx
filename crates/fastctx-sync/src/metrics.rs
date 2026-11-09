@@ -28,6 +28,7 @@ measures!(Counter {
     LegacyIncomplete => "sync.legacy_incomplete",
     ThumbnailHits => "sync.thumbnail_hits",
     ResolveScanBytes => "sync.resolve_scan_bytes",
+    IndexValidation => "sync.index_validation",
 });
 measures!(Gauge {
     MissingRecords => "sync.missing_records",

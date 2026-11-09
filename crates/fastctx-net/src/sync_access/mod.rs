@@ -4,6 +4,7 @@
 //! request deserializes into these assembly inputs, and policy checks perform no IO.
 
 mod policy;
+mod readers;
 mod source;
 
 use crate::{
@@ -27,6 +28,7 @@ pub struct DirectorySnapshot {
     index: Index,
     accounts: BTreeMap<AccountId, AccountIdentity>,
     names: BTreeMap<fastctx_types::AccountName, AccountId>,
+    grants: BTreeMap<(DeviceId, AccountId), fastctx_sync::cursor::Revision>,
 }
 impl DirectorySnapshot {
     pub fn from_authenticated(hub: HubId, directory: Directory, accounts: Vec<AccountIdentity>) -> Result<Self, Error> {
@@ -42,7 +44,28 @@ impl DirectorySnapshot {
                 return Err(Error::Denied("account mapping differs from authenticated membership".into()));
             }
         }
-        Ok(Self { hub, directory, index, accounts: mappings, names })
+        Ok(Self { hub, directory, index, accounts: mappings, names, grants: BTreeMap::new() })
+    }
+    /// Service composition loads these from its durable grant ledger. Current
+    /// Share rows and wall-clock times cannot reconstruct historical grants.
+    pub fn with_grants(mut self, grants: Vec<MachineGrant>) -> Result<Self, Error> {
+        let mut current = BTreeMap::new();
+        for grant in grants {
+            let Some(account) = self.identity(&grant.account) else {
+                return Err(Error::Denied("grant names an unknown account incarnation".into()));
+            };
+            let Some(machine) = self.member(&grant.machine) else {
+                return Err(Error::Denied("grant names an unknown machine".into()));
+            };
+            if grant.revision.0 == 0
+                || self.indexed().authorize(&account.name, crate::authorization::Action::Hold(&machine.name)).is_err()
+                || current.insert((grant.machine, grant.account), grant.revision).is_some()
+            {
+                return Err(Error::Denied("grant snapshot differs from current membership".into()));
+            }
+        }
+        self.grants = current;
+        Ok(self)
     }
     fn indexed(&self) -> Indexed<'_> {
         Indexed::new(&self.directory, &self.index)
@@ -61,6 +84,14 @@ impl DirectorySnapshot {
     fn account(&self, id: &AccountId) -> Option<&AccountIdentity> {
         self.identity(id).filter(|mapping| self.indexed().account(&mapping.name).is_some_and(|current| !current.locked))
     }
+}
+
+/// An active grant incarnation, supplied only by the authenticated ledger owner.
+#[derive(Clone)]
+pub struct MachineGrant {
+    pub machine: DeviceId,
+    pub account: AccountId,
+    pub revision: fastctx_sync::cursor::Revision,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

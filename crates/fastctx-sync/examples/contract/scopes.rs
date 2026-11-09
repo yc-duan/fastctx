@@ -12,8 +12,8 @@ use fastctx_sync::{
         SignedStatement, SigningKey,
     },
     scope::{
-        AccountIdentity, DiscoveryFence, ScopeDescriptor, ScopeDiscoveryRead, ScopeOffer, ScopeProof, ScopeSubject,
-        ScopesPage,
+        AccountIdentity, DiscoveryFence, ScopeDescriptor, ScopeDiscoveryRead, ScopeOffer, ScopeOwner, ScopeProof,
+        ScopeSubject, ScopeVisibility, ScopesPage,
     },
     transfer::{KindVersion, Message},
 };
@@ -22,11 +22,14 @@ pub fn sample(cursor: &ScopeCursor, device: DeviceId) -> Result<Vec<Message>, Bo
     let descriptor = ScopeDescriptor {
         format: 1,
         scope: cursor.scope.clone(),
-        owner: AccountIdentity {
-            id: AccountId::from_bytes([34; 32]),
-            name: "reader".parse()?,
-            opened: "2026-01-01T00:00:00Z".parse()?,
+        owner: ScopeOwner::Account {
+            identity: AccountIdentity {
+                id: AccountId::from_bytes([34; 32]),
+                name: "reader".parse()?,
+                opened: "2026-01-01T00:00:00Z".parse()?,
+            },
         },
+        visibility: ScopeVisibility::Current,
         subject: ScopeSubject::Conversation {
             conversation: ObjectId::from_bytes([40; 32]),
             shared_on: None,

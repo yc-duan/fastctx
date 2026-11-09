@@ -2,16 +2,18 @@
 
 use super::{
     AuthorityRule, Codec, ConflictRule, DataClass, DecisionState, DeletePolicy, ExportPolicy, Lightweight,
-    Registration, Retention, ScopePolicy, Stage,
+    MachineVisibilityRule, ReaderClass, Registration, Retention, ScopePolicy, Stage,
 };
 
 macro_rules! kind {
-    ($id:literal, $class:ident, $scope:ident, $authority:ident, $conflict:ident, $retention:ident, $mobile:ident, $owner:literal, $stage:ident, $codec:ident, $assisted:expr, $job:expr, $workspace:expr, $decision:ident, $delete:ident) => {
+    ($id:literal, $class:ident, $($scope:ident)|+, $authority:ident, $conflict:ident, $retention:ident, $mobile:ident, $owner:literal, $stage:ident, $codec:ident, $assisted:expr, $job:expr, $workspace:expr, $decision:ident, $delete:ident) => {
         Registration {
             id: $id,
             schema: 1,
             class: DataClass::$class,
-            scope: ScopePolicy::$scope,
+            scopes: &[$(ScopePolicy::$scope),+],
+            readers: None,
+            machine_visibility: MachineVisibilityRule::CurrentOrSegment,
             authority: AuthorityRule::$authority,
             conflict: ConflictRule::$conflict,
             retention: Retention::$retention,
@@ -271,23 +273,26 @@ pub(super) const KINDS: &[Registration] = &[
         Confirmed,
         HandlerWithTombstone
     ),
-    kind!(
-        "conversation.timer",
-        Asset,
-        Conversation,
-        Hub,
-        Expected,
-        UntilDeleted,
-        Complete,
-        "fastctx-node::timers",
-        Assets,
-        Json,
-        false,
-        false,
-        false,
-        Confirmed,
-        GenericTombstone
-    ),
+    Registration {
+        readers: Some(&[ReaderClass::User]),
+        ..kind!(
+            "conversation.timer",
+            Asset,
+            Conversation,
+            Hub,
+            Expected,
+            UntilDeleted,
+            Complete,
+            "fastctx-node::timers",
+            Assets,
+            Json,
+            false,
+            false,
+            false,
+            Confirmed,
+            GenericTombstone
+        )
+    },
     kind!(
         "conversation.artifact",
         Asset,
@@ -509,23 +514,26 @@ pub(super) const KINDS: &[Registration] = &[
         Confirmed,
         GenericTombstone
     ),
-    kind!(
-        "machine.audit",
-        Asset,
-        Machine,
-        Hub,
-        SingleWriter,
-        UntilDeleted,
-        Recent,
-        "fastctx-hub::machine_log",
-        Assets,
-        Json,
-        false,
-        false,
-        false,
-        Confirmed,
-        GenericTombstone
-    ),
+    Registration {
+        machine_visibility: MachineVisibilityRule::SinceGrant,
+        ..kind!(
+            "machine.audit",
+            Asset,
+            Account | Conversation | Project | Machine | Administrators,
+            Hub,
+            SingleWriter,
+            UntilDeleted,
+            Recent,
+            "fastctx-hub::machine_log",
+            Assets,
+            Json,
+            false,
+            false,
+            false,
+            Confirmed,
+            GenericTombstone
+        )
+    },
     kind!(
         "device.preferences",
         Asset,

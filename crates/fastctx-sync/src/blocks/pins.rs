@@ -55,8 +55,8 @@ pub(super) fn authorize_read(
     custody: &Custody,
 ) -> Result<()> {
     authorize(db, holder, policy, custody)?;
-    if !matches!(custody.context.principal, crate::store::access::Principal::LocalService)
-        && !matches!(policy.can_read(&custody.context, custody.kind), Decision::Allowed { revision } if revision == custody.context.observed_acl)
+    if !matches!(policy.can_read(&custody.context, custody.kind), Decision::Allowed { revision } if revision == custody.context.observed_acl)
+        || !matches!(policy.can_read_object(&custody.context, custody.kind, &custody.object), Decision::Allowed { revision } if revision == custody.context.observed_acl)
     {
         return Err(sql::invalid("the current reader cannot read this object kind"));
     }

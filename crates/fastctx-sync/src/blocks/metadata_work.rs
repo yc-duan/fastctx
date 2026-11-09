@@ -59,7 +59,7 @@ pub(super) async fn process(
             .map_err(|e| sql::error(e, store.worker.clone()))?;
         return Ok(Outcome::Completed { through });
     }
-    let Some(custody) = custody else {
+    let Some(validation) = custody else {
         return Ok(Outcome::Blocked {
             dependency: format!(
                 "index-custody:{}:{}:{}",
@@ -70,6 +70,9 @@ pub(super) async fn process(
             reason: "waiting for authorized index payload bytes".into(),
         });
     };
+    use crate::metrics::{Cause, Counter, Metrics, PlatformMetrics};
+    PlatformMetrics.add(Counter::IndexValidation, Cause::Integrity, 1);
+    let payload = validation.payload().clone();
     let _payload = store.leases.read(&payload.id)?;
     let stored = store
         .db
@@ -126,13 +129,14 @@ pub(super) async fn process(
             if !super::work::current(db, &holding)? {
                 return Ok(Outcome::Superseded);
             }
-            crate::blocks::pins::authorize(db, &holder, policy.as_ref(), &custody)?;
+            crate::blocks::pins::authorize(db, &holder, policy.as_ref(), validation.custody())?;
+            let hash = &validation.root().0.digest;
             let changed = db.execute(
                 "UPDATE sync_asset_manifests SET validated=1 WHERE hub=?1 AND scope=?2 AND hash=?3 AND validated=0",
                 params![holding.scope.hub.to_string(), holding.scope.scope.as_str(), hash.as_str()],
             )?;
             if changed != 0 {
-                pages::refresh(db, &holding.scope, &hash)?;
+                pages::refresh(db, &holding.scope, hash)?;
                 scheduler::content_changed(db, &holding, format!("complete:{}", hash.as_str()))?;
                 scheduler::content_changed(db, &holding, format!("access:{}", hash.as_str()))?;
             }

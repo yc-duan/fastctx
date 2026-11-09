@@ -52,6 +52,12 @@ impl AccessPolicy for Policy {
     fn can_read(&self, c: &AccessContext, k: RegisteredKind) -> Decision {
         self.check(c, k)
     }
+    fn can_read_object(&self, c: &AccessContext, k: RegisteredKind, object: &ObjectKey) -> Decision {
+        if object.scope != c.scope {
+            return Decision::Unavailable;
+        }
+        self.check(c, k)
+    }
     fn can_write(&self, c: &AccessContext, k: RegisteredKind) -> Decision {
         self.check(c, k)
     }

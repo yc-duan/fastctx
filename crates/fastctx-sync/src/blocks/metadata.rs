@@ -37,7 +37,7 @@ pub(super) fn validate(
     Ok(())
 }
 fn decode<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Result<T, Error> {
-    serde_json::from_slice(bytes).map_err(|e| Error::Invalid(e.to_string()))
+    serde_json::from_slice(bytes).map_err(|_| invalid("index payload does not match its registered codec"))
 }
 fn invalid(reason: &str) -> Error {
     Error::Invalid(reason.into())

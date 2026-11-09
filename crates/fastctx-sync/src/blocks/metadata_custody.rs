@@ -16,6 +16,25 @@ use fastctx_storage::{
     rusqlite::{Connection, params},
 };
 
+/// Only this private engine module can construct the index-validation purpose.
+/// It carries no reusable body-read grant and never crosses a service boundary.
+pub(super) struct IndexValidationPermit {
+    custody: Custody,
+    root: ManifestRoot,
+    payload: ContentBlock,
+}
+impl IndexValidationPermit {
+    pub(super) fn root(&self) -> &ManifestRoot {
+        &self.root
+    }
+    pub(super) fn payload(&self) -> &ContentBlock {
+        &self.payload
+    }
+    pub(super) fn custody(&self) -> &Custody {
+        &self.custody
+    }
+}
+
 pub(super) fn current(
     db: &Connection,
     store: &SqliteBlocks,
@@ -23,7 +42,7 @@ pub(super) fn current(
     root: &ManifestRoot,
     payload: &ContentBlock,
     after: Option<&str>,
-) -> Result<(Option<Custody>, Option<String>)> {
+) -> Result<(Option<IndexValidationPermit>, Option<String>)> {
     let (after_operation, after_object) = after.and_then(|value| value.split_once('/')).unwrap_or(("", ""));
     let period = serde_json::to_vec(holding).map_err(|e| sql::invalid(e.to_string()))?;
     let mut query=db.prepare_cached("SELECT p.operation,p.object,p.kind,u.purpose FROM sync_asset_pins p JOIN sync_asset_uploads u USING(hub,scope,operation,object) WHERE p.hub=?1 AND p.scope=?2 AND p.hash=?3 AND p.root_kind='manifest' AND p.holding=?4 AND (p.operation,p.object)>(?5,?6) ORDER BY p.operation,p.object LIMIT 65")?;
@@ -63,7 +82,7 @@ pub(super) fn current(
         // for this object. It does not grant an interactive reader access.
         let known:bool=db.prepare_cached("SELECT EXISTS(SELECT 1 FROM sync_asset_pins WHERE hub=?1 AND scope=?2 AND object=?3 AND kind=?4 AND hash=?5 AND root_kind='block' AND decoded_bytes=?6 AND holding=?7) OR EXISTS(SELECT 1 FROM sync_asset_access WHERE hub=?1 AND scope=?2 AND object=?3 AND kind=?4 AND hash=?5 AND root_kind='block' AND decoded_bytes=?6)")?.query_row(params![holding.scope.hub.to_string(),holding.scope.scope.as_str(),custody.object.object.as_str(),kind,payload.id.digest.as_str(),payload.decoded_bytes,period],|r|r.get(0))?;
         if known {
-            return Ok((Some(custody), None));
+            return Ok((Some(IndexValidationPermit { custody, root: root.clone(), payload: payload.clone() }), None));
         }
     }
     Ok((None, next))

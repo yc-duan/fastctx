@@ -26,6 +26,7 @@ pub enum ScopePolicy {
     Machine,
     Device,
     Local,
+    Administrators,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AuthorityRule {
@@ -85,12 +86,27 @@ pub enum DeletePolicy {
     HandlerWithTombstone,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReaderClass {
+    User,
+    Agent,
+    Service,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MachineVisibilityRule {
+    CurrentOrSegment,
+    SinceGrant,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct Registration {
     pub id: &'static str,
     pub schema: u16,
     pub class: DataClass,
-    pub scope: ScopePolicy,
+    pub scopes: &'static [ScopePolicy],
+    /// None preserves the existing kind-specific actor checks during migration.
+    pub readers: Option<&'static [ReaderClass]>,
+    pub machine_visibility: MachineVisibilityRule,
     pub authority: AuthorityRule,
     pub conflict: ConflictRule,
     pub retention: Retention,
@@ -186,12 +202,17 @@ impl Registry {
             if entry.id.is_empty() || !ids.insert(entry.id) {
                 return Err("duplicate or empty data kind".into());
             }
+            if entry.scopes.is_empty()
+                || entry.scopes.iter().enumerate().any(|(i, scope)| entry.scopes[..i].contains(scope))
+            {
+                return Err(format!("kind {} has no unique scope policy set", entry.id));
+            }
             if entry.class == DataClass::Asset && entry.retention != Retention::UntilDeleted {
                 return Err(format!("asset {} has an automatic eviction policy", entry.id));
             }
             if (entry.job_source || entry.workspace_source)
                 && (entry.class != DataClass::Asset
-                    || entry.scope != ScopePolicy::Conversation
+                    || entry.scopes != [ScopePolicy::Conversation]
                     || entry.authority != AuthorityRule::SourceDevice
                     || entry.conflict != ConflictRule::SingleWriter)
             {

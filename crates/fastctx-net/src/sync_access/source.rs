@@ -21,6 +21,9 @@ pub(super) fn keeps(state: &Snapshot, kind: RegisteredKind, object: &ObjectKey, 
         return false;
     }
     let descriptor = state.scope.descriptor();
+    let Some(owner) = descriptor.owner.account() else {
+        return false;
+    };
     let ScopeSubject::Conversation { conversation, .. } = &descriptor.subject else { return false };
     let matches_conversation = |key: &ObjectKey| key.scope == descriptor.scope && key.object == *conversation;
     match purpose {
@@ -28,20 +31,20 @@ pub(super) fn keeps(state: &Snapshot, kind: RegisteredKind, object: &ObjectKey, 
         HoldingUse::RuntimeSource { host } => {
             kind.registration().assisted_host
                 && host.host == *device
-                && host.account == descriptor.owner.id
+                && host.account == owner.id
                 && matches_conversation(&host.conversation)
         }
         HoldingUse::JobSource { job } => {
             kind.registration().job_source
                 && job.executor == *device
-                && job.account == descriptor.owner.id
+                && job.account == owner.id
                 && job.job.scope == descriptor.scope
                 && matches_conversation(&job.conversation)
         }
         HoldingUse::WorkspaceSource { workspace } => {
             kind.registration().workspace_source
                 && workspace.machine == *device
-                && workspace.account == descriptor.owner.id
+                && workspace.account == owner.id
                 && matches_conversation(&workspace.conversation)
         }
     }
