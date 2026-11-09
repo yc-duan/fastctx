@@ -67,6 +67,7 @@ struct Engine {
     queue: Mutex<Queue>,
     changed: Condvar,
     started: AtomicBool,
+    listener_open: AtomicBool,
     opened: tokio::sync::Notify,
     progress: tokio::sync::Notify,
     closed: AtomicBool,
@@ -91,6 +92,7 @@ impl Service {
             opened: tokio::sync::Notify::new(),
             progress: tokio::sync::Notify::new(),
             started: AtomicBool::new(false),
+            listener_open: AtomicBool::new(false),
             closed: AtomicBool::new(false),
             log: std::sync::OnceLock::new(),
         });
@@ -105,8 +107,16 @@ impl Service {
         let _ = self.engine.log.set(log);
     }
 
+    /// Claims the single continuation waiting for the upgrade backup after listen.
+    pub(crate) fn listener_opened(&self) -> bool {
+        !self.engine.listener_open.swap(true, Ordering::AcqRel)
+    }
+
     /// Called only after the listener has been polled, never during startup IO.
     pub(crate) fn start(&self) -> io::Result<bool> {
+        if self.engine.database.upgrade().and_then(|db| db.format_upgrade_gate()).is_some_and(|gate| !gate.finished()) {
+            return Ok(false);
+        }
         if self.engine.started.swap(true, Ordering::AcqRel) {
             return Ok(false);
         }

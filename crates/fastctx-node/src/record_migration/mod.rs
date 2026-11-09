@@ -107,16 +107,34 @@ pub(crate) fn storage_failure(doing: &str, error: fastctx_storage::Error) -> fas
 mod catalog;
 mod jobs;
 mod maintenance;
-/// The first actual poll of the listener opens background migration. A bound
-/// socket alone does not prove that the node is servicing requests yet.
+/// The first listener poll starts one continuation; backup completion opens
+/// migration later. Neither waiting nor bulk import blocks accepting requests.
 pub(crate) async fn after_open<F: std::future::Future>(node: &std::sync::Arc<crate::Node>, accept: F) -> F::Output {
     let mut accept = std::pin::pin!(accept);
     std::future::poll_fn(|context| {
         let result = std::future::Future::poll(accept.as_mut(), context);
-        match node.record_migration.start() {
-            Ok(true) => start(node),
-            Ok(false) => {}
-            Err(error) => node.log.line(format_args!("starting record migration: {error}")),
+        if node.record_migration.listener_opened() {
+            let gate = node.database.format_upgrade_gate();
+            let node = std::sync::Arc::downgrade(node);
+            fastctx_platform::task::spawn(async move {
+                let outcome = match gate {
+                    Some(gate) => gate.wait().await.map(|_| ()),
+                    None => Ok(()),
+                };
+                let Some(node) = node.upgrade() else {
+                    return;
+                };
+                if let Err(error) = outcome {
+                    node.log.line(format_args!(
+                        "upgrade backup ended without a durable result: {error}; continuing migration"
+                    ));
+                }
+                match node.record_migration.start() {
+                    Ok(true) => start(&node),
+                    Ok(false) => {}
+                    Err(error) => node.log.line(format_args!("starting record migration: {error}")),
+                }
+            });
         }
         result
     })
