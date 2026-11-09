@@ -14,7 +14,17 @@ pub fn turn(
         if old.declaration != *declaration {
             return Err(Error::CreationChanged);
         }
-        return Ok((old.clone(), Effects::default()));
+        let order = |e: &Evidence| (e.accepted, e.record.stream.clone(), e.record.epoch.clone(), e.record.sequence);
+        let old_order = order(&old.evidence);
+        let incoming_order = order(evidence);
+        if old_order == incoming_order && old.evidence.operation != evidence.operation {
+            return Err(Error::ConflictingReplay);
+        }
+        let mut state = old.clone();
+        if incoming_order < old_order {
+            state.evidence = evidence.clone();
+        }
+        return Ok((state, Effects::default()));
     }
     let mut effects = Effects::default();
     effects.indexes.push(IndexEffect::TurnReady(declaration.key.id()));
