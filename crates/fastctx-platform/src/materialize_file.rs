@@ -137,8 +137,8 @@ pub enum FileBoundary {
     PublishedSynced,
     PublishedNamespaceSynced,
 }
-/// No callback may publish before its transaction is FULL committed. Repeated
-/// records must compare the same intent and never regress a committed phase.
+/// Returning success attests that the Runtime transaction is FULL committed.
+/// Repeated records compare the same intent and never regress a committed phase.
 /// The caller serializes this binding with wanted, cleanup and revocation.
 pub trait FileJournal {
     fn record(&mut self, plan: &FilePlan, checkpoint: FileCheckpoint) -> io::Result<()>;

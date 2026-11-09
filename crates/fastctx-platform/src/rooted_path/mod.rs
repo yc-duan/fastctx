@@ -140,8 +140,10 @@ impl Directory {
         }
         Ok(())
     }
-    /// Confirms every held ancestor, including ones that already existed.
-    /// This intentionally does not use a string-path durability cache.
+    /// Unix fsyncs every held ancestor, including ones that already existed,
+    /// without a string-path cache. Windows creates with write-through but has
+    /// no ordinary-directory flush contract; startup reconciliation remains
+    /// mandatory even after a successful installed checkpoint.
     pub fn sync_chain(&self) -> io::Result<()> {
         crate::roles::in_place("sync managed namespace", || {
             let mut current = Some(self);

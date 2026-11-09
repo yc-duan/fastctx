@@ -55,7 +55,8 @@ pub enum DirectoryBoundary {
     JunctionFlushed,
     NamespaceSynced,
 }
-/// All records use the foundation Runtime transaction, not a platform sidecar.
+/// Returning success attests to a FULL foundation Runtime commit, not a queued
+/// write or a platform sidecar record.
 /// Intent reserves this binding's slot and preserves both generation roots.
 /// Replays compare operation/parent/stable/generations without regressing an
 /// installed checkpoint. `slot` is reconstructed from SlotRepair/SlotCreated;
@@ -232,7 +233,6 @@ fn switch_unix(parent: &Directory, plan: &DirectoryPlan, journal: &mut impl Dire
 fn invalid(message: &str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message.to_owned())
 }
-
 
 #[cfg(test)]
 mod health;
