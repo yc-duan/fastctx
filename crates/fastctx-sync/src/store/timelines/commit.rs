@@ -61,10 +61,15 @@ pub(super) fn install(
     }
     // While a branch switch rebuilds the index, rows are rebuilt from the tree
     // instead of patched against the old branch.
-    let indexing = next.indexed == Some(next.projection);
-    if indexing {
+    let mut indexed = next.indexed;
+    if indexed == Some(next.projection) {
         for change in changes {
-            index(db, conversation, change)?;
+            if !index(db, conversation, change)? {
+                // Partial cache patches stay hidden by the same head commit.
+                // Rebuild from the authoritative root rather than failing it.
+                indexed = None;
+                break;
+            }
         }
     }
     let local = local_head::advance(db)?;
@@ -77,15 +82,18 @@ pub(super) fn install(
             next.projection.0.to_be_bytes().as_slice(),
             serde_json::to_vec(&next.through).map_err(|error| sql::invalid(error.to_string()))?,
             next.root.as_ref().map(|root| root.0.digest.as_str().to_owned()),
-            next.indexed.map(|revision| revision.0.to_be_bytes().to_vec()),
+            indexed.map(|revision| revision.0.to_be_bytes().to_vec()),
             next.applied.0.to_be_bytes().as_slice(),
             local.0.to_be_bytes().as_slice()
         ])?;
+    if indexed != Some(next.projection) {
+        crate::scheduler::projection_changed(db, "derived.timeline-index", conversation, local)?;
+    }
     projection_commit::close_staging(db, custody, operation)?;
     Ok(Installed::Committed)
 }
 
-fn deactivate(db: &Connection, conversation: &ObjectKey, previous: &TimelineItem) -> Result<()> {
+fn deactivate(db: &Connection, conversation: &ObjectKey, previous: &TimelineItem) -> Result<bool> {
     let scope = &conversation.scope;
     let changed = db
         .prepare_cached("UPDATE sync_timeline_items SET active=0 WHERE hub=?1 AND scope=?2 AND conversation=?3 AND item=?4 AND revision=?5 AND active=1")?
@@ -96,21 +104,20 @@ fn deactivate(db: &Connection, conversation: &ObjectKey, previous: &TimelineItem
             previous.id.as_str(),
             previous.revision.0.to_be_bytes().as_slice()
         ])?;
-    if changed != 1 {
-        return Err(sql::invalid("the position index differs from the snapshot it was planned against"));
-    }
-    Ok(())
+    Ok(changed == 1)
 }
 
-fn index(db: &Connection, conversation: &ObjectKey, change: &IndexChange) -> Result<()> {
+fn index(db: &Connection, conversation: &ObjectKey, change: &IndexChange) -> Result<bool> {
     match change {
         IndexChange::Put { previous, item } => {
-            if let Some(previous) = previous {
-                deactivate(db, conversation, previous)?;
+            if let Some(previous) = previous
+                && !deactivate(db, conversation, previous)?
+            {
+                return Ok(false);
             }
             let scope = &conversation.scope;
             let position = position::encode(&item.position).map_err(|error| sql::invalid(error.to_string()))?;
-            db.prepare_cached("INSERT INTO sync_timeline_items(hub,scope,conversation,item,revision,accepted,position,body,turn,parent,active) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,1)")?
+            let changed = db.prepare_cached("INSERT INTO sync_timeline_items(hub,scope,conversation,item,revision,accepted,position,body,turn,parent,active) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,1) ON CONFLICT(hub,scope,conversation,item,revision) DO NOTHING")?
                 .execute(params![
                     scope.hub.to_string(),
                     scope.scope.as_str(),
@@ -123,8 +130,8 @@ fn index(db: &Connection, conversation: &ObjectKey, change: &IndexChange) -> Res
                     item.turn.as_str(),
                     item.parent.as_ref().map(|parent| parent.as_str())
                 ])?;
+            Ok(changed == 1)
         }
-        IndexChange::Retract { previous, .. } => deactivate(db, conversation, previous)?,
+        IndexChange::Retract { previous, .. } => deactivate(db, conversation, previous),
     }
-    Ok(())
 }

@@ -144,7 +144,7 @@ async fn settle(db: &Database, blocks: &SqliteBlocks, timelines: &SqliteTimeline
         for lease in leases {
             let outcome = if lease.task.key.kind == "sync.projection" {
                 installs += 1;
-                timelines.process(lease.clone()).await?
+                fastctx_sync::scheduler::TaskHandler::handle(timelines, lease.clone()).await?
             } else {
                 blocks.process(lease.clone()).await?
             };
@@ -358,6 +358,32 @@ pub(super) async fn run(root: &Path) -> Result<()> {
     let refused = timelines.timeline(reader.clone(), read(Some(forged.clone()))).await?;
     assert!(matches!(refused, TimelineResult::ReanchorNeeded));
     assert!(matches!(timelines.item(reader.clone(), forged, first.id()).await?, ItemRead::ReanchorNeeded));
+    // Select the old branch while its fence still holds the derived snapshot.
+    // Rebuilding must remove the second branch's row and reactivate the first.
+    let fourth = sources.begin_step(primary.clone(), Some(third.revision()), generation.clone()).await?;
+    let bound = sources.bind_target(fourth.clone(), primary.clone()).await?;
+    let selected = ManifestRoot(BlobId {
+        domain: scope(),
+        algorithm: DigestAlgorithm::Sha256,
+        digest: Digest::try_from(root_one.clone())?,
+    });
+    let expected = sources.checkpoint(primary.clone()).await?;
+    let switch = Fact {
+        fact: TimelineFact::ItemRevision {
+            change: TimelineChange::SelectBranch { root: selected, projection: Revision(1) },
+        },
+        roots: Vec::new(),
+    };
+    commit(&sources, &fourth, &bound, &primary, expected, 5, vec![switch]).await?;
+    assert!(settle(&db, &blocks, &timelines).await? > 1);
+    let (projection, _, indexed, _) = head(&db)?;
+    assert_eq!((projection, indexed), (3, Some(3)), "the branch position index caught up");
+    let TimelineResult::Page { page: selected } = timelines.timeline(reader.clone(), read(None)).await? else {
+        return Err("the rebuilt branch did not read from its position index".into());
+    };
+    assert_eq!(selected.items, vec![item.clone()]);
+    assert_eq!(count(&db, "SELECT COUNT(*) FROM sync_timeline_items WHERE active=1")?, 1);
+    timelines.release(reader.clone(), selected.fence).await?;
     timelines.release(reader.clone(), old_fence.clone()).await?;
     timelines.release(reader.clone(), latest.fence.clone()).await?;
     let stale = timelines.timeline(reader.clone(), read(Some(old_fence))).await?;
@@ -368,7 +394,7 @@ pub(super) async fn run(root: &Path) -> Result<()> {
     while blocks.drain_steps(64).await? != 0 {}
     while blocks.collect(64).await? != 0 {}
     assert_eq!(count(&db, &format!("SELECT COUNT(*) FROM sync_asset_manifests WHERE hash='{root_one}'"))?, 0);
-    assert_eq!(count(&db, &format!("SELECT COUNT(*) FROM sync_asset_manifests WHERE hash='{root_two}'"))?, 1);
+    assert_eq!(count(&db, &format!("SELECT COUNT(*) FROM sync_asset_manifests WHERE hash='{root_two}'"))?, 0);
     // A World opens the scope of a conversation it hosts under its alone hub,
     // derived from the conversation and kept with its origin.
     let alone = HubId::from_bytes([97; 8]);
@@ -381,7 +407,7 @@ pub(super) async fn run(root: &Path) -> Result<()> {
     let other = SqliteScopes::new(blocks.clone(), alone, DeviceId::from_bytes([99; 32]));
     assert!(matches!(other.open_conversation(hosted).await, Err(fastctx_sync::store::Error::Invalid(_))));
     println!(
-        "timeline install: item revisions to snapshot and index, indexed and fenced reads, item and stream reads, notices, release, input-only passes, retraction, idempotent rerun, head retention and hosted scopes passed"
+        "timeline install: item revisions to snapshot and index, indexed and fenced reads, item and stream reads, notices, release, input-only passes, retraction, branch index rebuild, idempotent rerun, head retention and hosted scopes passed"
     );
     Ok(())
 }

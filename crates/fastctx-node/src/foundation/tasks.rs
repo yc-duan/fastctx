@@ -9,11 +9,7 @@ use fastctx_sync::{
 };
 
 pub(super) fn handlers(blocks: &SqliteBlocks, timelines: &SqliteTimelines) -> Vec<Arc<dyn TaskHandler>> {
-    vec![
-        Arc::new(Content(blocks.clone())),
-        Arc::new(SupplyCleanup(blocks.clone())),
-        Arc::new(Timelines(timelines.clone())),
-    ]
+    vec![Arc::new(Content(blocks.clone())), Arc::new(SupplyCleanup(blocks.clone())), Arc::new(timelines.clone())]
 }
 
 /// Validation, expansion and supply checks of stored content.
@@ -35,20 +31,6 @@ impl TaskHandler for SupplyCleanup {
     }
     fn takes(&self, key: &TaskKey) -> bool {
         key.kind == "sync.gc" && (key.key.starts_with("supply:") || key.key.starts_with("supply-cancel:"))
-    }
-    fn handle(&self, lease: Lease) -> FutureResult<'_, Outcome> {
-        self.0.process(lease)
-    }
-}
-
-/// Installing committed item revisions into each conversation's timeline.
-struct Timelines(SqliteTimelines);
-impl TaskHandler for Timelines {
-    fn kind(&self) -> &'static str {
-        "sync.projection"
-    }
-    fn takes(&self, key: &TaskKey) -> bool {
-        key.kind == "sync.projection" && key.key.starts_with("derived.timeline/")
     }
     fn handle(&self, lease: Lease) -> FutureResult<'_, Outcome> {
         self.0.process(lease)

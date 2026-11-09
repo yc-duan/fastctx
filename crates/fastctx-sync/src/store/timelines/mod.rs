@@ -6,6 +6,7 @@ mod install;
 mod notices;
 mod pages;
 mod reader;
+mod rebuild;
 mod state;
 mod stream;
 
@@ -35,5 +36,27 @@ impl SqliteTimelines {
     /// The caller persists the outcome with the common Scheduler.
     pub fn process(&self, lease: Lease) -> FutureResult<'_, Outcome> {
         Box::pin(install::process(self, lease))
+    }
+    /// Resumes one bounded page of `derived.timeline-index/<object>` work.
+    /// The common scheduler persists its outcome and retries unfinished pages.
+    pub fn rebuild_index(&self, lease: Lease) -> FutureResult<'_, Outcome> {
+        Box::pin(rebuild::process(self, lease))
+    }
+}
+
+impl crate::scheduler::TaskHandler for SqliteTimelines {
+    fn kind(&self) -> &'static str {
+        "sync.projection"
+    }
+    fn takes(&self, key: &crate::scheduler::TaskKey) -> bool {
+        key.kind == self.kind()
+            && (key.key.starts_with("derived.timeline/") || key.key.starts_with("derived.timeline-index/"))
+    }
+    fn handle(&self, lease: Lease) -> FutureResult<'_, Outcome> {
+        if lease.task.key.key.starts_with("derived.timeline-index/") {
+            self.rebuild_index(lease)
+        } else {
+            self.process(lease)
+        }
     }
 }

@@ -203,14 +203,17 @@ impl SqliteTimelines {
             .blocks
             .database()
             .read(move |db| {
-                let found = state::head(db, &conversation)?;
+                // A read closure alone is not a SQLite snapshot. Pin the head
+                // check and index rows together across concurrent installations.
+                let snapshot = db.unchecked_transaction()?;
+                let found = state::head(&snapshot, &conversation)?;
                 if found.map(|found| (found.root, found.projection, found.indexed))
                     != Some((Some(expected.0), expected.1, expected.2))
                 {
                     return Ok(None);
                 }
                 let scope = &conversation.scope;
-                let rows = db
+                let rows = snapshot
                     .prepare_cached(seek.statement)?
                     .query_map(
                         params![
@@ -223,6 +226,7 @@ impl SqliteTimelines {
                         |row| row.get::<_, Vec<u8>>(0),
                     )?
                     .collect::<fastctx_storage::rusqlite::Result<Vec<_>>>()?;
+                snapshot.commit()?;
                 Ok(Some(rows))
             })
             .await
@@ -255,7 +259,7 @@ impl SqliteTimelines {
 }
 
 /// A distinct use per read, so one reader's release never ends another's.
-fn lease(conversation: &ObjectKey, local: LocalSequence) -> RootLeaseId {
+pub(super) fn lease(conversation: &ObjectKey, local: LocalSequence) -> RootLeaseId {
     static READS: AtomicU64 = AtomicU64::new(0);
     let nanos =
         std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |duration| duration.as_nanos());

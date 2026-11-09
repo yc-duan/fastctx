@@ -6,8 +6,9 @@ mod tables;
 pub use tables::TABLES;
 
 pub const COMPONENT: &str = "sync.shadow";
-pub const VERSION: u32 = 1;
-pub const SCHEMA: &str = concat!(include_str!("schema.sql"), include_str!("legacy_pins.sql"));
+pub const VERSION: u32 = 2;
+pub const SCHEMA: &str =
+    concat!(include_str!("schema.sql"), include_str!("schema_timeline_index.sql"), include_str!("legacy_pins.sql"));
 
 /// Installs the shadow component inside the service's startup transaction.
 /// The independently installed legacy carrier is never created twice.
@@ -15,7 +16,10 @@ pub fn initialize(db: &fastctx_storage::rusqlite::Connection) -> fastctx_storage
     fastctx_storage::versions::apply(
         db,
         COMPONENT,
-        &[fastctx_storage::versions::Migration { version: VERSION, sql: include_str!("schema.sql") }],
+        &[
+            fastctx_storage::versions::Migration { version: 1, sql: include_str!("schema.sql") },
+            fastctx_storage::versions::Migration { version: VERSION, sql: include_str!("schema_timeline_index.sql") },
+        ],
     )?;
     crate::migration::initialize_carrier(db)?;
     db.execute(

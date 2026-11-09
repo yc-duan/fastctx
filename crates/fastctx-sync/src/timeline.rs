@@ -8,6 +8,7 @@ pub mod index;
 pub mod pages;
 pub mod position;
 pub mod query;
+pub mod scan;
 mod tree;
 pub mod update;
 

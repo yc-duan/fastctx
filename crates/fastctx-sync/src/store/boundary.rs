@@ -93,7 +93,12 @@ fn permits(table: &str) -> bool {
         ),
         Some(Role::Projection) => matches!(
             table,
-            "sync_timeline_heads" | "sync_timeline_items" | "sync_asset_uploads" | "sync_local_head" | "sync_tasks"
+            "sync_timeline_heads"
+                | "sync_timeline_items"
+                | "sync_timeline_rebuilds"
+                | "sync_asset_uploads"
+                | "sync_local_head"
+                | "sync_tasks"
         ),
         Some(Role::Pending) => matches!(
             table,
@@ -117,11 +122,21 @@ impl WritePolicy for Rules {
 impl Guard for Rules {
     fn check(&mut self, change: &Change<'_>) -> Result<()> {
         if change.table() == "sync_tasks"
-            && matches!(ACTIVE.get(), Some(Role::Content | Role::Pending | Role::Projection))
+            && matches!(ACTIVE.get(), Some(Role::Content | Role::Pending))
             && (change.action() == Action::Delete
                 || change.after(0)? != fastctx_storage::rusqlite::types::ValueRef::Text(b"sync.manifest"))
         {
             return Err(super::sql::invalid("content publication cannot change another scheduler handler"));
+        }
+        if change.table() == "sync_tasks" && matches!(ACTIVE.get(), Some(Role::Projection)) {
+            use fastctx_storage::rusqlite::types::ValueRef;
+            let allowed = change.action() != Action::Delete
+                && (change.after(0)? == ValueRef::Text(b"sync.manifest")
+                    || change.after(0)? == ValueRef::Text(b"sync.projection")
+                        && matches!(change.after(3)?, ValueRef::Text(key) if key.starts_with(b"derived.timeline-index/")));
+            if !allowed {
+                return Err(super::sql::invalid("a projection cannot change another scheduler handler"));
+            }
         }
         // A source commit wakes content expansion for the roots it publishes and
         // the projections it marks stale, nothing else.

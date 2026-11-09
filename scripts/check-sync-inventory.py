@@ -71,7 +71,8 @@ def check(registry):
                 raise ValueError(f"unregistered production table {table}: {path.relative_to(ROOT)}")
     schema = ROOT / "crates/fastctx-sync/src/store"
     connection = sqlite3.connect(":memory:")
-    connection.executescript((schema / "schema.sql").read_text() + (schema / "legacy_pins.sql").read_text())
+    connection.executescript("".join((schema / name).read_text() for name in (
+        "schema.sql", "schema_timeline_index.sql", "legacy_pins.sql")))
     actual = {r[0] for r in connection.execute("SELECT name FROM sqlite_schema WHERE type='table'")}
     declared = set(re.findall(r'"(sync_[a-z_]+)"', (schema / "schema_tables.rs").read_text()))
     if actual != declared:
