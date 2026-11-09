@@ -15,7 +15,11 @@ pub(crate) struct Permit {
 }
 impl Budget {
     pub(crate) fn new(limit: usize) -> Result<Arc<Self>, Error> {
-        if limit < 2 * fastctx_types::sync::BLOCK_BYTES as usize + 65536 {
+        if limit
+            < fastctx_types::sync::BLOCK_BYTES as usize
+                + 65536
+                + super::codec::decode_workspace(crate::manifest::Encoding::Zstd)
+        {
             return Err(Error::Invalid("content budget cannot hold one bounded encoding operation".into()));
         }
         Ok(Arc::new(Self { limit, used: AtomicUsize::new(0) }))

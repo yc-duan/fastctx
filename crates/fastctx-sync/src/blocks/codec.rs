@@ -42,33 +42,72 @@ pub fn encode(scope: ScopeKey, decoded: Vec<u8>, encoding: Encoding) -> Result<E
     Ok(EncodedBlock { representation, bytes })
 }
 
-/// Checks both identities and the decoded size. A matching compressed digest
-/// alone is never evidence that the advertised content exists on this replica.
+/// Decoder state, its one-MiB window, native input/output buffers and the
+/// 64-KiB verification chunk. Callers charge this in addition to retained bytes.
+/// Zstd 1.5.7 estimates DCtx + window + three 128-KiB blocks + 64 bytes;
+/// this bound also includes the Rust verification chunk, with no BufReader copy.
+pub const fn decode_workspace(encoding: Encoding) -> usize {
+    match encoding {
+        Encoding::Raw => 0,
+        Encoding::Zstd => 2 * 1024 * 1024,
+    }
+}
+
+/// Checks content without keeping a decoded copy or cloning the input block.
+pub fn validate(representation: &Representation, encoded: &[u8]) -> Result<(), Error> {
+    visit(representation, encoded, |_| {})
+}
+
+/// Returns bounded decoded bytes; callers also reserve decode_workspace and
+/// the encoded input. Raw content reuses its input allocation.
 pub fn decode(representation: &Representation, encoded: Vec<u8>) -> Result<Vec<u8>, Error> {
+    if representation.envelope.encoding == Encoding::Raw {
+        validate(representation, &encoded)?;
+        return Ok(encoded);
+    }
+    let mut decoded = Vec::with_capacity(representation.content.decoded_bytes as usize);
+    visit(representation, &encoded, |bytes| decoded.extend_from_slice(bytes))?;
+    Ok(decoded)
+}
+
+fn visit(representation: &Representation, encoded: &[u8], mut consume: impl FnMut(&[u8])) -> Result<(), Error> {
+    use sha2::{Digest as _, Sha256};
     representation.validate().map_err(Error::Invalid)?;
-    if encoded.len() != representation.encoded_bytes as usize || Digest::of(&encoded) != representation.encoded_digest {
+    if encoded.len() != representation.encoded_bytes as usize || Digest::of(encoded) != representation.encoded_digest {
         return Err(Error::Invalid("encoded block length or digest differs from its descriptor".into()));
     }
-    let decoded = match representation.envelope.encoding {
-        Encoding::Raw => encoded,
-        Encoding::Zstd => {
-            let mut decoder = zstd::stream::read::Decoder::new(encoded.as_slice()).map_err(codec_error)?;
-            // A small output limit alone does not bound a hostile frame's window.
-            decoder.window_log_max(20).map_err(codec_error)?;
-            let mut decoded = Vec::with_capacity(representation.content.decoded_bytes as usize);
-            decoder
-                .take(u64::from(representation.content.decoded_bytes) + 1)
-                .read_to_end(&mut decoded)
-                .map_err(codec_error)?;
-            decoded
+    if representation.envelope.encoding == Encoding::Raw {
+        if encoded.len() != representation.content.decoded_bytes as usize
+            || Digest::of(encoded) != representation.content.id.digest
+        {
+            return Err(Error::Invalid("raw block differs from its content identity".into()));
         }
-    };
-    if decoded.len() != representation.content.decoded_bytes as usize
-        || Digest::of(&decoded) != representation.content.id.digest
+        consume(encoded);
+        return Ok(());
+    }
+    let mut decoder = zstd::stream::read::Decoder::with_buffer(encoded).map_err(codec_error)?;
+    decoder.window_log_max(20).map_err(codec_error)?;
+    let mut chunk = [0_u8; 64 * 1024];
+    let mut hash = Sha256::new();
+    let mut total = 0_usize;
+    loop {
+        let size = decoder.read(&mut chunk).map_err(codec_error)?;
+        if size == 0 {
+            break;
+        }
+        total = total.checked_add(size).ok_or_else(|| Error::Invalid("decoded block size overflow".into()))?;
+        if total > representation.content.decoded_bytes as usize {
+            return Err(Error::Invalid("decoded block exceeds its declared length".into()));
+        }
+        hash.update(&chunk[..size]);
+        consume(&chunk[..size]);
+    }
+    if total != representation.content.decoded_bytes as usize
+        || Digest::from_bytes(hash.finalize().into()) != representation.content.id.digest
     {
         return Err(Error::Invalid("decoded block length or digest differs from its content identity".into()));
     }
-    Ok(decoded)
+    Ok(())
 }
 
 fn codec_error(error: std::io::Error) -> Error {

@@ -140,7 +140,7 @@ struct Plain {
 impl Plain {
     fn of(text: &str) -> Self {
         let mut plain = String::with_capacity(text.len());
-        let mut joined = Vec::new();
+        let mut joined = Vec::with_capacity(text.matches("\r\n").count());
         let mut last = 0;
         for (at, _) in text.match_indices("\r\n") {
             plain.push_str(&text[last..at]);

@@ -156,6 +156,11 @@ fn physical_files(root: &Path) -> Result<usize> {
 }
 
 pub async fn run(root: &Path) -> Result<()> {
+    // The upstream ZSTD_estimateDStreamSize bound includes the context, window,
+    // one input block and two output blocks, plus wild-copy padding.
+    let decoder_state = zstd::zstd_safe::DCtx::create().sizeof();
+    let decoder_bound = decoder_state + 1024 * 1024 + 3 * zstd::zstd_safe::DCtx::out_size() + 64 + 64 * 1024;
+    assert!(decoder_bound <= codec::decode_workspace(Encoding::Zstd));
     let dir = root.join("content");
     fastctx_platform::ensure_private_dir(&dir)?;
     let database = open(&dir.join("replica.sqlite3"))?;

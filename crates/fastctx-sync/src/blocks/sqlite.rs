@@ -107,8 +107,9 @@ impl BlockStore for SqliteBlocks {
             if encoded.len() != representation.encoded_bytes as usize {
                 return Err(Error::Invalid("encoded block length differs from its descriptor".into()));
             }
-            let _buffer = self.budget.acquire(encoded.len() + representation.content.decoded_bytes as usize)?;
-            codec::decode(&representation, encoded.clone())?;
+            let _buffer =
+                self.budget.acquire(encoded.capacity() + codec::decode_workspace(representation.envelope.encoding))?;
+            codec::validate(&representation, &encoded)?;
             let _lease = self.leases.write(&representation.content.id)?;
             let policy = self.policy.clone();
             let holder = self.holder.clone();

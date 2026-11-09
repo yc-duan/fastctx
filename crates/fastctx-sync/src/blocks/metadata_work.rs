@@ -109,7 +109,10 @@ pub(super) async fn process(
         });
     };
     let _buffer = store.budget.acquire(
-        stored.representation.encoded_bytes as usize + payload.decoded_bytes as usize + page.page_json.len(),
+        stored.representation.encoded_bytes as usize
+            + payload.decoded_bytes as usize
+            + page.page_json.len() * 4
+            + codec::decode_workspace(stored.representation.envelope.encoding),
     )?;
     let encoded = store.files.read(&stored.key, stored.representation.encoded_bytes)?;
     let decoded = codec::decode(&stored.representation, encoded)?;

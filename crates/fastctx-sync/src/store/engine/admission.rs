@@ -38,8 +38,10 @@ fn cost(bytes: usize) -> Result<u32, Error> {
     // Bodies, normalized text and CRLF offset mapping coexist during planning;
     // replacement output is emitted incrementally, not stored once per match.
     bytes
-        .checked_mul(8)
+        .checked_mul(10)
         .and_then(|n| n.checked_add(fastctx_types::sync::PAGE_BYTES as usize * 4))
+        .and_then(|n| n.checked_add(fastctx_types::sync::BLOCK_BYTES as usize + 65536))
+        .and_then(|n| n.checked_add(crate::blocks::codec::decode_workspace(crate::manifest::Encoding::Zstd)))
         .and_then(|n| u32::try_from(n).ok())
         .ok_or_else(|| Error::Invalid("semantic admission budget exceeds its counter range".into()))
 }
