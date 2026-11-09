@@ -63,6 +63,7 @@ pub(super) struct Take {
 /// newer than it: kept for it to take, and installed now on Windows when it
 /// is closed.
 pub(super) fn ask(node: &Arc<Node>, manifest: Manifest, asker: Asker, app: &str) -> Result<(), String> {
+    super::withdrawal::check(node, &manifest.version).map_err(|problem| problem.why)?;
     let origin = super::schedule::Origin::from_asker(&asker);
     if super::schedule::withdrawn(node, &manifest.version, origin.as_ref()) {
         return Ok(());
@@ -159,6 +160,7 @@ async fn install(node: &Arc<Node>, manifest: &Manifest, target: &str) -> Result<
     if !signed_in(node, manifest, origin.as_ref()).await? {
         return Ok(());
     }
+    super::withdrawal::check(node, &manifest.version)?;
     if open() || super::schedule::withdrawn(node, &manifest.version, origin.as_ref()) {
         return Ok(());
     }

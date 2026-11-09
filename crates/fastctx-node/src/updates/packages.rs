@@ -32,6 +32,7 @@ pub(crate) async fn relay(
     fetch: Fetch,
     progress: watch::Sender<PackageProgress>,
 ) -> Result<PathBuf, String> {
+    super::withdrawal::check(node, &fetch.version).map_err(|problem| problem.why)?;
     let cache = super::cache(node);
     let (relays, carried) = {
         let held = node.updates.held.lock().expect("never poisoned");
@@ -56,6 +57,7 @@ pub(crate) async fn relay(
     let logging = node.clone();
     let log: fastctx_update::pool::Log = Arc::new(move |message| logging.log.line(format_args!("{message}")));
     let brought = node.updates.packages.relay(&cache, &fetch, carried, &mut heard, log).await?;
+    super::withdrawal::check(node, &fetch.version).map_err(|problem| problem.why)?;
     if let Some(at) = brought.github_at {
         super::github_reached(node, at);
     }

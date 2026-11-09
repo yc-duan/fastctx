@@ -249,7 +249,13 @@ impl Link {
     /// Saved constraints never recreate machine reports or queued updates.
     pub fn update_network(&self) -> Option<Network> {
         self.versions().or_else(|| {
-            self.inner.versions.policy.lock().expect("never poisoned").as_ref().map(|policy| policy.network())
+            self.inner
+                .versions
+                .policy
+                .lock()
+                .expect("never poisoned")
+                .as_ref()
+                .map(|policy| policy.network(&self.inner.key.public().to_string()))
         })
     }
 

@@ -863,6 +863,49 @@
         "preferences": true,
         "repair_supported": false,
         "repair_routing": false
+      },
+      {
+        "running": "1.0.1-beta.17",
+        "settings": {
+          "auto": true,
+          "chosen": true,
+          "relays": true
+        },
+        "channel": "stable",
+        "auto": false,
+        "auto_enabled": true,
+        "looked": {
+          "checking": false,
+          "failures": 0
+        },
+        "network": {
+          "policy": {
+            "channel": "stable",
+            "managed_auto": true
+          },
+          "updates_view": false,
+          "repair_supported": false,
+          "rolled": {
+            "version": "1.0.2",
+            "takes": false
+          }
+        },
+        "available": {
+          "version": "1.0.2",
+          "notes": "An update.",
+          "pub_date": "2026-10-20T12:00:00Z",
+          "platforms": {}
+        },
+        "automatic": null,
+        "above_hub": false,
+        "kernel_target": "",
+        "stage": {
+          "kind": "idle"
+        },
+        "progress": false,
+        "preferences": false,
+        "repair_supported": false,
+        "repair_routing": false
       }
     ],
     "checks": [

@@ -407,7 +407,7 @@ export class MachineUpdates {
     try {
       const saved = await updates.remote(machine.machine, call);
       this.asked += 1;
-      const settings = { reported: machine.reported, auto: saved.auto ?? saved.settings.auto, auto_chosen: saved.settings.chosen ?? machine.auto_chosen, relays: saved.settings.relays };
+      const settings = { reported: machine.reported, auto: saved.auto_enabled ?? saved.auto ?? saved.settings.auto, auto_chosen: saved.settings.chosen ?? machine.auto_chosen, relays: saved.settings.relays };
       this.acknowledgedWays.set(machine.machine, settings);
       this.byName.set(machine.machine, { ...machine, ...settings });
       this.said.delete(machine.machine);

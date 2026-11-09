@@ -13,6 +13,7 @@ mod packages;
 pub(crate) mod repair;
 mod retry;
 mod schedule;
+mod withdrawal;
 
 pub(crate) use application::Open;
 
@@ -216,12 +217,14 @@ fn kind(node: &Node, held: &Held) -> Kind {
 /// line of what runs here (`world-upgrade.md`, 正式版与测试版).
 pub(crate) fn state(node: &Node) -> State {
     let links = node.links();
-    let networks = links.iter().filter_map(|link| link.update_network()).collect();
+    let networks: Vec<_> = links.iter().filter_map(|link| link.update_network()).collect();
+    let policies_known = networks.len() == links.len();
     let held = node.updates.held.lock().expect("never poisoned");
     let cache = cache(node);
     let context = fastctx_update::state::Context {
         kind: kind(node, &held),
         connected: !links.is_empty(),
+        policies_known,
         hub_here: fastctx_install::service::registered_hubs(&node.root).is_ok_and(|hubs| !hubs.is_empty()),
         networks,
         cached: cache.manifests(),
@@ -335,7 +338,7 @@ pub(crate) fn report(node: &Node) {
         target: Some(fastctx_update::kernel::target()),
         package_progress: true,
         stage: state.stage,
-        auto: Some(state.auto),
+        auto: state.auto_enabled.or(Some(state.auto)),
         auto_chosen: held.settings.chosen && kind(node, &held) != Kind::Managed,
         kind: Some(kind(node, &held)),
         github_at: held.looked.github_at,
@@ -375,6 +378,9 @@ pub(crate) async fn call(node: &Arc<Node>, call: UpdateCall) -> Result<State, St
     }
     match call {
         UpdateCall::Progress { stage } => {
+            if let Stage::Installing { version } = &stage {
+                withdrawal::check(node, version).map_err(|problem| problem.why)?;
+            }
             // An installation the interface could not make is kept as any
             // failed update is, and not tried again before its time, the
             // interface opened again or not.
@@ -386,7 +392,11 @@ pub(crate) async fn call(node: &Arc<Node>, call: UpdateCall) -> Result<State, St
                         version: version.clone(),
                         target,
                         why: problem.why.clone(),
-                        reason: Some(problem.reason.clone()),
+                        reason: Some(
+                            withdrawal::check(node, version)
+                                .err()
+                                .map_or_else(|| problem.reason.clone(), |withdrawn| withdrawn.reason),
+                        ),
                     };
                     retry::failed(node, failure);
                 }
@@ -462,6 +472,8 @@ async fn manifest_of(node: &Arc<Node>, version: &str) -> Result<Manifest, String
 
 /// Brings the package `target` of `version` here, in the background.
 fn fetch(node: &Arc<Node>, version: String, target: String) -> Result<(), String> {
+    withdrawal::check(node, &version)
+        .map_err(|problem| reject_update(node, &version, &target, problem.reason, problem.why))?;
     {
         let mut held = node.updates.held.lock().expect("never poisoned");
         if held.fetching.as_ref().is_some_and(|fetching| fetching.version == version && fetching.target == target) {
@@ -485,6 +497,7 @@ fn fetch(node: &Arc<Node>, version: String, target: String) -> Result<(), String
             Ok(manifest) => bring(&node, &manifest, &target).await,
             Err(why) => Err(why.into()),
         };
+        let outcome = withdrawal::check(&node, &version).and(outcome);
         node.updates.held.lock().expect("never poisoned").fetching = None;
         if let Err(why) = outcome {
             node.log.line(format_args!("bringing {target} of {version} here: {why}"));
@@ -499,6 +512,7 @@ fn fetch(node: &Arc<Node>, version: String, target: String) -> Result<(), String
 /// when GitHub fails or goes slowly (`fastctx_update::obtain`), with its progress kept for the interface.
 /// Helpers can still be delivering other verified packages from this cache.
 async fn bring(node: &Arc<Node>, manifest: &Manifest, target: &str) -> Result<PathBuf, fastctx_types::update::Problem> {
+    withdrawal::check(node, &manifest.version)?;
     let cache = cache(node);
     let links = node.links();
     let sources: Vec<_> = links.iter().map(|link| link.as_ref()).collect();
@@ -531,6 +545,7 @@ async fn bring(node: &Arc<Node>, manifest: &Manifest, target: &str) -> Result<Pa
         .packages
         .obtain(&cache, manifest, target, &sources, network_now, carried, &mut progress, log)
         .await?;
+    withdrawal::check(node, &manifest.version)?;
     if let Some(at) = brought.github_at {
         github_reached(node, at);
     }
@@ -607,6 +622,11 @@ fn reject_update(
 /// The package on its way is shown as one fetched, and a failure kept, as
 /// for the interface's; `asker` is who asked from elsewhere.
 async fn kernel(node: &Arc<Node>, version: Option<&str>, asker: Option<Asker>) -> Result<(), String> {
+    if let Some(version) = version {
+        withdrawal::check(node, version).map_err(|problem| {
+            reject_update(node, version, &fastctx_update::kernel::target(), problem.reason, problem.why)
+        })?;
+    }
     let offer = match version {
         // A release asked for whose manifest did not come is kept as a
         // failure of that release, to be tried again as any other.
@@ -614,7 +634,10 @@ async fn kernel(node: &Arc<Node>, version: Option<&str>, asker: Option<Asker>) -
             Ok(offer) => offer,
             Err(why) => {
                 let target = fastctx_update::kernel::target();
-                retry::failed(node, Failed { version: version.to_string(), target, why: why.clone(), reason: None });
+                let (why, reason) = withdrawal::check(node, version)
+                    .err()
+                    .map_or((why, None), |problem| (problem.why, Some(problem.reason)));
+                retry::failed(node, Failed { version: version.to_string(), target, why: why.clone(), reason });
                 report(node);
                 return Err(why);
             }
@@ -623,21 +646,9 @@ async fn kernel(node: &Arc<Node>, version: Option<&str>, asker: Option<Asker>) -
             state(node).offer.ok_or("no release is known here yet; look again once GitHub or the network answers")?
         }
     };
-    // A release a network withdrew is taken by no machine, however asked for
-    // (`fastctx_types::update::Policy::withdrawn`).
-    if node
-        .links()
-        .iter()
-        .any(|link| link.versions().is_some_and(|network| network.policy.withdrawn.contains(&offer.version)))
-    {
-        return Err(reject_update(
-            node,
-            &offer.version,
-            &fastctx_update::kernel::target(),
-            fastctx_types::update::FailureReason::Withdrawn,
-            format!("the network's administrator withdrew {}", offer.version),
-        ));
-    }
+    withdrawal::check(node, &offer.version).map_err(|problem| {
+        reject_update(node, &offer.version, &fastctx_update::kernel::target(), problem.reason, problem.why)
+    })?;
     if !offer.newer_than(env!("CARGO_PKG_VERSION")) {
         let why = match version {
             Some(version) => format!("this machine runs {}; {version} is not newer", env!("CARGO_PKG_VERSION")),
@@ -708,6 +719,7 @@ async fn take(
 ) -> Result<(), fastctx_types::update::Problem> {
     let archive = bring(node, offer, target).await?;
     let origin = asker.as_ref().and_then(schedule::Origin::from_asker);
+    withdrawal::check(node, &offer.version)?;
     if schedule::withdrawn(node, &offer.version, origin.as_ref()) {
         return Ok(());
     }
@@ -863,6 +875,10 @@ pub(crate) async fn machine(
 /// update asked of a machine an application carries the World program of
 /// is the application's to take (`application`).
 pub(crate) async fn remote(node: &Arc<Node>, asker: Asker, update: Option<UpdateCall>) -> Result<State, String> {
+    // Network callbacks can precede loading the remaining memberships (2026-11-09).
+    if !node.updates.held.lock().expect("never poisoned").started {
+        return Err("update policies have not finished loading; try again".into());
+    }
     if let Some(UpdateCall::Repair { version, id }) = update {
         repair::accept(node, version, id, asker.by.to_string())?;
         return Ok(state(node));

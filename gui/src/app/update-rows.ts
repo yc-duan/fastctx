@@ -115,7 +115,7 @@ export class UpdateRows {
         .join("")}</div>`;
     const settings = this.pending ?? state?.settings;
     const onOff: [string, string][] = [["on", words.on], ["off", words.off]];
-    const auto = this.pending ? this.pending.auto : state ? (state.auto ?? state.settings.auto) : false;
+    const auto = this.pending ? this.pending.auto : state ? (state.auto_enabled ?? state.auto ?? state.settings.auto) : false;
     // Until the owner chooses, a computer with the application does not
     // update by itself: it says so beside the choice.
     const byDefault = settings && !settings.chosen ? `<span class="choice-note">${escape(words.autoByDefault)}</span>` : "";

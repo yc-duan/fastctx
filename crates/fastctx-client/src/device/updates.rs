@@ -150,7 +150,7 @@ impl Device {
             target: None,
             package_progress: false,
             stage: state.stage,
-            auto: Some(state.auto),
+            auto: state.auto_enabled.or(Some(state.auto)),
             auto_chosen: held.settings.chosen,
             kind: Some(Kind::Phone),
             github_at: held.looked.github_at,
@@ -181,6 +181,8 @@ impl Device {
         let sessions = self.sessions();
         let held = self.updates.held.lock().expect("never poisoned");
         let cache = self.update_cache();
+        let networks: Vec<_> = sessions.iter().filter_map(|session| session.link.update_network()).collect();
+        let policies_known = networks.len() == sessions.len();
         fastctx_update::state::calculate(
             State {
                 running: Some(Self::running(&held)),
@@ -198,8 +200,9 @@ impl Device {
             fastctx_update::state::Context {
                 kind: Kind::Phone,
                 connected: !sessions.is_empty(),
+                policies_known,
                 hub_here: false,
-                networks: sessions.iter().filter_map(|s| s.link.versions()).collect(),
+                networks,
                 cached: cache.manifests(),
                 activity: held.activity.clone(),
             },
@@ -220,6 +223,9 @@ impl Device {
 
         match call {
             UpdateCall::Progress { stage } => {
+                if let fastctx_types::update::Stage::Installing { version } = &stage {
+                    self.update_state().check_release(version).map_err(|problem| failed(problem.why))?;
+                }
                 self.updates.held.lock().expect("never poisoned").activity =
                     (!matches!(stage, fastctx_types::update::Stage::Idle)).then_some(stage);
                 self.report_versions();
@@ -281,6 +287,7 @@ impl Device {
     }
 
     fn fetch_update(self: &Arc<Self>, version: String, target: String) -> Result<(), Error> {
+        self.update_state().check_release(&version).map_err(|problem| failed(problem.why))?;
         {
             let mut held = self.updates.held.lock().expect("never poisoned");
             if held.fetching.as_ref().is_some_and(|fetching| fetching.version == version && fetching.target == target) {
@@ -315,12 +322,15 @@ impl Device {
                     fetching.total = progress.total;
                 }
             };
-            let outcome = match device.manifest_of(&version).await {
+            let mut outcome = match device.manifest_of(&version).await {
                 Ok(manifest) => {
                     fastctx_update::obtain(&cache, &manifest, &target, &links, network_now, &mut progress).await
                 }
                 Err(why) => Err(why.to_string().into()),
             };
+            if let Err(problem) = device.update_state().check_release(&version) {
+                outcome = Err(problem);
+            }
             if outcome.as_ref().is_ok_and(|b| b.github_at.is_some()) {
                 let mut held = device.updates.held.lock().expect("never poisoned");
                 held.looked.github_at = Some(jiff::Timestamp::now());
