@@ -13,7 +13,9 @@ use fastctx_types::{
     },
 };
 use serde::{Deserialize, Serialize};
-use std::io;
+
+mod validate;
+pub use validate::{BLOCKED_REASON_BYTES, CheckpointContext};
 
 pub const PARSER_VERSION: u16 = 1;
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -22,6 +24,9 @@ pub struct ClaudeCheckpointV1 {
     pub version: u16,
     pub file_identity: FileIdentity,
     pub observed_stamp: FileChangeStamp,
+    /// Following: bytes read from this generation. Reconciling: the new file's
+    /// contiguous audit position; the outer committed offset still belongs to
+    /// the old generation until the final consistent checkpoint installs the new.
     pub read_offset: ByteCount,
     pub partial: Option<Partial>,
     /// None when anchors are stored in the registered HostRows family instead.
@@ -118,41 +123,6 @@ pub struct Prefix {
     pub anchor: Option<Anchor>,
 }
 impl ClaudeCheckpointV1 {
-    pub fn validate(&self, committed: ByteCount) -> io::Result<()> {
-        if self.version != PARSER_VERSION {
-            return Err(io::Error::other("Claude parser version requires reconciliation"));
-        }
-        if committed > self.read_offset || self.read_offset > self.observed_stamp.size {
-            return Err(io::Error::other("Claude checkpoint offsets are inconsistent"));
-        }
-        match &self.partial {
-            Some(partial) if partial.boundaries() != (committed, self.read_offset) => {
-                return Err(io::Error::other("Claude partial line differs from the committed boundary"));
-            }
-            None if self.read_offset != committed => {
-                return Err(io::Error::other("Claude checkpoint lost its partial line"));
-            }
-            _ => {}
-        }
-        if self.audit_cursor.through > self.audit_cursor.observation.size {
-            return Err(io::Error::other("Claude audit cursor exceeds its observation"));
-        }
-        if let Some(Partial::Publishing { row, .. }) = &self.partial {
-            let bodies = match &row.content {
-                Completion::Valid(document) => &document.bodies,
-                Completion::Invalid { bodies, .. } => bodies,
-            };
-            if row.start.0.checked_add(bodies.raw.bytes.0).and_then(|end| end.checked_add(u64::from(!row.sealed)))
-                != Some(row.end.0)
-            {
-                return Err(io::Error::other("validated row span differs from its preserved bytes"));
-            }
-        }
-        for content in self.roots() {
-            content.validate().map_err(io::Error::other)?;
-        }
-        Ok(())
-    }
     /// All returned roots must be explicit edges of the checkpoint-state bundle.
     pub fn roots(&self) -> Vec<&ContentRef> {
         let mut roots = Vec::with_capacity(7);
