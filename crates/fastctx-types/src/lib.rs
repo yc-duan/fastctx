@@ -28,6 +28,7 @@ pub mod data;
 pub mod delivery_control;
 pub mod device;
 pub mod features;
+pub mod file_identity;
 pub mod file_read;
 pub mod file_search;
 pub mod files;

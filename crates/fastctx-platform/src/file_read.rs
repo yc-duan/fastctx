@@ -6,6 +6,8 @@ use std::io;
 use std::path::Path;
 use std::time::SystemTime;
 
+pub use fastctx_types::file_identity::{FileChangeStamp, FileIdentity};
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Snapshot {
     pub size: u64,
@@ -36,6 +38,26 @@ pub fn open(path: &Path) -> io::Result<File> {
 }
 
 impl Snapshot {
+    /// Stable coordinates of the opened file, independent of path and length.
+    /// They are meaningful only on this host and do not establish ownership.
+    pub fn identity(&self) -> FileIdentity {
+        use fastctx_types::sync::cursor::Count;
+        if cfg!(windows) {
+            FileIdentity::Windows { volume: Count(self.identity.0), index: Count(self.identity.1) }
+        } else {
+            FileIdentity::Unix { device: Count(self.identity.0), inode: Count(self.identity.1) }
+        }
+    }
+
+    /// Serializable change observations, deliberately separate from identity.
+    pub fn change_stamp(&self) -> io::Result<FileChangeStamp> {
+        Ok(FileChangeStamp {
+            size: fastctx_types::sync::cursor::ByteCount(self.size),
+            modified: jiff::Timestamp::try_from(self.modified).map_err(io::Error::other)?,
+            indicators: [self.changed.0.to_string(), self.changed.1.to_string()],
+        })
+    }
+
     /// Growth is meaningful only while the path still names the opened file.
     pub fn same_file(&self, other: &Self) -> bool {
         self.identity == other.identity
