@@ -56,7 +56,17 @@ pub(super) fn node(
         return Err(pages::corrupt("tree child crosses its conversation scope").into());
     }
     let node = match pages::load(source, &child.root, meter)? {
-        Node::Branch(children) => TreeNode::Branch(children),
+        Node::Branch(children) => {
+            // Keep the ordering invariant next to the searches that rely on it,
+            // independently of the block reader's manifest validation.
+            if children.is_empty()
+                || children.iter().any(|child| child.first_key > child.last_key || child.entries.0 == 0)
+                || children.windows(2).any(|pair| pair[0].last_key >= pair[1].first_key)
+            {
+                return Err(pages::corrupt("timeline child ranges are unordered or overlap").into());
+            }
+            TreeNode::Branch(children)
+        }
         Node::Payload(TimelinePayload::Items(leaf)) if kind == Kind::Items => {
             if leaf.conversation != root.conversation
                 || leaf.projection > root.projection

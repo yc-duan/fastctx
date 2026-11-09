@@ -129,6 +129,27 @@ fn plan(
             Some(Entry::Item(e, _)) => Some(&e.item),
             _ => None,
         };
+        match &update.change {
+            TimelineChange::Put { item } => {
+                let evidence = update
+                    .evidence
+                    .as_ref()
+                    .ok_or_else(|| Error::Invalid("timeline Put has no original source evidence".into()))?;
+                if let Some(Entry::Item(previous, proof)) = &old
+                    && previous.item == *item
+                    && (previous.record != evidence.record
+                        || previous.payload != evidence.payload
+                        || previous.batch != evidence.proof.id
+                        || proof != &evidence.proof)
+                {
+                    return Err(Error::Invalid("same timeline revision has different source evidence".into()).into());
+                }
+            }
+            TimelineChange::Retract { .. } if update.evidence.is_some() => {
+                return Err(Error::Invalid("retraction unexpectedly carries Put evidence".into()).into());
+            }
+            _ => {}
+        }
         let effect = index::index_changes(old_item, &update.change)?;
         if effect.is_none() {
             continue;
@@ -169,12 +190,7 @@ fn plan(
                     revision: item.revision,
                 }))
             }
-            TimelineChange::Retract { .. } => {
-                if update.evidence.is_some() {
-                    return Err(Error::Invalid("retraction unexpectedly carries Put evidence".into()).into());
-                }
-                None
-            }
+            TimelineChange::Retract { .. } => None,
             _ => unreachable!(),
         };
         root.lookup = overlay.replace(
