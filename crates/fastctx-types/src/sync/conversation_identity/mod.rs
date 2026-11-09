@@ -12,6 +12,10 @@
 //! Ownership, accounts, runtime paths, host-file generations, branch selection
 //! and body bytes are not identity inputs. A birth's device and timestamp must
 //! come from verified, immutable birth evidence, never the current location.
+//! The birth timestamp must be the original value in the authoritative birth
+//! record, retaining all of its fractional precision. Legacy import uses only
+//! the birth seal's timestamp; it must not substitute, round, enrich or rebuild
+//! it from timestamps elsewhere, even when they describe the same birth.
 //! Missing evidence is an unresolved mapping, not a reason to invent a birth.
 //! These functions allocate neither permissions nor production authority.
 //!

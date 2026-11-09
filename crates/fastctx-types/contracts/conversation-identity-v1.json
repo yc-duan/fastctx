@@ -1,5 +1,6 @@
 {
   "format": 1,
+  "birth_evidence": "born_at is the original authoritative birth-record value, with all of its fractional precision. Legacy import uses only the birth seal, never a second- or millisecond-precision copy elsewhere, and never reconstructs, rounds or enriches that value. Timezone-equivalent spelling of that same value is not a new identity. Missing birth evidence remains unresolved.",
   "domain": "fastctx.conversation-identity.v1",
   "framing": "Every field is u64be byte length followed by its bytes. Entity and variant tags are fields. UTF-8 is exact; existing identifier prefixes are retained. Index fields are u64be, birth timestamps are i128be Unix nanoseconds. Hash SHA-256 without truncation.",
   "context": "Context and body fields below are evidence outside keys; they are not hashed. Unknown fields inside a key are rejected. A body conflict is an immutable-operation conflict, not a prohibition on later revisions.",
