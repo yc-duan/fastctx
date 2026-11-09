@@ -21,15 +21,15 @@
     ]
   },
   "direct_device_intent": {
-    "key": "F8t5-ytBIPKx7GXkGY1uCLKOgT_rAeSkAIObheGAgM4",
+    "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
     "kind": "asset_sync_data",
-    "proof": "xCx-ncyaUkjqQ8KPFlrhYJK_d3kyMcDN7gBM-nF-IdqLdVgxN8x1L8ep6Q27PCcvcN0Qeszjrbz9x0FZ_7ykBA",
+    "proof": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
     "session": "ss-29292929292929292929292929292929"
   },
   "hub_intent": {
-    "key": "F8t5-ytBIPKx7GXkGY1uCLKOgT_rAeSkAIObheGAgM4",
+    "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
     "kind": "asset_sync_data",
-    "proof": "ymUKOJTBXHyNdCU8A-_iiYDOIcFS-6WtPEM3c_G5t-HxD4Mz_CkZkobKwdTl8n0v9uKyG3UmHAdSApj45FMsDQ",
+    "proof": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
     "session": "ss-29292929292929292929292929292929"
   },
   "limits": {
@@ -40,7 +40,7 @@
     "max_metadata_bytes": 262144
   },
   "no_or_unknown_transport_advertisement": "refused_before_new_intent",
-  "proof_status": "synthetic_exporter_not_a_connection",
+  "proof_status": "invalid_placeholder_not_a_signature",
   "selection": {
     "encoding": "raw",
     "envelope": "plain/v1",

@@ -1,6 +1,6 @@
 //! Frozen data-channel handshake shapes; no network connection is opened.
 use fastctx_net::{
-    sign::{Domain, SecretKey},
+    sign::{Domain, PublicKey, Signature},
     sync_transport::NegotiatedTransport,
 };
 use fastctx_types::sync::{
@@ -33,16 +33,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     assert!(NegotiatedTransport::select(&capabilities, &old, &limits, &limits).is_err());
     old.transports = vec!["future-transport".into()];
     assert!(NegotiatedTransport::select(&capabilities, &old, &limits, &limits).is_err());
-    let key = SecretKey::from_seed(&[51; 32]);
+    let key = PublicKey::from_bytes([0; 32]);
+    let proof = Signature::from_bytes([0; 64]);
+    for domain in [Domain::Session, Domain::Peer] {
+        assert!(key.verify(domain, b"wire-v1-placeholder", &proof).is_err());
+    }
     let session = SessionId::from_bytes([41; 16]);
-    // Synthetic exporter bytes fix the shape. They prove no live connection.
-    let hub =
-        selected.hub_intent(session.clone(), key.public(), key.sign(Domain::Session, b"wire-v1-synthetic-exporter"));
-    let peer = selected.peer_intent(session, key.public(), key.sign(Domain::Peer, b"wire-v1-synthetic-exporter"));
+    let hub = selected.hub_intent(session.clone(), key, proof);
+    let peer = selected.peer_intent(session, key, proof);
     println!(
         "{}",
         serde_json::to_string_pretty(&json!({
-            "proof_status":"synthetic_exporter_not_a_connection",
+            "proof_status":"invalid_placeholder_not_a_signature",
             "advertisement":capabilities,"selection":selected.selection(),"limits":selected.limits(),
             "hub_intent":hub,"direct_device_intent":peer,
             "no_or_unknown_transport_advertisement":"refused_before_new_intent",

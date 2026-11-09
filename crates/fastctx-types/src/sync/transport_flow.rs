@@ -115,32 +115,50 @@ impl Drop for Reservation {
 pub struct CompletedMetadata {
     pub message_id: MessageId,
     bytes: Vec<u8>,
-    _reservation: Reservation,
+    _reservation: AssemblyReservation,
 }
 impl CompletedMetadata {
     pub fn bytes(&self) -> &[u8] {
         &self.bytes
     }
 }
+#[derive(Debug)]
+struct AssemblyReservation {
+    _global: Reservation,
+    _session: Reservation,
+}
 struct Assembly {
     bytes: Vec<u8>,
     total: usize,
-    reservation: Reservation,
+    reservation: AssemblyReservation,
 }
 
-/// Interleaved messages are bounded by both count and the shared byte pool.
+/// Interleaved messages are bounded by count, the shared byte pool, and a session
+/// share of at most one eighth of that pool. Completed queued messages retain
+/// both reservations. A stalled session cannot reserve the entire process pool.
 /// Offsets are contiguous; any gap/replay is rejected without changing state.
 /// A caller may return frame credit after `push`, before the message is whole.
 pub struct MetadataReassembly {
     session: SessionId,
     limits: TransportLimits,
     budget: MetadataBudget,
+    session_budget: MetadataBudget,
     active: BTreeMap<MessageId, Assembly>,
 }
 impl MetadataReassembly {
     pub fn new(session: SessionId, limits: TransportLimits, budget: MetadataBudget) -> Result<Self, CodecError> {
         limits.validate().map_err(CodecError::InvalidFrame)?;
-        Ok(Self { session, limits, budget, active: BTreeMap::new() })
+        let session_bytes = budget.0.limit / 8;
+        if session_bytes < limits.max_metadata_bytes as usize {
+            return Err(CodecError::InvalidFrame("metadata pool is too small for the negotiated page bound".into()));
+        }
+        Ok(Self {
+            session,
+            limits,
+            budget,
+            session_budget: MetadataBudget::new(session_bytes),
+            active: BTreeMap::new(),
+        })
     }
     pub fn push(&mut self, header: &MetadataPart, payload: &[u8]) -> Result<Option<CompletedMetadata>, CodecError> {
         if header.session != self.session {
@@ -155,7 +173,8 @@ impl MetadataReassembly {
                 return Err(CodecError::Busy);
             }
             let total = header.total_bytes.0 as usize;
-            let reservation = self.budget.reserve(total)?;
+            let session = self.session_budget.reserve(total)?;
+            let reservation = AssemblyReservation { _global: self.budget.reserve(total)?, _session: session };
             self.active
                 .insert(header.message_id.clone(), Assembly { bytes: Vec::with_capacity(total), total, reservation });
         }

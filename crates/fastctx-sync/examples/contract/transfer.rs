@@ -240,8 +240,17 @@ pub fn sample(holding: &HoldingPeriod) -> Result<Value, Box<dyn std::error::Erro
     })?;
     assert_eq!(sender.available(), before);
 
-    let budget = MetadataBudget::new(8192);
-    let mut assembly = MetadataReassembly::new(session.clone(), limits.clone(), budget.clone())?;
+    let budget = MetadataBudget::new(8 * 8192);
+    let metadata_limits = TransportLimits { max_metadata_bytes: 8192, ..limits.clone() };
+    let mut assembly = MetadataReassembly::new(session.clone(), metadata_limits.clone(), budget.clone())?;
+    let other_session = SessionId::from_bytes([50; 16]);
+    let mut other = MetadataReassembly::new(other_session.clone(), metadata_limits, budget.clone())?;
+    let blocked = MetadataPart {
+        session: session.clone(),
+        message_id: MessageId::from_bytes([51; 16]),
+        offset: ByteCount(0),
+        total_bytes: ByteCount(8192),
+    };
     let mut meta_sender = CreditWindow::new(session.clone(), CreditStream::Metadata);
     let mut meta_receiver = CreditWindow::new(session.clone(), CreditStream::Metadata);
     meta_sender.apply(&meta_receiver.grant(1024)?)?;
@@ -259,8 +268,16 @@ pub fn sample(holding: &HoldingPeriod) -> Result<Value, Box<dyn std::error::Erro
         complete = assembly.push(&part, &payload)?;
         meta_sender.apply(&meta_receiver.grant(1024)?)?;
         assert_eq!(budget.used(), 8192);
+        assert!(matches!(assembly.push(&blocked, &[0]), Err(CodecError::Busy)));
+        let independent = MetadataPart { session: other_session.clone(), ..blocked.clone() };
+        assert!(other.push(&independent, &[0])?.is_none());
+        assert_eq!(budget.used(), 2 * 8192);
+        other.cancel(&independent.message_id);
+        assert_eq!(budget.used(), 8192);
     }
     assert_eq!(complete.as_ref().unwrap().bytes().len(), 8192);
+    assert_eq!(budget.used(), 8192);
+    drop(assembly);
     assert_eq!(budget.used(), 8192);
     drop(complete);
     assert_eq!(budget.used(), 0);
@@ -286,6 +303,8 @@ pub fn sample(holding: &HoldingPeriod) -> Result<Value, Box<dyn std::error::Erro
             "durable_ack_from_credit":false,"duplicate_and_older_credit_adds_bytes":false,
             "cross_session_credit":wrong,"cross_session_result":"wrong_stream",
             "metadata_bytes":8192,"metadata_window_bytes":1024,"completed_buffer_still_reserved":true,
+            "metadata_session_fraction":"1/8","stalled_session_blocks_other_session":false,
+            "queued_completion_keeps_session_reservation":true,
             "request_digest_survives_reconnect":true,"holding_change_changes_request_digest":true
         }
     }))
