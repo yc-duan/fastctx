@@ -27,9 +27,10 @@ use crate::world::{Said, World, earlier, until, with_password};
 /// answers of every size, cuts and a crash go as with this release's hub.
 /// Then it is updated in place while letters wait for a machine away: they
 /// are kept where this release keeps them, those after numbered on past
-/// them, and every one comes once. An earlier hub of an older database
-/// format, as 1.0.1-beta.13's, leaves a copy of it and refuses the upgraded
-/// one; one of this release's format serves it again as it is.
+/// them, and every one comes once. Updated from an older database format,
+/// this release keeps a recovery snapshot of the database it upgraded and the
+/// earlier release refuses the upgraded one; an earlier hub of this release's
+/// format serves it again as it is.
 pub async fn earlier_hub(world: &World, report: &mut Report) -> anyhow::Result<()> {
     let program = world.hub.earlier_program().ok_or_else(|| anyhow::anyhow!("the earlier release serves no hub"))?;
     let (alpha, beta) = (world.machine("alpha"), world.machine("beta"));
@@ -152,13 +153,16 @@ pub async fn earlier_hub(world: &World, report: &mut Report) -> anyhow::Result<(
             format!("{} and {} twice in {}", came.first_missing(), came.twice, seconds(came.took)),
         );
     } else {
-        // The update kept the database as the earlier release left it, and
-        // that release now refuses the upgraded one instead of misreading it.
-        let kept =
-            earlier_format.is_some_and(|earlier| world.hub.dir.join(format!("hub.sqlite3.format-{earlier}")).exists());
+        // The update keeps a recovery snapshot of the database it upgraded,
+        // and the earlier release refuses the upgraded one instead of
+        // misreading it.
+        let snapshot = until(Duration::from_secs(60), || {
+            earlier_format.is_some_and(|earlier| recovery_snapshot(&world.hub.dir, earlier))
+        })
+        .await;
         report.check(
-            kept,
-            "the update kept the earlier hub's database beside the upgraded one",
+            snapshot.is_some(),
+            "the update kept a recovery snapshot of the hub's upgraded database",
             format!("format {earlier_format:?} to {format:?}"),
         );
         let tried = world.hub.tried_by(&program)?;
@@ -433,6 +437,18 @@ async fn answers_at(path: &Path) -> bool {
         let _ = path;
         false
     }
+}
+
+/// Whether the hub's upgrade from format `earlier` left its first recovery
+/// snapshot complete in the hub's directory.
+fn recovery_snapshot(hub: &Path, earlier: u64) -> bool {
+    let prefix = format!("hub-format-{earlier}-");
+    std::fs::read_dir(hub.join("upgrade-backups")).is_ok_and(|entries| {
+        entries.flatten().any(|entry| {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            name.starts_with(&prefix) && name.contains("-t0-") && name.ends_with(".sqlite3")
+        })
+    })
 }
 
 /// The number the hub's next letter to `member` gets, by its records.
