@@ -43,7 +43,7 @@ fn live<T>(records: &Path, work: impl FnOnce() -> io::Result<T>) -> io::Result<T
 }
 
 pub(super) fn keep(records: &Path, transfer: &Transfer) -> io::Result<()> {
-    live(records, || state::write(&path(records), transfer))
+    live(records, || crate::record_migration::archive::keep_import(&path(records), transfer))
 }
 
 pub(super) fn finish(records: &Path, transfer: &mut Transfer) -> io::Result<()> {
@@ -57,7 +57,7 @@ pub(super) fn finish(records: &Path, transfer: &mut Transfer) -> io::Result<()> 
         transfer.done = true;
         transfer.originals = None;
         transfer.sources.clear();
-        state::write(&path(records), transfer)
+        crate::record_migration::archive::keep_import(&path(records), transfer)
     })
 }
 
@@ -144,4 +144,17 @@ pub(crate) fn readable(path: &Path) -> Result<PathBuf, String> {
         .and_then(|transfer| transfer.originals)
         .and_then(|originals| originals.into_iter().find(|original| original.source() == path))
         .map_or_else(|| path.into(), |original| original.readable().into()))
+}
+
+/// Archive expiry must retain the destinations of incomplete imports.
+pub(crate) fn archive_targets(world: &Path) -> io::Result<Vec<PathBuf>> {
+    let mut targets = Vec::new();
+    for path in crate::record_migration::archive::import_journals(&world.join("conversations"), "history-import.json")?
+    {
+        let Some(transfer) = state::read_or::<Option<Transfer>>(&path, None)? else { continue };
+        if !transfer.done {
+            targets.extend(transfer.originals.into_iter().flatten().map(|original| original.target().to_path_buf()));
+        }
+    }
+    Ok(targets)
 }

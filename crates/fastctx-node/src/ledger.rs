@@ -217,14 +217,15 @@ pub async fn sync(node: &Arc<Node>, hub: &HubId, town: Option<TownId>) -> Result
         let name = {
             let _syncing = node.syncing.lock().await;
             let (naming, link, id) = (node.clone(), link.clone(), id.clone());
-            fastctx_platform::task::blocking(move || local_name(&naming, &link, &id)).await
+            fastctx_platform::task::blocking(move || sync_name(&naming, &link, &id)).await
         };
         match name {
-            Ok(name) => {
+            Ok(Some(name)) => {
                 if let Err(error) = take(node, &link, &name, &id, latest).await {
                     problems.push(error);
                 }
             }
+            Ok(None) => {}
             Err(error) => problems.push(error),
         }
     }
@@ -237,24 +238,34 @@ pub async fn sync(node: &Arc<Node>, hub: &HubId, town: Option<TownId>) -> Result
 /// The short name this machine keeps the project `id` of `link`'s hub
 /// under, recording where it is kept the first time.
 pub(crate) fn local_name(node: &Node, link: &Link, id: &TownId) -> Result<TownName, String> {
+    sync_name(node, link, id)?.ok_or_else(|| "the project's standalone ledger is being imported".into())
+}
+
+fn sync_name(node: &Node, link: &Link, id: &TownId) -> Result<Option<TownName>, String> {
     let view = link.view();
     let project = view.project(id).ok_or_else(|| format!("the hub {} names no project {id}", link.hub_name()))?;
     let place = Place { hub: link.membership().id.clone(), town: id.clone() };
-    let kept =
-        match names::place(&node.world, &project.name).map_err(|error| format!("reading {}: {error}", project.name))? {
+    crate::record_migration::archive::with_import_gate(|| {
+        if carry::writing(&node.world, &project.name).map_err(|error| error.to_string())? {
+            return Ok(None);
+        }
+        let kept = match names::place(&node.world, &project.name)
+            .map_err(|error| format!("reading {}: {error}", project.name))?
+        {
             Some(kept) => kept,
             None => names::claim(&node.world, &project.name, &place)
                 .map_err(|error| format!("recording {}: {error}", project.name))?,
         };
-    if kept != place {
-        return Err(format!(
-            "this machine keeps another project named {} (of the hub {}); the hub {}'s is not taken here",
-            project.name,
-            kept.hub,
-            link.hub_name()
-        ));
-    }
-    Ok(project.name.clone())
+        if kept != place {
+            return Err(format!(
+                "this machine keeps another project named {} (of the hub {}); the hub {}'s is not taken here",
+                project.name,
+                kept.hub,
+                link.hub_name()
+            ));
+        }
+        Ok(Some(project.name.clone()))
+    })
 }
 
 /// Takes `town`'s entries through `latest`.
@@ -348,7 +359,7 @@ pub(crate) async fn take(
 
 /// Rechecks local identity and current replication rights after every network wait.
 fn check_place(node: &Node, link: &Link, name: &TownName, town: &TownId) -> Result<(), String> {
-    if carry::originals(&node.world, name).map_err(|error| error.to_string())?.is_some() {
+    if carry::writing(&node.world, name).map_err(|error| error.to_string())? {
         return Err("the project's standalone ledger is still being archived".into());
     }
     let expected = Place { hub: link.membership().id.clone(), town: town.clone() };
@@ -419,9 +430,12 @@ fn write_files(directory: &TownDir, entry: &Entry) -> io::Result<()> {
 /// written, and says which entries could not be read.
 pub fn finish(world: &WorldDir) -> io::Result<Vec<String>> {
     let mut problems = Vec::new();
-    for town in world.towns()? {
+    for town in carry::towns(world)? {
         if let Err(error) = carry::recover(world, &town, false) {
             problems.push(format!("finishing the import of {town}: {error}"));
+            continue;
+        }
+        if carry::writing(world, &town)? {
             continue;
         }
         let directory = world.town(&town);

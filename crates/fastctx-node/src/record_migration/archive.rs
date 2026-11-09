@@ -15,7 +15,10 @@ mod damaged;
 #[cfg(feature = "storage-drill")]
 pub(crate) use damaged::drill as damaged_drill;
 mod duplicates;
+mod imports;
+
 pub(super) use duplicates::settle as settle_duplicates;
+pub(crate) use imports::{import_journals, keep_import, with_import_gate};
 
 pub(crate) const RETENTION: Duration = Duration::from_secs(30 * 24 * 60 * 60);
 static DAMAGED: LazyLock<&'static readings::Counter> = LazyLock::new(|| readings::counter("migration.damaged_files"));
@@ -160,7 +163,7 @@ fn damaged_file(world: &Path, conversation: &str, family: &str, source: &Path, r
 }
 
 pub(crate) fn collect(world: &Path, retention: Duration) -> io::Result<u64> {
-    fn walk(path: &Path, retention: Duration, count: &mut u64) -> io::Result<()> {
+    fn walk(path: &Path, retention: Duration, references: &mut imports::References, count: &mut u64) -> io::Result<()> {
         let entries = match disk::read_dir(path) {
             Ok(entries) => entries,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
@@ -173,15 +176,17 @@ pub(crate) fn collect(world: &Path, retention: Duration) -> io::Result<u64> {
             }
             let metadata = disk::symlink_metadata(entry.path())?;
             if metadata.is_dir() {
-                walk(&entry.path(), retention, count)?;
+                walk(&entry.path(), retention, references, count)?;
                 match disk::remove_dir(entry.path()) {
                     Ok(()) => {}
                     Err(error)
                         if matches!(error.kind(), io::ErrorKind::DirectoryNotEmpty | io::ErrorKind::NotFound) => {}
                     Err(error) => return Err(error),
                 }
-            } else if metadata.is_file() && metadata.modified()?.elapsed().is_ok_and(|elapsed| elapsed >= retention) {
-                disk::remove_file(entry.path())?;
+            } else if metadata.is_file()
+                && metadata.modified()?.elapsed().is_ok_and(|elapsed| elapsed >= retention)
+                && references.delete_if_unreferenced(&entry.path())?
+            {
                 *count += 1;
                 REMOVED.add(1);
                 if (*count).is_multiple_of(128) {
@@ -192,7 +197,8 @@ pub(crate) fn collect(world: &Path, retention: Duration) -> io::Result<u64> {
         Ok(())
     }
     let mut count = 0;
-    walk(&world.join("archive"), retention, &mut count)?;
+    let mut references = imports::References::new(world)?;
+    walk(&world.join("archive"), retention, &mut references, &mut count)?;
     Ok(count)
 }
 
