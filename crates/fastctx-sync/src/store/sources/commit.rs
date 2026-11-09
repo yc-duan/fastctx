@@ -69,7 +69,12 @@ impl SqliteSources {
             .read_now(|db| source_commit::step_state(db, operation.step()))
             .map_err(|error| sql::error(error, operation.operation().clone()))?;
         match previous {
-            StepState::Consumed(receipt) => return Ok(*receipt),
+            StepState::Consumed(receipt) => {
+                // A retry after a lost reply also finishes the expansion that reply
+                // would have waited for.
+                let _ = self.blocks.expand_adopted(&adopted(&operation)).await;
+                return Ok(*receipt);
+            }
             StepState::Cancelled => return Err(Error::Invalid("the source step was cancelled".into())),
             StepState::Active => {}
         }

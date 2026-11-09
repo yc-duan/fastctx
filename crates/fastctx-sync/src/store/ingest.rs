@@ -131,6 +131,7 @@ impl IngestOperation {
             }
         }
         let mut keys = std::collections::BTreeSet::new();
+        let mut streams = std::collections::BTreeSet::new();
         let mut payloads = 0_u64;
         let mut bytes = batches.capacity().checked_mul(size_of::<IngestBatch>()).ok_or(Error::Busy)?;
         let checkpoint = fastctx_types::sync::transport_codec::bounded_json(
@@ -154,6 +155,7 @@ impl IngestOperation {
                 || kind.class != DataClass::Asset
                 || kind.conflict != ConflictRule::SingleWriter
                 || !keys.insert((destination, &target.source))
+                || !streams.insert((destination, &target.stream, &target.epoch))
             {
                 return Err(Error::Invalid("ingestion source, kind or custody coordinates differ".into()));
             }

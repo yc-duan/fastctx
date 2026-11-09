@@ -86,6 +86,11 @@ pub(super) async fn process(timelines: &SqliteTimelines, lease: Lease) -> Result
             Ok(Planned::Ready(plan)) => break Some(plan),
             Ok(Planned::Pending { missing }) => loaded.load(blocks, &missing)?,
             Err(Error::Busy) if take > 1 => take /= 2,
+            // The budget is fixed, so one record that does not fit alone never will;
+            // stop with a reason rather than retrying it forever.
+            Err(Error::Busy) => {
+                return Err(Error::Invalid("one committed record does not fit the timeline's page budget".into()));
+            }
             Err(error) => return Err(error),
         }
     };
