@@ -11,6 +11,7 @@ pub mod exposure;
 pub mod feed;
 pub mod identity;
 pub mod manifest;
+pub mod metadata;
 pub mod mutation;
 pub mod proof;
 pub mod scope;

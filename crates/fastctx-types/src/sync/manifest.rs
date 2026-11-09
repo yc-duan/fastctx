@@ -149,6 +149,7 @@ pub enum ManifestPage {
     Blocks { offset: ByteCount, blocks: Vec<ContentBlock> },
     Directory { entries: Vec<DirectoryEntry> },
     Branch { children: Vec<ManifestChild> },
+    Metadata { codec: super::metadata::MetadataCodec, payload: ContentBlock, references: Vec<ContentRef> },
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ManifestChild {

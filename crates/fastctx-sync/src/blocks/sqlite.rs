@@ -21,6 +21,10 @@ use std::{path::PathBuf, sync::Arc};
 mod cleanup;
 #[path = "gc.rs"]
 mod gc;
+#[path = "metadata_custody.rs"]
+mod metadata_custody;
+#[path = "metadata_work.rs"]
+mod metadata_work;
 #[path = "work.rs"]
 mod work;
 
@@ -119,6 +123,12 @@ impl BlockStore for SqliteBlocks {
                     let stored = rows::reserve(db, representation, id)?;
                     if stored.verified {
                         pins::ready(db, &request, &pin)?;
+                        // New object custody can unblock an existing index payload.
+                        scheduler::content_changed(
+                            db,
+                            &request.holding,
+                            format!("complete:{}", stored.representation.content.id.digest.as_str()),
+                        )?;
                     }
                     Ok((stored, pin))
                 })
@@ -169,14 +179,22 @@ impl BlockStore for SqliteBlocks {
                     let pin = pins::stage(db, &custody, id, ContentRef::Manifest { root: checked.reply.root.clone() })?;
                     pages::put(db, &checked)?;
                     pins::ready(db, &custody, &pin)?;
-                    access::expand(
-                        db,
-                        &custody.object,
-                        custody.kind.registration().id,
-                        &checked.reply.root,
-                        &checked.references,
-                        &custody.holding,
-                    )?;
+                    if !checked.metadata {
+                        access::expand(
+                            db,
+                            &custody.object,
+                            custody.kind.registration().id,
+                            &checked.reply.root,
+                            &checked.references,
+                            &custody.holding,
+                        )?;
+                    } else {
+                        scheduler::content_changed(
+                            db,
+                            &custody.holding,
+                            format!("metadata:{}", checked.reply.root.0.digest.as_str()),
+                        )?;
+                    }
                     scheduler::content_changed(
                         db,
                         &custody.holding,

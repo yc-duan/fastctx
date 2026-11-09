@@ -17,7 +17,7 @@ pub struct AccessContext {
     pub scope: ScopeKey,
     pub observed_acl: Revision,
 }
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct HostBinding {
     pub conversation: ObjectKey,
     pub account: AccountId,
@@ -26,7 +26,7 @@ pub struct HostBinding {
 }
 /// Verified against authenticated dispatch and the durable job record. Finishing
 /// the job does not end source custody; revocation and deletion still apply.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct JobBinding {
     pub job: ObjectKey,
     pub epoch: ProducerEpoch,
@@ -40,7 +40,7 @@ pub struct JobBinding {
 /// One artifact workspace per conversation and machine, shared by its jobs.
 /// The epoch is registered before ingestion; discovering a directory is not
 /// evidence of ownership. A stream's producer epoch may change independently.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct WorkspaceBinding {
     pub conversation: ObjectKey,
     pub account: AccountId,
@@ -49,7 +49,7 @@ pub struct WorkspaceBinding {
     pub registration: OperationId,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum HoldingUse {
     Replica,
     RuntimeSource { host: HostBinding },

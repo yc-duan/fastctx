@@ -117,6 +117,15 @@ impl SignedStatement {
     }
 }
 
+/// Directory discovery knows a proof ID; an out-of-order source batch knows
+/// only its stream/epoch. Both lookups resolve the same scoped descriptor.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "lookup", rename_all = "snake_case")]
+pub enum EpochLookup {
+    Proof { id: super::identity::Digest },
+    Stream { stream: StreamId, epoch: ProducerEpoch },
+}
+
 /// `data` encodes SourceBatch. Forwarders preserve all four proof fields, not a
 /// decoded and reserialized batch. Device and hub batches have distinct domains.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

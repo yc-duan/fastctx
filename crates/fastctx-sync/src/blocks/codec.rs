@@ -53,7 +53,7 @@ pub fn decode(representation: &Representation, encoded: Vec<u8>) -> Result<Vec<u
         Encoding::Raw => encoded,
         Encoding::Zstd => {
             let mut decoder = zstd::stream::read::Decoder::new(encoded.as_slice()).map_err(codec_error)?;
-            // A small output limit alone does not bound a hostile frame's window (2026-11-08).
+            // A small output limit alone does not bound a hostile frame's window.
             decoder.window_log_max(20).map_err(codec_error)?;
             let mut decoded = Vec::with_capacity(representation.content.decoded_bytes as usize);
             decoder

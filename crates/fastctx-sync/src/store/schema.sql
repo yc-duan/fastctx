@@ -202,6 +202,7 @@ CREATE INDEX sync_asset_access_pending ON sync_asset_access(hub,scope,hash,expan
 CREATE TABLE sync_asset_manifests (
     hub TEXT NOT NULL, scope TEXT NOT NULL, hash TEXT NOT NULL,
     page BLOB NOT NULL, complete INTEGER NOT NULL CHECK(complete IN (0,1)),
+    validated INTEGER NOT NULL CHECK(validated IN (0,1)),
     PRIMARY KEY(hub,scope,hash)
 ) WITHOUT ROWID;
 CREATE TABLE sync_asset_edges (
@@ -225,7 +226,7 @@ CREATE TABLE sync_asset_roots (
 CREATE INDEX sync_asset_roots_hash ON sync_asset_roots(hub,scope,hash);
 CREATE TABLE sync_asset_uploads (
     hub TEXT NOT NULL, scope TEXT NOT NULL, operation TEXT NOT NULL, object TEXT NOT NULL,
-    kind TEXT NOT NULL, holding BLOB NOT NULL,
+    kind TEXT NOT NULL, holding BLOB NOT NULL, purpose BLOB NOT NULL,
     cancelled INTEGER NOT NULL CHECK(cancelled IN (0,1)),
     PRIMARY KEY(hub,scope,operation,object)
 ) WITHOUT ROWID;
@@ -241,6 +242,8 @@ CREATE TABLE sync_asset_pins (
 ) WITHOUT ROWID;
 CREATE INDEX sync_asset_pins_hash ON sync_asset_pins(hub,scope,hash) WHERE phase!='released';
 CREATE INDEX sync_asset_pins_cleanup ON sync_asset_pins(hub,scope,operation,object,kind,hash,root_kind) WHERE phase!='released';
+CREATE INDEX sync_asset_pin_knowledge ON sync_asset_pins(hub,scope,hash,root_kind,object,kind);
+CREATE INDEX sync_asset_pin_validation ON sync_asset_pins(hub,scope,hash,root_kind,operation,object);
 CREATE TABLE sync_asset_transfers (
     hub TEXT NOT NULL, scope TEXT NOT NULL, hash TEXT NOT NULL, peer TEXT NOT NULL,
     publication_epoch BLOB NOT NULL CHECK(length(publication_epoch)=8),

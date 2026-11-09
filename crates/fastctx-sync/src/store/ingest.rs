@@ -3,14 +3,14 @@
 use super::{FutureResult, access::AccessContext};
 use crate::{
     cursor::{ByteCount, LocalSequence, Revision, StreamCursor},
-    identity::{Digest, ProducerEpoch, SourceId},
+    identity::{Digest, HostGeneration, SourceId},
     manifest::ContentRef,
 };
 use fastctx_types::sync::proof::{ConfirmedEpoch, SignedSourceBatch};
 #[derive(Clone, Debug)]
 pub struct SourceCheckpoint {
     pub source: SourceId,
-    pub generation: ProducerEpoch,
+    pub generation: HostGeneration,
     pub revision: Revision,
     pub committed_offset: ByteCount,
     pub parser_version: u16,

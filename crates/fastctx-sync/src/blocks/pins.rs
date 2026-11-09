@@ -33,6 +33,14 @@ pub(super) fn authorize(db: &Connection, holder: &Holder, policy: &dyn AccessPol
     if current != Some((true, custody.holding.acl_revision.0, custody.holding.publication_epoch.0)) {
         return Err(sql::invalid("content holding period is no longer current"));
     }
+    let deleted: bool = db
+        .prepare_cached("SELECT EXISTS(SELECT 1 FROM sync_tombstones WHERE hub=?1 AND scope=?2 AND object=?3)")?
+        .query_row(params![scope.hub.to_string(), scope.scope.as_str(), custody.object.object.as_str()], |r| {
+            r.get(0)
+        })?;
+    if deleted {
+        return Err(sql::invalid("deleted objects cannot publish or retain new content"));
+    }
     if !matches!(policy.can_keep(&custody.context,custody.kind,&custody.object,&custody.purpose),Decision::Allowed {revision} if revision==custody.context.observed_acl)
     {
         return Err(sql::invalid("current object custody does not permit content storage"));

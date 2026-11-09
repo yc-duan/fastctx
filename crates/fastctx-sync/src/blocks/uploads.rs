@@ -11,13 +11,14 @@ use fastctx_storage::{
 pub(super) fn intent(db: &Connection, custody: &Custody, operation: &OperationId, cancel: bool) -> Result<()> {
     let scope = &custody.object.scope;
     let holding = serde_json::to_vec(&custody.holding).map_err(|e| sql::invalid(e.to_string()))?;
+    let purpose = serde_json::to_vec(&custody.purpose).map_err(|e| sql::invalid(e.to_string()))?;
     let found = db.query_row(
-        "SELECT kind,holding,cancelled FROM sync_asset_uploads WHERE hub=?1 AND scope=?2 AND operation=?3 AND object=?4",
+        "SELECT kind,holding,cancelled,purpose FROM sync_asset_uploads WHERE hub=?1 AND scope=?2 AND operation=?3 AND object=?4",
         params![scope.hub.to_string(), scope.scope.as_str(), operation.as_str(), custody.object.object.as_str()],
-        |r| Ok((r.get::<_, String>(0)?, r.get::<_, Vec<u8>>(1)?, r.get::<_, bool>(2)?)),
+        |r| Ok((r.get::<_, String>(0)?, r.get::<_, Vec<u8>>(1)?, r.get::<_, bool>(2)?,r.get::<_, Vec<u8>>(3)?)),
     ).optional()?;
-    if let Some((kind, previous, cancelled)) = found {
-        if kind != custody.kind.registration().id || previous != holding {
+    if let Some((kind, previous, cancelled, previous_purpose)) = found {
+        if kind != custody.kind.registration().id || previous != holding || previous_purpose != purpose {
             return Err(sql::invalid("upload operation belongs to another kind or holding period"));
         }
         if cancelled && !cancel {
@@ -35,7 +36,7 @@ pub(super) fn intent(db: &Connection, custody: &Custody, operation: &OperationId
             )?;
         }
     } else {
-        db.execute("INSERT INTO sync_asset_uploads(hub,scope,operation,object,kind,holding,cancelled) VALUES(?1,?2,?3,?4,?5,?6,?7)", params![scope.hub.to_string(), scope.scope.as_str(), operation.as_str(), custody.object.object.as_str(), custody.kind.registration().id, holding, cancel])?;
+        db.execute("INSERT INTO sync_asset_uploads(hub,scope,operation,object,kind,holding,purpose,cancelled) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)", params![scope.hub.to_string(), scope.scope.as_str(), operation.as_str(), custody.object.object.as_str(), custody.kind.registration().id, holding,purpose,cancel])?;
     }
     Ok(())
 }

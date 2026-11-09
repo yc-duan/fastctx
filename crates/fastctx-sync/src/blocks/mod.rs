@@ -7,6 +7,7 @@ pub mod codec;
 mod files;
 mod leases;
 pub mod manifest;
+mod metadata;
 mod pages;
 mod pins;
 mod retention;

@@ -56,6 +56,7 @@ identifier!(ScopeId, "s-", "A stable ownership policy within one hub.");
 identifier!(ObjectId, "o-", "An object registered once by its authorized creator.");
 identifier!(StreamId, "r-", "A single sequenced source within a scope.");
 identifier!(ProducerEpoch, "p-", "A durable producer incarnation, changed on transfer or state loss.");
+identifier!(HostGeneration, "g-", "A local host-file rewrite incarnation, independent of producer handover.");
 identifier!(FeedEpoch, "f-", "A hub catalog incarnation, changed when its sequence space changes.");
 identifier!(OperationId, "m-", "An idempotency key reused for every retry of one operation.");
 identifier!(SourceId, "i-", "A registered ingestion source, unrelated to its current filesystem path.");

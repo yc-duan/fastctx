@@ -31,8 +31,18 @@ pub(super) async fn process(store: &SqliteBlocks, lease: Lease) -> std::result::
     }
     let command = parts[0].to_string();
     let hash = Digest::try_from(parts[1].to_string()).map_err(Error::Invalid)?;
-    let after = parts.get(2).map(|text| Digest::try_from(text.to_string())).transpose().map_err(Error::Invalid)?;
     let through = lease.task.wanted;
+    if command == "metadata" {
+        let after = parts.get(2).copied();
+        if let Some(cursor) = after {
+            let (operation, object) =
+                cursor.split_once('/').ok_or_else(|| Error::Invalid("invalid index custody cursor".into()))?;
+            crate::identity::OperationId::try_from(operation.to_string()).map_err(Error::Invalid)?;
+            ObjectId::try_from(object.to_string()).map_err(Error::Invalid)?;
+        }
+        return super::metadata_work::process(store, holding, hash, through, after).await;
+    }
+    let after = parts.get(2).map(|text| Digest::try_from(text.to_string())).transpose().map_err(Error::Invalid)?;
     store
         .db
         .write(1024 * 1024, move |db| {
@@ -52,7 +62,7 @@ pub(super) async fn process(store: &SqliteBlocks, lease: Lease) -> std::result::
         .await
         .map_err(|error| sql::error(error, store.worker.clone()))
 }
-fn current(db: &Connection, holding: &HoldingPeriod) -> Result<bool> {
+pub(super) fn current(db: &Connection, holding: &HoldingPeriod) -> Result<bool> {
     let state = db
         .query_row(
             "SELECT enabled,acl_revision,publication_epoch FROM sync_scopes WHERE hub=?1 AND scope=?2",
@@ -78,6 +88,14 @@ fn completion(db: &Connection, holding: &HoldingPeriod, hash: &Digest, after: Op
         .collect::<fastctx_storage::rusqlite::Result<Vec<_>>>()?;
     for parent in parents.iter().take(64) {
         let digest = Digest::try_from(parent.clone()).map_err(sql::invalid)?;
+        let pending: bool = db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sync_asset_manifests WHERE hub=?1 AND scope=?2 AND hash=?3 AND validated=0)",
+            params![holding.scope.hub.to_string(), holding.scope.scope.as_str(), digest.as_str()],
+            |r| r.get(0),
+        )?;
+        if pending {
+            scheduler::content_changed(db, holding, format!("metadata:{}", digest.as_str()))?;
+        }
         if pages::refresh(db, &holding.scope, &digest)? {
             scheduler::content_changed(db, holding, format!("complete:{}", digest.as_str()))?;
         }
@@ -94,7 +112,7 @@ fn expansion(
     through: crate::cursor::LocalSequence,
 ) -> Result<Outcome> {
     let exists: bool = db.query_row(
-        "SELECT EXISTS(SELECT 1 FROM sync_asset_manifests WHERE hub=?1 AND scope=?2 AND hash=?3)",
+        "SELECT EXISTS(SELECT 1 FROM sync_asset_manifests WHERE hub=?1 AND scope=?2 AND hash=?3 AND validated=1)",
         params![holding.scope.hub.to_string(), holding.scope.scope.as_str(), hash.as_str()],
         |row| row.get(0),
     )?;

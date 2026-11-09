@@ -50,7 +50,7 @@ pub(super) async fn read(
                     }
                     ManifestPage::Branch { children } => frontier
                         .extend(children.into_iter().rev().map(|child| ContentRef::Manifest { root: child.root })),
-                    ManifestPage::Directory { .. } => {
+                    ManifestPage::Directory { .. } | ManifestPage::Metadata { .. } => {
                         return Err(Error::Invalid("a semantic text body cannot be a directory manifest".into()));
                     }
                 }

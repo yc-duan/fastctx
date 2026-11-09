@@ -27,6 +27,7 @@ impl Reference {
 pub struct CheckedManifest {
     pub(crate) reply: ManifestReply,
     pub(crate) references: Vec<Reference>,
+    pub(crate) metadata: bool,
 }
 impl CheckedManifest {
     pub fn reply(&self) -> &ManifestReply {
@@ -58,6 +59,7 @@ pub fn validate(scope: &ScopeKey, reply: ManifestReply) -> Result<CheckedManifes
         return Err(Error::Invalid("escaped manifest page exceeds its wire budget".into()));
     }
     let page: ManifestPage = serde_json::from_str(&reply.page_json).map_err(invalid)?;
+    let metadata = matches!(&page, ManifestPage::Metadata { .. });
     let mut references = BTreeMap::new();
     match page {
         ManifestPage::Blocks { offset, blocks } => {
@@ -107,6 +109,22 @@ pub fn validate(scope: &ScopeKey, reply: ManifestReply) -> Result<CheckedManifes
                 }
             }
         }
+        ManifestPage::Metadata { payload, references: declared, .. } => {
+            if payload.decoded_bytes > PAGE_BYTES {
+                return Err(Error::Invalid("index payload exceeds its metadata budget".into()));
+            }
+            add(&mut references, Reference::Block { id: payload.id, decoded_bytes: payload.decoded_bytes })?;
+            for reference in declared {
+                reference.validate().map_err(Error::Invalid)?;
+                add(
+                    &mut references,
+                    match reference {
+                        ContentRef::Single { block, decoded_bytes } => Reference::Block { id: block, decoded_bytes },
+                        ContentRef::Manifest { root } => Reference::Manifest { root },
+                    },
+                )?;
+            }
+        }
         ManifestPage::Branch { children } => {
             let mut previous = None;
             for child in children {
@@ -121,7 +139,7 @@ pub fn validate(scope: &ScopeKey, reply: ManifestReply) -> Result<CheckedManifes
     if references.values().any(|reference| &reference.id().domain != scope || reference.id() == &reply.root.0) {
         return Err(Error::Invalid("manifest references must stay in their scope and exclude the page itself".into()));
     }
-    Ok(CheckedManifest { reply, references: references.into_values().collect() })
+    Ok(CheckedManifest { reply, references: references.into_values().collect(), metadata })
 }
 
 fn add(references: &mut BTreeMap<(BlobId, bool), Reference>, reference: Reference) -> Result<(), Error> {

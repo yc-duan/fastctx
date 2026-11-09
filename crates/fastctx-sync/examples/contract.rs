@@ -6,6 +6,8 @@ mod acceptance;
 mod catalog;
 #[path = "contract/hub_source.rs"]
 mod hub_source;
+#[path = "contract/indexes.rs"]
+mod indexes;
 #[path = "contract/manifests.rs"]
 mod manifests;
 #[path = "contract/scopes.rs"]
@@ -110,6 +112,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
     let (accepted, accepted_binding) = acceptance::sample(scope.clone(), device.clone())?;
+    let (index_messages, index_payloads) =
+        indexes::sample(&holding, &cursor, &accepted, &accepted_binding, &signed, &batch, &timeline)?;
     let submission = Submission {
         operation: OperationId::from_bytes([21; 32]),
         origin: device,
@@ -194,6 +198,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ];
     messages.push(catalog::sample(&holding, &cursor, &accepted, &accepted_binding, &batch)?);
     messages.extend(manifests::sample(&holding)?);
+    messages.extend(index_messages);
     messages.extend(scopes::sample(&cursor, DeviceId::from_bytes([3; 32]))?);
     let (hub_message, hub_batch) = hub_source::sample(&holding)?;
     messages.push(hub_message);
@@ -204,6 +209,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "messages": messages, "decoded_source_binding": batch, "timeline_payload_shapes": timeline,
             "decoded_acceptance_binding": accepted_binding,
             "decoded_hub_source_binding": hub_batch,
+            "decoded_index_payloads": index_payloads,
         }))?
     );
     Ok(())

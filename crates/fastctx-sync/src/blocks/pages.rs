@@ -30,12 +30,13 @@ pub(super) fn put(db: &Connection, checked: &CheckedManifest) -> Result<()> {
         return Ok(());
     }
     db.execute(
-        "INSERT INTO sync_asset_manifests(hub,scope,hash,page,complete) VALUES(?1,?2,?3,?4,0)",
+        "INSERT INTO sync_asset_manifests(hub,scope,hash,page,complete,validated) VALUES(?1,?2,?3,?4,0,?5)",
         params![
             id.domain.hub.to_string(),
             id.domain.scope.as_str(),
             id.digest.as_str(),
-            checked.reply.page_json.as_bytes()
+            checked.reply.page_json.as_bytes(),
+            !checked.metadata
         ],
     )?;
     for reference in &checked.references {
@@ -80,7 +81,7 @@ pub(super) fn get(db: &Connection, root: &ManifestRoot) -> Result<ManifestReply>
 
 pub(super) fn refresh(db: &Connection, scope: &ScopeKey, hash: &Digest) -> Result<bool> {
     let missing:bool=db.query_row(
-        "SELECT EXISTS(SELECT 1 FROM sync_asset_edges AS e LEFT JOIN sync_asset_blocks AS b ON e.hub=b.hub AND e.scope=b.scope AND e.child=b.hash LEFT JOIN sync_asset_manifests AS m ON e.hub=m.hub AND e.scope=m.scope AND e.child=m.hash WHERE e.hub=?1 AND e.scope=?2 AND e.parent=?3 AND ((e.child_kind='block' AND (b.verified IS NOT 1 OR b.decoded_bytes IS NOT e.decoded_bytes)) OR (e.child_kind='manifest' AND m.complete IS NOT 1))) OR EXISTS(SELECT 1 FROM sync_asset_gc WHERE hub=?1 AND scope=?2 AND hash=?3 AND root_kind='manifest' AND claimed=1)",
+        "SELECT EXISTS(SELECT 1 FROM sync_asset_edges AS e LEFT JOIN sync_asset_blocks AS b ON e.hub=b.hub AND e.scope=b.scope AND e.child=b.hash LEFT JOIN sync_asset_manifests AS m ON e.hub=m.hub AND e.scope=m.scope AND e.child=m.hash WHERE e.hub=?1 AND e.scope=?2 AND e.parent=?3 AND ((e.child_kind='block' AND (b.verified IS NOT 1 OR b.decoded_bytes IS NOT e.decoded_bytes)) OR (e.child_kind='manifest' AND m.complete IS NOT 1))) OR EXISTS(SELECT 1 FROM sync_asset_gc WHERE hub=?1 AND scope=?2 AND hash=?3 AND root_kind='manifest' AND claimed=1) OR EXISTS(SELECT 1 FROM sync_asset_manifests WHERE hub=?1 AND scope=?2 AND hash=?3 AND validated=0)",
         params![scope.hub.to_string(),scope.scope.as_str(),hash.as_str()],|row|row.get(0)
     )?;
     let changed = db.execute(

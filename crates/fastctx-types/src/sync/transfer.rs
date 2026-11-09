@@ -4,7 +4,7 @@ use super::{
     catalog::{CatalogPage, ChangesPage},
     cursor::{BlockRange, ByteCount, DurableAck, HoldingPeriod, PageCursor, Revision, ScopeCursor, SnapshotFence},
     exposure::{ExposureIntent, ShareActivation, SignedExposureReceipt},
-    identity::{Digest, FeedEpoch, HubId, ScopeKey, StreamId, ViewId},
+    identity::{Digest, FeedEpoch, HubId, ScopeKey, ViewId},
     manifest::{BlobId, Descriptor, Encoding, ManifestReply, ManifestRoot},
     proof::{ConfirmedEpoch, SignedSourceBatch},
     timeline::{StreamPage, StreamRead},
@@ -176,8 +176,7 @@ pub enum Message {
     },
     GetEpoch {
         scope: ScopeKey,
-        stream: StreamId,
-        epoch: super::identity::ProducerEpoch,
+        lookup: super::proof::EpochLookup,
     },
     Epoch {
         descriptor: ConfirmedEpoch,

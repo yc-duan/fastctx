@@ -22,8 +22,11 @@ CALLERS = {
         "crates/fastctx-sync/src/blocks/sqlite.rs",
         "crates/fastctx-sync/src/blocks/gc.rs",
         "crates/fastctx-sync/src/blocks/work.rs",
+        "crates/fastctx-sync/src/blocks/metadata_work.rs",
+        "crates/fastctx-sync/src/blocks/metadata_custody.rs",
         "crates/fastctx-sync/tests/sync_drill/blocks.rs",
         "crates/fastctx-sync/tests/sync_drill/block_recovery.rs",
+        "crates/fastctx-sync/tests/sync_drill/metadata.rs",
         "crates/fastctx-sync/tests/sync_drill/pending.rs",
     },
     "write_unpublished": {
@@ -45,6 +48,7 @@ CALLERS = {
         "crates/fastctx-sync/src/blocks/sqlite.rs",
         "crates/fastctx-sync/src/blocks/gc.rs",
         "crates/fastctx-sync/src/blocks/work.rs",
+        "crates/fastctx-sync/src/blocks/metadata_work.rs",
     },
     "enter_migration": {
         "crates/fastctx-storage/src/guard.rs",

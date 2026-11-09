@@ -1,4 +1,6 @@
 //! Real content files, writer transactions and collection share one lifecycle.
+#[path = "metadata.rs"]
+mod metadata;
 #[path = "pending.rs"]
 mod pending;
 #[path = "block_recovery.rs"]
@@ -333,6 +335,7 @@ pub async fn run(root: &Path) -> Result<()> {
         ))?,
         0
     );
+    metadata::run(root).await?;
     recovery::run(root).await?;
     pending::run(root).await?;
     println!(
