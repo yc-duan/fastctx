@@ -27,15 +27,18 @@ CREATE TABLE sync_accounts (
     hub TEXT NOT NULL, account TEXT NOT NULL, legacy_name TEXT NOT NULL,
     opened TEXT NOT NULL, PRIMARY KEY(hub,account), UNIQUE(hub,legacy_name,opened)
 ) WITHOUT ROWID;
--- Where each scope row came from: opened by this World for a subject it hosts
--- under its alone hub, or installed from a hub's directory evidence.
+-- Where each scope row came from: opened by this World for a conversation it
+-- hosts, installed from a hub's directory evidence, or described by this hub.
+-- `directory` names the account scope whose directory describes the row.
 CREATE TABLE sync_scopes (
     hub TEXT NOT NULL, scope TEXT NOT NULL, origin BLOB NOT NULL CHECK(length(origin) BETWEEN 2 AND 262144),
     acl_revision BLOB NOT NULL CHECK(length(acl_revision)=8),
     enabled INTEGER NOT NULL CHECK(enabled IN (0,1)),
     publication_epoch BLOB NOT NULL CHECK(length(publication_epoch)=8),
+    directory TEXT,
     PRIMARY KEY(hub,scope)
 ) WITHOUT ROWID;
+CREATE INDEX sync_scopes_directory ON sync_scopes(hub,directory,scope) WHERE directory IS NOT NULL;
 
 -- The latest scope fence owns one resumable, holding-independent maintenance task.
 CREATE TABLE sync_scope_reconciliations (
@@ -428,8 +431,11 @@ CREATE TABLE sync_hub_signing_keys (
     current INTEGER NOT NULL CHECK(current IN (0,1)),
     PRIMARY KEY(hub,public_key)
 ) WITHOUT ROWID;
+-- The hub's numbering of the control statements it signs, and the authority
+-- epoch it began this run with before accepting any write.
 CREATE TABLE sync_hub_control_heads (
-    hub TEXT PRIMARY KEY, sequence BLOB NOT NULL CHECK(length(sequence)=8)
+    hub TEXT PRIMARY KEY, sequence BLOB NOT NULL CHECK(length(sequence)=8),
+    authority_epoch BLOB NOT NULL CHECK(length(authority_epoch)=16)
 ) WITHOUT ROWID;
 CREATE TABLE sync_exposure_intents (
     hub TEXT NOT NULL, machine TEXT NOT NULL, generation BLOB NOT NULL CHECK(length(generation)=8),

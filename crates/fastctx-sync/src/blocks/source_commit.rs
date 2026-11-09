@@ -61,21 +61,7 @@ impl<'tx> ContentCommit<'tx> {
         let ticket = self.supplies.record(target, root)?;
         let ready = self.writer.recheck(&target.custody, ticket)?;
         self.writer.retain_supplied(ready)?;
-        // A descriptor's own references are readable as soon as it is committed;
-        // deeper levels expand through the content worker as usual.
-        if let ContentRef::Manifest { root: page } = root {
-            let custody = &target.custody;
-            let references: Vec<_> = pages::references(self.db, &page.0.domain, &page.0.digest)?
-                .into_iter()
-                .map(|child| match child {
-                    ContentRef::Single { block, decoded_bytes } => Reference::Block { id: block, decoded_bytes },
-                    ContentRef::Manifest { root } => Reference::Manifest { root },
-                })
-                .collect();
-            let kind = custody.kind.registration().id;
-            access::expand(self.db, &custody.object, kind, page, &references, &custody.holding)?;
-        }
-        Ok(())
+        expand_descriptor(self.db, &target.custody, root)
     }
     pub(crate) fn keep_checkpoint(&self, step: &SourceStep, lease: &RootLease) -> Result<RootLease> {
         root_holds::retained(self.db, &step.primary().custody, lease)
@@ -122,4 +108,21 @@ impl<'tx> ContentCommit<'tx> {
             }
         }
     }
+}
+
+/// A descriptor's own references are readable as soon as the transaction that
+/// adopts it commits; deeper levels expand through the content worker as usual.
+pub(crate) fn expand_descriptor(db: &Connection, custody: &Custody, root: &ContentRef) -> Result<()> {
+    let ContentRef::Manifest { root: page } = root else {
+        return Ok(());
+    };
+    let references: Vec<_> = pages::references(db, &page.0.domain, &page.0.digest)?
+        .into_iter()
+        .map(|child| match child {
+            ContentRef::Single { block, decoded_bytes } => Reference::Block { id: block, decoded_bytes },
+            ContentRef::Manifest { root } => Reference::Manifest { root },
+        })
+        .collect();
+    let kind = custody.kind.registration().id;
+    access::expand(db, &custody.object, kind, page, &references, &custody.holding)
 }

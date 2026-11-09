@@ -19,6 +19,7 @@ pub(crate) enum Role {
     Supply,
     Scopes,
     Reconcile,
+    Authority,
 }
 thread_local! { static ACTIVE: Cell<Option<Role>> = const { Cell::new(None) }; }
 pub(crate) struct Boundary(Option<Role>, PhantomData<Rc<()>>);
@@ -83,6 +84,26 @@ fn permits(table: &str) -> bool {
                 | "sync_source_steps"
                 | "sync_source_step_targets"
                 | "sync_tasks"
+        ),
+        // What a hub decides: scope rows and their feeds, the streams it orders or
+        // accepts, the control statements it signs and the content they retain.
+        Some(Role::Authority) => matches!(
+            table,
+            "sync_scopes"
+                | "sync_scope_heads"
+                | "sync_changes"
+                | "sync_objects"
+                | "sync_hub_control_heads"
+                | "sync_epoch_descriptors"
+                | "sync_source_proofs"
+                | "sync_stream_heads"
+                | "sync_stream_records"
+                | "sync_stream_roots"
+                | "sync_asset_access"
+                | "sync_asset_pins"
+                | "sync_asset_uploads"
+                | "sync_asset_gc"
+                | "sync_root_leases"
         ),
         Some(Role::Source) => matches!(
             table,

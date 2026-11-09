@@ -2,6 +2,7 @@
 
 mod access;
 mod adopted;
+pub(crate) mod authority_supply;
 mod budget;
 
 pub mod codec;

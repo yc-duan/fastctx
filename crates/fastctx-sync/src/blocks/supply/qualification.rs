@@ -40,8 +40,8 @@ pub(super) fn open(db: &Connection, request: &Request) -> Result<Revision> {
         })
         .transpose()?;
     match (&request.owner, &step) {
-        (SupplyOwner::Mutation, Some(_)) => {
-            return Err(sql::invalid("an edit cannot borrow a source step's private supply"));
+        (SupplyOwner::Mutation | SupplyOwner::Stream { .. }, Some(_)) => {
+            return Err(sql::invalid("an edit or authority record cannot borrow a source step's private supply"));
         }
         (SupplyOwner::Source { .. }, None) => return Err(sql::invalid("source supply has no engine-issued step")),
         _ => {}
@@ -67,7 +67,7 @@ fn validate_owner(db: &Connection, request: &Request, active: &uploads::ActiveSu
     let source = match &request.owner {
         SupplyOwner::Source { source } => Some(source),
         SupplyOwner::Use { usage: RootUse::Checkpoint { source } } if active.source.is_some() => Some(source),
-        SupplyOwner::Mutation if active.source.is_some() => {
+        SupplyOwner::Mutation | SupplyOwner::Stream { .. } if active.source.is_some() => {
             return Err(sql::invalid("mutation supply belongs to a source step"));
         }
         _ => None,

@@ -2,7 +2,7 @@
 use super::layout::{Address, Child};
 use crate::{
     cursor::{HoldingPeriod, Revision},
-    identity::{AccountId, DeviceId, Digest, ObjectKey, OperationId, ScopeKey, SourceId},
+    identity::{AccountId, DeviceId, Digest, ObjectKey, OperationId, ScopeKey, SourceId, StreamId},
     manifest::ContentRef,
     registry::REGISTRY,
     store::{
@@ -17,8 +17,17 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum SupplyOwner {
     Mutation,
-    Source { source: SourceId },
-    Use { usage: RootUse },
+    Source {
+        source: SourceId,
+    },
+    Use {
+        usage: RootUse,
+    },
+    /// Records an authority writes into this stream in the same operation, such
+    /// as a hub's own directory records.
+    Stream {
+        stream: StreamId,
+    },
 }
 
 pub(crate) struct SupplyRequest {

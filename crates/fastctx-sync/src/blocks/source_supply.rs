@@ -121,7 +121,11 @@ pub(crate) async fn prepare(blocks: &SqliteBlocks, operation: &IngestOperation) 
     }
     Ok(supplies)
 }
-async fn check(blocks: &SqliteBlocks, request: SupplyRequest, deadline: Instant) -> Result<SupplyTicket, Error> {
+pub(super) async fn check(
+    blocks: &SqliteBlocks,
+    request: SupplyRequest,
+    deadline: Instant,
+) -> Result<SupplyTicket, Error> {
     let operation = request.operation.clone();
     let holder = blocks.holder().clone();
     let policy = blocks.policy().clone();
@@ -156,7 +160,7 @@ async fn check(blocks: &SqliteBlocks, request: SupplyRequest, deadline: Instant)
         }
     }
 }
-fn now() -> i64 {
+pub(super) fn now() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |value| i64::try_from(value.as_millis()).unwrap_or(i64::MAX))
