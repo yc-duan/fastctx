@@ -1,0 +1,97 @@
+//! Bounded plans only. The sealed source writer owns CAS, signatures, indexes,
+//! dirty scheduling, private state retention and upload retirement atomically.
+use fastctx_hosts::claude::ingest::checkpoint::{ClaudeCheckpointV1, PARSER_VERSION};
+use fastctx_sync::{
+    catalog::{SourceBatch, SourceRecord},
+    cursor::{ByteCount, Revision, Sequence},
+    identity::{Digest, HostGeneration, OperationId, SourceId},
+    manifest::ContentRef,
+    store::{
+        Error,
+        ingest::{IngestBatch, IngestFacts, IngestOperation, SourceCheckpoint, SourceTarget},
+        ingest_effects::SourceEffects,
+    },
+};
+
+/// All put/put_manifest calls for this step use exactly this operation. It is
+/// reused after an uncertain reply; abandoning the step cancels its uploads.
+pub fn operation(source: &SourceId, generation: &HostGeneration, next: Revision) -> OperationId {
+    let mut bytes = b"fastctx.claude.ingest-step.v1\0".to_vec();
+    for field in [source.as_str().as_bytes(), generation.as_str().as_bytes()] {
+        bytes.extend_from_slice(&(field.len() as u64).to_be_bytes());
+        bytes.extend_from_slice(field);
+    }
+    bytes.extend_from_slice(&next.0.to_be_bytes());
+    OperationId::from_bytes(Digest::of(&bytes).bytes())
+}
+pub struct Step {
+    pub target: SourceTarget,
+    pub expected: Option<SourceCheckpoint>,
+    pub generation: HostGeneration,
+    pub committed_offset: ByteCount,
+    pub checkpoint: ClaudeCheckpointV1,
+    pub state: ContentRef,
+    pub after: Sequence,
+    pub records: Vec<SourceRecord>,
+    pub effects: SourceEffects,
+}
+impl Step {
+    pub fn prepare(self) -> Result<IngestOperation, Error> {
+        self.checkpoint.validate(self.committed_offset).map_err(|error| Error::Invalid(error.to_string()))?;
+        if !matches!(self.state, ContentRef::Manifest { .. }) {
+            return Err(Error::Invalid("Claude checkpoint state requires its explicit directory bundle".into()));
+        }
+        if self.checkpoint.partial.as_ref().is_some_and(|partial| {
+            let (source, generation) = partial.coordinates();
+            source != &self.target.source || generation != &self.generation
+        }) {
+            return Err(Error::Invalid("partial parser state belongs to another source or host generation".into()));
+        }
+        let revision = Revision(
+            self.expected
+                .as_ref()
+                .map_or(0, |p| p.revision.0)
+                .checked_add(1)
+                .ok_or_else(|| Error::Invalid("checkpoint revision overflow".into()))?,
+        );
+        let operation = operation(&self.target.source, &self.generation, revision);
+        let kind = self.target.custody.kind.registration();
+        let mut through = self.after;
+        for record in &self.records {
+            through.0 = through.0.checked_add(1).ok_or_else(|| Error::Invalid("source sequence overflow".into()))?;
+            if record.sequence != through || record.kind != kind.id || record.schema != kind.schema {
+                return Err(Error::Invalid("source records do not continue their registered stream".into()));
+            }
+        }
+        let facts = if self.records.is_empty() {
+            None
+        } else {
+            Some(IngestFacts::Local {
+                batch: SourceBatch {
+                    format: 1,
+                    scope: self.target.custody.object.scope.clone(),
+                    stream: self.target.stream.clone(),
+                    producer: self.target.producer.clone(),
+                    epoch: self.target.epoch.clone(),
+                    kind: kind.id.into(),
+                    schema: kind.schema,
+                    after: self.after,
+                    through,
+                    records: self.records,
+                },
+            })
+        };
+        let next = SourceCheckpoint {
+            source: self.target.source.clone(),
+            generation: self.generation,
+            revision,
+            committed_offset: self.committed_offset,
+            parser_version: PARSER_VERSION,
+            state: Some(self.state),
+        };
+        IngestOperation::new(
+            operation,
+            vec![IngestBatch { target: self.target, expected: self.expected, next, facts, effects: self.effects }],
+        )
+    }
+}

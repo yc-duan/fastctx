@@ -9,6 +9,7 @@
 //! it records what happened while it was away, such as jobs whose
 //! supervisor did not survive a restart of the machine.
 
+pub mod conversation_ingest;
 mod account_records;
 pub mod activity;
 mod activity_book;
