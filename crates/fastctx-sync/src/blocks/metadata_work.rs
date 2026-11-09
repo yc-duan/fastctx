@@ -150,14 +150,16 @@ pub(super) fn payload_bytes(
     let Some(stored) = stored else {
         return Ok(None);
     };
-    let buffer = store.budget.acquire(
+    let mut buffer = store.budget.acquire(
         stored.representation.encoded_bytes as usize
             + payload.decoded_bytes as usize
             + extra
             + codec::decode_workspace(stored.representation.envelope.encoding),
     )?;
     let encoded = store.files.read(&stored.key, stored.representation.encoded_bytes)?;
-    Ok(Some((codec::decode(&stored.representation, encoded)?, buffer)))
+    let decoded = codec::decode(&stored.representation, encoded)?;
+    buffer.shrink_to(decoded.capacity().checked_add(extra).ok_or(Error::Busy)?)?;
+    Ok(Some((decoded, buffer)))
 }
 
 /// Validates a metadata page published after its payload by the same operation,

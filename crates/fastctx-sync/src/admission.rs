@@ -74,4 +74,14 @@ impl BytePermit {
     pub fn bytes(&self) -> usize {
         self.permit.num_permits()
     }
+    /// Releases transient workspace after it has been freed, retaining the same
+    /// admission for the buffers that remain alive. This never reacquires bytes.
+    pub(crate) fn shrink_to(&mut self, bytes: usize) -> Result<(), Error> {
+        if bytes > self.bytes() {
+            return Err(Error::Invalid("a retained working set cannot grow its existing admission".into()));
+        }
+        let released = self.bytes() - bytes;
+        drop(self.permit.split(released).expect("released bytes belong to this permit"));
+        Ok(())
+    }
 }
