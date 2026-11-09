@@ -5,6 +5,7 @@
 
 pub mod blocks;
 pub mod catalog;
+pub mod conversation;
 pub mod cursor;
 pub mod exposure;
 pub mod identity;
