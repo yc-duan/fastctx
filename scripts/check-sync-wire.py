@@ -13,13 +13,22 @@ ROOTS = {
     "crates/fastctx-types/src/calls.rs": ["Call", "Reply"],
     "crates/fastctx-types/src/ipc.rs": ["ClientFrame", "NodeFrame"],
     "crates/fastctx-net/src/wire.rs": ["Up", "Down", "Intent", "Question", "Change", "Told"],
-    "crates/fastctx-net/src/peer.rs": ["Frame"],
+    "crates/fastctx-net/src/peer.rs": ["Frame", "Intent"],
     "crates/fastctx-types/src/remote.rs": ["RemoteCall", "RemoteReply", "Letter"],
     "crates/fastctx-types/src/session.rs": ["Watched"],
     "crates/fastctx-types/src/account_records.rs": ["Watched"],
     "crates/fastctx-types/src/history.rs": ["Watched"],
     "crates/fastctx-types/src/composer/sync.rs": ["Frame"],
     "crates/fastctx-types/src/sync/transfer.rs": ["Message"],
+    "crates/fastctx-types/src/sync/session.rs": ["TransportControl"],
+}
+# New channels require an explicitly named, exhaustive routing function.
+DISPATCHERS = {
+    "crates/fastctx-types/src/sync/transfer.rs::Message": ("asset_sync", "purpose"),
+    "crates/fastctx-types/src/sync/session.rs::TransportControl": ("asset_sync.transport", "purpose"),
+    "crates/fastctx-types/src/sync/session.rs::SessionBindingRequest": ("asset_sync.transport", "binding_purpose"),
+    "crates/fastctx-net/src/wire.rs::Intent": ("asset_sync.transport", "asset_sync_purpose"),
+    "crates/fastctx-net/src/peer.rs::Intent": ("asset_sync.transport", "asset_sync_purpose"),
 }
 FROZEN_SHA256 = "fbccea156dd77cd25a679487d83a21a85a82a0c64f51235f878e020b9b3c5ca2"
 
@@ -119,6 +128,9 @@ def check():
     if hashlib.sha256(raw).hexdigest() != FROZEN_SHA256:
         raise ValueError("the legacy wire baseline changed")
     baseline = json.loads(raw)
+    # peer::Intent was omitted from the original inventory. These three exact
+    # legacy variants predate asset sync; future variants still need mappings.
+    baseline["crates/fastctx-net/src/peer.rs::Intent"] = ["Data", "Link", "Probe"]
     actual = current()
     additions = {(key, variant) for key, variants in actual.items()
                  for variant in variants if variant not in baseline.get(key, ())}
@@ -128,19 +140,19 @@ def check():
         key = (item["type"], item["variant"])
         if key in mapped or item["purpose"] not in {"AssetSync", "ExecutionControl", "Observation", "Bootstrap"}:
             raise ValueError(f"invalid or duplicate wire purpose: {key}")
-        if (item["type"] != "crates/fastctx-types/src/sync/transfer.rs::Message"
-                or item["capability"] != "asset_sync"
-                or item["mapping"] != "crates/fastctx-types/src/sync/transfer.rs"):
+        dispatcher = DISPATCHERS.get(item["type"])
+        if (dispatcher is None or item["capability"] != dispatcher[0]
+                or item["mapping"] != item["type"].split("::")[0]):
             raise ValueError(f"new channel needs a registered dispatcher: {key}")
         source = code((ROOT / item["mapping"]).read_text(encoding="utf-8"))
-        start = source.index("{", source.index("pub fn purpose("))
+        start = source.index("{", source.index(f"pub fn {dispatcher[1]}("))
         depth, end = 1, start + 1
         while depth and end < len(source):
             depth += (source[end] == "{") - (source[end] == "}")
             end += 1
         body = source[start:end]
         purposes = {}
-        for pattern, purpose in re.findall(r"(Self::.*?)=>\s*(?:\{\s*)?Purpose::(\w+)", body, re.S):
+        for pattern, purpose in re.findall(r"(Self::[^;=]*?)=>\s*(?:\{\s*)?(?:Some\()?Purpose::(\w+)", body, re.S):
             for variant in re.findall(r"\bSelf::(\w+)", pattern):
                 if variant in purposes:
                     raise ValueError(f"duplicate purpose mapping: {variant}")

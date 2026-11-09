@@ -294,6 +294,10 @@ pub enum Intent {
     Register { account: AccountName, request: Bytes },
     /// One end of the data connection `stream`.
     Data { key: PublicKey, proof: Signature, stream: u64, end: End },
+    /// Separate asset data channel. Sent only after asset-transfer/v1 selection
+    /// and session binding on an authenticated control connection. The session
+    /// identifier is not a credential; legacy Data tickets cannot authorize it.
+    AssetSyncData { session: fastctx_types::sync::session::SessionId, key: PublicKey, proof: Signature },
     /// A package the hub holds, from the byte `from` on: the hub says the
     /// whole package's size, `{"size":…}`, then sends the bytes, and the
     /// member says it has them all. Sent only to a hub whose view says it
@@ -311,6 +315,26 @@ pub enum Intent {
     /// `proof` is the move's key's signature of the TLS exporter
     /// (`crate::moving`).
     Handover { id: String, role: crate::moving::HandoverRole, proof: Signature },
+}
+
+impl Intent {
+    /// Asset routing is separate from legacy Hands data pairing.
+    pub fn asset_sync_purpose(&self) -> Option<fastctx_types::sync::transfer::Purpose> {
+        use fastctx_types::sync::transfer::Purpose;
+        match self {
+            Self::AssetSyncData { .. } => Some(Purpose::AssetSync),
+            Self::Session { .. }
+            | Self::Login { .. }
+            | Self::Token { .. }
+            | Self::Peek { .. }
+            | Self::Register { .. }
+            | Self::Data { .. }
+            | Self::Package { .. }
+            | Self::Deliver { .. }
+            | Self::Probe
+            | Self::Handover { .. } => None,
+        }
+    }
 }
 
 /// A computer or phone logging in: the name it asks for, its key, and

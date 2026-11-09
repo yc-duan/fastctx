@@ -12,6 +12,8 @@ mod indexes;
 mod manifests;
 #[path = "contract/scopes.rs"]
 mod scopes;
+#[path = "contract/transfer.rs"]
+mod transfer;
 
 use fastctx_sync::{
     catalog::{ChangesPage, FeedEntry, SourceBatch, SourceRecord},
@@ -154,6 +156,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 max_page_bytes: 256 * 1024,
                 exposure_cleanup: vec!["physical/v1".into()],
                 hub_signing: None,
+                transports: vec!["asset-transfer/v1".into(), "future-transport".into()],
             },
         },
         Message::Cursors { entries: vec![cursor.clone()], more: false },
@@ -210,6 +213,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "decoded_acceptance_binding": accepted_binding,
             "decoded_hub_source_binding": hub_batch,
             "decoded_index_payloads": index_payloads,
+            "asset_transport": transfer::sample(&holding)?,
         }))?
     );
     Ok(())

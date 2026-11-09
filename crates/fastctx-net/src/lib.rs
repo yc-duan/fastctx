@@ -52,6 +52,7 @@ pub mod route;
 pub mod sign;
 pub mod sync_access;
 pub mod sync_proof;
+pub mod sync_transport;
 mod threads;
 pub mod tls;
 pub mod token;

@@ -215,5 +215,152 @@
     "purpose": "AssetSync",
     "capability": "asset_sync",
     "mapping": "crates/fastctx-types/src/sync/transfer.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/sync/transfer.rs::Message",
+    "variant": "OpenSyncSession",
+    "purpose": "AssetSync",
+    "capability": "asset_sync",
+    "mapping": "crates/fastctx-types/src/sync/transfer.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/sync/transfer.rs::Message",
+    "variant": "SessionReady",
+    "purpose": "AssetSync",
+    "capability": "asset_sync",
+    "mapping": "crates/fastctx-types/src/sync/transfer.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/sync/transfer.rs::Message",
+    "variant": "SessionClose",
+    "purpose": "AssetSync",
+    "capability": "asset_sync",
+    "mapping": "crates/fastctx-types/src/sync/transfer.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/sync/session.rs::TransportControl",
+    "variant": "SessionOpen",
+    "purpose": "AssetSync",
+    "capability": "asset_sync.transport",
+    "mapping": "crates/fastctx-types/src/sync/session.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/sync/session.rs::TransportControl",
+    "variant": "SessionReady",
+    "purpose": "AssetSync",
+    "capability": "asset_sync.transport",
+    "mapping": "crates/fastctx-types/src/sync/session.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/sync/session.rs::TransportControl",
+    "variant": "SessionClose",
+    "purpose": "AssetSync",
+    "capability": "asset_sync.transport",
+    "mapping": "crates/fastctx-types/src/sync/session.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/sync/session.rs::TransportControl",
+    "variant": "TransferRequest",
+    "purpose": "AssetSync",
+    "capability": "asset_sync.transport",
+    "mapping": "crates/fastctx-types/src/sync/session.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/sync/session.rs::TransportControl",
+    "variant": "PartOffer",
+    "purpose": "AssetSync",
+    "capability": "asset_sync.transport",
+    "mapping": "crates/fastctx-types/src/sync/session.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/sync/session.rs::TransportControl",
+    "variant": "PartReady",
+    "purpose": "AssetSync",
+    "capability": "asset_sync.transport",
+    "mapping": "crates/fastctx-types/src/sync/session.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/sync/session.rs::TransportControl",
+    "variant": "Credit",
+    "purpose": "AssetSync",
+    "capability": "asset_sync.transport",
+    "mapping": "crates/fastctx-types/src/sync/session.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/sync/session.rs::TransportControl",
+    "variant": "Stored",
+    "purpose": "AssetSync",
+    "capability": "asset_sync.transport",
+    "mapping": "crates/fastctx-types/src/sync/session.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/sync/session.rs::TransportControl",
+    "variant": "PartEnd",
+    "purpose": "AssetSync",
+    "capability": "asset_sync.transport",
+    "mapping": "crates/fastctx-types/src/sync/session.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/sync/session.rs::TransportControl",
+    "variant": "PartCommitted",
+    "purpose": "AssetSync",
+    "capability": "asset_sync.transport",
+    "mapping": "crates/fastctx-types/src/sync/session.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/sync/session.rs::TransportControl",
+    "variant": "TransferFinished",
+    "purpose": "AssetSync",
+    "capability": "asset_sync.transport",
+    "mapping": "crates/fastctx-types/src/sync/session.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/sync/session.rs::TransportControl",
+    "variant": "TransferCancel",
+    "purpose": "AssetSync",
+    "capability": "asset_sync.transport",
+    "mapping": "crates/fastctx-types/src/sync/session.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/sync/session.rs::TransportControl",
+    "variant": "TransferCancelled",
+    "purpose": "AssetSync",
+    "capability": "asset_sync.transport",
+    "mapping": "crates/fastctx-types/src/sync/session.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/sync/session.rs::TransportControl",
+    "variant": "Error",
+    "purpose": "AssetSync",
+    "capability": "asset_sync.transport",
+    "mapping": "crates/fastctx-types/src/sync/session.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/sync/session.rs::SessionBindingRequest",
+    "variant": "Object",
+    "purpose": "AssetSync",
+    "capability": "asset_sync.transport",
+    "mapping": "crates/fastctx-types/src/sync/session.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/sync/session.rs::SessionBindingRequest",
+    "variant": "Scope",
+    "purpose": "AssetSync",
+    "capability": "asset_sync.transport",
+    "mapping": "crates/fastctx-types/src/sync/session.rs"
+  },
+  {
+    "type": "crates/fastctx-net/src/wire.rs::Intent",
+    "variant": "AssetSyncData",
+    "purpose": "AssetSync",
+    "capability": "asset_sync.transport",
+    "mapping": "crates/fastctx-net/src/wire.rs"
+  },
+  {
+    "type": "crates/fastctx-net/src/peer.rs::Intent",
+    "variant": "AssetSyncData",
+    "purpose": "AssetSync",
+    "capability": "asset_sync.transport",
+    "mapping": "crates/fastctx-net/src/peer.rs"
   }
 ]

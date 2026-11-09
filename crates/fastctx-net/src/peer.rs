@@ -53,12 +53,7 @@ pub const MAX_FORWARD_MESSAGE: usize = crate::wire::MAX_DATA_MESSAGE + crate::wi
 #[serde(rename_all = "snake_case", tag = "f")]
 pub enum Frame {
     /// The first frame, from the machine that connected.
-    Hello {
-        protocol: u32,
-        version: String,
-        hub: HubId,
-        intent: Intent,
-    },
+    Hello { protocol: u32, version: String, hub: HubId, intent: Intent },
     /// The listening machine took the hello: it is `name`, and `proof` is
     /// its key's signature of the TLS exporter.
     Welcome {
@@ -70,9 +65,7 @@ pub enum Frame {
         cancels: bool,
     },
     /// The connection is refused or ended, and why.
-    Refused {
-        reason: String,
-    },
+    Refused { reason: String },
     /// A heartbeat; `took`, how many bytes of this connection the sender
     /// took from the receiver (`crate::pulse`), which an earlier release
     /// does not say.
@@ -87,27 +80,16 @@ pub enum Frame {
         took: Option<u64>,
     },
     /// A call for the machine on the other end, numbered `id` by its caller.
-    Call {
-        id: u64,
-        message: Envelope,
-    },
+    Call { id: u64, message: Envelope },
     /// The answer to the call the receiver's caller numbered `id`.
-    Answer {
-        id: u64,
-        message: Envelope,
-    },
+    Answer { id: u64, message: Envelope },
     /// The machine answering the call `id` stopped: the right it was made
     /// under was taken back. Whether it did what was asked is not known.
-    Cut {
-        id: u64,
-        reason: String,
-    },
+    Cut { id: u64, reason: String },
     /// The caller of the call it numbered `id` gave it up: one that only
     /// reads stops (`fastctx_types::contract`). Sent only to a machine that
     /// says it reads this.
-    Cancel {
-        id: u64,
-    },
+    Cancel { id: u64 },
 }
 
 /// What a connection to a listening machine is for.
@@ -124,8 +106,21 @@ pub enum Intent {
     },
     /// The connecting machine's end of the data connection `stream`.
     Data { key: PublicKey, proof: Signature, stream: u64, end: End },
+    /// Same asset transport contract as the hub, gated by negotiated capability.
+    /// Direct service cannot accept authority mutations or acknowledge the hub's copy.
+    AssetSyncData { session: fastctx_types::sync::session::SessionId, key: PublicKey, proof: Signature },
     /// The hub checking it reaches this machine here.
     Probe,
+}
+
+impl Intent {
+    pub fn asset_sync_purpose(&self) -> Option<fastctx_types::sync::transfer::Purpose> {
+        use fastctx_types::sync::transfer::Purpose;
+        match self {
+            Self::AssetSyncData { .. } => Some(Purpose::AssetSync),
+            Self::Link { .. } | Self::Data { .. } | Self::Probe => None,
+        }
+    }
 }
 
 /// Encodes a frame for the wire.

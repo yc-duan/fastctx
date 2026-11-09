@@ -34,6 +34,8 @@ pub enum CodecError {
     InvalidFrame(String),
     #[error("sync frame payload digest mismatch")]
     CorruptFrame,
+    #[error("metadata reassembly budget is occupied")]
+    Busy,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

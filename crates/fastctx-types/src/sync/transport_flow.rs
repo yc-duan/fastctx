@@ -94,7 +94,7 @@ impl MetadataBudget {
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |used| {
                 used.checked_add(bytes).filter(|next| *next <= self.0.limit)
             })
-            .map_err(|_| CodecError::TooLarge)?;
+            .map_err(|_| CodecError::Busy)?;
         Ok(Reservation { budget: self.clone(), bytes })
     }
 }
@@ -152,7 +152,7 @@ impl MetadataReassembly {
                 return Err(CodecError::InvalidFrame("metadata offset gap".into()));
             }
             if self.active.len() >= self.limits.max_active_parts as usize {
-                return Err(CodecError::TooLarge);
+                return Err(CodecError::Busy);
             }
             let total = header.total_bytes.0 as usize;
             let reservation = self.budget.reserve(total)?;

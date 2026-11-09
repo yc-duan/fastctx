@@ -4,7 +4,8 @@
 //! binds a session to an authenticated control connection incarnation and its
 //! current directory. Each request, offered part and publication must check
 //! object membership, kind/schema, read/holding purpose and current ACL again.
-//! Direct devices serve bytes only; their ACK holder cannot be the hub.
+//! Direct devices serve content and verified timeline projections, never
+//! authority acceptance or change feeds; their ACK holder cannot be the hub.
 
 pub use super::identity::{MessageId, PartId, SessionId, TransferId};
 use super::{
@@ -77,6 +78,11 @@ pub enum SessionBindingRequest {
     Scope { scope: ScopeKey },
 }
 impl SessionBindingRequest {
+    pub fn binding_purpose(&self) -> Purpose {
+        match self {
+            Self::Object { .. } | Self::Scope { .. } => Purpose::AssetSync,
+        }
+    }
     pub fn scope(&self) -> &ScopeKey {
         match self {
             Self::Object { object, .. } => &object.scope,

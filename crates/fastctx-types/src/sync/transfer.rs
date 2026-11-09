@@ -25,6 +25,9 @@ pub struct Capabilities {
     pub max_page_bytes: u32,
     pub exposure_cleanup: Vec<String>,
     pub hub_signing: Option<SigningAdvertisement>,
+    /// Open names; absence disables the separate asset data channel.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub transports: Vec<String>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SigningAdvertisement {
@@ -55,6 +58,13 @@ pub struct Selection {
     pub protocol: SelectedProtocol,
     pub envelope: SelectedEnvelope,
     pub encoding: Encoding,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transport: Option<SelectedTransport>,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SelectedTransport {
+    #[serde(rename = "asset-transfer/v1")]
+    V1,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -115,6 +125,16 @@ pub enum Message {
     },
     Selected {
         selection: Selection,
+    },
+    /// Control-plane messages, sent only after selecting asset-transfer/v1.
+    OpenSyncSession {
+        request: super::session::SessionOpen,
+    },
+    SessionReady {
+        ready: super::session::SessionReady,
+    },
+    SessionClose {
+        close: super::session::SessionClose,
     },
     GetScopes {
         request: super::scope::ScopeDiscoveryRead,
@@ -234,6 +254,9 @@ impl Message {
             }
             Self::Hello { .. }
             | Self::Selected { .. }
+            | Self::OpenSyncSession { .. }
+            | Self::SessionReady { .. }
+            | Self::SessionClose { .. }
             | Self::GetScopes { .. }
             | Self::ScopesPage { .. }
             | Self::Cursors { .. }
