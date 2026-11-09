@@ -444,9 +444,21 @@ CREATE TABLE sync_timeline_items (
     revision BLOB NOT NULL CHECK(length(revision)=8), accepted BLOB NOT NULL CHECK(length(accepted)=8),
     position BLOB NOT NULL, body BLOB NOT NULL, turn TEXT NOT NULL, parent TEXT,
     active INTEGER NOT NULL CHECK(active IN (0,1)),
+    -- Ordinary index patches use zero; a rebuild stamps its target projection.
+    index_generation BLOB NOT NULL DEFAULT X'0000000000000000' CHECK(length(index_generation)=8),
     PRIMARY KEY(hub,scope,conversation,item,revision)
 ) WITHOUT ROWID;
 CREATE INDEX sync_timeline_order ON sync_timeline_items(hub,scope,conversation,active,position,item);
+CREATE INDEX sync_timeline_generation ON sync_timeline_items(hub,scope,conversation,active,index_generation,item,revision);
+-- A position-index rebuild's resumable progress: copying the snapshot's rows
+-- strictly after `after_position`, then retiring rows of other generations.
+CREATE TABLE sync_timeline_rebuilds (
+    hub TEXT NOT NULL, scope TEXT NOT NULL, conversation TEXT NOT NULL,
+    projection BLOB NOT NULL CHECK(length(projection)=8), root TEXT NOT NULL,
+    phase INTEGER NOT NULL CHECK(phase IN (0,1)),
+    after_position BLOB CHECK(after_position IS NULL OR length(after_position)<=262144),
+    PRIMARY KEY(hub,scope,conversation)
+) WITHOUT ROWID;
 -- What each conversation's timeline has installed. `root` is absent until the
 -- first item revision; `applied` is the source commit installation caught up
 -- with; `local` is this commit's local sequence, which readers resume after;
