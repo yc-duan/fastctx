@@ -10,5 +10,6 @@ pub mod facts;
 pub mod parts;
 pub mod plan;
 pub mod resupply;
+pub mod source_io;
 pub mod state_read;
 pub mod step_content;

@@ -26,11 +26,21 @@ pub(super) fn ordinary_file(path: &Path) -> io::Result<File> {
     Ok(file)
 }
 
+/// Actual syscall counts for an explicitly observed read. Failed attempts count;
+/// metadata queries do not count as content reads.
+#[derive(Clone, Copy, Default)]
+pub struct IoCounts {
+    pub open_calls: u64,
+    pub read_calls: u64,
+    pub read_bytes: u64,
+}
+
 pub struct SourceFile {
     file: File,
     path: PathBuf,
     identity: FileIdentity,
     read_bytes: u64,
+    observation: Option<IoCounts>,
 }
 pub struct Window {
     pub offset: ByteCount,
@@ -42,7 +52,14 @@ impl SourceFile {
     pub fn open(path: &Path) -> io::Result<Self> {
         let file = ordinary_file(path)?;
         let snapshot = file_read::snapshot(&file, &file.metadata()?)?;
-        Ok(Self { file, path: path.to_owned(), identity: snapshot.identity(), read_bytes: 0 })
+        Ok(Self { file, path: path.to_owned(), identity: snapshot.identity(), read_bytes: 0, observation: None })
+    }
+    /// Enable immediately after opening. Subsequent drains preserve observation.
+    pub fn observe_io(&mut self) {
+        self.observation = Some(IoCounts { open_calls: 1, ..Default::default() });
+    }
+    pub fn take_io(&mut self) -> Option<IoCounts> {
+        self.observation.as_mut().map(std::mem::take)
     }
     pub fn identity(&self) -> &FileIdentity {
         &self.identity
@@ -65,7 +82,13 @@ impl SourceFile {
         let mut bytes = vec![0; limit.min(usize::try_from(before.size - offset.0).unwrap_or(usize::MAX))];
         let mut used = 0;
         while used < bytes.len() {
+            if let Some(counts) = &mut self.observation {
+                counts.read_calls += 1;
+            }
             let size = self.file.read(&mut bytes[used..])?;
+            if let Some(counts) = &mut self.observation {
+                counts.read_bytes += size as u64;
+            }
             if size == 0 {
                 break;
             }
@@ -77,6 +100,9 @@ impl SourceFile {
         }
         bytes.truncate(used);
         let after = self.snapshot()?;
+        if let Some(counts) = &mut self.observation {
+            counts.open_calls += 1;
+        }
         let path = ordinary_file(&self.path)?;
         let named = file_read::snapshot(&path, &path.metadata()?)?;
         if before.identity() != self.identity
