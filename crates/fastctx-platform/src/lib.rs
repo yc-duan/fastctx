@@ -44,6 +44,8 @@ pub mod limits;
 pub mod local_path;
 pub mod lock;
 pub mod log_writer;
+pub mod materialize_directory;
+pub mod materialize_file;
 pub mod memory;
 #[cfg(target_os = "linux")]
 pub mod mountinfo;
@@ -66,6 +68,7 @@ pub mod readings;
 pub mod registry;
 pub mod roles;
 pub mod rolling_log;
+pub mod rooted_path;
 pub mod scene;
 pub mod service_channel;
 #[cfg(windows)]
