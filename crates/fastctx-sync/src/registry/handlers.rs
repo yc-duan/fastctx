@@ -5,6 +5,7 @@ use crate::{
     manifest::ContentRef,
     store::{
         Error,
+        authorize::FieldChange,
         mutation::{FieldEdit, ProposedObject, TextEdit},
     },
 };
@@ -52,6 +53,17 @@ pub trait KindHandler: Send + Sync {
     fn kind(&self) -> &'static str;
     fn validate(&self, schema: u16, body: &[u8]) -> Result<(), Error>;
     fn references(&self, schema: u16, body: &[u8]) -> Result<Vec<ContentRef>, Error>;
+    /// Derives all changed business fields from verified bodies for every intent,
+    /// including whole writes. Empty bytes represent an absent/deleted body.
+    /// This pure operation runs again inside the writer; it must not perform IO
+    /// and must bound the returned vectors/strings by `max_bytes`.
+    fn differences(
+        &self,
+        schema: u16,
+        before: &[u8],
+        after: &[u8],
+        max_bytes: usize,
+    ) -> Result<Vec<FieldChange>, Error>;
     fn import_legacy(&self, shape: &str, body: &[u8]) -> Result<Vec<u8>, Error>;
     fn project_legacy(&self, head: &ObjectHead, body: &[u8], generation: u16) -> Result<Vec<u8>, Error>;
     fn project_local(&self, head: &ObjectHead, body: &[u8]) -> Result<Vec<u8>, Error>;

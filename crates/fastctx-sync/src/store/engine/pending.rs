@@ -65,7 +65,7 @@ pub(super) async fn submit(
         let result = store
             .db
             .write_then(
-                prepared.bytes + fastctx_types::sync::PAGE_BYTES as usize,
+                prepared.bytes + prepared.field_bytes + fastctx_types::sync::PAGE_BYTES as usize,
                 move |db| {
                     let _boundary = boundary::enter_typed_write(Role::Pending);
                     stage(db, &engine, prepared)
@@ -128,10 +128,19 @@ fn stage(db: &Connection, store: &SqliteBackend, prepared: Prepared) -> Result<S
             ));
         }
         super::basis::verify(db, &request.origin, &object.proposal, current.as_ref())?;
-        let fields = match &object.proposal.original {
-            crate::store::mutation::OriginalIntent::Fields { edits } => edits.as_slice(),
-            _ => &[],
-        };
+        let handler =
+            store.handlers.get(object.proposal.kind.as_str()).ok_or_else(|| sql::invalid("kind has no handler"))?;
+        let (fields, _) = super::semantics::derive(
+            handler.as_ref(),
+            object.kind.registration().schema,
+            &object.before,
+            &object.after,
+            object.field_budget,
+        )
+        .map_err(|error| sql::invalid(error.to_string()))?;
+        if fields != object.fields {
+            return Err(sql::invalid("semantic field changes differ inside the write fence"));
+        }
         let authorizer = store
             .authorizers
             .get(object.proposal.kind.as_str())
@@ -144,7 +153,7 @@ fn stage(db: &Connection, store: &SqliteBackend, prepared: Prepared) -> Result<S
                     current: current.as_ref(),
                     before: &object.before,
                     after: &object.after,
-                    fields,
+                    fields: &fields,
                 },
             ),
             context.observed_acl,

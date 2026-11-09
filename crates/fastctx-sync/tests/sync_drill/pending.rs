@@ -10,7 +10,7 @@ use fastctx_sync::{
     registry::handlers::{DeletePlan, ExportPlan, KindHandler, MergeBodies, MergeOutcome},
     store::{
         Error,
-        authorize::{MutationAuthorizer, PreparedChange},
+        authorize::{FieldChange, MutationAuthorizer, PreparedChange},
         engine::{Config, SqliteBackend},
         mutation::{
             AtomicMutation, BaseVersion, FieldEdit, OriginalIntent, ProposedObject, Submission, SubmissionMode,
@@ -32,6 +32,15 @@ impl KindHandler for TextHandler {
     }
     fn references(&self, _: u16, _: &[u8]) -> std::result::Result<Vec<ContentRef>, Error> {
         Ok(vec![])
+    }
+    fn differences(
+        &self,
+        _: u16,
+        before: &[u8],
+        after: &[u8],
+        _: usize,
+    ) -> std::result::Result<Vec<FieldChange>, Error> {
+        Ok(if before == after { vec![] } else { vec![FieldChange { path: vec!["body".into()] }] })
     }
     fn import_legacy(&self, _: &str, body: &[u8]) -> std::result::Result<Vec<u8>, Error> {
         self.validate(1, body)?;
@@ -77,7 +86,9 @@ impl MutationAuthorizer for Permit {
         "conversation.plan"
     }
     fn authorize(&self, context: &AccessContext, change: PreparedChange<'_>) -> Decision {
-        if change.proposal.kind == "conversation.plan" && change.fields.is_empty() {
+        let actual =
+            if change.before == change.after { vec![] } else { vec![FieldChange { path: vec!["body".into()] }] };
+        if change.proposal.kind == "conversation.plan" && change.fields == actual {
             Decision::Allowed { revision: context.observed_acl }
         } else {
             Decision::Denied { revision: context.observed_acl, reason: "not the drill's text mutation".into() }
@@ -85,6 +96,14 @@ impl MutationAuthorizer for Permit {
     }
 }
 fn engine(db: Database, blocks: Arc<SqliteBlocks>, gate: Arc<Policy>) -> Result<SqliteBackend> {
+    engine_with_budget(db, blocks, gate, 8 * 1024 * 1024)
+}
+fn engine_with_budget(
+    db: Database,
+    blocks: Arc<SqliteBlocks>,
+    gate: Arc<Policy>,
+    semantic_bytes: usize,
+) -> Result<SqliteBackend> {
     Ok(SqliteBackend::new(Config {
         database: db,
         hub: scope().hub,
@@ -93,7 +112,7 @@ fn engine(db: Database, blocks: Arc<SqliteBlocks>, gate: Arc<Policy>) -> Result<
         blocks,
         handlers: vec![Arc::new(TextHandler)],
         authorizers: vec![Arc::new(Permit)],
-        semantic_bytes: 8 * 1024 * 1024,
+        semantic_bytes,
     })?)
 }
 fn principal() -> Principal {

@@ -7,6 +7,7 @@ mod pending;
 mod prepare;
 pub(crate) use prepare::fingerprint as request_fingerprint;
 mod rows;
+mod semantics;
 
 use super::{
     Error,

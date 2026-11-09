@@ -2,9 +2,17 @@
 
 use super::{
     access::{AccessContext, Decision},
-    mutation::{FieldEdit, ProposedObject},
+    mutation::ProposedObject,
 };
 use crate::catalog::ObjectHead;
+
+/// A changed business field derived by the installed schema handler. Values
+/// remain in the verified before/after bodies, not in a second caller-supplied
+/// patch. Arrays and other indivisible values name their whole field.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FieldChange {
+    pub path: Vec<String>,
+}
 
 /// Local preparation binds `before` to this object's accepted version or its
 /// queued same-origin predecessor, then rechecks that binding inside the writer.
@@ -16,7 +24,7 @@ pub struct PreparedChange<'a> {
     pub current: Option<&'a ObjectHead>,
     pub before: &'a [u8],
     pub after: &'a [u8],
-    pub fields: &'a [FieldEdit],
+    pub fields: &'a [FieldChange],
 }
 
 /// Required for each writable kind. Runs inside the writer against the current

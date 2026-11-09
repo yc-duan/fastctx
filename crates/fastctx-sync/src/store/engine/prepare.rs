@@ -18,6 +18,7 @@ pub(super) struct Prepared {
     pub hash: Digest,
     pub objects: Vec<Object>,
     pub bytes: usize,
+    pub field_bytes: usize,
 }
 pub(super) struct Object {
     pub proposal: ProposedObject,
@@ -27,6 +28,8 @@ pub(super) struct Object {
     pub before: Vec<u8>,
     pub after: Vec<u8>,
     pub references: Vec<crate::manifest::ContentRef>,
+    pub fields: Vec<crate::store::authorize::FieldChange>,
+    pub field_budget: usize,
 }
 pub(super) fn actor(principal: &Principal) -> Result<AcceptedActor, Error> {
     match principal {
@@ -81,7 +84,8 @@ pub(super) async fn prepare(
         return Err(Error::Denied("submission origin differs from the authenticated actor".into()));
     }
     let hash = fingerprint(&request)?;
-    let mut prepared = Prepared { request: request.clone(), actor, hash, objects: Vec::new(), bytes: 0 };
+    let mut prepared =
+        Prepared { request: request.clone(), actor, hash, objects: Vec::new(), bytes: 0, field_bytes: 0 };
     let mut roots = 0_usize;
     for (proposal, kind) in request.objects.iter().zip(mutation.kinds()) {
         if proposal.key.scope.hub != store.hub {
@@ -151,8 +155,7 @@ pub(super) async fn prepare(
             OriginalIntent::Write { content, schema: written }
                 if proposal.candidate.as_ref() == Some(content) && *written == schema => {}
             OriginalIntent::Edit { edits } => {
-                let changed =
-                    handler.apply_edit(schema, &before, edits, store.semantic_bytes.saturating_sub(prepared.bytes))?;
+                let changed = handler.apply_edit(schema, &before, edits, store.semantic_bytes)?;
                 if changed != after {
                     return Err(Error::Invalid("candidate body does not implement its declared edit".into()));
                 }
@@ -170,6 +173,9 @@ pub(super) async fn prepare(
             OriginalIntent::Remove | OriginalIntent::Delete if proposal.candidate.is_none() => {}
             _ => return Err(Error::Invalid("intent and candidate do not match this installed handler".into())),
         }
+        let field_budget = fastctx_types::sync::PAGE_BYTES as usize - prepared.field_bytes;
+        let (fields, field_bytes) = super::semantics::derive(handler.as_ref(), schema, &before, &after, field_budget)?;
+        prepared.field_bytes += field_bytes;
         let references = if proposal.candidate.is_some() { handler.references(schema, &after)? } else { Vec::new() };
         let base = matches!(proposal.base, crate::store::mutation::BaseVersion::Version { root: Some(_), .. });
         roots = roots
@@ -197,6 +203,8 @@ pub(super) async fn prepare(
             before,
             after,
             references,
+            fields,
+            field_budget,
         });
     }
     Ok(prepared)

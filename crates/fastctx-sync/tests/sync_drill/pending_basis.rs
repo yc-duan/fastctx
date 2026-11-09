@@ -10,7 +10,9 @@ pub(super) async fn run(root: &Path) -> Result<()> {
     let dir = root.join("pending-basis");
     fastctx_platform::ensure_private_dir(&dir)?;
     let a = custody(60, "conversation.plan");
-    let original = codec::encode(scope(), b"protected=no\r\nlabel=old\r\n".to_vec(), Encoding::Raw)?;
+    let prefix = "x".repeat(400 * 1024 - b"protected=no\r\nlabel=old\r\n".len());
+    let body = |label: &str| format!("{prefix}protected=no\r\nlabel={label}\r\n").into_bytes();
+    let original = codec::encode(scope(), body("old"), Encoding::Raw)?;
     let base = ContentRef::from(original.representation.content.clone());
     let version = VersionRef { authority_epoch: AuthorityEpoch::from_bytes([60; 16]), revision: Revision(1) };
     let db = open_with(&dir.join("replica.sqlite3"), |db| {
@@ -28,11 +30,11 @@ pub(super) async fn run(root: &Path) -> Result<()> {
         8 * 1024 * 1024,
     )?);
     blocks.put(a.clone(), operation(60), original.representation, original.bytes).await?;
-    let forged = codec::encode(scope(), b"protected=yes\r\nlabel=old\r\n".to_vec(), Encoding::Raw)?;
+    let forged = codec::encode(scope(), format!("{prefix}protected=yes\r\nlabel=old\r\n").into_bytes(), Encoding::Raw)?;
     let forged = blocks.put(a.clone(), operation(61), forged.representation, forged.bytes).await?;
-    let changed = codec::encode(scope(), b"protected=no\r\nlabel=new\r\n".to_vec(), Encoding::Raw)?;
+    let changed = codec::encode(scope(), body("new"), Encoding::Raw)?;
     let changed = blocks.put(a.clone(), operation(62), changed.representation, changed.bytes).await?;
-    let store = engine(db.clone(), blocks.clone(), gate)?;
+    let store = engine_with_budget(db.clone(), blocks.clone(), gate, 1024 * 1024)?;
     let mut valid = request(62, vec![(60, ContentRef::from(changed.content.clone()))]);
     valid.objects[0].base = BaseVersion::Version {
         state_revision: version.clone(),
@@ -41,10 +43,7 @@ pub(super) async fn run(root: &Path) -> Result<()> {
     };
     valid.objects[0].before = Some(base.clone());
     valid.objects[0].original = OriginalIntent::Edit {
-        edits: vec![
-            TextEdit { search: "label=old\n".into(), replacement: "label=intermediate\n".into(), all: false },
-            TextEdit { search: "label=intermediate\n".into(), replacement: "label=new\n".into(), all: false },
-        ],
+        edits: vec![TextEdit { search: "label=old\n".into(), replacement: "label=new\n".into(), all: false }],
     };
     let mut wrong = valid.clone();
     wrong.objects[0].before = Some(ContentRef::from(forged.content.clone()));
@@ -75,7 +74,15 @@ pub(super) async fn run(root: &Path) -> Result<()> {
     next.operation = operation(63);
     next.objects[0].predecessor = Some(operation(62));
     next.objects[0].before = Some(ContentRef::from(changed.content.clone()));
-    next.objects[0].original = OriginalIntent::Write { content: ContentRef::from(changed.content), schema: 1 };
+    let final_body = codec::encode(scope(), body("end"), Encoding::Raw)?;
+    let final_body = blocks.put(a, operation(63), final_body.representation, final_body.bytes).await?;
+    next.objects[0].candidate = Some(ContentRef::from(final_body.content));
+    next.objects[0].original = OriginalIntent::Edit {
+        edits: vec![
+            TextEdit { search: "label=new\n".into(), replacement: "label=intermediate\n".into(), all: false },
+            TextEdit { search: "label=intermediate\n".into(), replacement: "label=end\n".into(), all: false },
+        ],
+    };
     store.submit_pending(principal(), AtomicMutation::new(next.clone())?).await?;
     next.operation = operation(64);
     next.objects[0].before = Some(base);
