@@ -58,7 +58,9 @@ impl<'a> Prepared<'a> {
         self.fence
     }
 }
+/// `object` is the authenticated document key, not its conversation/project target.
 pub fn prepare<'a>(
+    object: &ObjectKey,
     document: &'a Document,
     fence: &'a Fence,
     verified_root: &ContentRef,
@@ -66,11 +68,16 @@ pub fn prepare<'a>(
     max_bytes: usize,
     validation: Validation,
 ) -> Result<Prepared<'a>, Error> {
-    document.validate()?;
+    match validation {
+        Validation::Stored => document.validate_stored()?,
+        Validation::NewWrite => document.validate()?,
+    }
     if bytes.len() > max_bytes {
         return Err(Error::Busy);
     }
-    if verified_root != &document.text.root
+    fence.description_root.validate().map_err(Error::Invalid)?;
+    if object != &fence.object
+        || verified_root != &document.text.root
         || fence.object.scope != document.target.object().scope
         || fence.description_root.id().domain != fence.object.scope
         || bytes.len() as u64 != document.text.bytes.0
@@ -124,7 +131,7 @@ pub fn create(target: Target, mut details: Details, bytes: Vec<u8>, max_bytes: u
             *description = history::markdown::parse_written(name, value).map_err(Error::Invalid)?.description
         }
     }
-    Ok(Candidate { target, details, bytes })
+    Ok(Candidate { target, details, bytes, validation: Validation::NewWrite })
 }
 /// Bytes must be put and durably pinned before attach. The returned description
 /// contains only the resulting reference and digest, never an inline text copy.
@@ -132,6 +139,26 @@ pub struct Candidate {
     target: Target,
     details: Details,
     bytes: Vec<u8>,
+    validation: Validation,
+}
+/// Keeps exact bytes and description from a verified stored revision. Only
+/// lifecycle helpers may use this; ordinary text replacements use `create`.
+pub(super) fn retained(source: &Prepared<'_>) -> Candidate {
+    Candidate {
+        target: source.document.target.clone(),
+        details: source.document.details.clone(),
+        bytes: source.bytes.to_vec(),
+        validation: Validation::Stored,
+    }
+}
+impl Candidate {
+    pub(super) fn set_retired(&mut self, retired: bool) -> Result<(), Error> {
+        let Details::History { retired: value, .. } = &mut self.details else {
+            return Err(json::invalid("only a history topic can be retired or restored"));
+        };
+        *value = retired;
+        Ok(())
+    }
 }
 pub enum Attribution {
     Plan(plan::Author),
@@ -147,6 +174,11 @@ impl Candidate {
     /// Supplied by the authenticated editor/legacy adapter, not the Markdown.
     /// The mutation authorizer checks this attribution against the real cause.
     pub fn attribute(&mut self, attribution: Attribution, submission: Option<String>) -> Result<(), Error> {
+        super::schema::submission_id(&submission)?;
+        match &attribution {
+            Attribution::Plan(author) => super::schema::attribution(author)?,
+            Attribution::History(author) => super::schema::attribution(author)?,
+        }
         match (&mut self.details, attribution) {
             (Details::Plan { author, submission: id }, Attribution::Plan(value)) => {
                 *author = value;
@@ -171,7 +203,10 @@ impl Candidate {
                 utf8_bom: self.bytes.starts_with(b"\xef\xbb\xbf"),
             },
         };
-        description.validate()?;
+        match self.validation {
+            Validation::Stored => description.validate_stored()?,
+            Validation::NewWrite => description.validate()?,
+        }
         Ok(description)
     }
 }

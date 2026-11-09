@@ -38,7 +38,7 @@ impl Decoded<'_> {
                 utf8_bom: text.starts_with('\u{feff}'),
             },
         };
-        document.validate()?;
+        document.validate_stored()?;
         Ok(document)
     }
 }

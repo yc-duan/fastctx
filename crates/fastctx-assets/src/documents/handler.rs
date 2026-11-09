@@ -1,6 +1,6 @@
 //! Description-only adapter. Referenced-body operations require the real bounded
 //! semantic preparation port, not JSON containing an extra inline text field.
-use super::{Kind, decode};
+use super::{Kind, decode, decode_stored};
 use crate::{Error, json};
 use fastctx_sync::{
     catalog::ObjectHead,
@@ -39,7 +39,9 @@ impl KindHandler for Handler {
             if body.is_empty() {
                 return Ok(Value::Object(Default::default()));
             }
-            self.validate(schema, body)?;
+            if decode_stored(body)?.kind()? != self.0 {
+                return Err(json::invalid("document description belongs to another kind"));
+            }
             Ok(Value::Object(json::object(body)?))
         };
         json::schema(schema)?;
@@ -51,9 +53,8 @@ impl KindHandler for Handler {
     fn project_legacy(&self, _: &ObjectHead, _: &[u8], _: u16) -> Result<Vec<u8>, Error> {
         Err(unavailable())
     }
-    fn project_local(&self, _: &ObjectHead, body: &[u8]) -> Result<Vec<u8>, Error> {
-        self.validate(1, body)?;
-        Ok(body.to_vec())
+    fn project_local(&self, _: &ObjectHead, _: &[u8]) -> Result<Vec<u8>, Error> {
+        Err(unavailable())
     }
     fn merge(&self, _: &ProposedObject, _: &ObjectHead, _: MergeBodies<'_>) -> Result<MergeOutcome, Error> {
         Err(unavailable())

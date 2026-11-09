@@ -52,7 +52,11 @@ pub fn reconcile(
     options: Options<'_>,
 ) -> Result<Outcome, Error> {
     let Options { intent, mode, lifecycle, creating, budget } = options;
-    if !base.document().same_identity(current.document()) || !base.document().same_identity(incoming.document()) {
+    if base.fence().object != current.fence().object
+        || base.fence().object != incoming.fence().object
+        || !base.document().same_identity(current.document())
+        || !base.document().same_identity(incoming.document())
+    {
         return Err(json::invalid("a document merge cannot change its identity"));
     }
     if lifecycle == Lifecycle::Deleted {

@@ -6,6 +6,7 @@ pub use handler::Handler;
 pub mod legacy;
 pub mod lifecycle;
 pub mod reconcile;
+pub mod schema;
 pub mod text;
 use crate::{Error, json};
 use fastctx_sync::{
@@ -77,7 +78,18 @@ impl Document {
             _ => Err(json::invalid("a plan belongs to a conversation")),
         }
     }
+    /// Checks a newly authored description, independently of body preparation.
     pub fn validate(&self) -> Result<(), Error> {
+        self.validate_shape()?;
+        schema::validate(self, false)
+    }
+    /// For verified old records and byte-preserving lifecycle operations only.
+    /// Passing this check never authorizes a replacement or changed description.
+    pub fn validate_stored(&self) -> Result<(), Error> {
+        self.validate_shape()?;
+        schema::validate(self, true)
+    }
+    fn validate_shape(&self) -> Result<(), Error> {
         self.kind()?;
         self.text.root.validate().map_err(Error::Invalid)?;
         if self.text.root.id().domain != self.target.object().scope {
@@ -88,15 +100,7 @@ impl Document {
         {
             return Err(json::invalid("document extent differs from its exact content reference"));
         }
-        if let Details::History { name, description, submission, .. } = &self.details {
-            history::markdown::check_name(name).map_err(Error::Invalid)?;
-            if description.trim().is_empty() || description.chars().any(char::is_control) {
-                return Err(json::invalid("history description must be a nonempty single line"));
-            }
-            if submission.as_ref().is_some_and(|id| id.len() != 64 || !id.bytes().all(|b| b.is_ascii_hexdigit())) {
-                return Err(json::invalid("invalid history submission identity"));
-            }
-        }
+
         Ok(())
     }
     pub fn retired(&self) -> bool {
@@ -112,7 +116,20 @@ impl Document {
     }
 }
 pub fn decode(body: &[u8]) -> Result<Document, Error> {
+    if body.len() > schema::DESCRIPTION_BYTES {
+        return Err(json::invalid("document description exceeds its schema bound"));
+    }
     let document: Document = json::typed(serde_json::Value::Object(json::object(body)?))?;
     document.validate()?;
+    Ok(document)
+}
+/// Decodes previously verified descriptions without applying new authoring limits.
+/// Migration must still validate the original legacy record and its ownership.
+pub fn decode_stored(body: &[u8]) -> Result<Document, Error> {
+    if body.len() > schema::LEGACY_DESCRIPTION_BYTES {
+        return Err(json::invalid("stored document description exceeds its schema bound"));
+    }
+    let document: Document = json::typed(serde_json::Value::Object(json::object(body)?))?;
+    document.validate_stored()?;
     Ok(document)
 }

@@ -46,7 +46,16 @@ pub struct Change<'a> {
 }
 pub fn authorize(change: Change<'_>, authority: Authority<'_>) -> Result<(), Error> {
     let after = change.after;
-    after.validate()?;
+    match change.action {
+        Action::Write | Action::Edit => after.validate()?,
+        Action::Retire | Action::Restore => {
+            after.validate_stored()?;
+            if let Details::History { author, submission, .. } = &after.details {
+                super::schema::attribution(author)?;
+                super::schema::submission_id(submission)?;
+            }
+        }
+    }
     if !authority.permitted
         || authority.context.scope != authority.object.scope
         || authority.context.observed_acl != authority.acl_revision
@@ -113,6 +122,8 @@ pub fn authorize(change: Change<'_>, authority: Authority<'_>) -> Result<(), Err
                 || source.text.digest != after.text.digest
                 || source.text.bytes != after.text.bytes
                 || source.text.utf8_bom != after.text.utf8_bom
+                || !matches!((&source.details, &after.details),
+                    (Details::History { description: a, .. }, Details::History { description: b, .. }) if a == b)
             {
                 return Err(denied("lifecycle command changed the chosen revision's text"));
             }
