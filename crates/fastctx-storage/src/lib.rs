@@ -5,8 +5,8 @@
 pub mod authorization;
 mod blocking;
 pub mod documents;
-pub mod format_upgrade;
 mod error;
+pub mod format_upgrade;
 pub mod guard;
 mod integrity;
 mod keeper;
