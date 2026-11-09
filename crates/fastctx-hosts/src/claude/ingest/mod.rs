@@ -4,7 +4,12 @@
 //! buffers and staged content; this module does not create per-source budgets.
 
 pub mod body;
+pub mod checkpoint;
+pub mod children;
 pub mod document;
+pub mod file;
 pub mod image_base64;
 pub mod jsonl;
 pub mod lexical;
+pub mod reconcile;
+pub mod reports;
