@@ -10,7 +10,8 @@ use fastctx_sync::{
 use fastctx_types::sync::{cursor::ByteCount, transport_codec::bounded_json};
 use std::{collections::BTreeMap, io};
 
-const LINKS: [(&str, &str); 9] = [
+const LINKS: [(&str, &str); 10] = [
+    ("/read_ahead/content", "ahead"),
     ("/anchors_root", "anchors"),
     ("/row_index_root", "rows"),
     ("/partial/line/document/bodies/raw/content", "raw"),

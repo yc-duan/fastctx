@@ -14,7 +14,9 @@ use fastctx_types::{
 };
 use serde::{Deserialize, Serialize};
 
+mod read_ahead;
 mod validate;
+pub use read_ahead::ReadAhead;
 pub use validate::{BLOCKED_REASON_BYTES, CheckpointContext};
 
 pub const PARSER_VERSION: u16 = 1;
@@ -24,11 +26,16 @@ pub struct ClaudeCheckpointV1 {
     pub version: u16,
     pub file_identity: FileIdentity,
     pub observed_stamp: FileChangeStamp,
-    /// Following: bytes read from this generation. Reconciling: the new file's
+    /// Following: parsed bytes in this generation; read-ahead may hold more.
+    /// Reconciling: the new file's
     /// contiguous audit position; the outer committed offset still belongs to
     /// the old generation until the final consistent checkpoint installs the new.
     pub read_offset: ByteCount,
     pub partial: Option<Partial>,
+    /// Unparsed bytes from an already-read window. Keep the immutable whole block
+    /// and advance only its cursor, so a short row never causes a host reread.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub read_ahead: Option<ReadAhead>,
     /// None when anchors are stored in the registered HostRows family instead.
     pub anchors_root: Option<ContentRef>,
     /// None when native-row lookups use the registered HostRows family instead.
@@ -128,6 +135,7 @@ impl ClaudeCheckpointV1 {
         let mut roots = Vec::with_capacity(7);
         roots.extend(self.anchors_root.iter());
         roots.extend(self.row_index_root.iter());
+        roots.extend(self.read_ahead.iter().map(|ahead| &ahead.content));
         if let Some(partial) = &self.partial {
             roots.extend(partial.roots());
         }

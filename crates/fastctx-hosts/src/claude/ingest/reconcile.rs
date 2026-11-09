@@ -15,6 +15,8 @@ pub enum Change {
     Missing,
     /// Finish durable work from the validated private row before opening its host.
     Publish,
+    /// Consume already retained source bytes before observing its current path.
+    Buffered,
     Unchanged,
     Append {
         from: ByteCount,
@@ -32,6 +34,9 @@ pub fn classify(
 ) -> Change {
     if matches!(&checkpoint.partial, Some(super::checkpoint::Partial::Publishing { .. })) {
         return Change::Publish;
+    }
+    if checkpoint.read_ahead.is_some() {
+        return Change::Buffered;
     }
     let Some((identity, stamp)) = sample else {
         return Change::Missing;

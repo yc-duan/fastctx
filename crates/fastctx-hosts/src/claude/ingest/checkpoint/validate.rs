@@ -51,6 +51,9 @@ impl ClaudeCheckpointV1 {
         {
             return Err(io::Error::other("Claude checkpoint offsets are inconsistent"));
         }
+        if let Some(ahead) = &self.read_ahead {
+            ahead.validate(self.read_offset, self.observed_stamp.size)?;
+        }
         match &self.phase {
             Phase::Reconciling { previous, generation, prefix, old_branch, new_branch, .. } => {
                 if previous.0 == 0
@@ -58,6 +61,7 @@ impl ClaudeCheckpointV1 {
                     || generation == context.generation
                     || old_branch == new_branch
                     || self.partial.is_some()
+                    || self.read_ahead.is_some()
                     || self.read_offset != prefix.checked_through
                 {
                     return Err(io::Error::other(
@@ -185,6 +189,19 @@ impl ClaudeCheckpointV1 {
             || self.read_offset < old.read_offset
         {
             return Err(io::Error::other("replacement or rollback requires persisted reconciliation"));
+        }
+        if outer.generation == next.generation
+            && !matches!(self.phase, Phase::Reconciling { .. })
+            && let Some(ahead) = &old.read_ahead
+            && self.read_offset < ahead.end()?
+            && self.read_ahead.as_ref().is_none_or(|next| {
+                next.start != ahead.start
+                    || next.bytes != ahead.bytes
+                    || next.content != ahead.content
+                    || next.consumed < ahead.consumed
+            })
+        {
+            return Err(io::Error::other("following discarded or replaced unread staged bytes"));
         }
         Ok(())
     }

@@ -3,6 +3,7 @@
 
 pub mod bodies;
 pub mod checkpoint_bundle;
+pub mod checkpoints;
 pub mod display_pages;
 pub mod facts;
 pub mod plan;
