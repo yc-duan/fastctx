@@ -1,6 +1,8 @@
 //! Real writer lifecycle checks. Every run requires an explicit disposable root.
 #[path = "sync_drill/blocks.rs"]
 mod blocks;
+#[path = "sync_drill/format_upgrade.rs"]
+mod format_upgrade;
 #[path = "sync_drill/scheduler.rs"]
 mod scheduler;
 
@@ -10,6 +12,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("the drill root must not exist".into());
     }
     fastctx_platform::ensure_private_dir(&root)?;
+    format_upgrade::run(&root)?;
+    if std::env::args().nth(2).as_deref() == Some("upgrade") {
+        return Ok(());
+    }
     tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build()?.block_on(async {
         scheduler::run(&root).await?;
         blocks::run(&root).await
