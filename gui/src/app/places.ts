@@ -5,8 +5,8 @@ import type { Address } from "../world/events";
 import type { AgentSection, AgentTab } from "./profile-words";
 
 /** The features a World can turn on (`world-gui.md`, 功能). */
-export type Feature = "conversations" | "collaboration" | "sentinels";
-const features: Feature[] = ["conversations", "collaboration", "sentinels"];
+export type Feature = "conversations" | "collaboration" | "sentinels" | "history";
+const features: Feature[] = ["conversations", "collaboration", "sentinels", "history"];
 const sections: AgentSection[] = ["claude", "codex", "prompt", "skills", "mcp"];
 
 export type Place =
@@ -19,8 +19,9 @@ export type Place =
   /** Beginning a conversation, in a project or outside any. */
   | { kind: "new"; town: string | null }
   | { kind: "project"; town: string }
-  /** One document of a project's history (`world-history.md`). */
-  | { kind: "history"; town: string; name: string }
+  /** One document of a project's history (`world-history.md`), opened
+   *  from the project or, `from`, from a conversation in it. */
+  | { kind: "history"; town: string; name: string; from?: Address }
   /** One document of the history of a conversation outside any project. */
   | { kind: "talk-history"; address: Address; name: string }
   /** A page of a project: a version of it, or the current one. */
@@ -87,7 +88,7 @@ export function link(place: Place): string {
     case "project":
       return `#/project/${part(place.town)}`;
     case "history":
-      return `#/history/${part(place.town)}/${part(place.name)}`;
+      return `#/history/${part(place.town)}/${part(place.name)}${place.from ? `/from/${part(`${place.from.resident}@${place.from.machine}`)}` : ""}`;
     case "talk-history":
       return `#/talk-history/${part(`${place.address.resident}@${place.address.machine}`)}/${part(place.name)}`;
     case "page":
@@ -150,9 +151,12 @@ export function placeOf(hash: string): Place {
     case "project":
       if (parts[1]) return { kind: "project", town: parts[1] };
       break;
-    case "history":
-      if (parts[1] && parts[2]) return { kind: "history", town: parts[1], name: parts[2] };
-      break;
+    case "history": {
+      if (!parts[1] || !parts[2]) break;
+      const at = parts[3] === "from" ? (parts[4]?.lastIndexOf("@") ?? -1) : -1;
+      const from = at > 0 ? { resident: parts[4]!.slice(0, at), machine: parts[4]!.slice(at + 1) } : undefined;
+      return { kind: "history", town: parts[1], name: parts[2], ...(from ? { from } : {}) };
+    }
     case "talk-history": {
       const at = parts[1]?.lastIndexOf("@") ?? -1;
       if (parts[1] && parts[2] && at > 0) return { kind: "talk-history", address: { resident: parts[1].slice(0, at), machine: parts[1].slice(at + 1) }, name: parts[2] };

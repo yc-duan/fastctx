@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use fastctx_types::update::{Network, Policy};
+use fastctx_types::update::{Network, Policy, Rolled};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -16,8 +16,13 @@ impl UpdatePolicy {
         Self { policy: network.policy.clone(), hub: network.hub.clone() }
     }
 
-    pub fn network(&self) -> Network {
-        Network { policy: self.policy.clone(), hub: self.hub.clone(), ..Network::default() }
+    pub fn network(&self, key: &str) -> Network {
+        let rolled = self
+            .policy
+            .rollout
+            .as_ref()
+            .map(|rollout| Rolled { version: rollout.version.clone(), takes: rollout.takes(key) });
+        Network { policy: self.policy.clone(), hub: self.hub.clone(), rolled, ..Network::default() }
     }
 
     pub fn read(directory: &Path) -> std::io::Result<Option<Self>> {

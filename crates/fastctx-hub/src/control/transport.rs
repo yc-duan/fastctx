@@ -1,4 +1,4 @@
-//! A member's transport, isolated from all hub state and disk work.
+//! A member's transport, isolated from business locks and disk work.
 //! Heartbeats bypass business queues in both directions. Exceeding a
 //! connection's input budget closes only that connection, without waiting
 //! for its business consumer to make room.
@@ -51,7 +51,7 @@ pub(super) struct Input {
 }
 
 pub(super) struct Packet {
-    pub bytes: Vec<u8>,
+    pub outgoing: super::sending::Outgoing,
     pub last: bool,
     pub written: Option<tokio::sync::oneshot::Sender<()>>,
 }
@@ -79,13 +79,17 @@ impl Ended {
 }
 
 impl Transport {
-    pub(super) fn start(socket: crate::Socket, runtime: &tokio::runtime::Handle) -> Self {
+    pub(super) fn start(
+        socket: super::sending::Socket<crate::Socket>,
+        pulse: Arc<Pulse>,
+        runtime: &tokio::runtime::Handle,
+    ) -> Self {
         let (input, incoming) = mpsc::channel(INPUT_FRAMES);
         let (outgoing, output) = mpsc::channel(OUTPUT_FRAMES);
         let (end, ended) = watch::channel(None);
         let (beats, heartbeat) = watch::channel(None);
         let task = fastctx_platform::task::spawn_on(runtime, async move {
-            let reason = run(socket, input, output, beats).await;
+            let reason = run(socket, pulse, input, output, beats).await;
             end.send_replace(Some(reason));
         });
         Self { incoming, outgoing, ended, heartbeat, task }
@@ -99,12 +103,12 @@ impl Drop for Transport {
 }
 
 async fn run(
-    socket: crate::Socket,
+    socket: super::sending::Socket<crate::Socket>,
+    pulse: Arc<Pulse>,
     input: mpsc::Sender<Input>,
     mut output: mpsc::Receiver<Packet>,
     beats: watch::Sender<Option<Up>>,
 ) -> Ended {
-    let pulse = crate::pulse_of(&socket);
     let (mut sink, stream) = socket.split();
     let (pongs, mut pong) = watch::channel(None);
     let reader = read(stream, pulse.clone(), input, pongs, beats);
@@ -119,13 +123,13 @@ async fn run(
                     let frame = Down::Pong {
                         n, at: Some(jiff::Timestamp::now()), took: Some(pulse.taken()), afoot_ready: false,
                     };
-                    (Message::Binary(wire::encode(&frame).into()), false, None)
+                    (Message::Binary(wire::encode(&frame).into()).into(), false, None)
                 }
                 next = output.recv() => match next {
-                    Some(packet) => { welcomed = true; (Message::Binary(packet.bytes.into()), packet.last, packet.written) },
+                    Some(packet) => { welcomed = true; (packet.outgoing, packet.last, packet.written) },
                     None => return "business writer stopped".into(),
                 },
-                () = tokio::time::sleep(HEARTBEAT) => (fastctx_net::pulse::ping(&pulse), false, None),
+                () = tokio::time::sleep(HEARTBEAT) => (fastctx_net::pulse::ping(&pulse).into(), false, None),
             };
             match pulse.writing(sink.send(message)).await {
                 Ok(Ok(())) => {}
@@ -148,7 +152,7 @@ async fn run(
 }
 
 async fn read(
-    mut stream: futures_util::stream::SplitStream<crate::Socket>,
+    mut stream: futures_util::stream::SplitStream<super::sending::Socket<crate::Socket>>,
     pulse: Arc<Pulse>,
     input: mpsc::Sender<Input>,
     pongs: watch::Sender<Option<u64>>,

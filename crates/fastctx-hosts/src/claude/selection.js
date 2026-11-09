@@ -11,13 +11,16 @@ function modelOffers(rows) {
   }))
 }
 
+// An effort of '' names none: the model goes on with Claude Code's own, as
+// one whose efforts the World does not know does.
 async function controlSelection($, state, model, effort) {
   if (model !== null && model !== undefined && !model.trim()) throw controlRefusal('a model cannot be empty')
-  if (effort !== null && effort !== undefined && !effortLevels.includes(effort)) throw controlRefusal('unknown Claude reasoning effort: ' + effort)
+  if (effort !== null && effort !== undefined && effort !== '' && !effortLevels.includes(effort)) throw controlRefusal('unknown Claude reasoning effort: ' + effort)
   const updated = (state.selecting ?? Promise.resolve()).then(async () => {
     const selection = { ...state.selection }
     if (model !== null && model !== undefined) selection.model = model
-    if (effort !== null && effort !== undefined) selection.effort = effort
+    if (effort === '') delete selection.effort
+    else if (effort !== null && effort !== undefined) selection.effort = effort
     await controlWrite($, state.directory + '/selection.json', selection)
     state.selection = selection
     if (model !== null && model !== undefined) {

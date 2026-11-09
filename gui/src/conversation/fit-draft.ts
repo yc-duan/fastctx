@@ -16,6 +16,8 @@ export class DraftFit {
     if (!input.isConnected) return;
     const mirror = this.mirrorOf();
     mirror.style.width = `${input.getBoundingClientRect().width}px`;
+    // A chip over the head of the input indents its first line.
+    mirror.style.textIndent = input.style.textIndent;
     mirror.value = input.value;
     const height = `${mirror.scrollHeight}px`;
     if (input.style.height !== height) input.style.height = height;

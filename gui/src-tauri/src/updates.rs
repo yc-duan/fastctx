@@ -221,6 +221,7 @@ pub(crate) async fn update_install(
     version: String,
 ) -> Result<bool, String> {
     let mut state = ask(&shell, UpdateCall::State).await?;
+    state.check_release(&version).map_err(|problem| problem.why)?;
     if state.preferences
         && !state
             .offer
@@ -230,6 +231,7 @@ pub(crate) async fn update_install(
             .any(|manifest| manifest.version == version)
     {
         state = ask(&shell, UpdateCall::Choose { version: Some(version.clone()) }).await?;
+        state.check_release(&version).map_err(|problem| problem.why)?;
     }
     let target = target();
     let kept = state
@@ -246,6 +248,7 @@ pub(crate) async fn update_install(
     }
     #[cfg(target_os = "android")]
     {
+        ask(&shell, UpdateCall::State).await?.check_release(&version).map_err(|problem| problem.why)?;
         let installed = crate::android::install_package(&app, kept.path.clone()).await;
         installation_outcome(&shell, &state, &version, &installed).await;
         installed
@@ -263,8 +266,9 @@ pub(crate) async fn update_install(
             .find(|manifest| manifest.version == version)
             .ok_or("the new version's manifest is not known here")?;
         let package = manifest.package(&target).ok_or("the new version has no package for this computer")?;
-        let installed =
-            desktop::install(&app, &version, &target, package, std::path::Path::new(&kept.path)).await.map(|()| true);
+        let installed = desktop::install(&app, &shell, &version, &target, package, std::path::Path::new(&kept.path))
+            .await
+            .map(|()| true);
         installation_outcome(&shell, &state, &version, &installed).await;
         installed
     }
@@ -324,6 +328,7 @@ mod desktop {
 
     pub(super) async fn install(
         app: &tauri::AppHandle,
+        shell: &crate::Shell,
         version: &str,
         target: &str,
         package: &Package,
@@ -368,6 +373,10 @@ mod desktop {
                 let met = if met.is_empty() { String::new() } else { format!(" (the local source: {met})") };
                 format!("reading and verifying installer {} for {version}: {error}{met}", path.display())
             })?;
+            super::ask(shell, fastctx_types::update::UpdateCall::State)
+                .await?
+                .check_release(version)
+                .map_err(|problem| problem.why)?;
             let marker = marker(app)?;
             if let Some(dir) = marker.parent() {
                 std::fs::create_dir_all(dir)

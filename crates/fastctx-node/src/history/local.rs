@@ -65,12 +65,30 @@ pub(crate) async fn call(
     author: Option<Author>,
 ) -> Result<HistoryReply, Failure> {
     let scope = request.scope().clone();
+    if request.writes() {
+        if !super::switch::alone(node) {
+            return Err(Failure::not_run(fastctx_types::history::words::DISABLED));
+        }
+        if super::import::pending(node, &scope) {
+            return Err(super::import::writing());
+        }
+        if matches!(scope, Scope::Conversation { .. })
+            && super::import::state::belongs_to_account(&directory(node, &scope)).map_err(failure)?
+        {
+            return Err(failure("this history belongs to its network account; sign in to continue writing"));
+        }
+    }
     let identity = serde_json::to_string(&scope).map_err(failure)?;
     let shelf = node.history_shelves.of(&identity);
     let mut shelf = shelf.lock().await;
-    let ((), at) = on_shelf(&mut shelf, place(node, &scope), |shelf, place| {
+    let working = node.clone();
+    let copies_scope = scope.clone();
+    let ((), at) = on_shelf(&mut shelf, place(node, &scope), move |shelf, place| {
         shelf.refresh(place)?;
-        shelf.keep_copies(place)
+        if super::import::copies::enabled(&working, &copies_scope)? {
+            shelf.keep_copies(place)?;
+        }
+        Ok(())
     })
     .await?;
     let (name, text, expected, retired) = match request {
@@ -112,6 +130,10 @@ pub(crate) async fn call(
     let current = shelf.document(&name).map(|document| document.latest.version);
     if expected != current {
         return Err(failure(fastctx_types::history::conflict(current)));
+    }
+    // A new document takes one of the scope's places, as on a hub.
+    if current.is_none() && shelf.count() >= fastctx_types::history::MAX_DOCUMENTS {
+        return Err(failure(fastctx_types::history::full()));
     }
     // What the local copy held, so writing the new text over it leaves no
     // trace of tampering.
@@ -161,13 +183,19 @@ pub(crate) async fn call(
     }
     let saved = revision.clone();
     let written = (!retired).then_some(text);
+    let working = node.clone();
     on_shelf(&mut shelf, place(node, &scope), move |shelf, place| {
+        if !super::switch::alone(&working) {
+            return Ok(());
+        }
         let path = place.copies.join(format!("{}.md", saved.name));
         shelf.write_copy(&path, &saved.name, &saved, written.as_deref(), previous.as_deref())
     })
     .await?;
     crate::context::invalidations::history(node, &scope);
     node.memory_changed();
+    // A standalone write may have begun just before its first link was installed.
+    super::import::schedule(node);
     Ok(HistoryReply::Saved { revision: Box::new(revision) })
 }
 

@@ -280,6 +280,10 @@ pub(crate) struct HistoryRead {
     /// Some record the history is read from could not be read now: this is
     /// not the history as its files hold it, and is not to be kept as such.
     pub unread: bool,
+    /// The host has not written all it reported keeping yet.
+    pub unsettled: bool,
+    /// Actual history-read problems, distinct from records still being written.
+    pub unavailable: Vec<String>,
     /// For a read heard apart (`history_apart`): what was under way as its
     /// events began, and the mark of the last event told before them.
     pub snapshots: Vec<Arc<crate::watch::Marked>>,
@@ -386,6 +390,8 @@ async fn read_here(node: &Arc<Node>, resident: &ResidentId, hearing: Hearing) ->
     }
     let owner = Address { machine: node.machine(), resident: resident.clone() };
     let mut unread = false;
+    let mut unsettled = false;
+    let mut unavailable = Vec::new();
     // A session the user opened, or one in a login the workbench is closed
     // in, has its host neither started nor read: the conversation reads as
     // the World recorded it.
@@ -424,9 +430,11 @@ async fn read_here(node: &Arc<Node>, resident: &ResidentId, hearing: Hearing) ->
                 })
                 .collect();
             recorded.retain(|event| turn_of(&event.happened).is_none_or(|turn| !removed.contains(turn)));
-            let (hosted, missing) = crate::claude::history::hosted(node, resident, &recorded).await;
-            unread = missing;
-            (recorded, Some(hosted))
+            let hosted = crate::claude::history::hosted(node, resident, &recorded).await;
+            unread = hosted.unread;
+            unsettled = hosted.unsettled;
+            unavailable = hosted.unavailable;
+            (recorded, Some(hosted.events))
         }
         _ => (recorded(&directory).await?, None),
     };
@@ -468,7 +476,7 @@ async fn read_here(node: &Arc<Node>, resident: &ResidentId, hearing: Hearing) ->
         }
         _ => Vec::new(),
     };
-    Ok(HistoryRead { history, pending, events, unread, snapshots, at })
+    Ok(HistoryRead { history, pending, events, unread, unsettled, unavailable, snapshots, at })
 }
 
 /// A session's history: what the World kept of it, and what its host keeps
@@ -535,6 +543,19 @@ fn history(
             _ => None,
         })
         .collect();
+    // The words that open a turn are recorded once the host says the turn
+    // began, by this computer's clock, while the host's record keeps its own:
+    // a quick reply can bear an earlier time than the words it answers. The
+    // first words a turn heard soon after it began open it, whatever the
+    // times say; words sent into it later stand at their own time.
+    let began: std::collections::HashMap<String, jiff::Timestamp> = recorded
+        .iter()
+        .filter_map(|event| match &event.happened {
+            Happened::TurnStarted { turn } => Some((turn.clone(), event.at)),
+            _ => None,
+        })
+        .collect();
+    let mut opened = std::collections::HashSet::new();
     for mut event in recorded {
         if let Happened::Finished { turn, item } | Happened::Updated { turn, item } = &event.happened
             && (held.contains(&(turn.clone(), item.id.clone())) || drafts.contains(&(turn.clone(), item.id.clone())))
@@ -566,6 +587,26 @@ fn history(
             continue;
         }
         let turn = turn_of(&event.happened);
+        let opening = match (&event.happened, turn) {
+            (Happened::Heard { .. }, Some(turn)) if !opened.contains(turn) => began
+                .get(turn)
+                .is_some_and(|start| event.at.as_millisecond().saturating_sub(start.as_millisecond()) <= OPENING_MS),
+            _ => false,
+        };
+        let first = opening
+            .then(|| {
+                history.iter().position(|other| {
+                    turn == turn_of(&other.happened) && !matches!(other.happened, Happened::TurnStarted { .. })
+                })
+            })
+            .flatten();
+        if let Some(turn) = turn.filter(|_| opening) {
+            opened.insert(turn.to_string());
+        }
+        if let Some(index) = first {
+            history.insert(index, event);
+            continue;
+        }
         let index = history
             .iter()
             .position(|other| {
@@ -589,6 +630,9 @@ fn history(
     // items and steering input. Local facts were inserted at their source time.
     history
 }
+
+/// How soon after its turn began words count as the ones that opened it.
+const OPENING_MS: i64 = 2_000;
 
 fn recorded_history(mut history: Vec<SessionEvent>) -> Vec<SessionEvent> {
     use fastctx_types::session::Happened;
@@ -1025,7 +1069,7 @@ pub async fn open_here(
         .await?;
     }
     let origin = Origin::User;
-    let _birth = crate::here::born(node, &id, opened.acting.clone());
+    let _birth = crate::here::born(node, &id, opened.acting.clone(), origin.clone());
     crate::session_options::keep(node, &id, &options).await?;
     // What it is told of its machines and folders goes into the instructions
     // its thread starts with.

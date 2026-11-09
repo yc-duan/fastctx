@@ -2,8 +2,7 @@
 // (`world-gui.md`, 回来时), in two views. Now: the drawing of the World as
 // it is, each machine on it a way to its page, and under it what needs the
 // reader, each conversation by what it asks, answered here where it offers
-// its answers, or by what it told them that they have not seen
-// (`world-voice.md`, 送到哪里). Lately: what came back while the reader was
+// its answers. Lately: what came back while the reader was
 // away, a line a conversation by what it last said, along a line of the
 // time away, and beside it what is at work now, the conversations and the
 // commands running. A part with nothing in it is not drawn. Every line is a
@@ -40,9 +39,6 @@ export interface HomeOptions {
   /** Opens this device's updates, where the World's program here is put
    *  up to the interface's. */
   updates?(): void;
-  /** The last thing a conversation (`resident@machine`) told that this
-   *  device has shown the user. */
-  seenTold(key: string): string | null;
 }
 
 type Glyph = Parameters<typeof glyph>[0];
@@ -186,12 +182,7 @@ export class HomePage {
     this.now = now;
     const residents = this.residents();
     const asking = residents.filter((r) => r.now?.waiting_for_user || r.now?.asked).sort((a, b) => waited(a) - waited(b));
-    // What the conversations the user began told them that they have not
-    // seen: the urgent first, then what can wait, the latest first.
-    const telling = residents
-      .filter((r) => r.about.origin.kind === "user" && this.unseen(r))
-      .sort((a, b) => Number(b.now!.told!.status === "urgent") - Number(a.now!.told!.status === "urgent") || Date.parse(b.now!.told!.at) - Date.parse(a.now!.told!.at));
-    const asks = new Set([...asking, ...telling].map((r) => keyOf(addressOf(r))));
+    const asks = new Set(asking.map((r) => keyOf(addressOf(r))));
     const busy = residents
       .filter((r) => r.now?.activity === "busy" && !asks.has(keyOf(addressOf(r))))
       .sort((a, b) => Date.parse(a.now!.since) - Date.parse(b.now!.since));
@@ -202,7 +193,7 @@ export class HomePage {
 
     if (this.view === "now") {
       // Nothing waits: the drawing alone, and a line that says so.
-      const needs = asking.length || telling.length ? this.asks(asking, telling) : `<p class="front-quiet front-calm">${escape(this.options.words.nothingNeeds)}</p>`;
+      const needs = asking.length ? this.asks(asking) : `<p class="front-quiet front-calm">${escape(this.options.words.nothingNeeds)}</p>`;
       this.draw(`<div class="front-column">${needs}</div>`, false);
       return;
     }
@@ -300,39 +291,9 @@ export class HomePage {
 
   // What waits for the reader --------------------------------------------
 
-  private asks(asking: ResidentNow[], telling: ResidentNow[]): string {
+  private asks(asking: ResidentNow[]): string {
     const { words } = this.options;
-    return `<section class="front-part front-asks"><h2 class="front-title"><span>${escape(words.waiting)}</span><span class="front-count">${asking.length + telling.length}</span></h2><ul class="front-cards">${[
-      ...asking.map((r) => this.ask(r)),
-      ...telling.map((r) => this.told(r)),
-    ].join("")}</ul></section>`;
-  }
-
-  /** What a conversation told the user that this device has not shown
-   *  them: something urgent, or something that can wait. */
-  private unseen(r: ResidentNow): boolean {
-    const told = r.now?.told;
-    return !!told && told.status !== "reply" && this.options.seenTold(`${r.about.id}@${r.about.machine}`) !== told.id;
-  }
-
-  /** A card of what it told: who, when, and its words, an urgent one under
-   *  a clay ※. */
-  private told(r: ResidentNow): string {
-    const { words } = this.options;
-    const address = addressOf(r);
-    const name = this.name(r);
-    const told = r.now!.told!;
-    const at = new Date(told.at);
-    const urgent = told.status === "urgent";
-    // The card says the first paragraph; held or pointed at, the whole.
-    const shown = gist(told.text);
-    const whole = shown === told.text.trim() ? "" : ` title="${escape(told.text)}"`;
-    return `<li class="front-card" data-machine="${escape(address.machine)}" data-resident="${escape(address.resident)}">
-      <a class="front-card-link" href="${this.options.link(address)}">
-        <span class="front-card-head">${this.agent(r)}<span class="front-name" title="${escape(this.about(r, name))}">${escape(name)}</span>${this.device(r.about.machine)}<span class="front-for" title="${escape(this.when(at))}">${escape(words.ago(Math.max(0, this.now.getTime() - at.getTime())))}</span></span>
-        <span class="front-ask front-told${urgent ? " urgent" : ""}">${urgent ? `<span class="front-ask-glyph" aria-hidden="true">※</span><span class="spoken">${escape(words.urgent)}</span>` : `<span class="front-ask-glyph" aria-hidden="true"><span class="front-told-drop"></span></span>`}<span class="front-ask-text"${whole}>${escape(shown)}</span></span>
-      </a>
-    </li>`;
+    return `<section class="front-part front-asks"><h2 class="front-title"><span>${escape(words.waiting)}</span><span class="front-count">${asking.length}</span></h2><ul class="front-cards">${asking.map((r) => this.ask(r)).join("")}</ul></section>`;
   }
 
   private ask(r: ResidentNow): string {
@@ -525,18 +486,6 @@ export class HomePage {
 }
 
 /** How long a conversation has waited, as when it began: the oldest first. */
-/** What a conversation told, as a card says it: its first paragraph,
- *  without the marks of Markdown. */
-function gist(text: string): string {
-  const first = text.split(/\n\s*\n/).find((paragraph) => paragraph.trim()) ?? "";
-  return first
-    .split("\n")
-    .map((line) => line.replace(/^\s*(?:[-*+]\s+|\d+[.)]\s+|#{1,6}\s+|>\s?)/, ""))
-    .join(" ")
-    .replace(/(\*\*|__|`)/g, "")
-    .trim();
-}
-
 function waited(r: ResidentNow): number {
   return Date.parse(r.now?.waiting_since ?? r.now?.asked?.at ?? r.now?.since ?? r.about.born_at);
 }

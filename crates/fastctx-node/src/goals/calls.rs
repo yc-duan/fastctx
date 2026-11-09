@@ -84,6 +84,9 @@ pub(crate) async fn user_here(
     }
     let actor = account;
     let account = scope::resolve(node, &resident, Some(&actor)).await?;
+    if !matches!(request, Request::Read | Request::History { .. } | Request::Past) {
+        crate::account_features::require_goals(node, &account).await?;
+    }
     require(node, &request)?;
     let address = Address { machine: node.machine(), resident };
     let access = crate::record_access::Access { actor, owner: account.clone(), conversation: address.clone() };

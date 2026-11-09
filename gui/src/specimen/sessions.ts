@@ -13,6 +13,7 @@ import { cut, hunk, keepFile, leftOut, noted, printed, put, ran, same, wrote } f
 import { CONTROL_MD, FIXED_RS, readCall } from "./files";
 import { tour } from "./tour";
 import { voice } from "./voice";
+import { interruptions } from "./interruptions";
 
 export interface Specimen {
   title: string;
@@ -915,4 +916,4 @@ function colleague(): Specimen {
   return { title: "造出让 Q32 积分溢出的输入", agent: "codex", resident: "codex-91c0", machine: "laptop", model: "gpt-6.1-sol", town: "ctrl", here: "desktop", events: s.recent() };
 }
 
-export const specimens: Record<string, () => Specimen> = { claude, codex, asking, steps, trips, tour, deeds, controls, voice, colleague };
+export const specimens: Record<string, () => Specimen> = { claude, codex, asking, steps, trips, tour, deeds, controls, voice, colleague, interruptions };

@@ -9921,29 +9921,29 @@ limitations under the License.
 
 Used by:
 
-- fastctx 1.0.1-beta.16 (https://github.com/yc-duan/fastctx)
-- fastctx-agent 1.0.1-beta.16 (https://github.com/yc-duan/fastctx)
-- fastctx-client 1.0.1-beta.16 (https://github.com/yc-duan/fastctx)
-- fastctx-draft 1.0.1-beta.16 (https://github.com/yc-duan/fastctx)
-- fastctx-file-search 1.0.1-beta.16 (https://github.com/yc-duan/fastctx)
-- fastctx-hands 1.0.1-beta.16 (https://github.com/yc-duan/fastctx)
-- fastctx-hosts 1.0.1-beta.16 (https://github.com/yc-duan/fastctx)
-- fastctx-hub 1.0.1-beta.16 (https://github.com/yc-duan/fastctx)
-- fastctx-install 1.0.1-beta.16 (https://github.com/yc-duan/fastctx)
-- fastctx-net 1.0.1-beta.16 (https://github.com/yc-duan/fastctx)
-- fastctx-node 1.0.1-beta.16 (https://github.com/yc-duan/fastctx)
-- fastctx-office 1.0.1-beta.16 (https://github.com/yc-duan/fastctx)
-- fastctx-pdf 1.0.1-beta.16 (https://github.com/yc-duan/fastctx)
-- fastctx-platform 1.0.1-beta.16 (https://github.com/yc-duan/fastctx)
-- fastctx-ripgrep 1.0.1-beta.16 (https://github.com/yc-duan/fastctx)
-- fastctx-sentinel 1.0.1-beta.16 (https://github.com/yc-duan/fastctx)
-- fastctx-serve 1.0.1-beta.16 (https://github.com/yc-duan/fastctx)
-- fastctx-storage 1.0.1-beta.16 (https://github.com/yc-duan/fastctx)
-- fastctx-tui 1.0.1-beta.16 (https://github.com/yc-duan/fastctx)
-- fastctx-types 1.0.1-beta.16 (https://github.com/yc-duan/fastctx)
-- fastctx-uninstall 1.0.1-beta.16
-- fastctx-update 1.0.1-beta.16 (https://github.com/yc-duan/fastctx)
-- fastctx-watch 1.0.1-beta.16 (https://github.com/yc-duan/fastctx)
+- fastctx 1.0.1-beta.17 (https://github.com/yc-duan/fastctx)
+- fastctx-agent 1.0.1-beta.17 (https://github.com/yc-duan/fastctx)
+- fastctx-client 1.0.1-beta.17 (https://github.com/yc-duan/fastctx)
+- fastctx-draft 1.0.1-beta.17 (https://github.com/yc-duan/fastctx)
+- fastctx-file-search 1.0.1-beta.17 (https://github.com/yc-duan/fastctx)
+- fastctx-hands 1.0.1-beta.17 (https://github.com/yc-duan/fastctx)
+- fastctx-hosts 1.0.1-beta.17 (https://github.com/yc-duan/fastctx)
+- fastctx-hub 1.0.1-beta.17 (https://github.com/yc-duan/fastctx)
+- fastctx-install 1.0.1-beta.17 (https://github.com/yc-duan/fastctx)
+- fastctx-net 1.0.1-beta.17 (https://github.com/yc-duan/fastctx)
+- fastctx-node 1.0.1-beta.17 (https://github.com/yc-duan/fastctx)
+- fastctx-office 1.0.1-beta.17 (https://github.com/yc-duan/fastctx)
+- fastctx-pdf 1.0.1-beta.17 (https://github.com/yc-duan/fastctx)
+- fastctx-platform 1.0.1-beta.17 (https://github.com/yc-duan/fastctx)
+- fastctx-ripgrep 1.0.1-beta.17 (https://github.com/yc-duan/fastctx)
+- fastctx-sentinel 1.0.1-beta.17 (https://github.com/yc-duan/fastctx)
+- fastctx-serve 1.0.1-beta.17 (https://github.com/yc-duan/fastctx)
+- fastctx-storage 1.0.1-beta.17 (https://github.com/yc-duan/fastctx)
+- fastctx-tui 1.0.1-beta.17 (https://github.com/yc-duan/fastctx)
+- fastctx-types 1.0.1-beta.17 (https://github.com/yc-duan/fastctx)
+- fastctx-uninstall 1.0.1-beta.17
+- fastctx-update 1.0.1-beta.17 (https://github.com/yc-duan/fastctx)
+- fastctx-watch 1.0.1-beta.17 (https://github.com/yc-duan/fastctx)
 - pdf_oxide 0.3.78 (https://github.com/yfedoseev/pdf_oxide)
 - allocator-api2 0.2.21 (https://github.com/zakarumych/allocator-api2)
 - anyhow 1.0.104 (https://github.com/dtolnay/anyhow)
@@ -87068,4 +87068,4 @@ Source archives for the crates.io dependencies recorded by this build follow. Ea
 - zvariant_derive 5.15.0: https://static.crates.io/crates/zvariant_derive/zvariant_derive-5.15.0.crate
 - zvariant_utils 4.2.0: https://static.crates.io/crates/zvariant_utils/zvariant_utils-4.2.0.crate
 
-<!-- fastctx-notices-inputs: 8bdbf02f76db2083bd48d02b11dcd100cabd62e357bcdb756166ad910e6b44c6 -->
+<!-- fastctx-notices-inputs: 6400ee0e8ccce22c3486dc36b4ec04f56e26533515f42e8e7638cf6c42bba1de -->

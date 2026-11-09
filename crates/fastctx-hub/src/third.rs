@@ -92,6 +92,7 @@ pub fn migrate(from: &Path, to: &Path, new: Migrated) -> anyhow::Result<Report> 
         locked: false,
         opened: Timestamp::now(),
         collab: None,
+        history: false,
         profile: None,
         promotion: false,
     }));

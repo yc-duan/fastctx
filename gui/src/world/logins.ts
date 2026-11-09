@@ -80,6 +80,9 @@ export interface Login {
   launcher?: Launcher;
   /** The models a conversation in it can start on, as last read. */
   models?: AgentModel[];
+  /** Claude Code: what those who hold the machine changed in the models it
+   *  offers; absent from a node that cannot change them. */
+  model_edits?: ModelEdits;
   /** The change running in it now, or the last since the node started. */
   change?: LoginChange;
   /** What bringing the World's tools in it up to date waits for: none
@@ -94,6 +97,17 @@ export interface Login {
  *  themselves: something of theirs the user changed, or Codex's shared
  *  output limit, which only the user raises. */
 export type Drift = { kind: "changed"; location: string; reason: string } | { kind: "asks"; limit: OutputLimit };
+
+/** A Claude Code login's models as changed from the World's own table: rows
+ *  taken out, then model ids added, offered after the rows. */
+export interface ModelEdits {
+  removed?: string[];
+  added?: string[];
+}
+
+/** One change of a login's models: offer one, no longer offer one, or the
+ *  World's own table again. */
+export type ModelChange = { do: "add"; model: string } | { do: "remove"; model: string } | { do: "reset" };
 
 export type Found = "default" | "home" | "added" | "elsewhere";
 

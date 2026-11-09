@@ -22,6 +22,9 @@ pub(crate) struct Updates {
     wake: tokio::sync::Notify,
     pub(crate) routes: super::routes::Routes,
     pub(crate) projects: super::projects::Projects,
+    pub(crate) reading: super::reading::Reading,
+    pub(crate) history_changes: crate::history::watch::Changes,
+    pub(crate) history_catalogs: crate::history::context::catalog::Catalogs,
     refreshing: crate::leases::Registry<ResidentId, fastctx_platform::doing::Mutex<()>>,
     background: tokio::sync::Semaphore,
 }
@@ -32,6 +35,9 @@ impl Default for Updates {
             pending: Mutex::default(),
             routes: super::routes::Routes::default(),
             projects: super::projects::Projects::default(),
+            reading: super::reading::Reading::default(),
+            history_changes: crate::history::watch::Changes::default(),
+            history_catalogs: crate::history::context::catalog::Catalogs::default(),
             wake: tokio::sync::Notify::new(),
             refreshing: crate::leases::Registry::default(),
             background: tokio::sync::Semaphore::new(BACKGROUND),
@@ -57,6 +63,8 @@ impl Updates {
 }
 
 struct Pending {
+    inputs: Option<[u64; COUNT]>,
+    observed: Option<(u64, u64, u64)>,
     revision: [u64; COUNT],
     loaded: [u64; COUNT],
     working: bool,
@@ -66,11 +74,34 @@ struct Pending {
 
 impl Default for Pending {
     fn default() -> Self {
-        Self { revision: [1; COUNT], loaded: [0; COUNT], working: false, stopped: false, failed: None }
+        Self {
+            inputs: None,
+            observed: None,
+            revision: [1; COUNT],
+            loaded: [0; COUNT],
+            working: false,
+            stopped: false,
+            failed: None,
+        }
     }
 }
 
 impl Pending {
+    fn current(&self, observed: (u64, u64, u64)) -> bool {
+        self.revision == self.loaded && self.observed == Some(observed)
+    }
+
+    fn observe(&mut self, now: [u64; COUNT], observed: (u64, u64, u64)) {
+        if let Some(before) = self.inputs {
+            let changed = Parts::changed(&before, &now);
+            if !changed.empty() {
+                self.invalidate(changed);
+            }
+        }
+        self.inputs = Some(now);
+        self.observed = Some(observed);
+    }
+
     fn invalidate(&mut self, changed: Parts) {
         for part in parts::ALL {
             if changed.contains(part) {
@@ -97,26 +128,41 @@ impl Pending {
     }
 }
 
+// Directory counters avoid repeated scans; each part still decides whether its inputs changed.
+fn observation(
+    node: &Node,
+    about: &fastctx_types::residents::About,
+    town: Option<&fastctx_types::TownName>,
+) -> (u64, u64, u64) {
+    (*node.views.borrow(), *node.ways.borrow(), dependencies::hash(&(about, town)))
+}
+
 /// Called while the conversation's management gate is held, shared or alone.
 pub(crate) async fn refresh(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {
     let refreshing = node.contexts.refreshing(id);
     let _refreshing = refreshing.lock().await;
+    node.residents.active(id)?;
+    let (about, town) = node.residents.about(id).ok_or_else(|| Failure::new(super::words::UNKNOWN))?;
+    let observed = observation(node, &about, town.as_ref());
+    if node.contexts.pending.lock().expect("never poisoned").get(id).is_some_and(|pending| pending.current(observed)) {
+        return Ok(());
+    }
+    let inputs = dependencies::Scan::default().inputs(node, &about, town.as_ref());
     let (revision, loaded) = {
         let mut pending = node.contexts.pending.lock().expect("never poisoned");
         let pending = pending.entry(id.clone()).or_default();
+        pending.observe(inputs, observed);
         (pending.revision, pending.loaded)
     };
     if revision == loaded {
         return Ok(());
     }
-    node.residents.active(id)?;
-    let (about, town) = node.residents.about(id).ok_or_else(|| Failure::new(super::words::UNKNOWN))?;
     for part in parts::ALL {
         let index = part as usize;
         if revision[index] == loaded[index] {
             continue;
         }
-        let generation = (*node.views.borrow(), *node.ways.borrow(), *node.memory_changes.borrow());
+        let reading = node.contexts.reading.start(node, &about, town.as_ref(), part);
         part.record();
         match part {
             Part::Focus => {
@@ -137,9 +183,7 @@ pub(crate) async fn refresh(node: &Arc<Node>, id: &ResidentId) -> Result<(), Fai
             Part::Skills => super::sources::skills(node, id, &about.acting).await?,
             Part::History => super::map(node, id, town.as_ref(), &about.origin, &about.acting).await?,
         }
-        if generation != (*node.views.borrow(), *node.ways.borrow(), *node.memory_changes.borrow()) {
-            // The source may have read a version between two notifications,
-            // even if the next scan sees the original inputs again.
+        if !reading.current(node) {
             continue;
         }
         // A later source may fail; the successful ones need not run again.
@@ -152,6 +196,9 @@ pub(crate) async fn refresh(node: &Arc<Node>, id: &ResidentId) -> Result<(), Fai
 }
 
 fn start_pending(node: &Arc<Node>, id: &ResidentId) {
+    if !node.residents.host_open(id) {
+        return;
+    }
     {
         let mut entries = node.contexts.pending.lock().expect("never poisoned");
         let Some(pending) = entries.get_mut(id) else {
@@ -173,6 +220,9 @@ fn start_pending(node: &Arc<Node>, id: &ResidentId) {
                 let _turn = node.contexts.background.acquire().await.expect("never closed");
                 let gate = node.residents.management(&id)?;
                 let _using = gate.read().await;
+                if !node.residents.host_open(&id) {
+                    return Ok(());
+                }
                 refresh(&node, &id).await
             }
             .await;
@@ -189,6 +239,10 @@ fn start_pending(node: &Arc<Node>, id: &ResidentId) {
                     break;
                 }
                 let pending = entries.get_mut(&id).expect("worker owns its entry");
+                if !node.residents.host_open(&id) {
+                    pending.working = false;
+                    break;
+                }
                 if pending.completed(revision, failure) {
                     break;
                 }
@@ -213,7 +267,8 @@ pub(crate) fn told(node: &Node, id: &ResidentId, failure: Option<&str>) {
     }
 }
 
-fn scan(node: &Arc<Node>, seen: &mut BTreeMap<ResidentId, [u64; COUNT]>) {
+fn scan(node: &Arc<Node>) {
+    let generation = (*node.views.borrow(), *node.ways.borrow());
     let mut sources = dependencies::Scan::default();
     let mut live = BTreeSet::new();
     let mut projects = BTreeSet::new();
@@ -222,22 +277,31 @@ fn scan(node: &Arc<Node>, seen: &mut BTreeMap<ResidentId, [u64; COUNT]>) {
         if let Some(town) = &resident.town {
             projects.insert((serde_json::to_string(&resident.about.acting).expect("acting serializes"), town.clone()));
         }
-        let now = sources.inputs(node, &resident.about, resident.town.as_ref());
-        let changed =
-            seen.get(&resident.id).map_or_else(|| Parts::of(&parts::ALL), |before| Parts::changed(before, &now));
-        seen.insert(resident.id.clone(), now);
-        if !changed.empty() {
-            node.contexts
-                .pending
-                .lock()
-                .expect("never poisoned")
-                .entry(resident.id.clone())
-                .or_default()
-                .invalidate(changed);
+        if !node.residents.host_open(&resident.id) {
+            continue;
         }
+        let observed = (generation.0, generation.1, dependencies::hash(&(&resident.about, resident.town.as_ref())));
+        if node
+            .contexts
+            .pending
+            .lock()
+            .expect("never poisoned")
+            .get(&resident.id)
+            .is_some_and(|pending| pending.current(observed))
+        {
+            continue;
+        }
+        let now = sources.inputs(node, &resident.about, resident.town.as_ref());
+        node.contexts
+            .pending
+            .lock()
+            .expect("never poisoned")
+            .entry(resident.id.clone())
+            .or_default()
+            .observe(now, observed);
         start_pending(node, &resident.id);
     }
-    seen.retain(|id, _| live.contains(id));
+
     node.contexts.routes.retain(&live);
     node.contexts.projects.retain(&projects);
     node.contexts.pending.lock().expect("never poisoned").retain(|id, pending| pending.working || live.contains(id));
@@ -249,30 +313,23 @@ pub(crate) fn start(node: &Arc<Node>) {
     fastctx_platform::task::spawn(async move {
         let mut views = node.views.subscribe();
         let mut ways = node.ways.subscribe();
-        let mut seen = BTreeMap::new();
+        let mut residents = node.residents.changes();
         loop {
             let working = node.clone();
-            seen = match fastctx_platform::task::spawn_blocking(move || {
-                scan(&working, &mut seen);
-                seen
-            })
-            .await
-            {
-                Ok(seen) => seen,
-                Err(error) => {
-                    node.log.line(format_args!("refreshing conversation contexts: {error}"));
-                    BTreeMap::new()
-                }
-            };
+            if let Err(error) = fastctx_platform::task::spawn_blocking(move || scan(&working)).await {
+                node.log.line(format_args!("refreshing conversation contexts: {error}"));
+            }
             tokio::select! {
                 _ = views.changed() => {},
                 _ = ways.changed() => {},
+                _ = residents.changed() => {},
                 () = node.contexts.wake.notified() => {},
             }
             tokio::time::sleep(SETTLE).await;
             // Changes during the next scan stay pending for the following scan.
             views.mark_unchanged();
             ways.mark_unchanged();
+            residents.mark_unchanged();
         }
     });
 }

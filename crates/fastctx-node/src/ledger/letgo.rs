@@ -165,7 +165,7 @@ pub(super) async fn remove(node: &Arc<Node>, town: &TownName) -> io::Result<()> 
         for folder in ["journals", "specs", "pages", "tampering", "history"] {
             super::remove(&directory.path().join(folder))?;
         }
-        for file in ["project.json", "refused.json", "index.json", "projection-through.json"] {
+        for file in ["project.json", "refused.json", "index.json", "projection-through.json", "ledger-import.json"] {
             match fastctx_platform::disk::remove_file(directory.path().join(file)) {
                 Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
                 _ => {}

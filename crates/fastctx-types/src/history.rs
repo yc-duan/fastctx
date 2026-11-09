@@ -8,6 +8,11 @@ use crate::{MachineName, ResidentId, TownName, project::Stamp, residents::Host};
 use serde::{Deserialize, Serialize};
 
 pub const MAX_DOCUMENT_BYTES: usize = 512 * 1024;
+/// A description is one line in the list every conversation holds, all of
+/// it, so each is kept short (`world-history.md`, 为 grep 写).
+pub const MAX_DESCRIPTION_BYTES: usize = 1024;
+/// Each history holds at most this many documents, including retired ones.
+pub const MAX_DOCUMENTS: usize = 2048;
 pub const RECORD_KIND: &str = "history";
 
 /// The public scope uses project names and conversation addresses. Resolution
@@ -134,6 +139,11 @@ pub enum HistoryReply {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Watched {
     Catalog { catalog: Catalog },
+}
+
+/// Why a new document was refused in a history that holds `MAX_DOCUMENTS`.
+pub fn full() -> String {
+    format!("this history has reached its limit of {MAX_DOCUMENTS} documents")
 }
 
 pub fn conflict(current: Option<u64>) -> String {

@@ -34,6 +34,8 @@ pub mod dissolve;
 mod expiry;
 mod forget;
 mod health;
+mod history_author;
+mod history_limits;
 mod history_projection;
 mod hold_back;
 mod hub_machine;
@@ -57,6 +59,7 @@ mod presence;
 mod project_deletions;
 mod project_entry;
 mod question_parts;
+mod readers;
 mod record_subscriptions;
 mod records;
 mod releases;
@@ -153,6 +156,7 @@ pub fn init(dir: &Path, new: New) -> anyhow::Result<CertPin> {
         locked: false,
         opened: Timestamp::now(),
         collab: None,
+        history: false,
         profile: None,
         promotion: false,
     }));
@@ -1128,6 +1132,7 @@ async fn intended(
                 conversation_deletions,
                 profiles,
                 machine_updates,
+                history_switch,
                 account_records,
                 record_keys,
                 skill_files,
@@ -1161,6 +1166,7 @@ async fn intended(
                 conversation_deletions,
                 profiles,
                 machine_updates,
+                history_switch,
                 account_records,
                 record_keys,
                 skill_files,

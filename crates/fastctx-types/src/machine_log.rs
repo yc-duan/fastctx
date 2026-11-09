@@ -28,6 +28,9 @@ pub struct Actor {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "change")]
 pub enum Action {
+    History {
+        on: bool,
+    },
     Collab {
         version: u64,
     },
@@ -319,7 +322,10 @@ impl Action {
     pub fn of_project(&self) -> bool {
         matches!(
             self,
-            Self::OpenProject { .. } | Self::ShareProject { .. } | Self::MoveProject { .. } | Self::DeleteProject { .. }
+            Self::OpenProject { .. }
+                | Self::ShareProject { .. }
+                | Self::MoveProject { .. }
+                | Self::DeleteProject { .. }
         )
     }
 
@@ -336,6 +342,7 @@ impl Action {
             Self::DeleteProject { .. } => Needs::ProjectDeletes,
             Self::Profile { .. } => Needs::Profiles,
             Self::MachineUpdates { .. } => Needs::MachineUpdates,
+            Self::History { .. } => Needs::HistorySwitch,
             Self::Collab { .. }
             | Self::Share { .. }
             | Self::Assist { .. }
@@ -396,6 +403,8 @@ pub enum Needs {
     /// A reader of the records of machines' update settings changed, which
     /// came in 1.0.1-beta.16.
     MachineUpdates,
+    /// A reader of account history switch changes.
+    HistorySwitch,
 }
 
 /// What one reader of the machine log says it reads.
@@ -408,6 +417,7 @@ pub struct Reads {
     pub project_deletes: bool,
     pub profiles: bool,
     pub machine_updates: bool,
+    pub history_switch: bool,
 }
 
 impl Reads {
@@ -422,6 +432,7 @@ impl Reads {
             Needs::ProjectDeletes => self.project_deletes,
             Needs::Profiles => self.profiles,
             Needs::MachineUpdates => self.machine_updates,
+            Needs::HistorySwitch => self.history_switch,
         }
     }
 }

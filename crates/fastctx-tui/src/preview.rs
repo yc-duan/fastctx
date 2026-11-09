@@ -380,7 +380,7 @@ fn nodes(now: Timestamp) -> NodesReply {
         goal_commands: false,
         goal_reports: false,
         sentinels: false,
-        sentinel_look: false,
+        inspects: false,
         name: machine(name),
         os: os.into(),
         arch: "x86_64".into(),

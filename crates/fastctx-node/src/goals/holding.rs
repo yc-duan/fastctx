@@ -33,6 +33,7 @@ pub(super) async fn apply(
     view: &View,
     installed: Option<&str>,
 ) -> Result<(String, Option<View>), Failure> {
+    let enabled = crate::account_features::read(node, &view.account).await?.goals;
     let (working, resident, view, installed) = (node.clone(), id.clone(), view.clone(), installed.map(str::to_string));
     let (text, accepted, published) = work(move || {
         let (directory, claude, fallback) = prepare(&working, &resident)?;
@@ -50,7 +51,7 @@ pub(super) async fn apply(
                 };
                 let held = local::hold(rows)?;
                 let holds = held.as_ref().is_some_and(|held| !held.superseded(&view));
-                let text = if holds || working.residents.removed(&resident).is_some() {
+                let text = if !enabled || holds || working.residents.removed(&resident).is_some() {
                     String::new()
                 } else {
                     view.goal.as_ref().map(words::context).unwrap_or_default()

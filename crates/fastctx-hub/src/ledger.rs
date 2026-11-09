@@ -37,6 +37,7 @@ use fastctx_types::access::TownId;
 
 use crate::Hub;
 
+mod history_ranges;
 pub(crate) mod history_requests;
 mod page_index;
 mod reading;
@@ -55,6 +56,7 @@ pub struct TownLedger {
     memory: fastctx_net::memory::Index,
     pub(crate) history: fastctx_net::topic_history::Index,
     sequences: BTreeMap<String, u64>,
+    history_ranges: Arc<history_ranges::HistoryRanges>,
 }
 
 #[derive(Default)]
@@ -73,6 +75,24 @@ struct Prepared {
     history: Option<fastctx_net::topic_history::Revision>,
     account: Option<fastctx_types::AccountName>,
     bytes: Vec<u8>,
+}
+
+impl Prepared {
+    fn check_author(&self, hub: &Hub, store: &crate::store::Snapshot, from: &MachineName) -> Result<(), String> {
+        if let Some(history) = &self.history {
+            let account = self.account.as_ref().ok_or("project history writes require an explicit account")?;
+            crate::history_author::check(
+                hub,
+                store,
+                from,
+                &self.entry.key,
+                account,
+                &history.revision.author,
+                history.submission.is_some(),
+            )?;
+        }
+        Ok(())
+    }
 }
 
 pub struct Checked {
@@ -172,6 +192,9 @@ impl Ledgers {
                 .map(|ledger| &ledger.history)
                 .unwrap_or(&fastctx_net::topic_history::Index::default())
                 .check(revision)?;
+            if let Some(ledger) = ledger {
+                crate::history_limits::project(&ledger.history, &revision.revision.name)?;
+            }
         }
         let mut seen = BTreeSet::new();
         for file in &entry.files {
@@ -257,14 +280,7 @@ impl Ledgers {
     /// The committed range to read, without listing or copying the ledger.
     fn page(&self, town: TownId, after: u64) -> reading::Page {
         let last = self.towns.get(&town).map_or(0, |ledger| ledger.next - 1);
-        let history = self
-            .towns
-            .get(&town)
-            .into_iter()
-            .flat_map(|ledger| ledger.sequences.iter())
-            .filter(|(path, _)| path.starts_with("history/"))
-            .map(|(_, seq)| *seq)
-            .collect();
+        let history = self.towns.get(&town).map(|ledger| ledger.history_ranges.clone()).unwrap_or_default();
         reading::Page { dir: self.dir.join(town.as_str()), town, after, last, history }
     }
 }
@@ -273,6 +289,9 @@ impl TownLedger {
     fn add(&mut self, entry: &Entry, seq: u64) {
         self.paths.extend(entry.files.iter().map(|file| file.path.to_lowercase()));
         self.sequences.extend(entry.files.iter().map(|file| (file.path.clone(), seq)));
+        if entry.files.iter().any(|file| file.path.starts_with("history/")) {
+            self.history_ranges.append(seq);
+        }
     }
 
     /// Whether `path`, in lower case, cannot join the paths written: it is
@@ -352,6 +371,18 @@ pub(crate) async fn write_as(
         let entry = fastctx_net::ledger::open(&signed, &hub_id, &project)?;
         let mutation = fastctx_net::memory::decode(&entry.files)?;
         let history = fastctx_net::topic_history::decode(&entry.files)?;
+        if let Some(stored) = &history {
+            let revision = &stored.revision;
+            let text = entry
+                .files
+                .iter()
+                .find(|file| file.path == fastctx_net::topic_history::path(&revision.name, revision.version, "md"))
+                .expect("decoded history text");
+            fastctx_types::history::markdown::parse_written(
+                &revision.name,
+                std::str::from_utf8(&text.bytes.0).map_err(|error| error.to_string())?,
+            )?;
+        }
         let bytes = json(&signed).map_err(|error| error.to_string())?;
         if account.is_some() && mutation.is_none() && history.is_none() {
             return Err("a memory write must contain a memory revision or evidence".into());
@@ -364,6 +395,7 @@ pub(crate) async fn write_as(
     let _one = writing.lock().await;
     let checked = {
         let store = hub.store();
+        prepared.check_author(hub, &store, from)?;
         hub.ledgers.lock().expect("never poisoned").check(&store, from, &town, &prepared)?
     };
     let (path, proposed) = (checked.path.clone(), prepared.clone());
@@ -373,6 +405,9 @@ pub(crate) async fn write_as(
         ensure_private_dir(folder).map_err(|error| PublishFailure { error, published: false }).and_then(|()| {
             publish_checked(&path, &proposed.bytes, Permissions::Private, false, || {
                 let store = publishing.edit_store();
+                proposed
+                    .check_author(&publishing, &store, &author)
+                    .map_err(|why| io::Error::new(io::ErrorKind::PermissionDenied, why))?;
                 publishing
                     .ledgers
                     .lock()
@@ -407,12 +442,8 @@ pub(crate) async fn write_as(
             return Err(format!("the project {town} was deleted"));
         }
         let seq = hub.ledgers.lock().expect("never poisoned").commit(&town, checked);
-        let tell: Vec<_> = directory
-            .members
-            .iter()
-            .filter(|member| directory.member_in_project(&member.name, &town))
-            .map(|member| member.name.clone())
-            .collect();
+        let tell: Vec<_> =
+            store.indexed().project_readers(&town).into_iter().map(|at| directory.members[at].name.clone()).collect();
         (seq, tell)
     };
     hub.log.line(format_args!("{from} wrote entry {seq} of {town}"));

@@ -9,9 +9,40 @@ use fastctx_types::{
 };
 
 impl Device {
+    pub(crate) fn history_readers(
+        &self,
+        scope: &Scope,
+    ) -> Vec<(fastctx_types::access::HubId, Vec<fastctx_types::AccountName>)> {
+        self.sessions()
+            .iter()
+            .map(|session| (session.link.hub().clone(), session.link.history_readers(scope)))
+            .collect()
+    }
+
     pub(super) async fn history(&self, request: HistoryCall) -> Result<HistoryReply, Error> {
         crate::history::enabled()?;
-        let (link, account) = match request.scope() {
+        let (link, account) = self.history_network(request.scope()).await?;
+        let author = request.writes().then(|| Author {
+            stamp: Stamp { by: Writer::User, on: Some(link.membership().name), at: jiff::Timestamp::now() },
+            host: None,
+            model: None,
+        });
+        let mut reply = link.history_call(&account, request, author).await.map_err(failed)?;
+        let view = link.view();
+        let usable = |machine: &fastctx_types::MachineName| view.rights(&account, machine).hands;
+        match &mut reply {
+            HistoryReply::Catalog { catalog } => catalog.for_reader(&usable),
+            HistoryReply::Document { document } => document.for_reader(&usable),
+            HistoryReply::Saved { revision } => revision.author.stamp.for_reader(&usable),
+        }
+        Ok(reply)
+    }
+
+    pub(crate) async fn history_network(
+        &self,
+        scope: &Scope,
+    ) -> Result<(std::sync::Arc<fastctx_net::link::Link>, fastctx_types::AccountName), Error> {
+        Ok(match scope {
             Scope::Project { project } => {
                 let (link, account, _) = self.project_scope(project)?;
                 (link, account)
@@ -50,20 +81,6 @@ impl Device {
                     "this account has no registered history for that conversation; an older conversation host must be updated"
                 }))?
             }
-        };
-        let author = request.writes().then(|| Author {
-            stamp: Stamp { by: Writer::User, on: Some(link.membership().name), at: jiff::Timestamp::now() },
-            host: None,
-            model: None,
-        });
-        let mut reply = link.history_call(&account, request, author).await.map_err(failed)?;
-        let view = link.view();
-        let usable = |machine: &fastctx_types::MachineName| view.rights(&account, machine).hands;
-        match &mut reply {
-            HistoryReply::Catalog { catalog } => catalog.for_reader(&usable),
-            HistoryReply::Document { document } => document.for_reader(&usable),
-            HistoryReply::Saved { revision } => revision.author.stamp.for_reader(&usable),
-        }
-        Ok(reply)
+        })
     }
 }

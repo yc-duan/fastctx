@@ -85,6 +85,8 @@ export interface CollabNode {
   machine?: string;
   /** Why how it stands is not known, as the World said it. */
   why?: string | null;
+  /** More of its history is being read; the known children remain shown. */
+  reading?: boolean;
   children: CollabNode[];
 }
 

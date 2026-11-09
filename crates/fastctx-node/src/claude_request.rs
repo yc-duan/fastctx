@@ -186,46 +186,26 @@ pub fn policy(world: &Path, session: &str, messages: Option<usize>, after_compac
                     transcript_watched = true;
                 }
                 match fastctx_hosts::claude::transcript::read(&path) {
-                    Ok(read)
-                        if (read.context_uuids.len() == messages
-                            || (expected.as_ref().is_some_and(|value| value["retained"] == true)
-                                && (read.context_uuids.len() <= messages || messages == 4096)))
-                            && after_compact.is_none_or(|parent| read.context_parent.as_deref() == Some(parent)) =>
+                    Ok(mut read)
+                        if after_compact.is_none_or(|parent| read.context_parent.as_deref() == Some(parent)) =>
                     {
-                        if !read.problems.is_empty() {
-                            return Err(io::Error::other(read.problems.join("; ")));
-                        }
                         let tail = expected
                             .as_ref()
                             .and_then(|value| value["tail"].as_array())
                             .ok_or_else(|| io::Error::other("the mod omitted its observed message projection"))?;
                         let retained = expected.as_ref().is_some_and(|value| value["retained"] == true);
-                        let tail = if retained && tail.len() >= read.context_uuids.len() {
-                            &tail[tail.len() - read.context_uuids.len()..]
-                        } else {
-                            tail.as_slice()
-                        };
-                        if !read.message_tail_matches(tail) {
-                            return Err(io::Error::other(
-                                "the native file does not match the mod's current message projection",
-                            ));
+                        if lined_up(&mut read, tail, messages, retained)? {
+                            policy["last_uuid"] =
+                                serde_json::to_value(read.context_uuids.last()).map_err(io::Error::other)?;
+                            policy["context_tail"] =
+                                serde_json::to_value(read.context_tail).map_err(io::Error::other)?;
+                            policy["context_contract"] = json!(1);
+                            policy["retained_messages"] = json!(read.context_uuids.len());
+                            policy["synthetic_tail"] = json!(read.synthetic_tail);
+                            policy["context_uuids"] =
+                                serde_json::to_value(read.context_uuids).map_err(io::Error::other)?;
+                            return output(&policy);
                         }
-                        policy["last_uuid"] =
-                            serde_json::to_value(read.context_uuids.last()).map_err(io::Error::other)?;
-                        policy["context_tail"] = serde_json::to_value(read.context_tail).map_err(io::Error::other)?;
-                        policy["context_contract"] = json!(1);
-                        policy["retained_messages"] = json!(read.context_uuids.len());
-                        policy["synthetic_tail"] = json!(read.synthetic_tail);
-                        policy["context_uuids"] = serde_json::to_value(read.context_uuids).map_err(io::Error::other)?;
-                        return output(&policy);
-                    }
-                    Ok(read)
-                        if after_compact.is_none_or(|parent| read.context_parent.as_deref() == Some(parent))
-                            && read.context_uuids.len() > messages =>
-                    {
-                        return Err(io::Error::other(
-                            "the native file has more context than the mod's observed prefix",
-                        ));
                     }
                     Ok(_) => {}
                     Err(error) if matches!(error.kind(), io::ErrorKind::NotFound | io::ErrorKind::Interrupted) => {}
@@ -255,6 +235,48 @@ pub fn policy(world: &Path, session: &str, messages: Option<usize>, after_compac
             return Err(io::Error::other("the World node exited before identifying this Claude session"));
         }
     }
+}
+
+/// Whether the native file's context is the session's `messages` observed
+/// ones, `tail` their projections, oldest first, the context then holding just
+/// their rows. False while the file may still be catching up; an error when
+/// it holds other context. A retained context is the latest part of what the
+/// session observed, as after a compaction.
+fn lined_up(
+    read: &mut fastctx_hosts::claude::transcript::Transcript,
+    tail: &[Value],
+    messages: usize,
+    retained: bool,
+) -> io::Result<bool> {
+    let length = read.context_uuids.len();
+    let counted = length == messages || retained && (length <= messages || messages == 4096);
+    if counted && !read.problems.is_empty() {
+        return Err(io::Error::other(read.problems.join("; ")));
+    }
+    if counted {
+        let tail = if retained && tail.len() >= length { &tail[tail.len() - length..] } else { tail };
+        if read.message_tail_matches(tail) {
+            return Ok(true);
+        }
+    }
+    // A session resumed from its file holds none of the messages that said
+    // nothing there (`transcript::says_nothing`).
+    let quiet =
+        read.context_messages.iter().filter(|message| fastctx_hosts::claude::transcript::says_nothing(message)).count();
+    if quiet > 0 && read.line_up(tail, !retained && messages < 4096) {
+        if !read.problems.is_empty() {
+            return Err(io::Error::other(read.problems.join("; ")));
+        }
+        return Ok(true);
+    }
+    let more = if retained { length > messages } else { length > messages + quiet };
+    if retained && counted || !retained && !more && length == messages && quiet == 0 {
+        return Err(io::Error::other("the native file does not match the mod's current message projection"));
+    }
+    if more {
+        return Err(io::Error::other("the native file has more context than the mod's observed prefix"));
+    }
+    Ok(false)
 }
 
 /// Runs the mod helper, or the official plugin Elicitation command hook.

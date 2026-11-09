@@ -40,7 +40,6 @@ struct State {
 }
 
 pub(crate) struct Following {
-    internal: bool,
     node: Arc<Node>,
     source: Source,
     request: Option<NoticeId>,
@@ -53,18 +52,15 @@ impl Following {
         let source = (origin.resident.clone(), machine.clone());
         let request = origin.request.clone();
         let dispatch = (source.0.clone(), source.1.clone(), request.clone());
-        if origin.sentinel.is_none() {
+        {
             let mut state = node.on_deliveries.state.lock();
             *state.starting.entry(dispatch).or_default() += 1;
             *state.starting_sources.entry(source.clone()).or_default() += 1;
         }
-        Self { internal: origin.sentinel.is_some(), node: node.clone(), source, request, job: None }
+        Self { node: node.clone(), source, request, job: None }
     }
 
     pub(crate) fn started(&mut self, job: &JobId) {
-        if self.internal {
-            return;
-        }
         if self.job.as_ref() == Some(job) {
             return;
         }
@@ -86,9 +82,6 @@ impl Following {
     }
 
     pub(crate) fn receipt_path(&self, job: &JobId) -> Option<PathBuf> {
-        if self.internal {
-            return None;
-        }
         Some(receipt(
             &self.node,
             &self.source.0.machine,
@@ -102,9 +95,6 @@ impl Following {
 
 impl Drop for Following {
     fn drop(&mut self) {
-        if self.internal {
-            return;
-        }
         {
             let mut state = self.node.on_deliveries.state.lock();
             match &self.job {
@@ -176,9 +166,6 @@ fn cancellation(
 }
 
 pub(crate) fn cancelled(node: &Node, origin: &OnOrigin, machine: &MachineName) -> io::Result<()> {
-    if origin.sentinel.is_some() {
-        return Ok(());
-    }
     let Some(request) = &origin.request else { return Ok(()) };
     let path = cancellation(node, &origin.resident.machine, &origin.resident.resident, machine, request);
     items::write(&path, b"")

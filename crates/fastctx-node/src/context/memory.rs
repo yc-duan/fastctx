@@ -14,6 +14,10 @@ pub(crate) struct Body {
 pub(crate) struct Bodies(Mutex<BTreeMap<(ResidentId, String), Body>>);
 
 impl Bodies {
+    pub(crate) fn has_text(&self, id: &ResidentId, name: &str) -> bool {
+        self.0.lock().expect("never poisoned").get(&(id.clone(), name.into())).is_some_and(|body| !body.text.is_empty())
+    }
+
     pub(crate) fn remove(&self, id: &ResidentId) {
         self.0.lock().expect("never poisoned").retain(|(resident, _), _| resident != id);
     }

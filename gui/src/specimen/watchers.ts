@@ -68,26 +68,33 @@ export function specimenWatcherRecord(english: boolean, now: number, id: string,
     item += 1;
     events.push({ at: at(minutesAgo), event: "finished", turn, item: { id: `${turn}-${item}`, ...what } } as SessionEvent);
   };
-  const look = (turn: string, minutesAgo: number, command: string, output: string, running = false) =>
+  // A look reads the last lines of the training log on the server.
+  const tail = { machine: "server", path: "/data/run3/train.log", tail: 3 };
+  const look = (turn: string, minutesAgo: number, output: string, running = false) =>
     finished(turn, minutesAgo, {
       kind: "tool",
-      name: "look",
+      name: "read_file",
       server: null,
       machine: "server",
-      does: { as: "command", command, cwd: null, exit: null, job: null },
-      input: { machine: "server", command },
+      does: { as: "call" },
+      input: tail,
       output: running ? [] : [{ type: "text", text: output }],
       status: running ? "running" : "done",
       duration_ms: null,
     });
-  const reflex = (turn: string, minutesAgo: number, every: number, command: string) =>
+  const reflex = (turn: string, minutesAgo: number, every: number) =>
     finished(turn, minutesAgo, {
       kind: "tool",
       name: "install_reflex",
       server: null,
       machine: null,
       does: { as: "call" },
-      input: { id: "loss", every_ms: every * 60_000, probe: { kind: "look", machine: "server", command } },
+      input: {
+        id: "loss",
+        every_ms: every * 60_000,
+        probe: { tool: "read_file", ...tail },
+        predicate: { kind: "number", prefix: "loss", comparison: "less", value: 0.34 },
+      },
       output: [{ type: "text", text: '{"installed":true}' }],
       status: "done",
       duration_ms: null,
@@ -104,27 +111,26 @@ export function specimenWatcherRecord(english: boolean, now: number, id: string,
   }
   if (id !== LOSS) return { version: "specimen", events, ...(summary ? { summary } : {}) };
 
-  const tail = "tail -n 3 /data/run3/train.log";
   wake("w1", 95, { kind: "started" });
   finished("w1", 95, { kind: "thinking", text: say("先看日志现在走到哪一步，再决定巡检的间隔。", "First see where the log stands, then decide how often to check.") });
-  look("w1", 95, tail, "step 4100  loss 0.431\nstep 4150  loss 0.427\nstep 4200  loss 0.412");
-  reflex("w1", 94, 10, tail);
+  look("w1", 95, "step 4100  loss 0.431\nstep 4150  loss 0.427\nstep 4200  loss 0.412");
+  reflex("w1", 94, 10);
   message("w1", 94, say("当前 0.412，距 0.3 尚远。已设定每十分钟读取最后几行的巡检，低于 0.34 时再唤醒复核。", "0.412 now, far from 0.3. A check reads the last lines every ten minutes and wakes me below 0.34."));
   ended("w1", 94);
 
   wake("w2", 31, { kind: "reflex", source: `server: ${tail}` }, "step 6150  loss 0.338");
-  look("w2", 31, tail, "step 6100  loss 0.341\nstep 6150  loss 0.338\nstep 6200  loss 0.333");
-  reflex("w2", 30, 2, tail);
+  look("w2", 31, "step 6100  loss 0.341\nstep 6150  loss 0.338\nstep 6200  loss 0.333");
+  reflex("w2", 30, 2);
   message("w2", 30, say("0.333，仍在下降。巡检间隔改为两分钟，低于 0.3 即报告。", "0.333 and still falling. Checking every two minutes now; below 0.3 it reports."));
   ended("w2", 30);
 
   wake("w3", 1, { kind: "reflex", source: `server: ${tail}` }, "step 7350  loss 0.297");
   finished("w3", 1, { kind: "thinking", text: say("巡检读到 0.297，再亲自读取一次，排除一时的波动。", "The check saw 0.297; read once more myself so it is not a passing dip.") });
   if (!found) {
-    look("w3", 0, tail, "", true);
+    look("w3", 0, "", true);
     return { version: "specimen", events, ...(summary ? { summary } : {}), next: now + 2 * 60_000 };
   }
-  look("w3", 0, tail, "step 7350  loss 0.297\nstep 7400  loss 0.291\nstep 7450  loss 0.288");
+  look("w3", 0, "step 7350  loss 0.297\nstep 7400  loss 0.291\nstep 7450  loss 0.288");
   // What it reports is its words.
   message("w3", 0, say("连续三步低于 0.3（0.297、0.291、0.288），条件成立，唤醒对话。", "Three steps in a row under 0.3 (0.297, 0.291, 0.288): it holds, and the conversation is woken."));
   ended("w3", 0);

@@ -2,6 +2,7 @@
 use crate::{
     ports::{Look, Machine, ReadResult, Web},
     state::{State, Store},
+    tools::{self, required},
     words,
 };
 use fastctx_agent::{
@@ -65,19 +66,31 @@ pub async fn wake(
                 .map_err(|e| e.to_string())?;
             observation.full_path = Some(path.to_string_lossy().into_owned());
         }
-        observation.text = bounded(&observation.text, 8192);
+        observation.text = glimpse(&observation.text, OBSERVED);
         observations.push(observation.clone());
-        if state.definition.kind == Kind::Web {
-            observation.full_path = None;
-        }
+        // Where it is kept whole is for the session it reports to; its own
+        // looks cannot read there.
+        observation.full_path = None;
     }
-    let recent: Vec<_> = state.recent.iter().map(|o| json!({"id":o.id,"at":o.at,"source":bounded(&o.source,256),"text":bounded(&o.text,1024),"full_path":if state.definition.kind==Kind::Web { None } else { o.full_path.as_ref() }})).collect();
-    let reflexes: Vec<_> = state.reflexes.iter().map(|r| json!({"id":r.id,"at":r.at,"every_ms":r.every_ms})).collect();
+    let recent: Vec<_> = state
+        .recent
+        .iter()
+        .map(|o| json!({"id":o.id,"at":o.at,"source":bounded(&o.source,256),"text":glimpse(&o.text,1024)}))
+        .collect();
+    let reflexes: Vec<_> = state
+        .reflexes
+        .iter()
+        .map(|r| {
+            json!({"id":r.id,"at":r.at,"every_ms":r.every_ms,
+                "probe":r.probe.as_ref().map(tools::probe_shown),"predicate":r.predicate})
+        })
+        .collect();
     let input = if let WakeReason::Goal { review } = &reason {
         crate::goal::input(review)?.to_string()
     } else {
+        let time = jiff::Timestamp::from_millisecond(now).map(|at| at.to_string()).unwrap_or_default();
         json!({"condition":state.definition.condition,"kind":state.definition.kind,"at":state.definition.at,"plan_claim":state.plan,"notes_claim":state.notes,"recent":recent,
-        "reflexes":reflexes,"machines":machines,"wake":reason,"now":now}).to_string()
+        "reflexes":reflexes,"machines":machines,"wake":reason,"now":now,"time":time}).to_string()
     };
     let goal = state.definition.kind == Kind::Goal;
     if goal != matches!(reason, WakeReason::Goal { .. }) {
@@ -158,69 +171,18 @@ struct Sentinel<'a> {
     obstacle_recorded: bool,
     invalid_reports: u8,
 }
-fn tool(name: &str, description: &str, properties: Value, required: &[&str]) -> Tool {
-    Tool {
-        name: name.into(),
-        description: description.into(),
-        parameters: json!({"type":"object","properties":properties,"required":required,"additionalProperties":false}),
-    }
-}
-fn string() -> Value {
-    json!({"type":"string"})
-}
-impl Sentinel<'_> {
-    /// A machine parameter that names one of the machines it may look at.
-    fn machine(&self) -> Value {
-        if self.machines.is_empty() {
-            return string();
-        }
-        let names: Vec<_> = self.machines.iter().map(|machine| machine.name.as_str()).collect();
-        json!({"type":"string","enum":names})
-    }
-}
 impl Application for Sentinel<'_> {
     fn tools(&self) -> Vec<Tool> {
-        let mut tools = match self.state.definition.kind {
-            Kind::Local | Kind::Goal => {
-                vec![tool(
-                    "look",
-                    words::LOOK,
-                    json!({"machine":self.machine(),"command":string()}),
-                    &["machine", "command"],
-                )]
-            }
-            Kind::Web => vec![
-                tool("fetch_web", words::FETCH, json!({"url":string()}), &["url"]),
-                tool("search", words::SEARCH, json!({"query":string()}), &["query"]),
-            ],
-        };
-        if self.state.definition.kind != Kind::Goal {
-            let probe = if self.state.definition.kind == Kind::Web {
-                json!({"type":"object","properties":{"kind":{"const":"web"},"url":string()},"required":["kind","url"],"additionalProperties":false})
-            } else {
-                json!({"type":"object","properties":{"kind":{"const":"look"},"machine":self.machine(),"command":string()},"required":["kind","machine","command"],"additionalProperties":false})
-            };
-            tools.push(tool("install_reflex",words::REFLEX, json!({
-                "id":string(),"at":{"type":"integer"},"every_ms":{"type":["integer","null"]},
-                "probe":{"oneOf":[{"type":"null"},probe]},
-                "predicate":{"oneOf":[{"type":"null"},{"type":"object","properties":{"kind":{"enum":["contains","number","changed","exit_nonzero"]},"text":string(),"prefix":string(),"comparison":{"enum":["less","less_equal","greater","greater_equal","equal"]},"value":{"type":"number"}},"required":["kind"]}]}
-            }), &["id","at"]));
-            tools.push(tool("report",words::REPORT,json!({"status":{"enum":["watching","satisfied","unable"]},"reason":string(),"obstacle":string(),"evidence":{"type":"array","items":string()},"plan":string(),"notes":string()}), &["status"]));
-        } else {
-            tools.push(tool("report",words::GOAL_REPORT,json!({"sound":{"type":"boolean"},"reason":string(),"looked":string(),"saw":string(),"thinks":string()}), &["sound"]));
-        }
-        tools
+        tools::tools(self.state.definition.kind, self.machines)
     }
     fn call<'a>(&'a mut self, call: &'a ToolCall) -> FutureResult<'a, ToolOutput> {
         Box::pin(async move {
             let a = &call.arguments;
             match call.name.as_str() {
-                "look" if self.state.definition.kind != Kind::Web => {
-                    let machine =
-                        required(a, "machine")?.parse().map_err(|e: fastctx_types::NameError| e.to_string())?;
-                    let command = required(a, "command")?;
-                    let result = self.look.look(&self.state.definition, &machine, command).await?;
-                    self.observe(format!("{machine}: {command}"), result)
+                look if tools::LOOKS.contains(&look) && self.state.definition.kind != Kind::Web => {
+                    let (machine, inspect) = tools::look_of(look, a)?;
+                    let result = self.look.look(&self.state.definition, &machine, &inspect).await?;
+                    self.observe(tools::source(&machine, &inspect), result)
                 }
                 "fetch_web" if self.state.definition.kind == Kind::Web => {
                     let url = required(a, "url")?;
@@ -233,8 +195,7 @@ impl Application for Sentinel<'_> {
                     self.observe(format!("search: {query}"), result)
                 }
                 "install_reflex" if self.state.definition.kind != Kind::Goal => {
-                    let mut reflex: Reflex = serde_json::from_value(a.clone()).map_err(|e| e.to_string())?;
-                    reflex.last_fingerprint = None;
+                    let reflex = self.reflex_of(a)?;
                     crate::reflex::validate(&reflex, self.state.definition.kind, self.now)?;
                     if let Some(index) = self.state.reflexes.iter().position(|r| r.id == reflex.id) {
                         self.state.reflexes[index] = reflex;
@@ -258,6 +219,33 @@ impl Application for Sentinel<'_> {
     }
 }
 impl Sentinel<'_> {
+    /// The reflex `install_reflex` is called with. A repeating one given no
+    /// time after now first runs one interval from now: what it repeats
+    /// has just been looked at.
+    fn reflex_of(&self, arguments: &Value) -> Result<Reflex, String> {
+        let present = |key: &str| arguments.get(key).filter(|value| !value.is_null());
+        let every_ms =
+            present("every_ms").map(|every| every.as_u64().ok_or("every_ms is a count of milliseconds")).transpose()?;
+        let probe = present("probe").map(|probe| tools::probe_of(self.state.definition.kind, probe)).transpose()?;
+        let predicate = present("predicate")
+            .map(|predicate| {
+                serde_json::from_value::<Predicate>(predicate.clone()).map_err(|e| format!("predicate: {e}"))
+            })
+            .transpose()?;
+        let at = match (present("at").and_then(Value::as_i64).filter(|at| *at > self.now), every_ms) {
+            (Some(at), _) => at,
+            (None, Some(every)) => self.now.saturating_add(i64::try_from(every).unwrap_or(i64::MAX)),
+            (None, None) => return Err(words::NEED_AT.into()),
+        };
+        Ok(Reflex {
+            id: required(arguments, "id")?.to_string(),
+            at,
+            every_ms,
+            probe,
+            predicate,
+            last_fingerprint: None,
+        })
+    }
     fn checked_conclusion(&mut self, value: Result<Value, String>) -> Result<Decision, String> {
         match value.and_then(|value| self.conclude(&value)) {
             Err(error) => {
@@ -272,12 +260,13 @@ impl Sentinel<'_> {
             return Err("observation exceeded 65536 bytes".into());
         }
         let id = format!("{}-{}", self.state.sequence, self.observations.len() + 1);
+        let shown = result.shown();
         let full_path = match result.full_path {
             Some(path) => path,
             None => {
                 let path = self.directory.join("evidence").join(format!("{id}.txt"));
                 std::fs::create_dir_all(path.parent().expect("evidence directory")).map_err(|e| e.to_string())?;
-                fastctx_platform::publish(&path, result.text.as_bytes(), fastctx_platform::Permissions::Private)
+                fastctx_platform::publish(&path, shown.as_bytes(), fastctx_platform::Permissions::Private)
                     .map_err(|e| e.to_string())?;
                 path.to_string_lossy().into_owned()
             }
@@ -286,14 +275,10 @@ impl Sentinel<'_> {
             id,
             at: self.now,
             source: bounded(&source, 8192),
-            text: bounded(&result.text, 8192),
-            exit_code: result.exit_code,
+            text: glimpse(&shown, OBSERVED),
             full_path: Some(full_path),
         };
-        let mut output = serde_json::to_value(&observation).map_err(|e| e.to_string())?;
-        if self.state.definition.kind == Kind::Web {
-            output.as_object_mut().expect("observation object").remove("full_path");
-        }
+        let output = json!({"id":observation.id,"text":observation.text});
         self.observations.push(observation);
         Ok(ToolOutput::value(output))
     }
@@ -331,13 +316,11 @@ impl Sentinel<'_> {
             }
             "unable" => {
                 let obstacle = required(value, "obstacle")?;
+                // Wakes that each cannot watch count, whatever words each
+                // gives its obstacle; a wake that watches again resets them.
                 if !self.obstacle_recorded {
-                    if self.state.obstacle.as_deref() == Some(obstacle) {
-                        self.state.obstacle_count += 1;
-                    } else {
-                        self.state.obstacle = Some(obstacle.into());
-                        self.state.obstacle_count = 1;
-                    }
+                    self.state.obstacle = Some(obstacle.into());
+                    self.state.obstacle_count += 1;
                     self.obstacle_recorded = true;
                 }
                 if self.state.obstacle_count >= 3 {
@@ -367,11 +350,26 @@ impl Sentinel<'_> {
 fn done(conclusion: Conclusion) -> Result<Decision, String> {
     serde_json::to_value(conclusion).map(Decision::Finish).map_err(|e| e.to_string())
 }
-fn required<'a>(value: &'a Value, key: &str) -> Result<&'a str, String> {
-    value[key]
-        .as_str()
-        .filter(|s| !s.trim().is_empty() && s.len() <= 8192)
-        .ok_or_else(|| format!("missing or oversized {key}"))
+
+/// How much of what a look saw its model reads, in bytes: within what one
+/// tool answer holds, the observation's name around it.
+const OBSERVED: usize = 7_000;
+
+/// `text` within `limit` bytes: its beginning and, the most of it, its end,
+/// where the latest of a log or a page is.
+fn glimpse(text: &str, limit: usize) -> String {
+    if text.len() <= limit {
+        return text.into();
+    }
+    let boundary = |mut at: usize| {
+        while !text.is_char_boundary(at) {
+            at -= 1;
+        }
+        at
+    };
+    let head = boundary(limit / 4);
+    let tail = boundary(text.len() - (limit - limit / 4 - 48));
+    format!("{}\n… {} bytes not shown …\n{}", &text[..head], tail - head, &text[tail..])
 }
 #[derive(Deserialize)]
 struct Report {

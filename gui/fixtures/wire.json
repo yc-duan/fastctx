@@ -863,6 +863,49 @@
         "preferences": true,
         "repair_supported": false,
         "repair_routing": false
+      },
+      {
+        "running": "1.0.1-beta.17",
+        "settings": {
+          "auto": true,
+          "chosen": true,
+          "relays": true
+        },
+        "channel": "stable",
+        "auto": false,
+        "auto_enabled": true,
+        "looked": {
+          "checking": false,
+          "failures": 0
+        },
+        "network": {
+          "policy": {
+            "channel": "stable",
+            "managed_auto": true
+          },
+          "updates_view": false,
+          "repair_supported": false,
+          "rolled": {
+            "version": "1.0.2",
+            "takes": false
+          }
+        },
+        "available": {
+          "version": "1.0.2",
+          "notes": "An update.",
+          "pub_date": "2026-10-20T12:00:00Z",
+          "platforms": {}
+        },
+        "automatic": null,
+        "above_hub": false,
+        "kernel_target": "",
+        "stage": {
+          "kind": "idle"
+        },
+        "progress": false,
+        "preferences": false,
+        "repair_supported": false,
+        "repair_routing": false
       }
     ],
     "checks": [
@@ -20697,6 +20740,25 @@
         "machine": "desktop",
         "agent": "codex",
         "dir": "C:/Users/me/.codex"
+      },
+      {
+        "call": "change_agent_models",
+        "machine": "desktop",
+        "agent": "claude",
+        "dir": "/home/me/.claude-work",
+        "change": {
+          "do": "add",
+          "model": "deepseek-flash"
+        }
+      },
+      {
+        "call": "change_agent_models",
+        "machine": "desktop",
+        "agent": "claude",
+        "dir": "/home/me/.claude-work",
+        "change": {
+          "do": "reset"
+        }
       }
     ],
     "replies": [
@@ -20929,6 +20991,14 @@
                     "launcher": {
                       "path": "/home/me/.local/bin/claude",
                       "desktop_app": false
+                    },
+                    "model_edits": {
+                      "removed": [
+                        "claude-haiku-4-5-20251001"
+                      ],
+                      "added": [
+                        "deepseek-flash"
+                      ]
                     },
                     "change": {
                       "into": true,
@@ -21303,6 +21373,14 @@
                 "path": "/home/me/.local/bin/claude",
                 "desktop_app": false
               },
+              "model_edits": {
+                "removed": [
+                  "claude-haiku-4-5-20251001"
+                ],
+                "added": [
+                  "deepseek-flash"
+                ]
+              },
               "change": {
                 "into": true,
                 "started_at": "2026-10-11T12:00:00Z",
@@ -21557,6 +21635,15 @@
         }
       },
       {
+        "call": "change_agent_models",
+        "agent": "claude",
+        "dir": "/home/me/.claude-work",
+        "change": {
+          "do": "remove",
+          "model": "claude-opus-4-6"
+        }
+      },
+      {
         "call": "preview_agent_change",
         "agent": "claude",
         "dir": "/home/me/.claude-work",
@@ -21800,6 +21887,14 @@
               "launcher": {
                 "path": "/home/me/.local/bin/claude",
                 "desktop_app": false
+              },
+              "model_edits": {
+                "removed": [
+                  "claude-haiku-4-5-20251001"
+                ],
+                "added": [
+                  "deepseek-flash"
+                ]
               },
               "change": {
                 "into": true,
@@ -22171,6 +22266,12 @@
             "args": "<name>",
             "arguments": "required",
             "source": "builtin"
+          }
+        ],
+        "skills": [
+          {
+            "name": "deploy-checklist",
+            "description": "Before deploying a service"
           }
         ],
         "models": [
@@ -23644,6 +23745,74 @@
     ],
     "host_text": "=== from fastctx (user attachments, v3) ===\nThe user attached these files; sizes are in bytes. A script finds each at $FASTCTX_SCRATCH/<path> on whichever machine it runs; `fastctx view` on an image shows it to you.\n{\"delivery\":\"talk-ab12\",\"from\":\"phone\",\"files\":[{\"id\":\"attachment-ab12\",\"name\":\"截图.png\",\"media_type\":\"image/png\",\"size\":3145728,\"path\":\"attachments/attachment-ab12/截图.png\"}]}\n=== user's words (verbatim) ===\n看这张图。\nKeep my words verbatim."
   },
+  "collaboration": [
+    {
+      "conversation": {
+        "address": {
+          "machine": "desktop",
+          "resident": "codex-ab12"
+        },
+        "label": null,
+        "born_at": null,
+        "now": null,
+        "goal": {
+          "Ok": null
+        },
+        "plan": null,
+        "agents": [
+          {
+            "id": "agent-1",
+            "name": null,
+            "task": null,
+            "model": null,
+            "state": null,
+            "started_at": null,
+            "ended_at": null,
+            "duration_ms": null,
+            "children": [],
+            "reading": false,
+            "unavailable": null
+          }
+        ],
+        "reading": false,
+        "unavailable": []
+      },
+      "colleagues": []
+    },
+    {
+      "conversation": {
+        "address": {
+          "machine": "desktop",
+          "resident": "codex-ab12"
+        },
+        "label": null,
+        "born_at": null,
+        "now": null,
+        "goal": {
+          "Ok": null
+        },
+        "plan": null,
+        "agents": [
+          {
+            "id": "agent-1",
+            "name": null,
+            "task": null,
+            "model": null,
+            "state": null,
+            "started_at": null,
+            "ended_at": null,
+            "duration_ms": null,
+            "children": [],
+            "reading": true,
+            "unavailable": null
+          }
+        ],
+        "reading": true,
+        "unavailable": []
+      },
+      "colleagues": []
+    }
+  ],
   "composer": {
     "snapshots": [
       {
@@ -25384,6 +25553,17 @@
               }
             ]
           }
+        ],
+        "resets": [
+          {
+            "window": "seven_day",
+            "since": "2026-10-08T18:00:00Z",
+            "confirmed_at": "2026-10-08T18:05:00Z",
+            "resets_at": "2026-10-15T18:00:00Z",
+            "before_used_tenths": 730,
+            "used_tenths": 10,
+            "source": "scheduled"
+          }
         ]
       },
       {
@@ -25604,6 +25784,17 @@
                 "quota_tenths": 36
               }
             ]
+          }
+        ],
+        "resets": [
+          {
+            "window": "seven_day",
+            "since": "2026-10-08T18:00:00Z",
+            "confirmed_at": "2026-10-08T18:05:00Z",
+            "resets_at": "2026-10-15T18:00:00Z",
+            "before_used_tenths": 730,
+            "used_tenths": 10,
+            "source": "scheduled"
           }
         ]
       }

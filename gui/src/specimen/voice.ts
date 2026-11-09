@@ -1,29 +1,16 @@
 // A night of work by a conversation the World started (`world-voice.md`):
 // the user hands it a fix and a watch before bed; a job's end and a
-// sentinel wake it in the night; it works, and says to the user only what
-// they should know, once urgently with the picture that shows why. In the
-// morning the user asks one thing and it answers in plain words, as an
-// agent that forgets the tool does, which the view takes as its answer; so
-// it does for the turn a command the user gives begins.
+// sentinel wake it in the night; it works, and each turn ends with its
+// answer, what the user finds in the morning. Then the user asks one thing,
+// gives a command, and asks another, which it says it will look up first:
+// the view takes each turn's last words as its answer.
 
-import { run, Script, text } from "./script";
+import { run, Script } from "./script";
 import type { Specimen } from "./sessions";
-import type { Speaker, Tool } from "../world/events";
+import type { Speaker } from "../world/events";
 import type { JsonValue } from "../world/wire";
 
 const user: Speaker = { kind: "user", machine: "desktop" };
-
-/** A `message_user` call, as the World's tools show it in either host. */
-function say(message: string, status: "reply" | "info" | "urgent", attachments: { machine: string; path: string }[] = []): Partial<Tool> & { name: string; does: Tool["does"] } {
-  return {
-    name: "message_user",
-    machine: null,
-    input: { message, status, ...(attachments.length ? { attachments } : {}) },
-    output: text("=== told the user ==="),
-    does: { as: "call" },
-    duration_ms: 40,
-  };
-}
 
 export function voice(): Specimen {
   const s = new Script("2026-10-04T14:10:00Z");
@@ -43,8 +30,7 @@ export function voice(): Specimen {
     ),
   );
   s.tool("t1", run("fastctx sense 'the training loss on gpu diverges or stalls' --tell 'look at run3'", "=== run on laptop (exited 0) ===", "=== sentinel s-7f2c on server watches it ===", { duration_ms: 900 }));
-  s.tool("t1", say("好。整套回归已经在 lab 上跑起来，大约四十分钟。训练那边留了一项观测盯着 loss，发散或停住了它会叫醒我。有结果我再告诉你。", "reply"));
-  s.say("t1", "message", "回归 j-r4g7e2 在 lab 上跑着，观测 s-7f2c 在 gpu 上盯着 run3。它们叫醒我之前没有别的事。");
+  s.say("t1", "message", "好。整套回归已经在 lab 上跑起来，大约四十分钟；训练那边留了一项观测盯着 run3 的 loss，发散或停住了它会叫醒我。有结果我再告诉你。");
   s.ended("t1", "completed");
 
   s.heard(
@@ -66,13 +52,7 @@ export function voice(): Specimen {
   s.started("t2");
   s.say("t2", "thinking", "", 2);
   s.tool("t2", run("rg -c 'test result: ok' /home/me/.fastctx/world/towns/mark50/residents/claude-v01c/out/j-r4g7e2.log", "=== run on lab (exited 0) ===", "9", { duration_ms: 60 }, "lab"));
-  s.say("t2", "message", "九组测试都过了，step_response 稳态到了 0.9999。");
-  s.tool(
-    "t2",
-    say("整套回归跑完了：42 个单元测试、3 个文档测试全过，step_response 稳态 0.9999（原来 0.9612）。修复在 `fix/q32-integral` 分支上，等你看过再合。", "info", [
-      { machine: "lab", path: "/home/me/.fastctx/world/towns/mark50/residents/claude-v01c/out/j-r4g7e2.log" },
-    ]),
-  );
+  s.say("t2", "message", "整套回归跑完了：42 个单元测试、3 个文档测试全过，step_response 稳态 0.9999（原来 0.9612）。修复在 `fix/q32-integral` 分支上，等你看过再合。");
   s.ended("t2", "completed");
 
   s.heard("t3", { kind: "world" }, "=== sentinel s-7f2c on server: it holds ===\nThe loss of run3 rose from 0.31 to 4.7 after step 11,200 and keeps rising.", 9800, { kind: "words", from: { kind: "world" }, text: "the training loss diverged" });
@@ -90,11 +70,7 @@ export function voice(): Specimen {
       "gpu",
     ),
   );
-  s.say("t3", "message", "停了 run3，从 11k 的检查点以一半的学习率接着跑成 run3b，前一千步看着正常。");
-  s.tool(
-    "t3",
-    say("训练在 11,200 步之后发散了，loss 从 0.31 升到 4.7。我停了它，从第 11k 步的检查点把学习率减半重跑（run3b），前一千步正常。要不要把这个学习率写进默认配置，等你定。", "urgent", [{ machine: "gpu", path: "/data/run3/loss.png" }]),
-  );
+  s.say("t3", "message", "训练在 11,200 步之后发散了，loss 从 0.31 升到 4.7。我停了它，从第 11k 步的检查点把学习率减半接着跑成 run3b，前一千步正常。要不要把这个学习率写进默认配置，等你定。");
   s.ended("t3", "completed");
 
   s.heard("t4", user, "辛苦了。分支里改了几个文件？", 16_000);
@@ -155,11 +131,11 @@ export function voice(): Specimen {
     },
   });
 
-  // A model that said it would look, looked, and wrote the answer as its
-  // final words rather than saying it: the answer is shown all the same.
+  // A model that says it will look, looks, and answers: its words before the
+  // look are a step of its work, its last words the answer.
   s.heard("t6", user, "明早去 lab 机房，路上会下雨吗？", 2_000);
   s.started("t6");
-  s.tool("t6", say("我查一下明早的天气。", "reply"));
+  s.say("t6", "message", "我查一下明早的天气。");
   s.tool("t6", run("curl -s 'wttr.in/Hangzhou?format=%C+%t+%p&lang=zh'", "=== run on laptop (exited 0) ===", "小雨 +17°C 1.2mm", { duration_ms: 900 }));
   s.say("t6", "message", "明早有小雨，降水 1 毫米左右，17 度，带把伞就行。");
   s.ended("t6", "completed");

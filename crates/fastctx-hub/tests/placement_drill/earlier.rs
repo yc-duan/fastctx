@@ -223,7 +223,12 @@ async fn upgrade(
     node.kill()?;
     node.wait()?;
     let format = std::fs::read_to_string(old.join("world/format.json")).unwrap_or_default();
-    record("the World says the format this release wrote", format.contains("\"format\": 2"), json!(format));
+    let written_by = serde_json::from_str::<Value>(&format).ok().and_then(|said| said.get("written_by").cloned());
+    record(
+        "the World says the format this release wrote",
+        written_by == Some(json!(env!("CARGO_PKG_VERSION"))) && format_of(old) >= earlier_format,
+        json!(format),
+    );
 
     replace(&installed, earlier)?;
     if earlier_format.is_some() && earlier_format == format_of(old) {
@@ -253,9 +258,13 @@ async fn upgrade(
         }
         let said = std::fs::read_to_string(old.join("stdout.log")).unwrap_or_default();
         let tail: String = said.lines().rev().take(3).collect::<Vec<_>>().join(" | ");
+        // A release that marks the World's format refuses a newer one before
+        // it opens anything; one from before the mark stops where it opens
+        // the node database.
+        let refusal = if earlier_format.is_some() { "which is newer than this one" } else { "book_deeds_began" };
         record(
-            "the earlier release installed again stopped where it opens the moved World's database",
-            ended.is_some_and(|status| !status.success()) && said.contains("book_deeds_began"),
+            "the earlier release installed again refused the moved World before changing it",
+            ended.is_some_and(|status| !status.success()) && said.contains(refusal),
             json!(tail),
         );
     }

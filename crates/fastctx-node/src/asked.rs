@@ -1,8 +1,9 @@
 //! What an agent asked the user, kept in its `now` for whoever calls the
 //! user about it (`world-gui.md`, 通知): a request its turn waits on, from
 //! either host, asked until it is settled or its turn ends. A question Codex
-//! asks without stopping is words to the user (`asked_without_stopping`),
-//! said as `message_user`'s are.
+//! asks without stopping (`asked_without_stopping`) does not wait: it stays
+//! among the words of the conversation the user reads, and a colleague's
+//! goes to the agent that asked it.
 
 use std::sync::Arc;
 

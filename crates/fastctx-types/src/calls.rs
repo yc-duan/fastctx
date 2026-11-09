@@ -157,12 +157,32 @@ pub enum Call {
         key: crate::sentinel_settings::KeyName,
         value: Option<crate::sentinel_settings::Secret>,
     },
+    /// Has the account's sentinel home try its model and search once.
+    SentinelTry {
+        hub: Option<crate::HubName>,
+        account: Option<crate::AccountName>,
+    },
     /// The selected account's machine changes, before a previous page's
     /// cursor when supplied. The hub checks visibility on every read.
     MachineLog {
         hub: crate::HubName,
         account: crate::AccountName,
         before: Option<u64>,
+    },
+    /// The account's history switch, or this computer's with neither name.
+    HistorySwitchRead {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        hub: Option<crate::HubName>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        account: Option<crate::AccountName>,
+    },
+    /// Sets only the history switch; with no account or hub, this computer's own.
+    HistorySwitchWrite {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        hub: Option<crate::HubName>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        account: Option<crate::AccountName>,
+        on: bool,
     },
     /// Model collaboration as `account` has it at `hub`, or at the one hub
     /// when none is named; with no account, this computer's own, which
@@ -552,6 +572,15 @@ pub enum Call {
         agent: AgentName,
         dir: std::path::PathBuf,
         on: bool,
+    },
+    /// Changes the models the World offers in the Claude Code login `dir` on
+    /// `machine`; changed by whoever may manage the login, offered to
+    /// everyone who uses it, those it assists too (`world-gui.md`, 对话).
+    ChangeAgentModels {
+        machine: Written,
+        agent: AgentName,
+        dir: std::path::PathBuf,
+        change: crate::logins::models::ModelChange,
     },
     /// What putting the World's tools into a login on `machine` (`into`),
     /// or taking them out, would change, with nothing written; with
@@ -985,11 +1014,13 @@ pub enum Reply {
     },
     Sentinel(Box<crate::sentinel_control::Reply>),
     SentinelSettings(Box<crate::sentinel_settings::SettingsReply>),
+    SentinelTried(Box<crate::sentinel_settings::TryReport>),
     /// The HTTP proxy chosen in Fastctx, if one is (`Call::HubProxy`).
     HubProxy {
         url: Option<String>,
     },
     MachineLog(crate::machine_log::Page),
+    HistorySwitch(crate::history_switch::HistorySwitch),
     CollabRead(crate::collab::CollabView),
     CollabWritten {
         version: u64,
@@ -1204,13 +1235,16 @@ pub enum Reply {
         #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
         scratch: crate::scratch::Descriptions,
         /// Whether the session speaks to the user through `message_user`:
-        /// one the World started for them (`world-voice.md`).
+        /// a colleague the World started (`world-voice.md`).
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         speaks: bool,
         /// For a colleague, the agent that asked it, the one its
         /// `message_colleague` reaches (`world-colleagues.md`, 两个工具).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         asker: Option<crate::Address>,
+        /// Whether this conversation's account enabled watchers.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        sentinels: bool,
     },
     /// A job stopped, or found already ended: on `machine`, as its record
     /// now stands.

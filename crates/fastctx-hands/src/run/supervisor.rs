@@ -169,18 +169,14 @@ impl Job {
                 return self.publish_end().await;
             }
         }
-        let (tree, output) = if self.record.is_sentinel() {
-            super::sentinel::spawn(&shell, &self.record, self.world.path())?
-        } else {
-            ProcessTree::spawn_with_io(
-                &shell.program,
-                &args,
-                Path::new(&self.record.cwd),
-                &shell.environment,
-                mode,
-                self.record.stdin.as_deref().map(Path::new),
-            )?
-        };
+        let (tree, output) = ProcessTree::spawn_with_io(
+            &shell.program,
+            &args,
+            Path::new(&self.record.cwd),
+            &shell.environment,
+            mode,
+            self.record.stdin.as_deref().map(Path::new),
+        )?;
         let tree = Arc::new(tree);
         self.record.pid = Some(tree.main_pid());
         let (sender, mut events) = mpsc::unbounded_channel();
@@ -188,7 +184,6 @@ impl Job {
         let mut resume = Some(resume);
         let mut checkpoints = vec![output.stdout.checkpoint()];
         let mut workers = Vec::new();
-        let output_limit = self.record.is_sentinel().then_some(65_536);
         let mut streams = 1;
         // A thread the system will not start leaves the shell running with
         // no one to wait for it: what started is stopped, and the job fails.
@@ -208,7 +203,7 @@ impl Job {
                 checkpoints.push(reader.checkpoint());
                 let sender = sender.clone();
                 workers.push(spawn("fastctx-job-stderr", move || {
-                    let result = output::copy(reader, log, output_limit, |bytes, lost| {
+                    let result = output::copy(reader, log, |bytes, lost| {
                         let _ = sender.send(Event::Drained { stderr: true, bytes, lost });
                     });
                     let _ = sender.send(Event::Output { stderr: true, result });
@@ -216,7 +211,7 @@ impl Job {
             }
             let sender_out = sender.clone();
             workers.push(spawn("fastctx-job-stdout", move || {
-                let result = output::copy(output.stdout, log, output_limit, |bytes, lost| {
+                let result = output::copy(output.stdout, log, |bytes, lost| {
                     let _ = sender_out.send(Event::Drained { stderr: false, bytes, lost });
                 });
                 let _ = sender_out.send(Event::Output { stderr: false, result });
@@ -269,13 +264,8 @@ impl Job {
         let mut empty = false;
         let mut drained_out = None;
         let mut drained_err = (streams == 1).then_some(0);
-        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
         loop {
             tokio::select! {
-                () = tokio::time::sleep_until(deadline), if self.record.is_sentinel() && self.record.stop.is_none() => {
-                    resume.take();
-                    self.stop(tree, StopRequest {by:"sentinel".into(),reason:"observation exceeded 30 seconds".into()}).await?;
-                }
                 request = server.next() => {
                     let (connection, request) = request?;
                     self.waiting.push(connection);

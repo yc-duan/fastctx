@@ -246,10 +246,20 @@ impl Link {
     }
 
     /// Last received versions, or only the durable policy before the hub answers.
-    /// Saved constraints never recreate machine reports or queued updates.
+    /// Ended memberships impose no constraints. Saved constraints never recreate
+    /// machine reports or queued updates.
     pub fn update_network(&self) -> Option<Network> {
+        if !self.membership_active() {
+            return None;
+        }
         self.versions().or_else(|| {
-            self.inner.versions.policy.lock().expect("never poisoned").as_ref().map(|policy| policy.network())
+            self.inner
+                .versions
+                .policy
+                .lock()
+                .expect("never poisoned")
+                .as_ref()
+                .map(|policy| policy.network(&self.inner.key.public().to_string()))
         })
     }
 

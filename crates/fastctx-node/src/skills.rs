@@ -54,7 +54,7 @@ pub(crate) async fn context(node: &Node, acting: &Acting) -> Option<(String, Str
         return Some((String::new(), String::new()));
     }
     match cache::get(node, &link, &account).await {
-        Ok(body) => Some(body),
+        Ok(held) => Some((held.text, held.version)),
         Err(failed) => {
             if failed.news {
                 node.log.line(format_args!("reading the skills of {account}: {}", failed.error));
@@ -62,6 +62,17 @@ pub(crate) async fn context(node: &Node, acting: &Acting) -> Option<(String, Str
             None
         }
     }
+}
+
+/// The names and sentences of the skills of the one account `acting` works
+/// for, as a conversation's slash menu lists them; none when its hub cannot
+/// be asked now.
+pub(crate) async fn listed(node: &Node, acting: &Acting) -> Vec<skills::Listed> {
+    let Some((link, account)) = account_of(node, acting) else { return Vec::new() };
+    if crate::authorization::current_view(&link).is_ok_and(|view| view.account(&account).is_none()) {
+        return Vec::new();
+    }
+    cache::get(node, &link, &account).await.map(|held| held.index.skills).unwrap_or_default()
 }
 
 /// The skill `name` of the account `caller` works for, whole.

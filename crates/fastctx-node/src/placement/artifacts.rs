@@ -85,8 +85,9 @@ impl Lease {
         }
     }
 }
-/// The existing observation sandbox exposes only its script and current
-/// directory. A goal therefore starts in this verified evidence-only subtree.
+/// The folder of the evidence the World keeps for `owner`, which a goal's
+/// judge may read with its looks: verified to be the account's, and a plain
+/// directory.
 pub(crate) fn read_directory(
     node: &Node,
     scope: &HubAccount,

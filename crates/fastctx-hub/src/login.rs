@@ -337,6 +337,7 @@ pub(crate) async fn open_account(
                     locked: false,
                     opened: Timestamp::now(),
                     collab: None,
+                    history: false,
                     profile: None,
                     promotion: false,
                 }));

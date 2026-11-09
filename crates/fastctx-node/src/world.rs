@@ -158,7 +158,8 @@ pub fn start(node: &Arc<Node>, membership: Membership) -> io::Result<Arc<Link>> 
         .is_some_and(|ended| ended.dissolved);
     let handler = Arc::new(Handler { node: Arc::downgrade(node), hub: hub.clone(), changes: Arc::default() });
     let link = Arc::new(Link::start(net, membership, key, handler)?);
-    if let Some(old) = node.links.write().expect("never poisoned").insert(hub.clone(), link.clone()) {
+    let previous = node.links.write().expect("never poisoned").insert(hub.clone(), link.clone());
+    if let Some(old) = previous {
         old.stop();
     }
     // What the link said of its ways before it was among the links was not
@@ -283,7 +284,9 @@ async fn logged_in(node: &Arc<Node>, joined: Joined) -> Result<Reply, Failure> {
             .map_err(|error| Failure::new(format!("renaming this computer to {name}: {error}")))?;
         node.set_names(names);
     }
-    match node.link_of(&hub) {
+    // A link the hub stopped, as when it removed this computer, is not asked
+    // again: the new membership starts one in its place.
+    match node.link_of(&hub).filter(|link| !matches!(link.status(), Status::Stopped { .. })) {
         // Logged in again where the hub is reached now, as after a move this
         // computer did not follow: the link connects there from now on.
         Some(link) if !addresses.is_empty() && link.hub_addresses() != addresses => {
@@ -311,8 +314,12 @@ async fn logged_in(node: &Arc<Node>, joined: Joined) -> Result<Reply, Failure> {
                 .map_err(|error| Failure::new(format!("logged in, but recording the membership failed: {error}")))?;
             start(node, membership).map_err(|error| Failure::new(format!("starting the link to the hub: {error}")))?;
             crate::ledger::joined(node, &hub);
+            crate::history::import::schedule(node);
             let (carrying, at) = (node.clone(), hub.clone());
-            fastctx_platform::task::spawn(async move { crate::own_collab::carry(&carrying, &at).await });
+            fastctx_platform::task::spawn(async move {
+                crate::own_collab::carry(&carrying, &at).await;
+                crate::history::own_switch::carry(&carrying, &at).await;
+            });
         }
     }
     node.log.line(format_args!("logged in to {account} on {hub_name} as {name}"));
@@ -528,8 +535,10 @@ async fn put_aside(node: &Arc<Node>, link: &Arc<Link>) -> Result<std::path::Path
     // that named it as its own (`own_collab`).
     if node.links().iter().all(|other| other.membership().id == hub) {
         crate::own_collab::take_back(node, link);
+        crate::history::own_switch::take_back(node, link);
     }
     link.stop();
+    crate::replicas::cleanup::schedule(node);
     crate::mcp::store::leave(node, &hub).map_err(Failure::new)?;
     node.links.write().expect("never poisoned").remove(&hub);
     node.ways_changed();
@@ -570,7 +579,13 @@ pub fn accounts(node: &Node) -> AccountsReply {
         })
         .collect();
     let names = node.machine_names();
-    AccountsReply { machine: names.name, was: names.was, hubs, dissolved }
+    AccountsReply {
+        machine: names.name,
+        was: names.was,
+        hubs,
+        dissolved,
+        history: !node.connected_anywhere() && crate::history::own_switch::read(node).is_ok_and(|setting| setting.on),
+    }
 }
 
 /// What this machine is like.
@@ -580,12 +595,12 @@ pub fn facts(node: &Node) -> MachineFacts {
     };
     MachineFacts {
         turn_debts: true,
-        goal_runtime: fastctx_platform::preview() && node.goals.available(),
+        goal_runtime: node.goals.available(),
         goal_colleagues: true,
         goal_waits: true,
         goal_questions: true,
         goal_question_words: true,
-        goal_commands: fastctx_platform::preview(),
+        goal_commands: true,
         goal_reports: true,
         name: node.machine(),
         os: std::env::consts::OS.to_string(),
@@ -596,7 +611,7 @@ pub fn facts(node: &Node) -> MachineFacts {
         case_sensitive: !cfg!(any(windows, target_os = "macos")),
         version: env!("CARGO_PKG_VERSION").to_string(),
         sentinels: true,
-        sentinel_look: true,
+        inspects: true,
         completion_receipts: true,
         control_letters: true,
         run_stops: true,
@@ -883,19 +898,11 @@ impl fastctx_net::link::Node for Handler {
                             .map(|(taken, following)| RemoteReply::OnReceipt { taken, following })
                             .map_err(|error| Failure::new(format!("reading the on receipt: {error}")))
                     }
-                    RemoteCall::Follow { mut origin, job, out_from, err_from } => {
-                        if origin.sentinel.is_some() {
-                            origin.account = Some(HubAccount { hub: hub.clone(), account: caller.account.clone() });
-                        }
+                    RemoteCall::Follow { origin, job, out_from, err_from } => {
                         let stream = stream.ok_or_else(|| Failure::new("following an on needs a data connection"))?;
                         crate::on::serve_follow(&node, origin, job, out_from, err_from, stream).await
                     }
-                    RemoteCall::StopOn { mut origin, job } => {
-                        if origin.sentinel.is_some() {
-                            origin.account = Some(HubAccount { hub: hub.clone(), account: caller.account.clone() });
-                        }
-                        crate::on_stop::serve(&node, origin, job).await
-                    }
+                    RemoteCall::StopOn { origin, job } => crate::on_stop::serve(&node, origin, job).await,
                     RemoteCall::StopJob { job, by } => {
                         // The user is the user on whichever of their machines they
                         // asked; an agent is named with where it lives.
@@ -987,6 +994,7 @@ impl fastctx_net::link::Node for Handler {
                     | RemoteCall::AgentFolder { .. }
                     | RemoteCall::SetAgentTitle { .. }
                     | RemoteCall::SetAgentResetInPlace { .. }
+                    | RemoteCall::ChangeAgentModels { .. }
                     | RemoteCall::PreviewAgentChange { .. }
                     | RemoteCall::ChangeAgentLogin { .. }
                     | RemoteCall::ReadAgentLimits { .. }
@@ -1225,6 +1233,13 @@ impl fastctx_net::link::Node for Handler {
                             .await
                             .map(RemoteReply::SentinelKeys)
                     }
+                    RemoteCall::SentinelTry => {
+                        let scope =
+                            fastctx_types::access::HubAccount { hub: hub.clone(), account: caller.account.clone() };
+                        crate::sentinels::trial::here(&node, &scope)
+                            .await
+                            .map(|report| RemoteReply::SentinelTried(Box::new(report)))
+                    }
                     RemoteCall::SentinelKeys => {
                         let scope =
                             fastctx_types::access::HubAccount { hub: hub.clone(), account: caller.account.clone() };
@@ -1273,6 +1288,12 @@ impl fastctx_net::link::Node for Handler {
                         .map(|answer| RemoteReply::Book(Box::new(answer))),
                     RemoteCall::Stats { after, seen } => {
                         crate::stats::here(&node, after, seen).await.map(|stats| RemoteReply::Stats(Box::new(stats)))
+                    }
+                    RemoteCall::Inspect { inspect, evidence_of } => {
+                        let scope = HubAccount { hub: hub.clone(), account: caller.account.clone() };
+                        crate::inspect::here(&node, &scope, inspect, evidence_of.as_ref())
+                            .await
+                            .map(RemoteReply::Inspected)
                     }
                     RemoteCall::MemoryRoom { bytes } => {
                         crate::memory_room::answer(&node, bytes).map(|bytes| RemoteReply::MemoryRoom { bytes })
@@ -1498,7 +1519,7 @@ impl fastctx_net::link::Node for Handler {
                 &self.hub,
                 crate::replicas::updates::Change::History { town: town.clone(), name, version },
             );
-            crate::context::invalidations::project_at(&node, &self.hub, &town);
+            crate::context::invalidations::history_at(&node, &self.hub, &town);
             node.memory_changed();
         }
     }
@@ -1530,6 +1551,7 @@ impl fastctx_net::link::Node for Handler {
     /// more, whoever made it (`world-network.md`, 解散网络).
     fn place_ended(&self, dissolved: bool, then: Option<fastctx_types::uninstall::Then>) {
         let Some(node) = self.node.upgrade() else { return };
+        crate::replicas::cleanup::schedule(&node);
         let hub = self.hub.clone();
         if let Err(error) = crate::mcp::store::leave(&node, &hub) {
             node.log.line(format_args!("removing MCP commands after leaving the network: {error}"));
@@ -1553,6 +1575,7 @@ impl fastctx_net::link::Node for Handler {
     fn connected(&self) {
         let Some(node) = self.node.upgrade() else { return };
         node.views_changed();
+        crate::history::import::schedule(&node);
         crate::context::invalidations::reconnected(&node, &self.hub);
         node.skill_index.invalidate(&self.hub, None);
         crate::placement::copies::refresh(&node, &self.hub);
@@ -1584,6 +1607,12 @@ impl fastctx_net::link::Node for Handler {
                 fastctx_types::history::RECORD_KIND | fastctx_types::owned_records::KIND
             ) {
                 node.memory_changed();
+            }
+            if change.metadata.kind == fastctx_types::sentinel_settings::RECORD_KIND {
+                crate::account_features::changed(
+                    &node,
+                    fastctx_types::access::HubAccount { hub: self.hub.clone(), account: change.account.clone() },
+                );
             }
             crate::context::invalidations::record(&node, &self.hub, change);
             crate::placement::copies::changed(&node, &self.hub, change);

@@ -8,10 +8,8 @@ use serde::{Deserialize, Serialize};
 
 use super::{Change, Receipt, words};
 
-/// The most a block may take as it is kept, its text escaped as JSON: the
-/// Claude Code plugin reads each block's file in one read of at most 4 MiB.
-/// Blocks reach the model whole; only one that otherwise could not reach it
-/// at all is cut.
+/// The limit for file-backed context blocks, including JSON escaping.
+/// History is bounded at its source and always delivered whole.
 const BLOCK_KEPT_BYTES: usize = 4 * 1024 * 1024 - 64 * 1024;
 const BLOCK_COUNT: usize = 12;
 const FACT_BYTES: usize = 1024;
@@ -141,8 +139,11 @@ fn set_mode(
     }
     exists(world, id)?;
     let source = crate::profile::session::hash(text);
-    let text = bounded(text, BLOCK_KEPT_BYTES);
-    let fact = bounded(change.fact, FACT_BYTES);
+    let (text, fact) = if name == "history" {
+        (text.to_string(), change.fact.to_string())
+    } else {
+        (bounded(text, BLOCK_KEPT_BYTES), bounded(change.fact, FACT_BYTES))
+    };
     let incoming = Block {
         revision: 0,
         written_epoch: 0,
@@ -355,6 +356,10 @@ pub(super) fn collect(
         Ok((notes, Receipt { epoch: state.epoch, revisions, versions, reserved: false, shown }))
     })
 }
+pub(super) fn current_version(rows: &crate::records::Rows<'_>, name: &str) -> fastctx_storage::Result<Option<String>> {
+    Ok(rows.get::<Block>(super::records::BLOCKS, name)?.map(|block| block.version))
+}
+
 pub(super) fn seen_revision(rows: &crate::records::Rows<'_>, name: &str) -> fastctx_storage::Result<Option<u64>> {
     Ok(rows.get::<State>(super::records::STATE, "current")?.and_then(|state| state.seen.get(name).copied()))
 }

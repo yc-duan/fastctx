@@ -320,7 +320,7 @@ fn nodes() -> Vec<NodesReply> {
         goal_commands: lifetime,
         goal_reports: lifetime,
         sentinels: false,
-        sentinel_look: false,
+        inspects: false,
         name: name.parse().unwrap(),
         os: os.into(),
         arch: if os == "windows" { "x86_64".into() } else { "aarch64".into() },

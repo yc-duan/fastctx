@@ -64,7 +64,7 @@ fn cursor(db: &Connection, deed: &str) -> fastctx_storage::Result<Cursor> {
 /// their budget and stop being kept, and the book shows the gap once it
 /// reads again. Collecting the whole job still waits for it (`consumed`).
 pub(crate) fn segment(node: &Node, record: &JobRecord) -> io::Result<u64> {
-    if record.is_sentinel() || node.book_database.fault().is_some() {
+    if node.book_database.fault().is_some() {
         return Ok(u64::MAX);
     }
     node.book_database.read_now(|db| Ok(cursor(db, &deed(record))?.steps_segment)).map_err(io::Error::other)
@@ -73,9 +73,6 @@ pub(crate) fn segment(node: &Node, record: &JobRecord) -> io::Result<u64> {
 /// Whole-job collection obeys the same independent consumer as segment retention.
 /// A failed database is never evidence that its source has been consumed.
 pub(crate) fn consumed(node: &Node, record: &JobRecord) -> io::Result<bool> {
-    if record.is_sentinel() {
-        return Ok(true);
-    }
     if node.book_database.fault().is_some() {
         return Ok(false);
     }
@@ -90,10 +87,7 @@ pub(crate) fn consumed(node: &Node, record: &JobRecord) -> io::Result<bool> {
         .map_err(io::Error::other)
 }
 
-pub(crate) fn observe(node: &Node, path: &Path, record: &JobRecord) -> io::Result<()> {
-    if record.is_sentinel() {
-        return Ok(());
-    }
+pub(crate) fn observe(node: &Node, path: &Path) -> io::Result<()> {
     if let Some(error) = node.book_database.fault() {
         return Err(io::Error::other(error.clone()));
     }

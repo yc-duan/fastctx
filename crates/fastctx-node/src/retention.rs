@@ -205,7 +205,7 @@ fn recover_book(node: &Arc<Node>) {
         match crate::activity_book::consumed(node, &record) {
             Ok(true) => {}
             Ok(false) => {
-                if let Err(error) = crate::activity_book::observe(node, &path, &record) {
+                if let Err(error) = crate::activity_book::observe(node, &path) {
                     node.log.line(format_args!("recovering activity for job {}: {error}", record.id));
                 }
             }
@@ -304,17 +304,6 @@ fn collect_records(node: &Arc<Node>, now: Timestamp, lifetime: i64) -> io::Resul
                     Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
                     Err(error) => return Err(error),
                 };
-                if job.is_sentinel()
-                    && let Some(end) = &job.end
-                    && expired(now, end.at, lifetime)
-                    && !program::in_use(&job)?
-                    && crate::on::unfollowed(node, &path)
-                {
-                    if !forget(&path, held)? {
-                        pending = true;
-                    }
-                    continue;
-                }
                 let marker = path.with_extension("delivered");
                 let delivery = match crate::job_metadata::read(&marker) {
                     Ok(bytes) => serde_json::from_slice::<JobDelivery>(&bytes).map_err(io::Error::other)?,

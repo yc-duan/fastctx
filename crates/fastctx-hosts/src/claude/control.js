@@ -105,6 +105,8 @@ async function controlOpen($, sessions, sessionId) {
       session: sessionId, process: identity.process, parent: identity.parent,
       command_contract: 2,
       handoff_contract: 1,
+      // A model control's effort of '' names none (`selection.js`).
+      selection_contract: 1,
       assisted: await assistedSession($),
       // Persisted before polling: even a reload in the same clock tick or
       // after a clock rollback gets a different answer address.

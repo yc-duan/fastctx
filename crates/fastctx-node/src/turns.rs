@@ -151,12 +151,13 @@ async fn apply_inner(node: &Arc<Node>, id: &ResidentId, mut event: SessionEvent)
             crate::asked::settle(node, id, |asked| asked.waits && asked.id == request_id)?;
         }
         Happened::Finished { item, .. } => {
-            // What it asked without stopping goes where its words go: to the
-            // conversation it works for, or to the user, as `message_user`'s.
+            // What it asked without stopping goes where its words go: a
+            // colleague's to the conversation it works for; a session working
+            // for the user keeps it in the conversation the user reads.
             if let Some(said) = crate::asked::asked_without_stopping(item)
                 && !crate::goals::questions::route(node, id, item, event.at).await?
                 && crate::voice::speaks(node, id)
-                && let Err(error) = crate::voice::asked_without_stopping(node, id, &said).await
+                && let Err(error) = crate::voice::tell_asker(node, id, &said, &[]).await
             {
                 node.log.line(format_args!("keeping what {id} asked without stopping: {}", error.message));
             }

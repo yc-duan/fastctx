@@ -1,21 +1,31 @@
 //! Sentinel command and delivery wording, collected for editorial review.
+pub const DISABLED: &str =
+    "Watchers are turned off for this account. Ask the user to enable Watchers (观测) in Fastctx account settings.";
 pub const HELP: &str = r#"fastctx sense '<what to wait for>' [--at <time>]... [--web] [--tell '<note>']
 
-Leave a sentinel to wait for something and wake you when it happens. It
-lives on <machine>, which stays on, so it keeps watching after this session
-ends or this computer sleeps, and a closed session is brought back to hear it.
+Leave a sentinel to wait for something that takes judgment to see, and wake
+you when it happens. It lives on <machine>, which stays on, so it keeps
+watching after this session ends or this computer sleeps, and a closed
+session is brought back to hear it.
 
 Say the thing in one sentence, as exactly as you can: what must become true,
 and where to look if you know. The sentinel works out how to watch it and
 replies with its plan and a first look; read the plan.
 
-A sentinel sees the user's machines and the connections allowed for it,
-read-only, and cannot reach the internet.
+A sentinel reads the user's machines: files, directories, processes, GPUs,
+memory and disks, and the output of your jobs. It runs no programs and
+cannot reach the internet.
 
 With --web it is the other way round: it searches and reads the public web
-and sees nothing of the user's: no machines, no files, no connections. What
-you write goes into web searches, so write nothing private. Use --web only
-for what is on the public web alone, such as a published price.
+and sees nothing of the user's. What you write goes into web searches, so
+write nothing private. Use --web only for what is on the public web alone,
+such as a published price.
+
+What a program can tell needs no sentinel: a line in a log, a file that
+appears, a process that ends, a command whose output changes. Run a script
+that waits for it and exits, such as
+`until grep -q done train.log; do sleep 60; done`, in the background; when
+it ends you are woken with its last lines.
 
 --at also wakes you at that time and keeps waiting; repeat it for more
 times: 08:00, 2026-10-23T08:00, 30m. When the thing happens you are woken

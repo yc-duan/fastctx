@@ -31,7 +31,8 @@ impl Origin {
 }
 
 pub(super) fn withdrawn(node: &Node, version: &str, origin: Option<&Origin>) -> bool {
-    origin.is_some_and(|origin| origin.current(node, version) == Some(false))
+    super::withdrawal::check(node, version).is_err()
+        || origin.is_some_and(|origin| origin.current(node, version) == Some(false))
 }
 
 pub(super) fn reconcile(node: &Arc<Node>) {

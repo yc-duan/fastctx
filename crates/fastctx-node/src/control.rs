@@ -15,6 +15,11 @@ use fastctx_types::{Address, ResidentId};
 
 use crate::Node;
 
+/// Why `/model` is refused: the model is chosen in the conversation's model
+/// panel alone (`world-gui.md`, 对话).
+pub(crate) const MODEL_COMMAND: &str =
+    "/model is not taken here: choose the model in the conversation's model panel, under the input";
+
 pub async fn control(
     node: &Arc<Node>,
     resident: ResidentId,
@@ -196,6 +201,10 @@ pub async fn offers_here(node: &Arc<Node>, resident: &ResidentId) -> Result<Offe
         }
         _ => Offers::default(),
     };
+    // The account's own skills, which its words can ask for with `$name`.
+    if let Some((about, _)) = node.residents.about(resident) {
+        offers.skills = crate::skills::listed(node, &about.acting).await;
+    }
     offers.pending_controls = crate::control_queue::pending(node, resident).await?;
     offers.control_queue = true;
     offers.controls_told = true;

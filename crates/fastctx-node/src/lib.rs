@@ -9,6 +9,7 @@
 //! it records what happened while it was away, such as jobs whose
 //! supervisor did not survive a restart of the machine.
 
+mod account_features;
 mod account_records;
 pub mod activity;
 mod activity_book;
@@ -80,6 +81,7 @@ mod hub_arrival;
 mod hub_moving;
 mod inbox;
 mod initializing;
+mod inspect;
 mod intake;
 mod job_accounts;
 mod job_files;
@@ -234,6 +236,7 @@ pub(crate) struct Node {
     /// What this machine keeps in memory of each history scope, when it
     /// has no network (`history::shelf`).
     history_shelves: history::shelf::Shelves,
+    history_imports: history::import::Imports,
     /// What this machine keeps in memory of the ledgers it writes alone
     /// (`ledger::alone`).
     alone_ledgers: ledger::alone::Ledgers,
@@ -371,6 +374,7 @@ pub(crate) struct Node {
     /// Who watches the interface's optional parts (`features`).
     features: features::Switches,
     own_collab: own_collab::Keeping,
+    own_history: history::own_switch::Keeping,
     renewal: renewal::Startup,
     /// New versions of Fastctx here (`updates`).
     updates: updates::Updates,
@@ -415,6 +419,7 @@ impl Node {
     /// A hub's view may have changed, or this computer's name did: what is
     /// afoot here, and what an interface shows, may change with it.
     pub(crate) fn views_changed(&self) {
+        self.contexts.reading.changed(self);
         self.views.send_modify(|changes| *changes = changes.wrapping_add(1));
         self.shown_changed();
     }
@@ -789,6 +794,7 @@ pub async fn run_prepared(
                 context_bodies: Default::default(),
                 replicas: Default::default(),
                 history_shelves: Default::default(),
+                history_imports: Default::default(),
                 alone_ledgers: Default::default(),
                 registered: Default::default(),
                 collaboration_reads: Default::default(),
@@ -868,6 +874,7 @@ pub async fn run_prepared(
                 handoff: Arc::new(handoff::Handoff::default()),
                 features: features::Switches::default(),
                 own_collab: own_collab::Keeping::default(),
+                own_history: history::own_switch::Keeping::default(),
                 renewal,
                 updates: Default::default(),
                 supervised,
@@ -900,6 +907,7 @@ pub async fn run_prepared(
                 .line(format_args!("on the hub {} ({}) as {}", membership.hub_name, membership.id, membership.name));
             world::start(&node, membership).context("starting a link to a hub")?;
         }
+        replicas::cleanup::start(&node);
         Ok::<_, anyhow::Error>(())
     })
     .await??;
@@ -936,12 +944,8 @@ pub async fn run_prepared(
             composer::keep(&node);
             lifecycle::start(&node);
             recovery::start(&node, jobs_reconciled);
-            // Goals and sentinels are not offered in a release yet: what of them is
-            // kept stays as it is, driven by nothing.
-            if fastctx_platform::preview() {
-                goals::start(&node);
-                sentinels::start(&node);
-            }
+            goals::start(&node);
+            sentinels::start(&node);
             skills::follow(&node);
             on_delivery::resume(&node);
             received::resume(&node);

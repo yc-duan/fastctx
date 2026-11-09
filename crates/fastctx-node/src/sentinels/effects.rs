@@ -73,7 +73,8 @@ impl Runtime for Effects {
                 })
             } else {
                 // Every machine its account works on, as the agents of that account are given them.
-                let link = node.link_of(&registration.scope.hub).ok_or("the observation account's hub is not connected")?;
+                let link =
+                    node.link_of(&registration.scope.hub).ok_or("the observation account's hub is not connected")?;
                 let view = crate::authorization::current_view(&link).map_err(|e| e.message)?;
                 let account = &registration.scope.account;
                 let machines = view
@@ -82,11 +83,7 @@ impl Runtime for Effects {
                     .map(|member| fastctx_sentinel::ports::Machine { name: member.name.clone(), online: member.online })
                     .collect();
                 Ok(Capabilities {
-                    look: Box::new(super::look::MachineLook {
-                        node,
-                        scope: registration.scope.clone(),
-                        directory: directory.join("observations"),
-                    }),
+                    look: Box::new(super::look::MachineLook { node, scope: registration.scope.clone() }),
                     web: Box::new(Disabled),
                     machines,
                 })
@@ -96,7 +93,7 @@ impl Runtime for Effects {
     fn model<'a>(&'a self, registration: &'a Registration) -> FutureResult<'a, Box<dyn Model>> {
         Box::pin(async move {
             let node = self.node()?;
-            let settings = settings(&node, registration).await?;
+            let settings = running_settings(&node, registration).await?;
             let model = settings.model.ok_or("the sentinel model is not configured")?;
             let credentials = node.sentinels.credentials.get().ok_or("sentinel credential service is not connected")?;
             let key = tokio::time::timeout(
@@ -123,6 +120,23 @@ async fn settings(
     }
     Ok(settings)
 }
+async fn running_settings(
+    node: &Node,
+    registration: &Registration,
+) -> Result<fastctx_types::sentinel_settings::Settings, String> {
+    let settings = settings(node, registration).await?;
+    let enabled = if registration.definition.kind == Kind::Goal { settings.goals } else { settings.sentinels };
+    if !enabled {
+        return Err(if registration.definition.kind == Kind::Goal {
+            fastctx_types::goals::words::DISABLED
+        } else {
+            fastctx_types::sentinel_words::DISABLED
+        }
+        .into());
+    }
+    Ok(settings)
+}
+
 struct NodeSearch {
     node: Weak<Node>,
     registration: Registration,
@@ -132,7 +146,7 @@ impl Search for NodeSearch {
     fn search<'a>(&'a self, query: &'a str) -> FutureResult<'a, ReadResult> {
         Box::pin(async move {
             let node = self.node.upgrade().ok_or("the sentinel node has stopped")?;
-            let settings = settings(&node, &self.registration).await?;
+            let settings = running_settings(&node, &self.registration).await?;
             let search = settings.search.ok_or("sentinel search is not configured")?;
             let credentials = node.sentinels.credentials.get().ok_or("sentinel credential service is not connected")?;
             let key = tokio::time::timeout(
@@ -141,7 +155,7 @@ impl Search for NodeSearch {
             )
             .await
             .map_err(|_| "reading the sentinel search key timed out")??;
-            Tavily { endpoint: search.endpoint, key, audit: Audit::new(self.directory.join("web-audit")) }
+            Tavily { endpoint: search.endpoint, key, audit: Some(Audit::new(self.directory.join("web-audit"))) }
                 .search(query)
                 .await
         })
@@ -153,7 +167,7 @@ impl Look for Disabled {
         &'a self,
         _: &'a fastctx_types::sentinel::Definition,
         _: &'a MachineName,
-        _: &'a str,
+        _: &'a fastctx_types::inspect::Inspect,
     ) -> FutureResult<'a, ReadResult> {
         Box::pin(async { Err("machine observations are not available to this sentinel".into()) })
     }

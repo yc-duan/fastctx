@@ -73,6 +73,20 @@ pub async fn control(node: &Arc<Node>, resident: &ResidentId, control: Control) 
     if let Control::Answer { request, answer } = control {
         return answer_request(node, resident, request, answer).await;
     }
+    // The model is chosen in the conversation's model panel alone, never
+    // with `/model` (`world-gui.md`, 对话), and is one its login offers, as
+    // those who hold it listed them. One whose efforts the World does not
+    // know goes on with none named.
+    if matches!(&control, Control::Command { name, path: None, .. } if name == "model") {
+        return Err(Failure::not_run(crate::control::MODEL_COMMAND));
+    }
+    let control = match control {
+        Control::Model { model, effort } if model.is_some() || effort.is_some() => {
+            let (model, effort) = chosen(node, resident, &about, model, effort).await?;
+            Control::Model { model: Some(model), effort }
+        }
+        control => control,
+    };
     // What has the model work in a session between turns, a compaction or a
     // skill, takes a turn of its login, as words do (`turn_slots`), before
     // the session is woken for it.
@@ -121,6 +135,58 @@ pub(crate) async fn usage_now(node: &Arc<Node>, resident: &ResidentId) -> Result
     tokio::time::timeout(std::time::Duration::from_secs(60), invoke(node, resident, json!({"do":"usage"})))
         .await
         .map_err(|_| Failure::new("Claude did not report current usage within 60 seconds"))?
+}
+
+/// The model and effort a model control hands the session's mod, always
+/// naming the model, so that what the mod holds in memory cannot bring
+/// back one its login no longer offers (`super::model_list`): the one asked
+/// for, which the login must offer; with only an effort asked for, the one
+/// it goes on with while offered, else the one the login starts on. A model
+/// whose efforts the World does not know goes on with none named, said to a
+/// mod that takes that as an empty effort.
+async fn chosen(
+    node: &Arc<Node>,
+    resident: &ResidentId,
+    about: &fastctx_types::residents::About,
+    model: Option<String>,
+    effort: Option<String>,
+) -> Result<(String, Option<String>), Failure> {
+    let directory = about.session.as_ref().map(|session| files::directory(node.world.path(), session));
+    let aliases = match &about.session {
+        Some(session) => fastctx_hosts::claude::exchange::observed_aliases(
+            &fastctx_hosts::claude::exchange::sessions(node.world.path()).join(session),
+        )
+        .map_err(failure)?,
+        None => None,
+    };
+    let edits = crate::logins::models::edits_of(node, about.home.as_deref())?;
+    let offering = crate::logins::models::Offering { aliases, edits };
+    let model = match model {
+        Some(model) => {
+            offering.require(&model)?;
+            model
+        }
+        None => {
+            let current = super::model_list::current(node, resident, about).await?;
+            match current.filter(|current| offering.offers(current)) {
+                Some(current) => current,
+                None => {
+                    let profile = crate::profile::session::get(node, &about.acting);
+                    offering.starting(profile.claude.get("model").and_then(Value::as_str))?
+                }
+            }
+        }
+    };
+    if !fastctx_hosts::claude::models::efforts_of(&model).is_empty() {
+        return Ok((model, effort));
+    }
+    let clears = match &directory {
+        Some(directory) => {
+            files::host(directory).map_err(failure)?.is_none_or(|host| host.selection_contract == Some(1))
+        }
+        None => true,
+    };
+    Ok((model, clears.then(String::new)))
 }
 
 /// The goal's compaction respects the host's automatic compaction setting.
@@ -185,9 +251,11 @@ pub async fn offers(node: &Arc<Node>, resident: &ResidentId) -> Result<Offers, F
     let mut offers = if let Ok(mut offers) = asked {
         super::catalog::keep(node, resident, &offers)?;
         // The mod lists the aliases this login's Claude Code offers; the
-        // World offers its own table's rows of those families.
+        // World offers its own table's rows of those families, as those who
+        // hold the login changed them.
         let aliases: Vec<String> = offers.models.drain(..).map(|model| model.id).collect();
-        offers.models = fastctx_hosts::claude::models::model_offers(Some(&aliases));
+        let edits = crate::logins::models::edits_of(node, about.home.as_deref())?;
+        offers.models = fastctx_hosts::claude::models::model_offers(Some(&aliases), &edits);
         if !offers.controls.contains(&ControlKind::Model) {
             offers.controls.push(ControlKind::Model);
         }
@@ -204,13 +272,13 @@ pub async fn offers(node: &Arc<Node>, resident: &ResidentId) -> Result<Offers, F
         let checkpoints = about
             .session
             .as_ref()
-            .map(|session| files::read_message(&files::directory(node.world.path(), session).join("checkpoints.json")))
-            .transpose();
-        let checkpoints = match checkpoints {
-            Ok(value) => value.filter(|value| value["full"] == true),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-            Err(error) => return Err(failure(error)),
-        };
+            .map(|session| {
+                files::read_message_if_present(&files::directory(node.world.path(), session).join("checkpoints.json"))
+            })
+            .transpose()
+            .map_err(failure)?
+            .flatten()
+            .filter(|value| value["full"] == true);
         // A sleeping session's model is chosen as a running one's is: kept
         // for its next turn, among the models its login was last seen to
         // offer. One chosen before Claude Code names the session, in the few
@@ -254,12 +322,11 @@ pub async fn offers(node: &Arc<Node>, resident: &ResidentId) -> Result<Offers, F
                 .map(str::to_owned)
                 .or(initial.model)
                 .or(about.model),
-            effort: selected
-                .as_ref()
-                .and_then(|value| value["effort"].as_str())
-                .map(str::to_owned)
-                .or(initial.reasoning_effort),
-            models: fastctx_hosts::claude::models::model_offers(aliases.as_deref()),
+            effort: chosen_effort(selected.as_ref(), initial.reasoning_effort),
+            models: fastctx_hosts::claude::models::model_offers(
+                aliases.as_deref(),
+                &crate::logins::models::edits_of(node, about.home.as_deref())?,
+            ),
             ..Default::default()
         }
     };
@@ -337,11 +404,7 @@ pub(super) async fn selection(
     Ok(fastctx_types::agents::SessionOptions {
         mcp_off: initial.mcp_off,
         model: selected.as_ref().and_then(|value| value["model"].as_str()).map(str::to_owned).or(initial.model),
-        reasoning_effort: selected
-            .as_ref()
-            .and_then(|value| value["effort"].as_str())
-            .map(str::to_owned)
-            .or(initial.reasoning_effort),
+        reasoning_effort: chosen_effort(selected.as_ref(), initial.reasoning_effort),
     })
 }
 
@@ -804,4 +867,13 @@ pub fn ended(node: &Node, session: &str) {
 
 fn failure(error: std::io::Error) -> Failure {
     Failure::new(error.to_string())
+}
+
+/// The effort a session's choices name: once a choice was made through the
+/// World, the one it names, none included; before, the one it started with.
+fn chosen_effort(selected: Option<&Value>, initial: Option<String>) -> Option<String> {
+    match selected.filter(|selected| selected.is_object()) {
+        Some(selected) => selected["effort"].as_str().map(str::to_owned),
+        None => initial,
+    }
 }

@@ -309,6 +309,9 @@ export class Sidebar {
       ${store.trouble.peek() ? `<p class="sidebar-trouble" title="${escape(store.trouble.peek() ?? "")}">${escape(words.unreachable)}</p>` : ""}
       ${store.unanswered.peek() >= SLOW ? `<p class="sidebar-trouble" role="status">${escape(words.unanswered(store.unanswered.peek()))}</p>` : ""}`;
 
+    // A project's document read from one of its conversations keeps that
+    // conversation marked, as the way back leads there.
+    const marked: Place = place.kind === "history" && place.from ? { kind: "talk", address: place.from } : place;
     // Logged in to more than one account, the sidebar is the World as each
     // of them sees it, one after another; with one, it is that account's.
     const groups = groupsOf(world);
@@ -324,13 +327,13 @@ export class Sidebar {
           const asking = mine.some((r) => r.now?.waiting_for_user);
           return `<section class="sidebar-account${shut ? " shut" : ""}">
             <h2 class="side-account-title"><button class="side-account-fold${shut && asking ? " asking" : ""}" type="button" data-fold="group:${escape(key)}" aria-expanded="${!shut}" aria-label="${escape(words.groupOf(loginLabel(group.login)))}">${glyph("chevron", 14)}<span class="side-account-name">${escape(group.login.hubName)}<span class="side-account-sep"></span>${escape(group.login.account)}</span></button></h2>
-            ${shut ? "" : `<div class="side-account-body">${this.projects(group.towns, mine, place, now, facts, key)}${this.loose(mine, place, now, facts)}</div>`}
+            ${shut ? "" : `<div class="side-account-body">${this.projects(group.towns, mine, marked, now, facts, key)}${this.loose(mine, marked, now, facts)}</div>`}
           </section>`;
         })
         .join("");
     } else {
       const towns = groups[0]?.towns ?? (world?.towns ?? []).map((town) => town.town);
-      body = this.projects(towns, talks, place, now, facts, null) + this.loose(talks, place, now, facts);
+      body = this.projects(towns, talks, marked, now, facts, null) + this.loose(talks, marked, now, facts);
     }
 
     this.drawFoot(world, place);

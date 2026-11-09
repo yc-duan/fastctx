@@ -205,7 +205,7 @@ impl Pieces {
             (context.node.clone(), context.origin.clone(), context.consumed.clone(), context.through_exit)
         };
         let complete = !through_exit && !matches!(&end, OnEnd::Exited { remaining, .. } if *remaining > 0);
-        if origin.sentinel.is_none() && node.is_me(&origin.resident.machine) && !consumed.is_empty() {
+        if node.is_me(&origin.resident.machine) && !consumed.is_empty() {
             let directory = node.world.conversation(&origin.resident.resident);
             fastctx_platform::task::spawn_blocking(move || crate::job_receipts::apply_consumed(&directory, &consumed))
                 .await
@@ -215,7 +215,7 @@ impl Pieces {
         let (taken, receipt) = oneshot::channel();
         self.0.send(Piece::End { end, taken }).await.map_err(|_| "the on that sent it left".to_string())?;
         let received = receipt.await.is_ok();
-        if received && origin.sentinel.is_none() {
+        if received {
             let context = self.2.lock().clone();
             fastctx_platform::task::spawn_blocking(move || {
                 let job = context.job.as_ref().expect("started before end");
@@ -281,13 +281,9 @@ pub async fn send(node: &Arc<Node>, mut origin: OnOrigin, request: OnRequest) ->
         .job
         .as_ref()
         .map(|job| node.world.job_owner(&node.names(), &origin.resident.clone().into()).job_record(job));
-    let steps = if origin.sentinel.is_none() {
-        crate::on_steps::begin(node, parent.as_ref(), &request)
-            .await
-            .map_err(|error| Failure::new(format!("preparing the on step: {error}")))?
-    } else {
-        None
-    };
+    let steps = crate::on_steps::begin(node, parent.as_ref(), &request)
+        .await
+        .map_err(|error| Failure::new(format!("preparing the on step: {error}")))?;
     let context = ReceiptContext {
         scratch_hub: None,
         node: node.clone(),
@@ -450,16 +446,6 @@ async fn there(
         context.origin = origin.clone();
         context.scratch_hub = Some(link.membership().id);
     }
-    if origin.sentinel.is_some() {
-        match link
-            .call(&machine, &account, Purpose::Look, RemoteCall::Facts)
-            .await
-            .map_err(crate::authorization::call_failure)??
-        {
-            RemoteReply::Facts(facts) if facts.sentinel_look => {}
-            _ => return Err(Failure::not_run("upgrade the observed machine to run sentinel observations")),
-        }
-    }
     let sizes = sizes(&request.package).await.map_err(|failure| Failure::not_run(failure.message))?;
     requested(node, local_origin, request).await?;
     let followed = Arc::new(Mutex::new(Rank::EMITTING, "on follow progress", "", Followed::default()));
@@ -476,13 +462,9 @@ async fn there(
     // Its output goes straight to the `on` the script pipes it into when
     // that machine may take it from there (`world-run.md`, 数据跟着命令走).
     let piped = request.pipe_to.as_ref().is_some_and(|to| straight(node, &link, &account, &machine, to));
-    // A sentinel's look is no script of the conversation.
-    let attachments = match origin.sentinel {
-        None => {
-            let (reading, whose) = (node.clone(), origin.resident.clone());
-            fastctx_platform::task::blocking(move || crate::attachments::follow::known(&reading, &whose)).await
-        }
-        Some(_) => Vec::new(),
+    let attachments = {
+        let (reading, whose) = (node.clone(), origin.resident.clone());
+        fastctx_platform::task::blocking(move || crate::attachments::follow::known(&reading, &whose)).await
     };
     // A machine from before attachments went with a script runs it and
     // leaves them behind, saying nothing: one the script reaches for them
@@ -827,7 +809,7 @@ async fn sizes(package: &OnPackage) -> Result<OnSizes, Failure> {
 /// it lives here, so the machine it went to may write back about it; and
 /// beside the job whose script it is part of, for that job's answer.
 async fn requested(node: &Arc<Node>, origin: &OnOrigin, request: &OnRequest) -> Result<(), Failure> {
-    if origin.sentinel.is_some() || !node.is_me(&origin.resident.machine) {
+    if !node.is_me(&origin.resident.machine) {
         return Ok(());
     }
     let action = Action {
@@ -848,9 +830,6 @@ async fn requested(node: &Arc<Node>, origin: &OnOrigin, request: &OnRequest) -> 
 }
 
 async fn noted(node: &Arc<Node>, origin: &OnOrigin, request: &OnRequest, job: &JobId) -> Result<(), Failure> {
-    if origin.sentinel.is_some() {
-        return Ok(());
-    }
     let here = node.names();
     let action = Action {
         turn: origin.turn.clone(),
@@ -899,11 +878,6 @@ pub async fn serve_on(
     mut stream: Stream,
 ) -> Result<RemoteReply, Failure> {
     let starting = async {
-        if origin.sentinel.is_some()
-            && (sizes.state != 0 || sizes.input != 0 || sizes.script > 8192 || how.piped || how.source.is_some())
-        {
-            return Err(Failure::not_run("invalid internal observation package"));
-        }
         let mut staged = Staged::receive(node, &origin, &sizes, &mut stream)
             .await
             .map_err(|failure| Failure::not_run(failure.message))?;
@@ -912,9 +886,7 @@ pub async fn serve_on(
             take_piped(node, &origin, source, &path, &mut stream).await?;
             staged.input = Some(path);
         }
-        if origin.sentinel.is_none() {
-            bring_files(node, &origin, how.attachments, &mut stream).await?;
-        }
+        bring_files(node, &origin, how.attachments, &mut stream).await?;
         start(node, &origin, staged, how.writes_off, how.piped).await
     }
     .await;
@@ -1212,13 +1184,6 @@ pub(crate) fn on_job(node: &Arc<Node>, origin: &OnOrigin, job: &JobId) -> Result
         {
             Err(Failure::refused(format!("{job} belongs to a different on request")))
         }
-        Ok(record)
-            if record.on.as_ref().is_some_and(|on| {
-                on.sentinel != origin.sentinel || (on.sentinel.is_some() && on.account != origin.account)
-            }) =>
-        {
-            Err(Failure::refused("the observation identity or account does not match"))
-        }
         Ok(record) if record.on.is_some() => Ok(path),
         Ok(_) => Err(Failure::refused(format!("{job} on {} was not sent by an on", node.machine()))),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Err(Failure::output_not_retained(format!(
@@ -1323,11 +1288,8 @@ async fn start(
     writes_off: bool,
     piped: bool,
 ) -> Result<(JobId, PathBuf, Follower), Failure> {
-    let observation_directory =
-        if origin.sentinel.is_some() { crate::sentinels::look::admit(node, origin).await? } else { None };
     let script = staged.script;
     let on = OnJob {
-        sentinel: origin.sentinel.clone(),
         state: staged.state.to_string_lossy().into_owned(),
         request: origin.request.clone(),
         follower: origin.follower.clone(),
@@ -1338,7 +1300,7 @@ async fn start(
         turn: origin.turn.clone(),
         call_id: origin.call_id.clone(),
         script,
-        cwd: observation_directory.map(|path| crate::world::native(&path)),
+        cwd: None,
         writes_off,
         wait: None,
         attachments: Vec::new(),
@@ -1369,19 +1331,18 @@ pub(crate) struct Follower {
     node: Arc<Node>,
     path: PathBuf,
     _reader: crate::job_reader::Lease,
-    internal: bool,
 }
 
 impl Follower {
     /// Reserves the files before the follower becomes visible to collection.
-    pub(crate) fn reserved(node: &Arc<Node>, path: &Path, internal: bool) -> Option<Self> {
+    pub(crate) fn reserved(node: &Arc<Node>, path: &Path) -> Option<Self> {
         let reader = crate::job_reader::hold(node, path)?;
-        Some(Self::with_reader(node, path, reader, internal))
+        Some(Self::with_reader(node, path, reader))
     }
 
-    fn with_reader(node: &Arc<Node>, path: &Path, reader: crate::job_reader::Lease, internal: bool) -> Self {
+    fn with_reader(node: &Arc<Node>, path: &Path, reader: crate::job_reader::Lease) -> Self {
         *node.following.lock().expect("never poisoned").entry(path.to_path_buf()).or_default() += 1;
-        Self { node: node.clone(), path: path.to_path_buf(), _reader: reader, internal }
+        Self { node: node.clone(), path: path.to_path_buf(), _reader: reader }
     }
 
     async fn new(node: &Arc<Node>, path: &Path) -> Result<Self, Failure> {
@@ -1389,8 +1350,7 @@ impl Follower {
         fastctx_platform::task::spawn_blocking(move || {
             let reader = crate::job_reader::hold(&node, &path)
                 .ok_or_else(|| Failure::new(crate::job_reader::gone().to_string()))?;
-            let record = fastctx_hands::run::record::read(&path).map_err(|error| Failure::new(error.to_string()))?;
-            Ok(Self::with_reader(&node, &path, reader, record.is_sentinel()))
+            Ok(Self::with_reader(&node, &path, reader))
         })
         .await
         .map_err(|error| Failure::new(error.to_string()))?
@@ -1399,23 +1359,6 @@ impl Follower {
     async fn finish(self, handed: Result<Handed, String>) -> Result<(), Failure> {
         let handed = handed.map_err(Failure::new)?;
         fastctx_platform::task::spawn_blocking(move || {
-            if self.internal {
-                if matches!(handed, Handed { taken: true, complete: true }) {
-                    let record =
-                        fastctx_hands::run::record::read(&self.path).map_err(|e| Failure::new(e.to_string()))?;
-                    let receipt = fastctx_types::run::JobDelivery {
-                        job: record.id,
-                        output: record.output,
-                        at: jiff::Timestamp::now(),
-                        shown_whole: true,
-                    };
-                    crate::job_metadata::put(&self.path.with_extension("delivered"), &receipt)
-                        .map_err(|e| Failure::new(e.to_string()))?;
-                    self.node.job_files.due.lock().expect("never poisoned").insert(self.path.clone());
-                    self.node.job_files.changed.notify_one();
-                }
-                return Ok(());
-            }
             // A shell's background children still owe their eventual end,
             // even if they finished while the shell's receipt was in flight.
             if matches!(handed, Handed { taken: true, complete: true }) {
@@ -1439,9 +1382,7 @@ impl Drop for Follower {
                 following.remove(&self.path);
             }
         }
-        if !self.internal {
-            crate::inbox::retry_job(&self.node, &self.path);
-        }
+        crate::inbox::retry_job(&self.node, &self.path);
     }
 }
 
@@ -1568,21 +1509,19 @@ async fn hand_over(
             sink.scratch(scratch.clone()).await?;
             known_scratch = scratch;
         }
-        if !record.is_sentinel() {
-            loop {
-                let (path, mut position) = (record_path.to_path_buf(), facts_cursor);
-                let (facts, next) = fastctx_platform::task::spawn_blocking(move || {
-                    crate::run_facts::read_since(&path, &mut position).map(|facts| (facts, position))
-                })
-                .await
-                .map_err(|error| error.to_string())?
-                .map_err(|error| error.to_string())?;
-                facts_cursor = next;
-                if facts.is_empty() {
-                    break;
-                }
-                sink.facts(facts).await?;
+        loop {
+            let (path, mut position) = (record_path.to_path_buf(), facts_cursor);
+            let (facts, next) = fastctx_platform::task::spawn_blocking(move || {
+                crate::run_facts::read_since(&path, &mut position).map(|facts| (facts, position))
+            })
+            .await
+            .map_err(|error| error.to_string())?
+            .map_err(|error| error.to_string())?;
+            facts_cursor = next;
+            if facts.is_empty() {
+                break;
             }
+            sink.facts(facts).await?;
         }
         let errors = record.stderr.clone();
         let boundary = record.output_drained.filter(|_| record.end.is_none() && through(&record).is_some());
@@ -1608,12 +1547,6 @@ async fn hand_over(
             continue;
         }
         if let Some(end) = through(&record) {
-            if record.is_sentinel() {
-                return sink
-                    .ended(end, false, Vec::new(), record.end.is_none(), known_scratch)
-                    .await
-                    .map(|taken| Handed { taken, complete: record.end.is_some() });
-            }
             let path = record_path.to_path_buf();
             let writes = fastctx_platform::task::spawn_blocking(move || crate::run_facts::writes(&path))
                 .await

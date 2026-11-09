@@ -289,6 +289,9 @@ async fn finish_inner(node: &Arc<Node>, intent: &mut Intent) -> Result<Updated, 
             intents::keep(node, &directory, intent).await.map_err(failure)?;
             return Ok(Updated::Conflict { current: current.version });
         } else {
+            if intent.proposed.as_ref().is_some_and(|goal| goal.retired.is_none()) {
+                crate::account_features::require_goals(node, &intent.account).await?;
+            }
             let body = match &intent.proposed {
                 Some(goal) => Some(
                     super::archive::encode(node, &intent.account, goal, &intent.operation, intent.expected, storage)

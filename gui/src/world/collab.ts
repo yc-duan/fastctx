@@ -55,7 +55,7 @@ export interface CollabView {
 /** An account's settings at a hub, or, with no account, this computer's
  *  own, which apply while it is in no network. */
 export function readCollab(hub: string | null, account: string | null): Promise<CollabView> {
-  if (!inShell()) return import("../specimen/collab").then((specimen) => (shown ??= specimen.specimenCollab()));
+  if (import.meta.env.DEV && !inShell()) return import("../specimen/collab").then((specimen) => (shown ??= specimen.specimenCollab()));
   return invoke("collab_read", { hub, account });
 }
 
@@ -65,7 +65,7 @@ let shown: CollabView | null = null;
 /** Writes the settings over the version they were read at; the new version.
  *  This computer's own are written only while it is in no network. */
 export function writeCollab(hub: string | null, account: string | null, collab: Collab): Promise<number> {
-  if (!inShell()) {
+  if (import.meta.env.DEV && !inShell()) {
     const version = collab.version + 1;
     if (shown) shown = { ...shown, collab: { ...collab, version } };
     return Promise.resolve(version);

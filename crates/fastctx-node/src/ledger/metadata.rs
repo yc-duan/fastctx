@@ -50,19 +50,21 @@ pub(crate) async fn refresh(node: &Arc<Node>, link: &Arc<Link>, wanted: Option<&
             continue;
         }
         // The project's files are named, cleared and read on the blocking pool.
-        let (town, kept) = {
+        let Some((town, kept)) = ({
             let (naming, link, id) = (node.clone(), link.clone(), id.clone());
             fastctx_platform::task::blocking(move || -> Result<_, String> {
-                let town = super::local_name(&naming, &link, &id)?;
+                let Some(town) = super::sync_name(&naming, &link, &id)? else { return Ok(None) };
                 match fastctx_platform::disk::remove_file(naming.world.town(&town).path().join("index.json")) {
                     Ok(()) => {}
                     Err(error) if error.kind() == io::ErrorKind::NotFound => {}
                     Err(error) => return Err(error.to_string()),
                 }
                 let kept = read(&naming.world, &town).map_err(|error| error.to_string())?;
-                Ok((town, kept))
+                Ok(Some((town, kept)))
             })
             .await?
+        }) else {
+            continue;
         };
         if kept.as_ref().is_some_and(|kept| kept.seq >= index.seq) {
             continue;

@@ -17,6 +17,12 @@ pub fn file(path: &str, bytes: &[u8], old: &MachineName, new: &MachineName) -> R
     };
     let writer = |value: &mut Writer| rename_writer(value, old, new);
     let renamed = match parts.as_slice() {
+        ["history", _, version] if version.ends_with(".json") => {
+            let mut stored: fastctx_net::topic_history::Revision = parse(path, bytes)?;
+            stored.revision.author.stamp.on.iter_mut().for_each(rename);
+            writer(&mut stored.revision.author.stamp.by);
+            pretty(&stored)
+        }
         ["pages", _, "versions", _, "page.json"] => {
             let mut version: fastctx_types::pages::PageVersion = parse(path, bytes)?;
             version.on.iter_mut().for_each(rename);

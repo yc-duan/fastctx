@@ -66,6 +66,11 @@ pub(crate) fn start(node: &Arc<Node>) {
                         scopes.insert(HubAccount { hub: link.membership().id.clone(), account });
                     }
                 }
+                for resident in node.residents.everyone() {
+                    if let Acting::Accounts { accounts } = resident.about.acting {
+                        scopes.extend(accounts);
+                    }
+                }
                 match host.known() {
                     Ok(known) => {
                         for registration in known {
@@ -185,6 +190,12 @@ async fn enqueue(node: &Arc<Node>, scope: HubAccount, id: SentinelId, fired: Opt
         let result = async {
             let host = engine(&node)?;
             delete_if_owner_deleted(&node, &host, &scope, &id).await?;
+            let registration = lifecycle::get(host.records.as_ref(), &scope, &id).await.map_err(|e| e.to_string())?;
+            let goal =
+                registration.as_ref().is_some_and(|(_, r)| r.definition.kind == fastctx_types::sentinel::Kind::Goal);
+            if !crate::account_features::sentinel(&node, &scope, goal).await.map_err(|e| e.message)? {
+                return Ok(());
+            }
             if let Some(fired) = fired {
                 host.fire(&fired).await?;
                 tokio::time::timeout(
@@ -196,7 +207,9 @@ async fn enqueue(node: &Arc<Node>, scope: HubAccount, id: SentinelId, fired: Opt
             } else {
                 host.reconcile(&scope, &id).await?;
             }
-            super::delivery::pending(&node, &host, &scope, &id).await?;
+            if crate::account_features::sentinel(&node, &scope, goal).await.map_err(|e| e.message)? {
+                super::delivery::pending(&node, &host, &scope, &id).await?;
+            }
             Ok::<(), String>(())
         }
         .await;

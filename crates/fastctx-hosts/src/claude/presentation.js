@@ -13,6 +13,13 @@ const WORLD_FRAMES = [
   'The user sent a new message while you were working:',
 ]
 
+// The user's words as they were said, from a prompt the World's plugin
+// submitted for them, one zero-width space before a leading "/" fewer
+// (`world.js`, `asTyped`; `claude::as_said`).
+function asSaid(text) {
+  return /^\u200B+\//.test(text) ? text.slice(1) : text
+}
+
 // The session's observable presentation. Transport and inbox delivery live
 // in world.js; this module never submits a prompt or changes a host result.
 // Each handler receives reporting callbacks bound to its original session.
@@ -165,7 +172,8 @@ export function presentation(reserve, currentTurn) {
         await emit(reports, { event: 'changed', turn: turn ?? null, change: { kind: 'agent_ended', agent_id: told.agent, end: told.end } })
       } else if (e.agentId === undefined && e.door === 'prompt' && result.message.type === 'user'
         && !result.message.content.some(block => block.type === 'tool_result')) {
-        const text = result.message.content.filter(block => block.type === 'text').map(block => block.text).join('\n')
+        const prompt = result.message.content.filter(block => block.type === 'text').map(block => block.text).join('\n')
+        const text = e.origin?.kind === 'plugin' ? asSaid(prompt) : prompt
         // Words the World handed over are told by its own record, which knows
         // who said them, as the node's reading of the transcript leaves them
         // out (`claude::is_framed`).

@@ -192,6 +192,16 @@ impl Shelf {
     }
 
     fn refresh_conversation(&mut self, records: &Path) -> Result<(), String> {
+        if let Some(paths) = super::import::state::archiving(records)? {
+            self.documents.clear();
+            self.folders.clear();
+            self.seen = Seen::default();
+            for path in paths {
+                let stored = read_stored(&path)?;
+                self.put(stored.revision, fastctx_net::sign::sha256(stored.text.as_bytes()), 0);
+            }
+            return Ok(());
+        }
         let now = changed(records)?;
         if now.is_none() {
             self.documents.clear();
@@ -275,6 +285,11 @@ impl Shelf {
         shelved.latest = shelved.versions.last().expect("a version was put").clone();
     }
 
+    /// How many documents the scope holds, retired ones included.
+    pub(crate) fn count(&self) -> usize {
+        self.documents.len()
+    }
+
     pub(crate) fn document(&self, name: &str) -> Option<&Shelved> {
         self.documents.get(name)
     }
@@ -308,7 +323,10 @@ impl Shelf {
                 let text = String::from_utf8(file.bytes.0.clone()).map_err(|error| error.to_string())?;
                 Ok(Stored { revision, text, submission: None })
             }
-            Of::Conversation { records } => read_stored(&records.join(name).join(format!("{version}.json"))),
+            Of::Conversation { records } => {
+                let path = records.join(name).join(format!("{version}.json"));
+                read_stored(&super::import::state::readable(&path)?)
+            }
         }
     }
 
@@ -371,9 +389,13 @@ impl Shelf {
         text: Option<&str>,
         previous: Option<&str>,
     ) -> Result<(), String> {
+        let previous = previous.map(crate::replicas::bodies::Text::of);
         match text {
-            None => crate::replicas::files::delete(path).map_err(|error| error.to_string())?,
-            Some(text) => crate::replicas::files::publish(path, text, previous).map_err(|error| error.to_string())?,
+            None => crate::replicas::files::retire(path, None, previous.as_ref()).map_err(|error| error.to_string())?,
+            Some(text) => {
+                crate::replicas::files::publish(path, text, None, previous.as_ref())
+                    .map_err(|error| error.to_string())?;
+            }
         }
         let copy = Copy { version: latest.version, retired: latest.retired, stood: stood(path)? };
         self.copies.insert(name.to_string(), copy);

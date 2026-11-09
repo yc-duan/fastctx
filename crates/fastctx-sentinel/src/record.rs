@@ -189,15 +189,12 @@ fn wake(sequence: u64, run: &Run) -> Vec<SessionEvent> {
                 }
                 continue;
             }
-            let (name, machine, does) = match call.name.as_str() {
-                "look" => (
-                    "look",
-                    said("machine").and_then(|machine| machine.parse().ok()),
-                    Does::Command { command: said("command").unwrap_or_default(), cwd: None, exit: None, job: None },
-                ),
-                "search" => ("search", None, Does::Search { query: said("query").unwrap_or_default() }),
-                "fetch_web" => ("WebFetch", None, Does::Call),
-                other => (other, None, Does::Call),
+            // A look names the machine it looked at.
+            let machine = said("machine").and_then(|machine| machine.parse().ok());
+            let (name, does) = match call.name.as_str() {
+                "search" => ("search", Does::Search { query: said("query").unwrap_or_default() }),
+                "fetch_web" => ("WebFetch", Does::Call),
+                other => (other, Does::Call),
             };
             let status = match result {
                 Some(result) if result.error => ToolStatus::Failed,

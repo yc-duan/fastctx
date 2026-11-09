@@ -1,6 +1,9 @@
 //! Event-driven discovery and per-document refresh; no filesystem watching.
 
-use super::state::{self, Copy, Folder};
+use super::{
+    bodies::Text,
+    state::{self, Copy, Folder},
+};
 use crate::Node;
 use fastctx_net::link::Link;
 use fastctx_types::{
@@ -33,6 +36,15 @@ pub(crate) fn folder(node: &Node, link: &Link, scope: &Scope) -> Result<PathBuf,
             node.world.owner(&node.names(), &conversation.address).path().join("history")
         }
     })
+}
+
+pub(crate) fn enabled(node: &Node, account: &HubAccount, document: &Document) -> bool {
+    match document {
+        Document::History { scope, .. } => {
+            crate::history::switch::enabled(node, account) && !crate::history::import::settling(node, scope)
+        }
+        Document::Plan { .. } => true,
+    }
 }
 
 pub(crate) fn permitted(node: &Node, copy: &Copy) -> Result<(), String> {
@@ -68,6 +80,7 @@ pub(crate) async fn all(node: &Arc<Node>, link: &Arc<Link>) -> Result<(), String
         .map(|(id, route)| (id.clone(), route.clone()))
         .collect();
     let known_folders: Vec<_> = node.replicas.state.folders.lock().expect("never poisoned").values().cloned().collect();
+    let catalog_view = crate::authorization::current_view(link).map_err(failure)?;
     let Response::Replicas { catalog } = link.owned_records(&account, Request::Replicas).await? else {
         return Err("the hub did not return the replica catalog".into());
     };
@@ -90,16 +103,44 @@ pub(crate) async fn all(node: &Arc<Node>, link: &Arc<Link>) -> Result<(), String
         }
         super::publication::folder(node, Folder { account: account.clone(), scope, path }).await?;
     }
+    // One document that cannot be brought up to date holds up no other: it
+    // is tried again on its own.
+    let mut failed = Vec::new();
+    let listed: std::collections::BTreeSet<_> =
+        catalog.documents.iter().map(|head| state::identity(&account, head)).collect();
     for head in catalog.documents.iter().cloned() {
-        apply(node, link, &account, head).await?;
+        if let Err(error) = apply(node, link, &account, head.clone()).await {
+            failed.push((head, error));
+        }
     }
-    super::publication::catalog(node, account.hub.clone(), catalog, known, known_folders).await?;
+    // Edits waiting for a document the hub has not heard of yet, as one
+    // started while this computer was offline, go up now.
+    for slot in node.replicas.state.slots() {
+        let head = {
+            let copy = slot.lock().await;
+            if copy.account != account || copy.pending.is_empty() || listed.contains(&copy.id()) {
+                continue;
+            }
+            copy.head.clone()
+        };
+        if let Err(error) = apply(node, link, &account, head.clone()).await {
+            failed.push((head, error));
+        }
+    }
+    super::publication::catalog(node, catalog_view, catalog, known, known_folders).await?;
     super::publication::prune(node).await?;
     node.memory_changed();
+    if let Some(error) = super::updates::retry_later(node, &account, failed) {
+        node.log.line(format_args!("synchronizing document replicas: {error}"));
+    }
     Ok(())
 }
 
 pub(crate) async fn apply(node: &Arc<Node>, link: &Arc<Link>, account: &HubAccount, head: Head) -> Result<(), String> {
+    // Pausing history leaves existing copies and pending edits untouched.
+    if !enabled(node, account, &head.document) {
+        return Ok(());
+    }
     if let Document::Plan { owner } = &head.document {
         crate::placement::copies::upgrade::take(node, link, &head.owner, owner).await.map_err(failure)?;
     }
@@ -113,42 +154,89 @@ pub(crate) async fn apply(node: &Arc<Node>, link: &Arc<Link>, account: &HubAccou
             account: account.clone(),
             head: Head { version: None, ..head.clone() },
             path: path.clone(),
-            text: String::new(),
+            body: Text::default(),
+            projected: None,
             observed: Default::default(),
             pending: Vec::new(),
+            left: Vec::new(),
         })
     });
-    let mut copy = slot.lock().await;
-    if known && copy.path == path && copy.head == head && copy.pending.is_empty() {
-        return super::publication::repair(node, &copy).await;
+    let mut kept = slot.lock().await;
+    let mut copy = kept.clone();
+    let current = known && copy.path == path && copy.left.is_empty() && copy.pending.is_empty();
+    // A catalog read before a newer revision arrived does not take it back.
+    let stale = known && copy.head.version.zip(head.version).is_some_and(|(kept, told)| told < kept);
+    if current && (copy.head == head || stale) {
+        // A kept text that was lost is fetched again.
+        if super::publication::repair(node, &mut kept).await.is_ok() {
+            return Ok(());
+        }
+        return refresh(node, link, &mut kept).await;
     }
-    let old_path = copy.path.clone();
-    copy.path = path;
+    let previous = copy.effective().clone();
+    let shown = copy.projected.clone();
+    if copy.path != path {
+        let left = std::mem::replace(&mut copy.path, path);
+        copy.left.push(left);
+    }
+    let current_path = state::path_key(&copy.path);
+    copy.left.retain(|path| state::path_key(path) != current_path);
     copy.head.document = head.document.clone();
     permitted(node, &copy)?;
-    if head.retired && copy.pending.is_empty() {
-        copy.head = head;
-        copy.text.clear();
-    } else if copy.head.version != head.version || copy.head.retired != head.retired || !copy.pending.is_empty() {
-        refresh(node, link, &mut copy).await?;
-    } else {
-        copy.head = head;
+    // Flush reads its own base, including the absence of a new history topic.
+    if copy.pending.is_empty() {
+        if !stale && head.retired {
+            copy.head = head;
+            copy.body = Text::default();
+        } else if copy.head.version != head.version || copy.head.retired != head.retired {
+            fetch(node, link, &mut copy).await?;
+        } else if !stale {
+            copy.head = head;
+        }
     }
-    if !copy.pending.is_empty() {
-        super::writing::flush(node, link, &mut copy).await?;
-    }
+    // What went to the hub, and an edit it refused, are kept even when the
+    // rest could not go.
+    let flushed = if copy.pending.is_empty() { Ok(()) } else { super::writing::flush(node, link, &mut copy).await };
     if copy.head.retired && copy.pending.is_empty() {
-        copy.text.clear();
+        copy.body = Text::default();
     }
-    super::publication::save(node, &copy, true, Some(copy.effective())).await?;
-    if old_path != copy.path {
-        fastctx_platform::task::blocking(move || super::files::withdraw(&old_path)).await.map_err(failure)?;
+    if flushed.is_err() && copy.pending.len() < kept.pending.len() {
+        super::publication::save(node, &mut copy, false, None).await?;
+        *kept = copy.clone();
     }
-    Ok(())
+    super::publication::save(node, &mut copy, true, Some(&previous)).await?;
+    *kept = copy;
+    super::publication::leave(node, &mut kept, shown.as_ref(), &previous).await?;
+    flushed
+}
+
+/// Keeps `text` as one of the copy's texts.
+pub(crate) async fn keep(node: &Arc<Node>, copy: &Copy, text: &str) -> Result<Text, String> {
+    let (world, id, text) = (node.world.clone(), copy.id(), text.to_owned());
+    fastctx_platform::task::blocking(move || super::bodies::put(&world, &id, &text)).await.map_err(failure)
+}
+
+/// One of the copy's kept texts.
+pub(crate) async fn text(node: &Arc<Node>, copy: &Copy, text: &Text) -> Result<String, String> {
+    let (world, id, text) = (node.world.clone(), copy.id(), text.clone());
+    fastctx_platform::task::blocking(move || super::bodies::read(&world, &id, &text)).await.map_err(failure)
 }
 
 pub(crate) async fn refresh(node: &Arc<Node>, link: &Link, copy: &mut Copy) -> Result<(), String> {
-    let previous = copy.effective().to_string();
+    let previous = copy.effective().clone();
+    let mut next = copy.clone();
+    fetch(node, link, &mut next).await?;
+    super::publication::save(node, &mut next, true, Some(&previous)).await?;
+    *copy = next;
+    Ok(())
+}
+
+/// Takes the hub's current revision into the copy in memory; its caller
+/// keeps the copy.
+pub(crate) async fn fetch(node: &Arc<Node>, link: &Link, copy: &mut Copy) -> Result<(), String> {
+    if !enabled(node, &copy.account, &copy.head.document) {
+        return Err("notes synchronization is paused for this document".into());
+    }
     let (text, version, retired, history) = match &copy.head.document {
         Document::Plan { owner } => {
             let page = link.owned_plan_read(&copy.account.account, owner).await?;
@@ -175,11 +263,13 @@ pub(crate) async fn refresh(node: &Arc<Node>, link: &Link, copy: &mut Copy) -> R
         }
     };
     permitted(node, copy)?;
-    copy.text = if retired && copy.pending.is_empty() { String::new() } else { text };
+    if !enabled(node, &copy.account, &copy.head.document) {
+        return Err("notes synchronization is paused for this document".into());
+    }
+    copy.body = if retired && copy.pending.is_empty() { Text::default() } else { keep(node, copy, &text).await? };
     copy.head.version = version;
     copy.head.retired = retired;
     copy.head.history = history;
-    super::publication::save(node, copy, true, Some(&previous)).await?;
     Ok(())
 }
 
@@ -188,24 +278,29 @@ pub(crate) async fn repair(node: &Arc<Node>) -> Result<(), String> {
 }
 
 async fn repair_now(node: Arc<Node>) -> Result<(), String> {
-    if node.links().is_empty() {
-        crate::history::local_copy::repair(&node).await.map_err(|error| error.message)?;
-    }
+    crate::history::local_copy::repair(&node).await.map_err(|error| error.message)?;
+    // What this computer may no longer keep is withdrawn as its views
+    // change (`directory_changes`), not here on every command.
     fastctx_platform::task::spawn_blocking(move || {
-        super::publication::prune_now(&node)?;
+        let mut lost = Vec::new();
         for slot in node.replicas.state.slots() {
             // A writer repairs its own projection before returning; other documents never wait for it.
-            let Ok(copy) = slot.try_lock() else { continue };
-            if permitted(&node, &copy).is_ok() {
-                super::publication::repair_now(&node, &copy)?;
+            let Ok(mut copy) = slot.try_lock() else { continue };
+            match super::publication::repair_now(&node, &copy) {
+                Ok(Some(projected)) => copy.projected = projected,
+                Ok(None) => {}
+                Err(error) => lost.push((copy.account.clone(), copy.head.clone(), error)),
             }
+        }
+        // A copy whose kept text cannot be read is fetched again.
+        for (account, head, error) in lost {
+            super::updates::retry_later(&node, &account, vec![(head, error)]);
         }
         Ok(())
     })
     .await
     .map_err(|error| error.to_string())?
 }
-
 pub(crate) async fn project(
     node: &Arc<Node>,
     link: &Arc<Link>,
@@ -232,6 +327,11 @@ pub(crate) async fn project(
         return all(node, link).await;
     }
     for folder in folders {
+        if !crate::history::switch::enabled(node, &folder.account)
+            || crate::history::import::settling(node, &folder.scope)
+        {
+            continue;
+        }
         let view = crate::authorization::current_view(link).map_err(failure)?;
         if !view.member_keeps_project(&view.me, town) {
             return all(node, link).await;
@@ -240,6 +340,7 @@ pub(crate) async fn project(
         let owner = project.owner.clone();
         let opened = view.account(&owner).ok_or("the project's account is unavailable")?.opened;
         let catalog = link.history_catalog(&folder.account.account, town).await?;
+        let mut failed = Vec::new();
         for revision in catalog.documents {
             let head = Head {
                 owner: owner.clone(),
@@ -249,7 +350,12 @@ pub(crate) async fn project(
                 retired: revision.retired,
                 history: Some(revision),
             };
-            apply(node, link, &folder.account, head).await?;
+            if let Err(error) = apply(node, link, &folder.account, head.clone()).await {
+                failed.push((head, error));
+            }
+        }
+        if let Some(error) = super::updates::retry_later(node, &folder.account, failed) {
+            node.log.line(format_args!("synchronizing project history: {error}"));
         }
     }
     node.memory_changed();
@@ -302,9 +408,7 @@ pub(crate) async fn record(
 }
 
 pub(crate) async fn repair_paths(node: &Arc<Node>, paths: &[PathBuf]) -> Result<(), String> {
-    if node.links().is_empty() {
-        crate::history::local_copy::repair(node).await.map_err(|error| error.message)?;
-    }
+    crate::history::local_copy::repair(node).await.map_err(|error| error.message)?;
     super::state::loaded(node).await.map_err(failure)?;
     for path in paths {
         let native = fastctx_platform::local_path(path).map_err(failure)?;
@@ -313,8 +417,8 @@ pub(crate) async fn repair_paths(node: &Arc<Node>, paths: &[PathBuf]) -> Result<
         // A document being written may be waiting on the hub: its reader gets
         // the copy as it stands rather than waiting with it (the writer
         // repairs and publishes its own projection when it is done).
-        let Ok(copy) = tokio::time::timeout(READ_WAIT, slot.lock()).await else { continue };
-        super::publication::repair(node, &copy).await?;
+        let Ok(mut copy) = tokio::time::timeout(READ_WAIT, slot.lock()).await else { continue };
+        super::publication::repair(node, &mut copy).await?;
     }
     Ok(())
 }
@@ -361,6 +465,9 @@ pub(crate) async fn conversation(
         },
     )
     .await?;
+    if !crate::history::switch::enabled(node, &account) || crate::history::import::settling(node, &scope) {
+        return Ok(());
+    }
     let catalog = link.conversation_history_catalog(&account.account, &conversation.address).await?;
     for revision in catalog.documents {
         apply(

@@ -121,7 +121,7 @@ struct Touch {
 }
 
 pub(crate) fn ended(node: &std::sync::Arc<Node>, record: &JobRecord) {
-    if record.end.is_some() && !record.is_sentinel() {
+    if record.end.is_some() {
         seen::look(node, record);
     }
 }

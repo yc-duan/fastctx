@@ -64,6 +64,7 @@ pub fn fixtures() -> Fixtures {
             context_window: None,
             max_context_window: None,
         }],
+        model_edits: None,
         change: Some(LoginChange {
             into: true,
             started_at: at,
@@ -105,6 +106,10 @@ pub fn fixtures() -> Fixtures {
         reset_in_place: false,
         launcher: Some(Launcher { path: "/home/me/.local/bin/claude".into(), version: None, desktop_app: false }),
         models: vec![],
+        model_edits: Some(fastctx_types::logins::models::ModelEdits {
+            removed: vec!["claude-haiku-4-5-20251001".into()],
+            added: vec!["deepseek-flash".into()],
+        }),
         change: Some(LoginChange {
             into: true,
             started_at: at,
@@ -130,6 +135,7 @@ pub fn fixtures() -> Fixtures {
         reset_in_place: false,
         launcher: None,
         models: vec![],
+        model_edits: None,
         change: Some(LoginChange {
             into: true,
             started_at: at,
@@ -223,6 +229,7 @@ pub fn fixtures() -> Fixtures {
                     reset_in_place: false,
                     launcher: None,
                     models: vec![],
+                    model_edits: None,
                     change: None,
                     drift: None,
                     workbench: false,
@@ -428,6 +435,18 @@ pub fn fixtures() -> Fixtures {
                 agent: codex.clone(),
                 dir: "C:/Users/me/.codex".into(),
             },
+            Call::ChangeAgentModels {
+                machine: machine.clone().into(),
+                agent: claude.clone(),
+                dir: "/home/me/.claude-work".into(),
+                change: fastctx_types::logins::models::ModelChange::Add { model: "deepseek-flash".into() },
+            },
+            Call::ChangeAgentModels {
+                machine: machine.clone().into(),
+                agent: claude.clone(),
+                dir: "/home/me/.claude-work".into(),
+                change: fastctx_types::logins::models::ModelChange::Reset,
+            },
         ],
         replies: vec![
             Reply::AgentLogins(WorldLogins {
@@ -453,6 +472,11 @@ pub fn fixtures() -> Fixtures {
             RemoteCall::ScanAgents { stop: true },
             RemoteCall::AddAgentLogin { agent: claude.clone(), dir: "/home/me/.claude-work".into() },
             RemoteCall::AgentFolder { dir: "/home/me/agents".into(), change: FolderChange::Choose },
+            RemoteCall::ChangeAgentModels {
+                agent: claude.clone(),
+                dir: "/home/me/.claude-work".into(),
+                change: fastctx_types::logins::models::ModelChange::Remove { model: "claude-opus-4-6".into() },
+            },
             RemoteCall::PreviewAgentChange {
                 agent: claude.clone(),
                 dir: "/home/me/.claude-work".into(),

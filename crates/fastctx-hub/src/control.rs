@@ -20,6 +20,7 @@ use tokio::sync::mpsc;
 
 pub(crate) mod diagnostics;
 mod encoding;
+mod sending;
 mod transport;
 
 use crate::outq::Outq;
@@ -63,6 +64,7 @@ pub(crate) struct Said {
     pub profiles: bool,
     /// Whether it reads the records of machines' update settings changed.
     pub machine_updates: bool,
+    pub history_switch: bool,
     pub account_records: bool,
     pub record_keys: bool,
     pub skill_files: bool,
@@ -230,7 +232,9 @@ pub(crate) async fn session(
         out.afoot_started();
     }
 
-    let mut transport = transport::Transport::start(socket, &hub.network);
+    let pulse = crate::pulse_of(&socket);
+    let socket = sending::Socket::new(socket, &hub, name.clone(), key);
+    let mut transport = transport::Transport::start(socket, pulse, &hub.network);
     let output = transport.outgoing.clone();
     let (stopped, mut writer_stopped) = tokio::sync::oneshot::channel::<()>();
     let (telling, member, member_name, queue) = (hub.clone(), key, name.clone(), out.clone());
@@ -256,10 +260,10 @@ pub(crate) async fn session(
                     return;
                 }
             };
-            for (bytes, dissolved) in frames {
+            for (outgoing, dissolved) in frames {
                 let (written, received) = tokio::sync::oneshot::channel();
                 tokio::select! {
-                    sent = output.send(transport::Packet { bytes, last, written: dissolved.then_some(written) }) => {
+                    sent = output.send(transport::Packet { outgoing, last, written: dissolved.then_some(written) }) => {
                         if sent.is_err() { return; }
                     }
                     why = queue.overflowed() => {
@@ -792,7 +796,27 @@ fn handle(
             let (hub, out) = (hub.clone(), out.clone());
             fastctx_platform::task::spawn(async move {
                 let _reservation = reservation;
-                let answer = crate::ledger::history_requests::ask(&hub, &origin, question).await;
+                let account = match &question {
+                    Question::HistoryCatalog { account, .. }
+                    | Question::HistoryRead { account, .. }
+                    | Question::HistorySubmitted { account, .. } => account,
+                    _ => unreachable!("history read"),
+                };
+                let deadline = tokio::time::Instant::now() + crate::readers::WITHIN;
+                let reader = match crate::readers::account(&hub, &origin, account, &out, deadline).await {
+                    Ok(permit) => permit,
+                    Err(why) => {
+                        let _ = out.send(Out::Frame(Down::Told { id, answer: Err(why) }));
+                        return;
+                    }
+                };
+                let answer = crate::readers::run(
+                    reader,
+                    &out,
+                    deadline,
+                    crate::ledger::history_requests::ask(&hub, &origin, question),
+                )
+                .await;
                 let _ = out.send(Out::Frame(Down::Told { id, answer }));
             });
         }
@@ -853,7 +877,23 @@ fn handle(
             fastctx_platform::task::spawn(async move {
                 let _held = held;
                 let _reservation = reservation;
-                let answer = crate::owned_records::ask(&hub, from, key, account, request).await;
+                let deadline = tokio::time::Instant::now() + crate::readers::WITHIN;
+                let reader = if crate::readers::owned(&request) {
+                    match crate::readers::account(&hub, &origin, &account, &out, deadline).await {
+                        Ok(permit) => Some(permit),
+                        Err(why) => {
+                            let _ = out.send(Out::Frame(Down::Told { id, answer: Err(why) }));
+                            return;
+                        }
+                    }
+                } else {
+                    None
+                };
+                let work = crate::owned_records::ask(&hub, from, key, account, request);
+                let answer = match reader {
+                    Some(reader) => crate::readers::run(reader, &out, deadline, work).await,
+                    None => work.await,
+                };
                 let _ = out.send(Out::Frame(Down::Told { id, answer }));
             });
         }
@@ -870,7 +910,27 @@ fn handle(
             fastctx_platform::task::spawn(async move {
                 let _held = held;
                 let _reservation = reservation;
-                let answer = crate::account_records::ask(&hub, from, key, account, opened, request).await;
+                let deadline = tokio::time::Instant::now() + crate::readers::WITHIN;
+                let reader = if matches!(
+                    &request,
+                    fastctx_types::account_records::Request::Read { .. }
+                        | fastctx_types::account_records::Request::List { .. }
+                ) {
+                    match crate::readers::account(&hub, &origin, &account, &out, deadline).await {
+                        Ok(permit) => Some(permit),
+                        Err(why) => {
+                            let _ = out.send(Out::Frame(Down::Told { id, answer: Err(why) }));
+                            return;
+                        }
+                    }
+                } else {
+                    None
+                };
+                let work = crate::account_records::ask(&hub, from, key, account, opened, request);
+                let answer = match reader {
+                    Some(reader) => crate::readers::run(reader, &out, deadline, work).await,
+                    None => work.await,
+                };
                 let _ = out.send(Out::Frame(Down::Told { id, answer }));
             });
         }
@@ -1538,6 +1598,7 @@ fn ask(
                     project_deletes: letters.project_deletes,
                     profiles: letters.profiles,
                     machine_updates: letters.machine_updates,
+                    history_switch: letters.history_switch,
                 });
             store
                 .book

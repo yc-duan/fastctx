@@ -68,7 +68,7 @@ fn write(node: &Node, scope: &HubAccount, keys: &Keys) -> Result<(), String> {
         .map_err(|error| format!("keeping sentinel keys: {error}"))
 }
 
-async fn settings(node: &Node, scope: &HubAccount) -> Result<Settings, Failure> {
+pub(super) async fn settings(node: &Node, scope: &HubAccount) -> Result<Settings, Failure> {
     let records = node.sentinels.records()?;
     tokio::time::timeout(Duration::from_secs(60), fastctx_sentinel::settings::read(records, scope))
         .await
@@ -76,7 +76,7 @@ async fn settings(node: &Node, scope: &HubAccount) -> Result<Settings, Failure> 
         .map(|(_, settings)| settings)
         .map_err(|error| Failure::not_run(error.to_string()))
 }
-fn home_is_here(node: &Node, scope: &HubAccount, settings: &Settings) -> Result<bool, Failure> {
+pub(super) fn home_is_here(node: &Node, scope: &HubAccount, settings: &Settings) -> Result<bool, Failure> {
     let link = node.link_of(&scope.hub).ok_or_else(|| Failure::not_run("the account's network is not connected"))?;
     let view = crate::authorization::current_view(&link)?;
     Ok(settings.home.as_ref().is_some_and(|home| view.is_me(home)))
@@ -129,6 +129,12 @@ pub(crate) async fn set(
         RemoteReply::SentinelKeys(status) => Ok(status),
         _ => Err(Failure::new("the sentinel home answered another kind of call")),
     }
+}
+
+/// The key this machine holds for the account, if it holds one; for use
+/// here alone, never to be handed on.
+pub(super) fn held(node: &Node, scope: &HubAccount, key: KeyName) -> Result<Option<String>, Failure> {
+    read(node, scope).map(|mut keys| keys.slot(key).take()).map_err(Failure::new)
 }
 
 /// Which keys this machine holds for the account.

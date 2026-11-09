@@ -90,6 +90,21 @@ const FRAME_V1: &str = "The fastctx plugin delivers a message from the World.";
 /// them beside a tool's result (`world.js`, `userFramed`).
 const USER_FRAME: &str = "The user sent a new message while you were working:";
 
+/// What the World's plugin puts before the user's words that begin with "/",
+/// after any already there, which Claude Code refuses from a plugin as a
+/// command: a zero-width space, which the model reads past (`world.js`,
+/// `asTyped`).
+const BEFORE_SLASH: char = '\u{200B}';
+
+/// The user's words as they were said, from a prompt the World's plugin
+/// submitted for the user.
+pub fn as_said(prompt: &str) -> &str {
+    match prompt.strip_prefix(BEFORE_SLASH) {
+        Some(rest) if rest.trim_start_matches(BEFORE_SLASH).starts_with('/') => rest,
+        _ => prompt,
+    }
+}
+
 /// Words the World says on its own account, as the model reads them.
 pub fn framed(text: &str) -> String {
     format!("{FRAME}\n\n{text}")
@@ -210,13 +225,7 @@ pub fn write_plugin(world: &Path) -> io::Result<PathBuf> {
         .replace("__FASTCTX_FAILURES__", include_str!("failure.js"))
         .replace("__FASTCTX_TURN_FAILURES__", include_str!("turn_failures.js"))
         .replace("__FASTCTX_GOAL__", include_str!("goal.js"));
-    // Where the World offers no goal of its own yet (`world.md`, 这一版不发的),
-    // the refusal of Claude Code's own does not point to one.
-    let refusal = if fastctx_platform::preview() {
-        "Use the conversation goal in Fastctx."
-    } else {
-        fastctx_types::goals::words::UNOFFERED
-    };
+    let refusal = "Use the conversation goal in Fastctx; first enable Goals in the account settings under Watchers.";
     let module =
         module.replace("__FASTCTX_NATIVE_GOAL_REFUSAL__", &serde_json::to_string(refusal).expect("strings serialize"));
     let module = module.replace("__FASTCTX_WORLD__", &serde_json::to_string(&directory).expect("strings serialize"));

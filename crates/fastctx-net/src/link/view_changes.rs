@@ -62,6 +62,7 @@ impl Inner {
     /// Takes `view`, its times by this machine's clock, as this member's
     /// view now.
     pub(super) fn adopt(&self, mut view: View) -> Result<(), String> {
+        let _publishing = self.publishing_view.lock().expect("publishing view");
         // Who came or went since the hub made it.
         self.with_presences(&mut view);
         if view.hub != self.hub {
@@ -91,8 +92,10 @@ impl Inner {
             let records_changed = view.records_changed(&current);
             let ways_changed = view.ways_changed(&current);
             *current = Arc::from(view);
+            let catalog_view = current.clone();
             drop(current);
             if records_changed {
+                self.history_catalogs.view(&catalog_view);
                 let _ = self.record_changes.send(None);
             }
             if let Some(this) = self.this.upgrade() {

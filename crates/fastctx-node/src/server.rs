@@ -62,10 +62,10 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
         return Ok(());
     }
     let welcome = Welcome::Accepted {
-        goal_runtime: fastctx_platform::preview() && node.goals.available(),
+        goal_runtime: node.goals.available(),
         watch_many: true,
-        sentinels: fastctx_platform::preview(),
-        goal_commands: fastctx_platform::preview(),
+        sentinels: true,
+        goal_commands: true,
         profiles: true,
         account_records: true,
         conversation_plans: true,
@@ -245,12 +245,29 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
                 writer.send(&json(&NodeFrame::Reply { id, reply: Err(failure) })).await?;
                 return writer.drain().await;
             }
-            let mut changes = node.memory_changes.subscribe();
             let mut views = node.views.subscribe();
             let mut told = None;
             loop {
-                changes.borrow_and_update();
                 views.borrow_and_update();
+                let selection = crate::history::watch::readers(node, scope);
+                let network = match crate::history::api::network(node, &Caller::User, scope).await {
+                    Ok(network) => network,
+                    Err(failure) => {
+                        writer.send(&json(&NodeFrame::Reply { id, reply: Err(failure) })).await?;
+                        return writer.drain().await;
+                    }
+                };
+                let mut changes = match &network {
+                    Some((link, account)) => match link.history_catalog_changes(account, scope) {
+                        Ok(changes) => changes,
+                        Err(error) => {
+                            writer.send(&json(&NodeFrame::Reply { id, reply: Err(Failure::new(error)) })).await?;
+                            return writer.drain().await;
+                        }
+                    },
+                    None => node.contexts.history_changes.subscribe(scope),
+                };
+                let mut status = network.as_ref().map(|(link, _)| link.subscribe());
                 match crate::history::api::call(
                     node,
                     &Caller::User,
@@ -274,7 +291,17 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
                 }
                 tokio::select! {
                     changed = changes.changed() => if changed.is_err() { return Ok(()) },
-                    changed = views.changed() => if changed.is_err() { return Ok(()) },
+                    _ = async {
+                        match &mut status {
+                            Some(status) => { let _ = status.changed().await; }
+                            None => std::future::pending().await,
+                        }
+                    } => {},
+                    _ = async {
+                        loop {
+                            if views.changed().await.is_err() || crate::history::watch::readers(node, scope) != selection { break; }
+                        }
+                    } => {},
                     _ = reader.recv() => return Ok(()),
                 }
             }
@@ -473,7 +500,6 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
                     };
                     let origin = fastctx_types::on::OnOrigin {
                         turn: None,
-                        sentinel: None,
                         call_id: None,
                         resident,
                         town,
@@ -1372,6 +1398,14 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                 .await
                 .map(|logins| Reply::MachineAgentLogins(Box::new(logins)))
         }
+        Call::ChangeAgentModels { machine, agent, dir, change } => {
+            users_voice(node, peer)?;
+            crate::managed::refuse(node)?;
+
+            crate::logins::remote::change_models(node, machine, agent, dir, change)
+                .await
+                .map(|logins| Reply::MachineAgentLogins(Box::new(logins)))
+        }
         Call::PreviewAgentChange { machine, agent, dir, into, take_back, workbench } => {
             users_voice(node, peer)?;
             crate::managed::refuse(node)?;
@@ -1763,6 +1797,23 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                 crate::profile::scope(node, &caller::of(node, peer)?, hub.as_ref(), account.as_ref())?;
             crate::sentinels::keys::set(node, &link, &account, key, value).await.map(|_| Reply::Done)
         }
+        Call::SentinelTry { hub, account } => {
+            users_voice(node, peer)?;
+            let (link, account) =
+                crate::profile::scope(node, &caller::of(node, peer)?, hub.as_ref(), account.as_ref())?;
+            crate::sentinels::trial::tried(node, &link, &account)
+                .await
+                .map(|report| Reply::SentinelTried(Box::new(report)))
+        }
+        Call::HistorySwitchRead { hub, account } => {
+            users_voice(node, peer)?;
+            crate::history::switch::read(node, hub.as_ref(), account.as_ref()).map(Reply::HistorySwitch)
+        }
+        Call::HistorySwitchWrite { hub, account, on } => {
+            users_voice(node, peer)?;
+            crate::history::switch::write(node, hub.as_ref(), account.as_ref(), on).await?;
+            Ok(Reply::Done)
+        }
         Call::CollabRead { hub, account } => {
             users_voice(node, peer)?;
             match account {
@@ -1930,6 +1981,7 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                     collab: None,
                     scratch: Default::default(),
                     speaks: false,
+                    sentinels: false,
                     asker: None,
                 });
             }
@@ -2264,6 +2316,7 @@ async fn machines(
                     collab: None,
                     scratch: Default::default(),
                     speaks: false,
+                    sentinels: false,
                     asker: None,
                 });
             }
@@ -2295,7 +2348,11 @@ async fn machines(
     };
     let speaks = resident.is_some_and(|id| crate::voice::speaks(node, id));
     let asker = resident.filter(|_| speaks).and_then(|id| crate::voice::asker_of(node, id)).map(|(asker, _)| asker);
-    Ok(Reply::Machines { here, others, groups, collab, scratch, speaks, asker })
+    let sentinels = match resident {
+        Some(id) => crate::account_features::conversation(node, id).await.sentinels,
+        None => false,
+    };
+    Ok(Reply::Machines { here, others, groups, collab, scratch, speaks, asker, sentinels })
 }
 
 /// `fastctx nodes`: this computer, and hub by hub the machines whoever asks

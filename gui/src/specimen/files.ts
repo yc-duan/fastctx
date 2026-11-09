@@ -98,7 +98,7 @@ export const CONTROL_MD = [
 ];
 
 /** The replay the deeds specimen reads, whole. */
-export const RETRY_RS = [
+export const RETRY_RS = import.meta.env.DEV ? [
   "use crate::writer::Batch;",
   "use std::path::Path;",
   "",
@@ -124,7 +124,7 @@ export const RETRY_RS = [
   "    #[test]",
   "    fn kill_mid_batch_writes_once() {}",
   "}",
-];
+] : [];
 
 /** Claude Code's own read of a file, its lines numbered as it gives them;
  *  the file is held on the specimen machine as it was read. */

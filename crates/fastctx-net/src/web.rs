@@ -6,6 +6,7 @@
 mod connect;
 pub mod post;
 pub mod public;
+mod public_dns;
 
 use fastctx_types::update::ReachFailure;
 
@@ -88,6 +89,20 @@ impl Response {
         }
     }
 
+    /// The body's first `limit` bytes, and whether it held more.
+    pub async fn first(mut self, limit: usize) -> Result<(Vec<u8>, bool), String> {
+        let mut kept = Vec::new();
+        while let Some(chunk) = self.chunk().await? {
+            let room = limit - kept.len();
+            if chunk.len() > room {
+                kept.extend_from_slice(&chunk[..room]);
+                return Ok((kept, true));
+            }
+            kept.extend_from_slice(&chunk);
+        }
+        Ok((kept, false))
+    }
+
     /// The whole body, refused past `limit` bytes.
     pub async fn bytes(self, limit: usize) -> Result<Vec<u8>, String> {
         self.bytes_checked(limit).await.map_err(|error| error.why)
@@ -136,7 +151,6 @@ pub async fn get_conditional(url: &str, accept: &str, from: u64, etag: Option<&s
     }
     Err(format!("{url} redirected more than {REDIRECTS} times").into())
 }
-
 
 /// Where a redirect's `Location` points from `base`.
 fn resolve(base: &Uri, location: &str) -> Result<String, String> {

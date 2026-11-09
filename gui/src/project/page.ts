@@ -54,9 +54,6 @@ export interface ProjectOptions {
   senseLink(sense: SentinelSummary): string;
   /** How a sense stands, in a word. */
   phase(phase: SentinelPhase): string;
-  /** The last thing a conversation (`resident@machine`) told that this
-   *  device has shown the user. */
-  seenTold(key: string): string | null;
 }
 
 type Tab = "instructions" | "history" | "pages" | "places";
@@ -187,7 +184,7 @@ export class ProjectPage {
     const facts = `<p class="project-facts">${factRow(
       [...record.machines, words.opened(this.writer(map.opened.by), map.opened.on, words.day(new Date(map.opened.at))), ...(sharedBy ? [sharedBy] : [])].map(escape),
     )}</p>`;
-    const hub = hubOf(residents, jobs, record.machines, this.plans, this.senses, (key) => this.options.seenTold(key));
+    const hub = hubOf(residents, jobs, record.machines, this.plans, this.senses);
     const sections: [Tab, string, string][] = [
       [
         "instructions",
@@ -287,7 +284,7 @@ export class ProjectPage {
       .map((one) => {
         const said = words.changed(history.writer(one.author), this.options.home.ago(now.getTime() - changed(one)));
         return `<li><a class="page-link history-link" href="${escape(history.link(town, one.name))}" title="${escape(said)}">
-          <span class="page-link-glyph">${glyph("history", 18)}</span>
+          <span class="page-link-glyph">${glyph("journal", 18)}</span>
           <span class="page-link-body">
             <span class="page-link-title">${escape(one.name)}${one.retired ? `<span class="tag">${escape(words.retired)}</span>` : ""}</span>
             <span class="page-link-about">${escape(one.description)}</span>
