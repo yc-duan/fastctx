@@ -2,6 +2,7 @@
 
 mod sqlite;
 pub use sqlite::SqliteScheduler;
+pub(crate) use sqlite::content_changed;
 
 use crate::{
     cursor::{HoldingPeriod, LocalSequence, Revision},

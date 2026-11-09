@@ -10,6 +10,7 @@ use std::{cell::Cell, marker::PhantomData, rc::Rc, sync::Arc};
 #[derive(Clone, Copy)]
 pub(crate) enum Role {
     Scheduling,
+    Content,
 }
 thread_local! { static ACTIVE: Cell<Option<Role>> = const { Cell::new(None) }; }
 pub(crate) struct Boundary(Option<Role>, PhantomData<Rc<()>>);
@@ -22,13 +23,30 @@ impl Drop for Boundary {
     }
 }
 
-struct Rules;
+#[path = "references.rs"]
+mod references;
+#[derive(Default)]
+struct Rules {
+    references: references::References,
+}
 fn permits(table: &str) -> bool {
     if !table.starts_with("sync_") || table == "sync_legacy_pins" {
         return true;
     }
     match ACTIVE.get() {
         Some(Role::Scheduling) => matches!(table, "sync_tasks" | "sync_local_head"),
+        Some(Role::Content) => matches!(
+            table,
+            "sync_asset_blocks"
+                | "sync_asset_representations"
+                | "sync_asset_manifests"
+                | "sync_asset_edges"
+                | "sync_asset_access"
+                | "sync_asset_pins"
+                | "sync_asset_uploads"
+                | "sync_asset_gc"
+                | "sync_tasks"
+        ),
         None => false,
     }
 }
@@ -39,6 +57,13 @@ impl WritePolicy for Rules {
 }
 impl Guard for Rules {
     fn check(&mut self, change: &Change<'_>) -> Result<()> {
+        if change.table() == "sync_tasks"
+            && matches!(ACTIVE.get(), Some(Role::Content))
+            && (change.action() == Action::Delete
+                || change.after(0)? != fastctx_storage::rusqlite::types::ValueRef::Text(b"sync.manifest"))
+        {
+            return Err(super::sql::invalid("content publication cannot change another scheduler handler"));
+        }
         if change.table() == "sync_local_head"
             && matches!(ACTIVE.get(), Some(Role::Scheduling))
             && (change.action() != Action::Update
@@ -48,15 +73,20 @@ impl Guard for Rules {
             return Err(super::sql::invalid("the scheduler cannot advance a local change cursor"));
         }
         if permits(change.table()) {
-            Ok(())
+            self.references.changed(change)
         } else {
             Err(super::sql::invalid("a sync table write bypassed its typed entry point"))
         }
     }
-    fn write_policy(&self) -> Option<Arc<dyn WritePolicy>> {
-        Some(Arc::new(Rules))
+    fn validate_operation(&mut self, db: &Connection) -> Result<()> {
+        self.references.validate(db)
     }
-    fn ended(&mut self, _: bool) {}
+    fn write_policy(&self) -> Option<Arc<dyn WritePolicy>> {
+        Some(Arc::new(Rules::default()))
+    }
+    fn ended(&mut self, _: bool) {
+        self.references.clear();
+    }
     fn committed(&mut self, _: bool) {}
 }
 
@@ -71,5 +101,5 @@ pub fn guard(db: &Connection) -> Result<Box<dyn Guard>> {
     if actual != expected {
         return Err(super::sql::invalid("installed sync tables differ from the registry"));
     }
-    Ok(Box::new(Rules))
+    Ok(Box::new(Rules::default()))
 }

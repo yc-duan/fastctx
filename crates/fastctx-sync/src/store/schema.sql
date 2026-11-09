@@ -99,9 +99,14 @@ CREATE TABLE sync_pending_objects (
 CREATE INDEX sync_pending_object ON sync_pending_objects(hub,scope,object,origin,operation);
 CREATE TABLE sync_pending_roots (
     hub TEXT NOT NULL, origin TEXT NOT NULL, operation TEXT NOT NULL,
-    scope TEXT NOT NULL, hash TEXT NOT NULL, role TEXT NOT NULL,
-    PRIMARY KEY(hub,origin,operation,scope,hash,role)
+    scope TEXT NOT NULL, object TEXT NOT NULL, kind TEXT NOT NULL, hash TEXT NOT NULL,
+    root_kind TEXT NOT NULL CHECK(root_kind IN ('block','manifest')), decoded_bytes INTEGER,
+    role TEXT NOT NULL,
+    CHECK((root_kind='block' AND decoded_bytes IS NOT NULL AND decoded_bytes BETWEEN 0 AND 1048576)
+       OR (root_kind='manifest' AND decoded_bytes IS NULL)),
+    PRIMARY KEY(hub,origin,operation,scope,object,hash,root_kind,role)
 ) WITHOUT ROWID;
+CREATE INDEX sync_pending_roots_hash ON sync_pending_roots(hub,scope,hash,root_kind);
 CREATE TABLE sync_conflicts (
     hub TEXT NOT NULL, scope TEXT NOT NULL, object TEXT NOT NULL, operation TEXT NOT NULL,
     base_authority_epoch BLOB CHECK(base_authority_epoch IS NULL OR length(base_authority_epoch)=16),
@@ -184,6 +189,16 @@ CREATE TABLE sync_asset_representations (
     PRIMARY KEY(hub,scope,hash,representation),
     FOREIGN KEY(hub,scope,hash) REFERENCES sync_asset_blocks(hub,scope,hash)
 ) WITHOUT ROWID;
+CREATE UNIQUE INDEX sync_asset_encoding ON sync_asset_representations(hub,scope,hash,envelope);
+CREATE TABLE sync_asset_access (
+    hub TEXT NOT NULL, scope TEXT NOT NULL, object TEXT NOT NULL, kind TEXT NOT NULL,
+    hash TEXT NOT NULL, root_kind TEXT NOT NULL CHECK(root_kind IN ('block','manifest')),
+    decoded_bytes INTEGER, expanded INTEGER NOT NULL DEFAULT 0 CHECK(expanded IN (0,1)),
+    CHECK((root_kind='block' AND decoded_bytes IS NOT NULL AND decoded_bytes BETWEEN 0 AND 1048576)
+       OR (root_kind='manifest' AND decoded_bytes IS NULL)),
+    PRIMARY KEY(hub,scope,object,kind,hash,root_kind)
+) WITHOUT ROWID;
+CREATE INDEX sync_asset_access_pending ON sync_asset_access(hub,scope,hash,expanded,object,kind);
 CREATE TABLE sync_asset_manifests (
     hub TEXT NOT NULL, scope TEXT NOT NULL, hash TEXT NOT NULL,
     page BLOB NOT NULL, complete INTEGER NOT NULL CHECK(complete IN (0,1)),
@@ -208,16 +223,24 @@ CREATE TABLE sync_asset_roots (
     PRIMARY KEY(hub,scope,object,authority_epoch,revision,hash,root_kind)
 ) WITHOUT ROWID;
 CREATE INDEX sync_asset_roots_hash ON sync_asset_roots(hub,scope,hash);
+CREATE TABLE sync_asset_uploads (
+    hub TEXT NOT NULL, scope TEXT NOT NULL, operation TEXT NOT NULL, object TEXT NOT NULL,
+    kind TEXT NOT NULL, holding BLOB NOT NULL,
+    cancelled INTEGER NOT NULL CHECK(cancelled IN (0,1)),
+    PRIMARY KEY(hub,scope,operation,object)
+) WITHOUT ROWID;
 CREATE TABLE sync_asset_pins (
     hub TEXT NOT NULL, scope TEXT NOT NULL, operation TEXT NOT NULL, object TEXT NOT NULL,
     kind TEXT NOT NULL, hash TEXT NOT NULL,
     root_kind TEXT NOT NULL CHECK(root_kind IN ('block','manifest')), decoded_bytes INTEGER,
-    generation BLOB NOT NULL CHECK(length(generation)=8), phase TEXT NOT NULL, holding BLOB NOT NULL,
+    generation BLOB NOT NULL CHECK(length(generation)=8),
+    phase TEXT NOT NULL CHECK(phase IN ('staging','ready','released')), holding BLOB NOT NULL,
     CHECK((root_kind='block' AND decoded_bytes IS NOT NULL AND decoded_bytes BETWEEN 0 AND 1048576)
        OR (root_kind='manifest' AND decoded_bytes IS NULL)),
     PRIMARY KEY(hub,scope,operation,object,hash,root_kind)
 ) WITHOUT ROWID;
-CREATE INDEX sync_asset_pins_hash ON sync_asset_pins(hub,scope,hash);
+CREATE INDEX sync_asset_pins_hash ON sync_asset_pins(hub,scope,hash) WHERE phase!='released';
+CREATE INDEX sync_asset_pins_cleanup ON sync_asset_pins(hub,scope,operation,object,kind,hash,root_kind) WHERE phase!='released';
 CREATE TABLE sync_asset_transfers (
     hub TEXT NOT NULL, scope TEXT NOT NULL, hash TEXT NOT NULL, peer TEXT NOT NULL,
     publication_epoch BLOB NOT NULL CHECK(length(publication_epoch)=8),
@@ -227,8 +250,10 @@ CREATE TABLE sync_asset_transfers (
 ) WITHOUT ROWID;
 CREATE TABLE sync_asset_gc (
     hub TEXT NOT NULL, scope TEXT NOT NULL, hash TEXT NOT NULL,
+    root_kind TEXT NOT NULL CHECK(root_kind IN ('block','manifest')),
     generation BLOB NOT NULL CHECK(length(generation)=8), next_due INTEGER NOT NULL,
-    PRIMARY KEY(hub,scope,hash)
+    claimed INTEGER NOT NULL DEFAULT 0 CHECK(claimed IN (0,1)),
+    PRIMARY KEY(hub,scope,hash,root_kind)
 ) WITHOUT ROWID;
 CREATE INDEX sync_asset_gc_due ON sync_asset_gc(next_due);
 CREATE TABLE sync_source_proofs (

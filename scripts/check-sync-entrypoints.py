@@ -10,6 +10,15 @@ spec = importlib.util.spec_from_file_location("sync_wire", ROOT / "scripts/check
 wire = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(wire)
 CALLERS = {
+    "SqliteBlocks": {
+        "crates/fastctx-sync/src/blocks/mod.rs",
+        "crates/fastctx-sync/src/blocks/cleanup.rs",
+        "crates/fastctx-sync/src/blocks/sqlite.rs",
+        "crates/fastctx-sync/src/blocks/gc.rs",
+        "crates/fastctx-sync/src/blocks/work.rs",
+        "crates/fastctx-sync/tests/sync_drill/blocks.rs",
+        "crates/fastctx-sync/tests/sync_drill/block_recovery.rs",
+    },
     "write_unpublished": {
         "crates/fastctx-platform/src/durable_file.rs",
         "crates/fastctx-sync/src/blocks/files.rs",
@@ -23,7 +32,11 @@ CALLERS = {
     },
     "enter_typed_write": {
         "crates/fastctx-sync/src/store/boundary.rs",
+        "crates/fastctx-sync/src/blocks/cleanup.rs",
         "crates/fastctx-sync/src/scheduler/sqlite.rs",
+        "crates/fastctx-sync/src/blocks/sqlite.rs",
+        "crates/fastctx-sync/src/blocks/gc.rs",
+        "crates/fastctx-sync/src/blocks/work.rs",
     },
     "enter_migration": {
         "crates/fastctx-storage/src/guard.rs",

@@ -39,7 +39,7 @@ fn open(path: &Path, enabled: bool, publication: u64) -> fastctx_storage::Result
 fn queue(db: &Database, worker: u8) -> Result<SqliteScheduler> {
     Ok(SqliteScheduler::new(db.clone(), OperationId::from_bytes([worker; 32]), holder(), Duration::from_millis(50))?)
 }
-async fn closed(path: &Path) -> Result<()> {
+pub(super) async fn closed(path: &Path) -> Result<()> {
     let keeper = path.with_file_name(format!("{}-keeper", path.file_name().unwrap().to_string_lossy()));
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
     loop {

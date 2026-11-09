@@ -147,6 +147,36 @@ impl Scheduler for SqliteScheduler {
     }
 }
 
+/// Content publishers enqueue this under their existing SQL-only write boundary.
+/// Repeated changes coalesce until a lease has actually claimed the old version.
+pub(crate) fn content_changed(db: &Connection, holding: &HoldingPeriod, key: String) -> Result<()> {
+    let key = TaskKey { kind: "sync.manifest".into(), scope: holding.scope.clone(), key };
+    let existing = get(db, &key)?;
+    if existing.as_ref().is_some_and(|row| {
+        row.state == "ready" && row.task.wanted > row.task.completed && row.task.holding.as_ref() == Some(holding)
+    }) {
+        return Ok(());
+    }
+    let wanted = existing
+        .as_ref()
+        .map_or(0, |row| row.task.wanted.0)
+        .checked_add(1)
+        .ok_or_else(|| sql::invalid("content work version overflow"))?;
+    let task = Task {
+        key,
+        wanted: LocalSequence(wanted),
+        completed: LocalSequence(0),
+        priority: Priority::Background,
+        next_due_millis: 0,
+        dependency: None,
+        holding: Some(holding.clone()),
+    };
+    validate(&task).map_err(|error| sql::invalid(error.to_string()))?;
+    let mut row = existing.unwrap_or_else(|| Row::new(task.clone()));
+    update::dirty(&mut row, task)?;
+    save(db, &row)
+}
+
 fn validate(task: &Task) -> std::result::Result<(), Error> {
     if !KINDS.contains(&task.key.kind.as_str())
         || task.key.key.is_empty()

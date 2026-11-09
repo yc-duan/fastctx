@@ -5,7 +5,7 @@
 
 use std::{
     fs::{self, OpenOptions},
-    io::{self, Write},
+    io::{self, Read, Write},
     path::Path,
 };
 
@@ -33,6 +33,26 @@ fn prepare(path: &Path) -> io::Result<()> {
         path.parent().ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "content directory has no parent"))?;
     prepare(parent)?;
     create_directory(path)
+}
+
+/// Reads one bounded, ordinary content file and charges all bytes consumed,
+/// including a partial read that ultimately fails.
+pub fn read_bounded(path: &Path, max_bytes: u32) -> io::Result<Vec<u8>> {
+    crate::roles::in_place("read bounded durable content", || {
+        let metadata = fs::symlink_metadata(path)?;
+        if !metadata.is_file() || crate::owned_directory::is_link(&metadata) {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "content is not a plain file"));
+        }
+        let file = crate::disk::open_regular(path)?;
+        let mut body = Vec::with_capacity(max_bytes as usize);
+        let result = file.take(u64::from(max_bytes) + 1).read_to_end(&mut body);
+        crate::cost::read(body.len());
+        result?;
+        if body.len() > max_bytes as usize {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "content exceeds its read bound"));
+        }
+        Ok(body)
+    })
 }
 
 /// Writes a generation hidden by the database. The caller must hold its content
