@@ -1,0 +1,6 @@
+{
+  "baseline": "v1.0.1-beta.16",
+  "candidate": "7287f59927dc88aba79f8d7c59ed560b15ec0c4b",
+  "candidateGuiTree": "8ee1df6452bf118fe1f202182f5b1ad3aa80711d",
+  "scope": "GUI subtree only; remaining repository is origin/main; Safari native WebDriver clicks"
+}

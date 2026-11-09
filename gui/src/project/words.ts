@@ -17,11 +17,9 @@ export interface ProjectWords {
   /** What the user wrote for every agent working in the project. */
   instructions: string;
   noInstructions: string;
-  /** What each mark of what waits for the user means, where the pointer
-   *  rests on it. */
+  /** What the mark of a conversation waiting for the user means, where the
+   *  pointer rests on it. */
   needAsked: string;
-  needUrgent: string;
-  needInfo: string;
   /** A conversation's way, on its drawing: its stops in order. */
   way(stops: string[]): string;
   /** A sense on a conversation's line: what it watches, where, how it
@@ -93,8 +91,6 @@ export const zhProject: ProjectWords = {
   nowTab: "此刻",
   referenceTab: "资料",
   needAsked: "在问你",
-  needUrgent: "要紧",
-  needInfo: "说了一句",
   way: (stops) => stops.join(" → "),
   sense: (condition, machine, phase, seen) => [condition, `${machine}　${phase}`, seen].filter(Boolean).join("\n"),
   colleague: (label, who, doing) => [label, `${who}　${doing}`].filter(Boolean).join("\n"),
@@ -148,8 +144,6 @@ export const enProject: ProjectWords = {
   nowTab: "Now",
   referenceTab: "Reference",
   needAsked: "Asks you",
-  needUrgent: "Urgent",
-  needInfo: "Said something",
   way: (stops) => stops.join(" → "),
   sense: (condition, machine, phase, seen) => [condition, `${machine}, ${phase}`, seen].filter(Boolean).join("\n"),
   colleague: (label, who, doing) => [label, `${who}, ${doing}`].filter(Boolean).join("\n"),

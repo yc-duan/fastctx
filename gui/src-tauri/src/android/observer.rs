@@ -1,8 +1,8 @@
 //! Executes the page's explicit notification policy without a WebView,
 //! following the World as the hubs push what is afoot on each machine, so a
-//! question asked, what an agent told the user, or a turn the user's words
-//! began that ended without telling them anything is told the moment it
-//! reaches this phone (`world-gui.md`, 对话; `world-voice.md`), and so is
+//! question asked, what a colleague told the user, or the answer that ended
+//! a turn the user's words began is told the moment it reaches this phone
+//! (`world-gui.md`, 对话; `world-voice.md`, 送到哪里), and so is
 //! each trouble a hub tells of a machine or the network (`world-engine.md`,
 //! 量与告警). State survives process death; unavailable machines retain
 //! their last facts. The page gives the titles, in its words; the body is
@@ -93,10 +93,10 @@ fn kind_of(value: impl Serialize) -> Option<String> {
     serde_json::to_value(value).ok()?.as_str().map(String::from)
 }
 
-/// Whether the turn that just ended stands for an answer: one the user's
-/// words began that told them nothing through `message_user`. A node that
-/// does not say whose words began it is taken as before
-/// (`gui/src/app/presence.ts`, `endedUntold`).
+/// Whether the turn that just ended is an answer the user is called about:
+/// one the user's words began, unless a colleague answered them in it
+/// through `message_user`. A node that does not say whose words began it is
+/// taken as before (`gui/src/app/presence.ts`, `endedUntold`).
 fn ended_untold(now: &Now) -> bool {
     now.last_heard_user != Some(false)
         && now.told.as_ref().and_then(|told| told.turn.as_ref()).is_none_or(|turn| now.last_turn.as_ref() != Some(turn))

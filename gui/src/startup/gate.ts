@@ -41,14 +41,14 @@ export async function untilStarted(): Promise<void> {
     if (asked) await specimen(asked);
     return;
   }
-  const first = await invoke<Status>("startup_state");
-  if (first.phase === "ready") return;
   await new Gate().ready;
 }
 
 class Gate {
   readonly ready: Promise<void>;
   private resolve!: () => void;
+  private reject!: (error: unknown) => void;
+  private unlisten: (() => void) | null = null;
   private readonly page: StartupPage;
   /** The repair this page started, followed until it ends. */
   private repair: string | null = null;
@@ -56,7 +56,7 @@ class Gate {
   private done = false;
 
   constructor() {
-    this.ready = new Promise((resolve) => (this.resolve = resolve));
+    this.ready = new Promise((resolve, reject) => { this.resolve = resolve; this.reject = reject; });
     const words = language() === "en" ? enStartup : zhStartup;
     this.page = new StartupPage(words, {
       retry: () => void this.retry(),
@@ -65,7 +65,10 @@ class Gate {
     setTimeout(() => {
       if (!this.shown && !this.done) this.show(() => this.page.opening());
     }, QUIET_MS);
-    void listen("startup-changed", () => void this.read());
+    void listen("startup-changed", () => void this.read()).then((unlisten) => {
+      if (this.done) unlisten();
+      else this.unlisten = unlisten;
+    }).catch((error: unknown) => console.warn("Listening for startup changes failed", error));
     void this.tick();
   }
 
@@ -89,8 +92,21 @@ class Gate {
   private async read(): Promise<void> {
     if (this.done) return;
     if (this.repair) return this.follow();
-    const status = await invoke<Status>("startup_state").catch(() => null);
-    if (status) this.status(status);
+    let timeout = 0;
+    try {
+      const status = await Promise.race([
+        invoke<Status>("startup_state"),
+        new Promise<never>((_, reject) => { timeout = window.setTimeout(() => reject(new Error("the application did not answer startup_state within 10 seconds")), 10_000); }),
+      ]);
+      if (!this.done) this.status(status);
+    } catch (error) {
+      if (!this.done) {
+        this.done = true;
+        this.unlisten?.();
+        this.page.element.remove();
+        this.reject(error);
+      }
+    } finally { clearTimeout(timeout); }
   }
 
   private status(status: Status): void {
@@ -132,6 +148,7 @@ class Gate {
 
   private finish(): void {
     this.done = true;
+    this.unlisten?.();
     this.page.element.remove();
     this.resolve();
   }

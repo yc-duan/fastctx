@@ -1,0 +1,117 @@
+/* Reset history keeps its tabs and heading still; only the bounded list scrolls. */
+.ledger-page.quota-reset-view .ledger-body {
+  overflow: hidden;
+  min-height: 0;
+  padding-bottom: var(--space-4);
+}
+
+.ledger-sheet.resets {
+  height: 100%;
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-areas: "tabs tabs" "panel panel";
+}
+
+.quota-reset-label,
+.quota-reset-source {
+  color: var(--text-3);
+}
+
+.quota-reset-scroll {
+  flex: 1;
+  min-height: 0;
+  margin-top: var(--space-3);
+  overscroll-behavior: contain;
+}
+
+.quota-reset-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.quota-reset-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: var(--touch-target);
+  padding: var(--space-3) var(--space-2);
+  border-radius: var(--radius-m);
+  font-size: var(--size-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.quota-reset-row:nth-child(odd) {
+  background: var(--fill);
+}
+
+.quota-reset-row time {
+  color: var(--text-2);
+}
+
+.quota-reset-amount {
+  display: inline-flex;
+  justify-content: end;
+  gap: var(--space-2);
+  white-space: nowrap;
+  color: var(--text-3);
+}
+
+.quota-reset-amount strong {
+  font-family: var(--font-emphasis);
+  font-weight: normal;
+  color: var(--text-strong);
+}
+
+.quota-reset-empty {
+  padding: var(--space-8) var(--space-2);
+}
+
+.quota-reset-pages {
+  display: flex;
+  align-items: center;
+  justify-content: end;
+  gap: var(--space-4);
+  color: var(--text-3);
+}
+
+.quota-reset-pages button {
+  min-height: var(--touch-target);
+  min-width: var(--touch-target);
+  padding: var(--space-2);
+  border-radius: var(--radius-m);
+  color: var(--text-2);
+}
+
+.quota-reset-pages button:hover:not(:disabled) {
+  background: var(--fill-strong);
+}
+
+@container ledger-page (max-width: 600px) {
+  .ledger-sheet.resets {
+    grid-template-rows: auto minmax(0, 1fr);
+    grid-template-areas: "tabs" "panel";
+  }
+
+  .ledger-tablist {
+    min-width: 0;
+    max-width: 100%;
+    overflow-x: auto;
+  }
+
+  .ledger-tablist button {
+    flex: 1 0 auto;
+    min-height: var(--touch-target);
+    min-width: var(--touch-target);
+  }
+
+  .quota-reset-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    row-gap: var(--space-1);
+  }
+
+  .quota-reset-row time {
+    grid-column: 1 / -1;
+  }
+}

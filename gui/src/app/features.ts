@@ -1,6 +1,6 @@
 // What the workbench brings that has settings of its own (`world-layers.md`):
-// model collaboration, reached from the kernels, and the sentinels, reached
-// from Settings. Each is a page: off, the film that tells
+// history and model collaboration, tabs of the conversations' settings, and
+// the sentinels, reached from Settings. Each is a page: off, the film that tells
 // what it does, playing on a loop, and the button that turns it on under
 // it; turned on, a page over the window says it is on and what the
 // interface gained. On, its page shows a still of the film, to be watched
@@ -40,6 +40,7 @@ import { SentinelForm } from "./sentinel-form";
 import type { SentinelSeam, SentinelSettingsView } from "../world/sentinels";
 import { Film } from "../film/film";
 import type { Built, Shape } from "../film/reel";
+import { HistoryFeature, type FeatureFrame } from "./history-feature";
 
 /** Whether model collaboration can be turned on; a node offers a colleague
  *  only as `collab.rs` lets it. */
@@ -102,7 +103,7 @@ export class FeaturesPage implements Page {
 
   constructor(private readonly options: FeaturesOptions) {
     const { words, feature } = options;
-    this.title = feature === "sentinels" ? words.sentinels.name : words.collaboration.name;
+    this.title = feature === "sentinels" ? words.sentinels.name : feature === "history" ? words.history.name : words.collaboration.name;
     this.element = document.createElement("div");
     this.element.className = "features-page";
     this.element.innerHTML = `${options.head(`<h1 class="page-title">${escape(this.title)}</h1>`)}<div class="features-body scroller"></div>`;
@@ -111,6 +112,7 @@ export class FeaturesPage implements Page {
       if ((event.target as HTMLElement).closest("[data-act='replay']")) this.replay();
     });
     if (feature === "sentinels") this.sentinels();
+    else if (feature === "history") this.history();
     else this.collaboration();
   }
 
@@ -298,6 +300,35 @@ export class FeaturesPage implements Page {
         );
       }
     });
+  }
+
+  /** History: a switch alone (`history-feature.ts`), kept for the account,
+   *  or for this computer while it is in no network. */
+  private history(): void {
+    const { store, words } = this.options;
+    let drawn = false;
+    this.stop = effect(() => {
+      const world = store.world.get();
+      if (drawn || !world) return;
+      drawn = true;
+      const feature = new HistoryFeature(this.frame(), inNoNetwork(world) ? null : (this.login() ?? "none"));
+      this.replayFilm = () => this.watch(feature.film, words.history.name);
+    });
+  }
+
+  /** What a feature drawn from its own file borrows of this page. */
+  private frame(): FeatureFrame {
+    return {
+      body: this.body,
+      words: this.options.words,
+      film: (holder, make, label, still) => this.film(holder, make, label, still),
+      dropFilms: () => this.dropFilms(),
+      celebrate: (name, gained, make) => this.celebrate(name, gained, make),
+      onTop: (gained, solo) => this.onTop(gained, solo),
+      offWay: (name) => this.offWay(name),
+      askOff: (name, what, off, done) => this.askOff(name, what, off, done),
+      gives: (list) => this.gives(list),
+    };
   }
 
   private collaboration(): void {
@@ -582,8 +613,8 @@ export class FeaturesPage implements Page {
   /** What model collaboration gives the user: a ready text that teaches
    *  the calling model how to ask for what it wants, and nothing to
    *  operate by hand. */
-  private gives(): string {
-    return `<ul class="feature-gives">${this.options.words.collaboration.gives
+  private gives(list = this.options.words.collaboration.gives): string {
+    return `<ul class="feature-gives">${list
       .map(([mark, line]) => `<li><span class="feature-give-mark">${glyph(mark, 16)}</span><span>${escape(line)}</span></li>`)
       .join("")}</ul>`;
   }

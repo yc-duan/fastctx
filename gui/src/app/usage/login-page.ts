@@ -39,16 +39,18 @@ import { keepRecord, keptRecord, keptReport, readerNow, readReport, reportKey } 
 import { allowanceTrack, between, byDay, byHourOfWeek, dayOf, DAY_MS, daysBefore, longestRun, pace, total, track, valueOf, windowOf, type Person, type Span, type Unit, type Usage, type Went } from "./model";
 import { assistingMe, assistsOf, namer } from "./people";
 import { PreparedUsage } from "./prepared";
-import { assistingOwner } from "../reach";
+import { assistingOwner, machineWritten } from "../reach";
+import { ownerLoginOf } from "../machine-logins";
+import { resetHistory } from "./resets";
 import type { UsageWords } from "./words";
 
 type Agent = "codex" | "claude";
-type Tab = "calendar" | "quota" | "weeks" | "punch" | "calls";
+type Tab = "calendar" | "quota" | "weeks" | "punch" | "calls" | "resets";
 type Mine = NonNullable<ReturnType<typeof assistingMe>>;
 /** The allowances, in dollars, of the person the page looks at. */
 type Caps = { weekly: number | null; daily: number | null };
 
-const TABS: readonly Tab[] = ["calendar", "quota", "weeks", "punch", "calls"];
+const TABS: readonly Tab[] = ["calendar", "quota", "weeks", "punch", "calls", "resets"];
 
 export interface LoginUsageOptions {
   store: Store;
@@ -105,6 +107,7 @@ export class LoginUsagePage implements Page {
   private only: string | null = null;
   /** Every one who used it listed, not the first few and the rest folded. */
   private everyone = false;
+  private resetPage = 0;
   private width = 0;
   private height = 0;
 
@@ -200,9 +203,13 @@ export class LoginUsagePage implements Page {
   /** A person picked narrows everything below to them; picked again, or
    *  another picked, it widens or moves. */
   private click(event: Event): void {
-    const target = (event.target as HTMLElement).closest<HTMLElement>("[data-view], [data-only], [data-everyone]");
+    const target = (event.target as HTMLElement).closest<HTMLElement>("[data-view], [data-only], [data-everyone], [data-reset-page]");
     if (!target) return;
-    if (target.dataset.everyone !== undefined) this.everyone = target.dataset.everyone === "1";
+    if (target.dataset.resetPage !== undefined) {
+      this.resetPage = Math.max(0, Number(target.dataset.resetPage) || 0);
+      const history = this.body.querySelector(".quota-reset-scroll");
+      if (history) history.scrollTop = 0;
+    } else if (target.dataset.everyone !== undefined) this.everyone = target.dataset.everyone === "1";
     else if (target.dataset.only !== undefined) this.only = this.only === target.dataset.only ? null : target.dataset.only;
     else {
       const [what, value] = target.dataset.view!.split(":") as [keyof LoginUsagePage["view"], string];
@@ -245,12 +252,13 @@ export class LoginUsagePage implements Page {
       // The requests take the drawing's room, and, beside the drawings,
       // the room of the week's cards at its foot.
       const calls = tab === "calls";
+      const resets = tab === "resets";
       if (calls) context = this.callsContext(usage, mine, only, now);
-      const foot = calls && !mine ? "" : `${this.where(went, unit)}${this.models(went, unit, amounts, only?.ink)}`;
+      const foot = resets || (calls && !mine) ? "" : `${this.where(went, unit)}${this.models(went, unit, amounts, only?.ink)}`;
       const drawPanel = () => `<section class="ledger-panel">${this.narrow() ? this.panel(usage, tab, only, looked, caps, unit, amounts, now).replace('<div class="ledger-panel-head">', () => `<div class="ledger-panel-head">${this.unitSwitch(usage, tab)}`) : this.panel(usage, tab, only, looked, caps, unit, amounts, now)}</section>`;
       const panelHtml = calls ? `<section class="ledger-panel" data-calls></section>` : drawPanel();
       if (!calls) panel = { html: panelHtml, draw: drawPanel };
-      html = `<div class="ledger-sheet${mine ? " alone" : ""}${calls ? " calls" : ""}">${this.strip(usage, login?.limits ?? null, unit, amounts, mine, only, caps, now)}
+      html = `<div class="ledger-sheet${mine ? " alone" : ""}${calls ? " calls" : ""}${resets ? " resets" : ""}">${resets ? "" : this.strip(usage, login?.limits ?? null, unit, amounts, mine, only, caps, now)}
         ${this.tabs(usage, tab, mine, caps)}
         ${panelHtml}
         ${foot}
@@ -262,7 +270,11 @@ export class LoginUsagePage implements Page {
     }
     this.drawn = html;
     const top = this.body.scrollTop;
+    const historyTop = this.body.querySelector(".quota-reset-scroll")?.scrollTop ?? 0;
     this.body.innerHTML = html;
+    this.element.classList.toggle("quota-reset-view", !!this.body.querySelector(".ledger-sheet.resets"));
+    const history = this.body.querySelector(".quota-reset-scroll");
+    if (history) history.scrollTop = historyTop;
     if (context) {
       this.calls ??= new CallsList({
         words: options.calls.words,
@@ -278,6 +290,7 @@ export class LoginUsagePage implements Page {
       this.calls.placed(context);
     }
     this.body.scrollTop = top;
+    this.body.querySelector(".ledger-sheet.resets .ledger-tablist .current")?.scrollIntoView({ block: "nearest", inline: "nearest" });
     fitInks(this.body);
     // The figure's size is known once it is laid out: a first drawing at a
     // guess is drawn again, once, at the size it has.
@@ -344,7 +357,14 @@ export class LoginUsagePage implements Page {
    *  login assists does not see, so for them it is their weekly allowance,
    *  and without one there is none to draw. */
   private tab(mine: Mine | null, caps: Caps | null): Tab {
+    if (this.view.tab === "resets" && !this.canSeeResets()) return "calendar";
     return this.view.tab === "quota" && mine && !caps?.weekly ? "calendar" : this.view.tab;
+  }
+
+  private canSeeResets(): boolean {
+    const world = this.options.store.world.peek();
+    const machine = machineWritten(world, this.options.machine);
+    return this.report?.resets !== undefined && !!world && !!machine && (machine.here || !!ownerLoginOf(machine, world));
   }
 
   /** What stands now, one table of rows in shared columns: this week's
@@ -540,7 +560,7 @@ export class LoginUsagePage implements Page {
    *  (`unitSwitch`). */
   private tabs(usage: Usage, current_: Tab, mine: Mine | null, caps: Caps | null): string {
     const { words } = this.options;
-    const shown = TABS.filter((tab) => tab !== "quota" || !mine || caps?.weekly);
+    const shown = TABS.filter((tab) => (tab !== "quota" || !mine || caps?.weekly) && (tab !== "resets" || this.canSeeResets()));
     const tab = (value: Tab) => `<button type="button" role="tab" class="${current_ === value ? "current" : ""}" aria-selected="${current_ === value}" data-view="tab:${value}">${escape(words.tabs[value])}</button>`;
     return `<div class="ledger-tabs"><div class="ledger-switch ledger-tablist" role="tablist">${shown.map(tab).join("")}</div>${this.narrow() ? "" : this.unitSwitch(usage, current_)}</div>`;
   }
@@ -548,7 +568,7 @@ export class LoginUsagePage implements Page {
   /** Dollars or tokens, where the drawing shown is in either. */
   private unitSwitch(usage: Usage, tab: Tab): string {
     const { words } = this.options;
-    return usage.usd && tab !== "quota" && tab !== "calls"
+    return usage.usd && tab !== "quota" && tab !== "calls" && tab !== "resets"
       ? `<div class="ledger-switch ledger-units" role="group">${(["usd", "tokens"] as const).map((value) => `<button type="button" class="${this.view.unit === value ? "current" : ""}" aria-pressed="${this.view.unit === value}" data-view="unit:${value}">${escape(value === "usd" ? words.usd : words.tokenTab)}</button>`).join("")}</div>`
       : "";
   }
@@ -612,6 +632,8 @@ export class LoginUsagePage implements Page {
         const night = grid.reduce((sum, row) => sum + row.slice(0, 6).reduce((a, b) => a + b, 0), 0);
         return `<div class="ledger-panel-head"><span class="ledger-panel-title">${escape(words.punchTitle)}</span>${all ? `<span class="ledger-panel-said">${escape(words.punchSaid(Math.round((night / all) * 100)))}</span>` : ""}</div><div class="ledger-figure">${punch({ width, height: Math.max(200, this.height), grid, ink, amounts, words, seed })}</div>`;
       }
+      case "resets":
+        return this.canSeeResets() ? resetHistory(this.report?.resets ?? [], words, this.resetPage) : "";
       case "calls":
         return "";
     }

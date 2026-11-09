@@ -308,13 +308,13 @@ export class MapPeople {
 
   /** Opens sign-up to anyone who reaches the server, once agreed, or closes
    *  it at once with a moment to undo. */
-  signUp(hub: string): void {
+  signUp(hub: string, open?: boolean): void {
     const world = this.host.store.world.peek();
     const at = world ? this.admin(world, hub) : null;
     if (!at) return;
     const { words } = this.host;
     const set = (open: boolean) => this.host.change(at.login, { change: "settings", self_registration: open });
-    if (!at.hub.self_registration) {
+    if (open ?? !at.hub.self_registration) {
       this.host.confirm.ask({
         title: words.signUpTitle,
         what: words.signUpWhat,

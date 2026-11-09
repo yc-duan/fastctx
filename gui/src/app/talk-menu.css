@@ -536,3 +536,9 @@
   color: var(--text-2);
   font-size: var(--size-text);
 }
+
+.talk-menu-error {
+  display: block;
+  color: var(--wrong);
+  margin-top: var(--space-1);
+}

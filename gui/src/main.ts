@@ -30,6 +30,7 @@ import "./app/accounts.css";
 import "./app/me.css";
 import "./app/when.css";
 import "./app/assist.css";
+import "./app/login-models.css";
 import "./app/machines.css";
 import "./app/machine-framed.css";
 import "./app/machine-list.css";
@@ -61,6 +62,7 @@ import { LoginPage } from "./app/login";
 import { LoginUsagePage } from "./app/usage/login-page";
 import { enUsage, zhUsage } from "./app/usage/words";
 import "./app/usage/usage.css";
+import "./app/usage/resets.css";
 import { enCalls, zhCalls } from "./app/usage/calls-words";
 import "./app/usage/calls.css";
 import { keepLoginsFor, keptRecord } from "./app/usage/kept";
@@ -96,7 +98,7 @@ import { ServerLists } from "./app/mcp-switches";
 import { enAgentChange, zhAgentChange } from "./app/agent-change";
 import "./app/agent-logins.css";
 import "./app/disclose.css";
-import { specimenChange as specimenLoginChange, specimenFolder, specimenLogins, specimenPreview, specimenScan, specimenSetResetInPlace, specimenSetTitle, specimenTakeUp } from "./specimen/logins";
+import { specimenChange as specimenLoginChange, specimenChangeModels, specimenFolder, specimenLogins, specimenPreview, specimenScan, specimenSetResetInPlace, specimenSetTitle, specimenTakeUp } from "./specimen/logins";
 import { TalksPage, enTalks, zhTalks } from "./app/talks";
 import { FeaturesPage } from "./app/features";
 import { workbenchShown } from "./app/workbench-shown";
@@ -139,6 +141,7 @@ import { DataPage, enData, totalOf, zhData } from "./app/data-page";
 import { data } from "./world/data";
 import { keptForget, keptUsage, keptClear, seenDissolved, unwatch } from "./world/bridge";
 import { PREVIEW } from "./app/preview";
+import { historyForProject, historyForTalk } from "./app/history-offered";
 import { talksOf } from "./app/talk-row";
 import { ProjectsPage, enProjects, zhProjects } from "./app/projects-page";
 import "./app/projects.css";
@@ -213,7 +216,6 @@ import { history as historySeam, type HistoryAuthor, type HistoryCatalog, type H
 import { specimenHistory, specimenHistoryDocument } from "./specimen/history";
 import { sentinelList, sentinelListAll, sentinelOverview, sentinelRecord, sentinelStop, sentinels as liveSentinels, type SentinelSummary } from "./world/sentinels";
 import { planRead } from "./world/plan";
-import { sawTold, toldSeen } from "./app/told-seen";
 import { specimenHubPlans, specimenHubSenses } from "./specimen/hub";
 import type { Job as PanelJob } from "./conversation/jobs-panel";
 import { specimenSentinels } from "./specimen/sentinels";
@@ -271,6 +273,7 @@ import {
   readAgentLimits,
   setAgentTitle,
   setAgentResetInPlace,
+  changeAgentModels,
   scanAgents,
   control,
   offers,
@@ -381,50 +384,52 @@ const presenceWords = english ? enPresence : zhPresence;
 const shellWords = english ? enShell : zhShell;
 document.documentElement.lang = english ? "en" : "zh-CN";
 
-const specimen = specimenNow(params.get("accounts") === "2");
-// `?managed`: this computer as a managed machine; `?managed=removed`, one
-// its owner took off the network.
-if (params.has("managed")) specimen.world = specimenAsManaged(specimen.world, params.get("managed") === "removed");
-// `?shared`: bo's gpu shared whole with this computer's account and ada's.
-if (params.has("shared")) specimen.world = specimenAsShared(specimen.world);
-// `?visitor`: this computer's account a visitor asked to become a member.
-if (params.has("visitor")) specimen.world = specimenAsVisitor(specimen.world);
-// `?accounts=0`: a computer in no World yet, as on its first open.
-if (params.get("accounts") === "0") {
-  specimen.world.accounts.hubs = [];
-  specimen.world.nodes.hubs = [];
-}
-// `?dissolved`: a network this computer was on, dissolved by its
-// administrator while it was away, said once.
-if (params.has("dissolved")) specimen.world.accounts.dissolved = [{ hub: "lab", at: new Date().toISOString() }];
-// `?quiet`: a quiet morning, nothing waiting, nothing come back, nobody at
-// work.
-if (params.has("quiet")) {
-  for (const machine of specimen.world.who.machines) {
-    if (machine.kind !== "answered") continue;
-    machine.reply.residents = machine.reply.residents.map((r) => (r.now ? { ...r, now: { ...r.now, activity: "idle", waiting_for_user: false, turn: null } } : r));
-    machine.reply.residents.forEach((r) => {
-      if (r.now) delete r.now.asked;
-    });
-    machine.reply.jobs = [];
-    delete machine.reply.busy;
+const specimen = import.meta.env.DEV ? specimenNow(params.get("accounts") === "2") : null;
+if (specimen) {
+  // `?managed`: this computer as a managed machine; `?managed=removed`, one
+  // its owner took off the network.
+  if (params.has("managed")) specimen.world = specimenAsManaged(specimen.world, params.get("managed") === "removed");
+  // `?shared`: bo's gpu shared whole with this computer's account and ada's.
+  if (params.has("shared")) specimen.world = specimenAsShared(specimen.world);
+  // `?visitor`: this computer's account a visitor asked to become a member.
+  if (params.has("visitor")) specimen.world = specimenAsVisitor(specimen.world);
+  // `?accounts=0`: a computer in no World yet, as on its first open.
+  if (params.get("accounts") === "0") {
+    specimen.world.accounts.hubs = [];
+    specimen.world.nodes.hubs = [];
   }
-  if (specimen.away) specimen.away.happenings = [];
+  // `?dissolved`: a network this computer was on, dissolved by its
+  // administrator while it was away, said once.
+  if (params.has("dissolved")) specimen.world.accounts.dissolved = [{ hub: "lab", at: new Date().toISOString() }];
+  // `?quiet`: a quiet morning, nothing waiting, nothing come back, nobody at
+  // work.
+  if (params.has("quiet")) {
+    for (const machine of specimen.world.who.machines) {
+      if (machine.kind !== "answered") continue;
+      machine.reply.residents = machine.reply.residents.map((r) => (r.now ? { ...r, now: { ...r.now, activity: "idle", waiting_for_user: false, turn: null } } : r));
+      machine.reply.residents.forEach((r) => {
+        if (r.now) delete r.now.asked;
+      });
+      machine.reply.jobs = [];
+      delete machine.reply.busy;
+    }
+    if (specimen.away) specimen.away.happenings = [];
+  }
 }
-const store = createStore(() => ({ world: specimen.world, now: specimen.now }));
-const live = store.live;
+const store = createStore(import.meta.env.DEV ? () => ({ world: specimen!.world, now: specimen!.now }) : undefined);
+const live = !import.meta.env.DEV || store.live;
 keepLoginsFor(() => store.world.peek()?.accounts);
 // `?slowlogins=<ms>`: a machine's logins come from a node that takes that
 // long to answer.
 const specimenLoginsRead = async (machine: Parameters<typeof specimenLogins>[0]) => {
   await new Promise((resolve) => setTimeout(resolve, Number(params.get("slowlogins") ?? 0)));
-  return specimenLogins(machine, specimen.now);
+  return specimenLogins(machine, specimen!.now);
 };
 // `?departed=<machine>`: that machine leaves the network once it was read,
 // as when an assistance ended; its conversations stay listed, read only.
 const departing = !live ? params.get("departed") : null;
 if (departing) {
-  const world = specimen.world;
+  const world = specimen!.world;
   world.who.machines = world.who.machines.filter((machine) => (machine.kind === "answered" ? machine.reply.machine : machine.machine) !== departing);
   for (const hub of world.nodes.hubs) hub.machines = hub.machines.filter((machine) => machine.name !== departing);
   for (const hub of world.accounts.hubs) hub.members = hub.members.filter((member) => member.name !== departing);
@@ -457,7 +462,7 @@ const profileCalls: ProfileCalls = {
 };
 const serverLists = new ServerLists(profileCalls, store, english ? enProfile : zhProfile);
 /** The account's skills: the World's, or the specimen's. */
-const specimenSkillCalls = specimenSkills();
+const specimenSkillCalls = live ? null : specimenSkills();
 /** The account's Claude subagents: the World's, or the specimen's. */
 const subagentCalls = live ? profileSubagents : specimenSubagents(params.get("subagents") === "older");
 
@@ -512,6 +517,7 @@ function parentOf(at: Place): Place {
     case "machine":
       return { kind: "machines" };
     case "history":
+      return at.from ? { kind: "talk", address: at.from } : { kind: "project", town: at.town };
     case "page":
       return { kind: "project", town: at.town };
     case "talk-history":
@@ -549,8 +555,10 @@ function placeName(at: Place): string {
       return shellWords.settings;
     case "account":
       return shellWords.account;
-    case "project":
-      return at.town;
+    case "project": {
+      const world = live ? store.world.peek() : specimen!.world;
+      return world?.towns.find((one) => one.town === at.town)?.record.name ?? at.town;
+    }
     case "talks":
       return at.town ?? (english ? enTalks : zhTalks).title;
     case "sentinel":
@@ -621,8 +629,8 @@ function agentsOn(machine: string | null) {
   if (live) return agents(machine);
   const names = machine
     ? [machine]
-    : [...new Set([...machinesOf(specimen.world).filter((one) => one.here || one.online).map((one) => one.name), ...assistantsOf(specimen.world).map((one) => one.machine)])];
-  return Promise.resolve({ machine: specimen.world.here, machines: names.flatMap((name) => specimenAgents(name, specimen.now).machines) });
+    : [...new Set([...machinesOf(specimen!.world).filter((one) => one.here || one.online).map((one) => one.name), ...assistantsOf(specimen!.world).map((one) => one.machine)])];
+  return Promise.resolve({ machine: specimen!.world.here, machines: names.flatMap((name) => specimenAgents(name, specimen!.now).machines) });
 }
 
 /** The new-conversation pages, one for each project and one outside any:
@@ -747,9 +755,9 @@ const specimenAddresses = [
 const change = async (login: Login, made: AccountChange): Promise<void> => {
   if (!live) {
     // Kept in the specimen, so what was done stays as the page is read again.
-    const changed = specimenChange(specimen.world, login.hub, made);
+    const changed = specimenChange(specimen!.world, login.hub, made);
     if (!changed) return notLive();
-    specimen.world = changed;
+    specimen!.world = changed;
     await store.refresh();
     return;
   }
@@ -797,7 +805,7 @@ const remoteSeams: RemoteSeams = {
 };
 const accountConfirm = new Confirm(english ? enAccess : zhAccess);
 /** The specimen's server moving, kept across pages. */
-const specimenMove = specimenHubMove();
+const specimenMove = live ? null : specimenHubMove();
 /** When a code asked for now stops letting devices in, as the hub is told. */
 const codeExpires = (asked: CodeAsked) => (asked.expires ? asked.expires.toISOString() : LASTING);
 /** A specimen's code: listed as a real one would be, letting nobody in. */
@@ -813,10 +821,10 @@ const specimenCode = async (login: Login, way: TokenWay, kind: "phone" | "comput
     expires: codeExpires(asked),
     way,
     ...(asked.name ? { name: asked.name } : {}),
-    made_by: specimen.world.accounts.machine,
+    made_by: specimen!.world.accounts.machine,
     made_at: new Date().toISOString(),
   };
-  specimen.world = { ...specimen.world, accounts: { ...specimen.world.accounts, hubs: specimen.world.accounts.hubs.map((hub) => (hub.hub === login.hub ? { ...hub, tokens: [...(hub.tokens ?? []), made] } : hub)) } };
+  specimen!.world = { ...specimen!.world, accounts: { ...specimen!.world.accounts, hubs: specimen!.world.accounts.hubs.map((hub) => (hub.hub === login.hub ? { ...hub, tokens: [...(hub.tokens ?? []), made] } : hub)) } };
   await store.refresh();
   return `FX5${"0SPECIMEN0NOT0A0REAL0CODE".repeat(5)}`;
 };
@@ -884,11 +892,35 @@ const removal = (() => {
 })();
 
 const historyWords = english ? enHistory : zhHistory;
-/** Where a document of a history is read. */
-function historyLink(scope: HistoryScope, name: string): string {
+/** Where a document of a history is read; one of a project's read from a
+ *  conversation in it leads back to that conversation. */
+function historyLink(scope: HistoryScope, name: string, from?: Address): string {
   return scope.kind === "project"
-    ? link({ kind: "history", town: scope.project, name })
+    ? link({ kind: "history", town: scope.project, name, ...(from ? { from } : {}) })
     : link({ kind: "talk-history", address: { resident: scope.resident, machine: scope.machine }, name });
+}
+
+/** The history a conversation's side shows: its project's, with what it
+ *  wrote before it joined the project after it, or else its own
+ *  (`world-history.md`, 项目一份，对话一份). */
+function sideHistory(address: Address, town: string | null) {
+  const world = live ? store.world.peek() : specimen!.world;
+  const acting = residentsOf(world).find((r) => sameAddress(addressOf(r), address))?.about.acting ?? null;
+  if (town ? !historyForProject(world, town, live) : !historyForTalk(world, acting, live)) return undefined;
+  const seam = (scope: HistoryScope) => ({
+    watch: (show: (catalog: HistoryCatalog | null) => void) => followHistoryOf(scope, show),
+    link: (name: string) => historyLink(scope, name, address),
+    write: () => historyForm.open(scope),
+  });
+  const own = seam({ kind: "conversation", resident: address.resident, machine: address.machine });
+  if (!town) return { words: historyWords, ...own };
+  const name = world?.towns.find((one) => one.town === town)?.record.name ?? town;
+  return {
+    words: historyWords,
+    ...seam({ kind: "project", project: town }),
+    project: { name, href: link({ kind: "project", town }) },
+    earlier: own,
+  };
 }
 const historyForm = new HistoryForm({
   words: historyWords,
@@ -902,18 +934,18 @@ const historyForm = new HistoryForm({
     if (location.hash === there) show(placeOf(there));
     else location.hash = there;
   },
-  today: () => (live ? new Date() : specimen.now).toISOString().slice(0, 10),
+  // The user's own day, not the one at Greenwich.
+  today: () => {
+    const at = live ? new Date() : specimen!.now;
+    return `${at.getFullYear()}-${String(at.getMonth() + 1).padStart(2, "0")}-${String(at.getDate()).padStart(2, "0")}`;
+  },
 });
-
-/** Whether histories are offered: the development build's until the
- *  release turns them on (`world.md`, 这一版不发的). */
-const historyOffered = PREVIEW;
 
 /** Follows a history's catalog as it changes; returns how to stop. A
  *  World without the watch still answers a single read. */
 function followHistoryOf(scope: HistoryScope, show: (catalog: HistoryCatalog | null) => void): () => void {
   if (!live) {
-    show(specimenHistory(scope, specimen.now));
+    show(specimenHistory(scope, specimen!.now));
     return () => {};
   }
   let stopped = false;
@@ -941,7 +973,7 @@ const sentinelSeam = live ? liveSentinels : specimenSentinels(params.has("sentin
  *  with it whole, never a managed one, which acts for no one (`world-senses.md`,
  *  哨兵住在哪). */
 function sentinelHomes(hub: string, account: string): { name: string; form: "desktop" | "laptop" | "server" }[] {
-  const world = live ? store.world.peek() : specimen.world;
+  const world = live ? store.world.peek() : specimen!.world;
   if (!world) return [];
   const seen = world.accounts?.hubs.find((one) => one.name === hub);
   const homes = seen
@@ -1071,7 +1103,7 @@ function talkManage(address: Address, page: () => ConversationPage, markdown?: (
     open: (anchor: HTMLElement) => {
       const r = listedAt(store.world.peek(), address);
       if (!r) return;
-      const here = store.world.peek()?.here ?? (live ? null : specimen.world.here);
+      const here = store.world.peek()?.here ?? (live ? null : specimen!.world.here);
       // Begun here from Fastctx, it opens in its agent's own program too; a
       // specimen only shows where that would be.
       const own = r.about.world_started && r.about.machine === here && (desktopAvailable() || !live);
@@ -1132,7 +1164,7 @@ function presenceOf(world: WorldNow | null, address: Address): "removed" | "away
 function specimenActOn(address: Address, change: (r: ResidentNow) => ResidentNow | null): Promise<void> {
   return new Promise((resolve) =>
     setTimeout(() => {
-      for (const machine of specimen.world.who.machines) {
+      for (const machine of specimen!.world.who.machines) {
         if (machine.kind !== "answered" || machine.reply.machine !== address.machine) continue;
         machine.reply.residents = machine.reply.residents.flatMap((r) => {
           if (r.about.id !== address.resident) return [r];
@@ -1152,7 +1184,7 @@ async function specimenManaged(address: Address, action: Management): Promise<Ma
     if (action.do === "move") return { ...r, town: action.town };
     return r;
   });
-  const now = residentAt(specimen.world, address);
+  const now = residentAt(specimen!.world, address);
   return { removed: now?.removed ?? null, town: now?.town ?? null, activity: now?.now?.activity ?? null, steps: [], notification: null };
 }
 
@@ -1427,7 +1459,7 @@ function stillScene(world: WorldNow, marked: string | null = null): MachineMapSc
 }
 
 function home(): Page {
-  const lastVisit = live ? seen.read() : specimen.lastVisit;
+  const lastVisit = live ? seen.read() : specimen!.lastVisit;
   // The drawing of the World; a machine on it opens on the machines page,
   // a hub on the account page, a box the machines page.
   const drawing = new MachineMap({
@@ -1455,9 +1487,8 @@ function home(): Page {
     newTalk: () => beginTalk(),
     stopJob: live ? (job, machine) => stopJob(job, machine) : async () => {},
     updates: () => updateCard.open(),
-    seenTold: toldSeen,
   });
-  let away: Away | null = live ? null : specimen.away;
+  let away: Away | null = live ? null : specimen!.away;
   // What happened while the reader was away is asked of every machine when
   // the page opens, and again whenever the present changes in a way that
   // leaves something to tell; one question at a time. Asked again, only
@@ -1575,7 +1606,7 @@ function sentinelPage(at: Extract<Place, { kind: "sentinel" }>): Page {
       words: own,
       talkWords: words,
       english,
-      here: (live ? store.world.peek()?.here : specimen.world.here) ?? "",
+      here: (live ? store.world.peek()?.here : specimen!.world.here) ?? "",
       head,
       sentinel: { id, home, generation },
       known: knownSentinels.get(id) ?? null,
@@ -1586,7 +1617,7 @@ function sentinelPage(at: Extract<Place, { kind: "sentinel" }>): Page {
       withdraw: live ? () => sentinelStop(id, home) : async () => {},
       confirm: accountConfirm,
       form: (machine) => {
-        const world = live ? store.world.peek() : specimen.world;
+        const world = live ? store.world.peek() : specimen!.world;
         const known = world ? machinesOf(world).find((one) => one.name === machine || one.written === machine) : undefined;
         return known?.facts.Ok?.form ?? "desktop";
       },
@@ -1617,7 +1648,7 @@ function sentinelsPage(): Page {
           : new Promise((resolve) => setTimeout(() => resolve(specimenWatchersOverview(english, Date.now())), 200)),
       link: (one) => link({ kind: "sentinel", home: one.summary.definition.home, id: one.summary.definition.id, generation: one.summary.definition.generation }),
       form: (machine) => {
-        const world = live ? store.world.peek() : specimen.world;
+        const world = live ? store.world.peek() : specimen!.world;
         const known = world ? machinesOf(world).find((one) => one.name === machine || one.written === machine) : undefined;
         return known?.facts.Ok?.form ?? "desktop";
       },
@@ -1642,18 +1673,18 @@ function specimenFork(source: Address, sample: Specimen, through: string | null)
     { at, event: "changed", turn: null, change: { kind: "forked", source, thread: "specimen", through } },
   ];
   specimenForks.set(talkKey(address), { title: sample.title, agent: sample.agent, resident: address.resident, machine: sample.machine, model: sample.model, town: sample.town, here: sample.here, events });
-  const known = residentAt(specimen.world, source);
+  const known = residentAt(specimen!.world, source);
   if (known) {
     const fork: ResidentNow = {
       ...known,
       about: { ...known.about, id: address.resident, forked_from: source, born_at: at },
       now: known.now ? { ...known.now, activity: "idle", turn: null, waiting_for_user: false, since: at, title: titleOf(known) } : known.now,
     };
-    specimen.world = {
-      ...specimen.world,
+    specimen!.world = {
+      ...specimen!.world,
       who: {
-        ...specimen.world.who,
-        machines: specimen.world.who.machines.map((machine) =>
+        ...specimen!.world.who,
+        machines: specimen!.world.who.machines.map((machine) =>
           machine.kind === "answered" && machine.reply.residents.includes(known) ? { ...machine, reply: { ...machine.reply, residents: [fork, ...machine.reply.residents] } } : machine,
         ),
       },
@@ -1699,7 +1730,7 @@ function specimenTalk(address: Address): DeskTalk {
   const name = address.resident;
   const sample: Specimen & { later?: SessionEvent[]; rate?: number; timed?: boolean } = specimenForks.get(talkKey(address)) ?? (name.startsWith("stream")
     ? streamSpecimen(params)
-    : (specimens[name === "codex-a51c" ? "asking" : name === "claude-5teps" ? "steps" : name === "trips-1" ? "trips" : name === "deeds-1" ? "deeds" : name === "claude-t0ur" ? "tour" : name === "claude-c0ntrols" ? "controls" : name === "claude-v01c" ? "voice" : name === "codex-91c0" ? "colleague" : name.startsWith("codex") ? "codex" : "claude"] ?? specimens.claude!)());
+    : (specimens[name === "codex-a51c" ? "asking" : name === "claude-5teps" ? "steps" : name === "trips-1" ? "trips" : name === "deeds-1" ? "deeds" : name === "claude-t0ur" ? "tour" : name === "claude-c0ntrols" ? "controls" : name === "claude-v01c" ? "voice" : name === "codex-91c0" ? "colleague" : name === "codex-order" ? "interruptions" : name.startsWith("codex") ? "codex" : "claude"] ?? specimens.claude!)());
   const conversation = new Conversation();
   conversation.thoughtWords = sample.agent !== "codex";
   // A specimen keeps its whole history as a shell would, and its page holds
@@ -1723,7 +1754,7 @@ function specimenTalk(address: Address): DeskTalk {
       return key;
     };
   }
-  const known = residentsOf(specimen.world).find((r) => r.about.id === address.resident && r.about.machine === address.machine);
+  const known = residentsOf(specimen!.world).find((r) => r.about.id === address.resident && r.about.machine === address.machine);
   const page: ConversationPage = new ConversationPage({
     words,
     here: sample.here,
@@ -1743,9 +1774,8 @@ function specimenTalk(address: Address): DeskTalk {
     side: specimenSide(sideWords, planWords, { ...planSample, facts: (id) => planSample.facts[id] ?? null }, english, {
       self: address,
       goal: params.get("goal"),
-      // As the World lists it: one in no project keeps its own history.
-      ...(historyOffered && !(known ? known.town : sample.town) ? { history: specimenOwnHistory(address) } : {}),
-      where: () => whereOf(specimen.world, address, (name) => link({ kind: "machine", name })),
+      history: sideHistory(address, known ? known.town : sample.town),
+      where: () => whereOf(specimen!.world, address, (name) => link({ kind: "machine", name })),
     }),
     opening: { open: notLive, reveal: notLive },
     pictures: {
@@ -1867,7 +1897,7 @@ function specimenTalk(address: Address): DeskTalk {
     const now = store.clock.get();
     page.running(
       [
-        ...jobsOf(specimen.world).filter((job) => {
+        ...jobsOf(specimen!.world).filter((job) => {
           const owner = ownerResident(job.owner);
           return owner?.resident === address.resident && owner.machine === address.machine;
         }),
@@ -1919,27 +1949,18 @@ function specimenTalk(address: Address): DeskTalk {
     }
   }
   // Archived from its "⋯", as a live page follows it.
-  let suspended = false;
   const following = effect(() => {
     const now = store.world.get();
     talkActs.changed.get();
     if (!left) page.presence(presenceOf(now, address));
-    if (!left && !suspended) noteTold(now, address);
   });
   return {
     page,
     element: page.element,
     title: sample.title,
-    suspend: () => {
-      suspended = true;
-      page.suspend();
-    },
+    suspend: () => page.suspend(),
     reach: (turn: string) => page.showTurn(turn),
-    resume: () => {
-      suspended = false;
-      noteTold(store.world.peek(), address);
-      page.resume();
-    },
+    resume: () => page.resume(),
     leave() {
       left = true;
       runningJobs();
@@ -1998,7 +2019,7 @@ function someoneOf(world: ReturnType<typeof store.world.peek>, address: Address)
 /** How the list names a conversation, and its family; one the list does
  *  not know goes by its id. */
 function talkNamed(address: Address): { name: string; agent: "claude" | "codex" } {
-  const world = live ? store.world.peek() : specimen.world;
+  const world = live ? store.world.peek() : specimen!.world;
   const known = residentAt(world, address) ?? listedAt(world, address);
   const host = known?.about.host.agent ?? address.resident;
   return {
@@ -2009,7 +2030,7 @@ function talkNamed(address: Address): { name: string; agent: "claude" | "codex" 
 
 /** What the list calls a conversation, where it calls it anything. */
 function listedTitle(address: Address): string | null {
-  const world = live ? store.world.peek() : specimen.world;
+  const world = live ? store.world.peek() : specimen!.world;
   const known = residentAt(world, address) ?? listedAt(world, address);
   return known ? titleOf(known) : null;
 }
@@ -2040,17 +2061,14 @@ function liveTalk(address: Address): DeskTalk {
   // Goals are not offered in a release yet (`app/preview.ts`); nor can the
   // World drive one in a conversation Codex's own app holds.
   const noGoal = !PREVIEW || (!!known && /^codex/i.test(known.about.host.agent) && !known.about.world_started);
-  // A conversation in no project keeps its own history (`world-history.md`).
-  const historyScope: HistoryScope = { kind: "conversation", resident: address.resident, machine: address.machine };
-  const ownHistory =
-    historyOffered && !someone.project
-      ? {
-          words: historyWords,
-          watch: (show: (catalog: HistoryCatalog | null) => void) => followHistoryOf(historyScope, show),
-          link: (name: string) => historyLink(historyScope, name),
-          write: () => historyForm.open(historyScope),
-        }
-      : undefined;
+  // The history its side shows follows its project and whether history is
+  // on for it: either changing, the conversation is drawn anew.
+  const historyOf = (now: WorldNow | null) => {
+    const town = residentAt(now, address)?.town ?? listedAt(now, address)?.town ?? null;
+    return { town, shown: !!sideHistory(address, town) };
+  };
+  const historyWas = historyOf(world);
+  const ownHistory = sideHistory(address, historyWas.town);
   const here = world?.here ?? null;
   const conversation = new Conversation();
   // The agent by its name, or, not yet listed, its resident's id.
@@ -2320,7 +2338,7 @@ function liveTalk(address: Address): DeskTalk {
   // reading the conversation again: named once listed, as one just started;
   // its project and model as they change; asleep or not.
   let shown = listed;
-  let suspended = false;
+  let renewing = false;
   const named = !world
     ? effect(() => {
         if (!store.world.get()) return;
@@ -2336,7 +2354,6 @@ function liveTalk(address: Address): DeskTalk {
         if (!left) page.presence(deleted ? "deleted" : presenceOf(now, address));
         const known = residentAt(now, address);
         const who = someoneOf(now, address);
-        if (!left && !suspended) noteTold(now, address);
         if (
           !left &&
           !nowTold &&
@@ -2350,6 +2367,16 @@ function liveTalk(address: Address): DeskTalk {
           page.update();
         }
         if (!known || !who || left) return;
+        const history = historyOf(now);
+        if (!renewing && (history.town !== historyWas.town || history.shown !== historyWas.shown)) {
+          renewing = true;
+          queueMicrotask(() => {
+            if (left) return;
+            keptTalks.drop(talkKey(address));
+            desk().renew(address);
+          });
+          return;
+        }
         if (shown && who.agent === shown.agent && who.project === shown.project && who.model === shown.model) return;
         shown = who;
         page.identify(who);
@@ -2358,16 +2385,9 @@ function liveTalk(address: Address): DeskTalk {
     page,
     element: page.element,
     title: `${someone.agent} ${someone.machine}`,
-    suspend: () => {
-      suspended = true;
-      page.suspend();
-    },
+    suspend: () => page.suspend(),
     reach: (turn: string) => page.showTurn(turn),
-    resume: () => {
-      suspended = false;
-      noteTold(store.world.peek(), address);
-      page.resume();
-    },
+    resume: () => page.resume(),
     leave() {
       left = true;
       named();
@@ -2378,13 +2398,6 @@ function liveTalk(address: Address): DeskTalk {
       reading.close();
     },
   };
-}
-
-/** What a conversation told the user counts as seen while its page is in
- *  view on this device (`world-voice.md`, 要紧的事). */
-function noteTold(world: ReturnType<typeof store.world.peek>, address: Address): void {
-  const told = residentAt(world, address)?.now?.told;
-  if (told && document.visibilityState === "visible") sawTold(talkKey(address), told.id);
 }
 
 /** Opens what one of the world's ids names: a conversation, or a job's
@@ -2489,7 +2502,6 @@ function projectPage(town: string): Page {
     machineLink: (name) => link({ kind: "machine", name }),
     senseLink: (one) => link({ kind: "sentinel", home: one.definition.home, id: one.definition.id, generation: one.definition.generation }),
     phase: (phase) => words.sentinelPhase(phase),
-    seenTold: toldSeen,
     more: {
       label: projectActsWords.more,
       shown: (town) => projectActs.acts(town).length > 0,
@@ -2505,8 +2517,8 @@ function projectPage(town: string): Page {
   let historyWatch: number | null = null;
   const followHistory = async () => {
     const scope: HistoryScope = { kind: "project", project: town };
-    if (!historyOffered) return page.showHistory(null);
-    if (!live) return page.showHistory(specimenHistory(scope, specimen.now));
+    if (!historyForProject(store.world.peek(), town, live)) return page.showHistory(null);
+    if (!live) return page.showHistory(specimenHistory(scope, specimen!.now));
     try {
       const id = await historySeam.watch(scope, (catalog) => {
         if (!historyLeft) page.showHistory(catalog);
@@ -2526,7 +2538,7 @@ function projectPage(town: string): Page {
     const map = specimenMap();
     page.showPlans(specimenHubPlans());
     if (PREVIEW) page.showSenses(specimenHubSenses().map(remembered));
-    page.update(map, { machine: specimen.world.here, scope: { kind: "town", town, record: null }, machines: specimen.world.who.machines.map((machine) => machine.kind === "answered" ? { ...machine, reply: { ...machine.reply, residents: machine.reply.residents.filter((r) => r.town === town) } } : machine) }, specimen.now);
+    page.update(map, { machine: specimen!.world.here, scope: { kind: "town", town, record: null }, machines: specimen!.world.who.machines.map((machine) => machine.kind === "answered" ? { ...machine, reply: { ...machine.reply, residents: machine.reply.residents.filter((r) => r.town === town) } } : machine) }, specimen!.now);
     return { element: page.element, title: map.record.name };
   }
   let timer = 0;
@@ -2595,9 +2607,10 @@ function projectPage(town: string): Page {
 
 const historyConfirm = new Confirm({ close: projectWords.close, working: talkMenuWords.working, failed: talkMenuWords.failed });
 
-/** One document of a project's history, or of a conversation's. */
+/** One document of a project's history, or of a conversation's, under the
+ *  name of what it belongs to. */
 function historyPage(scope: HistoryScope, name: string): Page {
-  const world = live ? store.world.peek() : specimen.world;
+  const world = live ? store.world.peek() : specimen!.world;
   let back: { href: string; name: string };
   if (scope.kind === "project") {
     back = { href: link({ kind: "project", town: scope.project }), name: world?.towns.find((t) => t.town === scope.project)?.record.name ?? scope.project };
@@ -2605,7 +2618,7 @@ function historyPage(scope: HistoryScope, name: string): Page {
     const address = { resident: scope.resident, machine: scope.machine };
     const known = residentsOf(world).find((r) => sameAddress(addressOf(r), address));
     // Named as the list names it: its title, else who and where.
-    back = { href: talkLink(address), name: listedTitle(address) ?? (known ? someoneSaid(known, homeWords) : scope.resident) };
+    back = { href: talkLink(address), name: listedTitle(address) ?? (known ? someoneSaid(known, homeWords) : historyWords.untitled) };
   }
   const notHere = () => Promise.reject(new Error("specimen"));
   const page = new HistoryPage({
@@ -2614,7 +2627,7 @@ function historyPage(scope: HistoryScope, name: string): Page {
     back,
     name,
     close: projectWords.close,
-    read: (version) => (live ? historySeam.read(scope, name, version) : Promise.resolve(specimenHistoryDocument(scope, name, version, specimen.now))),
+    read: (version) => (live ? historySeam.read(scope, name, version) : Promise.resolve(specimenHistoryDocument(scope, name, version, specimen!.now))),
     save: (text, expected) => (live ? historySeam.save(scope, name, text, expected) : notHere()),
     retire: (expected, done) =>
       historyConfirm.ask({
@@ -2627,28 +2640,17 @@ function historyPage(scope: HistoryScope, name: string): Page {
       }),
     restore: (version) => (live ? historySeam.restore(scope, name, version) : notHere()),
     writer: (author) => historyWriter(author).name,
-    ago: (at) => homeWords.ago((live ? Date.now() : specimen.now.getTime()) - at.getTime()),
+    ago: (at) => homeWords.ago((live ? Date.now() : specimen!.now.getTime()) - at.getTime()),
   });
   return { element: page.element, title: name };
-}
-
-/** A specimen conversation's own history, for its side. */
-function specimenOwnHistory(address: Address) {
-  const scope: HistoryScope = { kind: "conversation", resident: address.resident, machine: address.machine };
-  return {
-    words: historyWords,
-    watch: (show: (catalog: HistoryCatalog | null) => void) => followHistoryOf(scope, show),
-    link: (name: string) => historyLink(scope, name),
-    write: () => historyForm.open(scope),
-  };
 }
 
 /** Who wrote a version of a document, and where their conversation is. */
 function historyWriter(author: HistoryAuthor): { name: string; href: string | null } {
   const by = author.by;
-  if (by.kind === "user") return { name: historyWords.you, href: null };
+  if (by.kind === "user") return { name: author.on ? historyWords.youOn(author.on) : historyWords.you, href: null };
   if (by.kind === "resident") {
-    const known = residentsOf(live ? store.world.peek() : specimen.world).find((r) => sameAddress(addressOf(r), by.address));
+    const known = residentsOf(live ? store.world.peek() : specimen!.world).find((r) => sameAddress(addressOf(r), by.address));
     // A conversation gone from the World is still named by its host.
     const agent = agentName(known?.about.host.agent ?? author.host?.agent ?? "");
     return { name: known ? someoneSaid(known, homeWords) : homeWords.someone(agent, by.address.machine), href: talkLink(by.address) };
@@ -2683,7 +2685,7 @@ function pageScreen(town: string, name: string, version: number | null): Page {
     project: { href: link({ kind: "project", town }), name: project },
     head,
     link: (version) => link({ kind: "page", town, page: name, version }),
-    ago: (at) => homeWords.ago((live ? Date.now() : specimen.now.getTime()) - at.getTime()),
+    ago: (at) => homeWords.ago((live ? Date.now() : specimen!.now.getTime()) - at.getTime()),
     someone: someoneAt,
     world: live
       ? {
@@ -2902,7 +2904,7 @@ function show(next: Place): void {
           },
         },
         moving: {
-          move: (login, request) => (live ? hubMove(login.hubName, login.account, request) : specimenMove(request)),
+          move: (login, request) => (live ? hubMove(login.hubName, login.account, request) : specimenMove!(request)),
           arrive: () => (live ? arriveHub() : notLive()),
           // Over SSH only from a computer, as a server is added.
           remote:
@@ -2935,7 +2937,7 @@ function show(next: Place): void {
           machine: agentsPlace.machine,
           workbench: workbenchShown.on,
           read: readAllLogins,
-          scan: (machine, stop) => (live ? scanAgents(machine, stop) : specimenScan(machine, stop, specimen.now)),
+          scan: (machine, stop) => (live ? scanAgents(machine, stop) : specimenScan(machine, stop, specimen!.now)),
           preview: (machine, agent, dir, into, takeBack, workbench) => (live ? previewAgentChange(machine, agent, dir, into, takeBack, workbench) : specimenPreview(machine, agent, dir, into, workbench)),
           change: (machine, agent, dir, into, raise, takeBack, expected, workbench) => (live ? changeAgentLogin(machine, agent, dir, into, raise, takeBack, expected, workbench) : specimenLoginChange(machine, agent, dir, into, workbench)),
           showing: (machine) => {
@@ -2956,7 +2958,7 @@ function show(next: Place): void {
       const profile = english ? enProfile : zhProfile;
       const settings = english ? enTalkSettings : zhTalkSettings;
       if (section === "skills") {
-        page = new SkillsPage({ store, words: profile, head: settingsHead(head, settings, "skills"), calls: live ? skillCalls : specimenSkillCalls, confirm: accountConfirm, close: pageWords.close });
+        page = new SkillsPage({ store, words: profile, head: settingsHead(head, settings, "skills"), calls: live ? skillCalls : specimenSkillCalls!, confirm: accountConfirm, close: pageWords.close });
         break;
       }
       if (!isHost(section)) {
@@ -3018,9 +3020,9 @@ function show(next: Place): void {
         when,
         workbench: workbenchShown.on,
         read: readAllLogins,
-        scan: (machine, stop) => (live ? scanAgents(machine, stop) : specimenScan(machine, stop, specimen.now)),
-        add: (machine, agent, dir) => (live ? addAgentLogin(machine, agent, dir) : specimenTakeUp(machine, agent, dir, specimen.now)),
-        folder: (machine, dir, change) => (live ? agentFolder(machine, dir, change) : specimenFolder(machine, dir, change, specimen.now)),
+        scan: (machine, stop) => (live ? scanAgents(machine, stop) : specimenScan(machine, stop, specimen!.now)),
+        add: (machine, agent, dir) => (live ? addAgentLogin(machine, agent, dir) : specimenTakeUp(machine, agent, dir, specimen!.now)),
+        folder: (machine, dir, change) => (live ? agentFolder(machine, dir, change) : specimenFolder(machine, dir, change, specimen!.now)),
         // A phone holds no folder of the World's; a plain browser walks the
         // specimen's folders.
         pick: live && onComputer() ? pickFolder : null,
@@ -3029,9 +3031,10 @@ function show(next: Place): void {
         change: (machine, agent, dir, into, raise, takeBack, expected, workbench) => (live ? changeAgentLogin(machine, agent, dir, into, raise, takeBack, expected, workbench) : specimenLoginChange(machine, agent, dir, into, workbench)),
         benched: (open) => workbenchChanged(open),
         limits: (machine, agent, dir) => (live ? readAgentLimits(machine, agent, dir) : notLive()),
-        setTitle: (machine, agent, dir, on) => (live ? setAgentTitle(machine, agent, dir, on) : specimenSetTitle(machine, agent, dir, on, specimen.now)),
-        setResetInPlace: (machine, agent, dir, on) => (live ? setAgentResetInPlace(machine, agent, dir, on) : specimenSetResetInPlace(machine, agent, dir, on, specimen.now)),
-        usageOf: (machine, agent, dir) => (live ? agentUsage(machine, agent, dir) : specimenUsage(machine, agent, dir, specimen.now)),
+        setTitle: (machine, agent, dir, on) => (live ? setAgentTitle(machine, agent, dir, on) : specimenSetTitle(machine, agent, dir, on, specimen!.now)),
+        setResetInPlace: (machine, agent, dir, on) => (live ? setAgentResetInPlace(machine, agent, dir, on) : specimenSetResetInPlace(machine, agent, dir, on, specimen!.now)),
+        changeModels: (machine, agent, dir, change) => (live ? changeAgentModels(machine, agent, dir, change) : specimenChangeModels(machine, agent, dir, change, specimen!.now)),
+        usageOf: (machine, agent, dir) => (live ? agentUsage(machine, agent, dir) : specimenUsage(machine, agent, dir, specimen!.now)),
         change_: change,
         confirm: accountConfirm,
       });
@@ -3069,7 +3072,7 @@ function show(next: Place): void {
         dir: next.dir,
         workbench: workbenchShown.on,
         read: readAllLogins,
-        usage: (machine, agent, dir) => (live ? agentUsage(machine, agent, dir) : specimenUsage(machine, agent, dir, specimen.now)),
+        usage: (machine, agent, dir) => (live ? agentUsage(machine, agent, dir) : specimenUsage(machine, agent, dir, specimen!.now)),
         when,
         talk: (machine, agent, home) => {
           workbenchChanged(true);
@@ -3078,7 +3081,7 @@ function show(next: Place): void {
         calls: {
           words: english ? enCalls : zhCalls,
           menu: (callsMenu ??= new ActsMenu()),
-          ask: (machine, agent, dir, query) => (live ? agentCalls(machine, agent, dir, query) : specimenCalls(machine, agent, dir, query, specimen.now)),
+          ask: (machine, agent, dir, query) => (live ? agentCalls(machine, agent, dir, query) : specimenCalls(machine, agent, dir, query, specimen!.now)),
           open: (machine, conversation, turn) => openTurn({ resident: conversation, machine }, turn),
           turn: next.turn ?? null,
           // The address no longer names the turn, and the page stays.
@@ -3108,17 +3111,17 @@ function show(next: Place): void {
       });
       break;
     case "feature":
-      page = new FeaturesPage({ store, words: english ? enFeatures : zhFeatures, homeWords: agentHomeWords, english, head: next.feature === "collaboration" || next.feature === "conversations" ? settingsHead(head, english ? enTalkSettings : zhTalkSettings, "collab") : head, feature: next.feature === "conversations" ? "collaboration" : next.feature, agents: () => agentsOn(null), confirm: accountConfirm, sentinels: { seam: sentinelSeam, machines: sentinelHomes } });
+      page = new FeaturesPage({ store, words: english ? enFeatures : zhFeatures, homeWords: agentHomeWords, english, head: next.feature === "collaboration" || next.feature === "conversations" ? settingsHead(head, english ? enTalkSettings : zhTalkSettings, "collab") : next.feature === "history" ? settingsHead(head, english ? enTalkSettings : zhTalkSettings, "history") : head, feature: next.feature === "conversations" ? "collaboration" : next.feature, agents: () => agentsOn(null), confirm: accountConfirm, sentinels: { seam: sentinelSeam, machines: sentinelHomes } });
       break;
     case "activity":
       page = new ActivityPage({
         words: english ? enActivity : zhActivity,
         head,
         machines: () => (live ? bookMachines(store.world.peek()) : specimenBookMachines),
-        read: (machine, query) => (live ? readBook(machine, query) : specimenBook(machine, query, specimen.now.getTime())),
+        read: (machine, query) => (live ? readBook(machine, query) : specimenBook(machine, query, specimen!.now.getTime())),
         workbench: workbenchShown.on,
         bringIn: (resident) => (live ? bringIn(resident).then(() => store.refresh()) : Promise.resolve()),
-        ...(live ? {} : { now: () => specimen.now.getTime() }),
+        ...(live ? {} : { now: () => specimen!.now.getTime() }),
       });
       break;
     case "login": {
@@ -3385,12 +3388,17 @@ function specimenPlace(): Place | null {
       return { kind: "data" };
     case "codex":
       return { kind: "talk", address: { resident: "codex-7f3a", machine: "laptop" } };
+    // `?s=solo`: a conversation in no project.
+    case "solo":
+      return { kind: "talk", address: { resident: "codex-6b19", machine: "desktop" } };
     case "asks":
       return { kind: "talk", address: { resident: "codex-a51c", machine: "laptop" } };
     case "stream":
       return { kind: "talk", address: { resident: "stream-1", machine: "laptop" } };
     case "steps":
       return { kind: "talk", address: { resident: "claude-5teps", machine: "laptop" } };
+    case "interruptions":
+      return { kind: "talk", address: { resident: "codex-order", machine: "laptop" } };
     case "trips":
       return { kind: "talk", address: { resident: "trips-1", machine: "desktop" } };
     case "deeds":
@@ -3596,7 +3604,7 @@ if (live) {
 if (!live && params.get("s") === "new") beginTalk(params.get("town"));
 if (!live && params.get("s") === "new-project") projectForm.open();
 if (!live && params.get("s") === "invite") {
-  const [first] = groupsOf(specimen.world);
+  const [first] = groupsOf(specimen!.world);
   if (first) tokens.open(first.login);
 }
 

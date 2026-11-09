@@ -1,0 +1,39 @@
+name: mac-side-paint
+on:
+  push:
+    branches: ['mac-walk/side-*']
+permissions:
+  contents: read
+jobs:
+  paint:
+    runs-on: macos-26
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: candidate
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Start source interface and Safari
+        run: |
+          mkdir -p evidence
+          sw_vers > evidence/os.txt
+          /usr/bin/safaridriver --version >> evidence/os.txt
+          npm ci --prefix candidate/gui --no-audit --no-fund > evidence/npm.log 2>&1
+          (cd candidate/gui && npm run dev -- --host 127.0.0.1 --port 5317) > evidence/vite.log 2>&1 &
+          sudo /usr/bin/safaridriver --enable
+          /usr/bin/safaridriver --port 4444 > evidence/driver.log 2>&1 &
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:5317/ > /dev/null && curl -fsS http://127.0.0.1:4444/status > /dev/null; then exit 0; fi
+            sleep 1
+          done
+          exit 1
+      - name: Isolate actual page painting
+        run: python3 candidate/.github/mac-side/paint.py --out evidence/paint
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mac-side-paint
+          path: evidence
+          retention-days: 14

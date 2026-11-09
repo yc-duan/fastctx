@@ -45,8 +45,8 @@ export interface Store {
  *  as it changes. */
 const tick = 2000;
 
-export function createStore(specimen: () => { world: WorldNow; now: Date }): Store {
-  const live = inShell();
+export function createStore(specimen?: () => { world: WorldNow; now: Date }): Store {
+  const live = !import.meta.env.DEV || inShell();
   const world = signal<WorldNow | null>(null);
   const whole = signal<WorldNow | null>(null);
   const read = (given: WorldNow) => {
@@ -64,7 +64,7 @@ export function createStore(specimen: () => { world: WorldNow; now: Date }): Sto
   const clock = signal(new Date());
   const unanswered = signal(0);
 
-  if (!live) {
+  if (!live && specimen) {
     const shown = specimen();
     remember(shown.world);
     read(shown.world);

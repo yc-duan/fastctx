@@ -102,6 +102,12 @@ export interface PendingControl {
   error?: string | null;
 }
 
+/** One of the account's own skills, as a conversation offers it. */
+export interface AccountSkill {
+  name: string;
+  description: string;
+}
+
 export interface Offers {
   /** The node takes controls to do once a turn ends, and their withdrawal. */
   control_queue?: boolean;
@@ -112,6 +118,9 @@ export interface Offers {
   pending_controls?: PendingControl[];
   controls: ControlKind[];
   commands: CommandOffer[];
+  /** The skills of the account it works for, kept in Fastctx: words
+   *  beginning with `$name` ask it to use one. */
+  skills?: AccountSkill[];
   models: ModelOffer[];
   model: string | null;
   effort: string | null;

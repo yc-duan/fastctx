@@ -240,7 +240,7 @@ function touring(): ResidentNow[] {
 }
 
 /** With `?s=voice`, the conversation that worked through the night
- *  (`voice.ts`), the last it told the user an urgent one. */
+ *  (`voice.ts`). */
 function voicing(): ResidentNow[] {
   if (new URLSearchParams(location.search).get("s") !== "voice") return [];
   return [
@@ -255,16 +255,14 @@ function voicing(): ResidentNow[] {
         desk: false,
         waiting_for_user: false,
         title: "夜里的回归与训练",
-        told: { id: "told-3", at: at("16:41:30"), status: "urgent", text: "训练在 11,200 步之后发散了，loss 从 0.31 升到 4.7。我停了它，从第 11k 步的检查点把学习率减半重跑（run3b），前一千步正常。要不要把这个学习率写进默认配置，等你定。", turn: "t3" },
       },
     }),
   ];
 }
 
 /** With `?s=project`, mark50's other conversations (`hub.ts`): one that
- *  worked through the night and told the user something urgent, one that
- *  asks the user, and one asleep on the desktop with something told that
- *  can wait. */
+ *  worked through the night, one that asks the user, and one asleep on the
+ *  desktop. */
 function hubbing(machine: "laptop" | "desktop"): ResidentNow[] {
   if (new URLSearchParams(location.search).get("s") !== "project") return [];
   if (machine === "desktop") {
@@ -280,7 +278,6 @@ function hubbing(machine: "laptop" | "desktop"): ResidentNow[] {
           desk: false,
           waiting_for_user: false,
           title: "CAN 帧时间戳",
-          told: { id: "told-4c1e-2", at: at("12:38:00"), status: "info", text: "驱动层打戳改好了，应用层的去重删掉了；回放 42 帧，时间戳全部单调。", turn: "t6" },
         },
       }),
     ];
@@ -297,7 +294,6 @@ function hubbing(machine: "laptop" | "desktop"): ResidentNow[] {
         desk: false,
         waiting_for_user: false,
         title: "夜里的回归与训练",
-        told: { id: "told-v01c-3", at: at("04:41:30"), status: "urgent", text: "训练在 11,200 步之后发散了，loss 从 0.31 升到 4.7。我停了它，从第 11k 步的检查点把学习率减半重跑（run3b），前一千步正常。要不要把这个学习率写进默认配置，等你定。", turn: "t3" },
       },
     }),
     resident("claude-a7e2", "laptop", claude(), "mark50", "claude-opus-5-5", "10:05:00", {
@@ -311,7 +307,6 @@ function hubbing(machine: "laptop" | "desktop"): ResidentNow[] {
         desk: false,
         waiting_for_user: false,
         title: "真机验证",
-        told: { id: "told-a7e2-1", at: at("13:12:00"), status: "info", text: "周五借实验室的真机跑 50 次，还是先在台架上跑？\n\n- 周五借真机\n- 先上台架" },
       },
     }),
   ];
@@ -576,7 +571,6 @@ export function specimenWorld(): { world: WorldState; now: Date; lastVisit: Date
                 waiting_for_user: false,
                 title: null,
                 last_said: "Done. The writer now commits every 5 000 rows and at end of file, and a retry replays only the rows since the last commit.",
-                told: { id: "told-7f3a-1", at: at("09:30:20"), status: "info", text: "重试时，失败的那一批也要补发告警吗？\n\n- 补发\n- 不补发" },
               },
               last_action: action("09:30:50", "laptop", "run", "cd /srv/ingest && cargo test 2>&1 | tail -3", "exit 0"),
             }),
@@ -676,7 +670,6 @@ export function specimenWorld(): { world: WorldState; now: Date; lastVisit: Date
                 waiting_for_user: false,
                 title: "日志轮转",
                 last_said: "Rotation now keeps 14 days of logs and compresses anything older than a day; the cron entry is in /etc/cron.d/app-logs.",
-                told: { id: "told-41aa-1", at: at("05:49:40"), status: "info", text: "日志轮转改好了：留 14 天，超过一天的压缩，定时任务在 /etc/cron.d/app-logs。", turn: "t2" },
               },
               // Opened on this shared server by another who shares it.
               openedBy: { account: "bob" },
