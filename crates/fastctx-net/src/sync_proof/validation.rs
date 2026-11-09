@@ -7,7 +7,6 @@ use fastctx_sync::{
     registry::{AuthorityRule, ConflictRule, REGISTRY},
     store::Error,
 };
-use std::collections::BTreeSet;
 
 pub(super) fn record_authority(kind: &str, schema: u16, authority: &Authority) -> Result<(), Error> {
     let kind = REGISTRY.asset(kind).map_err(Error::Invalid)?;
@@ -44,37 +43,10 @@ fn producer(kind: &str, producer: &Producer) -> Result<(), Error> {
 pub(super) fn source(value: &SourceBatch) -> Result<(), Error> {
     producer(&value.kind, &value.producer)?;
     let kind = REGISTRY.asset(&value.kind).map_err(Error::Invalid)?;
-    if value.format != 1
-        || value.schema != kind.registration().schema
-        || kind.registration().conflict != ConflictRule::SingleWriter
-        || value.records.is_empty()
-        || value.through.0.checked_sub(value.after.0) != Some(value.records.len() as u64)
-    {
-        return Err(Error::Invalid("invalid signed source range or registered schema".into()));
+    if value.schema != kind.registration().schema || kind.registration().conflict != ConflictRule::SingleWriter {
+        return Err(Error::Invalid("signed source batch differs from its registered schema".into()));
     }
-    let mut operations = BTreeSet::new();
-    for (index, record) in value.records.iter().enumerate() {
-        if record.sequence.0 != value.after.0 + index as u64 + 1
-            || record.kind != value.kind
-            || record.schema != value.schema
-            || record.payload.id.domain != value.scope
-            || record.payload.decoded_bytes > fastctx_types::sync::BLOCK_BYTES
-            || !operations.insert(&record.operation)
-        {
-            return Err(Error::Invalid("source record differs from its signed range binding".into()));
-        }
-        if record.roots.len() > fastctx_types::sync::RECORD_ROOTS {
-            return Err(Error::Invalid("source record owns too many content roots".into()));
-        }
-        let mut roots = BTreeSet::new();
-        for root in &record.roots {
-            root.validate().map_err(Error::Invalid)?;
-            if root.id().domain != value.scope || !roots.insert(root.id()) {
-                return Err(Error::Invalid("source record roots must be distinct and inside its scope".into()));
-            }
-        }
-    }
-    Ok(())
+    value.validate_shape().map_err(Error::Invalid)
 }
 pub(super) fn epoch(value: &EpochDescriptor) -> Result<(), Error> {
     producer(&value.kind, &value.producer)?;

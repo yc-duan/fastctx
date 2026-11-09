@@ -7,6 +7,8 @@ mod pending;
 mod recovery;
 #[path = "root_usage.rs"]
 mod root_usage;
+#[path = "source_steps.rs"]
+mod source_steps;
 use fastctx_storage::{Database, rusqlite::params};
 use fastctx_sync::{
     blocks::{SqliteBlocks, codec},
@@ -361,6 +363,7 @@ pub async fn run(root: &Path) -> Result<()> {
     metadata::run(root).await?;
     recovery::run(root).await?;
     root_usage::run(root).await?;
+    source_steps::run(root).await?;
     pending::run(root).await?;
     println!(
         "content lifecycle: typed pins, dual encodings, pending closures, private references, claim fences, cancellation, restart and revoked staging cleanup passed"

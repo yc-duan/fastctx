@@ -14,6 +14,7 @@ pub mod replica;
 pub mod roots;
 pub mod schema;
 pub mod source_authorize;
+pub mod source_step;
 pub(crate) mod sql;
 
 use crate::{

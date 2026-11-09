@@ -270,12 +270,51 @@ CREATE TABLE sync_asset_roots (
     PRIMARY KEY(hub,scope,object,authority_epoch,revision,hash,root_kind)
 ) WITHOUT ROWID;
 CREATE INDEX sync_asset_roots_hash ON sync_asset_roots(hub,scope,hash);
+-- Source uploads name the engine-issued step that owns them; only that step's
+-- commit consumes them and only its cancellation releases them.
 CREATE TABLE sync_asset_uploads (
     hub TEXT NOT NULL, scope TEXT NOT NULL, operation TEXT NOT NULL, object TEXT NOT NULL,
     kind TEXT NOT NULL, holding BLOB NOT NULL, purpose BLOB NOT NULL,
     cancelled INTEGER NOT NULL CHECK(cancelled IN (0,1)),
+    source_scope TEXT, source TEXT, source_step BLOB CHECK(source_step IS NULL OR length(source_step)=8),
+    consumed INTEGER NOT NULL DEFAULT 0 CHECK(consumed IN (0,1)),
+    CHECK((source_scope IS NULL) = (source IS NULL) AND (source IS NULL) = (source_step IS NULL)),
+    CHECK(source IS NOT NULL OR consumed=0),
     PRIMARY KEY(hub,scope,operation,object)
 ) WITHOUT ROWID;
+CREATE INDEX sync_asset_uploads_step ON sync_asset_uploads(hub,source_scope,source,source_step) WHERE source IS NOT NULL;
+-- Step revisions are issued once per source and never reused. A cancelled step
+-- consumes its number; the parser checkpoint and host generation stay as they were.
+CREATE TABLE sync_source_step_heads (
+    hub TEXT NOT NULL, scope TEXT NOT NULL, source TEXT NOT NULL,
+    issued BLOB NOT NULL CHECK(length(issued)=8),
+    PRIMARY KEY(hub,scope,source)
+) WITHOUT ROWID;
+CREATE TABLE sync_source_steps (
+    hub TEXT NOT NULL, scope TEXT NOT NULL, source TEXT NOT NULL,
+    step BLOB NOT NULL CHECK(length(step)=8), generation TEXT NOT NULL,
+    expected BLOB CHECK(expected IS NULL OR length(expected)=8),
+    operation TEXT NOT NULL, holding BLOB NOT NULL,
+    state TEXT NOT NULL CHECK(state IN ('active','consumed','cancelled')),
+    receipt BLOB, drained INTEGER NOT NULL DEFAULT 0 CHECK(drained IN (0,1)),
+    CHECK((state='consumed') = (receipt IS NOT NULL)),
+    CHECK(state!='active' OR drained=0),
+    PRIMARY KEY(hub,scope,source,step),
+    UNIQUE(hub,operation)
+) WITHOUT ROWID;
+CREATE UNIQUE INDEX sync_source_steps_active ON sync_source_steps(hub,scope,source) WHERE state='active';
+CREATE INDEX sync_source_steps_draining ON sync_source_steps(hub,scope,source,step) WHERE state!='active' AND drained=0;
+-- Every destination of one step; a destination serves one active step at a time.
+CREATE TABLE sync_source_step_targets (
+    hub TEXT NOT NULL, scope TEXT NOT NULL, source TEXT NOT NULL,
+    step BLOB NOT NULL CHECK(length(step)=8),
+    target_scope TEXT NOT NULL, target_source TEXT NOT NULL, object TEXT NOT NULL, kind TEXT NOT NULL,
+    stream TEXT NOT NULL, holding BLOB NOT NULL, purpose BLOB NOT NULL,
+    active INTEGER NOT NULL CHECK(active IN (0,1)),
+    PRIMARY KEY(hub,scope,source,step,target_scope,target_source),
+    FOREIGN KEY(hub,scope,source,step) REFERENCES sync_source_steps(hub,scope,source,step)
+) WITHOUT ROWID;
+CREATE UNIQUE INDEX sync_source_step_targets_active ON sync_source_step_targets(hub,target_scope,target_source) WHERE active=1;
 CREATE TABLE sync_asset_pins (
     hub TEXT NOT NULL, scope TEXT NOT NULL, operation TEXT NOT NULL, object TEXT NOT NULL,
     kind TEXT NOT NULL, hash TEXT NOT NULL,

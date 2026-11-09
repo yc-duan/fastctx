@@ -4,7 +4,9 @@ use super::{
     access::{AccessContext, Custody},
     ingest_effects::{SourceEffects, SourceFamily, SourceIndexPage, SourceIndexRead, SourceIndexRow},
     roots::RootLease,
+    source_step::{SourceStep, SourceStepTarget},
 };
+use crate::blocks::STEP_TARGETS;
 use crate::{
     catalog::SourceBatch,
     cursor::{ByteCount, LocalSequence, Revision},
@@ -74,60 +76,80 @@ impl IngestFacts {
         Ok(body.len())
     }
 }
+/// One destination's facts and registered effects inside a step.
 #[derive(Clone)]
 pub struct IngestBatch {
-    pub target: SourceTarget,
-    pub expected: Option<SourceCheckpoint>,
-    pub next: SourceCheckpoint,
+    pub target: SourceStepTarget,
     /// None advances local parser progress without inventing an empty source fact.
     pub facts: Option<IngestFacts>,
     pub effects: SourceEffects,
 }
-/// One bounded local transaction, including fan-out to several visibility scopes.
-/// The hub may subsequently accept each scope's signed batch independently.
+/// One bounded local transaction for one engine-issued step: the primary
+/// source's parser checkpoint and its facts fanned out to visibility scopes.
+/// Destinations carry no parser checkpoint of their own. The hub may later
+/// accept each scope's signed batch independently.
 #[derive(Clone)]
 pub struct IngestOperation {
-    operation: OperationId,
+    step: SourceStep,
+    expected: Option<SourceCheckpoint>,
+    next: SourceCheckpoint,
     batches: Vec<IngestBatch>,
 }
 impl IngestOperation {
-    pub fn new(operation: OperationId, batches: Vec<IngestBatch>) -> Result<Self, Error> {
-        if batches.is_empty() || batches.len() > 256 {
-            return Err(Error::Invalid("ingestion needs a bounded nonempty source set".into()));
+    pub fn new(
+        step: SourceStep,
+        expected: Option<SourceCheckpoint>,
+        next: SourceCheckpoint,
+        batches: Vec<IngestBatch>,
+    ) -> Result<Self, Error> {
+        if batches.is_empty() || batches.len() > STEP_TARGETS as usize {
+            return Err(Error::Invalid("ingestion needs a bounded nonempty destination set".into()));
         }
-        let hub = &batches[0].target.custody.object.scope.hub;
+        let primary = step.primary();
+        let scope = &primary.custody.object.scope;
+        if expected.as_ref().map(|old| old.revision) != step.expected()
+            || expected.as_ref().is_some_and(|old| old.source != primary.source)
+            || next.source != primary.source
+            || next.revision != step.revision()
+            || &next.generation != step.generation()
+            || next.parser_version == 0
+            || expected
+                .as_ref()
+                .is_some_and(|old| old.generation == next.generation && next.committed_offset < old.committed_offset)
+        {
+            return Err(Error::Invalid("checkpoint does not continue its step and source position".into()));
+        }
+        for root in expected.iter().chain(std::iter::once(&next)).filter_map(|p| p.state.as_ref()) {
+            root.validate().map_err(Error::Invalid)?;
+            if root.id().domain != *scope {
+                return Err(Error::Invalid("checkpoint root crosses its source scope".into()));
+            }
+        }
         let mut keys = std::collections::BTreeSet::new();
         let mut bytes = batches.capacity().checked_mul(size_of::<IngestBatch>()).ok_or(Error::Busy)?;
+        let checkpoint = fastctx_types::sync::transport_codec::bounded_json(
+            &(&expected, &next),
+            fastctx_types::sync::PAGE_BYTES as usize,
+        )
+        .map_err(|_| Error::Invalid("checkpoint exceeds its metadata bound".into()))?;
+        bytes = bytes.checked_add(checkpoint.len()).ok_or(Error::Busy)?;
         for batch in &batches {
-            let target = &batch.target;
+            let bound = batch.target.step();
+            if bound.key() != step.key() || bound.operation() != step.operation() {
+                return Err(Error::Invalid("a destination belongs to another step".into()));
+            }
+            let target = batch.target.target();
             let custody = &target.custody;
-            let scope = &custody.object.scope;
+            let destination = &custody.object.scope;
             let kind = custody.kind.registration();
-            if &scope.hub != hub
-                || custody.context.scope != *scope
-                || custody.holding.scope != *scope
+            if destination.hub != scope.hub
+                || custody.context.scope != *destination
+                || custody.holding.scope != *destination
                 || kind.class != DataClass::Asset
                 || kind.conflict != ConflictRule::SingleWriter
-                || !keys.insert((scope, &target.source))
-                || batch.next.source != target.source
-                || batch.expected.as_ref().is_some_and(|old| old.source != target.source)
+                || !keys.insert((destination, &target.source))
             {
                 return Err(Error::Invalid("ingestion source, kind or custody coordinates differ".into()));
-            }
-            if batch.next.revision.0 == 0
-                || batch.next.parser_version == 0
-                || batch.expected.as_ref().is_some_and(|old| {
-                    batch.next.revision <= old.revision
-                        || old.generation == batch.next.generation && batch.next.committed_offset < old.committed_offset
-                })
-            {
-                return Err(Error::Invalid("checkpoint does not advance its version and source position".into()));
-            }
-            for root in batch.expected.iter().chain(std::iter::once(&batch.next)).filter_map(|p| p.state.as_ref()) {
-                root.validate().map_err(Error::Invalid)?;
-                if root.id().domain != *scope {
-                    return Err(Error::Invalid("checkpoint root crosses its source scope".into()));
-                }
             }
             let metadata = fastctx_types::sync::transport_codec::bounded_json(
                 &(
@@ -139,8 +161,6 @@ impl IngestOperation {
                     &target.stream,
                     &target.epoch,
                     &target.producer,
-                    &batch.expected,
-                    &batch.next,
                 ),
                 fastctx_types::sync::PAGE_BYTES as usize,
             )
@@ -155,31 +175,43 @@ impl IngestOperation {
                 }
                 bytes = bytes.checked_add(count).ok_or(Error::Busy)?;
                 let claim = facts.claim()?;
-                if claim.scope != *scope
+                claim.validate_shape().map_err(Error::Invalid)?;
+                if claim.scope != *destination
                     || claim.stream != target.stream
                     || claim.epoch != target.epoch
                     || claim.producer != target.producer
                     || claim.kind != kind.id
                     || claim.schema != kind.schema
-                    || claim.records.is_empty()
                 {
                     return Err(Error::Invalid("source batch differs from the registered target".into()));
+                }
+                if matches!(facts, IngestFacts::Local { .. }) && &claim.operation != step.operation() {
+                    return Err(Error::Invalid("a local batch carries its step's operation".into()));
                 }
             }
         }
         if bytes > fastctx_types::sync::PAGE_BYTES as usize {
             return Err(Error::Invalid("ingestion transaction exceeds its metadata bound".into()));
         }
-        Ok(Self { operation, batches })
+        Ok(Self { step, expected, next, batches })
     }
     pub fn operation(&self) -> &OperationId {
-        &self.operation
+        self.step.operation()
+    }
+    pub fn step(&self) -> &SourceStep {
+        &self.step
+    }
+    pub fn expected(&self) -> Option<&SourceCheckpoint> {
+        self.expected.as_ref()
+    }
+    pub fn next(&self) -> &SourceCheckpoint {
+        &self.next
     }
     pub fn batches(&self) -> &[IngestBatch] {
         &self.batches
     }
 }
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub enum IngestStatus {
     CheckpointOnly,
     Applied {
@@ -191,14 +223,14 @@ pub enum IngestStatus {
         proof: Digest,
     },
 }
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct SourceReceipt {
     pub source: SourceId,
     pub scope: crate::identity::ScopeKey,
     pub checkpoint: Revision,
     pub status: IngestStatus,
 }
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct IngestReceipt {
     pub operation: OperationId,
     pub local: LocalSequence,

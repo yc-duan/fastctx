@@ -81,9 +81,15 @@ pub(super) fn shape(root: &ContentRef) -> (&'static str, Option<u32>) {
     }
 }
 
-pub(super) fn stage(db: &Connection, custody: &Custody, operation: OperationId, root: ContentRef) -> Result<Pin> {
+pub(super) fn stage(
+    db: &Connection,
+    custody: &Custody,
+    operation: OperationId,
+    root: ContentRef,
+    owner: super::uploads::Owner<'_>,
+) -> Result<Pin> {
     root.validate().map_err(sql::invalid)?;
-    super::uploads::intent(db, custody, &operation, false)?;
+    super::uploads::open(db, custody, &operation, owner)?;
     if root.id().domain != custody.object.scope {
         return Err(sql::invalid("pin content belongs to another scope"));
     }
@@ -138,8 +144,8 @@ pub(super) fn check(db: &Connection, custody: &Custody, pin: &Pin) -> Result<Str
     found.ok_or_else(|| sql::invalid("pin no longer matches the persisted staging intent"))
 }
 
-pub(super) fn ready(db: &Connection, custody: &Custody, pin: &Pin) -> Result<()> {
-    super::uploads::intent(db, custody, &pin.operation, false)?;
+pub(super) fn ready(db: &Connection, custody: &Custody, pin: &Pin, owner: super::uploads::Owner<'_>) -> Result<()> {
+    super::uploads::open(db, custody, &pin.operation, owner)?;
     if check(db, custody, pin)? == "released" {
         return Err(sql::invalid("a released pin cannot publish content"));
     }

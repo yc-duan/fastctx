@@ -141,3 +141,38 @@ pub struct SourceBatch {
     pub through: Sequence,
     pub records: Vec<SourceRecord>,
 }
+impl SourceBatch {
+    /// The range and record binding every holder checks before trusting a batch,
+    /// whether it signs it, verifies it or forwards it. Registry rules are separate.
+    pub fn validate_shape(&self) -> Result<(), String> {
+        if self.format != 1
+            || self.records.is_empty()
+            || self.through.0.checked_sub(self.after.0) != Some(self.records.len() as u64)
+        {
+            return Err("invalid source batch format or range".into());
+        }
+        let mut operations = std::collections::BTreeSet::new();
+        for (index, record) in self.records.iter().enumerate() {
+            if record.sequence.0 != self.after.0 + index as u64 + 1
+                || record.kind != self.kind
+                || record.schema != self.schema
+                || record.payload.id.domain != self.scope
+                || record.payload.decoded_bytes > super::BLOCK_BYTES
+                || !operations.insert(&record.operation)
+            {
+                return Err("source record differs from its batch range binding".into());
+            }
+            if record.roots.len() > super::RECORD_ROOTS {
+                return Err("source record owns too many content roots".into());
+            }
+            let mut roots = std::collections::BTreeSet::new();
+            for root in &record.roots {
+                root.validate()?;
+                if root.id().domain != self.scope || !roots.insert(root.id()) {
+                    return Err("source record roots must be distinct and inside its scope".into());
+                }
+            }
+        }
+        Ok(())
+    }
+}

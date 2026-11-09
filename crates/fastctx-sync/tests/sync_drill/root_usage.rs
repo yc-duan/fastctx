@@ -2,7 +2,10 @@
 use super::*;
 use fastctx_sync::{
     manifest::ContentRef,
-    store::roots::{AcquireRoot, RootAcquired, RootLease, RootStore, RootUse},
+    store::{
+        roots::{AcquireRoot, RootAcquired, RootLease, RootStore, RootUse},
+        source_step::CancelProgress,
+    },
 };
 
 fn request(custody: Custody, root: ContentRef, id: u8) -> AcquireRoot {
@@ -183,22 +186,19 @@ async fn private_supply(root: &Path) -> Result<()> {
     let db = open(&path)?;
     let blocks = store(&db, &dir)?;
     let reader = custody(60, "conversation.artifact");
-    let mut source = reader.clone();
-    source.purpose = HoldingUse::WorkspaceSource {
-        workspace: fastctx_sync::store::access::WorkspaceBinding {
-            conversation: source.object.clone(),
-            account: AccountId::from_bytes([61; 32]),
-            machine: DeviceId::from_bytes([3; 32]),
-            epoch: WorkspaceEpoch::from_bytes([62; 32]),
-            registration: operation(60),
-        },
-    };
+    let target = super::source_steps::target(&reader, 60);
+    let source = target.custody.clone();
+    let step = blocks.begin_step(target.clone(), None, HostGeneration::from_bytes([60; 32])).await?;
+    let bound = blocks.bind_target(step.clone(), target).await?;
     let content =
         codec::encode(scope(), b"private parser state before committing a checkpoint".to_vec(), Encoding::Raw)?;
     let manifest = page(content.representation.content.clone())?;
-    let published =
-        blocks.put(source.clone(), operation(60), content.representation.clone(), content.bytes.clone()).await?;
-    blocks.put_manifest(source.clone(), operation(60), manifest.clone()).await?;
+    // Source content never enters through the ordinary replica upload.
+    assert!(
+        blocks.put(source.clone(), operation(60), content.representation.clone(), content.bytes.clone()).await.is_err()
+    );
+    let published = blocks.put_source(bound.clone(), content.representation.clone(), content.bytes.clone()).await?;
+    blocks.put_manifest_source(bound.clone(), manifest.clone()).await?;
     pump(&db, &blocks).await?;
     assert!(blocks.descriptor(reader.clone(), published.content.id.clone()).await.is_err());
     assert!(blocks.read(reader.clone(), published.content.id.clone(), published.representation.clone()).await.is_err());
@@ -207,12 +207,14 @@ async fn private_supply(root: &Path) -> Result<()> {
     let usage = held(
         blocks
             .acquire_root(
-                operation(60),
+                step.operation().clone(),
                 request(source.clone(), ContentRef::Manifest { root: manifest.root.clone() }, 60),
             )
             .await?,
     )?;
-    assert_eq!(blocks.cancel_upload(source.clone(), operation(60), 8).await?, 2);
+    assert!(matches!(blocks.cancel_step(step.clone(), 8).await?, CancelProgress::Draining { released: 2 }));
+    assert!(matches!(blocks.cancel_step(step.clone(), 8).await?, CancelProgress::Done));
+    assert!(blocks.put_source(bound, content.representation.clone(), content.bytes.clone()).await.is_err());
     assert!(blocks.manifest(reader.clone(), manifest.root).await.is_err());
     assert_eq!(blocks.collect(8).await?, 0);
     // Supplying the actual bytes for Replica use creates a distinct public pin.

@@ -15,5 +15,8 @@ mod root_holds;
 mod rows;
 pub(crate) use retention::retain_supplied;
 mod sqlite;
+mod steps;
 mod uploads;
 pub use sqlite::SqliteBlocks;
+pub use steps::ReconcileCursor;
+pub(crate) use steps::STEP_TARGETS;

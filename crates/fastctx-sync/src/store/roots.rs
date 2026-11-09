@@ -64,7 +64,7 @@ impl AcquireRoot {
 /// This receipt identifies a persisted use. Release and reads recheck the saved
 /// lease, owner, kind, root and usage rather than trusting these fields. Release
 /// checks the actual holder but does not require the original grant to be current.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct RootLease {
     pub id: RootLeaseId,
     pub operation: OperationId,

@@ -14,6 +14,7 @@ pub(crate) enum Role {
     Roots,
     FormatUpgrade,
     Pending,
+    Source,
 }
 thread_local! { static ACTIVE: Cell<Option<Role>> = const { Cell::new(None) }; }
 pub(crate) struct Boundary(Option<Role>, PhantomData<Rc<()>>);
@@ -56,6 +57,15 @@ fn permits(table: &str) -> bool {
         ),
         Some(Role::Roots) => matches!(table, "sync_root_leases" | "sync_asset_gc"),
         Some(Role::FormatUpgrade) => table == "sync_format_upgrades",
+        Some(Role::Source) => matches!(
+            table,
+            "sync_source_step_heads"
+                | "sync_source_steps"
+                | "sync_source_step_targets"
+                | "sync_asset_uploads"
+                | "sync_asset_pins"
+                | "sync_asset_gc"
+        ),
         Some(Role::Pending) => matches!(
             table,
             "sync_pending_mutations"
