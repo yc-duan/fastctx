@@ -2,6 +2,7 @@
 //! device discovers and verifies exactly the descriptions its accounts own.
 use super::*;
 use fastctx_sync::{
+    authority::{Peer, Service},
     catalog::{CatalogChange, Lifecycle, SourceBatch},
     cursor::Sequence,
     proof::{
@@ -9,6 +10,7 @@ use fastctx_sync::{
         ProofPurpose, ProofSigner, ProofVerifier, Signature, SignedAcceptanceFragment, SignedSourceBatch,
         SignedStatement, SigningKey,
     },
+    replicate::{BlockOffer, BlockRequest, DirectoryFollower, Upstream},
     scope::{
         self, AccountIdentity, ScopeDiscoveryRead, ScopeSubject, ScopeVisibility, account_scope, directory_object,
     },
@@ -18,6 +20,7 @@ use fastctx_sync::{
         directory::{Recipient, ScopeDescription, SqliteDirectory},
         scopes::{Installed, ScopeState, SqliteScopes},
     },
+    transfer::Message,
 };
 use fastctx_types::sync::{conversation_identity::conversation_scope, feed};
 
@@ -122,6 +125,31 @@ impl AccessPolicy for HubPolicy {
     }
     fn can_execute(&self, c: &AccessContext, _: &DeviceId) -> Decision {
         Decision::Denied { revision: c.observed_acl, reason: "no execution".into() }
+    }
+}
+
+/// Carries each request and answer through its JSON encoding, as a transport
+/// would, to the hub's service for one authenticated device.
+struct Loopback {
+    service: Arc<Service>,
+    peer: Peer,
+}
+impl Upstream for Loopback {
+    fn exchange(&self, request: Message) -> fastctx_sync::store::FutureResult<'_, Message> {
+        Box::pin(async move {
+            let wire = |message: &Message| -> std::result::Result<Message, Error> {
+                let bytes = serde_json::to_vec(message).map_err(|error| Error::Invalid(error.to_string()))?;
+                serde_json::from_slice(&bytes).map_err(|error| Error::Invalid(error.to_string()))
+            };
+            let answer = self.service.answer(&self.peer, wire(&request)?).await?;
+            wire(&answer)
+        })
+    }
+    fn fetch(&self, _: BlockRequest) -> fastctx_sync::store::FutureResult<'_, Vec<u8>> {
+        Box::pin(async { Err(Error::Unavailable("the loopback carries no blocks yet".into())) })
+    }
+    fn offer(&self, _: BlockOffer) -> fastctx_sync::store::FutureResult<'_, fastctx_sync::cursor::DurableAck> {
+        Box::pin(async { Err(Error::Unavailable("the loopback carries no blocks yet".into())) })
     }
 }
 
@@ -276,7 +304,7 @@ pub(super) async fn run(root: &Path) -> Result<()> {
     super::super::scheduler::closed(&dir.join("hub.sqlite3")).await?;
     let (db, blocks) = hub_store(&dir, &hub)?;
     let run = AuthorityRun::begin(&blocks, hub.clone(), entropy(100)).await?;
-    let directory = SqliteDirectory::new(blocks, run, Arc::new(HubSigner));
+    let directory = Arc::new(SqliteDirectory::new(blocks, run, Arc::new(HubSigner)));
     let third = directory.publish(described(3, Lifecycle::Deleted), operation(248)).await?;
     let deleted = scope::verify(&key, third, &identity, &Verifier)?;
     deleted.validate_successor(&advanced)?;
@@ -318,6 +346,30 @@ pub(super) async fn run(root: &Path) -> Result<()> {
     assert_eq!(scopes.install(&account_scope_proof).await?, Installed::Opened(live(1)));
     let closed = ScopeState { acl_revision: Revision(3), publication_epoch: Revision(1), enabled: false };
     assert_eq!(scopes.install(&deleted).await?, Installed::Advanced(closed));
+
+    // A fresh device learns the same scopes through the hub's service.
+    let fresh = DeviceId::from_bytes([38; 32]);
+    let fresh_db = Database::open_guarded(&dir.join("fresh.sqlite3"), "", boundary::guard, schema::initialize)?;
+    let fresh_blocks = SqliteBlocks::new(
+        fresh_db.clone(),
+        dir.join("fresh-files"),
+        Holder::Device { device: fresh.clone() },
+        Arc::new(HubPolicy),
+        operation(250),
+        1 << 23,
+    )?;
+    let follower = DirectoryFollower::new(
+        SqliteScopes::new(fresh_blocks, HubId::from_bytes([39; 8]), fresh.clone()),
+        identity.clone(),
+        Arc::new(Verifier),
+    );
+    let upstream =
+        Loopback { service: Arc::new(Service::new(directory)), peer: Peer { device: fresh, accounts: vec![owner.id] } };
+    let discovered = follower.discover(&upstream).await?;
+    assert_eq!(discovered.installed.len(), 2);
+    assert!(discovered.installed.iter().all(|installed| matches!(installed, Installed::Opened(_))));
+    assert_eq!(discovered.directories.len(), 1);
+    assert_eq!(count(&fresh_db, "SELECT COUNT(*) FROM sync_scopes WHERE enabled=0")?, 1);
     println!(
         "hub directory: signed scope descriptions, idempotent retries, ACL advances, refusals, feed prefixes, paged discovery, restart and device installation passed"
     );

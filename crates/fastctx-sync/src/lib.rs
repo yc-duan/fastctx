@@ -4,6 +4,7 @@
 //! Storage implementations own their databases; consumers receive typed handles.
 
 pub mod admission;
+pub mod authority;
 pub mod blocks;
 pub mod catalog;
 pub mod conversation;
@@ -15,6 +16,7 @@ pub mod metrics;
 pub mod migration;
 pub mod proof;
 pub mod registry;
+pub mod replicate;
 pub mod scheduler;
 pub mod scope;
 pub mod store;
