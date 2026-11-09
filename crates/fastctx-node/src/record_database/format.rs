@@ -49,8 +49,8 @@ pub(super) fn initialize(db: &Connection, observed: &Observation) -> Result<()> 
     Ok(())
 }
 pub(super) fn start(database: &Database, log: Arc<crate::log::Log>) -> Result<()> {
-    if database.fault().is_some() {
-        return Ok(());
+    if let Some(error) = database.fault() {
+        return Err(error.clone());
     }
     let journal = Arc::new(SqliteUpgradeJournal::new(database.clone(), Service::World)?);
     let options = Options {

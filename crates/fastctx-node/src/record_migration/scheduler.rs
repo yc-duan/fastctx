@@ -114,7 +114,12 @@ impl Service {
 
     /// Called only after the listener has been polled, never during startup IO.
     pub(crate) fn start(&self) -> io::Result<bool> {
-        if self.engine.database.upgrade().and_then(|db| db.format_upgrade_gate()).is_some_and(|gate| !gate.finished()) {
+        let database =
+            self.engine.database.upgrade().ok_or_else(|| io::Error::other("migration database is closed"))?;
+        if let Some(error) = database.fault() {
+            return Err(io::Error::other(error.clone()));
+        }
+        if database.format_upgrade_gate().is_some_and(|gate| !gate.finished()) {
             return Ok(false);
         }
         if self.engine.started.swap(true, Ordering::AcqRel) {
@@ -142,13 +147,18 @@ impl Service {
         self.engine.progress.notified().await;
     }
 
-    pub(crate) async fn wait_started(&self) {
+    pub(crate) async fn wait_started(&self) -> io::Result<()> {
         loop {
             let opened = self.engine.opened.notified();
             tokio::pin!(opened);
             opened.as_mut().enable();
+            let database =
+                self.engine.database.upgrade().ok_or_else(|| io::Error::other("migration database is closed"))?;
+            if let Some(error) = database.fault() {
+                return Err(io::Error::other(error.clone()));
+            }
             if self.engine.started.load(Ordering::Acquire) {
-                return;
+                return Ok(());
             }
             opened.await;
         }

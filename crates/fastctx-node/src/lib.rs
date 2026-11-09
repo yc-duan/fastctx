@@ -754,7 +754,9 @@ pub async fn run_prepared(
 {report}"
                 ));
             }
-            record_database::start_upgrade(&database, log.clone()).context("pinning the World upgrade snapshot")?;
+            if database.fault().is_none() {
+                record_database::start_upgrade(&database, log.clone()).context("pinning the World upgrade snapshot")?;
+            }
             let record_migration =
                 record_database::register(&world, &database).context("opening the node record database")?;
             record_migration.report_to(log.clone());
@@ -929,7 +931,12 @@ pub async fn run_prepared(
     let recovering = node.clone();
     fastctx_platform::task::spawn(async move {
         let node = recovering;
-        node.record_migration.wait_started().await;
+        if let Err(error) = node.record_migration.wait_started().await {
+            node.log.line(format_args!("record recovery remains unavailable: {error}"));
+            node.effects_ready.store(true, std::sync::atomic::Ordering::Release);
+            node.effects_changed.notify_waiters();
+            return;
+        }
         startup::recover(&node).await;
         node.effects_ready.store(true, std::sync::atomic::Ordering::Release);
         node.effects_changed.notify_waiters();
@@ -974,7 +981,9 @@ pub async fn run_prepared(
     });
     let jobs_node = node.clone();
     fastctx_platform::task::spawn(async move {
-        jobs_node.record_migration.wait_started().await;
+        if jobs_node.record_migration.wait_started().await.is_err() {
+            return;
+        }
         if jobs_node.database.fault().is_some() {
             return;
         }
