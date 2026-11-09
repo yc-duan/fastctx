@@ -12,15 +12,11 @@ spec.loader.exec_module(wire)
 CALLERS = {
     "SqliteUpgradeJournal": {
         "crates/fastctx-sync/src/store/format_upgrade.rs",
-        "crates/fastctx-node/src/record_database.rs",
-        "crates/fastctx-node/src/world_format.rs",
-        "crates/fastctx-hub/src/store/format.rs",
-        "crates/fastctx-hub/src/store/shelf.rs",
+
     },
     "prepare_format_upgrade": {
         "crates/fastctx-sync/src/store/format_upgrade.rs",
-        "crates/fastctx-node/src/record_database.rs",
-        "crates/fastctx-hub/src/store/format.rs",
+
     },
     "IndexValidationPermit": {
         "crates/fastctx-sync/src/blocks/metadata_custody.rs",

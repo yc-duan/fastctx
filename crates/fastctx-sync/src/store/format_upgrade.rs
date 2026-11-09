@@ -73,11 +73,11 @@ impl Journal for SqliteUpgradeJournal {
         })
     }
 
-    fn interrupted(&self, expected: Record) -> Result<Record> {
+    fn interrupted(&self, expected: Record, retry_file_name: Option<String>) -> Result<Record> {
         if expected.service != self.service {
             return Err(sql::invalid("upgrade receipt belongs to another service"));
         }
-        let (abandoned, retry) = expected.interrupted()?;
+        let (abandoned, retry) = expected.interrupted(retry_file_name)?;
         let next = retry.as_ref().unwrap_or(&abandoned).clone();
         self.db.write_now(32 * 1024, move |db| {
             let _boundary = boundary::enter_typed_write(boundary::Role::FormatUpgrade);
