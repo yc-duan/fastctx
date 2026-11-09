@@ -162,6 +162,11 @@ pub enum Message {
     Changes {
         holding: HoldingPeriod,
         after: ScopeCursor,
+        /// Selected kind/schema set whose digest must equal `after.view`.
+        /// Omission selects the full view advertised by scope discovery (v1
+        /// projection schema). A cursor without a view still needs reconciliation.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        view: Option<ViewDefinition>,
         max_bytes: u32,
     },
     ChangesPage {

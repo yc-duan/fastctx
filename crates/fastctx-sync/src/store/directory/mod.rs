@@ -6,6 +6,7 @@ mod rows;
 mod stream;
 
 pub use discover::Recipient;
+pub(crate) use discover::feed_view;
 
 use crate::{
     blocks::{SqliteBlocks, authority_supply, codec},
@@ -55,6 +56,13 @@ impl SqliteDirectory {
     /// `signer` carries the hub's service key; `blocks` holds this hub's content.
     pub fn new(blocks: SqliteBlocks, run: AuthorityRun, signer: Arc<dyn ProofSigner>) -> Self {
         Self { blocks, run, signer, writing: tokio::sync::Mutex::new(()) }
+    }
+
+    pub(crate) fn database(&self) -> &fastctx_storage::Database {
+        self.blocks.database()
+    }
+    pub(crate) fn hub(&self) -> &crate::identity::HubId {
+        self.run.hub()
     }
 
     /// Signs `description` into its owner's directory and returns the proof a

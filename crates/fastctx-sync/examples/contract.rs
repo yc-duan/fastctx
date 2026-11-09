@@ -177,7 +177,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
         Message::Cursors { entries: vec![cursor.clone()], more: false },
         Message::Catalog { holding: holding.clone(), cursor: None, scope: scope.clone(), kinds: vec![kind] },
-        Message::Changes { holding: holding.clone(), after: cursor.clone(), max_bytes: 256 * 1024 },
+        Message::Changes {
+            holding: holding.clone(),
+            after: cursor.clone(),
+            view: Some(view.clone()),
+            max_bytes: 256 * 1024,
+        },
         Message::ChangesPage {
             holding: holding.clone(),
             page: ChangesPage {

@@ -10,7 +10,7 @@ use crate::{
         account_scope,
     },
     store::{Error, FutureResult, feed, sql},
-    transfer::KindVersion,
+    transfer::{KindVersion, ViewDefinition},
 };
 use fastctx_storage::rusqlite::params;
 use sha2::{Digest as _, Sha256};
@@ -64,7 +64,12 @@ impl SqliteDirectory {
                     let snapshot = db.unchecked_transaction()?;
                     let mut cursors = Vec::new();
                     for directory in &directories {
-                        cursors.extend(feed::cursor(&snapshot, directory)?);
+                        if let Some(mut cursor) = feed::cursor(&snapshot, directory)? {
+                            if let Some(descriptor) = super::described(&snapshot, directory)? {
+                                cursor.view = Some(feed_view(&descriptor).id().map_err(sql::invalid)?);
+                            }
+                            cursors.push(cursor);
+                        }
                     }
                     let fence = fence.unwrap_or_else(|| DiscoveryFence {
                         recipient: device.clone(),
@@ -100,9 +105,11 @@ impl SqliteDirectory {
                         let key = ScopeKey { hub: hub.clone(), scope: ScopeId::try_from(scope).map_err(sql::invalid)? };
                         let descriptor: ScopeDescriptor = serde_json::from_slice(&proof.payload.0)
                             .map_err(|error| sql::invalid(error.to_string()))?;
-                        let cursor: ScopeCursor =
+                        let mut cursor: ScopeCursor =
                             feed::cursor(&snapshot, &key)?.ok_or_else(|| sql::invalid("a described scope has no feed"))?;
-                        let offer = ScopeOffer { binding: *proof, cursor, kinds: offered(&descriptor.subject) };
+                        let view = feed_view(&descriptor);
+                        cursor.view = Some(view.id().map_err(sql::invalid)?);
+                        let offer = ScopeOffer { binding: *proof, cursor, kinds: view.kinds };
                         let size = serde_json::to_vec(&offer).map_err(|error| sql::invalid(error.to_string()))?.len();
                         if bytes + size > max_bytes && !entries.is_empty() {
                             more = true;
@@ -124,6 +131,16 @@ impl SqliteDirectory {
                 .await
                 .map_err(|error| sql::error(error, self.blocks.worker().clone()))
         })
+    }
+}
+
+/// Discovery and feed reads agree on the default complete v1 capability view.
+pub(crate) fn feed_view(descriptor: &ScopeDescriptor) -> ViewDefinition {
+    ViewDefinition {
+        scope: descriptor.scope.clone(),
+        acl_revision: descriptor.acl_revision,
+        projection_schema: 1,
+        kinds: offered(&descriptor.subject),
     }
 }
 

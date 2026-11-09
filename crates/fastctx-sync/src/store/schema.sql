@@ -437,6 +437,7 @@ CREATE TABLE sync_epoch_descriptors (
     signer BLOB NOT NULL CHECK(length(signer)=32), signature BLOB NOT NULL CHECK(length(signature)=64),
     operation TEXT NOT NULL, PRIMARY KEY(hub,scope,stream,epoch)
 ) WITHOUT ROWID;
+CREATE UNIQUE INDEX sync_epoch_proof ON sync_epoch_descriptors(hub,scope,proof);
 CREATE TABLE sync_hub_signing_keys (
     hub TEXT NOT NULL, public_key BLOB NOT NULL CHECK(length(public_key)=32),
     revision BLOB NOT NULL CHECK(length(revision)=8), rotation_proof BLOB,
