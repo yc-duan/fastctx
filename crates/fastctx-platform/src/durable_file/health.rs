@@ -67,6 +67,60 @@ fn directory_publication_confirmation_lifecycle() {
         })
         .unwrap();
     assert_eq!(confirmations.load(Ordering::SeqCst), 2, "a fresh process must reconfirm an existing directory");
-    fs::remove_dir(&target).unwrap();
-    fs::remove_dir(&root).unwrap();
+    assert!(cache.state.lock().unwrap().inflight.is_empty());
+    let refused = root.join("refused");
+    fs::write(&refused, b"not a directory").unwrap();
+    for _ in 0..32 {
+        assert!(cache.prepare(&refused, &|_| {}).is_err());
+        let mut state = cache.state.lock().unwrap();
+        assert!(state.inflight.is_empty());
+        assert!(!state.confirmed.contains(&refused));
+    }
+    fs::remove_file(&refused).unwrap();
+    cache.prepare(&refused, &|_| {}).unwrap();
+    let interrupted = root.join("interrupted");
+    assert!(
+        std::panic::catch_unwind(|| cache.prepare(&interrupted, &|entry| {
+            if entry == interrupted {
+                panic!("interrupt after mkdir");
+            }
+        }))
+        .is_err()
+    );
+    assert!(cache.state.lock().unwrap().inflight.is_empty());
+    cache.prepare(&interrupted, &|_| {}).unwrap();
+
+    let limited = Cache { limit: 8192, ..Cache::default() };
+    for scope in 0..32 {
+        let bucket = root.join(format!("scope-{scope}")).join("ab").join("cd");
+        limited.prepare(&bucket, &|_| {}).unwrap();
+        let state = limited.state.lock().unwrap();
+        assert!(state.inflight.is_empty());
+        assert!(state.confirmed.bytes <= limited.limit);
+    }
+    assert!(limited.state.lock().unwrap().confirmed.evictions > 0);
+    let evicted = root.join("scope-0").join("ab").join("cd");
+    let refreshed = AtomicUsize::new(0);
+    limited
+        .prepare(&evicted, &|entry| {
+            if entry == evicted {
+                refreshed.fetch_add(1, Ordering::SeqCst);
+            }
+        })
+        .unwrap();
+    assert_eq!(refreshed.load(Ordering::SeqCst), 1, "eviction requires a fresh confirmation");
+
+    let mut packed = Confirmed::default();
+    let first = root.join("sparse").join("00");
+    packed.remember(&first, CACHE_BYTES);
+    let baseline = packed.bytes;
+    for second in 0..256 {
+        packed.remember(&first.join(format!("{second:02x}")), CACHE_BYTES);
+    }
+    assert!(packed.bytes < baseline + 1024, "one second-level bitmap covers its 256 directories");
+    for first_byte in 1..256 {
+        packed.remember(&root.join("sparse").join(format!("{first_byte:02x}")).join("00"), CACHE_BYTES);
+    }
+    assert!(packed.bytes < baseline + 256 * 1024, "second-level bitmaps allocate only for touched prefixes");
+    fs::remove_dir_all(&root).unwrap();
 }

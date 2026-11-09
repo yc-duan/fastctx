@@ -55,8 +55,11 @@ impl FileKey {
         Ok(Self { representation: value.id(), ..self.clone() })
     }
     fn path(&self, root: &Path) -> PathBuf {
-        root.join(self.scope.hub.to_string()).join(self.scope.scope.as_str()).join(&self.content.as_str()[..2]).join(
-            format!(
+        root.join(self.scope.hub.to_string())
+            .join(self.scope.scope.as_str())
+            .join(&self.content.as_str()[..2])
+            .join(&self.content.as_str()[2..4])
+            .join(format!(
                 "{}.{}.{}",
                 self.content.as_str(),
                 match self.encoding {
@@ -64,8 +67,7 @@ impl FileKey {
                     Encoding::Zstd => "zstd",
                 },
                 self.generation.as_str()
-            ),
-        )
+            ))
     }
 }
 

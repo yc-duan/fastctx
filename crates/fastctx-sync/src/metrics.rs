@@ -29,6 +29,7 @@ measures!(Counter {
     ThumbnailHits => "sync.thumbnail_hits",
     ResolveScanBytes => "sync.resolve_scan_bytes",
     IndexValidation => "sync.index_validation",
+    DirectoryCacheEvictions => "sync.directory_cache_evictions",
 });
 measures!(Gauge {
     MissingRecords => "sync.missing_records",
@@ -41,6 +42,8 @@ measures!(Gauge {
     GarbageCandidates => "sync.garbage_candidates",
     LegacyPinnedRecords => "sync.legacy_pins.rows",
     LegacyPinnedBytes => "sync.legacy_pins.bytes",
+    DirectoryCacheBytes => "sync.directory_cache.bytes",
+    DirectoryConfirmations => "sync.directory_cache.confirmations",
 });
 measures!(Latency {
     Ingest => "sync.ingest",
