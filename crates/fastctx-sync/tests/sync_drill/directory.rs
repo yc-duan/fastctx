@@ -16,6 +16,7 @@ use fastctx_sync::{
         Error,
         control::AuthorityRun,
         directory::{Recipient, ScopeDescription, SqliteDirectory},
+        scopes::{Installed, ScopeState, SqliteScopes},
     },
 };
 use fastctx_types::sync::{conversation_identity::conversation_scope, feed};
@@ -252,11 +253,15 @@ pub(super) async fn run(root: &Path) -> Result<()> {
     assert_eq!(last.directories.len(), 1);
     assert_eq!(last.directories[0].through, Sequence(3));
     let mut seen = Vec::new();
+    let mut account_scope_proof = None;
     for offer in page.entries.into_iter().chain(last.entries) {
         let scope = offer.cursor.scope.clone();
         let verified = scope::verify(&scope, offer.binding, &identity, &Verifier)?;
         assert!(!offer.kinds.is_empty());
-        seen.push((scope, verified.descriptor().acl_revision));
+        seen.push((scope.clone(), verified.descriptor().acl_revision));
+        if scope == account {
+            account_scope_proof = Some(verified);
+        }
     }
     let mut expected = vec![(account.clone(), Revision(1)), (key.clone(), Revision(2))];
     expected.sort();
@@ -276,8 +281,45 @@ pub(super) async fn run(root: &Path) -> Result<()> {
     let deleted = scope::verify(&key, third, &identity, &Verifier)?;
     deleted.validate_successor(&advanced)?;
     assert_eq!(count(&db, &format!("SELECT enabled FROM sync_scopes WHERE scope='{}'", key.scope.as_str()))?, 0);
+
+    // A device installs the hub's descriptions: the conversation it hosted
+    // converts in place, a newer description reconciles custody, an older one
+    // is refused, and an unrelated scope opens fresh.
+    let device = DeviceId::from_bytes([36; 32]);
+    let hosted = serde_json::to_vec(&serde_json::json!({
+        "origin": "hosted",
+        "subject": { "subject": "conversation", "conversation": conversation.as_str(), "shared_on": null, "born_seal": null },
+        "device": device.as_str(),
+    }))?;
+    let node_db = Database::open_guarded(&dir.join("node.sqlite3"), "", boundary::guard, |db| {
+        schema::initialize(db)?;
+        db.execute(
+            "INSERT INTO sync_scopes(hub,scope,origin,acl_revision,enabled,publication_epoch) VALUES(?1,?2,?3,?4,1,?4)",
+            params![hub.to_string(), key.scope.as_str(), hosted, 1_u64.to_be_bytes().as_slice()],
+        )?;
+        Ok(())
+    })?;
+    let node_blocks = SqliteBlocks::new(
+        node_db.clone(),
+        dir.join("node-files"),
+        Holder::Device { device: device.clone() },
+        Arc::new(HubPolicy),
+        operation(249),
+        1 << 23,
+    )?;
+    let scopes = SqliteScopes::new(node_blocks, HubId::from_bytes([37; 8]), device.clone());
+    let live = |acl: u64| ScopeState { acl_revision: Revision(acl), publication_epoch: Revision(1), enabled: true };
+    assert_eq!(scopes.install(&verified).await?, Installed::Converted(live(1)));
+    assert_eq!(scopes.install(&advanced).await?, Installed::Advanced(live(2)));
+    assert_eq!(scopes.install(&advanced).await?, Installed::Unchanged(live(2)));
+    assert!(matches!(scopes.install(&verified).await, Err(Error::Invalid(_))));
+    assert_eq!(count(&node_db, "SELECT COUNT(*) FROM sync_scope_reconciliations")?, 1);
+    let account_scope_proof = account_scope_proof.ok_or("discovery missed the account scope")?;
+    assert_eq!(scopes.install(&account_scope_proof).await?, Installed::Opened(live(1)));
+    let closed = ScopeState { acl_revision: Revision(3), publication_epoch: Revision(1), enabled: false };
+    assert_eq!(scopes.install(&deleted).await?, Installed::Advanced(closed));
     println!(
-        "hub directory: signed scope descriptions, idempotent retries, ACL advances, refusals, feed prefixes, paged discovery and restart passed"
+        "hub directory: signed scope descriptions, idempotent retries, ACL advances, refusals, feed prefixes, paged discovery, restart and device installation passed"
     );
     Ok(())
 }

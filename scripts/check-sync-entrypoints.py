@@ -116,6 +116,7 @@ CALLERS = {
         "crates/fastctx-sync/src/blocks/adopted.rs",
         "crates/fastctx-sync/src/store/control.rs",
         "crates/fastctx-sync/src/store/directory/mod.rs",
+        "crates/fastctx-sync/src/store/scopes/install.rs",
     },
     "enter_migration": {
         "crates/fastctx-storage/src/guard.rs",

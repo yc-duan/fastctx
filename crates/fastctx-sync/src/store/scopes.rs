@@ -1,10 +1,11 @@
-//! Scope rows this World opens for itself. Under its alone hub the World is its
-//! own directory, so it opens the scopes of the subjects it hosts there; a scope
-//! under any real hub comes only from that hub's directory evidence.
+//! Scope rows on a device: the scopes of conversations this World hosts, which
+//! it opens itself, and the scopes its hubs describe, installed from their
+//! signed descriptions. A hosted scope under a real hub converts in place once
+//! that hub describes it.
 use crate::{
     blocks::SqliteBlocks,
     identity::{DeviceId, HubId, ObjectId, ScopeKey},
-    scope::ScopeSubject,
+    scope::{ScopeDescriptor, ScopeProof, ScopeSubject},
     store::{
         Error, FutureResult,
         boundary::{self, Role},
@@ -16,16 +17,34 @@ use fastctx_types::sync::conversation_identity::conversation_scope;
 use serde::{Deserialize, Serialize};
 
 mod advance;
+mod install;
 pub use advance::ScopeState;
 pub(crate) use advance::{advance as advance_in, current};
+pub use install::Installed;
 
-/// How a scope row came to exist, stored with it. Rows installed from a hub's
-/// directory carry that evidence instead.
+/// How a scope row came to exist, stored with it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "origin", rename_all = "snake_case", deny_unknown_fields)]
 enum Origin {
     /// Opened by this World, identified by its device, for a subject it hosts.
     Hosted { subject: ScopeSubject, device: DeviceId },
+    /// Installed from the hub's latest signed description, with its proof.
+    Directory { proof: Box<ScopeProof> },
+}
+impl Origin {
+    /// Whether this row stands for the scope a hosted opening asks for: the same
+    /// opening, or the hub's description of the same subject.
+    fn hosts(&self, opening: &Self) -> Result<bool, Error> {
+        let Self::Hosted { subject: wanted, .. } = opening else { return Ok(false) };
+        Ok(match self {
+            Self::Hosted { .. } => self == opening,
+            Self::Directory { proof } => {
+                let descriptor: ScopeDescriptor =
+                    serde_json::from_slice(&proof.payload.0).map_err(|error| Error::Invalid(error.to_string()))?;
+                descriptor.subject.same_subject(wanted)
+            }
+        })
+    }
 }
 
 #[derive(Clone)]
@@ -67,7 +86,8 @@ impl SqliteScopes {
                         .query_row(params![hub, key.scope.as_str()], |row| {
                             Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, bool>(1)?))
                         })?;
-                    if found != encoded {
+                    let found: Origin = serde_json::from_slice(&found).map_err(|error| sql::invalid(error.to_string()))?;
+                    if !found.hosts(&origin).map_err(|error| sql::invalid(error.to_string()))? {
                         return Err(sql::invalid("the scope was opened with another origin or subject"));
                     }
                     Ok(enabled)
