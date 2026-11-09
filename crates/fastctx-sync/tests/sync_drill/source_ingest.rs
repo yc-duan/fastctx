@@ -15,6 +15,7 @@ use fastctx_sync::{
         },
         ingest::{StateRead, StateReply, StreamProgress},
         ingest_effects::{DirtyProjection, IndexValue, SourceEffects, SourceFamily, SourceIndexChange},
+        ingest_memory::{IngestBudget, MAX_SOURCE_BYTES, SourceAdmission},
         mutation::Expected,
         source_authorize::{PreparedSourceChange, SourceAuthorizer},
         source_step::{SourceStep, SourceStepTarget},
@@ -252,8 +253,13 @@ pub(super) async fn run(root: &Path) -> Result<()> {
     let db = open(&path)?;
     let blocks = SqliteBlocks::new(db.clone(), dir.join("files"), holder(), policy(false), operation(90), 1 << 23)?;
     let gate = Arc::new(Gate(AtomicUsize::new(0)));
-    let sources =
-        SqliteSources::new(blocks.clone(), Arc::new(Signer), vec![gate.clone() as Arc<dyn SourceAuthorizer>])?;
+    let memory = IngestBudget::for_machine(None)?;
+    let sources = SqliteSources::new(
+        blocks.clone(),
+        Arc::new(Signer),
+        vec![gate.clone() as Arc<dyn SourceAuthorizer>],
+        memory.clone(),
+    )?;
     let primary = target(&custody(90, "conversation.timeline"), 90);
     let generation = HostGeneration::from_bytes([90; 32]);
     // A kind without an installed authorizer cannot even open a step.
@@ -263,6 +269,22 @@ pub(super) async fn run(root: &Path) -> Result<()> {
     // First step: a record whose display page owns an image, a parser state root,
     // an index row and a stale projection, all committed at once.
     let step = sources.begin_step(primary.clone(), None, generation.clone()).await?;
+    let source_memory = sources.memory(&step)?;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    let SourceAdmission::Granted(window) = source_memory.acquire(MAX_SOURCE_BYTES, deadline).await? else {
+        return Err("source window was not granted".into());
+    };
+    assert_eq!(window.flush_threshold(), 4 * 1024 * 1024);
+    drop(source_memory);
+    assert!(matches!(sources.memory(&step)?.acquire(1, deadline).await?, SourceAdmission::ReleaseRequired));
+    let uninstalled = SqliteSources::new(blocks.clone(), Arc::new(Signer), Vec::new(), memory.clone())?;
+    assert!(matches!(uninstalled.memory(&step), Err(Error::Unavailable(_))));
+    drop(window);
+    let SourceAdmission::Granted(window) = sources.memory(&step)?.acquire(1, deadline).await? else {
+        return Err("source window was not released".into());
+    };
+    assert_eq!((window.bytes(), window.flush_threshold()), (1, 1));
+    drop((window, uninstalled));
     let bound = sources.bind_target(step.clone(), primary.clone()).await?;
     let (display, part, descriptor, _) = display(&sources, &bound, b"\x89PNG one image").await?;
     let original = ContentRef::from(block(&sources, &bound, br#"{"type":"user","uuid":"u-1"}"#).await?);
@@ -422,7 +444,7 @@ pub(super) async fn run(root: &Path) -> Result<()> {
     super::super::scheduler::closed(&path).await?;
     let db = open(&path)?;
     let blocks = SqliteBlocks::new(db.clone(), dir.join("files"), holder(), policy(false), operation(90), 1 << 23)?;
-    let sources = SqliteSources::new(blocks, Arc::new(Signer), vec![gate as Arc<dyn SourceAuthorizer>])?;
+    let sources = SqliteSources::new(blocks, Arc::new(Signer), vec![gate as Arc<dyn SourceAuthorizer>], memory)?;
     let found = sources.checkpoint(primary.clone()).await?.ok_or("checkpoint missing")?;
     assert_eq!(found.revision, third.revision());
     println!(

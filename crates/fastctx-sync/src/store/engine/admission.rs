@@ -1,4 +1,5 @@
 //! FIFO byte admission bounds simultaneous semantic preparation, not stored assets.
+use crate::admission::{ByteBudget, BytePermit};
 use crate::{
     manifest::ContentRef,
     store::{
@@ -6,19 +7,19 @@ use crate::{
         mutation::{OriginalIntent, Submission},
     },
 };
-use std::{sync::Arc, time::Duration};
-use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+use std::time::Duration;
+use tokio::time::Instant;
 
 pub(super) struct Admission {
-    semaphore: Arc<Semaphore>,
+    budget: ByteBudget,
     semantic_bytes: usize,
 }
 impl Admission {
     pub(super) fn new(semantic_bytes: usize) -> Result<Self, Error> {
         let capacity = cost(semantic_bytes)?;
-        Ok(Self { semaphore: Arc::new(Semaphore::new(capacity as usize)), semantic_bytes })
+        Ok(Self { budget: ByteBudget::new(capacity as usize)?, semantic_bytes })
     }
-    pub(super) async fn acquire(&self, request: &Submission) -> Result<OwnedSemaphorePermit, Error> {
+    pub(super) async fn acquire(&self, request: &Submission) -> Result<BytePermit, Error> {
         let mut bodies = 0_usize;
         for reference in
             request.objects.iter().flat_map(|object| [object.before.as_ref(), object.candidate.as_ref()]).flatten()
@@ -34,12 +35,7 @@ impl Admission {
         if request.objects.iter().any(|object| matches!(object.original, OriginalIntent::Edit { .. })) {
             bodies = self.semantic_bytes;
         }
-        // Tokio's multi-permit queue is FIFO, including a large request ahead
-        // of smaller ones. Cancellation removes its queued reservation.
-        tokio::time::timeout(Duration::from_secs(30), self.semaphore.clone().acquire_many_owned(cost(bodies)?))
-            .await
-            .map_err(|_| Error::Busy)?
-            .map_err(|_| Error::Unavailable("semantic admission closed".into()))
+        self.budget.acquire_until(cost(bodies)? as usize, Instant::now() + Duration::from_secs(30)).await
     }
 }
 fn cost(bytes: usize) -> Result<u32, Error> {

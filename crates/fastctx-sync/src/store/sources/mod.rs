@@ -13,6 +13,7 @@ use super::{
         StreamProgress, sealed,
     },
     ingest_effects::{SourceFamily, SourceIndexPage, SourceIndexRead, SourceIndexRow},
+    ingest_memory::{IngestBudget, SourceMemory},
     source_authorize::SourceAuthorizer,
     source_step::{CancelProgress, SourceStep, SourceStepTarget},
 };
@@ -30,14 +31,17 @@ pub struct SqliteSources {
     blocks: SqliteBlocks,
     signer: Arc<dyn ProofSigner>,
     authorizers: BTreeMap<&'static str, Arc<dyn SourceAuthorizer>>,
+    memory: IngestBudget,
 }
 impl SqliteSources {
     /// Service composition installs one authorizer per ingestible kind. A kind
     /// without one cannot open a step or commit, not even checkpoint-only.
+    /// All source writers on the node receive clones of the same memory pool.
     pub fn new(
         blocks: SqliteBlocks,
         signer: Arc<dyn ProofSigner>,
         authorizers: Vec<Arc<dyn SourceAuthorizer>>,
+        memory: IngestBudget,
     ) -> Result<Self, Error> {
         let mut installed = BTreeMap::new();
         for authorizer in authorizers {
@@ -53,7 +57,7 @@ impl SqliteSources {
                 return Err(Error::Invalid("one kind has two source authorizers".into()));
             }
         }
-        Ok(Self { blocks, signer, authorizers: installed })
+        Ok(Self { blocks, signer, authorizers: installed, memory })
     }
     fn authorizer(&self, custody: &Custody) -> Result<&Arc<dyn SourceAuthorizer>, Error> {
         self.authorizers
@@ -64,6 +68,10 @@ impl SqliteSources {
 
 impl sealed::SourceWriter for SqliteSources {}
 impl SourceIngest for SqliteSources {
+    fn memory(&self, step: &SourceStep) -> Result<SourceMemory, Error> {
+        self.authorizer(&step.primary().custody)?;
+        self.memory.source(step)
+    }
     fn begin_step(
         &self,
         primary: SourceTarget,

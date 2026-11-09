@@ -12,6 +12,7 @@ use fastctx_sync::{
     store::{
         ingest::{IngestBatch, IngestFacts, IngestOperation, SourceCheckpoint, SourceIngest, SourceTarget},
         ingest_effects::{DirtyProjection, SourceEffects},
+        ingest_memory::IngestBudget,
         source_authorize::SourceAuthorizer,
         source_step::{SourceStep, SourceStepTarget},
         sources::SqliteSources,
@@ -172,7 +173,9 @@ pub(super) async fn run(root: &Path) -> Result<()> {
     let db = open(&dir.join("replica.sqlite3"))?;
     let blocks = SqliteBlocks::new(db.clone(), dir.join("files"), holder(), policy(false), operation(95), 1 << 24)?;
     let gate = Arc::new(Gate(AtomicUsize::new(0)));
-    let sources = SqliteSources::new(blocks.clone(), Arc::new(Signer), vec![gate as Arc<dyn SourceAuthorizer>])?;
+    let memory = IngestBudget::for_machine(None)?;
+    let installed = vec![gate as Arc<dyn SourceAuthorizer>];
+    let sources = SqliteSources::new(blocks.clone(), Arc::new(Signer), installed, memory.clone())?;
     let timelines = SqliteTimelines::new(blocks.clone());
     let primary = target(&custody(95, "conversation.timeline"), 95);
     let conversation = primary.custody.object.object.clone();
@@ -233,7 +236,8 @@ pub(super) async fn run(root: &Path) -> Result<()> {
     assert!(count(&db, staged)? > 0);
     let blocks = SqliteBlocks::new(db.clone(), dir.join("files"), holder(), policy(false), operation(95), 1 << 24)?;
     let gate = Arc::new(Gate(AtomicUsize::new(0)));
-    let sources = SqliteSources::new(blocks.clone(), Arc::new(Signer), vec![gate as Arc<dyn SourceAuthorizer>])?;
+    let installed = vec![gate as Arc<dyn SourceAuthorizer>];
+    let sources = SqliteSources::new(blocks.clone(), Arc::new(Signer), installed, memory)?;
     let timelines = SqliteTimelines::new(blocks.clone());
     blocks.collect(64).await?;
     assert_eq!(count(&db, staged)?, 0);

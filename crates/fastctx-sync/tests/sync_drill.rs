@@ -1,4 +1,6 @@
 //! Real writer lifecycle checks. Every run requires an explicit disposable root.
+#[path = "sync_drill/admission.rs"]
+mod admission;
 #[path = "sync_drill/blocks.rs"]
 mod blocks;
 #[path = "sync_drill/format_upgrade.rs"]
@@ -17,6 +19,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
     tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build()?.block_on(async {
+        admission::run().await?;
         scheduler::run(&root).await?;
         blocks::run(&root).await
     })?;

@@ -3,6 +3,7 @@ use super::{
     Error, FutureResult,
     access::{AccessContext, Custody},
     ingest_effects::{SourceEffects, SourceFamily, SourceIndexPage, SourceIndexRead, SourceIndexRow},
+    ingest_memory::SourceMemory,
     roots::RootLease,
     source_step::{CancelProgress, SourceStep, SourceStepTarget},
 };
@@ -277,6 +278,9 @@ pub enum StateReply {
 }
 
 pub trait SourceIngest: sealed::SourceWriter + Send + Sync {
+    /// Memory admission for the step's primary source, shared across steps and
+    /// host generations. A missing kind authorizer returns Unavailable.
+    fn memory(&self, step: &SourceStep) -> Result<SourceMemory, Error>;
     /// Issues the next step of `primary` at checkpoint `expected`, or reopens the
     /// identical active step after a restart. The kind needs an installed authorizer.
     fn begin_step(

@@ -8,6 +8,7 @@ pub mod engine;
 pub mod format_upgrade;
 pub mod ingest;
 pub mod ingest_effects;
+pub mod ingest_memory;
 pub(crate) mod local_head;
 pub mod mutation;
 pub mod projection;
