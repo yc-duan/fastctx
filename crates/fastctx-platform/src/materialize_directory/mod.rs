@@ -233,3 +233,6 @@ fn invalid(message: &str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message.to_owned())
 }
 
+
+#[cfg(test)]
+mod health;
