@@ -8,6 +8,7 @@ pub mod checkpoint;
 pub mod children;
 pub mod document;
 pub mod file;
+pub mod image;
 pub mod image_base64;
 pub mod jsonl;
 pub mod lexical;

@@ -25,7 +25,7 @@ impl Reader<'_> {
         }
         let offset = address.0.0.checked_add(4).ok_or_else(|| io::Error::other("descriptor offset overflow"))?;
         let bytes = exact(self.input, body, offset, length).await?;
-        let node: Node = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
+        let node: Node = super::codec::decode(&bytes)?;
         validate(&node, address, &self.document.bodies)?;
         Ok(node)
     }
@@ -33,6 +33,12 @@ impl Reader<'_> {
     /// unknown, arbitrarily large host fields do not become allocations.
     pub async fn field(&self, object: Address, name: &str) -> io::Result<Option<(Address, Node)>> {
         let node = self.node(object).await?;
+        if matches!(node.value, Value::Opaque { shape: super::Shape::Object, .. }) {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "JSON subtree is not indexed; read its preserved raw span",
+            ));
+        }
         let Value::Object { last, members } = node.value else {
             return Ok(None);
         };
@@ -102,14 +108,8 @@ fn validate(node: &Node, address: Address, bodies: &Bodies) -> io::Result<()> {
                 return Err(io::Error::other("JSON child list is inconsistent"));
             }
         }
-        Value::String { text, image } => {
-            span(text, &bodies.strings)?;
-            if let Some(image) = image {
-                span(image, &bodies.images)?;
-            }
-        }
-        Value::Number { text } => span(text, &bodies.strings)?,
-        Value::Bool { .. } | Value::Null => {}
+        Value::String { text } | Value::Number { text } => span(text, &bodies.strings)?,
+        Value::Bool { .. } | Value::Null | Value::Opaque { .. } => {}
     }
     Ok(())
 }

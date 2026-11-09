@@ -1,11 +1,16 @@
-//! A disk-backed JSON tree. Strings, numbers and child lists never accumulate in
-//! memory. Four append-only bodies preserve raw bytes, decoded scalars, images and
-//! bounded node descriptors. Descriptors refer to spans, not hidden content roots.
+//! A selective, disk-backed JSON index. Three append-only bodies preserve raw
+//! bytes, selected decoded scalars and compact node descriptors. Unknown subtrees
+//! remain opaque raw spans. Index bytes never exceed twice the row bytes plus
+//! 4 KiB; exhausted rows retain their evidence with an explicit unindexed root.
+//! Images are decoded by semantics only after the complete row establishes type,
+//! independent of JSON member order. Descriptors never hide content roots.
 //! Duplicate object keys retain their order; a reader selects the last matching
 //! member, just as the legacy JSON decoder does.
 
 mod build;
+mod codec;
 pub mod read;
+mod select;
 use super::{
     body::{BodyCursor, BodyKey, BodyPart, BodySink, BufferedBody},
     lexical::{Lexer, WINDOW_BYTES},
@@ -14,7 +19,27 @@ use fastctx_types::sync::cursor::{ByteCount, Count};
 use serde::{Deserialize, Serialize};
 use std::io;
 
-pub const NODE_BYTES: usize = 4096;
+pub const NODE_BYTES: usize = 256;
+/// Hard bound, including unreachable descriptors from a row that lost its index.
+pub fn index_limit(raw_bytes: u64) -> u64 {
+    raw_bytes.saturating_mul(2).saturating_add(4096)
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Shape {
+    Object,
+    Array,
+    String,
+    Number,
+    Bool,
+    Null,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Unindexed {
+    NotSelected,
+    RowBudget,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -37,10 +62,24 @@ pub struct Address(pub ByteCount);
 pub enum Value {
     Object { last: Option<Address>, members: Count },
     Array { last: Option<Address>, members: Count },
-    String { text: Span, image: Option<Span> },
+    String { text: Span },
     Number { text: Span },
     Bool { value: bool },
     Null,
+    Opaque { shape: Shape, reason: Unindexed },
+}
+impl Value {
+    pub fn shape(&self) -> Shape {
+        match self {
+            Self::Object { .. } => Shape::Object,
+            Self::Array { .. } => Shape::Array,
+            Self::String { .. } => Shape::String,
+            Self::Number { .. } => Shape::Number,
+            Self::Bool { .. } => Shape::Bool,
+            Self::Null => Shape::Null,
+            Self::Opaque { shape, .. } => *shape,
+        }
+    }
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -57,14 +96,13 @@ pub struct Node {
 pub struct Bodies {
     pub raw: BodyCursor,
     pub strings: BodyCursor,
-    pub images: BodyCursor,
     pub nodes: BodyCursor,
 }
 /// These roots must be explicit edges of the checkpoint/observation manifest.
 /// Serializing the struct as an opaque block alone does not retain its bodies.
 impl Bodies {
-    pub fn roots(&self) -> [&fastctx_types::sync::manifest::ContentRef; 4] {
-        [&self.raw.content, &self.strings.content, &self.images.content, &self.nodes.content]
+    pub fn roots(&self) -> [&fastctx_types::sync::manifest::ContentRef; 3] {
+        [&self.raw.content, &self.strings.content, &self.nodes.content]
     }
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -90,7 +128,6 @@ pub struct Decoder {
     build: build::State,
     raw: BufferedBody,
     strings: BufferedBody,
-    images: BufferedBody,
     nodes: BufferedBody,
     failure: Option<String>,
 }
@@ -100,7 +137,6 @@ impl Decoder {
         Self {
             raw: body(BodyPart::Raw),
             strings: body(BodyPart::Strings),
-            images: body(BodyPart::Images),
             nodes: body(BodyPart::Index),
             key,
             lexer: Lexer::new(128),
@@ -111,11 +147,15 @@ impl Decoder {
     pub fn resume(state: PartialDocument) -> io::Result<Self> {
         state.lexer.validate_checkpoint().map_err(io::Error::other)?;
         state.build.validate()?;
+        if state.bodies.nodes.bytes.0 > index_limit(state.bodies.raw.bytes.0)
+            || state.bodies.strings.bytes > state.bodies.raw.bytes
+        {
+            return Err(io::Error::other("saved JSON bodies exceed their row budget"));
+        }
         let body = |part, stored| BufferedBody::new(BodyKey { part, ..state.key.clone() }, Some(stored));
         Ok(Self {
             raw: body(BodyPart::Raw, state.bodies.raw),
             strings: body(BodyPart::Strings, state.bodies.strings),
-            images: body(BodyPart::Images, state.bodies.images),
             nodes: body(BodyPart::Index, state.bodies.nodes),
             key: state.key,
             lexer: state.lexer,
@@ -152,14 +192,7 @@ impl Decoder {
             used += step.used;
             if let Some(event) = step.event {
                 self.build
-                    .event(
-                        event,
-                        ByteCount(start + used as u64),
-                        &mut self.strings,
-                        &mut self.images,
-                        &mut self.nodes,
-                        sink,
-                    )
+                    .event(event, ByteCount(start + used as u64), &mut self.strings, &mut self.nodes, sink)
                     .await?;
             } else if step.used == 0 {
                 return Err(io::Error::other("JSON lexer made no progress"));
@@ -171,7 +204,6 @@ impl Decoder {
         Ok(Bodies {
             raw: self.raw.flush(sink).await?,
             strings: self.strings.flush(sink).await?,
-            images: self.images.flush(sink).await?,
             nodes: self.nodes.flush(sink).await?,
         })
     }
@@ -192,14 +224,7 @@ impl Decoder {
             match self.lexer.finish() {
                 Ok(Some(event)) => {
                     self.build
-                        .event(
-                            event,
-                            ByteCount(self.raw.bytes()?),
-                            &mut self.strings,
-                            &mut self.images,
-                            &mut self.nodes,
-                            sink,
-                        )
+                        .event(event, ByteCount(self.raw.bytes()?), &mut self.strings, &mut self.nodes, sink)
                         .await?
                 }
                 Ok(None) => {}
