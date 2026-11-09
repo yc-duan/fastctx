@@ -427,11 +427,17 @@ pub(super) async fn run(root: &Path) -> Result<()> {
     ));
     assert_eq!(count(&db, "SELECT COUNT(*) FROM sync_stream_records")?, 1);
     assert_eq!(count(&db, "SELECT COUNT(*) FROM sync_source_steps WHERE state='active'")?, 1);
-    let receipt = sources.ingest(attempt(1, payload, Vec::new(), Expected::Revision(Revision(1)))?).await?;
+    // A tree adopted through one root is readable to its leaves as soon as the
+    // receipt returns, before any content worker pass.
+    let (shown, image, _, _) = self::display(&sources, &bound, b"\x89PNG deep").await?;
+    let original = ContentRef::from(block(&sources, &bound, br#"{"uuid":"u-2"}"#).await?);
+    let deep = self::body(&sources, &bound, original, shown).await?;
+    let receipt = sources.ingest(attempt(1, payload, vec![deep], Expected::Revision(Revision(1)))?).await?;
     assert!(matches!(
         &receipt.sources[0].status,
         IngestStatus::Applied { progress: StreamProgress::LocalPending { cursor } } if cursor.committed == Sequence(2)
     ));
+    assert_eq!(granted(image.id().digest.as_str())?, 1);
     let row =
         sources.get_index(primary.clone(), SourceFamily::HostRows, b"row-1".to_vec()).await?.ok_or("row missing")?;
     assert_eq!(row.revision, Revision(2));

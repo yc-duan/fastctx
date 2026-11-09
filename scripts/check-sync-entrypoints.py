@@ -52,6 +52,8 @@ CALLERS = {
         "crates/fastctx-sync/src/store/sources/mod.rs",
         "crates/fastctx-sync/src/store/timelines/mod.rs",
         "crates/fastctx-sync/src/store/timelines/pages.rs",
+        "crates/fastctx-sync/src/store/scopes.rs",
+        "crates/fastctx-sync/src/blocks/adopted.rs",
         "crates/fastctx-sync/tests/sync_drill/blocks.rs",
         "crates/fastctx-sync/tests/sync_drill/block_recovery.rs",
         "crates/fastctx-sync/tests/sync_drill/root_usage.rs",
@@ -93,6 +95,8 @@ CALLERS = {
         "crates/fastctx-sync/src/blocks/supply/cleanup.rs",
         "crates/fastctx-sync/src/blocks/supply/invalidate.rs",
         "crates/fastctx-sync/src/blocks/supply/timeline.rs",
+        "crates/fastctx-sync/src/store/scopes.rs",
+        "crates/fastctx-sync/src/blocks/adopted.rs",
     },
     "enter_migration": {
         "crates/fastctx-storage/src/guard.rs",

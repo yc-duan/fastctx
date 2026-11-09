@@ -96,6 +96,7 @@ impl SqliteSources {
             prepared.push(Prepared { signed, payloads, authorizer });
         }
         let supplies = crate::blocks::source_supply::prepare(&self.blocks, &operation).await?;
+        let adopted = adopted(&operation);
         let holder = self.blocks.holder().clone();
         let policy = self.blocks.policy().clone();
         let id = operation.operation().clone();
@@ -111,7 +112,12 @@ impl SqliteSources {
             .map_err(|error| sql::error(error, id))?;
         drop(permits);
         match outcome {
-            Outcome::Committed(receipt) => Ok(receipt),
+            Outcome::Committed(receipt) => {
+                // The next step's producer reads what this one adopted at once.
+                // A failure here leaves the expansion to the content worker.
+                let _ = self.blocks.expand_adopted(&adopted).await;
+                Ok(receipt)
+            }
             Outcome::Moved(current) => Err(Error::LocalConflict { current }),
             Outcome::Denied(reason) => Err(Error::Denied(reason)),
             Outcome::Unavailable => Err(Error::Unavailable("the source authorizer has no current policy".into())),
@@ -188,6 +194,21 @@ fn write(
     let receipt = IngestReceipt { operation: step.operation().clone(), local, sources, leases };
     source_commit::consume(db, step, &receipt)?;
     Ok(Outcome::Committed(receipt))
+}
+
+/// Every record root the step's destinations adopted, with its custody.
+fn adopted(operation: &IngestOperation) -> Vec<(crate::store::access::Custody, ContentRef)> {
+    let mut adopted = Vec::new();
+    for batch in operation.batches() {
+        let target = batch.target.target();
+        if let Some(IngestFacts::Local { batch: facts }) = &batch.facts {
+            for record in &facts.records {
+                adopted.push((target.custody.clone(), ContentRef::from(record.payload.clone())));
+                adopted.extend(record.roots.iter().map(|root| (target.custody.clone(), root.clone())));
+            }
+        }
+    }
+    adopted
 }
 
 fn receipt(target: &SourceTarget, next: &SourceCheckpoint, status: IngestStatus) -> SourceReceipt {

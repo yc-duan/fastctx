@@ -1,6 +1,7 @@
 //! Bounded content validation precedes publication and durable reference changes.
 
 mod access;
+mod adopted;
 mod budget;
 
 pub mod codec;
