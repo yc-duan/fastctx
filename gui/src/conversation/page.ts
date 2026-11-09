@@ -911,15 +911,21 @@ export class ConversationPage {
   /** The page goes out of view and stays alive, its conversation still
    *  followed. */
   suspend(): void {
-    this.place = this.following ? null : this.view.anchor();
+    if (this.element.isConnected) this.place = this.following ? null : this.view.anchor();
   }
 
   /** The page is shown again, as it was left and as the conversation now
    *  stands. */
   resume(): void {
-    this.render();
-    if (this.following) this.scroller.scrollTop = this.scroller.scrollHeight;
-    else if (this.place && !this.view.restore(this.place)) this.toLatest();
+    // The desk wakes its pages before the shell mounts it. Restore only
+    // once the scroll region has its on-screen dimensions.
+    cancelAnimationFrame(this.frame);
+    this.frame = requestAnimationFrame(() => {
+      this.render();
+      if (!this.element.isConnected) return;
+      if (this.following) this.scroller.scrollTop = this.scroller.scrollHeight;
+      else if (this.place && !this.view.restore(this.place)) this.toLatest();
+    });
   }
 
   /** What is held is read again (`conversation.ts`): the reader stays
