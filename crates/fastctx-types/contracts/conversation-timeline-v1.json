@@ -1,0 +1,596 @@
+{
+  "cases": [
+    {
+      "expected": {
+        "position": {
+          "accepted": "20",
+          "display_ancestry": [
+            "1",
+            "20"
+          ],
+          "item": "o-1f8034773e6132e0cc0b1427190d3802738f72f844e450baabb4b365136054b7",
+          "turn": "10"
+        },
+        "primary": {
+          "block": {
+            "algorithm": "sha256",
+            "digest": "38334eb37bcfed318c2d4d6b1e312739293d1d9117475b237b9cae2a5da55321",
+            "domain": {
+              "hub": "w-0102030405060708",
+              "scope": "s-a2ff02c3fe67f061d722b10b1f1b31671f1352d87e93b17c6446d6752f994e36"
+            }
+          },
+          "decoded_bytes": 9,
+          "kind": "single"
+        },
+        "world": {
+          "block": {
+            "algorithm": "sha256",
+            "digest": "486ea46224d1bb4fb680f34f7c9ad96a8f24ec88be73ea8e5a6c65260e9cb8a7",
+            "domain": {
+              "hub": "w-0102030405060708",
+              "scope": "s-a2ff02c3fe67f061d722b10b1f1b31671f1352d87e93b17c6446d6752f994e36"
+            }
+          },
+          "decoded_bytes": 5,
+          "kind": "single"
+        }
+      },
+      "inputs": [
+        {
+          "evidence": {
+            "accepted": "30",
+            "operation": "m-624b60c58c9d8bfb6ff1886c2fd605d2adeb6ea4da576068201b6c6958ce93f4",
+            "record": {
+              "epoch": "p-0303030303030303030303030303030303030303030303030303030303030303",
+              "sequence": "30",
+              "stream": "r-0202020202020202020202020202020202020202020202020202020202020202"
+            }
+          },
+          "fact": {
+            "fact": "observed",
+            "observation": {
+              "authority": "world",
+              "body": {
+                "complete": true,
+                "display": {
+                  "block": {
+                    "algorithm": "sha256",
+                    "digest": "486ea46224d1bb4fb680f34f7c9ad96a8f24ec88be73ea8e5a6c65260e9cb8a7",
+                    "domain": {
+                      "hub": "w-0102030405060708",
+                      "scope": "s-a2ff02c3fe67f061d722b10b1f1b31671f1352d87e93b17c6446d6752f994e36"
+                    }
+                  },
+                  "decoded_bytes": 5,
+                  "kind": "single"
+                },
+                "original": {
+                  "block": {
+                    "algorithm": "sha256",
+                    "digest": "486ea46224d1bb4fb680f34f7c9ad96a8f24ec88be73ea8e5a6c65260e9cb8a7",
+                    "domain": {
+                      "hub": "w-0102030405060708",
+                      "scope": "s-a2ff02c3fe67f061d722b10b1f1b31671f1352d87e93b17c6446d6752f994e36"
+                    }
+                  },
+                  "decoded_bytes": 5,
+                  "kind": "single"
+                },
+                "text_bytes": "5",
+                "text_part": null
+              },
+              "created": "20",
+              "identity": {
+                "identity": "native",
+                "key": {
+                  "conversation": "o-0101010101010101010101010101010101010101010101010101010101010101",
+                  "native": {
+                    "kind": "claude_message",
+                    "uuid": "answer"
+                  },
+                  "role": "assistant_block"
+                }
+              },
+              "placement": {
+                "proof": {
+                  "proof": "native_turn"
+                },
+                "slot": {
+                  "slot": "sibling"
+                },
+                "turn": "o-c676177273b5472deef877a771e6581f8e51727c5eeec6f42adfb2e991912ccc"
+              }
+            }
+          }
+        },
+        {
+          "evidence": {
+            "accepted": "31",
+            "operation": "m-eb1e33e8a81b697b75855af6bfcdbcbf7cbbde9f94962ceaec1ed8af21f5a50f",
+            "record": {
+              "epoch": "p-0303030303030303030303030303030303030303030303030303030303030303",
+              "sequence": "31",
+              "stream": "r-0202020202020202020202020202020202020202020202020202020202020202"
+            }
+          },
+          "fact": {
+            "fact": "observed",
+            "observation": {
+              "authority": "host_draft",
+              "body": {
+                "complete": false,
+                "display": {
+                  "block": {
+                    "algorithm": "sha256",
+                    "digest": "7743ce348d9284d677a185f33295b92266cc435a5b5f775029b300066d26693a",
+                    "domain": {
+                      "hub": "w-0102030405060708",
+                      "scope": "s-a2ff02c3fe67f061d722b10b1f1b31671f1352d87e93b17c6446d6752f994e36"
+                    }
+                  },
+                  "decoded_bytes": 5,
+                  "kind": "single"
+                },
+                "original": {
+                  "block": {
+                    "algorithm": "sha256",
+                    "digest": "7743ce348d9284d677a185f33295b92266cc435a5b5f775029b300066d26693a",
+                    "domain": {
+                      "hub": "w-0102030405060708",
+                      "scope": "s-a2ff02c3fe67f061d722b10b1f1b31671f1352d87e93b17c6446d6752f994e36"
+                    }
+                  },
+                  "decoded_bytes": 5,
+                  "kind": "single"
+                },
+                "text_bytes": "5",
+                "text_part": "text"
+              },
+              "created": "20",
+              "identity": {
+                "identity": "native",
+                "key": {
+                  "conversation": "o-0101010101010101010101010101010101010101010101010101010101010101",
+                  "native": {
+                    "kind": "claude_message",
+                    "uuid": "answer"
+                  },
+                  "role": "assistant_block"
+                }
+              },
+              "placement": {
+                "proof": {
+                  "proof": "native_turn"
+                },
+                "slot": {
+                  "slot": "sibling"
+                },
+                "turn": "o-c676177273b5472deef877a771e6581f8e51727c5eeec6f42adfb2e991912ccc"
+              }
+            }
+          }
+        },
+        {
+          "evidence": {
+            "accepted": "32",
+            "operation": "m-e29c9c180c6279b0b02abd6a1801c7c04082cf486ec027aa13515e4f3884bb6b",
+            "record": {
+              "epoch": "p-0303030303030303030303030303030303030303030303030303030303030303",
+              "sequence": "32",
+              "stream": "r-0202020202020202020202020202020202020202020202020202020202020202"
+            }
+          },
+          "fact": {
+            "fact": "observed",
+            "observation": {
+              "authority": "host_final",
+              "body": {
+                "complete": true,
+                "display": {
+                  "block": {
+                    "algorithm": "sha256",
+                    "digest": "4b268f8ca8e2e00e3b92e6a585c414585099a9ccb10ea3455f5c18a6202fb384",
+                    "domain": {
+                      "hub": "w-0102030405060708",
+                      "scope": "s-a2ff02c3fe67f061d722b10b1f1b31671f1352d87e93b17c6446d6752f994e36"
+                    }
+                  },
+                  "decoded_bytes": 9,
+                  "kind": "single"
+                },
+                "original": {
+                  "block": {
+                    "algorithm": "sha256",
+                    "digest": "4b268f8ca8e2e00e3b92e6a585c414585099a9ccb10ea3455f5c18a6202fb384",
+                    "domain": {
+                      "hub": "w-0102030405060708",
+                      "scope": "s-a2ff02c3fe67f061d722b10b1f1b31671f1352d87e93b17c6446d6752f994e36"
+                    }
+                  },
+                  "decoded_bytes": 9,
+                  "kind": "single"
+                },
+                "text_bytes": "9",
+                "text_part": null
+              },
+              "created": "20",
+              "identity": {
+                "identity": "native",
+                "key": {
+                  "conversation": "o-0101010101010101010101010101010101010101010101010101010101010101",
+                  "native": {
+                    "kind": "claude_message",
+                    "uuid": "answer"
+                  },
+                  "role": "assistant_block"
+                }
+              },
+              "placement": {
+                "proof": {
+                  "proof": "native_turn"
+                },
+                "slot": {
+                  "slot": "sibling"
+                },
+                "turn": "o-c676177273b5472deef877a771e6581f8e51727c5eeec6f42adfb2e991912ccc"
+              }
+            }
+          }
+        },
+        {
+          "evidence": {
+            "accepted": "33",
+            "operation": "m-c6f3ac57944a531490cd39902d0f777715fd005efac9a30622d5f5205e7f6894",
+            "record": {
+              "epoch": "p-0303030303030303030303030303030303030303030303030303030303030303",
+              "sequence": "33",
+              "stream": "r-0202020202020202020202020202020202020202020202020202020202020202"
+            }
+          },
+          "fact": {
+            "fact": "observed",
+            "observation": {
+              "authority": "host_final",
+              "body": {
+                "complete": true,
+                "display": {
+                  "block": {
+                    "algorithm": "sha256",
+                    "digest": "38334eb37bcfed318c2d4d6b1e312739293d1d9117475b237b9cae2a5da55321",
+                    "domain": {
+                      "hub": "w-0102030405060708",
+                      "scope": "s-a2ff02c3fe67f061d722b10b1f1b31671f1352d87e93b17c6446d6752f994e36"
+                    }
+                  },
+                  "decoded_bytes": 9,
+                  "kind": "single"
+                },
+                "original": {
+                  "block": {
+                    "algorithm": "sha256",
+                    "digest": "38334eb37bcfed318c2d4d6b1e312739293d1d9117475b237b9cae2a5da55321",
+                    "domain": {
+                      "hub": "w-0102030405060708",
+                      "scope": "s-a2ff02c3fe67f061d722b10b1f1b31671f1352d87e93b17c6446d6752f994e36"
+                    }
+                  },
+                  "decoded_bytes": 9,
+                  "kind": "single"
+                },
+                "text_bytes": "9",
+                "text_part": null
+              },
+              "created": "20",
+              "identity": {
+                "identity": "native",
+                "key": {
+                  "conversation": "o-0101010101010101010101010101010101010101010101010101010101010101",
+                  "native": {
+                    "kind": "claude_message",
+                    "uuid": "answer"
+                  },
+                  "role": "assistant_block"
+                }
+              },
+              "placement": {
+                "proof": {
+                  "proof": "native_turn"
+                },
+                "slot": {
+                  "slot": "sibling"
+                },
+                "turn": "o-c676177273b5472deef877a771e6581f8e51727c5eeec6f42adfb2e991912ccc"
+              }
+            }
+          }
+        }
+      ],
+      "name": "host-final-and-world-input-priority"
+    },
+    {
+      "expected": {
+        "answer_ancestry": [
+          "1",
+          "20"
+        ],
+        "question_ancestry": [
+          "0",
+          "90"
+        ],
+        "question_before_answer": true
+      },
+      "input": {
+        "evidence": {
+          "accepted": "91",
+          "operation": "m-1da51b8d8ff98f6a48f80ae79fe3ca6c26e1abb7b7d125259255d6d2b875ea08",
+          "record": {
+            "epoch": "p-0303030303030303030303030303030303030303030303030303030303030303",
+            "sequence": "91",
+            "stream": "r-0202020202020202020202020202020202020202020202020202020202020202"
+          }
+        },
+        "fact": {
+          "fact": "observed",
+          "observation": {
+            "authority": "world",
+            "body": {
+              "complete": true,
+              "display": {
+                "block": {
+                  "algorithm": "sha256",
+                  "digest": "1f5087db919ced5c123c7f507d3fcce818cb0cf6e77c2f95a8a35e951e03fdb9",
+                  "domain": {
+                    "hub": "w-0102030405060708",
+                    "scope": "s-a2ff02c3fe67f061d722b10b1f1b31671f1352d87e93b17c6446d6752f994e36"
+                  }
+                },
+                "decoded_bytes": 8,
+                "kind": "single"
+              },
+              "original": {
+                "block": {
+                  "algorithm": "sha256",
+                  "digest": "1f5087db919ced5c123c7f507d3fcce818cb0cf6e77c2f95a8a35e951e03fdb9",
+                  "domain": {
+                    "hub": "w-0102030405060708",
+                    "scope": "s-a2ff02c3fe67f061d722b10b1f1b31671f1352d87e93b17c6446d6752f994e36"
+                  }
+                },
+                "decoded_bytes": 8,
+                "kind": "single"
+              },
+              "text_bytes": "8",
+              "text_part": null
+            },
+            "created": "90",
+            "identity": {
+              "identity": "native",
+              "key": {
+                "conversation": "o-0101010101010101010101010101010101010101010101010101010101010101",
+                "native": {
+                  "kind": "claude_message",
+                  "uuid": "question"
+                },
+                "role": "user"
+              }
+            },
+            "placement": {
+              "proof": {
+                "proof": "native_turn"
+              },
+              "slot": {
+                "slot": "opening"
+              },
+              "turn": "o-c676177273b5472deef877a771e6581f8e51727c5eeec6f42adfb2e991912ccc"
+            }
+          }
+        }
+      },
+      "name": "late-opening-reserved-slot",
+      "turn": {
+        "key": {
+          "conversation": "o-0101010101010101010101010101010101010101010101010101010101010101",
+          "native": {
+            "host": "world",
+            "turn": "turn-10"
+          }
+        },
+        "order": "10"
+      },
+      "after_case": "host-final-and-world-input-priority"
+    },
+    {
+      "binding": {
+        "source": {
+          "key": {
+            "activation": "activation",
+            "conversation": "o-0101010101010101010101010101010101010101010101010101010101010101",
+            "draft": "draft",
+            "role": "assistant_block",
+            "source": "i-0707070707070707070707070707070707070707070707070707070707070707"
+          },
+          "kind": "provisional"
+        },
+        "target": {
+          "conversation": "o-0101010101010101010101010101010101010101010101010101010101010101",
+          "native": {
+            "kind": "claude_message",
+            "uuid": "answer"
+          },
+          "role": "assistant_block"
+        }
+      },
+      "draft": {
+        "authority": "host_draft",
+        "body": {
+          "complete": false,
+          "display": {
+            "block": {
+              "algorithm": "sha256",
+              "digest": "7743ce348d9284d677a185f33295b92266cc435a5b5f775029b300066d26693a",
+              "domain": {
+                "hub": "w-0102030405060708",
+                "scope": "s-a2ff02c3fe67f061d722b10b1f1b31671f1352d87e93b17c6446d6752f994e36"
+              }
+            },
+            "decoded_bytes": 5,
+            "kind": "single"
+          },
+          "original": {
+            "block": {
+              "algorithm": "sha256",
+              "digest": "7743ce348d9284d677a185f33295b92266cc435a5b5f775029b300066d26693a",
+              "domain": {
+                "hub": "w-0102030405060708",
+                "scope": "s-a2ff02c3fe67f061d722b10b1f1b31671f1352d87e93b17c6446d6752f994e36"
+              }
+            },
+            "decoded_bytes": 5,
+            "kind": "single"
+          },
+          "text_bytes": "5",
+          "text_part": "text"
+        },
+        "created": "5",
+        "identity": {
+          "identity": "provisional",
+          "key": {
+            "activation": "activation",
+            "conversation": "o-0101010101010101010101010101010101010101010101010101010101010101",
+            "draft": "draft",
+            "role": "assistant_block",
+            "source": "i-0707070707070707070707070707070707070707070707070707070707070707"
+          }
+        },
+        "placement": {
+          "proof": {
+            "proof": "native_turn"
+          },
+          "slot": {
+            "slot": "sibling"
+          },
+          "turn": "o-c676177273b5472deef877a771e6581f8e51727c5eeec6f42adfb2e991912ccc"
+        }
+      },
+      "expected": {
+        "canonical": "o-1f8034773e6132e0cc0b1427190d3802738f72f844e450baabb4b365136054b7",
+        "display_ancestry": [
+          "1",
+          "5"
+        ],
+        "primary": {
+          "block": {
+            "algorithm": "sha256",
+            "digest": "38334eb37bcfed318c2d4d6b1e312739293d1d9117475b237b9cae2a5da55321",
+            "domain": {
+              "hub": "w-0102030405060708",
+              "scope": "s-a2ff02c3fe67f061d722b10b1f1b31671f1352d87e93b17c6446d6752f994e36"
+            }
+          },
+          "decoded_bytes": 9,
+          "kind": "single"
+        },
+        "source_visible": false
+      },
+      "final": {
+        "authority": "host_final",
+        "body": {
+          "complete": true,
+          "display": {
+            "block": {
+              "algorithm": "sha256",
+              "digest": "38334eb37bcfed318c2d4d6b1e312739293d1d9117475b237b9cae2a5da55321",
+              "domain": {
+                "hub": "w-0102030405060708",
+                "scope": "s-a2ff02c3fe67f061d722b10b1f1b31671f1352d87e93b17c6446d6752f994e36"
+              }
+            },
+            "decoded_bytes": 9,
+            "kind": "single"
+          },
+          "original": {
+            "block": {
+              "algorithm": "sha256",
+              "digest": "38334eb37bcfed318c2d4d6b1e312739293d1d9117475b237b9cae2a5da55321",
+              "domain": {
+                "hub": "w-0102030405060708",
+                "scope": "s-a2ff02c3fe67f061d722b10b1f1b31671f1352d87e93b17c6446d6752f994e36"
+              }
+            },
+            "decoded_bytes": 9,
+            "kind": "single"
+          },
+          "text_bytes": "9",
+          "text_part": null
+        },
+        "created": "20",
+        "identity": {
+          "identity": "native",
+          "key": {
+            "conversation": "o-0101010101010101010101010101010101010101010101010101010101010101",
+            "native": {
+              "kind": "claude_message",
+              "uuid": "answer"
+            },
+            "role": "assistant_block"
+          }
+        },
+        "placement": {
+          "proof": {
+            "proof": "native_turn"
+          },
+          "slot": {
+            "slot": "sibling"
+          },
+          "turn": "o-c676177273b5472deef877a771e6581f8e51727c5eeec6f42adfb2e991912ccc"
+        }
+      },
+      "name": "alias-keeps-original-display-slot",
+      "source_evidence": {
+        "accepted": "5",
+        "operation": "m-ef2d127de37b942baad06145e54b0c619a1f22327b2ebbcfbec78f5564afe39d",
+        "record": {
+          "stream": "r-0202020202020202020202020202020202020202020202020202020202020202",
+          "epoch": "p-0303030303030303030303030303030303030303030303030303030303030303",
+          "sequence": "5"
+        }
+      },
+      "target_evidence": {
+        "accepted": "33",
+        "operation": "m-c6f3ac57944a531490cd39902d0f777715fd005efac9a30622d5f5205e7f6894",
+        "record": {
+          "stream": "r-0202020202020202020202020202020202020202020202020202020202020202",
+          "epoch": "p-0303030303030303030303030303030303030303030303030303030303030303",
+          "sequence": "33"
+        }
+      }
+    }
+  ],
+  "kind": "conversation.timeline",
+  "schema": 1,
+  "context": {
+    "turn": {
+      "declaration": {
+        "key": {
+          "conversation": "o-0101010101010101010101010101010101010101010101010101010101010101",
+          "native": {
+            "host": "world",
+            "turn": "turn-10"
+          }
+        },
+        "order": "10"
+      },
+      "evidence": {
+        "accepted": "10",
+        "operation": "m-4a44dc15364204a80fe80e9039455cc1608281820fe2b24f1e5233ade6af1dd5",
+        "record": {
+          "stream": "r-0202020202020202020202020202020202020202020202020202020202020202",
+          "epoch": "p-0303030303030303030303030303030303030303030303030303030303030303",
+          "sequence": "10"
+        }
+      }
+    },
+    "note": "Inputs are retained source observations. Creation keys and accepted order come from the canonical producer. Expected snapshots omit the projection revision counter, which is allocated as canonical changes are emitted."
+  }
+}
