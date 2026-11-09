@@ -163,9 +163,12 @@ pub(crate) async fn ask(
         }
     }
     let mut response = match request {
-        Request::Register { resident, shared, previous } => Response::Conversation {
-            conversation: registration::register(hub, &from, &key, &account, resident, shared, previous).await?,
-        },
+        Request::Register { resident, shared, previous, born_at } => {
+            let conversation =
+                registration::register(hub, &from, &key, &account, resident, shared, previous, born_at).await?;
+            describe(hub, &conversation);
+            Response::Conversation { conversation }
+        }
         Request::PrepareDeletion { conversation } => {
             let (from, account) = (from.clone(), account.clone());
             hub.blocking(move |hub| crate::forget::prepare(&hub, &from, account, conversation)).await?;
@@ -380,6 +383,25 @@ pub(crate) fn legacy_plan(
         return Err("update this client to access a shared conversation's plan".into());
     }
     Ok(())
+}
+
+/// Signs or confirms the description of a registered conversation's scope in
+/// the background. The legacy record stays authoritative and registration
+/// never waits for it; a failure is retried by the next registration.
+fn describe(hub: &Hub, conversation: &Conversation) {
+    let Some(foundation) = hub.foundation.clone() else { return };
+    if conversation.identity.is_none() {
+        return;
+    }
+    let Some(opened) = hub.store().book.directory.account(&conversation.account).map(|account| account.opened) else {
+        return;
+    };
+    let (conversation, log) = (conversation.clone(), hub.log.clone());
+    fastctx_platform::task::spawn(async move {
+        if let Err(error) = foundation.describe_conversation(opened, &conversation).await {
+            log.line(format_args!("describing the scope of {}: {error}", conversation.address));
+        }
+    });
 }
 
 /// A birth, move or deletion invalidates catalogs without disclosing the removed identity.

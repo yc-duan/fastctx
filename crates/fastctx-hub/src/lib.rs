@@ -33,6 +33,7 @@ mod direct;
 pub mod dissolve;
 mod expiry;
 mod forget;
+mod foundation;
 mod health;
 mod history_author;
 mod history_limits;
@@ -304,6 +305,9 @@ pub(crate) struct Hub {
     /// Whether one of each machine's logins has the workbench open, as it
     /// last told (`workbench`).
     workbench: Mutex<HashMap<MachineName, bool>>,
+    /// The unified data foundation's engines on this hub (`foundation`), absent
+    /// when they could not open; the hub then serves without them.
+    foundation: Option<Arc<foundation::Foundation>>,
 }
 
 /// The view a session that reads what changes in its view was last given
@@ -798,6 +802,7 @@ struct Opened {
     updates: updates::Updates,
     account_records: account_records::Records,
     ledgers: ledger::Ledgers,
+    foundation: Option<foundation::Foundation>,
     secrets: HubSecrets,
     tls: releases::http::Tls,
     pin: CertPin,
@@ -812,7 +817,10 @@ struct Opened {
 /// Opens the hub kept in `dir` for serving: its files and databases read,
 /// written and set up, as only a blocking thread may.
 fn open(dir: &Path, log: Arc<log::Log>) -> anyhow::Result<Opened> {
-    let mut store = Store::open_logged(dir, Some(log))?;
+    let mut store = Store::open_logged(dir, Some(log.clone()))?;
+    let foundation = foundation::Foundation::open(dir, store.shelf.0.clone(), store.hub.id.clone(), log.clone())
+        .inspect_err(|error| log.line(format_args!("the data foundation did not open: {error:#}")))
+        .ok();
     // An assistance whose deadline passed while the hub was stopped is
     // ended before any member is heard.
     assists::end_due(&mut store, Timestamp::now())?;
@@ -851,6 +859,7 @@ fn open(dir: &Path, log: Arc<log::Log>) -> anyhow::Result<Opened> {
         updates,
         account_records,
         ledgers,
+        foundation,
         secrets,
         tls,
         pin: certificate.pin(),
@@ -882,6 +891,7 @@ async fn serving(
         updates,
         account_records,
         ledgers,
+        foundation,
         secrets,
         tls,
         pin,
@@ -930,8 +940,19 @@ async fn serving(
         account_records,
         troubles,
         workbench: Mutex::new("hub workbench", Rank::HUB_WORKBENCH, HashMap::new()),
+        foundation: foundation.map(Arc::new),
     });
     let _ = hub.this.set(Arc::downgrade(&hub));
+    // The authority run begins before any member is heard, so nothing is
+    // signed under an epoch the hub has not persisted.
+    if let Some(foundation) = hub.foundation.clone() {
+        match foundation.begin().await {
+            Ok(()) => {
+                fastctx_platform::task::spawn(async move { foundation.run().await });
+            }
+            Err(error) => hub.log.line(format_args!("the data foundation did not start: {error}")),
+        }
+    }
     hub.post.attach(Arc::downgrade(&hub));
     let _watchdog = watchdog::Watchdog::start(&hub, watched.0, watched.1)?;
     if let Err(error) = hub.blocking(|hub| hub_machine::settle(&hub)).await {
