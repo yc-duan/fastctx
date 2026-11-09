@@ -13,6 +13,7 @@ fastctx-types = { path = "../fastctx-types" }
 fastctx-sync = { path = "../fastctx-sync" }
 serde.workspace = true
 serde_json.workspace = true
+jiff.workspace = true
 
 [lints]
 workspace = true

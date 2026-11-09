@@ -123,19 +123,39 @@ pub fn entries() -> Vec<Intake> {
                 "migration.legacy-pins" => ("legacy migration", false, &[MissingPort::BusinessHandler]),
                 "device.pending-edit" => ("foundation pending engine", false, &[MissingPort::BusinessHandler]),
                 "account.notice" => (
-                    "diagnostic records",
-                    false,
-                    &[MissingPort::FoundationRegistration, MissingPort::BusinessHandler, MissingPort::SourceAuthorizer],
+                    "fastctx-assets::diagnostics::alert",
+                    true,
+                    &[
+                        MissingPort::FoundationRegistration,
+                        MissingPort::SourceAuthorizer,
+                        MissingPort::KindReaderPolicy,
+                        MissingPort::ProjectionContext,
+                    ],
                 ),
-                "conversation.agents"
-                | "job.facts"
-                | "account.usage"
-                | "account.activity"
-                | "account.read-position"
-                | "machine.settings"
-                | "machine.audit"
-                | "machine.connection"
-                | "device.preferences" => ("account and machine records", false, &[MissingPort::BusinessHandler]),
+                "account.usage" | "account.activity" | "machine.audit" | "machine.connection"
+                | "device.preferences" => (
+                    "fastctx-assets::records",
+                    true,
+                    &[
+                        MissingPort::SourceAuthorizer,
+                        MissingPort::KindReaderPolicy,
+                        MissingPort::ProjectionContext,
+                        MissingPort::FoundationRegistration,
+                    ],
+                ),
+                "account.read-position" | "machine.settings" => (
+                    "fastctx-assets::records",
+                    true,
+                    &[
+                        MissingPort::InternalServiceSubmission,
+                        MissingPort::KindReaderPolicy,
+                        MissingPort::ProjectionContext,
+                        MissingPort::LegacyNodeDelegation,
+                    ],
+                ),
+                "conversation.agents" | "job.facts" => {
+                    ("account and machine records", false, &[MissingPort::BusinessHandler])
+                }
                 _ => (entry.owner, false, &[MissingPort::BusinessHandler]),
             };
             Intake { registration: entry, owner, schema_available, missing }
