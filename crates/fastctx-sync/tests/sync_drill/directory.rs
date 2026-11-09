@@ -1,5 +1,7 @@
 //! A hub signs each scope description into its owner's directory stream; a
 //! device discovers and verifies exactly the descriptions its accounts own.
+#[path = "feed_reads.rs"]
+mod feed_reads;
 use super::*;
 use fastctx_sync::{
     authority::{Peer, Service},
@@ -370,6 +372,7 @@ pub(super) async fn run(root: &Path) -> Result<()> {
     assert!(discovered.installed.iter().all(|installed| matches!(installed, Installed::Opened(_))));
     assert_eq!(discovered.directories.len(), 1);
     assert_eq!(count(&fresh_db, "SELECT COUNT(*) FROM sync_scopes WHERE enabled=0")?, 1);
+    feed_reads::run(&upstream, &identity, &discovered.directories[0], &key).await?;
     println!(
         "hub directory: signed scope descriptions, idempotent retries, ACL advances, refusals, feed prefixes, paged discovery, restart and device installation passed"
     );
