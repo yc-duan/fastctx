@@ -19,6 +19,7 @@ mod control;
 mod item;
 mod model;
 mod placement;
+pub mod presentation;
 
 pub use alias::{AliasReduction, bind_alias, redirect_observation};
 pub use control::{AgentState, BranchReduction, RewriteReduction, SourceState, agent, branch, picture, rewrite, turn};
