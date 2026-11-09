@@ -35,6 +35,8 @@ pub struct ItemState {
     pub placement: Option<Versioned<Placement>>,
     pub position: Option<TimelinePosition>,
     pub positioned: Option<Placement>,
+    /// Canonical display parent; placement retains the original source evidence.
+    pub display_parent: Option<ObjectId>,
     pub run: Option<Versioned<RunLink>>,
     pub revision: Revision,
     /// Last emitted descriptor, distinct from newer state still awaiting dependencies.
@@ -53,6 +55,7 @@ impl ItemState {
             placement: None,
             position: None,
             positioned: None,
+            display_parent: None,
             run: None,
             revision: Revision(0),
             published: None,
@@ -120,6 +123,8 @@ pub struct TurnState {
 pub struct Neighbors<'a> {
     pub turn: Option<&'a TurnState>,
     pub parent: Option<&'a ItemState>,
+    /// Destination row when the requested parent has a retained alias.
+    pub resolved_parent: Option<&'a ItemState>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -169,6 +174,15 @@ pub enum IndexEffect {
         item: ObjectId,
     },
     Alias {
+        from: ObjectId,
+        to: ObjectId,
+    },
+    /// Persist with Alias. Page the source item's reverse relationship indexes,
+    /// resolve effective destinations, and dirty/wake every affected item and
+    /// pending dependency. This includes display children, call, picture and
+    /// branch membership links. Keep original evidence; new index writes must
+    /// resolve aliases too, so arrivals during the paged repair cannot escape it.
+    RebindRelations {
         from: ObjectId,
         to: ObjectId,
     },

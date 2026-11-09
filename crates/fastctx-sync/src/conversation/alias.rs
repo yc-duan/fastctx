@@ -51,6 +51,7 @@ pub fn bind_alias(
     to.display_created = to.display_created.min(from.display_created);
     if from.alias.is_none() {
         effects.indexes.push(IndexEffect::Alias { from: from.id(), to: to.id() });
+        effects.indexes.push(IndexEffect::RebindRelations { from: from.id(), to: to.id() });
     }
     from.alias = Some(to.id());
     placement::position(&mut to, neighbors, &mut effects)?;
