@@ -161,10 +161,7 @@ impl<'tx> SupplyWriter<'tx> {
         let expected = &ready.check.request;
         let usage = match &expected.owner {
             SupplyOwner::Use { usage } => usage == &request.usage,
-            SupplyOwner::Source { source } => {
-                matches!(&request.usage,RootUse::Checkpoint {source:actual} if source==actual)
-            }
-            SupplyOwner::Mutation => false,
+            SupplyOwner::Source { .. } | SupplyOwner::Mutation => false,
         };
         if !usage
             || expected.root != request.root
