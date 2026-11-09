@@ -23,6 +23,7 @@ mod model;
 mod placement;
 pub mod presentation;
 pub mod producer;
+pub mod source;
 mod routing;
 
 pub use alias::{AliasReduction, bind_alias, redirect_observation};
