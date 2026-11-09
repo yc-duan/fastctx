@@ -1331,6 +1331,7 @@ dependencies = [
  "tokio",
 ]
 
+
 [[package]]
 name = "fastctx-client"
 version = "1.0.1-beta.16"
@@ -1720,6 +1721,7 @@ dependencies = [
  "serde_yaml_ng",
  "sha2 0.10.9",
  "thiserror",
+ "url",
 ]
 
 [[package]]

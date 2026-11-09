@@ -12,6 +12,36 @@ pub struct Settings {
     pub model: Option<ModelSettings>,
     pub search: Option<SearchSettings>,
 }
+/// Validates public settings without credentials, network access or runtime state.
+pub fn validate(settings: &Settings) -> Result<(), String> {
+    if let Some(model) = &settings.model {
+        endpoint(&model.endpoint)?;
+        if model.model.trim().is_empty() || model.model.len() > 256 {
+            return Err("invalid sentinel model name".into());
+        }
+    }
+    if let Some(search) = &settings.search {
+        endpoint(&search.endpoint)?;
+    }
+    Ok(())
+}
+fn endpoint(text: &str) -> Result<(), String> {
+    if text.len() > 4096 {
+        return Err("sentinel endpoint is too long".into());
+    }
+    let url = url::Url::parse(text).map_err(|e| e.to_string())?;
+    let loopback = url.host_str().is_some_and(|h| {
+        h == "localhost" || h.trim_matches(['[', ']']).parse::<std::net::IpAddr>().is_ok_and(|ip| ip.is_loopback())
+    });
+    if url.scheme() != "https" && !(url.scheme() == "http" && loopback) {
+        return Err("sentinel endpoint requires HTTPS".into());
+    }
+    if !url.username().is_empty() || url.password().is_some() || url.fragment().is_some() {
+        return Err("sentinel endpoint must not contain credentials or a fragment".into());
+    }
+    Ok(())
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SearchSettings {
     pub provider: SearchProvider,
