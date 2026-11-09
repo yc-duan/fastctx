@@ -19,7 +19,7 @@ import { NodeQueue } from "./node-queue";
 import { ControlQueue, controlName } from "./control-queue";
 import type { PendingControl } from "../world/control";
 import { NodeTray, type AssistantFiles } from "./node-tray";
-import { Menu, commandFor, commandRow, commandsOf, usageOf, type MenuCommand } from "./commands";
+import { Menu, commandFor, commandRow, commandTyped, commandsOf, isSkill, usageOf, type MenuCommand } from "./commands";
 import { ModelPanel, enModelPanel, zhModelPanel } from "./model-panel";
 import { effortLabel } from "./effort-slider";
 import { fileRow, mentionAt, mentioned, type FileWords, type FoundFile } from "./mention";
@@ -43,6 +43,7 @@ import { escape, render } from "./prose";
 import { shownOf, skillsHtml } from "./said";
 import { Finder } from "./find";
 import { FarFind } from "./find-far";
+import { contextOf, type ModelRequest } from "./requests";
 import { UsageBadge, ring } from "./usage-badge";
 import { UsagePop } from "./usage-pop";
 import { ContextSheet } from "./context-sheet";
@@ -279,6 +280,17 @@ export class ConversationPage {
   private offersFailed = 0;
   private wasMoving = false;
   private commandMenu: Menu<MenuCommand> | null = null;
+  /** A command or skill picked from the menu that takes words: it stands at
+   *  the head of the input as a chip, and what is typed after it are its
+   *  words. */
+  private picked: MenuCommand | null = null;
+  private readonly pickedChip: HTMLElement;
+  /** The shared draft the chip stands with, by the epoch its words go under
+   *  once those sent from here before it are taken: the draft moved past
+   *  it, sent from any device, took the chip along. */
+  private pickedEpoch: number | null = null;
+  /** The note says what a command typed wants: typing again takes it away. */
+  private hinting = false;
   private modelPanel: ModelPanel | null = null;
   private fileMenu: Menu<FoundFile> | null = null;
   /** The latest `@` question; an answer to an earlier one is not shown. */
@@ -328,7 +340,7 @@ export class ConversationPage {
           <div class="composer-menus"><div class="composer-menu usage-pop" hidden></div><div class="composer-menu said-pop" role="dialog" hidden></div><div class="jobs-pop" role="dialog" hidden></div></div>
           <div class="composer-confirm" hidden></div>
           <div class="composer-tray"></div>
-          <textarea rows="1" enterkeyhint="send" placeholder="${escape(words.sendPlaceholder(someone.agent))}" aria-label="${escape(words.sendPlaceholder(someone.agent))}"></textarea>
+          <div class="composer-field"><span class="composer-picked" hidden></span><textarea rows="1" enterkeyhint="send" placeholder="${escape(words.sendPlaceholder(someone.agent))}" aria-label="${escape(words.sendPlaceholder(someone.agent))}"></textarea></div>
           <div class="composer-row">
             <div class="composer-tools"><button class="icon-button composer-attach" type="button" hidden></button><input class="composer-pick" type="file" multiple hidden><input class="composer-shot" type="file" accept="image/*" capture="environment" hidden><button class="composer-chip" type="button" hidden></button><button class="composer-jobs" type="button" hidden></button></div>
             <span class="composer-note" aria-live="polite"></span>
@@ -416,6 +428,14 @@ export class ConversationPage {
       this.usagePopover = new Popover(usagePop, this.context, () => this.usageSteady?.free());
     }
     this.input = this.element.querySelector("textarea")!;
+    this.pickedChip = this.element.querySelector<HTMLElement>(".composer-picked")!;
+    this.pickedChip.addEventListener("click", (event) => {
+      if (!(event.target as HTMLElement).closest(".composer-unpick")) return;
+      this.pick(null);
+      this.input.focus();
+    });
+    // The words begin after the chip: its width indents their first line.
+    new ResizeObserver(() => this.indent()).observe(this.pickedChip);
     this.fitter = new DraftFit(this.input);
     this.action = this.element.querySelector<HTMLButtonElement>(".composer-action")!;
     this.note = this.element.querySelector<HTMLElement>(".composer-note")!;
@@ -434,6 +454,8 @@ export class ConversationPage {
     this.chip = this.element.querySelector<HTMLButtonElement>(".composer-chip")!;
     this.input.value = this.draft() ?? "";
     if (options.controls) this.menus();
+    const kept = this.keptPick();
+    this.pick(kept?.command ?? null, kept?.epoch ?? null);
     if (options.files) this.fileMenuOf();
     this.context.addEventListener("click", () => this.toggleUsage());
     this.element.addEventListener("keydown", (event) => {
@@ -591,6 +613,10 @@ export class ConversationPage {
       this.submit();
     });
     this.input.addEventListener("input", () => {
+      if (this.hinting) {
+        this.hinting = false;
+        this.say("");
+      }
       this.fit();
       this.drawAction();
       this.keepDraft();
@@ -607,6 +633,12 @@ export class ConversationPage {
           event.preventDefault();
           return;
         }
+      }
+      // Backspace at the head of the words takes the chip before them away.
+      if (event.key === "Backspace" && this.picked && !composing(event) && this.input.selectionStart === 0 && this.input.selectionEnd === 0) {
+        event.preventDefault();
+        this.pick(null);
+        return;
       }
       // Enter sends where there is a keyboard; on a touch screen it is a new
       // line, and the button sends.
@@ -875,19 +907,31 @@ export class ConversationPage {
   /** Where the reader was, kept while the page is out of view: following
    *  the newest, or a block and how far down it they were. */
   private place: { key: string; offset: number } | null = null;
+  private suspended = false;
 
   /** The page goes out of view and stays alive, its conversation still
    *  followed. */
   suspend(): void {
-    this.place = this.following ? null : this.view.anchor();
+    this.suspended = true;
+    if (this.element.isConnected) this.place = this.following ? null : this.view.anchor();
   }
 
   /** The page is shown again, as it was left and as the conversation now
    *  stands. */
   resume(): void {
-    this.render();
-    if (this.following) this.scroller.scrollTop = this.scroller.scrollHeight;
-    else if (this.place && !this.view.restore(this.place)) this.toLatest();
+    if (this.suspended) {
+      this.suspended = false;
+      void this.askOffers();
+    }
+    // The desk wakes its pages before the shell mounts it. Restore only
+    // once the scroll region has its on-screen dimensions.
+    cancelAnimationFrame(this.frame);
+    this.frame = requestAnimationFrame(() => {
+      this.render();
+      if (!this.element.isConnected) return;
+      if (this.following) this.scroller.scrollTop = this.scroller.scrollHeight;
+      else if (this.place && !this.view.restore(this.place)) this.toLatest();
+    });
   }
 
   /** What is held is read again (`conversation.ts`): the reader stays
@@ -990,8 +1034,9 @@ export class ConversationPage {
     this.unbindShared?.();
     this.fileLinks?.release();
     this.pictures?.release();
-    this.nodeTray?.close();
-    void this.session?.close();
+    const removed = Promise.all([this.nodeTray?.close(), this.nodeQueue?.leave()]);
+    this.tray?.close();
+    void removed.then(() => this.session?.close());
   }
 
   private left = false;
@@ -1019,6 +1064,9 @@ export class ConversationPage {
       session = await open();
     } catch (error) {
       console.warn("the shared input could not be opened; this page keeps its own", error);
+      this.openingComposer = false;
+      this.tray?.resume();
+      this.drawAction();
       return;
     }
     if (this.left) {
@@ -1026,6 +1074,7 @@ export class ConversationPage {
       return;
     }
     this.session = session;
+    this.openingComposer = false;
     const typed = this.input.value;
     const caret = this.input.selectionStart ?? typed.length;
     try {
@@ -1035,6 +1084,15 @@ export class ConversationPage {
     }
     this.unbindShared = bindComposer(this.input, session.draft);
     if (typed.trim() && !this.input.value.trim()) this.setWords(typed, caret);
+    // A chip kept here went with its draft if that was sent meanwhile.
+    if (this.picked) {
+      const now = this.draftEpoch()!;
+      if (this.pickedEpoch !== null && now > this.pickedEpoch) this.pick(null);
+      else {
+        this.pickedEpoch = now;
+        this.keepPick();
+      }
+    }
     // What could not be done to waiting words is said in the interface's
     // words, the node's own on the pointer's rest.
     const say = (why: string, said?: string) => this.say(said ?? this.options.words.notDone(why), why, true);
@@ -1060,10 +1118,13 @@ export class ConversationPage {
     }
     if (this.options.attach && this.tray) {
       this.nodeTray = new NodeTray(this.options.attach.words, session, session.draft, say, assistantFiles, () => this.drawAction());
+      const held = this.tray.release();
       this.tray.element.replaceWith(this.nodeTray.element);
+      this.nodeTray.adopt(held);
     }
     session.subscribe((state) => {
       this.sharedState = state;
+      if (this.picked && this.pickedEpoch !== null && session.draft.view.state.epoch > this.pickedEpoch) this.pick(null);
       this.showOnTheirWay(state.composer);
       this.nodeQueue?.draw(state);
       this.nodeTray?.draw(state);
@@ -1227,6 +1288,9 @@ export class ConversationPage {
         // input or still in the queue: they leave the conversation, and the
         // reason is said by the input, once for words sent after them too.
         if (key) conversation.unsend(key);
+        // Words back in the input are not the words of a chip picked after
+        // they were sent.
+        if (this.picked) this.pick(null);
         if (!(error instanceof Withdrawn)) this.say(this.options.words.notSent(why), why, true);
         this.update();
       },
@@ -1245,11 +1309,33 @@ export class ConversationPage {
   /** Whether a file attached is still on its way, or failed and is not
    *  taken away: nothing is sent until it is there (user 2026-11-04). */
   private uploading(): boolean {
-    return this.session ? !!this.nodeTray?.uploading : !!(this.tray?.sending || this.tray?.failed);
+    return this.session ? !!this.nodeTray?.uploading : !!(this.tray?.sending || this.tray?.failed || (this.openingComposer && this.tray?.count));
   }
 
   private submit(): void {
-    const text = this.input.value.trim();
+    const typed = this.input.value.trim();
+    const picked = this.picked;
+    // A command picked from the menu runs with the words typed after it.
+    if (picked && !picked.account && this.options.controls) {
+      if (picked.arguments === "required" && !typed) {
+        this.hint(this.options.controls.words.commands.needsArgs(usageOf(picked)));
+        return;
+      }
+      this.clear();
+      this.pick(null);
+      void this.run(picked, typed);
+      return;
+    }
+    const command = this.options.controls && !picked ? commandTyped(typed) : null;
+    // One of the account's skills is asked for in the words themselves:
+    // picked from the menu, or its name written out after a slash.
+    const skill = picked?.account ? { name: picked.name, args: typed } : command && this.accountSkill(command.name) ? command : null;
+    const text = skill ? `$${skill.name}${skill.args ? ` ${skill.args}` : ""}` : typed;
+    // A command takes nothing attached, which stays for the words after it.
+    if (command && !skill) {
+      void this.typedCommand(command.name, command.args, typed);
+      return;
+    }
     if (this.uploading()) {
       this.say(this.options.attach!.words.wait);
       return;
@@ -1268,16 +1354,16 @@ export class ConversationPage {
       if (this.options.conversation.busy()) this.stop();
       return;
     }
-    if (this.options.controls && text.startsWith("/")) {
-      void this.typedCommand(text);
-      return;
-    }
     // What the last command did is behind the conversation now.
     this.say("");
     this.hideSaid();
     this.placeSent();
+    if (picked) this.pick(null);
     if (session) {
+      // The shared draft is what is sent: the skill's name goes into it.
+      if (skill) this.setWords(text);
       this.commandMenu?.hide();
+      this.fileMenu?.hide();
       this.nodeTray?.settle();
       this.sendShared(session, text);
       return;
@@ -1479,12 +1565,15 @@ export class ConversationPage {
     const holder = this.element.querySelector<HTMLElement>(".composer-menus")!;
     this.commandMenu = new Menu<MenuCommand>("commands", (command) => commandRow(command), (command) => {
       this.commandMenu!.hide();
-      if (command.arguments === "required" || (command.arguments === "optional" && !command.control)) {
-        if (this.session) this.setWords(`/${command.name} `);
-        else this.input.value = `/${command.name} `;
+      if (command.account || command.arguments === "required" || (command.arguments === "optional" && !command.control)) {
+        // What was typed to find it gives way to its chip.
+        if (this.session) this.setWords("");
+        else this.input.value = "";
+        this.pick(command);
+        this.fit();
+        this.keepDraft();
         this.input.focus();
         this.drawAction();
-        if (command.args) this.say(usageOf(command));
       } else {
         this.clear();
         void this.run(command, "");
@@ -1617,6 +1706,7 @@ export class ConversationPage {
     field.addEventListener("blur", () => finish(true));
   }
   private tray: AttachTray | null = null;
+  private openingComposer = false;
   private queue!: SendQueue;
   /** How many turns had ended when the last queued words were sent. */
   private released: number | null = null;
@@ -1628,7 +1718,8 @@ export class ConversationPage {
   /** Files come with the words: picked with the paperclip, pasted, or
    *  dropped anywhere on the page. */
   private attaching(attach: NonNullable<PageOptions["attach"]>): void {
-    const tray = new AttachTray(attach.words, attach.seam, () => this.drawAction());
+    this.openingComposer = !!this.options.composer;
+    const tray = new AttachTray(attach.words, attach.seam, () => this.drawAction(), this.openingComposer);
     tray.onlyImages(() => this.imagesOnly(), (why) => this.say(why, "", true));
     this.tray = tray;
     this.element.querySelector(".composer-tray")!.replaceWith(tray.element);
@@ -1701,11 +1792,8 @@ export class ConversationPage {
    *  Where the page has not read what it offers yet, or what it read names
    *  no such command, it is read again first; a command is never sent on
    *  to the agent as words. */
-  private async typedCommand(text: string): Promise<void> {
+  private async typedCommand(name: string, args: string, typed: string): Promise<void> {
     const controls = this.options.controls!;
-    const space = text.indexOf(" ");
-    const name = (space < 0 ? text.slice(1) : text.slice(1, space)).trim();
-    const args = space < 0 ? "" : text.slice(space + 1).trim();
     const find = (moving: boolean) => commandFor(commandsOf(this.offered, controls.words.commands, moving, this.side?.goals ?? false), name, args);
     if (!find(this.options.conversation.moving())) await this.askOffers();
     if (this.left) return;
@@ -1715,7 +1803,7 @@ export class ConversationPage {
     }
     const command = find(this.options.conversation.moving());
     if (command?.arguments === "required" && !args) {
-      this.say(controls.words.commands.needsArgs(usageOf(command)));
+      this.hint(controls.words.commands.needsArgs(usageOf(command)));
       return;
     }
     if (command) {
@@ -1723,9 +1811,23 @@ export class ConversationPage {
       void this.run(command, args);
       return;
     }
+    // One of the account's skills, known only now: the words go as asked
+    // for it, unless they changed meanwhile.
+    if (this.accountSkill(name)) {
+      if (this.input.value.trim() === typed && !this.picked) this.submit();
+      return;
+    }
     // One that waits for the turn is named as waiting, not unknown.
     const waiting = this.options.conversation.moving() && find(false);
     this.say(waiting ? controls.words.afterTurn(name) : controls.words.unknown(name));
+  }
+
+  /** Whether `name` is one of the account's skills, and no command. */
+  private accountSkill(name: string): boolean {
+    const controls = this.options.controls;
+    if (!controls) return false;
+    const listed = commandsOf(this.offered, controls.words.commands, false, this.side?.goals ?? false);
+    return listed.some((one) => one.account && one.name === name) && !commandFor(listed, name, "");
   }
 
   /** Asks what the conversation offers, one asking at a time. Its commands
@@ -1734,6 +1836,7 @@ export class ConversationPage {
    *  while one is out, it asks once more after that one, for every wish
    *  made meanwhile, so whoever waits gets an answer begun after it asked. */
   private askOffers(): Promise<void> {
+    if (this.suspended || this.left) return Promise.resolve();
     if (!this.offersAsking) {
       const asking = this.askOffersNow().finally(() => {
         this.offersAsking = null;
@@ -1860,8 +1963,20 @@ export class ConversationPage {
     if (!this.usagePop) return false;
     const { conversation } = this.options;
     const requests = conversation.requests;
-    this.usageDrawn = `${requests.length}:${requests[requests.length - 1]?.at}:${conversation.context?.used}`;
-    return this.usagePop.fill({ context: conversation.context ?? this.offered?.usage?.context ?? null, usage: this.offered?.usage ?? null, requests });
+    const context = this.contextNow(requests);
+    this.usageDrawn = `${requests.length}:${requests[requests.length - 1]?.at}:${context?.used}`;
+    return this.usagePop.fill({ context, usage: this.offered?.usage ?? null, requests });
+  }
+
+  /** How much of the context is in use now: the host's latest report,
+   *  unless a request answered after it says so more lately, as the ones
+   *  after a compaction in the middle of a turn do; else what the host
+   *  offers when it says. */
+  private contextNow(requests: readonly ModelRequest[]): { used: number; window: number | null } | null {
+    const report = this.options.conversation.context;
+    const latest = requests[requests.length - 1];
+    if (report && latest && latest.at > report.at && contextOf(latest) > 0) return { used: contextOf(latest), window: report.window };
+    return report ?? this.offered?.usage?.context ?? null;
   }
 
   /** Starting again from the user's words: said plainly first, done once
@@ -1911,6 +2026,8 @@ export class ConversationPage {
               return;
             }
             if (words !== null && !this.input.value.trim()) {
+              // They come back as they were sent, with no chip before them.
+              this.pick(null);
               if (this.session) this.setWords(words);
               else this.input.value = words;
               // What came with the words comes back with them.
@@ -1944,7 +2061,8 @@ export class ConversationPage {
   private slash(): void {
     const menu = this.commandMenu;
     if (!menu || !this.options.controls) return;
-    const typed = /^\/(\S*)$/.exec(this.input.value);
+    // With a chip picked the words are its own, a leading `/` among them.
+    const typed = this.picked ? null : /^\/([A-Za-z0-9_:-]*)$/.exec(this.input.value);
     if (!typed) return menu.hide();
     const prefix = typed[1]!.toLowerCase();
     const found = commandsOf(this.offered, this.options.controls.words.commands, this.options.conversation.moving(), this.side?.goals ?? false).filter((command) =>
@@ -2002,10 +2120,13 @@ export class ConversationPage {
    *  agent begins with (`app/model-memory.ts`). */
   private async setModel(model: string | null, effort: string | null): Promise<void> {
     const before = this.offered;
-    if (before) this.choose({ ...before, model: model ?? before.model, effort: effort ?? before.effort });
+    // A model with no efforts listed goes on with none named, not the last one's.
+    const chosen = before?.models.find((one) => one.id === (model ?? before.model));
+    const kept = chosen && !chosen.efforts.length ? null : (effort ?? before?.effort ?? null);
+    if (before) this.choose({ ...before, model: model ?? before.model, effort: kept });
     const done = await this.run({ name: "model", description: "", args: null, arguments: "optional", control: "model", source: null }, "", { do: "model", model, effort }, true);
     if (!done && before) this.unchoose(before);
-    else if (done) keepChoice(this.options.someone.agent, model ?? before?.model ?? null, effort ?? before?.effort ?? null);
+    else if (done) keepChoice(this.options.someone.agent, model ?? before?.model ?? null, kept);
   }
 
   private async setTier(id: string): Promise<void> {
@@ -2248,9 +2369,79 @@ export class ConversationPage {
   identify(who: Someone): void {
     Object.assign(this.options.someone, who);
     const said = this.options.words.sendPlaceholder(who.agent);
-    this.input.placeholder = said;
+    if (!this.picked) this.input.placeholder = said;
     this.input.setAttribute("aria-label", said);
     this.drawState();
+  }
+
+  /** Puts `command` at the head of the input as a chip, or takes the chip
+   *  away; the input's hint says what its words are for meanwhile. */
+  private pick(command: MenuCommand | null, epoch = this.draftEpoch()): void {
+    this.picked = command;
+    this.pickedEpoch = command ? epoch : null;
+    const chip = this.pickedChip;
+    const words = this.options.controls?.words.commands;
+    if (!command || !words) {
+      this.picked = null;
+      this.pickedEpoch = null;
+      chip.hidden = true;
+      chip.replaceChildren();
+      this.input.placeholder = this.options.words.sendPlaceholder(this.options.someone.agent);
+    } else {
+      const skill = isSkill(command);
+      chip.innerHTML = `${glyph(skill ? "skill" : "command", 14)}<span class="composer-picked-name">${escape(command.account ? command.name : `/${command.name}`)}</span><button class="composer-unpick" type="button" aria-label="${escape(words.unpick)}" title="${escape(words.unpick)}">${glyph("close", 12)}</button>`;
+      chip.title = command.description;
+      chip.hidden = false;
+      this.input.placeholder = command.args ?? (skill ? words.skillWords : "");
+    }
+    this.indent();
+    this.keepPick();
+    this.drawAction();
+  }
+
+  /** Indents the input's first line by the width of the chip over its head,
+   *  and fits the input to its words so indented. */
+  private indent(): void {
+    const chip = this.pickedChip;
+    const indent = chip.hidden ? "" : `${chip.offsetWidth + 6}px`;
+    if (this.input.style.textIndent === indent) return;
+    this.input.style.textIndent = indent;
+    this.fit();
+  }
+
+  /** The epoch of the shared draft that words typed now are sent under:
+   *  past those sent from here that the node has not taken yet. */
+  private draftEpoch(): number | null {
+    const draft = this.session?.draft;
+    return draft ? draft.view.state.epoch + draft.onTheirWay : null;
+  }
+
+  /** Says what a command typed wants, until the words change. */
+  private hint(text: string): void {
+    this.say(text);
+    this.hinting = true;
+  }
+
+  private keepPick(): void {
+    if (!this.options.draftKey) return;
+    try {
+      const key = `${this.options.draftKey}:picked`;
+      if (this.picked) localStorage.setItem(key, JSON.stringify({ command: this.picked, epoch: this.pickedEpoch }));
+      else localStorage.removeItem(key);
+    } catch {
+      // Not kept: the chip is gone if the page is left.
+    }
+  }
+
+  private keptPick(): { command: MenuCommand; epoch: number | null } | null {
+    if (!this.options.draftKey || !this.options.controls) return null;
+    try {
+      const kept = localStorage.getItem(`${this.options.draftKey}:picked`);
+      const { command, epoch } = kept ? (JSON.parse(kept) as { command?: MenuCommand; epoch?: number | null }) : {};
+      return command && typeof command.name === "string" ? { command, epoch: typeof epoch === "number" ? epoch : null } : null;
+    } catch {
+      return null;
+    }
   }
 
   /** The watch on the session is over: what is shown stays, and the bar
@@ -2439,18 +2630,17 @@ export class ConversationPage {
       : this.goneWhy;
     if (why) this.state.title = why;
     else this.state.removeAttribute("title");
-    // How much of the context is used: the host's latest report, from the
-    // conversation's events, or from what it offers when it says; with it
-    // how the cache served the last request and how long it stays.
-    const used = conversation.context ?? this.offered?.usage?.context ?? null;
+    // How much of the context is used now (`contextNow`); with it how the
+    // cache served the last request and how long it stays.
+    const requests = conversation.requests;
+    const used = this.contextNow(requests);
     if (this.badge) {
-      const requests = conversation.requests;
       this.badge.draw(used, requests);
       // Without anything to measure, the limits still have a way in.
       this.context.hidden = !this.badge.shows && !this.offered?.usage?.limits.length;
       // The pop-up open follows each new request.
       const pop = this.element.querySelector<HTMLElement>(".usage-pop")!;
-      if (!pop.hidden && this.usageDrawn !== `${requests.length}:${requests[requests.length - 1]?.at}:${conversation.context?.used}`) this.fillUsage();
+      if (!pop.hidden && this.usageDrawn !== `${requests.length}:${requests[requests.length - 1]?.at}:${used?.used}`) this.fillUsage();
     } else if (used && used.window) {
       const share = Math.min(1, used.used / used.window);
       const percent = Math.round(share * 100);
@@ -2474,7 +2664,7 @@ export class ConversationPage {
 
   private drawAction(): void {
     const { words, conversation } = this.options;
-    const typed = this.input.value.trim() !== "" || ((this.session ? this.nodeTray?.count : this.tray?.count) ?? 0) > 0;
+    const typed = this.input.value.trim() !== "" || !!this.picked || ((this.session ? this.nodeTray?.count : this.tray?.count) ?? 0) > 0;
     const busy = conversation.busy();
     if (!busy) this.stopping = false;
     const stop = !typed && busy;

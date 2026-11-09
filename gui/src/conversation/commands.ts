@@ -1,14 +1,16 @@
 // The composer's two menus. Typing `/` at the start of the words opens the
 // conversation's commands: the few the World does to any conversation it
-// holds (compact, change the model, rename, fork, stop, set its goal), each offered only
-// where the conversation takes it, and its host's own, as the host lists
-// them now. A World control stands for its name, so the same command does
-// the same thing on every host; the host's command of that name is kept
-// behind it for words the control does not take (`/compact` with
-// instructions). The model chip opens the models the host lists, each with
-// the reasoning efforts it takes.
+// holds (compact, rename, fork, stop, set its goal), each offered only
+// where the conversation takes it, the skills the account keeps in
+// Fastctx, and its host's own, as the host lists them now. A World control
+// stands for its name, so the same command does the same thing on every
+// host; the host's command of that name is kept behind it for words the
+// control does not take (`/compact` with instructions). The model is
+// chosen in the model chip alone, which opens the models the host lists,
+// each with the reasoning efforts it takes.
 
 import { layerOpened } from "../app/back";
+import { glyph } from "./glyphs";
 import { escape } from "./prose";
 import type { CommandArguments, CommandOffer, ControlKind, ModelOffer, Offers } from "../world/control";
 import { composing } from "../typing";
@@ -16,7 +18,6 @@ import { composing } from "../typing";
 export interface CommandWords {
   world: string;
   compact: string;
-  model: string;
   rename: string;
   fork: string;
   stop: string;
@@ -30,6 +31,12 @@ export interface CommandWords {
   goalArgs: string;
   /** A command that takes words was sent without them. */
   needsArgs(usage: string): string;
+  /** Where one of the account's own skills comes from, in the menu. */
+  skill: string;
+  /** What the words after a picked skill are for, before any is typed. */
+  skillWords: string;
+  /** Taking a picked command or skill off the input. */
+  unpick: string;
   /** Codex's commands the World carries out, said in the interface's
    *  words; the node lists them in the words of a command line. */
   host: Record<string, string>;
@@ -48,6 +55,8 @@ export interface MenuCommand {
   path?: string | undefined;
   /** The host's command of the same name a World control stands for. */
   host?: MenuCommand | undefined;
+  /** One of the account's own skills, asked for in the words as `$name`. */
+  account?: boolean;
 }
 
 /** The commands a conversation offers now: the World's for the controls
@@ -57,7 +66,9 @@ export interface MenuCommand {
 export function commandsOf(offers: Offers | null, words: CommandWords, moving = false, goal = false): MenuCommand[] {
   // A node that keeps them until the turn ends takes them at any time.
   const waits = (name: string) => moving && !offers?.control_queue && (name === "compact" || name === "review");
-  const own: MenuCommand[] = (offers?.commands ?? []).filter((command) => command.path || !waits(command.name)).map((command: CommandOffer) => ({
+  // The model is chosen in the model panel alone: no `/model`, the World's
+  // or the host's.
+  const own: MenuCommand[] = (offers?.commands ?? []).filter((command) => command.path || (command.name !== "model" && !waits(command.name))).map((command: CommandOffer) => ({
     name: command.name,
     description: (command.source === "codex" && !command.path && words.host[command.name]) || command.description,
     args: command.args,
@@ -74,7 +85,6 @@ export function commandsOf(offers: Offers | null, words: CommandWords, moving = 
   const world: MenuCommand[] = (
     [
       { name: "compact", description: words.compact, args: null, arguments: "none", control: "compact" },
-      { name: "model", description: words.model, args: null, arguments: "optional", control: "model" },
       { name: "rename", description: words.rename, args: words.renameArgs, arguments: "required", control: "rename" },
       { name: "fork", description: words.fork, args: null, arguments: "none", control: "fork" },
       { name: "stop", description: words.stop, args: null, arguments: "none", control: "stop" },
@@ -84,13 +94,32 @@ export function commandsOf(offers: Offers | null, words: CommandWords, moving = 
     .filter((command) => controls.has(command.control) && !waits(command.name))
     .map((command) => ({ ...command, source: words.world, host: hostOf(command.name) }));
   const standing = new Set(world.map((command) => command.name));
-  return [...world, ...own.filter((command) => command.path || !standing.has(command.name))];
+  const skills: MenuCommand[] = (offers?.skills ?? []).map((skill) => ({
+    name: skill.name,
+    description: skill.description,
+    args: null,
+    arguments: "optional",
+    control: null,
+    source: words.skill,
+    account: true,
+  }));
+  return [...world, ...skills, ...own.filter((command) => command.path || !standing.has(command.name))];
+}
+
+/** A command typed at the head of the words: `/NAME`, the name of letters,
+ *  digits, `-`, `_` and `:` as the hosts write theirs, then its arguments.
+ *  Words that begin with a path, such as `/Users/me/notes.md`, are words. */
+export function commandTyped(text: string): { name: string; args: string } | null {
+  const typed = /^\/([A-Za-z0-9_:-]+)(?:\s+([\s\S]*))?$/.exec(text);
+  return typed ? { name: typed[1]!, args: (typed[2] ?? "").trim() } : null;
 }
 
 /** What runs for `/name args`: the World's control, unless words follow that
  *  it takes none of and the host's command of that name takes them. */
 export function commandFor(commands: MenuCommand[], name: string, args: string): MenuCommand | null {
-  const command = commands.find((one) => one.name === name && !one.path) ?? commands.find((one) => one.name === name) ?? null;
+  // The account's skills are asked for in words, not run as commands.
+  const runnable = commands.filter((one) => !one.account);
+  const command = runnable.find((one) => one.name === name && !one.path) ?? runnable.find((one) => one.name === name) ?? null;
   if (command?.control && args && command.arguments === "none" && command.host && command.host.arguments !== "none") return command.host;
   return command;
 }
@@ -185,7 +214,19 @@ export class Menu<T> {
 let menus = 0;
 
 export function commandRow(command: MenuCommand): string {
-  return `<span class="menu-name">/${escape(command.name)}${command.args ? `<span class="menu-args"> ${escape(command.args)}</span>` : ""}</span><span class="menu-what">${escape(command.description)}</span>${command.source ? `<span class="menu-source">${escape(command.source)}</span>` : ""}`;
+  const name = command.account ? `${glyph("skill", 14)}${escape(command.name)}` : `/${escape(command.name)}`;
+  return `<span class="menu-name${command.account ? " menu-skill" : ""}">${name}${command.args ? `<span class="menu-args"> ${escape(command.args)}</span>` : ""}</span><span class="menu-what">${escape(command.description)}</span>${command.source ? `<span class="menu-source">${escape(command.source)}</span>` : ""}`;
+}
+
+/** A skill picked or used: the account's own, or one its host lists. */
+export function isSkill(command: MenuCommand): boolean {
+  return !!command.account || !!command.path || command.source === "skill";
+}
+
+/** The account's skill a message asks for: `$name` at its head. */
+export function askedSkill(text: string): { name: string; rest: string } | null {
+  const asked = /^\$([a-z][a-z0-9-]{0,63})(?=\s|$)/.exec(text);
+  return asked ? { name: asked[1]!, rest: text.slice(asked[0].length).replace(/^\s+/, "") } : null;
 }
 
 /** How a command is written with its words, for the hint while they are

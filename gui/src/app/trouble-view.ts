@@ -28,11 +28,18 @@ export interface TroublesNow {
   when(at: Date, now: Date): string;
 }
 
+/** The troubles of a hub that are shown: an earlier hub still tells of the
+ *  rules a machine broke, a developer's reading rather than trouble
+ *  (`world-foundation.md`, 规矩由机器守). */
+export function shownTroubles(hub: { troubles?: Trouble[] }): Trouble[] {
+  return (hub.troubles ?? []).filter((trouble) => trouble.kind !== "violations");
+}
+
 /** How many troubles of the network shown fall within `span` of now, but
  *  those over. */
 export function troublesIn(world: WorldNow, now: Date, span = WEEK_MS): number {
   const from = now.getTime() - span;
-  return world.accounts.hubs.reduce((sum, hub) => sum + (hub.troubles ?? []).filter((trouble) => !trouble.resolved && Date.parse(trouble.at) >= from).length, 0);
+  return world.accounts.hubs.reduce((sum, hub) => sum + shownTroubles(hub).filter((trouble) => !trouble.resolved && Date.parse(trouble.at) >= from).length, 0);
 }
 
 /** Whether a hub of the network shown tells troubles at all. */
@@ -65,7 +72,7 @@ export function troubleView(now: TroublesNow, words: TroubleWords): string {
   const machines = new Map(machinesOf(now.world).map((machine) => [machine.name, machine]));
   const rows = new Map<string, Row>();
   for (const hub of now.world.accounts.hubs) {
-    for (const trouble of hub.troubles ?? []) {
+    for (const trouble of shownTroubles(hub)) {
       const at = Date.parse(trouble.at);
       if (!(at >= start && at < end)) continue;
       const name = trouble.machine ?? null;

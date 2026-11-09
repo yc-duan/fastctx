@@ -37,7 +37,7 @@ let profile: Profile = {
 };
 
 // `?noServers`: an account that keeps none yet, its page as it starts.
-if (new URLSearchParams(location.search).has("noServers")) {
+if (import.meta.env.DEV && new URLSearchParams(location.search).has("noServers")) {
   profile = { ...profile, servers: {} };
   for (const servers of kept.values()) servers.clear();
 }

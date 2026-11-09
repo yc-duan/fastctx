@@ -166,6 +166,20 @@ export function specimenUsage(machine: string, agent: string, dir: string, at: D
     week: { start: new Date(start).toISOString(), end: new Date(end).toISOString(), window: true, ...went(specimen.claude, tokens, spent, 0) },
     readings: specimen.assisted ? [] : readings(hours, start, now, specimen),
     weeks: weeks(hours, start, specimen),
+    ...(machine === "desktop" && !specimen.assisted ? { resets: Array.from({ length: 54 }, (_, index) => {
+      const end = start - index * 7 * DAY;
+      const early = index % 9 === 2;
+      const since = end - (early ? 2 : 7) * DAY;
+      return {
+        window: "seven_day",
+        since: new Date(since).toISOString(),
+        confirmed_at: new Date(since + (early ? 6 * 60_000 : 40_000)).toISOString(),
+        resets_at: new Date(end).toISOString(),
+        before_used_tenths: 380 + index % 6 * 70,
+        used_tenths: early ? 20 : 0,
+        source: index === 53 ? "recorded" as const : early ? "automatic" as const : "scheduled" as const,
+      };
+    }) } : {}),
   });
 }
 

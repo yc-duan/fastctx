@@ -56,6 +56,15 @@ pub fn persist(step: &str, error: &str) {
     }
 }
 
+/// Records a page startup failure without requiring an open World connection.
+#[tauri::command]
+pub async fn startup_frontend_failed(error: String) -> Result<(), String> {
+    let error: String = error.chars().take(16000).collect();
+    tauri::async_runtime::spawn_blocking(move || persist("frontend", &error))
+        .await
+        .map_err(|error| format!("recording interface startup failure: {error}"))
+}
+
 #[tauri::command]
 pub fn startup_state(state: tauri::State<'_, Startup>) -> Status {
     state.0.lock().unwrap_or_else(|e| e.into_inner()).clone()

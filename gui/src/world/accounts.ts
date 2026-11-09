@@ -358,6 +358,10 @@ export interface HubAccounts {
   links?: LinkSeen[];
   /** The codes this computer's logins there made that still let devices in. */
   tokens?: TokenSeen[];
+  /** Whether the hub keeps each account's history switch (`world-history.md`). */
+  history_switch?: boolean;
+  /** The accounts logged in here that turned history on. */
+  history?: AccountName[];
 }
 
 export interface AccountsReply {
@@ -367,6 +371,9 @@ export interface AccountsReply {
   hubs: HubAccounts[];
   /** The networks this computer was on that were dissolved, not yet seen. */
   dissolved?: Dissolution[];
+  /** Whether this computer turned history on for itself, while it is in no
+   *  network. */
+  history?: boolean;
 }
 
 /** A network this computer was on, dissolved by its administrator: the

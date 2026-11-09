@@ -21,6 +21,7 @@ import { machinesOf } from "./reach";
 import type { Signal } from "./signals";
 import { RolloutWindow, type RolloutHost, type RolloutNow } from "./rollout-window";
 import { rulerOf } from "./update-ruler";
+import { SwitchChanges } from "./switch-change";
 import { lineOf } from "./update-marks";
 import type { UpdateViewWords } from "./update-view-words";
 import type { UpdateWords } from "./update-words";
@@ -102,6 +103,10 @@ export class MachineUpdates {
   private failure: string | null = null;
   private asked = 0;
   private timer = 0;
+  private readonly switches = new SwitchChanges();
+  private readonly writingWays = new Set<string>();
+  private readonly writingPolicy = new Set<string>();
+  private readonly acknowledgedWays = new Map<string, Pick<MachineUpdate, "reported" | "auto" | "auto_chosen" | "relays">>();
   /** What scheduling or setting a machine just said, by its name. */
   private readonly said = new Map<string, string>();
   /** Whether the network's policy is unfolded on a phone. */
@@ -112,6 +117,11 @@ export class MachineUpdates {
 
   constructor(private readonly host: UpdatesHost) {
     this.rollouts = new RolloutWindow(host.updates.view, host.updates.words.versions.close);
+  }
+
+  /** Keeps a pressed knob in the DOM until its slide finishes. */
+  deferDraw(redraw: () => void): boolean {
+    return this.switches.deferDraw(redraw);
   }
 
   /** What the hub says of a machine, as it is written here. */
@@ -182,7 +192,12 @@ export class MachineUpdates {
       views.set(key, view);
       for (const told of view.machines) {
         const written = writtenOf(login, told.machine);
-        const machine = written === told.machine ? told : { ...told, machine: written };
+        let machine = written === told.machine ? told : { ...told, machine: written };
+        const saved = this.acknowledgedWays.get(written);
+        // The hub may still hold the report from before this device saved
+        // its settings. That same report cannot undo its acknowledgement.
+        if (saved && told.reported === saved.reported) machine = { ...machine, ...saved };
+        else if (saved) this.acknowledgedWays.delete(written);
         const kept = byName.get(written);
         const more = (one: MachineUpdate) => Number(one.actions.schedule.allowed) + Number(one.actions.settings.allowed) + Number(one.actions.update.allowed);
         if (!kept || more(machine) > more(kept)) {
@@ -243,7 +258,8 @@ export class MachineUpdates {
           .map(([key, view]) => {
             const one = view.policy!;
             const minimum = one.minimum ?? null;
-            const managed = one.managed_auto !== false;
+            const setting = this.switches.state(`policy:${key}`, one.managed_auto !== false);
+            const managed = setting.on;
             const hubName = policies.length > 1 ? (logins.find((login) => `${login.hub}\n${login.account}` === key)?.hubName ?? "") : "";
             // The release going out a batch at a time, and how it stands.
             const going = one.rollout;
@@ -251,7 +267,7 @@ export class MachineUpdates {
             const rolling = view.rollouts
               ? `<span class="uv-policy-item"><span>${escape(words.rollout)}</span><button class="uv-chip${going?.stopped ? " caution" : ""}" type="button" data-uv-rollout="${escape(key)}"><span class="ml-num">${escape(goingSaid)}</span>${glyph("chevron", 12)}</button></span>`
               : "";
-            return `<div class="uv-policy">${hubName ? `<span class="uv-policy-hub">${escape(hubName)}</span>` : ""}<span class="uv-policy-item"><span>${escape(words.minimum)}</span><button class="uv-chip" type="button" data-uv-minimum="${escape(key)}"><span class="ml-num">${escape(minimum ?? words.noMinimum)}</span>${glyph("chevron", 12)}</button></span>${rolling}<span class="uv-policy-item"><span>${escape(words.managedAuto)}</span><span class="uv-auto${managed ? " on" : ""}" role="switch" aria-checked="${managed}" aria-label="${escape(words.managedAuto)}" data-uv-managed="${escape(key)}"><span class="switch-track"><span class="switch-knob"></span></span></span></span></div>`;
+            return `<div class="uv-policy">${hubName ? `<span class="uv-policy-hub">${escape(hubName)}</span>` : ""}<span class="uv-policy-item"><span>${escape(words.minimum)}</span><button class="uv-chip" type="button" data-uv-minimum="${escape(key)}"><span class="ml-num">${escape(minimum ?? words.noMinimum)}</span>${glyph("chevron", 12)}</button></span>${rolling}<span class="uv-policy-item"><span>${escape(words.managedAuto)}</span><span class="uv-auto${managed ? " on" : ""}" role="switch" tabindex="0" aria-checked="${managed}" aria-busy="${setting.busy}" aria-disabled="${setting.busy}" aria-label="${escape(words.managedAuto)}" data-uv-managed="${escape(key)}"><span class="switch-track"><span class="switch-knob"></span></span></span></span></div>`;
           })
           .join("");
         // On a phone the policy is folded into one line until it is opened.
@@ -260,7 +276,7 @@ export class MachineUpdates {
           : rows;
       }
     }
-    return { byName: this.byName, line, words, head, said: this.said };
+    return { byName: this.byName, line, words, head, said: this.said, autoState: (machine) => this.switches.state(`auto:${machine.machine}`, !!machine.auto) };
   }
 
   /** The update view's own presses in the list: a machine's switch, and the
@@ -274,10 +290,16 @@ export class MachineUpdates {
       this.host.draw();
       return true;
     }
-    const auto = target.closest<HTMLElement>("[data-uv-auto]")?.dataset.uvAuto;
-    if (auto) {
+    const autoButton = target.closest<HTMLElement>("[data-uv-auto]");
+    const auto = autoButton?.dataset.uvAuto;
+    if (auto && autoButton) {
       const machine = this.byName.get(auto);
-      if (machine) void this.setWays([machine], !machine.auto, null);
+      if (machine && !this.switches.state(`auto:${auto}`, !!machine.auto).busy) {
+        void this.switches.run(`auto:${auto}`, autoButton, (on) => this.setWay(machine, on, null)).then(() => {
+          this.host.draw();
+          return this.ask();
+        });
+      }
       return true;
     }
     const rolloutOf = target.closest<HTMLElement>("[data-uv-rollout]")?.dataset.uvRollout;
@@ -290,11 +312,17 @@ export class MachineUpdates {
     const key = minimumOf ?? managedOf;
     const policy = key === undefined ? undefined : this.views.get(key)?.policy;
     if (minimumOf !== undefined && policy) {
-      updates.minimum(policy.minimum ?? null, (version) => void this.setPolicy(minimumOf, version, policy.managed_auto !== false));
+      updates.minimum(policy.minimum ?? null, (version) => void this.setPolicy(minimumOf, version, policy.managed_auto !== false).then(() => this.ask()));
       return true;
     }
     if (managedOf !== undefined && policy) {
-      void this.setPolicy(managedOf, policy.minimum ?? null, policy.managed_auto === false);
+      const button = target.closest<HTMLElement>("[data-uv-managed]")!;
+      if (!this.switches.state(`policy:${managedOf}`, policy.managed_auto !== false).busy) {
+        void this.switches.run(`policy:${managedOf}`, button, (on) => this.setPolicy(managedOf, policy.minimum ?? null, on)).then(() => {
+          this.host.draw();
+          return this.ask();
+        });
+      }
       return true;
     }
     return false;
@@ -363,36 +391,59 @@ export class MachineUpdates {
    *  that sets them one by one is told only what changes, an earlier one
    *  the whole of them. */
   async setWays(machines: MachineUpdate[], auto: boolean | null, relays: boolean | null): Promise<void> {
-    const { updates } = this.host;
     // A room of machines is asked a few at a time, not all at once.
-    await inTurns(machines, WAYS_AT_ONCE, async (machine) => {
-      const call: UpdateCall =
-        machine.kernel && compareVersions(machine.kernel, PREFERENCES_SINCE) >= 0
-          ? { do: "preferences", auto, relays }
-          : { do: "set", settings: { auto: auto ?? !!machine.auto, chosen: auto !== null || machine.auto_chosen, relays: relays ?? machine.relays ?? true } };
-      try {
-        await updates.remote(machine.machine, call);
-        this.said.delete(machine.machine);
-      } catch (error) {
-        this.sayOnRow(machine.machine, plainly(error, updates.view, (why) => why));
-      }
-    });
+    await inTurns(machines, WAYS_AT_ONCE, async (machine) => { await this.setWay(machine, auto, relays); });
     await this.ask();
+  }
+
+  private async setWay(machine: MachineUpdate, auto: boolean | null, relays: boolean | null): Promise<boolean> {
+    if (this.writingWays.has(machine.machine)) return false;
+    this.writingWays.add(machine.machine);
+    const { updates } = this.host;
+    const call: UpdateCall =
+      machine.kernel && compareVersions(machine.kernel, PREFERENCES_SINCE) >= 0
+        ? { do: "preferences", auto, relays }
+        : { do: "set", settings: { auto: auto ?? !!machine.auto, chosen: auto !== null || machine.auto_chosen, relays: relays ?? machine.relays ?? true } };
+    try {
+      const saved = await updates.remote(machine.machine, call);
+      this.asked += 1;
+      const settings = { reported: machine.reported, auto: saved.auto ?? saved.settings.auto, auto_chosen: saved.settings.chosen ?? machine.auto_chosen, relays: saved.settings.relays };
+      this.acknowledgedWays.set(machine.machine, settings);
+      this.byName.set(machine.machine, { ...machine, ...settings });
+      this.said.delete(machine.machine);
+      return true;
+    } catch (error) {
+      this.sayOnRow(machine.machine, plainly(error, updates.view, (why) => why));
+      return false;
+    } finally {
+      this.writingWays.delete(machine.machine);
+    }
   }
 
   /** A network's update policy, set by the login `key` of this device that
    *  is its super administrator. */
-  private async setPolicy(key: string, minimum: string | null, managedAuto: boolean): Promise<void> {
+  private async setPolicy(key: string, minimum: string | null, managedAuto: boolean): Promise<boolean> {
     const { updates } = this.host;
     const login = loginsOf(this.host.world()?.accounts).find((one) => `${one.hub}\n${one.account}` === key);
-    if (!login) return;
+    if (!login || this.writingPolicy.has(key)) return false;
+    this.writingPolicy.add(key);
     try {
       await updates.ask(login.hubName, login.account, { do: "policy", minimum, managed_auto: managedAuto });
+      this.asked += 1;
+      const view = this.views.get(key);
+      if (view?.policy) {
+        view.policy = { ...view.policy, managed_auto: managedAuto };
+        if (minimum === null) delete view.policy.minimum;
+        else view.policy.minimum = minimum;
+      }
       this.host.failed(null);
+      return true;
     } catch (error) {
       this.host.failed(this.host.access.failed(detailOf(error)));
+      return false;
+    } finally {
+      this.writingPolicy.delete(key);
     }
-    await this.ask();
   }
 
   /** The newest releases the views tell of, the hub's own, and the line

@@ -253,15 +253,6 @@
   color: var(--text-2);
 }
 
-/* What a conversation told the user: an urgent one under the clay ※, one
-   that can wait under a drop of ink. */
-.front-told-drop {
-  width: 7px;
-  height: 7px;
-  border-radius: var(--radius-full);
-  background: var(--text-2);
-}
-
 /* What came back: the time away as a ruled line with a blot for each
    conversation, then a line each by what it last said. */
 .front-timeline {
