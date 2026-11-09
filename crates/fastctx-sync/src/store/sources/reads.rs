@@ -3,11 +3,12 @@
 use super::SqliteSources;
 use crate::{
     blocks::source_commit,
+    catalog::RecordRef,
     cursor::{ByteCount, Revision, Sequence, StreamCursor},
-    identity::HostGeneration,
+    identity::{HostGeneration, OperationId},
     store::{
         Error,
-        ingest::{SourceCheckpoint, SourceTarget, StreamProgress},
+        ingest::{Recorded, SourceCheckpoint, SourceTarget, StreamProgress},
         ingest_effects::{SourceFamily, SourceIndexPage, SourceIndexRead, SourceIndexRow},
         sql,
     },
@@ -40,6 +41,39 @@ impl SqliteSources {
     }
     pub(super) async fn read_progress(&self, target: SourceTarget) -> Result<Option<StreamProgress>, Error> {
         self.read(target, progress).await
+    }
+    pub(super) async fn read_recorded(
+        &self,
+        target: SourceTarget,
+        operation: OperationId,
+    ) -> Result<Option<Recorded>, Error> {
+        self.read(target, move |db, target| {
+            let scope = &target.custody.object.scope;
+            db.prepare_cached("SELECT sequence,payload FROM sync_stream_records WHERE hub=?1 AND scope=?2 AND stream=?3 AND epoch=?4 AND operation=?5")?
+                .query_row(
+                    params![
+                        scope.hub.to_string(),
+                        scope.scope.as_str(),
+                        target.stream.as_str(),
+                        target.epoch.as_str(),
+                        operation.as_str()
+                    ],
+                    |row| Ok((sql::counter(row, 0)?, row.get::<_, Vec<u8>>(1)?)),
+                )
+                .optional()?
+                .map(|(sequence, payload)| {
+                    Ok(Recorded {
+                        record: RecordRef {
+                            stream: target.stream.clone(),
+                            epoch: target.epoch.clone(),
+                            sequence: Sequence(sequence),
+                        },
+                        payload: serde_json::from_slice(&payload).map_err(|error| sql::invalid(error.to_string()))?,
+                    })
+                })
+                .transpose()
+        })
+        .await
     }
     pub(super) async fn index_row(
         &self,

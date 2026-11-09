@@ -67,6 +67,19 @@ pub enum ProofPurpose {
 }
 
 impl ProofPurpose {
+    pub const ALL: [Self; 7] = [
+        Self::SourceBatchV1,
+        Self::HubSourceBatchV1,
+        Self::AcceptedOperationV1,
+        Self::ProducerReleaseV1,
+        Self::EpochHandoverV1,
+        Self::ExposureReceiptV1,
+        Self::HubKeyRotationV1,
+    ];
+    /// The purpose a stored proof was signed for, by its domain name.
+    pub fn from_domain(domain: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|purpose| purpose.domain() == domain)
+    }
     /// The network adapter maps these names to closed net::sign domain variants.
     pub const fn domain(self) -> &'static str {
         match self {

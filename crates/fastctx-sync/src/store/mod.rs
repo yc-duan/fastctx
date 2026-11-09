@@ -18,6 +18,7 @@ pub mod source_authorize;
 pub mod source_step;
 pub mod sources;
 pub(crate) mod sql;
+pub mod timelines;
 
 use crate::{
     catalog::ObjectHead,

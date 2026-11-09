@@ -9,7 +9,7 @@ use super::{
     Error, FutureResult,
     access::{AccessContext, Custody},
     ingest::{
-        IngestOperation, IngestReceipt, SourceCheckpoint, SourceIngest, SourceTarget, StateRead, StateReply,
+        IngestOperation, IngestReceipt, Recorded, SourceCheckpoint, SourceIngest, SourceTarget, StateRead, StateReply,
         StreamProgress, sealed,
     },
     ingest_effects::{SourceFamily, SourceIndexPage, SourceIndexRead, SourceIndexRow},
@@ -19,7 +19,7 @@ use super::{
 use crate::{
     blocks::SqliteBlocks,
     cursor::Revision,
-    identity::HostGeneration,
+    identity::{HostGeneration, OperationId},
     manifest::{ContentBlock, ManifestReply, ManifestRoot, Pin, PublishedBlock, Representation},
     proof::{ConfirmedEpoch, ProofSigner},
     registry::{AuthorityRule, ConflictRule, DataClass, REGISTRY},
@@ -115,6 +115,9 @@ impl SourceIngest for SqliteSources {
             self.authorizer(&target.custody)?;
             self.blocks.manifest_granted(&target.custody, &root)
         })
+    }
+    fn recorded(&self, target: SourceTarget, operation: OperationId) -> FutureResult<'_, Option<Recorded>> {
+        Box::pin(self.read_recorded(target, operation))
     }
     fn get_index(
         &self,

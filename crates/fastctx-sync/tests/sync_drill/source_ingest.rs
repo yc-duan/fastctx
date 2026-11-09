@@ -33,7 +33,7 @@ use fastctx_types::sync::{
 };
 
 /// Signs nothing for real: the local writer stores whatever its signer returns.
-struct Signer;
+pub(super) struct Signer;
 impl ProofSigner for Signer {
     fn accepted(&self, _: &CommittedFragment) -> std::result::Result<SignedAcceptanceFragment, Error> {
         Err(Error::Unavailable("drill signer".into()))
@@ -66,7 +66,7 @@ impl ProofSigner for Signer {
 }
 
 /// Allows a batch unless a payload says "deny"; counts the payloads it judged.
-struct Gate(AtomicUsize);
+pub(super) struct Gate(pub(super) AtomicUsize);
 impl SourceAuthorizer for Gate {
     fn kind(&self) -> &'static str {
         "conversation.timeline"
@@ -103,16 +103,20 @@ async fn settle(db: &Database, blocks: &SqliteBlocks) -> Result<u32> {
     }
     Err("source work did not settle".into())
 }
-fn count(db: &Database, sql: &str) -> Result<u32> {
+pub(super) fn count(db: &Database, sql: &str) -> Result<u32> {
     Ok(db.read_now(|db| Ok(db.query_row(sql, [], |row| row.get(0))?))?)
 }
-async fn block(sources: &SqliteSources, target: &SourceStepTarget, bytes: &[u8]) -> Result<ContentBlock> {
+pub(super) async fn block(sources: &SqliteSources, target: &SourceStepTarget, bytes: &[u8]) -> Result<ContentBlock> {
     let content = codec::encode(scope(), bytes.to_vec(), Encoding::Raw)?;
     let block = content.representation.content.clone();
     sources.put_block(target.clone(), content.representation, content.bytes).await?;
     Ok(block)
 }
-fn metadata(codec: MetadataCodec, payload: ContentBlock, references: Vec<ContentRef>) -> Result<ManifestReply> {
+pub(super) fn metadata(
+    codec: MetadataCodec,
+    payload: ContentBlock,
+    references: Vec<ContentRef>,
+) -> Result<ManifestReply> {
     let page_json = serde_json::to_string(&ManifestPage::Metadata { codec, payload, references })?;
     Ok(ManifestReply {
         root: ManifestRoot(BlobId {
@@ -124,11 +128,11 @@ fn metadata(codec: MetadataCodec, payload: ContentBlock, references: Vec<Content
     })
 }
 /// A user message with one owned image, published as its DisplayV1 page.
-async fn display(
+pub(super) async fn display(
     sources: &SqliteSources,
     target: &SourceStepTarget,
     image: &[u8],
-) -> Result<(ContentRef, ContentRef, ContentBlock)> {
+) -> Result<(ContentRef, ContentRef, ContentBlock, ItemDisplayV1)> {
     let part = ContentRef::from(block(sources, target, image).await?);
     let descriptor = ItemDisplayV1 {
         version: 1,
@@ -154,10 +158,10 @@ async fn display(
     let page = metadata(MetadataCodec::DisplayV1, payload.clone(), vec![part.clone()])?;
     let root = ContentRef::Manifest { root: page.root.clone() };
     sources.put_manifest(target.clone(), page).await?;
-    Ok((root, part, payload))
+    Ok((root, part, payload, descriptor))
 }
 /// The projected body of that message, published as its BodyV1 page.
-async fn body(
+pub(super) async fn body(
     sources: &SqliteSources,
     target: &SourceStepTarget,
     original: ContentRef,
@@ -212,7 +216,12 @@ fn batch(
         }],
     }
 }
-fn checkpoint(target: &SourceTarget, step: &SourceStep, offset: u64, state: Option<ContentRef>) -> SourceCheckpoint {
+pub(super) fn checkpoint(
+    target: &SourceTarget,
+    step: &SourceStep,
+    offset: u64,
+    state: Option<ContentRef>,
+) -> SourceCheckpoint {
     SourceCheckpoint {
         source: target.source.clone(),
         generation: step.generation().clone(),
@@ -255,7 +264,7 @@ pub(super) async fn run(root: &Path) -> Result<()> {
     // an index row and a stale projection, all committed at once.
     let step = sources.begin_step(primary.clone(), None, generation.clone()).await?;
     let bound = sources.bind_target(step.clone(), primary.clone()).await?;
-    let (display, part, descriptor) = display(&sources, &bound, b"\x89PNG one image").await?;
+    let (display, part, descriptor, _) = display(&sources, &bound, b"\x89PNG one image").await?;
     let original = ContentRef::from(block(&sources, &bound, br#"{"type":"user","uuid":"u-1"}"#).await?);
     let body = body(&sources, &bound, original, display.clone()).await?;
     let payload = block(&sources, &bound, br#"{"item":"u-1"}"#).await?;
@@ -280,6 +289,11 @@ pub(super) async fn run(root: &Path) -> Result<()> {
         IngestStatus::Applied { progress: StreamProgress::LocalPending { cursor } } if cursor.committed == Sequence(1)
     ));
     assert_eq!(receipt.leases.len(), 1, "the checkpoint state is held");
+    // A producer recognizes an exact replay by the record its operation holds.
+    let recorded =
+        sources.recorded(primary.clone(), OperationId::from_bytes([100; 32])).await?.ok_or("record missing")?;
+    assert_eq!(recorded.record.sequence, Sequence(1));
+    assert!(sources.recorded(primary.clone(), OperationId::from_bytes([99; 32])).await?.is_none());
     // A lost reply is answered from the consumed step, without a second commit.
     let again = sources.ingest(commit).await?;
     assert_eq!((again.local, again.sources.len()), (receipt.local, 1));

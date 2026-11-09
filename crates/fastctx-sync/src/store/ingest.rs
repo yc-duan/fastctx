@@ -248,6 +248,12 @@ pub struct IngestReceipt {
     pub sources: Vec<SourceReceipt>,
     pub leases: Vec<RootLease>,
 }
+/// Where a committed record sits and the payload it carries.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Recorded {
+    pub record: crate::catalog::RecordRef,
+    pub payload: crate::manifest::ContentBlock,
+}
 pub(crate) mod sealed {
     pub trait SourceWriter {}
 }
@@ -304,6 +310,9 @@ pub trait SourceIngest: sealed::SourceWriter + Send + Sync {
     fn read_manifest(&self, target: SourceTarget, root: ManifestRoot) -> FutureResult<'_, ManifestReply>;
     /// Exact lookup uses the same registered family, key bound and source gate
     /// as pagination; callers need not fabricate a predecessor key.
+    /// The committed record of `operation` in the destination's stream epoch,
+    /// so a producer recognizes an exact replay before staging it again.
+    fn recorded(&self, target: SourceTarget, operation: OperationId) -> FutureResult<'_, Option<Recorded>>;
     fn get_index(
         &self,
         target: SourceTarget,

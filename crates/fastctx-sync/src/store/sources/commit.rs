@@ -168,7 +168,7 @@ fn write(
         let status = match &inputs.signed {
             None => IngestStatus::CheckpointOnly,
             Some((facts, signed)) => {
-                IngestStatus::Applied { progress: streams::append(db, step, target, facts, signed)? }
+                IngestStatus::Applied { progress: streams::append(db, step, target, facts, signed, local)? }
             }
         };
         effects::apply(db, holder, step, target, &batch.effects, local, now, &mut leases)?;

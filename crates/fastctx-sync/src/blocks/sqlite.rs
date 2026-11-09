@@ -20,6 +20,8 @@ use std::{path::PathBuf, sync::Arc};
 
 #[path = "cleanup.rs"]
 mod cleanup;
+#[path = "engine_reads.rs"]
+mod engine_reads;
 #[path = "gc.rs"]
 mod gc;
 #[path = "metadata_custody.rs"]

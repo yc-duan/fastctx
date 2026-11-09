@@ -15,6 +15,7 @@ pub(crate) enum Role {
     FormatUpgrade,
     Pending,
     Source,
+    Projection,
 }
 thread_local! { static ACTIVE: Cell<Option<Role>> = const { Cell::new(None) }; }
 pub(crate) struct Boundary(Option<Role>, PhantomData<Rc<()>>);
@@ -76,6 +77,10 @@ fn permits(table: &str) -> bool {
                 | "sync_local_head"
                 | "sync_tasks"
         ),
+        Some(Role::Projection) => matches!(
+            table,
+            "sync_timeline_heads" | "sync_timeline_items" | "sync_asset_access" | "sync_local_head" | "sync_tasks"
+        ),
         Some(Role::Pending) => matches!(
             table,
             "sync_pending_mutations"
@@ -98,7 +103,7 @@ impl WritePolicy for Rules {
 impl Guard for Rules {
     fn check(&mut self, change: &Change<'_>) -> Result<()> {
         if change.table() == "sync_tasks"
-            && matches!(ACTIVE.get(), Some(Role::Content | Role::Pending))
+            && matches!(ACTIVE.get(), Some(Role::Content | Role::Pending | Role::Projection))
             && (change.action() == Action::Delete
                 || change.after(0)? != fastctx_storage::rusqlite::types::ValueRef::Text(b"sync.manifest"))
         {

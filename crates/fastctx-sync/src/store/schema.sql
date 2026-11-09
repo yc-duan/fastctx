@@ -86,13 +86,17 @@ CREATE INDEX sync_local_changes_scope ON sync_local_changes(hub,scope,sequence);
 -- A producer's first epoch on this machine commits before the hub confirms it:
 -- its epoch proof and prefix digests stay empty and its facts stay local until
 -- confirmation builds the prefix over the stored records.
+-- `object` is the destination object the stream belongs to; `local` is the local
+-- sequence of the commit that last advanced it, which installers catch up with.
 CREATE TABLE sync_stream_heads (
-    hub TEXT NOT NULL, scope TEXT NOT NULL, stream TEXT NOT NULL,
+    hub TEXT NOT NULL, scope TEXT NOT NULL, stream TEXT NOT NULL, object TEXT NOT NULL,
     producer BLOB NOT NULL, epoch TEXT NOT NULL, kind TEXT NOT NULL, schema INTEGER NOT NULL,
-    sequence BLOB NOT NULL CHECK(length(sequence)=8), epoch_proof TEXT, prefix_digest TEXT,
+    sequence BLOB NOT NULL CHECK(length(sequence)=8), local BLOB NOT NULL CHECK(length(local)=8),
+    epoch_proof TEXT, prefix_digest TEXT,
     CHECK(prefix_digest IS NULL OR epoch_proof IS NOT NULL),
     PRIMARY KEY(hub,scope,stream,epoch)
 ) WITHOUT ROWID;
+CREATE INDEX sync_stream_heads_object ON sync_stream_heads(hub,scope,object,kind);
 CREATE TABLE sync_stream_records (
     hub TEXT NOT NULL, scope TEXT NOT NULL, stream TEXT NOT NULL, epoch TEXT NOT NULL,
     sequence BLOB NOT NULL CHECK(length(sequence)=8), operation TEXT NOT NULL,
@@ -435,8 +439,17 @@ CREATE TABLE sync_timeline_items (
     PRIMARY KEY(hub,scope,conversation,item,revision)
 ) WITHOUT ROWID;
 CREATE INDEX sync_timeline_order ON sync_timeline_items(hub,scope,conversation,active,position,item);
+-- What each conversation's timeline has installed. `root` is absent until the
+-- first item revision; `applied` is the source commit installation caught up
+-- with; `local` is this commit's local sequence, which readers resume after;
+-- `indexed` lags `projection` while a branch switch rebuilds the position index.
 CREATE TABLE sync_timeline_heads (
     hub TEXT NOT NULL, scope TEXT NOT NULL, conversation TEXT NOT NULL,
-    projection BLOB NOT NULL CHECK(length(projection)=8), through_cursor BLOB NOT NULL, root TEXT NOT NULL,
+    projection BLOB NOT NULL CHECK(length(projection)=8), through_cursor BLOB NOT NULL, root TEXT,
+    indexed BLOB CHECK(indexed IS NULL OR length(indexed)=8),
+    applied BLOB NOT NULL CHECK(length(applied)=8), local BLOB NOT NULL CHECK(length(local)=8),
+    CHECK((root IS NULL) = (projection=X'0000000000000000')),
     PRIMARY KEY(hub,scope,conversation)
 ) WITHOUT ROWID;
+CREATE INDEX sync_timeline_heads_root ON sync_timeline_heads(hub,scope,root) WHERE root IS NOT NULL;
+CREATE INDEX sync_timeline_heads_local ON sync_timeline_heads(hub,scope,local);

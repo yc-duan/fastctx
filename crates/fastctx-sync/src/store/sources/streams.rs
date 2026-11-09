@@ -5,7 +5,7 @@ use super::commit::encode;
 use crate::{
     blocks::source_commit,
     catalog::SourceBatch,
-    cursor::StreamCursor,
+    cursor::{LocalSequence, StreamCursor},
     manifest::ContentRef,
     store::{
         ingest::{SourceTarget, StreamProgress},
@@ -20,6 +20,7 @@ use fastctx_storage::{
 use fastctx_types::sync::proof::SignedSourceBatch;
 
 struct Head {
+    object: String,
     producer: Vec<u8>,
     kind: String,
     schema: u16,
@@ -29,16 +30,17 @@ struct Head {
 
 fn head(db: &Connection, target: &SourceTarget) -> Result<Option<Head>> {
     let scope = &target.custody.object.scope;
-    db.prepare_cached("SELECT producer,kind,schema,sequence,epoch_proof FROM sync_stream_heads WHERE hub=?1 AND scope=?2 AND stream=?3 AND epoch=?4")?
+    db.prepare_cached("SELECT object,producer,kind,schema,sequence,epoch_proof FROM sync_stream_heads WHERE hub=?1 AND scope=?2 AND stream=?3 AND epoch=?4")?
         .query_row(
             params![scope.hub.to_string(), scope.scope.as_str(), target.stream.as_str(), target.epoch.as_str()],
             |row| {
                 Ok(Head {
-                    producer: row.get(0)?,
-                    kind: row.get(1)?,
-                    schema: row.get(2)?,
-                    sequence: sql::counter(row, 3)?,
-                    confirmed: row.get::<_, Option<String>>(4)?.is_some(),
+                    object: row.get(0)?,
+                    producer: row.get(1)?,
+                    kind: row.get(2)?,
+                    schema: row.get(3)?,
+                    sequence: sql::counter(row, 4)?,
+                    confirmed: row.get::<_, Option<String>>(5)?.is_some(),
                 })
             },
         )
@@ -65,8 +67,12 @@ pub(super) fn check(db: &Connection, target: &SourceTarget, batch: &SourceBatch)
             }
         }
         Some(head) => {
-            if head.producer != encode(&batch.producer)? || head.kind != batch.kind || head.schema != batch.schema {
-                return Err(sql::invalid("the stream epoch belongs to another producer or kind"));
+            if head.object != target.custody.object.object.as_str()
+                || head.producer != encode(&batch.producer)?
+                || head.kind != batch.kind
+                || head.schema != batch.schema
+            {
+                return Err(sql::invalid("the stream epoch belongs to another object, producer or kind"));
             }
             if head.confirmed {
                 return Err(sql::invalid("a confirmed epoch continues through the hub's acceptance path"));
@@ -105,28 +111,32 @@ pub(super) fn append(
     target: &SourceTarget,
     batch: &SourceBatch,
     signed: &SignedSourceBatch,
+    local: LocalSequence,
 ) -> Result<StreamProgress> {
     let scope = &target.custody.object.scope;
     let hub = scope.hub.to_string();
     let (stream, epoch) = (target.stream.as_str(), target.epoch.as_str());
     let through = batch.through.0.to_be_bytes();
     let proof = signed.proof.id();
+    let local = local.0.to_be_bytes();
     let changed = db
         .prepare_cached(
-            "UPDATE sync_stream_heads SET sequence=?5 WHERE hub=?1 AND scope=?2 AND stream=?3 AND epoch=?4",
+            "UPDATE sync_stream_heads SET sequence=?5,local=?6 WHERE hub=?1 AND scope=?2 AND stream=?3 AND epoch=?4",
         )?
-        .execute(params![hub, scope.scope.as_str(), stream, epoch, through.as_slice()])?;
+        .execute(params![hub, scope.scope.as_str(), stream, epoch, through.as_slice(), local.as_slice()])?;
     if changed == 0 {
-        db.prepare_cached("INSERT INTO sync_stream_heads(hub,scope,stream,producer,epoch,kind,schema,sequence,epoch_proof,prefix_digest) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,NULL,NULL)")?
+        db.prepare_cached("INSERT INTO sync_stream_heads(hub,scope,stream,object,producer,epoch,kind,schema,sequence,local,epoch_proof,prefix_digest) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,NULL,NULL)")?
             .execute(params![
                 hub,
                 scope.scope.as_str(),
                 stream,
+                target.custody.object.object.as_str(),
                 encode(&batch.producer)?,
                 epoch,
                 batch.kind,
                 batch.schema,
-                through.as_slice()
+                through.as_slice(),
+                local.as_slice()
             ])?;
     }
     db.prepare_cached("INSERT INTO sync_source_proofs(hub,scope,proof,stream,epoch,producer,operation,first_sequence,last_sequence,purpose,signer,signed_bytes,signature,state) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,'local')")?
