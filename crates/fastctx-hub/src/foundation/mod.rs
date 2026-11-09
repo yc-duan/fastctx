@@ -6,10 +6,11 @@
 mod conversations;
 mod identity;
 mod policy;
+mod sources;
 
 use std::{
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, OnceLock},
+    sync::{Arc, Mutex},
     time::Duration,
 };
 
@@ -20,9 +21,10 @@ use fastctx_sync::{
     cursor::Holder,
     identity::{Digest, HubId, OperationId},
     proof::HubSigningIdentity,
-    scheduler::{SqliteScheduler, Worker},
-    store::{Error, control::AuthorityRun, directory::SqliteDirectory},
+    scheduler::{SqliteScheduler, Wake, Worker},
+    store::{Error, authority::SqliteAuthority, control::AuthorityRun, directory::SqliteDirectory},
 };
+use tokio::sync::OnceCell;
 
 /// Codec and read buffers the content engine may hold at once.
 const CONTENT_BUFFERS: usize = 16 * 1024 * 1024;
@@ -36,6 +38,8 @@ struct Authority {
     service: Service,
     #[allow(dead_code, reason = "the asset sync transport's advertisement")]
     identity: HubSigningIdentity,
+    worker: Mutex<Option<Worker>>,
+    wake: Wake,
 }
 
 pub(crate) struct Foundation {
@@ -43,9 +47,9 @@ pub(crate) struct Foundation {
     hub: HubId,
     blocks: SqliteBlocks,
     /// Set by `begin`, before the hub accepts any write.
-    authority: OnceLock<Authority>,
-    /// Taken once by `run`.
-    worker: Mutex<Option<Worker>>,
+    authority: OnceCell<Authority>,
+    scheduler: SqliteScheduler,
+    report: Arc<dyn Fn(String) + Send + Sync>,
 }
 
 impl Foundation {
@@ -63,27 +67,55 @@ impl Foundation {
         )?;
         let scheduler = SqliteScheduler::new(database, claims, holder, LEASE)?;
         let report: Arc<dyn Fn(String) + Send + Sync> = Arc::new(move |line| log.line(line));
-        let worker = Worker::new(scheduler, blocks.task_handlers(), report);
-        Ok(Self { dir: dir.to_path_buf(), hub, blocks, authority: OnceLock::new(), worker: Mutex::new(Some(worker)) })
+        Ok(Self { dir: dir.to_path_buf(), hub, blocks, authority: OnceCell::new(), scheduler, report })
     }
 
     /// Loads or first creates the hub's service key, then begins this run's
     /// authority epoch. The hub signs nothing before this returns.
     pub(crate) async fn begin(&self) -> Result<(), Error> {
-        let (signer, identity) = identity::load(&self.dir, &self.hub, &self.blocks).await?;
-        let entropy: fastctx_sync::store::control::Entropy = Arc::new(fastctx_net::sign::random::<32>);
-        let run = AuthorityRun::begin(&self.blocks, self.hub.clone(), entropy).await?;
-        let directory = Arc::new(SqliteDirectory::new(self.blocks.clone(), run, signer));
-        let service = Service::new(directory.clone());
-        let _ = self.authority.set(Authority { directory, service, identity });
-        Ok(())
+        self.authority
+            .get_or_try_init(|| async {
+                let (signer, identity) = identity::load(&self.dir, &self.hub, &self.blocks).await?;
+                let entropy: fastctx_sync::store::control::Entropy = Arc::new(fastctx_net::sign::random::<32>);
+                let run = AuthorityRun::begin(&self.blocks, self.hub.clone(), entropy).await?;
+                let verifier = Arc::new(fastctx_net::sync_proof::IdentityVerifier::new(
+                    self.hub.clone(),
+                    [identity.key.clone()],
+                    Arc::new(fastctx_sync::metrics::PlatformMetrics),
+                ));
+                // Composition installs real per-kind source policies with AccessState;
+                // an empty set keeps source intake unavailable.
+                let sources = Arc::new(SqliteAuthority::new(
+                    self.blocks.clone(),
+                    run.clone(),
+                    signer.clone(),
+                    verifier,
+                    identity.clone(),
+                    Vec::new(),
+                    8 * 1024 * 1024,
+                )?);
+                let directory = Arc::new(SqliteDirectory::new(self.blocks.clone(), run, signer));
+                let service = Service::new(directory.clone()).with_sources(sources.clone());
+                let mut handlers = self.blocks.task_handlers();
+                handlers.push(sources);
+                let worker = Worker::new(self.scheduler.clone(), handlers, self.report.clone());
+                Ok::<_, Error>(Authority {
+                    directory,
+                    service,
+                    identity,
+                    wake: worker.wake(),
+                    worker: Mutex::new(Some(worker)),
+                })
+            })
+            .await
+            .map(|_| ())
     }
 
-    /// Runs the durable tasks for as long as the hub does.
+    /// Runs the durable tasks after the authority has begun.
     pub(crate) async fn run(&self) {
-        let Some(worker) = self.worker.lock().expect("never poisoned").take() else {
-            return;
-        };
+        let Ok(authority) = self.authority() else { return };
+        let worker = authority.worker.lock().expect("never poisoned").take();
+        let Some(worker) = worker else { return };
         worker.run(std::future::pending()).await;
     }
 
