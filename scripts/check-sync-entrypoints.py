@@ -11,11 +11,13 @@ wire = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(wire)
 CALLERS = {
     "SqliteUpgradeJournal": {
+        "crates/fastctx-hub/src/store/format.rs",
         "crates/fastctx-node/src/record_database/format.rs",
         "crates/fastctx-sync/src/store/format_upgrade.rs",
 
     },
     "prepare_format_upgrade": {
+        "crates/fastctx-hub/src/store/format.rs",
         "crates/fastctx-node/src/record_database/format.rs",
         "crates/fastctx-sync/src/store/format_upgrade.rs",
 

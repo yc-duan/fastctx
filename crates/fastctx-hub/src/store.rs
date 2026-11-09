@@ -603,7 +603,11 @@ impl Store {
     }
 
     pub fn open(dir: &Path) -> io::Result<Self> {
-        let shelf = shelf::Shelf::open(dir)?;
+        Self::open_logged(dir, None)
+    }
+
+    pub(crate) fn open_logged(dir: &Path, log: Option<Arc<crate::log::Log>>) -> io::Result<Self> {
+        let shelf = shelf::Shelf::open(dir, log)?;
         let (hub, hub_rows) = hub_rows::HubRows::load(&shelf, read(&Self::hub_file(dir))?)?;
         let (book, book_rows) = book_rows::BookRows::load(&shelf)?;
         let mut upgraded: Vec<String> = shelf.meta("upgraded")?.unwrap_or_default();

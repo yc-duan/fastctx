@@ -811,8 +811,8 @@ struct Opened {
 
 /// Opens the hub kept in `dir` for serving: its files and databases read,
 /// written and set up, as only a blocking thread may.
-fn open(dir: &Path) -> anyhow::Result<Opened> {
-    let mut store = Store::open(dir)?;
+fn open(dir: &Path, log: Arc<log::Log>) -> anyhow::Result<Opened> {
+    let mut store = Store::open_logged(dir, Some(log))?;
     // An assistance whose deadline passed while the hub was stopped is
     // ended before any member is heard.
     assists::end_due(&mut store, Timestamp::now())?;
@@ -871,7 +871,8 @@ async fn serving(
 ) -> anyhow::Result<Next> {
     let opened = {
         let dir = dir.to_path_buf();
-        fastctx_platform::task::spawn_blocking(move || open(&dir)).await??
+        let opening_log = log.clone();
+        fastctx_platform::task::spawn_blocking(move || open(&dir, opening_log)).await??
     };
     let Opened {
         catalog,

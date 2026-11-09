@@ -47,7 +47,7 @@ CREATE INDEX IF NOT EXISTS machine_log_updated_by_record ON machine_log_updated(
 pub(crate) struct Shelf(pub(crate) Database);
 
 impl Shelf {
-    pub(crate) fn open(dir: &Path) -> io::Result<Self> {
+    pub(crate) fn open(dir: &Path, log: Option<std::sync::Arc<crate::log::Log>>) -> io::Result<Self> {
         if !fastctx_platform::disk::exists(dir.join(FILE))? {
             for name in ["hub.json", "directory.json"] {
                 if !fastctx_platform::disk::exists(dir.join(name))? {
@@ -55,15 +55,19 @@ impl Shelf {
                 }
             }
         }
-        super::format::prepare(dir)?;
+        let observed = super::format::prepare(dir)?;
         let database =
-            Database::open_initialized(&dir.join(FILE), SCHEMA, |connection| super::migrate::import(connection, dir))
-                .map_err(other)?;
+            Database::open_guarded(&dir.join(FILE), SCHEMA, fastctx_sync::store::boundary::guard, |connection| {
+                super::migrate::import(connection, dir)?;
+                super::format::initialize(connection, &observed)
+            })
+            .map_err(other)?;
+        super::format::start(&database, log.clone()).map_err(other)?;
         if let Some(report) = database.salvaged() {
             eprintln!("the hub's database was damaged and set aside; what could be read was salvaged:\n{report}");
         }
         let shelf = Self(database);
-        super::migrate::back_up(&shelf, dir)?;
+        super::format::finish_legacy(&shelf, dir, log)?;
         Ok(shelf)
     }
 
