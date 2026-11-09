@@ -52,6 +52,9 @@ impl ImageSource {
         };
         Ok(Some(Self { data, media_type }))
     }
+    pub fn encoded_span(&self) -> Span {
+        self.data
+    }
     pub fn media_type(&self) -> &str {
         &self.media_type
     }

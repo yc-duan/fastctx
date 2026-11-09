@@ -4,8 +4,10 @@
 pub mod bodies;
 pub mod checkpoint_bundle;
 pub mod checkpoints;
+pub mod display;
 pub mod display_pages;
 pub mod facts;
+pub mod parts;
 pub mod plan;
 pub mod resupply;
 pub mod state_read;

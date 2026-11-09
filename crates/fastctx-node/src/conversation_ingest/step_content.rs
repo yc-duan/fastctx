@@ -186,9 +186,13 @@ impl<'a> StepContent<'a> {
     /// Re-supply prior private content without caching a second full copy. The
     /// previous checkpoint remains the read authority until this step commits.
     pub(super) async fn supply_block(&self, bytes: Vec<u8>) -> Result<(), Error> {
+        self.put_part(bytes).await.map(drop)
+    }
+    /// A completed immutable part is referenced but never decoded by the merger.
+    /// Its bytes can leave memory after upload; append chunks use put_block instead.
+    pub async fn put_part(&self, bytes: Vec<u8>) -> Result<ContentBlock, Error> {
         let encoded = codec::encode(self.target.target().custody.object.scope.clone(), bytes, Encoding::Raw)?;
-        self.source.put_block(self.target.clone(), encoded.representation, encoded.bytes).await?;
-        Ok(())
+        Ok(self.source.put_block(self.target.clone(), encoded.representation, encoded.bytes).await?.content)
     }
     pub(super) async fn supply_manifest(&self, page: ManifestReply) -> Result<(), Error> {
         self.source.put_manifest(self.target.clone(), page).await?;
