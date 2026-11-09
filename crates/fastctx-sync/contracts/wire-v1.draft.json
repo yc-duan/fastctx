@@ -1,4 +1,756 @@
 {
+  "asset_transport": {
+    "control_plane": [
+      {
+        "message": "open_sync_session",
+        "request": {
+          "binding": {
+            "binding": "object",
+            "kind": {
+              "kind": "conversation.image",
+              "schema": 1
+            },
+            "object": {
+              "object": "o-2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d",
+              "scope": {
+                "hub": "w-0101010101010101",
+                "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+              }
+            }
+          },
+          "limits": {
+            "max_active_parts": 2,
+            "max_active_transfers": 4,
+            "max_control_bytes": 16384,
+            "max_frame_bytes": 65536,
+            "max_metadata_bytes": 262144
+          },
+          "session": "ss-29292929292929292929292929292929"
+        }
+      },
+      {
+        "message": "session_ready",
+        "ready": {
+          "holding": {
+            "acl_revision": "1",
+            "holder": {
+              "device": "d-0303030303030303030303030303030303030303030303030303030303030303",
+              "holder": "device"
+            },
+            "publication_epoch": "1",
+            "scope": {
+              "hub": "w-0101010101010101",
+              "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+            }
+          },
+          "limits": {
+            "max_active_parts": 2,
+            "max_active_transfers": 4,
+            "max_control_bytes": 16384,
+            "max_frame_bytes": 65536,
+            "max_metadata_bytes": 262144
+          },
+          "session": "ss-29292929292929292929292929292929"
+        }
+      },
+      {
+        "close": {
+          "session": "ss-29292929292929292929292929292929"
+        },
+        "message": "session_close"
+      }
+    ],
+    "controls": [
+      {
+        "binding": {
+          "binding": "object",
+          "kind": {
+            "kind": "conversation.image",
+            "schema": 1
+          },
+          "object": {
+            "object": "o-2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d",
+            "scope": {
+              "hub": "w-0101010101010101",
+              "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+            }
+          }
+        },
+        "limits": {
+          "max_active_parts": 2,
+          "max_active_transfers": 4,
+          "max_control_bytes": 16384,
+          "max_frame_bytes": 65536,
+          "max_metadata_bytes": 262144
+        },
+        "message": "session_open",
+        "session": "ss-29292929292929292929292929292929"
+      },
+      {
+        "binding": {
+          "binding": "scope",
+          "scope": {
+            "hub": "w-0101010101010101",
+            "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+          }
+        },
+        "limits": {
+          "max_active_parts": 2,
+          "max_active_transfers": 4,
+          "max_control_bytes": 16384,
+          "max_frame_bytes": 65536,
+          "max_metadata_bytes": 262144
+        },
+        "message": "session_open",
+        "session": "ss-29292929292929292929292929292929"
+      },
+      {
+        "holding": {
+          "acl_revision": "1",
+          "holder": {
+            "device": "d-0303030303030303030303030303030303030303030303030303030303030303",
+            "holder": "device"
+          },
+          "publication_epoch": "1",
+          "scope": {
+            "hub": "w-0101010101010101",
+            "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+          }
+        },
+        "limits": {
+          "max_active_parts": 2,
+          "max_active_transfers": 4,
+          "max_control_bytes": 16384,
+          "max_frame_bytes": 65536,
+          "max_metadata_bytes": 262144
+        },
+        "message": "session_ready",
+        "session": "ss-29292929292929292929292929292929"
+      },
+      {
+        "direction": "download",
+        "holding": {
+          "acl_revision": "1",
+          "holder": {
+            "device": "d-0303030303030303030303030303030303030303030303030303030303030303",
+            "holder": "device"
+          },
+          "publication_epoch": "1",
+          "scope": {
+            "hub": "w-0101010101010101",
+            "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+          }
+        },
+        "kind": {
+          "kind": "conversation.image",
+          "schema": 1
+        },
+        "message": "transfer_request",
+        "object": {
+          "object": "o-2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d",
+          "scope": {
+            "hub": "w-0101010101010101",
+            "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+          }
+        },
+        "operation": "m-2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c",
+        "priority": "interactive",
+        "representation": {
+          "choice": "encodings",
+          "preferred": [
+            "raw",
+            "zstd"
+          ]
+        },
+        "session": "ss-29292929292929292929292929292929",
+        "target": {
+          "content": {
+            "decoded_bytes": 7,
+            "id": {
+              "algorithm": "sha256",
+              "digest": "80e8b52f11fb9a81f8f707743bac2811bc2dca1b78dd37a9c8db43fe37deacd5",
+              "domain": {
+                "hub": "w-0101010101010101",
+                "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+              }
+            }
+          },
+          "target": "single"
+        },
+        "transfer": "tr-2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"
+      },
+      {
+        "direction": "upload",
+        "holding": {
+          "acl_revision": "1",
+          "holder": {
+            "device": "d-0303030303030303030303030303030303030303030303030303030303030303",
+            "holder": "device"
+          },
+          "publication_epoch": "1",
+          "scope": {
+            "hub": "w-0101010101010101",
+            "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+          }
+        },
+        "kind": {
+          "kind": "conversation.image",
+          "schema": 1
+        },
+        "message": "transfer_request",
+        "object": {
+          "object": "o-2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d",
+          "scope": {
+            "hub": "w-0101010101010101",
+            "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+          }
+        },
+        "operation": "m-2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c",
+        "priority": "interactive",
+        "representation": {
+          "choice": "encodings",
+          "preferred": [
+            "raw",
+            "zstd"
+          ]
+        },
+        "session": "ss-29292929292929292929292929292929",
+        "target": {
+          "content": {
+            "decoded_bytes": 7,
+            "id": {
+              "algorithm": "sha256",
+              "digest": "80e8b52f11fb9a81f8f707743bac2811bc2dca1b78dd37a9c8db43fe37deacd5",
+              "domain": {
+                "hub": "w-0101010101010101",
+                "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+              }
+            }
+          },
+          "target": "single"
+        },
+        "transfer": "tr-2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"
+      },
+      {
+        "direction": "download",
+        "holding": {
+          "acl_revision": "1",
+          "holder": {
+            "device": "d-0303030303030303030303030303030303030303030303030303030303030303",
+            "holder": "device"
+          },
+          "publication_epoch": "1",
+          "scope": {
+            "hub": "w-0101010101010101",
+            "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+          }
+        },
+        "kind": {
+          "kind": "conversation.image",
+          "schema": 1
+        },
+        "message": "transfer_request",
+        "object": {
+          "object": "o-2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d",
+          "scope": {
+            "hub": "w-0101010101010101",
+            "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+          }
+        },
+        "operation": "m-2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c",
+        "priority": "interactive",
+        "representation": {
+          "choice": "exact",
+          "content": {
+            "algorithm": "sha256",
+            "digest": "80e8b52f11fb9a81f8f707743bac2811bc2dca1b78dd37a9c8db43fe37deacd5",
+            "domain": {
+              "hub": "w-0101010101010101",
+              "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+            }
+          },
+          "representation": "2d5004397010edd8fd6b849b39c8e569d47ff9ce83f1bb97aeec7537b2025181"
+        },
+        "session": "ss-29292929292929292929292929292929",
+        "target": {
+          "content": {
+            "decoded_bytes": 7,
+            "id": {
+              "algorithm": "sha256",
+              "digest": "80e8b52f11fb9a81f8f707743bac2811bc2dca1b78dd37a9c8db43fe37deacd5",
+              "domain": {
+                "hub": "w-0101010101010101",
+                "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+              }
+            }
+          },
+          "target": "single"
+        },
+        "transfer": "tr-2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"
+      },
+      {
+        "direction": "download",
+        "holding": {
+          "acl_revision": "1",
+          "holder": {
+            "device": "d-0303030303030303030303030303030303030303030303030303030303030303",
+            "holder": "device"
+          },
+          "publication_epoch": "1",
+          "scope": {
+            "hub": "w-0101010101010101",
+            "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+          }
+        },
+        "kind": {
+          "kind": "conversation.image",
+          "schema": 1
+        },
+        "message": "transfer_request",
+        "object": {
+          "object": "o-2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d",
+          "scope": {
+            "hub": "w-0101010101010101",
+            "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+          }
+        },
+        "operation": "m-2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c",
+        "priority": "background",
+        "representation": {
+          "choice": "encodings",
+          "preferred": [
+            "raw",
+            "zstd"
+          ]
+        },
+        "session": "ss-29292929292929292929292929292929",
+        "target": {
+          "ranges": [
+            {
+              "end": "2",
+              "start": "0"
+            },
+            {
+              "end": "8",
+              "start": "7"
+            }
+          ],
+          "root": {
+            "algorithm": "sha256",
+            "digest": "80e8b52f11fb9a81f8f707743bac2811bc2dca1b78dd37a9c8db43fe37deacd5",
+            "domain": {
+              "hub": "w-0101010101010101",
+              "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+            }
+          },
+          "target": "manifest_ranges"
+        },
+        "transfer": "tr-2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"
+      },
+      {
+        "block_index": null,
+        "message": "part_offer",
+        "part": "pt-2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+        "representation": {
+          "content": {
+            "decoded_bytes": 7,
+            "id": {
+              "algorithm": "sha256",
+              "digest": "80e8b52f11fb9a81f8f707743bac2811bc2dca1b78dd37a9c8db43fe37deacd5",
+              "domain": {
+                "hub": "w-0101010101010101",
+                "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+              }
+            }
+          },
+          "encoded_bytes": 7,
+          "encoded_digest": "80e8b52f11fb9a81f8f707743bac2811bc2dca1b78dd37a9c8db43fe37deacd5",
+          "envelope": {
+            "encoding": "raw",
+            "protection": "plain",
+            "version": 1
+          }
+        },
+        "session": "ss-29292929292929292929292929292929",
+        "transfer": "tr-2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"
+      },
+      {
+        "durable_offset": "3",
+        "message": "part_ready",
+        "part": "pt-2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+        "session": "ss-29292929292929292929292929292929",
+        "transfer": "tr-2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"
+      },
+      {
+        "allowed_payload_total": "65536",
+        "message": "credit",
+        "session": "ss-29292929292929292929292929292929",
+        "stream": {
+          "stream": "transfer",
+          "transfer": "tr-2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"
+        }
+      },
+      {
+        "allowed_payload_total": "4096",
+        "message": "credit",
+        "session": "ss-29292929292929292929292929292929",
+        "stream": {
+          "stream": "metadata"
+        }
+      },
+      {
+        "durable_offset": "3",
+        "message": "stored",
+        "part": "pt-2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+        "session": "ss-29292929292929292929292929292929",
+        "transfer": "tr-2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"
+      },
+      {
+        "message": "part_end",
+        "part": "pt-2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+        "session": "ss-29292929292929292929292929292929",
+        "transfer": "tr-2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"
+      },
+      {
+        "ack": {
+          "content": {
+            "decoded_bytes": 7,
+            "id": {
+              "algorithm": "sha256",
+              "digest": "80e8b52f11fb9a81f8f707743bac2811bc2dca1b78dd37a9c8db43fe37deacd5",
+              "domain": {
+                "hub": "w-0101010101010101",
+                "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+              }
+            }
+          },
+          "holding": {
+            "acl_revision": "1",
+            "holder": {
+              "device": "d-0303030303030303030303030303030303030303030303030303030303030303",
+              "holder": "device"
+            },
+            "publication_epoch": "1",
+            "scope": {
+              "hub": "w-0101010101010101",
+              "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+            }
+          },
+          "kind": "block",
+          "object": {
+            "object": "o-2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d",
+            "scope": {
+              "hub": "w-0101010101010101",
+              "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+            }
+          },
+          "object_kind": "conversation.image",
+          "schema": 1
+        },
+        "message": "part_committed",
+        "part": "pt-2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+        "session": "ss-29292929292929292929292929292929",
+        "stored_representation": "2d5004397010edd8fd6b849b39c8e569d47ff9ce83f1bb97aeec7537b2025181",
+        "transfer": "tr-2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"
+      },
+      {
+        "message": "transfer_finished",
+        "session": "ss-29292929292929292929292929292929",
+        "transfer": "tr-2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"
+      },
+      {
+        "message": "transfer_cancel",
+        "operation": "m-2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c",
+        "session": "ss-29292929292929292929292929292929",
+        "transfer": "tr-2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"
+      },
+      {
+        "message": "transfer_cancelled",
+        "operation": "m-2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c",
+        "session": "ss-29292929292929292929292929292929",
+        "transfer": "tr-2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"
+      },
+      {
+        "message": "session_close",
+        "session": "ss-29292929292929292929292929292929"
+      },
+      {
+        "code": "unsupported_protocol",
+        "detail": "",
+        "message": "error",
+        "part": "pt-2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+        "retry_after_ms": null,
+        "session": "ss-29292929292929292929292929292929",
+        "transfer": "tr-2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"
+      },
+      {
+        "code": "unsupported_encoding",
+        "detail": "",
+        "message": "error",
+        "part": "pt-2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+        "retry_after_ms": null,
+        "session": "ss-29292929292929292929292929292929",
+        "transfer": "tr-2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"
+      },
+      {
+        "code": "invalid_request",
+        "detail": "",
+        "message": "error",
+        "part": "pt-2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+        "retry_after_ms": null,
+        "session": "ss-29292929292929292929292929292929",
+        "transfer": "tr-2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"
+      },
+      {
+        "code": "too_large",
+        "detail": "",
+        "message": "error",
+        "part": "pt-2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+        "retry_after_ms": null,
+        "session": "ss-29292929292929292929292929292929",
+        "transfer": "tr-2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"
+      },
+      {
+        "code": "not_accessible",
+        "detail": "",
+        "message": "error",
+        "part": "pt-2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+        "retry_after_ms": null,
+        "session": "ss-29292929292929292929292929292929",
+        "transfer": "tr-2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"
+      },
+      {
+        "code": "stale_holding",
+        "detail": "",
+        "message": "error",
+        "part": "pt-2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+        "retry_after_ms": null,
+        "session": "ss-29292929292929292929292929292929",
+        "transfer": "tr-2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"
+      },
+      {
+        "code": "revoked",
+        "detail": "",
+        "message": "error",
+        "part": "pt-2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+        "retry_after_ms": null,
+        "session": "ss-29292929292929292929292929292929",
+        "transfer": "tr-2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"
+      },
+      {
+        "code": "stale_session",
+        "detail": "",
+        "message": "error",
+        "part": "pt-2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+        "retry_after_ms": null,
+        "session": "ss-29292929292929292929292929292929",
+        "transfer": "tr-2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"
+      },
+      {
+        "code": "transfer_conflict",
+        "detail": "",
+        "message": "error",
+        "part": "pt-2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+        "retry_after_ms": null,
+        "session": "ss-29292929292929292929292929292929",
+        "transfer": "tr-2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"
+      },
+      {
+        "code": "offset_mismatch",
+        "detail": "",
+        "message": "error",
+        "part": "pt-2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+        "retry_after_ms": null,
+        "session": "ss-29292929292929292929292929292929",
+        "transfer": "tr-2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"
+      },
+      {
+        "code": "representation_changed",
+        "detail": "",
+        "message": "error",
+        "part": "pt-2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+        "retry_after_ms": null,
+        "session": "ss-29292929292929292929292929292929",
+        "transfer": "tr-2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"
+      },
+      {
+        "code": "corrupt_frame",
+        "detail": "",
+        "message": "error",
+        "part": "pt-2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+        "retry_after_ms": null,
+        "session": "ss-29292929292929292929292929292929",
+        "transfer": "tr-2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"
+      },
+      {
+        "code": "corrupt_representation",
+        "detail": "",
+        "message": "error",
+        "part": "pt-2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+        "retry_after_ms": null,
+        "session": "ss-29292929292929292929292929292929",
+        "transfer": "tr-2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"
+      },
+      {
+        "code": "corrupt_content",
+        "detail": "",
+        "message": "error",
+        "part": "pt-2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+        "retry_after_ms": null,
+        "session": "ss-29292929292929292929292929292929",
+        "transfer": "tr-2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"
+      },
+      {
+        "code": "busy",
+        "detail": "",
+        "message": "error",
+        "part": "pt-2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+        "retry_after_ms": null,
+        "session": "ss-29292929292929292929292929292929",
+        "transfer": "tr-2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"
+      },
+      {
+        "code": "disk_full",
+        "detail": "",
+        "message": "error",
+        "part": "pt-2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+        "retry_after_ms": null,
+        "session": "ss-29292929292929292929292929292929",
+        "transfer": "tr-2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"
+      },
+      {
+        "code": "source_unavailable",
+        "detail": "",
+        "message": "error",
+        "part": "pt-2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+        "retry_after_ms": null,
+        "session": "ss-29292929292929292929292929292929",
+        "transfer": "tr-2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"
+      },
+      {
+        "code": "cancelled",
+        "detail": "",
+        "message": "error",
+        "part": "pt-2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+        "retry_after_ms": null,
+        "session": "ss-29292929292929292929292929292929",
+        "transfer": "tr-2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"
+      },
+      {
+        "code": "outcome_unknown",
+        "detail": "",
+        "message": "error",
+        "part": "pt-2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+        "retry_after_ms": null,
+        "session": "ss-29292929292929292929292929292929",
+        "transfer": "tr-2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"
+      }
+    ],
+    "data_header": {
+      "block": {
+        "blob": {
+          "algorithm": "sha256",
+          "digest": "80e8b52f11fb9a81f8f707743bac2811bc2dca1b78dd37a9c8db43fe37deacd5",
+          "domain": {
+            "hub": "w-0101010101010101",
+            "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+          }
+        },
+        "frame_digest": "80e8b52f11fb9a81f8f707743bac2811bc2dca1b78dd37a9c8db43fe37deacd5",
+        "holding": {
+          "acl_revision": "1",
+          "holder": {
+            "device": "d-0303030303030303030303030303030303030303030303030303030303030303",
+            "holder": "device"
+          },
+          "publication_epoch": "1",
+          "scope": {
+            "hub": "w-0101010101010101",
+            "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+          }
+        },
+        "offset": "0",
+        "payload_bytes": 7,
+        "representation": "2d5004397010edd8fd6b849b39c8e569d47ff9ce83f1bb97aeec7537b2025181"
+      },
+      "frame": "1",
+      "part": "pt-2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+      "session": "ss-29292929292929292929292929292929",
+      "transfer": "tr-2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"
+    },
+    "envelopes": [
+      {
+        "hex": "465853540101000000000082000000007b226d657373616765223a22637265646974222c2273657373696f6e223a2273732d3239323932393239323932393239323932393239323932393239323932393239222c2273747265616d223a7b2273747265616d223a226d65746164617461227d2c22616c6c6f7765645f7061796c6f61645f746f74616c223a2234303936227d",
+        "name": "control"
+      },
+      {
+        "hex": "46585354010200000000035b000000077b2273657373696f6e223a2273732d3239323932393239323932393239323932393239323932393239323932393239222c227472616e73666572223a2274722d3261326132613261326132613261326132613261326132613261326132613261222c2270617274223a2270742d3262326232623262326232623262326232623262326232623262326232623262222c226672616d65223a2231222c22626c6f636b223a7b22686f6c64696e67223a7b22686f6c646572223a7b22686f6c646572223a22646576696365222c22646576696365223a22642d30333033303330333033303330333033303330333033303330333033303330333033303330333033303330333033303330333033303330333033303330333033227d2c2273636f7065223a7b22687562223a22772d30313031303130313031303130313031222c2273636f7065223a22732d30323032303230323032303230323032303230323032303230323032303230323032303230323032303230323032303230323032303230323032303230323032227d2c2261636c5f7265766973696f6e223a2231222c227075626c69636174696f6e5f65706f6368223a2231227d2c22626c6f62223a7b22646f6d61696e223a7b22687562223a22772d30313031303130313031303130313031222c2273636f7065223a22732d30323032303230323032303230323032303230323032303230323032303230323032303230323032303230323032303230323032303230323032303230323032227d2c22616c676f726974686d223a22736861323536222c22646967657374223a2238306538623532663131666239613831663866373037373433626163323831316263326463613162373864643337613963386462343366653337646561636435227d2c22726570726573656e746174696f6e223a2232643530303433393730313065646438666436623834396233396338653536396434376666396365383366316262393761656563373533376232303235313831222c226f6666736574223a2230222c227061796c6f61645f6279746573223a372c226672616d655f646967657374223a2238306538623532663131666239613831663866373037373433626163323831316263326463613162373864643337613963386462343366653337646561636435227d7d776972652d7631",
+        "name": "block_data"
+      },
+      {
+        "hex": "465853540103000000000084000000027b2273657373696f6e223a2273732d3239323932393239323932393239323932393239323932393239323932393239222c226d6573736167655f6964223a226d73672d3265326532653265326532653265326532653265326532653265326532653265222c226f6666736574223a2230222c22746f74616c5f6279746573223a2232227d7b7d",
+        "name": "metadata_part"
+      }
+    ],
+    "flow_contract": {
+      "block_bytes": 1048576,
+      "completed_buffer_still_reserved": true,
+      "consume_and_return_rounds": 256,
+      "cross_session_credit": {
+        "allowed_payload_total": "4096",
+        "session": "ss-2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f",
+        "stream": {
+          "stream": "transfer",
+          "transfer": "tr-2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"
+        }
+      },
+      "cross_session_result": "wrong_stream",
+      "duplicate_and_older_credit_adds_bytes": false,
+      "durable_ack_from_credit": false,
+      "holding_change_changes_request_digest": true,
+      "metadata_bytes": 8192,
+      "metadata_window_bytes": 1024,
+      "request_digest_survives_reconnect": true,
+      "window_bytes": 4096
+    },
+    "limits": {
+      "max_active_parts": 2,
+      "max_active_transfers": 4,
+      "max_control_bytes": 16384,
+      "max_frame_bytes": 65536,
+      "max_metadata_bytes": 262144
+    },
+    "magic_hex": "46585354",
+    "negative_envelopes": [
+      {
+        "error": "unknown_tag",
+        "hex": "4658535401ff00000000035b000000077b2273657373696f6e223a2273732d3239323932393239323932393239323932393239323932393239323932393239222c227472616e73666572223a2274722d3261326132613261326132613261326132613261326132613261326132613261222c2270617274223a2270742d3262326232623262326232623262326232623262326232623262326232623262222c226672616d65223a2231222c22626c6f636b223a7b22686f6c64696e67223a7b22686f6c646572223a7b22686f6c646572223a22646576696365222c22646576696365223a22642d30333033303330333033303330333033303330333033303330333033303330333033303330333033303330333033303330333033303330333033303330333033227d2c2273636f7065223a7b22687562223a22772d30313031303130313031303130313031222c2273636f7065223a22732d30323032303230323032303230323032303230323032303230323032303230323032303230323032303230323032303230323032303230323032303230323032227d2c2261636c5f7265766973696f6e223a2231222c227075626c69636174696f6e5f65706f6368223a2231227d2c22626c6f62223a7b22646f6d61696e223a7b22687562223a22772d30313031303130313031303130313031222c2273636f7065223a22732d30323032303230323032303230323032303230323032303230323032303230323032303230323032303230323032303230323032303230323032303230323032227d2c22616c676f726974686d223a22736861323536222c22646967657374223a2238306538623532663131666239613831663866373037373433626163323831316263326463613162373864643337613963386462343366653337646561636435227d2c22726570726573656e746174696f6e223a2232643530303433393730313065646438666436623834396233396338653536396434376666396365383366316262393761656563373533376232303235313831222c226f6666736574223a2230222c227061796c6f61645f6279746573223a372c226672616d655f646967657374223a2238306538623532663131666239613831663866373037373433626163323831316263326463613162373864643337613963386462343366653337646561636435227d7d776972652d7631",
+        "name": "unknown_tag"
+      },
+      {
+        "error": "too_large",
+        "hex": "46585354010200000000035b000100007b2273657373696f6e223a2273732d3239323932393239323932393239323932393239323932393239323932393239222c227472616e73666572223a2274722d3261326132613261326132613261326132613261326132613261326132613261222c2270617274223a2270742d3262326232623262326232623262326232623262326232623262326232623262222c226672616d65223a2231222c22626c6f636b223a7b22686f6c64696e67223a7b22686f6c646572223a7b22686f6c646572223a22646576696365222c22646576696365223a22642d30333033303330333033303330333033303330333033303330333033303330333033303330333033303330333033303330333033303330333033303330333033227d2c2273636f7065223a7b22687562223a22772d30313031303130313031303130313031222c2273636f7065223a22732d30323032303230323032303230323032303230323032303230323032303230323032303230323032303230323032303230323032303230323032303230323032227d2c2261636c5f7265766973696f6e223a2231222c227075626c69636174696f6e5f65706f6368223a2231227d2c22626c6f62223a7b22646f6d61696e223a7b22687562223a22772d30313031303130313031303130313031222c2273636f7065223a22732d30323032303230323032303230323032303230323032303230323032303230323032303230323032303230323032303230323032303230323032303230323032227d2c22616c676f726974686d223a22736861323536222c22646967657374223a2238306538623532663131666239613831663866373037373433626163323831316263326463613162373864643337613963386462343366653337646561636435227d2c22726570726573656e746174696f6e223a2232643530303433393730313065646438666436623834396233396338653536396434376666396365383366316262393761656563373533376232303235313831222c226f6666736574223a2230222c227061796c6f61645f6279746573223a372c226672616d655f646967657374223a2238306538623532663131666239613831663866373037373433626163323831316263326463613162373864643337613963386462343366653337646561636435227d7d776972652d7631",
+        "name": "whole_frame_too_long"
+      },
+      {
+        "error": "length_mismatch",
+        "hex": "46585354010200000000035b000000077b2273657373696f6e223a2273732d3239323932393239323932393239323932393239323932393239323932393239222c227472616e73666572223a2274722d3261326132613261326132613261326132613261326132613261326132613261222c2270617274223a2270742d3262326232623262326232623262326232623262326232623262326232623262222c226672616d65223a2231222c22626c6f636b223a7b22686f6c64696e67223a7b22686f6c646572223a7b22686f6c646572223a22646576696365222c22646576696365223a22642d30333033303330333033303330333033303330333033303330333033303330333033303330333033303330333033303330333033303330333033303330333033227d2c2273636f7065223a7b22687562223a22772d30313031303130313031303130313031222c2273636f7065223a22732d30323032303230323032303230323032303230323032303230323032303230323032303230323032303230323032303230323032303230323032303230323032227d2c2261636c5f7265766973696f6e223a2231222c227075626c69636174696f6e5f65706f6368223a2231227d2c22626c6f62223a7b22646f6d61696e223a7b22687562223a22772d30313031303130313031303130313031222c2273636f7065223a22732d30323032303230323032303230323032303230323032303230323032303230323032303230323032303230323032303230323032303230323032303230323032227d2c22616c676f726974686d223a22736861323536222c22646967657374223a2238306538623532663131666239613831663866373037373433626163323831316263326463613162373864643337613963386462343366653337646561636435227d2c22726570726573656e746174696f6e223a2232643530303433393730313065646438666436623834396233396338653536396434376666396365383366316262393761656563373533376232303235313831222c226f6666736574223a2230222c227061796c6f61645f6279746573223a372c226672616d655f646967657374223a2238306538623532663131666239613831663866373037373433626163323831316263326463613162373864643337613963386462343366653337646561636435227d7d776972652d76",
+        "name": "length_mismatch"
+      },
+      {
+        "error": "corrupt_frame",
+        "hex": "46585354010200000000035b000000077b2273657373696f6e223a2273732d3239323932393239323932393239323932393239323932393239323932393239222c227472616e73666572223a2274722d3261326132613261326132613261326132613261326132613261326132613261222c2270617274223a2270742d3262326232623262326232623262326232623262326232623262326232623262222c226672616d65223a2231222c22626c6f636b223a7b22686f6c64696e67223a7b22686f6c646572223a7b22686f6c646572223a22646576696365222c22646576696365223a22642d30333033303330333033303330333033303330333033303330333033303330333033303330333033303330333033303330333033303330333033303330333033227d2c2273636f7065223a7b22687562223a22772d30313031303130313031303130313031222c2273636f7065223a22732d30323032303230323032303230323032303230323032303230323032303230323032303230323032303230323032303230323032303230323032303230323032227d2c2261636c5f7265766973696f6e223a2231222c227075626c69636174696f6e5f65706f6368223a2231227d2c22626c6f62223a7b22646f6d61696e223a7b22687562223a22772d30313031303130313031303130313031222c2273636f7065223a22732d30323032303230323032303230323032303230323032303230323032303230323032303230323032303230323032303230323032303230323032303230323032227d2c22616c676f726974686d223a22736861323536222c22646967657374223a2238306538623532663131666239613831663866373037373433626163323831316263326463613162373864643337613963386462343366653337646561636435227d2c22726570726573656e746174696f6e223a2232643530303433393730313065646438666436623834396233396338653536396434376666396365383366316262393761656563373533376232303235313831222c226f6666736574223a2230222c227061796c6f61645f6279746573223a372c226672616d655f646967657374223a2238306538623532663131666239613831663866373037373433626163323831316263326463613162373864643337613963386462343366653337646561636435227d7d776972652d7630",
+        "name": "payload_digest_mismatch"
+      }
+    ],
+    "prefix_bytes": 16,
+    "protocol": "asset-transfer/v1",
+    "tags": {
+      "block_data": 2,
+      "metadata_part": 3,
+      "transport_control": 1
+    }
+  },
   "decoded_acceptance_binding": {
     "count": 1,
     "fragment": {
@@ -575,7 +1327,11 @@
           "fastctx-sync/v1",
           "future-protocol"
         ],
-        "receive_window": "4194304"
+        "receive_window": "4194304",
+        "transports": [
+          "asset-transfer/v1",
+          "future-transport"
+        ]
       },
       "message": "hello"
     },

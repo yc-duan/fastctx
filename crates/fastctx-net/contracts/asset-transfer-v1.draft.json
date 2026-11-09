@@ -1,0 +1,51 @@
+{
+  "advertisement": {
+    "encodings": [
+      "raw",
+      "zstd"
+    ],
+    "envelopes": [
+      "plain/v1"
+    ],
+    "exposure_cleanup": [],
+    "hub_signing": null,
+    "kinds": [],
+    "max_page_bytes": 262144,
+    "protocols": [
+      "fastctx-sync/v1"
+    ],
+    "receive_window": "4096",
+    "transports": [
+      "asset-transfer/v1",
+      "future-transport"
+    ]
+  },
+  "direct_device_intent": {
+    "key": "F8t5-ytBIPKx7GXkGY1uCLKOgT_rAeSkAIObheGAgM4",
+    "kind": "asset_sync_data",
+    "proof": "xCx-ncyaUkjqQ8KPFlrhYJK_d3kyMcDN7gBM-nF-IdqLdVgxN8x1L8ep6Q27PCcvcN0Qeszjrbz9x0FZ_7ykBA",
+    "session": "ss-29292929292929292929292929292929"
+  },
+  "hub_intent": {
+    "key": "F8t5-ytBIPKx7GXkGY1uCLKOgT_rAeSkAIObheGAgM4",
+    "kind": "asset_sync_data",
+    "proof": "ymUKOJTBXHyNdCU8A-_iiYDOIcFS-6WtPEM3c_G5t-HxD4Mz_CkZkobKwdTl8n0v9uKyG3UmHAdSApj45FMsDQ",
+    "session": "ss-29292929292929292929292929292929"
+  },
+  "limits": {
+    "max_active_parts": 2,
+    "max_active_transfers": 4,
+    "max_control_bytes": 16384,
+    "max_frame_bytes": 65536,
+    "max_metadata_bytes": 262144
+  },
+  "no_or_unknown_transport_advertisement": "refused_before_new_intent",
+  "proof_status": "synthetic_exporter_not_a_connection",
+  "selection": {
+    "encoding": "raw",
+    "envelope": "plain/v1",
+    "protocol": "fastctx-sync/v1",
+    "transport": "asset-transfer/v1"
+  },
+  "service_activation": false
+}
