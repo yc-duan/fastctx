@@ -1,7 +1,7 @@
 //! Lifecycle health: concurrent FULL writes cannot restart or contaminate a pinned backup.
 use fastctx_storage::{
     Database,
-    format_upgrade::{self, BackupBasis, Begin, Event, Options, Phase, Service},
+    format_upgrade::{self, BackupBasis, Begin, Event, Journal, Options, Phase, Service},
     rusqlite::Connection,
 };
 use fastctx_sync::store::{
@@ -69,6 +69,11 @@ pub fn run(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
     )?;
     copying.recv_timeout(Duration::from_secs(15))?;
     assert!(!gate.finished(), "migration opened before the backup finished");
+    let reopened = Database::open_guarded(&path, "", boundary::guard, |_| Ok(()))?;
+    let reopened_journal = Arc::new(SqliteUpgradeJournal::new(reopened.clone(), Service::World)?);
+    let reopened_gate = format_upgrade::start(&reopened, reopened_journal.clone(), Options::default())?;
+    assert!(!reopened_gate.finished());
+    assert_eq!(reopened_journal.attempts()?.len(), 1, "a same-process reopen must not consume T1");
     for _ in 0..16 {
         database.write_now(128, |db| {
             db.execute("INSERT INTO old_rows(value) VALUES(x'01')", [])?;
@@ -83,6 +88,7 @@ pub fn run(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(record.phase, Phase::Complete);
     assert!(gate.finished());
     assert_eq!(gate.wait_blocking()?, record);
+    assert_eq!(reopened_gate.wait_blocking()?, record);
     let backup = Connection::open(root.join("upgrade-backups").join(record.file_name.expect("complete backup")))?;
     assert_eq!(backup.query_row("SELECT count(*) FROM old_rows", [], |row| row.get::<_, i64>(0))?, 128);
     assert_eq!(
@@ -96,7 +102,7 @@ pub fn run(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
         "a concurrent writer restarted the backup"
     );
     println!(
-        "upgrade lifecycle: {} monotonic steps, exact T0, concurrent FULL writes, migration gate opened after standalone verification",
+        "upgrade lifecycle: {} monotonic steps, exact T0, concurrent FULL writes, same-file reopen, migration gate opened after standalone verification",
         progress.len()
     );
     Ok(())
