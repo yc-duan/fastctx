@@ -1331,6 +1331,15 @@ dependencies = [
  "tokio",
 ]
 
+[[package]]
+name = "fastctx-assets"
+version = "1.0.1-beta.16"
+dependencies = [
+ "fastctx-sync",
+ "fastctx-types",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "fastctx-client"
