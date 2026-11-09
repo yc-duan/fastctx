@@ -25,7 +25,7 @@ File	H/outboxes/<epoch>/<sequence>	Runtime	crates/fastctx-hub/src/post/member.rs
 File	H/counts/{<epoch>,.legacy-imported}	Runtime	crates/fastctx-hub/src/store/counts.rs	Foundation	Confirmed	Durable receive watermarks
 File	H/{outbox/<machine>/<sequence>,taken/<machine>}	Runtime	crates/fastctx-hub/src/store.rs	Migration	Confirmed	Legacy mailboxes
 File	H/outbox-trash/**	Scratch	crates/fastctx-hub/src/post/member.rs	Maintenance	Confirmed	Completed mailbox removal staging
-File	H/outbox-conflicts/<epoch>/<sequence>/**	Asset	crates/fastctx-hub/src/store/conflicts.rs	Migration	Confirmed	Conflicting source evidence
+File	H/outbox-conflicts/<epoch>/<sequence>/**	Runtime	crates/fastctx-hub/src/store/conflicts.rs	Migration	Confirmed	Local conflicting originals; separately import proven unique user content as its own asset, otherwise preserve locally
 File	H/{moving-out,arriving,moves,called-off,retired}.json	Runtime	crates/fastctx-hub/src/moving/mod.rs	Maintenance	Confirmed	Hub move decisions and fencing
 File	H/.hub-handover.sqlite3	Runtime	crates/fastctx-hub/src/moving/snapshot.rs	Maintenance	Confirmed	Snapshot pinned by the active move; disposable only after termination
 File	H/updates/{looked,github-list}.json	Derived	crates/fastctx-hub/src/updates/discovery.rs	Maintenance	Confirmed	Release discovery state
@@ -37,11 +37,11 @@ File	N/view.json	Derived	crates/fastctx-net/src/link/view_changes.rs	Projection	
 File	N/{counter,letters}.json	Runtime	crates/fastctx-net/src/link/state.rs	Foundation	Confirmed	Reserved delivery numbers and acknowledgement state
 File	N/outbox/<sequence>	Runtime	crates/fastctx-net/src/link/letters.rs	Foundation	Confirmed	Durable transport outbox
 File	N/{received/<sender>,received-by-key/<hash>}/<id>	Runtime	crates/fastctx-net/src/link/letters/receipts.rs	Migration	Confirmed	Legacy receipt sources
-File	N/failures/letter-<digest>.json	Asset	crates/fastctx-net/src/link/letters/failures.rs	Assets	Confirmed	Delivery failure evidence
+File	N/failures/letter-<digest>.json	Runtime	crates/fastctx-net/src/link/letters/failures.rs	Assets	Confirmed	Local failed delivery original; separately import proven unique user content, otherwise preserve locally
 File	N/failures/.identified	Runtime	crates/fastctx-net/src/link/letters/failures.rs	Migration	Confirmed	Failure identity migration marker
-File	N/posting-refusals/<epoch>-<sequence>.json	Asset	crates/fastctx-net/src/link/posting.rs	Assets	Confirmed	Refusal outcome
+File	N/posting-refusals/<epoch>-<sequence>.json	Runtime	crates/fastctx-net/src/link/posting.rs	Assets	Confirmed	Local refusal receipt and original; separately import proven unique user content, otherwise preserve locally
 File	N/ended.json	Runtime	crates/fastctx-net/src/link/state.rs	Maintenance	Confirmed	Membership removal decision and pending action
-File	N/line.json	Asset	crates/fastctx-net/src/link/line.rs	Assets	Confirmed	Connection state changes, not heartbeats
+File	N/line.json	Asset	crates/fastctx-net/src/link/line.rs	Assets	Confirmed	machine.connection: device-produced connection changes; current machine Hold readers, not historical audit segments
 File	N/update-policy.json	Asset	crates/fastctx-net/src/link/update_policy.rs	Assets	Confirmed	Device update preferences
 File	N/arrivals.json	Runtime	crates/fastctx-net/src/arrivals.rs	Foundation	Confirmed	Arrival notice acknowledgements
 File	C/{about,town,removed,moved*}	Asset	crates/fastctx-node/src/residents	Assets	Confirmed	Conversation metadata, project relation and lifecycle
@@ -97,12 +97,12 @@ File	W/{agent-scan.json,agent-homes.json}	ByKind:login-record-fields	crates/fast
 File	W/{collab.json,history-switch.json,features.json,limits.json,layer.json,retention.json}	Asset	crates/fastctx-node/src	Assets	Confirmed	Account or device configuration; asset expiry is retired
 File	W/*.carried.json	Runtime	crates/fastctx-node/src	Migration	Confirmed	Existing configuration carry receipts only; not a wildcard for new files
 File	W/mcp/<hub>/<account>.json	Runtime	crates/fastctx-node/src/mcp/store.rs	Foundation	Confirmed	Command MCP local settings/environment; publish only approved descriptions
-File	W/mcp/<hub>/logs/<account>/<name>.log	Asset	crates/fastctx-node/src/mcp/store.rs	Assets	Confirmed	Account-scoped execution diagnostics
+File	W/mcp/<hub>/logs/<account>/<name>.log	Asset	crates/fastctx-node/src/mcp/store.rs	Assets	PendingUser	Replication policy undecided; retain locally under the original account and current execution-machine Work intersection; class is provisional
 File	W/towns/<town>/{project.json,index.json,alone.json,signed/**,ledger/**,attachments/**}	Asset	crates/fastctx-node/src/ledger	Assets	Confirmed	Project definitions, signed ledger and attachments
 File	W/towns/<town>/history/**	Asset	crates/fastctx-node/src/history	Assets	Confirmed	Project document materialization
 File	W/towns/<town>/history-records/**	Asset	crates/fastctx-node/src/history/local.rs	Assets	Confirmed	Local project history
 File	W/towns/<town>/{journals/**,specs/**,projection-through.json}	Derived	crates/fastctx-node/src/ledger	Projection	Confirmed	Legacy ledger projections; retain unique old material until compared
-File	W/towns/<town>/{refused*.json,tampering/**,not-imported/**}	Asset	crates/fastctx-node/src/ledger	Migration	Confirmed	Rejected or modified original content; preserve evidence
+File	W/towns/<town>/{refused*.json,tampering/**,not-imported/**}	Runtime	crates/fastctx-node/src/ledger	Migration	Confirmed	Local rejected originals; only proven unique project content becomes project assets; unknown or tampered input is not an accepted ledger entry
 File	W/towns/<town>/{found.json,ledger-import.json}	Runtime	crates/fastctx-node/src/ledger	Migration	Confirmed	Project migration state
 File	W/towns/<town>/pages/<page>/**	ByKind:page-files	crates/fastctx-types/src/layout.rs	Assets	Confirmed	Page/resources are assets; jobs/out/scratch follow registered job layouts
 File	W/{net-left-*,net-third-version}/**	Runtime	crates/fastctx-node/src/world.rs	Migration	Confirmed	Left or previous network identity and transport state
@@ -156,8 +156,8 @@ External	<CODEX_HOME>/**	Runtime	crates/fastctx-hosts/src/codex	Ingestion	Confir
 External	<CLAUDE_CONFIG_DIR>/**	Runtime	crates/fastctx-hosts/src/claude	Ingestion	Confirmed	External host source and credentials, publish authorized timeline only
 File	<sentinel>/<id>/assignment.json	Derived	crates/fastctx-sentinel/src/resident/storage.rs	Assets	Confirmed	Assignment discovery projection
 File	<sentinel>/<id>/<generation>/state.json	Runtime	crates/fastctx-sentinel/src/state.rs	Foundation	Confirmed	Sentinel execution state and pending wake
-File	<sentinel>/<id>/<generation>/{history,runs}/<sequence>.json	Asset	crates/fastctx-sentinel/src/state.rs	Ingestion	Confirmed	Completed observation and execution evidence
-File	<sentinel>/<id>/<generation>/evidence/*.txt	Asset	crates/fastctx-sentinel/src/wake.rs	Ingestion	Confirmed	Observation evidence
+File	<sentinel>/<id>/<generation>/{history,runs}/<sequence>.json	Asset	crates/fastctx-sentinel/src/state.rs	Assets	Confirmed	conversation.sentinel-run: completed source facts with evidence roots; sentinel asset handler owns migration
+File	<sentinel>/<id>/<generation>/evidence/*.txt	Asset	crates/fastctx-sentinel/src/wake.rs	Assets	Confirmed	Evidence roots referenced by conversation.sentinel-run; sentinel asset handler owns migration
 File	<sentinel>/<id>/<generation>/tally.json	Derived	crates/fastctx-sentinel/src/state.rs	Projection	Confirmed	Usage tally; retain unique historical values during migration
 File	<sentinel>/<id>/<generation>/home.json	Runtime	crates/fastctx-sentinel/src/resident/storage.rs	Foundation	Confirmed	Notification delivery state
 File	<sentinel>/<id>/<generation>/judgments/<key>.json	Runtime	crates/fastctx-sentinel/src/resident/goal.rs	Foundation	Confirmed	Goal judgment receipt

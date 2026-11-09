@@ -48,9 +48,9 @@ Browser	localStorage/activity.span	Asset	gui/src/activity/page.ts	Client	Confirm
 Browser	localStorage/usage.view	Asset	gui/src/app/usage/login-page.ts	Client	Confirmed	Usage display preference
 Browser	localStorage/workbench.shown	Asset	gui/src/app/workbench-shown.ts	Client	Confirmed	Device layer preference and legacy alias
 Browser	localStorage/layer	Asset	gui/src/app/workbench-shown.ts	Client	Confirmed	Device layer preference and legacy alias
-Browser	localStorage/fastctx.last-answered	Asset	gui/src/app/store.ts	Client	Confirmed	Device read/notice positions
-Browser	localStorage/lastSeen	Asset	gui/src/main.ts	Client	Confirmed	Device read/notice positions
-Browser	localStorage/troubles.told	Asset	gui/src/app/presence.ts	Client	Confirmed	Device read/notice positions
+Browser	localStorage/fastctx.last-answered	Derived	gui/src/app/store.ts	Client	Confirmed	derived.directory: cached residents, logins and assisting directory; preserve unique legacy observations before rebuilding
+Browser	localStorage/lastSeen	Asset	gui/src/main.ts	Client	Confirmed	device.preferences: this device last viewed its home; not a stream cursor or max-merged account read position
+Browser	localStorage/troubles.told	Runtime	gui/src/app/presence.ts	Client	Confirmed	Local per-hub notification deduplication receipt; not a user read position
 Browser	localStorage/welcomed	Asset	gui/src/main.ts	Client	Confirmed	Device read/notice positions
 Browser	localStorage/path-notice	Asset	gui/src/app/path-notice.ts	Client	Confirmed	Device path notice acknowledgement
 Browser	localStorage/kept-logins	Derived	gui/src/app/usage/kept.ts	Client	Confirmed	Recent login presentation snapshots
