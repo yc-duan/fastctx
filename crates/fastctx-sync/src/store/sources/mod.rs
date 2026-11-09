@@ -2,8 +2,11 @@
 //! content through it and commits it as one transaction; it never touches SQL.
 mod commit;
 mod effects;
+mod open;
 mod reads;
 mod streams;
+
+pub use open::StreamOpening;
 
 use super::{
     Error, FutureResult,

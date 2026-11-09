@@ -94,6 +94,7 @@ CALLERS = {
         "crates/fastctx-sync/src/blocks/root_store.rs",
         "crates/fastctx-sync/src/blocks/step_writer.rs",
         "crates/fastctx-sync/src/store/sources/commit.rs",
+        "crates/fastctx-sync/src/store/sources/open.rs",
         "crates/fastctx-sync/src/store/timelines/install.rs",
         "crates/fastctx-sync/src/store/timelines/rebuild.rs",
         "crates/fastctx-sync/src/blocks/supply/mod.rs",

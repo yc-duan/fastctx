@@ -19,7 +19,7 @@ use fastctx_sync::{
         mutation::Expected,
         source_authorize::{PreparedSourceChange, SourceAuthorizer},
         source_step::{SourceStep, SourceStepTarget},
-        sources::SqliteSources,
+        sources::{SqliteSources, StreamOpening},
     },
 };
 use fastctx_types::sync::{
@@ -442,6 +442,18 @@ pub(super) async fn run(root: &Path) -> Result<()> {
         sources.get_index(primary.clone(), SourceFamily::HostRows, b"row-1".to_vec()).await?.ok_or("row missing")?;
     assert_eq!(row.revision, Revision(2));
 
+    // A producer's stream epoch is chosen once: the first candidate persists
+    // with an empty head, and later openings, across a restart too, return it.
+    let opening = |candidate: u8, device: u8| StreamOpening {
+        object: custody(92, "conversation.timeline").object,
+        kind: REGISTRY.asset("conversation.timeline").unwrap().registered(),
+        producer: Producer::Device { device: DeviceId::from_bytes([device; 32]) },
+        candidate: ProducerEpoch::from_bytes([candidate; 32]),
+    };
+    let epoch = sources.open_stream(opening(1, 3)).await?;
+    assert_eq!(epoch, ProducerEpoch::from_bytes([1; 32]));
+    assert!(matches!(sources.open_stream(opening(2, 4)).await, Err(Error::Invalid(_))));
+
     // Committed steps drain their staged pins; a restart keeps everything.
     while blocks.drain_steps(64).await? != 0 {}
     assert_eq!(count(&db, "SELECT COUNT(*) FROM sync_asset_pins WHERE phase!='released'")?, 0);
@@ -453,8 +465,9 @@ pub(super) async fn run(root: &Path) -> Result<()> {
     let sources = SqliteSources::new(blocks, Arc::new(Signer), vec![gate as Arc<dyn SourceAuthorizer>], memory)?;
     let found = sources.checkpoint(primary.clone()).await?.ok_or("checkpoint missing")?;
     assert_eq!(found.revision, third.revision());
+    assert_eq!(sources.open_stream(opening(2, 3)).await?, epoch);
     println!(
-        "source ingest: atomic step commit, retried receipt, owned display parts, checkpoint state handover, index and projection effects, refusals without writes and restart passed"
+        "source ingest: atomic step commit, retried receipt, owned display parts, checkpoint state handover, index and projection effects, refusals without writes, stream epoch opening and restart passed"
     );
     Ok(())
 }

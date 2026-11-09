@@ -99,6 +99,21 @@ impl AccountId {
     }
 }
 
+impl StreamId {
+    /// The one stream an object's source facts of `kind` are sequenced in. A new
+    /// producer continues the same stream under a new epoch.
+    pub fn of(object: &ObjectKey, kind: &str) -> Self {
+        let mut hash = Sha256::new();
+        hash.update(b"fastctx.sync.object-stream.v1\0");
+        hash.update(object.scope.hub.bytes());
+        for field in [object.scope.scope.as_str(), object.object.as_str(), kind] {
+            hash.update((field.len() as u64).to_be_bytes());
+            hash.update(field.as_bytes());
+        }
+        Self::from_bytes(hash.finalize().into())
+    }
+}
+
 impl Digest {
     pub fn bytes(&self) -> [u8; 32] {
         std::array::from_fn(|index| {
