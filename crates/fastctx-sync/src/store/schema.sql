@@ -27,8 +27,10 @@ CREATE TABLE sync_accounts (
     hub TEXT NOT NULL, account TEXT NOT NULL, legacy_name TEXT NOT NULL,
     opened TEXT NOT NULL, PRIMARY KEY(hub,account), UNIQUE(hub,legacy_name,opened)
 ) WITHOUT ROWID;
+-- Where each scope row came from: opened by this World for a subject it hosts
+-- under its alone hub, or installed from a hub's directory evidence.
 CREATE TABLE sync_scopes (
-    hub TEXT NOT NULL, scope TEXT NOT NULL, policy BLOB NOT NULL,
+    hub TEXT NOT NULL, scope TEXT NOT NULL, origin BLOB NOT NULL CHECK(length(origin) BETWEEN 2 AND 262144),
     acl_revision BLOB NOT NULL CHECK(length(acl_revision)=8),
     enabled INTEGER NOT NULL CHECK(enabled IN (0,1)),
     publication_epoch BLOB NOT NULL CHECK(length(publication_epoch)=8),

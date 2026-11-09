@@ -17,6 +17,7 @@ pub(crate) enum Role {
     Source,
     Projection,
     Supply,
+    Scopes,
 }
 thread_local! { static ACTIVE: Cell<Option<Role>> = const { Cell::new(None) }; }
 pub(crate) struct Boundary(Option<Role>, PhantomData<Rc<()>>);
@@ -70,6 +71,7 @@ fn permits(table: &str) -> bool {
                 | "sync_tasks"
         ),
         Some(Role::FormatUpgrade) => table == "sync_format_upgrades",
+        Some(Role::Scopes) => table == "sync_scopes",
         Some(Role::Source) => matches!(
             table,
             "sync_source_step_heads"

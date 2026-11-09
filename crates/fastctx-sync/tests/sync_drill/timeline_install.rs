@@ -13,6 +13,7 @@ use fastctx_sync::{
         ingest::{IngestBatch, IngestFacts, IngestOperation, SourceCheckpoint, SourceIngest, SourceTarget},
         ingest_effects::{DirtyProjection, SourceEffects},
         ingest_memory::IngestBudget,
+        scopes::SqliteScopes,
         source_authorize::SourceAuthorizer,
         source_step::{SourceStep, SourceStepTarget},
         sources::SqliteSources,
@@ -24,7 +25,7 @@ use fastctx_sync::{
     },
 };
 use fastctx_types::sync::{
-    conversation_identity::{ItemKey, ItemRole, NativeId, NativeItemKey},
+    conversation_identity::{ItemKey, ItemRole, NativeId, NativeItemKey, conversation_scope},
     conversation_timeline::{
         BodyAuthority, BodySnapshot, Evidence, ItemIdentity, Observation, TimelineEvent, TimelineFact,
     },
@@ -368,8 +369,19 @@ pub(super) async fn run(root: &Path) -> Result<()> {
     while blocks.collect(64).await? != 0 {}
     assert_eq!(count(&db, &format!("SELECT COUNT(*) FROM sync_asset_manifests WHERE hash='{root_one}'"))?, 0);
     assert_eq!(count(&db, &format!("SELECT COUNT(*) FROM sync_asset_manifests WHERE hash='{root_two}'"))?, 1);
+    // A World opens the scope of a conversation it hosts under its alone hub,
+    // derived from the conversation and kept with its origin.
+    let alone = HubId::from_bytes([97; 8]);
+    let device = DeviceId::from_bytes([97; 32]);
+    let hosted = ObjectId::from_bytes([98; 32]);
+    let scopes = SqliteScopes::new(blocks.clone(), alone.clone(), device);
+    let opened = scopes.open_conversation(hosted.clone()).await?;
+    assert_eq!(opened, ScopeKey { hub: alone.clone(), scope: conversation_scope(&hosted) });
+    assert_eq!(scopes.open_conversation(hosted.clone()).await?, opened);
+    let other = SqliteScopes::new(blocks.clone(), alone, DeviceId::from_bytes([99; 32]));
+    assert!(matches!(other.open_conversation(hosted).await, Err(fastctx_sync::store::Error::Invalid(_))));
     println!(
-        "timeline install: item revisions to snapshot and index, indexed and fenced reads, item and stream reads, notices, release, input-only passes, retraction, idempotent rerun and head retention passed"
+        "timeline install: item revisions to snapshot and index, indexed and fenced reads, item and stream reads, notices, release, input-only passes, retraction, idempotent rerun, head retention and hosted scopes passed"
     );
     Ok(())
 }

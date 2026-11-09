@@ -40,6 +40,32 @@ impl SqliteScheduler {
         }
         Ok(Self { db, worker, holder, lease_millis })
     }
+    /// The earliest time any task becomes claimable. It is a read, unlike
+    /// claiming, so an idle worker sleeps until then instead of polling.
+    pub fn next_due(&self) -> FutureResult<'_, Option<i64>> {
+        Box::pin(async move {
+            self.db
+                .read(|db| {
+                    let mut earliest: Option<i64> = None;
+                    let mut query = db.prepare_cached(
+                        "SELECT next_due FROM sync_tasks WHERE state=?1 AND priority=?2 ORDER BY next_due LIMIT 1",
+                    )?;
+                    for state in ["ready", "leased", "blocked"] {
+                        for priority in 0..4_u8 {
+                            let found: Option<i64> =
+                                query.query_row(params![state, priority], |row| row.get(0)).optional()?;
+                            earliest = match (earliest, found) {
+                                (Some(known), Some(found)) => Some(known.min(found)),
+                                (known, found) => known.or(found),
+                            };
+                        }
+                    }
+                    Ok(earliest)
+                })
+                .await
+                .map_err(|error| sql::error(error, self.worker.clone()))
+        })
+    }
 }
 
 /// These are scheduler handlers, not arbitrary asset namespaces or SQL tables.

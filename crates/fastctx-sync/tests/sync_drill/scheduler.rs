@@ -36,7 +36,7 @@ fn task(key: &str, wanted: u64, publication: u64) -> Task {
 fn open(path: &Path, enabled: bool, publication: u64) -> fastctx_storage::Result<Database> {
     Database::open_guarded(path, "", boundary::guard, move |db| {
         schema::initialize(db)?;
-        db.execute("INSERT INTO sync_scopes(hub,scope,policy,acl_revision,enabled,publication_epoch) VALUES(?1,?2,X'7b7d',?3,?4,?5) ON CONFLICT(hub,scope) DO UPDATE SET enabled=excluded.enabled,publication_epoch=excluded.publication_epoch",params![scope().hub.to_string(),scope().scope.as_str(),1u64.to_be_bytes().as_slice(),enabled,publication.to_be_bytes().as_slice()])?;
+        db.execute("INSERT INTO sync_scopes(hub,scope,origin,acl_revision,enabled,publication_epoch) VALUES(?1,?2,X'7b7d',?3,?4,?5) ON CONFLICT(hub,scope) DO UPDATE SET enabled=excluded.enabled,publication_epoch=excluded.publication_epoch",params![scope().hub.to_string(),scope().scope.as_str(),1u64.to_be_bytes().as_slice(),enabled,publication.to_be_bytes().as_slice()])?;
         Ok(())
     })
 }

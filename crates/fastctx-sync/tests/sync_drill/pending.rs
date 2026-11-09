@@ -148,7 +148,7 @@ pub(super) async fn run(root: &Path) -> Result<()> {
     let path = dir.join("replica.sqlite3");
     let other = ScopeKey { hub: scope().hub, scope: ScopeId::from_bytes([51; 32]) };
     let db = open_with(&path, |db| {
-        db.execute("INSERT INTO sync_scopes(hub,scope,policy,acl_revision,enabled,publication_epoch) VALUES(?1,?2,X'7b7d',?3,1,?3)",params![other.hub.to_string(),other.scope.as_str(),1_u64.to_be_bytes().as_slice()])?;
+        db.execute("INSERT INTO sync_scopes(hub,scope,origin,acl_revision,enabled,publication_epoch) VALUES(?1,?2,X'7b7d',?3,1,?3)",params![other.hub.to_string(),other.scope.as_str(),1_u64.to_be_bytes().as_slice()])?;
         Ok(())
     })?;
     let gate = Arc::new(Policy {

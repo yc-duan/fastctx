@@ -112,7 +112,7 @@ fn open_with(
 ) -> Result<Database> {
     Ok(Database::open_guarded(path, "", boundary::guard, |db| {
         schema::initialize(db)?;
-        db.execute("INSERT INTO sync_scopes(hub,scope,policy,acl_revision,enabled,publication_epoch) VALUES(?1,?2,X'7b7d',?3,1,?3) ON CONFLICT(hub,scope) DO NOTHING",params![scope().hub.to_string(),scope().scope.as_str(),1_u64.to_be_bytes().as_slice()])?;
+        db.execute("INSERT INTO sync_scopes(hub,scope,origin,acl_revision,enabled,publication_epoch) VALUES(?1,?2,X'7b7d',?3,1,?3) ON CONFLICT(hub,scope) DO NOTHING",params![scope().hub.to_string(),scope().scope.as_str(),1_u64.to_be_bytes().as_slice()])?;
         initialize(db)
     })?)
 }

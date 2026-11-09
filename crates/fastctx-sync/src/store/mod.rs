@@ -15,6 +15,7 @@ pub mod projection;
 pub mod replica;
 pub mod roots;
 pub mod schema;
+pub mod scopes;
 pub mod source_authorize;
 pub mod source_step;
 pub mod sources;
