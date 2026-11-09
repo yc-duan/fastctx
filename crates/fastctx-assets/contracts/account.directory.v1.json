@@ -1,0 +1,271 @@
+{
+  "kind": "account.directory",
+  "schema": 1,
+  "contract": "Only the committed ScopeDescriptor public shape is installed. Proof verification, current membership and source transition authorization are separate. Control facts await the foundation family; ordinary mutations are denied.",
+  "cases": [
+    {
+      "name": "administrator",
+      "body": {
+        "format": 1,
+        "scope": {
+          "hub": "w-0102030405060708",
+          "scope": "s-1111111111111111111111111111111111111111111111111111111111111111"
+        },
+        "owner": {
+          "owner": "hub"
+        },
+        "subject": {
+          "subject": "administrators"
+        },
+        "visibility": {
+          "visibility": "current"
+        },
+        "revision": {
+          "authority_epoch": "e-22222222222222222222222222222222",
+          "revision": "1"
+        },
+        "acl_revision": "1",
+        "lifecycle": "live"
+      },
+      "valid": true
+    },
+    {
+      "name": "machine-segment",
+      "body": {
+        "format": 1,
+        "scope": {
+          "hub": "w-0102030405060708",
+          "scope": "s-1111111111111111111111111111111111111111111111111111111111111111"
+        },
+        "owner": {
+          "owner": "account",
+          "identity": {
+            "id": "a-3333333333333333333333333333333333333333333333333333333333333333",
+            "name": "owner",
+            "opened": "2026-01-01T00:00:00Z"
+          }
+        },
+        "subject": {
+          "subject": "machine",
+          "device": "d-4444444444444444444444444444444444444444444444444444444444444444"
+        },
+        "visibility": {
+          "visibility": "since_grant",
+          "opened_acl": "1"
+        },
+        "revision": {
+          "authority_epoch": "e-22222222222222222222222222222222",
+          "revision": "1"
+        },
+        "acl_revision": "1",
+        "lifecycle": "live"
+      },
+      "valid": true
+    },
+    {
+      "name": "scope-tombstone",
+      "body": {
+        "format": 1,
+        "scope": {
+          "hub": "w-0102030405060708",
+          "scope": "s-1111111111111111111111111111111111111111111111111111111111111111"
+        },
+        "owner": {
+          "owner": "hub"
+        },
+        "subject": {
+          "subject": "administrators"
+        },
+        "visibility": {
+          "visibility": "current"
+        },
+        "revision": {
+          "authority_epoch": "e-22222222222222222222222222222222",
+          "revision": "1"
+        },
+        "acl_revision": "1",
+        "lifecycle": "deleted"
+      },
+      "valid": true
+    },
+    {
+      "name": "unknown-payload-field",
+      "body": {
+        "format": 1,
+        "scope": {
+          "hub": "w-0102030405060708",
+          "scope": "s-1111111111111111111111111111111111111111111111111111111111111111"
+        },
+        "owner": {
+          "owner": "hub"
+        },
+        "subject": {
+          "subject": "administrators"
+        },
+        "visibility": {
+          "visibility": "current"
+        },
+        "revision": {
+          "authority_epoch": "e-22222222222222222222222222222222",
+          "revision": "1"
+        },
+        "acl_revision": "1",
+        "lifecycle": "live",
+        "secret": "placeholder"
+      },
+      "valid": false
+    },
+    {
+      "name": "removed-scope",
+      "body": {
+        "format": 1,
+        "scope": {
+          "hub": "w-0102030405060708",
+          "scope": "s-1111111111111111111111111111111111111111111111111111111111111111"
+        },
+        "owner": {
+          "owner": "hub"
+        },
+        "subject": {
+          "subject": "administrators"
+        },
+        "visibility": {
+          "visibility": "current"
+        },
+        "revision": {
+          "authority_epoch": "e-22222222222222222222222222222222",
+          "revision": "1"
+        },
+        "acl_revision": "1",
+        "lifecycle": "removed"
+      },
+      "valid": false
+    },
+    {
+      "name": "zero-acl",
+      "body": {
+        "format": 1,
+        "scope": {
+          "hub": "w-0102030405060708",
+          "scope": "s-1111111111111111111111111111111111111111111111111111111111111111"
+        },
+        "owner": {
+          "owner": "hub"
+        },
+        "subject": {
+          "subject": "administrators"
+        },
+        "visibility": {
+          "visibility": "current"
+        },
+        "revision": {
+          "authority_epoch": "e-22222222222222222222222222222222",
+          "revision": "1"
+        },
+        "acl_revision": "0",
+        "lifecycle": "live"
+      },
+      "valid": false
+    },
+    {
+      "name": "account-owned-admin",
+      "body": {
+        "format": 1,
+        "scope": {
+          "hub": "w-0102030405060708",
+          "scope": "s-1111111111111111111111111111111111111111111111111111111111111111"
+        },
+        "owner": {
+          "owner": "account",
+          "identity": {
+            "id": "a-3333333333333333333333333333333333333333333333333333333333333333",
+            "name": "owner",
+            "opened": "2026-01-01T00:00:00Z"
+          }
+        },
+        "subject": {
+          "subject": "administrators"
+        },
+        "visibility": {
+          "visibility": "current"
+        },
+        "revision": {
+          "authority_epoch": "e-22222222222222222222222222222222",
+          "revision": "1"
+        },
+        "acl_revision": "1",
+        "lifecycle": "live"
+      },
+      "valid": false
+    },
+    {
+      "name": "hub-owned-machine",
+      "body": {
+        "format": 1,
+        "scope": {
+          "hub": "w-0102030405060708",
+          "scope": "s-1111111111111111111111111111111111111111111111111111111111111111"
+        },
+        "owner": {
+          "owner": "hub"
+        },
+        "subject": {
+          "subject": "machine",
+          "device": "d-4444444444444444444444444444444444444444444444444444444444444444"
+        },
+        "visibility": {
+          "visibility": "since_grant",
+          "opened_acl": "1"
+        },
+        "revision": {
+          "authority_epoch": "e-22222222222222222222222222222222",
+          "revision": "1"
+        },
+        "acl_revision": "1",
+        "lifecycle": "live"
+      },
+      "valid": false
+    },
+    {
+      "name": "future-opening",
+      "body": {
+        "format": 1,
+        "scope": {
+          "hub": "w-0102030405060708",
+          "scope": "s-1111111111111111111111111111111111111111111111111111111111111111"
+        },
+        "owner": {
+          "owner": "account",
+          "identity": {
+            "id": "a-3333333333333333333333333333333333333333333333333333333333333333",
+            "name": "owner",
+            "opened": "2026-01-01T00:00:00Z"
+          }
+        },
+        "subject": {
+          "subject": "machine",
+          "device": "d-4444444444444444444444444444444444444444444444444444444444444444"
+        },
+        "visibility": {
+          "visibility": "since_grant",
+          "opened_acl": "2"
+        },
+        "revision": {
+          "authority_epoch": "e-22222222222222222222222222222222",
+          "revision": "1"
+        },
+        "acl_revision": "1",
+        "lifecycle": "live"
+      },
+      "valid": false
+    },
+    {
+      "name": "control-not-yet-installed",
+      "body": {
+        "control": "grant",
+        "format": 1
+      },
+      "valid": false
+    }
+  ]
+}

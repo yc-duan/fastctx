@@ -1,0 +1,168 @@
+{
+  "kind": "account.settings",
+  "schema": 1,
+  "contract": "Closed public history/sentinel settings. Credential values, secret-presence queries and home status are runtime projection inputs, never this asset payload.",
+  "cases": [
+    {
+      "name": "history-off",
+      "body": {
+        "setting": "history",
+        "value": {
+          "on": false
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "history-on",
+      "body": {
+        "setting": "history",
+        "value": {
+          "on": true
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "sentinel-empty",
+      "body": {
+        "setting": "sentinel",
+        "value": {
+          "home": null,
+          "model": null,
+          "search": null
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "sentinel-model",
+      "body": {
+        "setting": "sentinel",
+        "value": {
+          "model": {
+            "protocol": "open_ai",
+            "endpoint": "https://example.invalid/v1",
+            "model": "model-a"
+          }
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "loopback-http",
+      "body": {
+        "setting": "sentinel",
+        "value": {
+          "model": {
+            "protocol": "open_ai",
+            "endpoint": "http://[::1]:8080",
+            "model": "model-a"
+          }
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "endpoint-query",
+      "body": {
+        "setting": "sentinel",
+        "value": {
+          "model": {
+            "protocol": "open_ai",
+            "endpoint": "https://example.invalid/v1?mode=a",
+            "model": "model-a"
+          }
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "remote-http",
+      "body": {
+        "setting": "sentinel",
+        "value": {
+          "model": {
+            "protocol": "open_ai",
+            "endpoint": "http://example.invalid",
+            "model": "model-a"
+          }
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "endpoint-credential",
+      "body": {
+        "setting": "sentinel",
+        "value": {
+          "model": {
+            "protocol": "open_ai",
+            "endpoint": "https://user:pass@example.invalid",
+            "model": "model-a"
+          }
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "secret-key",
+      "body": {
+        "setting": "sentinel",
+        "value": {
+          "key": "placeholder"
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "secret-in-model",
+      "body": {
+        "setting": "sentinel",
+        "value": {
+          "model": {
+            "protocol": "open_ai",
+            "endpoint": "https://example.invalid/v1",
+            "model": "model-a",
+            "key": "placeholder"
+          }
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "status-is-runtime",
+      "body": {
+        "setting": "sentinel",
+        "value": {
+          "home": null,
+          "model": null,
+          "search": null
+        },
+        "home_status": {
+          "kind": "ready"
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "unknown-subtype",
+      "body": {
+        "setting": "future",
+        "value": {}
+      },
+      "valid": false
+    },
+    {
+      "name": "history-extra",
+      "body": {
+        "setting": "history",
+        "value": {
+          "on": true,
+          "secret": "placeholder"
+        }
+      },
+      "valid": false
+    }
+  ]
+}

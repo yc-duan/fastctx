@@ -1,0 +1,162 @@
+{
+  "kind": "account.skill",
+  "schema": 1,
+  "contract": "Metadata references a complete directory root. Validation alone does not prove the root contents; mutation activation awaits prepared directory evidence and atomic name/index publication. Original authors, commits and revisions remain in their acceptance or migration envelopes.",
+  "cases": [
+    {
+      "name": "directory-reference",
+      "body": {
+        "name": "review",
+        "description": "Review changes",
+        "directory": {
+          "kind": "manifest",
+          "root": {
+            "domain": {
+              "hub": "w-0102030405060708",
+              "scope": "s-1111111111111111111111111111111111111111111111111111111111111111"
+            },
+            "algorithm": "sha256",
+            "digest": "5555555555555555555555555555555555555555555555555555555555555555"
+          }
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "description-trim-contract",
+      "body": {
+        "name": "review",
+        "description": " Review changes ",
+        "directory": {
+          "kind": "manifest",
+          "root": {
+            "domain": {
+              "hub": "w-0102030405060708",
+              "scope": "s-1111111111111111111111111111111111111111111111111111111111111111"
+            },
+            "algorithm": "sha256",
+            "digest": "5555555555555555555555555555555555555555555555555555555555555555"
+          }
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "extra-commit-field",
+      "body": {
+        "name": "review",
+        "description": "Review changes",
+        "directory": {
+          "kind": "manifest",
+          "root": {
+            "domain": {
+              "hub": "w-0102030405060708",
+              "scope": "s-1111111111111111111111111111111111111111111111111111111111111111"
+            },
+            "algorithm": "sha256",
+            "digest": "5555555555555555555555555555555555555555555555555555555555555555"
+          }
+        },
+        "commit": 1
+      },
+      "valid": false
+    },
+    {
+      "name": "uppercase-name",
+      "body": {
+        "name": "Review",
+        "description": "Review changes",
+        "directory": {
+          "kind": "manifest",
+          "root": {
+            "domain": {
+              "hub": "w-0102030405060708",
+              "scope": "s-1111111111111111111111111111111111111111111111111111111111111111"
+            },
+            "algorithm": "sha256",
+            "digest": "5555555555555555555555555555555555555555555555555555555555555555"
+          }
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "empty-description",
+      "body": {
+        "name": "review",
+        "description": " ",
+        "directory": {
+          "kind": "manifest",
+          "root": {
+            "domain": {
+              "hub": "w-0102030405060708",
+              "scope": "s-1111111111111111111111111111111111111111111111111111111111111111"
+            },
+            "algorithm": "sha256",
+            "digest": "5555555555555555555555555555555555555555555555555555555555555555"
+          }
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "multiline-description",
+      "body": {
+        "name": "review",
+        "description": "a\nb",
+        "directory": {
+          "kind": "manifest",
+          "root": {
+            "domain": {
+              "hub": "w-0102030405060708",
+              "scope": "s-1111111111111111111111111111111111111111111111111111111111111111"
+            },
+            "algorithm": "sha256",
+            "digest": "5555555555555555555555555555555555555555555555555555555555555555"
+          }
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "single-is-not-directory",
+      "body": {
+        "name": "review",
+        "description": "Review changes",
+        "directory": {
+          "kind": "single",
+          "block": {
+            "domain": {
+              "hub": "w-0102030405060708",
+              "scope": "s-1111111111111111111111111111111111111111111111111111111111111111"
+            },
+            "algorithm": "sha256",
+            "digest": "5555555555555555555555555555555555555555555555555555555555555555"
+          },
+          "decoded_bytes": 4
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "inline-files-not-metadata",
+      "body": {
+        "name": "review",
+        "description": "Review changes",
+        "directory": {
+          "kind": "manifest",
+          "root": {
+            "domain": {
+              "hub": "w-0102030405060708",
+              "scope": "s-1111111111111111111111111111111111111111111111111111111111111111"
+            },
+            "algorithm": "sha256",
+            "digest": "5555555555555555555555555555555555555555555555555555555555555555"
+          }
+        },
+        "files": []
+      },
+      "valid": false
+    }
+  ]
+}

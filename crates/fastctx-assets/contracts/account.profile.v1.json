@@ -1,0 +1,152 @@
+{
+  "kind": "account.profile",
+  "schema": 1,
+  "contract": "Authority/legacy versions live outside this payload. Unknown public fields survive unchanged; mutation authorization rejects changes to unknown fields. Command MCP entries contain only their location.",
+  "cases": [
+    {
+      "name": "defaults",
+      "body": {},
+      "valid": true
+    },
+    {
+      "name": "explicit-empty-family",
+      "body": {
+        "prompt": "fallback",
+        "prompts": {
+          "claude": ""
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "default-subagents",
+      "body": {
+        "subagents": null
+      },
+      "valid": true
+    },
+    {
+      "name": "empty-subagents",
+      "body": {
+        "subagents": {
+          "agents": [],
+          "instructions": ""
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "opaque-existing-field",
+      "body": {
+        "future_public": {
+          "label": "kept"
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "model-value-keeps-old-contract",
+      "body": {
+        "claude": {
+          "model": {
+            "future": "value"
+          }
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "remote-headers",
+      "body": {
+        "servers": {
+          "docs": {
+            "kind": "remote",
+            "url": "https://example.invalid/mcp",
+            "headers": {
+              "Authorization": "placeholder"
+            }
+          }
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "command-location",
+      "body": {
+        "servers": {
+          "tools": {
+            "kind": "command",
+            "machine": "worker"
+          }
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "command-details-not-an-asset",
+      "body": {
+        "servers": {
+          "tools": {
+            "kind": "command",
+            "machine": "worker",
+            "command": "program"
+          }
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "hooks-denied",
+      "body": {
+        "claude": {
+          "hooks": {}
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "claude-env-denied",
+      "body": {
+        "claude": {
+          "env": {
+            "API_KEY": "placeholder"
+          }
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "wrong-memory-type",
+      "body": {
+        "memory": "false"
+      },
+      "valid": false
+    },
+    {
+      "name": "unknown-layer",
+      "body": {
+        "layer": "future"
+      },
+      "valid": false
+    },
+    {
+      "name": "reserved-mcp-name",
+      "body": {
+        "servers": {
+          "FastCtx": {
+            "kind": "remote",
+            "url": "https://example.invalid"
+          }
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "legacy-version-is-envelope",
+      "body": {
+        "version": 7
+      },
+      "valid": false
+    }
+  ]
+}

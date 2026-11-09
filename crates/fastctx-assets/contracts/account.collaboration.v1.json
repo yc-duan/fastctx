@@ -1,0 +1,244 @@
+{
+  "kind": "account.collaboration",
+  "schema": 1,
+  "contract": "Version counters are envelope metadata. None at_once follows the existing default; legacy writes preserve unsaid limits by stable callee name. Unknown fields are not writable by an older schema.",
+  "cases": [
+    {
+      "name": "empty-config",
+      "body": {
+        "on": false,
+        "callers": [],
+        "callees": [],
+        "prompt": null,
+        "rules": ""
+      },
+      "valid": true
+    },
+    {
+      "name": "prompt-explicit-empty",
+      "body": {
+        "on": false,
+        "callers": [],
+        "callees": [],
+        "prompt": "",
+        "rules": ""
+      },
+      "valid": true
+    },
+    {
+      "name": "missing-screen-and-at-once",
+      "body": {
+        "on": false,
+        "callers": [],
+        "callees": [
+          {
+            "name": "helper",
+            "use_when": "review",
+            "login": {
+              "machine": "worker",
+              "agent": "codex",
+              "home": null
+            },
+            "model": null,
+            "effort": null
+          }
+        ],
+        "prompt": null,
+        "rules": ""
+      },
+      "valid": true
+    },
+    {
+      "name": "unlimited",
+      "body": {
+        "on": false,
+        "callers": [],
+        "callees": [
+          {
+            "name": "helper",
+            "use_when": "review",
+            "login": {
+              "machine": "worker",
+              "agent": "codex",
+              "home": null
+            },
+            "model": null,
+            "effort": null,
+            "at_once": "any"
+          }
+        ],
+        "prompt": null,
+        "rules": ""
+      },
+      "valid": true
+    },
+    {
+      "name": "limited",
+      "body": {
+        "on": false,
+        "callers": [],
+        "callees": [
+          {
+            "name": "helper",
+            "use_when": "review",
+            "login": {
+              "machine": "worker",
+              "agent": "codex",
+              "home": null
+            },
+            "model": null,
+            "effort": null,
+            "at_once": {
+              "most": 4
+            }
+          }
+        ],
+        "prompt": null,
+        "rules": ""
+      },
+      "valid": true
+    },
+    {
+      "name": "future-callee-field",
+      "body": {
+        "on": false,
+        "callers": [],
+        "callees": [
+          {
+            "name": "helper",
+            "use_when": "review",
+            "login": {
+              "machine": "worker",
+              "agent": "codex",
+              "home": null
+            },
+            "model": null,
+            "effort": null,
+            "future_public": "kept"
+          }
+        ],
+        "prompt": null,
+        "rules": ""
+      },
+      "valid": true
+    },
+    {
+      "name": "duplicate-callee",
+      "body": {
+        "on": false,
+        "callers": [],
+        "callees": [
+          {
+            "name": "helper",
+            "use_when": "review",
+            "login": {
+              "machine": "worker",
+              "agent": "codex",
+              "home": null
+            },
+            "model": null,
+            "effort": null
+          },
+          {
+            "name": "helper",
+            "use_when": "review",
+            "login": {
+              "machine": "worker",
+              "agent": "codex",
+              "home": null
+            },
+            "model": null,
+            "effort": null
+          }
+        ],
+        "prompt": null,
+        "rules": ""
+      },
+      "valid": false
+    },
+    {
+      "name": "claude-callee",
+      "body": {
+        "on": false,
+        "callers": [],
+        "callees": [
+          {
+            "name": "helper",
+            "use_when": "review",
+            "login": {
+              "machine": "worker",
+              "agent": "claude",
+              "home": null
+            },
+            "model": null,
+            "effort": null
+          }
+        ],
+        "prompt": null,
+        "rules": ""
+      },
+      "valid": false
+    },
+    {
+      "name": "zero-limit",
+      "body": {
+        "on": false,
+        "callers": [],
+        "callees": [
+          {
+            "name": "helper",
+            "use_when": "review",
+            "login": {
+              "machine": "worker",
+              "agent": "codex",
+              "home": null
+            },
+            "model": null,
+            "effort": null,
+            "at_once": {
+              "most": 0
+            }
+          }
+        ],
+        "prompt": null,
+        "rules": ""
+      },
+      "valid": false
+    },
+    {
+      "name": "uppercase-name",
+      "body": {
+        "on": false,
+        "callers": [],
+        "callees": [
+          {
+            "name": "Helper",
+            "use_when": "review",
+            "login": {
+              "machine": "worker",
+              "agent": "codex",
+              "home": null
+            },
+            "model": null,
+            "effort": null
+          }
+        ],
+        "prompt": null,
+        "rules": ""
+      },
+      "valid": false
+    },
+    {
+      "name": "legacy-version-is-envelope",
+      "body": {
+        "on": false,
+        "callers": [],
+        "callees": [],
+        "prompt": null,
+        "rules": "",
+        "version": 4
+      },
+      "valid": false
+    }
+  ]
+}
