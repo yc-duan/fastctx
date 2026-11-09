@@ -306,7 +306,17 @@ fn read_rows(
         {
             continue;
         }
-        if bookkeeping(row.kind().expect("type checked")) {
+        let kind = row.kind().expect("type checked");
+        if bookkeeping(kind) {
+            continue;
+        }
+        // Claude Code adds bookkeeping rows of new kinds with most releases. A
+        // row outside the conversation's tree, with no UUID, of a kind this
+        // reader does not take is one of them: it is left out, not reported as
+        // a damaged record that would leave the whole history unread.
+        if row.value.get("uuid").is_none()
+            && !matches!(kind, "user" | "assistant" | "attachment" | "system" | "queue-operation")
+        {
             continue;
         }
         // A message queued while a turn ran (a background task's notice, words
@@ -1043,6 +1053,7 @@ fn bookkeeping(kind: &str) -> bool {
             | "api-request-shape"
             | "api-request-blob"
             | "api-request"
+            | "tools-used"
             | "observer-ref"
             | "fork-context-ref"
             | "relocated"
