@@ -3,8 +3,7 @@
 use super::checkpoint_bundle::BoundState;
 use fastctx_hosts::claude::ingest::checkpoint::{CheckpointContext, PARSER_VERSION};
 use fastctx_sync::{
-    catalog::{SourceBatch, SourceRecord},
-    cursor::{ByteCount, Count, Sequence},
+    cursor::{ByteCount, Count},
     identity::{Digest, OperationId},
     store::{
         Error,
@@ -30,10 +29,9 @@ pub fn record_operation(step: &SourceStep, position: Count) -> OperationId {
 
 pub struct Destination {
     pub target: SourceStepTarget,
-    pub after: Sequence,
-    /// Already stored payloads and their direct owned roots. Descriptor Metadata
-    /// pages carry part ownership; logical cross-object links are not roots here.
-    pub records: Vec<SourceRecord>,
+    /// The shared canonical merger returns inputs and outputs together. Preserve
+    /// their evidence, record operations and ordering without reconstructing them.
+    pub facts: Option<IngestFacts>,
     pub effects: SourceEffects,
 }
 impl Destination {
@@ -41,42 +39,7 @@ impl Destination {
         if self.target.step().key() != step.key() || self.target.step().operation() != step.operation() {
             return Err(Error::Invalid("destination belongs to another source step".into()));
         }
-        if self.records.len() > 256 {
-            return Err(Error::Invalid("source batch exceeds its record count".into()));
-        }
-        let target = self.target.target();
-        let kind = target.custody.kind.registration();
-        let mut through = self.after;
-        for (position, record) in self.records.iter().enumerate() {
-            through.0 = through.0.checked_add(1).ok_or_else(|| Error::Invalid("source sequence overflow".into()))?;
-            if record.sequence != through
-                || record.kind != kind.id
-                || record.schema != kind.schema
-                || record.operation != record_operation(step, Count(position as u64))
-            {
-                return Err(Error::Invalid("source record differs from its stream or step position".into()));
-            }
-        }
-        let facts = if self.records.is_empty() {
-            None
-        } else {
-            Some(IngestFacts::Local {
-                batch: SourceBatch {
-                    format: 1,
-                    scope: target.custody.object.scope.clone(),
-                    stream: target.stream.clone(),
-                    producer: target.producer.clone(),
-                    epoch: target.epoch.clone(),
-                    operation: step.operation().clone(),
-                    kind: kind.id.into(),
-                    schema: kind.schema,
-                    after: self.after,
-                    through,
-                    records: self.records,
-                },
-            })
-        };
-        Ok(IngestBatch { target: self.target, facts, effects: self.effects })
+        Ok(IngestBatch { target: self.target, facts: self.facts, effects: self.effects })
     }
 }
 
