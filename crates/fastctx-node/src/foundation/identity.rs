@@ -4,7 +4,7 @@ use std::{io, sync::Arc};
 
 use fastctx_net::sync_proof::IdentitySigner;
 use fastctx_sync::{
-    identity::{DeviceId, Digest, HubId, OperationId},
+    identity::{AccountId, DeviceId, Digest, HubId, OperationId},
     metrics::PlatformMetrics,
     proof::ProofSigner,
 };
@@ -13,6 +13,8 @@ use fastctx_types::layout::WorldDir;
 pub(super) struct Identity {
     pub device: DeviceId,
     pub alone: HubId,
+    /// The alone hub's one account: the World itself, whose directory it is.
+    pub owner: AccountId,
     pub signer: Arc<dyn ProofSigner>,
 }
 impl Identity {
@@ -21,7 +23,9 @@ impl Identity {
         let device = DeviceId::from_bytes(*key.public().as_bytes());
         let alone = crate::ledger::alone(world)?;
         let signer = Arc::new(IdentitySigner::device(alone.clone(), Arc::new(key), Arc::new(PlatformMetrics)));
-        Ok(Self { device, alone, signer })
+        let seed = format!("fastctx-node/alone-owner/v1\0{alone}");
+        let owner = AccountId::from_bytes(Digest::of(seed.as_bytes()).bytes());
+        Ok(Self { device, alone, owner, signer })
     }
 }
 

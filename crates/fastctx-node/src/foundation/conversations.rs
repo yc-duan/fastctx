@@ -3,12 +3,20 @@
 //! and timeline object derive from it. A World with any hub membership keeps
 //! its conversations' identity at the hub, so it hosts none this way.
 use fastctx_sync::{
-    identity::{ObjectId, ObjectKey, ScopeKey},
-    store::Error,
+    cursor::{Holder, HoldingPeriod, Revision},
+    identity::{ObjectId, ObjectKey, ProducerEpoch, ScopeKey},
+    registry::REGISTRY,
+    store::{
+        Error,
+        access::{AccessContext, Custody, HoldingUse, HostBinding, Principal},
+    },
 };
 use fastctx_types::{
     ResidentId,
-    sync::conversation_identity::{ConversationKey, ConversationObject, conversation_scope},
+    sync::{
+        conversation_identity::{ConversationKey, ConversationObject, conversation_scope},
+        conversation_timeline::KIND,
+    },
 };
 
 use super::Foundation;
@@ -42,6 +50,34 @@ impl Foundation {
         let scope = ScopeKey { hub: self.alone.clone(), scope: conversation_scope(&conversation) };
         let timeline = ObjectKey { scope, object: ConversationObject::Timeline.id(&conversation) };
         Some(Hosted { conversation, timeline })
+    }
+
+    /// The custody a hosted conversation's timeline is ingested under: this
+    /// device's runtime source for the alone hub's owner, at the first ACL
+    /// revision such scopes keep. `epoch` is the source stream's producer epoch.
+    #[allow(dead_code, reason = "the conversation ingestion adapter's entry")]
+    pub(crate) fn source_custody(&self, hosted: &Hosted, epoch: ProducerEpoch) -> Result<Custody, Error> {
+        let scope = hosted.timeline.scope.clone();
+        let first = Revision(1);
+        Ok(Custody {
+            context: AccessContext { principal: Principal::LocalService, scope: scope.clone(), observed_acl: first },
+            kind: REGISTRY.asset(KIND).map_err(Error::Invalid)?.registered(),
+            object: hosted.timeline.clone(),
+            purpose: HoldingUse::RuntimeSource {
+                host: HostBinding {
+                    conversation: ObjectKey { scope: scope.clone(), object: hosted.conversation.clone() },
+                    account: self.owner.clone(),
+                    host: self.device.clone(),
+                    epoch,
+                },
+            },
+            holding: HoldingPeriod {
+                holder: Holder::Device { device: self.device.clone() },
+                scope,
+                acl_revision: first,
+                publication_epoch: first,
+            },
+        })
     }
 
     /// Opens the hosted conversation's scope before its first ingestion; a

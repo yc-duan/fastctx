@@ -19,7 +19,7 @@ use fastctx_storage::Database;
 use fastctx_sync::{
     blocks::SqliteBlocks,
     cursor::Holder,
-    identity::{DeviceId, HubId},
+    identity::{AccountId, DeviceId, HubId},
     scheduler::{SqliteScheduler, Wake, Worker},
     store::{ingest_memory::IngestBudget, scopes::SqliteScopes, sources::SqliteSources, timelines::SqliteTimelines},
 };
@@ -37,6 +37,7 @@ pub(crate) struct Foundation {
     scopes: SqliteScopes,
     alone: HubId,
     device: DeviceId,
+    owner: AccountId,
     wake: Wake,
     /// Taken once by `run`.
     worker: Mutex<Option<Worker>>,
@@ -47,7 +48,8 @@ impl Foundation {
     pub(crate) fn open(world: &WorldDir, database: &Database, log: Arc<crate::log::Log>) -> anyhow::Result<Self> {
         let identity = identity::Identity::load(world)?;
         let holder = Holder::Device { device: identity.device.clone() };
-        let policy = Arc::new(policy::AlonePolicy::new(identity.alone.clone(), identity.device.clone()));
+        let policy =
+            Arc::new(policy::AlonePolicy::new(identity.alone.clone(), identity.device.clone(), identity.owner.clone()));
         let claims = identity::claims(&identity.device);
         let blocks = SqliteBlocks::new(
             database.clone(),
@@ -73,6 +75,7 @@ impl Foundation {
             scopes,
             alone: identity.alone,
             device: identity.device,
+            owner: identity.owner,
         })
     }
 
