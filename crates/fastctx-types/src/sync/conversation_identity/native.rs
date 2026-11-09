@@ -4,7 +4,12 @@ use super::{IdentityError, encoding::Encoder};
 use crate::{NoticeId, sync::cursor::Count};
 use serde::{Deserialize, Serialize};
 
-/// An opaque, nonempty native field. Case, whitespace and Unicode are preserved.
+/// Maximum encoded length of one native coordinate, in UTF-8 bytes.
+pub const NATIVE_ID_BYTES: usize = 4096;
+
+/// An opaque native field of 1..=4096 UTF-8 bytes. Case, whitespace and Unicode
+/// are preserved; an oversized identifier is rejected, never truncated or hashed
+/// into a different host coordinate.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct NativeId(String);
@@ -23,7 +28,13 @@ impl TryFrom<String> for NativeId {
     type Error = IdentityError;
 
     fn try_from(value: String) -> Result<Self, Self::Error> {
-        if value.is_empty() { Err(IdentityError::EmptyNativeId) } else { Ok(Self(value)) }
+        if value.is_empty() {
+            Err(IdentityError::EmptyNativeId)
+        } else if value.len() > NATIVE_ID_BYTES {
+            Err(IdentityError::NativeIdTooLong)
+        } else {
+            Ok(Self(value))
+        }
     }
 }
 

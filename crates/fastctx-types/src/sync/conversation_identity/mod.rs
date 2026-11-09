@@ -33,13 +33,17 @@ pub use keys::{
     ConversationKey, ConversationObject, ItemKey, ItemRole, ProvisionalKey, RelationKey, RelationRole, TurnKey,
     conversation_scope,
 };
-pub use native::{ImageSelector, LegacyDigest, NativeAgentKey, NativeId, NativeItemKey, NativeTurnKey};
+pub use native::{
+    ImageSelector, LegacyDigest, NATIVE_ID_BYTES, NativeAgentKey, NativeId, NativeItemKey, NativeTurnKey,
+};
 
 /// An identity cannot be constructed or two observations cannot be coalesced.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum IdentityError {
     #[error("a native identity must not be empty")]
     EmptyNativeId,
+    #[error("a native identity must not exceed 4096 UTF-8 bytes")]
+    NativeIdTooLong,
     #[error("a legacy event digest must be exactly 20 lowercase hex digits")]
     InvalidLegacyDigest,
     #[error("an alias must stay within one canonical conversation")]
