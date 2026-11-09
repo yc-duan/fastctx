@@ -1,5 +1,6 @@
 //! Fixed metric names; account IDs and object paths belong in bounded scenes.
 
+pub mod observe;
 mod platform;
 pub use platform::PlatformMetrics;
 
@@ -17,6 +18,10 @@ macro_rules! measures {
 }
 measures!(Counter {
     IngestBytes => "sync.ingest_bytes",
+    SourceOpenCalls => "sync.source_open_calls",
+    SourceReadCalls => "sync.source_read_calls",
+    SourceRpcCalls => "sync.source_rpc_calls",
+    ObservationDropped => "sync.observation_dropped",
     NewSourceBytes => "sync.new_source_bytes",
     ReconcileBytes => "sync.reconcile_bytes",
     DuplicateRecords => "sync.duplicate_records",
@@ -52,6 +57,14 @@ measures!(Gauge {
 });
 measures!(Latency {
     Ingest => "sync.ingest",
+    SourceOpen => "sync.source.open",
+    SourceRead => "sync.source.read",
+    SourceParse => "sync.source.parse",
+    Normalize => "sync.normalize",
+    BlockHash => "sync.block.hash",
+    BlockWrite => "sync.block.write",
+    Ipc => "sync.ipc",
+    ShellSerialize => "sync.shell.serialize",
     ReadPage => "sync.read_page",
     Apply => "sync.apply",
     Commit => "sync.commit",
