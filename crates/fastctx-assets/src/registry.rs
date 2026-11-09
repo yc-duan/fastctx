@@ -1,12 +1,8 @@
-//! Intake readiness is separate from the foundation's persistence registration.
-//! No entry advertises service readiness merely because its schema is available.
-use crate::{
-    account::{Authorizer, Handler, Kind},
-    context::AccountState,
-};
-use fastctx_sync::registry::{DataClass, Lightweight, REGISTRY, Registration, handlers::KindHandler};
-use fastctx_sync::store::authorize::MutationAuthorizer;
-use std::sync::Arc;
+//! The intake list describes readiness; it is not an activation gate by itself.
+//! Service composition must use [`crate::installation::ready`] and install each
+//! returned kind's reader policy and mutation authorizer with its handler before
+//! advertising it. A standalone schema handler never authorizes object reads.
+use fastctx_sync::registry::{DataClass, DecisionState, Lightweight, REGISTRY, Registration};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MissingPort {
@@ -31,10 +27,23 @@ pub struct Intake {
     pub schema_available: bool,
     pub missing: &'static [MissingPort],
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Readiness {
+    Unavailable,
+    SchemaOnly,
+    Ready,
+}
 impl Intake {
-    /// Advertising follows complete service composition, not enum registration.
-    pub fn can_advertise(&self) -> bool {
-        self.missing.is_empty()
+    /// Service readiness also requires an approved persistence registration.
+    /// Advertising additionally requires installation of all returned ports.
+    pub fn readiness(&self) -> Readiness {
+        if !self.schema_available {
+            Readiness::Unavailable
+        } else if self.registration.decision != DecisionState::Confirmed || !self.missing.is_empty() {
+            Readiness::SchemaOnly
+        } else {
+            Readiness::Ready
+        }
     }
 }
 
@@ -55,6 +64,7 @@ pub fn entries() -> Vec<Intake> {
                         MissingPort::SourceAuthorizer,
                         MissingPort::DirectoryControlFacts,
                         MissingPort::ProjectionContext,
+                        MissingPort::KindReaderPolicy,
                     ],
                 ),
                 "account.profile" | "account.collaboration" | "account.settings" => (
@@ -77,6 +87,7 @@ pub fn entries() -> Vec<Intake> {
                         MissingPort::ProjectionContext,
                         MissingPort::FoundationRegistration,
                         MissingPort::LegacyNodeDelegation,
+                        MissingPort::KindReaderPolicy,
                     ],
                 ),
                 "conversation.timeline" => {
@@ -141,13 +152,3 @@ pub const DIAGNOSTIC_DEPENDENCIES: &[MissingPort] = &[
     MissingPort::SourceAuthorizer,
     MissingPort::BusinessHandler,
 ];
-
-pub fn schema_handlers() -> Vec<Arc<dyn KindHandler>> {
-    Kind::ALL.into_iter().map(|kind| Arc::new(Handler(kind)) as Arc<dyn KindHandler>).collect()
-}
-pub fn mutation_authorizers(state: Arc<dyn AccountState>) -> Vec<Arc<dyn MutationAuthorizer>> {
-    Kind::ALL
-        .into_iter()
-        .map(|kind| Arc::new(Authorizer::new(kind, state.clone())) as Arc<dyn MutationAuthorizer>)
-        .collect()
-}

@@ -66,10 +66,10 @@ pub fn unique_names(entries: &[Metadata]) -> Result<(), Error> {
 /// Resource accounting, expected versions, the account-wide legacy editor gate
 /// and atomic indexes are adapter work.
 pub fn apply_legacy_write(before: &Skill, incoming: &Skill) -> Result<Skill, Error> {
-    incoming.validate().map_err(Error::Invalid)?;
     if let Some(files) = &incoming.files {
         return skill_files::from_files(files.clone()).map_err(Error::Invalid);
     }
+    incoming.validate().map_err(Error::Invalid)?;
     if skill_files::requires_folder_editor(before).map_err(Error::Invalid)? {
         return Err(json::invalid("legacy skill editor cannot represent this directory"));
     }
