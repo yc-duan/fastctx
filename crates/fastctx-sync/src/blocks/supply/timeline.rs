@@ -31,6 +31,16 @@ impl SupplyWriter<'_> {
             params![object.scope.hub.to_string(),object.scope.scope.as_str(),object.object.as_str(),projection.0.to_be_bytes().as_slice(),root.0.digest.as_str(),request.custody.kind.registration().id,model::encode(&request.usage)?,model::encode(&request.custody.holding)?,model::encode(&request.custody.purpose)?,self.now],|row|row.get(0),
         )?;
         if !bound {
+            let waiting:bool=self.db.query_row(
+                "SELECT EXISTS(SELECT 1 FROM sync_root_leases WHERE hub=?1 AND scope=?2 AND object=?3 AND kind=?4 AND hash=?5 AND root_kind='manifest' AND usage=?6 AND purpose=?7 AND released=0 AND expires>?8 AND supply_id IS NULL)",
+                params![object.scope.hub.to_string(),object.scope.scope.as_str(),object.object.as_str(),request.custody.kind.registration().id,root.0.digest.as_str(),model::encode(&request.usage)?,model::encode(&request.custody.purpose)?,self.now],|row|row.get(0),
+            )?;
+            if waiting {
+                return Err(fastctx_storage::Error::with_kind(
+                    fastctx_storage::ErrorKind::Busy,
+                    "timeline snapshot use is awaiting holding-period reconciliation",
+                ));
+            }
             return Err(sql::invalid("timeline root differs from its committed projection or live fence"));
         }
         let validated = self

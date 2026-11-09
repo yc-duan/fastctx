@@ -77,6 +77,9 @@ impl<'tx> ContentCommit<'tx> {
         }
         Ok(())
     }
+    pub(crate) fn keep_checkpoint(&self, step: &SourceStep, lease: &RootLease) -> Result<RootLease> {
+        root_holds::retained(self.db, &step.primary().custody, lease)
+    }
     /// The parser's state hold is installed only with the checkpoint it protects.
     pub(crate) fn hold_checkpoint(&self, step: &SourceStep, root: &ContentRef) -> Result<RootLease> {
         let primary = step.primary();

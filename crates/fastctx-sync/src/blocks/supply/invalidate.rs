@@ -19,14 +19,14 @@ impl SupplyWriter<'_> {
         if max == 0 || max > 64 || after.is_some_and(|cursor| &cursor.scope != scope) {
             return Err(sql::invalid("supply invalidation needs a bounded page in the same scope"));
         }
-        let filter = match (object, operation) {
-            (Some(_), Some(_)) => " AND object=?3 AND operation=?4",
-            (Some(_), None) => " AND object=?3",
-            (None, Some(_)) => " AND operation=?4",
-            (None, None) => "",
+        let (filter, index) = match (object, operation) {
+            (Some(_), Some(_)) => (" AND object=?3 AND operation=?4", "sync_supply_upload"),
+            (Some(_), None) => (" AND object=?3", "sync_supply_object"),
+            (None, Some(_)) => (" AND operation=?4", "sync_supply_operation"),
+            (None, None) => ("", "sync_supply_active"),
         };
         let statement = format!(
-            "SELECT id,generation FROM sync_supply_checks WHERE hub=?1 AND scope=?2{filter} AND phase IN ('walking','waiting','ready') AND (id,generation)>(?5,?6) ORDER BY id,generation LIMIT ?7"
+            "SELECT id,generation FROM sync_supply_checks INDEXED BY {index} WHERE hub=?1 AND scope=?2{filter} AND phase IN ('walking','waiting','ready') AND (id,generation)>(?5,?6) ORDER BY id,generation LIMIT ?7"
         );
         let selected = self
             .db

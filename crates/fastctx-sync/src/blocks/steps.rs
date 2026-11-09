@@ -311,7 +311,7 @@ pub(crate) fn consume(db: &Connection, step: &SourceStep, receipt: &IngestReceip
 }
 
 /// Closes an active step: no new upload or commit can use it afterwards.
-fn retire(db: &Connection, hub: &HubId, key: &StepKey) -> Result<()> {
+pub(super) fn retire(db: &Connection, hub: &HubId, key: &StepKey) -> Result<()> {
     let revision = key.revision.0.to_be_bytes();
     db.prepare_cached("UPDATE sync_source_steps SET state='cancelled' WHERE hub=?1 AND scope=?2 AND source=?3 AND step=?4 AND state='active'")?
         .execute(params![hub.to_string(), key.scope.scope.as_str(), key.source.as_str(), revision.as_slice()])?;
@@ -361,6 +361,13 @@ pub(crate) fn cancel(db: &Connection, holder: &Holder, step: &SourceStep, max: u
     }
 }
 
+pub(super) fn drain_step(db: &Connection, key: &StepKey, max: u32) -> Result<u32> {
+    let released = uploads::release_step(db, &key.scope.hub, key, max)?;
+    if released == 0 {
+        mark_drained(db, &key.scope.hub, key)?;
+    }
+    Ok(released)
+}
 fn mark_drained(db: &Connection, hub: &HubId, key: &StepKey) -> Result<()> {
     db.prepare_cached("UPDATE sync_source_steps SET drained=1 WHERE hub=?1 AND scope=?2 AND source=?3 AND step=?4 AND state!='active'")?
         .execute(params![hub.to_string(), key.scope.scope.as_str(), key.source.as_str(), key.revision.0.to_be_bytes().as_slice()])?;

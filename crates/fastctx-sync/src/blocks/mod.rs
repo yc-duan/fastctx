@@ -13,6 +13,7 @@ mod pages;
 mod pins;
 
 pub(crate) mod projection_commit;
+pub(crate) mod reconcile;
 mod root_holds;
 mod rows;
 pub(crate) mod source_commit;

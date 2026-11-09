@@ -3,7 +3,7 @@
 mod sqlite;
 mod worker;
 pub use sqlite::SqliteScheduler;
-pub(crate) use sqlite::{content_changed, projection_changed, supply_cleanup};
+pub(crate) use sqlite::{content_changed, projection_changed, scope_changed, source_cleanup, supply_cleanup};
 pub use worker::{TaskHandler, Wake, Worker};
 
 use crate::{

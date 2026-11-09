@@ -3,7 +3,7 @@
 use super::{SqliteBlocks, pages, pins};
 use crate::{
     cursor::Revision,
-    identity::{ScopeKey, SourceId},
+    identity::ScopeKey,
     manifest::{ContentBlock, ContentRef},
     store::{
         Error,
@@ -18,13 +18,15 @@ use fastctx_storage::{
 
 /// Bounds the closure walk that proves a page or block belongs to the state.
 const STATE_NODES: u32 = 65_536;
+#[path = "source_state/current.rs"]
+mod current;
 
 impl SqliteBlocks {
     /// One page or block of `target`'s checkpoint state. A block read rechecks,
     /// after its IO, that the checkpoint did not advance or discard its state.
     pub(crate) fn read_state(&self, target: &SourceTarget, request: StateRead) -> Result<StateReply, Error> {
         let custody = &target.custody;
-        let (scope, source) = (&custody.object.scope, &target.source);
+        let scope = &custody.object.scope;
         let (checkpoint, node) = match &request {
             StateRead::Manifest { checkpoint, root } => (*checkpoint, ContentRef::Manifest { root: root.clone() }),
             StateRead::Block { checkpoint, id } => {
@@ -35,8 +37,7 @@ impl SqliteBlocks {
         let found = self
             .db
             .read_now(|db| {
-                pins::authorize(db, &self.holder, self.policy.as_ref(), custody)?;
-                let Some((revision, root)) = state(db, scope, source)? else {
+                let Some((revision, root)) = current::checked(db, self, target)? else {
                     return Ok(Err(None));
                 };
                 let Some(root) = root.filter(|_| revision == checkpoint) else {
@@ -54,8 +55,15 @@ impl SqliteBlocks {
         match request {
             StateRead::Manifest { root: page, .. } => self
                 .db
-                .read_now(|db| pages::get(db, &page))
-                .map(StateReply::Manifest)
+                .read_now(|db| {
+                    let found = current::checked(db, self, target)?;
+                    match found {
+                        Some((revision, Some(still))) if revision == checkpoint && still == root => {
+                            pages::get(db, &page).map(StateReply::Manifest)
+                        }
+                        current => Ok(StateReply::Superseded { current: current.map(|(revision, _)| revision) }),
+                    }
+                })
                 .map_err(|error| sql::error(error, self.worker.clone())),
             StateRead::Block { id, .. } => {
                 let length = length.ok_or_else(|| Error::Invalid("the requested state block is a manifest".into()))?;
@@ -64,7 +72,7 @@ impl SqliteBlocks {
                     .ok_or_else(|| Error::Unavailable("the checkpoint's state block is not stored".into()))?;
                 let current = self
                     .db
-                    .read_now(|db| state(db, scope, source))
+                    .read_now(|db| current::checked(db, self, target))
                     .map_err(|error| sql::error(error, self.worker.clone()))?;
                 match current {
                     Some((revision, Some(still))) if revision == checkpoint && still == root => {
@@ -75,21 +83,6 @@ impl SqliteBlocks {
             }
         }
     }
-}
-
-fn state(db: &Connection, scope: &ScopeKey, source: &SourceId) -> SqlResult<Option<(Revision, Option<ContentRef>)>> {
-    db.prepare_cached("SELECT revision,state FROM sync_sources WHERE hub=?1 AND scope=?2 AND source=?3")?
-        .query_row(params![scope.hub.to_string(), scope.scope.as_str(), source.as_str()], |row| {
-            Ok((Revision(sql::counter(row, 0)?), row.get::<_, Option<Vec<u8>>>(1)?))
-        })
-        .optional()?
-        .map(|(revision, state)| {
-            let root = state
-                .map(|bytes| serde_json::from_slice(&bytes).map_err(|error| sql::invalid(error.to_string())))
-                .transpose()?;
-            Ok((revision, root))
-        })
-        .transpose()
 }
 
 /// The decoded length of `node` if it lies in `root`'s closure: Some(None) for

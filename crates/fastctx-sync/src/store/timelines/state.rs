@@ -235,7 +235,7 @@ pub(super) fn progress(db: &Connection, conversation: &ObjectKey, through: &Stre
 pub(super) fn fence_held(db: &Connection, fence: &TimelineFence, now: i64) -> Result<bool> {
     let scope = &fence.conversation.scope;
     let row = db
-        .prepare_cached("SELECT object,kind,hash,root_kind,usage FROM sync_root_leases WHERE hub=?1 AND scope=?2 AND lease=?3 AND released=0 AND (expires IS NULL OR expires>?4)")?
+        .prepare_cached("SELECT object,kind,hash,root_kind,usage,holding FROM sync_root_leases WHERE hub=?1 AND scope=?2 AND lease=?3 AND released=0 AND supply_id IS NULL AND (expires IS NULL OR expires>?4)")?
         .query_row(params![scope.hub.to_string(), scope.scope.as_str(), fence.lease.as_str(), now], |row| {
             Ok((
                 row.get::<_, String>(0)?,
@@ -243,12 +243,26 @@ pub(super) fn fence_held(db: &Connection, fence: &TimelineFence, now: i64) -> Re
                 row.get::<_, String>(2)?,
                 row.get::<_, String>(3)?,
                 row.get::<_, Vec<u8>>(4)?,
+                row.get::<_,Vec<u8>>(5)?,
             ))
         })
         .optional()?;
-    let Some((object, kind, hash, form, usage)) = row else {
+    let Some((object, kind, hash, form, usage, holding)) = row else {
         return Ok(false);
     };
+    let holding: HoldingPeriod = decode(&holding)?;
+    let Some(current) = crate::store::scopes::current(db, scope)?.filter(|value| value.enabled) else {
+        return Ok(false);
+    };
+    if holding.scope != *scope {
+        return Err(sql::invalid("timeline fence belongs to another scope"));
+    }
+    if holding.acl_revision != current.acl_revision || holding.publication_epoch != current.publication_epoch {
+        return Err(fastctx_storage::Error::with_kind(
+            fastctx_storage::ErrorKind::Busy,
+            "timeline fence is awaiting holding-period reconciliation",
+        ));
+    }
     let usage: RootUse = decode(&usage)?;
     Ok(object == fence.conversation.object.as_str()
         && kind == KIND

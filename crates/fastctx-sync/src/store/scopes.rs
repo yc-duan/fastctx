@@ -15,6 +15,10 @@ use fastctx_storage::rusqlite::params;
 use fastctx_types::sync::conversation_identity::conversation_scope;
 use serde::{Deserialize, Serialize};
 
+mod advance;
+pub use advance::ScopeState;
+pub(crate) use advance::{advance as advance_in, current};
+
 /// How a scope row came to exist, stored with it. Rows installed from a hub's
 /// directory carry that evidence instead.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -99,6 +99,9 @@ pub trait AccessPolicy: Send + Sync {
     /// Final object/body gate, including authenticated derived-source inheritance.
     fn can_read_object(&self, context: &AccessContext, kind: RegisteredKind, object: &ObjectKey) -> Decision;
     fn can_write(&self, context: &AccessContext, kind: RegisteredKind) -> Decision;
+    /// Evaluates custody of the service's actual holder. Period reconciliation
+    /// calls this as LocalService with persisted object and purpose bindings;
+    /// retaining content grants no read, write or execution permission.
     fn can_keep(
         &self,
         context: &AccessContext,

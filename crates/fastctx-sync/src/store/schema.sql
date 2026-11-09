@@ -37,6 +37,17 @@ CREATE TABLE sync_scopes (
     PRIMARY KEY(hub,scope)
 ) WITHOUT ROWID;
 
+-- The latest scope fence owns one resumable, holding-independent maintenance task.
+CREATE TABLE sync_scope_reconciliations (
+    hub TEXT NOT NULL, scope TEXT NOT NULL,
+    generation BLOB NOT NULL CHECK(length(generation)=8),
+    acl_revision BLOB NOT NULL CHECK(length(acl_revision)=8),
+    publication_epoch BLOB NOT NULL CHECK(length(publication_epoch)=8),
+    enabled INTEGER NOT NULL CHECK(enabled IN (0,1)),
+    progress BLOB NOT NULL CHECK(length(progress) BETWEEN 2 AND 16384),
+    PRIMARY KEY(hub,scope)
+) WITHOUT ROWID;
+
 CREATE TABLE sync_objects (
     hub TEXT NOT NULL, scope TEXT NOT NULL, object TEXT NOT NULL,
     kind TEXT NOT NULL, schema INTEGER NOT NULL, authority BLOB NOT NULL, evidence BLOB NOT NULL,
@@ -306,6 +317,7 @@ CREATE TABLE sync_asset_uploads (
     PRIMARY KEY(hub,scope,operation,object)
 ) WITHOUT ROWID;
 CREATE INDEX sync_asset_uploads_step ON sync_asset_uploads(hub,source_scope,source,source_step) WHERE source IS NOT NULL;
+CREATE INDEX sync_asset_uploads_open ON sync_asset_uploads(hub,scope,operation,object) WHERE cancelled=0 AND consumed=0;
 -- Step revisions are issued once per source and never reused. A cancelled step
 -- consumes its number; the parser checkpoint and host generation stay as they were.
 CREATE TABLE sync_source_step_heads (
@@ -368,6 +380,7 @@ CREATE TABLE sync_root_leases (
 ) WITHOUT ROWID;
 CREATE INDEX sync_root_leases_hash ON sync_root_leases(hub,scope,hash,root_kind) WHERE released=0;
 CREATE INDEX sync_root_leases_scope ON sync_root_leases(hub,scope,lease) WHERE released=0;
+CREATE INDEX sync_root_leases_formal ON sync_root_leases(hub,scope,lease) WHERE released=0 AND supply_id IS NULL;
 CREATE INDEX sync_root_leases_object ON sync_root_leases(hub,scope,object,kind,hash,root_kind,decoded_bytes) WHERE released=0;
 CREATE INDEX sync_root_leases_due ON sync_root_leases(expires,hub,scope,lease) WHERE released=0 AND expires IS NOT NULL;
 CREATE INDEX sync_root_leases_supply ON sync_root_leases(hub,scope,supply_id,supply_generation,released,lease) WHERE supply_id IS NOT NULL;
@@ -488,6 +501,7 @@ CREATE TABLE sync_supply_checks (
 CREATE INDEX sync_supply_active ON sync_supply_checks(hub,scope,id,generation) WHERE phase IN ('walking','waiting','ready');
 CREATE INDEX sync_supply_object ON sync_supply_checks(hub,scope,object,id,generation) WHERE phase IN ('walking','waiting','ready');
 CREATE INDEX sync_supply_operation ON sync_supply_checks(hub,scope,operation,id,generation) WHERE phase IN ('walking','waiting','ready');
+CREATE INDEX sync_supply_upload ON sync_supply_checks(hub,scope,operation,object,id,generation) WHERE phase IN ('walking','waiting','ready');
 CREATE INDEX sync_supply_cleanup ON sync_supply_checks(cleanup,hub,scope,id,generation);
 CREATE TABLE sync_supply_work (
     hub TEXT NOT NULL, scope TEXT NOT NULL, id TEXT NOT NULL,

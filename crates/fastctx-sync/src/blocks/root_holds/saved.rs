@@ -28,8 +28,21 @@ impl Saved {
     }
     pub fn check(&self, expected: &Encoded) -> Result<()> {
         self.check_fields(expected)?;
-        if self.fields.holding != expected.holding || self.fields.purpose != expected.purpose {
-            return Err(sql::invalid("root usage differs from its persisted holding period"));
+        if self.fields.purpose != expected.purpose {
+            return Err(sql::invalid("root usage differs from its persisted purpose"));
+        }
+        if self.fields.holding != expected.holding {
+            let before: crate::cursor::HoldingPeriod =
+                serde_json::from_slice(&self.fields.holding).map_err(|e| sql::invalid(e.to_string()))?;
+            let after: crate::cursor::HoldingPeriod =
+                serde_json::from_slice(&expected.holding).map_err(|e| sql::invalid(e.to_string()))?;
+            if before.holder != after.holder || before.scope != after.scope {
+                return Err(sql::invalid("root use belongs to another holder or scope"));
+            }
+            return Err(fastctx_storage::Error::with_kind(
+                fastctx_storage::ErrorKind::Busy,
+                "root use is awaiting holding-period reconciliation",
+            ));
         }
         Ok(())
     }

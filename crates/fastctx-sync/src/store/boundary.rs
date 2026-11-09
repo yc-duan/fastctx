@@ -18,6 +18,7 @@ pub(crate) enum Role {
     Projection,
     Supply,
     Scopes,
+    Reconcile,
 }
 thread_local! { static ACTIVE: Cell<Option<Role>> = const { Cell::new(None) }; }
 pub(crate) struct Boundary(Option<Role>, PhantomData<Rc<()>>);
@@ -71,7 +72,18 @@ fn permits(table: &str) -> bool {
                 | "sync_tasks"
         ),
         Some(Role::FormatUpgrade) => table == "sync_format_upgrades",
-        Some(Role::Scopes) => table == "sync_scopes",
+        Some(Role::Scopes) => matches!(table, "sync_scopes" | "sync_scope_reconciliations" | "sync_tasks"),
+        Some(Role::Reconcile) => matches!(
+            table,
+            "sync_scope_reconciliations"
+                | "sync_root_leases"
+                | "sync_asset_uploads"
+                | "sync_asset_pins"
+                | "sync_asset_gc"
+                | "sync_source_steps"
+                | "sync_source_step_targets"
+                | "sync_tasks"
+        ),
         Some(Role::Source) => matches!(
             table,
             "sync_source_step_heads"
@@ -137,6 +149,13 @@ impl Guard for Rules {
             if !allowed {
                 return Err(super::sql::invalid("a projection cannot change another scheduler handler"));
             }
+        }
+        if change.table() == "sync_tasks"
+            && matches!(ACTIVE.get(), Some(Role::Scopes | Role::Reconcile))
+            && (change.action() == Action::Delete
+                || change.after(0)? != fastctx_storage::rusqlite::types::ValueRef::Text(b"sync.reconcile"))
+        {
+            return Err(super::sql::invalid("scope maintenance cannot enqueue another task family"));
         }
         // A source commit wakes content expansion for the roots it publishes and
         // the projections it marks stale, nothing else.

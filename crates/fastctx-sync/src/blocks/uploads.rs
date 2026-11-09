@@ -17,7 +17,9 @@ pub(crate) enum Owner<'a> {
     Source(&'a StepKey),
 }
 
+mod holding;
 mod supply;
+pub(super) use holding::{PinCursor, retire_old};
 pub(super) use supply::{ActiveSupply, active_supply, advance_supply};
 
 struct Saved {

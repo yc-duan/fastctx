@@ -17,8 +17,10 @@ use std::time::Duration;
 
 mod dependencies;
 mod due;
+mod reconcile;
 mod rows;
 mod update;
+pub(crate) use reconcile::{scope_changed, source_cleanup};
 use rows::{Row, get, save};
 
 /// Only service assembly receives the database. Business modules use Scheduler.

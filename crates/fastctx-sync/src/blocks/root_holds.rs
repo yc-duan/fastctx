@@ -14,7 +14,9 @@ use fastctx_storage::{
     rusqlite::{Connection, OptionalExtension, params},
 };
 
+mod current;
 mod saved;
+pub(super) use current::retained;
 mod sweep;
 pub(super) use sweep::{expire, retire_scope};
 
@@ -45,10 +47,10 @@ pub(super) fn existing(
     };
     let encoded = saved::encode(&lease, &custody.purpose)?;
     if let Some(previous) = saved::get(db, scope, &request.lease)? {
-        previous.check(&encoded)?;
         if previous.released {
             return Err(sql::invalid("a released usage identity cannot be acquired again"));
         }
+        previous.check(&encoded)?;
         return if matches!(request.usage, crate::store::roots::RootUse::Timeline { .. })
             || rows::complete(db, &request.root)?
         {
@@ -129,7 +131,7 @@ pub(super) fn release_id(
     Ok(())
 }
 
-fn retire(db: &Connection, scope: &ScopeKey, id: &RootLeaseId, hash: &str, form: &str) -> Result<()> {
+pub(super) fn retire(db: &Connection, scope: &ScopeKey, id: &RootLeaseId, hash: &str, form: &str) -> Result<()> {
     super::supply::invalidate_hold(db, scope, id)?;
     db.execute(
         "UPDATE sync_root_leases SET released=1 WHERE hub=?1 AND scope=?2 AND lease=?3",

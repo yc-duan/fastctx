@@ -113,7 +113,10 @@ impl SourceIngest for SqliteSources {
         Box::pin(self.read_progress(target))
     }
     fn read_state(&self, target: SourceTarget, request: StateRead) -> FutureResult<'_, StateReply> {
-        Box::pin(async move { self.blocks.read_state(&target, request) })
+        Box::pin(async move {
+            self.authorizer(&target.custody)?;
+            self.blocks.read_state(&target, request)
+        })
     }
     fn read_block(&self, target: SourceTarget, block: ContentBlock) -> FutureResult<'_, Vec<u8>> {
         Box::pin(async move {

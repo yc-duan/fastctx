@@ -269,7 +269,7 @@ fn advance(
     let previous = stored.and_then(|found| found.state.zip(found.lease));
     let lease = match (&next.state, &previous) {
         (None, _) => None,
-        (Some(root), Some((held, lease))) if held == root => Some(lease.clone()),
+        (Some(root), Some((held, lease))) if held == root => Some(content.keep_checkpoint(step, lease)?),
         (Some(root), _) => {
             let lease = content.hold_checkpoint(step, root)?;
             leases.push(lease.clone());

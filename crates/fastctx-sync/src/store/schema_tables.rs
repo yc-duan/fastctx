@@ -4,6 +4,7 @@ pub const TABLES: &[&str] = &[
     "sync_format_upgrades",
     "sync_accounts",
     "sync_scopes",
+    "sync_scope_reconciliations",
     "sync_objects",
     "sync_object_versions",
     "sync_scope_heads",

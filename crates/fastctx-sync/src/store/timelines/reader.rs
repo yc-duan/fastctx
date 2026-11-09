@@ -32,13 +32,34 @@ const READ_BUDGET: Budget = Budget { work_bytes: 16 * 1024 * 1024, max_pages: 25
 
 impl TimelineReader for SqliteTimelines {
     fn stream(&self, context: AccessContext, request: StreamRead) -> FutureResult<'_, StreamPage> {
-        Box::pin(self.read_stream(context, request))
+        Box::pin(async move {
+            let result = self.read_stream(context.clone(), request).await?;
+            self.scope_current(&context)?;
+            Ok(result)
+        })
     }
     fn timeline(&self, context: AccessContext, request: TimelineRead) -> FutureResult<'_, TimelineResult> {
-        Box::pin(self.read_timeline(context, request))
+        Box::pin(async move {
+            let conversation = request.conversation.clone();
+            let result = self.read_timeline(context.clone(), request).await?;
+            self.authorize(&context, &conversation)?;
+            if let TimelineResult::Page { page } = &result
+                && !self.held(&page.fence).await?
+            {
+                return Ok(TimelineResult::ReanchorNeeded);
+            }
+            Ok(result)
+        })
     }
     fn item(&self, context: AccessContext, fence: TimelineFence, item: ObjectId) -> FutureResult<'_, ItemRead> {
-        Box::pin(self.read_item(context, fence, item))
+        Box::pin(async move {
+            let result = self.read_item(context.clone(), fence.clone(), item).await?;
+            self.authorize(&context, &fence.conversation)?;
+            if !self.held(&fence).await? {
+                return Ok(ItemRead::ReanchorNeeded);
+            }
+            Ok(result)
+        })
     }
 }
 
@@ -48,13 +69,29 @@ enum Fresh {
 }
 
 impl SqliteTimelines {
+    fn scope_current(&self, context: &AccessContext) -> Result<(), Error> {
+        let current = self
+            .blocks
+            .database()
+            .read_now(|db| crate::store::scopes::current(db, &context.scope))
+            .map_err(|error| sql::error(error, self.blocks.worker().clone()))?;
+        let Some(current) = current.filter(|current| current.enabled) else {
+            return Err(Error::Revoked);
+        };
+        if current.acl_revision != context.observed_acl {
+            return Err(Error::Busy);
+        }
+        Ok(())
+    }
     pub(super) fn authorize(&self, context: &AccessContext, conversation: &ObjectKey) -> Result<(), Error> {
+        self.scope_current(context)?;
         if context.scope != conversation.scope {
             return Err(Error::Denied("the reader's scope differs from the conversation's".into()));
         }
         let kind = REGISTRY.asset(KIND).map_err(Error::Invalid)?.registered();
         match self.blocks.policy().can_read_object(context, kind, conversation) {
-            Decision::Allowed { .. } => Ok(()),
+            Decision::Allowed { revision } if revision == context.observed_acl => Ok(()),
+            Decision::Allowed { .. } => Err(Error::Busy),
             Decision::Denied { reason, .. } => Err(Error::Denied(reason)),
             Decision::Unavailable => Err(Error::Unavailable("the reader's access cannot be decided now".into())),
         }
