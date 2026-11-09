@@ -153,7 +153,9 @@ pub(super) fn verify(path: &Path, pages: u32, budget: &Budget) -> WorkResult<()>
     let check = || -> Result<()> {
         let mut db = read_only(path)?;
         let deadline = budget.clone();
-        db.progress_handler(4096, Some(move || deadline.time().is_err()))?;
+        // Large legacy values produce few integrity-progress calls across many
+        // pages. Check every SQLite progress point, not every 4096th one.
+        db.progress_handler(1, Some(move || deadline.time().is_err()))?;
         let actual: u32 = db.pragma_query_value(None, "page_count", |row| row.get(0))?;
         if actual != pages {
             return Err(Error::new("backup page count differs from its durable copy receipt"));
