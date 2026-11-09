@@ -83,6 +83,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         stream: stream.stream.clone(),
         producer: Producer::Device { device: device.clone() },
         epoch: stream.epoch.clone(),
+        operation: OperationId::from_bytes([47; 32]),
         kind: kind.kind.clone(),
         schema: 1,
         after: Sequence(0),

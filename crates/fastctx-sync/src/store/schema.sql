@@ -311,14 +311,16 @@ CREATE TABLE sync_asset_gc (
     PRIMARY KEY(hub,scope,hash,root_kind)
 ) WITHOUT ROWID;
 CREATE INDEX sync_asset_gc_due ON sync_asset_gc(next_due);
+-- A batch operation names one signed batch per stream epoch; retries return it.
 CREATE TABLE sync_source_proofs (
     hub TEXT NOT NULL, scope TEXT NOT NULL, proof TEXT NOT NULL,
-    stream TEXT NOT NULL, epoch TEXT NOT NULL, producer BLOB NOT NULL,
+    stream TEXT NOT NULL, epoch TEXT NOT NULL, producer BLOB NOT NULL, operation TEXT NOT NULL,
     first_sequence BLOB NOT NULL CHECK(length(first_sequence)=8),
     last_sequence BLOB NOT NULL CHECK(length(last_sequence)=8),
     purpose TEXT NOT NULL, signer BLOB NOT NULL CHECK(length(signer)=32),
     signed_bytes BLOB NOT NULL, signature BLOB NOT NULL CHECK(length(signature)=64),
-    state TEXT NOT NULL, PRIMARY KEY(hub,scope,proof)
+    state TEXT NOT NULL, PRIMARY KEY(hub,scope,proof),
+    UNIQUE(hub,scope,stream,epoch,operation)
 ) WITHOUT ROWID;
 CREATE INDEX sync_source_waiting_epoch ON sync_source_proofs(hub,scope,stream,epoch,state);
 CREATE TABLE sync_epoch_descriptors (

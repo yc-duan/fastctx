@@ -61,6 +61,7 @@ pub fn sample(cursor: &ScopeCursor, device: DeviceId) -> Result<Vec<Message>, Bo
         stream: epoch.stream.clone(),
         epoch: epoch.epoch.clone(),
         producer: Producer::Hub,
+        operation: operation.clone(),
         kind: epoch.kind.clone(),
         schema: 1,
         after: Sequence(0),

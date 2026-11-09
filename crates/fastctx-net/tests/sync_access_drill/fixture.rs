@@ -134,6 +134,7 @@ impl World {
             stream: epoch.stream.clone(),
             producer: Producer::Hub,
             epoch: self.epoch.clone(),
+            operation: operation.clone(),
             kind: "account.directory".into(),
             schema: 1,
             after: Sequence(sequence - 1),

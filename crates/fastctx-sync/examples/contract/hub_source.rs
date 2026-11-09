@@ -14,6 +14,7 @@ pub fn sample(holding: &HoldingPeriod) -> Result<(Message, SourceBatch), serde_j
         stream: StreamId::from_bytes([42; 32]),
         producer: Producer::Hub,
         epoch: ProducerEpoch::from_bytes([43; 32]),
+        operation: OperationId::from_bytes([44; 32]),
         kind: "account.directory".into(),
         schema: 1,
         after: Sequence(0),

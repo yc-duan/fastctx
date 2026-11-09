@@ -127,6 +127,9 @@ pub struct SourceBatch {
     pub stream: StreamId,
     pub producer: Producer,
     pub epoch: ProducerEpoch,
+    /// Idempotency key of the whole batch: an ingestion step's operation, or
+    /// the single fact's operation. Each record keeps its own logical operation.
+    pub operation: OperationId,
     /// A stream is bound to one registered kind/schema for its whole epoch.
     pub kind: String,
     pub schema: u16,
