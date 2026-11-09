@@ -3,6 +3,7 @@
 pub mod handlers;
 mod kinds;
 pub mod legacy;
+pub mod source_families;
 pub mod text;
 pub static REGISTRY: Registry = Registry::new(kinds::KINDS);
 pub use fastctx_types::sync::catalog::DataClass;

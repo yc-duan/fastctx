@@ -2,9 +2,10 @@
 
 use super::{
     catalog::SourceRecord,
-    cursor::{Revision, Sequence, StreamCursor},
-    identity::{Digest, ObjectId, ObjectKey},
+    cursor::{LocalSequence, Revision, Sequence, StreamCursor},
+    identity::{Digest, ObjectId, ObjectKey, RootLeaseId},
     manifest::{ContentRef, ManifestRoot},
+    progress::StreamProgress,
     proof::SignedSourceBatch,
 };
 use serde::{Deserialize, Serialize};
@@ -37,7 +38,7 @@ pub struct ProvenRecord {
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StreamPage {
-    pub fence: StreamCursor,
+    pub fence: StreamProgress,
     pub direction: Direction,
     pub records: Vec<ProvenRecord>,
     pub proofs: Vec<SignedSourceBatch>,
@@ -68,8 +69,15 @@ pub struct TimelineItem {
 pub struct TimelineFence {
     pub conversation: ObjectKey,
     pub projection: Revision,
-    pub through: StreamCursor,
+    pub through: StreamProgress,
+    /// Input change watermark incorporated by the projector.
+    pub applied: LocalSequence,
+    /// This provider's commit watermark, used for its projection subscription.
+    /// Asynchronous projections can finish out of input order across objects.
+    pub local: LocalSequence,
     pub root: ManifestRoot,
+    /// The same durable root-use mechanism as materialization and ingestion.
+    pub lease: RootLeaseId,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "from", content = "position", rename_all = "snake_case")]
@@ -94,6 +102,15 @@ pub struct TimelinePage {
     pub older: Option<TimelinePosition>,
     pub newer: Option<TimelinePosition>,
 }
+/// An unavailable projection/root is never represented by an empty successful page.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
+pub enum TimelineResult {
+    Page { page: Box<TimelinePage> },
+    Pending { progress: Option<StreamProgress> },
+    ReanchorNeeded,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "change", rename_all = "snake_case")]
 pub enum TimelineChange {

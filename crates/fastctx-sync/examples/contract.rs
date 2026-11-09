@@ -10,6 +10,8 @@ mod hub_source;
 mod indexes;
 #[path = "contract/manifests.rs"]
 mod manifests;
+#[path = "contract/progress.rs"]
+mod progress;
 #[path = "contract/scopes.rs"]
 mod scopes;
 #[path = "contract/transfer.rs"]
@@ -214,6 +216,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "decoded_hub_source_binding": hub_batch,
             "decoded_index_payloads": index_payloads,
             "asset_transport": transfer::sample(&holding)?,
+            "projection_progress": progress::sample(holding.scope.clone())?,
         }))?
     );
     Ok(())

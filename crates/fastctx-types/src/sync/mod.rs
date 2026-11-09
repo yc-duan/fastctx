@@ -14,6 +14,7 @@ pub mod identity;
 pub mod manifest;
 pub mod metadata;
 pub mod mutation;
+pub mod progress;
 pub mod proof;
 pub mod scope;
 pub mod session;

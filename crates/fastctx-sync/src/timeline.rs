@@ -7,7 +7,9 @@ pub use fastctx_types::sync::timeline::*;
 
 pub trait TimelineReader: Send + Sync {
     fn stream(&self, context: AccessContext, request: StreamRead) -> FutureResult<'_, StreamPage>;
-    fn timeline(&self, context: AccessContext, request: TimelineRead) -> FutureResult<'_, TimelinePage>;
+    /// Registers a durable root lease for a fresh fence. A stale lease returns
+    /// ReanchorNeeded; absent local projection state returns Pending.
+    fn timeline(&self, context: AccessContext, request: TimelineRead) -> FutureResult<'_, TimelineResult>;
     fn item(
         &self,
         context: AccessContext,

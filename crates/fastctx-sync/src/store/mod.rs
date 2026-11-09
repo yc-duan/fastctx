@@ -6,9 +6,13 @@ pub mod authorize;
 pub mod boundary;
 pub mod engine;
 pub mod ingest;
+pub mod ingest_effects;
 pub mod mutation;
+pub mod projection;
 pub mod replica;
+pub mod roots;
 pub mod schema;
+pub mod source_authorize;
 pub(crate) mod sql;
 
 use crate::{
@@ -121,7 +125,13 @@ pub trait Backend: Send + Sync {
         context: AccessContext,
         kind: Kind<Derived>,
         object: ObjectId,
-    ) -> FutureResult<'_, Option<LocalRecord>>;
+    ) -> FutureResult<'_, Option<projection::ProjectionRecord>>;
+    fn subscribe_projection(
+        &self,
+        context: AccessContext,
+        kind: Kind<Derived>,
+        request: Subscribe,
+    ) -> FutureResult<'_, Box<dyn projection::ProjectionSubscription>>;
     fn read(
         &self,
         context: AccessContext,
@@ -269,7 +279,10 @@ pub struct ProjectionStore<B> {
     kind: Kind<Derived>,
 }
 impl<B: Backend> ProjectionStore<B> {
-    pub fn get(&self, object: ObjectId) -> FutureResult<'_, Option<LocalRecord>> {
+    pub fn subscribe(&self, request: Subscribe) -> FutureResult<'_, Box<dyn projection::ProjectionSubscription>> {
+        self.backend.subscribe_projection(self.context.clone(), self.kind, request)
+    }
+    pub fn get(&self, object: ObjectId) -> FutureResult<'_, Option<projection::ProjectionRecord>> {
         self.backend.get_projection(self.context.clone(), self.kind, object)
     }
     pub fn replace(&self, change: ProjectionChange) -> FutureResult<'_, LocalCommitReceipt> {

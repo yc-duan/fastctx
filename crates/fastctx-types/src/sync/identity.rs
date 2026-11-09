@@ -73,6 +73,7 @@ identifier!(SessionId, "ss-", "A random session bound to one authenticated contr
 identifier!(TransferId, "tr-", "A durable transfer identity reused with the same request after reconnecting.", 16);
 identifier!(PartId, "pt-", "One offered representation within a session; never reused across sessions.", 16);
 identifier!(MessageId, "msg-", "One bounded metadata message within a session.", 16);
+identifier!(RootLeaseId, "rl-", "A durable root-use identity, not permission to read the root.");
 
 impl AuthorityEpoch {
     pub fn bytes(&self) -> [u8; 16] {

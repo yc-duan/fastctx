@@ -2148,6 +2148,83 @@
       "message": "source"
     }
   ],
+  "projection_progress": {
+    "confirmed": {
+      "cursor": {
+        "committed": "3",
+        "epoch": "p-3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d",
+        "scope": {
+          "hub": "w-0101010101010101",
+          "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+        },
+        "stream": "r-3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c"
+      },
+      "epoch_proof": "3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e",
+      "prefix_digest": "3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f",
+      "state": "confirmed"
+    },
+    "evidence_status": "shape_only_not_validated",
+    "local_pending": {
+      "cursor": {
+        "committed": "3",
+        "epoch": "p-3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d",
+        "scope": {
+          "hub": "w-0101010101010101",
+          "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+        },
+        "stream": "r-3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c"
+      },
+      "state": "local_pending"
+    },
+    "page": {
+      "page": {
+        "fence": {
+          "applied": "7",
+          "conversation": {
+            "object": "o-4040404040404040404040404040404040404040404040404040404040404040",
+            "scope": {
+              "hub": "w-0101010101010101",
+              "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+            }
+          },
+          "lease": "rl-4242424242424242424242424242424242424242424242424242424242424242",
+          "local": "11",
+          "projection": "1",
+          "root": {
+            "algorithm": "sha256",
+            "digest": "4141414141414141414141414141414141414141414141414141414141414141",
+            "domain": {
+              "hub": "w-0101010101010101",
+              "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+            }
+          },
+          "through": {
+            "cursor": {
+              "committed": "3",
+              "epoch": "p-3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d",
+              "scope": {
+                "hub": "w-0101010101010101",
+                "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+              },
+              "stream": "r-3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c"
+            },
+            "state": "local_pending"
+          }
+        },
+        "items": [],
+        "newer": null,
+        "older": null
+      },
+      "state": "page"
+    },
+    "projection_pending": {
+      "progress": null,
+      "state": "pending"
+    },
+    "reanchor": {
+      "state": "reanchor_needed"
+    }
+  },
   "signature_status": "shape_only_not_validated",
   "timeline_payload_shapes": [
     {
