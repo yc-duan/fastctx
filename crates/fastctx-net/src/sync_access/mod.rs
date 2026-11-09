@@ -53,12 +53,13 @@ impl DirectorySnapshot {
         });
         self.indexed().by_key(&PublicKey::from_bytes(bytes))
     }
-    fn account(&self, id: &AccountId) -> Option<&AccountIdentity> {
+    fn identity(&self, id: &AccountId) -> Option<&AccountIdentity> {
         self.accounts.get(id).filter(|mapping| {
-            self.indexed()
-                .account(&mapping.name)
-                .is_some_and(|current| current.opened == mapping.opened && !current.locked)
+            self.indexed().account(&mapping.name).is_some_and(|current| current.opened == mapping.opened)
         })
+    }
+    fn account(&self, id: &AccountId) -> Option<&AccountIdentity> {
+        self.identity(id).filter(|mapping| self.indexed().account(&mapping.name).is_some_and(|current| !current.locked))
     }
 }
 

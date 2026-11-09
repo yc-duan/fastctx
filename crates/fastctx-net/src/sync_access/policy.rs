@@ -32,7 +32,7 @@ impl DirectoryPolicy {
             || context.observed_acl != revision
             || object.is_some_and(|key| key.scope != context.scope)
             || !applicable
-            || snapshot.directory.account(&descriptor.owner.id) != Some(&descriptor.owner)
+            || snapshot.directory.identity(&descriptor.owner.id) != Some(&descriptor.owner)
             || !check(&snapshot)
         {
             return denied(revision);
