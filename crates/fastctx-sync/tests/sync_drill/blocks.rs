@@ -11,6 +11,8 @@ mod metadata;
 mod pending;
 #[path = "block_recovery.rs"]
 mod recovery;
+#[path = "replica.rs"]
+pub(crate) mod replica;
 #[path = "root_usage.rs"]
 mod root_usage;
 #[path = "source_ingest.rs"]
@@ -380,6 +382,7 @@ pub async fn run(root: &Path) -> Result<()> {
     source_steps::run(root).await?;
     source_ingest::run(root).await?;
     timeline_install::run(root).await?;
+    replica::run(root).await?;
     let canonical_root = root.to_owned();
     tokio::spawn(async move { canonical_producer::run(&canonical_root).await.map_err(|error| error.to_string()) })
         .await??;

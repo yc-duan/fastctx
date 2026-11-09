@@ -10,6 +10,9 @@ mod scheduler;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let root = std::env::args_os().nth(1).map(std::path::PathBuf::from).ok_or("usage: sync_drill DISPOSABLE_ROOT")?;
+    if std::env::args().nth(2).as_deref() == Some("replica-child") {
+        return blocks::replica::child(&root, std::env::args().nth(3).ok_or("missing crash point")?.parse()?);
+    }
     if root.exists() {
         return Err("the drill root must not exist".into());
     }
