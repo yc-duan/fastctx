@@ -1,5 +1,6 @@
 //! Signatures identify a producer; semantic authority still comes from this gate.
 use super::{
+    access::Custody,
     access::Decision,
     ingest::{SourceCheckpoint, SourceTarget},
     ingest_effects::SourceEffects,
@@ -18,6 +19,12 @@ pub struct PreparedSourceChange<'a> {
     pub checkpoint: &'a SourceCheckpoint,
     pub effects: &'a SourceEffects,
 }
+/// A verified remote batch has no local parser checkpoint or index effects.
+pub struct ReceivedSourceBatch<'a> {
+    pub custody: &'a Custody,
+    pub batch: &'a SourceBatch,
+    pub payloads: &'a [SourcePayload<'a>],
+}
 /// Installed per kind. Called inside the local writer and again by the accepting
 /// authority using its own trusted in-memory state. No IO or raw SQL is exposed.
 /// Missing installation disables ingestion and capability advertisement, including
@@ -26,4 +33,9 @@ pub struct PreparedSourceChange<'a> {
 pub trait SourceAuthorizer: Send + Sync {
     fn kind(&self) -> &'static str;
     fn authorize(&self, change: PreparedSourceChange<'_>) -> Decision;
+    /// An explicit receiving policy is required; a local policy cannot silently
+    /// approve remotely produced facts by inventing a parser checkpoint.
+    fn authorize_received(&self, _change: ReceivedSourceBatch<'_>) -> Decision {
+        Decision::Unavailable
+    }
 }

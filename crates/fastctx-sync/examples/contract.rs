@@ -14,6 +14,8 @@ mod manifests;
 mod progress;
 #[path = "contract/scopes.rs"]
 mod scopes;
+#[path = "contract/source_result.rs"]
+mod source_result;
 #[path = "contract/transfer.rs"]
 mod transfer;
 
@@ -158,6 +160,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }],
     };
     submission.validate_bounds()?;
+    let source_results = source_result::sample(&cursor, &batch, &signed)?;
     let mut messages = vec![
         Message::Hello {
             capabilities: Capabilities {
@@ -212,6 +215,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Message::Acknowledge { durable: DurableAck::Catalog { holding: holding.clone(), cursor: cursor.clone() } },
         Message::Revoked { holding: holding.clone() },
     ];
+    messages.extend(source_results);
     messages.push(catalog::sample(&holding, &cursor, &accepted, &accepted_binding, &batch)?);
     messages.extend(manifests::sample(&holding)?);
     messages.extend(index_messages);

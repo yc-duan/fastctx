@@ -19,6 +19,7 @@ pub mod progress;
 pub mod proof;
 pub mod scope;
 pub mod session;
+pub mod source_acceptance;
 pub mod timeline;
 pub mod transfer;
 pub mod transport_codec;

@@ -183,6 +183,13 @@
   },
   {
     "type": "crates/fastctx-types/src/sync/transfer.rs::Message",
+    "variant": "SourceResult",
+    "purpose": "AssetSync",
+    "capability": "asset_sync",
+    "mapping": "crates/fastctx-types/src/sync/transfer.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/sync/transfer.rs::Message",
     "variant": "StreamPage",
     "purpose": "AssetSync",
     "capability": "asset_sync",

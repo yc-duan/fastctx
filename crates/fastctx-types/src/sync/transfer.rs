@@ -172,6 +172,9 @@ pub enum Message {
         holding: HoldingPeriod,
         batch: SignedSourceBatch,
     },
+    SourceResult {
+        result: super::source_acceptance::SourceAccepted,
+    },
     Submit {
         request: super::mutation::Submission,
     },
@@ -266,6 +269,7 @@ impl Message {
             | Self::Changes { .. }
             | Self::ChangesPage { .. }
             | Self::Source { .. }
+            | Self::SourceResult { .. }
             | Self::Submit { .. }
             | Self::GetOperation { .. }
             | Self::Operation { .. }

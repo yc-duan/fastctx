@@ -2,6 +2,7 @@
 
 pub mod access;
 pub mod audit;
+pub mod authority;
 pub mod authorize;
 pub mod boundary;
 pub mod control;

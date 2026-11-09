@@ -180,12 +180,16 @@ CREATE TABLE sync_conflicts (
     hub TEXT NOT NULL, scope TEXT NOT NULL, object TEXT NOT NULL, operation TEXT NOT NULL,
     base_authority_epoch BLOB CHECK(base_authority_epoch IS NULL OR length(base_authority_epoch)=16),
     base_version BLOB CHECK(base_version IS NULL OR length(base_version)=8),
-    current_authority_epoch BLOB NOT NULL CHECK(length(current_authority_epoch)=16),
-    current_version BLOB NOT NULL CHECK(length(current_version)=8),
-    alternative_authority_epoch BLOB NOT NULL CHECK(length(alternative_authority_epoch)=16),
-    alternative_version BLOB NOT NULL CHECK(length(alternative_version)=8),
-    resolved_by TEXT, PRIMARY KEY(hub,scope,object,operation),
-    CHECK((base_authority_epoch IS NULL) = (base_version IS NULL))
+    current_authority_epoch BLOB CHECK(current_authority_epoch IS NULL OR length(current_authority_epoch)=16),
+    current_version BLOB CHECK(current_version IS NULL OR length(current_version)=8),
+    alternative_authority_epoch BLOB CHECK(alternative_authority_epoch IS NULL OR length(alternative_authority_epoch)=16),
+    alternative_version BLOB CHECK(alternative_version IS NULL OR length(alternative_version)=8),
+    resolved_by TEXT, source_evidence BLOB CHECK(source_evidence IS NULL OR length(source_evidence)<=524288),
+    PRIMARY KEY(hub,scope,object,operation),
+    CHECK((base_authority_epoch IS NULL) = (base_version IS NULL)),
+    CHECK((current_authority_epoch IS NULL) = (current_version IS NULL)),
+    CHECK((alternative_authority_epoch IS NULL) = (alternative_version IS NULL)),
+    CHECK(source_evidence IS NOT NULL OR (current_version IS NOT NULL AND alternative_version IS NOT NULL))
 ) WITHOUT ROWID;
 CREATE TABLE sync_outbox (
     destination TEXT NOT NULL, hub TEXT NOT NULL, scope TEXT NOT NULL,
@@ -578,4 +582,17 @@ CREATE TABLE sync_replica_epoch_fences (
 CREATE TABLE sync_replica_proofs (
     hub TEXT NOT NULL, scope TEXT NOT NULL, proof TEXT NOT NULL,
     original BLOB NOT NULL CHECK(length(original)<=262144), PRIMARY KEY(hub,scope,proof)
+) WITHOUT ROWID;
+
+-- Only unaccepted source metadata is bounded. Accepted facts have no retention cap.
+CREATE TABLE sync_authority_waiting (
+    hub TEXT NOT NULL, scope TEXT NOT NULL, stream TEXT NOT NULL, epoch TEXT NOT NULL,
+    operation TEXT NOT NULL, after_sequence BLOB NOT NULL CHECK(length(after_sequence)=8),
+    account TEXT NOT NULL, device TEXT NOT NULL, holding BLOB NOT NULL,
+    bytes INTEGER NOT NULL CHECK(bytes>0),
+    PRIMARY KEY(hub,scope,stream,epoch,operation)
+) WITHOUT ROWID;
+CREATE INDEX sync_authority_waiting_order ON sync_authority_waiting(hub,scope,stream,epoch,after_sequence,operation);
+CREATE TABLE sync_authority_waiting_usage (
+    hub TEXT PRIMARY KEY, bytes INTEGER NOT NULL CHECK(bytes>=0)
 ) WITHOUT ROWID;

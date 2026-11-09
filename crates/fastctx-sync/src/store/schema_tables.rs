@@ -16,6 +16,8 @@ pub const TABLES: &[&str] = &[
     "sync_stream_records",
     "sync_stream_roots",
     "sync_operations",
+    "sync_authority_waiting",
+    "sync_authority_waiting_usage",
     "sync_pending_mutations",
     "sync_pending_objects",
     "sync_pending_roots",

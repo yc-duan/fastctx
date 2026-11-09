@@ -1734,6 +1734,175 @@
       "message": "revoked"
     },
     {
+      "message": "source_result",
+      "result": {
+        "content_complete": false,
+        "receipt": {
+          "actor": {
+            "account": "a-0707070707070707070707070707070707070707070707070707070707070707",
+            "actor": "account",
+            "device": "d-0303030303030303030303030303030303030303030303030303030303030303"
+          },
+          "epoch": {
+            "proof": {
+              "data": "eyJzY29wZSI6eyJodWIiOiJ3LTAxMDEwMTAxMDEwMTAxMDEiLCJzY29wZSI6InMtMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMiJ9LCJzdHJlYW0iOiJyLTA1MDUwNTA1MDUwNTA1MDUwNTA1MDUwNTA1MDUwNTA1MDUwNTA1MDUwNTA1MDUwNTA1MDUwNTA1MDUwNTA1MDUiLCJraW5kIjoiY29udmVyc2F0aW9uLnRpbWVsaW5lIiwic2NoZW1hIjoxLCJlcG9jaCI6InAtMDYwNjA2MDYwNjA2MDYwNjA2MDYwNjA2MDYwNjA2MDYwNjA2MDYwNjA2MDYwNjA2MDYwNjA2MDYwNjA2MDYwNiIsInByb2R1Y2VyIjp7ImtpbmQiOiJkZXZpY2UiLCJkZXZpY2UiOiJkLTAzMDMwMzAzMDMwMzAzMDMwMzAzMDMwMzAzMDMwMzAzMDMwMzAzMDMwMzAzMDMwMzAzMDMwMzAzMDMwMzAzMDMifSwicHJlZGVjZXNzb3IiOm51bGwsImNsb3NlZF90aHJvdWdoIjpudWxsLCJvcGVyYXRpb24iOiJtLTJmMmYyZjJmMmYyZjJmMmYyZjJmMmYyZjJmMmYyZjJmMmYyZjJmMmYyZjJmMmYyZjJmMmYyZjJmMmYyZjJmMmYiLCJjb250cm9sX3NlcXVlbmNlIjoiMSIsImJhc2lzIjp7ImJhc2lzIjoiaW5pdGlhbCIsInJlZ2lzdHJhdGlvbiI6Im0tMmYyZjJmMmYyZjJmMmYyZjJmMmYyZjJmMmYyZjJmMmYyZjJmMmYyZjJmMmYyZjJmMmYyZjJmMmYyZjJmMmYyZiJ9fQ",
+              "purpose": "epoch_handover_v1",
+              "signature": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+              "signer": "CQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQk"
+            }
+          },
+          "head": {
+            "acl_revision": "1",
+            "authority": {
+              "device": "d-0303030303030303030303030303030303030303030303030303030303030303",
+              "epoch": "p-0606060606060606060606060606060606060606060606060606060606060606",
+              "kind": "device"
+            },
+            "completeness": {
+              "state": "metadata_only"
+            },
+            "content": null,
+            "current_version": {
+              "authority_epoch": "e-1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f",
+              "revision": "1"
+            },
+            "evidence": {
+              "epoch": "687a93c36223c58458da01a1e99276007c78984bd29439752f2b48dd09062fca",
+              "evidence": "stream",
+              "prefix_digest": "13f673d8e7ca6d7c76cdd056acf89451853d32913a7f450c1bf16aea0f5c5b62",
+              "through": "4"
+            },
+            "history": null,
+            "key": {
+              "object": "o-2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a",
+              "scope": {
+                "hub": "w-0101010101010101",
+                "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+              }
+            },
+            "kind": "conversation.timeline",
+            "lifecycle": "live",
+            "revision": {
+              "authority_epoch": "e-1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f",
+              "revision": "1"
+            },
+            "schema": 1
+          },
+          "operation": "m-2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f",
+          "prefix_digest": "13f673d8e7ca6d7c76cdd056acf89451853d32913a7f450c1bf16aea0f5c5b62",
+          "proof": "8cdacac6fdcd52b2e9d84a13e0f3fbcf3d89d1844df89b97f7645fbf2e9c7b77",
+          "scope": {
+            "acl_revision": "1",
+            "epoch": "f-0404040404040404040404040404040404040404040404040404040404040404",
+            "prefix_digest": "1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e",
+            "scope": {
+              "hub": "w-0101010101010101",
+              "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+            },
+            "through": "9007199254740993"
+          },
+          "stream": {
+            "committed": "4",
+            "epoch": "p-0606060606060606060606060606060606060606060606060606060606060606",
+            "scope": {
+              "hub": "w-0101010101010101",
+              "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+            },
+            "stream": "r-0505050505050505050505050505050505050505050505050505050505050505"
+          }
+        },
+        "status": "accepted"
+      }
+    },
+    {
+      "message": "source_result",
+      "result": {
+        "content_complete": true,
+        "receipt": {
+          "actor": {
+            "account": "a-0707070707070707070707070707070707070707070707070707070707070707",
+            "actor": "account",
+            "device": "d-0303030303030303030303030303030303030303030303030303030303030303"
+          },
+          "epoch": {
+            "proof": {
+              "data": "eyJzY29wZSI6eyJodWIiOiJ3LTAxMDEwMTAxMDEwMTAxMDEiLCJzY29wZSI6InMtMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMiJ9LCJzdHJlYW0iOiJyLTA1MDUwNTA1MDUwNTA1MDUwNTA1MDUwNTA1MDUwNTA1MDUwNTA1MDUwNTA1MDUwNTA1MDUwNTA1MDUwNTA1MDUiLCJraW5kIjoiY29udmVyc2F0aW9uLnRpbWVsaW5lIiwic2NoZW1hIjoxLCJlcG9jaCI6InAtMDYwNjA2MDYwNjA2MDYwNjA2MDYwNjA2MDYwNjA2MDYwNjA2MDYwNjA2MDYwNjA2MDYwNjA2MDYwNjA2MDYwNiIsInByb2R1Y2VyIjp7ImtpbmQiOiJkZXZpY2UiLCJkZXZpY2UiOiJkLTAzMDMwMzAzMDMwMzAzMDMwMzAzMDMwMzAzMDMwMzAzMDMwMzAzMDMwMzAzMDMwMzAzMDMwMzAzMDMwMzAzMDMifSwicHJlZGVjZXNzb3IiOm51bGwsImNsb3NlZF90aHJvdWdoIjpudWxsLCJvcGVyYXRpb24iOiJtLTJmMmYyZjJmMmYyZjJmMmYyZjJmMmYyZjJmMmYyZjJmMmYyZjJmMmYyZjJmMmYyZjJmMmYyZjJmMmYyZjJmMmYiLCJjb250cm9sX3NlcXVlbmNlIjoiMSIsImJhc2lzIjp7ImJhc2lzIjoiaW5pdGlhbCIsInJlZ2lzdHJhdGlvbiI6Im0tMmYyZjJmMmYyZjJmMmYyZjJmMmYyZjJmMmYyZjJmMmYyZjJmMmYyZjJmMmYyZjJmMmYyZjJmMmYyZjJmMmYyZiJ9fQ",
+              "purpose": "epoch_handover_v1",
+              "signature": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+              "signer": "CQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQk"
+            }
+          },
+          "head": {
+            "acl_revision": "1",
+            "authority": {
+              "device": "d-0303030303030303030303030303030303030303030303030303030303030303",
+              "epoch": "p-0606060606060606060606060606060606060606060606060606060606060606",
+              "kind": "device"
+            },
+            "completeness": {
+              "state": "metadata_only"
+            },
+            "content": null,
+            "current_version": {
+              "authority_epoch": "e-1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f",
+              "revision": "1"
+            },
+            "evidence": {
+              "epoch": "687a93c36223c58458da01a1e99276007c78984bd29439752f2b48dd09062fca",
+              "evidence": "stream",
+              "prefix_digest": "13f673d8e7ca6d7c76cdd056acf89451853d32913a7f450c1bf16aea0f5c5b62",
+              "through": "4"
+            },
+            "history": null,
+            "key": {
+              "object": "o-2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a",
+              "scope": {
+                "hub": "w-0101010101010101",
+                "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+              }
+            },
+            "kind": "conversation.timeline",
+            "lifecycle": "live",
+            "revision": {
+              "authority_epoch": "e-1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f",
+              "revision": "1"
+            },
+            "schema": 1
+          },
+          "operation": "m-2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f",
+          "prefix_digest": "13f673d8e7ca6d7c76cdd056acf89451853d32913a7f450c1bf16aea0f5c5b62",
+          "proof": "8cdacac6fdcd52b2e9d84a13e0f3fbcf3d89d1844df89b97f7645fbf2e9c7b77",
+          "scope": {
+            "acl_revision": "1",
+            "epoch": "f-0404040404040404040404040404040404040404040404040404040404040404",
+            "prefix_digest": "1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e",
+            "scope": {
+              "hub": "w-0101010101010101",
+              "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+            },
+            "through": "9007199254740993"
+          },
+          "stream": {
+            "committed": "4",
+            "epoch": "p-0606060606060606060606060606060606060606060606060606060606060606",
+            "scope": {
+              "hub": "w-0101010101010101",
+              "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+            },
+            "stream": "r-0505050505050505050505050505050505050505050505050505050505050505"
+          }
+        },
+        "status": "accepted"
+      }
+    },
+    {
+      "message": "source_result",
+      "result": {
+        "proof": "8cdacac6fdcd52b2e9d84a13e0f3fbcf3d89d1844df89b97f7645fbf2e9c7b77",
+        "status": "awaiting_epoch"
+      }
+    },
+    {
       "holding": {
         "acl_revision": "1",
         "holder": {
