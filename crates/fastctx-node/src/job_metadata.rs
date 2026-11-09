@@ -150,55 +150,6 @@ impl Job {
                 .unwrap_or(0) as u64)
         })
     }
-    /// Called while artifact deletion owns the job's collection claim, before
-    /// deleting the supervisor record. Small transactions keep unrelated writers moving.
-    pub(crate) fn delete_all(&self) -> io::Result<()> {
-        crate::run_facts::delete_step_view(self)?;
-        loop {
-            let prefix = self.prefix.clone();
-            let count = records::write_at(&self.directory, Priority::Background, 4096, move |rows| {
-                let mut query = rows.connection().prepare_cached("SELECT family,identity FROM record_payload_roots WHERE conversation=?1 AND family>=?2 AND family<?3 LIMIT 16")?;
-                let keys = query
-                    .query_map((rows.conversation(), &prefix, format!("{prefix}\u{10ffff}")), |row| {
-                        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-                    })?
-                    .collect::<std::result::Result<Vec<_>, _>>()?;
-                for (family, key) in &keys {
-                    crate::record_payloads::link(rows.connection(), rows.conversation(), family, key, None)?;
-                }
-                Ok(keys.len())
-            })?;
-            if count == 0 {
-                break;
-            }
-        }
-        loop {
-            let prefix = self.prefix.clone();
-            let count = records::write_at(&self.directory, Priority::Background, 4096, move |rows| {
-                Ok(rows.connection().execute("DELETE FROM conversation_records WHERE conversation=?1 AND position IN (SELECT position FROM conversation_records WHERE conversation=?1 AND family>=?2 AND family<?3 LIMIT 64)",(rows.conversation(),&prefix,format!("{prefix}\u{10ffff}")))?)
-            })?;
-            if count == 0 {
-                break;
-            }
-        }
-        let prefix = self.prefix.clone();
-        records::write_at(&self.directory, Priority::Background, 256, move |rows| {
-            for table in ["conversation_record_imports", "conversation_record_versions"] {
-                rows.connection().execute(
-                    &format!("DELETE FROM {table} WHERE conversation=?1 AND family>=?2 AND family<?3"),
-                    (rows.conversation(), &prefix, format!("{prefix}\u{10ffff}")),
-                )?;
-            }
-            Ok(())
-        })?;
-        let (_, conversation) = records::locate(&self.directory)?;
-        crate::record_migration::scheduler::forget(
-            &crate::record_migration::world(&self.directory)?,
-            &conversation,
-            &self.prefix,
-        );
-        Ok(())
-    }
 }
 
 pub(crate) fn get<T: DeserializeOwned>(marker: &Path) -> io::Result<Option<T>> {

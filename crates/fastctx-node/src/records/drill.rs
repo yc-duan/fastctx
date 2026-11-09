@@ -66,7 +66,6 @@ pub(crate) fn run(root: &Path) -> std::result::Result<(), Box<dyn std::error::Er
     assert_eq!(waiting(&directory)?.len(), 2);
     crate::inbox::consume(&directory, &first.delivery.id)?;
     assert!(!crate::inbox::keep(&directory, &first)?);
-    assert!(crate::inbox::heard_at(&directory, &first.delivery.id)?.is_none());
 
     let mut original = crate::delivery::begin(&directory, vec![later.clone()])?;
     let mut stale = original.clone();
@@ -123,10 +122,7 @@ pub(crate) fn run(root: &Path) -> std::result::Result<(), Box<dyn std::error::Er
     fastctx_platform::disk::create_dir_all(legacy.books())?;
     fastctx_platform::disk::write(legacy.delivered(), b"input-000007\n")?;
     assert!(crate::inbox::delivered_here(&legacy, &pending(7).delivery.id)?);
-    assert!(
-        crate::inbox::heard_at(&legacy, &pending(7).delivery.id)?.is_none(),
-        "old duplicate marker became consumption proof"
-    );
+
     let file = root.join("seen-file.txt");
     fastctx_platform::disk::write(&file, b"one")?;
     let mut seen = Seen {

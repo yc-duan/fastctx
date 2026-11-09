@@ -241,14 +241,6 @@ pub(crate) fn ready(world: &Path, conversation: &str, family: &str) {
     }
 }
 
-/// Lets go of a conversation's families under `prefix`, retired with what
-/// they held.
-pub(crate) fn forget(world: &Path, conversation: &str, prefix: &str) {
-    if let Some(engine) = ENGINES.lock().expect("migration registry").get(world).and_then(Weak::upgrade) {
-        engine.queue.lock().expect("migration queue").ready.forget(conversation, prefix);
-    }
-}
-
 /// Loads the completed gathered layouts while registration is still on a
 /// blocking thread.
 pub(crate) fn hydrate(

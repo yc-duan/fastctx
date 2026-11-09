@@ -310,15 +310,7 @@ pub(crate) fn consume(directory: &ConversationDir, id: &NoticeId) -> io::Result<
         Ok(())
     })
 }
-pub(crate) fn heard_at(directory: &ConversationDir, id: &NoticeId) -> io::Result<Option<jiff::Timestamp>> {
-    read_rows(directory, |rows| {
-        if rows.get::<Receipt>("delivery-receipts", id.as_str())? == Some(Receipt::Heard) {
-            rows.modified("delivery-receipts", id.as_str())
-        } else {
-            Ok(None)
-        }
-    })
-}
+
 pub fn owe(directory: &ConversationDir, owing: &Owing) -> io::Result<()> {
     let (owing, bytes) = (owing.clone(), serde_json::to_vec(owing)?.len());
     change(directory, bytes, move |rows| owe_in(rows, &owing))

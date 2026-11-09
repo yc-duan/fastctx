@@ -91,11 +91,6 @@ pub(crate) fn run(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(steps.len(), 200);
     assert_eq!(folded.iter().map(|row| row.count).sum::<u64>(), 99_801);
     super::drill_frames::run(&database, &path)?;
-    crate::job_metadata::Job::open(&path)?.delete_all()?;
-    assert_eq!(
-        database.read_now(|db| Ok(db.query_row("SELECT count(*) FROM run_steps", [], |row| row.get::<_, i64>(0))?))?,
-        0
-    );
-    println!("executor interrupted recovery, resumed append and job-view collection: passed");
+    println!("executor interrupted recovery and resumed append: passed");
     Ok(())
 }

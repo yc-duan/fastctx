@@ -97,22 +97,3 @@ pub(super) fn read(record: &Path) -> io::Result<(Vec<RunStep>, Vec<StepSummary>)
         Ok((steps, folded))
     })
 }
-
-pub(crate) fn delete(job: &Job) -> io::Result<()> {
-    for table in ["run_steps", "run_folded"] {
-        loop {
-            let count = job.change(VIEW, 4096, move |rows, family| {
-                let condition = if table == "run_steps" {
-                    "position IN (SELECT position FROM run_steps WHERE conversation=?1 AND call=?2 LIMIT 64)"
-                } else {
-                    "(conversation,call,machine,kind) IN (SELECT conversation,call,machine,kind FROM run_folded WHERE conversation=?1 AND call=?2 LIMIT 64)"
-                };
-                Ok(rows.connection().execute(&format!("DELETE FROM {table} WHERE {condition}"), (rows.conversation(), family))?)
-            })?;
-            if count == 0 {
-                break;
-            }
-        }
-    }
-    Ok(())
-}
