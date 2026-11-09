@@ -5,6 +5,7 @@ pub mod audit;
 pub mod authorize;
 pub mod boundary;
 pub mod engine;
+pub mod format_upgrade;
 pub mod ingest;
 pub mod ingest_effects;
 pub mod mutation;

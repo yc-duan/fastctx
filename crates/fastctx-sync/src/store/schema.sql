@@ -1,6 +1,22 @@
 -- Sequence and revision columns are unsigned big-endian eight-byte values.
 -- Their lexicographic order agrees with the protocol's unsigned order.
 -- Authority epochs are random 16-byte identities and have no temporal order.
+-- The owning database is the data root; these records have no account scope.
+CREATE TABLE sync_format_upgrades (
+    service TEXT NOT NULL CHECK(service IN ('world','hub')),
+    format INTEGER NOT NULL CHECK(format>0),
+    attempt INTEGER NOT NULL CHECK(attempt IN (0,1)),
+    written_by TEXT NOT NULL CHECK(length(written_by) BETWEEN 1 AND 128),
+    previous_format INTEGER CHECK(previous_format IS NULL OR previous_format BETWEEN 1 AND format),
+    upgraded_at INTEGER NOT NULL CHECK(upgraded_at>=0),
+    revision BLOB NOT NULL CHECK(length(revision)=8),
+    phase TEXT NOT NULL CHECK(phase IN ('prepared','copying','copied','complete','abandoned','not_required')),
+    snapshot_at INTEGER CHECK(snapshot_at IS NULL OR snapshot_at>=0),
+    file_name TEXT CHECK(file_name IS NULL OR length(file_name) BETWEEN 1 AND 192),
+    copied_pages INTEGER CHECK(copied_pages IS NULL OR copied_pages>0),
+    reason TEXT CHECK(reason IS NULL OR length(reason) BETWEEN 1 AND 4096),
+    PRIMARY KEY(service,format,attempt)
+) WITHOUT ROWID;
 CREATE TABLE sync_accounts (
     hub TEXT NOT NULL, account TEXT NOT NULL, legacy_name TEXT NOT NULL,
     opened TEXT NOT NULL, PRIMARY KEY(hub,account), UNIQUE(hub,legacy_name,opened)

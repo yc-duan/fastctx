@@ -10,6 +10,18 @@ spec = importlib.util.spec_from_file_location("sync_wire", ROOT / "scripts/check
 wire = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(wire)
 CALLERS = {
+    "SqliteUpgradeJournal": {
+        "crates/fastctx-sync/src/store/format_upgrade.rs",
+        "crates/fastctx-node/src/record_database.rs",
+        "crates/fastctx-node/src/world_format.rs",
+        "crates/fastctx-hub/src/store/format.rs",
+        "crates/fastctx-hub/src/store/shelf.rs",
+    },
+    "prepare_format_upgrade": {
+        "crates/fastctx-sync/src/store/format_upgrade.rs",
+        "crates/fastctx-node/src/record_database.rs",
+        "crates/fastctx-hub/src/store/format.rs",
+    },
     "IndexValidationPermit": {
         "crates/fastctx-sync/src/blocks/metadata_custody.rs",
     },
@@ -51,6 +63,7 @@ CALLERS = {
     },
     "enter_typed_write": {
         "crates/fastctx-sync/src/store/boundary.rs",
+        "crates/fastctx-sync/src/store/format_upgrade.rs",
         "crates/fastctx-sync/src/store/engine/pending.rs",
         "crates/fastctx-sync/src/blocks/cleanup.rs",
         "crates/fastctx-sync/src/scheduler/sqlite.rs",

@@ -1,6 +1,7 @@
 //! The closed table set installed by this schema component.
 
 pub const TABLES: &[&str] = &[
+    "sync_format_upgrades",
     "sync_accounts",
     "sync_scopes",
     "sync_objects",
