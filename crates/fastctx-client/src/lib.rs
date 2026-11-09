@@ -50,6 +50,7 @@ mod sentinels;
 pub mod shown;
 mod skills;
 mod thumbnail;
+mod timeline;
 pub mod town;
 pub mod world;
 pub mod world_now;

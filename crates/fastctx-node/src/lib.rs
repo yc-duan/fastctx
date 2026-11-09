@@ -68,6 +68,7 @@ mod firewall;
 mod focus;
 mod forget;
 mod forks;
+mod foundation;
 mod gate_waits;
 mod gates;
 mod gather;
@@ -211,6 +212,9 @@ pub(crate) struct Node {
     root: PathBuf,
     world: WorldDir,
     database: fastctx_storage::Database,
+    /// The unified data foundation's engines on `database`, when it opened
+    /// (`foundation`).
+    foundation: Option<foundation::Foundation>,
     book_database: fastctx_storage::Database,
     record_migration: record_migration::Service,
     controls_due: std::sync::Mutex<std::collections::HashMap<fastctx_types::ResidentId, bool>>,
@@ -757,6 +761,16 @@ pub async fn run_prepared(
             if database.fault().is_none() {
                 record_database::start_upgrade(&database, log.clone()).context("pinning the World upgrade snapshot")?;
             }
+            let foundation = match database.fault() {
+                Some(_) => None,
+                None => match foundation::Foundation::open(&world, &database, log.clone()) {
+                    Ok(foundation) => Some(foundation),
+                    Err(error) => {
+                        log.line(format_args!("the data foundation is unavailable: {error:#}"));
+                        None
+                    }
+                },
+            };
             let record_migration =
                 record_database::register(&world, &database).context("opening the node record database")?;
             record_migration.report_to(log.clone());
@@ -779,6 +793,7 @@ pub async fn run_prepared(
                 root: fastctx_root.to_path_buf(),
                 world,
                 database,
+                foundation,
                 book_database,
                 record_migration,
                 controls_due: Default::default(),
@@ -977,6 +992,17 @@ pub async fn run_prepared(
         .await
         {
             log.line(format_args!("starting recovered work: {error}"));
+        }
+    });
+    // The foundation's tasks start with bulk migration, after the upgrade's
+    // backup has released the database.
+    let founding = node.clone();
+    fastctx_platform::task::spawn(async move {
+        if founding.record_migration.wait_started().await.is_err() {
+            return;
+        }
+        if let Some(foundation) = founding.foundation.as_ref() {
+            foundation.run(founding.log.clone()).await;
         }
     });
     let jobs_node = node.clone();

@@ -1647,6 +1647,10 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             users_voice(node, peer)?;
             crate::history::api::call(node, &Caller::User, request).await.map(Reply::History)
         }
+        Call::Timeline(call) => {
+            users_voice(node, peer)?;
+            crate::foundation::reads::call(node, call).await.map(Reply::Timeline)
+        }
         Call::WatchMemory { .. } => Err(Failure::new("a memory watch is answered as it changes")),
         Call::Memory(_) => Err(Failure::not_run("project memory was replaced by history; update the app")),
         Call::Project(call) => {

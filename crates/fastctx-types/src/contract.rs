@@ -356,6 +356,8 @@ impl Call {
                 }
             }
             Self::WatchHistory { .. } => Leaving::Stop,
+            Self::Timeline(crate::timeline_reads::TimelineCall::Release { .. }) => Leaving::Finish,
+            Self::Timeline(_) => Leaving::Stop,
             Self::PrepareCopies { .. } => Leaving::Finish,
             Self::Memory(crate::memory::MemoryCall::List { .. } | crate::memory::MemoryCall::Read { .. }) => {
                 Leaving::Stop

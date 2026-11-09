@@ -87,6 +87,9 @@ pub enum Call {
         paths: Vec<std::path::PathBuf>,
     },
     History(crate::history::HistoryCall),
+    /// A conversation's installed timeline, read without its host's record
+    /// (`crate::timeline_reads`).
+    Timeline(crate::timeline_reads::TimelineCall),
     WatchHistory {
         scope: crate::history::Scope,
     },
@@ -995,6 +998,7 @@ pub enum Reply {
     },
     Collaboration(Box<crate::collaboration::Tree>),
     History(crate::history::HistoryReply),
+    Timeline(crate::timeline_reads::TimelineReply),
     Memory(crate::memory::MemoryReply),
     MemorySettings(crate::memory::Settings),
     Layer(crate::layers::Chosen),
@@ -1367,4 +1371,259 @@ pub struct HostCommand {
     pub program: std::path::PathBuf,
     pub args: Vec<String>,
     pub env: Vec<(String, String)>,
+}
+
+/// Each call new to the world protocol states its routing purpose here; the
+/// calls that predate it have none. The match stays exhaustive so a new call
+/// cannot pass without one.
+impl Call {
+    pub fn purpose(&self) -> Option<crate::sync::transfer::Purpose> {
+        use crate::sync::transfer::Purpose;
+        match self {
+            Self::Account { .. }
+            | Self::AccountRecords { .. }
+            | Self::Accounts { .. }
+            | Self::AddAgentLogin { .. }
+            | Self::AgentActivity { .. }
+            | Self::AgentCalls { .. }
+            | Self::AgentFolder { .. }
+            | Self::AgentLogins { .. }
+            | Self::AgentUsage { .. }
+            | Self::Agents { .. }
+            | Self::Arrive { .. }
+            | Self::Ask { .. }
+            | Self::Attach { .. }
+            | Self::AttachmentPlaces { .. }
+            | Self::AttachmentThumbnail { .. }
+            | Self::Book { .. }
+            | Self::BringIn { .. }
+            | Self::ChangeAgentLogin { .. }
+            | Self::ChangeAgentModels { .. }
+            | Self::ClaudeConsent { .. }
+            | Self::ClaudeContext { .. }
+            | Self::ClaudeSessionDirectory { .. }
+            | Self::ClaudeSubagents { .. }
+            | Self::CollabRead { .. }
+            | Self::CollabWrite { .. }
+            | Self::Collaboration { .. }
+            | Self::Collect { .. }
+            | Self::CompactBetweenTurns { .. }
+            | Self::Composer { .. }
+            | Self::Control { .. }
+            | Self::Copy { .. }
+            | Self::Data { .. }
+            | Self::DoctorCalls { .. }
+            | Self::DoctorReadings { .. }
+            | Self::Features { .. }
+            | Self::FindFiles { .. }
+            | Self::Folders { .. }
+            | Self::Forget { .. }
+            | Self::Goal { .. }
+            | Self::GoalCommand { .. }
+            | Self::HandOver { .. }
+            | Self::History { .. }
+            | Self::HistorySwitchRead { .. }
+            | Self::HistorySwitchWrite { .. }
+            | Self::HoldHost { .. }
+            | Self::Homes { .. }
+            | Self::HubArrived { .. }
+            | Self::HubMove { .. }
+            | Self::HubProxy { .. }
+            | Self::ItemDetail { .. }
+            | Self::JobChanged { .. }
+            | Self::Journal { .. }
+            | Self::Layer { .. }
+            | Self::Lines { .. }
+            | Self::Login { .. }
+            | Self::LoginWithToken { .. }
+            | Self::Look { .. }
+            | Self::MachineLog { .. }
+            | Self::MachineUpdates { .. }
+            | Self::Machines { .. }
+            | Self::Manage { .. }
+            | Self::Mcp { .. }
+            | Self::McpRelay { .. }
+            | Self::Memory { .. }
+            | Self::MemoryRoom { .. }
+            | Self::MemorySettings { .. }
+            | Self::Message { .. }
+            | Self::NetworkUpdates { .. }
+            | Self::Nodes { .. }
+            | Self::Offers { .. }
+            | Self::On { .. }
+            | Self::Open { .. }
+            | Self::OpenAccount { .. }
+            | Self::Page { .. }
+            | Self::PeekToken { .. }
+            | Self::Plan { .. }
+            | Self::PlanRead { .. }
+            | Self::PlanWrite { .. }
+            | Self::PrepareCopies { .. }
+            | Self::PreviewAgentChange { .. }
+            | Self::ProfileRead { .. }
+            | Self::ProfileSubagents { .. }
+            | Self::ProfileWrite { .. }
+            | Self::Project { .. }
+            | Self::ReadAgentLimits { .. }
+            | Self::ReadAttachment { .. }
+            | Self::ReadFile { .. }
+            | Self::ReadLineNotes { .. }
+            | Self::ReadLines { .. }
+            | Self::RecordRunFailure { .. }
+            | Self::RenameHere { .. }
+            | Self::Reopened { .. }
+            | Self::Run { .. }
+            | Self::Saw { .. }
+            | Self::Say { .. }
+            | Self::ScanAgents { .. }
+            | Self::SeenDissolved { .. }
+            | Self::Sentinel { .. }
+            | Self::SentinelKey { .. }
+            | Self::SentinelSettings { .. }
+            | Self::SentinelTry { .. }
+            | Self::ServerCommand { .. }
+            | Self::SetAgentResetInPlace { .. }
+            | Self::SetAgentTitle { .. }
+            | Self::SetFeature { .. }
+            | Self::SetLanguage { .. }
+            | Self::Since { .. }
+            | Self::Skill { .. }
+            | Self::SkillFiles { .. }
+            | Self::Stats { .. }
+            | Self::Stepped { .. }
+            | Self::Stop { .. }
+            | Self::StopJob { .. }
+            | Self::StoreRunFacts { .. }
+            | Self::Taken { .. }
+            | Self::Talk { .. }
+            | Self::Thumbnail { .. }
+            | Self::Timer { .. }
+            | Self::TurnEvidence { .. }
+            | Self::UninstallPrepare { .. }
+            | Self::Update { .. }
+            | Self::UpdateMachine { .. }
+            | Self::Upload { .. }
+            | Self::Wait { .. }
+            | Self::Watch { .. }
+            | Self::WatchAccountRecords { .. }
+            | Self::WatchFeatures { .. }
+            | Self::WatchHistory { .. }
+            | Self::WatchMany { .. }
+            | Self::WatchMemory { .. }
+            | Self::WatchTools { .. }
+            | Self::WatchWorld { .. }
+            | Self::Who { .. }
+            | Self::WorldNow { .. }
+            | Self::Write { .. } => None,
+            Self::Timeline { .. } => Some(Purpose::AssetSync),
+        }
+    }
+}
+
+/// The answers' purposes, kept the same way as the calls'.
+impl Reply {
+    pub fn answer_purpose(&self) -> Option<crate::sync::transfer::Purpose> {
+        use crate::sync::transfer::Purpose;
+        match self {
+            Self::AccountRecords { .. }
+            | Self::Accounts { .. }
+            | Self::AgentActivity { .. }
+            | Self::AgentCalls { .. }
+            | Self::AgentChangePreview { .. }
+            | Self::AgentLoginChanged { .. }
+            | Self::AgentLogins { .. }
+            | Self::AgentUsage { .. }
+            | Self::Agents { .. }
+            | Self::Arrived { .. }
+            | Self::Asked { .. }
+            | Self::Attachable { .. }
+            | Self::AttachmentPlaces { .. }
+            | Self::Book { .. }
+            | Self::Changed { .. }
+            | Self::ClaudeConsent { .. }
+            | Self::ClaudeContext { .. }
+            | Self::ClaudeSessionDirectory { .. }
+            | Self::ClaudeSubagents { .. }
+            | Self::CollabRead { .. }
+            | Self::CollabWritten { .. }
+            | Self::Collaboration { .. }
+            | Self::Compacted { .. }
+            | Self::Composer { .. }
+            | Self::ComposerUploaded { .. }
+            | Self::Controlled { .. }
+            | Self::Copied { .. }
+            | Self::Data { .. }
+            | Self::DoctorCalls { .. }
+            | Self::DoctorReadings { .. }
+            | Self::Done { .. }
+            | Self::Entered { .. }
+            | Self::EntryAdded { .. }
+            | Self::Features { .. }
+            | Self::FileRead { .. }
+            | Self::FilesFound { .. }
+            | Self::Folders { .. }
+            | Self::Forgetting { .. }
+            | Self::Goal { .. }
+            | Self::History { .. }
+            | Self::HistorySwitch { .. }
+            | Self::HubMove { .. }
+            | Self::HubProxy { .. }
+            | Self::ItemDetail { .. }
+            | Self::JobStopped { .. }
+            | Self::Journal { .. }
+            | Self::Journals { .. }
+            | Self::Layer { .. }
+            | Self::Lines { .. }
+            | Self::LoggedIn { .. }
+            | Self::Looked { .. }
+            | Self::MachineAgentLogins { .. }
+            | Self::MachineLog { .. }
+            | Self::Machines { .. }
+            | Self::Managed { .. }
+            | Self::Map { .. }
+            | Self::Mcp { .. }
+            | Self::Memory { .. }
+            | Self::MemoryRoom { .. }
+            | Self::MemorySettings { .. }
+            | Self::NetworkUpdates { .. }
+            | Self::Nodes { .. }
+            | Self::Notices { .. }
+            | Self::Offers { .. }
+            | Self::Opened { .. }
+            | Self::Page { .. }
+            | Self::PageAct { .. }
+            | Self::PageConsent { .. }
+            | Self::PageHistory { .. }
+            | Self::Pages { .. }
+            | Self::Plan { .. }
+            | Self::Profile { .. }
+            | Self::ProfileSubagents { .. }
+            | Self::ProfileWritten { .. }
+            | Self::Record { .. }
+            | Self::Run { .. }
+            | Self::Sentinel { .. }
+            | Self::SentinelSettings { .. }
+            | Self::SentinelTried { .. }
+            | Self::ServerInvitation { .. }
+            | Self::Since { .. }
+            | Self::Skill { .. }
+            | Self::SkillFiles { .. }
+            | Self::Spoken { .. }
+            | Self::Stats { .. }
+            | Self::Stopped { .. }
+            | Self::Thumbnail { .. }
+            | Self::Timers { .. }
+            | Self::TokenPeek { .. }
+            | Self::Told { .. }
+            | Self::Towns { .. }
+            | Self::TurnEvidence { .. }
+            | Self::Update { .. }
+            | Self::Uploaded { .. }
+            | Self::Waited { .. }
+            | Self::Who { .. }
+            | Self::WorldNow { .. }
+            | Self::Written { .. } => None,
+            Self::Timeline { .. } => Some(Purpose::AssetSync),
+        }
+    }
 }

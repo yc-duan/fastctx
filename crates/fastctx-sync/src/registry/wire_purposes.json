@@ -362,5 +362,19 @@
     "purpose": "AssetSync",
     "capability": "asset_sync.transport",
     "mapping": "crates/fastctx-net/src/peer.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/calls.rs::Call",
+    "variant": "Timeline",
+    "purpose": "AssetSync",
+    "capability": "node_ipc",
+    "mapping": "crates/fastctx-types/src/calls.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/calls.rs::Reply",
+    "variant": "Timeline",
+    "purpose": "AssetSync",
+    "capability": "node_ipc",
+    "mapping": "crates/fastctx-types/src/calls.rs"
   }
 ]
