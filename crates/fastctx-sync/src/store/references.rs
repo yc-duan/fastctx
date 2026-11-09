@@ -15,7 +15,7 @@ impl References {
             return Ok(());
         }
         let columns = match change.table() {
-            "sync_asset_roots" => [0, 1, 5, 6],
+            "sync_asset_roots" | "sync_stream_roots" => [0, 1, 5, 6],
             "sync_asset_pins" if change.after(9)? != ValueRef::Text(b"released") => [0, 1, 5, 6],
             "sync_asset_edges" => [0, 1, 3, 4],
             "sync_pending_roots" => [0, 3, 6, 7],

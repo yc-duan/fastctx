@@ -30,3 +30,5 @@ pub const PROTOCOL: u16 = 1;
 pub const BLOCK_BYTES: u32 = 1024 * 1024;
 /// Metadata is paged independently of the size of the referenced assets.
 pub const PAGE_BYTES: u32 = 256 * 1024;
+/// Content roots one source record may own beyond its payload block.
+pub const RECORD_ROOTS: usize = 64;

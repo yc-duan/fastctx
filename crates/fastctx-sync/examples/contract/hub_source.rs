@@ -32,6 +32,7 @@ pub fn sample(holding: &HoldingPeriod) -> Result<(Message, SourceBatch), serde_j
                 },
                 decoded_bytes: 1,
             },
+            roots: vec![],
             causes: vec![],
         }],
     };

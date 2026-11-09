@@ -71,6 +71,7 @@ pub fn sample(cursor: &ScopeCursor, device: DeviceId) -> Result<Vec<Message>, Bo
             operation,
             kind: epoch.kind.clone(),
             schema: 1,
+            roots: vec![],
             causes: vec![],
             payload: ContentBlock {
                 id: BlobId {

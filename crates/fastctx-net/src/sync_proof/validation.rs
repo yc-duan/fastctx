@@ -63,6 +63,16 @@ pub(super) fn source(value: &SourceBatch) -> Result<(), Error> {
         {
             return Err(Error::Invalid("source record differs from its signed range binding".into()));
         }
+        if record.roots.len() > fastctx_types::sync::RECORD_ROOTS {
+            return Err(Error::Invalid("source record owns too many content roots".into()));
+        }
+        let mut roots = BTreeSet::new();
+        for root in &record.roots {
+            root.validate().map_err(Error::Invalid)?;
+            if root.id().domain != value.scope || !roots.insert(root.id()) {
+                return Err(Error::Invalid("source record roots must be distinct and inside its scope".into()));
+            }
+        }
     }
     Ok(())
 }

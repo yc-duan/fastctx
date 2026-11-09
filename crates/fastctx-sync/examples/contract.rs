@@ -74,6 +74,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             kind: kind.kind.clone(),
             schema: 1,
             payload: ContentBlock { id: blob(n), decoded_bytes: 1 },
+            roots: vec![],
             causes: vec![],
         })
         .collect();

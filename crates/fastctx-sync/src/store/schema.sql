@@ -97,6 +97,18 @@ CREATE TABLE sync_stream_records (
     PRIMARY KEY(hub,scope,stream,epoch,sequence),
     UNIQUE(hub,scope,stream,epoch,operation)
 ) WITHOUT ROWID;
+-- A record retains its payload block and the roots it declares, forever: facts
+-- are assets. Revocation and deletion remove these rows through their own cleanup.
+CREATE TABLE sync_stream_roots (
+    hub TEXT NOT NULL, scope TEXT NOT NULL, stream TEXT NOT NULL, epoch TEXT NOT NULL,
+    sequence BLOB NOT NULL CHECK(length(sequence)=8), hash TEXT NOT NULL,
+    root_kind TEXT NOT NULL CHECK(root_kind IN ('block','manifest')), decoded_bytes INTEGER,
+    CHECK((root_kind='block' AND decoded_bytes IS NOT NULL AND decoded_bytes BETWEEN 0 AND 1048576)
+       OR (root_kind='manifest' AND decoded_bytes IS NULL)),
+    PRIMARY KEY(hub,scope,stream,epoch,sequence,hash,root_kind),
+    FOREIGN KEY(hub,scope,stream,epoch,sequence) REFERENCES sync_stream_records(hub,scope,stream,epoch,sequence)
+) WITHOUT ROWID;
+CREATE INDEX sync_stream_roots_hash ON sync_stream_roots(hub,scope,hash,root_kind);
 CREATE TABLE sync_operations (
     hub TEXT NOT NULL, actor TEXT NOT NULL, operation TEXT NOT NULL,
     request_hash TEXT NOT NULL, result BLOB NOT NULL, accepted_proofs BLOB,

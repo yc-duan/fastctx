@@ -148,6 +148,7 @@ impl World {
                     id: BlobId { domain: scope, algorithm: DigestAlgorithm::Sha256, digest: Digest::of(&payload) },
                     decoded_bytes: payload.len() as u32,
                 },
+                roots: vec![],
                 causes: vec![],
             }],
         };

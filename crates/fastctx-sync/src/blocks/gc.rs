@@ -151,7 +151,7 @@ fn claim(db: &Connection, candidate: Candidate) -> Result<Option<Claimed>> {
         .optional()?;
     let Some(claimed) = claimed else { return Ok(None) };
     if !claimed {
-        let retained:bool=db.query_row("SELECT EXISTS(SELECT 1 FROM sync_asset_roots WHERE hub=?1 AND scope=?2 AND hash=?3 AND root_kind=?4) OR EXISTS(SELECT 1 FROM sync_asset_pins WHERE hub=?1 AND scope=?2 AND hash=?3 AND root_kind=?4 AND phase!='released') OR EXISTS(SELECT 1 FROM sync_asset_edges WHERE hub=?1 AND scope=?2 AND child=?3 AND child_kind=?4) OR EXISTS(SELECT 1 FROM sync_pending_roots WHERE hub=?1 AND scope=?2 AND hash=?3 AND root_kind=?4) OR EXISTS(SELECT 1 FROM sync_root_leases WHERE hub=?1 AND scope=?2 AND hash=?3 AND root_kind=?4 AND released=0)",params![hub,scope,hash,candidate.form],|row|row.get(0))?;
+        let retained:bool=db.query_row("SELECT EXISTS(SELECT 1 FROM sync_asset_roots WHERE hub=?1 AND scope=?2 AND hash=?3 AND root_kind=?4) OR EXISTS(SELECT 1 FROM sync_stream_roots WHERE hub=?1 AND scope=?2 AND hash=?3 AND root_kind=?4) OR EXISTS(SELECT 1 FROM sync_asset_pins WHERE hub=?1 AND scope=?2 AND hash=?3 AND root_kind=?4 AND phase!='released') OR EXISTS(SELECT 1 FROM sync_asset_edges WHERE hub=?1 AND scope=?2 AND child=?3 AND child_kind=?4) OR EXISTS(SELECT 1 FROM sync_pending_roots WHERE hub=?1 AND scope=?2 AND hash=?3 AND root_kind=?4) OR EXISTS(SELECT 1 FROM sync_root_leases WHERE hub=?1 AND scope=?2 AND hash=?3 AND root_kind=?4 AND released=0)",params![hub,scope,hash,candidate.form],|row|row.get(0))?;
         if retained {
             db.execute(
                 "DELETE FROM sync_asset_gc WHERE hub=?1 AND scope=?2 AND hash=?3 AND root_kind=?4",
