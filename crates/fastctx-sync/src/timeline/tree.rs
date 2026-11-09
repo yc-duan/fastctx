@@ -16,6 +16,11 @@ use fastctx_types::sync::metadata::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 
+mod balance;
+mod packing;
+
+use packing::largest;
+
 pub(super) const MAX_DEPTH: usize = 64;
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Kind {
@@ -200,11 +205,15 @@ impl<'a, S: PageSource> Overlay<'a, S> {
         value: Option<Entry>,
         meter: &mut Meter,
     ) -> Work<Option<ManifestChild>> {
+        let removing = value.is_none();
         let mut roots = self.path(child, kind, context, key, value, meter, 0)?;
         while roots.len() > 1 {
             roots = self.branches(&context.conversation.scope, roots, meter)?;
         }
-        Ok(roots.pop())
+        match roots.pop() {
+            Some(root) if removing => Ok(Some(self.collapse(root, kind, context, meter)?)),
+            root => Ok(root),
+        }
     }
     #[allow(clippy::too_many_arguments)]
     fn path(
@@ -250,11 +259,16 @@ impl<'a, S: PageSource> Overlay<'a, S> {
             }
             TreeNode::Branch(mut children) => {
                 let at = children.partition_point(|c| c.last_key.as_str() < key).min(children.len() - 1);
+                let removing = value.is_none();
                 let changed = self.path(Some(&children[at]), kind, context, key, value, meter, depth + 1)?;
                 if changed.as_slice() == std::slice::from_ref(&children[at]) {
                     return Ok(child.cloned().into_iter().collect());
                 }
+                let count = changed.len();
                 children.splice(at..at + 1, changed);
+                if removing {
+                    self.coalesce(&mut children, at, count, kind, context, meter, depth + 1)?;
+                }
                 self.branches(&context.conversation.scope, children, meter)
             }
         }
@@ -270,9 +284,8 @@ impl<'a, S: PageSource> Overlay<'a, S> {
         let mut at = 0;
         while at < entries.len() {
             let remaining = &entries[at..];
-            let (count, page) = largest(remaining.len().min(256), |n| {
-                pages::encode_payload(&context.conversation.scope, &leaf(kind, context, &remaining[..n])?)
-            })?;
+            let (count, page) =
+                largest(remaining.len().min(256), |n| packing::leaf_page(kind, context, &remaining[..n]))?;
             let root = self.add(page, meter)?;
             out.push(ManifestChild {
                 first_key: remaining[0].key()?,
@@ -297,7 +310,7 @@ impl<'a, S: PageSource> Overlay<'a, S> {
             let (count, page) =
                 largest(remaining.len().min(256), |n| pages::encode_branch(scope, remaining[..n].to_vec()))?;
             if count == 1 && remaining.len() > 1 {
-                return Err(Error::Invalid("timeline branch cannot fit two child ranges".into()).into());
+                return Err(Error::Busy.into());
             }
             let root = self.add(page, meter)?;
             out.push(ManifestChild {
@@ -327,60 +340,6 @@ impl<S: PageSource> PageSource for Overlay<'_, S> {
             Ok(Some(bytes))
         } else {
             self.source.payload(block)
-        }
-    }
-}
-fn largest(
-    max: usize,
-    mut build: impl FnMut(usize) -> Result<Option<EncodedPage>, Error>,
-) -> Result<(usize, EncodedPage), Error> {
-    let mut low = 1;
-    let mut high = max;
-    let mut best = None;
-    while low <= high {
-        let mid = low + (high - low) / 2;
-        match build(mid)? {
-            Some(page) => {
-                best = Some((mid, page));
-                low = mid + 1
-            }
-            None => high = mid - 1,
-        }
-    }
-    best.ok_or_else(|| Error::Invalid("one timeline entry exceeds the final page budget".into()))
-}
-fn leaf(kind: Kind, root: &TimelineRoot, entries: &[Entry]) -> Result<TimelinePayload, Error> {
-    match kind {
-        Kind::Items => {
-            let mut items = Vec::new();
-            let mut proofs = BTreeMap::new();
-            for entry in entries {
-                let Entry::Item(item, proof) = entry else { return Err(pages::corrupt("lookup in item tree")) };
-                items.push(*item.clone());
-                if let Some(old) = proofs.insert(proof.id.clone(), proof.clone())
-                    && old != *proof
-                {
-                    return Err(Error::Invalid("same proof identity has different payloads".into()));
-                }
-            }
-            Ok(TimelinePayload::Items(Box::new(TimelineLeaf {
-                conversation: root.conversation.clone(),
-                projection: root.projection,
-                through: root.through.clone(),
-                items,
-                proofs: proofs.into_values().collect(),
-            })))
-        }
-        Kind::Lookup => {
-            let mut values = Vec::new();
-            for entry in entries {
-                let Entry::Lookup(value) = entry else { return Err(pages::corrupt("item in lookup tree")) };
-                values.push(value.clone())
-            }
-            Ok(TimelinePayload::ItemLookup(TimelineLookupLeaf {
-                conversation: root.conversation.clone(),
-                entries: values,
-            }))
         }
     }
 }
