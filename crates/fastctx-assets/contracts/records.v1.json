@@ -1,0 +1,1339 @@
+{
+  "schema": 1,
+  "contract": "Frozen pure record payloads. Log and MCP families are not registered kind names. Source qualification, exact scope routing and service readiness are separate gates; unknown legacy browser values retain the original consumer fallback semantics.",
+  "cases": [
+    {
+      "family": "usage",
+      "name": "financial-share",
+      "body": {
+        "kind": "share",
+        "device": "d-2222222222222222222222222222222222222222222222222222222222222222",
+        "login": "i-3333333333333333333333333333333333333333333333333333333333333333",
+        "account": "a-1111111111111111111111111111111111111111111111111111111111111111",
+        "at": "2026-01-08T00:00:00Z",
+        "allocation": {
+          "index": 0,
+          "count": 2
+        },
+        "amount": {
+          "model": "model",
+          "usd": 9,
+          "tokens": {
+            "input": 8
+          },
+          "kinds": null
+        },
+        "call": null
+      },
+      "valid": true
+    },
+    {
+      "family": "usage",
+      "name": "private-link-hidden-in-tokens",
+      "body": {
+        "kind": "share",
+        "device": "d-2222222222222222222222222222222222222222222222222222222222222222",
+        "login": "i-3333333333333333333333333333333333333333333333333333333333333333",
+        "account": "a-1111111111111111111111111111111111111111111111111111111111111111",
+        "at": "2026-01-08T00:00:00Z",
+        "allocation": {
+          "index": 0,
+          "count": 2
+        },
+        "amount": {
+          "model": "model",
+          "usd": 9,
+          "tokens": {
+            "input": 8,
+            "conversation": "private"
+          },
+          "kinds": null
+        },
+        "call": null
+      },
+      "valid": false
+    },
+    {
+      "family": "usage",
+      "name": "unknown-empty-token-field",
+      "body": {
+        "kind": "share",
+        "device": "d-2222222222222222222222222222222222222222222222222222222222222222",
+        "login": "i-3333333333333333333333333333333333333333333333333333333333333333",
+        "account": "a-1111111111111111111111111111111111111111111111111111111111111111",
+        "at": "2026-01-08T00:00:00Z",
+        "allocation": {
+          "index": 0,
+          "count": 2
+        },
+        "amount": {
+          "model": "model",
+          "usd": 9,
+          "tokens": {
+            "input": 8,
+            "extra": 0
+          },
+          "kinds": null
+        },
+        "call": null
+      },
+      "valid": false
+    },
+    {
+      "family": "usage",
+      "name": "zero-slots",
+      "body": {
+        "kind": "share",
+        "device": "d-2222222222222222222222222222222222222222222222222222222222222222",
+        "login": "i-3333333333333333333333333333333333333333333333333333333333333333",
+        "account": "a-1111111111111111111111111111111111111111111111111111111111111111",
+        "at": "2026-01-08T00:00:00Z",
+        "allocation": {
+          "index": 0,
+          "count": 0
+        },
+        "amount": {
+          "model": "model",
+          "usd": 9,
+          "tokens": {
+            "input": 8
+          },
+          "kinds": null
+        },
+        "call": null
+      },
+      "valid": false
+    },
+    {
+      "family": "usage",
+      "name": "slot-outside-count",
+      "body": {
+        "kind": "share",
+        "device": "d-2222222222222222222222222222222222222222222222222222222222222222",
+        "login": "i-3333333333333333333333333333333333333333333333333333333333333333",
+        "account": "a-1111111111111111111111111111111111111111111111111111111111111111",
+        "at": "2026-01-08T00:00:00Z",
+        "allocation": {
+          "index": 2,
+          "count": 2
+        },
+        "amount": {
+          "model": "model",
+          "usd": 9,
+          "tokens": {
+            "input": 8
+          },
+          "kinds": null
+        },
+        "call": null
+      },
+      "valid": false
+    },
+    {
+      "family": "usage",
+      "name": "private-identity-not-financial-summary",
+      "body": {
+        "kind": "share",
+        "device": "d-2222222222222222222222222222222222222222222222222222222222222222",
+        "login": "i-3333333333333333333333333333333333333333333333333333333333333333",
+        "account": "a-1111111111111111111111111111111111111111111111111111111111111111",
+        "at": "2026-01-08T00:00:00Z",
+        "allocation": {
+          "index": 0,
+          "count": 2
+        },
+        "amount": {
+          "model": "model",
+          "usd": 9,
+          "tokens": {
+            "input": 8
+          },
+          "kinds": null
+        },
+        "call": null,
+        "conversation": {
+          "scope": {
+            "hub": "w-0102030405060708",
+            "scope": "s-5555555555555555555555555555555555555555555555555555555555555555"
+          },
+          "object": "o-6666666666666666666666666666666666666666666666666666666666666666"
+        }
+      },
+      "valid": false
+    },
+    {
+      "family": "usage",
+      "name": "unobserved-background-cannot-name-model",
+      "body": {
+        "kind": "share",
+        "device": "d-2222222222222222222222222222222222222222222222222222222222222222",
+        "login": "i-3333333333333333333333333333333333333333333333333333333333333333",
+        "account": "a-1111111111111111111111111111111111111111111111111111111111111111",
+        "at": "2026-01-08T00:00:00Z",
+        "allocation": {
+          "index": 0,
+          "count": 2
+        },
+        "amount": {
+          "model": "model",
+          "usd": 9,
+          "tokens": {
+            "input": 8
+          },
+          "kinds": null
+        },
+        "call": {
+          "identity": "8888888888888888888888888888888888888888888888888888888888888888",
+          "source": "background",
+          "agent": null,
+          "effort": null,
+          "timing": {
+            "started_at": null,
+            "first_at": null,
+            "ended_at": "2026-01-08T00:00:00Z",
+            "approximate": true
+          },
+          "outcome": "unknown",
+          "phase": "unknown",
+          "observed": false
+        }
+      },
+      "valid": false
+    },
+    {
+      "family": "usage",
+      "name": "unobserved-background",
+      "body": {
+        "kind": "share",
+        "device": "d-2222222222222222222222222222222222222222222222222222222222222222",
+        "login": "i-3333333333333333333333333333333333333333333333333333333333333333",
+        "account": "a-1111111111111111111111111111111111111111111111111111111111111111",
+        "at": "2026-01-08T00:00:00Z",
+        "allocation": {
+          "index": 0,
+          "count": 2
+        },
+        "amount": {
+          "model": "",
+          "usd": 9,
+          "tokens": {
+            "input": 8
+          },
+          "kinds": null
+        },
+        "call": {
+          "identity": "8888888888888888888888888888888888888888888888888888888888888888",
+          "source": "background",
+          "agent": null,
+          "effort": null,
+          "timing": {
+            "started_at": null,
+            "first_at": null,
+            "ended_at": "2026-01-08T00:00:00Z",
+            "approximate": true
+          },
+          "outcome": "unknown",
+          "phase": "unknown",
+          "observed": false
+        }
+      },
+      "valid": true
+    },
+    {
+      "family": "usage",
+      "name": "quota-over-one-hundred-percent",
+      "body": {
+        "kind": "quota",
+        "device": "d-2222222222222222222222222222222222222222222222222222222222222222",
+        "login": "i-3333333333333333333333333333333333333333333333333333333333333333",
+        "owner": "a-1111111111111111111111111111111111111111111111111111111111111111",
+        "at": "2026-01-08T00:00:00Z",
+        "vendor_account": "vendor-fingerprint",
+        "windows": [
+          {
+            "name": "seven_day",
+            "minutes": 10080,
+            "used_tenths": 1200,
+            "resets_at": "2026-01-15T00:00:00Z"
+          }
+        ],
+        "resets": []
+      },
+      "valid": true
+    },
+    {
+      "family": "usage",
+      "name": "scheduled-reset",
+      "body": {
+        "kind": "quota",
+        "device": "d-2222222222222222222222222222222222222222222222222222222222222222",
+        "login": "i-3333333333333333333333333333333333333333333333333333333333333333",
+        "owner": "a-1111111111111111111111111111111111111111111111111111111111111111",
+        "at": "2026-01-08T00:00:00Z",
+        "vendor_account": "vendor-fingerprint",
+        "windows": [
+          {
+            "name": "seven_day",
+            "minutes": 10080,
+            "used_tenths": 1200,
+            "resets_at": "2026-01-15T00:00:00Z"
+          }
+        ],
+        "resets": [
+          {
+            "window": "seven_day",
+            "since": "2026-01-08T00:00:00Z",
+            "confirmed_at": "2026-01-08T00:00:00Z",
+            "resets_at": "2026-01-15T00:00:00Z",
+            "used_tenths": 0,
+            "source": "scheduled"
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "family": "usage",
+      "name": "reset-without-window",
+      "body": {
+        "kind": "quota",
+        "device": "d-2222222222222222222222222222222222222222222222222222222222222222",
+        "login": "i-3333333333333333333333333333333333333333333333333333333333333333",
+        "owner": "a-1111111111111111111111111111111111111111111111111111111111111111",
+        "at": "2026-01-08T00:00:00Z",
+        "vendor_account": "vendor-fingerprint",
+        "windows": [],
+        "resets": [
+          {
+            "window": "seven_day",
+            "since": "2026-01-08T00:00:00Z",
+            "confirmed_at": "2026-01-08T00:00:00Z",
+            "resets_at": "2026-01-15T00:00:00Z",
+            "used_tenths": 0,
+            "source": "scheduled"
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "family": "usage",
+      "name": "login-identity",
+      "body": {
+        "kind": "login_identity",
+        "device": "d-2222222222222222222222222222222222222222222222222222222222222222",
+        "login": "i-3333333333333333333333333333333333333333333333333333333333333333",
+        "owner": "a-1111111111111111111111111111111111111111111111111111111111111111",
+        "at": "2026-01-08T00:00:00Z",
+        "vendor_account": "vendor-key"
+      },
+      "valid": true
+    },
+    {
+      "family": "usage",
+      "name": "private-link-only",
+      "body": {
+        "kind": "conversation_link",
+        "call": "8888888888888888888888888888888888888888888888888888888888888888",
+        "conversation": {
+          "scope": {
+            "hub": "w-0102030405060708",
+            "scope": "s-5555555555555555555555555555555555555555555555555555555555555555"
+          },
+          "object": "o-6666666666666666666666666666666666666666666666666666666666666666"
+        },
+        "turn": "native-turn"
+      },
+      "valid": true
+    },
+    {
+      "family": "usage",
+      "name": "private-link-cannot-carry-money",
+      "body": {
+        "kind": "conversation_link",
+        "call": "8888888888888888888888888888888888888888888888888888888888888888",
+        "conversation": {
+          "scope": {
+            "hub": "w-0102030405060708",
+            "scope": "s-5555555555555555555555555555555555555555555555555555555555555555"
+          },
+          "object": "o-6666666666666666666666666666666666666666666666666666666666666666"
+        },
+        "turn": "native-turn",
+        "usd": 9
+      },
+      "valid": false
+    },
+    {
+      "family": "usage",
+      "name": "money-hidden-in-conversation-key",
+      "body": {
+        "kind": "conversation_link",
+        "call": "8888888888888888888888888888888888888888888888888888888888888888",
+        "conversation": {
+          "scope": {
+            "hub": "w-0102030405060708",
+            "scope": "s-5555555555555555555555555555555555555555555555555555555555555555"
+          },
+          "object": "o-6666666666666666666666666666666666666666666666666666666666666666",
+          "usd": 9
+        },
+        "turn": "native-turn"
+      },
+      "valid": false
+    },
+    {
+      "family": "activity",
+      "name": "original-hour",
+      "body": {
+        "executor": "d-2222222222222222222222222222222222222222222222222222222222222222",
+        "account": "a-1111111111111111111111111111111111111111111111111111111111111111",
+        "original_account": "hub/person",
+        "row": "original-hour-key",
+        "detail": {
+          "kind": "hour",
+          "value": {
+            "at": "2026-01-08T00:00:00Z",
+            "runs": 2,
+            "failed": 1,
+            "busy": 3,
+            "files": 4
+          }
+        }
+      },
+      "valid": true
+    },
+    {
+      "family": "activity",
+      "name": "unattributed-row",
+      "body": {
+        "executor": "d-2222222222222222222222222222222222222222222222222222222222222222",
+        "account": "a-1111111111111111111111111111111111111111111111111111111111111111",
+        "original_account": "",
+        "row": "original-hour-key",
+        "detail": {
+          "kind": "hour",
+          "value": {
+            "at": "2026-01-08T00:00:00Z",
+            "runs": 2,
+            "failed": 1,
+            "busy": 3,
+            "files": 4
+          }
+        }
+      },
+      "valid": false
+    },
+    {
+      "family": "activity",
+      "name": "missing-row-identity",
+      "body": {
+        "executor": "d-2222222222222222222222222222222222222222222222222222222222222222",
+        "account": "a-1111111111111111111111111111111111111111111111111111111111111111",
+        "original_account": "hub/person",
+        "row": "",
+        "detail": {
+          "kind": "hour",
+          "value": {
+            "at": "2026-01-08T00:00:00Z",
+            "runs": 2,
+            "failed": 1,
+            "busy": 3,
+            "files": 4
+          }
+        }
+      },
+      "valid": false
+    },
+    {
+      "family": "activity",
+      "name": "unknown-body-field",
+      "body": {
+        "executor": "d-2222222222222222222222222222222222222222222222222222222222222222",
+        "account": "a-1111111111111111111111111111111111111111111111111111111111111111",
+        "original_account": "hub/person",
+        "row": "original-hour-key",
+        "detail": {
+          "kind": "hour",
+          "value": {
+            "at": "2026-01-08T00:00:00Z",
+            "runs": 2,
+            "failed": 1,
+            "busy": 3,
+            "files": 4
+          }
+        },
+        "current_holder": "a-1111111111111111111111111111111111111111111111111111111111111111"
+      },
+      "valid": false
+    },
+    {
+      "family": "read_position",
+      "name": "exact-maximum-position",
+      "body": {
+        "account": "a-1111111111111111111111111111111111111111111111111111111111111111",
+        "position": {
+          "scope": {
+            "hub": "w-0102030405060708",
+            "scope": "s-5555555555555555555555555555555555555555555555555555555555555555"
+          },
+          "stream": "r-9999999999999999999999999999999999999999999999999999999999999999",
+          "epoch": "p-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "committed": "18446744073709551615"
+        }
+      },
+      "valid": true
+    },
+    {
+      "family": "read_position",
+      "name": "noncanonical-counter",
+      "body": {
+        "account": "a-1111111111111111111111111111111111111111111111111111111111111111",
+        "position": {
+          "scope": {
+            "hub": "w-0102030405060708",
+            "scope": "s-5555555555555555555555555555555555555555555555555555555555555555"
+          },
+          "stream": "r-9999999999999999999999999999999999999999999999999999999999999999",
+          "epoch": "p-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "committed": "01"
+        }
+      },
+      "valid": false
+    },
+    {
+      "family": "read_position",
+      "name": "numeric-counter",
+      "body": {
+        "account": "a-1111111111111111111111111111111111111111111111111111111111111111",
+        "position": {
+          "scope": {
+            "hub": "w-0102030405060708",
+            "scope": "s-5555555555555555555555555555555555555555555555555555555555555555"
+          },
+          "stream": "r-9999999999999999999999999999999999999999999999999999999999999999",
+          "epoch": "p-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "committed": 1
+        }
+      },
+      "valid": false
+    },
+    {
+      "family": "read_position",
+      "name": "directory-cache-not-progress",
+      "body": {
+        "account": "a-1111111111111111111111111111111111111111111111111111111111111111",
+        "position": {
+          "scope": {
+            "hub": "w-0102030405060708",
+            "scope": "s-5555555555555555555555555555555555555555555555555555555555555555"
+          },
+          "stream": "r-9999999999999999999999999999999999999999999999999999999999999999",
+          "epoch": "p-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "committed": "18446744073709551615"
+        },
+        "last-answered": "2026-01-08T00:00:00Z"
+      },
+      "valid": false
+    },
+    {
+      "family": "machine_settings",
+      "name": "codex-title",
+      "body": {
+        "device": "d-2222222222222222222222222222222222222222222222222222222222222222",
+        "value": {
+          "kind": "login",
+          "login": "i-3333333333333333333333333333333333333333333333333333333333333333",
+          "agent": "codex",
+          "value": {
+            "kind": "auto_title",
+            "on": false
+          }
+        }
+      },
+      "valid": true
+    },
+    {
+      "family": "machine_settings",
+      "name": "claude-title-not-world-controlled",
+      "body": {
+        "device": "d-2222222222222222222222222222222222222222222222222222222222222222",
+        "value": {
+          "kind": "login",
+          "login": "i-3333333333333333333333333333333333333333333333333333333333333333",
+          "agent": "claude",
+          "value": {
+            "kind": "auto_title",
+            "on": false
+          }
+        }
+      },
+      "valid": false
+    },
+    {
+      "family": "machine_settings",
+      "name": "no-reserve",
+      "body": {
+        "device": "d-2222222222222222222222222222222222222222222222222222222222222222",
+        "value": {
+          "kind": "memory_reserve",
+          "bytes": 0
+        }
+      },
+      "valid": true
+    },
+    {
+      "family": "machine_settings",
+      "name": "update-default",
+      "body": {
+        "device": "d-2222222222222222222222222222222222222222222222222222222222222222",
+        "value": {
+          "kind": "updates",
+          "auto": false,
+          "chosen": false,
+          "relays": true
+        }
+      },
+      "valid": true
+    },
+    {
+      "family": "machine_settings",
+      "name": "local-login-choice",
+      "body": {
+        "device": "d-2222222222222222222222222222222222222222222222222222222222222222",
+        "value": {
+          "kind": "login_discovery",
+          "added": [
+            {
+              "agent": "claude",
+              "path": "C:/local/login"
+            }
+          ],
+          "folders": []
+        }
+      },
+      "valid": true
+    },
+    {
+      "family": "machine_settings",
+      "name": "legacy-choice-never-expires-assets",
+      "body": {
+        "device": "d-2222222222222222222222222222222222222222222222222222222222222222",
+        "value": {
+          "kind": "legacy_retention",
+          "command_artifact_days": 7
+        }
+      },
+      "valid": true
+    },
+    {
+      "family": "machine_settings",
+      "name": "unsupported-reserve",
+      "body": {
+        "device": "d-2222222222222222222222222222222222222222222222222222222222222222",
+        "value": {
+          "kind": "memory_reserve",
+          "bytes": 123
+        }
+      },
+      "valid": false
+    },
+    {
+      "family": "machine_settings",
+      "name": "custom-model",
+      "body": {
+        "device": "d-2222222222222222222222222222222222222222222222222222222222222222",
+        "value": {
+          "kind": "login",
+          "login": "i-3333333333333333333333333333333333333333333333333333333333333333",
+          "agent": "claude",
+          "value": {
+            "kind": "models",
+            "edits": {
+              "added": [
+                "custom-model"
+              ]
+            }
+          }
+        }
+      },
+      "valid": true
+    },
+    {
+      "family": "machine_settings",
+      "name": "model-option-injection",
+      "body": {
+        "device": "d-2222222222222222222222222222222222222222222222222222222222222222",
+        "value": {
+          "kind": "login",
+          "login": "i-3333333333333333333333333333333333333333333333333333333333333333",
+          "agent": "claude",
+          "value": {
+            "kind": "models",
+            "edits": {
+              "added": [
+                "--option"
+              ]
+            }
+          }
+        }
+      },
+      "valid": false
+    },
+    {
+      "family": "audit",
+      "name": "original-hub-fact",
+      "body": {
+        "operation": "m-4444444444444444444444444444444444444444444444444444444444444444",
+        "record": {
+          "id": 1,
+          "at": "2026-01-08T00:00:00Z",
+          "actor": {
+            "account": null,
+            "authenticated": false,
+            "member": null,
+            "peer": null
+          },
+          "action": {
+            "change": "history",
+            "on": true
+          },
+          "outcome": {
+            "kind": "done"
+          }
+        }
+      },
+      "valid": true
+    },
+    {
+      "family": "audit",
+      "name": "missing-legacy-identity",
+      "body": {
+        "operation": "m-4444444444444444444444444444444444444444444444444444444444444444",
+        "record": {
+          "id": 0,
+          "at": "2026-01-08T00:00:00Z",
+          "actor": {
+            "account": null,
+            "authenticated": false,
+            "member": null,
+            "peer": null
+          },
+          "action": {
+            "change": "history",
+            "on": true
+          },
+          "outcome": {
+            "kind": "done"
+          }
+        }
+      },
+      "valid": false
+    },
+    {
+      "family": "audit",
+      "name": "unknown-outcome",
+      "body": {
+        "operation": "m-4444444444444444444444444444444444444444444444444444444444444444",
+        "record": {
+          "id": 1,
+          "at": "2026-01-08T00:00:00Z",
+          "actor": {
+            "account": null,
+            "authenticated": false,
+            "member": null,
+            "peer": null
+          },
+          "action": {
+            "change": "history",
+            "on": true
+          },
+          "outcome": {
+            "kind": "approved"
+          }
+        }
+      },
+      "valid": false
+    },
+    {
+      "family": "connection",
+      "name": "started",
+      "body": {
+        "device": "d-2222222222222222222222222222222222222222222222222222222222222222",
+        "change": {
+          "kind": "started",
+          "at": "2026-01-08T00:00:00Z"
+        }
+      },
+      "valid": true
+    },
+    {
+      "family": "connection",
+      "name": "up",
+      "body": {
+        "device": "d-2222222222222222222222222222222222222222222222222222222222222222",
+        "change": {
+          "kind": "up",
+          "at": "2026-01-08T00:00:00Z"
+        }
+      },
+      "valid": true
+    },
+    {
+      "family": "connection",
+      "name": "down",
+      "body": {
+        "device": "d-2222222222222222222222222222222222222222222222222222222222222222",
+        "change": {
+          "kind": "down",
+          "at": "2026-01-08T00:00:00Z"
+        }
+      },
+      "valid": true
+    },
+    {
+      "family": "connection",
+      "name": "invented-state",
+      "body": {
+        "device": "d-2222222222222222222222222222222222222222222222222222222222222222",
+        "change": {
+          "kind": "reconnected",
+          "at": "2026-01-08T00:00:00Z"
+        }
+      },
+      "valid": false
+    },
+    {
+      "family": "preferences",
+      "name": "legacy-invalid-theme-retained-consumer-falls-back",
+      "body": {
+        "device": "d-2222222222222222222222222222222222222222222222222222222222222222",
+        "value": {
+          "kind": "browser",
+          "key": "theme",
+          "value": "obsolete-theme"
+        }
+      },
+      "valid": true
+    },
+    {
+      "family": "preferences",
+      "name": "registered-pick:",
+      "body": {
+        "device": "d-2222222222222222222222222222222222222222222222222222222222222222",
+        "value": {
+          "kind": "browser",
+          "key": "pick:",
+          "value": "obsolete-theme"
+        }
+      },
+      "valid": true
+    },
+    {
+      "family": "preferences",
+      "name": "registered-account:",
+      "body": {
+        "device": "d-2222222222222222222222222222222222222222222222222222222222222222",
+        "value": {
+          "kind": "browser",
+          "key": "account:",
+          "value": "obsolete-theme"
+        }
+      },
+      "valid": true
+    },
+    {
+      "family": "preferences",
+      "name": "registered-lastSeen",
+      "body": {
+        "device": "d-2222222222222222222222222222222222222222222222222222222222222222",
+        "value": {
+          "kind": "browser",
+          "key": "lastSeen",
+          "value": "obsolete-theme"
+        }
+      },
+      "valid": true
+    },
+    {
+      "family": "preferences",
+      "name": "registered-workbench.shown",
+      "body": {
+        "device": "d-2222222222222222222222222222222222222222222222222222222222222222",
+        "value": {
+          "kind": "browser",
+          "key": "workbench.shown",
+          "value": "obsolete-theme"
+        }
+      },
+      "valid": true
+    },
+    {
+      "family": "preferences",
+      "name": "registered-effort:claude:custom-model",
+      "body": {
+        "device": "d-2222222222222222222222222222222222222222222222222222222222222222",
+        "value": {
+          "kind": "browser",
+          "key": "effort:claude:custom-model",
+          "value": "obsolete-theme"
+        }
+      },
+      "valid": true
+    },
+    {
+      "family": "preferences",
+      "name": "registered-view:resident@machine",
+      "body": {
+        "device": "d-2222222222222222222222222222222222222222222222222222222222222222",
+        "value": {
+          "kind": "browser",
+          "key": "view:resident@machine",
+          "value": "obsolete-theme"
+        }
+      },
+      "valid": true
+    },
+    {
+      "family": "preferences",
+      "name": "not-preference-troubles.told",
+      "body": {
+        "device": "d-2222222222222222222222222222222222222222222222222222222222222222",
+        "value": {
+          "kind": "browser",
+          "key": "troubles.told",
+          "value": "obsolete-theme"
+        }
+      },
+      "valid": false
+    },
+    {
+      "family": "preferences",
+      "name": "not-preference-fastctx.last-answered",
+      "body": {
+        "device": "d-2222222222222222222222222222222222222222222222222222222222222222",
+        "value": {
+          "kind": "browser",
+          "key": "fastctx.last-answered",
+          "value": "obsolete-theme"
+        }
+      },
+      "valid": false
+    },
+    {
+      "family": "preferences",
+      "name": "not-preference-draft:a@b",
+      "body": {
+        "device": "d-2222222222222222222222222222222222222222222222222222222222222222",
+        "value": {
+          "kind": "browser",
+          "key": "draft:a@b",
+          "value": "obsolete-theme"
+        }
+      },
+      "valid": false
+    },
+    {
+      "family": "preferences",
+      "name": "not-preference-keepConnected",
+      "body": {
+        "device": "d-2222222222222222222222222222222222222222222222222222222222222222",
+        "value": {
+          "kind": "browser",
+          "key": "keepConnected",
+          "value": "obsolete-theme"
+        }
+      },
+      "valid": false
+    },
+    {
+      "family": "preferences",
+      "name": "not-preference-foreign-key",
+      "body": {
+        "device": "d-2222222222222222222222222222222222222222222222222222222222222222",
+        "value": {
+          "kind": "browser",
+          "key": "foreign-key",
+          "value": "obsolete-theme"
+        }
+      },
+      "valid": false
+    },
+    {
+      "family": "preferences",
+      "name": "unknown-legacy-language-retained",
+      "body": {
+        "device": "d-2222222222222222222222222222222222222222222222222222222222222222",
+        "value": {
+          "kind": "features",
+          "value": {
+            "language": "future-language"
+          }
+        }
+      },
+      "valid": true
+    },
+    {
+      "family": "preferences",
+      "name": "android-minimal",
+      "body": {
+        "device": "d-2222222222222222222222222222222222222222222222222222222222222222",
+        "value": {
+          "kind": "android_notifications",
+          "json": "{\"enabled\":false,\"rules\":[]}"
+        }
+      },
+      "valid": true
+    },
+    {
+      "family": "preferences",
+      "name": "android-valid-rule",
+      "body": {
+        "device": "d-2222222222222222222222222222222222222222222222222222222222222222",
+        "value": {
+          "kind": "android_notifications",
+          "json": "{\"enabled\":true,\"rules\":[{\"when\":\"asked\",\"userStartedOnly\":false,\"title\":\"x\"}]}"
+        }
+      },
+      "valid": true
+    },
+    {
+      "family": "preferences",
+      "name": "android-empty-title",
+      "body": {
+        "device": "d-2222222222222222222222222222222222222222222222222222222222222222",
+        "value": {
+          "kind": "android_notifications",
+          "json": "{\"enabled\":true,\"rules\":[{\"when\":\"asked\",\"userStartedOnly\":false,\"title\":\"\"}]}"
+        }
+      },
+      "valid": false
+    },
+    {
+      "family": "preferences",
+      "name": "android-unknown-field",
+      "body": {
+        "device": "d-2222222222222222222222222222222222222222222222222222222222222222",
+        "value": {
+          "kind": "android_notifications",
+          "json": "{\"enabled\":false,\"rules\":[],\"extra\":true}"
+        }
+      },
+      "valid": false
+    },
+    {
+      "family": "alert",
+      "name": "one-original-recipient",
+      "body": {
+        "operation": "m-4444444444444444444444444444444444444444444444444444444444444444",
+        "recipient": "a-1111111111111111111111111111111111111111111111111111111111111111",
+        "trouble": {
+          "id": 1,
+          "at": "2026-01-08T00:00:00Z",
+          "kind": "drops",
+          "count": 4
+        }
+      },
+      "valid": true
+    },
+    {
+      "family": "alert",
+      "name": "recipient-needs-incarnation",
+      "body": {
+        "operation": "m-4444444444444444444444444444444444444444444444444444444444444444",
+        "recipient": "person",
+        "trouble": {
+          "id": 1,
+          "at": "2026-01-08T00:00:00Z",
+          "kind": "drops",
+          "count": 4
+        }
+      },
+      "valid": false
+    },
+    {
+      "family": "alert",
+      "name": "other-recipients-not-public",
+      "body": {
+        "operation": "m-4444444444444444444444444444444444444444444444444444444444444444",
+        "recipient": "a-1111111111111111111111111111111111111111111111111111111111111111",
+        "trouble": {
+          "id": 1,
+          "at": "2026-01-08T00:00:00Z",
+          "kind": "drops",
+          "count": 4
+        },
+        "told": [
+          "a-1111111111111111111111111111111111111111111111111111111111111111"
+        ]
+      },
+      "valid": false
+    },
+    {
+      "family": "log",
+      "name": "machine-range",
+      "body": {
+        "origin": {
+          "kind": "machine",
+          "device": "d-2222222222222222222222222222222222222222222222222222222222222222"
+        },
+        "source": "i-3333333333333333333333333333333333333333333333333333333333333333",
+        "generation": "g-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "from": "0",
+        "through": "4",
+        "observed_at": "2026-01-08T00:00:00Z",
+        "format": "lines",
+        "content": {
+          "kind": "single",
+          "block": {
+            "domain": {
+              "hub": "w-0102030405060708",
+              "scope": "s-5555555555555555555555555555555555555555555555555555555555555555"
+            },
+            "algorithm": "sha256",
+            "digest": "7777777777777777777777777777777777777777777777777777777777777777"
+          },
+          "decoded_bytes": 4
+        }
+      },
+      "valid": true
+    },
+    {
+      "family": "log",
+      "name": "hub-range",
+      "body": {
+        "origin": {
+          "kind": "hub"
+        },
+        "source": "i-3333333333333333333333333333333333333333333333333333333333333333",
+        "generation": "g-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "from": "0",
+        "through": "4",
+        "observed_at": "2026-01-08T00:00:00Z",
+        "format": "lines",
+        "content": {
+          "kind": "single",
+          "block": {
+            "domain": {
+              "hub": "w-0102030405060708",
+              "scope": "s-5555555555555555555555555555555555555555555555555555555555555555"
+            },
+            "algorithm": "sha256",
+            "digest": "7777777777777777777777777777777777777777777777777777777777777777"
+          },
+          "decoded_bytes": 4
+        }
+      },
+      "valid": true
+    },
+    {
+      "family": "log",
+      "name": "reversed-range",
+      "body": {
+        "origin": {
+          "kind": "machine",
+          "device": "d-2222222222222222222222222222222222222222222222222222222222222222"
+        },
+        "source": "i-3333333333333333333333333333333333333333333333333333333333333333",
+        "generation": "g-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "from": "5",
+        "through": "4",
+        "observed_at": "2026-01-08T00:00:00Z",
+        "format": "lines",
+        "content": {
+          "kind": "single",
+          "block": {
+            "domain": {
+              "hub": "w-0102030405060708",
+              "scope": "s-5555555555555555555555555555555555555555555555555555555555555555"
+            },
+            "algorithm": "sha256",
+            "digest": "7777777777777777777777777777777777777777777777777777777777777777"
+          },
+          "decoded_bytes": 4
+        }
+      },
+      "valid": false
+    },
+    {
+      "family": "log",
+      "name": "length-mismatch",
+      "body": {
+        "origin": {
+          "kind": "machine",
+          "device": "d-2222222222222222222222222222222222222222222222222222222222222222"
+        },
+        "source": "i-3333333333333333333333333333333333333333333333333333333333333333",
+        "generation": "g-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "from": "0",
+        "through": "5",
+        "observed_at": "2026-01-08T00:00:00Z",
+        "format": "lines",
+        "content": {
+          "kind": "single",
+          "block": {
+            "domain": {
+              "hub": "w-0102030405060708",
+              "scope": "s-5555555555555555555555555555555555555555555555555555555555555555"
+            },
+            "algorithm": "sha256",
+            "digest": "7777777777777777777777777777777777777777777777777777777777777777"
+          },
+          "decoded_bytes": 4
+        }
+      },
+      "valid": false
+    },
+    {
+      "family": "log",
+      "name": "scene-starts-at-zero",
+      "body": {
+        "origin": {
+          "kind": "machine",
+          "device": "d-2222222222222222222222222222222222222222222222222222222222222222"
+        },
+        "source": "i-3333333333333333333333333333333333333333333333333333333333333333",
+        "generation": "g-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "from": "0",
+        "through": "4",
+        "observed_at": "2026-01-08T00:00:00Z",
+        "format": "scene",
+        "content": {
+          "kind": "single",
+          "block": {
+            "domain": {
+              "hub": "w-0102030405060708",
+              "scope": "s-5555555555555555555555555555555555555555555555555555555555555555"
+            },
+            "algorithm": "sha256",
+            "digest": "7777777777777777777777777777777777777777777777777777777777777777"
+          },
+          "decoded_bytes": 4
+        }
+      },
+      "valid": true
+    },
+    {
+      "family": "log",
+      "name": "scene-offset-not-zero",
+      "body": {
+        "origin": {
+          "kind": "machine",
+          "device": "d-2222222222222222222222222222222222222222222222222222222222222222"
+        },
+        "source": "i-3333333333333333333333333333333333333333333333333333333333333333",
+        "generation": "g-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "from": "1",
+        "through": "5",
+        "observed_at": "2026-01-08T00:00:00Z",
+        "format": "scene",
+        "content": {
+          "kind": "single",
+          "block": {
+            "domain": {
+              "hub": "w-0102030405060708",
+              "scope": "s-5555555555555555555555555555555555555555555555555555555555555555"
+            },
+            "algorithm": "sha256",
+            "digest": "7777777777777777777777777777777777777777777777777777777777777777"
+          },
+          "decoded_bytes": 4
+        }
+      },
+      "valid": false
+    },
+    {
+      "family": "mcp_log",
+      "name": "original-executor-and-account",
+      "body": {
+        "account": "a-1111111111111111111111111111111111111111111111111111111111111111",
+        "executor": "d-2222222222222222222222222222222222222222222222222222222222222222",
+        "execution": "m-4444444444444444444444444444444444444444444444444444444444444444",
+        "command": "tools",
+        "content": {
+          "kind": "single",
+          "block": {
+            "domain": {
+              "hub": "w-0102030405060708",
+              "scope": "s-5555555555555555555555555555555555555555555555555555555555555555"
+            },
+            "algorithm": "sha256",
+            "digest": "7777777777777777777777777777777777777777777777777777777777777777"
+          },
+          "decoded_bytes": 4
+        }
+      },
+      "valid": true
+    },
+    {
+      "family": "mcp_log",
+      "name": "empty-command",
+      "body": {
+        "account": "a-1111111111111111111111111111111111111111111111111111111111111111",
+        "executor": "d-2222222222222222222222222222222222222222222222222222222222222222",
+        "execution": "m-4444444444444444444444444444444444444444444444444444444444444444",
+        "command": "",
+        "content": {
+          "kind": "single",
+          "block": {
+            "domain": {
+              "hub": "w-0102030405060708",
+              "scope": "s-5555555555555555555555555555555555555555555555555555555555555555"
+            },
+            "algorithm": "sha256",
+            "digest": "7777777777777777777777777777777777777777777777777777777777777777"
+          },
+          "decoded_bytes": 4
+        }
+      },
+      "valid": false
+    },
+    {
+      "family": "mcp_log",
+      "name": "no-invented-actor",
+      "body": {
+        "account": "a-1111111111111111111111111111111111111111111111111111111111111111",
+        "executor": "d-2222222222222222222222222222222222222222222222222222222222222222",
+        "execution": "m-4444444444444444444444444444444444444444444444444444444444444444",
+        "command": "tools",
+        "content": {
+          "kind": "single",
+          "block": {
+            "domain": {
+              "hub": "w-0102030405060708",
+              "scope": "s-5555555555555555555555555555555555555555555555555555555555555555"
+            },
+            "algorithm": "sha256",
+            "digest": "7777777777777777777777777777777777777777777777777777777777777777"
+          },
+          "decoded_bytes": 4
+        },
+        "actor": "current-login"
+      },
+      "valid": false
+    },
+    {
+      "family": "mcp_log",
+      "name": "invalid-content-ref",
+      "body": {
+        "account": "a-1111111111111111111111111111111111111111111111111111111111111111",
+        "executor": "d-2222222222222222222222222222222222222222222222222222222222222222",
+        "execution": "m-4444444444444444444444444444444444444444444444444444444444444444",
+        "command": "tools",
+        "content": {
+          "kind": "single",
+          "block": {
+            "domain": {
+              "hub": "w-0102030405060708",
+              "scope": "s-5555555555555555555555555555555555555555555555555555555555555555"
+            },
+            "algorithm": "sha256",
+            "digest": "7777777777777777777777777777777777777777777777777777777777777777"
+          },
+          "decoded_bytes": 1048577
+        }
+      },
+      "valid": false
+    }
+  ]
+}
