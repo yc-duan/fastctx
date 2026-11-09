@@ -60,7 +60,12 @@ impl Foundation {
             CONTENT_BUFFERS,
         )?;
         let memory = IngestBudget::for_machine(fastctx_platform::memory::physical().ok())?;
-        let sources = SqliteSources::new(blocks.clone(), identity.signer, Vec::new(), memory)?;
+        let sources = SqliteSources::new(
+            blocks.clone(),
+            identity.signer,
+            vec![Arc::new(fastctx_sync::conversation::source::TimelineAuthorizer)],
+            memory,
+        )?;
         let timelines = SqliteTimelines::new(blocks.clone());
         let scopes = SqliteScopes::new(blocks.clone(), identity.alone.clone(), identity.device.clone());
         let scheduler = SqliteScheduler::new(database.clone(), claims, holder, LEASE)?;
