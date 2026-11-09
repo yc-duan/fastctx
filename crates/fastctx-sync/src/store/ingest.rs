@@ -11,7 +11,7 @@ use crate::{
     catalog::SourceBatch,
     cursor::{ByteCount, LocalSequence, Revision},
     identity::{Digest, HostGeneration, OperationId, Producer, ProducerEpoch, SourceId, StreamId},
-    manifest::{BlobId, ContentRef, ManifestReply, ManifestRoot, Pin, PublishedBlock, Representation},
+    manifest::{BlobId, ContentBlock, ContentRef, ManifestReply, ManifestRoot, Pin, PublishedBlock, Representation},
     registry::{ConflictRule, DataClass},
 };
 pub use fastctx_types::sync::progress::StreamProgress;
@@ -298,6 +298,10 @@ pub trait SourceIngest: sealed::SourceWriter + Send + Sync {
     /// Block IO holds a lease and rechecks the checkpoint and revocation fences
     /// before returning. A holding transition still being applied returns Busy.
     fn read_state(&self, target: SourceTarget, request: StateRead) -> FutureResult<'_, StateReply>;
+    /// Bytes of a block already granted to the destination's object, such as a
+    /// descriptor an earlier step committed. Uploads of an open step stay private.
+    fn read_block(&self, target: SourceTarget, block: ContentBlock) -> FutureResult<'_, Vec<u8>>;
+    fn read_manifest(&self, target: SourceTarget, root: ManifestRoot) -> FutureResult<'_, ManifestReply>;
     /// Exact lookup uses the same registered family, key bound and source gate
     /// as pagination; callers need not fabricate a predecessor key.
     fn get_index(

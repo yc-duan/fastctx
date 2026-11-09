@@ -19,6 +19,8 @@ pub enum MetadataCodec {
     DisplayV1,
     /// An encoded ItemDisplayPartsV1; references the part bodies it owns.
     DisplayPartsV1,
+    /// An encoded ProjectedBody; references exactly its owned content.
+    BodyV1,
 }
 
 /// The proof identity binds the original domain/signature; its content block

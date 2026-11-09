@@ -160,14 +160,17 @@ pub(super) fn payload_bytes(
     Ok(Some((codec::decode(&stored.representation, encoded)?, buffer)))
 }
 
-/// Validates a metadata page that a source step publishes after its payload, so
-/// the page is complete before the step commits instead of after a worker pass.
+/// Validates a metadata page published after its payload by the same operation,
+/// so the page is complete when it is stored instead of after a worker pass.
+/// Returns false when that payload was not supplied first; a source step
+/// (`required`) must supply it, a replica publication waits for the worker.
 pub(super) fn validate_supplied(
     store: &SqliteBlocks,
     custody: &Custody,
     operation: &OperationId,
     checked: &CheckedManifest,
-) -> Result<(), Error> {
+    required: bool,
+) -> Result<bool, Error> {
     let page = &checked.reply().page_json;
     let ManifestPage::Metadata { codec: kind, payload, references } =
         serde_json::from_str(page).map_err(|e| Error::Invalid(format!("invalid metadata page: {e}")))?
@@ -179,10 +182,15 @@ pub(super) fn validate_supplied(
         .read_now(|db| crate::blocks::pins::ready_for(db, operation, custody, &ContentRef::from(payload.clone())))
         .map_err(|e| sql::error(e, store.worker.clone()))?;
     if !supplied {
-        return Err(Error::Invalid("publish a metadata page's payload through the same step first".into()));
+        return if required {
+            Err(Error::Invalid("publish a metadata page's payload through the same step first".into()))
+        } else {
+            Ok(false)
+        };
     }
     let Some((decoded, _buffer)) = payload_bytes(store, &payload, page.len() * 4)? else {
         return Err(Error::Invalid("a metadata page's payload is not stored".into()));
     };
-    metadata::validate(&custody.object.scope, kind, &payload, &decoded, &references)
+    metadata::validate(&custody.object.scope, kind, &payload, &decoded, &references)?;
+    Ok(true)
 }

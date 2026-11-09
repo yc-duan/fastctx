@@ -7,7 +7,7 @@ use crate::{
 };
 use fastctx_types::sync::{
     PAGE_BYTES,
-    conversation_timeline::{ItemDisplayPartsV1, ItemDisplayV1},
+    conversation_timeline::{ItemDisplayPartsV1, ItemDisplayV1, ProjectedBody},
     cursor::Completeness,
     metadata::{CatalogLeaf, HistoryLeaf, MetadataCodec, ProofReference, TimelinePayload},
 };
@@ -41,6 +41,7 @@ pub(crate) fn validate(
             page.validate_scopes(scope).map_err(Error::Invalid)?;
             page.owned_content()
         }
+        MetadataCodec::BodyV1 => decode::<ProjectedBody>(bytes)?.owned_content().into_iter().cloned().collect(),
     };
     if set(scope, references)? != set(scope, declared.to_vec())? {
         return Err(invalid("index payload and declared references differ"));

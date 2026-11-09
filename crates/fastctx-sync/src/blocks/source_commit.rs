@@ -1,6 +1,6 @@
 //! The content side of a source commit. Inside the source writer's transaction it
 //! adopts what a step supplied, swaps the checkpoint's state hold and closes the step.
-use super::{access, pins, root_holds, rows, steps};
+use super::{access, manifest::Reference, pages, pins, root_holds, rows, steps};
 use crate::{
     cursor::Holder,
     identity::{Digest, RootLeaseId},
@@ -42,7 +42,21 @@ pub(crate) fn adopt(db: &Connection, step: &SourceStep, custody: &Custody, root:
     if !rows::complete(db, root)? {
         return Err(sql::invalid("a source record names content whose closure is incomplete"));
     }
-    access::grant_root(db, &custody.object, custody.kind.registration().id, root, &custody.holding)
+    let kind = custody.kind.registration().id;
+    access::grant_root(db, &custody.object, kind, root, &custody.holding)?;
+    // A descriptor's own references are readable as soon as it is committed;
+    // deeper levels expand through the content worker as usual.
+    if let ContentRef::Manifest { root: page } = root {
+        let references: Vec<_> = pages::references(db, &page.0.domain, &page.0.digest)?
+            .into_iter()
+            .map(|child| match child {
+                ContentRef::Single { block, decoded_bytes } => Reference::Block { id: block, decoded_bytes },
+                ContentRef::Manifest { root } => Reference::Manifest { root },
+            })
+            .collect();
+        access::expand(db, &custody.object, kind, page, &references, &custody.holding)?;
+    }
+    Ok(())
 }
 
 /// Holds the new checkpoint's private parser state while that checkpoint is

@@ -226,15 +226,8 @@ impl SqliteBlocks {
         Self::same_scope(&custody, &page.root.0)?;
         let _buffer = self.budget.acquire(page.page_json.len() * 2 + 4096)?;
         let checked = manifest::validate(&custody.object.scope, page)?;
-        // A step publishes a metadata page after its payload, so the page is
-        // validated now rather than by a later worker pass.
-        let validated = match &step {
-            Some(_) if checked.metadata => {
-                metadata_work::validate_supplied(self, &custody, &operation, &checked)?;
-                true
-            }
-            _ => !checked.metadata,
-        };
+        let validated = !checked.metadata
+            || metadata_work::validate_supplied(self, &custody, &operation, &checked, step.is_some())?;
         let _lease = self.leases.write(&checked.reply.root.0)?;
         let policy = self.policy.clone();
         let holder = self.holder.clone();

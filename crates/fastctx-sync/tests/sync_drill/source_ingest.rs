@@ -22,8 +22,11 @@ use fastctx_sync::{
     },
 };
 use fastctx_types::sync::{
-    conversation_identity::{ImageSelector, NativeId},
-    conversation_timeline::{DisplayChannel, DisplayKind, DisplayPart, DisplayPicture, ItemDisplayV1, PictureTarget},
+    conversation_identity::{ImageSelector, ItemKey, ItemRole, NativeId, NativeItemKey},
+    conversation_timeline::{
+        BodyAuthority, BodySnapshot, DisplayChannel, DisplayKind, DisplayPart, DisplayPicture, ItemDisplayV1,
+        ItemIdentity, PictureTarget, ProjectedBody,
+    },
     cursor::{Count, Sequence},
     metadata::MetadataCodec,
     proof::{Bytes, ProofPurpose, Signature, SigningKey},
@@ -121,7 +124,11 @@ fn metadata(codec: MetadataCodec, payload: ContentBlock, references: Vec<Content
     })
 }
 /// A user message with one owned image, published as its DisplayV1 page.
-async fn display(sources: &SqliteSources, target: &SourceStepTarget, image: &[u8]) -> Result<(ContentRef, ContentRef)> {
+async fn display(
+    sources: &SqliteSources,
+    target: &SourceStepTarget,
+    image: &[u8],
+) -> Result<(ContentRef, ContentRef, ContentBlock)> {
     let part = ContentRef::from(block(sources, target, image).await?);
     let descriptor = ItemDisplayV1 {
         version: 1,
@@ -144,10 +151,36 @@ async fn display(sources: &SqliteSources, target: &SourceStepTarget, image: &[u8
         more: None,
     };
     let payload = block(sources, target, &descriptor.encode()?).await?;
-    let page = metadata(MetadataCodec::DisplayV1, payload, vec![part.clone()])?;
+    let page = metadata(MetadataCodec::DisplayV1, payload.clone(), vec![part.clone()])?;
     let root = ContentRef::Manifest { root: page.root.clone() };
     sources.put_manifest(target.clone(), page).await?;
-    Ok((root, part))
+    Ok((root, part, payload))
+}
+/// The projected body of that message, published as its BodyV1 page.
+async fn body(
+    sources: &SqliteSources,
+    target: &SourceStepTarget,
+    original: ContentRef,
+    display: ContentRef,
+) -> Result<ContentRef> {
+    let projected = ProjectedBody {
+        identity: ItemIdentity::Native(ItemKey {
+            conversation: target.target().custody.object.object.clone(),
+            role: ItemRole::User,
+            native: NativeItemKey::ClaudeMessage { uuid: NativeId::new("u-1")? },
+        }),
+        primary: BodySnapshot { original, display, complete: true, text_part: None, text_bytes: ByteCount(0) },
+        authority: BodyAuthority::HostFinal,
+        world: None,
+        host: None,
+        run: None,
+    };
+    let payload = block(sources, target, &serde_json::to_vec(&projected)?).await?;
+    let references = projected.owned_content().into_iter().cloned().collect();
+    let page = metadata(MetadataCodec::BodyV1, payload, references)?;
+    let root = ContentRef::Manifest { root: page.root.clone() };
+    sources.put_manifest(target.clone(), page).await?;
+    Ok(root)
 }
 fn batch(
     target: &SourceTarget,
@@ -222,10 +255,14 @@ pub(super) async fn run(root: &Path) -> Result<()> {
     // an index row and a stale projection, all committed at once.
     let step = sources.begin_step(primary.clone(), None, generation.clone()).await?;
     let bound = sources.bind_target(step.clone(), primary.clone()).await?;
-    let (display, part) = display(&sources, &bound, b"\x89PNG one image").await?;
+    let (display, part, descriptor) = display(&sources, &bound, b"\x89PNG one image").await?;
+    let original = ContentRef::from(block(&sources, &bound, br#"{"type":"user","uuid":"u-1"}"#).await?);
+    let body = body(&sources, &bound, original, display.clone()).await?;
     let payload = block(&sources, &bound, br#"{"item":"u-1"}"#).await?;
     let state = ContentRef::from(block(&sources, &bound, b"parser state one").await?);
-    let facts = batch(&primary, &step, 0, payload, vec![display.clone()]);
+    // An open step's uploads are private to it, even to its own source handle.
+    assert!(sources.read_block(primary.clone(), descriptor.clone()).await.is_err());
+    let facts = batch(&primary, &step, 0, payload, vec![display.clone(), body.clone()]);
     let commit = IngestOperation::new(
         step.clone(),
         None,
@@ -248,7 +285,11 @@ pub(super) async fn run(root: &Path) -> Result<()> {
     assert_eq!((again.local, again.sources.len()), (receipt.local, 1));
     assert_eq!(gate.0.load(Ordering::Acquire), 1);
     assert_eq!(count(&db, "SELECT COUNT(*) FROM sync_stream_records")?, 1);
-    assert_eq!(count(&db, "SELECT COUNT(*) FROM sync_stream_roots")?, 2);
+    assert_eq!(count(&db, "SELECT COUNT(*) FROM sync_stream_roots")?, 3);
+    // A committed descriptor's own payload is readable at once, before any
+    // content worker pass.
+    let bytes = sources.read_block(primary.clone(), descriptor).await?;
+    assert_eq!(ItemDisplayV1::decode(&bytes)?.parts.len(), 1);
     assert_eq!(count(&db, "SELECT COUNT(*) FROM sync_source_proofs WHERE state='local'")?, 1);
     assert_eq!(count(&db, "SELECT COUNT(*) FROM sync_stream_heads WHERE epoch_proof IS NULL")?, 1);
     assert_eq!(count(&db, "SELECT COUNT(*) FROM sync_source_steps WHERE state='consumed'")?, 1);

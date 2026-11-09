@@ -8,7 +8,7 @@ use crate::{
     },
     cursor::Revision,
     identity::HostGeneration,
-    manifest::{ContentBlock, ContentRef},
+    manifest::{ContentBlock, ContentRef, ManifestReply, ManifestRoot},
     store::{
         Error, FutureResult,
         access::Custody,
@@ -134,5 +134,34 @@ impl SqliteBlocks {
         }
         super::metadata_work::payload_bytes(self, block, 0)?
             .ok_or_else(|| Error::Invalid("a source record payload is not stored".into()))
+    }
+    /// Decoded bytes of a block already granted to `custody`'s object, such as
+    /// a descriptor an earlier step committed. Source-private uploads stay unreadable.
+    pub(crate) fn read_granted(&self, custody: &Custody, block: &ContentBlock) -> Result<(Vec<u8>, Permit), Error> {
+        let reference = ContentRef::from(block.clone());
+        self.db
+            .read_now(|db| {
+                super::pins::authorize(db, &self.holder, self.policy.as_ref(), custody)?;
+                if !super::access::has_grant(db, custody, &reference)? {
+                    return Err(sql::invalid("the block is not granted to this object"));
+                }
+                Ok(())
+            })
+            .map_err(|error| sql::error(error, self.worker.clone()))?;
+        super::metadata_work::payload_bytes(self, block, 0)?
+            .ok_or_else(|| Error::Unavailable("the granted block is not stored".into()))
+    }
+    /// One manifest page already granted to `custody`'s object.
+    pub(crate) fn manifest_granted(&self, custody: &Custody, root: &ManifestRoot) -> Result<ManifestReply, Error> {
+        let _lease = self.leases.read(&root.0)?;
+        self.db
+            .read_now(|db| {
+                super::pins::authorize(db, &self.holder, self.policy.as_ref(), custody)?;
+                if !super::access::has_grant(db, custody, &ContentRef::Manifest { root: root.clone() })? {
+                    return Err(sql::invalid("the page is not granted to this object"));
+                }
+                super::pages::get(db, root)
+            })
+            .map_err(|error| sql::error(error, self.worker.clone()))
     }
 }

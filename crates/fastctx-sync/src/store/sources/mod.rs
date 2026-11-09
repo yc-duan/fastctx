@@ -20,7 +20,7 @@ use crate::{
     blocks::SqliteBlocks,
     cursor::Revision,
     identity::HostGeneration,
-    manifest::{ManifestReply, Pin, PublishedBlock, Representation},
+    manifest::{ContentBlock, ManifestReply, ManifestRoot, Pin, PublishedBlock, Representation},
     proof::{ConfirmedEpoch, ProofSigner},
     registry::{AuthorityRule, ConflictRule, DataClass, REGISTRY},
 };
@@ -103,6 +103,18 @@ impl SourceIngest for SqliteSources {
     }
     fn read_state(&self, target: SourceTarget, request: StateRead) -> FutureResult<'_, StateReply> {
         Box::pin(async move { self.blocks.read_state(&target, request) })
+    }
+    fn read_block(&self, target: SourceTarget, block: ContentBlock) -> FutureResult<'_, Vec<u8>> {
+        Box::pin(async move {
+            self.authorizer(&target.custody)?;
+            self.blocks.read_granted(&target.custody, &block).map(|(bytes, _)| bytes)
+        })
+    }
+    fn read_manifest(&self, target: SourceTarget, root: ManifestRoot) -> FutureResult<'_, ManifestReply> {
+        Box::pin(async move {
+            self.authorizer(&target.custody)?;
+            self.blocks.manifest_granted(&target.custody, &root)
+        })
     }
     fn get_index(
         &self,
