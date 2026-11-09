@@ -6,6 +6,7 @@
 pub mod acceptance;
 mod canonical;
 pub mod catalog;
+pub mod conversation_identity;
 pub mod cursor;
 pub mod exposure;
 pub mod feed;
