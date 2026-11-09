@@ -38,7 +38,7 @@ fn permits(table: &str) -> bool {
         return true;
     }
     match ACTIVE.get() {
-        Some(Role::Scheduling) => matches!(table, "sync_tasks" | "sync_local_head"),
+        Some(Role::Scheduling) => matches!(table, "sync_tasks" | "sync_local_head" | "sync_dependencies"),
         Some(Role::Content) => matches!(
             table,
             "sync_asset_blocks"

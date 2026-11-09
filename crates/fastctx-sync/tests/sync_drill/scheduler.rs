@@ -1,3 +1,5 @@
+#[path = "scheduler_dependencies.rs"]
+mod dependencies;
 use fastctx_storage::{Database, rusqlite::params};
 use fastctx_sync::{
     cursor::{Holder, HoldingPeriod, LocalSequence, Revision},
@@ -21,6 +23,7 @@ fn task(key: &str, wanted: u64, publication: u64) -> Task {
         priority: Priority::Background,
         next_due_millis: 0,
         dependency: None,
+        dependency_revision: LocalSequence(wanted),
         holding: Some(HoldingPeriod {
             holder: holder(),
             scope: scope(),
@@ -210,8 +213,9 @@ pub async fn run(root: &Path) -> Result<()> {
         })?,
         0u64.to_be_bytes()
     );
+    dependencies::run(root).await?;
     println!(
-        "scheduler lifecycle: coalescing, leases, restart, holding fences, bounded wake and architecture refusals passed"
+        "scheduler lifecycle: coalescing, leases, dependency ordering, missed wakes, restart, slow recheck, holding fences and architecture refusals passed"
     );
     Ok(())
 }

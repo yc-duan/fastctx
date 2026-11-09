@@ -48,7 +48,8 @@ CREATE TABLE sync_changes (
 CREATE TABLE sync_local_head (
     singleton INTEGER PRIMARY KEY CHECK(singleton=1),
     sequence BLOB NOT NULL CHECK(length(sequence)=8),
-    scheduler_slot INTEGER NOT NULL DEFAULT 0 CHECK(scheduler_slot BETWEEN 0 AND 7)
+    scheduler_slot INTEGER NOT NULL DEFAULT 0 CHECK(scheduler_slot BETWEEN 0 AND 7),
+    dependency_sequence BLOB NOT NULL DEFAULT X'0000000000000000' CHECK(length(dependency_sequence)=8)
 );
 CREATE TABLE sync_local_changes (
     sequence BLOB PRIMARY KEY CHECK(length(sequence)=8),
@@ -140,6 +141,9 @@ CREATE TABLE sync_peer_views (
 CREATE TABLE sync_consumer_cursors (
     consumer TEXT PRIMARY KEY, sequence BLOB NOT NULL CHECK(length(sequence)=8)
 ) WITHOUT ROWID;
+CREATE TABLE sync_dependencies (
+    dependency TEXT PRIMARY KEY, sequence BLOB NOT NULL CHECK(length(sequence)=8)
+) WITHOUT ROWID;
 CREATE TABLE sync_tasks (
     kind TEXT NOT NULL, hub TEXT NOT NULL, scope TEXT NOT NULL, task_key TEXT NOT NULL,
     wanted BLOB NOT NULL CHECK(length(wanted)=8), completed BLOB NOT NULL CHECK(length(completed)=8),
@@ -147,9 +151,15 @@ CREATE TABLE sync_tasks (
     next_due INTEGER NOT NULL, lease_generation BLOB NOT NULL CHECK(length(lease_generation)=8),
     lease_owner TEXT, attempts INTEGER NOT NULL, dependency TEXT, reason TEXT, holding BLOB,
     lease_wanted BLOB CHECK(lease_wanted IS NULL OR length(lease_wanted)=8),
+    dependency_revision BLOB NOT NULL CHECK(length(dependency_revision)=8), input_dependency TEXT,
+    lease_dependency_revision BLOB CHECK(lease_dependency_revision IS NULL OR length(lease_dependency_revision)=8),
+    lease_dependency_sequence BLOB CHECK(lease_dependency_sequence IS NULL OR length(lease_dependency_sequence)=8),
+    blocked_attempts INTEGER NOT NULL CHECK(blocked_attempts>=0),
     CHECK(completed<=wanted),
-    CHECK((state='leased' AND lease_owner IS NOT NULL AND lease_wanted IS NOT NULL)
-       OR (state!='leased' AND lease_owner IS NULL AND lease_wanted IS NULL)),
+    CHECK((state='leased' AND lease_owner IS NOT NULL AND lease_wanted IS NOT NULL
+            AND lease_dependency_revision IS NOT NULL AND lease_dependency_sequence IS NOT NULL)
+       OR (state!='leased' AND lease_owner IS NULL AND lease_wanted IS NULL
+            AND lease_dependency_revision IS NULL AND lease_dependency_sequence IS NULL)),
     PRIMARY KEY(kind,hub,scope,task_key)
 ) WITHOUT ROWID;
 CREATE INDEX sync_tasks_due ON sync_tasks(state,priority,next_due,hub,scope,kind,task_key);

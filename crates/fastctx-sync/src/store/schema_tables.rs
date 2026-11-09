@@ -21,6 +21,7 @@ pub const TABLES: &[&str] = &[
     "sync_peer_views",
     "sync_consumer_cursors",
     "sync_tasks",
+    "sync_dependencies",
     "sync_sources",
     "sync_runtime",
     "sync_projections",

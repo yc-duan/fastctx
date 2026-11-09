@@ -1,20 +1,30 @@
 use super::*;
 
 pub(super) fn dirty(row: &mut Row, task: Task) -> Result<()> {
+    let was_blocked = row.state == "blocked";
     if row.task.holding != task.holding {
         row.generation = next(row.generation)?;
-        row.task = task;
-        row.task.completed = LocalSequence(0);
-        row.state = "ready".into();
-        row.owner = None;
-        row.attempts = 0;
+        let generation = row.generation;
+        *row = Row::new(task);
+        row.generation = generation;
     } else {
-        row.task.wanted = row.task.wanted.max(task.wanted);
         if number(task.priority) < number(row.task.priority) {
             row.task.priority = task.priority;
         }
-        row.task.dependency = task.dependency;
-        if row.state != "leased" {
+        let newer = task.wanted > row.task.wanted
+            || task.wanted == row.task.wanted && task.dependency_revision > row.task.dependency_revision;
+        let equal = task.wanted == row.task.wanted && task.dependency_revision == row.task.dependency_revision;
+        if equal && task.dependency != row.input_dependency {
+            return Err(sql::invalid("the same dependency observation cannot name two different blockers"));
+        }
+        if newer {
+            row.task.wanted = task.wanted;
+            row.task.dependency_revision = task.dependency_revision;
+            row.input_dependency = task.dependency.clone();
+            row.task.dependency = task.dependency;
+            row.blocked_attempts = 0;
+        }
+        if row.state != "leased" && (newer || equal) && (!was_blocked || newer) {
             row.task.next_due_millis = row.task.next_due_millis.min(task.next_due_millis);
         }
     }
@@ -28,8 +38,20 @@ pub(super) fn dirty(row: &mut Row, task: Task) -> Result<()> {
         }
         .into();
         row.reason = None;
+        if row.state == "blocked" && (!was_blocked || row.blocked_attempts == 0) {
+            defer_blocked(row);
+        }
     }
     Ok(())
+}
+
+fn defer_blocked(row: &mut Row) {
+    let delay = (15 * 60 * 1000_i64).saturating_mul(1_i64 << row.blocked_attempts.min(4)).min(4 * 60 * 60 * 1000);
+    row.blocked_attempts = row.blocked_attempts.saturating_add(1);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX));
+    row.task.next_due_millis = now.saturating_add(delay);
 }
 pub(super) fn validate_outcome(outcome: &Outcome) -> std::result::Result<(), Error> {
     let reason = match outcome {
@@ -46,13 +68,22 @@ pub(super) fn validate_outcome(outcome: &Outcome) -> std::result::Result<(), Err
     }
     Ok(())
 }
-pub(super) fn finish(row: &mut Row, outcome: Outcome) -> Result<()> {
+pub(super) fn finish(db: &Connection, row: &mut Row, outcome: Outcome) -> Result<()> {
     let claimed = row.lease_wanted.take().ok_or_else(|| sql::invalid("a leased task has no claimed version"))?;
+    let observed =
+        row.lease_dependency_revision.take().ok_or_else(|| sql::invalid("lease lacks dependency observation"))?;
+    let changed =
+        row.lease_dependency_sequence.take().ok_or_else(|| sql::invalid("lease lacks dependency sequence"))?;
     row.owner = None;
-    if row.task.wanted > claimed && !matches!(outcome, Outcome::Completed { .. }) {
+    if (row.task.wanted > claimed || row.task.dependency_revision > observed)
+        && !matches!(outcome, Outcome::Completed { .. })
+    {
         row.task.next_due_millis = 0;
         row.state = if row.task.dependency.is_some() { "blocked" } else { "ready" }.into();
         row.reason = None;
+        if row.state == "blocked" {
+            defer_blocked(row);
+        }
         return Ok(());
     }
     match outcome {
@@ -71,6 +102,11 @@ pub(super) fn finish(row: &mut Row, outcome: Outcome) -> Result<()> {
             }
             .into();
             row.reason = None;
+            if row.state == "blocked" {
+                defer_blocked(row);
+            } else {
+                row.blocked_attempts = 0;
+            }
         }
         Outcome::Retry { next_due_millis, reason } => {
             row.task.next_due_millis = next_due_millis;
@@ -78,9 +114,17 @@ pub(super) fn finish(row: &mut Row, outcome: Outcome) -> Result<()> {
             row.reason = Some(reason);
         }
         Outcome::Blocked { dependency, reason } => {
-            row.task.dependency = Some(dependency);
-            row.state = "blocked".into();
-            row.reason = Some(reason);
+            if dependencies::since(db, &dependency, changed)? {
+                row.task.dependency = None;
+                row.task.next_due_millis = 0;
+                row.state = "ready".into();
+                row.reason = None;
+            } else {
+                row.task.dependency = Some(dependency);
+                row.state = "blocked".into();
+                row.reason = Some(reason);
+                defer_blocked(row);
+            }
         }
         Outcome::Superseded => {
             row.state = "superseded".into();

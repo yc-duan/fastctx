@@ -31,6 +31,8 @@ pub struct Task {
     pub priority: Priority,
     pub next_due_millis: i64,
     pub dependency: Option<String>,
+    /// Origin-local observation order for dependency changes at the same wanted version.
+    pub dependency_revision: LocalSequence,
     /// Required for every download and publication task; checked on completion.
     pub holding: Option<HoldingPeriod>,
 }

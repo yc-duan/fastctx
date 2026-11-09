@@ -114,7 +114,7 @@ fn page(block: fastctx_sync::manifest::ContentBlock) -> Result<ManifestReply> {
 async fn pump(db: &Database, store: &SqliteBlocks) -> Result<()> {
     let scheduler = SqliteScheduler::new(db.clone(), operation(220), holder(), Duration::from_secs(10))?;
     for _ in 0..256 {
-        let leases = scheduler.due(i64::MAX / 2, 16).await?;
+        let leases = scheduler.due(now_millis(), 16).await?;
         if leases.is_empty() {
             return Ok(());
         }
@@ -124,6 +124,9 @@ async fn pump(db: &Database, store: &SqliteBlocks) -> Result<()> {
         }
     }
     Err("content work did not drain in its bounded scenario".into())
+}
+fn now_millis() -> i64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as i64
 }
 fn complete(db: &Database, root: &ManifestRoot) -> Result<bool> {
     let hash = root.0.digest.as_str();

@@ -85,7 +85,7 @@ pub async fn run(root: &Path) -> Result<()> {
     let scheduler = SqliteScheduler::new(db.clone(), operation(205), holder(), Duration::from_secs(10))?;
     let mut rejected = false;
     for _ in 0..16 {
-        let leases = scheduler.due(i64::MAX / 2, 16).await?;
+        let leases = scheduler.due(now_millis(), 16).await?;
         if leases.is_empty() {
             break;
         }

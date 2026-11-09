@@ -46,8 +46,8 @@ fn load(db: &Connection, priority: u8, now: i64, limit: u32) -> Result<Vec<Row>>
         return Ok(Vec::new());
     }
     let mut candidates = Vec::new();
-    for state in ["ready", "leased"] {
-        let mut query=db.prepare_cached("SELECT kind,hub,scope,task_key,wanted,completed,state,priority,next_due,lease_generation,lease_owner,attempts,dependency,reason,holding,lease_wanted FROM sync_tasks WHERE state=?1 AND priority=?2 AND next_due<=?3 ORDER BY next_due,hub,scope,kind,task_key LIMIT ?4")?;
+    for state in ["ready", "leased", "blocked"] {
+        let mut query=db.prepare_cached(&format!("SELECT {} FROM sync_tasks WHERE state=?1 AND priority=?2 AND next_due<=?3 ORDER BY next_due,hub,scope,kind,task_key LIMIT ?4", rows::COLUMNS))?;
         candidates.extend(
             query.query_map(params![state, priority, now, limit], rows::read)?.collect::<rusqlite::Result<Vec<_>>>()?,
         );
@@ -83,6 +83,8 @@ fn claim_rows(
         row.generation = next(row.generation)?;
         row.owner = Some(owner.clone());
         row.lease_wanted = Some(row.task.wanted);
+        row.lease_dependency_revision = Some(row.task.dependency_revision);
+        row.lease_dependency_sequence = Some(dependencies::sequence(db)?);
         row.state = "leased".into();
         row.task.next_due_millis = expires;
         row.attempts = row.attempts.saturating_add(1);

@@ -15,6 +15,7 @@ use fastctx_storage::{
 };
 use std::time::Duration;
 
+mod dependencies;
 mod due;
 mod rows;
 mod update;
@@ -111,7 +112,7 @@ impl Scheduler for SqliteScheduler {
                         row.state = "superseded".into();
                         row.owner = None;
                     } else {
-                        update::finish(&mut row, outcome)?;
+                        update::finish(db, &mut row, outcome)?;
                     }
                     save(db, &row)
                 })
@@ -124,21 +125,21 @@ impl Scheduler for SqliteScheduler {
             if dependency.is_empty() || dependency.len() > 1024 {
                 return Err(Error::Invalid("invalid task dependency".into()));
             }
+            let mut first = true;
             loop {
                 let dependency = dependency.clone();
-                let changed = self.db.write(256 * 4096, move |db| {
-                    let _boundary = boundary::enter_typed_write(Role::Scheduling);
-                    let mut query = db.prepare_cached("SELECT kind,hub,scope,task_key,wanted,completed,state,priority,next_due,lease_generation,lease_owner,attempts,dependency,reason,holding,lease_wanted FROM sync_tasks WHERE dependency=?1 AND state='blocked' ORDER BY next_due LIMIT 256")?;
-                    let rows = query.query_map([dependency], rows::read)?.collect::<rusqlite::Result<Vec<_>>>()?;
-                    let changed = rows.len();
-                    for mut row in rows {
-                        row.task.dependency = None; row.task.next_due_millis = 0;
-                        row.state = if row.task.completed < row.task.wanted { "ready" } else { "complete" }.into();
-                        row.reason = None;
-                        save(db,&row)?;
-                    }
-                    Ok(changed)
-                }).await.map_err(|error| sql::error(error, self.worker.clone()))?;
+                let changed = self
+                    .db
+                    .write(256 * 4096, move |db| {
+                        let _boundary = boundary::enter_typed_write(Role::Scheduling);
+                        if first {
+                            dependencies::changed(db, &dependency)?;
+                        }
+                        dependencies::wake_page(db, &dependency)
+                    })
+                    .await
+                    .map_err(|error| sql::error(error, self.worker.clone()))?;
+                first = false;
                 if changed < 256 {
                     return Ok(());
                 }
@@ -169,6 +170,7 @@ pub(crate) fn content_changed(db: &Connection, holding: &HoldingPeriod, key: Str
         priority: Priority::Background,
         next_due_millis: 0,
         dependency: None,
+        dependency_revision: LocalSequence(wanted),
         holding: Some(holding.clone()),
     };
     validate(&task).map_err(|error| sql::invalid(error.to_string()))?;
