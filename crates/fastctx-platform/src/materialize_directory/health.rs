@@ -135,6 +135,22 @@ fn publication_recovery_preserves_handles_and_never_exchanges_back() -> Result<(
     #[cfg(windows)]
     crate::directory_alias::create(outside.display_path(), &fixture.0.join("link"))?;
     assert!(root.open_directory(&name("link")).is_err());
+    for index in 0..128 {
+        fs::write(fixture.0.join(format!("enumeration-{index:04}-xxxxxxxxxxxxxxxxxxxxxxxx")), [])?;
+    }
+    let mut left = root.entries()?;
+    let mut right = root.entries()?;
+    let first_left = left.next().transpose()?;
+    let first_right = right.next().transpose()?;
+    let mut left_names = left.collect::<io::Result<Vec<_>>>()?;
+    let mut right_names = right.collect::<io::Result<Vec<_>>>()?;
+    left_names.extend(first_left);
+    right_names.extend(first_right);
+    left_names.sort();
+    right_names.sort();
+    assert_eq!(left_names, right_names);
+    assert!(left_names.iter().any(|value| value == "link"));
+    assert_eq!(left_names.iter().filter(|name| name.to_string_lossy().starts_with("enumeration-")).count(), 128);
     assert!(name("stage").could_alias(&name("ＳＴＡＧＥ")));
     Ok(())
 }

@@ -5,7 +5,9 @@
 //! Callers serialize managed namespace changes; a handle denotes a directory
 //! identity, even if another process with the same OS privileges moves it.
 
+mod entries;
 mod names;
+pub use entries::Entries;
 #[cfg(unix)]
 mod unix;
 #[cfg(windows)]
@@ -152,6 +154,24 @@ impl Directory {
                 current = dir.0.parent.as_ref();
             }
             Ok(())
+        })
+    }
+    /// Streams names from this directory identity with bounded buffering. Does
+    /// not follow entries; open each child through this same capability. Two
+    /// iterators have independent cursors, including across a Unix exchange.
+    pub fn entries(&self) -> io::Result<Entries> {
+        crate::roles::in_place("open managed directory cursor", || {
+            #[cfg(unix)]
+            let file = self.file().try_clone()?;
+            #[cfg(windows)]
+            let file = match (&self.0.parent, &self.0.name) {
+                (Some(parent), Some(name)) => imp::open_directory(parent.file(), name, false)?,
+                _ => imp::open_anchor(&self.0.path)?,
+            };
+            if identity(&file)? != self.identity() {
+                return Err(invalid("enumeration identity changed"));
+            }
+            Entries::open(file)
         })
     }
     pub fn open_file(&self, name: &Name) -> io::Result<File> {
