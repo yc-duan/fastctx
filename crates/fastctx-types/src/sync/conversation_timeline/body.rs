@@ -108,6 +108,12 @@ pub struct ProjectedBody {
     pub run: Option<RunLink>,
 }
 impl ProjectedBody {
+    /// Direct roots only: this does not enumerate parts hidden inside display
+    /// descriptors. The writer must decode ItemDisplayV1 and its overflow pages,
+    /// include their owned_content in retention, authorization and TimelineV1
+    /// references, and verify each Manifest part's total decoded length. Full
+    /// replicas follow that closure. Lightweight replicas keep descriptors and
+    /// overflow description pages without part bodies or original evidence.
     pub fn owned_content(&self) -> Vec<&ContentRef> {
         let mut refs = vec![&self.primary.original, &self.primary.display];
         refs.extend(self.world.iter());

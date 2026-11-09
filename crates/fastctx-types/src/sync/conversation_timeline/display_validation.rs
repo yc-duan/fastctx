@@ -22,6 +22,16 @@ impl ItemDisplayV1 {
         if self.tool.as_ref().is_some_and(|tool| tool.name.is_empty()) {
             return Err("tool summary has no name".into());
         }
+        if let Some(tool) = &self.tool {
+            for label in
+                [Some(tool.name.as_str()), tool.server.as_deref(), tool.machine.as_deref()].into_iter().flatten()
+            {
+                bounded_text(label, DISPLAY_LABEL_BYTES)?;
+            }
+            for summary in [&tool.does.text, &tool.does.command, &tool.does.path].into_iter().flatten() {
+                bounded_text(summary, DISPLAY_SUMMARY_BYTES)?;
+            }
+        }
         let mut preview = 0usize;
         for (index, part) in self.parts.iter().enumerate() {
             part.validate()?;
@@ -54,6 +64,16 @@ impl ItemDisplayV1 {
         bounded_json(self, DISPLAY_BYTES).map_err(|_| "item display exceeds 16 KiB")?;
         Ok(())
     }
+    /// Part bodies owned by this item, plus its remaining descriptor tree. The
+    /// writer walks that tree in bounded pages, retaining and authorizing all
+    /// returned content and adding it to TimelineV1 references. Logical pictures
+    /// belonging to another object are excluded. Full replicas follow this
+    /// closure; lightweight replicas retain descriptors, not bodies or original.
+    pub fn owned_content(&self) -> Vec<ContentRef> {
+        let mut refs: Vec<_> = self.parts.iter().filter_map(owned_part).collect();
+        refs.extend(self.more.iter().map(|more| ContentRef::Manifest { root: more.root.clone() }));
+        refs
+    }
     /// Checks the selected part, obtained by bounded index lookup when necessary.
     /// Updating a revision preserves every other part and reuses existing blocks.
     pub fn validate_append(&self, snapshot: &BodySnapshot, part: Option<&DisplayPart>) -> Result<(), String> {
@@ -83,6 +103,11 @@ impl ItemDisplayV1 {
     }
 }
 impl ItemDisplayPartsV1 {
+    /// Additional owned bodies in this descriptor leaf; no implied access to
+    /// pictures whose target is a different object.
+    pub fn owned_content(&self) -> Vec<ContentRef> {
+        self.parts.iter().filter_map(owned_part).collect()
+    }
     pub fn encode(&self) -> Result<Vec<u8>, String> {
         self.validate()?;
         bounded_json(self, DISPLAY_BYTES).map_err(|_| "display parts page exceeds 16 KiB".into())
@@ -113,6 +138,9 @@ impl ItemDisplayPartsV1 {
 impl DisplayPart {
     pub fn validate(&self) -> Result<(), String> {
         self.content.validate()?;
+        if let Some(media_type) = &self.media_type {
+            bounded_text(media_type, DISPLAY_LABEL_BYTES)?;
+        }
         if let ContentRef::Single { decoded_bytes, .. } = &self.content
             && u64::from(*decoded_bytes) != self.bytes.0
         {
@@ -145,6 +173,16 @@ impl DisplayPart {
         }
         Ok(())
     }
+}
+fn owned_part(part: &DisplayPart) -> Option<ContentRef> {
+    (!matches!(part.picture.as_ref().map(|picture| &picture.target), Some(PictureTarget::Object { .. })))
+        .then(|| part.content.clone())
+}
+fn bounded_text(text: &str, limit: usize) -> Result<(), String> {
+    if text.len() > limit {
+        return Err(format!("display summary field exceeds {limit} bytes"));
+    }
+    Ok(())
 }
 fn version(version: u16) -> Result<(), String> {
     if version != DISPLAY_VERSION {

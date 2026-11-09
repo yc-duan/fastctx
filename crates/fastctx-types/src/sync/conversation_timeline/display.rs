@@ -11,6 +11,8 @@ use serde::{Deserialize, Serialize};
 pub const DISPLAY_VERSION: u16 = 1;
 pub const DISPLAY_BYTES: usize = 16 * 1024;
 pub const DISPLAY_PREVIEW_BYTES: usize = 4 * 1024;
+pub const DISPLAY_LABEL_BYTES: usize = 256;
+pub const DISPLAY_SUMMARY_BYTES: usize = 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -51,6 +53,7 @@ pub enum ActionKind {
 
 /// Extracted at ingestion/merge time. These are bounded display summaries, not
 /// complete command arguments or paths to use as authorities for later actions.
+/// Producers truncate text/command/path with display_preview to at most 1 KiB.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ActionSummary {
@@ -61,6 +64,7 @@ pub struct ActionSummary {
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+/// Producers truncate name/server/machine to at most 256 UTF-8 bytes each.
 pub struct ToolSummary {
     pub name: String,
     pub server: Option<String>,
@@ -101,7 +105,10 @@ pub struct DisplayPicture {
 /// Text channels contain UTF-8; ToolInput contains UTF-8 JSON. Media contains
 /// original bytes. `preview` is a UTF-8 prefix, truncated at a character boundary;
 /// it is not a second body. The producer verifies the prefix against content.
-/// Parts keep their zero-based order across inline and overflow pages.
+/// Parts keep their zero-based order across inline and overflow pages. Producers
+/// truncate media_type to at most 256 UTF-8 bytes. For a Manifest content reference
+/// the writer verifies bytes against its total decoded extent; types can verify
+/// that equality only for Single references.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DisplayPart {
