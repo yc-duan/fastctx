@@ -110,6 +110,7 @@ CREATE TABLE sync_stream_heads (
     producer BLOB NOT NULL, epoch TEXT NOT NULL, kind TEXT NOT NULL, schema INTEGER NOT NULL,
     sequence BLOB NOT NULL CHECK(length(sequence)=8), local BLOB NOT NULL CHECK(length(local)=8),
     epoch_proof TEXT, prefix_digest TEXT,
+    origin TEXT NOT NULL DEFAULT 'local' CHECK(origin IN ('local','replicated')),
     CHECK(prefix_digest IS NULL OR epoch_proof IS NOT NULL),
     PRIMARY KEY(hub,scope,stream,epoch)
 ) WITHOUT ROWID;
@@ -515,4 +516,59 @@ CREATE TABLE sync_supply_work (
     position BLOB NOT NULL CHECK(length(position)=8),
     body BLOB NOT NULL CHECK(length(body)<=262144),
     PRIMARY KEY(hub,scope,id,generation,position)
+) WITHOUT ROWID;
+
+-- Receiving progress is separate from authority feeds and remote durable ACKs.
+CREATE TABLE sync_replica_scopes (
+    hub TEXT NOT NULL, scope TEXT NOT NULL, holding BLOB NOT NULL,
+    cursor BLOB NOT NULL, view BLOB NOT NULL CHECK(length(view)<=262144),
+    local BLOB NOT NULL CHECK(length(local)=8), PRIMARY KEY(hub,scope)
+) WITHOUT ROWID;
+CREATE TABLE sync_replica_pages (
+    hub TEXT NOT NULL, scope TEXT NOT NULL, holding BLOB NOT NULL, page TEXT NOT NULL,
+    local BLOB NOT NULL CHECK(length(local)=8), cursor BLOB NOT NULL,
+    PRIMARY KEY(hub,scope,holding,page)
+) WITHOUT ROWID;
+CREATE TABLE sync_replica_versions (
+    hub TEXT NOT NULL, scope TEXT NOT NULL, object TEXT NOT NULL,
+    authority_epoch BLOB NOT NULL CHECK(length(authority_epoch)=16),
+    revision BLOB NOT NULL CHECK(length(revision)=8), accepted BLOB NOT NULL, proof TEXT NOT NULL,
+    PRIMARY KEY(hub,scope,object,authority_epoch,revision)
+) WITHOUT ROWID;
+CREATE TABLE sync_replica_streams (
+    hub TEXT NOT NULL, scope TEXT NOT NULL, stream TEXT NOT NULL, epoch_proof TEXT NOT NULL,
+    object TEXT NOT NULL, kind TEXT NOT NULL, schema INTEGER NOT NULL,
+    holding BLOB NOT NULL, purpose BLOB NOT NULL,
+    wanted BLOB NOT NULL CHECK(length(wanted)=8), prefix_digest TEXT,
+    PRIMARY KEY(hub,scope,stream,epoch_proof)
+) WITHOUT ROWID;
+CREATE INDEX sync_replica_streams_object ON sync_replica_streams(hub,scope,object,kind);
+-- One page waiting for each unknown epoch; backpressure bounds the global bytes.
+CREATE TABLE sync_replica_waiting (
+    hub TEXT NOT NULL, scope TEXT NOT NULL, stream TEXT NOT NULL, epoch_proof TEXT NOT NULL,
+    holding BLOB NOT NULL, page BLOB NOT NULL CHECK(length(page)<=262144), digest TEXT NOT NULL,
+    PRIMARY KEY(hub,scope,stream,epoch_proof)
+) WITHOUT ROWID;
+-- Remaining declared nodes, visited by bounded keyset pages. Completed nodes are
+-- excluded by the partial index rather than scanned on every missing-block read.
+CREATE TABLE sync_replica_content (
+    hub TEXT NOT NULL, scope TEXT NOT NULL, object TEXT NOT NULL, kind TEXT NOT NULL,
+    hash TEXT NOT NULL, root_kind TEXT NOT NULL CHECK(root_kind IN ('block','manifest')),
+    decoded_bytes INTEGER, holding BLOB NOT NULL, done INTEGER NOT NULL CHECK(done IN (0,1)),
+    CHECK((root_kind='block' AND decoded_bytes BETWEEN 0 AND 1048576 AND decoded_bytes IS NOT NULL)
+       OR (root_kind='manifest' AND decoded_bytes IS NULL)),
+    PRIMARY KEY(hub,scope,object,kind,hash,root_kind)
+) WITHOUT ROWID;
+CREATE INDEX sync_replica_content_pending ON sync_replica_content(hub,scope,object,kind,hash,root_kind) WHERE done=0;
+
+CREATE TABLE sync_replica_epoch_fences (
+    hub TEXT NOT NULL, scope TEXT NOT NULL, stream TEXT NOT NULL, epoch TEXT NOT NULL,
+    closed_through BLOB NOT NULL CHECK(length(closed_through)=8), successor TEXT NOT NULL,
+    control_sequence BLOB NOT NULL CHECK(length(control_sequence)=8),
+    PRIMARY KEY(hub,scope,stream,epoch), UNIQUE(hub,scope,stream,successor)
+) WITHOUT ROWID;
+
+CREATE TABLE sync_replica_proofs (
+    hub TEXT NOT NULL, scope TEXT NOT NULL, proof TEXT NOT NULL,
+    original BLOB NOT NULL CHECK(length(original)<=262144), PRIMARY KEY(hub,scope,proof)
 ) WITHOUT ROWID;

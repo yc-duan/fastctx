@@ -10,6 +10,17 @@ spec = importlib.util.spec_from_file_location("sync_wire", ROOT / "scripts/check
 wire = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(wire)
 CALLERS = {
+    "SqliteReplica": {
+        "crates/fastctx-sync/src/store/replica.rs",
+        "crates/fastctx-sync/src/store/replica/sqlite.rs",
+        "crates/fastctx-sync/src/store/replica/targets.rs",
+        "crates/fastctx-sync/src/store/replica/changes.rs",
+        "crates/fastctx-sync/src/store/replica/content.rs",
+        "crates/fastctx-sync/src/store/replica/streams.rs",
+        "crates/fastctx-sync/src/store/replica/epoch_chain.rs",
+        "crates/fastctx-sync/tests/sync_drill/replica.rs",
+        "crates/fastctx-sync/tests/sync_drill/replica/crash.rs",
+    },
     "SqliteUpgradeJournal": {
         "crates/fastctx-sync/src/store/format_upgrade.rs",
         "crates/fastctx-node/src/record_database/format.rs",
@@ -34,6 +45,15 @@ CALLERS = {
         "crates/fastctx-sync/tests/sync_drill/pending.rs",
     },
     "SqliteBlocks": {
+        "crates/fastctx-sync/src/blocks/replica_commit.rs",
+        "crates/fastctx-sync/src/blocks/replica_content.rs",
+        "crates/fastctx-sync/src/store/replica/sqlite.rs",
+        "crates/fastctx-sync/src/store/replica/targets.rs",
+        "crates/fastctx-sync/src/store/replica/heads.rs",
+        "crates/fastctx-sync/src/store/replica/stream_rows.rs",
+        "crates/fastctx-sync/src/store/replica/epoch_chain.rs",
+        "crates/fastctx-sync/tests/sync_drill/replica.rs",
+        "crates/fastctx-sync/tests/sync_drill/replica/crash.rs",
         "crates/fastctx-sync/src/blocks/mod.rs",
         "crates/fastctx-sync/src/blocks/cleanup.rs",
         "crates/fastctx-sync/src/blocks/sqlite.rs",
@@ -93,6 +113,9 @@ CALLERS = {
         "crates/fastctx-net/tests/sync_access_drill/fixture.rs",
     },
     "enter_typed_write": {
+        "crates/fastctx-sync/src/blocks/replica_content.rs",
+        "crates/fastctx-sync/src/store/replica/changes.rs",
+        "crates/fastctx-sync/src/store/replica/streams.rs",
         "crates/fastctx-sync/src/store/boundary.rs",
         "crates/fastctx-sync/src/store/format_upgrade.rs",
         "crates/fastctx-sync/src/store/engine/pending.rs",

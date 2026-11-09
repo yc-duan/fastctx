@@ -20,6 +20,7 @@ pub(crate) enum Role {
     Scopes,
     Reconcile,
     Authority,
+    Replica,
 }
 thread_local! { static ACTIVE: Cell<Option<Role>> = const { Cell::new(None) }; }
 pub(crate) struct Boundary(Option<Role>, PhantomData<Rc<()>>);
@@ -134,6 +135,34 @@ fn permits(table: &str) -> bool {
                 | "sync_local_head"
                 | "sync_tasks"
         ),
+        Some(Role::Replica) => matches!(
+            table,
+            "sync_replica_proofs"
+                | "sync_replica_epoch_fences"
+                | "sync_replica_scopes"
+                | "sync_replica_pages"
+                | "sync_replica_versions"
+                | "sync_replica_streams"
+                | "sync_replica_waiting"
+                | "sync_replica_content"
+                | "sync_tombstones"
+                | "sync_objects"
+                | "sync_object_versions"
+                | "sync_asset_roots"
+                | "sync_asset_access"
+                | "sync_epoch_descriptors"
+                | "sync_source_proofs"
+                | "sync_stream_heads"
+                | "sync_stream_records"
+                | "sync_stream_roots"
+                | "sync_local_head"
+                | "sync_local_changes"
+                | "sync_asset_pins"
+                | "sync_asset_uploads"
+                | "sync_asset_gc"
+                | "sync_asset_manifests"
+                | "sync_tasks"
+        ),
         Some(Role::Pending) => matches!(
             table,
             "sync_pending_mutations"
@@ -161,6 +190,21 @@ impl Guard for Rules {
                 || change.after(0)? != fastctx_storage::rusqlite::types::ValueRef::Text(b"sync.manifest"))
         {
             return Err(super::sql::invalid("content publication cannot change another scheduler handler"));
+        }
+        if change.table() == "sync_tasks" && matches!(ACTIVE.get(), Some(Role::Replica)) {
+            use fastctx_storage::rusqlite::types::ValueRef;
+            let allowed = change.action() != Action::Delete
+                && match (change.after(0)?, change.after(3)?) {
+                    (ValueRef::Text(b"sync.manifest"), _) => true,
+                    (ValueRef::Text(b"sync.projection"), ValueRef::Text(key)) => key.starts_with(b"derived.timeline/"),
+                    (ValueRef::Text(b"sync.transfer"), ValueRef::Text(key)) => {
+                        key.starts_with(b"replica-stream/") || key.starts_with(b"replica-content/")
+                    }
+                    _ => false,
+                };
+            if !allowed {
+                return Err(super::sql::invalid("a replica cannot enqueue another writer's task"));
+            }
         }
         if change.table() == "sync_tasks" && matches!(ACTIVE.get(), Some(Role::Projection)) {
             use fastctx_storage::rusqlite::types::ValueRef;

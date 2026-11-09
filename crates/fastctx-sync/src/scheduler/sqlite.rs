@@ -321,3 +321,28 @@ fn current_holding(db: &Connection, holder: &Holder, holding: Option<&HoldingPer
         .optional()?;
     Ok(found == Some((true, holding.acl_revision.0, holding.publication_epoch.0)))
 }
+
+/// The authenticated replica head schedules a held download, never an upload.
+pub(crate) fn replica_changed(
+    db: &Connection,
+    holding: &HoldingPeriod,
+    key: String,
+    local: LocalSequence,
+) -> Result<()> {
+    let key = TaskKey { kind: "sync.transfer".into(), scope: holding.scope.clone(), key };
+    let task = Task {
+        key,
+        wanted: local,
+        completed: LocalSequence(0),
+        priority: Priority::Visible,
+        next_due_millis: 0,
+        dependency: None,
+        dependency_revision: local,
+        dependency_sequence: dependencies::sequence(db)?,
+        holding: Some(holding.clone()),
+    };
+    validate(&task).map_err(|e| sql::invalid(e.to_string()))?;
+    let mut row = get(db, &task.key)?.unwrap_or_else(|| Row::new(task.clone()));
+    update::dirty(db, &mut row, task)?;
+    save(db, &row)
+}

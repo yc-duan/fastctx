@@ -11,6 +11,9 @@ use crate::{
 };
 use std::collections::BTreeMap;
 
+mod sqlite;
+pub use sqlite::{ContentPosition, ContentRequest, MissingContent, SqliteReplica, StreamInstalled, StreamTarget};
+
 /// Built from the authenticated connection and current local custody state,
 /// never deserialized from a peer's self-reported privileges. Unlisted objects
 /// request ordinary replica custody; source exceptions are checked per object.

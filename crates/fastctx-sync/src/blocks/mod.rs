@@ -15,6 +15,7 @@ mod pins;
 
 pub(crate) mod projection_commit;
 pub(crate) mod reconcile;
+pub(crate) mod replica_commit;
 mod root_holds;
 mod rows;
 pub(crate) mod source_commit;
