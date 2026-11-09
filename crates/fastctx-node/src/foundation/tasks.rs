@@ -9,7 +9,12 @@ use fastctx_sync::{
 };
 
 pub(super) fn handlers(blocks: &SqliteBlocks, timelines: &SqliteTimelines) -> Vec<Arc<dyn TaskHandler>> {
-    vec![Arc::new(Content(blocks.clone())), Arc::new(SupplyCleanup(blocks.clone())), Arc::new(timelines.clone())]
+    vec![
+        Arc::new(Content(blocks.clone())),
+        Arc::new(SupplyCleanup(blocks.clone())),
+        Arc::new(Holdings(blocks.clone())),
+        Arc::new(timelines.clone()),
+    ]
 }
 
 /// Validation, expansion and supply checks of stored content.
@@ -34,5 +39,19 @@ impl TaskHandler for SupplyCleanup {
     }
     fn handle(&self, lease: Lease) -> FutureResult<'_, Outcome> {
         self.0.process(lease)
+    }
+}
+
+/// Scope generations retire old uploads and migrate surviving local uses.
+struct Holdings(SqliteBlocks);
+impl TaskHandler for Holdings {
+    fn kind(&self) -> &'static str {
+        "sync.reconcile"
+    }
+    fn takes(&self, key: &TaskKey) -> bool {
+        SqliteBlocks::takes_reconciliation(key)
+    }
+    fn handle(&self, lease: Lease) -> FutureResult<'_, Outcome> {
+        self.0.reconcile_scope(lease)
     }
 }

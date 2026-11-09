@@ -1,6 +1,8 @@
 //! Real content files, writer transactions and collection share one lifecycle.
 #[path = "canonical_producer.rs"]
 mod canonical_producer;
+#[path = "holding.rs"]
+mod holding;
 #[path = "metadata.rs"]
 mod metadata;
 #[path = "pending.rs"]
@@ -382,6 +384,7 @@ pub async fn run(root: &Path) -> Result<()> {
     pending::run(root).await?;
     supply::run(root).await?;
     timeline_hold::run(root).await?;
+    holding::run(root).await?;
     println!(
         "content lifecycle: typed pins, dual encodings, pending closures, private references, claim fences, cancellation, restart and revoked staging cleanup passed"
     );
