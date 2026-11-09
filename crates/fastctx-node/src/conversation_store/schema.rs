@@ -41,7 +41,7 @@ pub(crate) fn tables(db: &Connection) -> Result<Vec<Table>> {
     let mut tables = Vec::new();
     for name in names {
         // Foundation tables use scope/object ownership and their own writer
-        // guard; legacy export/deletion must not enumerate them (2026-11-09).
+        // guard; legacy export and deletion must not enumerate them.
         // Keep the transitional carrier in the legacy conversation lifecycle.
         if name != "sync_legacy_pins" && fastctx_sync::store::schema::TABLES.contains(&name.as_str()) {
             continue;

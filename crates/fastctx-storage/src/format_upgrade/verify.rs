@@ -21,7 +21,7 @@ pub(super) fn verify(path: &Path, pages: u32, budget: &Budget) -> WorkResult<()>
         let deadline = budget.clone();
         let interrupted_by_deadline = expired.clone();
         // SQLite checkList does not invoke this callback while walking a BLOB's
-        // overflow pages. The caller's bounded gate is independent (2026-11-09).
+        // overflow pages, so the caller's gate bounds its wait independently.
         db.progress_handler(
             1,
             Some(move || {

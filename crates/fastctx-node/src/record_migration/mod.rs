@@ -119,21 +119,13 @@ pub(crate) async fn after_open<F: std::future::Future>(node: &std::sync::Arc<cra
             let node = std::sync::Arc::downgrade(node);
             fastctx_platform::task::spawn(async move {
                 if let Some(error) = fault {
-                    if let Some(node) = node.upgrade() { node.log.line(format_args!("migration remains closed: {error}")); }
+                    if let Some(node) = node.upgrade() {
+                        node.log.line(format_args!("migration remains closed: {error}"));
+                    }
                     return;
                 }
                 let outcome = match gate {
-                    Some(gate) => {
-                        let outcome = gate.wait().await;
-                        if outcome.is_err() && !gate.finished() {
-                            if let Some(node) = node.upgrade() {
-                                node.log.line(format_args!("backup deadline passed while IO is still active; bulk migration remains paused until handles are released"));
-                            }
-                            // Track release asynchronously; no thread or database is
-                            // held while an uninterruptible IO operation finishes.
-                            gate.released().await.map(|_| ())
-                        } else { outcome.map(|_| ()) }
-                    }
+                    Some(gate) => backup_settled(&node, gate).await,
                     None => Ok(()),
                 };
                 let Some(node) = node.upgrade() else {
@@ -154,6 +146,24 @@ pub(crate) async fn after_open<F: std::future::Future>(node: &std::sync::Arc<cra
         result
     })
     .await
+}
+/// Waits for the format backup by its deadline. Past the deadline the worker may
+/// still own IO, so release is tracked asynchronously, holding neither a thread
+/// nor a database, and bulk migration stays paused until it happens.
+async fn backup_settled(
+    node: &std::sync::Weak<crate::Node>,
+    gate: fastctx_storage::format_upgrade::MigrationGate,
+) -> fastctx_storage::Result<()> {
+    let outcome = gate.wait().await;
+    if outcome.is_ok() || gate.finished() {
+        return outcome.map(|_| ());
+    }
+    if let Some(node) = node.upgrade() {
+        node.log.line(format_args!(
+            "backup deadline passed while IO is still active; bulk migration remains paused until handles are released"
+        ));
+    }
+    gate.released().await.map(|_| ())
 }
 fn start(node: &std::sync::Arc<crate::Node>) {
     if node.database.fault().is_some() {
