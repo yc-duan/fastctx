@@ -62,7 +62,8 @@ impl AcquireRoot {
     }
 }
 /// This receipt identifies a persisted use. Release and reads recheck the saved
-/// lease, owner, kind, root, usage and holding rather than trusting these fields.
+/// lease, owner, kind, root and usage rather than trusting these fields. Release
+/// checks the actual holder but does not require the original grant to be current.
 #[derive(Clone, Debug)]
 pub struct RootLease {
     pub id: RootLeaseId,
@@ -97,6 +98,8 @@ pub(crate) mod sealed {
 pub trait RootStore: sealed::RootWriter + Send + Sync {
     fn acquire_root(&self, operation: OperationId, request: AcquireRoot) -> FutureResult<'_, RootAcquired>;
     /// Releasing the same persisted generation twice succeeds without touching
-    /// another use. Revocation cleanup has its own private writer authority.
+    /// another use. Old holding periods remain releasable by the same holder;
+    /// reacquisition still requires current custody. Revocation cleanup has its
+    /// own private writer authority.
     fn release_root(&self, custody: Custody, lease: RootLease) -> FutureResult<'_, ()>;
 }

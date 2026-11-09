@@ -76,10 +76,17 @@ pub(super) fn acquire(
     Ok(RootAcquired::Held { lease: Box::new(lease) })
 }
 
-pub(super) fn release(db: &Connection, custody: &Custody, lease: &RootLease) -> Result<()> {
+pub(super) fn release(
+    db: &Connection,
+    holder: &crate::cursor::Holder,
+    custody: &Custody,
+    lease: &RootLease,
+) -> Result<()> {
+    pins::same_holder(holder, custody)?;
     if lease.object != custody.object
         || lease.kind != custody.kind.registration().id
-        || lease.holding != custody.holding
+        || &lease.holding.holder != holder
+        || lease.holding.scope != custody.object.scope
         || lease.root.id().domain != custody.object.scope
     {
         return Err(sql::invalid("root usage belongs to another object, kind or holding period"));
@@ -87,7 +94,7 @@ pub(super) fn release(db: &Connection, custody: &Custody, lease: &RootLease) -> 
     let scope = &custody.object.scope;
     let encoded = saved::encode(lease, &custody.purpose)?;
     let previous = saved::get(db, scope, &lease.id)?.ok_or_else(|| sql::invalid("root usage does not exist"))?;
-    previous.check(&encoded)?;
+    previous.check_release(&encoded, holder)?;
     if !previous.released {
         retire(db, scope, &lease.id, &previous.hash, &previous.form)?;
     }

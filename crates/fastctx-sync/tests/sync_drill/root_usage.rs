@@ -121,13 +121,53 @@ pub(super) async fn run(root: &Path) -> Result<()> {
         Ok(())
     })?;
     let blocks = store(&db, &dir)?;
-    assert!(blocks.release_root(owner, retained).await.is_err());
+    let mut stranger = owner.clone();
+    stranger.holding.holder = Holder::Device { device: DeviceId::from_bytes([99; 32]) };
+    assert!(blocks.release_root(stranger, retained.clone()).await.is_err());
     assert_eq!(blocks.retire_root_uses(scope(), 1).await?, 1);
+    blocks.release_root(owner.clone(), retained.clone()).await?;
+    blocks.release_root(owner, retained).await?;
     assert_eq!(blocks.retire_root_uses(scope(), 1).await?, 0);
     assert_eq!(blocks.collect(1).await?, 1);
     assert_eq!(active(&db)?, 0);
+    advanced_holding(root).await?;
     println!(
-        "root usage: pending closure, concurrent retry, restart, private custody, independent uses, expiry and revocation passed"
+        "root usage: pending closure, concurrent retry, restart, private custody, independent uses, expiry, old-period release and revocation passed"
     );
+    Ok(())
+}
+
+async fn advanced_holding(root: &Path) -> Result<()> {
+    let dir = root.join("advanced-root-holding");
+    fastctx_platform::ensure_private_dir(&dir)?;
+    let path = dir.join("replica.sqlite3");
+    let db = open(&path)?;
+    let blocks = store(&db, &dir)?;
+    let old = custody(50, "conversation.artifact");
+    let content = codec::encode(scope(), b"state retained across an ACL advance".to_vec(), Encoding::Raw)?;
+    let published = blocks.put(old.clone(), operation(50), content.representation, content.bytes).await?;
+    let root_request = request(old.clone(), published.content.into(), 50);
+    let lease = held(blocks.acquire_root(operation(50), root_request.clone()).await?)?;
+    drop(blocks);
+    drop(db);
+    super::super::scheduler::closed(&path).await?;
+    let mut current = old.clone();
+    current.holding.acl_revision = Revision(2);
+    current.holding.publication_epoch = Revision(2);
+    current.context.observed_acl = Revision(2);
+    let period = serde_json::to_vec(&current.holding)?;
+    let db = open_with(&path, |db| {
+        db.execute("UPDATE sync_scopes SET acl_revision=?1,publication_epoch=?1", [2_u64.to_be_bytes().as_slice()])?;
+        db.execute("UPDATE sync_root_leases SET holding=?1", [&period])?;
+        Ok(())
+    })?;
+    let blocks = store(&db, &dir)?;
+    assert!(blocks.acquire_root(operation(50), root_request).await.is_err());
+    assert_eq!(blocks.cancel_upload(current.clone(), operation(50), 8).await?, 1);
+    assert_eq!(blocks.cancel_upload(old.clone(), operation(50), 8).await?, 0);
+    assert_eq!(blocks.collect(8).await?, 0);
+    blocks.release_root(current, lease.clone()).await?;
+    blocks.release_root(old, lease).await?;
+    assert_eq!(blocks.collect(8).await?, 1);
     Ok(())
 }

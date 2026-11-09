@@ -58,14 +58,12 @@ impl RootStore for SqliteBlocks {
             if lease.kind != custody.kind.registration().id {
                 return Err(Error::Invalid("root usage belongs to another kind".into()));
             }
-            let policy = self.policy.clone();
             let holder = self.holder.clone();
             let operation = lease.operation.clone();
             self.db
                 .write(16384, move |db| {
                     let _boundary = boundary::enter_typed_write(Role::Roots);
-                    pins::authorize(db, &holder, policy.as_ref(), &custody)?;
-                    root_holds::release(db, &custody, &lease)
+                    root_holds::release(db, &holder, &custody, &lease)
                 })
                 .await
                 .map_err(|error| sql::error(error, operation))

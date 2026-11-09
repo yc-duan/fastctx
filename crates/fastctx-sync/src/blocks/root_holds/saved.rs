@@ -22,6 +22,22 @@ pub(super) struct Saved {
 }
 impl Saved {
     pub fn check(&self, expected: &Encoded) -> Result<()> {
+        self.check_fields(expected)?;
+        if self.fields.holding != expected.holding || self.fields.purpose != expected.purpose {
+            return Err(sql::invalid("root usage differs from its persisted holding period"));
+        }
+        Ok(())
+    }
+    pub fn check_release(&self, expected: &Encoded, holder: &crate::cursor::Holder) -> Result<()> {
+        self.check_fields(expected)?;
+        let period: crate::cursor::HoldingPeriod =
+            serde_json::from_slice(&self.fields.holding).map_err(|error| sql::invalid(error.to_string()))?;
+        if &period.holder != holder {
+            return Err(sql::invalid("root usage is owned by another holder"));
+        }
+        Ok(())
+    }
+    fn check_fields(&self, expected: &Encoded) -> Result<()> {
         let found = &self.fields;
         if found.object != expected.object
             || found.kind != expected.kind
@@ -30,8 +46,6 @@ impl Saved {
             || found.length != expected.length
             || found.operation != expected.operation
             || found.generation != expected.generation
-            || found.holding != expected.holding
-            || found.purpose != expected.purpose
             || found.usage != expected.usage
             || found.expires != expected.expires
         {

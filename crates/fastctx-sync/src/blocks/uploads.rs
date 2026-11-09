@@ -41,6 +41,39 @@ pub(super) fn intent(db: &Connection, custody: &Custody, operation: &OperationId
     Ok(())
 }
 
+/// Cancelling an owned operation remains valid after its grant has advanced or
+/// disappeared. The persisted holder, object and kind still have to match.
+pub(super) fn cancel(
+    db: &Connection,
+    holder: &crate::cursor::Holder,
+    custody: &Custody,
+    operation: &OperationId,
+) -> Result<()> {
+    super::pins::same_holder(holder, custody)?;
+    let scope = &custody.object.scope;
+    let found = db
+        .query_row(
+            "SELECT kind,holding FROM sync_asset_uploads WHERE hub=?1 AND scope=?2 AND operation=?3 AND object=?4",
+            params![scope.hub.to_string(), scope.scope.as_str(), operation.as_str(), custody.object.object.as_str()],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?)),
+        )
+        .optional()?;
+    if let Some((kind, period)) = found {
+        let period: crate::cursor::HoldingPeriod =
+            serde_json::from_slice(&period).map_err(|e| sql::invalid(e.to_string()))?;
+        if kind != custody.kind.registration().id || &period.holder != holder || period.scope != *scope {
+            return Err(sql::invalid("upload cancellation belongs to another object kind or holder"));
+        }
+        db.execute(
+            "UPDATE sync_asset_uploads SET cancelled=1 WHERE hub=?1 AND scope=?2 AND operation=?3 AND object=?4",
+            params![scope.hub.to_string(), scope.scope.as_str(), operation.as_str(), custody.object.object.as_str()],
+        )?;
+        Ok(())
+    } else {
+        intent(db, custody, operation, true)
+    }
+}
+
 pub(super) fn batch(
     db: &Connection,
     scope: &ScopeKey,

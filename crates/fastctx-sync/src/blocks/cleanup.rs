@@ -1,7 +1,7 @@
 //! Cancellation and revocation retire temporary pins without expiring assets.
 use super::SqliteBlocks;
 use crate::{
-    blocks::{pins, uploads},
+    blocks::uploads,
     identity::{OperationId, ScopeKey},
     store::{
         Error, FutureResult,
@@ -19,14 +19,12 @@ impl SqliteBlocks {
     pub fn cancel_upload(&self, custody: Custody, operation: OperationId, max: u32) -> FutureResult<'_, u32> {
         Box::pin(async move {
             page_size(max)?;
-            let policy = self.policy.clone();
             let holder = self.holder.clone();
             let id = operation.clone();
             self.db
                 .write(128 * 1024, move |db| {
                     let _boundary = boundary::enter_typed_write(Role::Content);
-                    pins::authorize(db, &holder, policy.as_ref(), &custody)?;
-                    uploads::intent(db, &custody, &id, true)?;
+                    uploads::cancel(db, &holder, &custody, &id)?;
                     uploads::batch(db, &custody.object.scope, Some((&custody, &id)), max)
                 })
                 .await

@@ -14,6 +14,17 @@ use fastctx_storage::{
     rusqlite::{Connection, OptionalExtension, params},
 };
 
+/// Releasing local ownership requires identity, not a still-current grant.
+pub(super) fn same_holder(holder: &Holder, custody: &Custody) -> Result<()> {
+    if &custody.holding.holder != holder
+        || custody.context.scope != custody.object.scope
+        || custody.holding.scope != custody.object.scope
+    {
+        return Err(sql::invalid("release differs from the actual holder or object scope"));
+    }
+    Ok(())
+}
+
 pub(super) fn authorize(db: &Connection, holder: &Holder, policy: &dyn AccessPolicy, custody: &Custody) -> Result<()> {
     if &custody.holding.holder != holder
         || custody.context.scope != custody.object.scope
