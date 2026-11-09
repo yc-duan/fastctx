@@ -1,6 +1,25 @@
 //! Literal edit planning shared by encoded files and synchronized text handlers.
 use std::ops::Range;
 
+/// Matching failures describe the requested edit; capacity failures are retryable
+/// and must never be treated as a conflicting document revision.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Error {
+    Match(String),
+    BudgetExceeded,
+    LengthOverflow,
+}
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Match(reason) => f.write_str(reason),
+            Self::BudgetExceeded => f.write_str("edited body exceeds its semantic budget"),
+            Self::LengthOverflow => f.write_str("edited body length overflow"),
+        }
+    }
+}
+impl std::error::Error for Error {}
+
 /// Ranges are UTF-8 byte offsets in already decoded text. The encoding adapter
 /// applies only these changes and preserves untouched source bytes.
 #[derive(Clone, Debug)]
@@ -25,7 +44,7 @@ pub fn plan(
     replace_all: bool,
     options: Options<'_>,
     stateful_at: impl Fn(usize) -> bool,
-) -> Result<Vec<Replacement>, String> {
+) -> Result<Vec<Replacement>, Error> {
     let mut changes = Vec::new();
     visit(text, search, replacement, replace_all, options, stateful_at, |change| changes.push(change))?;
     Ok(changes)
@@ -39,10 +58,10 @@ fn visit(
     options: Options<'_>,
     stateful_at: impl Fn(usize) -> bool,
     mut emit: impl FnMut(Replacement),
-) -> Result<(), String> {
+) -> Result<(), Error> {
     let option = options.all_option;
     if search.is_empty() {
-        return Err("SEARCH is empty; use write to create or replace a whole file".into());
+        return Err(Error::Match("SEARCH is empty; use write to create or replace a whole file".into()));
     }
     // A SEARCH written in a here-document has LF line endings whatever the
     // file has, so both are matched with each CRLF read as LF; the matches
@@ -51,18 +70,20 @@ fn visit(
     let old = search.replace("\r\n", "\n");
     let Some(first) = plain.text.find(&old) else {
         if let Some(issue) = options.issue {
-            return Err(format!("SEARCH was not found; the file has lines that cannot be edited: {issue}"));
+            return Err(Error::Match(format!(
+                "SEARCH was not found; the file has lines that cannot be edited: {issue}"
+            )));
         }
         // View and edit decode alike, so text copied from `fastctx view`
         // is found; a miss is a difference in the text itself.
-        return Err(
-            "SEARCH was not found; view the current file and copy its text exactly, including whitespace".into()
-        );
+        return Err(Error::Match(
+            "SEARCH was not found; view the current file and copy its text exactly, including whitespace".into(),
+        ));
     };
     // Count overlapping occurrences too: "aa" occurs twice in "aaa".
     let next = first + old.chars().next().expect("nonempty pattern").len_utf8();
     if !replace_all && plain.text[next..].contains(&old) {
-        return Err(format!("SEARCH occurs more than once; include more context, or use {option}"));
+        return Err(Error::Match(format!("SEARCH occurs more than once; include more context, or use {option}")));
     }
     let matches =
         plain.text.match_indices(&old).map(|(start, text)| plain.original(start)..plain.original(start + text.len()));
@@ -93,9 +114,9 @@ fn visit(
         let (prefix, suffix) = if stateful_at(matched.start) { (0, 0) } else { (prefix, suffix) };
         let replaced = matched.end - matched.start - prefix - suffix;
         let added = replacement.len() - prefix - suffix;
-        bytes = bytes.checked_sub(replaced).and_then(|n| n.checked_add(added)).ok_or("edited body length overflow")?;
+        bytes = bytes.checked_sub(replaced).and_then(|n| n.checked_add(added)).ok_or(Error::LengthOverflow)?;
         if bytes > options.max_bytes {
-            return Err("edited body exceeds its semantic budget".into());
+            return Err(Error::BudgetExceeded);
         }
         emit(Replacement {
             text: matched.start + prefix..matched.end - suffix,
@@ -108,9 +129,9 @@ fn visit(
 }
 
 /// Applies one edit to a UTF-8 document after the caller has decoded its schema.
-pub fn apply(text: &str, search: &str, replacement: &str, all: bool, max_bytes: usize) -> Result<String, String> {
+pub fn apply(text: &str, search: &str, replacement: &str, all: bool, max_bytes: usize) -> Result<String, Error> {
     if text.len() > max_bytes {
-        return Err("edited body exceeds its semantic budget".into());
+        return Err(Error::BudgetExceeded);
     }
     let mut output = String::with_capacity(text.len());
     let mut offset = 0;

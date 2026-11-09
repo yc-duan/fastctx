@@ -10,7 +10,11 @@ pub fn apply_edits(current: &[u8], edits: &[TextEdit], max_bytes: usize) -> Resu
     }
     for edit in edits {
         text = fastctx_types::write::literal_edit::apply(&text, &edit.search, &edit.replacement, edit.all, max_bytes)
-            .map_err(Error::Invalid)?;
+            .map_err(|error| match error {
+            fastctx_types::write::literal_edit::Error::Match(reason) => Error::Invalid(reason),
+            fastctx_types::write::literal_edit::Error::BudgetExceeded
+            | fastctx_types::write::literal_edit::Error::LengthOverflow => Error::Busy,
+        })?;
     }
     Ok(text.into_bytes())
 }

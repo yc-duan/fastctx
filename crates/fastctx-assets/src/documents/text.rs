@@ -212,7 +212,10 @@ pub fn edit(before: &Prepared<'_>, edits: &[TextEdit], max_bytes: usize) -> Resu
     for edit in edits {
         value =
             literal_edit::apply(&value, &edit.search, &edit.replacement, edit.all, max_bytes.saturating_sub(bom.len()))
-                .map_err(Error::Invalid)?;
+                .map_err(|error| match error {
+                    literal_edit::Error::Match(reason) => Error::Invalid(reason),
+                    literal_edit::Error::BudgetExceeded | literal_edit::Error::LengthOverflow => Error::Busy,
+                })?;
     }
     let mut bytes = Vec::with_capacity(bom.len() + value.len());
     bytes.extend_from_slice(bom.as_bytes());

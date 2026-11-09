@@ -123,7 +123,8 @@ pub(super) fn replace(
         replace_all,
         fastctx_types::write::literal_edit::Options { all_option, issue: document.issue(), max_bytes: usize::MAX },
         |offset| document.stateful_at(offset),
-    )?;
+    )
+    .map_err(|error| error.to_string())?;
     let applied = document.replace(&replacements)?;
     // Remap earlier excerpts once per block. Remapping after every occurrence
     // would make --all quadratic in the number of matches.
