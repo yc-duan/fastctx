@@ -69,6 +69,10 @@ identifier!(
     16
 );
 identifier!(ViewId, "v-", "The negotiated kind/schema set and ACL projection of a scope.");
+identifier!(SessionId, "ss-", "A random session bound to one authenticated control connection incarnation.", 16);
+identifier!(TransferId, "tr-", "A durable transfer identity reused with the same request after reconnecting.", 16);
+identifier!(PartId, "pt-", "One offered representation within a session; never reused across sessions.", 16);
+identifier!(MessageId, "msg-", "One bounded metadata message within a session.", 16);
 
 impl AuthorityEpoch {
     pub fn bytes(&self) -> [u8; 16] {

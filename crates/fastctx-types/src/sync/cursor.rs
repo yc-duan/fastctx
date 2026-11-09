@@ -133,7 +133,26 @@ pub enum Completeness {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum DurableAck {
-    Catalog { holding: HoldingPeriod, cursor: ScopeCursor },
-    Stream { holding: HoldingPeriod, cursor: StreamCursor },
-    Blocks { holding: HoldingPeriod, progress: BlockProgress },
+    Catalog {
+        holding: HoldingPeriod,
+        cursor: ScopeCursor,
+    },
+    Stream {
+        holding: HoldingPeriod,
+        cursor: StreamCursor,
+    },
+    Blocks {
+        holding: HoldingPeriod,
+        progress: BlockProgress,
+    },
+    /// One verified decoded block, durably published with its index and pin.
+    /// This does not acknowledge the object's other blocks or its source tail.
+    Block {
+        holding: HoldingPeriod,
+        object: super::identity::ObjectKey,
+        #[serde(rename = "object_kind")]
+        kind: String,
+        schema: u16,
+        content: super::manifest::ContentBlock,
+    },
 }

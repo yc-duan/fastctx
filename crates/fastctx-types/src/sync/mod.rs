@@ -15,8 +15,11 @@ pub mod metadata;
 pub mod mutation;
 pub mod proof;
 pub mod scope;
+pub mod session;
 pub mod timeline;
 pub mod transfer;
+pub mod transport_codec;
+pub mod transport_flow;
 
 /// The proposed first generation, advertised only by a complete implementation.
 pub const PROTOCOL: u16 = 1;
