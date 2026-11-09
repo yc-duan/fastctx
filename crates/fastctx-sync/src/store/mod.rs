@@ -6,6 +6,7 @@ pub mod authorize;
 pub mod boundary;
 pub mod ingest;
 pub mod mutation;
+pub mod replica;
 pub mod schema;
 pub(crate) mod sql;
 

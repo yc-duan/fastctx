@@ -339,6 +339,7 @@
           }
         ],
         "more": false,
+        "proofs": [],
         "through": {
           "acl_revision": "1",
           "epoch": "f-0404040404040404040404040404040404040404040404040404040404040404",
@@ -589,6 +590,138 @@
         }
       },
       "message": "revoked"
+    },
+    {
+      "holding": {
+        "acl_revision": "1",
+        "holder": {
+          "device": "d-0303030303030303030303030303030303030303030303030303030303030303",
+          "holder": "device"
+        },
+        "publication_epoch": "1",
+        "scope": {
+          "hub": "w-0101010101010101",
+          "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+        }
+      },
+      "message": "catalog_page",
+      "page": {
+        "fence": {
+          "cursor": {
+            "acl_revision": "1",
+            "epoch": "f-0404040404040404040404040404040404040404040404040404040404040404",
+            "prefix_digest": "1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e",
+            "scope": {
+              "hub": "w-0101010101010101",
+              "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+            },
+            "through": "9007199254740993",
+            "view": "v-b7d517755f34a2e7789965294788622749ac6526583eec49b58f6eec5abccc42"
+          },
+          "root": {
+            "algorithm": "sha256",
+            "digest": "2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+            "domain": {
+              "hub": "w-0101010101010101",
+              "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+            }
+          }
+        },
+        "next": null,
+        "objects": [
+          {
+            "acl_revision": "1",
+            "authority": {
+              "kind": "hub"
+            },
+            "completeness": {
+              "state": "metadata_only"
+            },
+            "content": {
+              "block": {
+                "algorithm": "sha256",
+                "digest": "1818181818181818181818181818181818181818181818181818181818181818",
+                "domain": {
+                  "hub": "w-0101010101010101",
+                  "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+                }
+              },
+              "decoded_bytes": 1,
+              "kind": "single"
+            },
+            "current_version": {
+              "authority_epoch": "e-1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f",
+              "revision": "8"
+            },
+            "evidence": {
+              "evidence": "accepted",
+              "proof": "ee124e2c14175b6b9b41331d6b20753d3708ecfedd8a47c5a2b9127cfc1580fc"
+            },
+            "history": null,
+            "key": {
+              "object": "o-1616161616161616161616161616161616161616161616161616161616161616",
+              "scope": {
+                "hub": "w-0101010101010101",
+                "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+              }
+            },
+            "kind": "account.settings",
+            "lifecycle": "live",
+            "revision": {
+              "authority_epoch": "e-1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f",
+              "revision": "8"
+            },
+            "schema": 1
+          },
+          {
+            "acl_revision": "1",
+            "authority": {
+              "device": "d-0303030303030303030303030303030303030303030303030303030303030303",
+              "epoch": "p-0606060606060606060606060606060606060606060606060606060606060606",
+              "kind": "device"
+            },
+            "completeness": {
+              "state": "metadata_only"
+            },
+            "content": null,
+            "current_version": {
+              "authority_epoch": "e-1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f",
+              "revision": "8"
+            },
+            "evidence": {
+              "epoch": "2929292929292929292929292929292929292929292929292929292929292929",
+              "evidence": "stream",
+              "prefix_digest": "f9cd273aa69a9e72d5daf790083e792353dec74645996e214fece7a876d05ecb",
+              "through": "4"
+            },
+            "history": null,
+            "key": {
+              "object": "o-2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a",
+              "scope": {
+                "hub": "w-0101010101010101",
+                "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+              }
+            },
+            "kind": "conversation.timeline",
+            "lifecycle": "live",
+            "revision": {
+              "authority_epoch": "e-1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f",
+              "revision": "8"
+            },
+            "schema": 1
+          }
+        ],
+        "proofs": [
+          {
+            "proof": {
+              "data": "eyJmcmFnbWVudCI6eyJiaW5kaW5nIjp7ImZvcm1hdCI6MSwiaHViIjoidy0wMTAxMDEwMTAxMDEwMTAxIiwiYXV0aG9yaXR5Ijp7ImtpbmQiOiJodWIifSwiYXV0aG9yaXR5X2Vwb2NoIjoiZS0xZjFmMWYxZjFmMWYxZjFmMWYxZjFmMWYxZjFmMWYxZiIsIm9wZXJhdGlvbiI6Im0tMTUxNTE1MTUxNTE1MTUxNTE1MTUxNTE1MTUxNTE1MTUxNTE1MTUxNTE1MTUxNTE1MTUxNTE1MTUxNTE1MTUxNSIsInJlcXVlc3RfaGFzaCI6IjIxMjEyMTIxMjEyMTIxMjEyMTIxMjEyMTIxMjEyMTIxMjEyMTIxMjEyMTIxMjEyMTIxMjEyMTIxMjEyMTIxMjEiLCJhY3RvciI6eyJhY3RvciI6ImFjY291bnQiLCJhY2NvdW50IjoiYS0yMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyIiwiZGV2aWNlIjoiZC0wMzAzMDMwMzAzMDMwMzAzMDMwMzAzMDMwMzAzMDMwMzAzMDMwMzAzMDMwMzAzMDMwMzAzMDMwMzAzMDMwMzAzIn19LCJzY29wZSI6InMtMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMiIsImtpbmQiOiJhY2NvdW50LnNldHRpbmdzIiwic2NoZW1hIjoxLCJvYmplY3RzIjpbeyJrZXkiOnsic2NvcGUiOnsiaHViIjoidy0wMTAxMDEwMTAxMDEwMTAxIiwic2NvcGUiOiJzLTAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIifSwib2JqZWN0Ijoiby0xNjE2MTYxNjE2MTYxNjE2MTYxNjE2MTYxNjE2MTYxNjE2MTYxNjE2MTYxNjE2MTYxNjE2MTYxNjE2MTYxNjE2In0sImtpbmQiOiJhY2NvdW50LnNldHRpbmdzIiwic2NoZW1hIjoxLCJhbGxvY2F0ZWQiOnsiYXV0aG9yaXR5X2Vwb2NoIjoiZS0xZjFmMWYxZjFmMWYxZjFmMWYxZjFmMWYxZjFmMWYxZiIsInJldmlzaW9uIjoiOCJ9LCJwYXJlbnRzIjpbXSwiY29udGVudCI6eyJraW5kIjoic2luZ2xlIiwiYmxvY2siOnsiZG9tYWluIjp7Imh1YiI6InctMDEwMTAxMDEwMTAxMDEwMSIsInNjb3BlIjoicy0wMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyIn0sImFsZ29yaXRobSI6InNoYTI1NiIsImRpZ2VzdCI6IjE4MTgxODE4MTgxODE4MTgxODE4MTgxODE4MTgxODE4MTgxODE4MTgxODE4MTgxODE4MTgxODE4MTgxODE4MTgifSwiZGVjb2RlZF9ieXRlcyI6MX0sImN1cnJlbnRfdmVyc2lvbiI6eyJhdXRob3JpdHlfZXBvY2giOiJlLTFmMWYxZjFmMWYxZjFmMWYxZjFmMWYxZjFmMWYxZjFmIiwicmV2aXNpb24iOiI4In0sImN1cnJlbnRfY29udGVudCI6eyJraW5kIjoic2luZ2xlIiwiYmxvY2siOnsiZG9tYWluIjp7Imh1YiI6InctMDEwMTAxMDEwMTAxMDEwMSIsInNjb3BlIjoicy0wMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyIn0sImFsZ29yaXRobSI6InNoYTI1NiIsImRpZ2VzdCI6IjE4MTgxODE4MTgxODE4MTgxODE4MTgxODE4MTgxODE4MTgxODE4MTgxODE4MTgxODE4MTgxODE4MTgxODE4MTgifSwiZGVjb2RlZF9ieXRlcyI6MX0sImhpc3RvcnkiOm51bGwsImxpZmVjeWNsZSI6ImxpdmUiLCJhY2NlcHRhbmNlIjp7Im91dGNvbWUiOiJhcHBsaWVkIn19XX0sImZyYWdtZW50X2RpZ2VzdCI6IjgwYmE0ODgxNzQxYTczNzZlMTEzOGY0MjkwMDAwMzk4MDIwMTk0ZmQ1OTE0M2U3Mjk5MDgwNmM3MWQyZjRlMTciLCJyZXN1bHRfZGlnZXN0IjoiZTU3NWE5ZjQxMTIzMjEwNTk5N2I1ODEzYTk3OTNhYTRkNTQxODZiZmQ5N2RlNzM2NGUzYjA5YzYwNjUwNTlkOCIsImluZGV4IjowLCJjb3VudCI6MX0",
+              "purpose": "accepted_operation_v1",
+              "signature": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+              "signer": "IyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyM"
+            }
+          }
+        ]
+      }
     },
     {
       "holding": {

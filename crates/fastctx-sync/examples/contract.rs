@@ -2,6 +2,8 @@
 
 #[path = "contract/acceptance.rs"]
 mod acceptance;
+#[path = "contract/catalog.rs"]
+mod catalog;
 #[path = "contract/hub_source.rs"]
 mod hub_source;
 #[path = "contract/manifests.rs"]
@@ -168,6 +170,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     view: view.id()?,
                     prefix_digest: Digest::from_bytes([32; 32]),
                 }],
+                proofs: vec![],
                 more: false,
             },
         },
@@ -183,12 +186,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             },
         },
         Message::Submit { request: submission },
-        Message::RestoreAccepted { proof: accepted },
+        Message::RestoreAccepted { proof: accepted.clone() },
         Message::GetManifest { holding: holding.clone(), root: ManifestRoot(blob(25)) },
         Message::GetDescriptor { holding: holding.clone(), blob: blob(1) },
         Message::Acknowledge { durable: DurableAck::Catalog { holding: holding.clone(), cursor: cursor.clone() } },
         Message::Revoked { holding: holding.clone() },
     ];
+    messages.push(catalog::sample(&holding, &cursor, &accepted, &accepted_binding, &batch)?);
     messages.extend(manifests::sample(&holding)?);
     messages.extend(scopes::sample(&cursor, DeviceId::from_bytes([3; 32]))?);
     let (hub_message, hub_batch) = hub_source::sample(&holding)?;

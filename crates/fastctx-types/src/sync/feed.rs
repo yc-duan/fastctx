@@ -1,7 +1,7 @@
 //! Stable feed anchors, independent of a peer's negotiated visibility.
 
 use super::{
-    catalog::CatalogChange,
+    catalog::{CatalogChange, SourceRecord},
     identity::{Digest, FeedEpoch, ScopeKey},
 };
 use sha2::{Digest as _, Sha256};
@@ -32,4 +32,22 @@ pub fn advance(previous: &Digest, change: &CatalogChange) -> Result<(Vec<u8>, Di
 /// escaping. Floating-point values are excluded from catalog changes.
 pub fn canonical_change(change: &CatalogChange) -> Result<Vec<u8>, String> {
     super::canonical::encode(change)
+}
+
+/// A source prefix is scoped by the hub-confirmed epoch proof's exact identity.
+/// It can be recomputed from original records regardless of batch boundaries.
+pub fn stream_genesis(epoch_proof: &Digest) -> Digest {
+    let mut hash = Sha256::new();
+    hash.update(b"fastctx-sync/stream-genesis/v1\0");
+    hash.update(epoch_proof.bytes());
+    Digest::from_bytes(hash.finalize().into())
+}
+
+pub fn stream_advance(previous: &Digest, record: &SourceRecord) -> Result<(Vec<u8>, Digest), String> {
+    let canonical = super::canonical::encode(record)?;
+    let mut hash = Sha256::new();
+    hash.update(b"fastctx-sync/stream-prefix/v1\0");
+    hash.update(previous.bytes());
+    hash.update(&canonical);
+    Ok((canonical, Digest::from_bytes(hash.finalize().into())))
 }

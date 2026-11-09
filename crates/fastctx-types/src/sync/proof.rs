@@ -99,6 +99,24 @@ pub struct SignedStatement {
     pub signature: Signature,
 }
 
+impl SignedStatement {
+    /// Content identity includes original bytes, domain, signer and signature.
+    /// Computing it is not signature verification or an authorization decision.
+    pub fn id(&self) -> super::identity::Digest {
+        use sha2::{Digest as _, Sha256};
+        let mut hash = Sha256::new();
+        hash.update(b"fastctx.sync.proof.v1");
+        let domain = self.purpose.domain().as_bytes();
+        hash.update((domain.len() as u64).to_be_bytes());
+        hash.update(domain);
+        hash.update(self.signer.0);
+        hash.update((self.data.0.len() as u64).to_be_bytes());
+        hash.update(&self.data.0);
+        hash.update(self.signature.0);
+        super::identity::Digest::from_bytes(hash.finalize().into())
+    }
+}
+
 /// `data` encodes SourceBatch. Forwarders preserve all four proof fields, not a
 /// decoded and reserialized batch. Device and hub batches have distinct domains.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

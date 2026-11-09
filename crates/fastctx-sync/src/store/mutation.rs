@@ -52,7 +52,7 @@ pub enum Expected {
 #[derive(Clone, Debug)]
 pub enum Origin {
     Local,
-    Replicated { source: crate::identity::DeviceId },
+    Replicated { source: crate::identity::Producer },
     Imported { source: SourceId },
 }
 #[derive(Clone, Debug)]

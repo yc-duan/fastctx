@@ -14,7 +14,7 @@ CREATE TABLE sync_scopes (
 ) WITHOUT ROWID;
 CREATE TABLE sync_objects (
     hub TEXT NOT NULL, scope TEXT NOT NULL, object TEXT NOT NULL,
-    kind TEXT NOT NULL, schema INTEGER NOT NULL, authority BLOB NOT NULL,
+    kind TEXT NOT NULL, schema INTEGER NOT NULL, authority BLOB NOT NULL, evidence BLOB NOT NULL,
     authority_epoch BLOB NOT NULL CHECK(length(authority_epoch)=16),
     revision BLOB NOT NULL CHECK(length(revision)=8),
     current_authority_epoch BLOB NOT NULL CHECK(length(current_authority_epoch)=16),
@@ -62,14 +62,14 @@ CREATE INDEX sync_local_changes_scope ON sync_local_changes(hub,scope,sequence);
 CREATE TABLE sync_stream_heads (
     hub TEXT NOT NULL, scope TEXT NOT NULL, stream TEXT NOT NULL,
     producer BLOB NOT NULL, epoch TEXT NOT NULL, kind TEXT NOT NULL, schema INTEGER NOT NULL,
-    sequence BLOB NOT NULL CHECK(length(sequence)=8), epoch_proof TEXT NOT NULL,
+    sequence BLOB NOT NULL CHECK(length(sequence)=8), epoch_proof TEXT NOT NULL, prefix_digest TEXT NOT NULL,
     PRIMARY KEY(hub,scope,stream,epoch)
 ) WITHOUT ROWID;
 CREATE TABLE sync_stream_records (
     hub TEXT NOT NULL, scope TEXT NOT NULL, stream TEXT NOT NULL, epoch TEXT NOT NULL,
     sequence BLOB NOT NULL CHECK(length(sequence)=8), operation TEXT NOT NULL,
     kind TEXT NOT NULL, schema INTEGER NOT NULL, payload BLOB NOT NULL,
-    causes BLOB NOT NULL, batch_proof TEXT NOT NULL,
+    causes BLOB NOT NULL, batch_proof TEXT NOT NULL, prefix_digest TEXT NOT NULL,
     PRIMARY KEY(hub,scope,stream,epoch,sequence),
     UNIQUE(hub,scope,stream,epoch,operation)
 ) WITHOUT ROWID;

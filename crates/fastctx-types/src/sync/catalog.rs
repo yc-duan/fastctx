@@ -2,7 +2,7 @@
 
 use super::{
     cursor::{Completeness, Revision, ScopeCursor, Sequence, SnapshotFence, VersionRef},
-    identity::{DeviceId, ObjectId, ObjectKey, OperationId, Producer, ProducerEpoch, ScopeKey, StreamId},
+    identity::{DeviceId, Digest, ObjectId, ObjectKey, OperationId, Producer, ProducerEpoch, ScopeKey, StreamId},
     manifest::{ContentBlock, ContentRef, ManifestRoot},
 };
 use serde::{Deserialize, Serialize};
@@ -31,6 +31,15 @@ pub enum Lifecycle {
     Deleted,
 }
 
+/// Every head names its verification path. Stream discovery remains pending
+/// until the original batches reach this authenticated epoch and prefix.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "evidence", rename_all = "snake_case")]
+pub enum HeadEvidence {
+    Accepted { proof: Digest },
+    Stream { epoch: Digest, through: Sequence, prefix_digest: Digest },
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ObjectHead {
     pub key: ObjectKey,
@@ -38,6 +47,7 @@ pub struct ObjectHead {
     pub schema: u16,
     pub acl_revision: Revision,
     pub authority: Authority,
+    pub evidence: HeadEvidence,
     /// Latest authority-allocated state revision, including retained conflicts.
     pub revision: VersionRef,
     /// The selected body version; it need not be the largest allocated revision.
@@ -53,6 +63,8 @@ pub struct ObjectHead {
 pub struct CatalogPage {
     pub fence: SnapshotFence,
     pub objects: Vec<ObjectHead>,
+    /// Original acceptance fragments, unique by proof ID and included in the page budget.
+    pub proofs: Vec<super::proof::SignedAcceptanceFragment>,
     pub next: Option<ObjectId>,
 }
 
@@ -85,6 +97,7 @@ pub struct ChangesPage {
     pub after: ScopeCursor,
     pub through: ScopeCursor,
     pub entries: Vec<FeedEntry>,
+    pub proofs: Vec<super::proof::SignedAcceptanceFragment>,
     pub more: bool,
 }
 
