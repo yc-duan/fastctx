@@ -1,7 +1,9 @@
 //! Restartable JSON syntax validation. No string, number, array or object is
 //! collected here. Borrowed fragments are at most one 64 KiB input window.
 
+mod scalars;
 mod strings;
+use scalars::{Literal, Number};
 use serde::{Deserialize, Serialize};
 use strings::StringState;
 
@@ -64,54 +66,6 @@ enum Array {
 enum Frame {
     Object(Object),
     Array(Array),
-}
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-enum Literal {
-    True,
-    False,
-    Null,
-}
-impl Literal {
-    fn bytes(self) -> &'static [u8] {
-        match self {
-            Self::True => b"true",
-            Self::False => b"false",
-            Self::Null => b"null",
-        }
-    }
-}
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-enum Number {
-    Start,
-    Minus,
-    Zero,
-    Integer,
-    Dot,
-    Fraction,
-    E,
-    Sign,
-    Exponent,
-}
-impl Number {
-    fn complete(self) -> bool {
-        matches!(self, Self::Zero | Self::Integer | Self::Fraction | Self::Exponent)
-    }
-    fn byte(self, byte: u8) -> Result<Option<Self>, ()> {
-        use Number::*;
-        Ok(Some(match (self, byte) {
-            (Start, b'-') => Minus,
-            (Start | Minus, b'0') => Zero,
-            (Start | Minus, b'1'..=b'9') => Integer,
-            (Integer, b'0'..=b'9') => Integer,
-            (Zero | Integer, b'.') => Dot,
-            (Dot | Fraction, b'0'..=b'9') => Fraction,
-            (Zero | Integer | Fraction, b'e' | b'E') => E,
-            (E, b'+' | b'-') => Sign,
-            (E | Sign | Exponent, b'0'..=b'9') => Exponent,
-            (_, b' ' | b'\t' | b'\r' | b'\n' | b',' | b']' | b'}') if self.complete() => return Ok(None),
-            _ => return Err(()),
-        }))
-    }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 enum Mode {
@@ -190,49 +144,23 @@ impl Lexer {
                     return Ok(Step { used: used + step.used, event: step.event });
                 }
                 Mode::Number(mut number) => {
-                    let start = used;
-                    while let Some(&byte) = input.get(used) {
-                        match number.byte(byte).map_err(|_| Error::at(used, "invalid JSON number"))? {
-                            Some(next) => {
-                                number = next;
-                                used += 1;
-                            }
-                            None => break,
-                        }
-                    }
+                    let step = number.step(&input[used..]).map_err(|e| Error::at(used + e.offset, e.message))?;
                     self.mode = Mode::Number(number);
-                    if used > start {
-                        return Ok(Step { used, event: Some(Event::NumberBytes(&input[start..used])) });
-                    }
-                    if used < input.len() {
+                    if matches!(step.event, Some(Event::EndNumber)) {
                         self.mode = Mode::Idle;
                         self.end_value();
-                        return Ok(Step { used, event: Some(Event::EndNumber) });
                     }
-                    return Ok(Step { used, event: None });
+                    return Ok(Step { used: used + step.used, event: step.event });
                 }
                 Mode::Literal { kind, mut read } => {
-                    while (read as usize) < kind.bytes().len() {
-                        let Some(&byte) = input.get(used) else {
-                            self.mode = Mode::Literal { kind, read };
-                            return Ok(Step { used, event: None });
-                        };
-                        if byte != kind.bytes()[read as usize] {
-                            return Err(Error::at(used, "invalid JSON literal"));
-                        }
-                        used += 1;
-                        read += 1;
+                    let step =
+                        kind.step(&mut read, &input[used..]).map_err(|e| Error::at(used + e.offset, e.message))?;
+                    self.mode = Mode::Literal { kind, read };
+                    if step.event.is_some() {
+                        self.mode = Mode::Idle;
+                        self.end_value();
                     }
-                    self.mode = Mode::Idle;
-                    self.end_value();
-                    return Ok(Step {
-                        used,
-                        event: Some(match kind {
-                            Literal::True => Event::Bool(true),
-                            Literal::False => Event::Bool(false),
-                            Literal::Null => Event::Null,
-                        }),
-                    });
+                    return Ok(Step { used: used + step.used, event: step.event });
                 }
                 Mode::Idle => {}
             }
