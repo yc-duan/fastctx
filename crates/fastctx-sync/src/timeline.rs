@@ -4,6 +4,12 @@ use crate::{
     store::{FutureResult, access::AccessContext},
 };
 pub use fastctx_types::sync::timeline::*;
+pub mod index;
+pub mod pages;
+pub mod position;
+pub mod query;
+mod tree;
+pub mod update;
 
 pub trait TimelineReader: Send + Sync {
     fn stream(&self, context: AccessContext, request: StreamRead) -> FutureResult<'_, StreamPage>;
