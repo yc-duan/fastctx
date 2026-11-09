@@ -409,9 +409,10 @@ impl Flow {
         consumed: &mut tokio::sync::watch::Receiver<Option<u64>>,
     ) -> Result<(), Failure> {
         let number = packet.number;
-        let encoded = watch_mux::encode(link.clone(), packet).await.map_err(Failure::new)?;
-        let bytes = encoded.bytes();
+        let prepared = watch_mux::prepare(packet).await.map_err(Failure::new)?;
+        let bytes = prepared.bytes();
         self.0.ready(bytes, consumed).await?;
+        let encoded = prepared.encode(link.clone()).await.map_err(Failure::new)?;
         send_encoded(output, encoded).await?;
         self.0.sent(number, bytes);
         Ok(())

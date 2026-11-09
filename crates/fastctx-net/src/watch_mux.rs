@@ -2,10 +2,12 @@
 //! packets can interleave with other subscriptions without weakening verification.
 
 pub mod commands;
+mod encoding;
 mod reader;
 mod writer;
+pub use encoding::{Encoded, Prepared, encode, prepare};
 pub use reader::{Reader, Received};
-pub use writer::{Encoded, Output, encode, write};
+pub use writer::{Output, write};
 
 use crate::sign::Signature;
 use serde::{Deserialize, Serialize};
