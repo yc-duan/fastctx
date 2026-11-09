@@ -4,11 +4,13 @@
 //!
 //! A snapshot is derived local state, never object content: the head row is
 //! what retains its root from collection, readers hold older roots through
-//! Timeline uses, and no read grant is ever issued for it.
+//! Timeline uses, and no read grant is ever issued for it. The pass's staging
+//! closes in the same commit, so no crash can leave its pins behind.
 use super::state::{self, Head};
 use crate::{
+    blocks::projection_commit,
     cursor::{LocalSequence, Revision, StreamCursor},
-    identity::ObjectKey,
+    identity::{ObjectKey, OperationId},
     manifest::ManifestRoot,
     store::{access::Custody, local_head, sql},
     timeline::{TimelineItem, index::IndexChange, position},
@@ -46,12 +48,15 @@ fn same(found: &Option<Head>, expected: &Option<Head>) -> bool {
 pub(super) fn install(
     db: &Connection,
     custody: &Custody,
+    operation: &OperationId,
     expected: &Option<Head>,
     next: &Next,
     changes: &[IndexChange],
 ) -> Result<Installed> {
     let conversation = &custody.object;
     if !same(&state::head(db, conversation)?, expected) {
+        // Planned against a head that is gone: the staged pages are unreferenced.
+        projection_commit::close_staging(db, custody, operation)?;
         return Ok(Installed::Moved);
     }
     // While a branch switch rebuilds the index, rows are rebuilt from the tree
@@ -76,6 +81,7 @@ pub(super) fn install(
             next.applied.0.to_be_bytes().as_slice(),
             local.0.to_be_bytes().as_slice()
         ])?;
+    projection_commit::close_staging(db, custody, operation)?;
     Ok(Installed::Committed)
 }
 

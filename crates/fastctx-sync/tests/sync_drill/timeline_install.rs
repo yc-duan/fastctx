@@ -216,18 +216,26 @@ pub(super) async fn run(root: &Path) -> Result<()> {
         count(&db, &format!("SELECT COUNT(*) FROM sync_asset_manifests WHERE hash='{root_one}' AND complete=1"))?,
         1
     );
-    assert_eq!(
-        count(
-            &db,
-            &format!(
-                "SELECT COUNT(*) FROM sync_asset_access WHERE hash='{root_one}' AND object='{}'",
-                conversation.as_str()
-            )
-        )?,
-        1
-    );
+    // A snapshot is derived local state: the head retains it, nothing grants it.
+    assert_eq!(count(&db, &format!("SELECT COUNT(*) FROM sync_asset_access WHERE hash='{root_one}'"))?, 0);
     // The installer's own staging is released once the head holds its pages.
     let staged = "SELECT COUNT(*) FROM sync_asset_pins p JOIN sync_asset_uploads u USING(hub,scope,operation,object) WHERE p.phase!='released' AND u.source IS NULL";
+    assert_eq!(count(&db, staged)?, 0);
+    // A writer that stops between its commit and that release leaves the closed
+    // staging pinned; collection after reopening releases it.
+    drop((timelines, sources, blocks, db));
+    let path = dir.join("replica.sqlite3");
+    super::super::scheduler::closed(&path).await?;
+    let db = open_with(&path, |db| {
+        db.execute("UPDATE sync_asset_pins SET phase='ready' WHERE (hub,scope,operation,object) IN (SELECT hub,scope,operation,object FROM sync_asset_uploads WHERE source IS NULL AND cancelled=1)", [])?;
+        Ok(())
+    })?;
+    assert!(count(&db, staged)? > 0);
+    let blocks = SqliteBlocks::new(db.clone(), dir.join("files"), holder(), policy(false), operation(95), 1 << 24)?;
+    let gate = Arc::new(Gate(AtomicUsize::new(0)));
+    let sources = SqliteSources::new(blocks.clone(), Arc::new(Signer), vec![gate as Arc<dyn SourceAuthorizer>])?;
+    let timelines = SqliteTimelines::new(blocks.clone());
+    blocks.collect(64).await?;
     assert_eq!(count(&db, staged)?, 0);
 
     // Reading: subscribe first, then the latest page from the position index.
@@ -279,6 +287,14 @@ pub(super) async fn run(root: &Path) -> Result<()> {
     assert_eq!(settle(&db, &blocks, &timelines).await?, 1);
     let (projection, root, _, _) = head(&db)?;
     assert_eq!((projection, root.as_deref()), (1, Some(root_one.as_str())));
+    // The same snapshot now stands for a later cursor than its root records;
+    // a fresh fence reads it by page and by item alike.
+    let TimelineResult::Page { page: unchanged } = timelines.timeline(reader.clone(), read(None)).await? else {
+        return Err("the snapshot after input facts does not read as a page".into());
+    };
+    let found = timelines.item(reader.clone(), unchanged.fence.clone(), first.id()).await?;
+    assert!(matches!(found, ItemRead::Item { item: Some(found) } if *found == item));
+    timelines.release(reader.clone(), unchanged.fence).await?;
 
     // Third step: the first item is retracted and the second appears.
     // Its body page is realized by the step that publishes the revision; the
@@ -332,6 +348,11 @@ pub(super) async fn run(root: &Path) -> Result<()> {
     };
     assert_eq!(old.items, vec![item.clone()]);
     assert!(notices.next(limit).await?.iter().any(|notice| notice.local > old_fence.local));
+    // A fence is client data: another live use does not vouch for its root.
+    let forged = TimelineFence { lease: latest.fence.lease.clone(), ..old_fence.clone() };
+    let refused = timelines.timeline(reader.clone(), read(Some(forged.clone()))).await?;
+    assert!(matches!(refused, TimelineResult::ReanchorNeeded));
+    assert!(matches!(timelines.item(reader.clone(), forged, first.id()).await?, ItemRead::ReanchorNeeded));
     timelines.release(reader.clone(), old_fence.clone()).await?;
     timelines.release(reader.clone(), latest.fence.clone()).await?;
     let stale = timelines.timeline(reader.clone(), read(Some(old_fence))).await?;

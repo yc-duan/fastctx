@@ -163,13 +163,20 @@ pub fn item(
         }))
     })())
 }
+/// The projection revision names the snapshot. Records installed after it that
+/// changed no item move the head's cursor and leave the root as it was, so a
+/// fence's cursor may be at or past its root's, on the same stream and epoch.
 fn read_root(source: &impl PageSource, fence: &TimelineFence, meter: &mut Meter) -> Work<TimelineRoot> {
     let root = tree::snapshot(source, &fence.root, meter)?;
+    let at = fence.through.cursor();
     if root.conversation != fence.conversation
         || root.projection != fence.projection
-        || &root.through != fence.through.cursor()
+        || root.through.scope != at.scope
+        || root.through.stream != at.stream
+        || root.through.epoch != at.epoch
+        || root.through.committed > at.committed
     {
-        return Err(pages::corrupt("timeline root differs from its exact fence").into());
+        return Err(pages::corrupt("timeline root differs from its fence").into());
     }
     Ok(root)
 }

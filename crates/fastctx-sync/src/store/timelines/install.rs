@@ -67,8 +67,8 @@ pub(super) async fn process(timelines: &SqliteTimelines, lease: Lease) -> Result
     }
     let prepared = decode(timelines, &records)?;
     let projection = Revision(head.as_ref().map_or(0, |found| found.projection.0) + 1);
-    let last = prepared.last().map_or(Sequence(0), |(record, _)| record.reference.sequence);
-    let operation = operation(&conversation, projection, last);
+    let after = head.as_ref().map_or(Sequence(0), |found| found.through.committed);
+    let operation = operation(&conversation, projection, after);
     let proofs = proofs(timelines, &custody, &operation, &prepared).await?;
     let previous = head.as_ref().and_then(|found| found.root.clone());
     let mut loaded = Loaded::default();
@@ -93,23 +93,29 @@ pub(super) async fn process(timelines: &SqliteTimelines, lease: Lease) -> Result
     if let Some(plan) = &plan {
         publish(timelines, &custody, &operation, plan).await?;
     }
+    let staged = plan.is_some() || !proofs.is_empty();
     let through = cursor(&conversation, &stream, slice);
     let caught_up = through.committed == stream.sequence;
     let next = next(&head, plan.as_ref(), projection, through, caught_up.then_some(stream.local));
     let changes = plan.map(|plan| plan.indexes).unwrap_or_default();
     let commit_custody = custody.clone();
+    let commit_operation = operation.clone();
     let installed = blocks
         .database()
         .write(fastctx_types::sync::PAGE_BYTES as usize * 2, move |db| {
             let _boundary = boundary::enter_typed_write(Role::Projection);
-            commit::install(db, &commit_custody, &head, &next, &changes)
+            commit::install(db, &commit_custody, &commit_operation, &head, &next, &changes)
         })
         .await
         .map_err(|error| sql::error(error, operation.clone()))?;
     if matches!(installed, Installed::Committed) {
         timelines.wake.notify_waiters();
     }
-    while blocks.cancel_upload(custody.clone(), operation.clone(), 128).await? != 0 {}
+    // The commit closed the staging either way; its pins go now rather than at
+    // the next collection.
+    if staged {
+        while blocks.cancel_upload(custody.clone(), operation.clone(), 128).await? != 0 {}
+    }
     Ok(match installed {
         Installed::Moved => Outcome::Retry { next_due_millis: 0, reason: "the timeline head moved".into() },
         Installed::Committed if !caught_up => {
@@ -318,16 +324,18 @@ fn next(
     }
 }
 
-/// A pass is identified by what it installs, so a retried pass after a crash
-/// reopens its own uploads instead of colliding with them.
-fn operation(conversation: &ObjectKey, projection: Revision, through: Sequence) -> OperationId {
+/// A pass is identified by the head it plans from: a pass retried after a crash
+/// reopens its own staging even when it now takes more records, and the commit
+/// that closes that staging releases whatever the crash left. Any committed
+/// pass moves the head, so a closed staging is never reopened.
+fn operation(conversation: &ObjectKey, projection: Revision, after: Sequence) -> OperationId {
     let digest = Digest::of(
         format!(
-            "fastctx-sync/timeline-install/v1\0{}\0{}\0{}\0{}",
+            "fastctx-sync/timeline-install/v2\0{}\0{}\0{}\0{}",
             conversation.scope.scope.as_str(),
             conversation.object.as_str(),
             projection.0,
-            through.0
+            after.0
         )
         .as_bytes(),
     );

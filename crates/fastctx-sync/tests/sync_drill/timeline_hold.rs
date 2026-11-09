@@ -88,9 +88,12 @@ pub(super) async fn run(root: &Path) -> Result<()> {
             break;
         }
     }
-    assert_eq!(physical_files(&dir.join("files"))?, 1);
+    // The committed head still names the snapshot, so its stored page and
+    // payload stay after the fence ends; superseded heads are collected in
+    // the installation lifecycle.
+    assert_eq!(physical_files(&dir.join("files"))?, 2);
     println!(
-        "timeline usage: incomplete authorized root held, missing bodies remain private, release permits collection"
+        "timeline usage: incomplete head root held without a grant, missing bodies remain private, the head retains it after release"
     );
     Ok(())
 }

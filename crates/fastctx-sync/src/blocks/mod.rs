@@ -11,6 +11,7 @@ pub(crate) mod metadata;
 mod pages;
 mod pins;
 
+pub(crate) mod projection_commit;
 mod root_holds;
 mod rows;
 pub(crate) mod source_commit;

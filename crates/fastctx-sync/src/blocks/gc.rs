@@ -1,7 +1,7 @@
 //! A claimed generation cannot be reused while its physical files are removed.
 use super::SqliteBlocks;
 use crate::{
-    blocks::{files::FileKey, root_holds, rows},
+    blocks::{files::FileKey, root_holds, rows, uploads},
     identity::{Digest, HubId, ScopeId, ScopeKey},
     manifest::{BlobId, ContentBlock, DigestAlgorithm},
     metrics::{Cause, Counter, Metrics, PlatformMetrics},
@@ -35,7 +35,8 @@ pub(super) async fn collect(store: &SqliteBlocks, max: u32) -> std::result::Resu
         .db
         .write(256 * 1024, move |db| {
             let _boundary = boundary::enter_typed_write(Role::Content);
-            root_holds::expire(db, now, max)
+            root_holds::expire(db, now, max)?;
+            uploads::release_closed(db, max)
         })
         .await
         .map_err(|error| sql::error(error, store.worker.clone()))?;

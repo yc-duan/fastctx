@@ -11,12 +11,12 @@ mod root_usage;
 mod source_ingest;
 #[path = "source_steps.rs"]
 mod source_steps;
-#[path = "timeline_install.rs"]
-mod timeline_install;
 #[path = "supply.rs"]
 mod supply;
 #[path = "timeline_hold.rs"]
 mod timeline_hold;
+#[path = "timeline_install.rs"]
+mod timeline_install;
 use fastctx_storage::{Database, rusqlite::params};
 use fastctx_sync::{
     blocks::{SqliteBlocks, codec},

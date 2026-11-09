@@ -91,7 +91,7 @@ fn permits(table: &str) -> bool {
         ),
         Some(Role::Projection) => matches!(
             table,
-            "sync_timeline_heads" | "sync_timeline_items" | "sync_asset_access" | "sync_local_head" | "sync_tasks"
+            "sync_timeline_heads" | "sync_timeline_items" | "sync_asset_uploads" | "sync_local_head" | "sync_tasks"
         ),
         Some(Role::Pending) => matches!(
             table,

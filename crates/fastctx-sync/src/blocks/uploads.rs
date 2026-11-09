@@ -199,6 +199,44 @@ pub(super) fn cancel(
     super::supply::cancelled_upload(db, scope, operation, &custody.object.object)
 }
 
+/// Closes an ordinary upload whose writer retained its content elsewhere in this
+/// same transaction. Its pins are released afterwards in pages, by the writer or,
+/// if the writer stops first, by collection; an absent upload needs no fence.
+pub(super) fn close(
+    db: &Connection,
+    holder: &crate::cursor::Holder,
+    custody: &Custody,
+    operation: &OperationId,
+) -> Result<()> {
+    if saved(db, custody, operation)?.is_none() {
+        return Ok(());
+    }
+    cancel(db, holder, custody, operation)
+}
+
+/// Releases up to `max` pins of uploads already cancelled or consumed whose
+/// release never finished. Only live pins are scanned, so the work follows
+/// what is in flight rather than every upload this database ever saw.
+pub(super) fn release_closed(db: &Connection, max: u32) -> Result<u32> {
+    let rows = db
+        .prepare_cached("SELECT p.hub,p.scope,p.operation,p.object,p.hash,p.root_kind FROM sync_asset_pins p INDEXED BY sync_asset_pins_cleanup JOIN sync_asset_uploads u ON u.hub=p.hub AND u.scope=p.scope AND u.operation=p.operation AND u.object=p.object WHERE p.phase!='released' AND (u.cancelled=1 OR u.consumed=1) LIMIT ?1")?
+        .query_map(params![max], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, String>(5)?,
+            ))
+        })?
+        .collect::<fastctx_storage::rusqlite::Result<Vec<_>>>()?;
+    for (hub, scope, operation, object, hash, form) in &rows {
+        retire(db, hub, scope, operation, object, hash, form)?;
+    }
+    Ok(rows.len() as u32)
+}
+
 /// Cancels every open intent of a step; its pins are released separately in pages.
 pub(crate) fn cancel_step(db: &Connection, hub: &HubId, step: &StepKey) -> Result<()> {
     db.prepare_cached("UPDATE sync_asset_uploads SET cancelled=1 WHERE hub=?1 AND source_scope=?2 AND source=?3 AND source_step=?4 AND consumed=0")?
