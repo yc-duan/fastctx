@@ -10,6 +10,7 @@ pub mod activity;
 pub mod context;
 pub mod device;
 pub mod diagnostics;
+pub mod documents;
 pub mod installation;
 mod json;
 pub mod machine;

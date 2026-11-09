@@ -15,6 +15,7 @@ pub enum MissingPort {
 
     AtomicPublication,
     PreparedDirectory,
+    PreparedSemanticContent,
     ProjectionContext,
     DerivedSourceBinding,
     FoundationRegistration,
@@ -96,9 +97,18 @@ pub fn entries() -> Vec<Intake> {
                 "conversation.timeline-observation" => {
                     ("legacy migration", false, &[MissingPort::BusinessHandler, MissingPort::SourceAuthorizer])
                 }
-                "conversation.metadata" | "conversation.plan" | "conversation.history" | "project.history" => {
-                    ("conversation documents", false, &[MissingPort::BusinessHandler])
-                }
+                "conversation.metadata" => ("conversation metadata", false, &[MissingPort::BusinessHandler]),
+                "conversation.plan" | "conversation.history" | "project.history" => (
+                    "fastctx-assets::documents",
+                    true,
+                    &[
+                        MissingPort::PreparedSemanticContent,
+                        MissingPort::ProjectionContext,
+                        MissingPort::InternalServiceSubmission,
+                        MissingPort::LegacyNodeDelegation,
+                        MissingPort::KindReaderPolicy,
+                    ],
+                ),
                 "conversation.goal" | "conversation.sentinel" | "conversation.sentinel-run" | "conversation.timer" => {
                     ("goals and sentinels", false, &[MissingPort::BusinessHandler])
                 }
