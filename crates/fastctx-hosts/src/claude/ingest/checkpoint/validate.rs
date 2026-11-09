@@ -112,6 +112,8 @@ impl ClaudeCheckpointV1 {
     }
     /// A generation changes only after the previous persisted reconciliation has
     /// established the exact row boundary from which following will restart.
+    /// Issued but cancelled steps consume revisions without moving the persisted
+    /// checkpoint, so successful checkpoint revisions need not be consecutive.
     pub fn validate_transition(
         &self,
         next: &CheckpointContext<'_>,
@@ -125,7 +127,7 @@ impl ClaudeCheckpointV1 {
             return Ok(());
         };
         old.validate(outer)?;
-        if outer.source != next.source || outer.revision.0.checked_add(1) != Some(next.revision.0) {
+        if outer.source != next.source || outer.revision >= next.revision {
             return Err(io::Error::other("checkpoint does not continue its source revision"));
         }
         if outer.generation != next.generation {
