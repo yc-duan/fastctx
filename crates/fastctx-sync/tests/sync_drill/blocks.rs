@@ -1,4 +1,6 @@
 //! Real content files, writer transactions and collection share one lifecycle.
+#[path = "canonical_producer.rs"]
+mod canonical_producer;
 #[path = "metadata.rs"]
 mod metadata;
 #[path = "pending.rs"]
@@ -374,6 +376,9 @@ pub async fn run(root: &Path) -> Result<()> {
     source_steps::run(root).await?;
     source_ingest::run(root).await?;
     timeline_install::run(root).await?;
+    let canonical_root = root.to_owned();
+    tokio::spawn(async move { canonical_producer::run(&canonical_root).await.map_err(|error| error.to_string()) })
+        .await??;
     pending::run(root).await?;
     supply::run(root).await?;
     timeline_hold::run(root).await?;

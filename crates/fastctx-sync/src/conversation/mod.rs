@@ -1,10 +1,12 @@
-//! Pure, bounded projection of already parsed conversation facts.
+//! Canonical conversation reduction and source-gated production.
 //!
 //! The caller supplies only keyed rows needed by one fact. It commits the
 //! returned states, indexes and canonical revisions atomically with the input.
 //! Missing dependencies stay durable and are retried when their keyed row
 //! changes. Child relocation and call fan-out are paged by that caller, never
-//! expanded into a full history here. No function opens a file, host or store.
+//! expanded into a full history by the reducer. Reducer functions never open a
+//! file, host or store; producer drives them through SourceIngest, and body_tree
+//! provides the shared persistent byte-tree operations.
 //! The caller verifies operation replay against retained source facts; the
 //! selected lanes are bounded state, not a replacement for that durable index.
 //!
@@ -14,11 +16,13 @@
 //! new chunk. Source evidence is retained even when its display lane loses.
 
 mod alias;
+pub mod body_tree;
 mod control;
 mod item;
 mod model;
 mod placement;
 pub mod presentation;
+pub mod producer;
 mod routing;
 
 pub use alias::{AliasReduction, bind_alias, redirect_observation};

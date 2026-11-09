@@ -75,7 +75,8 @@ pub struct TurnDeclaration {
 
 /// Text is appended as an immutable chunk, never by rebuilding the whole item.
 /// The writer realizes the returned append plan and resumes the pure reducer
-/// with its resulting ContentRef. Offset gaps remain pending, not discarded.
+/// with its resulting ContentRef. Missing previous operations remain pending;
+/// an offset differing from a matched previous operation is invalid.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TextAppend {
