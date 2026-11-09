@@ -19,6 +19,15 @@ enum Source {
 }
 
 impl Link {
+    pub(crate) fn require_history_write(&self, account: &AccountName) -> Result<(), String> {
+        let view = self.view();
+        if view.history_switch && view.account(account).is_some_and(|account| account.history && !account.locked) {
+            Ok(())
+        } else {
+            Err(fastctx_types::history::words::DISABLED.into())
+        }
+    }
+
     pub async fn history_call(
         &self,
         account: &AccountName,
@@ -27,6 +36,9 @@ impl Link {
     ) -> Result<HistoryReply, String> {
         if !fastctx_platform::history() {
             return Err("history is not enabled in this release".into());
+        }
+        if request.writes() {
+            self.require_history_write(account)?;
         }
         let scope = match request.scope() {
             Scope::Project { project } => Source::Project(

@@ -210,7 +210,7 @@ export class SideParts implements PartSet {
     this.stops.push(
       seams.where((where) => this.where.show(where)),
       seams.plan.watch((plan) => this.plan(plan)),
-      seams.goal.watch((goal) => this.goal(goal)),
+      ...(seams.noGoal ? [] : [seams.goal.watch((goal) => this.goal(goal))]),
       () => following.stop(),
     );
     this.drawTeam();

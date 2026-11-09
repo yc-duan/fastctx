@@ -9,6 +9,7 @@
 //! it records what happened while it was away, such as jobs whose
 //! supervisor did not survive a restart of the machine.
 
+mod account_features;
 mod account_records;
 pub mod activity;
 mod activity_book;
@@ -943,12 +944,8 @@ pub async fn run_prepared(
             composer::keep(&node);
             lifecycle::start(&node);
             recovery::start(&node, jobs_reconciled);
-            // Goals and sentinels are not offered in a release yet: what of them is
-            // kept stays as it is, driven by nothing.
-            if fastctx_platform::preview() {
-                goals::start(&node);
-                sentinels::start(&node);
-            }
+            goals::start(&node);
+            sentinels::start(&node);
             skills::follow(&node);
             on_delivery::resume(&node);
             received::resume(&node);

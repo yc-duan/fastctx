@@ -418,13 +418,6 @@ fn main() -> ExitCode {
         eprintln!("fastctx: {error:#}");
         return ExitCode::FAILURE;
     }
-    if !fastctx_platform::preview()
-        && let Some((_, words)) =
-            std::env::args_os().nth(1).and_then(|arg| UNOFFERED.iter().find(|(name, _)| arg == *name))
-    {
-        eprintln!("fastctx: {words}");
-        return ExitCode::FAILURE;
-    }
     let cli = match <Cli as clap::FromArgMatches>::from_arg_matches(&command_line().get_matches()) {
         Ok(cli) => cli,
         Err(error) => error.exit(),
@@ -641,23 +634,10 @@ const PEOPLE_ONLY: [&str; 24] = [
     "uninstall",
 ];
 
-/// What a release does not offer yet (`world.md`, 这一版不发的), and what it
-/// answers whatever follows it: listed nowhere.
-const UNOFFERED: [(&str, &str); 2] =
-    [("sense", fastctx_types::sentinel_words::UNOFFERED), ("goal", fastctx_types::goals::words::UNOFFERED)];
-
 /// The command line; in a resident's shell its help lists what a resident
 /// works with, the others staying callable.
 fn command_line() -> clap::Command {
     let mut command = <Cli as clap::CommandFactory>::command();
-    if !fastctx_platform::preview() {
-        for (name, _) in UNOFFERED {
-            command = command.mut_subcommand(name, |subcommand| subcommand.hide(true));
-        }
-        command = command.mut_subcommand("project", |project| {
-            project.mut_subcommand("show", |show| show.about(project::SHOW_RECORD_HELP))
-        });
-    }
     if std::env::var_os("FASTCTX_RESIDENT").is_some() {
         command =
             command.about("Commands for working on this machine, and on the user's other machines when there are any.");

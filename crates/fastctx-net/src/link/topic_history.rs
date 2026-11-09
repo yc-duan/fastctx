@@ -87,6 +87,7 @@ impl Link {
     }
 
     pub async fn history_write(&self, account: &AccountName, town: &TownId, entry: Signed) -> Result<u64, String> {
+        self.require_history_write(account)?;
         self.history_supported()?;
         match self.inner.ask(Question::HistoryWrite { town: town.clone(), account: account.clone(), entry }).await? {
             Told::Written { seq } => {

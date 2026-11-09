@@ -18,6 +18,7 @@ pub(crate) struct Changes {
 struct State {
     view: Option<Arc<View>>,
     pending: bool,
+    importing: bool,
     running: bool,
 }
 
@@ -26,12 +27,24 @@ impl Changes {
     pub(crate) fn changed(&self, view: Arc<View>) -> bool {
         let mut state = self.state.lock().expect("never poisoned");
         let changed = state.view.as_ref().is_none_or(|previous| view.records_changed(previous));
+        let importing = view.history_switch
+            && view.accounts.iter().any(|account| {
+                account.history
+                    && state.view.as_ref().is_none_or(|previous| {
+                        !previous.history_switch || previous.account(&account.name).is_none_or(|old| !old.history)
+                    })
+            });
+        state.importing |= importing;
         state.view = Some(view);
         changed
     }
 
     pub(crate) fn reconcile(self: &Arc<Self>, node: &Arc<Node>, link: Arc<Link>) {
         cleanup(node, &link);
+        if std::mem::take(&mut self.state.lock().expect("never poisoned").importing) {
+            crate::history::import::schedule(node);
+            crate::ledger::joined(node, link.hub());
+        }
         crate::replicas::updates::schedule(node, link.hub(), crate::replicas::updates::Change::All);
         {
             let mut state = self.state.lock().expect("never poisoned");

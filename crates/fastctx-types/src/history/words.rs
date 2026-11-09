@@ -1,5 +1,8 @@
 //! The history instructions supplied to every host.
 
+pub const DISABLED: &str =
+    "Notes are turned off for this account. Enable Notes in Fastctx account settings before creating or changing them.";
+
 pub const TEMPLATE: &str = r####"HISTORY
 This project's history is in <path> on <machine>: one Markdown file per topic, holding
 what happened and what was settled about it, oldest first. A topic is one thing someone

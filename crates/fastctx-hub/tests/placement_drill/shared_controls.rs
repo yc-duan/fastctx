@@ -36,6 +36,18 @@ async fn change(world: &World, address: &Address, change: UserChange, prefix: &s
 }
 
 pub(super) async fn exercise(owner: &World, bob: &World, local: &World, address: &Address) -> Result<()> {
+    let SettingsReply::View { view } = bob.sentinel_settings(None, Some(name("bob")), None).await? else {
+        anyhow::bail!("sentinel settings read conflicted")
+    };
+    bob.sentinel_settings(
+        None,
+        Some(name("bob")),
+        Some(WriteSettings {
+            expected: view.version,
+            settings: Settings { sentinels: true, goals: true, ..view.settings },
+        }),
+    )
+    .await?;
     change(bob, address, UserChange::Open { objective: "SHARED_GOAL_BOB".into(), standing: false }, "shared-goal-open")
         .await?;
     let shared =
@@ -62,7 +74,13 @@ pub(super) async fn exercise(owner: &World, bob: &World, local: &World, address:
         Some(name("bob")),
         Some(WriteSettings {
             expected: view.version,
-            settings: Settings { home: Some(machine("bob-pc")), model: None, search: None },
+            settings: Settings {
+                sentinels: true,
+                goals: true,
+                home: Some(machine("bob-pc")),
+                model: None,
+                search: None,
+            },
         }),
     )
     .await?;

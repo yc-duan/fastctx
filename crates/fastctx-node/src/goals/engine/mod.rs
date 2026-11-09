@@ -208,6 +208,9 @@ fn schedule(node: &Arc<Node>, id: ResidentId) {
 
 /// The action and place gates belong to the caller. Effects are installed only from accepted records.
 async fn commit(node: &Arc<Node>, view: &View, mut decision: policy::Decision) -> Result<(), Failure> {
+    if !crate::account_features::read(node, &view.account).await?.goals {
+        return Ok(());
+    }
     let operation = crate::speech::new_id("goal-decision").to_string();
     let at = jiff::Timestamp::now();
     let turn = decision.goal.runtime.settled_turn.clone();

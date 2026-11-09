@@ -3,6 +3,7 @@
 /// A resident or page tried to write the goal record directly; a goal changes
 /// only through the goal command's own restricted state transitions.
 pub const DIRECT_RECORD: &str = "A goal is changed through the goal command, not by writing its account record.";
+pub const DISABLED: &str = "Goals are turned off for this account. Ask the user to enable Goals (目标) in Fastctx account settings under Watchers (观测).";
 pub const NO_GOAL: &str = "This conversation has no goal.";
 pub const UNOFFERED: &str = "Goals are not available in this version of Fastctx.";
 pub const BLANK_GOAL: &str = "The goal cannot be empty.";

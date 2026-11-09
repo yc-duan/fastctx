@@ -93,7 +93,7 @@ impl Runtime for Effects {
     fn model<'a>(&'a self, registration: &'a Registration) -> FutureResult<'a, Box<dyn Model>> {
         Box::pin(async move {
             let node = self.node()?;
-            let settings = settings(&node, registration).await?;
+            let settings = running_settings(&node, registration).await?;
             let model = settings.model.ok_or("the sentinel model is not configured")?;
             let credentials = node.sentinels.credentials.get().ok_or("sentinel credential service is not connected")?;
             let key = tokio::time::timeout(
@@ -120,6 +120,23 @@ async fn settings(
     }
     Ok(settings)
 }
+async fn running_settings(
+    node: &Node,
+    registration: &Registration,
+) -> Result<fastctx_types::sentinel_settings::Settings, String> {
+    let settings = settings(node, registration).await?;
+    let enabled = if registration.definition.kind == Kind::Goal { settings.goals } else { settings.sentinels };
+    if !enabled {
+        return Err(if registration.definition.kind == Kind::Goal {
+            fastctx_types::goals::words::DISABLED
+        } else {
+            fastctx_types::sentinel_words::DISABLED
+        }
+        .into());
+    }
+    Ok(settings)
+}
+
 struct NodeSearch {
     node: Weak<Node>,
     registration: Registration,
@@ -129,7 +146,7 @@ impl Search for NodeSearch {
     fn search<'a>(&'a self, query: &'a str) -> FutureResult<'a, ReadResult> {
         Box::pin(async move {
             let node = self.node.upgrade().ok_or("the sentinel node has stopped")?;
-            let settings = settings(&node, &self.registration).await?;
+            let settings = running_settings(&node, &self.registration).await?;
             let search = settings.search.ok_or("sentinel search is not configured")?;
             let credentials = node.sentinels.credentials.get().ok_or("sentinel credential service is not connected")?;
             let key = tokio::time::timeout(

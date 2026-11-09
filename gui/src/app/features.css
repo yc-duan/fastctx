@@ -824,6 +824,26 @@
 
 /* The sentinels' settings (`sentinel-form.ts`): the fields of a part
    stacked under its choices, a key's label saying whether it is set. */
+.sf-switches {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.sf-switches label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  cursor: pointer;
+}
+
+.sf-switches input {
+  accent-color: var(--accent);
+}
+
+.sf-account {
+  margin-bottom: var(--space-4);
+}
+
 .sf-fields {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr));

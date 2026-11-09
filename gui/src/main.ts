@@ -141,6 +141,7 @@ import { DataPage, enData, totalOf, zhData } from "./app/data-page";
 import { data } from "./world/data";
 import { keptForget, keptUsage, keptClear, seenDissolved, unwatch } from "./world/bridge";
 import { PREVIEW } from "./app/preview";
+import { accountFeatures, featureAccount } from "./app/account-features";
 import { historyForProject, historyForTalk } from "./app/history-offered";
 import { talksOf } from "./app/talk-row";
 import { ProjectsPage, enProjects, zhProjects } from "./app/projects-page";
@@ -967,6 +968,7 @@ function followHistoryOf(scope: HistoryScope, show: (catalog: HistoryCatalog | n
   };
 }
 const sentinelSeam = live ? liveSentinels : specimenSentinels(params.has("sentinels"));
+accountFeatures.connect(sentinelSeam);
 /** The machines the sentinels may live on, the ones online first; a
  *  phone is a device, not one of them. */
 /** The machines a login's sentinels may live on: its own and those shared
@@ -2058,9 +2060,8 @@ function liveTalk(address: Address): DeskTalk {
   // Codex's own app, editor or command line holds a conversation the user
   // opened there: the World cannot drive a goal in it.
   const known = residentAt(world, address);
-  // Goals are not offered in a release yet (`app/preview.ts`); nor can the
-  // World drive one in a conversation Codex's own app holds.
-  const noGoal = !PREVIEW || (!!known && /^codex/i.test(known.about.host.agent) && !known.about.world_started);
+  const features = accountFeatures.talk(store.whole.peek(), address);
+  const noGoal = !features.goals || (!!known && /^codex/i.test(known.about.host.agent) && !known.about.world_started);
   // The history its side shows follows its project and whether history is
   // on for it: either changing, the conversation is drawn anew.
   const historyOf = (now: WorldNow | null) => {
@@ -2248,7 +2249,9 @@ function liveTalk(address: Address): DeskTalk {
   // answers.
   let sentinelReading: Promise<void> | null = null;
   const readSentinels = (): Promise<void> =>
-    (sentinelReading ??= sentinelList(address)
+    (sentinelReading ??= (accountFeatures.talk(store.whole.peek(), address).sentinels
+      ? sentinelList(address, (() => { const account = featureAccount(store.whole.peek(), address); return account ? { hub: account.hubName, account: account.account } : undefined; })())
+      : Promise.resolve([]))
       .then(
         (listed) => {
           if (!left) sentinelRows.set(listed.filter((one) => one.definition.kind !== "goal").map((one) => sentinelRow(remembered(one))));
@@ -2272,9 +2275,8 @@ function liveTalk(address: Address): DeskTalk {
   });
   // The sentinels' homes are asked, not followed: as the page opens, every
   // half minute while it is open, and after one is withdrawn.
-  // Sentinels are not offered in a release yet (`app/preview.ts`).
-  const sentinelTimer = PREVIEW ? window.setInterval(() => void readSentinels(), 30_000) : 0;
-  if (PREVIEW) void readSentinels();
+  const sentinelTimer = features.sentinels ? window.setInterval(() => void readSentinels(), 30_000) : 0;
+  if (features.sentinels) void readSentinels();
   // The conversation as the World's watch reads it (`conversation/source.ts`):
   // the page holds its latest part and reads the rest as the reader comes to
   // it; what is new is shown at once. When the host replaced or removed
@@ -2368,7 +2370,10 @@ function liveTalk(address: Address): DeskTalk {
         }
         if (!known || !who || left) return;
         const history = historyOf(now);
-        if (!renewing && (history.town !== historyWas.town || history.shown !== historyWas.shown)) {
+        store.clock.get();
+        const currentFeatures = accountFeatures.talk(store.whole.get(), address);
+        const featuresChanged = !!currentFeatures.goals !== !!features.goals || !!currentFeatures.sentinels !== !!features.sentinels;
+        if (!renewing && (featuresChanged || history.town !== historyWas.town || history.shown !== historyWas.shown)) {
           renewing = true;
           queueMicrotask(() => {
             if (left) return;
@@ -2566,10 +2571,16 @@ function projectPage(town: string): Page {
   };
   let sensesTimer = 0;
   const readSenses = async () => {
-    if (left || !PREVIEW) return;
+    if (left) return;
     if (document.visibilityState === "visible") {
-      const listed = await sentinelListAll().catch(() => null);
-      if (listed && !left) page.showSenses(listed.map(remembered));
+      const world = store.world.peek();
+      const accounts = loginsOf(world?.accounts).filter((login) => {
+        const hub = world?.accounts.hubs.find((hub) => hub.hub === login.hub);
+        const project = hub?.projects.find((project) => project.name === town);
+        return project && (project.owner === login.account || project.granted.includes(login.account)) && accountFeatures.get(login).sentinels;
+      });
+      const listed = await Promise.all(accounts.map((login) => sentinelListAll({ hub: login.hubName, account: login.account }).catch(() => null)));
+      if (!left && listed.every((list) => list !== null)) page.showSenses(listed.flatMap((list) => list ?? []).map(remembered));
     }
     if (!left) sensesTimer = window.setTimeout(readSenses, 30_000);
   };
@@ -3238,7 +3249,7 @@ function show(next: Place): void {
           const features = english ? enFeatures : zhFeatures;
           const row = (label: string, href: string, value: string) =>
             `<dt>${escapeText(label)}</dt><dd><a class="settings-link" href="${href}"><span>${escapeText(value)}</span>${glyph("chevron", 14)}</a></dd>`;
-          return workbenchShown.on.peek() && PREVIEW
+          return workbenchShown.on.peek()
             ? row(features.sentinels.name, link({ kind: "feature", feature: "sentinels" }), settingsWords.dataOpen)
             : "";
         },

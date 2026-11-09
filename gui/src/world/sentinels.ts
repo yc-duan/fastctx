@@ -24,6 +24,8 @@ export interface SearchSettings {
 }
 
 export interface SentinelSettings {
+  sentinels?: boolean;
+  goals?: boolean;
   home: string | null;
   model: ModelSettings | null;
   search: SearchSettings | null;
@@ -97,14 +99,14 @@ export interface SentinelSummary {
 }
 
 /** The sentinels the conversation at `owner` left, still watching. */
-export function sentinelList(owner: { machine: string; resident: string }): Promise<SentinelSummary[]> {
-  return invoke<{ kind: "listed"; sentinels: SentinelSummary[] }>("sentinel_list", { owner }).then((listed) => listed.sentinels);
+export function sentinelList(owner: { machine: string; resident: string }, login?: { hub: string; account: string }): Promise<SentinelSummary[]> {
+  return invoke<{ kind: "listed"; sentinels: SentinelSummary[] }>("sentinel_list", { owner, ...login }).then((listed) => listed.sentinels);
 }
 
 /** Every sentinel of the accounts this device acts for: what a project's
  *  page draws as the eyes its conversations keep. */
-export function sentinelListAll(): Promise<SentinelSummary[]> {
-  return invoke<{ kind: "listed"; sentinels: SentinelSummary[] }>("sentinel_list", {}).then((listed) => listed.sentinels);
+export function sentinelListAll(login?: { hub: string; account: string }): Promise<SentinelSummary[]> {
+  return invoke<{ kind: "listed"; sentinels: SentinelSummary[] }>("sentinel_list", { ...login }).then((listed) => listed.sentinels);
 }
 
 /** Withdraws one; its definition is gone even while its home has yet to confirm. */

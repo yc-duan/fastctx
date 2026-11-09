@@ -595,12 +595,12 @@ pub fn facts(node: &Node) -> MachineFacts {
     };
     MachineFacts {
         turn_debts: true,
-        goal_runtime: fastctx_platform::preview() && node.goals.available(),
+        goal_runtime: node.goals.available(),
         goal_colleagues: true,
         goal_waits: true,
         goal_questions: true,
         goal_question_words: true,
-        goal_commands: fastctx_platform::preview(),
+        goal_commands: true,
         goal_reports: true,
         name: node.machine(),
         os: std::env::consts::OS.to_string(),
@@ -1607,6 +1607,12 @@ impl fastctx_net::link::Node for Handler {
                 fastctx_types::history::RECORD_KIND | fastctx_types::owned_records::KIND
             ) {
                 node.memory_changed();
+            }
+            if change.metadata.kind == fastctx_types::sentinel_settings::RECORD_KIND {
+                crate::account_features::changed(
+                    &node,
+                    fastctx_types::access::HubAccount { hub: self.hub.clone(), account: change.account.clone() },
+                );
             }
             crate::context::invalidations::record(&node, &self.hub, change);
             crate::placement::copies::changed(&node, &self.hub, change);

@@ -420,7 +420,7 @@ fn write_files(directory: &TownDir, entry: &Entry) -> io::Result<()> {
 pub fn finish(world: &WorldDir) -> io::Result<Vec<String>> {
     let mut problems = Vec::new();
     for town in world.towns()? {
-        if let Err(error) = carry::recover(world, &town) {
+        if let Err(error) = carry::recover(world, &town, false) {
             problems.push(format!("finishing the import of {town}: {error}"));
             continue;
         }

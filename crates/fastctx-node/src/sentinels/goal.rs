@@ -41,6 +41,7 @@ pub(crate) async fn open(
     owner: &Address,
     goal: &str,
 ) -> Result<(Registration, Option<String>), Failure> {
+    crate::account_features::require_goals(node, scope).await?;
     let link = owner_link(node, scope, owner)?;
     let records = node.sentinels.records()?;
     let (_, settings) =
@@ -150,6 +151,9 @@ pub(crate) async fn waiting(node: &Arc<Node>, owner: &Address) -> Result<Vec<Reg
     }
     for (link, account) in scopes {
         let scope = HubAccount { hub: link.membership().id.clone(), account };
+        if !crate::account_features::read(node, &scope).await?.sentinels {
+            continue;
+        }
         let view = crate::authorization::current_view(&link)?;
         result.extend(
             fastctx_sentinel::goal::waiting(node.sentinels.records()?, &scope)

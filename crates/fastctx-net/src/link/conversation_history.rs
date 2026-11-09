@@ -99,6 +99,7 @@ impl Link {
         author: Author,
         submission: Option<String>,
     ) -> Result<HistoryRevision, String> {
+        self.require_history_write(account)?;
         let description = history::markdown::parse_written(name, &text)?.description;
         let revision = HistoryRevision {
             name: name.into(),

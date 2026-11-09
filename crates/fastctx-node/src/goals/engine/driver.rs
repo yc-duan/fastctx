@@ -50,6 +50,9 @@ fn assistance_now(node: &Node, goal: &Goal) -> Result<Option<policy::QuotaHold>,
 pub(super) async fn current(node: &Arc<Node>, id: &ResidentId) -> Result<Option<View>, Failure> {
     let cached = node.goals.views.lock().expect("goal views").get(id).cloned();
     let Some(cached) = cached else { return Ok(None) };
+    if !crate::account_features::read(node, &cached.account).await?.goals {
+        return Ok(None);
+    }
     let address = fastctx_types::Address { machine: node.machine(), resident: id.clone() };
     let view = super::super::operations::read(node, &address, &cached.account).await?;
     Ok(Some(view))
@@ -65,6 +68,9 @@ pub(super) async fn reconcile(node: &Arc<Node>, id: &ResidentId) -> Result<(), F
     let Some(view) = node.goals.views.lock().expect("goal views").get(id).cloned() else {
         return Ok(());
     };
+    if !crate::account_features::read(node, &view.account).await?.goals {
+        return Ok(());
+    }
     if view.pending.is_some() {
         return Ok(());
     }

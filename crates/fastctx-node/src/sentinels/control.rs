@@ -118,9 +118,11 @@ pub(crate) async fn control(
     account: &AccountName,
     request: Request,
 ) -> Result<Reply, Failure> {
-    // Not offered in a release yet (`fastctx_platform::preview`).
-    if !fastctx_platform::preview() {
-        return Err(Failure::not_run(fastctx_types::sentinel_words::UNOFFERED));
+    let scope = HubAccount { hub: link.membership().id.clone(), account: account.clone() };
+    if matches!(request, Request::Create { .. } | Request::Help)
+        && !crate::account_features::read(node, &scope).await?.sentinels
+    {
+        return Err(Failure::not_run(words::DISABLED));
     }
     if link.view().shared_records
         && matches!(
@@ -134,7 +136,6 @@ pub(crate) async fn control(
     {
         return super::shared::route(node, caller, link, account, request).await;
     }
-    let scope = HubAccount { hub: link.membership().id.clone(), account: account.clone() };
     let records = node.sentinels.records()?;
     let homes = Transport(node.clone());
     let fail = |error: fastctx_sentinel::records::Error| Failure::new(error.to_string());

@@ -82,14 +82,22 @@ pub(super) fn originals(world: &WorldDir, town: &TownName) -> io::Result<Option<
 }
 
 /// Startup completes only a handoff whose remote prefix was already verified.
-pub(crate) fn recover(world: &WorldDir, town: &TownName) -> io::Result<()> {
+pub(crate) fn recover(world: &WorldDir, town: &TownName, history_enabled: bool) -> io::Result<()> {
     if let Some(mut journal) = fastctx_net::link::state::read_or::<Option<Journal>>(&path(world, town), None)?
         && !journal.finished
         && journal.originals.is_some()
+        && (history_enabled || !has_history_originals(world, town, &journal))
     {
         finish(world, town, &mut journal)?;
     }
     Ok(())
+}
+
+fn has_history_originals(world: &WorldDir, town: &TownName, journal: &Journal) -> bool {
+    let history = world.town(town).ledger().join("history");
+    !journal.skipped.is_empty()
+        || journal.originals.iter().flatten().any(|original| original.source().starts_with(&history))
+        || journal.retained.iter().any(|retained| retained.source().starts_with(&history))
 }
 
 fn finish(world: &WorldDir, town: &TownName, journal: &mut Journal) -> io::Result<()> {
@@ -141,8 +149,22 @@ async fn one(node: &Arc<Node>, link: &Arc<Link>, home: &AccountName, town: &Town
     let (mut journal, entries) = {
         let _history = crate::history::import::lock(node, &scope).await;
         let _syncing = node.syncing.lock().await;
+        let prior: Option<Journal> =
+            fastctx_net::link::state::read_or(&path(&node.world, town), None).map_err(|error| error.to_string())?;
+        let history_enabled = crate::history::switch::on(link, home);
+        if let Some(journal) = prior.as_ref().filter(|journal| !journal.finished) {
+            if journal.target.hub != link.membership().id
+                || journal.account != *home
+                || link.view().account(home).is_none_or(|account| account.opened != journal.opened)
+            {
+                return Err("the standalone ledger is being imported into another account or hub incarnation".into());
+            }
+            if !history_enabled && has_history_originals(&node.world, town, journal) {
+                return Ok(());
+            }
+        }
         let recovering = originals(&node.world, town).map_err(|error| error.to_string())?.is_some();
-        recover(&node.world, town).map_err(|error| error.to_string())?;
+        recover(&node.world, town, history_enabled).map_err(|error| error.to_string())?;
         if recovering {
             crate::context::invalidations::project(node, town);
             crate::replicas::updates::schedule(node, link.hub(), crate::replicas::updates::Change::All);
@@ -153,6 +175,10 @@ async fn one(node: &Arc<Node>, link: &Arc<Link>, home: &AccountName, town: &Town
             return Ok(());
         }
         let entries = read_all(&node.world, &node.world.town(town)).map_err(|error| error.to_string())?;
+        if !history_enabled && entries.iter().any(|(_, entry, _)| fastctx_net::topic_history::has_history(&entry.files))
+        {
+            return Ok(());
+        }
         if entries.is_empty() {
             return Ok(());
         }
@@ -182,6 +208,11 @@ async fn one(node: &Arc<Node>, link: &Arc<Link>, home: &AccountName, town: &Town
         fastctx_net::link::state::write(&path(&node.world, town), &journal).map_err(|error| error.to_string())?;
         (journal, entries)
     };
+    let has_history = entries.iter().any(|(_, entry, _)| fastctx_net::topic_history::has_history(&entry.files));
+    let enabled = || !has_history || crate::history::switch::on(link, home);
+    if !enabled() {
+        return Ok(());
+    }
     let own = own_key(&node.world).map_err(|error| error.to_string())?.public();
     let open = fastctx_net::wire::Change::OpenProject {
         town: journal.target.town.clone(),
@@ -210,6 +241,9 @@ async fn one(node: &Arc<Node>, link: &Arc<Link>, home: &AccountName, town: &Town
         .collect::<Result<Vec<_>, _>>()?;
     let mut written = prefix(node, link, id, &entries, &selected, &own).await?;
     while written < selected.len() {
+        if !enabled() {
+            return Ok(());
+        }
         let entry = translated(node, link, &entries[selected[written]].1, &own)?;
         let signed = link.sign_entry(&entry);
         let result = if fastctx_net::topic_history::has_history(&entry.files) {
@@ -236,6 +270,9 @@ async fn one(node: &Arc<Node>, link: &Arc<Link>, home: &AccountName, town: &Town
     }
     let _history = crate::history::import::lock(node, &scope).await;
     let _syncing = node.syncing.lock().await;
+    if !enabled() {
+        return Ok(());
+    }
     if names::place(&node.world, town).map_err(|error| error.to_string())?.as_ref() != Some(&journal.source)
         || link.view().account(home).is_none_or(|account| account.opened != journal.opened)
         || link.view().me().and_then(|me| me.home.as_ref()) != Some(home)
