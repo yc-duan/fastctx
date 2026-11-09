@@ -137,6 +137,12 @@ pub fn validate_path(path: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// The existing portable path comparison key: NFKC followed by Unicode casefold.
+/// The original spelling remains the file name; this key only detects collisions.
+pub fn path_key(path: &str) -> String {
+    icu_casemap::CaseMapper::new().fold_string(&crate::names::nfkc(path)).into_owned()
+}
+
 pub fn validate_files(files: &[File]) -> Result<u64, String> {
     let mut names = BTreeMap::new();
     let mut components = BTreeMap::new();
@@ -149,12 +155,12 @@ pub fn validate_files(files: &[File]) -> Result<u64, String> {
                 prefix.push('/');
             }
             prefix.push_str(component);
-            let folded = icu_casemap::CaseMapper::new().fold_string(&crate::names::nfkc(&prefix)).into_owned();
+            let folded = path_key(&prefix);
             if components.insert(folded, prefix.clone()).is_some_and(|prior| prior != prefix) {
                 return Err("skill directory spellings collide on a case-insensitive computer".into());
             }
         }
-        let folded = icu_casemap::CaseMapper::new().fold_string(&crate::names::nfkc(&file.path)).into_owned();
+        let folded = path_key(&file.path);
         if names.insert(folded, file.data.is_some()).is_some() {
             return Err("skill paths collide on a case-insensitive computer".into());
         }
