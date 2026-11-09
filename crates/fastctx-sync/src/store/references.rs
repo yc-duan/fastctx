@@ -19,6 +19,7 @@ impl References {
             "sync_asset_pins" if change.after(9)? != ValueRef::Text(b"released") => [0, 1, 5, 6],
             "sync_asset_edges" => [0, 1, 3, 4],
             "sync_pending_roots" => [0, 3, 6, 7],
+            "sync_root_leases" if change.after(14)? == ValueRef::Integer(0) => [0, 1, 5, 6],
             _ => return Ok(()),
         };
         let text = |column| match change.after(column)? {
@@ -28,7 +29,7 @@ impl References {
             _ => Err(sql::invalid("content reference key is not text")),
         };
         self.0.insert((text(columns[0])?, text(columns[1])?, text(columns[2])?, text(columns[3])?));
-        // One maximum-sized manifest plus its own pin must fit (2026-11-08).
+        // One maximum-sized manifest plus its own pin must fit.
         if self.0.len() > 4097 {
             return Err(sql::invalid("operation exceeds the content-reference validation budget"));
         }

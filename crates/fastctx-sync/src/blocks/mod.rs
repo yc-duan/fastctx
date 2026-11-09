@@ -11,6 +11,7 @@ mod metadata;
 mod pages;
 mod pins;
 mod retention;
+mod root_holds;
 mod rows;
 pub(crate) use retention::retain_supplied;
 mod sqlite;

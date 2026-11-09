@@ -34,6 +34,7 @@ pub const TABLES: &[&str] = &[
     "sync_asset_roots",
     "sync_asset_pins",
     "sync_asset_uploads",
+    "sync_root_leases",
     "sync_asset_transfers",
     "sync_asset_gc",
     "sync_source_proofs",

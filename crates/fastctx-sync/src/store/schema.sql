@@ -12,6 +12,7 @@ CREATE TABLE sync_scopes (
     publication_epoch BLOB NOT NULL CHECK(length(publication_epoch)=8),
     PRIMARY KEY(hub,scope)
 ) WITHOUT ROWID;
+
 CREATE TABLE sync_objects (
     hub TEXT NOT NULL, scope TEXT NOT NULL, object TEXT NOT NULL,
     kind TEXT NOT NULL, schema INTEGER NOT NULL, authority BLOB NOT NULL, evidence BLOB NOT NULL,
@@ -255,6 +256,22 @@ CREATE INDEX sync_asset_pins_hash ON sync_asset_pins(hub,scope,hash) WHERE phase
 CREATE INDEX sync_asset_pins_cleanup ON sync_asset_pins(hub,scope,operation,object,kind,hash,root_kind) WHERE phase!='released';
 CREATE INDEX sync_asset_pin_knowledge ON sync_asset_pins(hub,scope,hash,root_kind,object,kind);
 CREATE INDEX sync_asset_pin_validation ON sync_asset_pins(hub,scope,hash,root_kind,operation,object);
+-- Local use lifetimes retain a complete closure without granting body access.
+CREATE TABLE sync_root_leases (
+    hub TEXT NOT NULL, scope TEXT NOT NULL, lease TEXT NOT NULL,
+    object TEXT NOT NULL, kind TEXT NOT NULL, hash TEXT NOT NULL,
+    root_kind TEXT NOT NULL CHECK(root_kind IN ('block','manifest')), decoded_bytes INTEGER,
+    operation TEXT NOT NULL, generation BLOB NOT NULL CHECK(length(generation)=8),
+    usage BLOB NOT NULL, holding BLOB NOT NULL, purpose BLOB NOT NULL, expires INTEGER,
+    released INTEGER NOT NULL CHECK(released IN (0,1)),
+    CHECK((root_kind='block' AND decoded_bytes IS NOT NULL AND decoded_bytes BETWEEN 0 AND 1048576)
+       OR (root_kind='manifest' AND decoded_bytes IS NULL)),
+    PRIMARY KEY(hub,scope,lease)
+) WITHOUT ROWID;
+CREATE INDEX sync_root_leases_hash ON sync_root_leases(hub,scope,hash,root_kind) WHERE released=0;
+CREATE INDEX sync_root_leases_scope ON sync_root_leases(hub,scope,lease) WHERE released=0;
+CREATE INDEX sync_root_leases_object ON sync_root_leases(hub,scope,object,kind,hash,root_kind,decoded_bytes) WHERE released=0;
+CREATE INDEX sync_root_leases_due ON sync_root_leases(expires,hub,scope,lease) WHERE released=0 AND expires IS NOT NULL;
 CREATE TABLE sync_asset_transfers (
     hub TEXT NOT NULL, scope TEXT NOT NULL, hash TEXT NOT NULL, peer TEXT NOT NULL,
     publication_epoch BLOB NOT NULL CHECK(length(publication_epoch)=8),

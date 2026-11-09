@@ -25,6 +25,8 @@ mod gc;
 mod metadata_custody;
 #[path = "metadata_work.rs"]
 mod metadata_work;
+#[path = "root_store.rs"]
+mod root_store;
 #[path = "work.rs"]
 mod work;
 

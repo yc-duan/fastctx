@@ -1,7 +1,7 @@
 //! A claimed generation cannot be reused while its physical files are removed.
 use super::SqliteBlocks;
 use crate::{
-    blocks::{files::FileKey, rows},
+    blocks::{files::FileKey, root_holds, rows},
     identity::{Digest, HubId, ScopeId, ScopeKey},
     manifest::{BlobId, ContentBlock, DigestAlgorithm},
     store::{
@@ -30,6 +30,14 @@ pub(super) async fn collect(store: &SqliteBlocks, max: u32) -> std::result::Resu
         return Err(Error::Invalid("garbage collection needs a page of 1 to 128 contents".into()));
     }
     let now = now();
+    store
+        .db
+        .write(256 * 1024, move |db| {
+            let _boundary = boundary::enter_typed_write(Role::Content);
+            root_holds::expire(db, now, max)
+        })
+        .await
+        .map_err(|error| sql::error(error, store.worker.clone()))?;
     let candidates=store.db.read(move |db| {
         let mut query=db.prepare_cached("SELECT hub,scope,hash,root_kind FROM sync_asset_gc WHERE next_due<=?1 ORDER BY next_due,hub,scope,hash,root_kind LIMIT ?2")?;
         let raw=query.query_map(params![now,max],|row|Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?,row.get::<_,String>(2)?,row.get::<_,String>(3)?)))?.collect::<fastctx_storage::rusqlite::Result<Vec<_>>>()?;
@@ -87,7 +95,7 @@ fn claim(db: &Connection, candidate: Candidate) -> Result<Option<Claimed>> {
         .optional()?;
     let Some(claimed) = claimed else { return Ok(None) };
     if !claimed {
-        let retained:bool=db.query_row("SELECT EXISTS(SELECT 1 FROM sync_asset_roots WHERE hub=?1 AND scope=?2 AND hash=?3 AND root_kind=?4) OR EXISTS(SELECT 1 FROM sync_asset_pins WHERE hub=?1 AND scope=?2 AND hash=?3 AND root_kind=?4 AND phase!='released') OR EXISTS(SELECT 1 FROM sync_asset_edges WHERE hub=?1 AND scope=?2 AND child=?3 AND child_kind=?4) OR EXISTS(SELECT 1 FROM sync_pending_roots WHERE hub=?1 AND scope=?2 AND hash=?3 AND root_kind=?4)",params![hub,scope,hash,candidate.form],|row|row.get(0))?;
+        let retained:bool=db.query_row("SELECT EXISTS(SELECT 1 FROM sync_asset_roots WHERE hub=?1 AND scope=?2 AND hash=?3 AND root_kind=?4) OR EXISTS(SELECT 1 FROM sync_asset_pins WHERE hub=?1 AND scope=?2 AND hash=?3 AND root_kind=?4 AND phase!='released') OR EXISTS(SELECT 1 FROM sync_asset_edges WHERE hub=?1 AND scope=?2 AND child=?3 AND child_kind=?4) OR EXISTS(SELECT 1 FROM sync_pending_roots WHERE hub=?1 AND scope=?2 AND hash=?3 AND root_kind=?4) OR EXISTS(SELECT 1 FROM sync_root_leases WHERE hub=?1 AND scope=?2 AND hash=?3 AND root_kind=?4 AND released=0)",params![hub,scope,hash,candidate.form],|row|row.get(0))?;
         if retained {
             db.execute(
                 "DELETE FROM sync_asset_gc WHERE hub=?1 AND scope=?2 AND hash=?3 AND root_kind=?4",

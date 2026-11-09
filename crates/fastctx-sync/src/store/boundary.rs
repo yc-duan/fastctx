@@ -11,6 +11,7 @@ use std::{cell::Cell, marker::PhantomData, rc::Rc, sync::Arc};
 pub(crate) enum Role {
     Scheduling,
     Content,
+    Roots,
     Pending,
 }
 thread_local! { static ACTIVE: Cell<Option<Role>> = const { Cell::new(None) }; }
@@ -49,8 +50,10 @@ fn permits(table: &str) -> bool {
                 | "sync_asset_pins"
                 | "sync_asset_uploads"
                 | "sync_asset_gc"
+                | "sync_root_leases"
                 | "sync_tasks"
         ),
+        Some(Role::Roots) => matches!(table, "sync_root_leases" | "sync_asset_gc"),
         Some(Role::Pending) => matches!(
             table,
             "sync_pending_mutations"
