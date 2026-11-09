@@ -4,14 +4,14 @@ use super::{
     access::{AccessContext, Custody},
     ingest_effects::{SourceEffects, SourceFamily, SourceIndexPage, SourceIndexRead, SourceIndexRow},
     roots::RootLease,
-    source_step::{SourceStep, SourceStepTarget},
+    source_step::{CancelProgress, SourceStep, SourceStepTarget},
 };
 use crate::blocks::STEP_TARGETS;
 use crate::{
     catalog::SourceBatch,
     cursor::{ByteCount, LocalSequence, Revision},
     identity::{Digest, HostGeneration, OperationId, Producer, ProducerEpoch, SourceId, StreamId},
-    manifest::{BlobId, ContentRef, ManifestReply, ManifestRoot},
+    manifest::{BlobId, ContentRef, ManifestReply, ManifestRoot, Pin, PublishedBlock, Representation},
     registry::{ConflictRule, DataClass},
 };
 pub use fastctx_types::sync::progress::StreamProgress;
@@ -76,6 +76,10 @@ impl IngestFacts {
         Ok(body.len())
     }
 }
+/// Record payload bytes one commit reads for its kind authorizers. Adapters
+/// flush a step at the same size.
+pub const PAYLOAD_BYTES: u64 = 4 * 1024 * 1024;
+
 /// One destination's facts and registered effects inside a step.
 #[derive(Clone)]
 pub struct IngestBatch {
@@ -126,6 +130,7 @@ impl IngestOperation {
             }
         }
         let mut keys = std::collections::BTreeSet::new();
+        let mut payloads = 0_u64;
         let mut bytes = batches.capacity().checked_mul(size_of::<IngestBatch>()).ok_or(Error::Busy)?;
         let checkpoint = fastctx_types::sync::transport_codec::bounded_json(
             &(&expected, &next),
@@ -188,10 +193,16 @@ impl IngestOperation {
                 if matches!(facts, IngestFacts::Local { .. }) && &claim.operation != step.operation() {
                     return Err(Error::Invalid("a local batch carries its step's operation".into()));
                 }
+                for record in &claim.records {
+                    payloads = payloads.saturating_add(u64::from(record.payload.decoded_bytes));
+                }
             }
         }
         if bytes > fastctx_types::sync::PAGE_BYTES as usize {
             return Err(Error::Invalid("ingestion transaction exceeds its metadata bound".into()));
+        }
+        if payloads > PAYLOAD_BYTES {
+            return Err(Error::Invalid("ingestion reads more record payload bytes than one step allows".into()));
         }
         Ok(Self { step, expected, next, batches })
     }
@@ -260,6 +271,27 @@ pub enum StateReply {
 }
 
 pub trait SourceIngest: sealed::SourceWriter + Send + Sync {
+    /// Issues the next step of `primary` at checkpoint `expected`, or reopens the
+    /// identical active step after a restart. The kind needs an installed authorizer.
+    fn begin_step(
+        &self,
+        primary: SourceTarget,
+        expected: Option<Revision>,
+        generation: HostGeneration,
+    ) -> FutureResult<'_, SourceStep>;
+    fn bind_target(&self, step: SourceStep, target: SourceTarget) -> FutureResult<'_, SourceStepTarget>;
+    /// Content of a step stays private to it until its commit adopts it.
+    fn put_block(
+        &self,
+        target: SourceStepTarget,
+        representation: Representation,
+        encoded: Vec<u8>,
+    ) -> FutureResult<'_, PublishedBlock>;
+    /// A metadata page must follow its payload in the same step; it is validated
+    /// before it is stored.
+    fn put_manifest(&self, target: SourceStepTarget, page: ManifestReply) -> FutureResult<'_, Pin>;
+    /// Cancels the step durably and releases up to `max` of its staged pins.
+    fn cancel_step(&self, step: SourceStep, max: u32) -> FutureResult<'_, CancelProgress>;
     fn checkpoint(&self, target: SourceTarget) -> FutureResult<'_, Option<SourceCheckpoint>>;
     fn progress(&self, target: SourceTarget) -> FutureResult<'_, Option<StreamProgress>>;
     /// Only members of this source's current checkpoint closure are eligible.

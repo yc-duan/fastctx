@@ -193,6 +193,13 @@ pub(crate) fn cancel_step(db: &Connection, hub: &HubId, step: &StepKey) -> Resul
     Ok(())
 }
 
+/// Marks every open intent of a committed step consumed; none can stage again.
+pub(crate) fn consume_step(db: &Connection, hub: &HubId, step: &StepKey) -> Result<()> {
+    db.prepare_cached("UPDATE sync_asset_uploads SET consumed=1 WHERE hub=?1 AND source_scope=?2 AND source=?3 AND source_step=?4 AND cancelled=0")?
+        .execute(params![hub.to_string(), step.scope.scope.as_str(), step.source.as_str(), step.revision.0.to_be_bytes().as_slice()])?;
+    Ok(())
+}
+
 /// Releases up to `max` pins staged by a step that was cancelled or consumed.
 pub(crate) fn release_step(db: &Connection, hub: &HubId, step: &StepKey, max: u32) -> Result<u32> {
     let rows = db

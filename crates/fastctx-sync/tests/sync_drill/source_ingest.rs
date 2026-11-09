@@ -1,0 +1,372 @@
+//! A step commit lands its checkpoint, facts, roots, effects and closure together;
+//! a retry returns the same receipt and a refusal leaves everything as it was.
+use super::{source_steps::target, *};
+use fastctx_sync::{
+    catalog::{SourceBatch, SourceRecord},
+    manifest::{ContentBlock, ContentRef},
+    proof::{
+        CommittedFragment, ConfirmedEpoch, EpochDescriptor, HubKeyRotation, ProducerRelease, ProofSigner,
+        SignedAcceptanceFragment, SignedSourceBatch, SignedStatement,
+    },
+    store::{
+        Error,
+        ingest::{
+            IngestBatch, IngestFacts, IngestOperation, IngestStatus, SourceCheckpoint, SourceIngest, SourceTarget,
+        },
+        ingest::{StateRead, StateReply, StreamProgress},
+        ingest_effects::{DirtyProjection, IndexValue, SourceEffects, SourceFamily, SourceIndexChange},
+        mutation::Expected,
+        source_authorize::{PreparedSourceChange, SourceAuthorizer},
+        source_step::{SourceStep, SourceStepTarget},
+        sources::SqliteSources,
+    },
+};
+use fastctx_types::sync::{
+    conversation_identity::{ImageSelector, NativeId},
+    conversation_timeline::{DisplayChannel, DisplayKind, DisplayPart, DisplayPicture, ItemDisplayV1, PictureTarget},
+    cursor::{Count, Sequence},
+    metadata::MetadataCodec,
+    proof::{Bytes, ProofPurpose, Signature, SigningKey},
+};
+
+/// Signs nothing for real: the local writer stores whatever its signer returns.
+struct Signer;
+impl ProofSigner for Signer {
+    fn accepted(&self, _: &CommittedFragment) -> std::result::Result<SignedAcceptanceFragment, Error> {
+        Err(Error::Unavailable("drill signer".into()))
+    }
+    fn source(&self, value: &SourceBatch) -> std::result::Result<SignedSourceBatch, Error> {
+        Ok(SignedSourceBatch {
+            proof: SignedStatement {
+                purpose: ProofPurpose::SourceBatchV1,
+                signer: SigningKey([3; 32]),
+                data: Bytes(serde_json::to_vec(value).map_err(|e| Error::Invalid(e.to_string()))?),
+                signature: Signature([7; 64]),
+            },
+        })
+    }
+    fn epoch(&self, _: &EpochDescriptor) -> std::result::Result<ConfirmedEpoch, Error> {
+        Err(Error::Unavailable("drill signer".into()))
+    }
+    fn release(&self, _: &ProducerRelease) -> std::result::Result<SignedStatement, Error> {
+        Err(Error::Unavailable("drill signer".into()))
+    }
+    fn exposure(
+        &self,
+        _: &fastctx_sync::exposure::ExposureReceipt,
+    ) -> std::result::Result<fastctx_sync::exposure::SignedExposureReceipt, Error> {
+        Err(Error::Unavailable("drill signer".into()))
+    }
+    fn rotation(&self, _: &HubKeyRotation) -> std::result::Result<SignedStatement, Error> {
+        Err(Error::Unavailable("drill signer".into()))
+    }
+}
+
+/// Allows a batch unless a payload says "deny"; counts the payloads it judged.
+struct Gate(AtomicUsize);
+impl SourceAuthorizer for Gate {
+    fn kind(&self) -> &'static str {
+        "conversation.timeline"
+    }
+    fn authorize(&self, change: PreparedSourceChange<'_>) -> Decision {
+        self.0.fetch_add(change.payloads.len(), Ordering::AcqRel);
+        if change.payloads.iter().any(|payload| payload.bytes == b"deny") {
+            Decision::Denied { revision: Revision(1), reason: "the drill denies this payload".into() }
+        } else {
+            Decision::Allowed { revision: Revision(1) }
+        }
+    }
+}
+
+/// Runs content work to quiescence. Projections have no worker in this drill, so
+/// their tasks are completed when seen; the count says how many there were.
+async fn settle(db: &Database, blocks: &SqliteBlocks) -> Result<u32> {
+    let scheduler = SqliteScheduler::new(db.clone(), operation(221), holder(), Duration::from_secs(10))?;
+    let mut projections = 0;
+    for _ in 0..256 {
+        let leases = scheduler.due(now_millis(), 16).await?;
+        if leases.is_empty() {
+            return Ok(projections);
+        }
+        for lease in leases {
+            let outcome = if lease.task.key.kind == "sync.projection" {
+                projections += 1;
+                fastctx_sync::scheduler::Outcome::Completed { through: lease.task.wanted }
+            } else {
+                blocks.process(lease.clone()).await?
+            };
+            scheduler.finish(lease, outcome).await?;
+        }
+    }
+    Err("source work did not settle".into())
+}
+fn count(db: &Database, sql: &str) -> Result<u32> {
+    Ok(db.read_now(|db| Ok(db.query_row(sql, [], |row| row.get(0))?))?)
+}
+async fn block(sources: &SqliteSources, target: &SourceStepTarget, bytes: &[u8]) -> Result<ContentBlock> {
+    let content = codec::encode(scope(), bytes.to_vec(), Encoding::Raw)?;
+    let block = content.representation.content.clone();
+    sources.put_block(target.clone(), content.representation, content.bytes).await?;
+    Ok(block)
+}
+fn metadata(codec: MetadataCodec, payload: ContentBlock, references: Vec<ContentRef>) -> Result<ManifestReply> {
+    let page_json = serde_json::to_string(&ManifestPage::Metadata { codec, payload, references })?;
+    Ok(ManifestReply {
+        root: ManifestRoot(BlobId {
+            domain: scope(),
+            algorithm: DigestAlgorithm::Sha256,
+            digest: Digest::of(page_json.as_bytes()),
+        }),
+        page_json,
+    })
+}
+/// A user message with one owned image, published as its DisplayV1 page.
+async fn display(sources: &SqliteSources, target: &SourceStepTarget, image: &[u8]) -> Result<(ContentRef, ContentRef)> {
+    let part = ContentRef::from(block(sources, target, image).await?);
+    let descriptor = ItemDisplayV1 {
+        version: 1,
+        kind: DisplayKind::User,
+        tool: None,
+        status: None,
+        append: None,
+        parts: vec![DisplayPart {
+            index: Count(0),
+            channel: DisplayChannel::Image,
+            content: part.clone(),
+            bytes: ByteCount(image.len() as u64),
+            preview: None,
+            media_type: Some("image/png".into()),
+            picture: Some(DisplayPicture {
+                selector: ImageSelector::ClaudeMessage { uuid: NativeId::new("u-1")?, image: Count(0) },
+                target: PictureTarget::Owned { content: part.clone() },
+            }),
+        }],
+        more: None,
+    };
+    let payload = block(sources, target, &descriptor.encode()?).await?;
+    let page = metadata(MetadataCodec::DisplayV1, payload, vec![part.clone()])?;
+    let root = ContentRef::Manifest { root: page.root.clone() };
+    sources.put_manifest(target.clone(), page).await?;
+    Ok((root, part))
+}
+fn batch(
+    target: &SourceTarget,
+    step: &SourceStep,
+    after: u64,
+    payload: ContentBlock,
+    roots: Vec<ContentRef>,
+) -> SourceBatch {
+    let kind = REGISTRY.asset("conversation.timeline").unwrap();
+    SourceBatch {
+        format: 1,
+        scope: scope(),
+        stream: target.stream.clone(),
+        producer: target.producer.clone(),
+        epoch: target.epoch.clone(),
+        operation: step.operation().clone(),
+        kind: kind.registration().id.into(),
+        schema: kind.registration().schema,
+        after: Sequence(after),
+        through: Sequence(after + 1),
+        records: vec![SourceRecord {
+            sequence: Sequence(after + 1),
+            operation: OperationId::from_bytes([after as u8 + 100; 32]),
+            kind: kind.registration().id.into(),
+            schema: kind.registration().schema,
+            payload,
+            roots,
+            causes: Vec::new(),
+        }],
+    }
+}
+fn checkpoint(target: &SourceTarget, step: &SourceStep, offset: u64, state: Option<ContentRef>) -> SourceCheckpoint {
+    SourceCheckpoint {
+        source: target.source.clone(),
+        generation: step.generation().clone(),
+        revision: step.revision(),
+        committed_offset: ByteCount(offset),
+        parser_version: 1,
+        state,
+    }
+}
+fn effects(target: &SourceTarget, expected: Expected, value: &[u8]) -> Result<SourceEffects> {
+    let derived = REGISTRY.projection("derived.timeline")?;
+    Ok(SourceEffects::new(
+        vec![SourceIndexChange {
+            family: SourceFamily::HostRows,
+            key: b"row-1".to_vec(),
+            expected,
+            value: IndexValue::Put(value.to_vec()),
+        }],
+        vec![DirtyProjection { kind: derived, object: target.custody.object.clone() }],
+        Vec::new(),
+    )?)
+}
+
+pub(super) async fn run(root: &Path) -> Result<()> {
+    let dir = root.join("source-ingest");
+    fastctx_platform::ensure_private_dir(&dir)?;
+    let path = dir.join("replica.sqlite3");
+    let db = open(&path)?;
+    let blocks = SqliteBlocks::new(db.clone(), dir.join("files"), holder(), policy(false), operation(90), 1 << 23)?;
+    let gate = Arc::new(Gate(AtomicUsize::new(0)));
+    let sources =
+        SqliteSources::new(blocks.clone(), Arc::new(Signer), vec![gate.clone() as Arc<dyn SourceAuthorizer>])?;
+    let primary = target(&custody(90, "conversation.timeline"), 90);
+    let generation = HostGeneration::from_bytes([90; 32]);
+    // A kind without an installed authorizer cannot even open a step.
+    let other = target(&custody(91, "conversation.artifact"), 91);
+    assert!(matches!(sources.begin_step(other, None, generation.clone()).await, Err(Error::Unavailable(_))));
+
+    // First step: a record whose display page owns an image, a parser state root,
+    // an index row and a stale projection, all committed at once.
+    let step = sources.begin_step(primary.clone(), None, generation.clone()).await?;
+    let bound = sources.bind_target(step.clone(), primary.clone()).await?;
+    let (display, part) = display(&sources, &bound, b"\x89PNG one image").await?;
+    let payload = block(&sources, &bound, br#"{"item":"u-1"}"#).await?;
+    let state = ContentRef::from(block(&sources, &bound, b"parser state one").await?);
+    let facts = batch(&primary, &step, 0, payload, vec![display.clone()]);
+    let commit = IngestOperation::new(
+        step.clone(),
+        None,
+        checkpoint(&primary, &step, 100, Some(state.clone())),
+        vec![IngestBatch {
+            target: bound.clone(),
+            facts: Some(IngestFacts::Local { batch: facts }),
+            effects: effects(&primary, Expected::Absent, b"first")?,
+        }],
+    )?;
+    let receipt = sources.ingest(commit.clone()).await?;
+    assert_eq!(gate.0.load(Ordering::Acquire), 1);
+    assert!(matches!(
+        &receipt.sources[0].status,
+        IngestStatus::Applied { progress: StreamProgress::LocalPending { cursor } } if cursor.committed == Sequence(1)
+    ));
+    assert_eq!(receipt.leases.len(), 1, "the checkpoint state is held");
+    // A lost reply is answered from the consumed step, without a second commit.
+    let again = sources.ingest(commit).await?;
+    assert_eq!((again.local, again.sources.len()), (receipt.local, 1));
+    assert_eq!(gate.0.load(Ordering::Acquire), 1);
+    assert_eq!(count(&db, "SELECT COUNT(*) FROM sync_stream_records")?, 1);
+    assert_eq!(count(&db, "SELECT COUNT(*) FROM sync_stream_roots")?, 2);
+    assert_eq!(count(&db, "SELECT COUNT(*) FROM sync_source_proofs WHERE state='local'")?, 1);
+    assert_eq!(count(&db, "SELECT COUNT(*) FROM sync_stream_heads WHERE epoch_proof IS NULL")?, 1);
+    assert_eq!(count(&db, "SELECT COUNT(*) FROM sync_source_steps WHERE state='consumed'")?, 1);
+    assert_eq!(count(&db, "SELECT COUNT(*) FROM sync_asset_uploads WHERE consumed=1")?, 1);
+    let found = sources.checkpoint(primary.clone()).await?.ok_or("checkpoint missing")?;
+    assert_eq!(
+        (found.revision, found.committed_offset, &found.state),
+        (step.revision(), ByteCount(100), &Some(state.clone()))
+    );
+    assert!(matches!(sources.progress(primary.clone()).await?, Some(StreamProgress::LocalPending { .. })));
+    let row =
+        sources.get_index(primary.clone(), SourceFamily::HostRows, b"row-1".to_vec()).await?.ok_or("row missing")?;
+    assert_eq!((row.revision, row.value.as_slice()), (Revision(1), b"first".as_slice()));
+    // The record's display root is published to the object; expansion through
+    // its validated page then grants the owned image as well.
+    assert_eq!(settle(&db, &blocks).await?, 1, "the commit marked its projection stale");
+    let granted = |hash: &str| {
+        count(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM sync_asset_access WHERE object='{}' AND hash='{hash}'",
+                primary.custody.object.object.as_str()
+            ),
+        )
+    };
+    assert_eq!(granted(display.id().digest.as_str())?, 1);
+    assert_eq!(granted(part.id().digest.as_str())?, 1);
+    // The checkpoint's private state reads back only at its own revision.
+    let state_id = state.id().clone();
+    let read = sources
+        .read_state(primary.clone(), StateRead::Block { checkpoint: step.revision(), id: state_id.clone() })
+        .await?;
+    assert!(matches!(read, StateReply::Bytes(bytes) if bytes == b"parser state one"));
+
+    // Second step: checkpoint only, with a new state root that replaces the hold.
+    let second = sources.begin_step(primary.clone(), Some(step.revision()), generation.clone()).await?;
+    let bound = sources.bind_target(second.clone(), primary.clone()).await?;
+    let state_two = ContentRef::from(block(&sources, &bound, b"parser state two").await?);
+    let commit = IngestOperation::new(
+        second.clone(),
+        Some(found.clone()),
+        checkpoint(&primary, &second, 140, Some(state_two.clone())),
+        vec![IngestBatch { target: bound.clone(), facts: None, effects: SourceEffects::default() }],
+    )?;
+    let receipt = sources.ingest(commit).await?;
+    assert!(matches!(receipt.sources[0].status, IngestStatus::CheckpointOnly));
+    assert_eq!(
+        count(&db, "SELECT COUNT(*) FROM sync_root_leases WHERE released=1")?,
+        1,
+        "the old state hold is released"
+    );
+    let stale =
+        sources.read_state(primary.clone(), StateRead::Block { checkpoint: step.revision(), id: state_id }).await?;
+    assert!(matches!(stale, StateReply::Superseded { current: Some(current) } if current == second.revision()));
+    let found = sources.checkpoint(primary.clone()).await?.ok_or("checkpoint missing")?;
+
+    // Refusals change nothing: a stale stream start, content the step never
+    // supplied and a denied payload each leave the step active and the head put.
+    let third = sources.begin_step(primary.clone(), Some(second.revision()), generation.clone()).await?;
+    let bound = sources.bind_target(third.clone(), primary.clone()).await?;
+    let payload = block(&sources, &bound, br#"{"item":"u-2"}"#).await?;
+    let attempt = |after: u64, payload: ContentBlock, roots: Vec<ContentRef>, expected: Expected| {
+        IngestOperation::new(
+            third.clone(),
+            Some(found.clone()),
+            checkpoint(&primary, &third, 180, Some(state_two.clone())),
+            vec![IngestBatch {
+                target: bound.clone(),
+                facts: Some(IngestFacts::Local { batch: batch(&primary, &third, after, payload, roots) }),
+                effects: effects(&primary, expected, b"second").unwrap(),
+            }],
+        )
+    };
+    let refused = |result: std::result::Result<_, Error>, why: &str| {
+        assert!(matches!(&result, Err(Error::Invalid(reason)) if reason.contains(why)), "{why}: {:?}", result.err());
+    };
+    refused(
+        sources.ingest(attempt(0, payload.clone(), Vec::new(), Expected::Revision(Revision(1)))?).await,
+        "stream head is at 1",
+    );
+    let foreign = ContentRef::Single {
+        block: BlobId { domain: scope(), algorithm: DigestAlgorithm::Sha256, digest: Digest::of(b"never supplied") },
+        decoded_bytes: 14,
+    };
+    refused(
+        sources.ingest(attempt(1, payload.clone(), vec![foreign], Expected::Revision(Revision(1)))?).await,
+        "did not supply",
+    );
+    refused(sources.ingest(attempt(1, payload.clone(), Vec::new(), Expected::Absent)?).await, "index row moved");
+    let denied = block(&sources, &bound, b"deny").await?;
+    assert!(matches!(
+        sources.ingest(attempt(1, denied, Vec::new(), Expected::Revision(Revision(1)))?).await,
+        Err(Error::Denied(_))
+    ));
+    assert_eq!(count(&db, "SELECT COUNT(*) FROM sync_stream_records")?, 1);
+    assert_eq!(count(&db, "SELECT COUNT(*) FROM sync_source_steps WHERE state='active'")?, 1);
+    let receipt = sources.ingest(attempt(1, payload, Vec::new(), Expected::Revision(Revision(1)))?).await?;
+    assert!(matches!(
+        &receipt.sources[0].status,
+        IngestStatus::Applied { progress: StreamProgress::LocalPending { cursor } } if cursor.committed == Sequence(2)
+    ));
+    let row =
+        sources.get_index(primary.clone(), SourceFamily::HostRows, b"row-1".to_vec()).await?.ok_or("row missing")?;
+    assert_eq!(row.revision, Revision(2));
+
+    // Committed steps drain their staged pins; a restart keeps everything.
+    while blocks.drain_steps(64).await? != 0 {}
+    assert_eq!(count(&db, "SELECT COUNT(*) FROM sync_asset_pins WHERE phase!='released'")?, 0);
+    drop((sources, blocks));
+    drop(db);
+    super::super::scheduler::closed(&path).await?;
+    let db = open(&path)?;
+    let blocks = SqliteBlocks::new(db.clone(), dir.join("files"), holder(), policy(false), operation(90), 1 << 23)?;
+    let sources = SqliteSources::new(blocks, Arc::new(Signer), vec![gate as Arc<dyn SourceAuthorizer>])?;
+    let found = sources.checkpoint(primary.clone()).await?.ok_or("checkpoint missing")?;
+    assert_eq!(found.revision, third.revision());
+    println!(
+        "source ingest: atomic step commit, retried receipt, owned display parts, checkpoint state handover, index and projection effects, refusals without writes and restart passed"
+    );
+    Ok(())
+}

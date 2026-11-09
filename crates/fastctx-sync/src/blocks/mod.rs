@@ -14,6 +14,7 @@ mod retention;
 mod root_holds;
 mod rows;
 pub(crate) use retention::retain_supplied;
+pub(crate) mod source_commit;
 mod sqlite;
 mod steps;
 mod uploads;

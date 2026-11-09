@@ -26,6 +26,12 @@ pub(crate) enum Cancelled {
     Committed { receipt: Box<IngestReceipt> },
 }
 
+pub(crate) enum StepState {
+    Active,
+    Consumed(Box<IngestReceipt>),
+    Cancelled,
+}
+
 struct Active {
     revision: Revision,
     generation: String,
@@ -221,6 +227,87 @@ pub(crate) fn bind(
             purpose
         ])?;
     Ok(())
+}
+
+/// The persisted state of `step`; a step that names another operation is refused.
+pub(crate) fn state(db: &Connection, step: &SourceStep) -> Result<StepState> {
+    let key = step.key();
+    let found = db
+        .prepare_cached(
+            "SELECT operation,state,receipt FROM sync_source_steps WHERE hub=?1 AND scope=?2 AND source=?3 AND step=?4",
+        )?
+        .query_row(
+            params![
+                key.scope.hub.to_string(),
+                key.scope.scope.as_str(),
+                key.source.as_str(),
+                key.revision.0.to_be_bytes().as_slice()
+            ],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, Option<Vec<u8>>>(2)?)),
+        )
+        .optional()?;
+    let Some((operation, state, receipt)) = found else {
+        return Err(sql::invalid("the source step does not exist"));
+    };
+    if operation != step.operation().as_str() {
+        return Err(sql::invalid("the source step names another operation"));
+    }
+    match state.as_str() {
+        "active" => Ok(StepState::Active),
+        "consumed" => {
+            let receipt = receipt.ok_or_else(|| sql::invalid("a consumed step lost its receipt"))?;
+            let receipt = serde_json::from_slice(&receipt).map_err(|error| sql::invalid(error.to_string()))?;
+            Ok(StepState::Consumed(Box::new(receipt)))
+        }
+        _ => Ok(StepState::Cancelled),
+    }
+}
+
+/// The destination must still be bound to this step with the custody it bound.
+pub(crate) fn require_bound(db: &Connection, step: &SourceStep, target: &SourceTarget) -> Result<()> {
+    let key = step.key();
+    let custody = &target.custody;
+    let bound: bool = db
+        .prepare_cached("SELECT EXISTS(SELECT 1 FROM sync_source_step_targets WHERE hub=?1 AND scope=?2 AND source=?3 AND step=?4 AND target_scope=?5 AND target_source=?6 AND object=?7 AND kind=?8 AND stream=?9 AND holding=?10 AND purpose=?11 AND active=1)")?
+        .query_row(
+            params![
+                key.scope.hub.to_string(),
+                key.scope.scope.as_str(),
+                key.source.as_str(),
+                key.revision.0.to_be_bytes().as_slice(),
+                custody.object.scope.scope.as_str(),
+                target.source.as_str(),
+                custody.object.object.as_str(),
+                custody.kind.registration().id,
+                target.stream.as_str(),
+                encode(&custody.holding)?,
+                encode(&custody.purpose)?
+            ],
+            |row| row.get(0),
+        )?;
+    if !bound {
+        return Err(sql::invalid("the destination is not bound to this source step"));
+    }
+    Ok(())
+}
+
+/// Closes a committed step with its receipt. Its uploads become consumed and its
+/// staged pins drain in later pages, like a cancelled step's.
+pub(crate) fn consume(db: &Connection, step: &SourceStep, receipt: &IngestReceipt) -> Result<()> {
+    let key = step.key();
+    let hub = key.scope.hub.to_string();
+    let revision = key.revision.0.to_be_bytes();
+    let changed = db
+        .prepare_cached("UPDATE sync_source_steps SET state='consumed',receipt=?6 WHERE hub=?1 AND scope=?2 AND source=?3 AND step=?4 AND operation=?5 AND state='active'")?
+        .execute(params![hub, key.scope.scope.as_str(), key.source.as_str(), revision.as_slice(), step.operation().as_str(), encode(receipt)?])?;
+    if changed != 1 {
+        return Err(sql::invalid("the source step is no longer active"));
+    }
+    db.prepare_cached(
+        "UPDATE sync_source_step_targets SET active=0 WHERE hub=?1 AND scope=?2 AND source=?3 AND step=?4",
+    )?
+    .execute(params![hub, key.scope.scope.as_str(), key.source.as_str(), revision.as_slice()])?;
+    uploads::consume_step(db, &key.scope.hub, &key)
 }
 
 /// Closes an active step: no new upload or commit can use it afterwards.

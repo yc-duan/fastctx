@@ -7,6 +7,8 @@ mod pending;
 mod recovery;
 #[path = "root_usage.rs"]
 mod root_usage;
+#[path = "source_ingest.rs"]
+mod source_ingest;
 #[path = "source_steps.rs"]
 mod source_steps;
 use fastctx_storage::{Database, rusqlite::params};
@@ -44,7 +46,7 @@ impl Policy {
         if self.enabled.load(Ordering::Acquire)
             && (context.scope == self.scope || self.extra.as_ref() == Some(&context.scope))
             && context.observed_acl == Revision(1)
-            && matches!(kind.registration().id, "conversation.plan" | "conversation.artifact")
+            && matches!(kind.registration().id, "conversation.plan" | "conversation.artifact" | "conversation.timeline")
         {
             Decision::Allowed { revision: Revision(1) }
         } else {
@@ -364,6 +366,7 @@ pub async fn run(root: &Path) -> Result<()> {
     recovery::run(root).await?;
     root_usage::run(root).await?;
     source_steps::run(root).await?;
+    source_ingest::run(root).await?;
     pending::run(root).await?;
     println!(
         "content lifecycle: typed pins, dual encodings, pending closures, private references, claim fences, cancellation, restart and revoked staging cleanup passed"

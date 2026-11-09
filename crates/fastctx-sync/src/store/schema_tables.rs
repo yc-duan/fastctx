@@ -25,6 +25,7 @@ pub const TABLES: &[&str] = &[
     "sync_tasks",
     "sync_dependencies",
     "sync_sources",
+    "sync_source_index",
     "sync_runtime",
     "sync_projections",
     "sync_tombstones",

@@ -28,6 +28,8 @@ mod metadata_custody;
 mod metadata_work;
 #[path = "root_store.rs"]
 mod root_store;
+#[path = "source_state.rs"]
+mod source_state;
 #[path = "step_writer.rs"]
 mod step_writer;
 #[path = "work.rs"]
@@ -85,6 +87,19 @@ impl SqliteBlocks {
     }
     pub fn reopen(&self, scope: &ScopeKey) -> Result<(), Error> {
         self.leases.reopen(scope)
+    }
+    /// The source writer commits in the same database under the same holder.
+    pub(crate) fn database(&self) -> &Database {
+        &self.db
+    }
+    pub(crate) fn holder(&self) -> &Holder {
+        &self.holder
+    }
+    pub(crate) fn policy(&self) -> &Arc<dyn AccessPolicy> {
+        &self.policy
+    }
+    pub(crate) fn worker(&self) -> &OperationId {
+        &self.worker
     }
     /// Performs one bounded unit of a leased manifest task. The caller persists
     /// the returned outcome with the common Scheduler before claiming more work.
@@ -211,6 +226,15 @@ impl SqliteBlocks {
         Self::same_scope(&custody, &page.root.0)?;
         let _buffer = self.budget.acquire(page.page_json.len() * 2 + 4096)?;
         let checked = manifest::validate(&custody.object.scope, page)?;
+        // A step publishes a metadata page after its payload, so the page is
+        // validated now rather than by a later worker pass.
+        let validated = match &step {
+            Some(_) if checked.metadata => {
+                metadata_work::validate_supplied(self, &custody, &operation, &checked)?;
+                true
+            }
+            _ => !checked.metadata,
+        };
         let _lease = self.leases.write(&checked.reply.root.0)?;
         let policy = self.policy.clone();
         let holder = self.holder.clone();
@@ -226,7 +250,7 @@ impl SqliteBlocks {
                     ContentRef::Manifest { root: checked.reply.root.clone() },
                     owner(&step),
                 )?;
-                pages::put(db, &checked)?;
+                pages::put(db, &checked, validated)?;
                 pins::ready(db, &custody, &pin, owner(&step))?;
                 if !checked.metadata {
                     access::expand(
@@ -237,7 +261,7 @@ impl SqliteBlocks {
                         &checked.references,
                         &custody.holding,
                     )?;
-                } else {
+                } else if !validated {
                     scheduler::content_changed(
                         db,
                         &custody.holding,

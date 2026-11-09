@@ -1,13 +1,14 @@
 //! Index payload IO occurs outside the writer; only verified structure is published.
 use super::SqliteBlocks;
 use crate::{
-    blocks::{codec, metadata, pages, rows},
+    blocks::{budget::Permit, codec, manifest::CheckedManifest, metadata, pages, rows},
     cursor::{HoldingPeriod, LocalSequence},
-    identity::Digest,
-    manifest::{BlobId, DigestAlgorithm, ManifestPage, ManifestRoot},
+    identity::{Digest, OperationId},
+    manifest::{BlobId, ContentBlock, ContentRef, DigestAlgorithm, ManifestPage, ManifestRoot},
     scheduler::{self, Outcome},
     store::{
         Error,
+        access::Custody,
         boundary::{self, Role},
         sql,
     },
@@ -73,34 +74,7 @@ pub(super) async fn process(
     use crate::metrics::{Cause, Counter, Metrics, PlatformMetrics};
     PlatformMetrics.add(Counter::IndexValidation, Cause::Integrity, 1);
     let payload = validation.payload().clone();
-    let _payload = store.leases.read(&payload.id)?;
-    let stored = store
-        .db
-        .read_now(|db| {
-            let available: bool = db.query_row(
-                "SELECT EXISTS(SELECT 1 FROM sync_asset_blocks WHERE hub=?1 AND scope=?2 AND hash=?3 AND verified=1)",
-                params![
-                    payload.id.domain.hub.to_string(),
-                    payload.id.domain.scope.as_str(),
-                    payload.id.digest.as_str()
-                ],
-                |r| r.get(0),
-            )?;
-            if !available {
-                return Ok(None);
-            }
-            let descriptor = rows::descriptor(db, &payload.id)?;
-            if descriptor.content != payload {
-                return Err(sql::invalid("index payload descriptor differs from its declared extent"));
-            }
-            let representation = descriptor
-                .representations
-                .first()
-                .ok_or_else(|| sql::invalid("index payload has no stored representation"))?;
-            rows::representation(db, representation).map(Some)
-        })
-        .map_err(|e| sql::error(e, store.worker.clone()))?;
-    let Some(stored) = stored else {
+    let Some((decoded, _buffer)) = payload_bytes(store, &payload, page.page_json.len() * 4)? else {
         return Ok(Outcome::Blocked {
             dependency: format!(
                 "block:{}:{}:{}",
@@ -111,14 +85,6 @@ pub(super) async fn process(
             reason: "waiting for the index payload".into(),
         });
     };
-    let _buffer = store.budget.acquire(
-        stored.representation.encoded_bytes as usize
-            + payload.decoded_bytes as usize
-            + page.page_json.len() * 4
-            + codec::decode_workspace(stored.representation.envelope.encoding),
-    )?;
-    let encoded = store.files.read(&stored.key, stored.representation.encoded_bytes)?;
-    let decoded = codec::decode(&stored.representation, encoded)?;
     metadata::validate(&holding.scope, kind, &payload, &decoded, &references)?;
     let policy = store.policy.clone();
     let holder = store.holder.clone();
@@ -144,4 +110,79 @@ pub(super) async fn process(
         })
         .await
         .map_err(|e| sql::error(e, store.worker.clone()))
+}
+
+/// Reads a verified payload's decoded bytes under an IO lease, or None while the
+/// payload is not stored. The permit covers the bytes plus the caller's `extra`
+/// working memory and must live as long as they do.
+pub(super) fn payload_bytes(
+    store: &SqliteBlocks,
+    payload: &ContentBlock,
+    extra: usize,
+) -> Result<Option<(Vec<u8>, Permit)>, Error> {
+    let _payload = store.leases.read(&payload.id)?;
+    let stored = store
+        .db
+        .read_now(|db| {
+            let available: bool = db.query_row(
+                "SELECT EXISTS(SELECT 1 FROM sync_asset_blocks WHERE hub=?1 AND scope=?2 AND hash=?3 AND verified=1)",
+                params![
+                    payload.id.domain.hub.to_string(),
+                    payload.id.domain.scope.as_str(),
+                    payload.id.digest.as_str()
+                ],
+                |r| r.get(0),
+            )?;
+            if !available {
+                return Ok(None);
+            }
+            let descriptor = rows::descriptor(db, &payload.id)?;
+            if descriptor.content != *payload {
+                return Err(sql::invalid("index payload descriptor differs from its declared extent"));
+            }
+            let representation = descriptor
+                .representations
+                .first()
+                .ok_or_else(|| sql::invalid("index payload has no stored representation"))?;
+            rows::representation(db, representation).map(Some)
+        })
+        .map_err(|e| sql::error(e, store.worker.clone()))?;
+    let Some(stored) = stored else {
+        return Ok(None);
+    };
+    let buffer = store.budget.acquire(
+        stored.representation.encoded_bytes as usize
+            + payload.decoded_bytes as usize
+            + extra
+            + codec::decode_workspace(stored.representation.envelope.encoding),
+    )?;
+    let encoded = store.files.read(&stored.key, stored.representation.encoded_bytes)?;
+    Ok(Some((codec::decode(&stored.representation, encoded)?, buffer)))
+}
+
+/// Validates a metadata page that a source step publishes after its payload, so
+/// the page is complete before the step commits instead of after a worker pass.
+pub(super) fn validate_supplied(
+    store: &SqliteBlocks,
+    custody: &Custody,
+    operation: &OperationId,
+    checked: &CheckedManifest,
+) -> Result<(), Error> {
+    let page = &checked.reply().page_json;
+    let ManifestPage::Metadata { codec: kind, payload, references } =
+        serde_json::from_str(page).map_err(|e| Error::Invalid(format!("invalid metadata page: {e}")))?
+    else {
+        return Err(Error::Invalid("only a metadata page carries a payload to validate".into()));
+    };
+    let supplied = store
+        .db
+        .read_now(|db| crate::blocks::pins::ready_for(db, operation, custody, &ContentRef::from(payload.clone())))
+        .map_err(|e| sql::error(e, store.worker.clone()))?;
+    if !supplied {
+        return Err(Error::Invalid("publish a metadata page's payload through the same step first".into()));
+    }
+    let Some((decoded, _buffer)) = payload_bytes(store, &payload, page.len() * 4)? else {
+        return Err(Error::Invalid("a metadata page's payload is not stored".into()));
+    };
+    metadata::validate(&custody.object.scope, kind, &payload, &decoded, &references)
 }

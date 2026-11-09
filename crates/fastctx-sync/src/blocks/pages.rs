@@ -10,7 +10,8 @@ use fastctx_storage::{
     rusqlite::{Connection, OptionalExtension, params},
 };
 
-pub(super) fn put(db: &Connection, checked: &CheckedManifest) -> Result<()> {
+/// A metadata page is stored unvalidated unless its payload was checked first.
+pub(super) fn put(db: &Connection, checked: &CheckedManifest, validated: bool) -> Result<()> {
     let id = &checked.reply.root.0;
     let claimed: bool = db.query_row("SELECT EXISTS(SELECT 1 FROM sync_asset_gc WHERE hub=?1 AND scope=?2 AND hash=?3 AND root_kind='manifest' AND claimed=1)",params![id.domain.hub.to_string(),id.domain.scope.as_str(),id.digest.as_str()],|row|row.get(0))?;
     if claimed {
@@ -36,7 +37,7 @@ pub(super) fn put(db: &Connection, checked: &CheckedManifest) -> Result<()> {
             id.domain.scope.as_str(),
             id.digest.as_str(),
             checked.reply.page_json.as_bytes(),
-            !checked.metadata
+            validated
         ],
     )?;
     for reference in &checked.references {

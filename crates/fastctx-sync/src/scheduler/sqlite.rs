@@ -188,6 +188,40 @@ pub(crate) fn content_changed(db: &Connection, holding: &HoldingPeriod, key: Str
     save(db, &row)
 }
 
+/// A source commit marks a derived projection stale at its own local sequence.
+/// The projection worker brings it to `wanted`; later commits only raise it.
+pub(crate) fn projection_changed(
+    db: &Connection,
+    kind: &str,
+    object: &crate::identity::ObjectKey,
+    local: LocalSequence,
+) -> Result<()> {
+    let key = TaskKey {
+        kind: "sync.projection".into(),
+        scope: object.scope.clone(),
+        key: format!("{kind}/{}", object.object.as_str()),
+    };
+    let existing = get(db, &key)?;
+    if existing.as_ref().is_some_and(|row| row.task.wanted >= local) {
+        return Ok(());
+    }
+    let task = Task {
+        key,
+        wanted: local,
+        completed: LocalSequence(0),
+        priority: Priority::Visible,
+        next_due_millis: 0,
+        dependency: None,
+        dependency_revision: local,
+        dependency_sequence: dependencies::sequence(db)?,
+        holding: None,
+    };
+    validate(&task).map_err(|error| sql::invalid(error.to_string()))?;
+    let mut row = existing.unwrap_or_else(|| Row::new(task.clone()));
+    update::dirty(db, &mut row, task)?;
+    save(db, &row)
+}
+
 fn validate(task: &Task) -> std::result::Result<(), Error> {
     if !KINDS.contains(&task.key.kind.as_str())
         || task.key.key.is_empty()

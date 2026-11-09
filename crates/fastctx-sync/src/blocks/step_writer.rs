@@ -2,11 +2,16 @@
 //! reaches them through SourceIngest, which also requires an installed authorizer.
 use super::SqliteBlocks;
 use crate::{
-    blocks::steps::{self, Cancelled, ReconcileCursor},
+    blocks::{
+        budget::Permit,
+        steps::{self, Cancelled, ReconcileCursor},
+    },
     cursor::Revision,
     identity::HostGeneration,
+    manifest::{ContentBlock, ContentRef},
     store::{
         Error, FutureResult,
+        access::Custody,
         boundary::{self, Role},
         ingest::SourceTarget,
         source_step::{CancelProgress, SourceStep, SourceStepTarget},
@@ -106,5 +111,28 @@ impl SqliteBlocks {
                 .await
                 .map_err(|error| sql::error(error, self.worker.clone()))
         })
+    }
+    /// Decoded bytes of a block this step supplied for `custody`, for the source
+    /// writer's semantic checks before it commits the step. The permit covers
+    /// the bytes and must live as long as they do.
+    pub(crate) fn read_supplied(
+        &self,
+        step: &SourceStep,
+        custody: &Custody,
+        block: &ContentBlock,
+    ) -> Result<(Vec<u8>, Permit), Error> {
+        let reference = ContentRef::from(block.clone());
+        let supplied = self
+            .db
+            .read_now(|db| {
+                Ok(super::pins::ready_for(db, step.operation(), custody, &reference)?
+                    || super::access::has_grant(db, custody, &reference)?)
+            })
+            .map_err(|error| sql::error(error, self.worker.clone()))?;
+        if !supplied {
+            return Err(Error::Invalid("a source record payload was not supplied by its step".into()));
+        }
+        super::metadata_work::payload_bytes(self, block, 0)?
+            .ok_or_else(|| Error::Invalid("a source record payload is not stored".into()))
     }
 }

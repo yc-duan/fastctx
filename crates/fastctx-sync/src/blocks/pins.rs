@@ -144,6 +144,35 @@ pub(super) fn check(db: &Connection, custody: &Custody, pin: &Pin) -> Result<Str
     found.ok_or_else(|| sql::invalid("pin no longer matches the persisted staging intent"))
 }
 
+/// Whether `operation` holds a ready pin of `root` for this object, kind and
+/// holding period: the bytes were supplied by that very operation.
+pub(super) fn ready_for(
+    db: &Connection,
+    operation: &OperationId,
+    custody: &Custody,
+    root: &ContentRef,
+) -> Result<bool> {
+    let scope = &custody.object.scope;
+    let (form, length) = shape(root);
+    let holding = serde_json::to_vec(&custody.holding).map_err(|error| sql::invalid(error.to_string()))?;
+    db.prepare_cached("SELECT EXISTS(SELECT 1 FROM sync_asset_pins WHERE hub=?1 AND scope=?2 AND operation=?3 AND object=?4 AND kind=?5 AND hash=?6 AND root_kind=?7 AND decoded_bytes IS ?8 AND holding=?9 AND phase='ready')")?
+        .query_row(
+            params![
+                scope.hub.to_string(),
+                scope.scope.as_str(),
+                operation.as_str(),
+                custody.object.object.as_str(),
+                custody.kind.registration().id,
+                root.id().digest.as_str(),
+                form,
+                length,
+                holding
+            ],
+            |row| row.get(0),
+        )
+        .map_err(Into::into)
+}
+
 pub(super) fn ready(db: &Connection, custody: &Custody, pin: &Pin, owner: super::uploads::Owner<'_>) -> Result<()> {
     super::uploads::open(db, custody, &pin.operation, owner)?;
     if check(db, custody, pin)? == "released" {

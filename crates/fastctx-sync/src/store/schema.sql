@@ -83,17 +83,21 @@ CREATE TABLE sync_local_changes (
     CHECK((authority_epoch IS NULL) = (revision IS NULL))
 ) WITHOUT ROWID;
 CREATE INDEX sync_local_changes_scope ON sync_local_changes(hub,scope,sequence);
+-- A producer's first epoch on this machine commits before the hub confirms it:
+-- its epoch proof and prefix digests stay empty and its facts stay local until
+-- confirmation builds the prefix over the stored records.
 CREATE TABLE sync_stream_heads (
     hub TEXT NOT NULL, scope TEXT NOT NULL, stream TEXT NOT NULL,
     producer BLOB NOT NULL, epoch TEXT NOT NULL, kind TEXT NOT NULL, schema INTEGER NOT NULL,
-    sequence BLOB NOT NULL CHECK(length(sequence)=8), epoch_proof TEXT NOT NULL, prefix_digest TEXT NOT NULL,
+    sequence BLOB NOT NULL CHECK(length(sequence)=8), epoch_proof TEXT, prefix_digest TEXT,
+    CHECK(prefix_digest IS NULL OR epoch_proof IS NOT NULL),
     PRIMARY KEY(hub,scope,stream,epoch)
 ) WITHOUT ROWID;
 CREATE TABLE sync_stream_records (
     hub TEXT NOT NULL, scope TEXT NOT NULL, stream TEXT NOT NULL, epoch TEXT NOT NULL,
     sequence BLOB NOT NULL CHECK(length(sequence)=8), operation TEXT NOT NULL,
     kind TEXT NOT NULL, schema INTEGER NOT NULL, payload BLOB NOT NULL,
-    causes BLOB NOT NULL, batch_proof TEXT NOT NULL, prefix_digest TEXT NOT NULL,
+    causes BLOB NOT NULL, batch_proof TEXT NOT NULL, prefix_digest TEXT,
     PRIMARY KEY(hub,scope,stream,epoch,sequence),
     UNIQUE(hub,scope,stream,epoch,operation)
 ) WITHOUT ROWID;
@@ -200,11 +204,22 @@ CREATE TABLE sync_tasks (
 ) WITHOUT ROWID;
 CREATE INDEX sync_tasks_due ON sync_tasks(state,priority,next_due,hub,scope,kind,task_key);
 CREATE INDEX sync_tasks_dependency ON sync_tasks(dependency,state,next_due);
+-- The committed parser checkpoint of each source. Its private state root is held
+-- by the root use saved beside it, swapped in the commit that advances it.
 CREATE TABLE sync_sources (
     hub TEXT NOT NULL, scope TEXT NOT NULL, source TEXT NOT NULL,
     generation TEXT NOT NULL, revision BLOB NOT NULL CHECK(length(revision)=8),
     committed_offset BLOB NOT NULL CHECK(length(committed_offset)=8),
-    parser_version INTEGER NOT NULL, state BLOB, PRIMARY KEY(hub,scope,source)
+    parser_version INTEGER NOT NULL, state BLOB, state_lease BLOB,
+    CHECK((state IS NULL) = (state_lease IS NULL)),
+    PRIMARY KEY(hub,scope,source)
+) WITHOUT ROWID;
+-- Registered source index families, namespaced by destination scope and source.
+CREATE TABLE sync_source_index (
+    hub TEXT NOT NULL, scope TEXT NOT NULL, source TEXT NOT NULL, family TEXT NOT NULL,
+    key BLOB NOT NULL CHECK(length(key) BETWEEN 1 AND 1024),
+    revision BLOB NOT NULL CHECK(length(revision)=8), value BLOB NOT NULL,
+    PRIMARY KEY(hub,scope,source,family,key)
 ) WITHOUT ROWID;
 CREATE TABLE sync_runtime (
     hub TEXT NOT NULL, scope TEXT NOT NULL, kind TEXT NOT NULL, record_key TEXT NOT NULL,
@@ -370,7 +385,7 @@ CREATE TABLE sync_source_proofs (
     last_sequence BLOB NOT NULL CHECK(length(last_sequence)=8),
     purpose TEXT NOT NULL, signer BLOB NOT NULL CHECK(length(signer)=32),
     signed_bytes BLOB NOT NULL, signature BLOB NOT NULL CHECK(length(signature)=64),
-    state TEXT NOT NULL, PRIMARY KEY(hub,scope,proof),
+    state TEXT NOT NULL CHECK(state IN ('local','accepted','awaiting_epoch')), PRIMARY KEY(hub,scope,proof),
     UNIQUE(hub,scope,stream,epoch,operation)
 ) WITHOUT ROWID;
 CREATE INDEX sync_source_waiting_epoch ON sync_source_proofs(hub,scope,stream,epoch,state);

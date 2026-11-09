@@ -65,6 +65,16 @@ fn permits(table: &str) -> bool {
                 | "sync_asset_uploads"
                 | "sync_asset_pins"
                 | "sync_asset_gc"
+                | "sync_asset_access"
+                | "sync_root_leases"
+                | "sync_sources"
+                | "sync_source_index"
+                | "sync_source_proofs"
+                | "sync_stream_heads"
+                | "sync_stream_records"
+                | "sync_stream_roots"
+                | "sync_local_head"
+                | "sync_tasks"
         ),
         Some(Role::Pending) => matches!(
             table,
@@ -93,6 +103,18 @@ impl Guard for Rules {
                 || change.after(0)? != fastctx_storage::rusqlite::types::ValueRef::Text(b"sync.manifest"))
         {
             return Err(super::sql::invalid("content publication cannot change another scheduler handler"));
+        }
+        // A source commit wakes content expansion for the roots it publishes and
+        // the projections it marks stale, nothing else.
+        if change.table() == "sync_tasks"
+            && matches!(ACTIVE.get(), Some(Role::Source))
+            && (change.action() == Action::Delete
+                || !matches!(
+                    change.after(0)?,
+                    fastctx_storage::rusqlite::types::ValueRef::Text(b"sync.manifest" | b"sync.projection")
+                ))
+        {
+            return Err(super::sql::invalid("a source commit cannot change another scheduler handler"));
         }
         if change.table() == "sync_local_head"
             && matches!(ACTIVE.get(), Some(Role::Scheduling))

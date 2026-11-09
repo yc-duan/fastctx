@@ -8,6 +8,7 @@ pub mod engine;
 pub mod format_upgrade;
 pub mod ingest;
 pub mod ingest_effects;
+pub(crate) mod local_head;
 pub mod mutation;
 pub mod projection;
 pub mod replica;
@@ -15,6 +16,7 @@ pub mod roots;
 pub mod schema;
 pub mod source_authorize;
 pub mod source_step;
+pub mod sources;
 pub(crate) mod sql;
 
 use crate::{
