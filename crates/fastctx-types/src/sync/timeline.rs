@@ -64,6 +64,8 @@ pub struct TimelineItem {
     pub parent: Option<ObjectId>,
     pub position: TimelinePosition,
     pub body: ContentRef,
+    /// Bounded public display metadata; expanding a part never reads host JSON.
+    pub display: Box<super::conversation_timeline::ItemDisplayV1>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TimelineFence {

@@ -114,6 +114,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     item: ObjectId::from_bytes([item; 32]),
                 },
                 body: content(sequence),
+                display: Box::new(fastctx_types::sync::conversation_timeline::ItemDisplayV1 {
+                    version: 1,
+                    kind: fastctx_types::sync::conversation_timeline::DisplayKind::Message,
+                    tool: None,
+                    status: None,
+                    append: None,
+                    parts: Vec::new(),
+                    more: None,
+                }),
             },
         });
     }

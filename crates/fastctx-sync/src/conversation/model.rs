@@ -139,8 +139,14 @@ pub struct PreparedPut {
 impl PreparedPut {
     /// `body` must be the writer's stored representation of this descriptor,
     /// including its declared owned content closure, not a different payload.
-    pub fn finish(self, body: ContentRef) -> Result<TimelineChange, Error> {
+    /// The writer verifies `display` against primary.display before this call.
+    pub fn finish(self, body: ContentRef, display: ItemDisplayV1) -> Result<TimelineChange, Error> {
         body.validate().map_err(Error::InvalidContent)?;
+        display.validate().map_err(Error::InvalidContent)?;
+        display.validate_scopes(&body.id().domain).map_err(Error::InvalidContent)?;
+        if body.id().domain != self.body.primary.display.id().domain {
+            return Err(Error::InvalidContent("projected display crosses its body scope".into()));
+        }
         Ok(TimelineChange::Put {
             item: TimelineItem {
                 id: self.id,
@@ -149,6 +155,7 @@ impl PreparedPut {
                 parent: self.parent,
                 position: self.position,
                 body,
+                display: Box::new(display),
             },
         })
     }

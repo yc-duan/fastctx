@@ -8,11 +8,11 @@ use crate::{
 use fastctx_types::sync::{
     PAGE_BYTES,
     cursor::Completeness,
-    metadata::{CatalogLeaf, HistoryLeaf, MetadataCodec, ProofReference, TimelineLeaf},
+    metadata::{CatalogLeaf, HistoryLeaf, MetadataCodec, ProofReference, TimelinePayload},
 };
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
-pub(super) fn validate(
+pub(crate) fn validate(
     scope: &ScopeKey,
     codec: MetadataCodec,
     payload: &ContentBlock,
@@ -29,7 +29,7 @@ pub(super) fn validate(
     let references = match codec {
         MetadataCodec::HistoryV1 => history(scope, decode(bytes)?)?,
         MetadataCodec::CatalogV1 => catalog(scope, decode(bytes)?)?,
-        MetadataCodec::TimelineV1 => timeline(scope, decode(bytes)?)?,
+        MetadataCodec::TimelineV1 => timeline_references(scope, &decode(bytes)?)?,
     };
     if set(scope, references)? != set(scope, declared.to_vec())? {
         return Err(invalid("index payload and declared references differ"));
@@ -138,7 +138,46 @@ fn catalog(scope: &ScopeKey, page: CatalogLeaf) -> Result<Vec<ContentRef>, Error
     }
     Ok(references)
 }
-fn timeline(scope: &ScopeKey, page: TimelineLeaf) -> Result<Vec<ContentRef>, Error> {
+pub(crate) fn timeline_references(scope: &ScopeKey, payload: &TimelinePayload) -> Result<Vec<ContentRef>, Error> {
+    use TimelinePayload::*;
+    let page = match payload {
+        Root(root) => {
+            if root.conversation.scope != *scope
+                || root.through.scope != *scope
+                || root.projection.0 == 0
+                || root.items.is_some() != root.lookup.is_some()
+                || root.items.as_ref().map(|c| c.entries) != root.lookup.as_ref().map(|c| c.entries)
+            {
+                return Err(invalid("timeline root has inconsistent scope, projection or tree counts"));
+            }
+            let mut refs = Vec::new();
+            for child in root.items.iter().chain(root.lookup.iter()) {
+                if child.entries.0 == 0 || child.first_key > child.last_key || child.root.0.domain != *scope {
+                    return Err(invalid("timeline root has an invalid child range"));
+                }
+                refs.push(ContentRef::Manifest { root: child.root.clone() });
+            }
+            return Ok(refs);
+        }
+        ItemLookup(page) => {
+            if page.conversation.scope != *scope || page.entries.is_empty() || page.entries.len() > 256 {
+                return Err(invalid("timeline lookup has an invalid scope or item bound"));
+            }
+            let mut previous = None;
+            for entry in &page.entries {
+                if entry.item != entry.position.item
+                    || entry.revision.0 == 0
+                    || entry.position.display_ancestry.is_empty()
+                    || previous.is_some_and(|id| id >= &entry.item)
+                {
+                    return Err(invalid("timeline lookup is unsorted or has an invalid location"));
+                }
+                previous = Some(&entry.item);
+            }
+            return Ok(Vec::new());
+        }
+        Items(page) => page,
+    };
     if page.conversation.scope != *scope
         || page.through.scope != *scope
         || page.projection.0 == 0
@@ -150,12 +189,12 @@ fn timeline(scope: &ScopeKey, page: TimelineLeaf) -> Result<Vec<ContentRef>, Err
     let mut used = BTreeSet::new();
     let mut ids = BTreeSet::new();
     let mut previous = None;
-    for entry in page.items {
-        let item = entry.item;
+    for entry in &page.items {
+        let item = &entry.item;
         if item.position.item != item.id
             || item.revision.0 == 0
             || item.position.display_ancestry.is_empty()
-            || !ids.insert(item.id)
+            || !ids.insert(item.id.clone())
             || previous.as_ref().is_some_and(|position| position >= &item.position)
             || entry.record.sequence.0 == 0
             || (entry.record.stream == page.through.stream
@@ -165,10 +204,13 @@ fn timeline(scope: &ScopeKey, page: TimelineLeaf) -> Result<Vec<ContentRef>, Err
         {
             return Err(invalid("timeline index is unsorted, duplicated or lacks its source evidence"));
         }
-        used.insert(entry.batch);
-        previous = Some(item.position);
-        references.push(ContentRef::from(entry.payload));
-        references.push(item.body);
+        item.display.validate().map_err(Error::Invalid)?;
+        item.display.validate_scopes(scope).map_err(Error::Invalid)?;
+        used.insert(entry.batch.clone());
+        previous = Some(item.position.clone());
+        references.push(ContentRef::from(entry.payload.clone()));
+        references.push(item.body.clone());
+        references.extend(item.display.owned_content());
     }
     if proofs != used {
         return Err(invalid("timeline leaf carries an unrelated source proof"));

@@ -3,8 +3,8 @@ use super::{
     catalog::{ObjectHead, RecordRef},
     cursor::{Revision, ScopeCursor, StreamCursor, VersionRef},
     identity::{Digest, ObjectKey},
-    manifest::{ContentBlock, ContentRef, ManifestRoot},
-    timeline::TimelineItem,
+    manifest::{ContentBlock, ContentRef, ManifestChild, ManifestRoot},
+    timeline::{TimelineItem, TimelinePosition},
 };
 use serde::{Deserialize, Serialize};
 
@@ -68,4 +68,36 @@ pub struct TimelineLeaf {
     pub through: StreamCursor,
     pub items: Vec<IndexedTimelineItem>,
     pub proofs: Vec<ProofReference>,
+}
+
+/// Immutable snapshot watermarks live here, not in every path-copied leaf.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TimelineRoot {
+    pub conversation: ObjectKey,
+    pub projection: Revision,
+    pub through: StreamCursor,
+    pub items: Option<ManifestChild>,
+    pub lookup: Option<ManifestChild>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TimelineLookupEntry {
+    pub item: super::identity::ObjectId,
+    pub position: TimelinePosition,
+    pub revision: Revision,
+}
+/// Only a location is repeated; display descriptors stay in the ordered tree.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TimelineLookupLeaf {
+    pub conversation: ObjectKey,
+    pub entries: Vec<TimelineLookupEntry>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "page", content = "value", rename_all = "snake_case", deny_unknown_fields)]
+pub enum TimelinePayload {
+    Root(Box<TimelineRoot>),
+    Items(Box<TimelineLeaf>),
+    ItemLookup(TimelineLookupLeaf),
 }

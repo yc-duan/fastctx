@@ -89,7 +89,11 @@ pub fn sample(
     for (codec, payload, references) in [
         (MetadataCodec::HistoryV1, serde_json::to_value(history)?, history_refs),
         (MetadataCodec::CatalogV1, serde_json::to_value(catalog)?, vec![ContentRef::from(evidence.payload)]),
-        (MetadataCodec::TimelineV1, serde_json::to_value(timeline)?, refs),
+        (
+            MetadataCodec::TimelineV1,
+            serde_json::to_value(fastctx_types::sync::metadata::TimelinePayload::Items(Box::new(timeline)))?,
+            refs,
+        ),
     ] {
         let encoded = codec::encode(holding.scope.clone(), serde_json::to_vec(&payload)?, Encoding::Raw)?;
         let page_json = serde_json::to_string(&ManifestPage::Metadata {
