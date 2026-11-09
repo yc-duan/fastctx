@@ -144,8 +144,8 @@
   padding-right: calc(var(--space-4) + (var(--dk-room) - var(--space-4)) * var(--dk-corner));
 }
 
-.sp-split[data-dock="right"] .desk-pane > :is(.conversation-page, .dk-fork-page) > .page-head {
-  --dk-room: max(var(--space-4), calc(var(--sp-corner) - var(--side-width) * var(--sp-open)));
+.sp-host.sp-shown > .sp-split[data-dock="right"] .desk-pane > :is(.conversation-page, .dk-fork-page) > .page-head {
+  --dk-room: max(var(--space-4), calc(var(--sp-corner) - var(--side-width)));
 }
 
 .desk-pane.dk-corner > :is(.conversation-page, .dk-fork-page) > .page-head {

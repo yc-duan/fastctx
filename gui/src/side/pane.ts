@@ -6,9 +6,9 @@
 // the way back to it over the page. Another conversation in focus, the side
 // turns to its parts. Its "⋯", where it stands, is held in the desk's
 // corner with where the conversation works and the side's switch, which
-// stay as it folds away. The side opens and folds by the desk's `--sp-open`
-// (`side.css`): folding, it stays drawn until that has gone back to
-// nothing. Where there is no room beside the conversations, as on a phone,
+// stay as it folds away. The desk's open class determines the side's size
+// (`side.css`): folding, it stays drawn until the optional size transition
+// has had time to finish. Where there is no room beside it, as on a phone,
 // it lies over the whole desk, where the conversation works said in its
 // own line.
 
@@ -188,7 +188,7 @@ export class SidePane {
     }
   }
 
-  /** Shuts it: it goes as `--sp-open` goes back, then is no longer drawn. */
+  /** Shuts it immediately; it stays drawn briefly for the size transition. */
   close(): void {
     if (!this.open) return;
     this.openMenu(false);

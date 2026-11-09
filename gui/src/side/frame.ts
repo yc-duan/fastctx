@@ -106,7 +106,7 @@ export class SideFrame implements PartsFrame {
     host.append(this.split);
     host.classList.add("sp-host");
     const frame = this;
-    this.pane.element.append(
+    this.pane.element.prepend(
       makeGrip("sp-grip", {
         get part() {
           return frame.placed === "over" ? frame.dock : frame.placed;
@@ -232,6 +232,7 @@ export class SideFrame implements PartsFrame {
     if (first || placed !== this.placed) {
       this.placed = placed;
       this.pane.over(placed === "over");
+      this.host.classList.toggle("sp-over", placed === "over");
       const shown = placed === "over" ? this.dock : placed;
       this.split.dataset.dock = shown;
       this.pane.setDock(shown);
@@ -328,6 +329,7 @@ export class SideFrame implements PartsFrame {
     const was = this.host.classList.contains("sp-shown");
     if (open && !was) void this.host.offsetWidth;
     this.host.classList.toggle("sp-shown", open);
+    this.host.classList.toggle("sp-visible", !this.pane.element.hidden);
     if (open && this.parts) this.parts.fresh = false;
     this.opener.setAttribute("aria-pressed", String(open));
     this.historyMark.setAttribute("aria-pressed", String(!!this.parts?.history && this.pane.visible === this.parts.history.part));
