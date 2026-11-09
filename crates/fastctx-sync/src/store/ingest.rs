@@ -9,7 +9,7 @@ use crate::{
     catalog::SourceBatch,
     cursor::{ByteCount, LocalSequence, Revision},
     identity::{Digest, HostGeneration, OperationId, Producer, ProducerEpoch, SourceId, StreamId},
-    manifest::ContentRef,
+    manifest::{BlobId, ContentRef, ManifestReply, ManifestRoot},
     registry::{ConflictRule, DataClass},
 };
 pub use fastctx_types::sync::progress::StreamProgress;
@@ -209,9 +209,31 @@ pub(crate) mod sealed {
     pub trait SourceWriter {}
 }
 
+/// The checkpoint version fixes the private root for every page of one read.
+/// Encoding selection stays inside the engine and never enters parser state.
+#[derive(Clone, Debug)]
+pub enum StateRead {
+    Manifest { checkpoint: Revision, root: ManifestRoot },
+    Block { checkpoint: Revision, id: BlobId },
+}
+#[derive(Clone, Debug)]
+pub enum StateReply {
+    Manifest(ManifestReply),
+    /// Decoded, digest-checked bytes, bounded by BLOCK_BYTES.
+    Bytes(Vec<u8>),
+    /// The checkpoint advanced or its private state was explicitly discarded.
+    Superseded {
+        current: Option<Revision>,
+    },
+}
+
 pub trait SourceIngest: sealed::SourceWriter + Send + Sync {
     fn checkpoint(&self, target: SourceTarget) -> FutureResult<'_, Option<SourceCheckpoint>>;
     fn progress(&self, target: SourceTarget) -> FutureResult<'_, Option<StreamProgress>>;
+    /// Only members of this source's current checkpoint closure are eligible.
+    /// Block IO holds a lease and rechecks the checkpoint and revocation fences
+    /// before returning. A holding transition still being applied returns Busy.
+    fn read_state(&self, target: SourceTarget, request: StateRead) -> FutureResult<'_, StateReply>;
     /// Exact lookup uses the same registered family, key bound and source gate
     /// as pagination; callers need not fabricate a predecessor key.
     fn get_index(

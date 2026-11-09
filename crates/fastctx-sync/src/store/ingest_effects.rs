@@ -107,7 +107,8 @@ impl SourceEffects {
                     lease.usage.validate()?;
                     if lease.object != custody.object
                         || lease.kind != custody.kind.registration().id
-                        || lease.holding != custody.holding
+                        || lease.holding.holder != custody.holding.holder
+                        || lease.holding.scope != custody.object.scope
                         || lease.root.id().domain != object.scope
                     {
                         return Err(Error::Invalid("root release differs from its source custody".into()));
