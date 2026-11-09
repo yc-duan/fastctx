@@ -243,7 +243,7 @@ impl BlockStore for SqliteBlocks {
             self.db
                 .read(move |db| {
                     pins::authorize_read(db, &holder, policy.as_ref(), &custody)?;
-                    access::require(db, &custody, &ContentRef::Manifest { root: root.clone() })?;
+                    access::require_read(db, &custody, &ContentRef::Manifest { root: root.clone() })?;
                     pages::get(db, &root)
                 })
                 .await

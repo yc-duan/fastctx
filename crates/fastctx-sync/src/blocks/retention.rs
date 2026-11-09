@@ -7,7 +7,7 @@ use crate::{
 use fastctx_storage::{Result, rusqlite::Connection};
 
 pub(crate) fn retain_supplied(db: &Connection, custody: &Custody, root: &ContentRef) -> Result<()> {
-    access::require(db, custody, root)?;
+    access::require_known_root(db, custody, root)?;
     if !rows::complete(db, root)? {
         return Err(sql::invalid("a local edit cannot adopt incomplete content"));
     }

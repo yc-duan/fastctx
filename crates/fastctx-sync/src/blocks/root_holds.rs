@@ -58,12 +58,12 @@ pub(super) fn acquire(
     // An existing use may be forked without retaining an upload pin forever.
     // It supplies custody only, never permission to return its bytes to a caller.
     let held: bool = db.query_row(
-        "SELECT EXISTS(SELECT 1 FROM sync_root_leases WHERE hub=?1 AND scope=?2 AND object=?3 AND kind=?4 AND hash=?5 AND root_kind=?6 AND decoded_bytes IS ?7 AND holding=?8 AND purpose=?9 AND released=0 AND (expires IS NULL OR expires>?10))",
-        params![scope.hub.to_string(),scope.scope.as_str(),lease.object.object.as_str(),lease.kind,lease.root.id().digest.as_str(),pins::shape(&lease.root).0,pins::shape(&lease.root).1,encoded.holding,encoded.purpose,now],
+        "SELECT EXISTS(SELECT 1 FROM sync_root_leases WHERE hub=?1 AND scope=?2 AND object=?3 AND kind=?4 AND hash=?5 AND root_kind=?6 AND decoded_bytes IS ?7 AND holding=?8 AND purpose=?9 AND usage=?10 AND released=0 AND (expires IS NULL OR expires>?11))",
+        params![scope.hub.to_string(),scope.scope.as_str(),lease.object.object.as_str(),lease.kind,lease.root.id().digest.as_str(),pins::shape(&lease.root).0,pins::shape(&lease.root).1,encoded.holding,encoded.purpose,encoded.usage,now],
         |row| row.get(0),
     )?;
     if !held {
-        access::require(db, custody, &request.root)?;
+        access::require_known_root(db, custody, &request.root)?;
     }
     if !rows::complete(db, &request.root)? {
         return Ok(RootAcquired::Pending { completeness: Completeness::MetadataOnly });

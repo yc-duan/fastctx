@@ -63,6 +63,9 @@ pub(super) async fn run(root: &Path) -> Result<()> {
         db.read_now(|db| Ok(db.query_row("SELECT COUNT(*) FROM sync_asset_access", [], |row| row.get::<_, u32>(0))?))?,
         0
     );
+    let mut other_source = request(owner.clone(), first.root.clone(), 39);
+    other_source.usage = RootUse::Checkpoint { source: SourceId::from_bytes([39; 32]) };
+    assert!(blocks.acquire_root(operation(39), other_source).await.is_err());
     let second_request = request(owner.clone(), first.root.clone(), 32);
     let second = held(blocks.acquire_root(operation(32), second_request).await?)?;
     let mut other = acquire.clone();
@@ -131,6 +134,7 @@ pub(super) async fn run(root: &Path) -> Result<()> {
     assert_eq!(blocks.collect(1).await?, 1);
     assert_eq!(active(&db)?, 0);
     advanced_holding(root).await?;
+    private_supply(root).await?;
     println!(
         "root usage: pending closure, concurrent retry, restart, private custody, independent uses, expiry, old-period release and revocation passed"
     );
@@ -169,5 +173,53 @@ async fn advanced_holding(root: &Path) -> Result<()> {
     blocks.release_root(current, lease.clone()).await?;
     blocks.release_root(old, lease).await?;
     assert_eq!(blocks.collect(8).await?, 1);
+    Ok(())
+}
+
+async fn private_supply(root: &Path) -> Result<()> {
+    let dir = root.join("private-source-staging");
+    fastctx_platform::ensure_private_dir(&dir)?;
+    let path = dir.join("replica.sqlite3");
+    let db = open(&path)?;
+    let blocks = store(&db, &dir)?;
+    let reader = custody(60, "conversation.artifact");
+    let mut source = reader.clone();
+    source.purpose = HoldingUse::WorkspaceSource {
+        workspace: fastctx_sync::store::access::WorkspaceBinding {
+            conversation: source.object.clone(),
+            account: AccountId::from_bytes([61; 32]),
+            machine: DeviceId::from_bytes([3; 32]),
+            epoch: WorkspaceEpoch::from_bytes([62; 32]),
+            registration: operation(60),
+        },
+    };
+    let content =
+        codec::encode(scope(), b"private parser state before committing a checkpoint".to_vec(), Encoding::Raw)?;
+    let manifest = page(content.representation.content.clone())?;
+    let published =
+        blocks.put(source.clone(), operation(60), content.representation.clone(), content.bytes.clone()).await?;
+    blocks.put_manifest(source.clone(), operation(60), manifest.clone()).await?;
+    pump(&db, &blocks).await?;
+    assert!(blocks.descriptor(reader.clone(), published.content.id.clone()).await.is_err());
+    assert!(blocks.read(reader.clone(), published.content.id.clone(), published.representation.clone()).await.is_err());
+    assert!(blocks.manifest(reader.clone(), manifest.root.clone()).await.is_err());
+    assert!(blocks.read(source.clone(), published.content.id.clone(), published.representation).await.is_err());
+    let usage = held(
+        blocks
+            .acquire_root(
+                operation(60),
+                request(source.clone(), ContentRef::Manifest { root: manifest.root.clone() }, 60),
+            )
+            .await?,
+    )?;
+    assert_eq!(blocks.cancel_upload(source.clone(), operation(60), 8).await?, 2);
+    assert!(blocks.manifest(reader.clone(), manifest.root).await.is_err());
+    assert_eq!(blocks.collect(8).await?, 0);
+    // Supplying the actual bytes for Replica use creates a distinct public pin.
+    let public = blocks.put(reader.clone(), operation(61), content.representation, content.bytes.clone()).await?;
+    assert_eq!(blocks.read(reader.clone(), public.content.id, public.representation).await?, content.bytes);
+    blocks.release(reader, public.pin).await?;
+    blocks.release_root(source, usage).await?;
+    assert_eq!(blocks.collect(8).await? + blocks.collect(8).await?, 2);
     Ok(())
 }
