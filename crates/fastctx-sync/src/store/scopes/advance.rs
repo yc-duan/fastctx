@@ -31,7 +31,7 @@ impl SqliteScopes {
         Box::pin(async move {
             self.blocks
                 .database()
-                .write(16 * 1024, move |db| advance(db, &scope, expected, next))
+                .write(16 * 1024, move |db| super::advance_in(db, &scope, expected, next))
                 .await
                 .map_err(|error| sql::error(error, self.blocks.worker().clone()))
         })
