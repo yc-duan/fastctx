@@ -30,6 +30,7 @@ measures!(Counter {
     ResolveScanBytes => "sync.resolve_scan_bytes",
     IndexValidation => "sync.index_validation",
     DirectoryCacheEvictions => "sync.directory_cache_evictions",
+    GarbageFailures => "sync.garbage_failures",
 });
 measures!(Gauge {
     MissingRecords => "sync.missing_records",

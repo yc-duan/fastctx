@@ -4,6 +4,7 @@ use crate::{
     blocks::{files::FileKey, root_holds, rows},
     identity::{Digest, HubId, ScopeId, ScopeKey},
     manifest::{BlobId, ContentBlock, DigestAlgorithm},
+    metrics::{Cause, Counter, Metrics, PlatformMetrics},
     store::{
         Error,
         boundary::{self, Role},
@@ -45,40 +46,95 @@ pub(super) async fn collect(store: &SqliteBlocks, max: u32) -> std::result::Resu
     }).await.map_err(|error|sql::error(error,store.worker.clone()))?;
     let mut collected = 0;
     for candidate in candidates {
-        let _lease = match store.leases.cleanup(&candidate.id) {
-            Ok(lease) => lease,
-            Err(Error::Busy) => {
-                store.db.write(4096,move |db| {
-                    let _boundary=boundary::enter_typed_write(Role::Content);
-                    db.execute("UPDATE sync_asset_gc SET next_due=?1 WHERE hub=?2 AND scope=?3 AND hash=?4 AND root_kind=?5",params![now.saturating_add(50),candidate.id.domain.hub.to_string(),candidate.id.domain.scope.as_str(),candidate.id.digest.as_str(),candidate.form])?;Ok(())
-                }).await.map_err(|error|sql::error(error,store.worker.clone()))?;
-                continue;
+        match collect_one(store, candidate.clone(), now).await {
+            Ok(true) => collected += 1,
+            Ok(false) => {}
+            Err(error) => {
+                PlatformMetrics.add(Counter::GarbageFailures, Cause::Ordinary, 1);
+                defer(store, candidate, &error, now).await?;
             }
-            Err(error) => return Err(error),
-        };
-        let claimed = store
-            .db
-            .write(16384, move |db| {
-                let _boundary = boundary::enter_typed_write(Role::Content);
-                claim(db, candidate)
-            })
-            .await
-            .map_err(|error| sql::error(error, store.worker.clone()))?;
-        let Some(claimed) = claimed else { continue };
-        for file in &claimed.files {
-            store.files.delete(file)?;
         }
-        store
-            .db
-            .write(512 * 1024, move |db| {
-                let _boundary = boundary::enter_typed_write(Role::Content);
-                finish(db, &claimed.candidate)
-            })
-            .await
-            .map_err(|error| sql::error(error, store.worker.clone()))?;
-        collected += 1;
     }
     Ok(collected)
+}
+
+async fn collect_one(store: &SqliteBlocks, candidate: Candidate, now: i64) -> std::result::Result<bool, Error> {
+    let _lease = match store.leases.cleanup(&candidate.id) {
+        Ok(lease) => lease,
+        Err(Error::Busy) => {
+            store
+                .db
+                .write(4096, move |db| {
+                    let _boundary = boundary::enter_typed_write(Role::Content);
+                    db.execute(
+                        "UPDATE sync_asset_gc SET next_due=?1 WHERE hub=?2 AND scope=?3 AND hash=?4 AND root_kind=?5",
+                        params![
+                            now.saturating_add(50),
+                            candidate.id.domain.hub.to_string(),
+                            candidate.id.domain.scope.as_str(),
+                            candidate.id.digest.as_str(),
+                            candidate.form
+                        ],
+                    )?;
+                    Ok(())
+                })
+                .await
+                .map_err(|error| sql::error(error, store.worker.clone()))?;
+            return Ok(false);
+        }
+        Err(error) => return Err(error),
+    };
+    let claimed = store
+        .db
+        .write(16384, move |db| {
+            let _boundary = boundary::enter_typed_write(Role::Content);
+            claim(db, candidate)
+        })
+        .await
+        .map_err(|error| sql::error(error, store.worker.clone()))?;
+    let Some(claimed) = claimed else { return Ok(false) };
+    for file in &claimed.files {
+        store.files.delete(file)?;
+    }
+    store
+        .db
+        .write(512 * 1024, move |db| {
+            let _boundary = boundary::enter_typed_write(Role::Content);
+            finish(db, &claimed.candidate)
+        })
+        .await
+        .map_err(|error| sql::error(error, store.worker.clone()))?;
+    Ok(true)
+}
+
+async fn defer(store: &SqliteBlocks, candidate: Candidate, error: &Error, now: i64) -> std::result::Result<(), Error> {
+    let reason = match error {
+        Error::Busy => "busy",
+        Error::Full => "full",
+        Error::Corrupt(_) => "corrupt",
+        Error::Unavailable(_) => "unavailable",
+        Error::OutcomeUnknown { .. } => "outcome_unknown",
+        Error::Denied(_) | Error::Revoked => "denied",
+        Error::Invalid(_) | Error::Conflict { .. } | Error::LocalConflict { .. } => "invalid",
+    };
+    store.db.write(4096,move |db| {
+        let _boundary = boundary::enter_typed_write(Role::Content);
+        let id = &candidate.id;
+        let failures = db.query_row(
+            "SELECT failures FROM sync_asset_gc WHERE hub=?1 AND scope=?2 AND hash=?3 AND root_kind=?4",
+            params![id.domain.hub.to_string(),id.domain.scope.as_str(),id.digest.as_str(),candidate.form],
+            |row| row.get::<_,u32>(0),
+        ).optional()?;
+        if let Some(failures) = failures {
+            let failures = failures.saturating_add(1).min(16);
+            let delay = (1000_i64 << (failures-1)).min(300_000);
+            db.execute(
+                "UPDATE sync_asset_gc SET next_due=?1,failures=?2,failure=?3 WHERE hub=?4 AND scope=?5 AND hash=?6 AND root_kind=?7",
+                params![now.saturating_add(delay),failures,reason,id.domain.hub.to_string(),id.domain.scope.as_str(),id.digest.as_str(),candidate.form],
+            )?;
+        }
+        Ok(())
+    }).await.map_err(|error|sql::error(error,store.worker.clone()))
 }
 
 fn claim(db: &Connection, candidate: Candidate) -> Result<Option<Claimed>> {

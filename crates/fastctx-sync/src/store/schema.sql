@@ -284,6 +284,8 @@ CREATE TABLE sync_asset_gc (
     root_kind TEXT NOT NULL CHECK(root_kind IN ('block','manifest')),
     generation BLOB NOT NULL CHECK(length(generation)=8), next_due INTEGER NOT NULL,
     claimed INTEGER NOT NULL DEFAULT 0 CHECK(claimed IN (0,1)),
+    failures INTEGER NOT NULL DEFAULT 0 CHECK(failures BETWEEN 0 AND 16),
+    failure TEXT NOT NULL DEFAULT '',
     PRIMARY KEY(hub,scope,hash,root_kind)
 ) WITHOUT ROWID;
 CREATE INDEX sync_asset_gc_due ON sync_asset_gc(next_due);

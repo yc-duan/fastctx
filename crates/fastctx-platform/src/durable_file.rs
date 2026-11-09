@@ -71,7 +71,7 @@ pub fn delete_unreferenced(path: &Path) -> io::Result<()> {
     crate::roles::in_place("delete durable content", || {
         let metadata = match fs::symlink_metadata(path) {
             Ok(value) => value,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return sync_parent(path),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return sync_existing_parent(path),
             Err(error) => return Err(error),
         };
         if !metadata.is_file() || crate::owned_directory::is_link(&metadata) {
@@ -94,6 +94,23 @@ fn configure(options: &mut OpenOptions) {
     use windows_sys::Win32::Storage::FileSystem::FILE_FLAG_WRITE_THROUGH;
     // CreateFileW documents write-through metadata flushing, including renames.
     options.custom_flags(FILE_FLAG_WRITE_THROUGH);
+}
+/// A reserved generation may never have created even its bucket directories.
+/// Confirm the first surviving namespace instead of requiring a vanished bucket.
+#[cfg(unix)]
+fn sync_existing_parent(path: &Path) -> io::Result<()> {
+    for ancestor in path.ancestors().skip(1) {
+        match fs::File::open(ancestor) {
+            Ok(directory) => return directory.sync_all(),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
+}
+#[cfg(windows)]
+fn sync_existing_parent(path: &Path) -> io::Result<()> {
+    sync_parent(path)
 }
 #[cfg(unix)]
 fn sync_parent(path: &Path) -> io::Result<()> {
