@@ -108,9 +108,11 @@ pub struct SourceRecord {
     pub kind: String,
     pub schema: u16,
     pub payload: ContentBlock,
-    /// Every other root the payload refers to, nested descriptor parts included.
-    /// Holders retain and fetch exactly these; the kind's validator rejects a
-    /// payload that refers to anything else.
+    /// Every root the payload refers to directly. A root's own closure carries
+    /// what it refers to in turn: a descriptor that names further content is a
+    /// metadata page whose codec references it exactly. Holders retain and fetch
+    /// the closures of exactly these roots; the kind's validator rejects a
+    /// payload whose direct references differ from them.
     pub roots: Vec<ContentRef>,
     pub causes: Vec<RecordRef>,
 }

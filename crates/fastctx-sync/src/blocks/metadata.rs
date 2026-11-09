@@ -1,4 +1,4 @@
-//! Registered index codecs declare their complete content-reference set.
+//! Registered metadata codecs declare their complete content-reference set.
 use crate::{
     catalog::HeadEvidence,
     identity::{Digest, ScopeKey},
@@ -7,6 +7,7 @@ use crate::{
 };
 use fastctx_types::sync::{
     PAGE_BYTES,
+    conversation_timeline::{ItemDisplayPartsV1, ItemDisplayV1},
     cursor::Completeness,
     metadata::{CatalogLeaf, HistoryLeaf, MetadataCodec, ProofReference, TimelinePayload},
 };
@@ -30,6 +31,16 @@ pub(crate) fn validate(
         MetadataCodec::HistoryV1 => history(scope, decode(bytes)?)?,
         MetadataCodec::CatalogV1 => catalog(scope, decode(bytes)?)?,
         MetadataCodec::TimelineV1 => timeline_references(scope, &decode(bytes)?)?,
+        MetadataCodec::DisplayV1 => {
+            let display = ItemDisplayV1::decode(bytes).map_err(Error::Invalid)?;
+            display.validate_scopes(scope).map_err(Error::Invalid)?;
+            display.owned_content()
+        }
+        MetadataCodec::DisplayPartsV1 => {
+            let page = ItemDisplayPartsV1::decode(bytes).map_err(Error::Invalid)?;
+            page.validate_scopes(scope).map_err(Error::Invalid)?;
+            page.owned_content()
+        }
     };
     if set(scope, references)? != set(scope, declared.to_vec())? {
         return Err(invalid("index payload and declared references differ"));

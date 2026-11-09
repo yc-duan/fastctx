@@ -49,8 +49,9 @@ pub enum BodyAuthority {
 pub struct BodySnapshot {
     /// Original host evidence. Public readers never parse this representation.
     pub original: ContentRef,
-    /// Encoded ItemDisplayV1, at most 16 KiB. Timeline pages inline the decoded
-    /// descriptor; part bodies and original evidence are fetched only on demand.
+    /// The DisplayV1 page whose payload is the encoded ItemDisplayV1, at most
+    /// 16 KiB. Timeline pages inline the decoded descriptor; part bodies and
+    /// original evidence are fetched only on demand.
     pub display: ContentRef,
     pub complete: bool,
     /// The appendable channel inside the projected body, if it has one.
@@ -108,12 +109,11 @@ pub struct ProjectedBody {
     pub run: Option<RunLink>,
 }
 impl ProjectedBody {
-    /// Direct roots only: this does not enumerate parts hidden inside display
-    /// descriptors. The writer must decode ItemDisplayV1 and its overflow pages,
-    /// include their owned_content in retention, authorization and TimelineV1
-    /// references, and verify each Manifest part's total decoded length. Full
-    /// replicas follow that closure. Lightweight replicas keep descriptors and
-    /// overflow description pages without part bodies or original evidence.
+    /// Direct roots only. Parts are owned through the display page's closure,
+    /// whose DisplayV1 and DisplayPartsV1 pages reference them exactly; the
+    /// writer still verifies each Manifest part's total decoded length. Full
+    /// replicas follow the whole closure. Lightweight replicas keep descriptors
+    /// and overflow description pages without part bodies or original evidence.
     pub fn owned_content(&self) -> Vec<&ContentRef> {
         let mut refs = vec![&self.primary.original, &self.primary.display];
         refs.extend(self.world.iter());

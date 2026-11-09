@@ -129,10 +129,11 @@ pub struct DisplayAppend {
     pub index: Count,
 }
 
-/// A manifest containing subsequent ItemDisplayPartsV1 pages in index order.
-/// It contains descriptors and index child pages only. Referenced part bodies
-/// remain independently fetched assets, never physical dependencies of this
-/// lightweight description tree. The writer validates exact contiguous coverage.
+/// The overflow descriptors in index order: one DisplayPartsV1 page, or a
+/// Branch over such pages keyed by part index as 16 lowercase hex digits. Each
+/// page references exactly the bodies its parts own, so the tree retains what
+/// it describes; a lightweight replica fetches its pages without those bodies.
+/// The writer validates exact contiguous coverage.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DisplayPartsRef {

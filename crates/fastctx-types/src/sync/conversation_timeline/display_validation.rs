@@ -64,11 +64,9 @@ impl ItemDisplayV1 {
         bounded_json(self, DISPLAY_BYTES).map_err(|_| "item display exceeds 16 KiB")?;
         Ok(())
     }
-    /// Part bodies owned by this item, plus its remaining descriptor tree. The
-    /// writer walks that tree in bounded pages, retaining and authorizing all
-    /// returned content and adding it to TimelineV1 references. Logical pictures
-    /// belonging to another object are excluded. Full replicas follow this
-    /// closure; lightweight replicas retain descriptors, not bodies or original.
+    /// The exact references of this descriptor's DisplayV1 page: the part bodies
+    /// it owns and the root of its overflow pages, which own the rest. Logical
+    /// pictures belonging to another object are excluded.
     pub fn owned_content(&self) -> Vec<ContentRef> {
         let mut refs: Vec<_> = self.parts.iter().filter_map(owned_part).collect();
         refs.extend(self.more.iter().map(|more| ContentRef::Manifest { root: more.root.clone() }));
@@ -103,10 +101,15 @@ impl ItemDisplayV1 {
     }
 }
 impl ItemDisplayPartsV1 {
-    /// Additional owned bodies in this descriptor leaf; no implied access to
-    /// pictures whose target is a different object.
+    /// The exact references of this leaf's DisplayPartsV1 page; no implied
+    /// access to pictures whose target is a different object.
     pub fn owned_content(&self) -> Vec<ContentRef> {
         self.parts.iter().filter_map(owned_part).collect()
+    }
+    /// Same-object content stays in the owner's scope; a cross-object picture
+    /// keeps its target's scope and grants nothing here.
+    pub fn validate_scopes(&self, scope: &ScopeKey) -> Result<(), String> {
+        self.parts.iter().try_for_each(|part| part.validate_scope(scope))
     }
     pub fn encode(&self) -> Result<Vec<u8>, String> {
         self.validate()?;

@@ -1,4 +1,5 @@
-//! Explicit immutable index payloads, distinct from user directory manifests.
+//! Typed immutable payloads that declare their exact references: indexes and
+//! item descriptors, distinct from user directory manifests.
 use super::{
     catalog::{ObjectHead, RecordRef},
     cursor::{Revision, ScopeCursor, StreamCursor, VersionRef},
@@ -14,6 +15,10 @@ pub enum MetadataCodec {
     HistoryV1,
     CatalogV1,
     TimelineV1,
+    /// An encoded ItemDisplayV1; references its owned part bodies and overflow root.
+    DisplayV1,
+    /// An encoded ItemDisplayPartsV1; references the part bodies it owns.
+    DisplayPartsV1,
 }
 
 /// The proof identity binds the original domain/signature; its content block
