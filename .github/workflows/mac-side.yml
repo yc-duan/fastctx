@@ -1,0 +1,60 @@
+name: mac-side
+on:
+  push:
+    branches: ['mac-walk/side-*']
+permissions:
+  contents: read
+jobs:
+  safari:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, macos-26]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: candidate
+      - uses: actions/checkout@v4
+        with:
+          ref: v1.0.1-beta.16
+          path: baseline
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Start the two source interfaces
+        run: |
+          mkdir -p evidence
+          sw_vers | tee evidence/os.txt
+          uname -m | tee -a evidence/os.txt
+          /usr/bin/safaridriver --version | tee -a evidence/os.txt
+          npm ci --prefix baseline/gui --no-audit --no-fund > evidence/npm-baseline.log 2>&1
+          npm ci --prefix candidate/gui --no-audit --no-fund > evidence/npm-candidate.log 2>&1
+          (cd baseline/gui && npm run dev -- --host 127.0.0.1 --port 5316) > evidence/vite-baseline.log 2>&1 &
+          (cd candidate/gui && npm run dev -- --host 127.0.0.1 --port 5317) > evidence/vite-candidate.log 2>&1 &
+          for port in 5316 5317; do
+            ready=0
+            for attempt in $(seq 1 60); do
+              if curl -fsS "http://127.0.0.1:$port/" > /dev/null; then ready=1; break; fi
+              sleep 1
+            done
+            test "$ready" = 1
+          done
+      - name: Enable real Safari automation
+        run: |
+          sudo /usr/bin/safaridriver --enable
+          /usr/bin/safaridriver --port 4444 > evidence/safaridriver.log 2>&1 &
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:4444/status > /dev/null; then exit 0; fi
+            sleep 1
+          done
+          exit 1
+      - name: Compare repeated native clicks and settled geometry
+        run: python3 candidate/.github/mac-side/probe.py --out evidence/safari
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mac-side-${{ matrix.os }}
+          path: evidence
+          retention-days: 14

@@ -28,11 +28,11 @@ const RELEASES: { version: string; day: string; size: number | null }[] = [
 const MAJOR = { version: "2.0.0-beta.1", day: "2026-11-20T09:00:00Z", size: 16_000_000 };
 
 /** Other machines, by name: what each runs and is. */
-const MACHINES: Record<string, { running: string; app?: string; auto: boolean; relays: boolean }> = {
+const MACHINES: Record<string, { running: string; app?: string; auto: boolean; relays: boolean }> = import.meta.env.DEV ? {
   server: { running: runningOn("server"), auto: true, relays: true },
   gpu: { running: runningOn("gpu"), auto: false, relays: true },
   studio: { running: runningOn("studio"), app: runningOn("studio"), auto: false, relays: true },
-};
+} : {};
 
 function manifestOf(version: string, size: number | null, target: string, triple: string): Manifest {
   const pack = { signature: "", ...(size ? { size } : {}) };

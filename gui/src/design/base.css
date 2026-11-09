@@ -547,3 +547,11 @@ input[type="checkbox"]:focus-visible {
 [role="switch"][aria-checked="true"] .switch-knob {
   --slide: 13px;
 }
+
+/* Keep the requested position visible while saving it. */
+[role="switch"][aria-busy="true"],
+[role="menuitemcheckbox"][aria-busy="true"],
+[role="radio"][aria-busy="true"] {
+  opacity: var(--switch-saving-alpha);
+  cursor: wait;
+}

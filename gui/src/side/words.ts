@@ -8,7 +8,7 @@ export interface SideWords {
   /** The conversation's own parts, each a word in the side's first line. */
   pages: { plan: string; goal: string; collab: string; history: string };
   /** The side's first page: the parts at a glance. */
-  home: { name: string; none: string; all: (n: number) => string; allHistory: string };
+  home: { name: string; none: string; all: (n: number) => string };
   /** A file read in the side, over the parts. */
   file: FileWords;
   /** The switch that opens the side, and the act that shuts it. */
@@ -110,6 +110,7 @@ export interface GoalWords {
 
 export interface CollabWords {
   empty: string;
+  reading: string;
   states: Record<NodeState, string>;
   goal: Record<GoalStatus, string>;
   /** How long one worked, to the second while it works. */
@@ -150,8 +151,8 @@ function clock(ms: number, now: number, locale: string, today: string, tomorrow:
 }
 
 export const zhSide: SideWords = {
-  pages: { plan: "计划", goal: "目标", collab: "协作", history: "历史" },
-  home: { name: "概览", none: "还没有计划与协作", all: (n) => `全部 ${n} 个`, allHistory: "全部历史" },
+  pages: { plan: "计划", goal: "目标", collab: "协作", history: "笔记" },
+  home: { name: "概览", none: "还没有计划与协作", all: (n) => `全部 ${n} 个` },
   file: { outside: "用默认程序打开", reading: "读取中…", missing: "找不到这个文件", failed: "读取失败", interrupted: "连接中断，正在重连…" },
   panel: "侧面板",
   shut: "收起侧面板",
@@ -218,6 +219,7 @@ export const zhSide: SideWords = {
   },
   collab: {
     empty: "还没有同事或子代理",
+    reading: "还在读",
     states: { working: "在干", waiting: "等你回答", done: "交回了", failed: "失败", stopped: "已停下", idle: "空着", unknown: "不知道是否还在干" },
     goal: { active: "进行中", paused: "已暂停", blocked: "阻碍", complete: "已完成" },
     took: zh.took,
@@ -238,8 +240,8 @@ export const zhSide: SideWords = {
 };
 
 export const enSide: SideWords = {
-  pages: { plan: "Plan", goal: "Goal", collab: "Team", history: "History" },
-  home: { name: "Overview", none: "No plan or helpers yet", all: (n) => `All ${n}`, allHistory: "All of it" },
+  pages: { plan: "Plan", goal: "Goal", collab: "Team", history: "Notes" },
+  home: { name: "Overview", none: "No plan or helpers yet", all: (n) => `All ${n}` },
   file: { outside: "Open with default app", reading: "Reading…", missing: "File not found", failed: "Couldn't read this file", interrupted: "Disconnected, reconnecting…" },
   panel: "Side panel",
   shut: "Close the side panel",
@@ -304,6 +306,7 @@ export const enSide: SideWords = {
   },
   collab: {
     empty: "No colleagues or subagents yet",
+    reading: "Still reading",
     states: { working: "Working", waiting: "Waiting for you", done: "Handed back", failed: "Failed", stopped: "Stopped", idle: "Idle", unknown: "Not known whether it still works" },
     goal: { active: "Under way", paused: "Paused", blocked: "Blocked", complete: "Done" },
     took: en.took,

@@ -2,16 +2,16 @@
 // without a World: the page specimen's stand-in host, and the interface's
 // specimen when it opens a page.
 
-const steps = Array.from({ length: 60 }, (_, i) => i * 50);
-const metrics = steps.map((step, i) => ({
+const steps = import.meta.env.DEV ? Array.from({ length: 60 }, (_, i) => i * 50) : [];
+const metrics = import.meta.env.DEV ? steps.map((step, i) => ({
   step,
   loss: Number((2.3 * Math.exp(-i / 14) + 0.38 + Math.sin(i / 3) * 0.02).toFixed(4)),
   val_loss: Number((2.35 * Math.exp(-i / 16) + 0.41 + Math.cos(i / 4) * 0.025).toFixed(4)),
-}));
-const log = metrics
+})) : [];
+const log = import.meta.env.DEV ? metrics
   .slice(-14)
   .map((m) => `step ${String(m.step).padStart(4)}  loss ${m.loss.toFixed(4)}  val ${m.val_loss.toFixed(4)}  lr 3.0e-4  12.4 it/s`)
-  .join("\n");
+  .join("\n") : "";
 
 export const answers: Record<string, (args: Record<string, unknown>) => unknown> = {
   "world.now": () => ({

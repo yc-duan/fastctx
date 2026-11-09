@@ -22,6 +22,11 @@ export const specimenOffers: Offers = {
     { name: "init", description: "Write an AGENTS.md for this place", args: null, arguments: "none", source: "codex" },
     { name: "goal", description: "Set, show or clear the goal", args: "[get | clear | set <objective>]", arguments: "optional", source: "codex" },
     { name: "fast", description: "Faster responses", args: null, arguments: "none", source: "codex" },
+    { name: "pdf", description: "Read and fill PDF forms", args: "[file]", arguments: "optional", source: "skill", path: "C:/Users/me/.codex/skills/pdf/SKILL.md" },
+  ],
+  skills: [
+    { name: "deploy-checklist", description: "部署任何服务之前：要核对的事与回滚的路" },
+    { name: "weekly-report", description: "写本周的进展周报，照团队的格式" },
   ],
   models: [
     { id: "gpt-6.1-sol", name: "GPT-6.1 Sol", description: "The default", efforts: ["low", "medium", "high", "xhigh"], default_effort: "medium", default: true, service_tiers: [{ id: "priority", name: "Fast", description: "Faster responses" }, { id: "ultrafast", name: "Ultrafast", description: "Fastest responses, at a higher cost" }], default_service_tier: null },
@@ -48,8 +53,13 @@ export const specimenClaudeOffers: Offers = {
   commands: [
     { name: "review", description: "Review a pull request", args: null, arguments: "optional", source: "claude" },
     { name: "init", description: "Write a CLAUDE.md for this place", args: null, arguments: "none", source: "claude" },
+    { name: "batch", description: "Run one instruction across many files in parallel", args: "<instruction>", arguments: "required", source: "claude" },
   ],
-  models: ["opus", "fable", "sonnet", "haiku"].map((id, index) => ({
+  skills: [
+    { name: "deploy-checklist", description: "部署任何服务之前：要核对的事与回滚的路" },
+    { name: "weekly-report", description: "写本周的进展周报，照团队的格式" },
+  ],
+  models: import.meta.env.DEV ? ["opus", "fable", "sonnet", "haiku"].map((id, index) => ({
     id,
     name: id[0]!.toUpperCase() + id.slice(1),
     description: "",
@@ -58,7 +68,7 @@ export const specimenClaudeOffers: Offers = {
     default: index === 0,
     service_tiers: [],
     default_service_tier: null,
-  })),
+  })) : [],
   model: "opus",
   effort: "medium",
   service_tier: null,

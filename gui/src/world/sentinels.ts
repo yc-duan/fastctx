@@ -11,7 +11,8 @@ export type ModelProtocol = "open_ai" | "anthropic";
 
 export interface ModelSettings {
   protocol: ModelProtocol;
-  /** The whole address, `/chat/completions` or `/messages` included. */
+  /** The provider's base address, or the whole one with
+   *  `/chat/completions` or `/messages`; the home adds what is missing. */
   endpoint: string;
   model: string;
   output_limit?: "max_completion_tokens" | "max_tokens";
@@ -43,17 +44,34 @@ export interface SentinelSettingsView {
 
 export type SettingsReply = { kind: "view"; view: SentinelSettingsView } | { kind: "conflict"; current_version: number | null };
 
+/** What trying the model or the search once from the home found. */
+export interface SentinelTried {
+  ok: boolean;
+  ms: number;
+  /** The reply, how many results, or what went wrong in the provider's words. */
+  said: string;
+}
+
+/** A try of the saved settings: each part that is set up. */
+export interface SentinelTryReport {
+  model: SentinelTried | null;
+  search: SentinelTried | null;
+}
+
 export interface SentinelSeam {
   read(hub: string, account: string): Promise<SentinelSettingsView>;
   write(hub: string, account: string, expected: number | null, settings: SentinelSettings): Promise<SettingsReply>;
   /** Hands a key to the machine the sentinels live on, and to no other. */
   setKey(hub: string, account: string, key: "model" | "search", value: string): Promise<void>;
+  /** Has the machine the sentinels live on try its model and search once. */
+  tryOut(hub: string, account: string): Promise<SentinelTryReport>;
 }
 
 export const sentinels: SentinelSeam = {
   read: (hub, account) => invoke<SentinelSettingsView>("sentinel_settings_read", { hub, account }),
   write: (hub, account, expected, settings) => invoke<SettingsReply>("sentinel_settings_write", { hub, account, change: { expected, settings } }),
   setKey: (hub, account, key, value) => invoke<void>("sentinel_key_set", { hub, account, key, value }),
+  tryOut: (hub, account) => invoke<SentinelTryReport>("sentinel_try", { hub, account }),
 };
 
 export type SentinelPhase = "starting" | "watching" | "satisfied" | "unable" | "withdrawn" | "unavailable";

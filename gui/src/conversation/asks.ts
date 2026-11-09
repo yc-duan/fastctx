@@ -1,7 +1,7 @@
 // What a session waits on the user for: a command or a change to approve, a
-// form or a link from one of its tools. It asks the user in words through
-// `message_user`, which waits for nothing; the hosts' own asking tools are
-// off in the World's sessions. The host asks; the
+// form or a link from one of its tools. It asks the user in words, in its
+// answer, or a colleague through `message_user`; the hosts' own asking tools
+// are off in the World's sessions. The host asks; the
 // World passes the request on as it came (`SessionChange::Request`) and
 // carries the user's answer back in the host's own shape. A card is drawn
 // where the request came, answered in place, and folds into a line once it

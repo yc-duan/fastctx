@@ -6,53 +6,14 @@
    the semibold face for what heads a part; the accent is kept for the marks
    a hand adds and the one act that matters. */
 
-/* The desk in two columns: the conversations, and the side as tall as the
-   window. --sp-open goes from nothing to one as the side opens: the side
-   widens by it from the right, the conversations giving way beside it, and
-   back as it shuts. None of the three is inherited: each is passed down
-   only along the way to what reads it (below), so the side opening, and the
-   sidebar moving the side's width with it, restyle those few elements each
-   frame rather than everything on the desk. */
-@property --sp-open {
-  syntax: "<number>";
-  inherits: false;
-  initial-value: 0;
-}
-
-/* Registered so its width is a length where it is read, as the corner's
-   room that the side takes over. */
-@property --side-width {
-  syntax: "<length>";
-  inherits: false;
-  initial-value: 0px;
-}
-
-@property --side-height {
-  syntax: "<length>";
-  inherits: false;
-  initial-value: 0px;
-}
-
+/* The open class determines ordinary width, height and opacity values.
+   Registered custom properties are not part of the state: older WebKit
+   lacks registration, and newer versions can cache inherited values. */
 .sp-host {
-  --sp-open: 0;
-  transition: --sp-open var(--glide) var(--glide-easing);
+  --side-width: 0px;
+  --side-height: 0px;
 }
 
-.sp-host.sp-shown {
-  --sp-open: 1;
-}
-
-.sp-split,
-.sp-split > .sp-panel,
-.sp-split > .desk-panes,
-.sp-panel > .sp-sheet,
-.desk-panes > .desk-pane:is(.dk-corner, .dk-turning),
-.desk-pane:is(.dk-corner, .dk-turning) > :is(.conversation-page, .dk-fork-page),
-.desk-pane:is(.dk-corner, .dk-turning) > :is(.conversation-page, .dk-fork-page) > .page-head {
-  --sp-open: inherit;
-  --side-width: inherit;
-  --side-height: inherit;
-}
 
 .sp-split {
   position: relative;
@@ -78,7 +39,6 @@ html.framed .sp-host {
 }
 
 .sp-panel {
-  --grip-ink: 0;
   position: relative;
   display: flex;
   justify-content: flex-start;
@@ -87,7 +47,6 @@ html.framed .sp-host {
   color: var(--text);
   font-family: var(--font-reading);
   font-size: var(--size-text);
-  transition: --grip-ink var(--hover) var(--ease);
 }
 
 .sp-panel[hidden] {
@@ -99,9 +58,18 @@ html.framed .sp-host {
    page's ground over what it covers. */
 .sp-split > .sp-panel:not(.sp-over) {
   flex: none;
-  width: calc(var(--side-width) * var(--sp-open));
+  width: 0;
   overflow: hidden;
   background: transparent;
+  transition: width var(--glide) var(--glide-easing), height var(--glide) var(--glide-easing);
+}
+
+.sp-host.sp-shown > .sp-split > .sp-panel:not(.sp-over) {
+  width: var(--side-width);
+}
+
+.sp-resizing > .sp-split > .sp-panel {
+  transition: none;
 }
 
 /* The sheet keeps its width while the side widens, so nothing in it is set
@@ -115,7 +83,12 @@ html.framed .sp-host {
   grid-template-columns: minmax(0, 1fr);
   width: var(--side-width);
   min-height: 0;
-  opacity: var(--sp-open);
+  opacity: 0;
+  transition: opacity var(--glide) var(--glide-easing);
+}
+
+.sp-host.sp-shown > .sp-split > .sp-panel > .sp-sheet {
+  opacity: 1;
 }
 
 /* The margin ruled down the side's left edge from the window's top to its
@@ -137,18 +110,14 @@ html.framed .sp-host {
 }
 
 /* The same stroke in ink over it, coming up while the line is held or
-   pointed at: it can be dragged. The ink is passed down to it alone. */
-.sp-panel > .sp-sheet,
-.sp-sheet > .sp-margin,
-.sp-margin > .sp-margin-ink {
-  --grip-ink: inherit;
-}
+   pointed at to be dragged. */
 
 .sp-margin-ink {
   position: absolute;
   inset: 0;
   color: var(--text-2);
-  opacity: var(--grip-ink);
+  opacity: 0;
+  transition: opacity var(--hover) var(--ease);
 }
 
 /* The line between the side and the conversation, to drag
@@ -169,10 +138,10 @@ html.framed .sp-host {
   outline: none;
 }
 
-.sp-panel:has(> .sp-grip:hover),
-.sp-panel:has(> .sp-grip:focus-visible),
-.sp-resizing .sp-panel {
-  --grip-ink: 1;
+.sp-grip:hover + .sp-sheet .sp-margin-ink,
+.sp-grip:focus + .sp-sheet .sp-margin-ink,
+.sp-resizing .sp-margin-ink {
+  opacity: 1;
 }
 
 .sp-panel.sp-over .sp-grip {
@@ -277,12 +246,16 @@ html.framed .sp-panel.sp-over .sp-line {
   display: none;
 }
 
-/* With the side open beside them, the conversations keep a narrow margin:
-   room is short, and the side's cards stand close. It narrows as the side
-   opens and widens back as it folds, by --sp-open, so nothing in them moves
-   at once where the side begins or ends its way. */
-.sp-split:not([data-dock="bottom"]):has(> .sp-panel:not([hidden]):not(.sp-over)) > .desk-panes {
-  --gutter: calc(var(--gutter-wide) + (var(--space-2) - var(--gutter-wide)) * var(--sp-open));
+/* It has a line of its own, so a phone keeps its name too. */
+@media (max-width: 640px) {
+  .sp-back .page-back span {
+    display: inline;
+  }
+}
+
+/* With the side open beside them, the conversations keep a narrow margin. */
+.sp-host.sp-shown:not(.sp-over) > .sp-split:not([data-dock="bottom"]) > .desk-panes {
+  --gutter: var(--space-2);
 }
 
 .sp-page[hidden] {
@@ -312,8 +285,8 @@ html.framed .sp-panel.sp-over .sp-line {
 /* The goal's card stands only where the side lies over the conversation
    and its bar above the input; beside it, the bar says it. */
 .sp-panel:not(.sp-over) .sh-card.barred,
-.sh-page:has(> .sh-card:not(.barred)) > .sh-none,
-.sp-over .sh-page:has(> .sh-card) > .sh-none {
+.sh-page.sh-has-unbarred > .sh-none,
+.sp-over .sh-page.sh-has-cards > .sh-none {
   display: none;
 }
 
@@ -512,8 +485,7 @@ html.framed .sp-panel.sp-over .sp-line {
 }
 
 .sh-open:hover,
-.sh-ask:hover,
-.sh-doc:hover {
+.sh-ask:hover {
   background: var(--fill-strong);
 }
 
@@ -591,31 +563,6 @@ html.framed .sp-panel.sp-over .sp-line {
   padding-left: var(--space-2);
 }
 
-.sh-doc {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-width: 0;
-  margin: 0 var(--space-1);
-  padding: 2px var(--space-2);
-  border-radius: var(--radius-s);
-  color: var(--text);
-  text-decoration: none;
-  transition: background-color var(--hover) var(--ease);
-}
-
-.sh-doc > .glyph {
-  flex: none;
-  color: var(--text-3);
-}
-
-.sh-doc > span {
-  min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
 /* Under the lines, where they begin. */
 .sh-all {
   align-self: flex-start;
@@ -631,8 +578,7 @@ html.framed .sp-panel.sp-over .sp-line {
 @media (pointer: coarse) {
   .sh-head,
   .sh-open,
-  .sh-ask,
-  .sh-doc {
+  .sh-ask {
     min-height: 44px;
   }
 }
@@ -679,12 +625,38 @@ html.framed .sp-panel.sp-over .sp-line {
   flex: none;
 }
 
-/* A conversation's own history, where it is in no project: its documents
-   one to a line, and the way to write one under them. */
+/* The history a conversation's model works with: its documents one to a
+   line, and the way to write one under them. In a project, under the
+   project's name, which leads there; what the conversation wrote before it
+   joined, under its own title after them. */
 .sp-history {
   display: flex;
   flex-direction: column;
   min-height: 0;
+}
+
+.sp-history-title a {
+  color: inherit;
+  text-decoration: none;
+  transition: color var(--hover) var(--ease);
+}
+
+.sp-history-title a:hover {
+  color: var(--accent-bright);
+}
+
+.sp-history-write + .sp-history-title {
+  margin-top: var(--space-6);
+}
+
+/* Each line says what its document covers in two lines at most; the rest
+   is where the pointer rests. */
+.sp-history .page-link-about {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
 }
 
 .sp-history .page-links {
@@ -729,8 +701,15 @@ html.framed .sp-panel.sp-over .sp-line {
   flex: none;
 }
 
-.sp-toggle[aria-pressed="true"] {
+.sp-toggle[aria-pressed="true"],
+.sp-history-mark[aria-pressed="true"] {
   color: var(--text);
+}
+
+/* The side's own mark for the history is for where it lies over the desk
+   and the corner's line is not drawn. */
+.sp-panel:not(.sp-over) .sp-acts .sp-history-mark {
+  display: none;
 }
 
 /* On the desk the window's buttons stand on the paper's own ground too, so
@@ -739,7 +718,7 @@ html.on-desk .window-controls {
   background: var(--bg);
 }
 
-.sp-host:has(> .sp-split > .sp-panel.sp-over:not([hidden])) .sp-corner-bar {
+.sp-host.sp-over.sp-visible .sp-corner-bar {
   display: none;
 }
 
@@ -784,7 +763,12 @@ html.on-desk .window-controls {
   flex-direction: column;
   justify-content: flex-start;
   width: auto;
-  height: calc(var(--side-height) * var(--sp-open));
+  height: 0;
+}
+
+.sp-host.sp-shown > .sp-split[data-dock="bottom"] > .sp-panel:not(.sp-over) {
+  width: auto;
+  height: var(--side-height);
 }
 
 .sp-split[data-dock="bottom"] > .sp-panel:not(.sp-over) > .sp-sheet {
@@ -875,11 +859,20 @@ html.on-desk .window-controls {
    going down as it shuts. */
 .sp-panel.sp-over {
   position: absolute;
-  inset: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
   z-index: 40;
   padding-bottom: var(--safe-bottom);
-  opacity: var(--sp-open);
-  translate: 0 calc((1 - var(--sp-open)) * 24px);
+  opacity: 0;
+  transform: translateY(24px);
+  transition: opacity var(--glide) var(--glide-easing), transform var(--glide) var(--glide-easing);
+}
+
+.sp-host.sp-shown > .sp-split > .sp-panel.sp-over {
+  opacity: 1;
+  transform: translateY(0);
 }
 
 .sp-panel.sp-over > .sp-sheet {

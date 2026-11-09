@@ -188,6 +188,7 @@ export class NodeQueue {
     try {
       editing.unbind();
       editing.tray?.settle();
+      await editing.tray?.settledRemovals();
       await this.session.finishEditing(editing.document);
       editing.tray?.close();
       if (this.editing === editing) this.editing = null;
@@ -196,6 +197,13 @@ export class NodeQueue {
       editing.unbind = bindComposer(editing.field, editing.document);
       this.failed(String(error instanceof Error ? error.message : error));
     }
+  }
+
+  /** Releases the editor after any requested attachment removals finish. */
+  async leave(): Promise<void> {
+    this.editing?.unbind();
+    await this.editing?.tray?.close();
+    this.editing = null;
   }
 
   private close(): void {
