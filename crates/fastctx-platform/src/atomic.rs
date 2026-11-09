@@ -11,6 +11,9 @@
 //! account's, as the files around it are: a hub's service runs as root over a
 //! hub kept in its user's World, and the user's own commands read its records.
 
+mod complete;
+pub use complete::{publish_existing_new, sync_existing};
+
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};

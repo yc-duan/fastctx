@@ -4,8 +4,23 @@
 //! or relocated database. Only startup and upgrade composition receive a journal.
 
 mod basis;
+mod executor;
+mod files;
+mod gate;
 mod names;
+mod options;
+mod snapshot;
 mod state;
+pub use executor::start;
+pub use gate::MigrationGate;
+pub use options::{Event, Limits, Observer, Options};
+
+impl crate::Database {
+    /// Present only for service databases whose startup installed an upgrade gate.
+    pub fn format_upgrade_gate(&self) -> Option<MigrationGate> {
+        self.0.upgrade.get().cloned()
+    }
+}
 use crate::{Error, Result};
 pub use basis::BackupBasis;
 

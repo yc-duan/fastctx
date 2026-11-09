@@ -76,6 +76,7 @@ struct Inner {
     unsettled: Arc<AtomicBool>,
     /// Shared with the writer thread, which lets it go after its connection.
     _keeper: Option<Arc<keeper::Keeper>>,
+    upgrade: std::sync::OnceLock<format_upgrade::MigrationGate>,
 }
 impl Drop for Inner {
     fn drop(&mut self) {
@@ -264,6 +265,7 @@ impl Database {
             salvaged,
             unsettled,
             _keeper: Some(kept.keeper.clone()),
+            upgrade: std::sync::OnceLock::new(),
         })))
     }
 
@@ -292,6 +294,11 @@ impl Database {
         Self::or_unavailable(path, Self::open_kept(path, schema, &initialize, Some(&guard)))
     }
 
+    /// Keeps startup refusal available to diagnostics without touching the file.
+    pub fn refused(path: &Path, error: Error) -> Self {
+        Self::or_unavailable(path, Err(error))
+    }
+
     fn or_unavailable(path: &Path, opened: Result<Self>) -> Self {
         match opened {
             Ok(database) => database,
@@ -315,6 +322,7 @@ impl Database {
                     salvaged: None,
                     unsettled: Arc::new(AtomicBool::new(false)),
                     _keeper: None,
+                    upgrade: std::sync::OnceLock::new(),
                 }))
             }
         }
