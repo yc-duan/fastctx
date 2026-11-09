@@ -85,6 +85,17 @@ impl SqliteDirectory {
         })
     }
 
+    /// The description this hub last signed for `scope`.
+    pub fn current(&self, scope: ScopeKey) -> FutureResult<'_, Option<ScopeDescriptor>> {
+        Box::pin(async move {
+            self.blocks
+                .database()
+                .read(move |db| described(db, &scope))
+                .await
+                .map_err(|error| sql::error(error, self.blocks.worker().clone()))
+        })
+    }
+
     /// The hub describes only scopes whose identity derives from their subject,
     /// under owners whose identity derives from their legacy account.
     fn check(&self, description: &ScopeDescription) -> Result<(), Error> {
@@ -291,7 +302,6 @@ impl SqliteDirectory {
 
 /// The description this hub last signed for `scope`, read in the caller's
 /// transaction; None for a scope this hub does not describe.
-#[allow(dead_code, reason = "the hub acceptance writer's read of the scope it accepts into")]
 pub(crate) fn described(
     db: &fastctx_storage::rusqlite::Connection,
     scope: &ScopeKey,

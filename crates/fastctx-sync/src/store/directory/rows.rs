@@ -67,7 +67,7 @@ pub(super) fn open_directory(
 ) -> Result<()> {
     let origin = encode(&Described::Opening { owner: owner.clone() })?;
     insert(db, directory, &origin, Revision(1), true, directory)?;
-    feed::open(db, directory, &FeedEpoch::from_bytes(run.draw())).map(drop)
+    feed::open(db, directory, &FeedEpoch::from_bytes(run.draw()?)).map(drop)
 }
 
 /// Records a signed description on its scope's row, opening the row and its
@@ -85,7 +85,7 @@ pub(super) fn describe(
     let enabled = descriptor.lifecycle == crate::catalog::Lifecycle::Live;
     let Some(found) = scopes::current(db, scope)? else {
         insert(db, scope, &origin, descriptor.acl_revision, enabled, directory)?;
-        return feed::open(db, scope, &FeedEpoch::from_bytes(run.draw())).map(drop);
+        return feed::open(db, scope, &FeedEpoch::from_bytes(run.draw()?)).map(drop);
     };
     db.prepare_cached("UPDATE sync_scopes SET origin=?3,directory=?4 WHERE hub=?1 AND scope=?2")?.execute(params![
         scope.hub.to_string(),

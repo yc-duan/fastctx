@@ -94,6 +94,7 @@ fn permits(table: &str) -> bool {
                 | "sync_changes"
                 | "sync_objects"
                 | "sync_hub_control_heads"
+                | "sync_hub_signing_keys"
                 | "sync_epoch_descriptors"
                 | "sync_source_proofs"
                 | "sync_stream_heads"

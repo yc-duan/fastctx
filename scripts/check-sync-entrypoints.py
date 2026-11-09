@@ -59,6 +59,7 @@ CALLERS = {
         "crates/fastctx-sync/src/store/scopes.rs",
         "crates/fastctx-sync/src/blocks/adopted.rs",
         "crates/fastctx-sync/src/blocks/authority_supply.rs",
+        "crates/fastctx-sync/src/blocks/tasks.rs",
         "crates/fastctx-sync/src/store/control.rs",
         "crates/fastctx-sync/src/store/directory/mod.rs",
         "crates/fastctx-sync/tests/sync_drill/directory.rs",

@@ -22,6 +22,7 @@ pub(crate) mod source_supply;
 mod sqlite;
 mod steps;
 pub(crate) mod supply;
+mod tasks;
 mod uploads;
 pub use sqlite::SqliteBlocks;
 pub use steps::ReconcileCursor;

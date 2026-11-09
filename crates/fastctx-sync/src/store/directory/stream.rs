@@ -37,7 +37,7 @@ pub(super) fn id(directory: &ScopeKey) -> StreamId {
 /// Opens `directory`'s stream under a new epoch the hub confirms itself.
 pub(super) fn open(db: &Connection, run: &AuthorityRun, signer: &dyn ProofSigner, directory: &ScopeKey) -> Result<()> {
     let stream = id(directory);
-    let epoch = ProducerEpoch::from_bytes(run.draw());
+    let epoch = ProducerEpoch::from_bytes(run.draw()?);
     let seed = format!("fastctx-sync/directory-epoch/v1\0{}\0{}", stream.as_str(), epoch.as_str());
     let registration = OperationId::from_bytes(Digest::of(seed.as_bytes()).bytes());
     let descriptor = EpochDescriptor {

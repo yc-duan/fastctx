@@ -170,7 +170,7 @@ fn entropy(start: u64) -> fastctx_sync::store::control::Entropy {
     Arc::new(move || {
         let mut bytes = [0; 32];
         bytes[..8].copy_from_slice(&next.fetch_add(1, Ordering::AcqRel).to_be_bytes());
-        bytes
+        Ok(bytes)
     })
 }
 fn count(db: &Database, sql: &str) -> Result<i64> {
