@@ -1,6 +1,11 @@
 //! Path-based record entry points share the node's writer without owning it.
 
+mod format;
 mod upgrade;
+
+pub(crate) fn start_upgrade(database: &Database, log: std::sync::Arc<crate::log::Log>) -> fastctx_storage::Result<()> {
+    format::start(database, log)
+}
 
 use fastctx_storage::{Database, WeakDatabase};
 use fastctx_types::layout::{ConversationDir, WorldDir};
@@ -135,10 +140,15 @@ INSERT INTO book_deeds_began(why) SELECT 'Fastctx 1.0.1-beta.13 and earlier kept
 WHERE NOT EXISTS(SELECT 1 FROM book_deeds_began);
 ";
 
-/// Opens the node schema on a blocking thread before registering its writer.
+/// Opens the node schema on a blocking thread. Call start_upgrade before
+/// registering or publishing the writer; a diagnostic reopen only drops it.
 pub(crate) fn open(world: &WorldDir) -> Database {
     let path = world.path().join("node.sqlite3");
-    let guard = crate::asset_preservation::guard;
+    let observed = match format::observe(world, &path) {
+        Ok(observed) => observed,
+        Err(error) => return Database::refused(&path, error),
+    };
+    let guard = format::guard;
     fastctx_storage::Database::open_guarded_or_unavailable(&path, crate::composer::SCHEMA, guard, |db| {
         upgrade::payloads(db)?;
         upgrade::records(db)?;
@@ -181,6 +191,7 @@ pub(crate) fn open(world: &WorldDir) -> Database {
         )?;
         fastctx_sync::migration::initialize(db)?;
         crate::conversation_store::schema::initialize(db)?;
-        crate::conversation_store::transfer::prepare(db, world)
+        crate::conversation_store::transfer::prepare(db, world)?;
+        format::initialize(db, &observed)
     })
 }

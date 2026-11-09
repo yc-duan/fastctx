@@ -754,6 +754,7 @@ pub async fn run_prepared(
 {report}"
                 ));
             }
+            record_database::start_upgrade(&database, log.clone()).context("pinning the World upgrade snapshot")?;
             let record_migration =
                 record_database::register(&world, &database).context("opening the node record database")?;
             record_migration.report_to(log.clone());

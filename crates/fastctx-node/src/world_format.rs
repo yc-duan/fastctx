@@ -19,6 +19,9 @@ pub(crate) const CURRENT: u32 = 4;
 struct Format {
     format: u32,
     written_by: String,
+    /// Survives death between the file fence and the SQL upgrade transaction.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    previous_format: Option<u32>,
 }
 
 fn path(world: &WorldDir) -> std::path::PathBuf {
@@ -27,7 +30,14 @@ fn path(world: &WorldDir) -> std::path::PathBuf {
 
 fn read(world: &WorldDir) -> io::Result<Option<Format>> {
     match fastctx_platform::disk::read(path(world)) {
-        Ok(bytes) => Ok(Some(serde_json::from_slice(&bytes)?)),
+        Ok(bytes) => {
+            let found: Format = serde_json::from_slice(&bytes)?;
+            fastctx_storage::format_upgrade::validate_written_by(&found.written_by).map_err(io::Error::other)?;
+            if found.format == 0 || found.previous_format.is_some_and(|old| old == 0 || old >= found.format) {
+                return Err(io::Error::other("invalid World format provenance"));
+            }
+            Ok(Some(found))
+        }
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(error),
     }
@@ -52,9 +62,18 @@ pub(crate) fn check(world: &WorldDir) -> io::Result<()> {
 pub(crate) fn claim(world: &WorldDir) -> io::Result<()> {
     check(world)?;
     let version = env!("CARGO_PKG_VERSION");
-    if read(world)?.is_some_and(|found| found.format == CURRENT && found.written_by == version) {
+    let found = read(world)?;
+    if found.as_ref().is_some_and(|found| found.format == CURRENT && found.written_by == version) {
         return Ok(());
     }
-    let bytes = serde_json::to_vec_pretty(&Format { format: CURRENT, written_by: version.to_string() })?;
+    let previous_format =
+        found.and_then(|found| if found.format < CURRENT { Some(found.format) } else { found.previous_format });
+    let bytes =
+        serde_json::to_vec_pretty(&Format { format: CURRENT, written_by: version.to_string(), previous_format })?;
     fastctx_platform::publish(&path(world), &bytes, fastctx_platform::Permissions::Private)
+}
+
+/// The file fence is ahead of SQL; an interrupted opening retains its old format.
+pub(crate) fn previous(world: &WorldDir) -> io::Result<Option<u32>> {
+    Ok(read(world)?.and_then(|found| found.previous_format))
 }
