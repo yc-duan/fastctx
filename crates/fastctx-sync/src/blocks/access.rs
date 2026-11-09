@@ -55,7 +55,7 @@ pub(super) fn block_ref(db: &Connection, custody: &Custody, id: &crate::manifest
     let period = serde_json::to_vec(&custody.holding).map_err(|error| sql::invalid(error.to_string()))?;
     let replica = serde_json::to_vec(&HoldingUse::Replica).map_err(|error| sql::invalid(error.to_string()))?;
     let length = db.query_row(
-        "SELECT decoded_bytes FROM sync_asset_access WHERE hub=?1 AND scope=?2 AND object=?3 AND kind=?4 AND hash=?5 AND root_kind='block' UNION ALL SELECT p.decoded_bytes FROM sync_asset_pins p JOIN sync_asset_uploads u USING(hub,scope,operation,object) WHERE p.hub=?1 AND p.scope=?2 AND p.object=?3 AND p.kind=?4 AND p.hash=?5 AND p.root_kind='block' AND p.phase='ready' AND p.holding=?6 AND u.purpose=?7 AND u.cancelled=0 LIMIT 1",
+        "SELECT decoded_bytes FROM sync_asset_access WHERE hub=?1 AND scope=?2 AND object=?3 AND kind=?4 AND hash=?5 AND root_kind='block' UNION ALL SELECT p.decoded_bytes FROM sync_asset_pins p JOIN sync_asset_uploads u USING(hub,scope,operation,object) WHERE p.hub=?1 AND p.scope=?2 AND p.object=?3 AND p.kind=?4 AND p.hash=?5 AND p.root_kind='block' AND p.phase='ready' AND p.holding=?6 AND u.purpose=?7 AND u.cancelled=0 AND u.consumed=0 AND u.source IS NULL LIMIT 1",
         params![id.domain.hub.to_string(), id.domain.scope.as_str(), custody.object.object.as_str(), custody.kind.registration().id, id.digest.as_str(), period,replica], |row| row.get::<_,u32>(0)
     ).optional()?.ok_or_else(|| sql::invalid("no block reference is authorized for this object and kind"))?;
     let reference = ContentRef::Single { block: id.clone(), decoded_bytes: length };
@@ -66,16 +66,10 @@ pub(super) fn block_ref(db: &Connection, custody: &Custody, id: &crate::manifest
 /// Public reads may use Replica uploads, but source uploads remain private until
 /// the writer publishes an asset grant. A root-use lease never grants a read.
 pub(super) fn require_read(db: &Connection, custody: &Custody, root: &ContentRef) -> Result<()> {
-    require_node(db, custody, root, true)
+    require_node(db, custody, root)
 }
 
-/// Checks knowledge of this node, not the provenance of its dependency closure.
-/// Private supply is not an interactive body-read authority.
-pub(super) fn require_known_root(db: &Connection, custody: &Custody, root: &ContentRef) -> Result<()> {
-    require_node(db, custody, root, false)
-}
-
-fn require_node(db: &Connection, custody: &Custody, root: &ContentRef, public_read: bool) -> Result<()> {
+fn require_node(db: &Connection, custody: &Custody, root: &ContentRef) -> Result<()> {
     let scope = &custody.object.scope;
     let deleted = db
         .query_row(
@@ -95,8 +89,8 @@ fn require_node(db: &Connection, custody: &Custody, root: &ContentRef, public_re
     let (form, length) = pins::shape(root);
     let replica = serde_json::to_vec(&HoldingUse::Replica).map_err(|error| sql::invalid(error.to_string()))?;
     let supplied:bool=db.query_row(
-        "SELECT EXISTS(SELECT 1 FROM sync_asset_pins p JOIN sync_asset_uploads u USING(hub,scope,operation,object) WHERE p.hub=?1 AND p.scope=?2 AND p.object=?3 AND p.kind=?4 AND p.hash=?5 AND p.root_kind=?6 AND p.decoded_bytes IS ?7 AND p.holding=?8 AND p.phase='ready' AND u.cancelled=0 AND (?9=0 OR u.purpose=?10))",
-        params![scope.hub.to_string(),scope.scope.as_str(),custody.object.object.as_str(),custody.kind.registration().id,root.id().digest.as_str(),form,length,holding,public_read,replica],|row|row.get(0)
+        "SELECT EXISTS(SELECT 1 FROM sync_asset_pins p JOIN sync_asset_uploads u USING(hub,scope,operation,object) WHERE p.hub=?1 AND p.scope=?2 AND p.object=?3 AND p.kind=?4 AND p.hash=?5 AND p.root_kind=?6 AND p.decoded_bytes IS ?7 AND p.holding=?8 AND p.phase='ready' AND u.cancelled=0 AND u.consumed=0 AND u.source IS NULL AND u.purpose=?9)",
+        params![scope.hub.to_string(),scope.scope.as_str(),custody.object.object.as_str(),custody.kind.registration().id,root.id().digest.as_str(),form,length,holding,replica],|row|row.get(0)
     )?;
     if root.id().domain == *scope && supplied {
         Ok(())

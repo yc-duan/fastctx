@@ -17,6 +17,9 @@ pub(crate) enum Owner<'a> {
     Source(&'a StepKey),
 }
 
+mod supply;
+pub(super) use supply::{ActiveSupply, active_supply, advance_supply};
+
 struct Saved {
     kind: String,
     holding: Vec<u8>,
@@ -107,6 +110,19 @@ fn source_step_open(
     operation: &OperationId,
     custody: &Custody,
 ) -> Result<()> {
+    if source_step_active(db, hub, step, operation, custody)? {
+        Ok(())
+    } else {
+        Err(sql::invalid("the source step or its bound destination is no longer active"))
+    }
+}
+fn source_step_active(
+    db: &Connection,
+    hub: &HubId,
+    step: &StepKey,
+    operation: &OperationId,
+    custody: &Custody,
+) -> Result<bool> {
     let revision = step.revision.0.to_be_bytes();
     let active: bool = db
         .prepare_cached("SELECT EXISTS(SELECT 1 FROM sync_source_steps WHERE hub=?1 AND scope=?2 AND source=?3 AND step=?4 AND operation=?5 AND state='active')")?
@@ -115,7 +131,7 @@ fn source_step_open(
             |row| row.get(0),
         )?;
     if !active {
-        return Err(sql::invalid("the source step is no longer active"));
+        return Ok(false);
     }
     let bound: bool = db
         .prepare_cached("SELECT EXISTS(SELECT 1 FROM sync_source_step_targets WHERE hub=?1 AND scope=?2 AND source=?3 AND step=?4 AND target_scope=?5 AND object=?6 AND kind=?7 AND active=1)")?
@@ -131,10 +147,7 @@ fn source_step_open(
             ],
             |row| row.get(0),
         )?;
-    if !bound {
-        return Err(sql::invalid("the upload names a destination its step did not bind"));
-    }
-    Ok(())
+    Ok(bound)
 }
 
 /// Records a cancelled intent before any pin exists, so a late put cannot stage.
@@ -183,13 +196,32 @@ pub(super) fn cancel(
         "UPDATE sync_asset_uploads SET cancelled=1 WHERE hub=?1 AND scope=?2 AND operation=?3 AND object=?4",
         params![scope.hub.to_string(), scope.scope.as_str(), operation.as_str(), custody.object.object.as_str()],
     )?;
-    Ok(())
+    super::supply::cancelled_upload(db, scope, operation, &custody.object.object)
 }
 
 /// Cancels every open intent of a step; its pins are released separately in pages.
 pub(crate) fn cancel_step(db: &Connection, hub: &HubId, step: &StepKey) -> Result<()> {
     db.prepare_cached("UPDATE sync_asset_uploads SET cancelled=1 WHERE hub=?1 AND source_scope=?2 AND source=?3 AND source_step=?4 AND consumed=0")?
         .execute(params![hub.to_string(), step.scope.scope.as_str(), step.source.as_str(), step.revision.0.to_be_bytes().as_slice()])?;
+    let mut query=db.prepare_cached("SELECT scope,operation,object FROM sync_asset_uploads WHERE hub=?1 AND source_scope=?2 AND source=?3 AND source_step=?4 AND cancelled=1 LIMIT 256")?;
+    let scopes = query
+        .query_map(
+            params![
+                hub.to_string(),
+                step.scope.scope.as_str(),
+                step.source.as_str(),
+                step.revision.0.to_be_bytes().as_slice()
+            ],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?)),
+        )?
+        .collect::<fastctx_storage::rusqlite::Result<Vec<_>>>()?;
+    for (scope, operation, object) in scopes {
+        let scope =
+            ScopeKey { hub: hub.clone(), scope: crate::identity::ScopeId::try_from(scope).map_err(sql::invalid)? };
+        let operation = OperationId::try_from(operation).map_err(sql::invalid)?;
+        let object = crate::identity::ObjectId::try_from(object).map_err(sql::invalid)?;
+        super::supply::cancelled_upload(db, &scope, &operation, &object)?;
+    }
     Ok(())
 }
 
@@ -224,7 +256,10 @@ fn retire(
     hash: &str,
     form: &str,
 ) -> Result<()> {
-    db.execute("UPDATE sync_asset_pins SET phase='released' WHERE hub=?1 AND scope=?2 AND operation=?3 AND object=?4 AND hash=?5 AND root_kind=?6", params![hub, scope, operation, object, hash, form])?;
+    let changed = db.execute("UPDATE sync_asset_pins SET phase='released' WHERE hub=?1 AND scope=?2 AND operation=?3 AND object=?4 AND hash=?5 AND root_kind=?6 AND phase!='released'", params![hub, scope, operation, object, hash, form])?;
+    if changed != 0 {
+        advance_supply(db, hub, scope, operation, object)?;
+    }
     db.execute("INSERT INTO sync_asset_gc(hub,scope,hash,root_kind,generation,next_due) VALUES(?1,?2,?3,?4,?5,0) ON CONFLICT(hub,scope,hash,root_kind) DO NOTHING", params![hub, scope, hash, form, 1_u64.to_be_bytes().as_slice()])?;
     Ok(())
 }

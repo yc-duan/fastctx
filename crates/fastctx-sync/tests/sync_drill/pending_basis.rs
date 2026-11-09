@@ -18,6 +18,7 @@ pub(super) async fn run(root: &Path) -> Result<()> {
     let db = open_with(&dir.join("replica.sqlite3"), |db| {
         db.execute("INSERT INTO sync_objects(hub,scope,object,kind,schema,authority,evidence,authority_epoch,revision,current_authority_epoch,current_version,content,history,state,completeness) VALUES(?1,?2,?3,'conversation.plan',1,?4,?5,?6,?7,?6,?7,?8,NULL,'live',?9)",params![scope().hub.to_string(),scope().scope.as_str(),a.object.object.as_str(),serde_json::to_vec(&Authority::Hub).unwrap(),serde_json::to_vec(&HeadEvidence::Accepted{proof:Digest::from_bytes([0;32])}).unwrap(),version.authority_epoch.bytes().as_slice(),version.revision.0.to_be_bytes().as_slice(),serde_json::to_vec(&base).unwrap(),serde_json::to_vec(&Completeness::MetadataOnly).unwrap()])?;
         db.execute("INSERT INTO sync_object_versions(hub,scope,object,authority_epoch,revision,actor,operation,content,parents,state) VALUES(?1,?2,?3,?4,?5,'fixture',?6,?7,X'5b5d','live')",params![scope().hub.to_string(),scope().scope.as_str(),a.object.object.as_str(),version.authority_epoch.bytes().as_slice(),version.revision.0.to_be_bytes().as_slice(),operation(60).as_str(),serde_json::to_vec(&base).unwrap()])?;
+        db.execute("INSERT INTO sync_asset_access(hub,scope,object,kind,hash,root_kind,decoded_bytes,expanded) VALUES(?1,?2,?3,'conversation.plan',?4,'block',?5,1)",params![scope().hub.to_string(),scope().scope.as_str(),a.object.object.as_str(),base.id().digest.as_str(),original.representation.content.decoded_bytes])?;
         Ok(())
     })?;
     let gate = policy(false);

@@ -63,6 +63,16 @@ impl Stored {
 
 impl SqliteSources {
     pub(super) async fn commit(&self, operation: IngestOperation) -> Result<IngestReceipt, Error> {
+        let previous = self
+            .blocks
+            .database()
+            .read_now(|db| source_commit::step_state(db, operation.step()))
+            .map_err(|error| sql::error(error, operation.operation().clone()))?;
+        match previous {
+            StepState::Consumed(receipt) => return Ok(*receipt),
+            StepState::Cancelled => return Err(Error::Invalid("the source step was cancelled".into())),
+            StepState::Active => {}
+        }
         let mut prepared = Vec::with_capacity(operation.batches().len());
         let mut permits = Vec::new();
         for batch in operation.batches() {
@@ -85,16 +95,17 @@ impl SqliteSources {
             }
             prepared.push(Prepared { signed, payloads, authorizer });
         }
+        let supplies = crate::blocks::source_supply::prepare(&self.blocks, &operation).await?;
         let holder = self.blocks.holder().clone();
         let policy = self.blocks.policy().clone();
         let id = operation.operation().clone();
-        let now = now();
         let outcome = self
             .blocks
             .database()
             .write(fastctx_types::sync::PAGE_BYTES as usize * 2, move |db| {
                 let _boundary = boundary::enter_typed_write(Role::Source);
-                write(db, &holder, policy.as_ref(), &operation, &prepared, now)
+                let content = source_commit::ContentCommit::new(db, &holder, policy.as_ref(), &supplies, now())?;
+                write(db, &holder, policy.as_ref(), &operation, &prepared, &content)
             })
             .await
             .map_err(|error| sql::error(error, id))?;
@@ -114,7 +125,7 @@ fn write(
     policy: &dyn AccessPolicy,
     operation: &IngestOperation,
     prepared: &[Prepared],
-    now: i64,
+    content: &source_commit::ContentCommit<'_>,
 ) -> SqlResult<Outcome> {
     let step = operation.step();
     match source_commit::step_state(db, step)? {
@@ -160,7 +171,7 @@ fn write(
         }
     }
     let mut leases = Vec::new();
-    advance(db, holder, step, stored, operation.next(), now, &mut leases)?;
+    advance(db, holder, step, stored, operation.next(), content, &mut leases)?;
     let local = local_head::advance(db)?;
     let mut sources = Vec::with_capacity(prepared.len());
     for (batch, inputs) in operation.batches().iter().zip(prepared) {
@@ -168,10 +179,10 @@ fn write(
         let status = match &inputs.signed {
             None => IngestStatus::CheckpointOnly,
             Some((facts, signed)) => {
-                IngestStatus::Applied { progress: streams::append(db, step, target, facts, signed, local)? }
+                IngestStatus::Applied { progress: streams::append(db, content, target, facts, signed, local)? }
             }
         };
-        effects::apply(db, holder, step, target, &batch.effects, local, now, &mut leases)?;
+        effects::apply(db, content, step, target, &batch.effects, local, &mut leases)?;
         sources.push(receipt(target, operation.next(), status));
     }
     let receipt = IngestReceipt { operation: step.operation().clone(), local, sources, leases };
@@ -225,7 +236,7 @@ fn advance(
     step: &SourceStep,
     stored: Option<Stored>,
     next: &SourceCheckpoint,
-    now: i64,
+    content: &source_commit::ContentCommit<'_>,
     leases: &mut Vec<RootLease>,
 ) -> SqlResult<()> {
     let primary = step.primary();
@@ -234,7 +245,7 @@ fn advance(
         (None, _) => None,
         (Some(root), Some((held, lease))) if held == root => Some(lease.clone()),
         (Some(root), _) => {
-            let lease = source_commit::hold_checkpoint(db, step, root, now)?;
+            let lease = content.hold_checkpoint(step, root)?;
             leases.push(lease.clone());
             Some(lease)
         }

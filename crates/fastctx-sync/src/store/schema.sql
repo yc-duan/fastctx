@@ -54,6 +54,7 @@ CREATE TABLE sync_object_versions (
     actor TEXT NOT NULL, operation TEXT NOT NULL, content BLOB, parents BLOB NOT NULL,
     state TEXT NOT NULL, PRIMARY KEY(hub,scope,object,authority_epoch,revision)
 ) WITHOUT ROWID;
+CREATE INDEX sync_object_version_operation ON sync_object_versions(hub,scope,object,operation,authority_epoch,revision);
 CREATE TABLE sync_scope_heads (
     hub TEXT NOT NULL, scope TEXT NOT NULL, epoch TEXT NOT NULL,
     sequence BLOB NOT NULL CHECK(length(sequence)=8), snapshot TEXT,
@@ -297,6 +298,7 @@ CREATE TABLE sync_asset_uploads (
     cancelled INTEGER NOT NULL CHECK(cancelled IN (0,1)),
     source_scope TEXT, source TEXT, source_step BLOB CHECK(source_step IS NULL OR length(source_step)=8),
     consumed INTEGER NOT NULL DEFAULT 0 CHECK(consumed IN (0,1)),
+    supply_revision BLOB NOT NULL DEFAULT X'0000000000000000' CHECK(length(supply_revision)=8),
     CHECK((source_scope IS NULL) = (source IS NULL) AND (source IS NULL) = (source_step IS NULL)),
     CHECK(source IS NOT NULL OR consumed=0),
     PRIMARY KEY(hub,scope,operation,object)
@@ -356,6 +358,8 @@ CREATE TABLE sync_root_leases (
     operation TEXT NOT NULL, generation BLOB NOT NULL CHECK(length(generation)=8),
     usage BLOB NOT NULL, holding BLOB NOT NULL, purpose BLOB NOT NULL, expires INTEGER,
     released INTEGER NOT NULL CHECK(released IN (0,1)),
+    supply_id TEXT, supply_generation BLOB CHECK(supply_generation IS NULL OR length(supply_generation)=8),
+    CHECK((supply_id IS NULL) = (supply_generation IS NULL)),
     CHECK((root_kind='block' AND decoded_bytes IS NOT NULL AND decoded_bytes BETWEEN 0 AND 1048576)
        OR (root_kind='manifest' AND decoded_bytes IS NULL)),
     PRIMARY KEY(hub,scope,lease)
@@ -364,6 +368,7 @@ CREATE INDEX sync_root_leases_hash ON sync_root_leases(hub,scope,hash,root_kind)
 CREATE INDEX sync_root_leases_scope ON sync_root_leases(hub,scope,lease) WHERE released=0;
 CREATE INDEX sync_root_leases_object ON sync_root_leases(hub,scope,object,kind,hash,root_kind,decoded_bytes) WHERE released=0;
 CREATE INDEX sync_root_leases_due ON sync_root_leases(expires,hub,scope,lease) WHERE released=0 AND expires IS NOT NULL;
+CREATE INDEX sync_root_leases_supply ON sync_root_leases(hub,scope,supply_id,supply_generation,released,lease) WHERE supply_id IS NOT NULL;
 CREATE TABLE sync_asset_transfers (
     hub TEXT NOT NULL, scope TEXT NOT NULL, hash TEXT NOT NULL, peer TEXT NOT NULL,
     publication_epoch BLOB NOT NULL CHECK(length(publication_epoch)=8),
@@ -393,6 +398,7 @@ CREATE TABLE sync_source_proofs (
     UNIQUE(hub,scope,stream,epoch,operation)
 ) WITHOUT ROWID;
 CREATE INDEX sync_source_waiting_epoch ON sync_source_proofs(hub,scope,stream,epoch,state);
+CREATE INDEX sync_source_proof_operation ON sync_source_proofs(hub,scope,operation,stream,epoch);
 CREATE TABLE sync_epoch_descriptors (
     hub TEXT NOT NULL, scope TEXT NOT NULL, stream TEXT NOT NULL, epoch TEXT NOT NULL,
     producer BLOB NOT NULL, kind TEXT NOT NULL, schema INTEGER NOT NULL,
@@ -453,3 +459,26 @@ CREATE TABLE sync_timeline_heads (
 ) WITHOUT ROWID;
 CREATE INDEX sync_timeline_heads_root ON sync_timeline_heads(hub,scope,root) WHERE root IS NOT NULL;
 CREATE INDEX sync_timeline_heads_local ON sync_timeline_heads(hub,scope,local);
+CREATE TABLE sync_supply_checks (
+    hub TEXT NOT NULL, scope TEXT NOT NULL, id TEXT NOT NULL,
+    generation BLOB NOT NULL CHECK(length(generation)=8),
+    object TEXT NOT NULL, kind TEXT NOT NULL, operation TEXT NOT NULL,
+    request BLOB NOT NULL CHECK(length(request)<=262144),
+    supply_revision BLOB NOT NULL CHECK(length(supply_revision)=8),
+    phase TEXT NOT NULL CHECK(phase IN ('walking','waiting','ready','paused','rejected','cancelled','consumed')),
+    progress BLOB NOT NULL CHECK(length(progress)<=4096),
+    next_work BLOB NOT NULL CHECK(length(next_work)=8),
+    cleanup INTEGER NOT NULL CHECK(cleanup IN (0,1)), cancel_reason BLOB,
+    PRIMARY KEY(hub,scope,id,generation)
+) WITHOUT ROWID;
+CREATE INDEX sync_supply_active ON sync_supply_checks(hub,scope,id,generation) WHERE phase IN ('walking','waiting','ready');
+CREATE INDEX sync_supply_object ON sync_supply_checks(hub,scope,object,id,generation) WHERE phase IN ('walking','waiting','ready');
+CREATE INDEX sync_supply_operation ON sync_supply_checks(hub,scope,operation,id,generation) WHERE phase IN ('walking','waiting','ready');
+CREATE INDEX sync_supply_cleanup ON sync_supply_checks(cleanup,hub,scope,id,generation);
+CREATE TABLE sync_supply_work (
+    hub TEXT NOT NULL, scope TEXT NOT NULL, id TEXT NOT NULL,
+    generation BLOB NOT NULL CHECK(length(generation)=8),
+    position BLOB NOT NULL CHECK(length(position)=8),
+    body BLOB NOT NULL CHECK(length(body)<=262144),
+    PRIMARY KEY(hub,scope,id,generation,position)
+) WITHOUT ROWID;

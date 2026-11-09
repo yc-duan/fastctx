@@ -187,6 +187,13 @@ pub(super) fn release(db: &Connection, custody: &Custody, pin: &Pin) -> Result<(
     }
     phase(db, pin, "released")?;
     let scope = &pin.object.scope;
+    super::uploads::advance_supply(
+        db,
+        &scope.hub.to_string(),
+        scope.scope.as_str(),
+        pin.operation.as_str(),
+        pin.object.object.as_str(),
+    )?;
     db.execute(
         "INSERT INTO sync_asset_gc(hub,scope,hash,root_kind,generation,next_due) VALUES(?1,?2,?3,?4,?5,0) ON CONFLICT(hub,scope,hash,root_kind) DO NOTHING",
         params![scope.hub.to_string(),scope.scope.as_str(),pin.root.id().digest.as_str(),shape(&pin.root).0,1_u64.to_be_bytes().as_slice()]

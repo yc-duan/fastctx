@@ -41,6 +41,8 @@ pub const TABLES: &[&str] = &[
     "sync_source_steps",
     "sync_source_step_targets",
     "sync_root_leases",
+    "sync_supply_checks",
+    "sync_supply_work",
     "sync_asset_transfers",
     "sync_asset_gc",
     "sync_source_proofs",

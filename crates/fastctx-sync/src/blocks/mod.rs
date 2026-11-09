@@ -10,13 +10,14 @@ pub mod manifest;
 pub(crate) mod metadata;
 mod pages;
 mod pins;
-mod retention;
+
 mod root_holds;
 mod rows;
-pub(crate) use retention::retain_supplied;
 pub(crate) mod source_commit;
+pub(crate) mod source_supply;
 mod sqlite;
 mod steps;
+pub(crate) mod supply;
 mod uploads;
 pub use sqlite::SqliteBlocks;
 pub use steps::ReconcileCursor;

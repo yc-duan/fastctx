@@ -34,6 +34,8 @@ mod root_store;
 mod source_state;
 #[path = "step_writer.rs"]
 mod step_writer;
+#[path = "supply/runner.rs"]
+mod supply_work;
 #[path = "work.rs"]
 mod work;
 

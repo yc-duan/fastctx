@@ -8,6 +8,7 @@ mod prepare;
 pub(crate) use prepare::fingerprint as request_fingerprint;
 mod rows;
 mod semantics;
+mod supply;
 
 use super::{
     Error,

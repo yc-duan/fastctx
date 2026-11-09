@@ -2,7 +2,7 @@
 //! marks stale at this commit's local sequence, and its non-checkpoint root uses.
 use crate::{
     blocks::source_commit,
-    cursor::{Holder, LocalSequence, Revision},
+    cursor::{LocalSequence, Revision},
     scheduler,
     store::{
         ingest::SourceTarget,
@@ -49,15 +49,14 @@ pub(super) fn check(db: &Connection, target: &SourceTarget, effects: &SourceEffe
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(super) fn apply(
     db: &Connection,
-    holder: &Holder,
+    content: &source_commit::ContentCommit<'_>,
     step: &SourceStep,
     target: &SourceTarget,
     effects: &SourceEffects,
     local: LocalSequence,
-    now: i64,
+
     leases: &mut Vec<RootLease>,
 ) -> Result<()> {
     let scope = &target.custody.object.scope;
@@ -97,7 +96,7 @@ pub(super) fn apply(
         scheduler::projection_changed(db, dirty.kind.registration().id, &dirty.object, local)?;
     }
     for change in effects.roots() {
-        if let Some(lease) = source_commit::change_root(db, holder, step, change, now)? {
+        if let Some(lease) = content.change_root(step, change)? {
             leases.push(lease);
         }
     }

@@ -16,6 +16,7 @@ pub(crate) enum Role {
     Pending,
     Source,
     Projection,
+    Supply,
 }
 thread_local! { static ACTIVE: Cell<Option<Role>> = const { Cell::new(None) }; }
 pub(crate) struct Boundary(Option<Role>, PhantomData<Rc<()>>);
@@ -36,6 +37,7 @@ mod references;
 struct Rules {
     references: references::References,
     pending: pending_audit::PendingAudit,
+    supply: crate::blocks::supply::audit::SupplyAudit,
 }
 fn permits(table: &str) -> bool {
     if !table.starts_with("sync_") || table == "sync_legacy_pins" {
@@ -57,6 +59,16 @@ fn permits(table: &str) -> bool {
                 | "sync_tasks"
         ),
         Some(Role::Roots) => matches!(table, "sync_root_leases" | "sync_asset_gc"),
+        Some(Role::Supply) => matches!(
+            table,
+            "sync_supply_checks"
+                | "sync_supply_work"
+                | "sync_root_leases"
+                | "sync_asset_gc"
+                | "sync_asset_access"
+                | "sync_asset_uploads"
+                | "sync_tasks"
+        ),
         Some(Role::FormatUpgrade) => table == "sync_format_upgrades",
         Some(Role::Source) => matches!(
             table,
@@ -121,6 +133,14 @@ impl Guard for Rules {
         {
             return Err(super::sql::invalid("a source commit cannot change another scheduler handler"));
         }
+        if change.table() == "sync_tasks" && matches!(ACTIVE.get(), Some(Role::Supply)) {
+            let allowed = change.action() != Action::Delete
+                && (change.after(0)? == fastctx_storage::rusqlite::types::ValueRef::Text(b"sync.manifest")
+                    || change.after(0)? == fastctx_storage::rusqlite::types::ValueRef::Text(b"sync.gc"));
+            if !allowed {
+                return Err(super::sql::invalid("supply verification cannot change another scheduler handler"));
+            }
+        }
         if change.table() == "sync_local_head"
             && matches!(ACTIVE.get(), Some(Role::Scheduling))
             && (change.action() != Action::Update
@@ -131,14 +151,16 @@ impl Guard for Rules {
         }
         if permits(change.table()) {
             self.references.changed(change)?;
-            self.pending.changed(change)
+            self.pending.changed(change)?;
+            self.supply.changed(change)
         } else {
             Err(super::sql::invalid("a sync table write bypassed its typed entry point"))
         }
     }
     fn validate_operation(&mut self, db: &Connection) -> Result<()> {
         self.references.validate(db)?;
-        self.pending.validate(db)
+        self.pending.validate(db)?;
+        self.supply.validate(db)
     }
     fn write_policy(&self) -> Option<Arc<dyn WritePolicy>> {
         Some(Arc::new(Rules::default()))
@@ -146,6 +168,7 @@ impl Guard for Rules {
     fn ended(&mut self, _: bool) {
         self.references.clear();
         self.pending.clear();
+        self.supply.clear();
     }
     fn committed(&mut self, _: bool) {}
 }

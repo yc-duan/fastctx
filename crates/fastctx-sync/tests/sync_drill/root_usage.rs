@@ -14,6 +14,7 @@ fn request(custody: Custody, root: ContentRef, id: u8) -> AcquireRoot {
         custody,
         root,
         usage: RootUse::Checkpoint { source: SourceId::from_bytes([31; 32]) },
+        bases: Vec::new(),
         expires_at_millis: None,
     }
 }
@@ -68,8 +69,10 @@ pub(super) async fn run(root: &Path) -> Result<()> {
     );
     let mut other_source = request(owner.clone(), first.root.clone(), 39);
     other_source.usage = RootUse::Checkpoint { source: SourceId::from_bytes([39; 32]) };
+    other_source.bases.push(fastctx_sync::store::roots::SupplyBasis::Held { lease: Box::new(first.clone()) });
     assert!(blocks.acquire_root(operation(39), other_source).await.is_err());
-    let second_request = request(owner.clone(), first.root.clone(), 32);
+    let mut second_request = request(owner.clone(), first.root.clone(), 32);
+    second_request.bases.push(fastctx_sync::store::roots::SupplyBasis::Held { lease: Box::new(first.clone()) });
     let second = held(blocks.acquire_root(operation(32), second_request).await?)?;
     let mut other = acquire.clone();
     other.lease = RootLeaseId::from_bytes([33; 32]);
@@ -159,22 +162,32 @@ async fn advanced_holding(root: &Path) -> Result<()> {
     drop(db);
     super::super::scheduler::closed(&path).await?;
     let mut current = old.clone();
-    current.holding.acl_revision = Revision(2);
     current.holding.publication_epoch = Revision(2);
-    current.context.observed_acl = Revision(2);
     let period = serde_json::to_vec(&current.holding)?;
     let db = open_with(&path, |db| {
-        db.execute("UPDATE sync_scopes SET acl_revision=?1,publication_epoch=?1", [2_u64.to_be_bytes().as_slice()])?;
-        db.execute("UPDATE sync_root_leases SET holding=?1", [&period])?;
+        db.execute("UPDATE sync_scopes SET publication_epoch=?1", [2_u64.to_be_bytes().as_slice()])?;
         Ok(())
     })?;
     let blocks = store(&db, &dir)?;
     assert!(blocks.acquire_root(operation(50), root_request).await.is_err());
+    let mut next = request(current.clone(), lease.root.clone(), 51);
+    next.bases.push(fastctx_sync::store::roots::SupplyBasis::Held { lease: Box::new(lease.clone()) });
+    assert!(matches!(blocks.acquire_root(operation(51), next.clone()).await, Err(fastctx_sync::store::Error::Busy)));
+    drop(blocks);
+    drop(db);
+    super::super::scheduler::closed(&path).await?;
+    let db = open_with(&path, |db| {
+        db.execute("UPDATE sync_root_leases SET holding=?1 WHERE supply_id IS NULL", [&period])?;
+        Ok(())
+    })?;
+    let blocks = store(&db, &dir)?;
+    let rebound = held(blocks.acquire_root(operation(51), next).await?)?;
     assert_eq!(blocks.cancel_upload(current.clone(), operation(50), 8).await?, 1);
     assert_eq!(blocks.cancel_upload(old.clone(), operation(50), 8).await?, 0);
     assert_eq!(blocks.collect(8).await?, 0);
-    blocks.release_root(current, lease.clone()).await?;
+    blocks.release_root(current.clone(), lease.clone()).await?;
     blocks.release_root(old, lease).await?;
+    blocks.release_root(current, rebound).await?;
     assert_eq!(blocks.collect(8).await?, 1);
     Ok(())
 }
@@ -204,14 +217,9 @@ async fn private_supply(root: &Path) -> Result<()> {
     assert!(blocks.read(reader.clone(), published.content.id.clone(), published.representation.clone()).await.is_err());
     assert!(blocks.manifest(reader.clone(), manifest.root.clone()).await.is_err());
     assert!(blocks.read(source.clone(), published.content.id.clone(), published.representation).await.is_err());
-    let usage = held(
-        blocks
-            .acquire_root(
-                step.operation().clone(),
-                request(source.clone(), ContentRef::Manifest { root: manifest.root.clone() }, 60),
-            )
-            .await?,
-    )?;
+    let mut acquisition = request(source.clone(), ContentRef::Manifest { root: manifest.root.clone() }, 60);
+    acquisition.usage = RootUse::Checkpoint { source: step.primary().source.clone() };
+    let usage = held(blocks.acquire_root(step.operation().clone(), acquisition).await?)?;
     assert!(matches!(blocks.cancel_step(step.clone(), 8).await?, CancelProgress::Draining { released: 2 }));
     assert!(matches!(blocks.cancel_step(step.clone(), 8).await?, CancelProgress::Done));
     assert!(blocks.put_source(bound, content.representation.clone(), content.bytes.clone()).await.is_err());

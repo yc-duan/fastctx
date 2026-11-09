@@ -86,6 +86,11 @@ impl Address {
             (_, extent) => Ok(Self { trail: self.trail.clone(), span: extent }),
         }
     }
+    pub fn position_cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.trail
+            .cmp(&other.trail)
+            .then_with(|| self.span.map_or(0, |span| span.start).cmp(&other.span.map_or(0, |span| span.start)))
+    }
     pub fn contains(&self, target: &Self) -> bool {
         if !target.trail.starts_with(&self.trail) {
             return false;
@@ -116,8 +121,8 @@ impl Address {
         self.trail == other.trail
     }
     fn bound(&self) -> Result<()> {
-        if self.trail.len() > 128
-            || serde_json::to_vec(&self.trail).map_err(|e| sql::invalid(e.to_string()))?.len() > 16 * 1024
+        if serde_json::to_vec(&self.trail).map_err(|e| sql::invalid(e.to_string()))?.len()
+            > fastctx_types::sync::PAGE_BYTES as usize / 4
         {
             return Err(sql::invalid("supply position exceeds its path budget"));
         }

@@ -12,8 +12,10 @@ use crate::{
     store::{
         access::{AccessContext, Custody, HoldingUse, Principal},
         ingest::StreamProgress,
+        roots::RootUse,
         sql,
     },
+    timeline::TimelineFence,
 };
 use fastctx_storage::{
     Result,
@@ -224,4 +226,33 @@ pub(super) fn progress(db: &Connection, conversation: &ObjectKey, through: &Stre
         },
         _ => StreamProgress::LocalPending { cursor: through.clone() },
     })
+}
+
+/// Whether `fence` is still a live hold on exactly the snapshot it names: the
+/// use exists unreleased and unexpired, and binds this conversation, the
+/// fence's root and its projection. A fence is client data, so its lease id
+/// alone proves nothing about the root a read would follow.
+pub(super) fn fence_held(db: &Connection, fence: &TimelineFence, now: i64) -> Result<bool> {
+    let scope = &fence.conversation.scope;
+    let row = db
+        .prepare_cached("SELECT object,kind,hash,root_kind,usage FROM sync_root_leases WHERE hub=?1 AND scope=?2 AND lease=?3 AND released=0 AND (expires IS NULL OR expires>?4)")?
+        .query_row(params![scope.hub.to_string(), scope.scope.as_str(), fence.lease.as_str(), now], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, Vec<u8>>(4)?,
+            ))
+        })
+        .optional()?;
+    let Some((object, kind, hash, form, usage)) = row else {
+        return Ok(false);
+    };
+    let usage: RootUse = decode(&usage)?;
+    Ok(object == fence.conversation.object.as_str()
+        && kind == KIND
+        && hash == fence.root.0.digest.as_str()
+        && form == "manifest"
+        && usage == RootUse::Timeline { projection: fence.projection })
 }

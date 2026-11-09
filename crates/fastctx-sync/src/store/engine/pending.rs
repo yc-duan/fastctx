@@ -59,6 +59,7 @@ pub(super) async fn submit(
     let _admission = store.semantic_budget.acquire(original).await?;
     for attempt in 0..3 {
         let prepared = prepare::prepare(store, principal.clone(), &mutation).await?;
+        let supplies = super::supply::prepare(store, &prepared).await?;
         let operation = prepared.request.operation.clone();
         let engine = store.clone();
         let notify = store.changed.clone();
@@ -68,7 +69,7 @@ pub(super) async fn submit(
                 prepared.bytes + prepared.field_bytes + fastctx_types::sync::PAGE_BYTES as usize,
                 move |db| {
                     let _boundary = boundary::enter_typed_write(Role::Pending);
-                    stage(db, &engine, prepared)
+                    stage(db, &engine, prepared, supplies)
                 },
                 move |receipt| {
                     notify.send_replace(receipt.local);
@@ -100,7 +101,12 @@ fn existing(
         })
         .transpose()
 }
-fn stage(db: &Connection, store: &SqliteBackend, prepared: Prepared) -> Result<SubmissionReceipt> {
+fn stage(
+    db: &Connection,
+    store: &SqliteBackend,
+    prepared: Prepared,
+    supplies: Vec<Vec<crate::blocks::supply::SupplyTicket>>,
+) -> Result<SubmissionReceipt> {
     let actor = String::from_utf8(rows::encode(&prepared.actor)?).map_err(|e| sql::invalid(e.to_string()))?;
     let request = &prepared.request;
     for object in &prepared.objects {
@@ -163,7 +169,7 @@ fn stage(db: &Connection, store: &SqliteBackend, prepared: Prepared) -> Result<S
     let hub = request.objects[0].key.scope.hub.to_string();
     let body = rows::encode(request)?;
     db.prepare_cached("INSERT INTO sync_pending_mutations(hub,origin,operation,actor,local_sequence,request_hash,original_request,mode,state,preserve_offline) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)")?.execute(params![hub,request.origin.as_str(),request.operation.as_str(),actor,local.0.to_be_bytes().as_slice(),prepared.hash.as_str(),body,match request.mode {SubmissionMode::Online=>"online",SubmissionMode::Offline=>"offline"},rows::encode(&PendingState::Queued)?,request.mode==SubmissionMode::Offline])?;
-    for object in &prepared.objects {
+    for (object, supplies) in prepared.objects.iter().zip(&supplies) {
         let proposal = &object.proposal;
         db.prepare_cached("INSERT INTO sync_pending_objects(hub,origin,operation,scope,object,kind,base,before_root,candidate_root,predecessor,original_intent,holding) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)")?.execute(params![hub,request.origin.as_str(),request.operation.as_str(),proposal.key.scope.scope.as_str(),proposal.key.object.as_str(),proposal.kind,rows::encode(&proposal.base)?,proposal.before.as_ref().map(rows::encode).transpose()?,proposal.candidate.as_ref().map(rows::encode).transpose()?,proposal.predecessor.as_ref().map(|id|id.as_str()),rows::encode(&proposal.original)?,rows::encode(&object.custody.holding)?])?;
         let base = match &proposal.base {
@@ -180,6 +186,7 @@ fn stage(db: &Connection, store: &SqliteBackend, prepared: Prepared) -> Result<S
         for (index, reference) in object.references.iter().enumerate() {
             retain(db, object, request, reference, &format!("reference:{index}"))?;
         }
+        super::supply::retain(db, store, &object.custody, supplies)?;
         local = rows::advance(db)?;
         db.prepare_cached("INSERT INTO sync_local_changes(sequence,hub,scope,object,kind,origin,operation) VALUES(?1,?2,?3,?4,?5,?6,?7)")?.execute(params![local.0.to_be_bytes().as_slice(),hub,proposal.key.scope.scope.as_str(),proposal.key.object.as_str(),proposal.kind,rows::encode(&crate::store::mutation::Origin::Local)?,request.operation.as_str()])?;
     }
@@ -202,7 +209,6 @@ fn retain(
     root: &ContentRef,
     role: &str,
 ) -> Result<()> {
-    crate::blocks::retain_supplied(db, &object.custody, root)?;
     let (form, length) = match root {
         ContentRef::Single { decoded_bytes, .. } => ("block", Some(*decoded_bytes)),
         ContentRef::Manifest { .. } => ("manifest", None),

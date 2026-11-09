@@ -1,5 +1,5 @@
 //! SQL-only usage holds share the writer with source checkpoints and runtime plans.
-use super::{access, pins, rows};
+use super::{pins, rows};
 use crate::{
     cursor::{Completeness, Revision},
     identity::{OperationId, RootLeaseId, ScopeKey},
@@ -18,14 +18,14 @@ mod saved;
 mod sweep;
 pub(super) use sweep::{expire, retire_scope};
 
-/// The caller has checked current custody inside this same writer transaction.
-/// This retains bytes without creating a body-read grant or a replicated root.
-pub(super) fn acquire(
+/// Idempotent lookup precedes supply validation: an acquired use outlives the
+/// staging operation that originally supplied it.
+pub(super) fn existing(
     db: &Connection,
     operation: &OperationId,
     request: &AcquireRoot,
     now: i64,
-) -> Result<RootAcquired> {
+) -> Result<Option<RootAcquired>> {
     request.validate().map_err(|error| sql::invalid(error.to_string()))?;
     if request.expires_at_millis.is_some_and(|expiry| expiry <= now) {
         return Err(sql::invalid("root usage has already expired"));
@@ -49,31 +49,39 @@ pub(super) fn acquire(
         if previous.released {
             return Err(sql::invalid("a released usage identity cannot be acquired again"));
         }
-        return if rows::complete(db, &request.root)? {
-            Ok(RootAcquired::Held { lease: Box::new(lease) })
+        return if matches!(request.usage, crate::store::roots::RootUse::Timeline { .. })
+            || rows::complete(db, &request.root)?
+        {
+            Ok(Some(RootAcquired::Held { lease: Box::new(lease) }))
         } else {
-            Ok(RootAcquired::Pending { completeness: Completeness::MetadataOnly })
+            Ok(Some(RootAcquired::Pending { completeness: Completeness::MetadataOnly }))
         };
     }
-    // An existing use may be forked without retaining an upload pin forever.
-    // It supplies custody only, never permission to return its bytes to a caller.
-    let held: bool = db.query_row(
-        "SELECT EXISTS(SELECT 1 FROM sync_root_leases WHERE hub=?1 AND scope=?2 AND object=?3 AND kind=?4 AND hash=?5 AND root_kind=?6 AND decoded_bytes IS ?7 AND holding=?8 AND purpose=?9 AND usage=?10 AND released=0 AND (expires IS NULL OR expires>?11))",
-        params![scope.hub.to_string(),scope.scope.as_str(),lease.object.object.as_str(),lease.kind,lease.root.id().digest.as_str(),pins::shape(&lease.root).0,pins::shape(&lease.root).1,encoded.holding,encoded.purpose,encoded.usage,now],
-        |row| row.get(0),
-    )?;
-    if !held {
-        access::require_known_root(db, custody, &request.root)?;
-    }
-    if !rows::complete(db, &request.root)? {
-        return Ok(RootAcquired::Pending { completeness: Completeness::MetadataOnly });
-    }
+    Ok(None)
+}
+
+/// The supply writer has rechecked this root in the enclosing transaction.
+pub(super) fn insert(db: &Connection, operation: &OperationId, request: &AcquireRoot) -> Result<RootLease> {
+    let custody = &request.custody;
+    let scope = &custody.object.scope;
+    let lease = RootLease {
+        id: request.lease.clone(),
+        operation: operation.clone(),
+        object: custody.object.clone(),
+        kind: custody.kind.registration().id.into(),
+        root: request.root.clone(),
+        usage: request.usage.clone(),
+        holding: custody.holding.clone(),
+        generation: Revision(1),
+        expires_at_millis: request.expires_at_millis,
+    };
+    let encoded = saved::encode(&lease, &custody.purpose)?;
     let (form, length) = pins::shape(&request.root);
     db.execute(
         "INSERT INTO sync_root_leases(hub,scope,lease,object,kind,hash,root_kind,decoded_bytes,operation,generation,usage,holding,purpose,expires,released) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,0)",
         params![scope.hub.to_string(),scope.scope.as_str(),lease.id.as_str(),lease.object.object.as_str(),lease.kind,lease.root.id().digest.as_str(),form,length,operation.as_str(),lease.generation.0.to_be_bytes().as_slice(),encoded.usage,encoded.holding,encoded.purpose,lease.expires_at_millis],
     )?;
-    Ok(RootAcquired::Held { lease: Box::new(lease) })
+    Ok(lease)
 }
 
 pub(super) fn release(
@@ -122,6 +130,7 @@ pub(super) fn release_id(
 }
 
 fn retire(db: &Connection, scope: &ScopeKey, id: &RootLeaseId, hash: &str, form: &str) -> Result<()> {
+    super::supply::invalidate_hold(db, scope, id)?;
     db.execute(
         "UPDATE sync_root_leases SET released=1 WHERE hub=?1 AND scope=?2 AND lease=?3",
         params![scope.hub.to_string(), scope.scope.as_str(), id.as_str()],

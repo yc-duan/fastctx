@@ -17,6 +17,9 @@ use fastctx_storage::{
 };
 
 pub(super) async fn process(store: &SqliteBlocks, lease: Lease) -> std::result::Result<Outcome, Error> {
+    if lease.task.key.key.starts_with("supply:") || lease.task.key.key.starts_with("supply-cancel:") {
+        return super::supply_work::process(store, lease).await;
+    }
     if lease.task.key.kind != "sync.manifest" {
         return Err(Error::Invalid("content worker received another handler's lease".into()));
     }
@@ -43,7 +46,9 @@ pub(super) async fn process(store: &SqliteBlocks, lease: Lease) -> std::result::
         return super::metadata_work::process(store, holding, hash, through, after).await;
     }
     let after = parts.get(2).map(|text| Digest::try_from(text.to_string())).transpose().map_err(Error::Invalid)?;
-    store
+    let changed = (command == "complete")
+        .then(|| format!("manifest:{}:{}:{}", holding.scope.hub, holding.scope.scope.as_str(), hash.as_str()));
+    let outcome = store
         .db
         .write(1024 * 1024, move |db| {
             let _boundary = boundary::enter_typed_write(Role::Content);
@@ -60,7 +65,20 @@ pub(super) async fn process(store: &SqliteBlocks, lease: Lease) -> std::result::
             }
         })
         .await
-        .map_err(|error| sql::error(error, store.worker.clone()))
+        .map_err(|error| sql::error(error, store.worker.clone()))?;
+    if let Some(changed) = changed
+        && !matches!(outcome, Outcome::Superseded)
+    {
+        use crate::scheduler::Scheduler;
+        let queue = crate::scheduler::SqliteScheduler::new(
+            store.db.clone(),
+            store.worker.clone(),
+            store.holder.clone(),
+            std::time::Duration::from_secs(30),
+        )?;
+        queue.dependency_changed(changed).await?;
+    }
+    Ok(outcome)
 }
 pub(super) fn current(db: &Connection, holding: &HoldingPeriod) -> Result<bool> {
     let state = db

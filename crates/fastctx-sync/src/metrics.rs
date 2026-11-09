@@ -31,6 +31,10 @@ measures!(Counter {
     IndexValidation => "sync.index_validation",
     DirectoryCacheEvictions => "sync.directory_cache_evictions",
     GarbageFailures => "sync.garbage_failures",
+    SupplyNodes => "sync.supply_nodes",
+    SupplyPageBytes => "sync.supply_page_bytes",
+    SupplyReused => "sync.supply_reused",
+    SupplyRetiredHolds => "sync.supply_retired_holds",
 });
 measures!(Gauge {
     MissingRecords => "sync.missing_records",

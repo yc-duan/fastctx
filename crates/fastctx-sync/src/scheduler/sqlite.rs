@@ -222,6 +222,36 @@ pub(crate) fn projection_changed(
     save(db, &row)
 }
 
+/// Cleanup survives the holding period it retires. Its owner is rechecked by the
+/// supply worker instead of borrowing an invalidated transport lease.
+pub(crate) fn supply_cleanup(db: &Connection, scope: &ScopeKey, key: String) -> Result<()> {
+    let key = TaskKey { kind: "sync.gc".into(), scope: scope.clone(), key };
+    let existing = get(db, &key)?;
+    if existing.as_ref().is_some_and(|row| row.state == "ready" && row.task.wanted > row.task.completed) {
+        return Ok(());
+    }
+    let wanted = existing
+        .as_ref()
+        .map_or(0, |row| row.task.wanted.0)
+        .checked_add(1)
+        .ok_or_else(|| sql::invalid("supply cleanup version overflow"))?;
+    let task = Task {
+        key,
+        wanted: LocalSequence(wanted),
+        completed: LocalSequence(0),
+        priority: Priority::Background,
+        next_due_millis: 0,
+        dependency: None,
+        dependency_revision: LocalSequence(wanted),
+        dependency_sequence: dependencies::sequence(db)?,
+        holding: None,
+    };
+    validate(&task).map_err(|error| sql::invalid(error.to_string()))?;
+    let mut row = existing.unwrap_or_else(|| Row::new(task.clone()));
+    update::dirty(db, &mut row, task)?;
+    save(db, &row)
+}
+
 fn validate(task: &Task) -> std::result::Result<(), Error> {
     if !KINDS.contains(&task.key.kind.as_str())
         || task.key.key.is_empty()

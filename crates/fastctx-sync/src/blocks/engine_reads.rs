@@ -4,7 +4,6 @@
 use super::{SqliteBlocks, pages};
 use crate::blocks::budget::Permit;
 use crate::{
-    identity::{RootLeaseId, ScopeKey},
     manifest::{ContentBlock, ManifestReply, ManifestRoot},
     store::{Error, sql},
 };
@@ -31,18 +30,5 @@ impl SqliteBlocks {
     /// A stored block's decoded bytes, or None while it is not here.
     pub(crate) fn stored_block(&self, block: &ContentBlock) -> Result<Option<(Vec<u8>, Permit)>, Error> {
         super::metadata_work::payload_bytes(self, block, 0)
-    }
-    /// Whether a root use is still held: neither released nor expired at `now`.
-    pub(crate) fn lease_held(&self, scope: &ScopeKey, lease: &RootLeaseId, now: i64) -> Result<bool, Error> {
-        self.db
-            .read_now(|db| {
-                db.query_row(
-                    "SELECT EXISTS(SELECT 1 FROM sync_root_leases WHERE hub=?1 AND scope=?2 AND lease=?3 AND released=0 AND (expires IS NULL OR expires>?4))",
-                    params![scope.hub.to_string(), scope.scope.as_str(), lease.as_str(), now],
-                    |row| row.get(0),
-                )
-                .map_err(Into::into)
-            })
-            .map_err(|error| sql::error(error, self.worker.clone()))
     }
 }

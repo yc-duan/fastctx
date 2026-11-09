@@ -9,7 +9,6 @@ use crate::{
     manifest::ContentRef,
     store::{
         ingest::{SourceTarget, StreamProgress},
-        source_step::SourceStep,
         sql,
     },
 };
@@ -107,7 +106,7 @@ pub(super) fn check(db: &Connection, target: &SourceTarget, batch: &SourceBatch)
 /// each adopted from the step that supplied it.
 pub(super) fn append(
     db: &Connection,
-    step: &SourceStep,
+    content: &source_commit::ContentCommit<'_>,
     target: &SourceTarget,
     batch: &SourceBatch,
     signed: &SignedSourceBatch,
@@ -172,7 +171,7 @@ pub(super) fn append(
                 proof.as_str()
             ])?;
         for root in std::iter::once(ContentRef::from(record.payload.clone())).chain(record.roots.iter().cloned()) {
-            source_commit::adopt(db, step, &target.custody, &root)?;
+            content.adopt(target, &root)?;
             let (form, length) = match &root {
                 ContentRef::Single { decoded_bytes, .. } => ("block", Some(*decoded_bytes)),
                 ContentRef::Manifest { .. } => ("manifest", None),

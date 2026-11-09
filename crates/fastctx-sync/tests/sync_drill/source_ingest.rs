@@ -351,9 +351,14 @@ pub(super) async fn run(root: &Path) -> Result<()> {
     let receipt = sources.ingest(commit).await?;
     assert!(matches!(receipt.sources[0].status, IngestStatus::CheckpointOnly));
     assert_eq!(
-        count(&db, "SELECT COUNT(*) FROM sync_root_leases WHERE released=1")?,
+        count(&db, "SELECT COUNT(*) FROM sync_root_leases WHERE released=1 AND supply_id IS NULL")?,
         1,
         "the old state hold is released"
+    );
+    assert_eq!(
+        count(&db, "SELECT COUNT(*) FROM sync_root_leases WHERE released=0 AND supply_id IS NOT NULL")?,
+        0,
+        "completed supply checks release their private protection"
     );
     let stale =
         sources.read_state(primary.clone(), StateRead::Block { checkpoint: step.revision(), id: state_id }).await?;
@@ -390,7 +395,7 @@ pub(super) async fn run(root: &Path) -> Result<()> {
     };
     refused(
         sources.ingest(attempt(1, payload.clone(), vec![foreign], Expected::Revision(Revision(1)))?).await,
-        "did not supply",
+        "has no qualified supply",
     );
     refused(sources.ingest(attempt(1, payload.clone(), Vec::new(), Expected::Absent)?).await, "index row moved");
     let denied = block(&sources, &bound, b"deny").await?;

@@ -42,7 +42,7 @@ impl Layout {
         }
         let page: ManifestPage = serde_json::from_str(&reply.page_json).map_err(|e| sql::invalid(e.to_string()))?;
         let local = Address::default();
-        let (extent, children) = match page {
+        let (extent, mut children) = match page {
             ManifestPage::Blocks { offset, blocks } => {
                 let (span, children) = bytes::blocks(&local, offset.0, blocks)?;
                 (Some(span), children)
@@ -93,6 +93,11 @@ impl Layout {
         if children.len() > 4096 || children.iter().any(|child| child.root.id().domain != reply.root.0.domain) {
             return Err(sql::invalid("supply page children exceed their scope or count bound"));
         }
+        children.sort_by(|a, b| a.address.position_cmp(&b.address));
+        children.dedup();
+        if children.windows(2).any(|pair| pair[0].address.contains(&pair[1].address)) {
+            return Err(sql::invalid("basis page has overlapping logical positions"));
+        }
         Ok(Self { address: address.resolve(extent)?, children })
     }
 
@@ -100,21 +105,21 @@ impl Layout {
     /// logical position. A new page spanning several old children must itself be
     /// supplied; its children will each be checked against the same declared basis.
     pub fn toward(&self, target: &Address) -> Result<Option<Child>> {
-        let mut found: Option<Child> = None;
-        for index in 0..self.children.len() {
-            let child = self.child(index)?.expect("existing child index");
-            if !child.address.contains(target) {
-                continue;
-            }
-            if let Some(previous) = &found {
-                if previous != &child {
-                    return Err(sql::invalid("basis page has ambiguous containing positions"));
-                }
+        let mut low = 0;
+        let mut high = self.children.len();
+        while low < high {
+            let middle = low + (high - low) / 2;
+            let child = self.child(middle)?.expect("existing child index");
+            if child.address.position_cmp(target).is_gt() {
+                high = middle;
             } else {
-                found = Some(child);
+                low = middle + 1;
             }
         }
-        Ok(found)
+        let Some(index) = low.checked_sub(1) else {
+            return Ok(None);
+        };
+        Ok(self.child(index)?.filter(|child| child.address.contains(target)))
     }
     pub fn child(&self, index: usize) -> Result<Option<Child>> {
         self.children

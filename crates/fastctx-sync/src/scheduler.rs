@@ -2,7 +2,7 @@
 
 mod sqlite;
 pub use sqlite::SqliteScheduler;
-pub(crate) use sqlite::{content_changed, projection_changed};
+pub(crate) use sqlite::{content_changed, projection_changed, supply_cleanup};
 
 use crate::{
     cursor::{HoldingPeriod, LocalSequence, Revision},

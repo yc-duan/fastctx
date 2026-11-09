@@ -26,12 +26,20 @@ impl RootUse {
         Ok(())
     }
 }
+/// Each reuse basis is checked and protected before any traversal begins.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub enum SupplyBasis {
+    Published { root: ContentRef },
+    Held { lease: Box<RootLease> },
+}
+
 #[derive(Clone)]
 pub struct AcquireRoot {
     pub lease: RootLeaseId,
     pub custody: Custody,
     pub root: ContentRef,
     pub usage: RootUse,
+    pub bases: Vec<SupplyBasis>,
     /// Only runtime usage expires. Asset retention is independent of this lease.
     pub expires_at_millis: Option<i64>,
 }
@@ -39,6 +47,9 @@ impl AcquireRoot {
     pub fn validate(&self) -> Result<(), Error> {
         self.usage.validate()?;
         self.root.validate().map_err(Error::Invalid)?;
+        if self.bases.len() > 8 || matches!(self.usage, RootUse::Timeline { .. }) && !self.bases.is_empty() {
+            return Err(Error::Invalid("root usage exceeds its declared reuse bases".into()));
+        }
         match self.usage {
             RootUse::Checkpoint { .. } if self.expires_at_millis.is_some() => {
                 return Err(Error::Invalid("checkpoint state lives until advancement or explicit discard".into()));
@@ -92,8 +103,10 @@ pub(crate) mod sealed {
 }
 
 /// Service composition supplies a restricted handle. Every acquisition checks
-/// exact object custody and a complete root closure in the same transaction as
-/// its hold. The writer uses RootChange for joint commits with runtime intents;
+/// exact object custody in the same transaction as its hold. Checkpoint and
+/// runtime uses require a complete, supplied closure; a timeline fence holds its
+/// verified authorized root and available descendants while missing pages load.
+/// The writer uses RootChange for joint commits with runtime intents;
 /// neither path re-uploads bytes or borrows the process-local IO lease.
 pub trait RootStore: sealed::RootWriter + Send + Sync {
     fn acquire_root(&self, operation: OperationId, request: AcquireRoot) -> FutureResult<'_, RootAcquired>;

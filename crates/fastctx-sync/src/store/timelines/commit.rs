@@ -1,12 +1,15 @@
 //! One installation commit: the head moves from the root this installer planned
 //! against to the new one, the position index follows with exact preconditions,
 //! and the watermarks readers resume from advance in the same transaction.
+//!
+//! A snapshot is derived local state, never object content: the head row is
+//! what retains its root from collection, readers hold older roots through
+//! Timeline uses, and no read grant is ever issued for it.
 use super::state::{self, Head};
 use crate::{
-    blocks::retain_supplied,
     cursor::{LocalSequence, Revision, StreamCursor},
     identity::ObjectKey,
-    manifest::{ContentRef, ManifestRoot},
+    manifest::ManifestRoot,
     store::{access::Custody, local_head, sql},
     timeline::{TimelineItem, index::IndexChange, position},
 };
@@ -50,13 +53,6 @@ pub(super) fn install(
     let conversation = &custody.object;
     if !same(&state::head(db, conversation)?, expected) {
         return Ok(Installed::Moved);
-    }
-    if let Some(root) = &next.root
-        && next.root != expected.as_ref().and_then(|head| head.root.clone())
-    {
-        // The installer's own ready pins still hold the new pages, so no
-        // collection can claim them before this grant and the head retain them.
-        retain_supplied(db, custody, &ContentRef::Manifest { root: root.clone() })?;
     }
     // While a branch switch rebuilds the index, rows are rebuilt from the tree
     // instead of patched against the old branch.

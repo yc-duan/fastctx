@@ -23,10 +23,14 @@ impl SqliteBlocks {
             if !self.close(&scope)? {
                 return Err(Error::Busy);
             }
+            let holder = self.holder.clone();
+            let policy = self.policy.clone();
             self.db
                 .write(128 * 1024, move |db| {
+                    let writer = crate::blocks::supply::writer(db, &holder, policy.as_ref(), now())?;
+                    let invalidated = writer.invalidate(&scope, None, None, None, max.min(64))?;
                     let _boundary = boundary::enter_typed_write(Role::Roots);
-                    root_holds::retire_scope(db, &scope, max)
+                    Ok(root_holds::retire_scope(db, &scope, max)? + invalidated.changed)
                 })
                 .await
                 .map_err(|error| sql::error(error, self.worker.clone()))
@@ -58,10 +62,42 @@ impl RootStore for SqliteBlocks {
             let holder = self.holder.clone();
             let id = operation.clone();
             self.db
-                .write(16384, move |db| {
+                .write(2 * 1024 * 1024, move |db| {
                     let _boundary = boundary::enter_typed_write(Role::Roots);
                     pins::authorize(db, &holder, policy.as_ref(), &request.custody)?;
-                    root_holds::acquire(db, &id, &request, now())
+                    let now = now();
+                    if let Some(previous) = root_holds::existing(db, &id, &request, now)? {
+                        return Ok(previous);
+                    }
+                    let writer = crate::blocks::supply::writer(db, &holder, policy.as_ref(), now)?;
+                    if matches!(request.usage, crate::store::roots::RootUse::Timeline { .. }) {
+                        return writer.acquire_timeline(&id, &request);
+                    }
+                    let supply = crate::blocks::supply::SupplyRequest {
+                        operation: id.clone(),
+                        custody: request.custody.clone(),
+                        root: request.root.clone(),
+                        bases: request.bases.clone(),
+                        owner: crate::blocks::supply::SupplyOwner::Use { usage: request.usage.clone() },
+                    };
+                    let ticket = writer.begin(&supply)?;
+                    match writer.step(&ticket, crate::blocks::supply::SupplyBudget::default())? {
+                        crate::blocks::supply::SupplyProgress::Ready => {
+                            let ready = writer.recheck(&request.custody, &ticket)?;
+                            Ok(RootAcquired::Held { lease: Box::new(writer.acquire(ready, &request)?) })
+                        }
+                        crate::blocks::supply::SupplyProgress::Pending { .. } => {
+                            Ok(RootAcquired::Pending { completeness: crate::cursor::Completeness::MetadataOnly })
+                        }
+                        crate::blocks::supply::SupplyProgress::Rejected { node, reason } => Err(sql::invalid(format!(
+                            "content {} has no qualified supply: {reason:?}",
+                            node.id().digest.as_str()
+                        ))),
+                        _ => Err(fastctx_storage::Error::with_kind(
+                            fastctx_storage::ErrorKind::Busy,
+                            "root supply changed before acquisition",
+                        )),
+                    }
                 })
                 .await
                 .map_err(|error| sql::error(error, operation))

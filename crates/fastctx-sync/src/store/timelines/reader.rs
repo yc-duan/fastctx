@@ -61,11 +61,22 @@ impl SqliteTimelines {
     }
 
     /// Ends the snapshot hold behind a fence once its reader is done with it.
+    /// Only the exact fence releases its hold; a stale one is already gone.
     pub async fn release(&self, context: AccessContext, fence: TimelineFence) -> Result<(), Error> {
-        if context.scope != fence.conversation.scope {
-            return Err(Error::Denied("the reader's scope differs from the fence's".into()));
+        self.authorize(&context, &fence.conversation)?;
+        if !self.held(&fence).await? {
+            return Ok(());
         }
         self.blocks.release_use(fence.conversation.scope, fence.lease).await
+    }
+
+    async fn held(&self, fence: &TimelineFence) -> Result<bool, Error> {
+        let check = fence.clone();
+        self.blocks
+            .database()
+            .read(move |db| state::fence_held(db, &check, now()))
+            .await
+            .map_err(|error| sql::error(error, self.blocks.worker().clone()))
     }
 
     async fn read_timeline(&self, context: AccessContext, request: TimelineRead) -> Result<TimelineResult, Error> {
@@ -77,7 +88,7 @@ impl SqliteTimelines {
                 if fence.conversation != conversation {
                     return Err(Error::Invalid("the fence belongs to another conversation".into()));
                 }
-                if !self.blocks.lease_held(&conversation.scope, &fence.lease, now())? {
+                if !self.held(&fence).await? {
                     return Ok(TimelineResult::ReanchorNeeded);
                 }
                 fence
@@ -99,7 +110,7 @@ impl SqliteTimelines {
 
     async fn read_item(&self, context: AccessContext, fence: TimelineFence, id: ObjectId) -> Result<ItemRead, Error> {
         self.authorize(&context, &fence.conversation)?;
-        if !self.blocks.lease_held(&fence.conversation.scope, &fence.lease, now())? {
+        if !self.held(&fence).await? {
             return Ok(ItemRead::ReanchorNeeded);
         }
         let mut loaded = Loaded::default();
@@ -146,6 +157,7 @@ impl SqliteTimelines {
             custody,
             root: ContentRef::Manifest { root: root.clone() },
             usage: RootUse::Timeline { projection: head.projection },
+            bases: Vec::new(),
             expires_at_millis: Some(now().saturating_add(HOLD_MILLIS)),
         };
         let operation = OperationId::from_bytes(Digest::of(lease.as_str().as_bytes()).bytes());
