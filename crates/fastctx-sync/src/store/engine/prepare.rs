@@ -70,7 +70,7 @@ fn sort_fields(value: &mut serde_json::Value) {
 pub(super) async fn prepare(
     store: &SqliteBackend,
     principal: Principal,
-    mutation: AtomicMutation,
+    mutation: &AtomicMutation,
 ) -> Result<Prepared, Error> {
     let actor = actor(&principal)?;
     let origin = match &actor {
@@ -116,7 +116,9 @@ pub(super) async fn prepare(
                     store.policy.can_keep(&context, kind.registered(), &proposal.key, &custody.purpose),
                     context.observed_acl,
                 )?;
-                Ok((rows::get(db, &proposal.key)?, custody))
+                let current = rows::get(db, &proposal.key)?;
+                super::basis::verify(db, &request.origin, proposal, current.as_ref())?;
+                Ok((current, custody))
             })
             .map_err(|e| crate::store::sql::error(e, request.operation.clone()))?;
         if current.as_ref().is_some_and(|head| head.kind != proposal.kind) {
@@ -149,27 +151,8 @@ pub(super) async fn prepare(
             OriginalIntent::Write { content, schema: written }
                 if proposal.candidate.as_ref() == Some(content) && *written == schema => {}
             OriginalIntent::Edit { edits } => {
-                let text = std::str::from_utf8(&before).map_err(|e| Error::Invalid(e.to_string()))?;
-                let mut changed = text.to_owned();
-                for edit in edits {
-                    if edit.search.is_empty() {
-                        return Err(Error::Invalid("an edit needs a nonempty search".into()));
-                    }
-                    let count = changed.matches(&edit.search).count();
-                    if count == 0 || !edit.all && count != 1 {
-                        return Err(Error::Invalid("an edit search is missing or ambiguous".into()));
-                    }
-                    let length = changed
-                        .len()
-                        .checked_sub(count * edit.search.len())
-                        .and_then(|n| n.checked_add(count.checked_mul(edit.replacement.len())?))
-                        .ok_or(Error::Busy)?;
-                    if length > store.semantic_bytes {
-                        return Err(Error::Busy);
-                    }
-                    changed = changed.replace(&edit.search, &edit.replacement);
-                }
-                if changed.as_bytes() != after {
+                let changed = handler.apply_edit(schema, &before, edits, before.len().max(after.len()))?;
+                if changed != after {
                     return Err(Error::Invalid("candidate body does not implement its declared edit".into()));
                 }
             }

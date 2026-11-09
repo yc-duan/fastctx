@@ -1,33 +1,6 @@
-//! File text rules shared by viewing and writing. A bare CR is data.
+//! File text display and the shared writing rules.
 
-pub(crate) fn dominant_ending(text: &str) -> &'static str {
-    let crlf = text.matches("\r\n").count();
-    let lf = text.bytes().filter(|&b| b == b'\n').count() - crlf;
-    if crlf > lf { "\r\n" } else { "\n" }
-}
-
-pub(crate) fn replacement_ending(text: &str, dominant: &'static str) -> &'static str {
-    let crlf = text.matches("\r\n").count();
-    let lf = text.bytes().filter(|&b| b == b'\n').count() - crlf;
-    match (crlf, lf) {
-        (0, 0) => dominant,
-        (_, 0) => "\r\n",
-        (0, _) => "\n",
-        _ => dominant,
-    }
-}
-
-pub(crate) fn newlines(text: &str, ending: &str) -> String {
-    text.replace("\r\n", "\n").replace('\n', ending)
-}
-
-/// Removes only a line terminator, never a bare CR at EOF.
-pub(crate) fn line_content(text: &str) -> &str {
-    match text.strip_suffix('\n') {
-        Some(text) => text.strip_suffix('\r').unwrap_or(text),
-        None => text,
-    }
-}
+pub(crate) use fastctx_types::write::text::{dominant_ending, line_content, newlines};
 
 /// Controls are escaped so terminals cannot overwrite the displayed file text.
 pub(crate) fn visible(text: &str) -> String {

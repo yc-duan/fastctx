@@ -1,4 +1,8 @@
 //! Atomic local edits survive restarts without borrowing authority revisions.
+#[path = "pending_basis.rs"]
+mod basis;
+#[path = "pending_queue.rs"]
+mod queue;
 use super::*;
 use fastctx_sync::{
     catalog::ObjectHead,
@@ -46,6 +50,16 @@ impl KindHandler for TextHandler {
         _: MergeBodies<'_>,
     ) -> std::result::Result<MergeOutcome, Error> {
         Ok(MergeOutcome::Conflict)
+    }
+    fn apply_edit(
+        &self,
+        schema: u16,
+        current: &[u8],
+        edits: &[fastctx_types::sync::mutation::TextEdit],
+        max_bytes: usize,
+    ) -> std::result::Result<Vec<u8>, Error> {
+        self.validate(schema, current)?;
+        fastctx_sync::registry::text::apply_edits(current, edits, max_bytes)
     }
     fn patch_fields(&self, _: u16, _: &[u8], _: &[FieldEdit]) -> std::result::Result<Vec<u8>, Error> {
         Err(Error::Invalid("a plan is text".into()))
@@ -175,8 +189,10 @@ pub(super) async fn run(root: &Path) -> Result<()> {
     assert_eq!(count(&db, "sync_outbox")?, 1);
     assert_eq!(count(&db, "sync_pending_roots")?, 2);
     assert_eq!(count(&db, "sync_object_versions")?, 0);
+    basis::run(root).await?;
+    queue::run(root).await?;
     println!(
-        "pending lifecycle: atomic local edits, root retention, replay, restart and missing-delivery rollback passed"
+        "pending lifecycle: atomic edits, verified bases/predecessors, shared CRLF edits, root retention, replay, restart and rollback passed"
     );
     Ok(())
 }

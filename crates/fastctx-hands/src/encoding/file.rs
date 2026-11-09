@@ -54,12 +54,7 @@ pub(crate) struct Source {
     bom: Vec<u8>,
 }
 
-#[derive(Clone)]
-pub(crate) struct Replacement {
-    pub text: Range<usize>,
-    pub content: String,
-    pub context: Range<usize>,
-}
+pub(crate) use fastctx_types::write::literal_edit::Replacement;
 
 impl Source {
     pub fn decode(raw: Vec<u8>, selection: Option<&str>) -> Result<Self, String> {

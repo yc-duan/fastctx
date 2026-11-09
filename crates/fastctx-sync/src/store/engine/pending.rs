@@ -56,25 +56,32 @@ pub(super) async fn submit(
     if let Some(receipt) = previous {
         return Ok(receipt);
     }
-    let _admission = store.semantic_budget.acquire(store.admission_bytes)?;
-    let prepared = prepare::prepare(store, principal, mutation).await?;
-    let operation = prepared.request.operation.clone();
-    let engine = store.clone();
-    let notify = store.changed.clone();
-    store
-        .db
-        .write_then(
-            prepared.bytes + fastctx_types::sync::PAGE_BYTES as usize,
-            move |db| {
-                let _boundary = boundary::enter_typed_write(Role::Pending);
-                stage(db, &engine, prepared)
-            },
-            move |receipt| {
-                notify.send_replace(receipt.local);
-            },
-        )
-        .await
-        .map_err(|e| sql::error(e, operation))
+    let _admission = store.semantic_budget.acquire(original).await?;
+    for attempt in 0..3 {
+        let prepared = prepare::prepare(store, principal.clone(), &mutation).await?;
+        let operation = prepared.request.operation.clone();
+        let engine = store.clone();
+        let notify = store.changed.clone();
+        let result = store
+            .db
+            .write_then(
+                prepared.bytes + fastctx_types::sync::PAGE_BYTES as usize,
+                move |db| {
+                    let _boundary = boundary::enter_typed_write(Role::Pending);
+                    stage(db, &engine, prepared)
+                },
+                move |receipt| {
+                    notify.send_replace(receipt.local);
+                },
+            )
+            .await
+            .map_err(|e| sql::error(e, operation));
+        match result {
+            Err(Error::Busy) if attempt < 2 => continue,
+            result => return result,
+        }
+    }
+    Err(Error::Busy)
 }
 fn existing(
     db: &Connection,
@@ -120,6 +127,7 @@ fn stage(db: &Connection, store: &SqliteBackend, prepared: Prepared) -> Result<S
                 "object changed during semantic preparation",
             ));
         }
+        super::basis::verify(db, &request.origin, &object.proposal, current.as_ref())?;
         let fields = match &object.proposal.original {
             crate::store::mutation::OriginalIntent::Fields { edits } => edits.as_slice(),
             _ => &[],

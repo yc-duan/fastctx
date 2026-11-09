@@ -2,7 +2,7 @@ use super::blocks::{self, Block};
 use super::excerpts::excerpts;
 use super::storage::{PublishedEncoding, Target};
 use super::{EditBlocksRequest, EditRequest, WriteError, WriteRequest, WriteResult, Writer};
-use crate::encoding::file::{Replacement, Source};
+use crate::encoding::file::Source;
 use fastctx_types::files::SeenFiles;
 use std::ops::Range;
 use std::path::Path;
@@ -116,64 +116,14 @@ pub(super) fn replace(
     all_option: &str,
     ranges: &mut Vec<Range<usize>>,
 ) -> Result<(), String> {
-    if block.old.is_empty() {
-        return Err("SEARCH is empty; use write to create or replace a whole file".into());
-    }
-    // A SEARCH written in a here-document has LF line endings whatever the
-    // file has, so both are matched with each CRLF read as LF; the matches
-    // are mapped back to the file's own text, whose line endings stay.
-    let plain = Plain::of(&document.text);
-    let old = block.old.replace("\r\n", "\n");
-    let Some(first) = plain.text.find(&old) else {
-        if let Some(issue) = document.issue() {
-            return Err(format!("SEARCH was not found; the file has lines that cannot be edited: {issue}"));
-        }
-        // View and edit decode alike, so text copied from `fastctx view`
-        // is found; a miss is a difference in the text itself.
-        return Err(
-            "SEARCH was not found; view the current file and copy its text exactly, including whitespace".into()
-        );
-    };
-    // Count overlapping occurrences too: "aa" occurs twice in "aaa".
-    let next = first + old.chars().next().expect("nonempty pattern").len_utf8();
-    if !replace_all && plain.text[next..].contains(&old) {
-        return Err(format!("SEARCH occurs more than once; include more context, or use {all_option}"));
-    }
-    let matches: Vec<_> = plain
-        .text
-        .match_indices(&old)
-        .map(|(start, text)| plain.original(start)..plain.original(start + text.len()))
-        .collect();
-    let dominant = crate::text::dominant_ending(&document.text);
-    let mut replacements = Vec::new();
-    for matched in matches {
-        let original = &document.text[matched.clone()];
-        if Plain::of(original).text == Plain::of(block.new).text {
-            continue;
-        }
-        let ending = crate::text::replacement_ending(original, dominant);
-        let replacement = crate::text::newlines(block.new, ending);
-        let prefix = original
-            .chars()
-            .zip(replacement.chars())
-            .take_while(|(a, b)| a == b)
-            .map(|(c, _)| c.len_utf8())
-            .sum::<usize>();
-        let suffix = original[prefix..]
-            .chars()
-            .rev()
-            .zip(replacement[prefix..].chars().rev())
-            .take_while(|(a, b)| a == b)
-            .map(|(c, _)| c.len_utf8())
-            .sum::<usize>();
-        // Stateful context may contain switches needed to express the change.
-        let (prefix, suffix) = if document.stateful_at(matched.start) { (0, 0) } else { (prefix, suffix) };
-        replacements.push(Replacement {
-            text: matched.start + prefix..matched.end - suffix,
-            content: replacement[prefix..replacement.len() - suffix].into(),
-            context: matched,
-        });
-    }
+    let replacements = fastctx_types::write::literal_edit::plan(
+        &document.text,
+        block.old,
+        block.new,
+        replace_all,
+        fastctx_types::write::literal_edit::Options { all_option, issue: document.issue(), max_bytes: usize::MAX },
+        |offset| document.stateful_at(offset),
+    )?;
     let applied = document.replace(&replacements)?;
     // Remap earlier excerpts once per block. Remapping after every occurrence
     // would make --all quadratic in the number of matches.
@@ -183,36 +133,6 @@ pub(super) fn replace(
     }
     ranges.extend(applied.into_iter().map(|(_, after)| after));
     Ok(())
-}
-
-/// A text with each CRLF read as LF, and where the LF of each such pair
-/// landed in it, so that an offset in it maps back to the text it came from.
-struct Plain {
-    text: String,
-    joined: Vec<usize>,
-}
-
-impl Plain {
-    fn of(text: &str) -> Self {
-        let mut plain = String::with_capacity(text.len());
-        let mut joined = Vec::new();
-        let mut last = 0;
-        for (at, _) in text.match_indices("\r\n") {
-            plain.push_str(&text[last..at]);
-            joined.push(plain.len());
-            plain.push('\n');
-            last = at + 2;
-        }
-        plain.push_str(&text[last..]);
-        Self { text: plain, joined }
-    }
-
-    /// The offset in the original text of a boundary in the plain one. A
-    /// boundary just before a joined LF lands before its CR, so a match never
-    /// starts or ends between the two.
-    fn original(&self, offset: usize) -> usize {
-        offset + self.joined.partition_point(|&lf| lf < offset)
-    }
 }
 
 fn relocated(offset: usize, edits: &[(Range<usize>, Range<usize>)], right: bool) -> usize {

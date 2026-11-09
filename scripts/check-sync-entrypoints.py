@@ -14,6 +14,7 @@ CALLERS = {
         "crates/fastctx-sync/src/store/engine/mod.rs",
         "crates/fastctx-sync/src/store/engine/pending.rs",
         "crates/fastctx-sync/src/store/engine/prepare.rs",
+        "crates/fastctx-sync/tests/sync_drill/pending_queue.rs",
         "crates/fastctx-sync/tests/sync_drill/pending.rs",
     },
     "SqliteBlocks": {
@@ -27,6 +28,8 @@ CALLERS = {
         "crates/fastctx-sync/tests/sync_drill/blocks.rs",
         "crates/fastctx-sync/tests/sync_drill/block_recovery.rs",
         "crates/fastctx-sync/tests/sync_drill/metadata.rs",
+        "crates/fastctx-sync/tests/sync_drill/pending_basis.rs",
+        "crates/fastctx-sync/tests/sync_drill/pending_queue.rs",
         "crates/fastctx-sync/tests/sync_drill/pending.rs",
     },
     "write_unpublished": {

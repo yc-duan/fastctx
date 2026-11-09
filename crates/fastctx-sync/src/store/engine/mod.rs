@@ -1,5 +1,7 @@
 //! SQLite asset writer and its pre-transaction semantic preparation.
 mod access;
+mod admission;
+mod basis;
 mod bodies;
 mod pending;
 mod prepare;
@@ -42,8 +44,7 @@ pub struct SqliteBackend {
     handlers: Arc<BTreeMap<&'static str, Arc<dyn KindHandler>>>,
     authorizers: Arc<BTreeMap<&'static str, Arc<dyn MutationAuthorizer>>>,
     semantic_bytes: usize,
-    admission_bytes: usize,
-    semantic_budget: Arc<crate::blocks::Budget>,
+    semantic_budget: Arc<admission::Admission>,
     changed: tokio::sync::watch::Sender<LocalSequence>,
 }
 impl SqliteBackend {
@@ -56,12 +57,7 @@ impl SqliteBackend {
         if matches!(&config.holder,Holder::Hub {hub} if hub!=&config.hub) {
             return Err(Error::Denied("holder belongs to another hub".into()));
         }
-        let admission_bytes = config
-            .semantic_bytes
-            .checked_mul(3)
-            .and_then(|n| n.checked_add(fastctx_types::sync::PAGE_BYTES as usize * 4))
-            .ok_or_else(|| Error::Invalid("semantic budget overflows".into()))?;
-        let semantic_budget = crate::blocks::Budget::new(admission_bytes)?;
+        let semantic_budget = Arc::new(admission::Admission::new(config.semantic_bytes)?);
         let mut handlers = BTreeMap::new();
         for handler in config.handlers {
             REGISTRY.asset(handler.kind()).map_err(Error::Invalid)?;
@@ -89,7 +85,7 @@ impl SqliteBackend {
             handlers: Arc::new(handlers),
             authorizers: Arc::new(authorizers),
             semantic_bytes: config.semantic_bytes,
-            admission_bytes,
+
             semantic_budget,
             changed: tokio::sync::watch::channel(local).0,
         })

@@ -6,9 +6,11 @@ use super::{
 };
 use crate::catalog::ObjectHead;
 
-/// The engine verifies these bounded bodies against the current and proposed
-/// roots before entering the writer. Handlers derive the semantic field delta;
-/// caller-supplied field names alone are not authorization evidence.
+/// Local preparation binds `before` to this object's accepted version or its
+/// queued same-origin predecessor, then rechecks that binding inside the writer.
+/// Authority acceptance supplies its own current body and the replayed intent;
+/// a client's claimed before/candidate is never authority authorization evidence.
+/// Handlers derive field deltas from these bounded, content-verified bytes.
 pub struct PreparedChange<'a> {
     pub proposal: &'a ProposedObject,
     pub current: Option<&'a ObjectHead>,
