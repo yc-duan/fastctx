@@ -29,7 +29,8 @@ pub(crate) struct SupplyRequest {
     pub owner: SupplyOwner,
 }
 
-#[derive(Clone, Debug)]
+/// Persisted coordinates are replayable, but adoption rechecks the owning row.
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct SupplyTicket {
     pub(in crate::blocks) scope: ScopeKey,
     pub(in crate::blocks) id: Digest,
