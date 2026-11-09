@@ -13,6 +13,10 @@ mod source_ingest;
 mod source_steps;
 #[path = "timeline_install.rs"]
 mod timeline_install;
+#[path = "supply.rs"]
+mod supply;
+#[path = "timeline_hold.rs"]
+mod timeline_hold;
 use fastctx_storage::{Database, rusqlite::params};
 use fastctx_sync::{
     blocks::{SqliteBlocks, codec},
@@ -371,6 +375,8 @@ pub async fn run(root: &Path) -> Result<()> {
     source_ingest::run(root).await?;
     timeline_install::run(root).await?;
     pending::run(root).await?;
+    supply::run(root).await?;
+    timeline_hold::run(root).await?;
     println!(
         "content lifecycle: typed pins, dual encodings, pending closures, private references, claim fences, cancellation, restart and revoked staging cleanup passed"
     );
