@@ -10,7 +10,7 @@ use crate::{
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "call", rename_all = "snake_case")]
+#[serde(tag = "do", rename_all = "snake_case")]
 pub enum TimelineCall {
     /// A page of `resident`'s timeline; without a fence, from its latest snapshot.
     Read { resident: ResidentId, fence: Option<TimelineFence>, anchor: TimelineAnchor, max_items: u32, max_bytes: u32 },
@@ -28,7 +28,7 @@ impl TimelineCall {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "reply", rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum TimelineReply {
     Read {
         result: TimelineResult,
