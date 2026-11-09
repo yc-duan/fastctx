@@ -14,11 +14,13 @@
 //! new chunk. Source evidence is retained even when its display lane loses.
 
 
+mod alias;
 mod control;
 mod item;
 mod model;
 mod placement;
 
+pub use alias::{AliasReduction, bind_alias, redirect_observation};
 pub use control::{AgentState, BranchReduction, RewriteReduction, SourceState, agent, branch, picture, rewrite, turn};
 pub use item::{AppendOutcome, AppendPlan, append, observe, place, run};
 pub use model::*;
