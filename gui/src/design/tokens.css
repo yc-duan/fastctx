@@ -77,6 +77,7 @@
      pointer, stand this far apart, so two filled rows never run together
      into one shape. */
   --row-gap: 2px;
+  --touch-target: 44px;
 
   --radius-s: 6px;
   --radius-m: 10px;
@@ -96,6 +97,7 @@
   /* Motion. Hover moves only colour, opacity and transform; folding has one
      duration and one curve everywhere. Nothing moves for itself. */
   --hover: 180ms;
+  --switch-saving-alpha: 0.55;
   --fold: 220ms;
   --fold-easing: cubic-bezier(0.2, 0, 0, 1);
   /* A side of the window coming or going, the sidebar or the panel beside

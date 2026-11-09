@@ -17,6 +17,7 @@ import type { UpdateSettings, UpdateState } from "../world/updates";
 
 export class UpdateRows {
   private said = "";
+  private pending: UpdateSettings | null = null;
   private readonly stop: () => void;
 
   constructor(
@@ -35,7 +36,7 @@ export class UpdateRows {
       const target = event.target as HTMLElement;
       if (target.closest("[data-update-look]")) this.versions(true);
       const choice = target.closest<HTMLButtonElement>("[data-update-choice]");
-      if (choice) this.choose(choice.dataset.updateChoice!, choice.dataset.value!);
+      if (choice && !choice.disabled) this.choose(choice.dataset.updateChoice!, choice.dataset.value!);
     });
     this.stop = effect(() => {
       updates.offered.get();
@@ -49,19 +50,24 @@ export class UpdateRows {
 
   private choose(kind: string, value: string): void {
     const state = this.updates.state.peek();
-    if (!state) return;
+    if (!state || this.pending) return;
     const settings: UpdateSettings = { ...state.settings };
     if (kind === "auto") {
       settings.auto = value === "on";
       settings.chosen = true;
     } else if (kind === "relays") settings.relays = value === "on";
+    this.pending = settings;
+    this.said = "";
+    this.draw(state);
     this.updates.set(settings).then(
       () => {
         this.said = "";
+        this.pending = null;
         this.draw(this.updates.state.peek());
       },
       (error: unknown) => {
         this.said = detailOf(error);
+        this.pending = null;
         this.draw(this.updates.state.peek());
       },
     );
@@ -104,12 +110,12 @@ export class UpdateRows {
       `<div class="choice-options">${options
         .map(
           ([value, name]) =>
-            `<button type="button" class="choice${value === chosen ? " chosen" : ""}" role="radio" aria-checked="${value === chosen}" data-update-choice="${kind}" data-value="${value}">${escape(name)}</button>`,
+            `<button type="button" class="choice${value === chosen ? " chosen" : ""}" role="radio" aria-checked="${value === chosen}"${this.pending ? ' disabled aria-busy="true"' : ""} data-update-choice="${kind}" data-value="${value}">${escape(name)}</button>`,
         )
         .join("")}</div>`;
-    const settings = state?.settings;
+    const settings = this.pending ?? state?.settings;
     const onOff: [string, string][] = [["on", words.on], ["off", words.off]];
-    const auto = state ? (state.auto ?? state.settings.auto) : false;
+    const auto = this.pending ? this.pending.auto : state ? (state.auto ?? state.settings.auto) : false;
     // Until the owner chooses, a computer with the application does not
     // update by itself: it says so beside the choice.
     const byDefault = settings && !settings.chosen ? `<span class="choice-note">${escape(words.autoByDefault)}</span>` : "";

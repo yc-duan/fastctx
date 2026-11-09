@@ -11,6 +11,8 @@ export interface MachineLogActor {
 
 export type MachineLogAction =
   | { change: "collab"; version: number }
+  /** The account's history switch (`world-history.md`). */
+  | { change: "history"; on: boolean }
   | { change: "share"; machine: MachineName; to: AccountName; shared: boolean; jobs?: number }
   // Assistance, under the names the hub first wrote it under, which hubs
   // and nodes of every version read.

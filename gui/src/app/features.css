@@ -852,3 +852,80 @@
   margin-top: var(--space-2);
   color: var(--caution);
 }
+
+/* Trying the saved settings: the button, then a line for the model and one
+   for the search, each with what came back beneath it. */
+.sf-try {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-3);
+}
+
+.sf-try[hidden] {
+  display: none;
+}
+
+.sf-try-go.trying .glyph {
+  animation: sf-trying 1.2s var(--ease) infinite alternate;
+}
+
+@keyframes sf-trying {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0.3;
+  }
+}
+
+:root[data-reduced] .sf-try-go.trying .glyph {
+  animation: none;
+}
+
+.sf-tried {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+}
+
+.sf-tried-line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin: var(--space-2) 0 0;
+  font-size: var(--size-text);
+}
+
+.sf-tried-what {
+  color: var(--text-2);
+  min-width: 3em;
+}
+
+.sf-tried-verdict {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.sf-tried-line.ok .sf-tried-verdict .glyph {
+  color: var(--accent);
+}
+
+.sf-tried-line.bad .sf-tried-verdict {
+  color: var(--caution);
+}
+
+.sf-tried-time {
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.sf-tried-said {
+  margin: 0;
+  color: var(--text-2);
+  font-family: var(--font-code);
+  font-variation-settings: var(--code-axes);
+  font-size: var(--size-code);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}

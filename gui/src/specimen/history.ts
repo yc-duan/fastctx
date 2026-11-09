@@ -1,7 +1,8 @@
 // A history, as the specimen holds it: a project's documents of dated
 // paragraphs, one with a decision and a paragraph that no longer holds, one
-// kept in three versions, one taken down; and the history of a conversation
-// outside any project.
+// kept in three versions, one taken down; the history of a conversation
+// outside any project; and what a conversation of the project wrote in its
+// own before it joined.
 
 import type { HistoryCatalog, HistoryDocument, HistoryRevision, HistoryScope } from "../world/history";
 
@@ -22,7 +23,8 @@ interface Kept {
 
 /** The day `ago` before the specimen's moment, as a paragraph's date. */
 function dayOf(ago: number): string {
-  return new Date(now - ago).toISOString().slice(0, 10);
+  const at = new Date(now - ago);
+  return `${at.getFullYear()}-${String(at.getMonth() + 1).padStart(2, "0")}-${String(at.getDate()).padStart(2, "0")}`;
 }
 
 function project(): Record<string, Kept> {
@@ -86,8 +88,17 @@ function project(): Record<string, Kept> {
   };
 }
 
-function conversation(): Record<string, Kept> {
+function conversation(resident: string): Record<string, Kept> {
   const d = (n: number) => dayOf(n * day);
+  if (resident === "claude-2b1c") {
+    return {
+      "q16-overflow-first-seen": {
+        description: "Q16 积分第一次溢出时的现场，进项目之前记下的。积分溢出、overflow、step 测试、ki",
+        versions: [{ ago: 9 * day, by: claude, on: "laptop", model: "claude-opus-5-5", body: `${d(9)}：\`step_response\` 跑到第 4 秒，积分项越过 \`i32::MAX\`，输出从 0.98 跳成 -1。` }],
+      },
+    };
+  }
+  if (resident !== "codex-6b19") return {};
   return {
     "printer-setup": {
       description: "书房那台打印机在家里网络上的设置。打印机、printer、IPP、驱动、局域网地址",
@@ -97,7 +108,7 @@ function conversation(): Record<string, Kept> {
 }
 
 function kept(scope: HistoryScope): Record<string, Kept> {
-  return scope.kind === "project" ? project() : conversation();
+  return scope.kind === "project" ? project() : conversation(scope.resident);
 }
 
 function revision(name: string, one: Kept, index: number): HistoryRevision {
@@ -122,7 +133,7 @@ export function specimenHistory(scope: HistoryScope, at: Date): HistoryCatalog {
 export function specimenHistoryDocument(scope: HistoryScope, name: string, version: number | null, at: Date): HistoryDocument {
   now = at.getTime();
   const all = kept(scope);
-  const one = all[name] ?? Object.values(all)[0]!;
+  const one = all[name] ?? Object.values(all)[0] ?? Object.values(conversation("codex-6b19"))[0]!;
   const index = version === null ? one.versions.length - 1 : Math.min(Math.max(version - 1, 0), one.versions.length - 1);
   const chosen = revision(name, one, index);
   return {

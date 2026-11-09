@@ -36,16 +36,16 @@ const ASKED_FOR = ["answer", "command", "change", "tool", "plan", "form", "other
 
 /** Gives the phone the rules it calls the user by, in the interface's
  *  words, or turns them off. The same rules as a computer's: an agent that
- *  asks the user something, one that tells them a reply or something
- *  urgent (what can wait is not pushed), and a turn the user's words began
- *  in a conversation opened through the World that ends without telling
- *  them anything. The phone writes the body from the agent's own words, as
- *  a computer does. */
+ *  asks the user something, a colleague that tells them a reply or
+ *  something urgent (what can wait is not pushed), and the answer that ends
+ *  a turn the user's words began in a conversation opened through the
+ *  World. The phone writes the body from the agent's own words, as a
+ *  computer does. */
 export function configurePhone(words: PresenceWords, enabled: boolean): Promise<void> {
   const who = "{who}";
   const rules: Rule[] = [
     { when: "asked", userStartedOnly: false, title: Object.fromEntries(ASKED_FOR.map((what) => [what, words.asked(who, what)])) },
-    { when: "told", userStartedOnly: true, title: { reply: words.finished(who), urgent: words.urgent(who) } },
+    { when: "told", userStartedOnly: false, title: { reply: words.finished(who), urgent: words.urgent(who) } },
     { when: "finished", userStartedOnly: true, title: words.finished(who), compacted: words.compacted },
   ];
   return call("configure", { configuration: { enabled, agentNames: { codex: "Codex", claude: "Claude" }, rules, troubles: troubleTemplates(words.troubles) } });

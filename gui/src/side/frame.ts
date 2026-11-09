@@ -68,6 +68,8 @@ function keptShare(): number | null {
 export class SideFrame implements PartsFrame {
   readonly pane: SidePane;
   readonly opener: HTMLButtonElement;
+  /** Opens the side at the history of the conversation in focus. */
+  private readonly historyMark: HTMLButtonElement;
   /** The corner's line, and where in it the conversation's place goes. */
   private readonly corner: HTMLElement;
   private readonly whereSlot: HTMLElement;
@@ -127,7 +129,14 @@ export class SideFrame implements PartsFrame {
     this.corner.className = "sp-corner-bar";
     this.whereSlot = document.createElement("div");
     this.whereSlot.className = "sp-corner-where";
-    this.corner.append(this.whereSlot, this.pane.more, this.opener);
+    this.historyMark = document.createElement("button");
+    this.historyMark.type = "button";
+    this.historyMark.className = "icon-button sp-history-mark";
+    this.historyMark.hidden = true;
+    this.historyMark.innerHTML = glyph("journal", 18);
+    // Pressed again on its history, the side goes back to the overview.
+    this.historyMark.addEventListener("click", () => this.pane.turnToHistory());
+    this.corner.append(this.whereSlot, this.historyMark, this.pane.more, this.opener);
     // It stands over a head that drags the window: the window is told it is
     // pressed, not dragged from.
     this.corner.dataset.worldTitlebar = "client";
@@ -160,6 +169,10 @@ export class SideFrame implements PartsFrame {
     if (parts) parts.frame = this;
     this.corner.hidden = !parts;
     this.whereSlot.replaceChildren(...(parts ? [parts.where.corner] : []));
+    const mark = parts?.history?.label ?? null;
+    this.historyMark.hidden = mark === null;
+    this.historyMark.title = mark ?? "";
+    this.historyMark.setAttribute("aria-label", mark ?? "");
     this.pane.use(parts);
     this.drawSwitch();
     parts?.seen(this.pane.visible);
@@ -317,6 +330,7 @@ export class SideFrame implements PartsFrame {
     this.host.classList.toggle("sp-shown", open);
     if (open && this.parts) this.parts.fresh = false;
     this.opener.setAttribute("aria-pressed", String(open));
+    this.historyMark.setAttribute("aria-pressed", String(!!this.parts?.history && this.pane.visible === this.parts.history.part));
     this.opener.classList.toggle("news", !open && !!this.parts?.fresh);
     if (this.placed !== "over") keep(OPEN_KEPT, open ? "1" : null);
   }

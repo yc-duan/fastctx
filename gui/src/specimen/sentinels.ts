@@ -1,5 +1,6 @@
 // The sentinels' settings, as the specimen keeps them: off, or with
-// `?sentinels` living on the server with a model and its key set.
+// `?sentinels` living on the server with a model and its key set. A try
+// finds the model answering; with `?unkeyed` its key refused.
 
 import type { SentinelSeam, SentinelSettingsView } from "../world/sentinels";
 
@@ -7,13 +8,14 @@ export function specimenSentinels(on: boolean): SentinelSeam {
   let view: SentinelSettingsView = on
     ? {
         version: 3,
-        settings: { home: "server", model: { protocol: "open_ai", endpoint: "https://api.deepseek.com/v1/chat/completions", model: "deepseek-chat" }, search: null },
+        settings: { home: "server", model: { protocol: "open_ai", endpoint: "https://api.deepseek.com", model: "deepseek-chat" }, search: null },
         home_status: { kind: "ready" },
         keys: { model: true, search: false },
         key_error: null,
       }
     : { version: null, settings: { home: null, model: null, search: null }, home_status: { kind: "unset" }, keys: null, key_error: null };
-  const wait = () => new Promise((resolve) => setTimeout(resolve, 400));
+  const wait = (ms = 400) => new Promise((resolve) => setTimeout(resolve, ms));
+  const refused = new URLSearchParams(location.search).has("unkeyed");
   return {
     read: async () => view,
     write: async (_hub, _account, expected, settings) => {
@@ -25,6 +27,16 @@ export function specimenSentinels(on: boolean): SentinelSeam {
     setKey: async (_hub, _account, key) => {
       await wait();
       view = { ...view, keys: { ...(view.keys ?? { model: false, search: false }), [key]: true } };
+    },
+    tryOut: async () => {
+      await wait(1200);
+      const model = view.settings.model
+        ? refused
+          ? { ok: false, ms: 412, said: 'https://api.deepseek.com/chat/completions answered HTTP 401 (authentication_error/invalid_api_key): {"error":{"message":"Authentication Fails, Your api key: ****abcd is invalid","type":"authentication_error"}}' }
+          : { ok: true, ms: 1384, said: "Ready." }
+        : null;
+      const search = view.settings.search ? { ok: true, ms: 822, said: "5 results" } : null;
+      return { model, search };
     },
   };
 }

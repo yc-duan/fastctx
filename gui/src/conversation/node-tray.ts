@@ -1,67 +1,50 @@
-// What is attached to the shared words, as the node of the agent's machine
-// keeps them (`world-gui.md`, 对话: the input is one for every device). Every
-// device shows the same files; a file goes to that machine as soon as it is
-// attached, and any device can take one out. What this device is still
-// sending, before the node lists it, is shown too, with its picture where
-// the page holds the bytes; once listed, it is one row, as this device's
-// own upload has it. One whose connection broke waits to go on from where
-// it stopped (`world-network.md`, 断开不是结束).
-//
-// For an agent assisting the user, files other than images go to one of
-// the user's machines (`world-run.md`, 协助的智能体没有「这里」), without
-// asking.
-// The node keeps that machine with the words, the one the first device to
-// send them gave, so they go to one machine whichever device sends.
+// Attachments belong to the node's draft. Local uploads keep one identity
+// until its receipt arrives, including retries and removal during transfer.
 
-import type { ComposerSession, ComposerSessionState } from "./composer";
-import type { ComposerDocument } from "./composer";
-import type { AttachWords } from "./attach";
+import type { ComposerSession, ComposerSessionState, ComposerDocument } from "./composer";
+import type { AttachWords, Attached } from "./attach";
+import type { Attachment } from "../world/attachments";
+import type { ComposerAttachmentAdded, ComposerUpdated } from "../world/composer";
 import { viewAttached } from "./attached-pictures";
-import { glyph } from "./glyphs";
-import { escape } from "./prose";
+import { AttachmentRows, type AttachmentRow } from "./attachment-rows";
 
-/** Something could not be done, said by the composer: the World's own
- *  words, kept for the pointer's rest, and the interface's words for it
- *  where the one that failed has them. */
+/** A failure in the World's words, with interface wording where available. */
 export type Failed = (why: string, said?: string) => void;
-
 const reason = (error: unknown): string => String(error instanceof Error ? error.message : error);
-
 const IMAGE = /\.(png|jpe?g|gif|webp|bmp|avif|svg)$/i;
 
-interface Sending {
+interface Upload {
+  key: string;
   name: string;
   size: number | null;
   image: boolean;
   preview: string | null;
+  operation: string | null;
+  attachment: string | null;
+  settled: boolean;
+  error: string | null;
+  removed: boolean;
+  detaching: boolean;
+  begin: (() => Promise<ComposerAttachmentAdded>) | null;
+  first?: (() => Promise<unknown>) | undefined;
+  flight?: Promise<void>;
 }
 
-/** How a file's picture is known, by name and size. */
-const pictured = (name: string, size: number | null): string => `${name}:${size}`;
-
-/** For an agent assisting the user, which has no machine it works on:
- *  where its files other than images go. */
+/** Where a file other than an image goes for an assisting agent. */
 export interface AssistantFiles {
-  /** Whether the agent assists the user. */
   assisting(): boolean;
-  /** The user's machine they go to, as written in the World, or null when
-   *  none can take them. */
   place(): string | null;
-  /** Said when none can. */
   nowhere: string;
 }
 
 export class NodeTray {
   readonly element: HTMLUListElement;
-  /** What this device started sending, by its upload's operation. */
-  private readonly sending = new Map<string, Sending>();
-  /** Pictures of the files this device attached, by name and size: each
-   *  holds the file's bytes until it is let go. */
-  private readonly previews = new Map<string, string>();
-  /** The pictures whose files the node has listed with words: let go once
-   *  no words hold them. */
-  private readonly listed = new Set<string>();
+  private readonly rows: AttachmentRows;
+  private readonly uploads = new Map<string, Upload>();
+  private readonly removing = new Set<string>();
+  private readonly removals = new Set<Promise<void>>();
   private state: ComposerSessionState | null = null;
+  private closed = false;
 
   constructor(
     private readonly words: AttachWords,
@@ -69,48 +52,31 @@ export class NodeTray {
     private readonly document: ComposerDocument,
     private readonly failed: Failed,
     private readonly assistantFiles: AssistantFiles | null = null,
-    /** Whether a file is on its way changed. */
     private readonly changed: () => void = () => {},
   ) {
     this.element = window.document.createElement("ul");
     this.element.className = "attach-tray";
     this.element.hidden = true;
+    this.rows = new AttachmentRows(this.element, words);
     this.element.addEventListener("click", (event) => {
       const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-remove], [data-retry]");
       if (!button) {
         viewAttached(this.element, event.target as Element);
         return;
       }
+      const upload = this.uploads.get(button.dataset.retry ?? button.dataset.remove ?? "");
       if (button.dataset.retry) {
-        this.session.retryOperation(button.dataset.retry).catch((error: unknown) => this.failed(reason(error), this.words.failed(reason(error))));
-        return;
-      }
-      const id = button.dataset.remove!;
-      if (this.sending.has(id)) {
-        this.forget(id);
+        if (upload) void this.send(upload);
+      } else if (upload) {
+        upload.removed = true;
         this.draw();
-        return;
+      } else if (button.dataset.remove) {
+        void this.detach(button.dataset.remove);
       }
-      // This device's own upload goes no further once taken out.
-      const operation = this.draft()?.uploads.find((one) => one.id === id)?.operation;
-      if (operation && this.sending.has(operation)) this.forget(operation);
-      this.session.detach(id, this.document).catch((error: unknown) => this.failed(reason(error)));
     });
   }
 
-  private forget(operation: string): void {
-    this.sending.delete(operation);
-    try {
-      this.session.forgetOperation(operation);
-    } catch {
-      // Still on its way: it is listed again once the node has it.
-    }
-  }
-
-  /** The words this tray holds the files of: the input's, without those
-   *  that went with words still on their way, or a queued one's being
-   *  changed. */
-  private draft(state: ComposerSessionState | null = this.state) {
+  private draft(state = this.state) {
     const target = this.document.view.state.target;
     if (!state) return null;
     if (target.kind !== "draft") return state.composer.queue.find((item) => item.id === target.id)?.draft ?? null;
@@ -119,40 +85,12 @@ export class NodeTray {
     return going.size ? { ...draft, attachments: draft.attachments.filter((one) => !going.has(one.id)) } : draft;
   }
 
-  /** Whether files are attached or on their way. */
-  get count(): number {
-    const draft = this.draft();
-    return (draft?.attachments.length ?? 0) + (draft?.uploads.length ?? 0) + this.sending.size;
-  }
+  get count(): number { return this.items().length; }
+  get uploading(): boolean { return this.items().some((item) => item.state !== "ready"); }
+  get files(): number { return this.items().filter((item) => !item.image).length; }
+  get placing(): boolean { return !!this.assistantFiles?.assisting() && this.files > 0; }
+  get chosen(): string | null { return this.placing ? this.draft()?.files_on ?? this.assistantFiles!.place() : null; }
 
-  /** Whether a file is still on its way, or failed and is not yet taken
-   *  away or tried again: the words wait for it. */
-  get uploading(): boolean {
-    return (this.draft()?.uploads.length ?? 0) > 0 || this.sending.size > 0;
-  }
-
-  /** Files other than images among those attached. */
-  get files(): number {
-    const draft = this.draft();
-    return (draft?.attachments ?? []).filter((one) => !one.media_type.startsWith("image/") && !IMAGE.test(one.name)).length;
-  }
-
-  /** Whether files other than images go with the words to an assisting
-   *  agent, and so need a machine of the user's. */
-  get placing(): boolean {
-    return !!this.assistantFiles?.assisting() && this.files > 0;
-  }
-
-  /** Where the files other than images go: the machine kept with the
-   *  words, else the one they would go to now. Null when they need none,
-   *  or none can take them. */
-  get chosen(): string | null {
-    if (!this.placing) return null;
-    return this.draft()?.files_on ?? this.assistantFiles!.place();
-  }
-
-  /** Gives the node the machine, when it does not have it yet: just before
-   *  the words are sent, so every device sends them to that one. */
   settle(): void {
     const chosen = this.chosen;
     if (chosen === null || chosen === (this.draft()?.files_on ?? null)) return;
@@ -164,14 +102,8 @@ export class NodeTray {
       const image = file.type.startsWith("image/") || IMAGE.test(file.name);
       const placed = this.placed(image);
       if (placed === null) continue;
-      const preview = image ? URL.createObjectURL(file) : null;
-      if (preview) {
-        const key = pictured(file.name, file.size);
-        const before = this.previews.get(key);
-        if (before) URL.revokeObjectURL(before);
-        this.previews.set(key, preview);
-      }
-      this.start({ name: file.name || this.words.attach, size: file.size, image, preview }, () => this.session.attachFile(file, this.document), placed);
+      this.start(file.name || this.words.attach, file.size, image, image ? URL.createObjectURL(file) : null,
+        () => this.session.attachFile(file, this.document), placed);
     }
   }
 
@@ -181,14 +113,27 @@ export class NodeTray {
       const image = IMAGE.test(name);
       const placed = this.placed(image);
       if (placed === null) continue;
-      this.start({ name, size: null, image, preview: null }, () => this.session.attachPath(path, () => {}, this.document), placed);
+      this.start(name, null, image, null, () => this.session.attachPath(path, () => {}, this.document), placed);
     }
   }
 
-  /** What has to come before a file goes to an agent assisting the user: a
-   *  file other than an image goes straight to a machine of the user's, so
-   *  the node is told which first. Null where none can take it, which is
-   *  then not attached and said so; nothing to do for any other file. */
+  /** Takes files held locally while this shared input was opening. */
+  adopt(held: readonly Attached[]): void {
+    for (const item of held) {
+      const placed = this.placed(item.image);
+      if (placed === null) {
+        if (item.preview) URL.revokeObjectURL(item.preview);
+        continue;
+      }
+      const source = item.source;
+      const receipt = source ? null : item.ref as Attachment;
+      const begin = source?.kind === "bytes" ? () => this.session.attachFile(source.file, this.document)
+        : source?.kind === "path" ? () => this.session.attachPath(source.path, () => {}, this.document)
+        : async () => ({ attachment: receipt!, updated: { Ok: await this.session.attach(receipt!, this.document) } });
+      this.start(item.name, item.size, item.image, item.preview, begin, placed, receipt?.id);
+    }
+  }
+
   private placed(image: boolean): (() => Promise<unknown>) | null | undefined {
     if (image || !this.assistantFiles?.assisting()) return undefined;
     const kept = this.draft()?.files_on ?? null;
@@ -200,101 +145,157 @@ export class NodeTray {
     return place === kept ? undefined : () => this.session.setFilesOn(place, this.document);
   }
 
-  private start(file: Sending, upload: () => ReturnType<ComposerSession["attachFile"]>, first?: () => Promise<unknown>): void {
-    if (first) {
-      first().then(
-        () => this.start(file, upload),
-        (error: unknown) => this.failed(reason(error), this.words.failed(reason(error))),
-      );
-      return;
-    }
-    const before = new Set(this.session.state.operations.map((operation) => operation.id));
-    const done = upload();
-    const operation = this.session.state.operations.find((one) => !before.has(one.id));
-    if (operation) this.sending.set(operation.id, file);
+  private start(name: string, size: number | null, image: boolean, preview: string | null,
+    begin: () => Promise<ComposerAttachmentAdded>, first?: () => Promise<unknown>, attachment?: string): void {
+    const upload: Upload = { key: crypto.randomUUID(), name, size, image, preview, operation: null,
+      attachment: attachment ?? null, settled: false, error: null, removed: false, detaching: false, begin, first };
+    this.uploads.set(upload.key, upload);
     this.draw();
-    // One the user took out says nothing more.
-    const kept = () => !operation || this.sending.has(operation.id);
-    done.then(
-      (added) => {
-        if (kept() && "Err" in added.updated) this.failed(added.updated.Err, this.words.failed(added.updated.Err));
-        if (operation) this.sending.delete(operation.id);
-        this.draw();
-      },
-      (error: unknown) => {
-        if (kept()) this.failed(reason(error), this.words.failed(reason(error)));
-        this.draw();
-      },
-    );
+    void this.send(upload);
   }
 
-  /** Lets go of the pictures of files the node listed with words that no
-   *  words hold any more, the input's or a queued one's: sent, or taken
-   *  out. One still on its way stays until it is listed. */
-  private prune(state: ComposerSessionState): void {
-    if (!this.previews.size) return;
-    const held = new Set<string>();
-    const { composer } = state;
-    for (const draft of [composer.draft, ...composer.queue.map((one) => one.draft), ...composer.unobserved.map((one) => one.draft)]) {
-      for (const one of draft.attachments) held.add(pictured(one.name, one.size));
-      for (const one of draft.uploads) held.add(pictured(one.file.name, one.file.size));
-    }
-    for (const [key, url] of this.previews) {
-      if (held.has(key)) this.listed.add(key);
-      else if (this.listed.has(key)) {
-        URL.revokeObjectURL(url);
-        this.previews.delete(key);
-        this.listed.delete(key);
+  private send(upload: Upload): Promise<void> {
+    if (upload.flight) return upload.flight;
+    const flight = this.perform(upload);
+    upload.flight = flight;
+    const finished = () => { delete upload.flight; };
+    void flight.then(finished, finished);
+    return flight;
+  }
+
+  private async perform(upload: Upload): Promise<void> {
+    upload.error = null;
+    try {
+      if (upload.first) {
+        await upload.first();
+        upload.first = undefined;
       }
+      if (upload.removed && !upload.operation) { this.forget(upload); this.draw(); return; }
+      let done: Promise<ComposerAttachmentAdded | ComposerUpdated>;
+      if (upload.operation) done = this.session.retryOperation(upload.operation);
+      else {
+        const before = new Set(this.session.state.operations.map((one) => one.id));
+        done = upload.begin!();
+        upload.operation = this.session.state.operations.find((one) => !before.has(one.id))?.id ?? null;
+      }
+      this.draw(this.session.state);
+      const added = await done;
+      // Attaching a receipt is an ordinary mutation, while uploading returns
+      // both the receipt and the result of attaching it to the draft.
+      if ("attachment" in added) {
+        upload.attachment = added.attachment.id;
+        if ("Err" in added.updated && !upload.removed) this.failed(added.updated.Err, this.words.failed(added.updated.Err));
+      }
+      upload.settled = true;
+      upload.begin = null;
+      if (upload.removed && upload.attachment && !upload.detaching) await this.detach(upload.attachment, upload);
+    } catch (error) {
+      upload.error = reason(error);
+      if (!upload.removed && !this.closed) this.failed(upload.error, this.words.failed(upload.error));
+    }
+    this.draw(this.session.state);
+  }
+
+  private forget(upload: Upload): void {
+    if (upload.preview) URL.revokeObjectURL(upload.preview);
+    this.uploads.delete(upload.key);
+  }
+
+  private detach(id: string, upload?: Upload): Promise<void> {
+    if (this.removing.has(id)) return Promise.resolve();
+    this.removing.add(id);
+    if (upload) upload.detaching = true;
+    const done = this.session.detach(id, this.document).then(() => {
+      if (upload) this.forget(upload);
+    }, (error: unknown) => {
+      if (upload) { upload.removed = false; upload.detaching = false; }
+      this.failed(reason(error), this.words.failed(reason(error)));
+    }).finally(() => {
+      this.removing.delete(id);
+      this.draw(this.session.state);
+    });
+    this.removals.add(done);
+    const finished = () => { this.removals.delete(done); };
+    void done.then(finished, finished);
+    return done;
+  }
+
+  private reconcile(state: ComposerSessionState): void {
+    const drafts = [state.composer.draft, ...state.composer.queue.map((one) => one.draft), ...state.composer.unobserved.map((one) => one.draft)];
+    const held = new Set(drafts.flatMap((draft) => [...draft.attachments.map((one) => one.id), ...draft.uploads.map((one) => one.id)]));
+    const pending = new Map(drafts.flatMap((draft) => draft.uploads.flatMap((one) => one.operation ? [[one.operation, one.id] as const] : [])));
+    const operations = new Map(state.operations.map((one) => [one.id, one]));
+    for (const upload of this.uploads.values()) {
+      const operation = upload.operation ? operations.get(upload.operation) : undefined;
+      upload.attachment = (upload.operation ? pending.get(upload.operation) : undefined) ?? upload.attachment;
+      if (operation?.result && "attachment" in operation.result) upload.attachment = operation.result.attachment.id;
+      if (operation?.status === "completed") {
+        upload.settled = true;
+        upload.begin = null;
+      }
+      if (upload.removed) {
+        if (upload.attachment && !upload.detaching) void this.detach(upload.attachment, upload);
+        else if (!upload.attachment && (upload.settled || operation?.status === "failed" || (!upload.operation && upload.error !== null))) {
+          this.forget(upload);
+          if (upload.operation) this.session.forgetOperation(upload.operation);
+        }
+      } else if (upload.settled && upload.attachment && !held.has(upload.attachment)) this.forget(upload);
     }
   }
 
-  /** Lets go of every picture: the tray is gone. */
-  close(): void {
-    for (const url of this.previews.values()) URL.revokeObjectURL(url);
-    this.previews.clear();
-    this.listed.clear();
+  private items(): AttachmentRow[] {
+    const draft = this.draft();
+    const operations = new Map((this.state?.operations ?? []).map((one) => [one.id, one]));
+    const local = new Map([...this.uploads.values()].flatMap((one) => one.attachment ? [[one.attachment, one] as const] : []));
+    const visible = new Set([...(draft?.attachments ?? []).map((one) => one.id), ...(draft?.uploads ?? []).map((one) => one.id)]);
+    const uploading = (upload: Upload | undefined, error: string | null) => {
+      const operation = upload?.operation ? operations.get(upload.operation) : undefined;
+      if (upload?.removed) return { state: "sending" as const, fact: this.words.removing, retry: null, why: null };
+      if (operation?.status === "failed" && operation.broken) return { state: "sending" as const, fact: this.words.resuming, retry: null, why: operation.error?.message ?? null };
+      const why = operation?.status === "failed" ? operation.error?.message : upload?.error ?? error;
+      return why != null ? { state: "failed" as const, fact: this.words.failed(why), retry: upload?.key ?? null, why }
+        : { state: "sending" as const, fact: this.words.sending, retry: null, why: null };
+    };
+    return [
+      ...(draft?.attachments ?? []).map((one): AttachmentRow => {
+        const own = local.get(one.id);
+        const removing = own?.removed || this.removing.has(one.id);
+        return { key: own?.key ?? one.id, name: one.name, image: one.media_type.startsWith("image/") || IMAGE.test(one.name),
+          preview: own?.preview ?? null, state: removing ? "sending" : "ready", fact: removing ? this.words.removing : this.words.size(one.size), remove: own?.key ?? one.id };
+      }),
+      ...(draft?.uploads ?? []).map((one): AttachmentRow => {
+        const own = local.get(one.id);
+        return { key: own?.key ?? one.id, name: one.file.name, image: one.file.media_type.startsWith("image/") || IMAGE.test(one.file.name),
+          preview: own?.preview ?? null, ...uploading(own, one.error), remove: own?.key ?? one.id };
+      }),
+      ...[...this.uploads.values()].filter((one) => !one.settled && (!one.attachment || !visible.has(one.attachment))).map((one): AttachmentRow => ({
+        key: one.key, name: one.name, image: one.image, preview: one.preview, ...uploading(one, null), remove: one.key,
+      })),
+    ];
+  }
+
+  /** Removal requested here finishes before its editor or session closes. */
+  async settledRemovals(): Promise<void> {
+    const uploads = [...this.uploads.values()].filter((one) => one.removed).flatMap((one) => one.flight ? [one.flight] : []);
+    await Promise.allSettled([...this.removals, ...uploads]);
+  }
+
+  close(): Promise<void> {
+    const settled = this.settledRemovals();
+    this.closed = true;
+    for (const upload of this.uploads.values()) {
+      if (upload.preview) URL.revokeObjectURL(upload.preview);
+      upload.preview = null;
+    }
+    this.uploads.clear();
+    return settled;
   }
 
   draw(state: ComposerSessionState | null = this.state): void {
+    if (this.closed) return;
     this.state = state;
-    if (state) this.prune(state);
-    const { words } = this;
-    const draft = this.draft(state);
-    const operations = new Map((state?.operations ?? []).map((operation) => [operation.id, operation]));
-    const item = (key: string, name: string, image: boolean, preview: string | null, fact: string, failed: string | null, retry: string | null, why: string | null = null) => {
-      const picture = preview ? `<img class="attach-thumb" src="${escape(preview)}" alt="${escape(name)}">` : `<span class="attach-thumb attach-glyph">${glyph(image ? "image" : "file", 18)}</span>`;
-      const said = failed ? `<span class="attach-fact wrong" title="${escape(failed)}">${escape(words.failed(failed))}</span>` : fact ? `<span class="attach-fact"${why ? ` title="${escape(why)}"` : ""}>${escape(fact)}</span>` : "";
-      const again = retry ? `<button class="attach-act" type="button" data-retry="${escape(retry)}">${escape(words.retry)}</button>` : "";
-      return `<li class="attach-item ${failed ? "failed" : fact === words.sending || fact === words.resuming ? "sending" : "ready"}">${picture}<span class="attach-text"><span class="attach-name" title="${escape(name)}">${escape(name)}</span>${said}</span>${again}<button class="attach-remove" type="button" data-remove="${escape(key)}" aria-label="${escape(words.remove)}" title="${escape(words.remove)}">${glyph("close", 14)}</button></li>`;
-    };
-    // How an upload stands: as this device's own operation has it while it
-    // has one, else as the node says.
-    const standing = (operation: string | null, error: string | null) => {
-      const own = operation === null ? undefined : operations.get(operation);
-      if (own?.status === "failed" && own.broken) return { fact: words.resuming, failed: null, retry: null, why: own.error?.message ?? null };
-      if (own?.status === "failed") return { fact: words.sending, failed: own.error?.message ?? "", retry: operation, why: null };
-      if (own) return { fact: words.sending, failed: null, retry: null, why: null };
-      return { fact: words.sending, failed: error, retry: null, why: null };
-    };
-    const listed = new Set((draft?.uploads ?? []).flatMap((one) => (one.operation ? [one.operation] : [])));
-    const rows = [
-      ...(draft?.attachments ?? []).map((one) =>
-        item(one.id, one.name, one.media_type.startsWith("image/") || IMAGE.test(one.name), this.previews.get(pictured(one.name, one.size)) ?? null, words.size(one.size), null, null),
-      ),
-      ...(draft?.uploads ?? []).map((one) => {
-        const operation = one.operation && this.sending.has(one.operation) ? one.operation : null;
-        const now = standing(operation, one.error);
-        return item(one.id, one.file.name, one.file.media_type.startsWith("image/"), this.previews.get(pictured(one.file.name, one.file.size)) ?? null, now.fact, now.failed, now.retry, now.why);
-      }),
-      ...[...this.sending].filter(([id]) => !listed.has(id)).map(([id, file]) => {
-        const now = standing(id, null);
-        return item(id, file.name, file.image, file.preview, now.fact, now.failed, now.retry, now.why);
-      }),
-    ];
-    this.element.hidden = rows.length === 0;
-    const html = rows.join("");
-    if (this.element.innerHTML !== html) this.element.innerHTML = html;
+    if (state) this.reconcile(state);
+    this.rows.draw(this.items());
     this.changed();
   }
 }

@@ -45,6 +45,8 @@ export interface PartSet {
   readonly where: SideWhere;
   /** The part this conversation last showed. */
   part: string | null;
+  /** Its history's part, and what the mark that opens it is named. */
+  readonly history: { part: string; label: string } | null;
 }
 
 /** Something read in the side's body over the parts: one of the host's
@@ -64,6 +66,9 @@ export class SidePane {
   private readonly body: HTMLElement;
   private readonly margin: HTMLElement;
   private readonly menu: HTMLElement;
+  /** Opens the history, where the side lies over the desk and the corner's
+   *  mark is not drawn. */
+  private readonly historyMark: HTMLButtonElement;
   private set: PartSet | null = null;
   private peeked: Peek | null = null;
   private height = 0;
@@ -84,7 +89,7 @@ export class SidePane {
     this.element.className = "sp-panel";
     this.element.hidden = true;
     this.element.setAttribute("aria-label", words.panel);
-    this.element.innerHTML = `<div class="sp-sheet"><div class="sp-margin" aria-hidden="true"></div><header class="sp-head"><div class="sp-line"><div class="sp-where"></div><div class="sp-acts"><button class="icon-button sp-shut" type="button" aria-label="${escape(words.shut)}" title="${escape(words.shut)}">${glyph("close", 18)}</button></div></div></header><div class="sp-back" hidden></div><div class="sp-body"></div></div>`;
+    this.element.innerHTML = `<div class="sp-sheet"><div class="sp-margin" aria-hidden="true"></div><header class="sp-head"><div class="sp-line"><div class="sp-where"></div><div class="sp-acts"><button class="icon-button sp-history-mark" type="button" hidden>${glyph("journal", 18)}</button><button class="icon-button sp-shut" type="button" aria-label="${escape(words.shut)}" title="${escape(words.shut)}">${glyph("close", 18)}</button></div></div></header><div class="sp-back" hidden></div><div class="sp-body"></div></div>`;
     // Where the side stands is the side's own to choose: its "⋯" is there
     // while the side is.
     this.more = document.createElement("div");
@@ -112,6 +117,8 @@ export class SidePane {
       if (!this.menu.hidden && !this.menu.contains(target) && !more.contains(target)) this.openMenu(false);
     });
     this.element.querySelector(".sp-shut")!.addEventListener("click", () => this.close());
+    this.historyMark = this.element.querySelector(".sp-history-mark")!;
+    this.historyMark.addEventListener("click", () => this.turnToHistory());
     this.back.addEventListener("click", (event) => {
       const home = this.set?.parts[0]?.id;
       if (home && (event.target as HTMLElement).closest(".sp-home")) this.select(home);
@@ -152,6 +159,10 @@ export class SidePane {
       this.body.append(part.page.element);
     }
     this.whereSlot.replaceChildren(...(set ? [set.where.line] : []));
+    const label = set?.history?.label ?? "";
+    this.historyMark.hidden = !set?.history;
+    this.historyMark.title = label;
+    this.historyMark.setAttribute("aria-label", label);
     this.drawShown();
     if (this.open) this.page()?.shown?.();
   }
@@ -195,6 +206,14 @@ export class SidePane {
   toggle(first?: string | null): void {
     if (this.open) this.close();
     else this.show(this.set?.part ?? first);
+  }
+
+  /** Opens the side at the history, or, showing it, back at the overview. */
+  turnToHistory(): void {
+    const history = this.set?.history;
+    if (!history) return;
+    if (this.visible === history.part) this.select(this.set!.parts[0]!.id);
+    else this.show(history.part);
   }
 
   /** Shows a part, what was read over the parts going. */
@@ -267,6 +286,7 @@ export class SidePane {
   private drawShown(): void {
     const shown = this.shown();
     for (const part of this.set?.parts ?? []) part.page.element.hidden = part.id !== shown;
+    this.historyMark.setAttribute("aria-pressed", String(!!shown && shown === this.set?.history?.part));
     this.drawBack();
   }
 

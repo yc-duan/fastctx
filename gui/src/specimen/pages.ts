@@ -19,15 +19,15 @@ const acts: PageAct[] = [
   { kind: "say", to: { resident: "codex-0d1e", machine: "lab" } },
 ];
 
-const tuning: PageVersion[] = [
+const tuning: PageVersion[] = import.meta.env.DEV ? [
   { version: 1, base: null, title: "mark50 调参看板", description: "第 1–6 组的损失曲线", acts: [], withdrawn: false, restored_from: null, by: codex, on: "lab", at: ago(60 * 26) },
   { version: 2, base: 1, title: "mark50 调参看板", description: "加上各组结果表与训练日志", acts: [], withdrawn: false, restored_from: null, by: codex, on: "lab", at: ago(60 * 5) },
   { version: 3, base: 2, title: "mark50 调参看板", description: "第 7 组之后的曲线、显卡占用，能让 Codex 重跑一组", acts, withdrawn: false, restored_from: null, by: codex, on: "lab", at: ago(42) },
-];
+] : [];
 
-const table: PageVersion[] = [
+const table: PageVersion[] = import.meta.env.DEV ? [
   { version: 1, base: null, title: "Q16 与 Q32 的误差对照", description: "同一组输入下两种定点格式的最大误差", acts: [], withdrawn: false, restored_from: null, by: claude, on: "laptop", at: ago(60 * 3) },
-];
+] : [];
 
 const kept: Record<string, { versions: PageVersion[]; html: (version: number) => string | null }> = {
   tuning: { versions: tuning, html: () => html },

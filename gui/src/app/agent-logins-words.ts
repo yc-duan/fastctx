@@ -86,6 +86,24 @@ export interface AgentLoginsWords extends MachinePickWords {
   autoTitleWhy: string;
   resetInPlace: string;
   resetInPlaceWhy: string;
+  /** A Claude Code login's models, as those who hold it change them. */
+  models: string;
+  modelsTitle: string;
+  modelsOf(who: string): string;
+  modelsWhat: string;
+  modelsOwn: string;
+  modelsRemove: string;
+  modelsLast: string;
+  modelsAdd: string;
+  modelsAddHint: string;
+  modelsAddGo: string;
+  modelsAddWhy: string;
+  modelsRemoved: string;
+  modelsBack: string;
+  modelsReset: string;
+  modelsDone: string;
+  modelsClose: string;
+  modelsFailed(why: string): string;
   plan: string;
   planNone: string;
   assisting: string;
@@ -196,8 +214,25 @@ export const zhAgentLogins: AgentLoginsWords = {
   copied: "已复制",
   autoTitle: "自动命名对话",
   autoTitleWhy: "新对话的第一句话送出时，由这个登录起一个标题，和 Codex 官方客户端一样；每段对话多一次很小的模型请求",
-  resetInPlace: "随清零重算本周",
-  resetInPlaceWhy: "厂商在重置时间之前清零这个账号的周额度时（比如升级套餐），这一周与受协助者的周用量从那一刻重新算；关着时只按账号的重置时间",
+  resetInPlace: "自动检测重置",
+  resetInPlaceWhy: "周剩余额度恢复到98%—100%且增加至少2个百分点，经至少5分钟变化的新读数确认后重算本周；关闭不撤销已确认的重置",
+  models: "模型…",
+  modelsTitle: "模型",
+  modelsOf: (who) => `${who} 的模型`,
+  modelsWhat: "用这个登录的每个人，包括受它协助的人，新开对话和换模型时都从这份清单里选。",
+  modelsOwn: "自定义",
+  modelsRemove: "不再提供",
+  modelsLast: "至少留一个",
+  modelsAdd: "添加模型",
+  modelsAddHint: "完整的模型 ID，比如 claude-opus-5-6",
+  modelsAddGo: "添加",
+  modelsAddWhy: "填 Claude Code 的 --model 认得的完整 ID。Fastctx 不知道它有哪几档推理强度，用它时不另选强度。",
+  modelsRemoved: "去掉的自带模型",
+  modelsBack: "加回",
+  modelsReset: "恢复 Fastctx 自带的清单",
+  modelsDone: "完成",
+  modelsClose: "关闭",
+  modelsFailed: (why) => `没改成：${why}`,
   plan: "套餐",
   planNone: "不标",
   assisting: "协助",
@@ -297,8 +332,25 @@ export const enAgentLogins: AgentLoginsWords = {
   copied: "Copied",
   autoTitle: "Name conversations",
   autoTitleWhy: "As a new conversation's first words go in, this login names it, as the Codex app does: one small model request per conversation",
-  resetInPlace: "Restart the week on early resets",
-  resetInPlaceWhy: "When the vendor clears this account's weekly limit before its reset time, as on a plan change, the week and the weekly usage of those it assists start over from then; when off, only at the reset time",
+  resetInPlace: "Detect resets automatically",
+  resetInPlaceWhy: "Detect a weekly recovery to 98–100% remaining, rising by at least 2 points, confirmed by changed readings over at least 5 minutes. Turning this off keeps confirmed resets",
+  models: "Models…",
+  modelsTitle: "Models",
+  modelsOf: (who) => `Models of ${who}`,
+  modelsWhat: "Everyone who uses this login, those it assists too, picks from this list when starting a conversation or switching models.",
+  modelsOwn: "Custom",
+  modelsRemove: "Stop offering",
+  modelsLast: "Keep at least one",
+  modelsAdd: "Add a model",
+  modelsAddHint: "A full model ID, such as claude-opus-5-6",
+  modelsAddGo: "Add",
+  modelsAddWhy: "A full ID Claude Code's --model takes. Fastctx does not know which efforts it has, so none is chosen with it.",
+  modelsRemoved: "Built-in models taken out",
+  modelsBack: "Offer again",
+  modelsReset: "Back to Fastctx's own list",
+  modelsDone: "Done",
+  modelsClose: "Close",
+  modelsFailed: (why) => `Not changed: ${why}`,
   plan: "Plan",
   planNone: "None",
   assisting: "Assisting",
