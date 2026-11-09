@@ -31,6 +31,7 @@
 
 import { diffCard, unifiedDiff, type DiffCard, type DiffKind } from "./diff-card";
 import { handOnAtEdge } from "../scroll-handoff";
+import { noticeAnswer } from "./notice-answer";
 import { reducedMotion } from "../motion";
 import { ActsMenu } from "../app/acts-menu";
 import { onHeld } from "../app/press";
@@ -1884,19 +1885,19 @@ export class ConversationView {
     const notice = this.noticeOf(entry);
     if (!notice) {
       const agent = agentWords(entry);
-      if (agent) into.innerHTML = `<div class="prose notice-answer">${render(agent.body)}</div>`;
+      if (agent) into.append(noticeAnswer(agent.body));
       return;
     }
     if (notice.kind === "answer" && notice.end.last_message) {
-      into.innerHTML = `<div class="prose notice-answer">${render(notice.end.last_message)}</div>`;
+      into.append(noticeAnswer(notice.end.last_message));
     } else if (notice.kind === "world") {
       into.innerHTML = `<div class="told-plain">${plain(entry.text)}</div>`;
     } else if (notice.kind === "question") {
       into.innerHTML = `<div class="told-plain">${plain(notice.text)}</div>`;
     } else if (notice.kind === "words" && notice.told) {
-      into.innerHTML = `<div class="prose notice-answer">${render(notice.text)}</div>`;
+      into.append(noticeAnswer(notice.text));
     } else if (notice.kind === "words" && notice.goal_report?.shown) {
-      into.innerHTML = `<div class="prose notice-answer">${render(notice.goal_report.shown.text)}</div>`;
+      into.append(noticeAnswer(notice.goal_report.shown.text));
     } else if (notice.kind === "words" && notice.goal_question) {
       into.innerHTML = askedHtml(askedOf(notice.goal_question.questions));
     }
@@ -2953,7 +2954,7 @@ export class ConversationView {
     }
     if (entry.kind === "agent-told") {
       const words = entry.end.answer ?? entry.end.reason ?? "";
-      content.innerHTML = `<div class="prose notice-answer">${render(words)}</div>`;
+      content.append(noticeAnswer(words));
       return;
     }
     if (entry.kind === "tool" && startsAgent(entry.tool)) {
