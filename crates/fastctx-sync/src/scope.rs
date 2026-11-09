@@ -1,7 +1,6 @@
 //! A scope is installed from original hub evidence, never from a caller's label.
 
 use crate::{
-    catalog::Lifecycle,
     cursor::StreamCursor,
     identity::{Digest, Producer, ScopeKey},
     proof::{HubSigningIdentity, ProofVerifier},
@@ -32,22 +31,7 @@ impl VerifiedScope {
     /// This does not order authority epochs. The caller has already established
     /// feed order; every changed description must advance its ACL generation.
     pub fn validate_successor(&self, previous: &Self) -> Result<(), Error> {
-        let old = previous.descriptor();
-        let next = self.descriptor();
-        if next == old {
-            return Ok(());
-        }
-        if next.scope != old.scope
-            || !next.owner.same_identity(&old.owner)
-            || next.visibility != old.visibility
-            || next.revision == old.revision
-            || next.acl_revision <= old.acl_revision
-            || old.lifecycle == Lifecycle::Deleted
-            || !same_subject(&next.subject, &old.subject)
-        {
-            return Err(Error::Denied("scope update changes identity or fails to advance its ACL fence".into()));
-        }
-        Ok(())
+        self.descriptor.validate_successor(&previous.descriptor).map_err(Error::Denied)
     }
 }
 
@@ -81,47 +65,13 @@ pub fn verify(
     }
     let descriptor: ScopeDescriptor =
         serde_json::from_slice(&proof.payload.0).map_err(|error| Error::Invalid(error.to_string()))?;
-    if descriptor.format != 1
-        || &descriptor.scope != expected
-        || descriptor.scope.hub != identity.hub
-        || descriptor.acl_revision.0 == 0
-        || descriptor.revision.revision.0 == 0
-        || descriptor.lifecycle == Lifecycle::Removed
-    {
+    if &descriptor.scope != expected || descriptor.scope.hub != identity.hub {
         return Err(Error::Invalid("invalid scope identity or revision".into()));
     }
-    if matches!(descriptor.subject, ScopeSubject::Administrators) != matches!(descriptor.owner, ScopeOwner::Hub) {
-        return Err(Error::Invalid("only administrator scopes are hub-owned".into()));
-    }
-    if let ScopeVisibility::SinceGrant { opened_acl } = descriptor.visibility
-        && (!matches!(descriptor.subject, ScopeSubject::Machine { .. })
-            || opened_acl.0 == 0
-            || opened_acl > descriptor.acl_revision)
-    {
-        return Err(Error::Invalid("grant visibility requires a valid immutable machine segment fence".into()));
-    }
-    if let ScopeSubject::Conversation { shared_on, born_seal, .. } = &descriptor.subject
-        && (shared_on.is_some() != born_seal.is_some() || born_seal.as_ref().is_some_and(|seal| seal.len() > 4096))
-    {
-        return Err(Error::Invalid("shared conversation origin needs its bounded machine seal".into()));
-    }
+    descriptor.validate().map_err(Error::Invalid)?;
     Ok(VerifiedScope {
         descriptor,
         source: StreamCursor { scope: batch.scope, stream: batch.stream, epoch: batch.epoch, committed: batch.through },
         proof,
     })
-}
-
-fn same_subject(one: &ScopeSubject, other: &ScopeSubject) -> bool {
-    match (one, other) {
-        (ScopeSubject::Account, ScopeSubject::Account)
-        | (ScopeSubject::Administrators, ScopeSubject::Administrators) => true,
-        (ScopeSubject::Conversation { conversation: a, .. }, ScopeSubject::Conversation { conversation: b, .. }) => {
-            a == b
-        }
-        (ScopeSubject::Project { project: a, .. }, ScopeSubject::Project { project: b, .. }) => a == b,
-        (ScopeSubject::Machine { device: a }, ScopeSubject::Machine { device: b })
-        | (ScopeSubject::Device { device: a }, ScopeSubject::Device { device: b }) => a == b,
-        _ => false,
-    }
 }
