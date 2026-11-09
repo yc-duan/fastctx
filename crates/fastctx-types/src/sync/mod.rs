@@ -7,6 +7,7 @@ pub mod acceptance;
 mod canonical;
 pub mod catalog;
 pub mod conversation_identity;
+pub mod conversation_timeline;
 pub mod cursor;
 pub mod exposure;
 pub mod feed;
