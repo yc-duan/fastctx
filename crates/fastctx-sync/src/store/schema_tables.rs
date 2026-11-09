@@ -12,6 +12,7 @@ pub const TABLES: &[&str] = &[
     "sync_local_head",
     "sync_local_changes",
     "sync_stream_heads",
+    "sync_stream_prefixes",
     "sync_stream_records",
     "sync_stream_roots",
     "sync_operations",

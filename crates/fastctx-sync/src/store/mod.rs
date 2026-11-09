@@ -7,6 +7,7 @@ pub mod boundary;
 pub mod control;
 pub mod directory;
 pub mod engine;
+pub(crate) mod epochs;
 pub(crate) mod feed;
 pub mod format_upgrade;
 pub mod ingest;

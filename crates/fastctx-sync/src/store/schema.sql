@@ -115,6 +115,13 @@ CREATE TABLE sync_stream_heads (
     PRIMARY KEY(hub,scope,stream,epoch)
 ) WITHOUT ROWID;
 CREATE INDEX sync_stream_heads_object ON sync_stream_heads(hub,scope,object,kind);
+-- A producer's bounded confirmation task resumes without scanning old records.
+CREATE TABLE sync_stream_prefixes (
+    hub TEXT NOT NULL, scope TEXT NOT NULL, stream TEXT NOT NULL, epoch TEXT NOT NULL,
+    sequence BLOB NOT NULL CHECK(length(sequence)=8), prefix_digest TEXT NOT NULL,
+    PRIMARY KEY(hub,scope,stream,epoch),
+    FOREIGN KEY(hub,scope,stream,epoch) REFERENCES sync_stream_heads(hub,scope,stream,epoch)
+) WITHOUT ROWID;
 CREATE TABLE sync_stream_records (
     hub TEXT NOT NULL, scope TEXT NOT NULL, stream TEXT NOT NULL, epoch TEXT NOT NULL,
     sequence BLOB NOT NULL CHECK(length(sequence)=8), operation TEXT NOT NULL,

@@ -1,8 +1,10 @@
 //! The SQLite source writer. An adapter opens an engine-issued step, uploads its
 //! content through it and commits it as one transaction; it never touches SQL.
 mod commit;
+mod confirmation;
 mod effects;
 mod open;
+mod prefix_records;
 mod reads;
 mod streams;
 
@@ -25,16 +27,18 @@ use crate::{
     cursor::Revision,
     identity::{HostGeneration, OperationId},
     manifest::{ContentBlock, ManifestReply, ManifestRoot, Pin, PublishedBlock, Representation},
-    proof::{ConfirmedEpoch, ProofSigner},
+    proof::{ConfirmedEpoch, HubSigningIdentity, ProofSigner, ProofVerifier},
     registry::{AuthorityRule, ConflictRule, DataClass, REGISTRY},
 };
 use std::{collections::BTreeMap, sync::Arc};
 
+#[derive(Clone)]
 pub struct SqliteSources {
     blocks: SqliteBlocks,
     signer: Arc<dyn ProofSigner>,
     authorizers: BTreeMap<&'static str, Arc<dyn SourceAuthorizer>>,
     memory: IngestBudget,
+    hubs: BTreeMap<crate::identity::HubId, (HubSigningIdentity, Arc<dyn ProofVerifier>)>,
 }
 impl SqliteSources {
     /// Service composition installs one authorizer per ingestible kind. A kind
@@ -60,7 +64,16 @@ impl SqliteSources {
                 return Err(Error::Invalid("one kind has two source authorizers".into()));
             }
         }
-        Ok(Self { blocks, signer, authorizers: installed, memory })
+        Ok(Self { blocks, signer, authorizers: installed, memory, hubs: BTreeMap::new() })
+    }
+    /// Installs the trusted hub layer from authenticated discovery. A missing
+    /// layer leaves confirmation unavailable; relayed evidence is never a pin.
+    pub fn with_hub(mut self, identity: HubSigningIdentity, verifier: Arc<dyn ProofVerifier>) -> Result<Self, Error> {
+        if self.hubs.contains_key(&identity.hub) {
+            return Err(Error::Invalid("a hub confirmation layer is already installed".into()));
+        }
+        self.hubs.insert(identity.hub.clone(), (identity, verifier));
+        Ok(self)
     }
     fn authorizer(&self, custody: &Custody) -> Result<&Arc<dyn SourceAuthorizer>, Error> {
         self.authorizers
@@ -147,7 +160,7 @@ impl SourceIngest for SqliteSources {
     fn ingest(&self, operation: IngestOperation) -> FutureResult<'_, IngestReceipt> {
         Box::pin(self.commit(operation))
     }
-    fn confirm_epoch(&self, _context: AccessContext, _epoch: ConfirmedEpoch) -> FutureResult<'_, ()> {
-        Box::pin(async { Err(Error::Unavailable("epoch confirmation arrives with the hub's acceptance path".into())) })
+    fn confirm_epoch(&self, context: AccessContext, epoch: ConfirmedEpoch) -> FutureResult<'_, ()> {
+        Box::pin(self.confirm(context, epoch))
     }
 }

@@ -121,6 +121,8 @@ fn permits(table: &str) -> bool {
                 | "sync_source_index"
                 | "sync_source_proofs"
                 | "sync_stream_heads"
+                | "sync_stream_prefixes"
+                | "sync_epoch_descriptors"
                 | "sync_stream_records"
                 | "sync_stream_roots"
                 | "sync_local_head"

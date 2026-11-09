@@ -24,12 +24,13 @@ struct Head {
     kind: String,
     schema: u16,
     sequence: u64,
-    confirmed: bool,
+    proof: Option<String>,
+    prefix: Option<String>,
 }
 
 fn head(db: &Connection, target: &SourceTarget) -> Result<Option<Head>> {
     let scope = &target.custody.object.scope;
-    db.prepare_cached("SELECT object,producer,kind,schema,sequence,epoch_proof FROM sync_stream_heads WHERE hub=?1 AND scope=?2 AND stream=?3 AND epoch=?4")?
+    db.prepare_cached("SELECT object,producer,kind,schema,sequence,epoch_proof,prefix_digest FROM sync_stream_heads WHERE hub=?1 AND scope=?2 AND stream=?3 AND epoch=?4")?
         .query_row(
             params![scope.hub.to_string(), scope.scope.as_str(), target.stream.as_str(), target.epoch.as_str()],
             |row| {
@@ -39,7 +40,8 @@ fn head(db: &Connection, target: &SourceTarget) -> Result<Option<Head>> {
                     kind: row.get(2)?,
                     schema: row.get(3)?,
                     sequence: sql::counter(row, 4)?,
-                    confirmed: row.get::<_, Option<String>>(5)?.is_some(),
+                    proof: row.get(5)?,
+                    prefix: row.get(6)?,
                 })
             },
         )
@@ -72,9 +74,6 @@ pub(super) fn check(db: &Connection, target: &SourceTarget, batch: &SourceBatch)
                 || head.schema != batch.schema
             {
                 return Err(sql::invalid("the stream epoch belongs to another object, producer or kind"));
-            }
-            if head.confirmed {
-                return Err(sql::invalid("a confirmed epoch continues through the hub's acceptance path"));
             }
             if head.sequence != batch.after.0 {
                 return Err(sql::invalid(format!(
@@ -115,6 +114,13 @@ pub(super) fn append(
     let scope = &target.custody.object.scope;
     let hub = scope.hub.to_string();
     let (stream, epoch) = (target.stream.as_str(), target.epoch.as_str());
+    let previous = head(db, target)?;
+    let epoch_proof = previous.as_ref().and_then(|head| head.proof.clone());
+    let mut prefix = previous
+        .as_ref()
+        .and_then(|head| head.prefix.as_ref())
+        .map(|text| crate::identity::Digest::try_from(text.clone()).map_err(sql::invalid))
+        .transpose()?;
     let through = batch.through.0.to_be_bytes();
     let proof = signed.proof.id();
     let local = local.0.to_be_bytes();
@@ -156,7 +162,10 @@ pub(super) fn append(
         ])?;
     for record in &batch.records {
         let sequence = record.sequence.0.to_be_bytes();
-        db.prepare_cached("INSERT INTO sync_stream_records(hub,scope,stream,epoch,sequence,operation,kind,schema,payload,causes,batch_proof,prefix_digest) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,NULL)")?
+        if let Some(previous) = &prefix {
+            prefix = Some(fastctx_types::sync::feed::stream_advance(previous, record).map_err(sql::invalid)?.1);
+        }
+        db.prepare_cached("INSERT INTO sync_stream_records(hub,scope,stream,epoch,sequence,operation,kind,schema,payload,causes,batch_proof,prefix_digest) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)")?
             .execute(params![
                 hub,
                 scope.scope.as_str(),
@@ -168,7 +177,8 @@ pub(super) fn append(
                 record.schema,
                 encode(&record.payload)?,
                 encode(&record.causes)?,
-                proof.as_str()
+                proof.as_str(),
+                prefix.as_ref().map(|digest|digest.as_str())
             ])?;
         for root in std::iter::once(ContentRef::from(record.payload.clone())).chain(record.roots.iter().cloned()) {
             content.adopt(target, &root)?;
@@ -189,12 +199,36 @@ pub(super) fn append(
                 ])?;
         }
     }
-    Ok(StreamProgress::LocalPending {
-        cursor: StreamCursor {
-            scope: scope.clone(),
-            stream: target.stream.clone(),
-            epoch: target.epoch.clone(),
-            committed: batch.through,
-        },
-    })
+    let cursor = StreamCursor {
+        scope: scope.clone(),
+        stream: target.stream.clone(),
+        epoch: target.epoch.clone(),
+        committed: batch.through,
+    };
+    match (epoch_proof, prefix) {
+        (Some(proof), Some(digest)) => {
+            db.prepare_cached(
+                "UPDATE sync_stream_heads SET prefix_digest=?5 WHERE hub=?1 AND scope=?2 AND stream=?3 AND epoch=?4",
+            )?
+            .execute(params![hub, scope.scope.as_str(), stream, epoch, digest.as_str()])?;
+            db.prepare_cached("UPDATE sync_stream_prefixes SET sequence=?5,prefix_digest=?6 WHERE hub=?1 AND scope=?2 AND stream=?3 AND epoch=?4")?
+                .execute(params![hub,scope.scope.as_str(),stream,epoch,through.as_slice(),digest.as_str()])?;
+            Ok(StreamProgress::Confirmed {
+                cursor,
+                epoch_proof: proof.try_into().map_err(sql::invalid)?,
+                prefix_digest: digest,
+            })
+        }
+        (Some(_), None) => {
+            super::confirmation::dirty(
+                db,
+                scope,
+                &target.stream,
+                &target.epoch,
+                LocalSequence(u64::from_be_bytes(local)),
+            )?;
+            Ok(StreamProgress::LocalPending { cursor })
+        }
+        _ => Ok(StreamProgress::LocalPending { cursor }),
+    }
 }

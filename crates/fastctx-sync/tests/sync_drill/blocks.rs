@@ -15,6 +15,8 @@ mod recovery;
 pub(crate) mod replica;
 #[path = "root_usage.rs"]
 mod root_usage;
+#[path = "source_confirmation.rs"]
+mod source_confirmation;
 #[path = "source_ingest.rs"]
 mod source_ingest;
 #[path = "source_steps.rs"]
@@ -381,6 +383,7 @@ pub async fn run(root: &Path) -> Result<()> {
     root_usage::run(root).await?;
     source_steps::run(root).await?;
     source_ingest::run(root).await?;
+    source_confirmation::run(root).await?;
     timeline_install::run(root).await?;
     replica::run(root).await?;
     let canonical_root = root.to_owned();

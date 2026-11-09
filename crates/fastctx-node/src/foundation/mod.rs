@@ -65,7 +65,7 @@ impl Foundation {
         let scopes = SqliteScopes::new(blocks.clone(), identity.alone.clone(), identity.device.clone());
         let scheduler = SqliteScheduler::new(database.clone(), claims, holder, LEASE)?;
         let report: Arc<dyn Fn(String) + Send + Sync> = Arc::new(move |line| log.line(line));
-        let worker = Worker::new(scheduler, tasks::handlers(&blocks, &timelines), report);
+        let worker = Worker::new(scheduler, tasks::handlers(&blocks, &timelines, &sources), report);
         Ok(Self {
             wake: worker.wake(),
             worker: Mutex::new(Some(worker)),

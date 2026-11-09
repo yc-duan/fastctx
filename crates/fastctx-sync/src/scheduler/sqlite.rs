@@ -224,11 +224,12 @@ pub(crate) fn projection_changed(
     object: &crate::identity::ObjectKey,
     local: LocalSequence,
 ) -> Result<()> {
-    let key = TaskKey {
-        kind: "sync.projection".into(),
-        scope: object.scope.clone(),
-        key: format!("{kind}/{}", object.object.as_str()),
-    };
+    projection_work(db, &object.scope, format!("{kind}/{}", object.object.as_str()), local)
+}
+
+/// Marks bounded derived work stale under an owner-specific key prefix.
+pub(crate) fn projection_work(db: &Connection, scope: &ScopeKey, key: String, local: LocalSequence) -> Result<()> {
+    let key = TaskKey { kind: "sync.projection".into(), scope: scope.clone(), key };
     let existing = get(db, &key)?;
     if existing.as_ref().is_some_and(|row| row.task.wanted >= local) {
         return Ok(());
