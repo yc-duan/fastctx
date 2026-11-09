@@ -2,7 +2,7 @@
 use super::{
     Event, FailureKind, Journal, MigrationGate, Options, Phase, Record, Transition,
     files::{self, Files},
-    snapshot::{self, Budget, Failure, Snapshot, WorkResult},
+    snapshot::{Budget, Failure, Snapshot, WorkResult},
 };
 use crate::{Database, Error, ErrorKind, Result};
 use std::{
@@ -15,10 +15,25 @@ use std::{
 /// synchronous; copying and verification run on one background thread. The journal
 /// must be bound to this same database. An Err has NOT authorized service writes.
 pub fn start(database: &Database, journal: Arc<dyn Journal>, options: Options) -> Result<MigrationGate> {
-    if database.0.upgrade.get().is_some() {
-        return Err(Error::new("format backup was already started on this database"));
+    database.available()?;
+    if let Some(gate) = database.format_upgrade_gate() {
+        return Ok(gate);
     }
-    let gate = MigrationGate::default();
+    let (gate, leader) = super::registry::claim(database.path(), options.limits.elapsed)?;
+    if leader {
+        let result = start_owned(database, journal, options, gate.clone());
+        gate.opened(result.as_ref().map(|_| ()).map_err(Clone::clone));
+        if let Err(error) = result {
+            gate.finish(Err(error.clone()));
+            return Err(error);
+        }
+    } else {
+        gate.wait_opened()?;
+    }
+    let _ = database.0.upgrade.set(gate.clone());
+    Ok(gate)
+}
+fn start_owned(database: &Database, journal: Arc<dyn Journal>, options: Options, gate: MigrationGate) -> Result<()> {
     let files = Files::new(database.path())?;
     let mut record = journal.current()?;
     if record.phase == Phase::Copying {
@@ -36,7 +51,7 @@ pub fn start(database: &Database, journal: Arc<dyn Journal>, options: Options) -
         report(&record, &options);
         gate.finish(Ok(record));
     } else {
-        let work = prepare(database, &files, &record, &options);
+        let work = prepare(database, &files, &record, &options, &gate);
         match work {
             Err(failure) => {
                 record = fail(journal.as_ref(), &record, failure)?;
@@ -87,6 +102,7 @@ pub fn start(database: &Database, journal: Arc<dyn Journal>, options: Options) -
                     // Even journal failure cannot pin a WAL or close migration
                     // forever. The warning is explicit; restart reconciles the record.
                     // Completion is published even when a diagnostic callback panics.
+                    drop(recovery_journal);
                     completed.finish(result.clone());
                     if let Err(error) = result {
                         let message = format!(
@@ -111,8 +127,7 @@ pub fn start(database: &Database, journal: Arc<dyn Journal>, options: Options) -
             }
         }
     }
-    database.0.upgrade.set(gate.clone()).map_err(|_| Error::new("concurrent format-backup startup"))?;
-    Ok(gate)
+    Ok(())
 }
 
 fn prepare(
@@ -120,10 +135,12 @@ fn prepare(
     files: &Files,
     record: &Record,
     options: &Options,
+    gate: &MigrationGate,
 ) -> WorkResult<(Option<Snapshot>, Budget)> {
-    let budget = Budget::new(database.path(), options.limits.clone()).map_err(|e| {
-        Failure::new(if record.phase == Phase::Copied { FailureKind::Integrity } else { FailureKind::Snapshot }, e)
-    })?;
+    let budget =
+        Budget::new(database.path(), options.limits.clone(), gate.deadline(), gate.stop_signal()).map_err(|e| {
+            Failure::new(if record.phase == Phase::Copied { FailureKind::Integrity } else { FailureKind::Snapshot }, e)
+        })?;
     if record.phase == Phase::Copied {
         return Ok((None, budget));
     }
@@ -153,6 +170,12 @@ impl Worker {
             Err(WorkError::Physical(failure)) => {
                 self.record = fail(self.journal.as_ref(), &self.record, failure)?;
             }
+            Err(WorkError::PublicationPending(error)) => {
+                (self.options.observe)(Event::Warning(format!(
+                    "backup publication is unconfirmed: {error}; Copied evidence and names are retained for restart reconciliation"
+                )));
+                return Err(error);
+            }
             Err(WorkError::Journal(error)) => {
                 (self.options.observe)(Event::Warning(format!(
                     "backup status could not be committed: {error}; restart will reconcile it"
@@ -160,7 +183,7 @@ impl Worker {
                 return Err(error);
             }
         }
-        if self.record.phase == Phase::Abandoned {
+        if matches!(self.record.phase, Phase::Abandoned | Phase::Complete) {
             cleanup(&self.files, &self.record, &self.options);
         }
         report(&self.record, &self.options);
@@ -176,7 +199,7 @@ impl Worker {
             (self.options.observe)(Event::Copied(self.record.clone()));
         }
         let path = self.files.copied_path(&self.record).map_err(|e| Failure::new(FailureKind::Integrity, e))?;
-        snapshot::verify(
+        super::verify::verify(
             &path,
             self.record
                 .copied_pages
@@ -185,7 +208,8 @@ impl Worker {
         )?;
         (self.options.observe)(Event::IntegrityChecked(self.record.clone()));
         self.budget.time()?;
-        self.files.publish(&self.record).map_err(|e| Failure::new(FailureKind::Publication, e))?;
+        self.budget.require_running(FailureKind::Publication)?;
+        self.files.publish(&self.record).map_err(WorkError::PublicationPending)?;
         (self.options.observe)(Event::Published(self.record.clone()));
         self.record = advance(self.journal.as_ref(), &self.record, Transition::Complete).map_err(WorkError::Journal)?;
         Ok(())
@@ -194,6 +218,7 @@ impl Worker {
 enum WorkError {
     Physical(Failure),
     Journal(Error),
+    PublicationPending(Error),
 }
 impl From<Failure> for WorkError {
     fn from(failure: Failure) -> Self {

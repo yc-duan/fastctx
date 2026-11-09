@@ -10,6 +10,10 @@ use crate::{
 use std::{
     fs,
     path::{Path, PathBuf},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, Instant},
 };
 
@@ -40,26 +44,34 @@ impl From<std::io::Error> for Failure {
 pub(super) type WorkResult<T> = std::result::Result<T, Failure>;
 #[derive(Clone)]
 pub(super) struct Budget {
-    began: Instant,
+    deadline: Instant,
+    stop: Arc<AtomicBool>,
     limits: Limits,
     wal: PathBuf,
     initial_wal: u64,
 }
 impl Budget {
-    pub fn new(database: &Path, limits: Limits) -> Result<Self> {
+    pub fn new(database: &Path, limits: Limits, deadline: Instant, stop: Arc<AtomicBool>) -> Result<Self> {
         let mut wal = database.as_os_str().to_owned();
         wal.push("-wal");
         let wal = PathBuf::from(wal);
-        Ok(Self { began: Instant::now(), initial_wal: length(&wal)?, wal, limits })
+        Ok(Self { deadline, stop, initial_wal: length(&wal)?, wal, limits })
     }
     pub fn time(&self) -> WorkResult<()> {
-        if self.began.elapsed() >= self.limits.elapsed {
+        if Instant::now() >= self.deadline {
             return Err(Failure::new(FailureKind::Deadline, Error::new("backup exceeded its elapsed-time limit")));
+        }
+        Ok(())
+    }
+    pub fn require_running(&self, kind: FailureKind) -> WorkResult<()> {
+        if self.stop.load(Ordering::Acquire) {
+            return Err(Failure::new(kind, Error::new("format backup cancelled by its lifecycle owner")));
         }
         Ok(())
     }
     pub fn copying(&self) -> WorkResult<()> {
         self.time()?;
+        self.require_running(FailureKind::Copy)?;
         let bytes = length(&self.wal).map_err(|e| Failure::new(FailureKind::Copy, e))?;
         if bytes.saturating_sub(self.initial_wal) > self.limits.wal_growth_bytes {
             return Err(Failure::new(FailureKind::WalLimit, Error::new("backup exceeded its WAL-growth limit")));
@@ -142,33 +154,9 @@ impl Snapshot {
         copy
     }
 }
-fn read_only(path: &Path) -> Result<Connection> {
+pub(super) fn read_only(path: &Path) -> Result<Connection> {
     let db = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX)?;
     db.busy_timeout(Duration::from_millis(25))?;
     db.pragma_update(None, "cache_size", -2048)?;
     Ok(db)
-}
-pub(super) fn verify(path: &Path, pages: u32, budget: &Budget) -> WorkResult<()> {
-    budget.time()?;
-    let check = || -> Result<()> {
-        let mut db = read_only(path)?;
-        let deadline = budget.clone();
-        // Large legacy values produce few integrity-progress calls across many
-        // pages. Check every SQLite progress point, not every 4096th one.
-        db.progress_handler(1, Some(move || deadline.time().is_err()))?;
-        let actual: u32 = db.pragma_query_value(None, "page_count", |row| row.get(0))?;
-        if actual != pages {
-            return Err(Error::new("backup page count differs from its durable copy receipt"));
-        }
-        let mut query = db.prepare("PRAGMA integrity_check")?;
-        let mut rows = query.query([])?;
-        let first =
-            rows.next()?.ok_or_else(|| Error::new("integrity check returned no result"))?.get::<_, String>(0)?;
-        if first != "ok" || rows.next()?.is_some() {
-            return Err(Error::new(format!("backup integrity check failed: {first}")));
-        }
-        Ok(())
-    }();
-    budget.time()?;
-    check.map_err(|e| Failure::new(FailureKind::Integrity, e))
 }

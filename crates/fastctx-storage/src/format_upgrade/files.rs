@@ -90,7 +90,7 @@ impl Files {
         } else {
             atomic::publish_existing_new(&self.partial(record)?, &target)?;
         }
-        self.clean_partial(record)
+        Ok(())
     }
     pub fn clean_partial(&self, record: &Record) -> Result<()> {
         if record.file_name.is_none() {
