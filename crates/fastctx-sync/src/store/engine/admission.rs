@@ -1,7 +1,10 @@
 //! FIFO byte admission bounds simultaneous semantic preparation, not stored assets.
 use crate::{
     manifest::ContentRef,
-    store::{Error, mutation::Submission},
+    store::{
+        Error,
+        mutation::{OriginalIntent, Submission},
+    },
 };
 use std::{sync::Arc, time::Duration};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
@@ -25,6 +28,11 @@ impl Admission {
                 ContentRef::Manifest { .. } => self.semantic_bytes,
             };
             bodies = bodies.saturating_add(bytes).min(self.semantic_bytes);
+        }
+        // A handler's sequential edit can temporarily grow far beyond both the
+        // initial and final bodies. Reserve its bounded intermediate workspace.
+        if request.objects.iter().any(|object| matches!(object.original, OriginalIntent::Edit { .. })) {
+            bodies = self.semantic_bytes;
         }
         // Tokio's multi-permit queue is FIFO, including a large request ahead
         // of smaller ones. Cancellation removes its queued reservation.

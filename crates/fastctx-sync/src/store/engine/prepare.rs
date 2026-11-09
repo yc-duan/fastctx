@@ -151,7 +151,8 @@ pub(super) async fn prepare(
             OriginalIntent::Write { content, schema: written }
                 if proposal.candidate.as_ref() == Some(content) && *written == schema => {}
             OriginalIntent::Edit { edits } => {
-                let changed = handler.apply_edit(schema, &before, edits, before.len().max(after.len()))?;
+                let changed =
+                    handler.apply_edit(schema, &before, edits, store.semantic_bytes.saturating_sub(prepared.bytes))?;
                 if changed != after {
                     return Err(Error::Invalid("candidate body does not implement its declared edit".into()));
                 }

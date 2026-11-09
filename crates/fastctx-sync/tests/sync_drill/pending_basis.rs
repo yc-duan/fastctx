@@ -41,7 +41,10 @@ pub(super) async fn run(root: &Path) -> Result<()> {
     };
     valid.objects[0].before = Some(base.clone());
     valid.objects[0].original = OriginalIntent::Edit {
-        edits: vec![TextEdit { search: "label=old\n".into(), replacement: "label=new\n".into(), all: false }],
+        edits: vec![
+            TextEdit { search: "label=old\n".into(), replacement: "label=intermediate\n".into(), all: false },
+            TextEdit { search: "label=intermediate\n".into(), replacement: "label=new\n".into(), all: false },
+        ],
     };
     let mut wrong = valid.clone();
     wrong.objects[0].before = Some(ContentRef::from(forged.content.clone()));

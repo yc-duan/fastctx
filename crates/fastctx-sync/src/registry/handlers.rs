@@ -63,6 +63,7 @@ pub trait KindHandler: Send + Sync {
     ) -> Result<MergeOutcome, Error>;
     /// Decodes this kind's body and applies the same edit rules as its writer.
     /// Local validation and authority rebasing use this method, never a second matcher.
+    /// `max_bytes` bounds every intermediate body, not only the final result.
     fn apply_edit(&self, schema: u16, current: &[u8], edits: &[TextEdit], max_bytes: usize) -> Result<Vec<u8>, Error>;
     /// Only the declared, permitted paths may change; unknown fields survive.
     fn patch_fields(&self, schema: u16, current: &[u8], edits: &[FieldEdit]) -> Result<Vec<u8>, Error>;
