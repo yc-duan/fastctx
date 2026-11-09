@@ -9,30 +9,16 @@ use std::{
     path::Path,
 };
 
-/// Creates missing private directories one level at a time. Existing directories
-/// are never replaced or chmodded. The requested directory must not be a link;
-/// its ancestors are within the caller's trusted canonical storage root.
+mod directories;
+use directories::prepare;
+
+/// Confirms each directory once per process, including existing directories.
+/// Unix syncs each parent before publication; concurrent callers share that work.
+/// Windows directory publication is best effort: write-through and file flushing
+/// do not provide a documented power-loss guarantee for ancestor directory entries.
+/// Paths must remain under the caller's exclusively owned, canonical storage tree.
 pub fn prepare_directory(path: &Path) -> io::Result<()> {
     crate::roles::in_place("prepare durable content directory", || prepare(path))
-}
-fn prepare(path: &Path) -> io::Result<()> {
-    if !path.is_absolute() {
-        return Err(io::Error::new(io::ErrorKind::InvalidInput, "content directories must be absolute"));
-    }
-    match fs::symlink_metadata(path) {
-        Ok(metadata) => {
-            if !metadata.is_dir() || crate::owned_directory::is_link(&metadata) {
-                return Err(io::Error::new(io::ErrorKind::InvalidInput, "content path is not a plain directory"));
-            }
-            return Ok(());
-        }
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-        Err(error) => return Err(error),
-    }
-    let parent =
-        path.parent().ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "content directory has no parent"))?;
-    prepare(parent)?;
-    create_directory(path)
 }
 
 /// Reads one bounded, ordinary content file and charges all bytes consumed,
@@ -80,7 +66,7 @@ pub fn write_unpublished(path: &Path, bytes: &[u8]) -> io::Result<()> {
 
 /// Deletes an unreferenced generation after its readers have drained. Windows
 /// first durably truncates it: a delayed namespace deletion must not restore
-/// readable private content after an exposure-cleanup receipt (2026-11-08).
+/// readable private content after an exposure-cleanup receipt.
 pub fn delete_unreferenced(path: &Path) -> io::Result<()> {
     crate::roles::in_place("delete durable content", || {
         let metadata = match fs::symlink_metadata(path) {
@@ -115,6 +101,8 @@ fn sync_parent(path: &Path) -> io::Result<()> {
 }
 #[cfg(windows)]
 fn sync_parent(_: &Path) -> io::Result<()> {
+    // Win32 has no documented ordinary directory-handle flush. Namespace
+    // preparation is best effort; callers must reconcile unclean publications.
     Ok(())
 }
 #[cfg(unix)]
@@ -136,11 +124,11 @@ fn create_directory(path: &Path) -> io::Result<()> {
     match fs::DirBuilder::new().mode(0o700).create(path) {
         Ok(()) => {}
         Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-            prepare(path)?;
+            directories::plain(&fs::symlink_metadata(path)?)?;
         }
         Err(error) => return Err(error),
     }
-    sync_parent(path)
+    Ok(())
 }
 #[cfg(windows)]
 fn create_directory(path: &Path) -> io::Result<()> {
@@ -166,7 +154,11 @@ fn create_directory(path: &Path) -> io::Result<()> {
             return Ok(());
         }
         let error = io::Error::last_os_error();
-        if matches!(error.raw_os_error(), Some(80 | 183)) { prepare(path) } else { Err(error) }
+        if matches!(error.raw_os_error(), Some(80 | 183)) {
+            directories::plain(&fs::symlink_metadata(path)?)
+        } else {
+            Err(error)
+        }
     })();
     if temporary.exists() {
         let _ = fs::remove_dir(&temporary);
