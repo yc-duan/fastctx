@@ -42,6 +42,7 @@ import { indexOf } from "./world-index";
 import { compareVersions, type MachineUpdate } from "../world/updates";
 import { groupMark, markOf, runningOf, shortVersion, type Mark } from "./update-marks";
 import type { UpdateViewWords } from "./update-view-words";
+import type { SwitchState } from "./switch-change";
 
 export interface ListNow {
   world: WorldNow;
@@ -91,6 +92,7 @@ export interface UpdatesNow {
   head: string;
   /** What scheduling a machine's update just said, by its name. */
   said: ReadonlyMap<string, string>;
+  autoState(machine: MachineUpdate): SwitchState;
 }
 
 /** Up to this many dots for the agents at work on a machine; more are a
@@ -451,7 +453,8 @@ function versionCell(update: MachineUpdate, updates: UpdatesNow): string {
 function autoSwitch(update: MachineUpdate, updates: UpdatesNow): string {
   if (update.kind === "phone" || update.auto === null) return "";
   const settable = update.actions.settings.allowed;
-  return `<span class="uv-auto${update.auto ? " on" : ""}${settable ? "" : " fixed"}" role="switch" aria-checked="${update.auto}" aria-label="${escape(updates.words.auto)}" title="${escape(settable ? updates.words.auto : updates.words.reasons[update.actions.settings.reason ?? "other"])}"${settable ? ` data-uv-auto="${escape(update.machine)}"` : ""}><span class="switch-track"><span class="switch-knob"></span></span></span>`;
+  const state = updates.autoState(update);
+  return `<span class="uv-auto${state.on ? " on" : ""}${settable ? "" : " fixed"}" role="switch" tabindex="${settable ? 0 : -1}" aria-checked="${state.on}" aria-busy="${state.busy}" aria-disabled="${!settable || state.busy}" aria-label="${escape(updates.words.auto)}" title="${escape(settable ? updates.words.auto : updates.words.reasons[update.actions.settings.reason ?? "other"])}"${settable ? ` data-uv-auto="${escape(update.machine)}"` : ""}><span class="switch-track"><span class="switch-knob"></span></span></span>`;
 }
 
 /** How far in a row stands: nothing at the first level. */

@@ -211,7 +211,8 @@ export class FocusPanel {
         if (off.has(name)) off.delete(name);
         else off.add(name);
         servers.changed([...off].sort());
-        this.draw();
+        target.setAttribute("aria-checked", String(!off.has(name)));
+        this.drawn = this.html();
         break;
       }
     }

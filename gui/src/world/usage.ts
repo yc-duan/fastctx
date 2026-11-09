@@ -89,6 +89,17 @@ export interface UsageReading {
   windows: LimitWindow[];
 }
 
+/** A weekly accounting boundary recorded by the login's machine. */
+export interface UsageReset {
+  window: string;
+  since: Timestamp;
+  confirmed_at: Timestamp;
+  resets_at: Timestamp;
+  before_used_tenths?: number;
+  used_tenths: number;
+  source: "automatic" | "scheduled" | "recorded";
+}
+
 export interface UsageReport {
   people: UsagePerson[];
   hours: UsageHour[];
@@ -97,4 +108,6 @@ export interface UsageReport {
   readings: UsageReading[];
   /** Oldest first, the current week last; older nodes do not say. */
   weeks?: UsageSpan[];
+  /** Only the login's owner receives this field, even when it is empty. */
+  resets?: UsageReset[];
 }

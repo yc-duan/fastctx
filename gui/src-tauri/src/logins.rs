@@ -182,6 +182,22 @@ pub(crate) async fn set_agent_reset_in_place(
         .map_err(|error| error.to_string())
 }
 
+/// Changes the models a Claude Code login offers, for everyone who uses it.
+#[fastctx_gui_command::command]
+pub(crate) async fn change_agent_models(
+    shell: tauri::State<'_, Shell>,
+    machine_name: String,
+    agent_name: String,
+    dir: PathBuf,
+    change: fastctx_types::logins::models::ModelChange,
+) -> Result<MachineLogins, String> {
+    shell
+        .world()
+        .change_agent_models(machine(machine_name)?, agent(agent_name)?, dir, change)
+        .await
+        .map_err(|error| error.to_string())
+}
+
 /// Turns naming new Codex conversations in a login on or off.
 #[fastctx_gui_command::command]
 pub(crate) async fn set_agent_title(

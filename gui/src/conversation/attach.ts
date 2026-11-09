@@ -7,8 +7,7 @@
 
 import { leave } from "../app/leave";
 import { viewAttached } from "./attached-pictures";
-import { glyph } from "./glyphs";
-import { escape } from "./prose";
+import { AttachmentRows } from "./attachment-rows";
 
 /** Where an attachment's bytes come from: a file on this computer, which
  *  the shell reads itself, or bytes the page holds (pasted, picked on a
@@ -24,6 +23,7 @@ export interface AttachWords {
   sending: string;
   /** An upload whose connection broke, waiting to go on from where it stopped. */
   resuming: string;
+  removing: string;
   failed(why: string): string;
   retry: string;
   size(bytes: number): string;
@@ -64,8 +64,7 @@ let serial = 0;
 export class AttachTray {
   readonly element: HTMLElement;
   private items: Attached[] = [];
-  /** The cards drawn last time, which rise in no more. */
-  private drawn = new Set<string>();
+  private readonly rows: AttachmentRows;
   private sent = new Map<string, number>();
   /** Whether files other than images are taken now: why not, when not. */
   private refusing: (() => string | null) | null = null;
@@ -79,11 +78,12 @@ export class AttachTray {
     private readonly changed: () => void,
     /** Holds what is attached until `sendAll`, for words whose agent is
      *  still being chosen; otherwise each file goes as it is added. */
-    private readonly deferred = false,
+    private deferred = false,
   ) {
     this.element = document.createElement("ul");
     this.element.className = "attach-tray";
     this.element.hidden = true;
+    this.rows = new AttachmentRows(this.element, words);
     this.element.addEventListener("click", (event) => {
       const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-remove], [data-retry]");
       if (!button) {
@@ -205,6 +205,26 @@ export class AttachTray {
     return this.items;
   }
 
+  /** Starts files held while the shared input was opening. */
+  resume(): void {
+    this.deferred = false;
+    for (const item of this.items) if (item.state === "waiting") void this.send(item);
+  }
+
+  /** Transfers ownership of every card and preview to another input. */
+  release(): Attached[] {
+    const held = this.items;
+    this.items = [];
+    this.draw();
+    return held;
+  }
+
+  /** Releases previews still owned by this input. */
+  close(): void {
+    for (const item of this.release()) if (item.preview) URL.revokeObjectURL(item.preview);
+    this.sent.clear();
+  }
+
   /** What arrived, for sending with the words; the tray is emptied. */
   take(): { refs: unknown[]; shown: Attached[] } {
     const ready = this.items.filter((item) => item.state === "ready");
@@ -247,11 +267,13 @@ export class AttachTray {
   }
 
   private remove(key: string): void {
+    const item = this.items.find((candidate) => candidate.key === key);
+    if (!item) return;
+    this.items = this.items.filter((candidate) => candidate !== item);
+    this.sent.delete(key);
+    this.changed();
     const gone = () => {
-      const item = this.items.find((candidate) => candidate.key === key);
-      if (!item) return;
       if (item.preview) URL.revokeObjectURL(item.preview);
-      this.items = this.items.filter((candidate) => candidate !== item);
       this.draw();
     };
     // It sinks out of the tray before it goes.
@@ -267,29 +289,14 @@ export class AttachTray {
 
   private draw(): void {
     const { words } = this;
-    this.element.hidden = this.items.length === 0;
-    // A card rises into the tray the first time it is drawn, never again.
-    const drawn = this.drawn;
-    this.drawn = new Set(this.items.map((item) => item.key));
-    this.element.innerHTML = this.items
-      .map((item) => {
-        const picture = item.preview
-          ? `<img class="attach-thumb" src="${escape(item.preview)}" alt="${escape(item.name)}">`
-          : `<span class="attach-thumb attach-glyph">${glyph(item.image ? "image" : "file", 18)}</span>`;
-        const fact =
-          item.state === "failed"
-            ? `<span class="attach-fact wrong" title="${escape(item.why ?? "")}">${escape(words.failed(item.why ?? ""))}</span>`
-            : item.state === "sending"
-              ? `<span class="attach-fact">${escape(words.sending)}</span>`
-              : item.size !== null
-                ? `<span class="attach-fact">${escape(words.size(item.size))}</span>`
-                : "";
-        const retry =
-          item.state === "failed" ? `<button class="attach-act" type="button" data-retry="${item.key}">${escape(words.retry)}</button>` : "";
-        return `<li class="attach-item ${item.state}${drawn.has(item.key) ? "" : " fresh"}" data-item="${item.key}">${picture}<span class="attach-text"><span class="attach-name" title="${escape(item.name)}">${escape(item.name)}</span>${fact}</span>${retry}<button class="attach-remove" type="button" data-remove="${item.key}" aria-label="${escape(words.remove)}" title="${escape(words.remove)}">${glyph("close", 14)}</button>${item.state === "sending" && item.size ? `<span class="attach-progress"></span>` : ""}</li>`;
-      })
-      .join("");
-    for (const item of this.items) this.progress(item);
+    this.rows.draw(this.items.map((item) => ({
+      key: item.key, name: item.name, image: item.image, preview: item.preview, state: item.state,
+      fact: item.state === "failed" ? words.failed(item.why ?? "")
+        : item.state === "sending" ? words.sending
+        : item.size === null ? "" : words.size(item.size),
+      why: item.why, retry: item.state === "failed" ? item.key : null, remove: item.key,
+      progress: item.state === "sending" && item.size ? 100 * (this.sent.get(item.key) ?? 0) / item.size : null,
+    })));
     this.changed();
   }
 }

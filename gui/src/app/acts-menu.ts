@@ -10,6 +10,7 @@ import { escape } from "../conversation/prose";
 import { layerOpened, type Layer } from "./back";
 import { longest } from "./leave";
 import { stepped } from "./menu-keys";
+import { paintSwitch, SwitchChanges } from "./switch-change";
 
 export interface MenuAct {
   act: string;
@@ -20,6 +21,10 @@ export interface MenuAct {
   checked?: boolean;
   /** A setting turned on or off by the press: a switch at the row's end. */
   on?: boolean;
+  /** An immediate setting saved without closing the menu. The key names
+   *  the setting across menu openings; change reports failures and returns
+   *  false, or returns true once the requested value is acknowledged. */
+  toggle?: { key: string; change(on: boolean): Promise<boolean>; busy?(): boolean; problem?(): { text: string; detail: string } | undefined };
   /** What it does, said under a pointer's rest, never on the menu. */
   hint?: string;
 }
@@ -33,10 +38,12 @@ export class ActsMenu {
   private readonly element: HTMLElement;
   private readonly shade: HTMLElement;
   private anchor: HTMLElement | null = null;
-  private chosen: ((act: string) => void) | null = null;
+  private chosen: ((act: string, on?: boolean) => void) | null = null;
   /** Told once it closes, however that comes. */
   private closed: (() => void) | null = null;
   private shown = false;
+  private readonly switches = new SwitchChanges();
+  private acts = new Map<string, MenuAct>();
   private readonly layer: Layer = { isOpen: () => this.shown, close: () => this.close() };
 
   constructor() {
@@ -52,9 +59,14 @@ export class ActsMenu {
     this.element.addEventListener("click", (event) => {
       const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-act]");
       if (!button || button.disabled) return;
+      const act = this.acts.get(button.dataset.act!);
+      if (act?.toggle && act.on !== undefined) {
+        void this.toggle(button, act);
+        return;
+      }
       const chosen = this.chosen;
       this.close();
-      chosen?.(button.dataset.act!);
+      chosen?.(button.dataset.act!, act?.on === undefined ? undefined : !act.on);
     });
     this.element.addEventListener("keydown", (event) => {
       if (event.key === "Escape") {
@@ -100,7 +112,7 @@ export class ActsMenu {
    *  short menu held up from what the finger rests on. An anchor marked
    *  `data-menu-align="start"` is a field to choose for: the menu opens
    *  from its left edge, at least as wide as it. */
-  open(anchor: HTMLElement, title: string, entries: MenuEntry[], chosen: (act: string) => void, beside = false): void {
+  open(anchor: HTMLElement, title: string, entries: MenuEntry[], chosen: (act: string, on?: boolean) => void, beside = false): void {
     if (this.shown && this.isAnchor(anchor)) return this.close();
     this.close();
     this.anchor = anchor;
@@ -116,7 +128,7 @@ export class ActsMenu {
 
   /** Opens at `at`, a point in the window, as the right button's menu
    *  does: down and right of it where the window has room. */
-  openAt(at: readonly [number, number], title: string, entries: MenuEntry[], chosen: (act: string) => void, closed?: () => void): void {
+  openAt(at: readonly [number, number], title: string, entries: MenuEntry[], chosen: (act: string, on?: boolean) => void, closed?: () => void): void {
     this.close();
     const sheet = narrow.matches;
     this.show(title, entries, chosen, sheet);
@@ -124,11 +136,13 @@ export class ActsMenu {
     if (!sheet) this.place({ left: at[0], right: at[0], top: at[1], bottom: at[1] }, true);
   }
 
-  private show(title: string, entries: MenuEntry[], chosen: (act: string) => void, sheet: boolean): void {
+  private show(title: string, entries: MenuEntry[], chosen: (act: string, on?: boolean) => void, sheet: boolean): void {
     this.chosen = chosen;
+    this.acts = new Map(entries.flatMap((entry) => "act" in entry ? [[entry.act, entry] as const] : []));
     this.element.style.minWidth = "";
     const head = sheet ? `<div class="talk-menu-head"><span class="talk-menu-name">${escape(title)}</span></div>` : "";
     this.element.innerHTML = head + entries.map(entry).join("");
+    this.paintSwitches();
     this.element.classList.remove("leaving");
     this.shade.classList.remove("leaving");
     this.element.classList.toggle("as-sheet", sheet);
@@ -137,6 +151,44 @@ export class ActsMenu {
     this.shown = true;
     layerOpened(this.layer);
     this.element.querySelector<HTMLButtonElement>("button")?.focus({ preventScroll: true });
+  }
+
+  private paintSwitches(): void {
+    for (const button of this.element.querySelectorAll<HTMLButtonElement>("[data-act]")) {
+      const act = this.acts.get(button.dataset.act!);
+      if (act?.toggle && act.on !== undefined) {
+        const state = this.switches.state(act.toggle.key, act.on);
+        paintSwitch(button, { on: state.on, busy: state.busy || !!act.toggle.busy?.() });
+      }
+    }
+  }
+
+  private async toggle(button: HTMLButtonElement, act: MenuAct): Promise<void> {
+    const toggle = act.toggle!;
+    button.querySelector(".talk-menu-error")?.remove();
+    const changing = this.switches.run(toggle.key, button, async (on) => {
+      const saved = await toggle.change(on);
+      if (saved) {
+        act.on = on;
+        for (const shown of this.acts.values()) if (shown.toggle?.key === toggle.key) shown.on = on;
+      }
+      return saved;
+    });
+    this.paintSwitches();
+    const saved = await changing;
+    this.paintSwitches();
+    if (!saved) {
+      const problem = toggle.problem?.();
+      const current = [...this.element.querySelectorAll<HTMLButtonElement>("[data-act]")].find((one) => this.acts.get(one.dataset.act!)?.toggle?.key === toggle.key);
+      if (problem && current) {
+        const note = document.createElement("span");
+        note.className = "talk-menu-error";
+        note.setAttribute("role", "status");
+        note.textContent = problem.text;
+        note.title = problem.detail;
+        current.querySelector(".talk-menu-label")?.append(note);
+      }
+    }
   }
 
   close(): void {

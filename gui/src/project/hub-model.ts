@@ -27,21 +27,9 @@ export interface HubSession {
   route: Station[] | null;
   /** What it asks the user, while it waits on them. */
   asked: string | null;
-  /** What it told the user that this device has not shown them, unless it
-   *  only answered them. */
-  unseen: { status: "urgent" | "info"; text: string } | null;
   /** Every machine its work stands on: its own, its colleagues', where its
    *  senses watch and its jobs run. */
   machines: string[];
-}
-
-/** Something that waits for the user: a question a conversation asked, or
- *  what it told them that they have not seen. */
-export interface HubNeed {
-  kind: "asked" | "urgent" | "info";
-  r: ResidentNow;
-  text: string;
-  at: string;
 }
 
 export interface HubPlace {
@@ -55,7 +43,6 @@ export interface HubPlace {
 
 export interface Hub {
   sessions: HubSession[];
-  needs: HubNeed[];
   ground: HubPlace[];
 }
 
@@ -75,15 +62,14 @@ export function routeOf(markdown: string | null): Station[] | null {
 const sameAddress = (a: { resident: string; machine: string }, r: ResidentNow) => a.resident === r.about.id && a.machine === r.about.machine;
 
 /** The hub of a project from what its machines answered, the plans read
- *  for its conversations (keyed by `keyOf`), the senses of the accounts
- *  here, and what this device has seen of what was told. */
+ *  for its conversations (keyed by `keyOf`), and the senses of the accounts
+ *  here. */
 export function hubOf(
   residents: ResidentNow[],
   jobs: RunningJob[],
   machines: string[],
   plans: ReadonlyMap<string, string | null>,
   senses: SentinelSummary[],
-  seenTold: (key: string) => string | null,
 ): Hub {
   const present = residents.filter((r) => !r.removed);
   // The conversations begun here, and any colleague whose asker is not here
@@ -100,7 +86,6 @@ export function hubOf(
       const owner = ownerResident(job.owner);
       return !!owner && workers.some((one) => sameAddress(owner, one));
     });
-    const told = r.now?.told;
     const asked = r.now?.asked?.text ?? (r.now?.waiting_for_user ? "" : null);
     return {
       r,
@@ -109,7 +94,6 @@ export function hubOf(
       senses: kept,
       route: routeOf(plans.get(keyOf(r)) ?? null),
       asked,
-      unseen: told && told.status !== "reply" && seenTold(keyOf(r)) !== told.id ? { status: told.status, text: told.text } : null,
       machines: [...new Set([...workers.map((one) => one.about.machine), ...kept.map((one) => one.definition.home), ...theirs.map((job) => job.machine)])],
     };
   });
@@ -118,14 +102,6 @@ export function hubOf(
   const rank = (one: HubSession) => (one.asked !== null ? 0 : one.r.now?.activity === "busy" ? 1 : 2);
   const lately = (one: HubSession) => Date.parse(one.r.now?.since ?? one.r.about.born_at);
   sessions.sort((a, b) => rank(a) - rank(b) || lately(b) - lately(a));
-
-  const needs: HubNeed[] = [];
-  for (const { r, asked, unseen } of sessions) {
-    if (asked !== null) needs.push({ kind: "asked", r, text: asked, at: r.now?.asked?.at ?? r.now?.waiting_since ?? r.now?.since ?? r.about.born_at });
-    if (unseen) needs.push({ kind: unseen.status, r, text: unseen.text, at: r.now?.told?.at ?? r.about.born_at });
-  }
-  const order = { asked: 0, urgent: 1, info: 2 } as const;
-  needs.sort((a, b) => order[a.kind] - order[b.kind] || Date.parse(b.at) - Date.parse(a.at));
 
   // The project's own machines first, then any other its work stands on.
   const names: string[] = [...machines];
@@ -139,5 +115,5 @@ export function hubOf(
     senses: watching.filter((one) => one.definition.home === machine),
     jobs: jobs.filter((job) => job.machine === machine),
   }));
-  return { sessions, needs, ground };
+  return { sessions, ground };
 }

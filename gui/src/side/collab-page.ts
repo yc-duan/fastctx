@@ -51,6 +51,7 @@ function rule(seed: string): string {
 export class CollabPage implements SidePage {
   readonly element: HTMLElement;
   private nodes: CollabNode[] = [];
+  private reading = false;
   /** Those drawn, in the order their times stand on the page. */
   private drawn: CollabNode[] = [];
   private unfolded = false;
@@ -82,8 +83,9 @@ export class CollabPage implements SidePage {
     }).observe(this.element);
   }
 
-  show(nodes: CollabNode[]): void {
+  show(nodes: CollabNode[], reading = false): void {
     this.nodes = nodes;
+    this.reading = reading;
     this.draw();
   }
 
@@ -111,8 +113,8 @@ export class CollabPage implements SidePage {
       const fold = earlier ? `<button class="cp-earlier" type="button">${escape(this.unfolded ? this.words.fold : this.words.earlier(earlier))}</button>` : "";
       return `<section class="cp-group"><h3 class="cp-group-name">${escape(name)}</h3>${kept.map((node) => this.card(node, now)).join("")}${fold}</section>`;
     });
-    const empty = this.nodes.length === 0 ? `<p class="cp-empty">${escape(this.words.empty)}</p>` : "";
-    this.element.innerHTML = drawn.join("") + empty;
+    const note = this.reading ? this.words.reading : this.nodes.length === 0 ? this.words.empty : "";
+    this.element.innerHTML = drawn.join("") + (note ? `<p class="cp-empty">${escape(note)}</p>` : "");
     this.tick();
   }
 
@@ -153,6 +155,7 @@ export class CollabPage implements SidePage {
     const meta = [
       node.kind === "colleague" ? `<span>${escape(node.name)}</span>` : "",
       state,
+      node.reading ? `<span>${escape(words.reading)}</span>` : "",
       going(node.state) && node.doing ? `<span class="cp-doing">${escape(node.doing)}</span>` : "",
       !going(node.state) && node.tokens ? `<span>${escape(words.tokens(node.tokens))}</span>` : "",
       // A colleague's goal says itself only where it stopped short of done.
@@ -221,6 +224,7 @@ export function workedFor(node: CollabNode, now: number): number | null {
 export function pointedAt(node: CollabNode, took: number | null, now: number, words: CollabWords, goals: GoalWords): string {
   const facts = [
     words.states[node.state],
+    node.reading ? words.reading : "",
     took === null ? "" : words.took(took),
     node.steps ? words.steps(node.steps) : "",
     node.tokens ? words.tokens(node.tokens) : "",
@@ -236,6 +240,8 @@ export function pointedAt(node: CollabNode, took: number | null, now: number, wo
 export function shortLine(node: CollabNode, now: number, words: CollabWords, goals: GoalWords): string {
   const took = workedFor(node, now);
   // One waiting on the user says so before its time.
-  const waits = node.state === "waiting" ? `<span class="cp-said waiting">${escape(words.states.waiting)}</span>` : "";
+  const waits = node.reading
+    ? `<span class="cp-said">${escape(words.reading)}</span>`
+    : node.state === "waiting" ? `<span class="cp-said waiting">${escape(words.states.waiting)}</span>` : "";
   return `<button class="cp-line ${node.state}" type="button" data-id="${escape(node.id)}" title="${escape(pointedAt(node, took, now, words, goals))}"><span class="cp-state" role="img" aria-label="${escape(words.states[node.state])}">${stateMark(node.state)}</span><span class="cp-task">${escape(node.task || node.name)}</span><span class="cp-end">${waits}<span class="cp-took">${took === null ? "" : escape(words.took(took))}</span></span></button>`;
 }

@@ -504,7 +504,7 @@
 .notice-box .notice-answer {
   max-height: min(60vh, 36rem);
   overflow-y: auto;
-  overscroll-behavior: contain;
+  scrollbar-width: thin;
   font-style: normal;
   color: var(--text-2);
 }

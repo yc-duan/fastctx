@@ -1,24 +1,27 @@
 // The settings of the workbench's conversations (`world-gui.md`, 接入与工作台):
 // what the account gives every agent working for it (its skills, its MCP
 // servers), each agent's own (the model it begins a conversation on, and
-// its prompt, a step in from its card), and model collaboration. They reach only the conversations Fastctx holds,
-// never an agent that is only connected, so they stand in the sidebar's
-// workbench group as one place, its parts on tabs; connecting agents is the
-// agents page's alone. The tab last open is kept on this device.
+// its prompt, a step in from its card), history and model collaboration.
+// They reach only the conversations Fastctx holds, never an agent that is
+// only connected, so they stand in the sidebar's workbench group as one
+// place, its parts on tabs; connecting agents is the agents page's alone.
+// The tab last open is kept on this device. History's tab is there only
+// where the build offers history (`preview.ts`).
 
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import type { HostPrefs } from "./host-prefs";
+import { HISTORY } from "./preview";
 import { link, type Place } from "./places";
 import type { Page } from "./shell";
 import { effect } from "./signals";
 import type { Store } from "./store";
 import type { TalkSettingsWords } from "./talk-settings-words";
 
-export type SettingsTab = "skills" | "mcp" | "models" | "collab";
+export type SettingsTab = "skills" | "mcp" | "models" | "history" | "collab";
 export type Host = "claude" | "codex";
 
-const TABS: SettingsTab[] = ["skills", "mcp", "models", "collab"];
+const TABS: SettingsTab[] = ["skills", "mcp", "models", ...(HISTORY ? (["history"] as const) : []), "collab"];
 const HOSTS: Host[] = ["claude", "codex"];
 const KEPT_TAB = "talk.settings";
 
@@ -28,6 +31,7 @@ export function settingsTabOf(place: Place): SettingsTab | null {
   if (place.kind === "agents" && (place.tab === "prefs" || place.section === "prompt")) return "models";
   if (place.kind === "subagents" || place.kind === "prompt") return "models";
   if (place.kind === "feature" && (place.feature === "collaboration" || place.feature === "conversations")) return "collab";
+  if (place.kind === "feature" && place.feature === "history") return "history";
   return null;
 }
 
@@ -39,6 +43,8 @@ export function settingsPlace(tab: SettingsTab): Place {
       return { kind: "agents", machine: null, section: tab };
     case "models":
       return { kind: "agents", machine: null, section: "claude", tab: "prefs" };
+    case "history":
+      return { kind: "feature", feature: "history" };
     case "collab":
       return { kind: "feature", feature: "collaboration" };
   }

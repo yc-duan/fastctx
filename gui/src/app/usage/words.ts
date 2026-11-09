@@ -65,7 +65,19 @@ export interface UsageWords {
   partsWhy: string;
   weekReached(percent: number): string;
   /** The tabs and the unit. */
-  tabs: { calendar: string; quota: string; weeks: string; punch: string; calls: string };
+  tabs: { calendar: string; quota: string; weeks: string; punch: string; calls: string; resets: string };
+  resetHistory: string;
+  resetsNone: string;
+  remaining: string;
+  resetSources: { automatic: string; scheduled: string; recorded: string };
+  resetRecordedWhy: string;
+  resetDate(at: Date): string;
+  resetStarts(at: Date): string;
+  resetConfirmed(at: Date): string;
+  resetEnds(at: Date): string;
+  resetRemaining(before: string | null, after: string): string;
+  resetPrevious: string;
+  resetNext: string;
   usd: string;
   tokenTab: string;
   /** The calendar. */
@@ -190,7 +202,19 @@ export const zhUsage: UsageWords = {
   partHead: "占周额度",
   partsWhy: "按这一周各人在 Fastctx 里记下的用量分摊整个号的 7 天额度：Claude 按 Claude Code 账本里的美元，Codex 按 token，缓存读算十分之一、输出算八倍（OpenAI 标价的比例）",
   weekReached: (percent) => `整个号 7 天额度用到 ${percent}%`,
-  tabs: { calendar: "日历", quota: "额度", weeks: "每周", punch: "时段", calls: "调用" },
+  tabs: { calendar: "日历", quota: "额度", weeks: "每周", punch: "时段", calls: "调用", resets: "重置" },
+  resetHistory: "重置历史",
+  resetsNone: "还没有重置记录",
+  remaining: "剩余额度",
+  resetSources: { automatic: "自动检测", scheduled: "周期重置", recorded: "旧版记录" },
+  resetRecordedWhy: "旧版保存的重置，未记录确认方式",
+  resetDate: (at) => at.toLocaleString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }),
+  resetStarts: (at) => `本周起点：${at.toLocaleString("zh-CN")}`,
+  resetConfirmed: (at) => `记录时间：${at.toLocaleString("zh-CN")}`,
+  resetEnds: (at) => `下次周期重置：${at.toLocaleString("zh-CN")}`,
+  resetRemaining: (before, after) => before === null ? `记录时剩余 ${after}` : `剩余额度从 ${before} 恢复到 ${after}`,
+  resetPrevious: "上一页",
+  resetNext: "下一页",
   usd: "$",
   tokenTab: "token",
   year: "过去一年",
@@ -288,7 +312,19 @@ export const enUsage: UsageWords = {
   partHead: "Of the limit",
   partsWhy: "The account's 7-day limit shared out by what each person used this week as Fastctx recorded it: Claude by Claude Code's own dollars, Codex by tokens, a cache read a tenth and output eight times (OpenAI's list-price ratios)",
   weekReached: (percent) => `The account's 7-day limit at ${percent}%`,
-  tabs: { calendar: "Calendar", quota: "Limit", weeks: "Weeks", punch: "Hours", calls: "Requests" },
+  tabs: { calendar: "Calendar", quota: "Limit", weeks: "Weeks", punch: "Hours", calls: "Requests", resets: "Resets" },
+  resetHistory: "Reset history",
+  resetsNone: "No resets recorded yet",
+  remaining: "Remaining quota",
+  resetSources: { automatic: "Detected", scheduled: "Scheduled", recorded: "Earlier record" },
+  resetRecordedWhy: "Saved by an earlier version without a confirmation source",
+  resetDate: (at) => at.toLocaleString("en-GB", { year: "numeric", month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }),
+  resetStarts: (at) => `Week starts: ${at.toLocaleString("en-GB")}`,
+  resetConfirmed: (at) => `Recorded: ${at.toLocaleString("en-GB")}`,
+  resetEnds: (at) => `Next scheduled reset: ${at.toLocaleString("en-GB")}`,
+  resetRemaining: (before, after) => before === null ? `${after} remaining when recorded` : `Remaining quota restored from ${before} to ${after}`,
+  resetPrevious: "Previous",
+  resetNext: "Next",
   usd: "$",
   tokenTab: "Tokens",
   year: "The past year",

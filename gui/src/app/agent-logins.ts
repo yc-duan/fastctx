@@ -21,7 +21,7 @@ import { glyph } from "../conversation/glyphs";
 import type { AccountChange, HubAccounts, Login as AccountLogin, PlanLabel } from "../world/accounts";
 import type { WorldNow } from "../world/bridge";
 import type { Folders } from "../world/focus";
-import type { AgentLogins, ChangePreview, FolderChange, Login, LoginChange, MachineLogins, WorldLogins } from "../world/logins";
+import type { AgentLogins, ChangePreview, FolderChange, Login, LoginChange, MachineLogins, ModelChange, WorldLogins } from "../world/logins";
 import type { UsageReport } from "../world/usage";
 import type { AccessWords } from "./account-words";
 import { ActsMenu, type MenuEntry } from "./acts-menu";
@@ -35,6 +35,7 @@ import { AssistSheet, assistChange, assistancesIn, fiveHourWindow, namesOn, type
 import type { Confirm } from "./confirm";
 import { FolderPicker } from "./folder-picker";
 import { redrawKeepingFocus } from "./focus";
+import { LoginModelsSheet } from "./login-models-sheet";
 import { detailOf } from "./problem";
 import { isVisitor } from "./reach";
 import type { Page } from "./shell";
@@ -86,6 +87,8 @@ export interface AgentLoginsOptions {
   /** Codex only: turns naming new conversations in a login on or off. */
   setTitle(machine: string, agent: Agent, dir: string, on: boolean): Promise<MachineLogins>;
   setResetInPlace(machine: string, agent: Agent, dir: string, on: boolean): Promise<MachineLogins>;
+  /** Claude Code only: changes the models a login offers. */
+  changeModels(machine: string, agent: Agent, dir: string, change: ModelChange): Promise<MachineLogins>;
   usageOf(machine: string, agent: Agent, dir: string): Promise<UsageReport>;
   change_(login: AccountLogin, change: AccountChange): Promise<void>;
   confirm: Confirm;
@@ -131,6 +134,9 @@ export class AgentLoginsPage implements Page {
   private record: MachineLogins | null = null;
   private problem: { machine: string; detail: string; offline: boolean } | null = null;
   private reading: string | null = null;
+  private readRevision = 0;
+  private left = false;
+  private readonly changing = new Set<string>();
   /** The machine whose record was asked for since it was shown. */
   private fetched: string | null = null;
   private following = 0;
@@ -150,7 +156,8 @@ export class AgentLoginsPage implements Page {
   private drawn = "";
 
   /** The calls that name a machine, as `options` makes them. */
-  private readonly calls: Pick<AgentLoginsOptions, "read" | "scan" | "add" | "folder" | "folders" | "preview" | "change" | "limits" | "setTitle" | "setResetInPlace" | "usageOf">;
+  private readonly calls: Pick<AgentLoginsOptions, "read" | "scan" | "add" | "folder" | "folders" | "preview" | "change" | "limits" | "setTitle" | "setResetInPlace" | "changeModels" | "usageOf">;
+  private readonly modelsSheet: LoginModelsSheet;
 
   constructor(private readonly options: AgentLoginsOptions) {
     // Every call names the machine shown as this computer writes it, its
@@ -170,8 +177,10 @@ export class AgentLoginsPage implements Page {
       limits: (machine, agent, dir) => options.limits(as(machine), agent, dir),
       setTitle: (machine, agent, dir, on) => options.setTitle(as(machine), agent, dir, on),
       setResetInPlace: (machine, agent, dir, on) => options.setResetInPlace(as(machine), agent, dir, on),
+      changeModels: (machine, agent, dir, change) => options.changeModels(as(machine), agent, dir, change),
       usageOf: (machine, agent, dir) => options.usageOf(as(machine), agent, dir),
     };
+    this.modelsSheet = new LoginModelsSheet(options.words);
     const { words } = options;
     this.agent = options.agent;
     this.title = options.agent === "claude" ? words.claude : words.codex;
@@ -218,6 +227,9 @@ export class AgentLoginsPage implements Page {
   }
 
   leave(): void {
+    this.left = true;
+    this.readRevision += 1;
+    this.reading = null;
     this.stop();
     clearTimeout(this.following);
     this.machines?.element.remove();
@@ -260,16 +272,18 @@ export class AgentLoginsPage implements Page {
 
   /** Reads what the machine shown recorded; while a scan or a change runs
    *  there, reads again until it ends. Then its logins' usage. */
-  private async read(): Promise<void> {
+  private async read(force = false): Promise<void> {
     const machine = this.current(this.options.store.world.peek()).machine;
-    if (!machine || this.reading === machine.name) return;
+    if (this.left || !machine || (!force && this.reading === machine.name)) return;
     const name = machine.name;
     this.reading = name;
+    const revision = ++this.readRevision;
     const asked = readerNow();
+    const current = () => !this.left && this.readRevision === revision && readerNow() === asked;
     try {
       const world = await this.calls.read(name);
       const heard = world.machines.find((one) => (one.kind === "answered" ? one.logins.machine : one.machine) === name) ?? world.machines[0];
-      if (this.reading !== name) return;
+      if (!current()) return;
       if (heard?.kind === "answered") {
         this.record = heard.logins;
         keepRecord(heard.logins, asked);
@@ -279,11 +293,11 @@ export class AgentLoginsPage implements Page {
         this.problem = { machine: name, detail: heard.kind === "no_answer" ? heard.reason : "", offline: heard.kind === "offline" };
       }
     } catch (error) {
-      if (this.reading === name) this.problem = { machine: name, detail: detailOf(error), offline: false };
+      if (current()) this.problem = { machine: name, detail: detailOf(error), offline: false };
     } finally {
-      if (this.reading === name) this.reading = null;
+      if (this.readRevision === revision) this.reading = null;
     }
-    if (this.current(this.options.store.world.peek()).machine?.name !== name) return;
+    if (!current() || this.current(this.options.store.world.peek()).machine?.name !== name) return;
     this.draw();
     clearTimeout(this.following);
     if (this.running()) this.following = window.setTimeout(() => void this.read(), FOLLOW_MS);
@@ -692,17 +706,25 @@ export class AgentLoginsPage implements Page {
     const benched = !!record && this.benched(record, login);
     if (benched && found.machine.hold !== "assist") entries.push({ act: "limits", icon: "reread", label: words.rereadLimits });
     entries.push({ act: "copy", icon: "folder", label: words.copyDir });
+    // Those who hold the machine choose the models a connected Claude Code
+    // login offers, where its node can change them.
+    if (this.agent === "claude" && found.machine.mine && login.integration === "in" && login.model_edits) {
+      entries.push({ act: "models", icon: "tune", label: words.models });
+    }
     // Codex names its own conversations when the login's owner asks it to;
     // Claude Code does its own. Only a login the World's tools are in hosts
     // World conversations, so only such a login shows it.
     const switches: MenuEntry[] = [];
     if (this.agent === "codex" && found.machine.mine && login.integration === "in") {
-      switches.push({ act: "title", icon: "edit", label: words.autoTitle, on: !!login.auto_title, hint: words.autoTitleWhy });
+      switches.push({ act: "title", icon: "edit", label: words.autoTitle, on: !!login.auto_title, hint: words.autoTitleWhy,
+        toggle: { key: `title:${machineName}:${this.agent}:${dir}`, busy: () => this.changing.has(`s:${machineName}:${dir}`), problem: () => this.notes.get(`s:${machineName}:${dir}`), change: (on) => this.quietly(null, `s:${machineName}:${dir}`, () => this.calls.setTitle(machineName, "codex", dir, on)) } });
     }
     // The week's start is the owner's to choose, where the workbench keeps
     // the login's usage (`world-usage.md`).
     if (found.machine.mine && benched) {
-      switches.push({ act: "reset", icon: "reread", label: words.resetInPlace, on: !!login.reset_in_place, hint: words.resetInPlaceWhy });
+      const agent = this.agent;
+      switches.push({ act: "reset", icon: "reread", label: words.resetInPlace, on: !!login.reset_in_place, hint: words.resetInPlaceWhy,
+        toggle: { key: `reset:${machineName}:${agent}:${dir}`, busy: () => this.changing.has(`s:${machineName}:${dir}`), problem: () => this.notes.get(`s:${machineName}:${dir}`), change: (on) => this.quietly(null, `s:${machineName}:${dir}`, () => this.calls.setResetInPlace(machineName, agent, dir, on)) } });
     }
     if (switches.length) entries.push({ rule: true }, ...switches);
     if (identity?.method === "oauth_token" && admin) {
@@ -716,12 +738,12 @@ export class AgentLoginsPage implements Page {
     }
     if (found.machine.mine) entries.push({ rule: true }, { act: "remove", icon: "archive", label: words.remove, danger: true });
     this.menu.open(anchor, identity?.email ?? dirName(login.dir), entries, (act) => {
-      if (act.startsWith("plan:")) void this.menuAct("plan", act.slice("plan:".length), machineName, dir);
-      else void this.menuAct(act, "", machineName, dir);
+      const [name, value = ""] = act.split(":");
+      void this.menuAct(name!, value, machineName, dir);
     });
   }
 
-  private async menuAct(act: string, plan: string, machineName: string, dir: string): Promise<void> {
+  private async menuAct(act: string, value: string, machineName: string, dir: string): Promise<void> {
     const { options } = this;
     const found = this.find(machineName, dir);
     if (!found?.login) return;
@@ -735,15 +757,24 @@ export class AgentLoginsPage implements Page {
       case "assist":
         this.openAssist(machineName, dir, null);
         return;
+      case "models": {
+        const identity = found.login.identity?.who.kind === "known" ? found.login.identity.who.value : null;
+        this.modelsSheet.open({
+          title: options.words.modelsOf(identity?.email ?? dirName(dir)),
+          login: found.login,
+          change: async (change) => {
+            const asked = readerNow();
+            const record = await this.calls.changeModels(machineName, "claude", dir, change);
+            this.took(record, asked);
+            return record;
+          },
+        });
+        return;
+      }
       case "limits":
         await this.quietly(null, key, () => this.calls.limits(machineName, this.agent, dir));
         return;
-      case "title":
-        await this.quietly(null, key, () => this.calls.setTitle(machineName, this.agent, dir, !found.login!.auto_title));
-        return;
-      case "reset":
-        await this.quietly(null, key, () => this.calls.setResetInPlace(machineName, this.agent, dir, !found.login!.reset_in_place));
-        return;
+
       case "copy":
         await navigator.clipboard.writeText(dir).catch(() => {});
         this.notes.set(key, { text: options.words.copied, detail: dir });
@@ -757,7 +788,7 @@ export class AgentLoginsPage implements Page {
         const owner = found.machine.ownerLogin;
         if (!owner) return;
         await this.quietly(null, key, async () => {
-          await options.change_(owner, { change: "plan", machine: machineName, agent: this.agent, ...(found.login!.default ? {} : { home: dir }), plan: (plan || null) as PlanLabel | null });
+          await options.change_(owner, { change: "plan", machine: machineName, agent: this.agent, ...(found.login!.default ? {} : { home: dir }), plan: (value || null) as PlanLabel | null });
           await options.store.refresh();
         });
         return;
@@ -864,19 +895,42 @@ export class AgentLoginsPage implements Page {
     }, FRESH_MS);
   }
 
+  /** Shows the record a change was answered with, for the reader `asked`
+   *  it was made for; a read begun before it must not undo it. */
+  private took(record: MachineLogins, asked: string): void {
+    if (this.left || readerNow() !== asked) return;
+    this.readRevision += 1;
+    this.reading = null;
+    keepRecord(record, asked);
+    if (this.current(this.options.store.world.peek()).machine?.name === record.machine) {
+      this.record = record;
+      this.problem = null;
+      this.draw();
+    }
+  }
+
   /** Does `act`, says on the machine or row what went wrong if it did,
    *  and reads the record again. */
-  private async quietly(button: HTMLButtonElement | null, key: string, act: () => Promise<unknown>): Promise<void> {
+  private async quietly(button: HTMLButtonElement | null, key: string, act: () => Promise<MachineLogins | void>): Promise<boolean> {
+    if (this.left || this.changing.has(key)) return false;
+    this.changing.add(key);
+    const asked = readerNow();
+    let saved = false;
     if (button) button.disabled = true;
     this.notes.delete(key);
     try {
-      await act();
+      const record = await act();
+      saved = true;
+      if (this.left || readerNow() !== asked) return true;
+      if (record) this.took(record, asked);
     } catch (error) {
-      this.notes.set(key, { text: this.options.words.failed, detail: detailOf(error) });
+      if (!this.left && readerNow() === asked) this.notes.set(key, { text: this.options.words.failed, detail: detailOf(error) });
     } finally {
+      this.changing.delete(key);
       if (button) button.disabled = false;
     }
-    await this.read();
+    void this.read(true);
+    return saved;
   }
 }
 
