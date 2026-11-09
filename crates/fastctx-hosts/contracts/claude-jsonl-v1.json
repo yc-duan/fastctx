@@ -1,0 +1,67 @@
+{
+  "contract": "fastctx.claude-jsonl-framing.v1",
+  "notes": [
+    "Synthetic Claude rows exercise JSON/UTF-8/base64 boundaries and the authorized stable-seal rule.",
+    "These samples freeze semantic framing, not the private checkpoint or manifest-tree encoding.",
+    "An invalid row preserves evidence but never produces a validated document."
+  ],
+  "cases": [
+    {
+      "name": "utf8-escape-boundaries",
+      "input": "{\"type\":\"assistant\",\"uuid\":\"fixture-message\",\"timestamp\":\"2026-01-01T00:00:00Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"中🙂\\n\\uD834\\uDD1E\"}]}}\n",
+      "expected": {
+        "type": "assistant",
+        "uuid": "fixture-message",
+        "timestamp": "2026-01-01T00:00:00Z",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "中🙂\n𝄞"
+            }
+          ]
+        }
+      },
+      "valid_while_following": 1,
+      "valid_after_stable_seal": 1,
+      "invalid_rows": 0,
+      "raw_sha256": "45ca5b8d3612b665af1bc5f98a77416fca27a28858964b9ca1aae88f03906976"
+    },
+    {
+      "name": "sealed-image-tail",
+      "input": "{\"type\":\"user\",\"uuid\":\"fixture-image\",\"timestamp\":\"2026-01-01T00:00:00Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"image\",\"source\":{\"type\":\"base64\",\"media_type\":\"image/png\",\"data\":\"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jB7sAAAAASUVORK5CYII=\"}}]}}",
+      "expected": {
+        "type": "user",
+        "uuid": "fixture-image",
+        "timestamp": "2026-01-01T00:00:00Z",
+        "message": {
+          "role": "user",
+          "content": [
+            {
+              "type": "image",
+              "source": {
+                "type": "base64",
+                "media_type": "image/png",
+                "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jB7sAAAAASUVORK5CYII="
+              }
+            }
+          ]
+        }
+      },
+      "valid_while_following": 0,
+      "valid_after_stable_seal": 1,
+      "invalid_rows": 0,
+      "raw_sha256": "96244f4786ce83474779bbef428bd725f6128857ac696eefe543b3cc0bced9aa"
+    },
+    {
+      "name": "invalid-trailing-bytes",
+      "input": "{\"type\":\"assistant\"} trailing\n",
+      "expected": null,
+      "valid_while_following": 0,
+      "valid_after_stable_seal": 0,
+      "invalid_rows": 1,
+      "raw_sha256": "684efa7b66efcb232d709590829c7fdd4540d918322b137b02f26ef5b185af91"
+    }
+  ]
+}

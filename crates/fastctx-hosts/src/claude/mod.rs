@@ -22,6 +22,7 @@ mod context;
 pub mod control;
 pub mod ending;
 pub mod exchange;
+pub mod ingest;
 pub mod lifecycle;
 pub mod login_files;
 pub mod models;
