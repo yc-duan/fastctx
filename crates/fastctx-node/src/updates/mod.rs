@@ -216,7 +216,7 @@ fn kind(node: &Node, held: &Held) -> Kind {
 /// chose, while it is newer than what runs here, or else the newest on the
 /// line of what runs here (`world-upgrade.md`, 正式版与测试版).
 pub(crate) fn state(node: &Node) -> State {
-    let links = node.links();
+    let links: Vec<_> = node.links().into_iter().filter(|link| link.membership_active()).collect();
     let networks: Vec<_> = links.iter().filter_map(|link| link.update_network()).collect();
     let policies_known = networks.len() == links.len();
     let held = node.updates.held.lock().expect("never poisoned");

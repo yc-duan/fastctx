@@ -74,6 +74,7 @@ pub(super) async fn run(inner: Arc<Inner>, mut changes: Option<super::changes::C
         };
         match ended {
             Ended::Stop(reason) => {
+                inner.membership_ended.store(true, std::sync::atomic::Ordering::Release);
                 inner.node.log(format!("the link to the hub stopped: {reason}"));
                 let dissolved = inner.dissolved.load(std::sync::atomic::Ordering::Relaxed);
                 let then = *inner.then.lock().expect("never poisoned");
@@ -413,6 +414,7 @@ async fn connected(
                 }
                 _ => {}
             }
+            keeping.membership_ended.store(false, std::sync::atomic::Ordering::Release);
             held(&keeping, taken).map_err(|error| format!("recording what the hub holds: {error}"))?;
             keeping
                 .change_letters(|letters| {

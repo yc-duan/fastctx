@@ -255,6 +255,9 @@ export class Updates {
 
   /** Missing candidates from beta.8 and later are decisions, not old nodes. */
   private within(state: UpdateState, version: string): boolean {
+    // Older nodes restore the rollout but cannot calculate its batch offline.
+    const oldNode = state.running === undefined || compareVersions(state.running, "1.0.1-beta.17") < 0;
+    if (oldNode && state.network?.policy.rollout && !state.network.rolled) return false;
     if (state.automatic != null) return state.automatic === version;
     const legacy = state.running === undefined || compareVersions(state.running, "1.0.1-beta.8") < 0;
     return legacy && (state.hub_major === undefined || majorOf(version) <= state.hub_major);

@@ -178,7 +178,7 @@ impl Device {
     /// releases by itself only when its owner chose so, and never past the
     /// major version of the hubs it is on.
     fn update_state(&self) -> State {
-        let sessions = self.sessions();
+        let sessions: Vec<_> = self.sessions().into_iter().filter(|session| session.link.membership_active()).collect();
         let held = self.updates.held.lock().expect("never poisoned");
         let cache = self.update_cache();
         let networks: Vec<_> = sessions.iter().filter_map(|session| session.link.update_network()).collect();
