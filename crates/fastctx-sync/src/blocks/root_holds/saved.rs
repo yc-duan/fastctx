@@ -21,6 +21,11 @@ pub(super) struct Saved {
     fields: Encoded,
 }
 impl Saved {
+    pub fn holder(&self) -> Result<crate::cursor::Holder> {
+        let period: crate::cursor::HoldingPeriod =
+            serde_json::from_slice(&self.fields.holding).map_err(|error| sql::invalid(error.to_string()))?;
+        Ok(period.holder)
+    }
     pub fn check(&self, expected: &Encoded) -> Result<()> {
         self.check_fields(expected)?;
         if self.fields.holding != expected.holding || self.fields.purpose != expected.purpose {

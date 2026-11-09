@@ -101,6 +101,26 @@ pub(super) fn release(
     Ok(())
 }
 
+/// Releases a use known only by its identity, such as a reader's fence. The
+/// persisted holder must match; an unknown or released use needs nothing.
+pub(super) fn release_id(
+    db: &Connection,
+    holder: &crate::cursor::Holder,
+    scope: &ScopeKey,
+    id: &RootLeaseId,
+) -> Result<()> {
+    let Some(previous) = saved::get(db, scope, id)? else {
+        return Ok(());
+    };
+    if &previous.holder()? != holder {
+        return Err(sql::invalid("root usage is owned by another holder"));
+    }
+    if !previous.released {
+        retire(db, scope, id, &previous.hash, &previous.form)?;
+    }
+    Ok(())
+}
+
 fn retire(db: &Connection, scope: &ScopeKey, id: &RootLeaseId, hash: &str, form: &str) -> Result<()> {
     db.execute(
         "UPDATE sync_root_leases SET released=1 WHERE hub=?1 AND scope=?2 AND lease=?3",

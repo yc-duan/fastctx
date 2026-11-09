@@ -4,19 +4,18 @@
 use super::{
     SqliteTimelines,
     commit::{self, Installed, Next},
-    evidence::{self, Head, Record},
     pages::Loaded,
+    state::{self, Head, Record},
 };
 use crate::{
     blocks::codec,
-    cursor::{HoldingPeriod, LocalSequence, Revision, Sequence, StreamCursor},
+    cursor::{LocalSequence, Revision, Sequence, StreamCursor},
     identity::{Digest, ObjectId, ObjectKey, OperationId},
     manifest::{BlockStore, Encoding, ManifestPage, ManifestRoot},
-    registry::REGISTRY,
     scheduler::{Lease, Outcome},
     store::{
         Error,
-        access::{AccessContext, Custody, HoldingUse, Principal},
+        access::Custody,
         boundary::{self, Role},
         sql,
     },
@@ -26,9 +25,8 @@ use crate::{
         update::{Projection, SourceEvidence, Update, UpdatePlan, plan_update},
     },
 };
-use fastctx_storage::rusqlite::{Connection, params};
 use fastctx_types::sync::{
-    conversation_timeline::{KIND, TimelineEvent, TimelineFact},
+    conversation_timeline::{TimelineEvent, TimelineFact},
     metadata::ProofReference,
 };
 use std::collections::BTreeMap;
@@ -46,8 +44,8 @@ pub(super) async fn process(timelines: &SqliteTimelines, lease: Lease) -> Result
     let snapshot = blocks
         .database()
         .read(move |db| {
-            let head = evidence::head(db, &read)?;
-            let Some(stream) = evidence::stream(db, &read)? else {
+            let head = state::head(db, &read)?;
+            let Some(stream) = state::stream(db, &read)? else {
                 return Ok(None);
             };
             if let Some(found) = &head
@@ -56,8 +54,8 @@ pub(super) async fn process(timelines: &SqliteTimelines, lease: Lease) -> Result
                 return Err(sql::invalid("the installed timeline follows another stream"));
             }
             let after = head.as_ref().map_or(Sequence(0), |found| found.through.committed);
-            let records = evidence::records(db, &read, &stream, after, RECORDS)?;
-            Ok(Some((head, stream, records, custody(db, &holder, &read)?)))
+            let records = state::records(db, &read, &stream, after, RECORDS)?;
+            Ok(Some((head, stream, records, state::custody(db, &holder, &read)?)))
         })
         .await
         .map_err(|error| sql::error(error, blocks.worker().clone()))?;
@@ -108,6 +106,9 @@ pub(super) async fn process(timelines: &SqliteTimelines, lease: Lease) -> Result
         })
         .await
         .map_err(|error| sql::error(error, operation.clone()))?;
+    if matches!(installed, Installed::Committed) {
+        timelines.wake.notify_waiters();
+    }
     while blocks.cancel_upload(custody.clone(), operation.clone(), 128).await? != 0 {}
     Ok(match installed {
         Installed::Moved => Outcome::Retry { next_due_millis: 0, reason: "the timeline head moved".into() },
@@ -128,37 +129,6 @@ fn conversation(lease: &Lease) -> Result<ObjectKey, Error> {
         .strip_prefix("derived.timeline/")
         .ok_or_else(|| Error::Invalid("the projection task is not a conversation timeline".into()))?;
     Ok(ObjectKey { scope: key.scope.clone(), object: ObjectId::try_from(object.to_owned()).map_err(Error::Invalid)? })
-}
-
-/// The installer keeps replica custody of the conversation under the scope's
-/// current holding period.
-fn custody(
-    db: &Connection,
-    holder: &crate::cursor::Holder,
-    conversation: &ObjectKey,
-) -> fastctx_storage::Result<Custody> {
-    let scope = &conversation.scope;
-    let (acl, epoch) = db
-        .prepare_cached("SELECT acl_revision,publication_epoch FROM sync_scopes WHERE hub=?1 AND scope=?2")?
-        .query_row(params![scope.hub.to_string(), scope.scope.as_str()], |row| {
-            Ok((sql::counter(row, 0)?, sql::counter(row, 1)?))
-        })?;
-    Ok(Custody {
-        context: AccessContext {
-            principal: Principal::LocalService,
-            scope: scope.clone(),
-            observed_acl: Revision(acl),
-        },
-        kind: REGISTRY.asset(KIND).map_err(sql::invalid)?.registered(),
-        object: conversation.clone(),
-        purpose: HoldingUse::Replica,
-        holding: HoldingPeriod {
-            holder: holder.clone(),
-            scope: scope.clone(),
-            acl_revision: Revision(acl),
-            publication_epoch: Revision(epoch),
-        },
-    })
 }
 
 /// Each record with its canonical change, if it carries one. A branch switch
@@ -212,7 +182,7 @@ async fn proofs(
         let id = record.proof.clone();
         let signed = blocks
             .database()
-            .read_now(|db| evidence::proof(db, &conversation, &id))
+            .read_now(|db| state::proof(db, &conversation, &id))
             .map_err(|error| sql::error(error, operation.clone()))?;
         let bytes = serde_json::to_vec(&signed).map_err(|error| Error::Invalid(error.to_string()))?;
         let content = codec::encode(custody.object.scope.clone(), bytes, Encoding::Raw)?;
@@ -240,7 +210,7 @@ fn updates(slice: &[(Record, Option<TimelineChange>)], proofs: &BTreeMap<Digest,
 
 fn cursor(
     conversation: &ObjectKey,
-    stream: &evidence::Stream,
+    stream: &state::Stream,
     slice: &[(Record, Option<TimelineChange>)],
 ) -> StreamCursor {
     StreamCursor {

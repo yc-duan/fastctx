@@ -16,10 +16,5 @@ pub trait TimelineReader: Send + Sync {
     /// Registers a durable root lease for a fresh fence. A stale lease returns
     /// ReanchorNeeded; absent local projection state returns Pending.
     fn timeline(&self, context: AccessContext, request: TimelineRead) -> FutureResult<'_, TimelineResult>;
-    fn item(
-        &self,
-        context: AccessContext,
-        fence: TimelineFence,
-        item: ObjectId,
-    ) -> FutureResult<'_, Option<TimelineItem>>;
+    fn item(&self, context: AccessContext, fence: TimelineFence, item: ObjectId) -> FutureResult<'_, ItemRead>;
 }

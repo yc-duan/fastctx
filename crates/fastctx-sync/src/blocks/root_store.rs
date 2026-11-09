@@ -2,7 +2,7 @@
 use super::SqliteBlocks;
 use crate::{
     blocks::{pins, root_holds},
-    identity::{OperationId, ScopeKey},
+    identity::{OperationId, RootLeaseId, ScopeKey},
     store::{
         Error, FutureResult,
         access::Custody,
@@ -27,6 +27,22 @@ impl SqliteBlocks {
                 .write(128 * 1024, move |db| {
                     let _boundary = boundary::enter_typed_write(Role::Roots);
                     root_holds::retire_scope(db, &scope, max)
+                })
+                .await
+                .map_err(|error| sql::error(error, self.worker.clone()))
+        })
+    }
+}
+impl SqliteBlocks {
+    /// Ends a use known by its identity alone, such as the hold behind a
+    /// reader's fence; releasing it twice is harmless.
+    pub(crate) fn release_use(&self, scope: ScopeKey, lease: RootLeaseId) -> FutureResult<'_, ()> {
+        Box::pin(async move {
+            let holder = self.holder.clone();
+            self.db
+                .write(16384, move |db| {
+                    let _boundary = boundary::enter_typed_write(Role::Roots);
+                    root_holds::release_id(db, &holder, &scope, &lease)
                 })
                 .await
                 .map_err(|error| sql::error(error, self.worker.clone()))

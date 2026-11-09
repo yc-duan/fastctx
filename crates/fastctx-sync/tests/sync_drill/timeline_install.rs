@@ -8,6 +8,7 @@ use super::{
 use fastctx_sync::{
     catalog::{RecordRef, SourceBatch, SourceRecord},
     manifest::ContentRef,
+    store::{PageLimit, projection::ProjectionSubscription},
     store::{
         ingest::{IngestBatch, IngestFacts, IngestOperation, SourceCheckpoint, SourceIngest, SourceTarget},
         ingest_effects::{DirtyProjection, SourceEffects},
@@ -16,14 +17,17 @@ use fastctx_sync::{
         sources::SqliteSources,
         timelines::SqliteTimelines,
     },
-    timeline::{TimelineChange, TimelineItem, TimelinePosition},
+    timeline::{
+        ItemRead, StreamPosition, StreamRead, TimelineAnchor, TimelineChange, TimelineFence, TimelineItem,
+        TimelinePosition, TimelineRead, TimelineReader, TimelineResult,
+    },
 };
 use fastctx_types::sync::{
     conversation_identity::{ItemKey, ItemRole, NativeId, NativeItemKey},
     conversation_timeline::{
         BodyAuthority, BodySnapshot, Evidence, ItemIdentity, Observation, TimelineEvent, TimelineFact,
     },
-    cursor::Sequence,
+    cursor::{LocalSequence, Sequence, StreamCursor},
 };
 
 /// One record's fact, with the roots it declares.
@@ -226,6 +230,44 @@ pub(super) async fn run(root: &Path) -> Result<()> {
     let staged = "SELECT COUNT(*) FROM sync_asset_pins p JOIN sync_asset_uploads u USING(hub,scope,operation,object) WHERE p.phase!='released' AND u.source IS NULL";
     assert_eq!(count(&db, staged)?, 0);
 
+    // Reading: subscribe first, then the latest page from the position index.
+    let reader = AccessContext { principal: Principal::LocalService, scope: scope(), observed_acl: Revision(1) };
+    let limit = PageLimit { items: 16, bytes: 1 << 20 };
+    let mut notices = timelines.subscribe(reader.clone(), LocalSequence(0));
+    let read = |fence: Option<TimelineFence>| TimelineRead {
+        conversation: primary.custody.object.clone(),
+        fence,
+        anchor: TimelineAnchor::Latest,
+        max_items: 100,
+        max_bytes: 262_144,
+    };
+    let TimelineResult::Page { page: first_page } = timelines.timeline(reader.clone(), read(None)).await? else {
+        return Err("the first snapshot does not read as a page".into());
+    };
+    assert_eq!(first_page.items, vec![item.clone()]);
+    let old_fence = first_page.fence.clone();
+    let found = timelines.item(reader.clone(), old_fence.clone(), first.id()).await?;
+    assert!(matches!(found, ItemRead::Item { item: Some(found) } if *found == item));
+    let records = timelines
+        .stream(
+            reader.clone(),
+            StreamRead {
+                stream: StreamCursor {
+                    scope: scope(),
+                    stream: primary.stream.clone(),
+                    epoch: primary.epoch.clone(),
+                    committed: Sequence(0),
+                },
+                position: StreamPosition::Latest,
+                through: None,
+                max_records: 16,
+                max_bytes: 1 << 20,
+            },
+        )
+        .await?;
+    assert_eq!((records.records.len(), records.proofs.len()), (2, 1));
+    assert_eq!(notices.next(limit).await?.len(), 1);
+
     // Second step: input facts alone advance the installed cursor, nothing else.
     let second = sources.begin_step(primary.clone(), Some(step.revision()), generation.clone()).await?;
     let bound = sources.bind_target(second.clone(), primary.clone()).await?;
@@ -278,6 +320,22 @@ pub(super) async fn run(root: &Path) -> Result<()> {
         )?,
         1
     );
+    // The new snapshot answers from the index; the old fence keeps reading its
+    // own immutable snapshot until it is released, then has to re-anchor.
+    let TimelineResult::Page { page: latest } = timelines.timeline(reader.clone(), read(None)).await? else {
+        return Err("the second snapshot does not read as a page".into());
+    };
+    assert_eq!(latest.items, vec![item_two.clone()]);
+    let TimelineResult::Page { page: old } = timelines.timeline(reader.clone(), read(Some(old_fence.clone()))).await?
+    else {
+        return Err("the old fence does not read its snapshot".into());
+    };
+    assert_eq!(old.items, vec![item.clone()]);
+    assert!(notices.next(limit).await?.iter().any(|notice| notice.local > old_fence.local));
+    timelines.release(reader.clone(), old_fence.clone()).await?;
+    timelines.release(reader.clone(), latest.fence.clone()).await?;
+    let stale = timelines.timeline(reader.clone(), read(Some(old_fence))).await?;
+    assert!(matches!(stale, TimelineResult::ReanchorNeeded));
     // Nothing new: another pass changes nothing.
     assert_eq!(settle(&db, &blocks, &timelines).await?, 0);
     // The superseded root is retained only by the head it no longer is.
@@ -286,7 +344,7 @@ pub(super) async fn run(root: &Path) -> Result<()> {
     assert_eq!(count(&db, &format!("SELECT COUNT(*) FROM sync_asset_manifests WHERE hash='{root_one}'"))?, 0);
     assert_eq!(count(&db, &format!("SELECT COUNT(*) FROM sync_asset_manifests WHERE hash='{root_two}'"))?, 1);
     println!(
-        "timeline install: item revisions to snapshot and index, input-only passes, retraction, idempotent rerun and head retention passed"
+        "timeline install: item revisions to snapshot and index, indexed and fenced reads, item and stream reads, notices, release, input-only passes, retraction, idempotent rerun and head retention passed"
     );
     Ok(())
 }

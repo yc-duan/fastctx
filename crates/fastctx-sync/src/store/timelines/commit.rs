@@ -1,7 +1,7 @@
 //! One installation commit: the head moves from the root this installer planned
 //! against to the new one, the position index follows with exact preconditions,
 //! and the watermarks readers resume from advance in the same transaction.
-use super::evidence::{self, Head};
+use super::state::{self, Head};
 use crate::{
     blocks::retain_supplied,
     cursor::{LocalSequence, Revision, StreamCursor},
@@ -48,7 +48,7 @@ pub(super) fn install(
     changes: &[IndexChange],
 ) -> Result<Installed> {
     let conversation = &custody.object;
-    if !same(&evidence::head(db, conversation)?, expected) {
+    if !same(&state::head(db, conversation)?, expected) {
         return Ok(Installed::Moved);
     }
     if let Some(root) = &next.root

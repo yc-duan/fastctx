@@ -104,6 +104,15 @@ pub struct TimelinePage {
     pub older: Option<TimelinePosition>,
     pub newer: Option<TimelinePosition>,
 }
+/// One item at a fence. A page missing locally is Pending, never an absent item;
+/// an expired fence must be re-anchored rather than read against a newer snapshot.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ItemRead {
+    Item { item: Option<Box<TimelineItem>> },
+    Pending { progress: Option<StreamProgress> },
+    ReanchorNeeded,
+}
 /// An unavailable projection/root is never represented by an empty successful page.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]

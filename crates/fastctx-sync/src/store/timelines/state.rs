@@ -1,18 +1,25 @@
-//! What T2 needs beside each item revision: the record it came from and the
-//! original signed batch, whose canonical serialization every holder publishes
-//! as the same content-addressed proof block.
+//! What installation and reading need from the database: the installed head,
+//! the conversation's stream and records, the original signed batches whose
+//! canonical serialization every holder publishes as the same proof block, and
+//! the replica custody this holder keeps of the conversation.
 use crate::{
     catalog::RecordRef,
-    cursor::{LocalSequence, Revision, Sequence, StreamCursor},
+    cursor::{HoldingPeriod, LocalSequence, Revision, Sequence, StreamCursor},
     identity::{Digest, ObjectKey, ProducerEpoch, StreamId},
     manifest::{ContentBlock, ManifestRoot},
     proof::{Bytes, ProofPurpose, Signature, SignedSourceBatch, SignedStatement, SigningKey},
-    store::sql,
+    registry::REGISTRY,
+    store::{
+        access::{AccessContext, Custody, HoldingUse, Principal},
+        ingest::StreamProgress,
+        sql,
+    },
 };
 use fastctx_storage::{
     Result,
     rusqlite::{Connection, OptionalExtension, params},
 };
+use fastctx_types::sync::conversation_timeline::KIND;
 
 /// What this holder has installed for one conversation.
 #[derive(Clone)]
@@ -22,6 +29,7 @@ pub(super) struct Head {
     pub root: Option<ManifestRoot>,
     pub indexed: Option<Revision>,
     pub applied: LocalSequence,
+    pub local: LocalSequence,
 }
 /// The conversation's timeline stream as last committed here.
 pub(super) struct Stream {
@@ -43,7 +51,7 @@ fn decode<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Result<T> {
 pub(super) fn head(db: &Connection, conversation: &ObjectKey) -> Result<Option<Head>> {
     let scope = &conversation.scope;
     let row = db
-        .prepare_cached("SELECT projection,through_cursor,root,indexed,applied FROM sync_timeline_heads WHERE hub=?1 AND scope=?2 AND conversation=?3")?
+        .prepare_cached("SELECT projection,through_cursor,root,indexed,applied,local FROM sync_timeline_heads WHERE hub=?1 AND scope=?2 AND conversation=?3")?
         .query_row(params![scope.hub.to_string(), scope.scope.as_str(), conversation.object.as_str()], |row| {
             Ok((
                 sql::counter(row, 0)?,
@@ -51,10 +59,11 @@ pub(super) fn head(db: &Connection, conversation: &ObjectKey) -> Result<Option<H
                 row.get::<_, Option<String>>(2)?,
                 row.get::<_, Option<Vec<u8>>>(3)?,
                 sql::counter(row, 4)?,
+                sql::counter(row, 5)?,
             ))
         })
         .optional()?;
-    row.map(|(projection, through, root, indexed, applied)| {
+    row.map(|(projection, through, root, indexed, applied, local)| {
         Ok(Head {
             projection: Revision(projection),
             through: decode(&through)?,
@@ -75,6 +84,7 @@ pub(super) fn head(db: &Connection, conversation: &ObjectKey) -> Result<Option<H
                 })
                 .transpose()?,
             applied: LocalSequence(applied),
+            local: LocalSequence(local),
         })
     })
     .transpose()
@@ -156,4 +166,62 @@ pub(super) fn proof(db: &Connection, conversation: &ObjectKey, proof: &Digest) -
         return Err(sql::invalid("a stored source proof differs from its identity"));
     }
     Ok(SignedSourceBatch { proof: statement })
+}
+
+/// Installation and reading keep replica custody of the conversation under the scope's
+/// current holding period.
+pub(super) fn custody(
+    db: &Connection,
+    holder: &crate::cursor::Holder,
+    conversation: &ObjectKey,
+) -> fastctx_storage::Result<Custody> {
+    let scope = &conversation.scope;
+    let (acl, epoch) = db
+        .prepare_cached("SELECT acl_revision,publication_epoch FROM sync_scopes WHERE hub=?1 AND scope=?2")?
+        .query_row(params![scope.hub.to_string(), scope.scope.as_str()], |row| {
+            Ok((sql::counter(row, 0)?, sql::counter(row, 1)?))
+        })?;
+    Ok(Custody {
+        context: AccessContext {
+            principal: Principal::LocalService,
+            scope: scope.clone(),
+            observed_acl: Revision(acl),
+        },
+        kind: REGISTRY.asset(KIND).map_err(sql::invalid)?.registered(),
+        object: conversation.clone(),
+        purpose: HoldingUse::Replica,
+        holding: HoldingPeriod {
+            holder: holder.clone(),
+            scope: scope.clone(),
+            acl_revision: Revision(acl),
+            publication_epoch: Revision(epoch),
+        },
+    })
+}
+
+/// The fence's view of the stream: local until the hub confirms its epoch and
+/// the prefix digest reaches the installed cursor.
+pub(super) fn progress(db: &Connection, conversation: &ObjectKey, through: &StreamCursor) -> Result<StreamProgress> {
+    let scope = &conversation.scope;
+    let confirmed = db
+        .prepare_cached("SELECT h.epoch_proof,r.prefix_digest FROM sync_stream_heads h JOIN sync_stream_records r ON r.hub=h.hub AND r.scope=h.scope AND r.stream=h.stream AND r.epoch=h.epoch WHERE h.hub=?1 AND h.scope=?2 AND h.stream=?3 AND h.epoch=?4 AND r.sequence=?5")?
+        .query_row(
+            params![
+                scope.hub.to_string(),
+                scope.scope.as_str(),
+                through.stream.as_str(),
+                through.epoch.as_str(),
+                through.committed.0.to_be_bytes().as_slice()
+            ],
+            |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, Option<String>>(1)?)),
+        )
+        .optional()?;
+    Ok(match confirmed {
+        Some((Some(proof), Some(prefix))) => StreamProgress::Confirmed {
+            cursor: through.clone(),
+            epoch_proof: Digest::try_from(proof).map_err(sql::invalid)?,
+            prefix_digest: Digest::try_from(prefix).map_err(sql::invalid)?,
+        },
+        _ => StreamProgress::LocalPending { cursor: through.clone() },
+    })
 }
