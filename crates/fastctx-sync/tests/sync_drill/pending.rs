@@ -127,8 +127,18 @@ pub(super) async fn run(root: &Path) -> Result<()> {
     let dir = root.join("pending-edits");
     fastctx_platform::ensure_private_dir(&dir)?;
     let path = dir.join("replica.sqlite3");
-    let db = open(&path)?;
-    let gate = policy(false);
+    let other = ScopeKey { hub: scope().hub, scope: ScopeId::from_bytes([51; 32]) };
+    let db = open_with(&path, |db| {
+        db.execute("INSERT INTO sync_scopes(hub,scope,policy,acl_revision,enabled,publication_epoch) VALUES(?1,?2,X'7b7d',?3,1,?3)",params![other.hub.to_string(),other.scope.as_str(),1_u64.to_be_bytes().as_slice()])?;
+        Ok(())
+    })?;
+    let gate = Arc::new(Policy {
+        scope: scope(),
+        extra: Some(other.clone()),
+        enabled: AtomicBool::new(true),
+        checks: AtomicUsize::new(0),
+        first_only: false,
+    });
     let blocks = Arc::new(SqliteBlocks::new(
         db.clone(),
         dir.join("files"),
@@ -140,17 +150,29 @@ pub(super) async fn run(root: &Path) -> Result<()> {
     let store = engine(db.clone(), blocks.clone(), gate.clone())?;
     let content = codec::encode(scope(), b"a retained local plan".to_vec(), Encoding::Raw)?;
     let a = custody(50, "conversation.plan");
-    let b = custody(51, "conversation.plan");
+    let mut b = custody(51, "conversation.plan");
+    b.context.scope = other.clone();
+    b.object.scope = other.clone();
+    b.holding.scope = other.clone();
     let one = blocks.put(a.clone(), operation(50), content.representation.clone(), content.bytes.clone()).await?;
+    let content = codec::encode(other.clone(), content.bytes, Encoding::Raw)?;
     let two = blocks.put(b.clone(), operation(50), content.representation, content.bytes).await?;
-    let submission =
+    let mut submission =
         request(50, vec![(50, ContentRef::from(one.content.clone())), (51, ContentRef::from(two.content.clone()))]);
+    submission.objects[1].key = b.object.clone();
     let receipt = store.submit_pending(principal(), AtomicMutation::new(submission.clone())?).await?;
     assert!(receipt.authority.is_none());
     assert_eq!(receipt.local.0, 2);
     assert_eq!(count(&db, "sync_object_versions")?, 0);
     assert_eq!(count(&db, "sync_pending_objects")?, 2);
     assert_eq!(count(&db, "sync_outbox")?, 1);
+    let holdings = db.read_now(|db| {
+        let mut query = db.prepare("SELECT holding FROM sync_pending_objects ORDER BY scope")?;
+        Ok(query.query_map([], |r| r.get::<_, Vec<u8>>(0))?.collect::<fastctx_storage::rusqlite::Result<Vec<_>>>()?)
+    })?;
+    let scopes: std::collections::BTreeSet<_> =
+        holdings.iter().map(|bytes| serde_json::from_slice::<HoldingPeriod>(bytes).unwrap().scope).collect();
+    assert_eq!(scopes, [scope(), other].into_iter().collect());
     blocks.release(a.clone(), one.pin).await?;
     blocks.release(b, two.pin).await?;
     assert_eq!(blocks.collect(128).await?, 0);

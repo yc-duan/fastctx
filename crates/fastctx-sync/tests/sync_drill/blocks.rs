@@ -30,6 +30,7 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 struct Policy {
     scope: ScopeKey,
+    extra: Option<ScopeKey>,
     enabled: AtomicBool,
     checks: AtomicUsize,
     first_only: bool,
@@ -37,7 +38,7 @@ struct Policy {
 impl Policy {
     fn check(&self, context: &AccessContext, kind: RegisteredKind) -> Decision {
         if self.enabled.load(Ordering::Acquire)
-            && context.scope == self.scope
+            && (context.scope == self.scope || self.extra.as_ref() == Some(&context.scope))
             && context.observed_acl == Revision(1)
             && matches!(kind.registration().id, "conversation.plan" | "conversation.artifact")
         {
@@ -55,7 +56,7 @@ impl AccessPolicy for Policy {
         self.check(c, k)
     }
     fn can_keep(&self, c: &AccessContext, k: RegisteredKind, o: &ObjectKey, _: &HoldingUse) -> Decision {
-        if o.scope != self.scope || self.first_only && self.checks.fetch_add(1, Ordering::AcqRel) != 0 {
+        if o.scope != c.scope || self.first_only && self.checks.fetch_add(1, Ordering::AcqRel) != 0 {
             Decision::Denied { revision: Revision(1), reason: "publication lost custody".into() }
         } else {
             self.check(c, k)
@@ -98,7 +99,13 @@ fn open_with(
     })?)
 }
 fn policy(first_only: bool) -> Arc<Policy> {
-    Arc::new(Policy { scope: scope(), enabled: AtomicBool::new(true), checks: AtomicUsize::new(0), first_only })
+    Arc::new(Policy {
+        scope: scope(),
+        extra: None,
+        enabled: AtomicBool::new(true),
+        checks: AtomicUsize::new(0),
+        first_only,
+    })
 }
 fn page(block: fastctx_sync::manifest::ContentBlock) -> Result<ManifestReply> {
     let bytes = serde_json::to_string(&ManifestPage::Blocks { offset: ByteCount(0), blocks: vec![block] })?;

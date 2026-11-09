@@ -93,7 +93,7 @@ CREATE TABLE sync_pending_objects (
     hub TEXT NOT NULL, origin TEXT NOT NULL, operation TEXT NOT NULL,
     scope TEXT NOT NULL, object TEXT NOT NULL, kind TEXT NOT NULL,
     base BLOB NOT NULL, before_root BLOB, candidate_root BLOB,
-    predecessor TEXT, original_intent BLOB NOT NULL,
+    predecessor TEXT, original_intent BLOB NOT NULL, holding BLOB NOT NULL,
     PRIMARY KEY(hub,origin,operation,scope,object),
     FOREIGN KEY(hub,origin,operation) REFERENCES sync_pending_mutations(hub,origin,operation)
 ) WITHOUT ROWID;

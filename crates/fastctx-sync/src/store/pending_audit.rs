@@ -141,6 +141,15 @@ impl PendingAudit {
                 {
                     return Err(sql::invalid("pending object differs from its immutable request"));
                 }
+                let holding: Vec<u8> = db.prepare_cached("SELECT holding FROM sync_pending_objects WHERE hub=?1 AND origin=?2 AND operation=?3 AND scope=?4 AND object=?5")?.query_row(params![hub,origin,operation,scope,id],|r|r.get(0))?;
+                let holding: crate::cursor::HoldingPeriod = decode(&holding)?;
+                let publication = db.prepare_cached("SELECT publication_epoch FROM sync_scopes WHERE hub=?1 AND scope=?2 AND enabled=1 AND acl_revision=?3")?.query_row(params![hub,scope,object.observed_acl.0.to_be_bytes().as_slice()],|r|sql::counter(r,0))?;
+                if holding.scope != object.key.scope
+                    || holding.acl_revision != object.observed_acl
+                    || holding.publication_epoch.0 != publication
+                {
+                    return Err(sql::invalid("pending object lacks its own current scope holding fence"));
+                }
                 let base = match &object.base {
                     crate::store::mutation::BaseVersion::Absent => None,
                     crate::store::mutation::BaseVersion::Version { root, .. } => root.as_ref(),
