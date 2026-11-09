@@ -51,10 +51,8 @@ impl ReportReader {
     /// `path` comes from an already claimed plugin instance. `layout` is decoded
     /// from that report's bounded outer header, never guessed from a directory.
     pub fn open(path: &Path, layout: Layout, expected: Option<&ReportStamp>, position: Position) -> io::Result<Self> {
-        if !path.with_extension("done").try_exists()? {
-            return Err(io::ErrorKind::WouldBlock.into());
-        }
-        let file = file_read::open(path)?;
+        completion_marker(path)?;
+        let file = super::file::ordinary_file(path)?;
         let snapshot = file_read::snapshot(&file, &file.metadata()?)?;
         let stamp = ReportStamp { identity: snapshot.identity(), change: snapshot.change_stamp()? };
         if expected.is_some_and(|old| old != &stamp) {
@@ -96,7 +94,7 @@ impl ReportReader {
             return Ok(ReportWindow { bytes: 0, complete: true });
         }
         if self.current.is_none() {
-            let mut file = file_read::open(&self.part_path())?;
+            let mut file = super::file::ordinary_file(&self.part_path())?;
             let snapshot = file_read::snapshot(&file, &file.metadata()?)?;
             if self.position.offset.0 > snapshot.size {
                 return Err(io::Error::new(io::ErrorKind::Interrupted, "report part was truncated"));
@@ -133,7 +131,7 @@ impl ReportReader {
                 .ok_or_else(|| io::Error::other("report length overflow"))?;
             return Ok(ReportWindow { bytes: count, complete: false });
         }
-        let path_file = file_read::open(&part_path)?;
+        let path_file = super::file::ordinary_file(&part_path)?;
         let path_stamp = file_read::snapshot(&path_file, &path_file.metadata()?)?;
         if path_stamp.identity() != before.identity || path_stamp.change_stamp()? != before.change {
             return Err(io::Error::new(io::ErrorKind::Interrupted, "report part path was replaced"));
@@ -145,15 +143,19 @@ impl ReportReader {
         Ok(ReportWindow { bytes: 0, complete: false })
     }
     fn verify_manifest(&self) -> io::Result<()> {
-        let file = file_read::open(&self.path)?;
+        let file = super::file::ordinary_file(&self.path)?;
         let now = file_read::snapshot(&file, &file.metadata()?)?;
-        if now.identity() != self.stamp.identity
-            || now.change_stamp()? != self.stamp.change
-            || !self.path.with_extension("done").try_exists()?
-        {
+        if now.identity() != self.stamp.identity || now.change_stamp()? != self.stamp.change {
             return Err(io::Error::new(io::ErrorKind::Interrupted, "report manifest or completion marker changed"));
         }
-        Ok(())
+        completion_marker(&self.path)
+    }
+}
+fn completion_marker(path: &Path) -> io::Result<()> {
+    match super::file::ordinary_file(&path.with_extension("done")) {
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Err(io::ErrorKind::WouldBlock.into()),
+        Err(error) => Err(error),
     }
 }
 /// A dependency is a single report filename, not a path supplied by a host.

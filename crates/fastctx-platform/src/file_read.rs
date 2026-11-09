@@ -13,7 +13,7 @@ pub struct Snapshot {
     pub size: u64,
     pub modified: SystemTime,
     identity: (u64, u64),
-    changed: (i64, i64),
+    metadata_indicators: (i64, i64),
 }
 
 /// Opens for reading with concurrent writers allowed. Special files must
@@ -54,7 +54,7 @@ impl Snapshot {
         Ok(FileChangeStamp {
             size: fastctx_types::sync::cursor::ByteCount(self.size),
             modified: jiff::Timestamp::try_from(self.modified).map_err(io::Error::other)?,
-            indicators: [self.changed.0.to_string(), self.changed.1.to_string()],
+            indicators: [self.metadata_indicators.0.to_string(), self.metadata_indicators.1.to_string()],
         })
     }
 
@@ -68,14 +68,19 @@ impl Snapshot {
         let modified = self.modified.duration_since(SystemTime::UNIX_EPOCH).map(|since| since.as_nanos()).unwrap_or(0);
         format!(
             "{}-{}-{}-{}-{}-{}",
-            self.size, modified, self.identity.0, self.identity.1, self.changed.0, self.changed.1
+            self.size,
+            modified,
+            self.identity.0,
+            self.identity.1,
+            self.metadata_indicators.0,
+            self.metadata_indicators.1
         )
     }
 }
 
 pub fn snapshot(file: &File, metadata: &Metadata) -> io::Result<Snapshot> {
-    let (identity, changed) = indicators(file, metadata)?;
-    Ok(Snapshot { size: metadata.len(), modified: metadata.modified()?, identity, changed })
+    let (identity, metadata_indicators) = indicators(file, metadata)?;
+    Ok(Snapshot { size: metadata.len(), modified: metadata.modified()?, identity, metadata_indicators })
 }
 
 #[cfg(unix)]

@@ -16,6 +16,16 @@ use std::{
     path::{Path, PathBuf},
 };
 
+/// Check the opened handle, since checking the pathname before open races a
+/// replacement and the platform opener intentionally permits directories.
+pub(super) fn ordinary_file(path: &Path) -> io::Result<File> {
+    let file = file_read::open(path)?;
+    if !file.metadata()?.is_file() {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "Claude source is not an ordinary file"));
+    }
+    Ok(file)
+}
+
 pub struct SourceFile {
     file: File,
     path: PathBuf,
@@ -30,7 +40,7 @@ pub struct Window {
 }
 impl SourceFile {
     pub fn open(path: &Path) -> io::Result<Self> {
-        let file = file_read::open(path)?;
+        let file = ordinary_file(path)?;
         let snapshot = file_read::snapshot(&file, &file.metadata()?)?;
         Ok(Self { file, path: path.to_owned(), identity: snapshot.identity(), read_bytes: 0 })
     }
@@ -67,7 +77,7 @@ impl SourceFile {
         }
         bytes.truncate(used);
         let after = self.snapshot()?;
-        let path = file_read::open(&self.path)?;
+        let path = ordinary_file(&self.path)?;
         let named = file_read::snapshot(&path, &path.metadata()?)?;
         if before.identity() != self.identity
             || after.identity() != self.identity

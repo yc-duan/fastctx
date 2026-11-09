@@ -12,8 +12,10 @@ pub enum FileIdentity {
     Windows { volume: Count, index: Count },
 }
 
-/// Indicators detect changes but never prove that an old prefix is unchanged.
-/// Decimal indicator strings preserve signed platform tick values exactly.
+/// Metadata observations never prove that an old prefix is unchanged.
+/// Decimal indicator strings preserve signed platform tick values exactly:
+/// Unix ctime seconds/nanoseconds, or Windows ChangeTime/CreationTime ticks.
+/// CreationTime is an additional replacement signal, not a modification clock.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FileChangeStamp {
