@@ -9923,6 +9923,7 @@ Used by:
 
 - fastctx 1.0.1-beta.16 (https://github.com/yc-duan/fastctx)
 - fastctx-agent 1.0.1-beta.16 (https://github.com/yc-duan/fastctx)
+- fastctx-assets 1.0.1-beta.16 (https://github.com/yc-duan/fastctx)
 - fastctx-client 1.0.1-beta.16 (https://github.com/yc-duan/fastctx)
 - fastctx-draft 1.0.1-beta.16 (https://github.com/yc-duan/fastctx)
 - fastctx-file-search 1.0.1-beta.16 (https://github.com/yc-duan/fastctx)
@@ -87069,4 +87070,4 @@ Source archives for the crates.io dependencies recorded by this build follow. Ea
 - zvariant_derive 5.15.0: https://static.crates.io/crates/zvariant_derive/zvariant_derive-5.15.0.crate
 - zvariant_utils 4.2.0: https://static.crates.io/crates/zvariant_utils/zvariant_utils-4.2.0.crate
 
-<!-- fastctx-notices-inputs: a9802abdc8f44f383c9036d8de0ebc838b3ef8eefbda13ffc265d3c74973c8d3 -->
+<!-- fastctx-notices-inputs: d9d4de51f868b0565399f01abd260ab45f93a68d51cd1e42388d045c865b0896 -->
