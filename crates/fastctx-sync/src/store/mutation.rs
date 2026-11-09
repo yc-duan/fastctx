@@ -49,7 +49,8 @@ pub enum Expected {
     Absent,
     Revision(Revision),
 }
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "origin", rename_all = "snake_case")]
 pub enum Origin {
     Local,
     Replicated { source: crate::identity::Producer },

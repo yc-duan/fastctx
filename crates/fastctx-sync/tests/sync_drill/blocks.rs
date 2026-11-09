@@ -1,4 +1,6 @@
 //! Real content files, writer transactions and collection share one lifecycle.
+#[path = "pending.rs"]
+mod pending;
 #[path = "block_recovery.rs"]
 mod recovery;
 use fastctx_storage::{Database, rusqlite::params};
@@ -332,6 +334,7 @@ pub async fn run(root: &Path) -> Result<()> {
         0
     );
     recovery::run(root).await?;
+    pending::run(root).await?;
     println!(
         "content lifecycle: typed pins, dual encodings, pending closures, private references, claim fences, cancellation, restart and revoked staging cleanup passed"
     );

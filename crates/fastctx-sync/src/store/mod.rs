@@ -4,6 +4,7 @@ pub mod access;
 pub mod audit;
 pub mod authorize;
 pub mod boundary;
+pub mod engine;
 pub mod ingest;
 pub mod mutation;
 pub mod replica;

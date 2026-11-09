@@ -5,22 +5,22 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 
-pub(super) struct Budget {
+pub(crate) struct Budget {
     limit: usize,
     used: AtomicUsize,
 }
-pub(super) struct Permit {
+pub(crate) struct Permit {
     budget: Arc<Budget>,
     bytes: usize,
 }
 impl Budget {
-    pub(super) fn new(limit: usize) -> Result<Arc<Self>, Error> {
+    pub(crate) fn new(limit: usize) -> Result<Arc<Self>, Error> {
         if limit < 2 * fastctx_types::sync::BLOCK_BYTES as usize + 65536 {
             return Err(Error::Invalid("content budget cannot hold one bounded encoding operation".into()));
         }
         Ok(Arc::new(Self { limit, used: AtomicUsize::new(0) }))
     }
-    pub(super) fn acquire(self: &Arc<Self>, bytes: usize) -> Result<Permit, Error> {
+    pub(crate) fn acquire(self: &Arc<Self>, bytes: usize) -> Result<Permit, Error> {
         self.used
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |used| {
                 used.checked_add(bytes).filter(|total| *total <= self.limit)

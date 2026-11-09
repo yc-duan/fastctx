@@ -11,6 +11,7 @@ use std::{cell::Cell, marker::PhantomData, rc::Rc, sync::Arc};
 pub(crate) enum Role {
     Scheduling,
     Content,
+    Pending,
 }
 thread_local! { static ACTIVE: Cell<Option<Role>> = const { Cell::new(None) }; }
 pub(crate) struct Boundary(Option<Role>, PhantomData<Rc<()>>);
@@ -23,11 +24,14 @@ impl Drop for Boundary {
     }
 }
 
+#[path = "pending_audit.rs"]
+mod pending_audit;
 #[path = "references.rs"]
 mod references;
 #[derive(Default)]
 struct Rules {
     references: references::References,
+    pending: pending_audit::PendingAudit,
 }
 fn permits(table: &str) -> bool {
     if !table.starts_with("sync_") || table == "sync_legacy_pins" {
@@ -47,6 +51,17 @@ fn permits(table: &str) -> bool {
                 | "sync_asset_gc"
                 | "sync_tasks"
         ),
+        Some(Role::Pending) => matches!(
+            table,
+            "sync_pending_mutations"
+                | "sync_pending_objects"
+                | "sync_pending_roots"
+                | "sync_local_head"
+                | "sync_local_changes"
+                | "sync_outbox"
+                | "sync_asset_access"
+                | "sync_tasks"
+        ),
         None => false,
     }
 }
@@ -58,7 +73,7 @@ impl WritePolicy for Rules {
 impl Guard for Rules {
     fn check(&mut self, change: &Change<'_>) -> Result<()> {
         if change.table() == "sync_tasks"
-            && matches!(ACTIVE.get(), Some(Role::Content))
+            && matches!(ACTIVE.get(), Some(Role::Content | Role::Pending))
             && (change.action() == Action::Delete
                 || change.after(0)? != fastctx_storage::rusqlite::types::ValueRef::Text(b"sync.manifest"))
         {
@@ -73,19 +88,22 @@ impl Guard for Rules {
             return Err(super::sql::invalid("the scheduler cannot advance a local change cursor"));
         }
         if permits(change.table()) {
-            self.references.changed(change)
+            self.references.changed(change)?;
+            self.pending.changed(change)
         } else {
             Err(super::sql::invalid("a sync table write bypassed its typed entry point"))
         }
     }
     fn validate_operation(&mut self, db: &Connection) -> Result<()> {
-        self.references.validate(db)
+        self.references.validate(db)?;
+        self.pending.validate(db)
     }
     fn write_policy(&self) -> Option<Arc<dyn WritePolicy>> {
         Some(Arc::new(Rules::default()))
     }
     fn ended(&mut self, _: bool) {
         self.references.clear();
+        self.pending.clear();
     }
     fn committed(&mut self, _: bool) {}
 }

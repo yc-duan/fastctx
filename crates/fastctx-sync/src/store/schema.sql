@@ -52,7 +52,7 @@ CREATE TABLE sync_local_head (
 );
 CREATE TABLE sync_local_changes (
     sequence BLOB PRIMARY KEY CHECK(length(sequence)=8),
-    hub TEXT NOT NULL, scope TEXT NOT NULL, object TEXT NOT NULL,
+    hub TEXT NOT NULL, scope TEXT NOT NULL, object TEXT NOT NULL, kind TEXT NOT NULL,
     authority_epoch BLOB CHECK(authority_epoch IS NULL OR length(authority_epoch)=16),
     revision BLOB CHECK(revision IS NULL OR length(revision)=8),
     origin BLOB NOT NULL, operation TEXT NOT NULL,
