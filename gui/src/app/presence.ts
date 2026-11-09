@@ -25,6 +25,7 @@ import { workbenchShown } from "./workbench-shown";
 import { effect } from "./signals";
 import { residentsOf, type Store } from "./store";
 import type { TroubleWords } from "./trouble-words";
+import { shownTroubles } from "./trouble-view";
 
 export interface PresenceWords {
   /** The agent asks the user something; `what` is what it wants of them,
@@ -194,7 +195,7 @@ export function startPresence(options: PresenceOptions): void {
     let changed = false;
     for (const hub of world.accounts.hubs) {
       if (!hub.health) continue;
-      const troubles = hub.troubles ?? [];
+      const troubles = shownTroubles(hub);
       const keys = troubles.map(troubleKey);
       const before = told[hub.hub];
       told[hub.hub] = keys;

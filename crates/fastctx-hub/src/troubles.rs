@@ -353,6 +353,8 @@ impl Troubles {
                     .filter(|kept| kept.told.iter().any(|(told, opened)| told == name && *opened == account.opened)),
             );
         }
+        // Rules broken, kept from an earlier release, are no trouble to tell.
+        found.retain(|kept| kept.trouble.kind != TroubleKind::Violations);
         found.sort_by_key(|kept| kept.trouble.id);
         found.dedup_by_key(|kept| kept.trouble.id);
         let skip = found.len().saturating_sub(SHOWN);
