@@ -11,10 +11,6 @@ use fastctx_sync::store::{
 };
 use std::{io, path::Path, sync::Arc};
 
-#[path = "format_followup.rs"]
-mod followup;
-pub(super) use followup::finish_legacy;
-
 pub(super) const CURRENT: u64 = 3;
 pub(super) struct Observation {
     basis: BackupBasis,

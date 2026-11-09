@@ -62,12 +62,15 @@ impl Shelf {
                 super::format::initialize(connection, &observed)
             })
             .map_err(other)?;
-        super::format::start(&database, log.clone()).map_err(other)?;
+
         if let Some(report) = database.salvaged() {
             eprintln!("the hub's database was damaged and set aside; what could be read was salvaged:\n{report}");
         }
         let shelf = Self(database);
-        super::format::finish_legacy(&shelf, dir, log)?;
+        // File retirement needs exclusive startup ownership, before standby or
+        // serving can read/write hub.json. This is fixed-size name cleanup.
+        super::migrate::back_up(&shelf, dir)?;
+        super::format::start(&shelf.0, log).map_err(other)?;
         Ok(shelf)
     }
 

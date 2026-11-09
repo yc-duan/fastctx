@@ -250,6 +250,13 @@ struct Retired {
 pub(crate) async fn retire(dir: &Path, why: &str, log: &std::sync::Arc<crate::log::Log>, leave: &crate::Leave) {
     let (dir, why, said, remove) = (dir.to_path_buf(), why.to_string(), log.clone(), leave.remove_service.clone());
     let done = fastctx_platform::task::spawn_blocking(move || {
+        if let Err(error) = fastctx_storage::format_upgrade::stop_format_backup(
+            &dir.join("hub.sqlite3"),
+            std::time::Duration::from_secs(5),
+        ) {
+            said.line(format_args!("hub retirement deferred until backup/database handles close: {error}"));
+            return;
+        }
         match clear(&dir, &why) {
             Ok(()) => said.line(format_args!("the hub's data here is deleted: {why}")),
             Err(error) => said.line(format_args!("deleting the hub's data here: {error}")),
@@ -266,6 +273,8 @@ pub(crate) async fn retire(dir: &Path, why: &str, log: &std::sync::Arc<crate::lo
 }
 
 pub(crate) fn clear(dir: &Path, why: &str) -> io::Result<()> {
+    fastctx_storage::format_upgrade::stop_format_backup(&dir.join("hub.sqlite3"), std::time::Duration::from_secs(5))
+        .map_err(io::Error::other)?;
     for entry in fastctx_platform::disk::read_dir(dir)? {
         let entry = entry?;
         let name = entry.file_name();
