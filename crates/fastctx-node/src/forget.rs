@@ -28,13 +28,21 @@ use serde::{Deserialize, Serialize};
 use crate::Node;
 use crate::data::delete::Stop;
 
-/// What is still to be asked of hubs, and what wakes the asking.
+/// What is still to be asked of hubs.
 #[derive(Default)]
 pub(crate) struct Asks {
     /// Held while the kept asks are read and written.
     file: crate::ranked::Forgetting,
-    wake: Arc<tokio::sync::Notify>,
+    /// The sendings in a row that left asks to send: what paces the next.
+    left: std::sync::atomic::AtomicU32,
 }
+
+/// The kind of job that sends the kept asks to their hubs.
+const ASKING: &str = "forget/asks";
+/// The longest one sending of the kept asks may take.
+const ASKS_WITHIN: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+/// How soon after a hub's view changed the asks are sent again, at most.
+const VIEWS_APART: std::time::Duration = std::time::Duration::from_millis(500);
 
 /// A deletion still to be asked of a hub.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -119,15 +127,24 @@ pub(crate) async fn ask(
             keep(node, vec![ask])
                 .await
                 .map_err(|error| Failure::new(format!("keeping what to ask the hub: {error}")))?;
-            node.forget_asks.wake.notify_one();
+            wake(node);
             Ok(How::Queued)
         }
         Err(reason) => Err(Failure::new(reason)),
     }
 }
 
+/// Asks for the kept asks to be sent, as a job (`fastctx_jobs`): one job
+/// however often it is asked. Asked while a sending waits to be tried
+/// again, that one is due now; asked while one runs, another follows it.
 pub(crate) fn wake(node: &Node) {
-    node.forget_asks.wake.notify_one();
+    let job = fastctx_jobs::Job { kind: ASKING, key: "asks".into(), unit: "node".into(), payload: Vec::new() };
+    let (database, jobs) = (node.database.clone(), node.durable_jobs.clone());
+    fastctx_platform::task::spawn(async move {
+        if database.write_relaxed(128, move |db| fastctx_jobs::submit(db, &job)).await.is_ok() {
+            jobs.stir(ASKING);
+        }
+    });
 }
 
 /// Recheck deleted originals after this conversation releases its inherited references.
@@ -177,7 +194,7 @@ pub(crate) async fn project(
     .await
     .map_err(|error| error.to_string())?;
     home(node, id).await?;
-    node.forget_asks.wake.notify_one();
+    wake(node);
     Ok(())
 }
 
@@ -222,37 +239,42 @@ pub(crate) async fn told(node: &Arc<Node>, hub: &HubId, forgetting: Forgetting) 
         .collect();
     if !others.is_empty() {
         match keep(node, others).await {
-            Ok(()) => node.forget_asks.wake.notify_one(),
+            Ok(()) => wake(node),
             Err(error) => node.log.line(format_args!("keeping what to ask the other hubs of {id}: {error}")),
         }
     }
     Forgot::Done
 }
 
-/// Asks the hubs what is still to be asked, whenever a hub's view changes,
-/// as when a link connects, or a new ask is kept.
+/// Names what sends the kept asks, before the node's jobs start, and asks
+/// for a sending now and whenever a hub's view changes, as when a link
+/// connects. A new ask kept asks for one itself (`wake`).
 pub(crate) fn start(node: &Arc<Node>) {
+    use fastctx_jobs::{Kind, Outcome, Taken};
+    let weak = Arc::downgrade(node);
+    let run = move |_: Taken| -> std::pin::Pin<Box<dyn std::future::Future<Output = Outcome> + Send>> {
+        let node = weak.upgrade();
+        Box::pin(async move {
+            let Some(node) = node else { return Outcome::Failed("the node is stopping".into()) };
+            let left = &node.forget_asks.left;
+            if send_kept(&node).await {
+                left.store(0, std::sync::atomic::Ordering::Release);
+                return Outcome::Done;
+            }
+            let failures = left.fetch_add(1, std::sync::atomic::Ordering::AcqRel).saturating_add(1);
+            Outcome::Again { after: fastctx_net::again::backoff(failures) }
+        })
+    };
+    node.durable_jobs.register(Kind { name: ASKING, at_once: 1, within: ASKS_WITHIN, tries: 5 }, Arc::new(run));
+    wake(node);
     let weak = Arc::downgrade(node);
     let mut views = node.views.subscribe();
-    let wake = node.forget_asks.wake.clone();
     fastctx_platform::task::spawn(async move {
-        let mut again = crate::again::Again::default();
-        loop {
-            let woken = wake.notified();
-            tokio::pin!(woken);
-            woken.as_mut().enable();
-            let done = {
-                let Some(node) = weak.upgrade() else { return };
-                send_kept(&node).await
-            };
-            if done {
-                again.reset();
-            }
-            tokio::select! {
-                () = tokio::time::sleep(again.next()), if !done => {},
-                changed = views.changed() => if changed.is_err() { return },
-                () = woken => {},
-            }
+        while views.changed().await.is_ok() {
+            let Some(node) = weak.upgrade() else { return };
+            wake(&node);
+            drop(node);
+            tokio::time::sleep(VIEWS_APART).await;
         }
     });
 }
