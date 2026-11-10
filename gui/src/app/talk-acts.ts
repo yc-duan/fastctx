@@ -14,7 +14,7 @@ import type { ResidentNow } from "../world/world";
 import { titleOf } from "../world/names";
 import { signal } from "./signals";
 import type { TalkMenuWords } from "./talk-menu-words";
-import { addressOf, sameReach } from "./store";
+import { addressOf, letGo } from "./store";
 
 export interface TalkActsOptions {
   words: TalkMenuWords;
@@ -63,7 +63,7 @@ export class TalkActs {
       removed: shown.archived === undefined ? (r.removed ?? null) : shown.archived ? (r.removed ?? new Date().toISOString()) : null,
       now,
     };
-    sameReach(copy, r);
+
     return copy;
   }
 
@@ -73,12 +73,15 @@ export class TalkActs {
 
   /** Lets go of what the World now says too: of a conversation gone, all;
    *  the part a refusal undid was let go of when it came back. */
-  settle(listed: (address: Address) => ResidentNow | null): void {
+  settle(listed: (address: Address) => ResidentNow | null, current = listed): void {
     let changed = false;
     for (const [key, shown] of this.shown) {
       if (this.pending.get(key)) continue;
       const [machine, resident] = key.split("\n") as [string, string];
-      const r = listed({ machine, resident });
+      const address = { machine, resident };
+      // The acknowledged deletion releases retained content even while an older answer is still shown.
+      if (shown.deleting) letGo(address);
+      const r = (shown.deleting ? current : listed)(address);
       if (!r) {
         this.shown.delete(key);
         changed = true;
@@ -137,6 +140,7 @@ export class TalkActs {
         // Its machine gone offline since it was asked, it is deleted there
         // once it is back: said, unless the asking said so already.
         const done = await within(this.options.forget(address));
+        letGo(address);
         if (done === "queued" && !announced) this.options.say(this.options.words.deleteAway(address.machine));
       } catch (error) {
         this.undo(address, "deleting", this.notDone(error, this.options.words.notDeleted), String(error instanceof Error ? error.message : error));

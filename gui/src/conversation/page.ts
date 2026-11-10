@@ -2374,12 +2374,12 @@ export class ConversationPage {
     this.jobs.update(jobs, now);
   }
 
-  private away: "removed" | "deleted" | "away" | null = null;
+  private away: "removed" | "deleted" | "away" | "unreached" | "stopped" | null = null;
 
   /** Whether the user archived it, or deleted it, as the World last listed
    *  it. Archived, it is kept to read and can be brought back where the
    *  composer was; deleted, what is shown is all that is left of it here. */
-  presence(away: "removed" | "deleted" | "away" | null): void {
+  presence(away: "removed" | "deleted" | "away" | "unreached" | "stopped" | null): void {
     if (this.away === away) return;
     this.away = away;
     // Its shared input is no one's now.
@@ -2392,7 +2392,7 @@ export class ConversationPage {
     this.element.querySelector<HTMLElement>(".composer")!.hidden = away !== null;
     // Nothing more is heard of it: no turn is said to go on, and its goal's
     // bar, whose acts would reach nothing, steps aside.
-    const unheard = away === "away" || away === "deleted";
+    const unheard = away !== null && away !== "removed";
     this.view.hearing(!unheard);
     this.element.toggleAttribute("data-unheard", unheard);
     const gone = this.element.querySelector<HTMLElement>(".composer-gone")!;
@@ -2407,7 +2407,9 @@ export class ConversationPage {
           ? `${glyph("trash", 16)}<span>${escape(manage?.words.deleted ?? this.options.words.removedNote)}</span>`
           : away === "away"
             ? `${glyph("lock", 16)}<span>${escape(this.options.someone.assistFrom ? this.options.words.assistEndedNote : this.options.words.departedNote)}</span>`
-            : "";
+            : away === "unreached" || away === "stopped"
+              ? `${glyph("link", 16)}<span>${escape(this.options.words.watchInterrupted(null))}</span>`
+              : "";
     this.element.querySelector<HTMLElement>(".talk-menu-toggle")?.toggleAttribute("hidden", away === "deleted");
     this.drawState();
     this.update();
@@ -2639,7 +2641,7 @@ export class ConversationPage {
     const working = !this.gone && this.away === null && !waiting && conversation.busy();
     // Out of reach for good, that is what is said, not that the line broke.
     const now =
-      (this.away === "away" ? null : this.gone) ??
+      (this.away !== null ? null : this.gone) ??
       (this.away !== null
         ? this.away === "deleted"
           ? (this.options.manage?.words.deleted ?? words.removed)
@@ -2647,7 +2649,9 @@ export class ConversationPage {
             ? someone.assistFrom
               ? words.assistEnded
               : words.departed
-            : words.removed
+            : this.away === "unreached" || this.away === "stopped"
+              ? words.watchInterrupted(null)
+              : words.removed
         : waiting
           ? words.waitingForYou
           : working
@@ -2670,7 +2674,7 @@ export class ConversationPage {
     // where the head has no room for its machine, a long press says it.
     const lives = someone.assistFrom ? this.options.words.assistFrom(someone.assistFrom) : someone.machine;
     who.title = [someone.agent, lives, now, model].filter(Boolean).join("　");
-    const trouble = this.away === "away" ? now : (this.gone ?? (this.away !== null ? now : null));
+    const trouble = this.away !== null ? now : this.gone;
     this.state.hidden = !trouble;
     if (this.state.textContent !== (trouble ?? "")) this.state.textContent = trouble ?? "";
     this.state.classList.toggle("gone", trouble !== null);

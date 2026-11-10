@@ -152,7 +152,7 @@ import { ReaderPage } from "./app/reader";
 import { Shell, pageHead, type Page } from "./app/shell";
 import { deferredPage } from "./app/deferred-page";
 import { effect, signal } from "./app/signals";
-import { addressOf, assistedBy, bareName, createStore, forgetAnswered, isDeparted, isUnreached, jobsOf, letGo, residentAt, residentsOf, sameAddress, unreachedOf } from "./app/store";
+import { addressOf, assistedBy, bareName, createStore, forgetAnswered, isDeparted, isUnreached, jobsOf, lookRevision, machineReach, letGo, residentAt, residentsOf, sameAddress, unreachedOf } from "./app/store";
 import { TalkActs } from "./app/talk-acts";
 import { TalkMenu } from "./app/talk-menu";
 import { enTalkMenu, zhTalkMenu } from "./app/talk-menu-words";
@@ -1026,7 +1026,7 @@ const talkMenu = new TalkMenu({
   words: talkMenuWords,
   acts: talkActs,
   towns: townsFor,
-  reachable: (r) => !isUnreached(r),
+  reachable: (r) => !isUnreached(store.world.peek(), r),
   departed: (r) => isDeparted(store.world.peek(), r),
   someone: (r) => someoneSaid(r),
   place: (r) => placeSaid(r),
@@ -1035,7 +1035,7 @@ const talkMenu = new TalkMenu({
 });
 effect(() => {
   const now = store.world.get();
-  talkActs.settle((address) => listedAt(now, address));
+  talkActs.settle((address) => listedAt(now, address), (address) => residentAt(now, address));
 });
 
 /** A conversation as the World lists it, archived or not, as its machine
@@ -1085,14 +1085,14 @@ function askForget(r: ResidentNow, then?: () => void): void {
     });
     return;
   }
-  const working = !isUnreached(r) && (r.now?.activity === "busy" || !!r.now?.turn);
-  const also = [working ? words.deleteWorking : "", isUnreached(r) ? words.deleteAway(placeSaid(r)) : ""].filter(Boolean);
+  const working = !isUnreached(store.world.peek(), r) && (r.now?.activity === "busy" || !!r.now?.turn);
+  const also = [working ? words.deleteWorking : "", isUnreached(store.world.peek(), r) ? words.deleteAway(placeSaid(r)) : ""].filter(Boolean);
   forgetConfirm.ask({
     title: words.deleteTitle(name),
     what: words.deleteWhat,
     fields: `<ul class="forget-parts">${words.deleteParts(words.hostRecord(r.about.host.agent)).map((part) => `<li>${escapeText(part)}</li>`).join("")}</ul>${also.length ? `<p class="forget-also">${escapeText(also.join(" "))}</p>` : ""}`,
     go: words.deleteGo,
-    act: async () => talkActs.delete(r, isUnreached(r)),
+    act: async () => talkActs.delete(r, isUnreached(store.world.peek(), r)),
     done: () => then?.(),
   });
 }
@@ -1155,11 +1155,13 @@ function talkManage(address: Address, page: () => ConversationPage, markdown?: (
  *  never says it was deleted: a network that wobbles, a view not read again
  *  yet and a machine away all look so for a while. Only its machine says
  *  that, from the record it keeps of what it deleted (`gone` below). */
-function presenceOf(world: WorldNow | null, address: Address): "removed" | "away" | null {
+function presenceOf(world: WorldNow | null, address: Address): "removed" | "away" | "unreached" | "stopped" | null {
   const r = listedAt(world, address);
   if (!r) return null;
   if (talkActs.view(r).removed) return "removed";
-  return isDeparted(world, r) ? "away" : null;
+  if (isDeparted(world, r)) return "away";
+  if (!isUnreached(world, r)) return null;
+  return machineReach(world, r.about.machine) === "stopped" ? "stopped" : "unreached";
 }
 
 /** A specimen's conversations take what is done to them after a moment,
@@ -2333,6 +2335,7 @@ function liveTalk(address: Address): DeskTalk {
     deleted = true;
     reading.close();
     page.presence("deleted");
+    letGo(address);
     keptTalks.gone(talkKey(address));
   };
   // Opened before the World first answered, as from a notification at
@@ -2356,6 +2359,7 @@ function liveTalk(address: Address): DeskTalk {
         talkActs.changed.get();
         if (!left) page.presence(deleted ? "deleted" : presenceOf(now, address));
         const known = residentAt(now, address);
+        reading.recheck?.(known ? lookRevision(now, address.machine) : null);
         const who = someoneOf(now, address);
         if (
           !left &&

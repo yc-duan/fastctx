@@ -78,7 +78,7 @@ export function factsByMachine(world: WorldNow | null): Map<string, MachineFacts
   return facts;
 }
 
-export function talkRow(r: ResidentNow, place: Place, now: Date, facts: Map<string, MachineFacts>, words: TalkRowWords, acts?: RowActs, assisting: string | null = null, when: string | null = null): string {
+export function talkRow(world: WorldNow | null, r: ResidentNow, place: Place, now: Date, facts: Map<string, MachineFacts>, words: TalkRowWords, acts?: RowActs, assisting: string | null = null, when: string | null = null): string {
   const address: Address = { resident: r.about.id, machine: r.about.machine };
   const current = place.kind === "talk" && place.address.resident === address.resident && place.address.machine === address.machine;
   const agent = agentName(r.about.host.agent);
@@ -86,7 +86,7 @@ export function talkRow(r: ResidentNow, place: Place, now: Date, facts: Map<stri
   const someone = assisting !== null ? words.someoneAssisting(agent, assisting) : words.someone(agent, r.about.machine);
   const name = titleOf(r) ?? someone;
   // What a machine away last said of a conversation is not said as now.
-  const away = isUnreached(r);
+  const away = isUnreached(world, r);
   const archived = !!r.removed;
   const deleting = !!acts?.isDeleting;
   const waiting = !away && !archived && !!r.now?.waiting_for_user;

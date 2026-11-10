@@ -130,7 +130,7 @@ export class TalksPage implements Page {
       acts: options.acts,
       menu: options.menu,
       menuWords: options.menuWords,
-      reachable: (r) => !isUnreached(r),
+      reachable: (r) => !isUnreached(options.store.world.peek(), r),
       redraw: () => {
         this.drawn = "";
         this.draw();
@@ -191,7 +191,7 @@ export class TalksPage implements Page {
     this.talkList.drawing(talks);
     // An archived one says when it was archived, where another says where it lives.
     const row = (r: ResidentNow) =>
-      talkRow(r, place, now, facts, shell, this.talkList.rowActs(r), assistedBy(this.options.store.world.peek(), r), archivedOnly && r.removed ? words.archivedAt(new Date(r.removed), now) : null);
+      talkRow(world, r, place, now, facts, shell, this.talkList.rowActs(r), assistedBy(this.options.store.world.peek(), r), archivedOnly && r.removed ? words.archivedAt(new Date(r.removed), now) : null);
     let html = "";
     if (!talks.length) html = `<p class="talks-none">${escape(archivedOnly ? words.noneArchived : words.none)}</p>`;
     else {

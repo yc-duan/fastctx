@@ -30,8 +30,7 @@ export interface ConversationFeed {
   ended(why: string | null): void;
   /** It was deleted: what is shown stays, and nothing more comes. */
   deleted(why: string): void;
-  /** Its machine refused this account: what is shown stays, and it is not
-   *  asked again. */
+  /** Its machine refused this account: what is shown stays until current facts permit a retry. */
   refused(why: string): void;
   /** Whether it works now, on which turn, and which words its machine
    *  keeps on their way in; after every event before it. */
@@ -42,6 +41,8 @@ export interface Reading {
   /** Reads everything again, as when the host replaced or removed turns,
    *  or what came did not follow what is held. */
   again(): void;
+  /** Reconsiders a refusal when the current listing or its permission revision changes. */
+  recheck?(revision: string | null): void;
   close(): void;
 }
 
@@ -57,6 +58,8 @@ export const watched: ConversationSource = {
     let id: number | null = null;
     let reading = 0;
     let closed = false;
+    let refused = false;
+    let authority: string | null = null;
     const current = () => {
       if (id === null) throw new Error("the conversation is not watched now");
       return id;
@@ -68,7 +71,13 @@ export const watched: ConversationSource = {
       index: async (generation, start, end, docs) => conversationIndex(current(), generation, start, end, docs),
       find: async (generation, query, held) => conversationFind(current(), generation, query, held),
     };
-    const take = (piece: Piece) => {
+    const decline = (why: string, attempted: string | null) => {
+      refused = true;
+      feed.refused(why);
+      // A reply from before a new grant must not close the newly usable conversation.
+      if (authority !== null && authority !== attempted) restart();
+    };
+    const take = (piece: Piece, attempted: string | null) => {
       switch (piece.kind) {
         case "resumed":
           feed.resumed();
@@ -96,8 +105,7 @@ export const watched: ConversationSource = {
           feed.deleted(piece.error);
           return;
         case "refused":
-          closed = true;
-          feed.refused(piece.error);
+          decline(piece.error, attempted);
           return;
         case "now":
           feed.now(piece.busy, piece.turn, piece.kept ?? []);
@@ -110,12 +118,13 @@ export const watched: ConversationSource = {
     let waiting: (() => void) | null = null;
     const read = () => {
       const mine = ++reading;
+      const attempted = authority;
       let ready = false;
       const early: Piece[] = [];
       watch(address, (piece) => {
-        if (closed || mine !== reading) return;
+        if (closed || refused || mine !== reading) return;
         if (!ready) early.push(piece);
-        else take(piece);
+        else take(piece, attempted);
       })
         .then((started) => {
           if (closed || mine !== reading) {
@@ -126,21 +135,22 @@ export const watched: ConversationSource = {
           tries = 0;
           since = null;
           feed.window(started.window, parts);
-          for (const piece of early) take(piece);
+          for (const piece of early) {
+            if (closed || refused || mine !== reading) break;
+            take(piece, attempted);
+          }
           ready = true;
         })
         .catch((error: unknown) => {
           if (mine !== reading || closed) return;
-          // Deleted: asking again will not find it. Refused: asking again
-          // on a timer is refused the same way.
+          // Deletion is final. A refusal waits for changed facts instead of retrying on a timer.
           if (typeof error === "object" && error !== null && (error as { deleted?: unknown }).deleted === true) {
             closed = true;
             feed.deleted(whyOf(error));
             return;
           }
           if (typeof error === "object" && error !== null && (error as { refused?: unknown }).refused === true) {
-            closed = true;
-            feed.refused(whyOf(error));
+            decline(whyOf(error), attempted);
             return;
           }
           since ??= new Date();
@@ -156,14 +166,22 @@ export const watched: ConversationSource = {
           );
         });
     };
+    function restart(): void {
+      if (closed) return;
+      waiting?.();
+      waiting = null;
+      if (id !== null) void unwatch(id);
+      id = null;
+      refused = false;
+      read();
+    }
     read();
     return {
-      again() {
-        waiting?.();
-        waiting = null;
-        if (id !== null) void unwatch(id);
-        id = null;
-        read();
+      again: restart,
+      recheck(revision) {
+        const changed = authority !== revision;
+        authority = revision;
+        if (changed && authority !== null && refused) restart();
       },
       close() {
         closed = true;

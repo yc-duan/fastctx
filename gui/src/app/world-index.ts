@@ -7,6 +7,8 @@
 
 import type { AccountName, AccountSeen, HubAccounts, MemberSeen } from "../world/accounts";
 import type { WorldNow } from "../world/bridge";
+import type { MachinePresence } from "../world/presence";
+import type { MachineWho, ResidentNow } from "../world/world";
 
 /** One hub as the World has it, looked up by name. */
 export interface HubIndex {
@@ -28,6 +30,9 @@ export interface HubIndex {
 
 export interface WorldIndex {
   hubs: Map<string, HubIndex>;
+  who: Map<string, MachineWho>;
+  residents: Map<string, ResidentNow>;
+  presence: Map<string, MachinePresence>;
   /** The first computer by the name it goes by now, on any hub, in the
    *  hubs' order. */
   computer: Map<string, MemberSeen>;
@@ -87,5 +92,11 @@ function indexMade(world: WorldNow): WorldIndex {
       groups: new Map([...groups].map(([owner, names]) => [owner, [...names].sort((a, b) => a.localeCompare(b))])),
     });
   }
-  return { hubs, computer, managed, grouped };
+  const who = new Map<string, MachineWho>();
+  const residents = new Map<string, ResidentNow>();
+  for (const machine of world.who.machines) {
+    who.set(machine.kind === "answered" ? machine.reply.machine : machine.machine, machine);
+    if (machine.kind === "answered") for (const resident of machine.reply.residents) residents.set(pair(resident.about.machine, resident.about.id), resident);
+  }
+  return { hubs, computer, managed, grouped, who, residents, presence: new Map((world.machine_presence ?? []).map((one) => [one.machine, one])) };
 }

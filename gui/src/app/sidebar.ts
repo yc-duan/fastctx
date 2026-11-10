@@ -37,7 +37,7 @@ import type { Store } from "./store";
 import type { TalkActs } from "./talk-acts";
 import type { TalkMenu } from "./talk-menu";
 import type { TalkMenuWords } from "./talk-menu-words";
-import { assistedBy, departedFor, isUnreached } from "./store";
+import { assistedBy, unreachedFor, isUnreached } from "./store";
 import { TalkList } from "./talk-list";
 import { factsByMachine, keepWriting, talkRow, talksOf } from "./talk-row";
 import type { ShellWords } from "./words";
@@ -189,7 +189,7 @@ export class Sidebar {
       acts: options.acts,
       menu: options.menu,
       menuWords: options.menuWords,
-      reachable: (r) => !isUnreached(r),
+      reachable: (r) => !isUnreached(this.options.store.world.peek(), r),
       redraw: () => {
         this.drawn = "";
         this.draw();
@@ -323,7 +323,7 @@ export class Sidebar {
         .map((group) => {
           const key = `${group.login.hub}/${group.login.account}`;
           const shut = folded.has(`group:${key}`);
-          const mine = talks.filter((r) => residentIn(world, group, r) || departedFor(r, group.login));
+          const mine = talks.filter((r) => residentIn(world, group, r) || unreachedFor(world, r, group.login));
           const asking = mine.some((r) => r.now?.waiting_for_user);
           return `<section class="sidebar-account${shut ? " shut" : ""}">
             <h2 class="side-account-title"><button class="side-account-fold${shut && asking ? " asking" : ""}" type="button" data-fold="group:${escape(key)}" aria-expanded="${!shut}" aria-label="${escape(words.groupOf(loginLabel(group.login)))}">${glyph("chevron", 14)}<span class="side-account-name">${escape(group.login.hubName)}<span class="side-account-sep"></span>${escape(group.login.account)}</span></button></h2>
@@ -512,7 +512,7 @@ export class Sidebar {
     const shown = talks.filter((r, i) => i < SHOWN || r.now?.waiting_for_user || (place.kind === "talk" && place.address.resident === r.about.id && place.address.machine === r.about.machine));
     const rest = talks.length - shown.length;
     const all = place.kind === "talks" && place.town === town;
-    return `<ul class="${kind}">${shown.map((r) => talkRow(r, place, now, facts, words, this.talkList.rowActs(r), assistedBy(this.options.store.world.peek(), r))).join("")}${
+    return `<ul class="${kind}">${shown.map((r) => talkRow(this.options.store.world.peek(), r, place, now, facts, words, this.talkList.rowActs(r), assistedBy(this.options.store.world.peek(), r))).join("")}${
       rest > 0
         ? `<li><a class="talk-all${all ? " current" : ""}" href="${link({ kind: "talks", town })}"><span class="talk-host"></span><span class="talk-name">${escape(words.all)}</span><span class="count">${talks.length}</span></a></li>`
         : ""
