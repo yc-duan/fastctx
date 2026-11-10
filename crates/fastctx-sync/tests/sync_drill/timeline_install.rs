@@ -36,6 +36,8 @@ use fastctx_types::sync::{
 mod merkle;
 #[path = "timeline_reader.rs"]
 mod reader;
+#[path = "timeline_stream.rs"]
+mod stream_budget;
 
 /// One record's fact, with the roots it declares.
 struct Fact {
@@ -371,6 +373,7 @@ pub(super) async fn run(root: &Path) -> Result<()> {
     assert_eq!(latest.items, vec![revised.clone(), item_two.clone()]);
     reader::patch(&timelines, &reader, &first_page, &latest.items).await?;
     reader::content(&timelines, &reader, &first_page, &item_two).await?;
+    stream_budget::run(&sources, &timelines, &reader).await?;
     let appended = latest;
     let retracted = sources.begin_step(primary.clone(), Some(third.revision()), generation.clone()).await?;
     let retracted_bound = sources.bind_target(retracted.clone(), primary.clone()).await?;

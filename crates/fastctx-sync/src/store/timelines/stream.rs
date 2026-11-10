@@ -10,6 +10,7 @@ use crate::{
     timeline::{Direction, ProvenRecord, StreamPage, StreamPosition, StreamRead},
 };
 use fastctx_storage::rusqlite::{OptionalExtension, params};
+use fastctx_types::sync::transport_codec::{CodecError, bounded_json};
 use std::collections::BTreeMap;
 
 impl SqliteTimelines {
@@ -93,9 +94,13 @@ impl SqliteTimelines {
                 .map_err(|error| Error::Corrupt(format!("a stored source proof does not hold a batch: {error}")))?;
             batches.insert(id.clone(), batch);
         }
-        let mut records = Vec::new();
+        // Reserve the longest continuation counter before adding records or proofs.
+        let mut page =
+            StreamPage { fence, direction, records: Vec::new(), proofs: Vec::new(), next: Some(Sequence(u64::MAX)) };
+        let budget = request.max_bytes as usize;
+        let mut bytes = encoded_size(&page, budget)?
+            .ok_or_else(|| Error::Invalid("the byte budget cannot hold a stream page envelope".into()))?;
         let mut used = BTreeMap::new();
-        let mut bytes = 0_usize;
         let mut next = None;
         for (index, (sequence, proof)) in rows.iter().enumerate() {
             let record: SourceRecord = batches[proof]
@@ -104,22 +109,44 @@ impl SqliteTimelines {
                 .find(|record| record.sequence.0 == *sequence)
                 .cloned()
                 .ok_or_else(|| Error::Corrupt("a stored record is missing from its signed batch".into()))?;
-            let size = serde_json::to_vec(&record).map_err(|error| Error::Invalid(error.to_string()))?.len()
-                + if used.contains_key(proof) { 0 } else { proofs[proof].proof.data.0.len() };
-            if index == limit as usize || (!records.is_empty() && bytes + size > request.max_bytes as usize) {
-                next = records.last().map(|last: &ProvenRecord| last.record.sequence);
+            let record = ProvenRecord { record, batch_proof: Digest::try_from(proof.clone()).map_err(Error::Invalid)? };
+            let fresh = !used.contains_key(proof);
+            let proof_bytes = if fresh { encoded_size(&proofs[proof], budget)? } else { Some(0) };
+            let needed = encoded_size(&record, budget)?.zip(proof_bytes).and_then(|(record, proof)| {
+                bytes
+                    .checked_add(record)?
+                    .checked_add(usize::from(!page.records.is_empty()))?
+                    .checked_add(proof)?
+                    .checked_add(usize::from(fresh && !used.is_empty()))
+            });
+            if index == limit as usize || needed.is_none_or(|needed| needed > budget) {
+                if page.records.is_empty() {
+                    return Err(Error::Invalid(
+                        "the byte budget cannot hold one record and its original batch proof".into(),
+                    ));
+                }
+                next = page.records.last().map(|last| last.record.sequence);
                 break;
             }
-            bytes += size;
+            bytes = needed.expect("checked page size");
             used.insert(proof.clone(), ());
-            records
-                .push(ProvenRecord { record, batch_proof: Digest::try_from(proof.clone()).map_err(Error::Invalid)? });
+            page.records.push(record);
         }
         if descending {
-            records.reverse();
+            page.records.reverse();
         }
-        let proofs = used.into_keys().map(|id| proofs[&id].clone()).collect();
+        page.next = next;
+        page.proofs = used.into_keys().map(|id| proofs[&id].clone()).collect();
         self.authorize(&context, &returned_object)?;
-        Ok(StreamPage { fence, direction, records, proofs, next })
+        Ok(page)
+    }
+}
+
+/// Bound the full JSON representation, including base64 and signature envelopes.
+fn encoded_size(value: &impl serde::Serialize, budget: usize) -> Result<Option<usize>, Error> {
+    match bounded_json(value, budget) {
+        Ok(bytes) => Ok(Some(bytes.len())),
+        Err(CodecError::TooLarge) => Ok(None),
+        Err(error) => Err(Error::Corrupt(format!("encoding a stored stream page: {error}"))),
     }
 }
