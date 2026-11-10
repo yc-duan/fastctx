@@ -55,10 +55,8 @@ async fn remote(node: &Arc<Node>, address: &Address, town: &TownName) -> Result<
         ));
     }
     let call = RemoteCall::EnterProject { resident: address.resident.clone(), town: town.clone() };
-    match link
-        .call(&address.machine, &account.account, Purpose::Echo, call)
-        .await
-        .map_err(|error| Failure::new(error.to_string()))??
+    match crate::record_changes::transport::linked(&link, &address.machine, &account.account, Purpose::Echo, call)
+        .await?
     {
         RemoteReply::Entered { town: entered, map } if entered == *town => Ok(*map),
         _ => Err(Failure::new("the conversation's home answered something other than project entry")),

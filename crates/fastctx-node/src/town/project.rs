@@ -248,7 +248,7 @@ async fn machines(node: &Arc<Node>, acting: &fastctx_types::access::Acting, hub:
 /// of the hub named, when whoever asks works for it, or the one account they
 /// work for. None on a computer that is on no hub, which keeps its projects
 /// itself.
-fn owner(
+pub(crate) fn owner(
     node: &Node,
     caller: &Caller,
     named: Option<AccountName>,
@@ -290,7 +290,7 @@ fn owner(
 
 /// A path as the World writes it: absolute, and on Windows with forward
 /// slashes. A path is a machine's own; nothing else is done to it.
-fn absolute(path: &str) -> Result<String, String> {
+pub(crate) fn absolute(path: &str) -> Result<String, String> {
     let bytes = path.as_bytes();
     let drive =
         bytes.len() >= 3 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' && matches!(bytes[2], b'/' | b'\\');

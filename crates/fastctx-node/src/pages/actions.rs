@@ -49,7 +49,7 @@ pub async fn relay(
         _ => return Err(Failure::not_run(format!("upgrade {target} to execute pages for their consenting account"))),
     }
     let call = RemoteCall::PageAction { source, action };
-    match node.call(&acting, &target, call.purpose(), call).await.map_err(|e| Failure::new(e.to_string()))?? {
+    match crate::record_changes::transport::on(node, &acting, &target, call.purpose(), call).await? {
         RemoteReply::PageAction { result } => Ok(result),
         _ => Err(Failure::new(format!("{target} answered something other than a page action"))),
     }

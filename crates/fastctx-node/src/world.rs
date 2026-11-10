@@ -758,6 +758,10 @@ impl fastctx_net::link::Node for Handler {
                 };
                 let link =
                     node.link_of(&hub).ok_or_else(|| Failure::not_run("the link that brought the call is gone"))?;
+                if crate::record_changes::handles_remote(&call) {
+                    let scope = HubAccount { hub: hub.clone(), account: caller.account.clone() };
+                    return crate::record_changes::remote(&node, scope, &caller, call).await;
+                }
                 if let Some(town) = crate::admission::town_of(&call)
                     && link.view().project_named(&caller.account, town).is_none()
                 {
@@ -820,11 +824,7 @@ impl fastctx_net::link::Node for Handler {
                         let stream = stream.ok_or_else(|| Failure::new("MCP requires a data connection"))?;
                         crate::mcp::serve(&node, &hub, &caller.account, &name, stream).await.map(|()| RemoteReply::Set)
                     }
-                    RemoteCall::PageAction { source, action } => {
-                        crate::pages::actions::answer(&node, &asker, source, action)
-                            .await
-                            .map(|result| RemoteReply::PageAction { result })
-                    }
+                    RemoteCall::PageAction { .. } => unreachable!("page actions are submitted before dispatch"),
                     RemoteCall::Relay { made } => crate::devices::relay(&node, &asker, made).await,
                     // A resident of the calling machine works here (`world-run.md`,
                     // 这里).
@@ -1182,27 +1182,18 @@ impl fastctx_net::link::Node for Handler {
                         ))
                     }),
                     RemoteCall::Canon { .. } => Err(Failure::not_run(fastctx_types::memory::LEGACY)),
-                    RemoteCall::WorkingCopy { owner, placement, resource } => {
-                        crate::placement::prepare_copy(&node, &asker, owner, placement, resource)
-                            .await
-                            .map(|location| RemoteReply::WorkingCopy { location })
-                    }
+                    RemoteCall::WorkingCopy { .. } => unreachable!("working copies are submitted before dispatch"),
                     RemoteCall::MemoryFolders { .. } => {
                         Err(Failure::not_run("project memory was replaced by history; update the requesting computer"))
                     }
                     RemoteCall::Plan { resident, operation, of } => {
-                        let account =
-                            fastctx_types::access::HubAccount { hub: hub.clone(), account: caller.account.clone() };
+                        let account = HubAccount { hub: hub.clone(), account: caller.account.clone() };
                         crate::plan::here(&node, &resident, None, None, Some(&account), operation, of)
                             .await
                             .map(|result| RemoteReply::Plan { result })
                     }
-                    RemoteCall::EnterProject { resident, town } => {
-                        let account =
-                            fastctx_types::access::HubAccount { hub: hub.clone(), account: caller.account.clone() };
-                        crate::town::enter::here(&node, &resident, &town, Some(&account))
-                            .await
-                            .map(|map| RemoteReply::Entered { town, map: Box::new(map) })
+                    RemoteCall::EnterProject { .. } => {
+                        unreachable!("project entry is submitted before dispatch")
                     }
                     RemoteCall::GoalCommand { actor, turn, request } => {
                         let account =

@@ -101,6 +101,20 @@ pub(crate) fn town_of(call: &RemoteCall) -> Option<&TownName> {
 
 /// Refuses a call `caller` may not make here; otherwise, who asked.
 pub fn admit(node: &Arc<Node>, link: &Arc<Link>, caller: &Caller, call: &RemoteCall) -> Result<Asker, Failure> {
+    admit_inner(node, link, caller, call, true)
+}
+
+/// Admission before durable submission. Project membership is checked by the
+/// worker after the same refresh the synchronous entrance used to perform.
+pub(crate) fn admit_for_submission(
+    node: &Arc<Node>, link: &Arc<Link>, caller: &Caller, call: &RemoteCall,
+) -> Result<Asker, Failure> {
+    admit_inner(node, link, caller, call, false)
+}
+
+fn admit_inner(
+    node: &Arc<Node>, link: &Arc<Link>, caller: &Caller, call: &RemoteCall, project_ready: bool,
+) -> Result<Asker, Failure> {
     let here = node.machine();
     // Nothing of a call turned away here ran.
     let refuse = |why: String| Failure::refused(format!("{here} refused {}: {why}", caller.machine));
@@ -167,7 +181,7 @@ pub fn admit(node: &Arc<Node>, link: &Arc<Link>, caller: &Caller, call: &RemoteC
     }
     crate::devices::admit(&view, &caller.machine, call)?;
     let hub = link.membership().id.clone();
-    if let Some(town) = town_of(call) {
+    if project_ready && let Some(town) = town_of(call) {
         let allowed = view
             .projects
             .iter()

@@ -222,7 +222,7 @@ pub(super) fn check_base(page: &PageName, base: Option<u32>, current: Option<u32
     }))
 }
 
-pub(super) fn user(caller: &Caller) -> Result<(), Failure> {
+pub(crate) fn user(caller: &Caller) -> Result<(), Failure> {
     if matches!(caller, Caller::User) {
         Ok(())
     } else {
@@ -230,11 +230,11 @@ pub(super) fn user(caller: &Caller) -> Result<(), Failure> {
     }
 }
 
-fn publisher(caller: &Caller) -> Result<(), Failure> {
+pub(crate) fn publisher(caller: &Caller) -> Result<(), Failure> {
     if matches!(caller, Caller::Page(_)) { Err(Failure::new("pages cannot publish pages")) } else { Ok(()) }
 }
 
-fn next(base: Option<u32>) -> Result<u32, Failure> {
+pub(crate) fn next(base: Option<u32>) -> Result<u32, Failure> {
     base.unwrap_or(0).checked_add(1).ok_or_else(|| Failure::new("the version number is exhausted"))
 }
 

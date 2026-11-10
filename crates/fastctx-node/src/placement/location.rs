@@ -245,15 +245,14 @@ pub(crate) async fn prepare(
             };
             Some(super::prepare_copy(node, &asker, owner, placement, resource.clone()).await?)
         } else {
-            match link
-                .call(
-                    &selected.machine.name,
-                    &scope.account,
-                    Purpose::Hands,
-                    RemoteCall::WorkingCopy { owner, placement, resource: resource.clone() },
-                )
-                .await
-                .map_err(failure)??
+            match crate::record_changes::transport::linked(
+                &link,
+                &selected.machine.name,
+                &scope.account,
+                Purpose::Hands,
+                RemoteCall::WorkingCopy { owner, placement, resource: resource.clone() },
+            )
+            .await?
             {
                 RemoteReply::WorkingCopy { location } => Some(location),
                 _ => return Err(failure("the working computer did not return its plan path")),

@@ -75,10 +75,8 @@ pub(crate) async fn call(
         return Err(Failure::not_run(words::OLDER));
     }
     let call = RemoteCall::Plan { resident: address.resident.clone(), operation, of };
-    match link
-        .call(&address.machine, &acting.account, Purpose::Echo, call)
-        .await
-        .map_err(|error| Failure::new(error.to_string()))??
+    match crate::record_changes::transport::linked(&link, &address.machine, &acting.account, Purpose::Echo, call)
+        .await?
     {
         RemoteReply::Plan { result } => Ok(result),
         _ => Err(Failure::new(words::REPLY)),

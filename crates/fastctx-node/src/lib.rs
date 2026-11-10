@@ -135,6 +135,7 @@ mod ranked;
 mod reach;
 mod received;
 mod record_access;
+mod record_changes;
 mod record_database;
 mod record_gates;
 mod record_migration;
@@ -975,6 +976,7 @@ pub async fn run_prepared(
         // work below names its own kinds then.
         timeline::register(&node);
         management::register(&node);
+        record_changes::register(&node);
         control::submission::register(&node);
         talk::submission::register(&node);
         goals::submission::register(&node);

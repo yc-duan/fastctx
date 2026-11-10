@@ -1159,6 +1159,7 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
         active_caller(node, peer)?;
     }
     match call {
+        call if crate::record_changes::handles(&call) => crate::record_changes::local(node, peer, call).await,
         Call::Goal { resident, machine, account, request } => {
             users_voice(node, peer)?;
             crate::goals::calls::user(node, resident, machine, account, request)
@@ -2077,7 +2078,7 @@ fn users_voice(node: &Node, peer: &Peer) -> Result<(), Failure> {
 /// A resident names only the projects of the accounts it works for; any
 /// other is answered as one that is not there (`world-network.md`, 一个居民
 /// 替谁干活).
-async fn named_town(node: &Arc<Node>, caller: &Caller, town: Option<&TownName>) -> Result<(), Failure> {
+pub(crate) async fn named_town(node: &Arc<Node>, caller: &Caller, town: Option<&TownName>) -> Result<(), Failure> {
     let Some(town) = town else { return Ok(()) };
     crate::town::access::ready(node, &crate::around::acting_of(node, caller), town).await
 }

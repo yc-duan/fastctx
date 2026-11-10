@@ -101,22 +101,18 @@ pub(crate) async fn prepare(
             }
             _ => continue,
         }
-        match node
-            .call(
-                &subject,
-                &machine,
-                Purpose::Hands,
-                RemoteCall::WorkingCopy { owner: owner.clone(), placement: 0, resource: resource.clone() },
-            )
-            .await
+        match crate::record_changes::transport::on(
+            node, &subject, &machine, Purpose::Hands,
+            RemoteCall::WorkingCopy { owner: owner.clone(), placement: 0, resource: resource.clone() },
+        )
+        .await
         {
-            Ok(Ok(RemoteReply::WorkingCopy { location })) => {
+            Ok(RemoteReply::WorkingCopy { location }) => {
                 remember(Some(machine.name.clone()));
                 return Ok(Some(location));
             }
-            Ok(Err(error)) if error.message == crate::history::switch::COPIES_OFF => continue,
-            Ok(Err(error)) => return Err(error),
-            Err(error) => return Err(failure(error)),
+            Err(error) if error.message == crate::history::switch::COPIES_OFF => continue,
+            Err(error) => return Err(error),
             _ => return Err(failure("the computer did not return the replica location")),
         }
     }

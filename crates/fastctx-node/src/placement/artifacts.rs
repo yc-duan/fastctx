@@ -70,15 +70,14 @@ impl Lease {
             return super::prepare_copy(node, &asker, self.owner.clone(), self.version, resource).await;
         }
         let link = node.link_of(&self.scope.hub).ok_or_else(|| failure("the evidence hub is unavailable"))?;
-        match link
-            .call(
-                &self.location.machine,
-                &self.scope.account,
-                Purpose::Hands,
-                RemoteCall::WorkingCopy { owner: self.owner.clone(), placement: self.version, resource },
-            )
-            .await
-            .map_err(failure)??
+        match crate::record_changes::transport::linked(
+            &link,
+            &self.location.machine,
+            &self.scope.account,
+            Purpose::Hands,
+            RemoteCall::WorkingCopy { owner: self.owner.clone(), placement: self.version, resource },
+        )
+        .await?
         {
             RemoteReply::WorkingCopy { location } => Ok(location),
             _ => Err(failure("the working computer did not acknowledge the evidence folder")),
@@ -107,7 +106,7 @@ pub(crate) fn read_directory(
     Ok(Some(path))
 }
 
-fn validate_key(key: &str) -> Result<(), Failure> {
+pub(crate) fn validate_key(key: &str) -> Result<(), Failure> {
     if key.is_empty() || key.len() > 128 || !key.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-') {
         return Err(failure("invalid artifact folder key"));
     }
