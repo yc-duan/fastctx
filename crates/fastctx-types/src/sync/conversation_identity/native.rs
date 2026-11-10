@@ -96,7 +96,8 @@ impl NativeAgentKey {
     }
 }
 
-/// A source-provided turn name, not its display position or arrival timestamp.
+/// A source-provided turn name or a retained leading prefix, independent of
+/// display position and arrival time.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "host", rename_all = "snake_case", deny_unknown_fields)]
 pub enum NativeTurnKey {
@@ -111,6 +112,14 @@ pub enum NativeTurnKey {
     },
     World {
         turn: NativeId,
+    },
+    /// A retained host prefix whose opening lies outside the record.
+    ClaudeLeading {
+        session: NativeId,
+    },
+    /// A retained host prefix whose opening lies outside the record.
+    CodexLeading {
+        thread: NativeId,
     },
 }
 
@@ -130,6 +139,14 @@ impl NativeTurnKey {
             Self::World { turn } => {
                 into.text("world-turn");
                 into.text(turn.as_str());
+            }
+            Self::ClaudeLeading { session } => {
+                into.text("claude-leading-turn");
+                into.text(session.as_str());
+            }
+            Self::CodexLeading { thread } => {
+                into.text("codex-leading-turn");
+                into.text(thread.as_str());
             }
         }
     }

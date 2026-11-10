@@ -1341,6 +1341,65 @@
     "stream": "r-0505050505050505050505050505050505050505050505050505050505050505",
     "through": "4"
   },
+  "leading_turns": {
+    "source_gate": "nonzero_turn_without_opening",
+    "turns": [
+      {
+        "event": {
+          "evidence": {
+            "accepted": "1",
+            "operation": "m-3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c",
+            "record": {
+              "epoch": "p-3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b",
+              "sequence": "1",
+              "stream": "r-3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a"
+            }
+          },
+          "fact": {
+            "fact": "turn",
+            "turn": {
+              "key": {
+                "conversation": "o-3939393939393939393939393939393939393939393939393939393939393939",
+                "native": {
+                  "host": "claude_leading",
+                  "session": "retained-session"
+                }
+              },
+              "order": "1"
+            }
+          }
+        },
+        "identity": "o-ef74bffd979e2b986c78821fd1fb8103ef1f4ea78038d8798da2d4b73261f6bd"
+      },
+      {
+        "event": {
+          "evidence": {
+            "accepted": "2",
+            "operation": "m-3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d",
+            "record": {
+              "epoch": "p-3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b",
+              "sequence": "2",
+              "stream": "r-3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a"
+            }
+          },
+          "fact": {
+            "fact": "turn",
+            "turn": {
+              "key": {
+                "conversation": "o-3939393939393939393939393939393939393939393939393939393939393939",
+                "native": {
+                  "host": "codex_leading",
+                  "thread": "retained-thread"
+                }
+              },
+              "order": "2"
+            }
+          }
+        },
+        "identity": "o-367dddb17d22d8f83d2bcbf7216d885d8965b8fcee051cc4f52d6a495910573b"
+      }
+    ]
+  },
   "messages": [
     {
       "capabilities": {

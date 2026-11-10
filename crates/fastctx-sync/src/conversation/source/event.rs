@@ -50,6 +50,8 @@ pub fn validate(conversation: &ObjectId, scope: &ScopeKey, event: &TimelineEvent
             }
         }
         TimelineFact::Turn { turn } => {
+            // Leading host prefixes use an ordinary nonzero slot. A declaration
+            // does not assert that an Opening item exists inside the record.
             if &turn.key.conversation != conversation || turn.order.0 == 0 {
                 return Err("turn declaration differs from its conversation or order".into());
             }

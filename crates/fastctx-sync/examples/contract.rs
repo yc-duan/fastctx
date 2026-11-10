@@ -8,6 +8,8 @@ mod catalog;
 mod hub_source;
 #[path = "contract/indexes.rs"]
 mod indexes;
+#[path = "contract/leading.rs"]
+mod leading;
 #[path = "contract/manifests.rs"]
 mod manifests;
 #[path = "contract/ordering.rs"]
@@ -248,6 +250,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "asset_transport": transfer::sample(&holding)?,
             "projection_progress": progress::sample(holding.scope.clone())?,
             "timeline_ordering": ordering_sample,
+            "leading_turns": leading::sample(&scope)?,
         }))?
     );
     Ok(())
