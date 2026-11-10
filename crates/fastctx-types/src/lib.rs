@@ -86,6 +86,7 @@ pub mod skills;
 pub mod stats;
 pub mod sync;
 pub mod thumbnail;
+pub mod timeline_pages;
 pub mod timeline_reads;
 pub mod timers;
 pub mod tolerant;

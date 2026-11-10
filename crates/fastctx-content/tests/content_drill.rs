@@ -120,7 +120,7 @@ fn body(seed: u64, bytes: usize) -> Vec<u8> {
         state ^= state << 13;
         state ^= state >> 7;
         state ^= state << 17;
-        if state % 5 == 0 {
+        if state.is_multiple_of(5) {
             text.extend_from_slice(format!("{:x}", state >> 40).as_bytes());
         } else {
             text.extend_from_slice(WORDS[(state >> 20) as usize % WORDS.len()].as_bytes());

@@ -171,6 +171,10 @@ mod stop;
 mod stops;
 mod stuck;
 mod talk;
+// Nothing calls the timeline yet: the page call that reads it and the job
+// that builds it are the next things joined to it.
+#[expect(dead_code, unused_imports, reason = "the timeline's page call and build job are not joined yet")]
+mod timeline;
 pub mod thumbnail;
 pub mod timers;
 mod to_end;
@@ -217,6 +221,9 @@ pub(crate) struct Node {
     /// The unified data foundation's engines on `database`, when it opened
     /// (`foundation`).
     foundation: Option<foundation::Foundation>,
+    /// The content database: what this machine holds of conversations and
+    /// other streams as items, read a page at a time (`timeline`).
+    content: Option<fastctx_content::Content>,
     ingestion: std::sync::OnceLock<Arc<conversation_ingest::watcher::Service>>,
     book_database: fastctx_storage::Database,
     record_migration: record_migration::Service,
@@ -774,6 +781,13 @@ pub async fn run_prepared(
                     }
                 },
             };
+            let content = match fastctx_content::Content::open(world.path()) {
+                Ok(content) => Some(content),
+                Err(error) => {
+                    log.line(format_args!("the content database is unavailable: {error}"));
+                    None
+                }
+            };
             let record_migration =
                 record_database::register(&world, &database).context("opening the node record database")?;
             record_migration.report_to(log.clone());
@@ -797,6 +811,7 @@ pub async fn run_prepared(
                 world,
                 database,
                 foundation,
+                content,
                 ingestion: Default::default(),
                 book_database,
                 record_migration,

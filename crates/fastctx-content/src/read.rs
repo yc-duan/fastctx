@@ -81,6 +81,24 @@ impl Content {
         })?)
     }
 
+    /// Where every item of a stream stands, without its state and in no
+    /// order: what a producer that makes the stream from a whole source
+    /// compares that source with. It reads the index by identity, never a
+    /// state; for as long as the stream has items, on a thread that may block.
+    pub fn places(&self, stream: &StreamKey) -> Result<Vec<Place>> {
+        stream.check()?;
+        Ok(self.0.database.read_background_now(|db| {
+            let snapshot = db.unchecked_transaction()?;
+            let Some((id, _)) = locate(&snapshot, stream)? else { return Ok(Vec::new()) };
+            let mut indexed = snapshot
+                .prepare_cached("SELECT place, item FROM items INDEXED BY items_by_identity WHERE stream = ?1")?;
+            let places = indexed
+                .query_map([id], |row| Ok(Place { order: row.get(0)?, item: row.get(1)? }))?
+                .collect::<fastctx_storage::rusqlite::Result<_>>()?;
+            Ok(places)
+        })?)
+    }
+
     /// The stream's revision; none when the stream is not here.
     pub fn revision(&self, stream: &StreamKey) -> Result<Option<u64>> {
         stream.check()?;

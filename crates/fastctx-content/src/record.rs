@@ -129,7 +129,7 @@ pub(crate) fn pack(objects: &[ObjectRef]) -> Vec<u8> {
 }
 
 pub(crate) fn unpack(packed: &[u8]) -> Result<Vec<ObjectRef>, String> {
-    if packed.len() % OBJECT_BYTES != 0 {
+    if !packed.len().is_multiple_of(OBJECT_BYTES) {
         return Err("object references are not whole".into());
     }
     Ok(packed

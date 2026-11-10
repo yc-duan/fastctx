@@ -1573,6 +1573,7 @@ dependencies = [
  "base64 0.22.1",
  "fastctx-agent",
  "fastctx-client",
+ "fastctx-content",
  "fastctx-draft",
  "fastctx-file-search",
  "fastctx-hands",

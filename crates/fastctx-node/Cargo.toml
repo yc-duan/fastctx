@@ -26,6 +26,7 @@ anyhow.workspace = true
 base64 = "0.22"
 fastctx-hands = { path = "../fastctx-hands" }
 fastctx-client = { path = "../fastctx-client" }
+fastctx-content = { path = "../fastctx-content" }
 fastctx-file-search = { path = "../fastctx-file-search" }
 fastctx-hosts = { path = "../fastctx-hosts" }
 fastctx-hub = { path = "../fastctx-hub" }
