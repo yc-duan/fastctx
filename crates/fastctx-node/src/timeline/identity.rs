@@ -12,7 +12,7 @@ use std::collections::HashMap;
 pub(super) type Identity = [u8; 32];
 
 /// What names an event apart from what it holds, when something does.
-fn name(event: &SessionEvent) -> Option<String> {
+pub(super) fn name(event: &SessionEvent) -> Option<String> {
     match &event.happened {
         Happened::Finished { item, .. } => Some(format!("item/{}", item.id)),
         Happened::Heard { delivery: Some(delivery), .. } => {

@@ -10,6 +10,7 @@ pub(crate) mod api;
 mod build;
 mod identity;
 mod order;
+mod preview;
 pub(crate) mod reads;
 
 use fastctx_content::StreamKey;

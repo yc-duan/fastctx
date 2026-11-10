@@ -94,8 +94,9 @@ pub enum TimelineShown {
     /// The event as JSON. Readers decode each event independently, skipping
     /// those they do not understand.
     Event { event: serde_json::Value },
-    /// An event too large for a page: how long it is, the event slimmed to
-    /// what is drawn of it when that is small, and the object that holds it
-    /// whole.
+    /// An event too large for a page: how long it is, the object that holds
+    /// it whole, and in `slim` the same event with what is long in it cut
+    /// short: still an event, and the one it stands for by its time, kind,
+    /// turn and item. None when no cut keeps it that.
     Oversized { bytes: u64, slim: Option<serde_json::Value>, object: String },
 }

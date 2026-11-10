@@ -23,8 +23,6 @@ pub(super) const OVERSIZED: u8 = b'O';
 /// The records one batch brings to the timeline, at most.
 const BATCH_RECORDS: usize = 2_048;
 const BATCH_BYTES: usize = 4 * 1024 * 1024;
-/// The largest slimmed event an oversized one is shown as in a page.
-const SLIM_BYTES: usize = 32 * 1024;
 
 /// What a build came to.
 #[derive(Clone, Copy, Debug)]
@@ -121,19 +119,10 @@ fn state(content: &Content, event: &SessionEvent, encoded: Vec<u8>) -> Result<St
         return Ok(State::Is { body, objects: Vec::new() });
     }
     let object = content.objects().put(&encoded).map_err(failure)?;
-    let mut slim = event.clone();
-    let slim: Option<serde_json::Value> =
-        if fastctx_net::history::slim(&mut slim, &fastctx_net::history::Pictures::Inline) {
-            serde_json::to_vec(&slim)
-                .ok()
-                .filter(|bytes| bytes.len() <= SLIM_BYTES)
-                .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-        } else {
-            None
-        };
     let mut body = vec![OVERSIZED];
     body.extend_from_slice(
-        &serde_json::to_vec(&serde_json::json!({ "bytes": encoded.len(), "slim": slim })).map_err(failure)?,
+        &serde_json::to_vec(&serde_json::json!({ "bytes": encoded.len(), "slim": super::preview::preview(event) }))
+            .map_err(failure)?,
     );
     Ok(State::Is { body, objects: vec![object] })
 }
