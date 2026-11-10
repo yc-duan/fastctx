@@ -32,6 +32,11 @@ use fastctx_types::sync::{
     cursor::{LocalSequence, Sequence, StreamCursor},
 };
 
+#[path = "timeline_merkle.rs"]
+mod merkle;
+#[path = "timeline_reader.rs"]
+mod reader;
+
 /// One record's fact, with the roots it declares.
 struct Fact {
     fact: TimelineFact,
@@ -259,6 +264,7 @@ pub(super) async fn run(root: &Path) -> Result<()> {
     };
     assert_eq!(first_page.items, vec![item.clone()]);
     let old_fence = first_page.fence.clone();
+    merkle::run(&old_fence, &item)?;
     let found = timelines.item(reader.clone(), old_fence.clone(), first.id()).await?;
     assert!(matches!(found, ItemRead::Item { item: Some(found) } if *found == item));
     let records = timelines
@@ -281,6 +287,13 @@ pub(super) async fn run(root: &Path) -> Result<()> {
     assert_eq!((records.records.len(), records.proofs.len()), (2, 1));
     assert_eq!(notices.next(limit).await?.len(), 1);
 
+    let waiting = timelines.clone();
+    let waiting_context = reader.clone();
+    let waiting_conversation = primary.custody.object.clone();
+    let waiting_after = old_fence.local;
+    let waiter = tokio::spawn(async move { waiting.wait(waiting_context, waiting_conversation, waiting_after).await });
+    tokio::task::yield_now().await;
+    assert!(!waiter.is_finished(), "wait does not invent a head change");
     // Second step: input facts alone advance the installed cursor, nothing else.
     let second = sources.begin_step(primary.clone(), Some(step.revision()), generation.clone()).await?;
     let bound = sources.bind_target(second.clone(), primary.clone()).await?;
@@ -299,9 +312,13 @@ pub(super) async fn run(root: &Path) -> Result<()> {
     };
     let found = timelines.item(reader.clone(), unchanged.fence.clone(), first.id()).await?;
     assert!(matches!(found, ItemRead::Item { item: Some(found) } if *found == item));
+    assert!(
+        matches!(tokio::time::timeout(Duration::from_secs(5), waiter).await???, fastctx_sync::timeline::TimelineWait::Moved { local } if local == unchanged.fence.local)
+    );
+    reader::patch(&timelines, &reader, &first_page, &unchanged.items).await?;
     timelines.release(reader.clone(), unchanged.fence).await?;
 
-    // Third step: the first item is retracted and the second appears.
+    // Third step: revise the first item and append the second.
     // Its body page is realized by the step that publishes the revision; the
     // descriptor and its image were adopted with the observation before.
     let third = sources.begin_step(primary.clone(), Some(second.revision()), generation.clone()).await?;
@@ -321,19 +338,24 @@ pub(super) async fn run(root: &Path) -> Result<()> {
         body: body_two,
         display: Box::new(descriptor_two),
     };
-    let retract = Fact {
-        fact: TimelineFact::ItemRevision {
-            change: TimelineChange::Retract { item: first.id(), revision: Revision(2) },
-        },
-        roots: Vec::new(),
-    };
-    commit(&sources, &third, &bound, &primary, Some(done), 3, vec![retract, put(item_two.clone(), part_two)]).await?;
+    let revised = TimelineItem { revision: Revision(2), ..item.clone() };
+    let revised_part = revised.display.parts[0].content.clone();
+    let done = commit(
+        &sources,
+        &third,
+        &bound,
+        &primary,
+        Some(done),
+        3,
+        vec![put(revised.clone(), revised_part), put(item_two.clone(), part_two)],
+    )
+    .await?;
     assert_eq!(settle(&db, &blocks, &timelines).await?, 1);
     let (projection, root_two, indexed, _) = head(&db)?;
     let root_two = root_two.ok_or("second snapshot has no root")?;
     assert_eq!((projection, indexed), (2, Some(2)));
     assert_ne!(root_two, root_one);
-    assert_eq!(count(&db, "SELECT COUNT(*) FROM sync_timeline_items WHERE active=1")?, 1);
+    assert_eq!(count(&db, "SELECT COUNT(*) FROM sync_timeline_items WHERE active=1")?, 2);
     assert_eq!(
         count(
             &db,
@@ -346,7 +368,26 @@ pub(super) async fn run(root: &Path) -> Result<()> {
     let TimelineResult::Page { page: latest } = timelines.timeline(reader.clone(), read(None)).await? else {
         return Err("the second snapshot does not read as a page".into());
     };
+    assert_eq!(latest.items, vec![revised.clone(), item_two.clone()]);
+    reader::patch(&timelines, &reader, &first_page, &latest.items).await?;
+    reader::content(&timelines, &reader, &first_page, &item_two).await?;
+    let appended = latest;
+    let retracted = sources.begin_step(primary.clone(), Some(third.revision()), generation.clone()).await?;
+    let retracted_bound = sources.bind_target(retracted.clone(), primary.clone()).await?;
+    let retract = Fact {
+        fact: TimelineFact::ItemRevision {
+            change: TimelineChange::Retract { item: first.id(), revision: Revision(3) },
+        },
+        roots: Vec::new(),
+    };
+    commit(&sources, &retracted, &retracted_bound, &primary, Some(done), 5, vec![retract]).await?;
+    settle(&db, &blocks, &timelines).await?;
+    let TimelineResult::Page { page: latest } = timelines.timeline(reader.clone(), read(None)).await? else {
+        return Err("retraction did not install".into());
+    };
     assert_eq!(latest.items, vec![item_two.clone()]);
+    reader::patch(&timelines, &reader, &appended, &latest.items).await?;
+    timelines.release(reader.clone(), appended.fence).await?;
     let TimelineResult::Page { page: old } = timelines.timeline(reader.clone(), read(Some(old_fence.clone()))).await?
     else {
         return Err("the old fence does not read its snapshot".into());
@@ -360,7 +401,7 @@ pub(super) async fn run(root: &Path) -> Result<()> {
     assert!(matches!(timelines.item(reader.clone(), forged, first.id()).await?, ItemRead::ReanchorNeeded));
     // Select the old branch while its fence still holds the derived snapshot.
     // Rebuilding must remove the second branch's row and reactivate the first.
-    let fourth = sources.begin_step(primary.clone(), Some(third.revision()), generation.clone()).await?;
+    let fourth = sources.begin_step(primary.clone(), Some(retracted.revision()), generation.clone()).await?;
     let bound = sources.bind_target(fourth.clone(), primary.clone()).await?;
     let selected = ManifestRoot(BlobId {
         domain: scope(),
@@ -374,18 +415,48 @@ pub(super) async fn run(root: &Path) -> Result<()> {
         },
         roots: Vec::new(),
     };
-    commit(&sources, &fourth, &bound, &primary, expected, 5, vec![switch]).await?;
+    commit(&sources, &fourth, &bound, &primary, expected, 6, vec![switch]).await?;
     assert!(settle(&db, &blocks, &timelines).await? > 1);
     let (projection, _, indexed, _) = head(&db)?;
-    assert_eq!((projection, indexed), (3, Some(3)), "the branch position index caught up");
+    assert_eq!((projection, indexed), (4, Some(4)), "the branch position index caught up");
     let TimelineResult::Page { page: selected } = timelines.timeline(reader.clone(), read(None)).await? else {
         return Err("the rebuilt branch did not read from its position index".into());
     };
     assert_eq!(selected.items, vec![item.clone()]);
+    reader::patch(&timelines, &reader, &latest, &selected.items).await?;
     assert_eq!(count(&db, "SELECT COUNT(*) FROM sync_timeline_items WHERE active=1")?, 1);
     timelines.release(reader.clone(), selected.fence).await?;
     timelines.release(reader.clone(), old_fence.clone()).await?;
     timelines.release(reader.clone(), latest.fence.clone()).await?;
+    assert!(matches!(
+        timelines
+            .changes(
+                reader.clone(),
+                fastctx_sync::timeline::TimelineChangesRead {
+                    from: old_fence.clone(),
+                    to: None,
+                    after: None,
+                    max_items: 1,
+                    max_bytes: 262_144,
+                }
+            )
+            .await?,
+        fastctx_sync::timeline::TimelineChangesResult::ReanchorNeeded
+    ));
+    assert!(matches!(
+        timelines
+            .content(
+                reader.clone(),
+                fastctx_sync::timeline::TimelineContentRead {
+                    fence: old_fence.clone(),
+                    item: item.id.clone(),
+                    content: item.body.clone(),
+                    range: None,
+                }
+            )
+            .await?,
+        fastctx_sync::timeline::TimelineContentResult::ReanchorNeeded
+    ));
     let stale = timelines.timeline(reader.clone(), read(Some(old_fence))).await?;
     assert!(matches!(stale, TimelineResult::ReanchorNeeded));
     // Nothing new: another pass changes nothing.
@@ -406,8 +477,37 @@ pub(super) async fn run(root: &Path) -> Result<()> {
     assert_eq!(scopes.open_conversation(hosted.clone()).await?, opened);
     let other = SqliteScopes::new(blocks.clone(), alone, DeviceId::from_bytes([99; 32]));
     assert!(matches!(other.open_conversation(hosted).await, Err(fastctx_sync::store::Error::Invalid(_))));
+    // Reopen a lightweight cache whose owned body has not arrived yet.
+    let TimelineResult::Page { page } = timelines.timeline(reader.clone(), read(None)).await? else {
+        return Err("the head disappeared before cache reopen".into());
+    };
+    let content = page.items[0].display.parts[0].content.clone();
+    let hash = content.id().digest.as_str().to_owned();
+    drop((notices, scopes, other, timelines, sources, blocks, db));
+    super::super::scheduler::closed(&path).await?;
+    let db = open_with(&path, |db| {
+        db.execute("UPDATE sync_asset_blocks SET verified=0 WHERE hash=?1", [&hash])?;
+        Ok(())
+    })?;
+    let blocks = SqliteBlocks::new(db, dir.join("files"), holder(), policy(false), operation(95), 1 << 24)?;
+    let timelines = SqliteTimelines::new(blocks);
+    assert!(matches!(
+        timelines
+            .content(
+                reader.clone(),
+                fastctx_sync::timeline::TimelineContentRead {
+                    fence: page.fence.clone(),
+                    item: item.id,
+                    content,
+                    range: None,
+                }
+            )
+            .await?,
+        fastctx_sync::timeline::TimelineContentResult::Pending { .. }
+    ));
+    timelines.release(reader, page.fence).await?;
     println!(
-        "timeline install: item revisions to snapshot and index, indexed and fenced reads, item and stream reads, notices, release, input-only passes, retraction, branch index rebuild, idempotent rerun, head retention and hosted scopes passed"
+        "timeline install: item revisions to snapshot and index, indexed and fenced reads, item and stream reads, notices, release, input-only passes, retraction, branch index rebuild, idempotent rerun, head retention, hosted scopes and pending owned content after cache reopen passed"
     );
     Ok(())
 }

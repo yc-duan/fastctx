@@ -65,6 +65,9 @@ pub(super) struct Meter {
     pages: usize,
 }
 impl Meter {
+    pub fn pages(&self) -> usize {
+        self.pages
+    }
     pub fn new(budget: Budget) -> Self {
         Self { budget, bytes: 0, pages: 0 }
     }

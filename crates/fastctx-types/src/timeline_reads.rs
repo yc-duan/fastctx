@@ -3,8 +3,13 @@
 use crate::{
     ResidentId,
     sync::{
+        cursor::LocalSequence,
         identity::ObjectId,
-        timeline::{ItemRead, TimelineAnchor, TimelineFence, TimelineResult},
+        manifest::ContentRef,
+        timeline::{
+            ByteRange, ItemRead, TimelineAnchor, TimelineChangesResult, TimelineContentResult, TimelineCoverage,
+            TimelineFence, TimelineResult,
+        },
     },
 };
 use serde::{Deserialize, Serialize};
@@ -16,13 +21,37 @@ pub enum TimelineCall {
     Read { resident: ResidentId, fence: Option<TimelineFence>, anchor: TimelineAnchor, max_items: u32, max_bytes: u32 },
     /// One item of the snapshot `fence` names.
     Item { resident: ResidentId, fence: TimelineFence, item: ObjectId },
+    /// Waits at most thirty seconds for this conversation's installed head to move.
+    Wait { resident: ResidentId, after: LocalSequence },
+    /// ID-ordered patches between two held snapshots; None acquires the latest `to`.
+    Changes {
+        resident: ResidentId,
+        from: Box<TimelineFence>,
+        to: Option<Box<TimelineFence>>,
+        after: Option<ObjectId>,
+        max_items: u32,
+        max_bytes: u32,
+    },
+    /// A bounded range of logical content owned by an item at this snapshot.
+    Content {
+        resident: ResidentId,
+        fence: Box<TimelineFence>,
+        item: ObjectId,
+        content: ContentRef,
+        range: Option<ByteRange>,
+    },
     /// Ends `fence`'s hold once its reader is done with it.
     Release { resident: ResidentId, fence: TimelineFence },
 }
 impl TimelineCall {
     pub fn resident(&self) -> &ResidentId {
         match self {
-            Self::Read { resident, .. } | Self::Item { resident, .. } | Self::Release { resident, .. } => resident,
+            Self::Read { resident, .. }
+            | Self::Item { resident, .. }
+            | Self::Release { resident, .. }
+            | Self::Wait { resident, .. }
+            | Self::Changes { resident, .. }
+            | Self::Content { resident, .. } => resident,
         }
     }
 }
@@ -32,9 +61,20 @@ impl TimelineCall {
 pub enum TimelineReply {
     Read {
         result: TimelineResult,
+        coverage: TimelineCoverage,
     },
     Item {
         read: ItemRead,
+    },
+    Moved {
+        local: LocalSequence,
+    },
+    Unchanged,
+    Changes {
+        result: TimelineChangesResult,
+    },
+    Content {
+        read: TimelineContentResult,
     },
     Released,
     /// This conversation has no timeline installed here; its history is read

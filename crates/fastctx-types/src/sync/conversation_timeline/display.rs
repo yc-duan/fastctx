@@ -167,6 +167,17 @@ pub struct ItemDisplayPartsV1 {
     pub parts: Vec<DisplayPart>,
 }
 
+/// The logical Content response for a Branch of overflow descriptors. Child
+/// coordinates are part indexes, and each child is fetched through Content again.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ItemDisplayPartsBranchV1 {
+    pub version: u16,
+    pub start: Count,
+    pub count: Count,
+    pub children: Vec<DisplayPartsRef>,
+}
+
 /// A byte budget still ends at a Unicode scalar boundary. The caller shares the
 /// 4 KiB budget across parts; JSON escaping is charged by descriptor encoding.
 pub fn display_preview(text: &str, bytes: usize) -> String {

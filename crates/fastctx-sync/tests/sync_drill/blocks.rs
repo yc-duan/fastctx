@@ -192,6 +192,10 @@ fn physical_files(root: &Path) -> Result<usize> {
     Ok(files)
 }
 
+pub async fn run_timeline(root: &Path) -> Result<()> {
+    timeline_install::run(root).await
+}
+
 pub async fn run(root: &Path) -> Result<()> {
     // The upstream ZSTD_estimateDStreamSize bound includes the context, window,
     // one input block and two output blocks, plus wild-copy padding.

@@ -11,7 +11,7 @@ use crate::{
     store::{self, FutureResult},
 };
 pub use append::append_block;
-pub use read::{locate, read_range};
+pub use read::{locate, read_range, read_range_at};
 use serde::{Deserialize, Serialize};
 
 pub const FANOUT: usize = 32;
@@ -115,6 +115,11 @@ fn extent(page: &ManifestPage) -> Result<(u64, u64, u64)> {
         ManifestPage::Branch { children } => children_extent(children),
         _ => Err(corrupt("expected a byte-tree page")),
     }
+}
+/// The validated origin and logical length of one complete byte-tree subtree.
+pub fn page_extent(page: &ManifestPage) -> Result<(ByteCount, ByteCount)> {
+    let (start, end, _) = extent(page)?;
+    Ok((ByteCount(start), ByteCount(end.checked_sub(start).ok_or_else(|| corrupt("byte-tree extent is reversed"))?)))
 }
 fn verify_child(child: &ManifestChild, page: &ManifestPage) -> Result<()> {
     let (start, end, entries) = extent(page)?;

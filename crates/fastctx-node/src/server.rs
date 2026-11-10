@@ -69,6 +69,7 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
         profiles: true,
         account_records: true,
         conversation_plans: true,
+        timeline_reads: true,
         scratch_locations: true,
         collaboration_watch: true,
         machine: node.machine(),

@@ -375,13 +375,37 @@
     "variant": "Timeline",
     "purpose": "AssetSync",
     "capability": "node_ipc",
-    "mapping": "crates/fastctx-types/src/calls.rs"
+    "mapping": "crates/fastctx-types/src/calls.rs",
+    "nested": {
+      "type": "crates/fastctx-types/src/timeline_reads.rs::TimelineCall",
+      "variants": [
+        "Read",
+        "Item",
+        "Release",
+        "Wait",
+        "Changes",
+        "Content"
+      ]
+    }
   },
   {
     "type": "crates/fastctx-types/src/calls.rs::Reply",
     "variant": "Timeline",
     "purpose": "AssetSync",
     "capability": "node_ipc",
-    "mapping": "crates/fastctx-types/src/calls.rs"
+    "mapping": "crates/fastctx-types/src/calls.rs",
+    "nested": {
+      "type": "crates/fastctx-types/src/timeline_reads.rs::TimelineReply",
+      "variants": [
+        "Read",
+        "Item",
+        "Moved",
+        "Unchanged",
+        "Changes",
+        "Content",
+        "Released",
+        "Unavailable"
+      ]
+    }
   }
 ]

@@ -4,6 +4,7 @@ use crate::{
     store::{FutureResult, access::AccessContext},
 };
 pub use fastctx_types::sync::timeline::*;
+pub mod changes;
 pub mod index;
 pub mod pages;
 pub mod position;
@@ -18,4 +19,12 @@ pub trait TimelineReader: Send + Sync {
     /// ReanchorNeeded; absent local projection state returns Pending.
     fn timeline(&self, context: AccessContext, request: TimelineRead) -> FutureResult<'_, TimelineResult>;
     fn item(&self, context: AccessContext, fence: TimelineFence, item: ObjectId) -> FutureResult<'_, ItemRead>;
+    fn wait(
+        &self,
+        context: AccessContext,
+        conversation: crate::identity::ObjectKey,
+        after: crate::cursor::LocalSequence,
+    ) -> FutureResult<'_, TimelineWait>;
+    fn changes(&self, context: AccessContext, request: TimelineChangesRead) -> FutureResult<'_, TimelineChangesResult>;
+    fn content(&self, context: AccessContext, request: TimelineContentRead) -> FutureResult<'_, TimelineContentResult>;
 }

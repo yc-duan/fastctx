@@ -1,5 +1,6 @@
 //! Stream pagination and the canonical timeline projection are separate reads.
 
+pub use super::timeline_reader::*;
 use super::{
     catalog::SourceRecord,
     cursor::{LocalSequence, Revision, Sequence, StreamCursor},

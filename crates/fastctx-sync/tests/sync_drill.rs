@@ -20,6 +20,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("the drill root must not exist".into());
     }
     fastctx_platform::ensure_private_dir(&root)?;
+    if std::env::args().nth(2).as_deref() == Some("timeline") {
+        return tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()?
+            .block_on(blocks::run_timeline(&root));
+    }
     format_upgrade::run(&root)?;
     if std::env::args().nth(2).as_deref() == Some("upgrade") {
         return Ok(());

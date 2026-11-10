@@ -3,14 +3,21 @@ use std::collections::BTreeSet;
 
 /// Locates a block by absolute byte offset, checking every followed child binding.
 pub async fn locate(io: &dyn BodyTreeIo, body: &BodyExtent, offset: ByteCount) -> Result<(ByteCount, ContentBlock)> {
-    Box::pin(locate_inner(io, body, offset)).await
+    Box::pin(locate_inner(io, body, ByteCount(0), offset)).await
 }
 
-async fn locate_inner(io: &dyn BodyTreeIo, body: &BodyExtent, offset: ByteCount) -> Result<(ByteCount, ContentBlock)> {
+async fn locate_inner(
+    io: &dyn BodyTreeIo,
+    body: &BodyExtent,
+    origin: ByteCount,
+    offset: ByteCount,
+) -> Result<(ByteCount, ContentBlock)> {
     body.content.validate().map_err(BodyTreeError::InvalidInput)?;
     if offset.0 >= body.bytes.0 {
         return Err(BodyTreeError::InvalidInput("offset outside body extent".into()));
     }
+    let wanted = add(origin.0, offset.0)?;
+    let through = add(origin.0, body.bytes.0)?;
     let mut root = match &body.content {
         ContentRef::Single { block, decoded_bytes } => {
             if u64::from(*decoded_bytes) != body.bytes.0 {
@@ -31,7 +38,7 @@ async fn locate_inner(io: &dyn BodyTreeIo, body: &BodyExtent, offset: ByteCount)
             verify_child(child, &current)?;
         }
         let (start, end, _) = extent(&current)?;
-        if expected.is_none() && (start != 0 || end != body.bytes.0) {
+        if expected.is_none() && (start != origin.0 || end != through) {
             return Err(corrupt("body root extent differs"));
         }
         match current {
@@ -39,8 +46,13 @@ async fn locate_inner(io: &dyn BodyTreeIo, body: &BodyExtent, offset: ByteCount)
                 let mut at = start.0;
                 for block in blocks {
                     let end = add(at, u64::from(block.decoded_bytes))?;
-                    if at <= offset.0 && offset.0 < end {
-                        return Ok((ByteCount(at), block));
+                    if at <= wanted && wanted < end {
+                        return Ok((
+                            ByteCount(
+                                at.checked_sub(origin.0).ok_or_else(|| corrupt("subtree block precedes its origin"))?,
+                            ),
+                            block,
+                        ));
                     }
                     at = end;
                 }
@@ -49,7 +61,7 @@ async fn locate_inner(io: &dyn BodyTreeIo, body: &BodyExtent, offset: ByteCount)
             ManifestPage::Branch { children } => {
                 let child = children
                     .into_iter()
-                    .find(|child| range(child).is_ok_and(|(first, end)| first <= offset.0 && offset.0 < end))
+                    .find(|child| range(child).is_ok_and(|(first, end)| first <= wanted && wanted < end))
                     .ok_or_else(|| corrupt("branch does not cover offset"))?;
                 root = child.root.clone();
                 expected = Some(child);
@@ -68,12 +80,26 @@ pub async fn read_range(
     bytes: usize,
     max_bytes: usize,
 ) -> Result<Vec<u8>> {
-    Box::pin(read_inner(io, body, offset, bytes, max_bytes)).await
+    Box::pin(read_inner(io, body, ByteCount(0), offset, bytes, max_bytes)).await
+}
+
+/// Reads a standalone subtree whose persisted byte coordinates begin at `origin`.
+/// The caller's offset and returned bytes remain relative to this subtree.
+pub async fn read_range_at(
+    io: &dyn BodyTreeIo,
+    body: &BodyExtent,
+    origin: ByteCount,
+    offset: ByteCount,
+    bytes: usize,
+    max_bytes: usize,
+) -> Result<Vec<u8>> {
+    Box::pin(read_inner(io, body, origin, offset, bytes, max_bytes)).await
 }
 
 async fn read_inner(
     io: &dyn BodyTreeIo,
     body: &BodyExtent,
+    origin: ByteCount,
     offset: ByteCount,
     bytes: usize,
     max_bytes: usize,
@@ -88,7 +114,7 @@ async fn read_inner(
     let mut output = Vec::with_capacity(bytes);
     let mut at = offset.0;
     while at < end {
-        let (start, block) = locate(io, body, ByteCount(at)).await?;
+        let (start, block) = Box::pin(locate_inner(io, body, origin, ByteCount(at))).await?;
         let decoded = io.read_block(block.clone()).await?;
         if decoded.len() != block.decoded_bytes as usize || Digest::of(&decoded) != block.id.digest {
             return Err(corrupt("body block identity or length differs"));

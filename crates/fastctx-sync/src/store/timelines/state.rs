@@ -220,6 +220,9 @@ pub(super) fn progress(db: &Connection, conversation: &ObjectKey, through: &Stre
 /// alone proves nothing about the root a read would follow.
 pub(super) fn fence_held(db: &Connection, fence: &TimelineFence, now: i64) -> Result<bool> {
     let scope = &fence.conversation.scope;
+    if fence.root.0.domain != *scope || fence.through.cursor().scope != *scope {
+        return Ok(false);
+    }
     let row = db
         .prepare_cached("SELECT object,kind,hash,root_kind,usage,holding FROM sync_root_leases WHERE hub=?1 AND scope=?2 AND lease=?3 AND released=0 AND supply_id IS NULL AND (expires IS NULL OR expires>?4)")?
         .query_row(params![scope.hub.to_string(), scope.scope.as_str(), fence.lease.as_str(), now], |row| {

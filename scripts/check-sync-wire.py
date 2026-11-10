@@ -161,6 +161,11 @@ def check():
                 purposes[variant] = purpose
         if re.search(r"\b_\s*(?:if\b[^=]*)?=>", body) or purposes.get(item["variant"]) != item["purpose"]:
             raise ValueError(f"wire variant lacks its exhaustive purpose mapping: {key}")
+        if nested := item.get("nested"):
+            path, name = nested["type"].rsplit("::", 1)
+            definitions = enums(code((ROOT / path).read_text(encoding="utf-8")))
+            if sorted(nested["variants"]) != definitions.get(name):
+                raise ValueError(f"nested wire variants differ from purpose registry: {nested['type']}")
         mapped.add(key)
     if additions != mapped:
         raise ValueError(f"new wire variants differ from purpose registry: {sorted(additions ^ mapped)}")

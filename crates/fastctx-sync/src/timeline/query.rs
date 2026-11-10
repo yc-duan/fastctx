@@ -166,7 +166,7 @@ pub fn item(
 /// The projection revision names the snapshot. Records installed after it that
 /// changed no item move the head's cursor and leave the root as it was, so a
 /// fence's cursor may be at or past its root's, on the same stream and epoch.
-fn read_root(source: &impl PageSource, fence: &TimelineFence, meter: &mut Meter) -> Work<TimelineRoot> {
+pub(super) fn read_root(source: &impl PageSource, fence: &TimelineFence, meter: &mut Meter) -> Work<TimelineRoot> {
     let root = tree::snapshot(source, &fence.root, meter)?;
     let at = fence.through.cursor();
     if root.conversation != fence.conversation
@@ -231,7 +231,7 @@ fn walk(
 fn backward(anchor: &TimelineAnchor) -> bool {
     !matches!(anchor, TimelineAnchor::After(_))
 }
-fn limits(limit: PageLimit) -> Result<(), Error> {
+pub(super) fn limits(limit: PageLimit) -> Result<(), Error> {
     if limit.items == 0 || limit.items > 100 || limit.bytes == 0 || limit.bytes > PAGE_BYTES {
         return Err(Error::Invalid("timeline read requires 1..100 items and at most 256 KiB".into()));
     }

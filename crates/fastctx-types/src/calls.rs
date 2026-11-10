@@ -1515,7 +1515,14 @@ impl Call {
             | Self::Who { .. }
             | Self::WorldNow { .. }
             | Self::Write { .. } => None,
-            Self::Timeline { .. } => Some(Purpose::AssetSync),
+            Self::Timeline(
+                crate::timeline_reads::TimelineCall::Read { .. }
+                | crate::timeline_reads::TimelineCall::Item { .. }
+                | crate::timeline_reads::TimelineCall::Release { .. }
+                | crate::timeline_reads::TimelineCall::Wait { .. }
+                | crate::timeline_reads::TimelineCall::Changes { .. }
+                | crate::timeline_reads::TimelineCall::Content { .. },
+            ) => Some(Purpose::AssetSync),
         }
     }
 }
@@ -1623,7 +1630,16 @@ impl Reply {
             | Self::Who { .. }
             | Self::WorldNow { .. }
             | Self::Written { .. } => None,
-            Self::Timeline { .. } => Some(Purpose::AssetSync),
+            Self::Timeline(
+                crate::timeline_reads::TimelineReply::Read { .. }
+                | crate::timeline_reads::TimelineReply::Item { .. }
+                | crate::timeline_reads::TimelineReply::Moved { .. }
+                | crate::timeline_reads::TimelineReply::Unchanged
+                | crate::timeline_reads::TimelineReply::Changes { .. }
+                | crate::timeline_reads::TimelineReply::Content { .. }
+                | crate::timeline_reads::TimelineReply::Released
+                | crate::timeline_reads::TimelineReply::Unavailable,
+            ) => Some(Purpose::AssetSync),
         }
     }
 }

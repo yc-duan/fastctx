@@ -271,6 +271,8 @@ def samples(root, shipped):
         # A node that follows collaborations says so; a client before it reads past that.
         yield {"mode": "welcome", "protocol": protocol,
                "value": {"kind": "accepted", "machine": "desktop", "version": "1.0.0", "collaboration_watch": True}}
+        yield {"mode": "welcome", "protocol": protocol,
+               "value": {"kind": "accepted", "machine": "desktop", "version": "1.0.0", "timeline_reads": True}}
         yield {"mode": "watched", "protocol": protocol, "value": MARKED_LIVE}
         for reply in replies(fixtures):
             if protocol == 5 and reply["reply"] == "server_invitation":
@@ -325,6 +327,8 @@ def samples(root, shipped):
             yield {"mode": "welcome", "protocol": 13, "reader": reader, "value": welcome}
         yield {"mode": "welcome", "protocol": 13, "reader": reader,
                "value": {"kind": "accepted", "machine": "desktop", "version": "1.0.0", "collaboration_watch": True}}
+        yield {"mode": "welcome", "protocol": 13, "reader": reader,
+               "value": {"kind": "accepted", "machine": "desktop", "version": "1.0.0", "timeline_reads": True}}
         yield {"mode": "watched", "protocol": 13, "reader": reader, "value": MARKED_LIVE}
         for reply in replies(fixtures):
             notice = reply["notices"][0]["notice"] if reply["reply"] == "notices" else {}

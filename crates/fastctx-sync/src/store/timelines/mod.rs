@@ -1,7 +1,9 @@
 //! Every holder installs its conversations' canonical item revisions into
 //! immutable TimelineV1 snapshots and a local position index. Input facts in
 //! the same stream only advance the installed cursor; replicas never re-merge.
+mod changes;
 mod commit;
+mod content;
 mod epochs;
 mod install;
 mod notices;
@@ -10,6 +12,7 @@ mod reader;
 mod rebuild;
 mod state;
 mod stream;
+mod wait;
 
 pub use notices::TimelineNotices;
 

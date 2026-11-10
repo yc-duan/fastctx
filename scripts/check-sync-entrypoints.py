@@ -73,6 +73,8 @@ CALLERS = {
         "crates/fastctx-sync/src/blocks/reconcile/mod.rs",
         "crates/fastctx-sync/src/blocks/reconcile/steps.rs",
         "crates/fastctx-sync/src/blocks/engine_reads.rs",
+        "crates/fastctx-sync/src/blocks/reader_content.rs",
+        "crates/fastctx-sync/src/store/timelines/content.rs",
         "crates/fastctx-sync/src/blocks/source_supply.rs",
         "crates/fastctx-sync/src/blocks/supply/runner.rs",
         "crates/fastctx-sync/tests/sync_drill/supply.rs",

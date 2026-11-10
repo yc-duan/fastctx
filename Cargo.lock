@@ -1678,6 +1678,7 @@ dependencies = [
 name = "fastctx-sync"
 version = "1.0.1-beta.16"
 dependencies = [
+ "base64 0.22.1",
  "fastctx-platform",
  "fastctx-storage",
  "fastctx-types",

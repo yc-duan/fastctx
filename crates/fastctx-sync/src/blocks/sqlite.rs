@@ -28,6 +28,8 @@ mod gc;
 mod metadata_custody;
 #[path = "metadata_work.rs"]
 mod metadata_work;
+#[path = "reader_content.rs"]
+mod reader_content;
 #[path = "replica_content.rs"]
 mod replica_content;
 #[path = "root_store.rs"]

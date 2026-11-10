@@ -9,6 +9,7 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+base64 = "0.22"
 fastctx-types = { path = "../fastctx-types" }
 fastctx-storage = { path = "../fastctx-storage" }
 fastctx-platform = { path = "../fastctx-platform" }

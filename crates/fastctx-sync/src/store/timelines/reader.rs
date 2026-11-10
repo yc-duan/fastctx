@@ -28,9 +28,31 @@ use std::sync::atomic::{AtomicU64, Ordering};
 /// How long a fresh read holds its snapshot; a reader paging longer re-anchors.
 const HOLD_MILLIS: i64 = 10 * 60 * 1000;
 /// T2's allowance for decoding one page or item from immutable pages.
-const READ_BUDGET: Budget = Budget { work_bytes: 16 * 1024 * 1024, max_pages: 256, max_changes: 0 };
+pub(super) const READ_BUDGET: Budget = Budget { work_bytes: 16 * 1024 * 1024, max_pages: 256, max_changes: 0 };
 
 impl TimelineReader for SqliteTimelines {
+    fn wait(
+        &self,
+        context: AccessContext,
+        conversation: ObjectKey,
+        after: LocalSequence,
+    ) -> FutureResult<'_, crate::timeline::TimelineWait> {
+        Box::pin(self.wait_head(context, conversation, after))
+    }
+    fn changes(
+        &self,
+        context: AccessContext,
+        request: crate::timeline::TimelineChangesRead,
+    ) -> FutureResult<'_, crate::timeline::TimelineChangesResult> {
+        Box::pin(self.read_changes(context, request))
+    }
+    fn content(
+        &self,
+        context: AccessContext,
+        request: crate::timeline::TimelineContentRead,
+    ) -> FutureResult<'_, crate::timeline::TimelineContentResult> {
+        Box::pin(self.read_content(context, request))
+    }
     fn stream(&self, context: AccessContext, request: StreamRead) -> FutureResult<'_, StreamPage> {
         Box::pin(async move {
             let result = self.read_stream(context.clone(), request).await?;
@@ -63,7 +85,7 @@ impl TimelineReader for SqliteTimelines {
     }
 }
 
-enum Fresh {
+pub(super) enum Fresh {
     Fence(TimelineFence),
     Pending(Option<StreamProgress>),
 }
@@ -127,7 +149,7 @@ impl SqliteTimelines {
         self.blocks.release_use(fence.conversation.scope, fence.lease).await
     }
 
-    async fn held(&self, fence: &TimelineFence) -> Result<bool, Error> {
+    pub(super) async fn held(&self, fence: &TimelineFence) -> Result<bool, Error> {
         let check = fence.clone();
         self.blocks
             .database()
@@ -187,7 +209,7 @@ impl SqliteTimelines {
     }
 
     /// Holds the current snapshot root and returns the fence that names it.
-    async fn fresh(&self, conversation: &ObjectKey) -> Result<Fresh, Error> {
+    pub(super) async fn fresh(&self, conversation: &ObjectKey) -> Result<Fresh, Error> {
         let holder = self.blocks.holder().clone();
         let read = conversation.clone();
         let snapshot = self
