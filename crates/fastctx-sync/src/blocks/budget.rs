@@ -16,6 +16,9 @@ impl Budget {
         }
         Ok(Arc::new(Self(ByteBudget::new(limit)?)))
     }
+    pub(crate) fn shared(&self) -> ByteBudget {
+        self.0.clone()
+    }
     pub(crate) fn acquire(&self, bytes: usize) -> Result<Permit, Error> {
         self.0.try_acquire(bytes)
     }

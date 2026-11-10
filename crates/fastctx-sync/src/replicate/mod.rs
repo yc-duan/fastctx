@@ -3,6 +3,8 @@
 //! and neither turns a peer's message into a permission.
 mod directory;
 mod follow;
+mod received;
+pub use received::{Received, decode_json, decode_message};
 
 pub use directory::{DirectoryFollower, Discovered, DiscoveredPage};
 pub use follow::{FollowDiscovery, FollowPage, FollowProgress, ReplicaFollower};
@@ -32,15 +34,17 @@ pub struct BlockOffer {
     pub object: ObjectKey,
     pub kind: KindVersion,
     pub operation: OperationId,
+    pub cause: fastctx_types::sync::session::UploadCause,
     pub representation: Representation,
     pub encoded: Vec<u8>,
 }
 
 pub trait Upstream: Send + Sync {
-    /// One bounded metadata request and the hub's answer to it.
-    fn exchange(&self, request: Message) -> FutureResult<'_, Message>;
-    /// The decoded bytes of one block.
-    fn fetch(&self, request: BlockRequest) -> FutureResult<'_, Vec<u8>>;
+    /// One bounded metadata request and the hub's answer to it. The returned
+    /// guard retains the decoded answer's byte admission until consumption ends.
+    fn exchange(&self, request: Message) -> FutureResult<'_, Received<Message>>;
+    /// The verified, decoded bytes of one block, retaining their byte admission.
+    fn fetch(&self, request: BlockRequest) -> FutureResult<'_, Received<Vec<u8>>>;
     /// Stages one block at the hub; the acknowledgement covers that block only.
     fn offer(&self, offer: BlockOffer) -> FutureResult<'_, DurableAck>;
 }

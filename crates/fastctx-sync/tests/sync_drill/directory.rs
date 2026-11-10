@@ -135,19 +135,30 @@ impl AccessPolicy for HubPolicy {
 pub(super) struct Loopback {
     pub(super) service: Arc<Service>,
     pub(super) peer: Peer,
+    pub(super) budget: fastctx_sync::admission::ByteBudget,
 }
 impl Upstream for Loopback {
-    fn exchange(&self, request: Message) -> fastctx_sync::store::FutureResult<'_, Message> {
+    fn exchange(
+        &self,
+        request: Message,
+    ) -> fastctx_sync::store::FutureResult<'_, fastctx_sync::replicate::Received<Message>> {
         Box::pin(async move {
             let wire = |message: &Message| -> std::result::Result<Message, Error> {
                 let bytes = serde_json::to_vec(message).map_err(|error| Error::Invalid(error.to_string()))?;
                 serde_json::from_slice(&bytes).map_err(|error| Error::Invalid(error.to_string()))
             };
+            let _request = self.budget.try_acquire(fastctx_types::sync::PAGE_BYTES as usize * 4)?;
             let answer = self.service.answer(&self.peer, wire(&request)?).await?;
-            wire(&answer)
+            fastctx_sync::replicate::decode_message(
+                &serde_json::to_vec(&answer).map_err(|e| Error::Invalid(e.to_string()))?,
+                &self.budget,
+            )
         })
     }
-    fn fetch(&self, _: BlockRequest) -> fastctx_sync::store::FutureResult<'_, Vec<u8>> {
+    fn fetch(
+        &self,
+        _: BlockRequest,
+    ) -> fastctx_sync::store::FutureResult<'_, fastctx_sync::replicate::Received<Vec<u8>>> {
         Box::pin(async { Err(Error::Unavailable("the loopback carries no blocks yet".into())) })
     }
     fn offer(&self, _: BlockOffer) -> fastctx_sync::store::FutureResult<'_, fastctx_sync::cursor::DurableAck> {
@@ -361,12 +372,15 @@ pub(super) async fn run(root: &Path) -> Result<()> {
         1 << 23,
     )?;
     let follower = DirectoryFollower::new(
-        SqliteScopes::new(fresh_blocks, HubId::from_bytes([39; 8]), fresh.clone()),
+        SqliteScopes::new(fresh_blocks.clone(), HubId::from_bytes([39; 8]), fresh.clone()),
         identity.clone(),
         Arc::new(Verifier),
     );
-    let upstream =
-        Loopback { service: Arc::new(Service::new(directory)), peer: Peer { device: fresh, accounts: vec![owner.id] } };
+    let upstream = Loopback {
+        service: Arc::new(Service::new(directory)),
+        peer: Peer { device: fresh, accounts: vec![owner.id] },
+        budget: fresh_blocks.buffer_budget(),
+    };
     let discovered = follower.discover(&upstream).await?;
     assert_eq!(discovered.installed.len(), 2);
     assert!(discovered.installed.iter().all(|installed| matches!(installed, Installed::Opened(_))));

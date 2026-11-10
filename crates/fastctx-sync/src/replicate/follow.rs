@@ -1,6 +1,6 @@
 //! A bounded network driver over durable receiver state. Transport failure leaves
 //! the last verified commit intact; only a remote permission denial stops a scope.
-use super::{DirectoryFollower, Upstream};
+use super::{DirectoryFollower, Received, Upstream};
 use crate::{
     cursor::{ScopeCursor, Sequence},
     identity::{ScopeId, ScopeKey},
@@ -188,24 +188,25 @@ impl ReplicaFollower {
         let Some(answer) = answer else {
             return self.stopped(&state).await;
         };
-        let (changed, more) = match answer {
-            Message::Reset { scope, epoch, .. } if scope == state.holding.scope => {
-                self.replica.restart_follow(state, epoch).await?;
+        let (changed, more) = match answer.value() {
+            Message::Reset { scope, epoch, .. } if scope == &state.holding.scope => {
+                self.replica.restart_follow(state, epoch.clone()).await?;
                 return Ok(FollowProgress::Reset);
             }
-            Message::ChangesPage { holding, page } if holding == state.holding && page.after == state.cursor => {
+            Message::ChangesPage { holding, page } if holding == &state.holding && page.after == state.cursor => {
                 let changed = page.through != page.after;
                 let more = page.more;
                 if !changed && (more || !page.entries.is_empty() || !page.proofs.is_empty()) {
                     return Err(Error::Invalid("the feed page made no progress".into()));
                 }
                 if changed {
-                    self.replica.apply_changes(state.context(), page).await?;
+                    self.replica.apply_changes(state.context(), page.clone()).await?;
                 }
                 (changed, more)
             }
             _ => return Err(Error::Invalid("the hub answered changes with another scope, holding or message".into())),
         };
+        drop(answer);
         let Some(need) = self.replica.next_stream(state.context()).await? else {
             return Ok(if more || changed { FollowProgress::Progress } else { FollowProgress::CaughtUp });
         };
@@ -253,10 +254,10 @@ impl ReplicaFollower {
         let Some(answer) = answer else {
             return self.stopped(&state).await;
         };
-        let Message::StreamPage { holding, page } = answer else {
+        let Message::StreamPage { holding, page } = answer.value() else {
             return Err(Error::Invalid("the hub did not answer the stream range".into()));
         };
-        if holding != state.holding
+        if holding != &state.holding
             || page.records.len() > self.max_records as usize
             || page.direction != Direction::Forward
             || page.records.first().map(|r| r.record.sequence.0) != cursor.committed.0.checked_add(1)
@@ -266,7 +267,7 @@ impl ReplicaFollower {
         {
             return Err(Error::Invalid("stream response differs from the requested target".into()));
         }
-        self.replica.apply_stream(state.context(), page).await?;
+        self.replica.apply_stream(state.context(), page.clone()).await?;
         self.replica.finish_stream(state.context(), need).await?;
         Ok(FollowProgress::Progress)
     }
@@ -282,7 +283,7 @@ impl ReplicaFollower {
         let Some(answer) = answer else {
             return self.stopped(state).await;
         };
-        let Message::Epoch { descriptor } = answer else {
+        let Message::Epoch { descriptor } = answer.value() else {
             return Err(Error::Invalid("the hub did not answer the epoch lookup".into()));
         };
         let decoded: crate::proof::EpochDescriptor =
@@ -294,7 +295,7 @@ impl ReplicaFollower {
         if !matches || decoded.scope != state.holding.scope {
             return Err(Error::Invalid("epoch response differs from its request".into()));
         }
-        self.replica.install_epoch(state.context(), descriptor).await?;
+        self.replica.install_epoch(state.context(), descriptor.clone()).await?;
         Ok(FollowProgress::Progress)
     }
     async fn exchange(
@@ -302,7 +303,7 @@ impl ReplicaFollower {
         upstream: &dyn Upstream,
         state: &FollowScope,
         request: Message,
-    ) -> Result<Option<Message>, Error> {
+    ) -> Result<Option<Received<Message>>, Error> {
         let max = match &request {
             Message::Changes { max_bytes, .. } => *max_bytes,
             Message::StreamRange { request, .. } => request.max_bytes,
@@ -314,7 +315,9 @@ impl ReplicaFollower {
         let reason = match &answer {
             Err(Error::Denied(message)) => Some(FollowStop::Denied { message: message.clone() }),
             Err(Error::Revoked) => Some(FollowStop::Revoked),
-            Ok(Message::Revoked { holding }) if holding == &state.holding => Some(FollowStop::Revoked),
+            Ok(answer) if matches!(answer.value(), Message::Revoked { holding } if holding == &state.holding) => {
+                Some(FollowStop::Revoked)
+            }
             _ => None,
         };
         if let Some(reason) = reason {
@@ -322,7 +325,7 @@ impl ReplicaFollower {
             return Ok(None);
         }
         let answer = answer?;
-        if serde_json::to_vec(&answer).map_err(|e| Error::Invalid(e.to_string()))?.len() > max as usize {
+        if serde_json::to_vec(answer.value()).map_err(|e| Error::Invalid(e.to_string()))?.len() > max as usize {
             return Err(Error::Invalid("the hub response exceeds the requested page budget".into()));
         }
         Ok(Some(answer))

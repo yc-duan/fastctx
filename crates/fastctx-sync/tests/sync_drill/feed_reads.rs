@@ -44,7 +44,7 @@ pub(super) async fn run(
         ScopeCursor { through: Sequence(0), prefix_digest: Some(feed::genesis(&end.scope, &end.epoch)), ..end.clone() };
     assert!(beginning.view.is_some());
     let all = upstream.exchange(changes(&holding, &beginning, 256 * 1024)).await?;
-    let Message::ChangesPage { page, .. } = &all else {
+    let Message::ChangesPage { page, .. } = all.value() else {
         return Err("missing changes page".into());
     };
     assert_eq!(page.entries.len(), 4);
@@ -65,27 +65,27 @@ pub(super) async fn run(
     loop {
         let request = changes(&holding, &after, budget);
         let answer = upstream.exchange(request.clone()).await?;
-        assert_eq!(upstream.exchange(request).await?, answer);
+        assert_eq!(upstream.exchange(request).await?.value(), answer.value());
         assert!(bytes(&answer) <= budget as usize);
-        let Message::ChangesPage { holding: echoed, page } = answer else {
+        let Message::ChangesPage { holding: echoed, page } = answer.value() else {
             return Err("expected changes".into());
         };
-        assert_eq!(echoed, holding);
+        assert_eq!(echoed, &holding);
         assert_eq!(page.after, after);
         assert_eq!(page.entries.len(), 1);
         let mut prefix = after.prefix_digest.clone().unwrap();
-        for entry in page.entries {
+        for entry in &page.entries {
             let FeedEntry::Changed { change, prefix_digest } = entry else {
                 return Err("unexpected skipped change".into());
             };
             count += 1;
             assert_eq!(change.sequence, Sequence(count));
-            prefix = feed::advance(&prefix, &change)?.1;
-            assert_eq!(prefix, prefix_digest);
-            last_head = Some(change.head);
+            prefix = feed::advance(&prefix, change)?.1;
+            assert_eq!(&prefix, prefix_digest);
+            last_head = Some(change.head.clone());
         }
         assert_eq!(page.through.prefix_digest, Some(prefix));
-        after = page.through;
+        after = page.through.clone();
         if !page.more {
             break;
         }
@@ -97,16 +97,17 @@ pub(super) async fn run(
         return Err("directory is not a stream".into());
     };
     let request = Message::GetEpoch { scope: end.scope.clone(), lookup: EpochLookup::Proof { id: epoch_id.clone() } };
-    let Message::Epoch { descriptor } = upstream.exchange(request.clone()).await? else {
+    let epoch_reply = upstream.exchange(request.clone()).await?;
+    let Message::Epoch { descriptor } = epoch_reply.value() else {
         return Err("missing epoch".into());
     };
-    let epoch = Verifier.epoch(&descriptor, identity)?;
+    let epoch = Verifier.epoch(descriptor, identity)?;
     assert_eq!(descriptor.proof.id(), epoch_id);
     let by_stream = Message::GetEpoch {
         scope: end.scope.clone(),
         lookup: EpochLookup::Stream { stream: epoch.stream.clone(), epoch: epoch.epoch.clone() },
     };
-    assert_eq!(upstream.exchange(by_stream).await?, Message::Epoch { descriptor });
+    assert_eq!(upstream.exchange(by_stream).await?.value(), &Message::Epoch { descriptor: descriptor.clone() });
     let stream = StreamCursor {
         scope: end.scope.clone(),
         stream: epoch.stream.clone(),
@@ -119,10 +120,10 @@ pub(super) async fn run(
     loop {
         let answer = upstream.exchange(range(&holding, &stream, StreamPosition::After(position), 1)).await?;
         assert!(bytes(&answer) <= 256 * 1024);
-        let Message::StreamPage { holding: echoed, page } = answer else {
+        let Message::StreamPage { holding: echoed, page } = answer.value() else {
             return Err("missing stream page".into());
         };
-        assert_eq!(echoed, holding);
+        assert_eq!(echoed, &holding);
         assert_eq!(page.direction, Direction::Forward);
         assert_eq!(
             page.fence,
@@ -136,7 +137,7 @@ pub(super) async fn run(
         assert_eq!(page.proofs.len(), 1);
         let proof = &page.proofs[0];
         let batch = Verifier.source(proof, &epoch)?;
-        for record in page.records {
+        for record in &page.records {
             assert_eq!(record.batch_proof, proof.proof.id());
             assert_eq!(&record.record, &batch.records[(record.record.sequence.0 - batch.after.0 - 1) as usize]);
             assert_eq!(record.record.sequence, Sequence(position.0 + 1));
@@ -154,7 +155,8 @@ pub(super) async fn run(
     let mut anchor = StreamPosition::Latest;
     let mut reverse = Vec::new();
     loop {
-        let Message::StreamPage { page, .. } = upstream.exchange(range(&holding, &stream, anchor, 2)).await? else {
+        let answer = upstream.exchange(range(&holding, &stream, anchor, 2)).await?;
+        let Message::StreamPage { page, .. } = answer.value() else {
             return Err("missing backwards page".into());
         };
         assert_eq!(page.direction, Direction::Backward);
@@ -175,10 +177,10 @@ pub(super) async fn run(
         kinds: Vec::new(),
     };
     let hidden = ScopeCursor { view: Some(view.id()?), ..beginning.clone() };
-    let Message::ChangesPage { page, .. } = upstream
+    let filtered = upstream
         .exchange(Message::Changes { holding: holding.clone(), after: hidden, view: Some(view), max_bytes: 256 * 1024 })
-        .await?
-    else {
+        .await?;
+    let Message::ChangesPage { page, .. } = filtered.value() else {
         return Err("missing filtered page".into());
     };
     assert!(matches!(page.entries.as_slice(), [FeedEntry::Skipped { after: Sequence(0), through: Sequence(4), .. }]));
@@ -186,13 +188,14 @@ pub(super) async fn run(
     let mut wrong = beginning.clone();
     wrong.prefix_digest = Some(Digest::from_bytes([199; 32]));
     assert!(
-        matches!(upstream.exchange(changes(&holding, &wrong, 256 * 1024)).await?, Message::Reset { epoch, .. } if epoch == end.epoch)
+        matches!(upstream.exchange(changes(&holding, &wrong, 256 * 1024)).await?.value(), Message::Reset { epoch, .. } if epoch == &end.epoch)
     );
     assert!(matches!(upstream.exchange(changes(&holding, &wrong, 1)).await, Err(Error::Invalid(_))));
     wrong = beginning.clone();
     wrong.view = None;
-    assert!(matches!(upstream.exchange(changes(&holding, &wrong, 256 * 1024)).await?, Message::Reset { .. }));
-    let Message::ChangesPage { page, .. } = upstream.exchange(changes(&holding, end, 256 * 1024)).await? else {
+    assert!(matches!(upstream.exchange(changes(&holding, &wrong, 256 * 1024)).await?.value(), Message::Reset { .. }));
+    let answer = upstream.exchange(changes(&holding, end, 256 * 1024)).await?;
+    let Message::ChangesPage { page, .. } = answer.value() else {
         return Err("valid cursor was disturbed".into());
     };
     assert!(page.entries.is_empty());
@@ -200,6 +203,7 @@ pub(super) async fn run(
 
     let stranger = Loopback {
         service: upstream.service.clone(),
+        budget: upstream.budget.clone(),
         peer: Peer { device: upstream.peer.device.clone(), accounts: vec![AccountId::from_bytes([201; 32])] },
     };
     for request in

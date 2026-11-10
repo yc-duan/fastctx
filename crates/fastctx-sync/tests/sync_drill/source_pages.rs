@@ -83,9 +83,10 @@ pub(super) async fn run(root: &Path) -> Result<()> {
     let gate = Arc::new(Gate(AtomicBool::new(false)));
     let (_, blocks) = open_hub(&hub_dir, false)?;
     let (run, authority) = authority(&blocks, 1, &gate).await?;
-    let directory = Arc::new(SqliteDirectory::new(blocks, run, Arc::new(Signer(true))));
+    let directory = Arc::new(SqliteDirectory::new(blocks.clone(), run, Arc::new(Signer(true))));
     describe(&directory, &object, 214).await?;
     let upstream = super::super::directory::Loopback {
+        budget: blocks.buffer_budget(),
         service: Arc::new(Service::new(directory).with_sources(Arc::new(authority.clone()))),
         peer: Peer { device: DeviceId::from_bytes([3; 32]), accounts: vec![account().id] },
     };
@@ -114,10 +115,10 @@ pub(super) async fn run(root: &Path) -> Result<()> {
                 },
             })
             .await?;
-        assert!(serde_json::to_vec(&answer)?.len() <= fastctx_types::sync::PAGE_BYTES as usize);
-        let Message::StreamPage { page, .. } = answer else { return Err("missing source page".into()) };
+        assert!(serde_json::to_vec(answer.value())?.len() <= fastctx_types::sync::PAGE_BYTES as usize);
+        let Message::StreamPage { page, .. } = answer.value() else { return Err("missing source page".into()) };
         assert_eq!(page.proofs, vec![signed]);
-        received.extend(page.records.into_iter().map(|r| r.record));
+        received.extend(page.records.iter().map(|r| r.record.clone()));
     }
     assert_eq!(received, records);
     println!(

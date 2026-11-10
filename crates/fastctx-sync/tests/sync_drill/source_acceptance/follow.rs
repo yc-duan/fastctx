@@ -45,8 +45,8 @@ async fn server(
     let service = Arc::new(Service::new(directory.clone()).with_sources(Arc::new(authority.clone())));
     Ok((db, blocks, authority, directory, service))
 }
-fn loopback(service: Arc<Service>) -> Loopback {
-    Loopback { service, peer: Peer { device: replica_device(), accounts: vec![account().id] } }
+fn loopback(service: Arc<Service>, budget: fastctx_sync::admission::ByteBudget) -> Loopback {
+    Loopback { service, budget, peer: Peer { device: replica_device(), accounts: vec![account().id] } }
 }
 async fn append_to_hub(authority: &SqliteAuthority, object: &ObjectKey, after: u64) -> Result<()> {
     let sequence = Sequence(after + 1);
@@ -118,9 +118,9 @@ async fn settle_follow(follower: &ReplicaFollower, upstream: &Loopback) -> Resul
 }
 pub(crate) fn child(root: &Path) -> Result<()> {
     tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build()?.block_on(async {
-        let (_, _, _, _, service) = server(&root.join("hub"), 70).await?;
+        let (_, hub_blocks, _, _, service) = server(&root.join("hub"), 70).await?;
         let (db, _blocks, _replica, follower, directory) = node_b(&root.join("replica"))?;
-        let upstream = loopback(service);
+        let upstream = loopback(service, hub_blocks.buffer_budget());
         discover(&follower, &directory, &upstream).await?;
         for _ in 0..32 {
             follower.step(&upstream, conversation(42).scope).await?;
@@ -216,7 +216,7 @@ pub(super) async fn run(root: &Path) -> Result<()> {
     super::super::super::scheduler::closed(&hub_dir.join("hub.sqlite3")).await?;
     kill_receiver(&root)?;
     let (hub_db, hub_blocks, authority, directory, service) = server(&hub_dir, 100).await?;
-    let upstream = loopback(service);
+    let upstream = loopback(service, hub_blocks.buffer_budget());
     let (db, blocks, replica, follower, discovered) = node_b(&replica_dir)?;
     let partial = replica.follow_scope(conversation(42).scope).await?.unwrap();
     assert_eq!(partial.cursor.through, Sequence(3));

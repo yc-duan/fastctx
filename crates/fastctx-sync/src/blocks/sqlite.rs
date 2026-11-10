@@ -52,6 +52,10 @@ pub struct SqliteBlocks {
     worker: OperationId,
 }
 impl SqliteBlocks {
+    /// Transport buffers share this store's existing runtime pool, not a second quota.
+    pub fn buffer_budget(&self) -> crate::admission::ByteBudget {
+        self.budget.shared()
+    }
     /// Service composition supplies an exclusive content root and its machine's
     /// buffer budget. All clones share file ownership, IO leases and admission.
     pub fn new(

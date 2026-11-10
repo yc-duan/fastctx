@@ -1,7 +1,7 @@
 //! A device learns the scopes its hub describes for it: it pages through
 //! discovery, verifies every description against the pinned hub key and
 //! installs it through the one scope entry.
-use super::Upstream;
+use super::{Received, Upstream};
 use crate::{
     cursor::ScopeCursor,
     proof::{HubSigningIdentity, ProofVerifier},
@@ -28,6 +28,7 @@ pub struct DiscoveredPage {
     pub installed: Vec<(ScopeOffer, Installed)>,
     pub directories: Vec<ScopeCursor>,
     pub next: Option<DiscoveryCursor>,
+    _received: Received<Message>,
 }
 
 pub struct DirectoryFollower {
@@ -48,19 +49,27 @@ impl DirectoryFollower {
         upstream: &dyn Upstream,
         cursor: Option<DiscoveryCursor>,
     ) -> Result<DiscoveredPage, Error> {
-        let request = ScopeDiscoveryRead {
-            cursor: cursor.clone(),
-            directories: Vec::new(),
-            max_items: 64,
-            max_bytes: 256 * 1024,
+        let mut max_items = 64;
+        let answer = loop {
+            let request = ScopeDiscoveryRead {
+                cursor: cursor.clone(),
+                directories: Vec::new(),
+                max_items,
+                max_bytes: 256 * 1024,
+            };
+            match upstream.exchange(Message::GetScopes { request }).await {
+                Err(Error::Busy) if max_items > 1 => {
+                    max_items /= 2;
+                }
+                result => break result?,
+            }
         };
-        let answer = upstream.exchange(Message::GetScopes { request }).await?;
-        if serde_json::to_vec(&answer).map_err(|e| Error::Invalid(e.to_string()))?.len()
+        if serde_json::to_vec(answer.value()).map_err(|e| Error::Invalid(e.to_string()))?.len()
             > fastctx_types::sync::PAGE_BYTES as usize
         {
             return Err(Error::Invalid("discovery exceeded its byte budget".into()));
         }
-        let Message::ScopesPage { page } = answer else {
+        let Message::ScopesPage { page } = answer.value() else {
             return Err(Error::Invalid("the hub answered discovery with another message".into()));
         };
         if page.entries.len() > 64
@@ -83,15 +92,20 @@ impl DirectoryFollower {
             return Err(Error::Invalid("discovery continuation made no ordered progress".into()));
         }
         let mut installed = Vec::new();
-        for offer in page.entries {
+        for offer in &page.entries {
             let verified =
                 scope::verify(&offer.cursor.scope, offer.binding.clone(), &self.identity, self.verifier.as_ref())?;
             if offer.cursor.acl_revision != verified.descriptor().acl_revision {
                 return Err(Error::Invalid("discovery cursor names another scope ACL".into()));
             }
-            installed.push((offer, self.scopes.install(&verified).await?));
+            installed.push((offer.clone(), self.scopes.install(&verified).await?));
         }
-        Ok(DiscoveredPage { installed, directories: page.directories, next: page.next })
+        Ok(DiscoveredPage {
+            installed,
+            directories: page.directories.clone(),
+            next: page.next.clone(),
+            _received: answer,
+        })
     }
 
     /// Pages through the hub's discovery once and installs every description.

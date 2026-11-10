@@ -10,7 +10,7 @@
 pub use super::identity::{MessageId, PartId, SessionId, TransferId};
 use super::{
     cursor::{BlockRange, ByteCount, Count, DurableAck, HoldingPeriod, Sequence},
-    identity::{Digest, ObjectKey, OperationId, ScopeKey},
+    identity::{Digest, ObjectKey, OperationId, ProducerEpoch, ScopeKey},
     manifest::{BlobId, ContentBlock, Encoding, ManifestRoot, Representation},
     transfer::{BlockFrame, KindVersion, Purpose},
 };
@@ -132,6 +132,14 @@ impl TransferPriority {
         }
     }
 }
+/// Why a device stages content before submitting its owning operation.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "cause", rename_all = "snake_case", deny_unknown_fields)]
+pub enum UploadCause {
+    Source { epoch: ProducerEpoch },
+    Mutation,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TransferRequest {
