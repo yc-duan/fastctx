@@ -12,98 +12,115 @@ use crate::Node;
 
 pub(crate) use crate::job_receipts::{confirmed, received, received_from, wait_taken};
 
+/// The hourly maintenance is a pass (`crate::passes`): made as the node
+/// starts and an hour after each one ends.
+const MAINTAINING: crate::passes::Pass = crate::passes::Pass {
+    name: "upkeep/hourly",
+    within: Duration::from_secs(50 * 60),
+    rests: Some(Duration::from_secs(60 * 60)),
+};
+
 pub(crate) fn start(node: &Arc<Node>) -> io::Result<()> {
     crate::claude::claim_cleanup::start(node);
+    crate::passes::register(node, MAINTAINING, |node: Arc<Node>| async move {
+        maintain(&node).await;
+        crate::passes::Left::Nothing
+    });
+    // What a finished job leaves is collected as it finishes, between passes.
     let node = node.clone();
     fastctx_platform::task::spawn(async move {
-        let mut schedule = tokio::time::interval(Duration::from_secs(60 * 60));
         loop {
-            let maintenance = tokio::select! {
-                _ = schedule.tick() => true,
-                () = node.job_files.changed.notified() => false,
-            };
-            let collecting = node.clone();
-            match fastctx_platform::task::spawn_blocking(move || {
-                recover_book(&collecting);
-                let immediate = collect_immediate(&collecting);
-                let retained = if maintenance {
-                    let obligations = crate::obligations::collect(&collecting);
-                    let retained = collect_scratch(&collecting);
-                    obligations.and(retained)
-                } else {
-                    Ok(())
-                };
-                immediate.and(retained)
-            })
-            .await
-            {
-                Ok(Ok(())) => {}
-                Ok(Err(error)) => node.log.line(format_args!("retiring completed jobs: {error}")),
-                Err(error) => node.log.line(format_args!("retiring completed jobs: {error}")),
-            }
-            if !maintenance {
-                continue;
-            }
-            let retiring = node.clone();
-            match fastctx_platform::task::spawn_blocking(move || {
-                let payloads = crate::record_payloads::maintain(&retiring.database, |scope, error| {
-                    retiring.log.line(format_args!("collecting conversation {scope} projections: {error}"))
-                })
-                .map_err(io::Error::other);
-                let maps = crate::records::maps::maintain(&retiring.database, |scope, error| {
-                    retiring.log.line(format_args!("collecting conversation {scope} map snapshots: {error}"))
-                })
-                .map_err(io::Error::other);
-                let requests = crate::claude::turn_facts::collect(&retiring.database, |scope, error| {
-                    retiring.log.line(format_args!("collecting conversation {scope} request observations: {error}"))
-                })
-                .map_err(io::Error::other);
-                let terminals = crate::delivery::terminals::collect(&retiring.database, |scope, error| {
-                    retiring.log.line(format_args!("collecting conversation {scope} staged terminal readers: {error}"))
-                })
-                .map_err(io::Error::other);
-                let books = crate::books::retire(&retiring);
-                let presence = crate::inbox::presence::collect(&retiring.database);
-                let claude = crate::claude::garbage::collect(&retiring.world);
-                let trust = crate::claude::garbage::untrust_departed(&retiring);
-                let purged = crate::activity_book::purge(&retiring);
-                let swept = crate::gather::sweep(&retiring.world);
-                // Each step is told on its own when it fails.
-                [
-                    ("collecting conversation projections", payloads),
-                    ("collecting conversation maps", maps),
-                    ("collecting staged terminal readers", terminals),
-                    ("collecting settled request observations", requests),
-                    ("collecting closed input memberships", presence),
-                    ("retiring the bookkeeping of removed conversations", books),
-                    ("collecting what Claude sessions left", claude),
-                    ("taking back Claude Code's trust of deleted conversations", trust),
-                    ("letting go of deleted conversations' activity", purged),
-                    ("sweeping earlier conversation directories", swept),
-                ]
-                .into_iter()
-                .filter_map(|(step, result)| result.err().map(|error| format!("{step}: {error}")))
-                .collect::<Vec<_>>()
-            })
-            .await
-            {
-                Ok(failures) => {
-                    for failure in failures {
-                        node.log.line(format_args!("{failure}"));
-                    }
-                }
-                Err(error) => node.log.line(format_args!("retiring bookkeeping: {error}")),
-            }
-            let collecting = node.clone();
-            match fastctx_platform::task::spawn_blocking(move || crate::program_collection::collect(&collecting)).await
-            {
-                Ok(Ok(())) => {}
-                Ok(Err(error)) => node.log.line(format_args!("collecting unused programs: {error:#}")),
-                Err(error) => node.log.line(format_args!("collecting unused programs: {error}")),
-            }
+            node.job_files.changed.notified().await;
+            collect(&node, false).await;
         }
     });
     Ok(())
+}
+
+/// Retires what completed jobs left; with `maintenance`, what only the
+/// hourly pass looks at too.
+async fn collect(node: &Arc<Node>, maintenance: bool) {
+    let collecting = node.clone();
+    match fastctx_platform::task::spawn_blocking(move || {
+        recover_book(&collecting);
+        let immediate = collect_immediate(&collecting);
+        let retained = if maintenance {
+            let obligations = crate::obligations::collect(&collecting);
+            let retained = collect_scratch(&collecting);
+            obligations.and(retained)
+        } else {
+            Ok(())
+        };
+        immediate.and(retained)
+    })
+    .await
+    {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => node.log.line(format_args!("retiring completed jobs: {error}")),
+        Err(error) => node.log.line(format_args!("retiring completed jobs: {error}")),
+    }
+}
+
+/// One hourly pass: every step is told on its own when it fails, and none
+/// holds back the others.
+async fn maintain(node: &Arc<Node>) {
+    collect(node, true).await;
+    let retiring = node.clone();
+    match fastctx_platform::task::spawn_blocking(move || {
+        let payloads = crate::record_payloads::maintain(&retiring.database, |scope, error| {
+            retiring.log.line(format_args!("collecting conversation {scope} projections: {error}"))
+        })
+        .map_err(io::Error::other);
+        let maps = crate::records::maps::maintain(&retiring.database, |scope, error| {
+            retiring.log.line(format_args!("collecting conversation {scope} map snapshots: {error}"))
+        })
+        .map_err(io::Error::other);
+        let requests = crate::claude::turn_facts::collect(&retiring.database, |scope, error| {
+            retiring.log.line(format_args!("collecting conversation {scope} request observations: {error}"))
+        })
+        .map_err(io::Error::other);
+        let terminals = crate::delivery::terminals::collect(&retiring.database, |scope, error| {
+            retiring.log.line(format_args!("collecting conversation {scope} staged terminal readers: {error}"))
+        })
+        .map_err(io::Error::other);
+        let books = crate::books::retire(&retiring);
+        let presence = crate::inbox::presence::collect(&retiring.database);
+        let claude = crate::claude::garbage::collect(&retiring.world);
+        let trust = crate::claude::garbage::untrust_departed(&retiring);
+        let purged = crate::activity_book::purge(&retiring);
+        let swept = crate::gather::sweep(&retiring.world);
+        // Each step is told on its own when it fails.
+        [
+            ("collecting conversation projections", payloads),
+            ("collecting conversation maps", maps),
+            ("collecting staged terminal readers", terminals),
+            ("collecting settled request observations", requests),
+            ("collecting closed input memberships", presence),
+            ("retiring the bookkeeping of removed conversations", books),
+            ("collecting what Claude sessions left", claude),
+            ("taking back Claude Code's trust of deleted conversations", trust),
+            ("letting go of deleted conversations' activity", purged),
+            ("sweeping earlier conversation directories", swept),
+        ]
+        .into_iter()
+        .filter_map(|(step, result)| result.err().map(|error| format!("{step}: {error}")))
+        .collect::<Vec<_>>()
+    })
+    .await
+    {
+        Ok(failures) => {
+            for failure in failures {
+                node.log.line(format_args!("{failure}"));
+            }
+        }
+        Err(error) => node.log.line(format_args!("retiring bookkeeping: {error}")),
+    }
+    let collecting = node.clone();
+    match fastctx_platform::task::spawn_blocking(move || crate::program_collection::collect(&collecting)).await {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => node.log.line(format_args!("collecting unused programs: {error:#}")),
+        Err(error) => node.log.line(format_args!("collecting unused programs: {error}")),
+    }
 }
 
 /// Recovery holds a job lease while replaying journals, without a shared lock.

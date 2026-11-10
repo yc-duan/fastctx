@@ -33,16 +33,14 @@ use crate::data::delete::Stop;
 pub(crate) struct Asks {
     /// Held while the kept asks are read and written.
     file: crate::ranked::Forgetting,
-    /// The sendings in a row that left asks to send: what paces the next.
-    left: std::sync::atomic::AtomicU32,
 }
 
-/// The kind of job that sends the kept asks to their hubs.
-const ASKING: &str = "forget/asks";
-/// The longest one sending of the kept asks may take.
-const ASKS_WITHIN: std::time::Duration = std::time::Duration::from_secs(10 * 60);
-/// How soon after a hub's view changed the asks are sent again, at most.
-const VIEWS_APART: std::time::Duration = std::time::Duration::from_millis(500);
+/// Sending the kept asks to their hubs is a pass (`crate::passes`), made
+/// when an ask is kept and when a hub's view changes.
+const ASKING: crate::passes::Pass =
+    crate::passes::Pass { name: "forget/asks", within: std::time::Duration::from_secs(10 * 60), rests: None };
+/// How long a hub's view is quiet before the asks are sent again.
+const VIEWS_SETTLE: std::time::Duration = std::time::Duration::from_millis(500);
 
 /// A deletion still to be asked of a hub.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -134,17 +132,9 @@ pub(crate) async fn ask(
     }
 }
 
-/// Asks for the kept asks to be sent, as a job (`fastctx_jobs`): one job
-/// however often it is asked. Asked while a sending waits to be tried
-/// again, that one is due now; asked while one runs, another follows it.
+/// Asks for the kept asks to be sent.
 pub(crate) fn wake(node: &Node) {
-    let job = fastctx_jobs::Job { kind: ASKING, key: "asks".into(), unit: "node".into(), payload: Vec::new() };
-    let (database, jobs) = (node.database.clone(), node.durable_jobs.clone());
-    fastctx_platform::task::spawn(async move {
-        if database.write_relaxed(128, move |db| fastctx_jobs::submit(db, &job)).await.is_ok() {
-            jobs.stir(ASKING);
-        }
-    });
+    crate::passes::ask(node, ASKING.name);
 }
 
 /// Recheck deleted originals after this conversation releases its inherited references.
@@ -246,37 +236,15 @@ pub(crate) async fn told(node: &Arc<Node>, hub: &HubId, forgetting: Forgetting) 
     Forgot::Done
 }
 
-/// Names what sends the kept asks, before the node's jobs start, and asks
-/// for a sending now and whenever a hub's view changes, as when a link
-/// connects. A new ask kept asks for one itself (`wake`).
+/// Names what sends the kept asks, before the node's jobs start: now, and
+/// whenever a hub's view changes, as when a link connects. A new ask kept
+/// asks for a sending itself (`wake`).
 pub(crate) fn start(node: &Arc<Node>) {
-    use fastctx_jobs::{Kind, Outcome, Taken};
-    let weak = Arc::downgrade(node);
-    let run = move |_: Taken| -> std::pin::Pin<Box<dyn std::future::Future<Output = Outcome> + Send>> {
-        let node = weak.upgrade();
-        Box::pin(async move {
-            let Some(node) = node else { return Outcome::Failed("the node is stopping".into()) };
-            let left = &node.forget_asks.left;
-            if send_kept(&node).await {
-                left.store(0, std::sync::atomic::Ordering::Release);
-                return Outcome::Done;
-            }
-            let failures = left.fetch_add(1, std::sync::atomic::Ordering::AcqRel).saturating_add(1);
-            Outcome::Again { after: fastctx_net::again::backoff(failures) }
-        })
-    };
-    node.durable_jobs.register(Kind { name: ASKING, at_once: 1, within: ASKS_WITHIN, tries: 5 }, Arc::new(run));
-    wake(node);
-    let weak = Arc::downgrade(node);
-    let mut views = node.views.subscribe();
-    fastctx_platform::task::spawn(async move {
-        while views.changed().await.is_ok() {
-            let Some(node) = weak.upgrade() else { return };
-            wake(&node);
-            drop(node);
-            tokio::time::sleep(VIEWS_APART).await;
-        }
+    use crate::passes::Left;
+    crate::passes::register(node, ASKING, |node: Arc<Node>| async move {
+        if send_kept(&node).await { Left::Nothing } else { Left::Work }
     });
+    crate::passes::follow(node, ASKING.name, node.views.subscribe(), VIEWS_SETTLE);
 }
 
 fn handing(node: &Arc<Node>) -> Result<crate::handoff::Busy, Failure> {

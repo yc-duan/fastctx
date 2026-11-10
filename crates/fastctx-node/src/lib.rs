@@ -121,6 +121,7 @@ mod on_steps;
 mod on_stop;
 mod outbox;
 mod own_collab;
+mod passes;
 mod pages;
 mod placement;
 mod plan;
@@ -373,7 +374,6 @@ pub(crate) struct Node {
     on_deliveries: on_delivery::Deliveries,
     received: received::Received,
     control_letters: control_letters::Receiving,
-    receipts_changed: tokio::sync::Notify,
     outbox: outbox::Outbox,
     delivery_work: delivery::work::Work,
     on_stopping: std::sync::Mutex<std::collections::HashSet<PathBuf>>,
@@ -900,7 +900,6 @@ pub async fn run_prepared(
                 on_deliveries: Default::default(),
                 received: Default::default(),
                 control_letters: Default::default(),
-                receipts_changed: Default::default(),
                 outbox: Default::default(),
                 delivery_work: Default::default(),
                 on_stopping: Default::default(),

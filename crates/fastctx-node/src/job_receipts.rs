@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::Node;
 mod forward;
+pub(crate) use forward::changed;
 mod graph;
 pub(crate) mod storage;
 use crate::records::items;
@@ -138,7 +139,7 @@ fn enqueue(node: &Node, sending: Sending) -> io::Result<()> {
     );
     let directory = node.world.owner(&node.names(), &sending.owner).book("job-deliveries");
     queue(&directory.join(format!("{key}.json")), sending)?;
-    node.receipts_changed.notify_one();
+    forward::changed(node);
     Ok(())
 }
 

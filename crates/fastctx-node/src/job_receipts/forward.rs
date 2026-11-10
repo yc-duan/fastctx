@@ -8,44 +8,44 @@ use fastctx_platform::task;
 use fastctx_types::{access::Written, remote::RemoteReply};
 use std::{io, path::Path, sync::Arc};
 
-/// Receipt forwarding has its own retry loop; artifact maintenance neither
-/// paces it nor waits behind a remote receipt.
+/// Forwarding receipts is a pass (`crate::passes`) of its own: artifact
+/// maintenance neither paces it nor waits behind a remote receipt. It is
+/// made when a receipt is kept or a way to another machine opens, and once
+/// an hour besides.
+const FORWARDING: crate::passes::Pass = crate::passes::Pass {
+    name: "receipts/forward",
+    within: std::time::Duration::from_secs(30 * 60),
+    rests: Some(std::time::Duration::from_secs(3600)),
+};
+
+/// What the last pass that failed said, so the log does not repeat it.
+static SAID: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
 pub(crate) fn start(node: &std::sync::Arc<Node>) {
-    let node = node.clone();
-    fastctx_platform::task::spawn(async move {
-        let mut again = crate::again::Again::default();
-        let mut ways = node.ways.subscribe();
-        let mut previous = None;
-        loop {
-            let changed = node.receipts_changed.notified();
-            tokio::pin!(changed);
-            changed.as_mut().enable();
-            ways.borrow_and_update();
-            let pending = match forward(&node).await {
-                Ok(pending) => {
-                    previous = None;
-                    pending
-                }
-                Err(error) => {
-                    let reason = error.to_string();
-                    if previous.as_ref() != Some(&reason) {
-                        node.log.line(format_args!("forwarding job receipts: {reason}"));
-                        previous = Some(reason);
-                    }
-                    true
-                }
-            };
-            if !pending {
-                again.reset();
+    use crate::passes::Left;
+    crate::passes::register(node, FORWARDING, |node: Arc<Node>| async move {
+        match forward(&node).await {
+            Ok(pending) => {
+                *SAID.lock().expect("never poisoned") = None;
+                if pending { Left::Work } else { Left::Nothing }
             }
-            let pause = if pending { again.next() } else { std::time::Duration::from_secs(3600) };
-            tokio::select! {
-                () = tokio::time::sleep(pause) => {}
-                () = &mut changed => {}
-                _ = ways.changed() => {}
+            Err(error) => {
+                let reason = error.to_string();
+                let mut said = SAID.lock().expect("never poisoned");
+                if said.as_ref() != Some(&reason) {
+                    node.log.line(format_args!("forwarding job receipts: {reason}"));
+                    *said = Some(reason);
+                }
+                Left::Work
             }
         }
     });
+    crate::passes::follow(node, FORWARDING.name, node.ways.subscribe(), std::time::Duration::ZERO);
+}
+
+/// A receipt was kept, or one could not be finished: asks for a pass.
+pub(crate) fn changed(node: &Node) {
+    crate::passes::ask(node, FORWARDING.name);
 }
 
 async fn retry(node: &Arc<Node>, path: &Path, reason: String) -> io::Result<()> {
@@ -58,7 +58,7 @@ async fn finish(node: &Arc<Node>, path: &Path, bytes: Vec<u8>, outcome: Outcome,
     task::spawn_blocking(move || {
         let done = obligations::finish_record(&node, &path, &bytes, outcome, &reason)?;
         if !done {
-            node.receipts_changed.notify_one();
+            changed(&node);
         }
         Ok(done)
     })
