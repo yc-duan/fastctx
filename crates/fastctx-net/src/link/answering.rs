@@ -349,7 +349,10 @@ async fn work(
     let kind = remote.kind();
     held.kind = Some(kind.clone());
     held.processing = fastctx_platform::call_timing::ResponseTime::start(contract.response);
-    let doing = crate::submission::scope(submission, inner.node.call(caller.clone(), remote, stream));
+    let doing = super::admission::held(
+        place.clone(),
+        crate::submission::scope(submission, inner.node.call(caller.clone(), remote, stream)),
+    );
     let doing: super::BoxFuture<RemoteResult> = match &held.processing {
         Some(processing) => Box::pin(processing.handling(doing)),
         None => Box::pin(doing),

@@ -33,6 +33,7 @@ fn rows_at(state: &State, waiting: &HashMap<tokio::task::Id, String>, now: tokio
                     Phase::Queued => "queued",
                     Phase::Running => "running",
                     Phase::Settling => "settling",
+                    Phase::Staying => "staying",
                 }
                 .into(),
                 seconds,
@@ -46,6 +47,7 @@ fn rows_at(state: &State, waiting: &HashMap<tokio::task::Id, String>, now: tokio
                         Phase::Queued => "waiting for admission",
                         Phase::Running => "answering",
                         Phase::Settling => "finishing after the caller left",
+                        Phase::Staying => "staying for work it submitted",
                     }
                     .into()
                 }),

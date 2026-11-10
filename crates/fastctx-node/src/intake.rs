@@ -111,6 +111,9 @@ enum Phase {
     Queued,
     Running,
     Settling,
+    /// Its work is submitted and done apart from it; it holds no place among
+    /// the calls of its kind, only what it holds in memory.
+    Staying,
 }
 
 static STATE: LazyLock<Mutex<State>> = LazyLock::new(Default::default);
@@ -244,6 +247,18 @@ impl Permit for Place {
             }
         }
         state.calls.insert(self.id, entry);
+        state.pump(pool);
+    }
+    fn stays(&self) {
+        let mut state = state();
+        let Some(entry) = state.calls.get_mut(&self.id) else { return };
+        if entry.phase != Phase::Running {
+            return;
+        }
+        entry.phase = Phase::Staying;
+        let (pool, account, subject) = (entry.request.pool, entry.account.clone(), entry.subject.clone());
+        state.pools.get_mut(&pool).expect("pool").release(&account);
+        decrease(&mut state.running_subjects, (pool, subject));
         state.pump(pool);
     }
 }

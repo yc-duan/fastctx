@@ -149,8 +149,9 @@ pub(crate) async fn submit<C: Serialize, T: DeserializeOwned>(
         node.durable_jobs.stir(kind);
     }
     // The call has done what a submission does; the rest is its caller
-    // staying for the outcome.
+    // staying for the outcome, which takes no place from the calls after it.
     fastctx_platform::call_timing::recorded();
+    fastctx_net::link::admission::stays();
     let stays = match &caller {
         Some(submission) => Duration::from_millis(u64::from(submission.waits_ms)).min(family.stays),
         None => family.stays,

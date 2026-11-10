@@ -88,6 +88,26 @@ pub trait Permit: Send + Sync {
     fn started(&self) {}
     /// Returns processing capacity without abandoning work already begun.
     fn settling(&self) {}
+    /// Returns processing capacity for good: the call has handed its work
+    /// to what does it apart from the call, and only stays for the outcome.
+    fn stays(&self) {}
+}
+
+tokio::task_local! {
+    static PLACE: Admitted;
+}
+
+/// Runs `answering` as the call that holds `place`.
+pub(super) async fn held<F: std::future::Future>(place: Admitted, answering: F) -> F::Output {
+    PLACE.scope(place, answering).await
+}
+
+/// Says that the call the running task answers has submitted its work and
+/// from here on only stays for what comes of it: the place it took among
+/// the calls of its kind goes to the next one. What it holds in memory stays
+/// counted until it answers. It says nothing outside an admitted call.
+pub fn stays() {
+    let _ = PLACE.try_with(|place| place.stays());
 }
 
 /// Compatibility for handlers that do not schedule incoming work.
