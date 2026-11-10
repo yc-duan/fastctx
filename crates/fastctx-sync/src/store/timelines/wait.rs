@@ -28,6 +28,9 @@ impl SqliteTimelines {
                     if let Some(notice) = page.into_iter().find(|notice| notice.object == conversation.object) {
                         break TimelineWait::Moved { local: notice.local };
                     }
+                    // Woken for something else: the scope's own record may have
+                    // moved, which ends the wait now rather than at its limit.
+                    self.authorize(&context, &conversation)?;
                     if tokio::time::Instant::now() >= until {
                         break TimelineWait::Unchanged;
                     }

@@ -109,7 +109,8 @@ impl SqliteReplica {
             return Err(Error::Invalid("changes page contains unreferenced acceptance evidence".into()));
         }
         let blocks = self.blocks.clone();
-        self.blocks.database().write(bytes.len()*4+16384,move |db| {
+        let deleted = page.entries.iter().any(|entry| matches!(entry, FeedEntry::Changed { change, .. } if change.head.lifecycle == crate::catalog::Lifecycle::Deleted));
+        let committed = self.blocks.database().write(bytes.len()*4+16384,move |db| {
             let _role=boundary::enter_typed_write(Role::Replica);
             rows::current(db,&context.holding)?;
             let period=encode(&context.holding)?;
@@ -132,7 +133,12 @@ impl SqliteReplica {
             db.execute("UPDATE sync_replica_scopes SET cursor=?3,local=?4 WHERE hub=?1 AND scope=?2",params![stored.scope.hub.to_string(),stored.scope.scope.as_str(),encode(&page.through)?,local.0.to_be_bytes().as_slice()])?;
             db.execute("INSERT INTO sync_replica_pages(hub,scope,holding,page,local,cursor,generation) VALUES(?1,?2,?3,?4,?5,?6,?7)",params![stored.scope.hub.to_string(),stored.scope.scope.as_str(),period,digest.as_str(),local.0.to_be_bytes().as_slice(),encode(&page.through)?,generation.0.to_be_bytes().as_slice()])?;
             Ok(ReplicaCommit{local,cursor:Some(page.through),next:None})
-        }).await.map_err(|e|sql::error(e,self.blocks.worker().clone()))
+        }).await.map_err(|e|sql::error(e,self.blocks.worker().clone()))?;
+        // A tombstone ends the reading of whoever waits on that object.
+        if deleted {
+            self.blocks.moved().notify_waiters();
+        }
+        Ok(committed)
     }
 }
 fn validate(context: &ReplicaContext, page: &ChangesPage) -> Result<(), Error> {

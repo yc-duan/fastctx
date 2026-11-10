@@ -52,6 +52,7 @@ pub struct SqliteBlocks {
     leases: Arc<Leases>,
     budget: Arc<Budget>,
     worker: OperationId,
+    moved: Arc<tokio::sync::Notify>,
 }
 impl SqliteBlocks {
     /// Transport buffers share this store's existing runtime pool, not a second quota.
@@ -77,6 +78,7 @@ impl SqliteBlocks {
             leases: Arc::new(Leases::default()),
             budget,
             worker,
+            moved: Arc::new(tokio::sync::Notify::new()),
         })
     }
     /// The service calls this after committing the scope's invalidation. Cleanup
@@ -112,6 +114,12 @@ impl SqliteBlocks {
     }
     pub(crate) fn worker(&self) -> &OperationId {
         &self.worker
+    }
+    /// Wakes those waiting on what this store has installed: a timeline's head,
+    /// a scope's fence, an object's tombstone. The rows are the record; a wake
+    /// only shortens the wait, and a waiter reads them again on each one.
+    pub(crate) fn moved(&self) -> &Arc<tokio::sync::Notify> {
+        &self.moved
     }
     /// Performs one bounded unit of a leased manifest task. The caller persists
     /// the returned outcome with the common Scheduler before claiming more work.

@@ -1637,10 +1637,11 @@ impl Reply {
                 crate::timeline_reads::TimelineReply::Read { .. }
                 | crate::timeline_reads::TimelineReply::Item { .. }
                 | crate::timeline_reads::TimelineReply::Moved { .. }
-                | crate::timeline_reads::TimelineReply::Unchanged
+                | crate::timeline_reads::TimelineReply::Unchanged { .. }
                 | crate::timeline_reads::TimelineReply::Changes { .. }
                 | crate::timeline_reads::TimelineReply::Content { .. }
                 | crate::timeline_reads::TimelineReply::Released
+                | crate::timeline_reads::TimelineReply::Closed { .. }
                 | crate::timeline_reads::TimelineReply::Unavailable,
             ) => Some(Purpose::AssetSync),
         }

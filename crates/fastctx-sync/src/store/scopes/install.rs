@@ -40,14 +40,19 @@ impl SqliteScopes {
         Box::pin(async move {
             let origin = serde_json::to_vec(&Origin::Directory { proof: Box::new(proof) })
                 .map_err(|error| Error::Invalid(error.to_string()))?;
-            self.blocks
+            let installed = self
+                .blocks
                 .database()
                 .write(16 * 1024 + origin.len(), move |db| {
                     let _boundary = boundary::enter_typed_write(Role::Scopes);
                     install(db, &descriptor, &origin)
                 })
                 .await
-                .map_err(|error| sql::error(error, self.blocks.worker().clone()))
+                .map_err(|error| sql::error(error, self.blocks.worker().clone()))?;
+            if !matches!(installed, Installed::Unchanged(_)) {
+                self.blocks.moved().notify_waiters();
+            }
+            Ok(installed)
         })
     }
 }

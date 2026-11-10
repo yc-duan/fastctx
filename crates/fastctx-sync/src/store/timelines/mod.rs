@@ -11,6 +11,7 @@ mod notices;
 mod pages;
 mod reader;
 mod rebuild;
+mod standing;
 mod state;
 mod stream;
 mod wait;
@@ -26,7 +27,8 @@ use std::sync::Arc;
 use tokio::sync::Notify;
 
 /// Installer and readers of one node share a handle, so an installation wakes
-/// the subscriptions waiting on it.
+/// the subscriptions waiting on it; so does a change to a scope's own record,
+/// through the store's wake.
 #[derive(Clone)]
 pub struct SqliteTimelines {
     blocks: SqliteBlocks,
@@ -35,7 +37,8 @@ pub struct SqliteTimelines {
 impl SqliteTimelines {
     /// Shares the block store's database, holder and content budget.
     pub fn new(blocks: SqliteBlocks) -> Self {
-        Self { blocks, wake: Arc::new(Notify::new()) }
+        let wake = blocks.moved().clone();
+        Self { blocks, wake }
     }
     /// One bounded unit of a leased `sync.projection` task for `derived.timeline`.
     /// The caller persists the outcome with the common Scheduler.

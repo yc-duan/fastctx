@@ -14,6 +14,23 @@ mod tree;
 pub mod update;
 
 pub trait TimelineReader: Send + Sync {
+    /// What the installed records say of `conversation`'s scope to `principal`:
+    /// the holding period its reads are answered under, and the recorded fact
+    /// that ends them, if one does. None when no record of the scope is
+    /// installed on this device.
+    fn standing(
+        &self,
+        principal: crate::store::access::Principal,
+        conversation: crate::identity::ObjectKey,
+    ) -> FutureResult<'_, Option<ScopeStanding>>;
+    /// Waits, at most thirty seconds, for the records to say something other
+    /// than `known`, and answers what they say then.
+    fn standing_beyond(
+        &self,
+        principal: crate::store::access::Principal,
+        conversation: crate::identity::ObjectKey,
+        known: ScopeStanding,
+    ) -> FutureResult<'_, Option<ScopeStanding>>;
     fn stream(&self, context: AccessContext, request: StreamRead) -> FutureResult<'_, StreamPage>;
     /// Registers a durable root lease for a fresh fence. A stale lease returns
     /// ReanchorNeeded; absent local projection state returns Pending.

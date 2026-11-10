@@ -29,11 +29,14 @@ impl SqliteScopes {
     /// not overwrite a newer fence. New scopes still need their origin installed.
     pub fn advance(&self, scope: ScopeKey, expected: ScopeState, next: ScopeState) -> FutureResult<'_, ScopeState> {
         Box::pin(async move {
-            self.blocks
+            let advanced = self
+                .blocks
                 .database()
                 .write(16 * 1024, move |db| super::advance_in(db, &scope, expected, next))
                 .await
-                .map_err(|error| sql::error(error, self.blocks.worker().clone()))
+                .map_err(|error| sql::error(error, self.blocks.worker().clone()))?;
+            self.blocks.moved().notify_waiters();
+            Ok(advanced)
         })
     }
 }

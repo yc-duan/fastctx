@@ -30,6 +30,21 @@ use fastctx_types::sync::conversation_timeline::KIND;
 pub(super) const READ_BUDGET: Budget = Budget { work_bytes: 16 * 1024 * 1024, max_pages: 256, max_changes: 0 };
 
 impl TimelineReader for SqliteTimelines {
+    fn standing(
+        &self,
+        principal: crate::store::access::Principal,
+        conversation: ObjectKey,
+    ) -> FutureResult<'_, Option<crate::timeline::ScopeStanding>> {
+        Box::pin(self.read_standing(principal, conversation))
+    }
+    fn standing_beyond(
+        &self,
+        principal: crate::store::access::Principal,
+        conversation: ObjectKey,
+        known: crate::timeline::ScopeStanding,
+    ) -> FutureResult<'_, Option<crate::timeline::ScopeStanding>> {
+        Box::pin(self.wait_standing(principal, conversation, known))
+    }
     fn wait(
         &self,
         context: AccessContext,
@@ -81,9 +96,13 @@ impl SqliteTimelines {
             .database()
             .read_now(|db| crate::store::scopes::current(db, &context.scope))
             .map_err(|error| sql::error(error, self.blocks.worker().clone()))?;
-        let Some(current) = current.filter(|current| current.enabled) else {
-            return Err(Error::Revoked);
+        // A scope with no row here is not known to have ended.
+        let Some(current) = current else {
+            return Err(Error::Unavailable("no record of the scope is installed here".into()));
         };
+        if !current.enabled {
+            return Err(Error::Revoked);
+        }
         if current.acl_revision != context.observed_acl {
             return Err(Error::Busy);
         }
@@ -125,8 +144,12 @@ impl SqliteTimelines {
 
     /// Ends the snapshot hold behind a fence once its reader is done with it.
     /// Only the exact fence releases its hold; a stale one is already gone.
+    /// Giving a hold back asks for no right to read: a reader whose reading
+    /// the scope's record has since ended still returns what it was given.
     pub async fn release(&self, context: AccessContext, fence: TimelineFence) -> Result<(), Error> {
-        self.authorize_principal(&context, &fence.conversation)?;
+        if context.scope != fence.conversation.scope {
+            return Err(Error::Denied("the reader's scope differs from the conversation's".into()));
+        }
         if !self.held(&fence).await? {
             return Ok(());
         }

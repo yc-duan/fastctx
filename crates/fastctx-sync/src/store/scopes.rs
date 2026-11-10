@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 
 mod advance;
 mod description;
-pub(crate) use description::directory_description;
+pub(crate) use description::{directory_description, lifecycle};
 mod install;
 pub use advance::ScopeState;
 pub(crate) use advance::{advance as advance_in, current};
