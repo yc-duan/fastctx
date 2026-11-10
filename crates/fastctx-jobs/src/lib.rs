@@ -11,9 +11,11 @@
 //! Jobs are not answers. What a job did is in the state it changed, which
 //! whoever asked reads or is told of.
 
+mod operations;
 mod run;
 mod table;
 
+pub use operations::{Operation, RESULT_BYTES, Standing, accept, settle, standing};
 pub use table::{KEY_BYTES, PAYLOAD_BYTES, SCHEMA, forget, submit};
 
 use fastctx_storage::Database;
@@ -74,6 +76,8 @@ pub struct Jobs {
     database: Database,
     kinds: Mutex<HashMap<&'static str, Arc<Registered>>>,
     started: AtomicBool,
+    /// The operations someone waits for the settling of.
+    waited: Mutex<HashMap<Operation, tokio::sync::watch::Sender<u64>>>,
 }
 
 struct Registered {
@@ -88,7 +92,7 @@ struct Registered {
 impl Jobs {
     /// The jobs kept in `database`, whose schema includes `SCHEMA`.
     pub fn new(database: Database) -> Arc<Self> {
-        Arc::new(Self { database, kinds: Mutex::default(), started: AtomicBool::new(false) })
+        Arc::new(Self { database, kinds: Mutex::default(), started: AtomicBool::new(false), waited: Mutex::default() })
     }
 
     /// Names what runs a kind's jobs. Every kind is registered before `start`.

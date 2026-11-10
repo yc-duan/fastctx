@@ -5,7 +5,7 @@
 //!
 //! jobs_drill --root ABSOLUTE_DIRECTORY_THAT_DOES_NOT_EXIST
 
-use fastctx_jobs::{Job, Jobs, Kind, Outcome, Run, Taken, submit};
+use fastctx_jobs::{Job, Jobs, Kind, Operation, Outcome, Run, Standing, Taken, accept, settle, submit};
 use fastctx_storage::Database;
 use fastctx_storage::rusqlite::params;
 use std::collections::HashMap;
@@ -114,6 +114,28 @@ async fn drill(database: Database) -> Outcome_<()> {
         Box::pin(async { Outcome::Failed("it cannot be done".into()) })
     });
     jobs.register(Kind { name: "fail", at_once: 1, within: Duration::from_secs(5), tries: 3 }, fail);
+
+    let operating = Arc::new(tokio::sync::Semaphore::new(0));
+    let operated = Arc::new(AtomicUsize::new(0));
+    let (opening, counted, settling) = (operating.clone(), operated.clone(), jobs.clone());
+    let settles = database.clone();
+    let operate: Run = Arc::new(move |taken: Taken| {
+        let (opening, counted, jobs, database) = (opening.clone(), counted.clone(), settling.clone(), settles.clone());
+        Box::pin(async move {
+            opening.acquire().await.expect("the gate stays open").forget();
+            counted.fetch_add(1, Ordering::AcqRel);
+            let operation = Operation { kind: "open", unit: taken.unit, id: taken.key };
+            let settled = operation.clone();
+            let wrote = database
+                .write(256, move |db| {
+                    settle(db, &settled, &Standing::Done(b"opened".to_vec()), Duration::from_secs(3600))
+                })
+                .await;
+            jobs.told(&operation);
+            if wrote.is_ok() { Outcome::Done } else { Outcome::Failed("its settling was not written".into()) }
+        })
+    });
+    jobs.register(Kind { name: "operate", at_once: 1, within: Duration::from_secs(30), tries: 3 }, operate);
 
     let slow: Run = Arc::new(|_| {
         Box::pin(async {
@@ -231,6 +253,44 @@ async fn drill(database: Database) -> Outcome_<()> {
             return Err("a job set aside did not run when asked for again".into());
         }
         tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+
+    // An operation is accepted once however often it is asked for, and
+    // whoever waits for it learns what it came to when its job settles it.
+    let operation = Operation { kind: "open", unit: "unit".into(), id: "asked-once".into() };
+    for asked in 0..3 {
+        let (operation, job) = (operation.clone(), job("operate", "asked-once", "unit", b""));
+        let known = database
+            .write(256, move |db| {
+                let known = accept(db, &operation)?;
+                if known.is_none() {
+                    submit(db, &job)?;
+                }
+                Ok(known)
+            })
+            .await?;
+        if (asked == 0) != known.is_none() {
+            return Err(format!("asked {asked} times, an operation stood as {known:?}").into());
+        }
+    }
+    let early = jobs.settled(&operation, Duration::from_millis(50)).await?;
+    if early != Some(Standing::Accepted) || operated.load(Ordering::Acquire) != 0 {
+        return Err(format!("an operation not done yet stood as {early:?}").into());
+    }
+    let waiting = {
+        let (jobs, operation) = (jobs.clone(), operation.clone());
+        tokio::spawn(async move { jobs.settled(&operation, Duration::from_secs(10)).await })
+    };
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let began = Instant::now();
+    operating.add_permits(1);
+    jobs.stir("operate");
+    let told = waiting.await??;
+    if told != Some(Standing::Done(b"opened".to_vec())) || began.elapsed() > Duration::from_secs(5) {
+        return Err(format!("whoever waited for an operation was told {told:?} after {:?}", began.elapsed()).into());
+    }
+    if operated.load(Ordering::Acquire) != 1 {
+        return Err("an operation asked for three times was not done once".into());
     }
 
     // A run that overstays is dropped and counts as a failure.
