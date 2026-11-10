@@ -155,6 +155,9 @@ impl TryFrom<Out> for TextRef {
     }
 }
 
+mod chunks;
+pub use chunks::TextChunk;
+
 pub trait Text: AsRef<Branch> + Sized {
     /// Returns a number of characters visible in a current text data structure.
     fn len<T: ReadTxn>(&self, _txn: &T) -> u32 {
