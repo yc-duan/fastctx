@@ -14,3 +14,4 @@ pub mod jsonl;
 pub mod lexical;
 pub mod reconcile;
 pub mod reports;
+pub mod semantic;
