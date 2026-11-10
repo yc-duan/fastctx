@@ -1,6 +1,7 @@
 // What the frame around every page says: the sidebar, the new conversation,
 // the settings. In the user's words (`world-gui.md`, 用词).
 
+import { enText, zhText } from "../conversation/text-words";
 import type { FolderPickerWords } from "./folder-picker";
 import { dollars, underCent } from "../world/money";
 import { agentName } from "../world/names";
@@ -1117,6 +1118,7 @@ export const zhComposer: ComposerWords = {
     nowhere: "项目未设置这台机器上的文件位置",
   },
   attach: {
+    text: zhText,
     attach: "添加文件",
     photo: "拍照",
     drop: () => "拖放文件到这里",
@@ -1333,6 +1335,7 @@ export const enComposer: ComposerWords = {
     nowhere: "This project has no file locations on that machine",
   },
   attach: {
+    text: enText,
     attach: "Add files",
     photo: "Take a photo",
     drop: () => "Drop files here",

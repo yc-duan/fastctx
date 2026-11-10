@@ -9,6 +9,7 @@ export interface AttachmentRow {
   preview: string | null;
   state: "waiting" | "sending" | "ready" | "failed";
   fact: string;
+  open?: (() => void) | undefined;
   why?: string | null;
   retry?: string | null;
   remove: string;
@@ -19,6 +20,7 @@ interface Card {
   element: HTMLLIElement;
   picture: HTMLElement;
   name: HTMLElement;
+  text: HTMLElement;
   fact: HTMLElement;
   retry: HTMLButtonElement;
   remove: HTMLButtonElement;
@@ -60,8 +62,9 @@ export class AttachmentRows {
       if (event.animationName === "attach-in") element.classList.remove("fresh");
     });
     const picture = document.createElement("span");
-    const text = document.createElement("span");
-    text.className = "attach-text";
+    const text = document.createElement(row.open ? "button" : "span");
+    if (text instanceof HTMLButtonElement) text.type = "button";
+    text.className = row.open ? "attach-text attach-open" : "attach-text";
     const name = document.createElement("span");
     name.className = "attach-name";
     const fact = document.createElement("span");
@@ -80,7 +83,7 @@ export class AttachmentRows {
     const progress = document.createElement("span");
     progress.className = "attach-progress";
     element.append(picture, text, retry, remove, progress);
-    return { element, picture, name, fact, retry, remove, progress, preview: null, image: !row.image };
+    return { element, picture, name, text, fact, retry, remove, progress, preview: null, image: !row.image };
   }
 
   private update(card: Card, row: AttachmentRow): void {
@@ -97,6 +100,15 @@ export class AttachmentRows {
       card.preview = row.preview;
       card.image = row.image;
     }
+    if (!!row.open !== (card.text instanceof HTMLButtonElement)) {
+      const next = document.createElement(row.open ? "button" : "span");
+      if (next instanceof HTMLButtonElement) next.type = "button";
+      next.className = row.open ? "attach-text attach-open" : "attach-text";
+      next.append(card.name, card.fact);
+      card.text.replaceWith(next);
+      card.text = next;
+    }
+    card.text.onclick = row.open ?? null;
     card.name.textContent = row.name;
     card.name.title = row.name;
     card.fact.textContent = row.fact;

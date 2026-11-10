@@ -16,6 +16,7 @@ import "./design/breath.css";
 import "./design/base.css";
 import "./design/highlight.css";
 import "./conversation/conversation.css";
+import "./conversation/text-attachment.css";
 import "./conversation/turns.css";
 import "./conversation/model-panel.css";
 import "./conversation/agents.css";

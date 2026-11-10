@@ -66,7 +66,7 @@ export function bindComposer(
     }
     shown = next.characters;
     epoch = next.state.epoch;
-    textarea.readOnly = originalReadOnly || !next.state.targetAvailable || next.state.sending || next.state.closing;
+    textarea.readOnly = originalReadOnly || !next.state.targetAvailable || next.state.sending || next.state.closing || next.state.recovering;
     applying = false;
   };
 
@@ -129,7 +129,7 @@ export function bindComposer(
     ending = setTimeout(finishComposition, 0);
   };
   const beforeInput = (event: InputEvent): void => {
-    if (applying || composition) return;
+    if (applying || composition || event.defaultPrevented || document.view.state.recovering) return;
     before = capture(event.inputType);
     document.setComposing(true);
     const captured = before;
@@ -147,6 +147,7 @@ export function bindComposer(
   };
   const input = (event: Event): void => {
     if (applying || composition) return;
+    if (document.view.state.recovering) { textarea.value = textareaText(document.view.characters); return; }
     const inferred = event instanceof InputEvent && !before ? completedInput(textareaText(shown), textarea.value, selection(), event.inputType, event.data) : undefined;
     const useHint = before !== undefined || inferred !== undefined;
     const base = before ?? { ...capture(""), ...(inferred ? { hint: inferred } : {}) };

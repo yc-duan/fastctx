@@ -8,6 +8,7 @@ import type { ComposerJournal, Seal } from "./document";
 import { composerJournalStore } from "./journal";
 import type { ComposerJournalStore } from "./journal";
 import { composerWriter } from "./writer";
+import { recoverable } from "./errors";
 import { ANSWER_WITHIN, after, unanswered } from "../../world/again";
 
 export interface ComposerOperation {
@@ -138,6 +139,7 @@ export class ComposerSession {
   private readonly documents = new Map<ComposerDocument, DocumentEntry>();
   private readonly editors = new Set<ComposerDocument>();
   private readonly operations = new Map<string, Operation>();
+  private readonly files = new Map<string, File>();
   private readonly listeners = new Set<(state: ComposerSessionState) => void>();
   private opening: Promise<void> | undefined;
   private closing: Promise<void> | undefined;
@@ -329,6 +331,9 @@ export class ComposerSession {
   private receive(snapshot: ComposerSnapshot, reset = false): void {
     if (!reset && snapshot.revision <= this.snapshot.revision) return;
     this.snapshot = snapshot;
+    const held = new Set([snapshot.draft, ...snapshot.queue.map((item) => item.draft), ...snapshot.unobserved.map((item) => item.draft)]
+      .flatMap((draft) => draft.attachments.map((file) => file.id)));
+    for (const id of this.files.keys()) if (!held.has(id)) this.files.delete(id);
     for (const document of this.documents.keys()) document.receive(snapshot, reset);
     this.emit();
   }
@@ -346,9 +351,13 @@ export class ComposerSession {
           // The document sends it again by itself (`ComposerDocument`).
           if (unanswered(error)) throw error;
           const failure = errorOf(error);
-          if (["this draft was already sent; keep your local edit and apply it to the new epoch", "that queued message no longer exists", "that queued message is being delivered"].includes(failure.message)) {
-            const updated = await this.transport.read();
-            this.receive(updated.composer);
+          if (recoverable(failure) || ["this draft was already sent; keep your local edit and apply it to the new epoch", "that queued message no longer exists", "that queued message is being delivered"].includes(failure.message)) {
+            try {
+              const updated = await this.transport.read();
+              this.receive(updated.composer);
+            } catch (error) {
+              if (!recoverable(failure)) throw error;
+            }
           }
           throw failure;
         }
@@ -637,8 +646,31 @@ export class ComposerSession {
     });
   }
 
+  /** Discards refused edits only after the caller has saved the entire visible text.
+   * The input stays frozen until the outbox deletion has committed. */
+  async recoverText(document: ComposerDocument, preserve: (text: string) => Promise<void>): Promise<void> {
+    this.assertOpen();
+    const entry = this.documents.get(document);
+    if (!entry) throw new Error("the document belongs to a different composer");
+    const text = document.beginRecovery();
+    if (text === null) return;
+    try {
+      await preserve(text);
+      // Closing hands this outbox to a later writer. A late upload or copy
+      // must never delete that writer's newer edits (2026-11-09).
+      if (this.closed || this.closing) return;
+      document.discardPending();
+      await this.save(entry);
+    } finally { if (!this.closed && !this.closing) document.finishRecovery(); }
+  }
+
+  /** Bytes still held by this page, while their attachment belongs to a draft. */
+  getFile(id: string): File | undefined { return this.files.get(id); }
+
   async attachFile(file: File, document = this.draft): Promise<ComposerAttachmentAdded> {
-    return this.upload(document, (scope) => this.transport.attachFile(scope, file));
+    const added = await this.upload(document, (scope) => this.transport.attachFile(scope, file));
+    if (file.type.startsWith("text/plain")) { this.files.set(added.attachment.id, file); this.emit(); }
+    return added;
   }
 
   async attachPath(path: string, sent: (bytes: number) => void = () => {}, document = this.draft): Promise<ComposerAttachmentAdded> {
@@ -792,7 +824,7 @@ export class ComposerSession {
       const watching = this.watching;
       this.watching = undefined;
       try { if (watching) await this.transport.unwatch(watching.id); }
-      finally { if (this.closed) { this.releaseWriter(); this.listeners.clear(); } }
+      finally { if (this.closed) { this.releaseWriter(); this.listeners.clear(); this.files.clear(); } }
     }
   }
 

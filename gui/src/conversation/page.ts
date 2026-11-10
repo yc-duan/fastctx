@@ -57,6 +57,11 @@ import { DraftFit } from "./fit-draft";
 import { Popover } from "./popover";
 import { Steady } from "../app/steady";
 import { composing } from "../typing";
+import { limitComposerInput } from "./composer/limit";
+import { missingCharacter, recoverable } from "./composer/errors";
+import { textareaText } from "./composer/characters";
+import { attachText, copyRejectedText, showTextNotice } from "./text-attachment";
+import { enText, zhText } from "./text-words";
 
 /** How many events the page holds at most, and how many its latest part
  *  holds before what comes before its newest turns is let go, down to how
@@ -296,6 +301,7 @@ export class ConversationPage {
   /** The latest `@` question; an answer to an earlier one is not shown. */
   private mentionAsked = 0;
   private note: HTMLElement;
+  private readonly textNote: HTMLElement;
   /** What the note says on hover, worked out when the pointer comes to it,
    *  for a line that says how long something has been so. */
   private noteDetail: (() => string) | null = null;
@@ -341,6 +347,7 @@ export class ConversationPage {
           <div class="composer-confirm" hidden></div>
           <div class="composer-tray"></div>
           <div class="composer-field"><span class="composer-picked" hidden></span><textarea rows="1" enterkeyhint="send" placeholder="${escape(words.sendPlaceholder(someone.agent))}" aria-label="${escape(words.sendPlaceholder(someone.agent))}"></textarea></div>
+          <p class="composer-text-note" role="status" hidden></p>
           <div class="composer-row">
             <div class="composer-tools"><button class="icon-button composer-attach" type="button" hidden></button><input class="composer-pick" type="file" multiple hidden><input class="composer-shot" type="file" accept="image/*" capture="environment" hidden><button class="composer-chip" type="button" hidden></button><button class="composer-jobs" type="button" hidden></button></div>
             <span class="composer-note" aria-live="polite"></span>
@@ -439,6 +446,7 @@ export class ConversationPage {
     this.fitter = new DraftFit(this.input);
     this.action = this.element.querySelector<HTMLButtonElement>(".composer-action")!;
     this.note = this.element.querySelector<HTMLElement>(".composer-note")!;
+    this.textNote = this.element.querySelector<HTMLElement>(".composer-text-note")!;
     this.note.addEventListener("pointerover", () => {
       if (this.noteDetail) this.note.title = this.noteDetail();
     });
@@ -612,6 +620,11 @@ export class ConversationPage {
       event.preventDefault();
       this.submit();
     });
+    this.unlimit = limitComposerInput(this.input, (text, typing) => {
+      const words = this.options.words.english ? enText : zhText;
+      if (typing) showTextNotice(this.textNote, words.limit);
+      else void attachText(text, words, (file) => this.attachTextFile(file), this.textNote).catch(() => {});
+    }, () => this.session ? textareaText(this.session.draft.view.characters) : undefined);
     this.input.addEventListener("input", () => {
       if (this.hinting) {
         this.hinting = false;
@@ -1031,6 +1044,7 @@ export class ConversationPage {
     this.left = true;
     document.removeEventListener("keydown", this.findKey);
     this.stopDrops?.();
+    this.unlimit();
     this.unbindShared?.();
     this.fileLinks?.release();
     this.pictures?.release();
@@ -1043,6 +1057,7 @@ export class ConversationPage {
   /** The node's shared input, once open. */
   private session: ComposerSession | null = null;
   private sharedState: ComposerSessionState | null = null;
+  private readonly unlimit: () => void;
   private unbindShared: (() => void) | null = null;
   private nodeQueue: NodeQueue | null = null;
   private controlQueue: ControlQueue | null = null;
@@ -1053,6 +1068,8 @@ export class ConversationPage {
   private offersAsking: Promise<void> | null = null;
   private offersWanted: Promise<void> | null = null;
   private nodeTray: NodeTray | null = null;
+  private readonly rescued = new WeakSet<import("./composer").ComposerDocument>();
+  private readonly reconciled = new WeakMap<import("./composer").ComposerDocument, number>();
   /** Words sent straight on from here that the agent has not heard yet. */
   private straight = 0;
 
@@ -1107,7 +1124,7 @@ export class ConversationPage {
         this.onTheirWay.delete(id);
         this.update();
       });
-    });
+    }, this.options.words.english, this.textNote, (file) => this.openTextAttachment(file));
     this.queue.element.replaceWith(this.nodeQueue.element);
     // From now on the commands the node holds stand among the words.
     if (this.options.controls) {
@@ -1117,13 +1134,35 @@ export class ConversationPage {
       this.syncControls();
     }
     if (this.options.attach && this.tray) {
-      this.nodeTray = new NodeTray(this.options.attach.words, session, session.draft, say, assistantFiles, () => this.drawAction());
+      this.nodeTray = new NodeTray(this.options.attach.words, session, session.draft, say, assistantFiles, () => this.drawAction(), (file) => this.openTextAttachment(file));
       const held = this.tray.release();
       this.tray.element.replaceWith(this.nodeTray.element);
       this.nodeTray.adopt(held);
     }
     session.subscribe((state) => {
       this.sharedState = state;
+      for (const document of [session.draft, ...state.editors]) {
+        const view = document.view.state;
+        const words = this.options.words.english ? enText : zhText;
+        if (view.reconciled > (this.reconciled.get(document) ?? 0)) {
+          this.reconciled.set(document, view.reconciled);
+          showTextNotice(this.textNote, words.reconciled);
+        }
+        if (!recoverable(view.error) || view.composing || document.onTheirWay || this.rescued.has(document)) continue;
+        this.rescued.add(document);
+        const changed = missingCharacter(view.error);
+        // Start after the current notification, when the textarea has rendered
+        // and any failed Send has returned its sealed words to the input.
+        void Promise.resolve().then(() => session.recoverText(document, (text) => changed ? copyRejectedText(text, words, this.textNote) : attachText(text, words,
+          async (file) => {
+            if (document === session.draft && this.nodeTray) { await this.nodeTray.addText(file); return; }
+            if (this.imagesOnly()) throw new Error(this.imagesOnly()!);
+            const filesOn = this.options.attach?.filesOn;
+            if (filesOn?.assisting() && document.filesOn === null) await session.setFilesOn(filesOn.place(), document);
+            const added = await session.attachFile(file, document);
+            if ("Err" in added.updated) throw new Error(added.updated.Err);
+          }, this.textNote))).catch(() => {}).finally(() => { this.rescued.delete(document); });
+      }
       if (this.picked && this.pickedEpoch !== null && session.draft.view.state.epoch > this.pickedEpoch) this.pick(null);
       this.showOnTheirWay(state.composer);
       this.nodeQueue?.draw(state);
@@ -1134,7 +1173,7 @@ export class ConversationPage {
   }
 
   /** Shows words of the queue on their way as said, once each. */
-  private onItsWay(id: string, text: string, attachments: readonly { name: string; size: number; media_type: string }[]): void {
+  private onItsWay(id: string, text: string, attachments: readonly Attachment[]): void {
     if (this.onTheirWay.has(id) || this.departed.has(id)) return;
     // The queue and what the agent heard come by two ways: words the agent
     // heard before the queue said they were going stand already.
@@ -1142,7 +1181,7 @@ export class ConversationPage {
       this.onTheirWay.set(id, "");
       return;
     }
-    const shown = attachments.map((one) => ({ name: one.name, size: one.size, image: one.media_type.startsWith("image/"), preview: null }));
+    const shown = attachments.map((one) => ({ name: one.name, size: one.size, image: one.media_type.startsWith("image/"), preview: null, ...(one.media_type.startsWith("text/plain") ? { kept: one } : {}) }));
     this.onTheirWay.set(id, this.options.conversation.sending(text, this.options.here || null, shown));
   }
 
@@ -1203,6 +1242,12 @@ export class ConversationPage {
     this.input.dispatchEvent(new Event("input", { bubbles: true }));
   }
 
+  private async attachTextFile(file: File): Promise<void> {
+    if (this.nodeTray) await this.nodeTray.addText(file);
+    else if (this.tray) await this.tray.addText(file);
+    else throw new Error("the conversation cannot receive attachments");
+  }
+
   private attachFiles(files: Iterable<File>): void {
     if (this.nodeTray) this.nodeTray.addFiles(files);
     else this.tray?.addFiles(files);
@@ -1223,7 +1268,7 @@ export class ConversationPage {
     const connected = session.state.connected;
     const queued = connected && this.queues();
     const going = session.state.attachmentsOnTheirWay;
-    const shown = (draft?.draft.attachments ?? []).filter((one) => !going.has(one.id)).map((one) => ({ name: one.name, size: one.size, image: one.media_type.startsWith("image/"), preview: null }));
+    const shown = (draft?.draft.attachments ?? []).filter((one) => !going.has(one.id)).map((one) => ({ name: one.name, size: one.size, image: one.media_type.startsWith("image/"), preview: null, ...(one.media_type.startsWith("text/plain") ? { kept: one } : {}) }));
     const key = queued ? null : conversation.sending(text, here || null, shown);
     if (key && !connected) conversation.sent(key, { state: "waiting", why: session.state.error?.message ?? "" });
     // Words that will wait for the turn to end are in the queue at once, as
@@ -1420,6 +1465,7 @@ export class ConversationPage {
   }
 
   private clear(): void {
+    showTextNotice(this.textNote, "");
     if (this.session) this.setWords("");
     else this.input.value = "";
     this.fit();
@@ -1447,6 +1493,10 @@ export class ConversationPage {
   /** A file the conversation names, pressed: one that reads as text opens
    *  in the side, a picture in the viewer, anything else with this device's
    *  program for its kind (`file-kind.ts`). */
+  private openTextAttachment(file: Attachment): void {
+    if (!this.openElsewhere(file.owner.machine, file.path, file)) this.fileLinks?.openOutside(file.owner.machine, file.path, file);
+  }
+
   private openFile(machine: MachineName, path: string): void {
     if (!this.openElsewhere(machine, path, null)) this.fileLinks?.openOutside(machine, path);
   }

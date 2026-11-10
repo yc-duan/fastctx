@@ -18,6 +18,10 @@ import type { ComposerUpdated } from "../world/composer";
 import { glyph } from "./glyphs";
 import { escape } from "./prose";
 import { composing } from "../typing";
+import { limitComposerInput } from "./composer/limit";
+import { textareaText } from "./composer/characters";
+import { attachText, showTextNotice } from "./text-attachment";
+import { enText, zhText } from "./text-words";
 import { controlRow, placeControls, withdrawn, type ControlQueueWords } from "./control-queue";
 import type { PendingControl } from "../world/control";
 
@@ -56,6 +60,9 @@ export class NodeQueue {
     /** A line sent at once: the page shows it below the turn's line until
      *  the session takes it in (walkthrough items 9, 10). */
     private readonly sentNow: ((id: string, text: string, attachments: readonly Attachment[], sending: Promise<ComposerUpdated>) => void) | null = null,
+    private readonly english = false,
+    private readonly note: HTMLElement = window.document.createElement("span"),
+    private readonly openText: ((attachment: Attachment) => void) | null = null,
   ) {
     this.element = document.createElement("div");
     this.element.className = "send-queue";
@@ -173,13 +180,26 @@ export class NodeQueue {
       field.className = "queue-edit";
       field.rows = 2;
       field.setAttribute("aria-label", this.words.edit);
-      const tray = this.attachWords ? new NodeTray(this.attachWords, this.session, document, this.failed, this.assistantFiles) : null;
-      this.editing = { id, document, field, tray, unbind: bindComposer(field, document) };
+      const tray = this.attachWords ? new NodeTray(this.attachWords, this.session, document, this.failed, this.assistantFiles, () => {}, this.openText) : null;
+      this.editing = { id, document, field, tray, unbind: this.bind(field, document, tray) };
       this.draw();
       field.focus();
     } catch (error) {
       this.failed(String(error instanceof Error ? error.message : error));
     }
+  }
+
+  private bind(field: HTMLTextAreaElement, document: ComposerDocument, tray: NodeTray | null): () => void {
+    const words = this.english ? enText : zhText;
+    const unlimit = limitComposerInput(field, (text, typing) => {
+      if (typing) showTextNotice(this.note, words.limit);
+      else void attachText(text, words, async (file) => {
+        if (!tray) throw new Error("the conversation cannot receive attachments");
+        await tray.addText(file);
+      }, this.note).catch(() => {});
+    }, () => textareaText(document.view.characters));
+    const unbind = bindComposer(field, document);
+    return () => { unlimit(); unbind(); };
   }
 
   private async finish(): Promise<void> {
@@ -194,7 +214,7 @@ export class NodeQueue {
       if (this.editing === editing) this.editing = null;
       this.draw();
     } catch (error) {
-      editing.unbind = bindComposer(editing.field, editing.document);
+      editing.unbind = this.bind(editing.field, editing.document, editing.tray);
       this.failed(String(error instanceof Error ? error.message : error));
     }
   }

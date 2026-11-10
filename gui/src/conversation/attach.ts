@@ -8,6 +8,7 @@
 import { leave } from "../app/leave";
 import { viewAttached } from "./attached-pictures";
 import { AttachmentRows } from "./attachment-rows";
+import type { TextWords } from "./text-words";
 
 /** Where an attachment's bytes come from: a file on this computer, which
  *  the shell reads itself, or bytes the page holds (pasted, picked on a
@@ -15,6 +16,7 @@ import { AttachmentRows } from "./attachment-rows";
 export type AttachSource = { kind: "path"; path: string } | { kind: "bytes"; file: File };
 
 export interface AttachWords {
+  text: TextWords;
   attach: string;
   /** Taking a photo straight into the words, on a device with a camera. */
   photo: string;
@@ -124,6 +126,20 @@ export class AttachTray {
         source: { kind: "bytes", file },
       });
     }
+  }
+
+  /** A generated text file, with a completion receipt for preserving refused edits. */
+  async addText(file: File): Promise<void> {
+    const why = this.refusal(false);
+    if (why) throw new Error(why);
+    serial += 1;
+    const item: Attached = { key: `attach-${serial}`, name: file.name, size: file.size, image: false, preview: null,
+      source: { kind: "bytes", file }, state: this.deferred ? "waiting" : "sending", ref: null, why: null };
+    this.items.push(item);
+    this.draw();
+    if (this.deferred) return;
+    await this.send(item);
+    if (!this.items.includes(item) || item.state === "failed") throw new Error(item.why ?? item.name);
   }
 
   /** Files on this computer, by path: dropped onto the window. */
@@ -289,14 +305,18 @@ export class AttachTray {
 
   private draw(): void {
     const { words } = this;
-    this.rows.draw(this.items.map((item) => ({
-      key: item.key, name: item.name, image: item.image, preview: item.preview, state: item.state,
-      fact: item.state === "failed" ? words.failed(item.why ?? "")
-        : item.state === "sending" ? words.sending
-        : item.size === null ? "" : words.size(item.size),
-      why: item.why, retry: item.state === "failed" ? item.key : null, remove: item.key,
-      progress: item.state === "sending" && item.size ? 100 * (this.sent.get(item.key) ?? 0) / item.size : null,
-    })));
+    this.rows.draw(this.items.map((item) => {
+      const file = item.source?.kind === "bytes" ? item.source.file : null;
+      return {
+        key: item.key, name: item.name, image: item.image, preview: item.preview, state: item.state,
+        ...(file?.type.startsWith("text/plain") ? { open: () => { void import("./text-preview").then(({ previewText }) => previewText(file, words.text)); } } : {}),
+        fact: item.state === "failed" ? words.failed(item.why ?? "")
+          : item.state === "sending" ? words.sending
+          : item.size === null ? "" : words.size(item.size),
+        why: item.why, retry: item.state === "failed" ? item.key : null, remove: item.key,
+        progress: item.state === "sending" && item.size ? 100 * (this.sent.get(item.key) ?? 0) / item.size : null,
+      };
+    }));
     this.changed();
   }
 }

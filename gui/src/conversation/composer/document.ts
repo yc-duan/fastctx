@@ -2,6 +2,7 @@ import type { Character, CharacterId, ComposerDraft, ComposerEdit, ComposerSnaps
 import { context, inserted, key, overlay, position, text, wellFormed } from "./characters";
 import type { Context } from "./characters";
 import { after, unanswered } from "../../world/again";
+import { missingCharacter, recoverable } from "./errors";
 
 interface Pending {
   readonly mutation: ComposerEdit;
@@ -51,6 +52,9 @@ export interface ComposerState {
   readonly connected: boolean;
   readonly composing: boolean;
   readonly closing: boolean;
+  readonly recovering: boolean;
+  /** Local edits re-applied after an explicit rejection of deleted identities. */
+  readonly reconciled: number;
   readonly targetAvailable: boolean;
   readonly sending: boolean;
   readonly needsSnapshot: boolean;
@@ -98,6 +102,9 @@ export class ComposerDocument {
   private connected = true;
   private composing = false;
   private closing = false;
+  private recovering = false;
+  private reconciled = 0;
+  private rejectedCharacters = false;
   private flight: Pending | undefined;
   private error: unknown = null;
   /** An edit no answer came to, or a busy machine did not start, goes again
@@ -183,9 +190,9 @@ export class ComposerDocument {
     const state: ComposerState = {
       target: this.target,
       revision: this.snapshot.revision, epoch: this.draft.epoch, pending,
-      connected: this.connected, composing: this.composing, closing: this.closing, targetAvailable: this.available,
-      sending: this.sending, needsSnapshot: this.rejectedEpoch || this.rejectedTarget, error: this.error,
-      canSend: !this.disposed && !this.closing && this.connected && !this.composing && this.available && !this.sending
+      connected: this.connected, composing: this.composing, closing: this.closing, recovering: this.recovering, reconciled: this.reconciled, targetAvailable: this.available,
+      sending: this.sending, needsSnapshot: this.rejectedEpoch || this.rejectedTarget || this.rejectedCharacters, error: this.error,
+      canSend: !this.disposed && !this.recovering && !this.closing && this.connected && !this.composing && this.available && !this.sending
         && !pending && this.error === null && !this.draft.uploads.length
         && (/\P{White_Space}/u.test(text(this.characters)) || !!this.draft.attachments.length),
     };
@@ -297,6 +304,7 @@ export class ComposerDocument {
   edit(start: number, end: number, insert: string, characters = this.characters, epoch = this.draft.epoch): Character[] | undefined {
     if (this.disposed) throw new Error("the composer is disposed");
     if (this.closing) throw new Error("this queued editor is being finished");
+    if (this.recovering) throw new Error("the input text is being preserved");
     if (start < 0 || end < start || end > characters.length) throw new Error("the edit is outside its document");
     insert = wellFormed(insert);
     if (start === end && !insert) return;
@@ -367,8 +375,41 @@ export class ComposerDocument {
 
   /** No timer or guessed retry budget: call on reconnect or explicit retry. */
   retry(): void {
-    if (!this.rejectedEpoch && !this.rejectedTarget) this.error = null;
+    if (!this.rejectedEpoch && !this.rejectedTarget && !recoverable(this.error)) this.error = null;
     this.refresh();
+  }
+
+  /** Freeze the visible projection until it has been preserved outside the outbox. */
+  beginRecovery(): string | null {
+    if (!recoverable(this.error) || this.recovering || this.composing || this.seals.length) return null;
+    this.recovering = true;
+    this.emit();
+    return text(this.characters);
+  }
+
+  /** Call only after preserving the full projection. The latest node view is authoritative. */
+  discardPending(): void {
+    if (!this.recovering) throw new Error("the input text has not been preserved");
+    this.generation += 1;
+    this.flight = undefined;
+    this.waiting?.();
+    this.waiting = undefined;
+    this.pending = [];
+    this.retired.clear();
+    this.history.clear();
+    if (!this.getDraft(this.snapshot)) this.target = Object.freeze({ kind: "draft" });
+    this.draft = this.getDraft(this.snapshot)!;
+    this.available = true;
+    this.history.set(this.draft.epoch, this.draft.characters);
+    this.error = null;
+    this.tries = 0;
+    this.rejectedEpoch = this.rejectedTarget = this.rejectedCharacters = false;
+    this.refresh();
+  }
+
+  finishRecovery(): void {
+    this.recovering = false;
+    this.emit();
   }
 
   /** Stops network work. Pending text stays readable; the owner must keep this
@@ -444,10 +485,10 @@ export class ComposerDocument {
 
   private rebase(): ReadonlyMap<string, CharacterId> {
     const renamed = new Map<string, CharacterId>();
-    if (this.composing || this.flight || !this.available || (!this.retired.size && !this.pending.some((entry) => entry.mutation.epoch !== this.draft.epoch))) return renamed;
+    if (this.recovering || this.composing || this.flight || !this.available || (!this.retired.size && !this.pending.some((entry) => entry.mutation.epoch !== this.draft.epoch))) return renamed;
     // A transmitted request must be resolved by its original receipt before a
     // new ID is allocated. Otherwise a lost response after Send duplicates text.
-    if (this.pending[0]?.attempted && !this.rejectedEpoch) return renamed;
+    if (this.pending[0]?.attempted && !this.rejectedEpoch && !this.rejectedCharacters) return renamed;
     const carry = this.carry();
     // Which words still on their way each carried character waits behind.
     const behind = new Map<string, Sealed | null>();
@@ -476,6 +517,7 @@ export class ComposerDocument {
       start = end;
     }
     for (const entry of current) {
+      if (this.rejectedCharacters && entry.observed) continue;
       const remap = (id: CharacterId): CharacterId => renamed.get(key(id)) ?? id;
       const ids: CharacterId[] = [];
       for (let node = entry.context; node; node = node.previous) ids.push(remap(node.id));
@@ -499,6 +541,7 @@ export class ComposerDocument {
       if (seal.end) seal.end = renamed.get(key(seal.end)) ?? seal.end;
     }
     this.rejectedEpoch = false;
+    if (this.rejectedCharacters) { this.reconciled += 1; this.rejectedCharacters = false; }
     this.error = null;
     this.retired.clear();
     return renamed;
@@ -536,7 +579,7 @@ export class ComposerDocument {
 
   private pump(): void {
     const entry = this.pending[0];
-    if (this.disposed || !this.connected || this.composing || this.flight || this.waiting || this.error !== null || !entry) return;
+    if (this.disposed || this.recovering || !this.connected || this.composing || this.flight || this.waiting || this.error !== null || !entry) return;
     if (this.waits(entry)) return;
     // Receipts precede target validation on the authority. An exact retry can
     // resolve a lost reply even after its queued item disappeared or began sending.
@@ -571,6 +614,7 @@ export class ComposerDocument {
       this.tries = 0;
       this.rejectedEpoch = false;
       this.rejectedTarget = false;
+      this.rejectedCharacters = false;
       this.receive(updated.composer);
       this.refresh();
     }, (error: unknown) => {
@@ -588,6 +632,15 @@ export class ComposerDocument {
       }
       this.error = error;
       const message = error instanceof Error ? error.message : error;
+      if (missingCharacter(error)) {
+        this.rejectedCharacters = true;
+        const known = new Set([...this.draft.characters, ...this.pending.filter((one) => !one.observed).flatMap((one) => inserted(one.mutation))].map((one) => key(one.id)));
+        for (const one of this.pending) {
+          for (const id of [...one.mutation.delete, ...(one.mutation.after ? [one.mutation.after] : [])]) {
+            if (!known.has(key(id))) this.retired.add(key(id));
+          }
+        }
+      }
       this.rejectedEpoch = message === staleEpoch;
       this.rejectedTarget = message === "that queued message no longer exists" || message === "that queued message is being delivered";
       this.refresh();

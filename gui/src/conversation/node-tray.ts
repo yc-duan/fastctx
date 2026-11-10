@@ -27,6 +27,7 @@ interface Upload {
   detaching: boolean;
   begin: (() => Promise<ComposerAttachmentAdded>) | null;
   first?: (() => Promise<unknown>) | undefined;
+  file: File | null;
   flight?: Promise<void>;
 }
 
@@ -53,6 +54,7 @@ export class NodeTray {
     private readonly failed: Failed,
     private readonly assistantFiles: AssistantFiles | null = null,
     private readonly changed: () => void = () => {},
+    private readonly openText: ((attachment: Attachment) => void) | null = null,
   ) {
     this.element = window.document.createElement("ul");
     this.element.className = "attach-tray";
@@ -103,8 +105,16 @@ export class NodeTray {
       const placed = this.placed(image);
       if (placed === null) continue;
       this.start(file.name || this.words.attach, file.size, image, image ? URL.createObjectURL(file) : null,
-        () => this.session.attachFile(file, this.document), placed);
+        () => this.session.attachFile(file, this.document), placed, undefined, file);
     }
+  }
+
+  async addText(file: File): Promise<void> {
+    const placed = this.placed(false);
+    if (placed === null) throw new Error(this.words.imagesOnly);
+    const upload = this.start(file.name, file.size, false, null, () => this.session.attachFile(file, this.document), placed, undefined, file);
+    await upload.flight;
+    if (upload.removed || upload.error) throw new Error(upload.error ?? "the text attachment was removed");
   }
 
   addPaths(paths: string[]): void {
@@ -130,7 +140,7 @@ export class NodeTray {
       const begin = source?.kind === "bytes" ? () => this.session.attachFile(source.file, this.document)
         : source?.kind === "path" ? () => this.session.attachPath(source.path, () => {}, this.document)
         : async () => ({ attachment: receipt!, updated: { Ok: await this.session.attach(receipt!, this.document) } });
-      this.start(item.name, item.size, item.image, item.preview, begin, placed, receipt?.id);
+      this.start(item.name, item.size, item.image, item.preview, begin, placed, receipt?.id, source?.kind === "bytes" ? source.file : undefined);
     }
   }
 
@@ -146,12 +156,13 @@ export class NodeTray {
   }
 
   private start(name: string, size: number | null, image: boolean, preview: string | null,
-    begin: () => Promise<ComposerAttachmentAdded>, first?: () => Promise<unknown>, attachment?: string): void {
+    begin: () => Promise<ComposerAttachmentAdded>, first?: () => Promise<unknown>, attachment?: string, file?: File): Upload {
     const upload: Upload = { key: crypto.randomUUID(), name, size, image, preview, operation: null,
-      attachment: attachment ?? null, settled: false, error: null, removed: false, detaching: false, begin, first };
+      attachment: attachment ?? null, settled: false, error: null, removed: false, detaching: false, begin, first, file: file ?? null };
     this.uploads.set(upload.key, upload);
     this.draw();
     void this.send(upload);
+    return upload;
   }
 
   private send(upload: Upload): Promise<void> {
@@ -184,7 +195,10 @@ export class NodeTray {
       // both the receipt and the result of attaching it to the draft.
       if ("attachment" in added) {
         upload.attachment = added.attachment.id;
-        if ("Err" in added.updated && !upload.removed) this.failed(added.updated.Err, this.words.failed(added.updated.Err));
+        if ("Err" in added.updated && !upload.removed) {
+          upload.error = added.updated.Err;
+          this.failed(added.updated.Err, this.words.failed(added.updated.Err));
+        }
       }
       upload.settled = true;
       upload.begin = null;
@@ -256,20 +270,24 @@ export class NodeTray {
       return why != null ? { state: "failed" as const, fact: this.words.failed(why), retry: upload?.key ?? null, why }
         : { state: "sending" as const, fact: this.words.sending, retry: null, why: null };
     };
+    const open = (file: File | null | undefined) => file?.type.startsWith("text/plain")
+      ? () => { void import("./text-preview").then(({ previewText }) => previewText(file, this.words.text)); } : undefined;
     return [
       ...(draft?.attachments ?? []).map((one): AttachmentRow => {
         const own = local.get(one.id);
         const removing = own?.removed || this.removing.has(one.id);
         return { key: own?.key ?? one.id, name: one.name, image: one.media_type.startsWith("image/") || IMAGE.test(one.name),
-          preview: own?.preview ?? null, state: removing ? "sending" : "ready", fact: removing ? this.words.removing : this.words.size(one.size), remove: own?.key ?? one.id };
+          preview: own?.preview ?? null,
+          open: open(own?.file ?? this.session.getFile(one.id)) ?? (this.openText && one.media_type.startsWith("text/plain") ? () => this.openText!(one) : undefined),
+          state: removing ? "sending" : "ready", fact: removing ? this.words.removing : this.words.size(one.size), remove: own?.key ?? one.id };
       }),
       ...(draft?.uploads ?? []).map((one): AttachmentRow => {
         const own = local.get(one.id);
         return { key: own?.key ?? one.id, name: one.file.name, image: one.file.media_type.startsWith("image/") || IMAGE.test(one.file.name),
-          preview: own?.preview ?? null, ...uploading(own, one.error), remove: own?.key ?? one.id };
+          preview: own?.preview ?? null, open: open(own?.file), ...uploading(own, one.error), remove: own?.key ?? one.id };
       }),
       ...[...this.uploads.values()].filter((one) => !one.settled && (!one.attachment || !visible.has(one.attachment))).map((one): AttachmentRow => ({
-        key: one.key, name: one.name, image: one.image, preview: one.preview, ...uploading(one, null), remove: one.key,
+        key: one.key, name: one.name, image: one.image, preview: one.preview, open: open(one.file), ...uploading(one, null), remove: one.key,
       })),
     ];
   }

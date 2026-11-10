@@ -78,6 +78,9 @@ import { Steady } from "./steady";
 import type { Store } from "./store";
 import type { FocusWords, NewTalkWords } from "./words";
 import { composing } from "../typing";
+import { limitComposerInput } from "../conversation/composer/limit";
+import { attachText, showTextNotice } from "../conversation/text-attachment";
+import { enText, zhText } from "../conversation/text-words";
 
 /** How many of the table of agents' rows are drawn at first, and how many
  *  more each time the end of those comes near. */
@@ -242,6 +245,7 @@ export class NewTalk {
   private readonly form: HTMLFormElement;
   private readonly input: HTMLTextAreaElement;
   private readonly note: HTMLElement;
+  private readonly textNote: HTMLElement;
   private readonly start: HTMLButtonElement;
   private readonly context: HTMLElement;
   private readonly pop: HTMLElement;
@@ -310,6 +314,7 @@ export class NewTalk {
           <div class="talk-context"></div>
           <div class="composer-tray"></div>
           <textarea rows="1" enterkeyhint="send"></textarea>
+          <p class="composer-text-note" role="status" hidden></p>
           <div class="composer-row">
             <div class="composer-tools"><button class="icon-button composer-attach" type="button" hidden></button><input class="composer-pick" type="file" multiple hidden><input class="composer-shot" type="file" accept="image/*" capture="environment" hidden><button class="composer-chip" type="button" hidden></button></div>
             <span class="composer-note" aria-live="polite"></span>
@@ -324,6 +329,7 @@ export class NewTalk {
     this.form = this.element.querySelector("form")!;
     this.input = this.element.querySelector("textarea")!;
     this.note = this.element.querySelector<HTMLElement>(".composer-note")!;
+    this.textNote = this.element.querySelector<HTMLElement>(".composer-text-note")!;
     this.start = this.element.querySelector<HTMLButtonElement>(".composer-action")!;
     this.context = this.element.querySelector<HTMLElement>(".talk-context")!;
     this.pop = this.element.querySelector<HTMLElement>(".talk-pop")!;
@@ -391,6 +397,14 @@ export class NewTalk {
     this.form.addEventListener("submit", (event) => {
       event.preventDefault();
       void this.submit();
+    });
+    limitComposerInput(this.input, (text, typing) => {
+      const words = this.options.words.english ? enText : zhText;
+      if (typing) showTextNotice(this.textNote, words.limit);
+      else void attachText(text, words, async (file) => {
+        if (!this.tray) throw new Error("the conversation cannot receive attachments");
+        await this.tray.addText(file);
+      }, this.textNote).catch(() => {});
     });
     this.input.addEventListener("input", () => {
       remember(this.kept, this.input.value || null);
