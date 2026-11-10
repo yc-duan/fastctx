@@ -3,6 +3,7 @@
 mod commands;
 pub(crate) mod compaction;
 mod document;
+mod durability;
 mod failures;
 mod idle;
 mod keeping;
@@ -70,6 +71,7 @@ pub struct Composers {
     upload_failures: Arc<Mutex<HashMap<ResidentId, HashMap<String, String>>>>,
     snapshots: publication::Snapshots,
     legacy_refreshes: legacy_refresh::Refreshes,
+    durability: Arc<durability::Durability>,
 }
 
 pub fn removed(node: &Node, id: &ResidentId) {

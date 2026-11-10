@@ -97,7 +97,7 @@ pub async fn compact_document(database: &Database, key: documents::Key) -> Resul
     .await
     .map_err(|error| fastctx_storage::Error::new(error.to_string()))??;
     database
-        .write_relaxed(key.bytes() + checkpoint.len(), move |db| {
+        .write(key.bytes() + checkpoint.len(), move |db| {
             let changed = db.prepare_cached(
             "UPDATE documents SET through=?4 WHERE namespace=?1 AND owner=?2 AND name=?3 AND revision=?4 AND through=?5"
         )?.execute(params![key.namespace,key.owner,key.name,revision,through])?;

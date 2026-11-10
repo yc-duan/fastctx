@@ -1,5 +1,6 @@
 //! Negotiated Yjs v1 document synchronization on a shared watch connection.
-//! Input acknowledgements prove database commit, not merely frame reception.
+//! Input acknowledgements prove acceptance and database commit, not disk sync.
+//! Clients retain their Yjs replica for state-vector repair after reconnecting.
 
 use super::{QueuedCommand, Uploading};
 use crate::{MachineName, NoticeId, access::Written, attachments::Attachment, ipc::Failure};
@@ -87,8 +88,24 @@ pub enum Input {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Frame {
-    State { version: u32, state: Box<State>, documents: Vec<Update> },
-    Update { revision: u64, document: Update },
-    Saved { number: u64, document: String, revision: u64, document_revision: u64 },
-    Refused { number: u64, failure: Failure },
+    State {
+        version: u32,
+        state: Box<State>,
+        documents: Vec<Update>,
+    },
+    Update {
+        revision: u64,
+        document: Update,
+    },
+    /// The update is committed and visible; a text-only commit may still await disk sync.
+    Saved {
+        number: u64,
+        document: String,
+        revision: u64,
+        document_revision: u64,
+    },
+    Refused {
+        number: u64,
+        failure: Failure,
+    },
 }
