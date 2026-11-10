@@ -10,6 +10,7 @@ mod append;
 mod audit;
 mod error;
 mod frame;
+mod objects;
 mod read;
 mod record;
 mod schema;
@@ -18,6 +19,7 @@ mod wake;
 pub use append::{Appended, BATCH_BYTES, Batch, CHECKPOINT_BYTES, Checkpoint};
 pub use audit::Audited;
 pub use error::{Error, Result};
+pub use objects::{OBJECTS_DIRECTORY, OBJECTS_FILE, Objects, READ_BYTES, ROW_BYTES};
 pub use read::{Anchor, Item, Page, Place};
 pub use record::{FRAME_BYTES, FRAME_RECORDS, KEY_BYTES, ObjectRef, RECORD_BYTES, RECORD_OBJECTS, Record, State};
 
@@ -70,6 +72,7 @@ pub struct Content(Arc<Inner>);
 
 struct Inner {
     database: Database,
+    objects: Objects,
     wakes: wake::Wakes,
 }
 
@@ -83,7 +86,13 @@ impl Content {
             checkpoint_pages: Some(CHECKPOINT_PAGES),
         };
         let database = Database::open_shaped(&directory.join(FILE), schema::SCHEMA, shape)?;
-        Ok(Self(Arc::new(Inner { database, wakes: wake::Wakes::default() })))
+        let objects = Objects::open(directory)?;
+        Ok(Self(Arc::new(Inner { database, objects, wakes: wake::Wakes::default() })))
+    }
+
+    /// The objects the records here refer to.
+    pub fn objects(&self) -> &Objects {
+        &self.0.objects
     }
 
     /// The storage counters of the database, for readings.

@@ -87,6 +87,21 @@ impl Content {
         Ok(self.0.database.read_now(|db| revision(db, stream))?)
     }
 
+    /// Whether records of `scope` refer to an object: what lets a reader of
+    /// the scope read it.
+    pub fn refers(&self, scope: &str, hash: &[u8; 32]) -> Result<bool> {
+        Ok(self.0.database.read_now(|db| {
+            Ok(db
+                .prepare_cached(
+                    "SELECT 1 FROM object_refs JOIN scopes ON scopes.id = object_refs.scope \
+                     WHERE scopes.key = ?1 AND object_refs.hash = ?2 AND object_refs.count > 0",
+                )?
+                .query_row(params![scope, &hash[..]], |_| Ok(()))
+                .optional()?
+                .is_some())
+        })?)
+    }
+
     /// A producer's position as it last kept it.
     pub fn checkpoint(&self, name: &str) -> Result<Option<Vec<u8>>> {
         Ok(self.0.database.read_now(|db| {

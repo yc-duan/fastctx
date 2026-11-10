@@ -7,7 +7,7 @@
 //! `--strict` fails the drill when a budget is missed; it holds for a
 //! release build only.
 
-use fastctx_content::{Anchor, Batch, Content, Record, State, StreamKey};
+use fastctx_content::{Anchor, Batch, Content, ObjectRef, Record, State, StreamKey};
 use std::path::Path;
 use std::time::{Duration, Instant};
 
@@ -72,6 +72,7 @@ fn main() -> Outcome<()> {
         audited.items,
         began.elapsed()
     );
+    objects(&content)?;
     let began = Instant::now();
     content.settle()?;
     println!("settled to the disk in {:.1?}", began.elapsed());
@@ -274,5 +275,59 @@ fn revisions(content: &Content, stream: &StreamKey) -> Outcome<()> {
     if stale.is_ok() {
         return Err("a batch of a generation the stream has left was taken".into());
     }
+    Ok(())
+}
+
+/// Objects are kept once by their content, read a range at a time, and
+/// readable by a scope for as long as its records refer to them.
+fn objects(content: &Content) -> Outcome<()> {
+    let store = content.objects();
+    let small = body(1, 9_000);
+    let large = body(2, 3 * 1024 * 1024 + 17);
+    let began = Instant::now();
+    let kept_small = store.put(&small)?;
+    let kept_large = store.put(&large)?;
+    let took = began.elapsed();
+    if store.put(&large)? != kept_large || store.size(&kept_large.hash)? != Some(large.len() as u64) {
+        return Err("the same bytes were not the same object".into());
+    }
+    if store.read(&kept_small.hash, 100, 50)?.as_deref() != Some(&small[100..150])
+        || store.read(&kept_large.hash, 2_000_000, 4_096)?.as_deref() != Some(&large[2_000_000..2_004_096])
+        || store.read(&kept_large.hash, large.len() as u64 - 5, 100)?.as_deref() != Some(&large[large.len() - 5..])
+    {
+        return Err("a range of an object is not the bytes put".into());
+    }
+    if store.read(&[7; 32], 0, 10)?.is_some() {
+        return Err("an object that was never put was read".into());
+    }
+    let stream = StreamKey::new("drill/objects", "conversation/objects/timeline");
+    let referring = |state| Record { item: b"with-objects".to_vec(), order: vec![1], state };
+    let both: Vec<ObjectRef> = vec![kept_small, kept_large];
+    let append = |state| {
+        content.append(Batch {
+            stream: stream.clone(),
+            generation: 0,
+            records: vec![referring(state)],
+            checkpoint: None,
+            durable: false,
+        })
+    };
+    append(State::Is { body: b"refers to two".to_vec(), objects: both })?;
+    if !content.refers(&stream.scope, &kept_large.hash)? || content.refers("drill/other", &kept_large.hash)? {
+        return Err("a scope's records do not say which objects it may read".into());
+    }
+    append(State::Is { body: b"refers to one".to_vec(), objects: vec![kept_small] })?;
+    if content.refers(&stream.scope, &kept_large.hash)? || !content.refers(&stream.scope, &kept_small.hash)? {
+        return Err("an object a record no longer refers to is still counted".into());
+    }
+    append(State::Gone)?;
+    if content.refers(&stream.scope, &kept_small.hash)? {
+        return Err("an object of an item that is gone is still counted".into());
+    }
+    store.remove(&kept_large.hash)?;
+    if store.size(&kept_large.hash)?.is_some() {
+        return Err("a removed object is still here".into());
+    }
+    println!("objects: {} and {} bytes put in {took:.1?}; ranges, counts and removal hold", small.len(), large.len());
     Ok(())
 }

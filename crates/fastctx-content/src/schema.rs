@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS object_refs (
     count INTEGER NOT NULL,
     PRIMARY KEY (scope, hash)
 ) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS object_refs_by_hash ON object_refs (hash);
 CREATE TABLE IF NOT EXISTS checkpoints (
     name TEXT PRIMARY KEY,
     state BLOB NOT NULL
