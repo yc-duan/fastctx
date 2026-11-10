@@ -501,6 +501,36 @@ impl Database {
         tokio::time::timeout(ANSWER, receive).await.map_err(|_| unknown())?.map_err(|_| unknown())?
     }
 
+    /// Commits as `write` does without waiting for the disk, as
+    /// `write_relaxed_now_at` says: for what a later durable commit of the
+    /// same work makes whole, and what is done again, unharmed, when lost.
+    pub async fn write_relaxed<T: Send + 'static>(
+        &self,
+        bytes: usize,
+        write: impl FnOnce(&rusqlite::Connection) -> Result<T> + Send + 'static,
+    ) -> Result<T> {
+        self.available()?;
+        let priority = Priority::Normal;
+        let permit = tokio::time::timeout(QUEUE_WAIT, self.0.writes.admit(priority, bytes))
+            .await
+            .map_err(|_| busy("write admission"))??;
+        self.admitted(priority);
+        let (send, receive) = oneshot::channel();
+        self.submit(
+            priority,
+            writer::job(
+                permit,
+                false,
+                write,
+                |_| {},
+                move |result| {
+                    let _ = send.send(result);
+                },
+            ),
+        )?;
+        tokio::time::timeout(ANSWER, receive).await.map_err(|_| unknown())?.map_err(|_| unknown())?
+    }
+
     /// Blocking-thread compatibility; it parks on the same admission and commit
     /// notifications as asynchronous callers, never sleeps in a polling loop.
     #[track_caller]

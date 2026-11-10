@@ -20,6 +20,17 @@ use crate::{
 };
 
 impl SqliteBlocks {
+    /// A write of a source step before its commit. It does not wait for the
+    /// disk: the commit that adopts the step is durable and takes every
+    /// earlier write of the log to the disk with it, and a step lost with the
+    /// machine's power is issued and staged again.
+    pub(super) async fn step_write<T: Send + 'static>(
+        &self,
+        bytes: usize,
+        write: impl FnOnce(&fastctx_storage::rusqlite::Connection) -> fastctx_storage::Result<T> + Send + 'static,
+    ) -> fastctx_storage::Result<T> {
+        self.db.write_relaxed(bytes, write).await
+    }
     /// Issues the next step of `primary`, which must be at checkpoint `expected`.
     pub fn begin_step(
         &self,
@@ -30,13 +41,12 @@ impl SqliteBlocks {
         Box::pin(async move {
             let policy = self.policy.clone();
             let holder = self.holder.clone();
-            self.db
-                .write(65536, move |db| {
-                    let _boundary = boundary::enter_typed_write(Role::Source);
-                    steps::begin(db, &holder, policy.as_ref(), &primary, expected, &generation)
-                })
-                .await
-                .map_err(|error| sql::error(error, self.worker.clone()))
+            self.step_write(65536, move |db| {
+                let _boundary = boundary::enter_typed_write(Role::Source);
+                steps::begin(db, &holder, policy.as_ref(), &primary, expected, &generation)
+            })
+            .await
+            .map_err(|error| sql::error(error, self.worker.clone()))
         })
     }
     pub fn bind_target(&self, step: SourceStep, target: SourceTarget) -> FutureResult<'_, SourceStepTarget> {
@@ -45,14 +55,13 @@ impl SqliteBlocks {
             let holder = self.holder.clone();
             let operation = step.operation().clone();
             let (bound, step) = (target.clone(), step.clone());
-            self.db
-                .write(65536, move |db| {
-                    let _boundary = boundary::enter_typed_write(Role::Source);
-                    steps::bind(db, &holder, policy.as_ref(), &step, &bound)?;
-                    Ok(SourceStepTarget::new(step, bound))
-                })
-                .await
-                .map_err(|error| sql::error(error, operation))
+            self.step_write(65536, move |db| {
+                let _boundary = boundary::enter_typed_write(Role::Source);
+                steps::bind(db, &holder, policy.as_ref(), &step, &bound)?;
+                Ok(SourceStepTarget::new(step, bound))
+            })
+            .await
+            .map_err(|error| sql::error(error, operation))
         })
     }
     /// Cancels the step durably, then releases up to `max` of its staged pins.

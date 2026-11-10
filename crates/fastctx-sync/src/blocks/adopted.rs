@@ -49,9 +49,12 @@ impl SqliteBlocks {
             let take = frontier.len().min(PAGE).min(BUDGET - spent);
             let page: Vec<Pending> = frontier.drain(..take).collect();
             spent += page.len();
+            // Grants below an adopted page are derived from committed rows; lost
+            // with the machine's power, the content worker's queued expansion
+            // makes them again.
             let next = self
                 .database()
-                .write(PAGE * 8192, move |db| {
+                .write_relaxed(PAGE * 8192, move |db| {
                     let _boundary = boundary::enter_typed_write(Role::Content);
                     let mut next = Vec::new();
                     for pending in page {

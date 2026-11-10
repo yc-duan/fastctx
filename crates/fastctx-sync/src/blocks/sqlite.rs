@@ -175,8 +175,7 @@ impl SqliteBlocks {
         let id = operation.clone();
         let staged = step.clone();
         let (stored, pin) = self
-            .db
-            .write(encoded.len() + 16384, move |db| {
+            .content_write(step.is_some(), encoded.len() + 16384, move |db| {
                 let _boundary = boundary::enter_typed_write(Role::Content);
                 pins::authorize(db, &holder, policy.as_ref(), &request)?;
                 let pin = pins::stage(
@@ -208,23 +207,22 @@ impl SqliteBlocks {
             let holder = self.holder.clone();
             let request = custody;
             let confirmed = pin.clone();
-            self.db
-                .write(16384, move |db| {
-                    let _boundary = boundary::enter_typed_write(Role::Content);
-                    pins::authorize(db, &holder, policy.as_ref(), &request)?;
-                    pins::ready(db, &request, &confirmed, owner(&step))?;
-                    rows::publish(db, &stored)?;
-                    if !rows::complete(db, &confirmed.root)? {
-                        return Err(sql::invalid("published block is not complete under its pinned reference"));
-                    }
-                    scheduler::content_changed(
-                        db,
-                        &request.holding,
-                        format!("complete:{}", stored.representation.content.id.digest.as_str()),
-                    )
-                })
-                .await
-                .map_err(|error| sql::error(error, operation))?;
+            self.content_write(step.is_some(), 16384, move |db| {
+                let _boundary = boundary::enter_typed_write(Role::Content);
+                pins::authorize(db, &holder, policy.as_ref(), &request)?;
+                pins::ready(db, &request, &confirmed, owner(&step))?;
+                rows::publish(db, &stored)?;
+                if !rows::complete(db, &confirmed.root)? {
+                    return Err(sql::invalid("published block is not complete under its pinned reference"));
+                }
+                scheduler::content_changed(
+                    db,
+                    &request.holding,
+                    format!("complete:{}", stored.representation.content.id.digest.as_str()),
+                )
+            })
+            .await
+            .map_err(|error| sql::error(error, operation))?;
         }
         Ok(PublishedBlock { content, representation, pin })
     }
@@ -244,49 +242,53 @@ impl SqliteBlocks {
         let policy = self.policy.clone();
         let holder = self.holder.clone();
         let id = operation.clone();
-        self.db
-            .write(checked.reply.page_json.len() * 2 + 16384, move |db| {
-                let _boundary = boundary::enter_typed_write(Role::Content);
-                pins::authorize(db, &holder, policy.as_ref(), &custody)?;
-                let pin = pins::stage(
+        self.content_write(step.is_some(), checked.reply.page_json.len() * 2 + 16384, move |db| {
+            let _boundary = boundary::enter_typed_write(Role::Content);
+            pins::authorize(db, &holder, policy.as_ref(), &custody)?;
+            let pin =
+                pins::stage(db, &custody, id, ContentRef::Manifest { root: checked.reply.root.clone() }, owner(&step))?;
+            pages::put(db, &checked, validated)?;
+            pins::ready(db, &custody, &pin, owner(&step))?;
+            if !checked.metadata {
+                access::expand(
                     db,
-                    &custody,
-                    id,
-                    ContentRef::Manifest { root: checked.reply.root.clone() },
-                    owner(&step),
+                    &custody.object,
+                    custody.kind.registration().id,
+                    &checked.reply.root,
+                    &checked.references,
+                    &custody.holding,
                 )?;
-                pages::put(db, &checked, validated)?;
-                pins::ready(db, &custody, &pin, owner(&step))?;
-                if !checked.metadata {
-                    access::expand(
-                        db,
-                        &custody.object,
-                        custody.kind.registration().id,
-                        &checked.reply.root,
-                        &checked.references,
-                        &custody.holding,
-                    )?;
-                } else if !validated {
-                    scheduler::content_changed(
-                        db,
-                        &custody.holding,
-                        format!("metadata:{}", checked.reply.root.0.digest.as_str()),
-                    )?;
-                }
+            } else if !validated {
                 scheduler::content_changed(
                     db,
                     &custody.holding,
-                    format!("complete:{}", checked.reply.root.0.digest.as_str()),
+                    format!("metadata:{}", checked.reply.root.0.digest.as_str()),
                 )?;
-                scheduler::content_changed(
-                    db,
-                    &custody.holding,
-                    format!("access:{}", checked.reply.root.0.digest.as_str()),
-                )?;
-                Ok(pin)
-            })
-            .await
-            .map_err(|error| sql::error(error, operation))
+            }
+            scheduler::content_changed(
+                db,
+                &custody.holding,
+                format!("complete:{}", checked.reply.root.0.digest.as_str()),
+            )?;
+            scheduler::content_changed(
+                db,
+                &custody.holding,
+                format!("access:{}", checked.reply.root.0.digest.as_str()),
+            )?;
+            Ok(pin)
+        })
+        .await
+        .map_err(|error| sql::error(error, operation))
+    }
+    /// Content a source step stages is committed without waiting for the disk
+    /// (`step_write`); content put for a replica is durable when acknowledged.
+    async fn content_write<T: Send + 'static>(
+        &self,
+        staged: bool,
+        bytes: usize,
+        write: impl FnOnce(&fastctx_storage::rusqlite::Connection) -> fastctx_storage::Result<T> + Send + 'static,
+    ) -> fastctx_storage::Result<T> {
+        if staged { self.step_write(bytes, write).await } else { self.db.write(bytes, write).await }
     }
 }
 impl BlockStore for SqliteBlocks {
