@@ -13,6 +13,7 @@ mod packages;
 pub(crate) mod repair;
 mod retry;
 mod schedule;
+pub(crate) mod submission;
 mod withdrawal;
 
 pub(crate) use application::Open;
@@ -141,6 +142,7 @@ pub(crate) fn start(node: &Arc<Node>) {
         };
         held.started = true;
     }
+    submission::register(node);
     retry::complete(node, env!("CARGO_PKG_VERSION"));
     if let Some(version) = application(node) {
         application::took(node, &version);
@@ -368,14 +370,7 @@ pub(crate) fn report(node: &Node) {
 
 /// An interface here asks.
 pub(crate) async fn call(node: &Arc<Node>, call: UpdateCall) -> Result<State, String> {
-    if !fastctx_platform::follows_releases()
-        && matches!(
-            call,
-            UpdateCall::Look | UpdateCall::Fetch { .. } | UpdateCall::Kernel { .. } | UpdateCall::Choose { .. }
-        )
-    {
-        return Err("development builds do not follow releases".into());
-    }
+    submission::allowed(&call)?;
     match call {
         UpdateCall::Progress { stage } => {
             if let Stage::Installing { version } = &stage {
@@ -837,7 +832,11 @@ pub(crate) async fn machine(
     });
     let running = match heard {
         Some(kernel) => Some(kernel),
-        None => match node.call(acting, &machine, fastctx_types::access::Purpose::Look, RemoteCall::Facts).await {
+        None => match submission::call_machine(
+            node, acting, &machine, fastctx_types::access::Purpose::Look, RemoteCall::Facts,
+        )
+        .await
+        {
             Ok(Ok(RemoteReply::Facts(facts))) => Some(facts.version),
             _ => None,
         },
@@ -860,13 +859,17 @@ pub(crate) async fn machine(
             )));
         }
     };
-    match node
-        .call(acting, &machine, fastctx_types::access::Purpose::Hands, call)
-        .await
-        .map_err(|failure| Failure::new(failure.to_string()))??
-    {
-        RemoteReply::Update(state) => Ok(*state),
-        _ => Err(Failure::new(format!("{machine} answered something other than how its updates stand"))),
+    let asking = crate::submitted::Asking::begin();
+    loop {
+        let reply = submission::call_machine(
+            node, acting, &machine, fastctx_types::access::Purpose::Hands, call.clone(),
+        )
+        .await?;
+        match reply {
+            Ok(RemoteReply::Update(state)) => return Ok(*state),
+            Ok(_) => return Err(Failure::new(format!("{machine} answered something other than how its updates stand"))),
+            Err(failure) => asking.accepted(failure).await?,
+        }
     }
 }
 

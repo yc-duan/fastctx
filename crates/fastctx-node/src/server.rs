@@ -1558,18 +1558,22 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
         Call::Update(call) => {
             // Which versions this machine runs is the user's to choose.
             users_voice(node, peer)?;
-            crate::updates::call(node, call).await.map(|state| Reply::Update(Box::new(state))).map_err(Failure::new)
+            Box::pin(crate::updates::submission::local(node, call)).await.map(|state| Reply::Update(Box::new(state)))
         }
         Call::UpdateMachine { machine } => {
             users_voice(node, peer)?;
             let acting = crate::around::acting_of(node, &caller::of(node, peer)?);
             let update = fastctx_types::update::UpdateCall::Kernel { version: None };
-            crate::updates::machine(node, &acting, machine, update).await.map(|state| Reply::Update(Box::new(state)))
+            Box::pin(crate::updates::submission::machine(node, &acting, machine, update))
+                .await
+                .map(|state| Reply::Update(Box::new(state)))
         }
         Call::MachineUpdates { machine, update } => {
             users_voice(node, peer)?;
             let acting = crate::around::acting_of(node, &caller::of(node, peer)?);
-            crate::updates::machine(node, &acting, machine, update).await.map(|state| Reply::Update(Box::new(state)))
+            Box::pin(crate::updates::submission::machine(node, &acting, machine, update))
+                .await
+                .map(|state| Reply::Update(Box::new(state)))
         }
         Call::Manage { resident, machine, action } => {
             users_voice(node, peer)?;
@@ -1759,11 +1763,7 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
         }
         Call::NetworkUpdates { hub, account, request } => {
             users_voice(node, peer)?;
-            crate::world::hub_link(node, Some(&hub))?
-                .network_updates(&account, request)
-                .await
-                .map(Reply::NetworkUpdates)
-                .map_err(Failure::new)
+            Box::pin(crate::updates::submission::network(node, hub, account, request)).await.map(Reply::NetworkUpdates)
         }
         Call::MachineLog { hub, account, before } => {
             users_voice(node, peer)?;
@@ -1782,11 +1782,11 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
         }
         Call::HubMove { hub, account, request } => {
             users_voice(node, peer)?;
-            crate::hub_moving::request(node, hub.as_ref(), &account, request).await.map(Reply::HubMove)
+            Box::pin(crate::updates::submission::moving(node, hub, account, request)).await.map(Reply::HubMove)
         }
         Call::HubArrived { hub } => {
             users_voice(node, peer)?;
-            crate::hub_arrival::installed(node, &hub).await.map(|()| Reply::Done)
+            Box::pin(crate::updates::submission::arrived(node, hub)).await.map(|()| Reply::Done)
         }
         Call::HandOver => {
             users_voice(node, peer)?;
@@ -1799,7 +1799,7 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
         }
         Call::UninstallPrepare => {
             users_voice(node, peer)?;
-            crate::uninstall::prepare(node).await?;
+            Box::pin(crate::updates::submission::prepare_uninstall(node)).await?;
             Ok(Reply::Done)
         }
         Call::Copy { from, to } => {

@@ -1296,10 +1296,9 @@ impl fastctx_net::link::Node for Handler {
                         };
                         let asker =
                             crate::updates::Asker { by: caller.account.clone(), hub: hub.clone(), scheduled_at: None };
-                        crate::updates::remote(&node, asker, update)
+                        Box::pin(crate::updates::submission::remote(&node, asker, update))
                             .await
                             .map(|state| RemoteReply::Update(Box::new(state)))
-                            .map_err(Failure::new)
                     }
                     RemoteCall::Book { query } => crate::activity_book::answer_here(&node, Some(&acting), query)
                         .await
