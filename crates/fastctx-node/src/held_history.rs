@@ -176,7 +176,7 @@ fn live(pending: Vec<SessionEvent>, owner: &Address) -> impl Iterator<Item = Wat
 /// A version of the resident's history, from what it is read from: equal
 /// versions read the same history. None while a turn runs, when its host
 /// adds to its record without saying so to any of these.
-async fn stamp(node: &Arc<Node>, resident: &ResidentId) -> Result<Option<String>, Failure> {
+pub(crate) async fn stamp(node: &Arc<Node>, resident: &ResidentId) -> Result<Option<String>, Failure> {
     let (about, _) = node
         .residents
         .about(resident)

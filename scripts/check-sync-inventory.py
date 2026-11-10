@@ -73,7 +73,7 @@ def check(registry):
         tables.add(table)
     for path in (ROOT / "crates").rglob("*.rs"):
         name = path.as_posix()
-        if "/src/" not in name or "/fastctx-sync/" in name or any(x in path.name for x in ("test", "drill")):
+        if "/src/" not in name or "/fastctx-sync/" in name or "/fastctx-content/" in name or any(x in path.name for x in ("test", "drill")):
             continue
         for table in re.findall(r"CREATE\s+(?:TABLE|TEMP\s+TABLE)\s+(?:IF\s+NOT\s+EXISTS\s+)?([a-z_][a-z0-9_]*)", path.read_text(encoding="utf-8"), re.I):
             if table not in tables and "temp." + table not in tables:

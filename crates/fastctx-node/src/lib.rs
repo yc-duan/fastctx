@@ -1008,6 +1008,7 @@ pub async fn run_prepared(
             afoot::start(&node);
             usage::watch(&node);
             forget::start(&node);
+            timeline::register(&node);
         })
         .await
         {

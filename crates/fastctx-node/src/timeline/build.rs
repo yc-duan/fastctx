@@ -7,7 +7,7 @@
 use super::identity::{self, Identity};
 use super::order;
 use crate::Node;
-use fastctx_content::{Batch, Content, RECORD_BYTES, Record, State, StreamKey};
+use fastctx_content::{Batch, Checkpoint, Content, RECORD_BYTES, Record, State, StreamKey};
 use fastctx_types::ResidentId;
 use fastctx_types::ipc::Failure;
 use fastctx_types::session::SessionEvent;
@@ -28,7 +28,6 @@ const SLIM_BYTES: usize = 32 * 1024;
 
 /// What a build came to.
 #[derive(Clone, Copy, Debug)]
-#[expect(dead_code, reason = "the timeline build job is not joined yet")]
 pub(crate) struct Built {
     /// The events of the history read.
     pub events: usize,
@@ -43,16 +42,34 @@ fn failure(error: impl std::fmt::Display) -> Failure {
 }
 
 /// Reads the conversation's history, without keeping its host awake for the
-/// reading, and brings its timeline to it.
-#[expect(dead_code, reason = "the timeline build job is not joined yet")]
+/// reading, and brings its timeline to it. A history whose version is the
+/// one the timeline was last built from is not read at all.
 pub(crate) async fn build(node: &Arc<Node>, resident: &ResidentId) -> Result<Built, Failure> {
     let content = node.content()?.clone();
+    let name = format!("timeline/{resident}");
+    // Taken before the history is read: what is read is at least as new.
+    let version = crate::held_history::stamp(node, resident).await?.map(String::into_bytes);
+    if let Some(version) = &version {
+        let (reading, name) = (content.clone(), name.clone());
+        let built = fastctx_platform::task::blocking(move || reading.checkpoint(&name)).await.map_err(failure)?;
+        if built.as_ref() == Some(version) {
+            return Ok(Built { events: 0, written: 0, gone: 0 });
+        }
+    }
     let crate::talk::HistoryRead { history, unread, .. } = crate::talk::history_quietly(node, resident).await?;
     let stream = super::stream(resident);
-    fastctx_platform::task::blocking(move || write(&content, &stream, &history, unread)).await
+    // A reading that missed a record is not the version's history.
+    let checkpoint = version.filter(|_| !unread).map(|state| Checkpoint { name, state });
+    fastctx_platform::task::blocking(move || write(&content, &stream, &history, unread, checkpoint)).await
 }
 
-fn write(content: &Content, stream: &StreamKey, history: &[SessionEvent], unread: bool) -> Result<Built, Failure> {
+fn write(
+    content: &Content,
+    stream: &StreamKey,
+    history: &[SessionEvent],
+    unread: bool,
+    checkpoint: Option<Checkpoint>,
+) -> Result<Built, Failure> {
     let had: HashMap<Identity, u64> = content
         .places(stream)
         .map_err(failure)?
@@ -90,7 +107,7 @@ fn write(content: &Content, stream: &StreamKey, history: &[SessionEvent], unread
         pending.push(Record { item: identities[index].to_vec(), order: keys[index].to_be_bytes().to_vec(), state })?;
         written += 1;
     }
-    pending.flush()?;
+    pending.flush(checkpoint)?;
     Ok(Built { events: history.len(), written, gone })
 }
 
@@ -139,19 +156,21 @@ impl Pending<'_> {
             };
         self.records.push(record);
         if self.records.len() >= BATCH_RECORDS || self.bytes >= BATCH_BYTES {
-            self.flush()?;
+            self.flush(None)?;
         }
         Ok(())
     }
 
-    fn flush(&mut self) -> Result<(), Failure> {
-        if self.records.is_empty() {
+    /// Appends what is pending; with a checkpoint, as the build's last
+    /// batch, which keeps the version the timeline now holds.
+    fn flush(&mut self, checkpoint: Option<Checkpoint>) -> Result<(), Failure> {
+        if self.records.is_empty() && checkpoint.is_none() {
             return Ok(());
         }
         let records = std::mem::take(&mut self.records);
         self.bytes = 0;
         self.content
-            .append(Batch { stream: self.stream.clone(), generation: 0, records, checkpoint: None, durable: false })
+            .append(Batch { stream: self.stream.clone(), generation: 0, records, checkpoint, durable: false })
             .map_err(failure)?;
         Ok(())
     }

@@ -81,12 +81,17 @@ pub(crate) async fn call(
     Err(refused.expect("a speaker was tried"))
 }
 
-/// Reads only the materialized index; an absent timeline stays absent.
+/// Reads the timeline as it is kept. A reader of its end, or one waiting
+/// for it to move, also asks for it to be brought to the conversation's
+/// history, which is done after this reading and tells those who wait.
 pub(crate) async fn here(node: &Arc<Node>, request: TimelineAsk) -> Result<TimelineTold, Failure> {
     let (about, _) =
         node.residents.about(request.resident()).ok_or_else(|| crate::forget::gone(node, request.resident()))?;
     if !about.world_managed() {
         return Err(Failure::refused(crate::speech::OWN_SESSION));
+    }
+    if matches!(&request, TimelineAsk::Moved { .. } | TimelineAsk::Page { from: TimelineFrom::Latest, .. }) {
+        super::wanted(node, request.resident());
     }
     match request {
         TimelineAsk::Moved { resident, after } => {
