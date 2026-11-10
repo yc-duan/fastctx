@@ -89,7 +89,7 @@ pub(super) async fn advance(
                     &indexes::key("row", uuid),
                     &NativeRow {
                         body: original(row).id().digest.clone(),
-                        turn: work.placement.as_ref().map(|p| p.turn.clone()),
+                        turn: work.placement.as_ref().and_then(|p| p.turn.clone()),
                     },
                 )
                 .await?;
@@ -184,7 +184,12 @@ async fn turn(claim: &Claim, header: &Header, local: Local<'_, '_>) -> Result<Op
             },
         };
         let chosen = old.and_then(|old| old.turn).unwrap_or_else(|| turn.id());
-        work.placement = Some(Placement { turn: chosen.clone(), slot: DisplaySlot::Opening, proof: bootstrap()? });
+        work.placement = Some(Placement {
+            turn: Some(chosen.clone()),
+            slot: DisplaySlot::Opening,
+            proof: bootstrap()?,
+            order: None,
+        });
         rows.put(
             SourceFamily::HostRows,
             &format!("claude/session/{}", claim.primary.source.as_str()),
@@ -212,7 +217,14 @@ async fn turn(claim: &Claim, header: &Header, local: Local<'_, '_>) -> Result<Op
             .await?;
         work.placement = parent
             .or_else(|| session.map(|s| s.turn))
-            .map(|turn| Ok::<_, Error>(Placement { turn, slot: DisplaySlot::Sibling, proof: bootstrap()? }))
+            .map(|turn| {
+                Ok::<_, Error>(Placement {
+                    turn: Some(turn),
+                    slot: DisplaySlot::Sibling,
+                    proof: bootstrap()?,
+                    order: None,
+                })
+            })
             .transpose()?;
         work.stage = Stage::Content;
     }
