@@ -46,7 +46,11 @@ impl World {
         client.next += 1;
         let id = client.next;
         let call = Call::WatchAccountRecords { hub, account, kind, owner };
-        client.connection.send(&crate::to_json(&ClientFrame::Call { id, call })).await.map_err(CallError::Broken)?;
+        client
+            .connection
+            .send(&crate::to_json(&ClientFrame::Call { id, call, submission: None }))
+            .await
+            .map_err(CallError::Broken)?;
         Ok(RecordsWatch::Local { client, id })
     }
 }

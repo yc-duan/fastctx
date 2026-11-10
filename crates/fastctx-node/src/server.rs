@@ -86,7 +86,7 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
     while let Some(frame) = reader.recv().await? {
         let requested = tokio::time::Instant::now();
         let _doing = fastctx_platform::doing::doing(format!("{} from {caller}", crate::labels::call_in(&frame)));
-        let ClientFrame::Call { id, call } = (match parse(&frame) {
+        let ClientFrame::Call { id, call, submission } = (match parse(&frame) {
             Ok(call) => call,
             Err(error) => {
                 let envelope: serde_json::Value = parse(&frame)?;
@@ -100,6 +100,16 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
             }
         }) else {
             return Err(std::io::Error::other("an MCP frame requires its own relay connection"));
+        };
+        // A name is checked at the door, and is this computer's own clients'
+        // from here on (`fastctx_net::submission`).
+        let submission = match submission.map(|named| named.check().map(|()| named)).transpose() {
+            Ok(submission) => submission.map(|named| fastctx_net::submission::bound(&["here"], &named)),
+            Err(reason) => {
+                writer.send(&json(&NodeFrame::Reply { id, reply: Err(Failure::not_run(reason)) })).await?;
+                writer.drain().await?;
+                continue;
+            }
         };
         if legacy && !crate::renewal_legacy::call(hello.protocol, &hello.peer, &call) {
             writer
@@ -687,11 +697,8 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
                             | Call::StoreRunFacts { .. }
                             | Call::RecordRunFailure { .. }
                     );
-                    if internal {
-                        handled(node, &hello.peer, call).await
-                    } else {
-                        crate::gate_waits::asked_since(requested, handled(node, &hello.peer, call)).await
-                    }
+                    let handling = fastctx_net::submission::scope(submission, handled(node, &hello.peer, call));
+                    if internal { handling.await } else { crate::gate_waits::asked_since(requested, handling).await }
                 }
             }
         };

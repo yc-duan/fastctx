@@ -170,6 +170,7 @@ mod step_command;
 mod stop;
 mod stops;
 mod stuck;
+mod submitted;
 mod talk;
 pub mod thumbnail;
 mod timeline;
@@ -1009,6 +1010,7 @@ pub async fn run_prepared(
             usage::watch(&node);
             forget::start(&node);
             timeline::register(&node);
+            management::register(&node);
         })
         .await
         {

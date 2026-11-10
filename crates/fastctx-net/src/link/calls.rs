@@ -176,7 +176,11 @@ impl Inner {
             stream,
             body: serde_json::to_value(body).expect("bodies serialize"),
         };
-        let plain = envelope(&Body::Call { call: call.clone() }, None);
+        // The name of what the calling task answers goes with the call, so
+        // asking that again asks this again under the same name. A stream
+        // is not submitted work and carries none.
+        let submission = crate::submission::current();
+        let plain = envelope(&Body::Call { call: call.clone(), submission: submission.clone() }, None);
         let large = feed.is_none()
             && wire::encode(&Up::Call { id: u64::MAX, message: plain.clone() }).len() > wire::MAX_CONTROL_FRAME;
         if large && !self.view().call_details {
@@ -241,7 +245,7 @@ impl Inner {
                 sha256: crate::sign::Digest(crate::sign::sha256(&bytes)),
             };
             let details = Some(crate::call_details::CallDetails::of(&self.me(), &call));
-            let message = envelope(&Body::LargeCall { carried, details }, Some(ticket.clone()));
+            let message = envelope(&Body::LargeCall { carried, details, submission }, Some(ticket.clone()));
             if wire::encode(&Up::Call { id: u64::MAX, message: message.clone() }).len() > wire::MAX_CONTROL_FRAME {
                 return Err(CallFailure::NotAllowed {
                     name: to.clone(),

@@ -718,7 +718,19 @@ impl Device {
         ) {
             fastctx_net::cancellable::call(&session.link, &machine, &account, remote.clone()).await
         } else {
-            session.link.call(&machine, &account, purpose, remote.clone()).await
+            // Named as a client's call of its own node is, and asked again
+            // under the name while its work is accepted and not done.
+            let named = crate::submission::fresh().map_err(|error| {
+                Error::from(crate::CallError::Failed(fastctx_types::ipc::Failure::not_run(error.to_string())))
+            })?;
+            let began = std::time::Instant::now();
+            loop {
+                let asking = session.link.call(&machine, &account, purpose, remote.clone());
+                match fastctx_net::submission::scope(Some(named.clone()), asking).await {
+                    Ok(Err(failure)) if crate::submission::asks_again(&failure, began) => {}
+                    answered => break answered,
+                }
+            }
         }
         .map_err(|error| {
             crate::Error::from(crate::CallError::Failed(fastctx_types::ipc::Failure::unanswered(error.to_string())))

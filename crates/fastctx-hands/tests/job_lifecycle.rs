@@ -275,7 +275,7 @@ async fn node(mut listener: Listener, world: WorldDir, machine: MachineName, not
             )
             .await
             .unwrap();
-        let ClientFrame::Call { id, call } =
+        let ClientFrame::Call { id, call, .. } =
             serde_json::from_slice(&connection.recv().await.unwrap().unwrap()).unwrap()
         else {
             panic!("expected call")

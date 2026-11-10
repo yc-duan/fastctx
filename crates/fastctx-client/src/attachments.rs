@@ -39,7 +39,10 @@ impl Client {
         let id = self.next;
         let size = file.size;
         let call = Call::Upload { target, node, file, composer };
-        self.connection.send(&crate::to_json(&ClientFrame::Call { id, call })).await.map_err(CallError::Broken)?;
+        self.connection
+            .send(&crate::to_json(&ClientFrame::Call { id, call, submission: None }))
+            .await
+            .map_err(CallError::Broken)?;
         let (mut reader, mut writer) = self.connection.split();
         let send = async {
             let mut buffer = vec![0u8; UPLOAD_CHUNK];

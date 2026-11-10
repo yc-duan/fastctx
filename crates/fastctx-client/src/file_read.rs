@@ -326,7 +326,11 @@ async fn ask(world: &World, asked: &Asked, range: FileRange) -> Result<Source, E
         }
         Asked::Attachment(attachment) => Call::ReadAttachment { attachment: attachment.clone(), range },
     };
-    client.connection.send(&crate::to_json(&ClientFrame::Call { id, call })).await.map_err(CallError::Broken)?;
+    client
+        .connection
+        .send(&crate::to_json(&ClientFrame::Call { id, call, submission: None }))
+        .await
+        .map_err(CallError::Broken)?;
     Ok(Source::Local { client, id })
 }
 

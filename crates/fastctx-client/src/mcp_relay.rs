@@ -15,7 +15,7 @@ impl Client {
         self.next += 1;
         let id = self.next;
         self.connection
-            .send(&crate::to_json(&ClientFrame::Call { id, call: Call::McpRelay { name } }))
+            .send(&crate::to_json(&ClientFrame::Call { id, call: Call::McpRelay { name }, submission: None }))
             .await
             .map_err(CallError::Broken)?;
         match self.frame().await? {

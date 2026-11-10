@@ -230,21 +230,31 @@ async fn work(
     // A large call's own kind is known only once it is in: it comes in in
     // a place for calls coming in, and then takes its own.
     let pool = match &body {
-        Body::Call { call } | Body::StreamCall { call } => call.contract().pool,
+        Body::Call { call, .. } | Body::StreamCall { call } => call.contract().pool,
         Body::LargeCall { .. } | Body::Answer { .. } | Body::LargeAnswer { .. } => Pool::Receiving,
     };
     let request = match &body {
-        Body::Call { call } | Body::StreamCall { call } => {
+        Body::Call { call, .. } | Body::StreamCall { call } => {
             Request::call(caller.machine.clone(), caller.account.clone(), came, call, &inner.me())
         }
         _ => Request::receiving(caller.machine.clone(), caller.account.clone(), came),
+    };
+    // A name is checked at the door, and is this caller's alone from here on.
+    let submission = match &body {
+        Body::Call { submission: Some(submission), .. } | Body::LargeCall { submission: Some(submission), .. } => {
+            if let Err(reason) = submission.check() {
+                return Some(refused(reason));
+            }
+            Some(crate::submission::bound(&[caller.account.as_str(), caller.machine.as_str()], submission))
+        }
+        _ => None,
     };
     let mut place = match acquire(inner, request, stop).await? {
         Ok(place) => place,
         Err(failure) => return Some(Err(failure)),
     };
     let accepting = match &body {
-        Body::Call { call } | Body::StreamCall { call } => {
+        Body::Call { call, .. } | Body::StreamCall { call } => {
             Some(call.contract().within.unwrap_or(fastctx_types::contract::OPENED_WITHIN))
         }
         _ => None,
@@ -318,7 +328,7 @@ async fn work(
     }
     let kind = remote.kind();
     held.kind = Some(kind.clone());
-    let doing = inner.node.call(caller.clone(), remote, stream);
+    let doing = crate::submission::scope(submission, inner.node.call(caller.clone(), remote, stream));
     let past = async {
         match contract.within {
             Some(within) => tokio::time::sleep_until(came + within).await,
@@ -441,14 +451,14 @@ async fn open_call(
         Ok(ticket.stream)
     };
     match body {
-        Body::Call { call } => Ok((call, None, None)),
+        Body::Call { call, .. } => Ok((call, None, None)),
         Body::StreamCall { call: remote } => {
             let stream = Stream::open(endpoint, &inner.key, from_the_caller()?, End::Sink)
                 .await
                 .map_err(|error| format!("opening its data connection: {error}"))?;
             Ok((remote, Some(stream), None))
         }
-        Body::LargeCall { carried, details } => {
+        Body::LargeCall { carried, details, .. } => {
             let details =
                 details.ok_or("upgrade the sender: its large call carries no verifiable authorization facts")?;
             if from_the_caller()? != carried.stream {

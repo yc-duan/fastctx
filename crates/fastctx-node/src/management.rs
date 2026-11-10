@@ -49,8 +49,32 @@ pub async fn manage(
     Ok((Address { machine: machine.name, resident }, managed))
 }
 
+/// Managing a conversation is submitted work (`crate::submitted`): it may
+/// stop a turn, and start or stop the host's session. A try that did not
+/// finish is not done again, since moving it tells the agent so each time.
+const FAMILY: crate::submitted::Family = crate::submitted::Family {
+    name: "call/manage",
+    at_once: 8,
+    within: std::time::Duration::from_secs(30 * 60),
+    stays: std::time::Duration::from_secs(240),
+    again: false,
+};
+
+/// What `here` records of what it was asked.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct Asked {
+    resident: ResidentId,
+    action: Management,
+}
+
+/// Names what manages conversations, before the node's jobs start.
+pub(crate) fn register(node: &Arc<Node>) {
+    crate::submitted::register(node, FAMILY, |node: Arc<Node>, asked: Asked| async move {
+        manage_here(&node, &asked.resident, asked.action).await
+    });
+}
+
 pub async fn here(node: &Arc<Node>, id: &ResidentId, action: Management) -> Result<Managed, Failure> {
-    let _doing = fastctx_platform::doing::doing(format!("{action:?} of {id}"));
     // Archiving and restoring go through the conversation's host, which is
     // not started where the workbench is closed in its login.
     if matches!(action, Management::Archive | Management::Restore)
@@ -59,6 +83,11 @@ pub async fn here(node: &Arc<Node>, id: &ResidentId, action: Management) -> Resu
     {
         return Err(Failure::refused(crate::logins::workbench::CLOSED));
     }
+    crate::submitted::submit(node, &FAMILY, id.as_str(), &Asked { resident: id.clone(), action }).await
+}
+
+async fn manage_here(node: &Arc<Node>, id: &ResidentId, action: Management) -> Result<Managed, Failure> {
+    let _doing = fastctx_platform::doing::doing(format!("{action:?} of {id}"));
     let actions = crate::control_queue::gate(node, id);
     let _action = if matches!(action, Management::Sleep | Management::Archive) {
         None

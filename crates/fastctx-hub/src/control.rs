@@ -1226,7 +1226,7 @@ fn call_details(
 ) -> Result<(fastctx_net::call_details::CallDetails, Option<diagnostics::Kind>), String> {
     use fastctx_net::{call_details::CallDetails, message::Body};
     match message.body::<Body>().map_err(|error| error.to_string())? {
-        Body::Call { call } | Body::StreamCall { call } => {
+        Body::Call { call, .. } | Body::StreamCall { call } => {
             Ok((CallDetails::of(&message.from, &call), Some(diagnostics::Kind::of(&call))))
         }
         Body::LargeCall { details, .. } => {
@@ -1315,7 +1315,7 @@ fn note_updates(hub: &Hub, message: &Envelope, standing: &Standing) {
 /// The call a message carries, when it carries one.
 fn carried_call(message: &Envelope) -> Option<fastctx_types::remote::RemoteCall> {
     match message.body::<fastctx_net::message::Body>().ok()? {
-        fastctx_net::message::Body::Call { call } | fastctx_net::message::Body::StreamCall { call } => Some(call),
+        fastctx_net::message::Body::Call { call, .. } | fastctx_net::message::Body::StreamCall { call } => Some(call),
         _ => None,
     }
 }

@@ -6,7 +6,7 @@ use tokio::sync::oneshot;
 
 async fn request(connection: &mut Connection) -> (u64, Call) {
     let bytes = connection.recv().await.unwrap().expect("the session must retain its arrival");
-    let ClientFrame::Call { id, call } = serde_json::from_slice(&bytes).unwrap() else { panic!("expected call") };
+    let ClientFrame::Call { id, call, .. } = serde_json::from_slice(&bytes).unwrap() else { panic!("expected call") };
     (id, call)
 }
 

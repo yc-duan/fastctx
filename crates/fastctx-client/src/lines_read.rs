@@ -77,6 +77,7 @@ impl World {
                             request: fastctx_types::lines::ReadRequest { source, start, count },
                         }
                     },
+                    submission: None,
                 }))
                 .await
                 .map_err(CallError::Broken)?;

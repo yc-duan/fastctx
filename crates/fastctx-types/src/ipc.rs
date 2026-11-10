@@ -139,8 +139,17 @@ pub enum Welcome {
 // Calls retain their existing allocation-free representation on ordinary connections.
 #[allow(clippy::large_enum_variant)]
 pub enum ClientFrame {
-    McpLine { line: usize },
-    Call { id: u64, call: crate::Call },
+    McpLine {
+        line: usize,
+    },
+    Call {
+        id: u64,
+        call: crate::Call,
+        /// The name the client gives the call when it submits work
+        /// (`crate::submission`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        submission: Option<crate::submission::Submission>,
+    },
 }
 
 /// A frame from the node after the welcome.
@@ -267,6 +276,11 @@ pub enum FailureCode {
     ControlUncertain,
     /// The requested action has not entered the host; the node retains it for retry.
     HostUnavailable,
+    /// The work a named call asked for is recorded and not done yet
+    /// (`crate::submission`): asked again under the same name, the call is
+    /// answered with how the work stands. Only a call that carried a name
+    /// is answered so.
+    Accepted,
     /// A code of a newer version, which this one does not know.
     #[serde(other)]
     Unknown,
@@ -308,6 +322,23 @@ impl Failure {
 
     pub fn not_run(message: impl Into<String>) -> Self {
         Self { capacity: None, denial: None, message: message.into(), not_run: true, code: None }
+    }
+
+    /// The work was accepted and is being done; this is not its outcome.
+    pub fn accepted(message: impl Into<String>) -> Self {
+        Self {
+            capacity: None,
+            denial: None,
+            message: message.into(),
+            not_run: false,
+            code: Some(FailureCode::Accepted),
+        }
+    }
+
+    /// Whether the work asked for is accepted and not done yet: asking
+    /// again under the same name says how it stands.
+    pub fn is_accepted(&self) -> bool {
+        self.code == Some(FailureCode::Accepted)
     }
 
     pub fn original_gone() -> Self {

@@ -60,7 +60,7 @@ impl Pool {
         client.next += 1;
         client
             .connection
-            .send(&crate::to_json(&ClientFrame::Call { id: client.next, call: Call::WatchMany }))
+            .send(&crate::to_json(&ClientFrame::Call { id: client.next, call: Call::WatchMany, submission: None }))
             .await
             .map_err(CallError::Broken)?;
         let (commands, incoming) = mpsc::channel(2 * watch_ipc::SUBSCRIPTIONS + 1);

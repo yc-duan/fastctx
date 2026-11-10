@@ -49,6 +49,7 @@ pub mod renewal;
 mod sentinels;
 pub mod shown;
 mod skills;
+mod submission;
 mod thumbnail;
 mod timeline;
 pub mod town;
@@ -368,9 +369,28 @@ impl Client {
                 self.machine
             ))));
         }
-        self.next += 1;
-        let id = self.next;
-        self.connection.send(&to_json(&ClientFrame::Call { id, call })).await.map_err(CallError::Broken)?;
+        // The call is named: where its work is submitted and not done yet,
+        // it is asked again under the name until what came of it is known
+        // (`submission`).
+        let named = submission::fresh().map_err(CallError::Broken)?;
+        let mut frame = ClientFrame::Call { id: 0, call, submission: Some(named) };
+        let began = std::time::Instant::now();
+        loop {
+            self.next += 1;
+            let id = self.next;
+            if let ClientFrame::Call { id: numbered, .. } = &mut frame {
+                *numbered = id;
+            }
+            self.connection.send(&to_json(&frame)).await.map_err(CallError::Broken)?;
+            match self.answer(id).await? {
+                Err(failure) if submission::asks_again(&failure, began) => {}
+                reply => return reply.map_err(CallError::Failed),
+            }
+        }
+    }
+
+    /// The one answer to the call `id`.
+    async fn answer(&mut self, id: u64) -> Result<Result<Reply, Failure>, CallError> {
         let frame = self
             .connection
             .recv()
@@ -379,7 +399,7 @@ impl Client {
             .ok_or_else(|| CallError::Broken(std::io::ErrorKind::UnexpectedEof.into()))?;
         let broken = |what: String| CallError::Broken(std::io::Error::other(what));
         match serde_json::from_slice::<NodeFrame>(&frame).map_err(|error| broken(error.to_string()))? {
-            NodeFrame::Reply { id: answered, reply } if answered == id => reply.map_err(CallError::Failed),
+            NodeFrame::Reply { id: answered, reply } if answered == id => Ok(reply),
             // Calls on one client go one at a time, so any other id is a
             // fault in the node.
             NodeFrame::Reply { id: answered, .. } => {
@@ -404,7 +424,10 @@ impl Client {
     pub async fn on(mut self, call: Call) -> Result<OnStream, CallError> {
         self.next += 1;
         let id = self.next;
-        self.connection.send(&to_json(&ClientFrame::Call { id, call })).await.map_err(CallError::Broken)?;
+        self.connection
+            .send(&to_json(&ClientFrame::Call { id, call, submission: None }))
+            .await
+            .map_err(CallError::Broken)?;
         Ok(OnStream { client: self, id })
     }
 
@@ -438,7 +461,10 @@ impl Client {
         }
         self.next += 1;
         let id = self.next;
-        self.connection.send(&to_json(&ClientFrame::Call { id, call })).await.map_err(CallError::Broken)?;
+        self.connection
+            .send(&to_json(&ClientFrame::Call { id, call, submission: None }))
+            .await
+            .map_err(CallError::Broken)?;
         Ok(Watching { transport: WatchingTransport::Local { client: self, id } })
     }
 
@@ -448,7 +474,7 @@ impl Client {
         self.next += 1;
         let id = self.next;
         self.connection
-            .send(&to_json(&ClientFrame::Call { id, call: Call::WatchFeatures }))
+            .send(&to_json(&ClientFrame::Call { id, call: Call::WatchFeatures, submission: None }))
             .await
             .map_err(CallError::Broken)?;
         Ok((self, id))
@@ -460,7 +486,7 @@ impl Client {
         self.next += 1;
         let id = self.next;
         self.connection
-            .send(&to_json(&ClientFrame::Call { id, call: Call::WatchWorld { known } }))
+            .send(&to_json(&ClientFrame::Call { id, call: Call::WatchWorld { known }, submission: None }))
             .await
             .map_err(CallError::Broken)?;
         Ok((self, id))
@@ -473,7 +499,7 @@ impl Client {
         self.next += 1;
         let id = self.next;
         self.connection
-            .send(&to_json(&ClientFrame::Call { id, call: Call::WatchHistory { scope } }))
+            .send(&to_json(&ClientFrame::Call { id, call: Call::WatchHistory { scope }, submission: None }))
             .await
             .map_err(CallError::Broken)?;
         Ok((self, id))
@@ -483,7 +509,7 @@ impl Client {
         self.next += 1;
         let id = self.next;
         self.connection
-            .send(&to_json(&ClientFrame::Call { id, call: Call::WatchMemory { town } }))
+            .send(&to_json(&ClientFrame::Call { id, call: Call::WatchMemory { town }, submission: None }))
             .await
             .map_err(CallError::Broken)?;
         Ok((self, id))
@@ -505,7 +531,10 @@ impl Client {
     pub async fn watch_tools(mut self, call: Call) -> Result<ToolsWatch, CallError> {
         self.next += 1;
         let id = self.next;
-        self.connection.send(&to_json(&ClientFrame::Call { id, call })).await.map_err(CallError::Broken)?;
+        self.connection
+            .send(&to_json(&ClientFrame::Call { id, call, submission: None }))
+            .await
+            .map_err(CallError::Broken)?;
         Ok(ToolsWatch { client: self, id })
     }
 }
