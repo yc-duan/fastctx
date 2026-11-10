@@ -17,13 +17,15 @@ use std::{
     collections::HashMap,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
 };
 
 pub(crate) type Shared = Arc<Handle>;
 pub(crate) struct Handle {
     pub bodies: Arc<tokio::sync::Semaphore>,
+    navigation: AtomicU64,
+    navigation_changed: tokio::sync::Notify,
     reader: tokio::sync::Mutex<Reader>,
     closed: Arc<AtomicBool>,
     closing: Arc<tokio::sync::Notify>,
@@ -35,6 +37,62 @@ impl std::ops::Deref for Handle {
     }
 }
 impl Handle {
+    pub async fn part(&self, generation: u64, edge: Edge, request: u64) -> Result<Option<Part>, String> {
+        let previous = self.navigation.fetch_max(request, Ordering::AcqRel);
+        if request < previous {
+            return Ok(None);
+        }
+        if request > previous {
+            self.navigation_changed.notify_waiters();
+        }
+        let changed = self.navigation_changed.notified();
+        tokio::pin!(changed);
+        changed.as_mut().enable();
+        let mut work = self.lock().await.clone();
+        let following_revision = work.follow_revision;
+        if request != self.navigation.load(Ordering::Acquire) {
+            return Ok(None);
+        }
+        let read = tokio::select! {
+            read = work.read_part(generation, edge) => read?,
+            () = &mut changed => return Ok(None),
+            () = self.closed() => return Ok(None),
+        };
+        if !read {
+            return Ok(None);
+        }
+        let mut current = self.lock().await;
+        if request != self.navigation.load(Ordering::Acquire) || self.closed.load(Ordering::Acquire) {
+            return Ok(None);
+        }
+        if work.state.revision < current.state.revision {
+            return Err("the timeline changed while its window was being read; try again".into());
+        }
+        work.state.inherit_live(&current.state);
+        current.state = work.state;
+        if current.follow_revision == following_revision {
+            current.following = work.following;
+        }
+        Ok(Some(Part::replacement(generation, current.snapshot()?)))
+    }
+    async fn advanced(&self) -> Result<Option<Window>, String> {
+        let mut work = self.lock().await.clone();
+        let generation = work.transcript.lock().expect("transcript").generation();
+        let navigation = self.navigation.load(Ordering::Acquire);
+        let following_revision = work.follow_revision;
+        work.read_advanced().await?;
+        let mut current = self.lock().await;
+        if self.closed.load(Ordering::Acquire)
+            || navigation != self.navigation.load(Ordering::Acquire)
+            || current.transcript.lock().expect("transcript").generation() != generation
+            || current.follow_revision != following_revision
+        {
+            return Ok(None);
+        }
+        work.state.inherit_live(&current.state);
+        current.state = work.state;
+        current.snapshot().map(Some)
+    }
     fn close(&self) {
         self.closed.store(true, Ordering::Release);
         self.closing.notify_waiters();
@@ -51,9 +109,13 @@ async fn until_closed(closed: &AtomicBool, closing: &tokio::sync::Notify) {
         notified.await;
     }
 }
-#[derive(Default)]
-pub(crate) struct Readers(Mutex<HashMap<u64, Shared>>);
+#[derive(Clone, Default)]
+pub(crate) struct Readers(Arc<Mutex<HashMap<u64, Shared>>>);
 impl Readers {
+    pub async fn run(&self, id: u64, reader: Shared, initial: Option<Watching>, pieces: Sender<Piece>) {
+        stream(reader, initial, pieces).await;
+        self.close(id);
+    }
     pub fn insert(&self, id: u64, reader: Shared) {
         self.0.lock().expect("timeline readers").insert(id, reader);
     }
@@ -72,6 +134,7 @@ impl Readers {
     }
 }
 
+#[derive(Clone)]
 pub(crate) struct Reader {
     pub world: World,
     pub resident: ResidentId,
@@ -79,8 +142,6 @@ pub(crate) struct Reader {
     pub transcript: Arc<Mutex<Transcript>>,
     state: timeline_window::Window,
     mark: Option<Mark>,
-    emitted: usize,
-    emitted_bytes: usize,
     following: bool,
     follow_revision: u64,
     closed: Arc<AtomicBool>,
@@ -120,8 +181,6 @@ pub(crate) async fn open(
         transcript: Arc::new(Mutex::new(transcript)),
         state: timeline_window::Window::default(),
         mark: None,
-        emitted: 0,
-        emitted_bytes: 0,
         following: true,
         follow_revision: 0,
         objects: Vec::new(),
@@ -144,6 +203,8 @@ pub(crate) async fn open(
     let window = reader.snapshot()?;
     let shared = Arc::new(Handle {
         bodies: Arc::new(tokio::sync::Semaphore::new(1)),
+        navigation: AtomicU64::new(0),
+        navigation_changed: tokio::sync::Notify::new(),
         closed: reader.closed.clone(),
         closing: reader.closing.clone(),
         reader: tokio::sync::Mutex::new(reader),
@@ -156,19 +217,17 @@ fn older(error: &Error) -> bool {
 
 async fn ready(watching: &mut Watching) -> Result<Vec<SessionEvent>, Error> {
     tokio::time::timeout(std::time::Duration::from_secs(30), async {
-        let mut pending = Vec::new();
-        let mut bytes = 0;
+        let mut pending = timeline_window::Window::default();
         loop {
             match watching.next().await? {
-                Some(Watched::Resumed) => return Ok(pending),
+                Some(Watched::Resumed) => return Ok(pending.pending_events()),
                 Some(Watched::Live { event, mark: None }) => {
-                    bytes += serde_json::to_vec(&event).map_or(0, |v| v.len());
-                    if pending.len() >= timeline_window::HELD_EVENTS || bytes > timeline_window::HELD_BYTES {
+                    pending.observe(&event);
+                    if pending.pending_over_budget {
                         return Err(Error::Other(
                             "the pending-request snapshot exceeds the conversation window budget".into(),
                         ));
                     }
-                    pending.push(event);
                 }
                 Some(_) => {
                     return Err(Error::Unexpected("a live-only subscription did not acknowledge registration".into()));
@@ -208,26 +267,13 @@ impl Reader {
     }
     fn snapshot(&mut self) -> Result<Window, String> {
         let (events, edges) = self.state.shown()?;
-        self.emitted = events.len();
-        self.emitted_bytes = events.iter().map(|e| serde_json::to_vec(e).map_or(0, |v| v.len())).sum();
         self.objects = edges.objects.clone();
         self.transcript.lock().expect("transcript").paged(&events, edges)
     }
-    pub async fn part(&mut self, generation: u64, edge: Edge) -> Result<Option<Part>, String> {
-        let previous = self.state.clone();
-        match self.read_part(generation, edge).await {
-            Ok(part) => Ok(part),
-            Err(error) => {
-                self.state = previous;
-                Err(error)
-            }
+    async fn read_part(&mut self, generation: u64, edge: Edge) -> Result<bool, String> {
+        if !matches!(edge, Edge::Latest) && self.transcript.lock().expect("transcript").generation() != generation {
+            return Ok(false);
         }
-    }
-    async fn read_part(&mut self, generation: u64, edge: Edge) -> Result<Option<Part>, String> {
-        if self.transcript.lock().expect("transcript").generation() != generation {
-            return Ok(None);
-        }
-        self.following = matches!(edge, Edge::Latest);
         let backwards = matches!(edge, Edge::Before { .. });
         let from = match edge {
             Edge::Latest => TimelineFrom::Latest,
@@ -239,15 +285,16 @@ impl Reader {
                 Some(place) => TimelineFrom::After { place },
                 None => TimelineFrom::Latest,
             },
-            _ => return Ok(None),
+            _ => return Ok(false),
         };
+        self.following = matches!(edge, Edge::Latest);
         let latest = matches!(from, TimelineFrom::Latest);
         let mut page = self.fetch(from).await?;
         if !latest && page.revision != Some(self.state.revision) {
             self.refresh().await?;
             let place = if backwards { self.state.first() } else { self.state.last() };
             let Some(place) = place else {
-                return Ok(Some(Part::replacement(generation, self.snapshot()?)));
+                return Ok(true);
             };
             page = self
                 .fetch(if backwards { TimelineFrom::Before { place } } else { TimelineFrom::After { place } })
@@ -283,7 +330,7 @@ impl Reader {
                 }
             }
         }
-        Ok(Some(Part::replacement(generation, self.snapshot()?)))
+        Ok(true)
     }
     /// A revision has no changed-range list. Reread the held neighborhood so
     /// removals and edits in its middle cannot survive an append-only merge.
@@ -335,17 +382,7 @@ impl Reader {
         self.state.replace(events, revision, older, self.state.newer);
         Ok(())
     }
-    async fn advanced(&mut self) -> Result<Window, String> {
-        let previous = self.state.clone();
-        match self.read_advanced().await {
-            Ok(window) => Ok(window),
-            Err(error) => {
-                self.state = previous;
-                Err(error)
-            }
-        }
-    }
-    async fn read_advanced(&mut self) -> Result<Window, String> {
+    async fn read_advanced(&mut self) -> Result<(), String> {
         if self.following
             && !self.state.newer
             && let Some(place) = self.state.last()
@@ -356,8 +393,7 @@ impl Reader {
                 self.state.merge(page.events, false);
             }
         }
-        self.refresh().await?;
-        self.snapshot()
+        self.refresh().await
     }
     fn live(&mut self, mut event: SessionEvent, mark: Option<Mark>) -> Result<Option<Piece>, String> {
         if mark.is_some_and(|mark| {
@@ -368,30 +404,41 @@ impl Reader {
         if let Some(mark) = mark {
             self.mark = Some(mark);
         }
-        let previewed = crate::timeline_preview::limit(&mut event);
+        crate::timeline_preview::limit(&mut event);
         if !self.state.observe(&event) {
             if self.state.pending_over_budget {
                 return Err("the pending-request snapshot exceeds the conversation window budget".into());
             }
             return Ok(None);
         }
-        if self.state.newer {
-            self.state.shown()?;
+        let pending = timeline_window::pending_event(&event);
+        if self.state.newer && !pending {
             return Ok(None);
         }
-        let bytes = serde_json::to_vec(&event).map_or(0, |v| v.len());
-        if previewed
-            || self.state.previewed
-            || self.state.chunks >= 128
-            || self.emitted >= timeline_window::HELD_EVENTS
-            || self.emitted_bytes + bytes > timeline_window::HELD_BYTES
-            || bytes > 64 << 10
+        if self.state.previewed
+            && let Some(mut snapshot) = self.state.running(&event)
         {
-            return Ok(Some(Piece::Window { window: self.snapshot()? }));
+            if let fastctx_types::session::Happened::Began { turn, item } = snapshot.happened {
+                snapshot.happened = fastctx_types::session::Happened::Updated { turn, item };
+            }
+            event = snapshot;
         }
-        self.emitted += 1;
-        self.emitted_bytes += bytes;
-        self.transcript.lock().expect("transcript").live_event(&event).map(Some)
+        self.state.previewed = false;
+        let key = timeline_window::key(&event);
+        let mut evicted = std::mem::take(&mut self.state.retired);
+        if !self.state.newer {
+            evicted.extend(self.state.trim_visible());
+        }
+        if !evicted.is_empty() {
+            self.objects.retain(|o| self.state.entries.iter().any(|e| e.has_object(&o.object)));
+        }
+        let generation = self.transcript.lock().expect("transcript").generation();
+        Ok(Some(Piece::Live {
+            generation,
+            key,
+            evicted,
+            event: serde_json::value::to_raw_value(&event).map_err(|e| e.to_string())?,
+        }))
     }
 }
 
@@ -409,8 +456,9 @@ pub(crate) async fn stream(reader: Shared, mut initial: Option<Watching>, pieces
                     let mut watching = world.watch_live(resident.clone(), machine.clone()).await?;
                     let pending = ready(&mut watching).await?;
                     reader.lock().await.state.pending(pending);
-                    let window = reader.lock().await.advanced().await.map_err(Error::Other)?;
-                    pieces.send(Piece::Window { window }).map_err(|_| Error::Other("the page closed".into()))?;
+                    if let Some(window) = reader.advanced().await.map_err(Error::Other)? {
+                        pieces.send(Piece::Window { window }).map_err(|_| Error::Other("the page closed".into()))?;
+                    }
                     Ok(watching)
                 }
                 .await
@@ -462,43 +510,59 @@ async fn connected(
         let after = reader.lock().await.state.revision;
         let moved = world.timeline(machine.clone(), TimelineAsk::Moved { resident: resident.clone(), after });
         tokio::pin!(moved);
+        let mut advancing = None;
         loop {
             tokio::select! {
                 () = reader.closed() => return Ok(Follow::Closed),
-                result = &mut moved => {
+                result = &mut moved, if advancing.is_none() => {
                     match result? {
-                        TimelineTold::Moved { revision: Some(revision) } if revision > after => {
-                            let window = reader.lock().await.advanced().await.map_err(Error::Other)?;
-                            send(Piece::Window { window })?;
-                        },
-                        TimelineTold::Moved { .. } => {},
+                        TimelineTold::Moved { revision: Some(revision) } if revision > after => { advancing = Some(Box::pin(reader.advanced())); },
+                        TimelineTold::Moved { .. } => break,
                         _ => return Err(Error::Unexpected("a timeline wait returned another answer".into())),
                     }
+                },
+                result = async { advancing.as_mut().expect("guarded").await }, if advancing.is_some() => {
+                    if let Some(window) = result.map_err(Error::Other)? { send(Piece::Window { window })?; }
                     break;
                 },
-                live = watching.next() => match live? {
-                    Some(Watched::Live { event, mark }) => {
-                        if let fastctx_types::session::Happened::Changed { change, .. } = &event.happened {
-                            use fastctx_types::session::SessionChange;
-                            match change {
-                                SessionChange::HistoryChanged => { reader.lock().await.state.live.clear(); return Ok(Follow::Refresh); },
-                                SessionChange::HistoryCut { removed_turns } => {
-                                    reader.lock().await.state.live.retain(|e| !removed_turns.iter().any(|turn| event_turn(e) == Some(turn.as_str())));
-                                    return Ok(Follow::Refresh);
-                                },
-                                _ => {},
-                            }
-                        }
-                        if let Some(piece) = reader.lock().await.live(event, mark).map_err(Error::Other)? { send(piece)?; }
-                    },
-                    Some(Watched::Now { busy, turn, kept, .. }) => send(Piece::Now { busy, turn, kept })?,
-                    Some(Watched::Resumed) => {},
-                    Some(_) => return Err(Error::Unexpected("a live-only subscription sent history".into())),
-                    None => return Err(Error::Other("the live subscription ended".into())),
-                },
+                live = watching.next() => { if let Some(follow) = received(reader, pieces, live?).await? { return Ok(follow); } },
             }
         }
     }
+}
+async fn received(reader: &Shared, pieces: &Sender<Piece>, live: Option<Watched>) -> Result<Option<Follow>, Error> {
+    let send = |piece| pieces.send(piece).map_err(|_| Error::Other("the page closed".into()));
+    match live {
+        Some(Watched::Live { event, mark }) => {
+            if let fastctx_types::session::Happened::Changed { change, .. } = &event.happened {
+                use fastctx_types::session::SessionChange;
+                match change {
+                    SessionChange::HistoryChanged => {
+                        reader.lock().await.state.live.clear();
+                        return Ok(Some(Follow::Refresh));
+                    }
+                    SessionChange::HistoryCut { removed_turns } => {
+                        reader
+                            .lock()
+                            .await
+                            .state
+                            .live
+                            .retain(|e| !removed_turns.iter().any(|turn| event_turn(e) == Some(turn.as_str())));
+                        return Ok(Some(Follow::Refresh));
+                    }
+                    _ => {}
+                }
+            }
+            if let Some(piece) = reader.lock().await.live(event, mark).map_err(Error::Other)? {
+                send(piece)?;
+            }
+        }
+        Some(Watched::Now { busy, turn, kept, .. }) => send(Piece::Now { busy, turn, kept })?,
+        Some(Watched::Resumed) => {}
+        Some(_) => return Err(Error::Unexpected("a live-only subscription sent history".into())),
+        None => return Err(Error::Other("the live subscription ended".into())),
+    }
+    Ok(None)
 }
 
 fn event_turn(event: &SessionEvent) -> Option<&str> {

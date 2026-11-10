@@ -1,3 +1,4 @@
+import { sameEvent } from "./event-identity";
 // A conversation as its page holds it (`world-gui.md`, 对话: 很长的对话). The
 // shell keeps every event of it (`src-tauri/src/transcript.rs`); the page
 // holds its latest turns, read as they go on, and whatever earlier parts its
@@ -31,7 +32,7 @@ export interface Window {
   /** What its turns read of what came before them. */
   carry: SessionEvent[];
   /** Opaque timeline paging has no full-history ordinal or turn count. */
-  pages?: { older: boolean; newer: boolean; keys?: string[]; objects: { at: number; bytes: number; object: string }[] };
+  pages?: { older: boolean; newer: boolean; keys?: string[]; live_keys?: string[]; pending?: SessionEvent[]; objects: { at: number; bytes: number; object: string }[] };
 }
 
 /** A part read from the shell. */
@@ -78,9 +79,14 @@ export interface Found {
 }
 
 /** Where the parts a page does not hold are read from. */
+export interface ScanCursor { revision: string; after: { order: string; item: string } }
+export interface ExpandedEvent { object: string; event: SessionEvent }
+export interface Scanned { events: SessionEvent[]; next: ScanCursor | null }
+
 export interface PartSource {
+  scan?(cursor: ScanCursor | null): Promise<Scanned>;
   part(generation: number, edge: Edge): Promise<PartRead | null>;
-  object?(generation: number, at: number): Promise<SessionEvent>;
+  object?(generation: number, object: string): Promise<ExpandedEvent>;
   follow?(revision: number, following: boolean): Promise<void>;
   /** Where a turn first appears. */
   locate(generation: number, turn: string): Promise<number | null>;
@@ -218,7 +224,7 @@ export class Conversation {
       const expanded = this.expanded.get(object.object);
       if (expanded) events[object.at] = expanded;
     }
-    tail.history(events, window.carry, window.pages?.keys, !window.pages);
+    tail.history(events, window.carry, window.pages?.keys, !window.pages, window.pages?.pending);
     this.parts = [{ start: window.start, end: window.start + window.events.length, turnsBefore: window.turns_before, turns: 0, fold: tail }];
     this.reading.clear();
     this.structure += 1;
@@ -244,6 +250,34 @@ export class Conversation {
     return true;
   }
 
+  /** Applies only the realtime change, retaining no raw chunk journal. */
+  liveEvent(event: SessionEvent, key: string, evicted: readonly string[] = []): void {
+    if (event.event === "changed" && (event.change.kind === "request" || event.change.kind === "resolved")) {
+      this.live.livePending(event);
+      return;
+    }
+    this.route(event);
+    this.live.event(event, key);
+    const removed = new Set(evicted);
+    this.live.evictPlaces([...removed]);
+    if (removed.size) {
+      const window = this.pageWindow;
+      if (window?.pages?.keys) {
+        const positions = new Map<number, number>();
+        const keys: string[] = [];
+        window.events = window.events.filter((_, at) => {
+          if (removed.has(window.pages!.keys![at]!)) return false;
+          positions.set(at, keys.length); keys.push(window.pages!.keys![at]!); return true;
+        });
+        window.pages.keys = keys;
+        window.pages.objects = window.pages.objects.flatMap((object) => { const at = positions.get(object.at); return at === undefined ? [] : [{ ...object, at }]; });
+        if (evicted.length) window.pages.older = true;
+        this.tail.end = window.events.length;
+      }
+      this.parts = [...this.parts]; this.structure += 1;
+    }
+  }
+
   /** Fetches only after the reader explicitly opens a deferred event. */
   async readFull(key: string): Promise<void> {
     const entry = this.get(key);
@@ -252,12 +286,16 @@ export class Conversation {
     const object = entry && this.objectOf(entry);
     if (!object || !source?.object || !window) return;
     const generation = this.generation;
-    const event = await source.object(generation, object.at);
+    const expected = window.events[object.at];
+    const expanded = await source.object(generation, object.object);
+    if (expanded.object !== object.object) throw new Error("the expanded object did not match the selected content");
+    const event = expanded.event;
+    if (expected && !sameEvent(expected, event)) throw new Error("the expanded event did not match the selected entry");
     if (source !== this.source || !this.pageWindow) return;
     const current = this.pageWindow.pages?.objects.find((held) => held.object === object.object);
     if (!current) return;
-    // Expanded bodies have an independent 8 MiB cache. Older expansions can
-    // be opened again; the original bounded previews remain the base.
+    // Expanded bodies are budgeted separately within the held window. Bodies
+    // evicted by paging are fetched again after the reader returns.
     this.expanded.set(current.object, event);
     let bytes = [...this.expanded.values()].reduce((sum, e) => sum + JSON.stringify(e).length * 2, 0);
     while (bytes > 8 * 1024 * 1024 && this.expanded.size > 1) {
@@ -265,13 +303,8 @@ export class Conversation {
       bytes -= JSON.stringify(this.expanded.get(first)).length * 2;
       this.expanded.delete(first);
     }
-    const active = this.pageWindow;
-    const events = [...active.events];
-    for (const object of active.pages?.objects ?? []) {
-      const expanded = this.expanded.get(object.object);
-      if (expanded) events[object.at] = expanded;
-    }
-    this.live.history(events, active.carry, active.pages?.keys, false);
+    if (expected && (expected.event === "finished") && expected.item.kind === "other" && expected.item.host_kind === "Content preview unavailable") this.live.evictPlaces([window.pages?.keys?.[object.at] ?? ""]);
+    this.live.event(event);
     this.structure += 1;
     this.changed();
   }
@@ -426,6 +459,19 @@ export class Conversation {
   async *everything(): AsyncGenerator<readonly Entry[]> {
     const source = this.source;
     const generation = this.generation;
+    if (this.pageWindow) {
+      if (!source?.scan) throw new Error("this source cannot export the complete conversation");
+      let cursor: ScanCursor | null = null;
+      do {
+        const scanned = await source.scan(cursor);
+        const fold = new Fold("export");
+        fold.thoughtWords = this.thoughts;
+        fold.history(scanned.events);
+        yield fold.entries;
+        cursor = scanned.next;
+      } while (cursor);
+      return;
+    }
     let at = 0;
     for (const part of [...this.parts]) {
       while (source && at < part.start) {
@@ -461,8 +507,11 @@ export class Conversation {
       const before = `timeline:${this.generation}:before`;
       const after = `timeline:${this.generation}:after`;
       if (pages.older) blocks.push({ kind: "gap", key: before, stamp: this.reading.has(before) ? 1 : 0, start: 0, end: 0, turns: 0, first: true, loading: this.reading.has(before), paged: true });
-      blocks.push(...this.live.blocks());
+      const current = this.live.blocks();
+      const pending = pages.newer ? current.filter((block) => block.kind === "ask") : [];
+      blocks.push(...current.filter((block) => !pages.newer || block.kind !== "ask"));
       if (pages.newer) blocks.push({ kind: "gap", key: after, stamp: this.reading.has(after) ? 1 : 0, start: end, end, turns: 0, first: false, loading: this.reading.has(after), later: true, paged: true });
+      blocks.push(...pending);
       this.cache = { version, blocks };
       return blocks;
     }

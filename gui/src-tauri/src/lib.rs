@@ -113,6 +113,7 @@ mod conversation_watch;
 mod timeline_body;
 mod timeline_objects;
 mod timeline_preview;
+mod timeline_scan;
 mod timeline_watch;
 mod timeline_window;
 mod watch_delivery;
@@ -343,6 +344,7 @@ async fn watch(
         shell.transcripts.insert(id, transcript);
         shell.timeline_readers.insert(id, reader.clone());
         let mut initial = Some(opened.watching);
+        let readers = shell.timeline_readers.clone();
         if let Err(error) = shell.follow_delivery(
             page,
             id,
@@ -351,7 +353,12 @@ async fn watch(
                 Piece::Now { .. } => Some("now".into()),
                 _ => None,
             },
-            move |pieces, _| timeline_watch::stream(reader.clone(), initial.take(), pieces),
+            move |pieces, _| {
+                let (reader, watching, readers) = (reader.clone(), initial.take(), readers.clone());
+                async move {
+                    readers.run(id, reader, watching, pieces).await;
+                }
+            },
         ) {
             shell.transcripts.close(id);
             shell.timeline_readers.close(id);
@@ -1293,6 +1300,7 @@ pub fn run() {
             transcript::conversation_part,
             transcript::conversation_follow,
             timeline_objects::conversation_object,
+            timeline_scan::conversation_scan,
             transcript::conversation_cut,
             transcript::conversation_locate,
             transcript::conversation_index,

@@ -363,6 +363,7 @@ export class ConversationPage {
     this.scroller = this.element.querySelector<HTMLElement>(".talk-scroller")!;
     this.room = this.element.querySelector<HTMLElement>(".talk-room")!;
     const transcript = this.element.querySelector<HTMLElement>(".conversation")!;
+    const owner = this;
     this.finder = new Finder(
       transcript,
       this.scroller,
@@ -376,8 +377,8 @@ export class ConversationPage {
         findRange: (match) => this.view.findRange(match),
         // What the page does not hold is found by the shell, from text the
         // page reads aside once (`find-far.ts`).
-        far: {
-          search: (query) => this.far.search(query),
+        get far() { if (options.conversation.paged) return undefined; return {
+          search: (query: string) => far().search(query),
           get more() {
             return far().more;
           },
@@ -385,13 +386,13 @@ export class ConversationPage {
             return far().grown;
           },
           held: () => options.conversation.bounds().join(";"),
-          reach: async (at) => {
+          reach: async (at: number) => {
             await options.conversation.reach(at);
-            cancelAnimationFrame(this.frame);
-            this.render();
+            cancelAnimationFrame(owner.frame);
+            owner.render();
           },
-          close: () => this.far.close(),
-        },
+          close: () => far().close(),
+        }; },
       },
     );
     const far = () => this.far;
@@ -702,20 +703,21 @@ export class ConversationPage {
         const nested = event.deltaY < 0 && scrollsUpWithin(event.target as Element, this.scroller);
         if (!nested) {
           this.pageDirection = event.deltaY < 0 ? "before" : "after";
-          this.pageGesture += 1;
-          this.view.readerMoved();
+          const now = performance.now();
+          if (now - wheelAt > 200) { this.pageGesture += 1; this.view.readerMoved(); }
+          wheelAt = now;
         }
         if (event.deltaY < 0 && !nested) up(); else moved();
       },
       { passive: true },
     );
     let touchY = 0;
-    this.scroller.addEventListener("touchstart", (event) => { touchY = event.touches[0]?.clientY ?? 0; }, { passive: true });
+    let wheelAt = -Infinity;
+    this.scroller.addEventListener("touchstart", (event) => { touchY = event.touches[0]?.clientY ?? 0; this.pageGesture += 1; }, { passive: true });
     this.scroller.addEventListener("touchmove", (event) => {
       const y = event.touches[0]?.clientY ?? touchY;
       this.pageDirection = y > touchY ? "before" : "after";
       touchY = y;
-      this.pageGesture += 1;
       this.view.readerMoved();
       moved();
     }, { passive: true });
@@ -723,6 +725,7 @@ export class ConversationPage {
     this.scroller.addEventListener("pointerdown", (event) => {
       if (event.target === this.scroller) {
         this.pointerPaging = true;
+        this.pageGesture += 1;
         window.addEventListener("pointerup", () => { this.pointerPaging = false; }, { once: true });
         moved();
       }
@@ -730,9 +733,9 @@ export class ConversationPage {
     this.scroller.addEventListener("keydown", (event) => {
       if ((event.target as Element).closest("input, textarea, select, [contenteditable]")) return;
       if (event.key === "PageUp" || event.key === "ArrowUp" || event.key === "Home") {
-        this.pageDirection = "before"; this.pageGesture += 1; this.view.readerMoved(); up();
+        this.pageDirection = "before"; if (!event.repeat) this.pageGesture += 1; this.view.readerMoved(); up();
       } else if (event.key === "PageDown" || event.key === "ArrowDown" || event.key === "End" || event.key === " ") {
-        this.pageDirection = "after"; this.pageGesture += 1; this.view.readerMoved(); moved();
+        this.pageDirection = "after"; if (!event.repeat) this.pageGesture += 1; this.view.readerMoved(); moved();
       }
     });
     // Otherwise only a scroll the reader made says whether they still
@@ -745,7 +748,6 @@ export class ConversationPage {
       const resized = clientHeight !== sized.client || scrollHeight !== sized.content;
       if (this.pointerPaging && scrollTop !== sized.top) {
         this.pageDirection = scrollTop < sized.top ? "before" : "after";
-        this.pageGesture += 1;
         this.view.readerMoved();
       }
       sized = { client: clientHeight, content: scrollHeight, top: scrollTop };
@@ -940,6 +942,7 @@ export class ConversationPage {
    *  view when the reader was already there. A page not in view is drawn
    *  when it is shown again. */
   private render(): void {
+    this.finder.setScope(this.options.conversation.paged ? (this.options.words.english ? "Loaded content only" : "仅搜索已加载内容") : null);
     this.frame = 0;
     if (!this.element.isConnected) return;
     const follow = this.following;
@@ -1019,7 +1022,7 @@ export class ConversationPage {
     if (this.view.restore(place)) return;
     if (this.options.conversation.paged) {
       const near = this.options.conversation.live.blocks()[0];
-      if (near) this.view.restore({ key: near.key, offset: place.offset });
+      if (near) this.view.restore({ key: near.key, offset: 0 });
       return;
     }
     if (!turn) return;

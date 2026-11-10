@@ -9,26 +9,39 @@ pub(crate) const EXPANDED_BYTES: u64 = 8 << 20;
 
 pub(crate) async fn read(
     reader: crate::timeline_watch::Shared,
-    generation: u64,
-    at: usize,
+    _generation: u64,
+    object_hash: String,
+) -> Result<Box<RawValue>, String> {
+    let object = reader
+        .lock()
+        .await
+        .objects
+        .iter()
+        .find(|o| o.object == object_hash)
+        .cloned()
+        .ok_or("this event has no deferred content")?;
+    fetch(reader, object, true).await
+}
+
+pub(crate) async fn fetch(
+    reader: crate::timeline_watch::Shared,
+    object: crate::timeline_window::Object,
+    held: bool,
 ) -> Result<Box<RawValue>, String> {
     let _permit = reader
         .bodies
         .clone()
         .try_acquire_owned()
         .map_err(|_| "another event is being opened; try again when it finishes")?;
-    let (world, machine, resident, object) = {
-        let reader = reader.lock().await;
-        if reader.transcript.lock().expect("transcript").generation() != generation {
-            return Err("the conversation window changed".into());
-        }
-        let object = reader.objects.iter().find(|o| o.at == at).cloned().ok_or("this event has no deferred content")?;
-        (reader.world.clone(), reader.machine.clone(), reader.resident.clone(), object)
+    let (world, machine, resident) = {
+        let r = reader.lock().await;
+        (r.world.clone(), r.machine.clone(), r.resident.clone())
     };
     if object.bytes > EXPANDED_BYTES {
         return Err("This event exceeds 8 MiB. Use the complete output file, when the tool provides one.".into());
     }
     let mut bytes = Vec::with_capacity(object.bytes as usize);
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(60);
     while (bytes.len() as u64) < object.bytes {
         let length = (object.bytes - bytes.len() as u64).min(u64::from(OBJECT_BYTES)) as u32;
         let reading = world.timeline(
@@ -41,7 +54,7 @@ pub(crate) async fn read(
             },
         );
         let reply = tokio::select! {
-            reply = reading => reply.map_err(|e| e.to_string())?,
+            reply = tokio::time::timeout_at(deadline, reading) => reply.map_err(|_| "opening the event exceeded 60 s")?.map_err(|e| e.to_string())?,
             () = reader.closed() => return Err("the conversation window closed".into()),
         };
         let TimelineTold::Object { base64: Some(encoded) } = reply else {
@@ -52,11 +65,15 @@ pub(crate) async fn read(
             return Err("the event object returned an invalid range".into());
         }
         bytes.extend(chunk);
-        if !reader.lock().await.objects.iter().any(|held| held.object == object.object) {
+        if held && !reader.lock().await.objects.iter().any(|held| held.object == object.object) {
             return Err("the event is no longer in the conversation window".into());
         }
     }
     tokio::task::spawn_blocking(move || {
+        use sha2::{Digest, Sha256};
+        if format!("{:x}", Sha256::digest(&bytes)) != object.object {
+            return Err("the event content did not match its object digest".into());
+        }
         let text = String::from_utf8(bytes).map_err(|e| e.to_string())?;
         // Validate off the runtime threads before replacing a usable preview.
         serde_json::from_str::<fastctx_types::session::SessionEvent>(&text).map_err(|e| e.to_string())?;

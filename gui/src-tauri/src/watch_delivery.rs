@@ -62,6 +62,7 @@ pub(crate) async fn watch_delivery_read(
     let read = shell.deliveries.read(id, through, resync.unwrap_or(false))?;
     if matches!(read, Read::Closed) {
         shell.transcripts.close(id);
+        shell.timeline_readers.close(id);
     }
     Ok(read)
 }

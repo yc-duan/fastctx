@@ -70,6 +70,7 @@ export type Piece =
   | { kind: "extended"; start: number; events: SessionEvent[] }
   /** One thing as it happened, the `at`th event of the conversation. */
   | { kind: "event"; generation?: number; at: number; event: SessionEvent }
+  | { kind: "live"; generation: number; event: SessionEvent; key: string; evicted?: string[] }
   | { kind: "ended"; error: string | null }
   /** The conversation was deleted: nothing more of it comes. */
   | { kind: "deleted"; error: string }
@@ -127,8 +128,8 @@ export function unwatch(id: number): Promise<void> {
 
 /** A part of a watched conversation the page does not hold; null when the
  *  page asked about an earlier reading or there is nothing there. */
-export function conversationPart(id: number, generation: number, edge: Edge): Promise<PartRead | null> {
-  return invoke("conversation_part", { id, generation, edge });
+export function conversationPart(id: number, generation: number, edge: Edge, request?: number): Promise<PartRead | null> {
+  return invoke("conversation_part", { id, generation, edge, request });
 }
 
 /** Where a turn of a watched conversation first appears. */
@@ -136,8 +137,8 @@ export function conversationFollow(id: number, revision: number, following: bool
   return invoke("conversation_follow", { id, revision, following });
 }
 
-export function conversationObject(id: number, generation: number, at: number): Promise<SessionEvent> {
-  return invoke("conversation_object", { id, generation, at });
+export function conversationObject(id: number, generation: number, object: string): Promise<import("../conversation/conversation").ExpandedEvent> {
+  return invoke("conversation_object", { id, generation, object });
 }
 
 export function conversationLocate(id: number, generation: number, turn: string): Promise<number | null> {
@@ -789,4 +790,9 @@ export function arriveHub(): Promise<void> {
 
 export function remoteClose(session: number): Promise<void> {
   return invoke("remote_close", { session });
+}
+
+/** Reads an export page without replacing the visible window. */
+export function conversationScan(id: number, cursor: import("../conversation/conversation").ScanCursor | null): Promise<import("../conversation/conversation").Scanned> {
+  return invoke("conversation_scan", { id, cursor });
 }

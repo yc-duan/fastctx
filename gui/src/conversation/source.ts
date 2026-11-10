@@ -4,7 +4,7 @@
 
 import type { Address, SessionEvent } from "../world/events";
 import { after, whyOf } from "../world/again";
-import { conversationCut, conversationFind, conversationIndex, conversationLocate, conversationFollow, conversationObject, conversationPart, unwatch, watch, type Piece } from "../world/bridge";
+import { conversationScan, conversationCut, conversationFind, conversationIndex, conversationLocate, conversationFollow, conversationObject, conversationPart, unwatch, watch, type Piece } from "../world/bridge";
 import type { PartSource, Window } from "./conversation";
 
 export interface ConversationFeed {
@@ -16,6 +16,7 @@ export interface ConversationFeed {
   rebased(generation: number, offset: number, turnsAdded: number): void;
   /** One thing as it happens, the `at`th event. */
   happened(at: number, event: SessionEvent): void;
+  live(event: SessionEvent, key: string, evicted?: string[]): void;
   /** The live part broke and is being read again: why, and since when. */
   interrupted(why: string | null, since: Date): void;
   /** It came back. */
@@ -59,7 +60,8 @@ export const watched: ConversationSource = {
       return id;
     };
     let generation: number | null = null;
-    let pending: Extract<Piece, { kind: "event" }>[] = [];
+    let navigation = 0;
+    let pending: Extract<Piece, { kind: "event" | "live" }>[] = [];
     const install = (window: Window) => {
       if (window.pages && generation !== null && window.generation < generation) return;
       generation = window.pages ? window.generation : null;
@@ -67,19 +69,26 @@ export const watched: ConversationSource = {
       const events = pending;
       pending = [];
       for (const event of events) {
-        if (event.generation === generation) feed.happened(event.at, event.event);
+        if (event.generation === generation) { if (event.kind === "live") feed.live(event.event, event.key, event.evicted); else feed.happened(event.at, event.event); }
         else if (event.generation! > (generation ?? -1)) pending.push(event);
       }
     };
     const parts: PartSource = {
+      scan: async (cursor) => { const owner = current(); const scanned = await conversationScan(owner, cursor); if (closed || id !== owner) throw new Error("the conversation closed during export"); return scanned; },
       part: async (generation, edge) => {
         const owner = current();
-        const part = await conversationPart(owner, generation, edge);
-        if (id !== owner || closed) return null;
+        const request = ++navigation;
+        const part = await conversationPart(owner, generation, edge, request);
+        if (request !== navigation || id !== owner || closed) return null;
         if (part?.window) { install(part.window); return null; }
         return part;
       },
-      object: async (generation, at) => conversationObject(current(), generation, at),
+      object: async (generation, object) => {
+        const owner = current();
+        const expanded = await conversationObject(owner, generation, object);
+        if (closed || refused || id !== owner) throw new Error("the conversation closed while its content was opening");
+        return expanded;
+      },
       follow: async (revision, following) => conversationFollow(current(), revision, following),
       locate: async (generation, turn) => conversationLocate(current(), generation, turn),
       cut: async (generation, events) => conversationCut(current(), generation, events),
@@ -100,6 +109,7 @@ export const watched: ConversationSource = {
         case "resumed":
           feed.resumed();
           return;
+        case "live":
         case "event":
           if (piece.generation !== undefined && piece.generation !== generation) {
             if (piece.generation > (generation ?? -1)) {
@@ -108,7 +118,7 @@ export const watched: ConversationSource = {
             }
             return;
           }
-          feed.happened(piece.at, piece.event);
+          if (piece.kind === "live") feed.live(piece.event, piece.key, piece.evicted); else feed.happened(piece.at, piece.event);
           return;
         case "window":
           install(piece.window);
@@ -200,6 +210,7 @@ export const watched: ConversationSource = {
       if (id !== null) void unwatch(id);
       id = null;
       generation = null;
+      navigation += 1;
       pending = [];
       refused = false;
       read();

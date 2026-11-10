@@ -18,6 +18,8 @@ pub(crate) struct Edges {
     pub newer: bool,
     pub objects: Vec<Object>,
     pub keys: Vec<String>,
+    pub live_keys: Vec<String>,
+    pub pending: Vec<SessionEvent>,
 }
 #[derive(Clone, Serialize)]
 pub(crate) struct Object {
@@ -34,6 +36,11 @@ pub(crate) struct Stored {
     name: Option<String>,
     object: Option<(u64, String)>,
     bytes: usize,
+}
+impl Stored {
+    pub fn has_object(&self, hash: &str) -> bool {
+        self.object.as_ref().is_some_and(|(_, object)| object == hash)
+    }
 }
 impl From<TimelineEvent> for Stored {
     fn from(raw: TimelineEvent) -> Self {
@@ -78,6 +85,9 @@ pub(crate) struct Window {
     pub right: Option<TimelinePlace>,
     pub chunks: usize,
     pub previewed: bool,
+    live_bytes: usize,
+    live_sizes: BTreeMap<String, usize>,
+    pub retired: Vec<String>,
 }
 impl Window {
     pub fn first(&self) -> Option<TimelinePlace> {
@@ -113,6 +123,16 @@ impl Window {
         self.bound(backwards);
     }
 
+    pub fn inherit_live(&mut self, current: &Self) {
+        self.live = current.live.clone();
+        self.live_base = current.live_base.clone();
+        self.live_sizes = current.live_sizes.clone();
+        self.live_bytes = current.live_bytes;
+        self.pending = current.pending.clone();
+        self.pending_bytes = current.pending_bytes;
+        self.pending_over_budget = false;
+        self.reconcile();
+    }
     fn reconcile(&mut self) {
         self.live.retain(|live| {
             let before = self.live_base.get(&name(live)).copied().unwrap_or(0);
@@ -157,6 +177,8 @@ impl Window {
         }
     }
     pub fn observe(&mut self, event: &SessionEvent) -> bool {
+        self.pending_over_budget = false;
+        self.retired.clear();
         use fastctx_types::session::SessionChange;
         match &event.happened {
             Happened::Changed { change: SessionChange::Request { id, .. }, .. } => {
@@ -182,19 +204,15 @@ impl Window {
             }
             _ => {}
         }
-        if self.entries.iter().any(|held| {
-            held.event.as_ref().is_some_and(|e| {
-                e == event
-                    || (e.at >= event.at
-                        && matches!(
-                            (&e.happened, &event.happened),
-                            (
-                                Happened::Finished { .. },
-                                Happened::Began { .. } | Happened::Updated { .. } | Happened::Grew { .. }
-                            )
-                        )
-                        && covers(e, event))
-            })
+        if self.entries.iter().filter_map(|held| held.event.as_ref()).chain(self.live.iter()).any(|e| {
+            e == event
+                || (matches!(
+                    (&e.happened, &event.happened),
+                    (
+                        Happened::Finished { .. },
+                        Happened::Began { .. } | Happened::Updated { .. } | Happened::Grew { .. }
+                    )
+                ) && covers(e, event))
         }) {
             return false;
         }
@@ -211,10 +229,39 @@ impl Window {
                     _ => {},
                 }
                 self.previewed |= crate::timeline_preview::limit(snapshot);
+                let key = key(snapshot);
+                let bytes = serde_json::to_vec(snapshot).map_or(0, |v| v.len());
+                self.live_bytes = self.live_bytes + bytes - self.live_sizes.insert(key, bytes).unwrap_or(0);
+                self.bound_live();
                 self.chunks += 1;
                 return true;
         }
-        self.live.retain(|held| !covers(event, held));
+        if let Happened::Grew { turn, item, part, text, .. } = &event.happened {
+            if *part != Part::Text {
+                return false;
+            }
+            return self.observe(&SessionEvent {
+                at: event.at,
+                happened: Happened::Began {
+                    turn: turn.clone(),
+                    item: fastctx_types::session::Item {
+                        id: item.clone(),
+                        draft: None,
+                        started_at: None,
+                        detail: None,
+                        what: What::Message { text: text.clone() },
+                    },
+                },
+            });
+        }
+        self.live.retain(|held| {
+            if !covers(event, held) {
+                return true;
+            }
+            self.live_bytes = self.live_bytes.saturating_sub(self.live_sizes.remove(&key(held)).unwrap_or(0));
+            self.retired.push(key(held));
+            false
+        });
         let before = self
             .entries
             .iter()
@@ -224,27 +271,73 @@ impl Window {
             .unwrap_or(0);
         self.live_base.insert(name(event), before);
         self.live.push(event.clone());
+        let bytes = serde_json::to_vec(event).map_or(0, |v| v.len());
+        self.live_bytes += bytes;
+        self.live_sizes.insert(key(event), bytes);
+        self.bound_live();
+        self.prune_bases();
         self.chunks += 1;
         true
     }
 
+    pub fn trim_visible(&mut self) -> Vec<String> {
+        let mut bytes: usize = self.entries.iter().map(|e| e.bytes).sum::<usize>() + self.live_bytes;
+        let mut removed = Vec::new();
+        while !self.entries.is_empty() && (self.entries.len() + self.live.len() > HELD_EVENTS || bytes > HELD_BYTES) {
+            let entry = self.entries.remove(0);
+            bytes = bytes.saturating_sub(entry.bytes);
+            if let Some(event) = entry.event {
+                removed.push(key(&event));
+            }
+            self.older = true;
+        }
+        removed
+    }
+    pub fn pending_events(&self) -> Vec<SessionEvent> {
+        self.pending.values().cloned().collect()
+    }
+    pub fn live_keys(&self) -> Vec<String> {
+        self.live.iter().map(key).collect()
+    }
+    pub fn running(&self, event: &SessionEvent) -> Option<SessionEvent> {
+        let Happened::Grew { turn, item, .. } = &event.happened else { return None };
+        self.live.iter().find(|e| matches!(&e.happened, Happened::Began { turn: t, item: i } | Happened::Updated { turn: t, item: i } if t == turn && i.id == *item)).cloned()
+    }
+    fn bound_live(&mut self) {
+        while self.live.len() > HELD_EVENTS / 2 || self.live_bytes > HELD_BYTES / 2 {
+            if self.live.is_empty() {
+                break;
+            }
+            let removed = self.live.remove(0);
+            self.retired.push(key(&removed));
+            self.live_bytes = self.live_bytes.saturating_sub(self.live_sizes.remove(&key(&removed)).unwrap_or(0));
+        }
+    }
+
     pub fn shown(&mut self) -> Result<(Vec<SessionEvent>, Edges), String> {
         let mut events = Vec::new();
-        let mut edges = Edges { older: self.older, newer: self.newer, objects: Vec::new(), keys: Vec::new() };
+        let mut edges = Edges {
+            older: self.older,
+            newer: self.newer,
+            objects: Vec::new(),
+            keys: Vec::new(),
+            live_keys: self.live_keys(),
+            pending: self.pending_events(),
+        };
         for entry in &self.entries {
             if let Some(event) = &entry.event {
                 if let Some((bytes, object)) = &entry.object {
                     edges.objects.push(Object { at: events.len(), bytes: *bytes, object: object.clone() });
                 }
                 events.push(event.clone());
-                edges.keys.push(entry.place.item.clone());
+                edges.keys.push(key(event));
             }
         }
         let mut persisted = events.len();
         if !self.newer {
-            for event in self.live.iter().chain(self.pending.values()) {
+            for event in &self.live {
                 events.push(event.clone());
-                edges.keys.push(format!("live:{:x}", Sha256::digest(serde_json::to_vec(event).unwrap_or_default())));
+                edges.keys.push(key(event));
             }
         }
         let mut bytes: usize = events.iter().map(|e| serde_json::to_vec(e).map_or(0, |b| b.len())).sum();
@@ -285,11 +378,27 @@ impl Window {
             }
             live_bytes -= serde_json::to_vec(&self.live.remove(0)).map_or(0, |b| b.len());
         }
+        self.live_sizes = self.live.iter().map(|e| (key(e), serde_json::to_vec(e).map_or(0, |v| v.len()))).collect();
+        self.live_bytes = self.live_sizes.values().sum();
         self.prune_bases();
         self.chunks = 0;
         self.previewed = false;
         Ok((events, edges))
     }
+}
+
+pub(crate) fn key(event: &SessionEvent) -> String {
+    format!("event:{:x}", Sha256::digest(name(event).as_bytes()))
+}
+pub(crate) fn pending_event(event: &SessionEvent) -> bool {
+    matches!(
+        event.happened,
+        Happened::Changed {
+            change: fastctx_types::session::SessionChange::Request { .. }
+                | fastctx_types::session::SessionChange::Resolved { .. },
+            ..
+        }
+    )
 }
 
 pub(crate) fn decoded(event: &TimelineEvent) -> Option<SessionEvent> {
@@ -304,6 +413,7 @@ fn name(event: &SessionEvent) -> String {
     match &event.happened {
         Happened::Finished { turn, item } => format!("finished:{turn}:{}", item.id),
         Happened::Began { turn, item } | Happened::Updated { turn, item } => format!("running:{turn}:{}", item.id),
+        Happened::Grew { turn, item, .. } => format!("running:{turn}:{item}"),
         Happened::TurnStarted { turn } => format!("started:{turn}"),
         Happened::TurnEnded { turn, .. } => format!("ended:{turn}"),
         Happened::Heard { delivery: Some(id), .. } => format!("delivery:{id}"),

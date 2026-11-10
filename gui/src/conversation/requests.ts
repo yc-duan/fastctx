@@ -42,6 +42,12 @@ export class Requests {
   /** Moves whenever a request is added or told again. */
   version = 0;
 
+  /** Rebuilds a bounded page's request projection without retaining earlier pages. */
+  clear(): void {
+    this.byKey.clear();
+    this.version += 1;
+  }
+
   /** A row of Claude Code's session file: every row of one response says
    *  the response's usage again, the last most whole. */
   claude(at: number, response: string | null, usage: JsonValue, turn: string | null = null, items: readonly string[] = []): void {

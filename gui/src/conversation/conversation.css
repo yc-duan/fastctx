@@ -1821,6 +1821,21 @@
   color: var(--text-3);
 }
 
+.find-bar.has-scope {
+  height: 64px;
+  padding-bottom: 24px;
+}
+
+.find-scope {
+  position: absolute;
+  left: var(--space-3);
+  right: var(--space-3);
+  bottom: 3px;
+  color: var(--text-3);
+  font-size: var(--size-text);
+  line-height: 20px;
+}
+
 .find-count {
   flex: none;
   padding: 0 var(--space-1);

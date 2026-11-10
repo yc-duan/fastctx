@@ -28,7 +28,7 @@ interface FindView {
     /** Reads in the turns around event `at`, and draws them. */
     reach(at: number): Promise<void>;
     close(): void;
-  };
+  } | undefined;
 }
 
 export interface FindWords {
@@ -44,6 +44,7 @@ export interface FindWords {
 export class Finder {
   readonly element: HTMLElement;
   private readonly input: HTMLInputElement;
+  private readonly scope: HTMLElement;
   private readonly count: HTMLElement;
   private readonly index = new FindIndex();
   private selected: FindMatch | FarMatch | null = null;
@@ -58,6 +59,12 @@ export class Finder {
   private revision = 0;
   private readonly highlights: FindHighlights;
   private task: Promise<void> = Promise.resolve();
+
+  setScope(text: string | null): void {
+    this.scope.hidden = text === null;
+    this.element.classList.toggle("has-scope", text !== null);
+    if (this.scope.textContent !== text) this.scope.textContent = text;
+  }
 
   /** Resolves once queued changes and the requested reveal have settled. */
   get ready(): Promise<void> {
@@ -85,6 +92,10 @@ export class Finder {
     // It floats over the page's caption, which drags the window on Windows.
     this.element.dataset.worldTitlebar = "client";
     this.element.innerHTML = `<span class="find-glyph">${glyph("search", 16)}</span><input class="find-input" type="search" enterkeyhint="search" placeholder="${escape(words.placeholder)}" aria-label="${escape(words.find)}"><span class="find-count" aria-live="polite"></span><button class="icon-button find-step" type="button" data-step="-1" aria-label="${escape(words.previous)}" title="${escape(words.previous)}">${glyph("chevron", 16)}</button><button class="icon-button find-step find-next" type="button" data-step="1" aria-label="${escape(words.next)}" title="${escape(words.next)}">${glyph("chevron", 16)}</button><button class="icon-button find-close" type="button" aria-label="${escape(words.close)}" title="${escape(words.close)}">${glyph("close", 16)}</button>`;
+    this.scope = document.createElement("span");
+    this.scope.className = "find-scope";
+    this.scope.hidden = true;
+    this.element.querySelector(".find-count")!.before(this.scope);
     this.input = this.element.querySelector<HTMLInputElement>(".find-input")!;
     this.count = this.element.querySelector<HTMLElement>(".find-count")!;
     this.input.addEventListener("input", () => this.search(true));

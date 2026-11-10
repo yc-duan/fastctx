@@ -356,7 +356,9 @@ export class Fold {
     entry.stamp = ++this.clock;
   }
 
+  private preferredKeys: Map<string, string> | null = null;
   private add(entry: Entry): void {
+    if ("item" in entry && "turn" in entry && typeof entry.turn === "string") entry.key = this.preferredKeys?.get(itemKey(entry.turn, entry.item)) ?? entry.key;
     entry.stamp = ++this.clock;
     entry.at = this.current;
     this.entries.push(entry);
@@ -400,15 +402,24 @@ export class Fold {
   /** What came before, replacing what is shown; `carry`, what the part's
    *  turns read of what came before it (its title, its context, the model
    *  that answered), read first as nothing of its own. */
-  history(events: SessionEvent[], carry: SessionEvent[] = [], places?: readonly string[], keepWaiting = true): void {
+  history(events: SessionEvent[], carry: SessionEvent[] = [], places?: readonly string[], keepWaiting = true, authoritativePending?: SessionEvent[]): void {
     // Requests still waiting are kept: the host asked them, and they are
     // not part of the history it gives back. So are words sent from here
     // that this reading does not hold yet.
+    this.preferredKeys = places ? new Map(this.entries.flatMap((entry) => "item" in entry && "turn" in entry && typeof entry.turn === "string" ? [[itemKey(entry.turn, entry.item), entry.key]] : [])) : null;
     const waiting = keepWaiting ? this.entries.filter((entry) => entry.kind === "ask" && entry.state.state === "waiting") : [];
     const pending = this.entries.filter((entry): entry is Heard => entry.kind === "heard" && entry.sending !== undefined);
     const known = new Set(this.entries.filter((entry) => entry.kind === "heard").map((entry) => entry.key));
     const halted = this.halted;
     this.entries = [];
+    this.byCall.clear();
+    if (places) {
+      this.attachments.clear();
+      this.controlStates.clear();
+      this.requests.clear();
+    }
+    this.placedEntries.clear();
+    this.pendingIds = authoritativePending === undefined ? null : new Set(authoritativePending.flatMap((event) => event.event === "changed" && event.change.kind === "request" ? [askKey(event.change.id)] : []));
     this.byKey.clear();
     this.byItem.clear();
     this.byTurn.clear();
@@ -436,7 +447,11 @@ export class Fold {
     } finally {
       this.replaying = false;
     }
+    this.ignoreHistoricalRequests = authoritativePending !== undefined;
     this.extend(events, places);
+    this.ignoreHistoricalRequests = false;
+    if (authoritativePending) this.extend(authoritativePending);
+    this.preferredKeys = null;
     // A history the node gives whole is as it stands after every change it
     // holds: a change of history among its events is shown already, and is
     // no reason to read it again. One that comes after it is.
@@ -478,6 +493,45 @@ export class Fold {
   }
 
   /** One more event of this fold's part. */
+  private placedEntries = new Map<string, Set<string>>();
+  private pendingIds: Set<string> | null = null;
+  private ignoreHistoricalRequests = false;
+  evictPlaces(places: readonly string[]): void {
+    if (places.length === 0) return;
+    const gone = new Set<string>();
+    for (const place of places) {
+      for (const key of this.placedEntries.get(place) ?? []) gone.add(key);
+      this.placedEntries.delete(place);
+    }
+    for (const keys of this.placedEntries.values()) for (const key of keys) gone.delete(key);
+    if (![...gone].some((key) => this.byKey.has(key))) return;
+    this.remove((entry) => gone.has(entry.key));
+    const turns = new Set(this.entries.flatMap((entry) => "turn" in entry && entry.turn ? [entry.turn] : []));
+    for (const map of [this.began, this.heardIn, this.stretches]) for (const turn of map.keys()) if (!turns.has(turn)) map.delete(turn);
+    const items = new Set(this.entries.flatMap((entry) => "turn" in entry && "item" in entry && typeof entry.turn === "string" ? [itemEntryKey(entry.turn, entry.item)] : []));
+    for (const key of this.over) if (!items.has(key)) this.over.delete(key);
+    for (const turn of this.endedTurns) if (!turns.has(turn)) this.endedTurns.delete(turn);
+  }
+  livePending(event: SessionEvent): void {
+    if (event.event !== "changed") return;
+    const change = event.change;
+    if (change.kind === "request") {
+      this.pendingIds?.add(askKey(change.id));
+      const existing = this.ask(change.id);
+      if (existing) {
+        if (existing.turn !== event.turn || existing.request !== change.request || JSON.stringify(existing.params) !== JSON.stringify(change.params)) {
+          existing.turn = event.turn; existing.request = change.request; existing.params = change.params;
+          existing.state = { state: "waiting" }; existing.version += 1; this.touch(existing);
+        }
+        return;
+      }
+    }
+    this.event(event);
+    if (change.kind === "resolved") {
+      this.pendingIds?.delete(askKey(change.id));
+      this.remove((entry) => entry.kind === "ask" && askKey(entry.id) === askKey(change.id));
+    }
+  }
   private currentPlace = "";
   private placed = false;
   event(event: SessionEvent, place?: string): void {
@@ -485,7 +539,14 @@ export class Fold {
     this.placed = place !== undefined;
     this.currentPlace = place ?? `${this.scope}@${this.current}`;
     this.folded += 1;
+    const before = this.clock;
     this.read(event);
+    if (place !== undefined) {
+      if (event.event === "grew") {
+        const entry = this.find(event.turn, event.item);
+        if (entry && !this.placedEntries.has(place)) this.placedEntries.set(place, new Set([entry.key]));
+      } else this.placedEntries.set(place, new Set(this.entries.filter((entry) => entry.stamp > before).map((entry) => entry.key)));
+    }
   }
 
   /** How many events of its part this fold has read. */
@@ -698,7 +759,9 @@ export class Fold {
         return;
       case "changed": {
         const change = event.change;
+        if (this.ignoreHistoricalRequests && (change.kind === "request" || change.kind === "resolved")) return;
         if (change.kind === "request") {
+          if (this.pendingIds !== null && !this.pendingIds.has(askKey(change.id))) return;
           if (!forPeople(change.request) || this.ask(change.id)) return;
           this.add({
             kind: "ask",

@@ -39,6 +39,14 @@ pub(crate) enum Piece {
         at: usize,
         event: Box<serde_json::value::RawValue>,
     },
+    /// A realtime change; no transcript journal or whole-window replacement.
+    Live {
+        generation: u64,
+        event: Box<serde_json::value::RawValue>,
+        key: String,
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        evicted: Vec<String>,
+    },
     /// Whether the conversation works now, and on which turn, as its
     /// machine holds it; told after every event before it. A machine too
     /// old to tell this never sends it.

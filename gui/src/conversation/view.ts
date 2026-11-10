@@ -989,10 +989,13 @@ export class ConversationView {
       const slot = this.slots.get(block.key);
       const signature = `${this.findSignature(block)}|${slot?.findRevision ?? 0}`;
       if (this.findRead.get(block.key) === signature) continue;
-      this.findRead.set(block.key, signature);
+      const held = this.conversation.held();
+      const current = () => !this.conversation.paged || held === this.conversation.held();
       const parts = this.findParts(block);
-      changed.push({ key: block.key, parts: block.kind === "activity-group" ? parts : (function* () {
-        for (const part of parts) yield { ...part, stamp: `${signature}|${part.stamp}` };
+      const read = this.findRead;
+      changed.push({ key: block.key, parts: (function* () {
+        for (const part of parts) yield block.kind === "activity-group" ? part : { ...part, stamp: `${signature}|${part.stamp}` };
+        if (current()) read.set(block.key, signature);
       })() });
     }
     const removed = [...this.findRemoved];

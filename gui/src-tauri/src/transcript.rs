@@ -30,9 +30,10 @@ pub(crate) async fn conversation_part(
     id: u64,
     generation: u64,
     edge: Edge,
+    request: Option<u64>,
 ) -> Result<Option<Part>, String> {
     if let Some(reader) = shell.timeline_readers.get(id) {
-        return reader.lock().await.part(generation, edge).await;
+        return reader.part(generation, edge, request.unwrap_or(generation)).await;
     }
     on_transcript(&shell, id, move |transcript| transcript.part(generation, edge)).await
 }

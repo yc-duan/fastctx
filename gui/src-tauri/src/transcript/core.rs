@@ -322,12 +322,6 @@ impl Transcript {
         self.generation
     }
 
-    pub(crate) fn live_event(&mut self, event: &SessionEvent) -> Result<Piece, String> {
-        let at = self.events.len();
-        self.admit(event)?;
-        Ok(Piece::Event { generation: Some(self.generation), at, event: self.events.get(at) })
-    }
-
     fn admit(&mut self, event: &SessionEvent) -> Result<(), String> {
         let (text, hash) = json(event)?;
         self.keep(event, text, hash)
