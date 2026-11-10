@@ -28,6 +28,9 @@ pub async fn answer(endpoint: &dyn Endpoint, request: &Message, bytes: u32) -> R
                 return Err(Error::OutcomeUnknown { operation });
             }
             Message::Submit { request } => return Err(Error::OutcomeUnknown { operation: request.operation.clone() }),
+            Message::PublishSourceManifest { upload, .. } => {
+                return Err(Error::OutcomeUnknown { operation: upload.operation.clone() });
+            }
             _ => return Err(Error::Invalid("one metadata result exceeds its negotiated page bound".into())),
         }
     }
@@ -66,6 +69,7 @@ impl Write for Counter {
 pub(crate) fn failed_delivery(request: &Message, error: Error) -> Error {
     let operation = match request {
         Message::Submit { request } => Some(request.operation.clone()),
+        Message::PublishSourceManifest { upload, .. } => Some(upload.operation.clone()),
         Message::Source { batch, .. } => {
             #[derive(serde::Deserialize)]
             struct Operation {

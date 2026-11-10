@@ -45,6 +45,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             .build()?
             .block_on(blocks::run_timeline(&root));
     }
+    if std::env::args().nth(2).as_deref() == Some("replica-supply") {
+        return tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()?
+            .block_on(blocks::source_acceptance::supply::run(&root));
+    }
     if std::env::args().nth(2).as_deref() == Some("upload-bench") {
         return tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)

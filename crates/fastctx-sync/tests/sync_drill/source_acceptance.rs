@@ -7,10 +7,10 @@ mod fixture;
 pub(crate) mod follow;
 #[path = "source_pages.rs"]
 mod source_pages;
+#[path = "source_acceptance/supply.rs"]
+pub(crate) mod supply;
 #[path = "source_acceptance/upload/mod.rs"]
 pub(crate) mod upload;
-#[path = "source_acceptance/supply.rs"]
-mod supply;
 use fastctx_sync::{
     catalog::{Lifecycle, SourceBatch, SourceRecord},
     cursor::{Sequence, StreamCursor},

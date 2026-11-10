@@ -203,7 +203,9 @@ impl Endpoint for Service {
             // awaited transaction alone would let acknowledged writes miss it.
             let _active = if matches!(
                 &request,
-                fastctx_sync::transfer::Message::Source { .. } | fastctx_sync::transfer::Message::Submit { .. }
+                fastctx_sync::transfer::Message::Source { .. }
+                    | fastctx_sync::transfer::Message::Submit { .. }
+                    | fastctx_sync::transfer::Message::PublishSourceManifest { .. }
             ) {
                 Some(
                     crate::moving::Moving::enter(&self.hub)

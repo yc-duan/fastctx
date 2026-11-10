@@ -40,7 +40,7 @@ async fn fetch(
             .map_err(|error| Error::Invalid(error.to_string()))?;
     Box::pin(service.supply(peer, request)).await
 }
-pub(super) async fn run(root: &Path) -> Result<()> {
+pub(crate) async fn run(root: &Path) -> Result<()> {
     let dir = root.join("replica-supply");
     fastctx_platform::ensure_private_dir(&dir.join("node"))?;
     fastctx_platform::ensure_private_dir(&dir.join("hub"))?;
@@ -85,7 +85,38 @@ pub(super) async fn run(root: &Path) -> Result<()> {
             ],
         },
     )?;
-    for page in [&first_leaf, &second_leaf, &root_page] {
+    let wide_page = |count| {
+        page(
+            &object.scope,
+            ManifestPage::Branch {
+                children: (0..count)
+                    .map(|index| ManifestChild {
+                        first_key: format!("{index:016x}"),
+                        last_key: format!("{index:016x}"),
+                        root: second_leaf.root.clone(),
+                        entries: Count(1),
+                    })
+                    .collect(),
+            },
+        )
+    };
+    assert!(matches!(
+        fastctx_sync::blocks::manifest::validate(&object.scope, wide_page(1001)?),
+        Err(Error::Invalid(_))
+    ));
+    let (mut low, mut high) = (1_u64, 1001_u64);
+    while low + 1 < high {
+        let mid = low + (high - low) / 2;
+        if fastctx_sync::blocks::manifest::validate(&object.scope, wide_page(mid)?).is_ok() {
+            low = mid;
+        } else {
+            high = mid;
+        }
+    }
+    let wide_count = low;
+    assert!(wide_count > 128);
+    let wide = wide_page(wide_count)?;
+    for page in [&first_leaf, &second_leaf, &root_page, &wide] {
         source.put_manifest(bound.clone(), page.clone()).await?;
     }
     let payload = codec::encode(object.scope.clone(), b"accepted fact".to_vec(), Encoding::Raw)?;
@@ -107,7 +138,10 @@ pub(super) async fn run(root: &Path) -> Result<()> {
             kind: KIND.into(),
             schema: 1,
             payload: payload.representation.content.clone(),
-            roots: vec![ContentRef::Manifest { root: root_page.root.clone() }],
+            roots: vec![
+                ContentRef::Manifest { root: root_page.root.clone() },
+                ContentRef::Manifest { root: wide.root.clone() },
+            ],
             causes: Vec::new(),
         }],
     };
@@ -157,7 +191,7 @@ pub(super) async fn run(root: &Path) -> Result<()> {
         authority.put_block(upload(&batch), encoded.representation, encoded.bytes).await?;
     }
     authority.put_block(upload(&batch), payload.representation.clone(), payload.bytes).await?;
-    for page in [&first_leaf, &second_leaf, &root_page] {
+    for page in [&first_leaf, &second_leaf, &root_page, &wide] {
         authority.put_manifest(upload(&batch), page.clone()).await?;
     }
     assert!(matches!(fetch(&service, &peer, &request).await, Err(Error::Denied(_))));
@@ -176,6 +210,27 @@ pub(super) async fn run(root: &Path) -> Result<()> {
         ..request.clone()
     };
     assert_eq!(fetch(&service, &peer, &single).await?.value(), b"accepted fact");
+    let cache = Database::open(&dir.join("hub/hub.sqlite3"), "")?;
+    let bad = ObjectId::from_bytes([0; 32]);
+    let id = content[0].id.clone();
+    let other = conversation(43).scope;
+    cache
+        .write(4096, move |db| {
+            db.execute(
+                "INSERT INTO sync_asset_access(hub,scope,object,kind,hash,root_kind,decoded_bytes,expanded)
+             SELECT hub,scope,?3,kind,hash,root_kind,decoded_bytes,expanded FROM sync_asset_access
+             WHERE hub=?1 AND scope=?2 AND hash=?4 AND root_kind='block' LIMIT 1",
+                params![id.domain.hub.to_string(), id.domain.scope.as_str(), bad.as_str(), id.digest.as_str()],
+            )?;
+            db.execute(
+                "INSERT INTO sync_asset_access(hub,scope,object,kind,hash,root_kind,decoded_bytes,expanded)
+             SELECT hub,?3,object,kind,hash,root_kind,decoded_bytes,expanded FROM sync_asset_access
+             WHERE hub=?1 AND scope=?2 AND hash=?4 AND root_kind='block' LIMIT 1",
+                params![id.domain.hub.to_string(), id.domain.scope.as_str(), other.scope.as_str(), id.digest.as_str()],
+            )?;
+            Ok(())
+        })
+        .await?;
     assert!(
         matches!(json(&service,&peer,Message::GetDescriptor {holding:period.clone(),blob:content[0].id.clone()}).await?,Message::Descriptor {descriptor,..} if descriptor.content==content[0])
     );
@@ -197,6 +252,37 @@ pub(super) async fn run(root: &Path) -> Result<()> {
     };
     assert_eq!(selected.iter().map(|block| block.content.clone()).collect::<Vec<_>>(), content[1..]);
     assert!(remaining.is_empty());
+    let mut missing = vec![BlockRange { start: Count(0), end: Count(wide_count) }];
+    let mut received = 0;
+    while !missing.is_empty() {
+        let answer = json(
+            &service,
+            &peer,
+            Message::WantBlocks { holding: period.clone(), manifest: wide.root.clone(), missing },
+        )
+        .await?;
+        let Message::Blocks { blocks: selected, remaining, .. } = answer else {
+            return Err("wrong range response".into());
+        };
+        assert!(!selected.is_empty());
+        for block in selected {
+            assert_eq!(block.index.0, received);
+            assert_eq!(block.content, content[2]);
+            received += 1;
+        }
+        missing = remaining;
+    }
+    assert_eq!(received, wide_count);
+    println!(
+        "ordered ranges: {wide_count} children (maximum legal escaped page), all ordinals delivered; 1001 children exceed the existing 256KiB page contract"
+    );
+    for digest in [content[0].id.digest.clone(), Digest::from_bytes([199; 32])] {
+        let crossed = BlobId { domain: conversation(43).scope, digest, ..content[0].id.clone() };
+        assert!(
+            matches!(service.recheck_message(&peer,&Message::GetDescriptor { holding:period.clone(),blob:crossed }).await,
+            Err(Error::Denied(message)) if message=="descriptor is outside the requested scope")
+        );
+    }
     let sibling = BlockRequest { root: ContentRef::Manifest { root: first_leaf.root }, ..request.clone() };
     assert!(matches!(fetch(&service, &peer, &sibling).await, Err(Error::Denied(_))));
     let stale =
@@ -210,7 +296,7 @@ pub(super) async fn run(root: &Path) -> Result<()> {
     assert!(matches!(fetch(&service, &peer, &other).await, Err(Error::Denied(_))));
     visibility.0.store(true, Ordering::Release);
     assert!(service.recheck(&peer, &period).await.is_err());
-    assert!(fetch(&service, &peer, &request).await.is_err());
+    assert!(matches!(fetch(&service, &peer, &request).await, Err(Error::Denied(_))));
     visibility.0.store(false, Ordering::Release);
     let file = dir.join("hub/hub.sqlite3");
     let fixture = Database::open(&file, "")?;

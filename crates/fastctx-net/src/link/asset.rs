@@ -225,6 +225,7 @@ impl Upstream for AssetUpstream {
                     serde_json::from_slice::<SourceOperation>(&batch.proof.data.0).ok().map(|batch| batch.operation)
                 }
                 Message::Submit { request } => Some(request.operation.clone()),
+                Message::PublishSourceManifest { upload, .. } => Some(upload.operation.clone()),
                 _ => None,
             };
             self.request(operation, None, move |channel| {

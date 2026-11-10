@@ -1,4 +1,5 @@
 //! Replica supply uses the feed read gate, then the hub's adopted object roots.
+mod membership;
 mod ranges;
 use super::{Peer, Service, read};
 use crate::{
@@ -16,7 +17,6 @@ use crate::{
     transfer::{KindVersion, Message},
 };
 use fastctx_storage::rusqlite::{Connection, OptionalExtension, params};
-use std::collections::HashSet;
 
 impl Service {
     fn supply_blocks(&self) -> Result<&SqliteBlocks, Error> {
@@ -57,13 +57,16 @@ impl Service {
             }
             Message::GetDescriptor { holding, blob } => {
                 self.recheck(peer, holding).await?;
-                let root = self.block_reference(blob).await?;
+                let root = self.block_reference(&holding.scope, blob).await?;
                 self.custody(peer, holding, &root, None).await?;
             }
             Message::Changes { holding, .. } | Message::StreamRange { holding, .. } => {
                 self.recheck(peer, holding).await?
             }
             Message::GetEpoch { scope, .. } => self.recheck_scope(peer, scope, None).await?,
+            Message::ProbeSource { upload, .. } | Message::PublishSourceManifest { upload, .. } => {
+                self.check_source_transfer(peer, upload).await?;
+            }
             _ => {}
         }
         Ok(())
@@ -88,18 +91,7 @@ impl Service {
                     let snapshot = db.unchecked_transaction()?;
                     let descriptor =
                         read::authorize(&snapshot, &peer, &holding.scope, Some(&holding), policy.as_ref())?;
-                    let (object, kind) = grant(&snapshot, &holding.scope, &root, expected.as_ref())?;
-                    if let crate::scope::ScopeSubject::Conversation { conversation, .. } = &descriptor.subject
-                        && let Some(canonical) = fastctx_types::sync::conversation_identity::source_object(
-                            conversation,
-                            kind.registration().id,
-                        )
-                        && object.object != canonical
-                    {
-                        return Err(
-                            Error::Denied("source content is not granted to its canonical kind object".into()).into()
-                        );
-                    }
+                    let (object, kind) = grant(&snapshot, &holding.scope, &root, expected.as_ref(), &descriptor)?;
                     let state = scopes::current(&snapshot, &holding.scope)?.ok_or(Error::Revoked)?;
                     let custody = Custody {
                         context: AccessContext {
@@ -142,21 +134,9 @@ impl Service {
         }
         let custody = self.custody(peer, &request.holding, &request.root, Some((request.object, request.kind))).await?;
         let blocks = self.supply_blocks()?;
-        let max_nodes = (blocks.buffer_budget().capacity() / 8 / 512).max(1);
-        let _walk = blocks.buffer_budget().try_acquire(max_nodes * 512)?;
-        let (root, node, scope) =
-            (request.root.clone(), ContentRef::from(request.block.clone()), custody.object.scope.clone());
-        let member = blocks
-            .database()
-            .read(move |db| member(db, &scope, &root, &node, max_nodes))
-            .await
-            .map_err(|error| read::ReadError::from(error).0)??;
-        if !member {
-            return Err(Error::Denied("block is not in the granted root's closure".into()));
-        }
-        drop(_walk);
-        // The accepted root and its checked closure authorize this read before
-        // the asynchronous per-descendant access cache has caught up (2026-11-09).
+        self.member(&custody, &request.root, &ContentRef::from(request.block.clone())).await?;
+        // Accepted roots and checked closure edges authorize reads before the
+        // asynchronous descendant grant cache has caught up.
         blocks.require_adopted(&custody, &request.root)?;
         let (decoded, permit) = blocks
             .stored_block(&request.block)?
@@ -181,7 +161,7 @@ impl Service {
     ) -> Result<Message, Error> {
         let reference = ContentRef::Manifest { root: root.clone() };
         self.recheck(peer, &holding).await?;
-        let custody = self.custody(peer, &holding, &reference, None).await.map_err(metadata_pending)?;
+        let custody = self.custody(peer, &holding, &reference, None).await?;
         let reply = self.supply_blocks()?.manifest(custody, root).await?;
         self.custody(peer, &holding, &reference, None).await?;
         Ok(Message::Manifest { holding, reply })
@@ -192,26 +172,33 @@ impl Service {
         }
         self.supply_blocks()?;
         self.recheck(peer, &holding).await?;
-        let root = self.block_reference(&blob).await.map_err(metadata_pending)?;
-        let custody = self.custody(peer, &holding, &root, None).await.map_err(metadata_pending)?;
+        let root = self.block_reference(&holding.scope, &blob).await?;
+        let custody = self.custody(peer, &holding, &root, None).await?;
         let descriptor: Descriptor = self.supply_blocks()?.descriptor(custody, blob).await?;
         self.custody(peer, &holding, &root, None).await?;
         Ok(Message::Descriptor { holding, descriptor })
     }
-    async fn block_reference(&self, id: &BlobId) -> Result<ContentRef, Error> {
+    async fn block_reference(&self, scope: &ScopeKey, id: &BlobId) -> Result<ContentRef, Error> {
+        if &id.domain != scope {
+            return Err(Error::Denied("descriptor is outside the requested scope".into()));
+        }
         let id = id.clone();
-        self.directory.database().read(move |db| {
-            let length = db.query_row("SELECT decoded_bytes FROM sync_asset_access WHERE hub=?1 AND scope=?2 AND hash=?3 AND root_kind='block' LIMIT 1", params![id.domain.hub.to_string(), id.domain.scope.as_str(), id.digest.as_str()], |row| row.get::<_, u32>(0)).optional()?;
-            Ok(length.map(|decoded_bytes| ContentRef::Single { block: id, decoded_bytes }))
-        }).await.map_err(|error| read::ReadError::from(error).0)?.ok_or_else(|| Error::Denied("content is not granted to an accepted object".into()))
-    }
-}
-// Without an owning root these metadata requests must wait for descendant
-// access expansion. A missing grant reveals no bytes and is retryable.
-fn metadata_pending(error: Error) -> Error {
-    match error {
-        Error::Denied(_) => Error::Unavailable("metadata is not yet granted to a live accepted object".into()),
-        other => other,
+        self.directory
+            .database()
+            .read(move |db| {
+                let length = db
+                    .query_row(
+                        "SELECT decoded_bytes FROM sync_asset_access
+                 WHERE hub=?1 AND scope=?2 AND hash=?3 AND root_kind='block' LIMIT 1",
+                        params![id.domain.hub.to_string(), id.domain.scope.as_str(), id.digest.as_str()],
+                        |row| row.get::<_, u32>(0),
+                    )
+                    .optional()?;
+                Ok(length.map(|decoded_bytes| ContentRef::Single { block: id, decoded_bytes }))
+            })
+            .await
+            .map_err(|error| read::ReadError::from(error).0)?
+            .ok_or_else(|| Error::Unavailable("metadata is not yet granted to a live accepted object".into()))
     }
 }
 fn kind(name: &str) -> read::Result<RegisteredKind> {
@@ -226,6 +213,7 @@ fn grant(
     scope: &ScopeKey,
     root: &ContentRef,
     expected: Option<&(ObjectKey, KindVersion)>,
+    descriptor: &crate::scope::ScopeDescriptor,
 ) -> read::Result<(ObjectKey, RegisteredKind)> {
     let (form, length) = match root {
         ContentRef::Single { decoded_bytes, .. } => ("block", Some(*decoded_bytes)),
@@ -236,61 +224,42 @@ fn grant(
     if expected.is_some_and(|(object, _)| &object.scope != scope) {
         return Err(Error::Denied("object is outside the requested scope".into()).into());
     }
-    let row = db.query_row("SELECT a.object,a.kind FROM sync_asset_access a WHERE a.hub=?1 AND a.scope=?2 AND a.hash=?3 AND a.root_kind=?4 AND a.decoded_bytes IS ?5 AND (?6 IS NULL OR a.object=?6) AND (?7 IS NULL OR a.kind=?7) AND NOT EXISTS(SELECT 1 FROM sync_tombstones t WHERE t.hub=a.hub AND t.scope=a.scope AND t.object=a.object) ORDER BY a.object,a.kind LIMIT 1", params![scope.hub.to_string(),scope.scope.as_str(),root.id().digest.as_str(),form,length,object,wanted_kind], |row|Ok((row.get::<_,String>(0)?, row.get::<_,String>(1)?))).optional()?.ok_or_else(|| read::ReadError(Error::Denied("root is not granted to a live accepted object".into())))?;
-    let registered = kind(&row.1)?;
-    if expected.is_some_and(|(_, wanted)| wanted.schema != registered.registration().schema) {
-        return Err(read::unavailable("requested schema is not installed"));
-    }
-    Ok((ObjectKey { scope: scope.clone(), object: row.0.try_into().map_err(read::corrupt)? }, registered))
-}
-fn member(
-    db: &Connection,
-    scope: &ScopeKey,
-    root: &ContentRef,
-    node: &ContentRef,
-    max_nodes: usize,
-) -> fastctx_storage::Result<Result<bool, Error>> {
-    let shape = |reference: &ContentRef| match reference {
-        ContentRef::Single { decoded_bytes, .. } => ("block", Some(*decoded_bytes)),
-        ContentRef::Manifest { .. } => ("manifest", None),
-    };
-    let (form, length) = shape(root);
-    let wanted = (node.id().digest.as_str(), shape(node));
-    let mut pending = vec![(root.id().digest.as_str().to_owned(), form.to_owned(), length)];
-    let mut seen = HashSet::new();
-    let mut query = db.prepare_cached("SELECT child,child_kind,decoded_bytes FROM sync_asset_edges WHERE hub=?1 AND scope=?2 AND parent=?3 AND child_kind='manifest' ORDER BY child,child_kind LIMIT ?4")?;
-    while let Some((hash, form, length)) = pending.pop() {
-        if !seen.insert((hash.clone(), form.clone())) {
+    let mut query = db.prepare_cached(
+        "SELECT a.object,a.kind FROM sync_asset_access a
+         WHERE a.hub=?1 AND a.scope=?2 AND a.hash=?3 AND a.root_kind=?4
+           AND a.decoded_bytes IS ?5 AND (?6 IS NULL OR a.object=?6)
+           AND (?7 IS NULL OR a.kind=?7)
+           AND NOT EXISTS(SELECT 1 FROM sync_tombstones t
+                          WHERE t.hub=a.hub AND t.scope=a.scope AND t.object=a.object)
+         ORDER BY a.object,a.kind",
+    )?;
+    let mut rows = query.query(params![
+        scope.hub.to_string(),
+        scope.scope.as_str(),
+        root.id().digest.as_str(),
+        form,
+        length,
+        object,
+        wanted_kind
+    ])?;
+    while let Some(row) = rows.next()? {
+        let name: String = row.get(1)?;
+        let Ok(registered) = kind(&name) else { continue };
+        let object: crate::identity::ObjectId = row.get::<_, String>(0)?.try_into().map_err(read::corrupt)?;
+        if let crate::scope::ScopeSubject::Conversation { conversation, .. } = &descriptor.subject
+            && let Some(canonical) = fastctx_types::sync::conversation_identity::source_object(conversation, &name)
+            && object != canonical
+        {
             continue;
         }
-        if seen.len() + pending.len() > max_nodes {
-            return Ok(Err(Error::Busy));
+        if expected.is_some_and(|(_, wanted)| wanted.schema != registered.registration().schema) {
+            return Err(read::unavailable("requested schema is not installed"));
         }
-        if hash == wanted.0 && (form.as_str(), length) == wanted.1 {
-            return Ok(Ok(true));
-        }
-        if form != "manifest" {
-            continue;
-        }
-        let present: bool = db.query_row(
-            "SELECT EXISTS(SELECT 1 FROM sync_asset_manifests WHERE hub=?1 AND scope=?2 AND hash=?3)",
-            params![scope.hub.to_string(), scope.scope.as_str(), hash],
-            |row| row.get(0),
-        )?;
-        if !present {
-            return Ok(Err(Error::Unavailable("a granted closure page is not stored".into())));
-        }
-        let direct: bool = db.query_row("SELECT EXISTS(SELECT 1 FROM sync_asset_edges WHERE hub=?1 AND scope=?2 AND parent=?3 AND child=?4 AND child_kind=?5 AND decoded_bytes IS ?6)",params![scope.hub.to_string(),scope.scope.as_str(),hash,wanted.0,wanted.1.0,wanted.1.1],|row|row.get(0))?;
-        if direct {
-            return Ok(Ok(true));
-        }
-        let mut rows = query.query(params![scope.hub.to_string(), scope.scope.as_str(), hash, max_nodes as i64 + 1])?;
-        while let Some(row) = rows.next()? {
-            if seen.len() + pending.len() >= max_nodes {
-                return Ok(Err(Error::Busy));
-            }
-            pending.push((row.get(0)?, row.get(1)?, row.get(2)?));
-        }
+        return Ok((ObjectKey { scope: scope.clone(), object }, registered));
     }
-    Ok(Ok(false))
+    if expected.is_some() {
+        Err(Error::Denied("root is not granted to a live accepted object".into()).into())
+    } else {
+        Err(read::unavailable("metadata is not yet granted to a live accepted object"))
+    }
 }

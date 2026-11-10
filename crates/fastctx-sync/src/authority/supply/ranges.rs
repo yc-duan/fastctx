@@ -1,8 +1,9 @@
 //! Keyset storage-block selection follows only an adopted ordered manifest tree.
+mod page;
 use super::*;
 use crate::{
     cursor::{BlockRange, Count},
-    manifest::{IndexedBlock, ManifestPage},
+    manifest::IndexedBlock,
 };
 use fastctx_types::sync::session::MAX_RANGES;
 
@@ -27,7 +28,8 @@ impl Service {
         let custody = self.custody(peer, &holding, &reference, None).await?;
         let blocks = self.supply_blocks()?;
         blocks.require_adopted(&custody, &reference)?;
-        let _permit = blocks.buffer_budget().try_acquire(2 * fastctx_types::sync::PAGE_BYTES as usize)?;
+        let _permit =
+            blocks.buffer_budget().try_acquire(4 * fastctx_types::sync::PAGE_BYTES as usize + PAGE_BLOCKS * 512)?;
         let mut output = Vec::new();
         let mut pending = vec![(root.clone(), 0_u64, None)];
         let mut pages = 0;
@@ -43,19 +45,8 @@ impl Service {
             let reply = blocks
                 .stored_page(&page_root)?
                 .ok_or_else(|| Error::Unavailable("an adopted manifest page is not stored".into()))?;
-            let prepared = crate::transport_flow::decode_json::<ManifestPage>(
-                reply.page_json.as_bytes(),
-                &blocks.buffer_budget(),
-            )?;
-            let page = prepared.value();
-            let count = match page {
-                ManifestPage::Blocks { blocks, .. } => blocks.len() as u64,
-                ManifestPage::Branch { children } => children
-                    .iter()
-                    .try_fold(0_u64, |sum, child| sum.checked_add(child.entries.0))
-                    .ok_or_else(|| Error::Corrupt("manifest block count overflow".into()))?,
-                _ => return Err(Error::Invalid("block ranges require an ordered Blocks/Branch tree".into())),
-            };
+            let page = page::decode(reply.page_json.as_bytes(), start, &missing, PAGE_BLOCKS - output.len())?;
+            let count = page.count();
             if expected.is_some_and(|expected| expected != count) {
                 return Err(Error::Corrupt("ordered manifest child count differs from its parent".into()));
             }
@@ -68,50 +59,38 @@ impl Service {
                 }
             }
             match page {
-                ManifestPage::Blocks { blocks, .. } => {
-                    for (offset, content) in blocks.iter().enumerate() {
-                        let index = start + offset as u64;
-                        if missing.iter().any(|range| range.start.0 <= index && index < range.end.0) {
-                            output.push(IndexedBlock { index: Count(index), content: content.clone() });
-                            if output.len() == PAGE_BLOCKS {
-                                break;
-                            }
-                        }
-                    }
+                page::Selected::Blocks { blocks, .. } => output.extend(blocks),
+                page::Selected::Branch { children, .. } => {
+                    let available = WALK_PAGES.saturating_sub(pages);
+                    let mut first: Vec<_> =
+                        children.into_iter().chain(pending.drain(..).rev()).take(available).collect();
+                    first.reverse();
+                    pending = first;
                 }
-                ManifestPage::Branch { children } => {
-                    let mut starts = Vec::new();
-                    let mut next = start;
-                    for child in children {
-                        let end = next
-                            .checked_add(child.entries.0)
-                            .ok_or_else(|| Error::Corrupt("manifest block ordinal overflow".into()))?;
-                        if missing.iter().any(|range| range.start.0 < end && next < range.end.0) {
-                            starts.push((child.root.clone(), next, Some(child.entries.0)));
-                        }
-                        next = end;
-                    }
-                    if pending.len() + starts.len() > WALK_PAGES {
-                        return Err(Error::Busy);
-                    }
-                    pending.extend(starts.into_iter().rev());
-                }
-                _ => unreachable!("ordered variants checked above"),
             }
         }
-        let after = output.last().map(|block| block.index.0 + 1).unwrap_or(0);
-        let remaining = missing
-            .into_iter()
-            .filter_map(|range| {
-                let start = range.start.0.max(after);
-                (start < range.end.0).then_some(BlockRange { start: Count(start), end: range.end })
-            })
-            .collect();
+
         self.custody(peer, &holding, &reference, None).await?;
-        let answer = Message::Blocks { holding, manifest: root, blocks: output, remaining };
-        if read::size(&answer).map_err(|error| error.0)? > fastctx_types::sync::PAGE_BYTES as usize {
-            return Err(Error::Busy);
+        loop {
+            let after = output.last().map(|block| block.index.0 + 1).unwrap_or(0);
+            let remaining = missing
+                .iter()
+                .filter_map(|range| {
+                    let start = range.start.0.max(after);
+                    (start < range.end.0).then_some(BlockRange { start: Count(start), end: range.end })
+                })
+                .collect();
+            let answer =
+                Message::Blocks { holding: holding.clone(), manifest: root.clone(), blocks: output, remaining };
+            if read::size(&answer).map_err(|error| error.0)? <= fastctx_types::sync::PAGE_BYTES as usize {
+                return Ok(answer);
+            }
+            let Message::Blocks { blocks, .. } = answer else { unreachable!() };
+            output = blocks;
+            if output.len() <= 1 {
+                return Err(Error::Invalid("one block range result exceeds the metadata page bound".into()));
+            }
+            output.truncate(output.len() / 2);
         }
-        Ok(answer)
     }
 }

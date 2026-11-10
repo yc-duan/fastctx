@@ -23,6 +23,15 @@ impl Service {
             operation: upload.operation.clone(),
         })
     }
+    pub(super) async fn check_source_transfer(&self, peer: &Peer, upload: &SourceTransfer) -> Result<(), Error> {
+        let request = self.upload_request(peer, upload).await?;
+        let sources =
+            self.sources.as_ref().ok_or_else(|| Error::Unavailable("source receiver is not installed".into()))?;
+        if sources.upload_custody(&request)?.object != upload.object {
+            return Err(Error::Denied("source transfer names another object".into()));
+        }
+        Ok(())
+    }
     pub(super) async fn probe_source(
         &self,
         peer: &Peer,
