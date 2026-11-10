@@ -407,5 +407,26 @@
         "Unavailable"
       ]
     }
+  },
+  {
+    "type": "crates/fastctx-types/src/sync/transfer.rs::Message",
+    "variant": "ProbeSource",
+    "purpose": "AssetSync",
+    "capability": "asset_sync",
+    "mapping": "crates/fastctx-types/src/sync/transfer.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/sync/transfer.rs::Message",
+    "variant": "SourcePresence",
+    "purpose": "AssetSync",
+    "capability": "asset_sync",
+    "mapping": "crates/fastctx-types/src/sync/transfer.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/sync/transfer.rs::Message",
+    "variant": "PublishSourceManifest",
+    "purpose": "AssetSync",
+    "capability": "asset_sync",
+    "mapping": "crates/fastctx-types/src/sync/transfer.rs"
   }
 ]

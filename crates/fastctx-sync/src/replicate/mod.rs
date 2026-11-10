@@ -3,6 +3,11 @@
 //! and neither turns a peer's message into a permission.
 mod directory;
 mod follow;
+mod source_upload;
+pub use source_upload::{
+    SourceUploadKey, SourceUploadPage, SourceUploadPhase, SourceUploadProgress, SourceUploadState, SourceUploadStop,
+    SourceUploader,
+};
 mod received;
 pub use received::{Received, decode_json, decode_message};
 

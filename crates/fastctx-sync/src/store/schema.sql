@@ -429,6 +429,30 @@ CREATE TABLE sync_source_proofs (
 ) WITHOUT ROWID;
 CREATE INDEX sync_source_waiting_epoch ON sync_source_proofs(hub,scope,stream,epoch,state);
 CREATE INDEX sync_source_proof_operation ON sync_source_proofs(hub,scope,operation,stream,epoch);
+CREATE INDEX sync_source_upload_queue ON sync_source_proofs(hub,scope,stream,epoch,first_sequence);
+-- Device remote acknowledgements do not change local source checkpoints.
+CREATE TABLE sync_source_uploads (
+    hub TEXT NOT NULL, scope TEXT NOT NULL, stream TEXT NOT NULL, epoch TEXT NOT NULL,
+    holding BLOB NOT NULL, through BLOB NOT NULL CHECK(length(through)=8), prefix_digest TEXT,
+    stop_reason BLOB,
+    PRIMARY KEY(hub,scope,stream,epoch)
+) WITHOUT ROWID;
+CREATE TABLE sync_source_upload_batches (
+    hub TEXT NOT NULL, scope TEXT NOT NULL, stream TEXT NOT NULL, epoch TEXT NOT NULL,
+    proof TEXT NOT NULL, after_sequence BLOB NOT NULL CHECK(length(after_sequence)=8),
+    phase TEXT NOT NULL CHECK(phase IN ('content','submit','waiting','confirm')),
+    receipt BLOB,
+    PRIMARY KEY(hub,scope,stream,epoch,proof),
+    UNIQUE(hub,scope,stream,epoch,after_sequence)
+) WITHOUT ROWID;
+CREATE TABLE sync_source_upload_nodes (
+    hub TEXT NOT NULL, scope TEXT NOT NULL, stream TEXT NOT NULL, epoch TEXT NOT NULL,
+    proof TEXT NOT NULL, hash TEXT NOT NULL, form TEXT NOT NULL CHECK(form IN ('block','manifest')),
+    decoded_bytes INTEGER, expanded INTEGER NOT NULL CHECK(expanded IN (0,1)),
+    done INTEGER NOT NULL CHECK(done IN (0,1)),
+    CHECK((form='block' AND decoded_bytes IS NOT NULL AND decoded_bytes BETWEEN 0 AND 1048576) OR (form='manifest' AND decoded_bytes IS NULL)),
+    PRIMARY KEY(hub,scope,stream,epoch,proof,hash,form)
+) WITHOUT ROWID;
 CREATE TABLE sync_epoch_descriptors (
     hub TEXT NOT NULL, scope TEXT NOT NULL, stream TEXT NOT NULL, epoch TEXT NOT NULL,
     producer BLOB NOT NULL, kind TEXT NOT NULL, schema INTEGER NOT NULL,

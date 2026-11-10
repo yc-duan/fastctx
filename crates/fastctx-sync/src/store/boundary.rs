@@ -15,6 +15,7 @@ pub(crate) enum Role {
     FormatUpgrade,
     Pending,
     Source,
+    SourceUpload,
     Projection,
     Supply,
     Scopes,
@@ -134,6 +135,9 @@ fn permits(table: &str) -> bool {
                 | "sync_local_head"
                 | "sync_tasks"
         ),
+        Some(Role::SourceUpload) => {
+            matches!(table, "sync_source_uploads" | "sync_source_upload_batches" | "sync_source_upload_nodes")
+        }
         Some(Role::Projection) => matches!(
             table,
             "sync_timeline_heads"

@@ -1917,6 +1917,215 @@
       }
     },
     {
+      "content": {
+        "block": {
+          "algorithm": "sha256",
+          "digest": "475e69f1c8d1921b34d4098c4759c2f054282cafe7801cb7ca4a49e2afc49fa6",
+          "domain": {
+            "hub": "w-0101010101010101",
+            "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+          }
+        },
+        "decoded_bytes": 33,
+        "kind": "single"
+      },
+      "message": "probe_source",
+      "upload": {
+        "epoch": "p-0606060606060606060606060606060606060606060606060606060606060606",
+        "holding": {
+          "acl_revision": "1",
+          "holder": {
+            "device": "d-0303030303030303030303030303030303030303030303030303030303030303",
+            "holder": "device"
+          },
+          "publication_epoch": "1",
+          "scope": {
+            "hub": "w-0101010101010101",
+            "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+          }
+        },
+        "kind": {
+          "kind": "conversation.timeline",
+          "schema": 1
+        },
+        "object": {
+          "object": "o-9441b948b040cde665de0a9117fa496afce21b4eb967dd63425d4bd1c50d90c3",
+          "scope": {
+            "hub": "w-0101010101010101",
+            "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+          }
+        },
+        "operation": "m-2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f"
+      }
+    },
+    {
+      "content": {
+        "block": {
+          "algorithm": "sha256",
+          "digest": "475e69f1c8d1921b34d4098c4759c2f054282cafe7801cb7ca4a49e2afc49fa6",
+          "domain": {
+            "hub": "w-0101010101010101",
+            "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+          }
+        },
+        "decoded_bytes": 33,
+        "kind": "single"
+      },
+      "message": "source_presence",
+      "present": false,
+      "upload": {
+        "epoch": "p-0606060606060606060606060606060606060606060606060606060606060606",
+        "holding": {
+          "acl_revision": "1",
+          "holder": {
+            "device": "d-0303030303030303030303030303030303030303030303030303030303030303",
+            "holder": "device"
+          },
+          "publication_epoch": "1",
+          "scope": {
+            "hub": "w-0101010101010101",
+            "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+          }
+        },
+        "kind": {
+          "kind": "conversation.timeline",
+          "schema": 1
+        },
+        "object": {
+          "object": "o-9441b948b040cde665de0a9117fa496afce21b4eb967dd63425d4bd1c50d90c3",
+          "scope": {
+            "hub": "w-0101010101010101",
+            "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+          }
+        },
+        "operation": "m-2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f"
+      }
+    },
+    {
+      "message": "publish_source_manifest",
+      "page": {
+        "decoded_bytes": 33,
+        "id": {
+          "algorithm": "sha256",
+          "digest": "475e69f1c8d1921b34d4098c4759c2f054282cafe7801cb7ca4a49e2afc49fa6",
+          "domain": {
+            "hub": "w-0101010101010101",
+            "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+          }
+        }
+      },
+      "upload": {
+        "epoch": "p-0606060606060606060606060606060606060606060606060606060606060606",
+        "holding": {
+          "acl_revision": "1",
+          "holder": {
+            "device": "d-0303030303030303030303030303030303030303030303030303030303030303",
+            "holder": "device"
+          },
+          "publication_epoch": "1",
+          "scope": {
+            "hub": "w-0101010101010101",
+            "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+          }
+        },
+        "kind": {
+          "kind": "conversation.timeline",
+          "schema": 1
+        },
+        "object": {
+          "object": "o-9441b948b040cde665de0a9117fa496afce21b4eb967dd63425d4bd1c50d90c3",
+          "scope": {
+            "hub": "w-0101010101010101",
+            "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+          }
+        },
+        "operation": "m-2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f"
+      }
+    },
+    {
+      "content": {
+        "kind": "manifest",
+        "root": {
+          "algorithm": "sha256",
+          "digest": "475e69f1c8d1921b34d4098c4759c2f054282cafe7801cb7ca4a49e2afc49fa6",
+          "domain": {
+            "hub": "w-0101010101010101",
+            "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+          }
+        }
+      },
+      "message": "probe_source",
+      "upload": {
+        "epoch": "p-0606060606060606060606060606060606060606060606060606060606060606",
+        "holding": {
+          "acl_revision": "1",
+          "holder": {
+            "device": "d-0303030303030303030303030303030303030303030303030303030303030303",
+            "holder": "device"
+          },
+          "publication_epoch": "1",
+          "scope": {
+            "hub": "w-0101010101010101",
+            "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+          }
+        },
+        "kind": {
+          "kind": "conversation.timeline",
+          "schema": 1
+        },
+        "object": {
+          "object": "o-9441b948b040cde665de0a9117fa496afce21b4eb967dd63425d4bd1c50d90c3",
+          "scope": {
+            "hub": "w-0101010101010101",
+            "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+          }
+        },
+        "operation": "m-2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f"
+      }
+    },
+    {
+      "content": {
+        "kind": "manifest",
+        "root": {
+          "algorithm": "sha256",
+          "digest": "475e69f1c8d1921b34d4098c4759c2f054282cafe7801cb7ca4a49e2afc49fa6",
+          "domain": {
+            "hub": "w-0101010101010101",
+            "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+          }
+        }
+      },
+      "message": "source_presence",
+      "present": true,
+      "upload": {
+        "epoch": "p-0606060606060606060606060606060606060606060606060606060606060606",
+        "holding": {
+          "acl_revision": "1",
+          "holder": {
+            "device": "d-0303030303030303030303030303030303030303030303030303030303030303",
+            "holder": "device"
+          },
+          "publication_epoch": "1",
+          "scope": {
+            "hub": "w-0101010101010101",
+            "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+          }
+        },
+        "kind": {
+          "kind": "conversation.timeline",
+          "schema": 1
+        },
+        "object": {
+          "object": "o-9441b948b040cde665de0a9117fa496afce21b4eb967dd63425d4bd1c50d90c3",
+          "scope": {
+            "hub": "w-0101010101010101",
+            "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+          }
+        },
+        "operation": "m-2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f"
+      }
+    },
+    {
       "holding": {
         "acl_revision": "1",
         "holder": {

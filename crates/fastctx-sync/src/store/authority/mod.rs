@@ -69,6 +69,12 @@ impl SqliteAuthority {
         }
         Ok(Self { blocks, run, signer, verifier, identity, authorizers: installed, awaiting_bytes })
     }
+    pub(crate) fn blocks(&self) -> &SqliteBlocks {
+        &self.blocks
+    }
+    pub(crate) fn upload_custody(&self, request: &SourceUpload) -> Result<crate::store::access::Custody, Error> {
+        access::upload(self, request)
+    }
     pub fn put_block(
         &self,
         request: SourceUpload,

@@ -4,6 +4,7 @@ mod access;
 mod adopted;
 pub(crate) mod authority_supply;
 mod budget;
+pub(crate) use budget::Permit;
 
 pub mod codec;
 mod files;
@@ -20,6 +21,7 @@ mod root_holds;
 mod rows;
 pub(crate) mod source_commit;
 pub(crate) mod source_supply;
+mod source_transfer;
 mod sqlite;
 mod steps;
 pub(crate) mod supply;

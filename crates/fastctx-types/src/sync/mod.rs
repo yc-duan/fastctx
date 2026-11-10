@@ -20,6 +20,7 @@ pub mod proof;
 pub mod scope;
 pub mod session;
 pub mod source_acceptance;
+pub mod source_transfer;
 pub mod timeline;
 mod timeline_reader;
 pub mod transfer;

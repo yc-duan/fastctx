@@ -16,6 +16,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if std::env::args().nth(2).as_deref() == Some("follow-child") {
         return blocks::source_acceptance::follow::child(&root);
     }
+    if std::env::args().nth(2).as_deref() == Some("upload-child") {
+        return blocks::source_acceptance::upload::child(&root);
+    }
     if root.exists() {
         return Err("the drill root must not exist".into());
     }
@@ -26,6 +29,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .enable_all()
             .build()?
             .block_on(blocks::run_timeline(&root));
+    }
+    if std::env::args().nth(2).as_deref() == Some("upload-bench") {
+        return tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()?
+            .block_on(blocks::source_acceptance::upload::benchmark(&root));
+    }
+    if std::env::args().nth(2).as_deref() == Some("upload") {
+        return tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()?
+            .block_on(blocks::source_acceptance::upload::run(&root));
     }
     format_upgrade::run(&root)?;
     if std::env::args().nth(2).as_deref() == Some("upgrade") {

@@ -180,6 +180,22 @@ pub enum Message {
     SourceResult {
         result: super::source_acceptance::SourceAccepted,
     },
+    ProbeSource {
+        upload: super::source_transfer::SourceTransfer,
+        content: super::manifest::ContentRef,
+    },
+    SourcePresence {
+        upload: super::source_transfer::SourceTransfer,
+        content: super::manifest::ContentRef,
+        present: bool,
+    },
+    /// The exact page bytes were offered as `page` under this batch operation.
+    /// This request explicitly interprets those bytes as a manifest, without
+    /// putting a second escaped copy of the page inside a metadata envelope.
+    PublishSourceManifest {
+        upload: super::source_transfer::SourceTransfer,
+        page: super::manifest::ContentBlock,
+    },
     Submit {
         request: super::mutation::Submission,
     },
@@ -275,6 +291,9 @@ impl Message {
             | Self::ChangesPage { .. }
             | Self::Source { .. }
             | Self::SourceResult { .. }
+            | Self::ProbeSource { .. }
+            | Self::SourcePresence { .. }
+            | Self::PublishSourceManifest { .. }
             | Self::Submit { .. }
             | Self::GetOperation { .. }
             | Self::Operation { .. }

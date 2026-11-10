@@ -18,6 +18,8 @@ mod progress;
 mod scopes;
 #[path = "contract/source_result.rs"]
 mod source_result;
+#[path = "contract/source_upload.rs"]
+mod source_upload;
 #[path = "contract/transfer.rs"]
 mod transfer;
 
@@ -227,6 +229,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Message::Revoked { holding: holding.clone() },
     ];
     messages.extend(source_results);
+    messages.extend(source_upload::sample(&holding, &batch)?);
     messages.push(catalog::sample(&holding, &cursor, &accepted, &accepted_binding, &batch)?);
     messages.extend(manifests::sample(&holding)?);
     messages.extend(index_messages);

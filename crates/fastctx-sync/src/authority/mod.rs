@@ -4,6 +4,7 @@
 mod changes;
 mod epoch;
 mod read;
+mod source_transfer;
 mod sources;
 mod stream;
 pub use sources::PeerUpload;
@@ -66,6 +67,10 @@ impl Service {
                 Message::GetScopes { request } => {
                     let recipient = Recipient { device: peer.device.clone(), accounts: peer.accounts.clone() };
                     Ok(Message::ScopesPage { page: self.directory.discover(recipient, request).await? })
+                }
+                Message::ProbeSource { upload, content } => self.probe_source(peer, upload, content).await,
+                Message::PublishSourceManifest { upload, page } => {
+                    self.publish_source_manifest(peer, upload, page).await
                 }
                 Message::Source { holding, batch } => {
                     Ok(Message::SourceResult { result: self.accept_source(peer, holding, batch).await? })

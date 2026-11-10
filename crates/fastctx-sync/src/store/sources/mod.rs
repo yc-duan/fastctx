@@ -7,6 +7,8 @@ mod open;
 mod prefix_records;
 mod reads;
 mod streams;
+pub(crate) mod uploads;
+pub use uploads::{SourceUploadKey, SourceUploadPhase, SourceUploadState, SourceUploadStop};
 
 pub use open::StreamOpening;
 

@@ -48,6 +48,8 @@ CALLERS = {
         "crates/fastctx-sync/tests/sync_drill/pending.rs",
     },
     "SqliteBlocks": {
+        "crates/fastctx-sync/src/blocks/source_transfer.rs",
+        "crates/fastctx-sync/tests/sync_drill/source_acceptance/upload/mod.rs",
         "crates/fastctx-sync/src/store/replica/receipts.rs",
         "crates/fastctx-sync/tests/sync_drill/source_acceptance/follow.rs",
         "crates/fastctx-sync/src/blocks/replica_commit.rs",
@@ -124,6 +126,7 @@ CALLERS = {
         "crates/fastctx-net/tests/sync_access_drill/fixture.rs",
     },
     "enter_typed_write": {
+        "crates/fastctx-sync/src/store/sources/uploads/mod.rs",
         "crates/fastctx-sync/src/store/replica/follow.rs",
         "crates/fastctx-sync/src/blocks/replica_content.rs",
         "crates/fastctx-sync/src/store/replica/changes.rs",

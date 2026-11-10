@@ -17,6 +17,8 @@ use fastctx_types::sync::conversation_identity::conversation_scope;
 use serde::{Deserialize, Serialize};
 
 mod advance;
+mod description;
+pub(crate) use description::directory_description;
 mod install;
 pub use advance::ScopeState;
 pub(crate) use advance::{advance as advance_in, current};

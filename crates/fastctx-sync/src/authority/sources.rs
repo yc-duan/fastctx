@@ -15,7 +15,7 @@ use crate::{
 };
 
 impl Service {
-    async fn source_context(&self, peer: &Peer, holding: &HoldingPeriod) -> Result<AccessContext, Error> {
+    pub(super) async fn source_context(&self, peer: &Peer, holding: &HoldingPeriod) -> Result<AccessContext, Error> {
         if holding.holder != (Holder::Device { device: peer.device.clone() }) {
             return Err(Error::Denied("source holding is not the authenticated peer".into()));
         }

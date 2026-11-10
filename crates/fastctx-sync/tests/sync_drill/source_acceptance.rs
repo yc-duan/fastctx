@@ -7,6 +7,8 @@ mod fixture;
 pub(crate) mod follow;
 #[path = "source_pages.rs"]
 mod source_pages;
+#[path = "source_acceptance/upload/mod.rs"]
+pub(crate) mod upload;
 use fastctx_sync::{
     catalog::{Lifecycle, SourceBatch, SourceRecord},
     cursor::{Sequence, StreamCursor},
@@ -120,9 +122,14 @@ async fn describe(directory: &SqliteDirectory, object: &ObjectKey, n: u8) -> Res
 }
 fn node(dir: &Path, object: &ObjectKey) -> Result<(Database, SqliteBlocks, SqliteSources, SourceTarget)> {
     let key = object.scope.clone();
+    let origin = serde_json::to_vec(&serde_json::json!({
+        "origin": "hosted",
+        "subject": { "subject": "conversation", "conversation": object.object, "shared_on": null, "born_seal": null },
+        "device": DeviceId::from_bytes([3; 32]),
+    }))?;
     let db = Database::open_guarded(&dir.join("node.sqlite3"), "", boundary::guard, move |db| {
         schema::initialize(db)?;
-        db.execute("INSERT INTO sync_scopes(hub,scope,origin,acl_revision,enabled,publication_epoch) VALUES(?1,?2,X'7b7d',?3,1,?3) ON CONFLICT DO NOTHING",params![key.hub.to_string(),key.scope.as_str(),1_u64.to_be_bytes().as_slice()])?;
+        db.execute("INSERT INTO sync_scopes(hub,scope,origin,acl_revision,enabled,publication_epoch) VALUES(?1,?2,?3,?4,1,?4) ON CONFLICT DO NOTHING",params![key.hub.to_string(),key.scope.as_str(),origin,1_u64.to_be_bytes().as_slice()])?;
         Ok(())
     })?;
     let blocks = SqliteBlocks::new(
@@ -439,6 +446,7 @@ pub(super) async fn run(root: &Path) -> Result<()> {
     assert!(answered(&metadata, &second).await?.1);
     assert_eq!(count_scope(&db, "sync_changes", &object)?, 3);
     source_pages::run(root).await?;
+    Box::pin(upload::run(root)).await?;
     println!(
         "hub source acceptance: out-of-order persistence, FULL rollback, restart, initial epoch confirmation, exact replay, conflicting proof retention, missing attachment, hub semantic refusal and continued producer prefixes passed"
     );
