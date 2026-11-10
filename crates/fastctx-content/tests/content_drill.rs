@@ -399,5 +399,68 @@ fn reclaiming(content: &Content, stream: &StreamKey, root: &Path) -> Outcome<()>
         "reclaiming: {} objects looked at, {} removed ({} bytes) in {took:.1?}",
         late.looked, late.removed, late.bytes
     );
+    forgetting(content)
+}
+
+/// A scope that is forgotten leaves nothing: no item, no frame, no count of
+/// an object, and no object only it referred to; another scope's stay.
+fn forgetting(content: &Content) -> Outcome<()> {
+    let store = content.objects();
+    let (gone, kept) = (StreamKey::new("drill/forgotten", "timeline"), StreamKey::new("drill/remembered", "timeline"));
+    let (own, shared) = (store.put(&body(21, 90_000))?, store.put(&body(22, 100_000))?);
+    let records = |objects: &[ObjectRef]| -> Vec<Record> {
+        (0u64..5_000)
+            .map(|number| Record {
+                item: number.to_be_bytes().to_vec(),
+                order: number.to_be_bytes().to_vec(),
+                state: State::Is {
+                    body: body(number, 200),
+                    objects: if number == 0 { objects.to_vec() } else { Vec::new() },
+                },
+            })
+            .collect()
+    };
+    for (stream, objects) in [(&gone, vec![own, shared]), (&kept, vec![shared])] {
+        for chunk in records(&objects).chunks(1_000) {
+            content.append(Batch {
+                stream: stream.clone(),
+                generation: 0,
+                records: chunk.to_vec(),
+                checkpoint: None,
+                durable: false,
+            })?;
+        }
+    }
+    let began = Instant::now();
+    let (mut passes, mut items) = (0, 0);
+    loop {
+        let pass = content.forget(&gone.scope)?;
+        passes += 1;
+        items += pass.items;
+        if !pass.more {
+            break;
+        }
+    }
+    let took = began.elapsed();
+    if items != 5_000 || content.revision(&gone)?.is_some() || content.refers(&gone.scope, &shared.hash)? {
+        return Err(format!("a forgotten scope left something: {items} items went in {passes} passes").into());
+    }
+    if content.page(&kept, &Anchor::Latest, 10, 1 << 20)?.items.len() != 10
+        || !content.refers(&kept.scope, &shared.hash)?
+        || store.size(&shared.hash)?.is_none()
+    {
+        return Err("forgetting one scope took from another".into());
+    }
+    if content.forget(&gone.scope)? != fastctx_content::Forgotten::default() {
+        return Err("forgetting a scope twice found something the second time".into());
+    }
+    // The object only the forgotten scope referred to was put just now, so
+    // it is left for reclaiming, which takes it once it is no longer new.
+    std::thread::sleep(Duration::from_millis(30));
+    while content.reclaim(Duration::ZERO)?.more {}
+    if store.size(&own.hash)?.is_some() || store.size(&shared.hash)?.is_none() {
+        return Err("the objects of a forgotten scope are not the ones that went".into());
+    }
+    println!("forgetting: 5000 items in {passes} passes in {took:.1?}");
     Ok(())
 }

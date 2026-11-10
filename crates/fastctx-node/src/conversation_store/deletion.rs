@@ -33,6 +33,9 @@ pub(crate) fn begin_with_account(
             db.execute("DELETE FROM node_conversation_transfers WHERE name=?1", [&conversation])?;
             db.execute("DELETE FROM migration_born WHERE name=?1", [&conversation])?;
             fastctx_jobs::forget(db, &conversation)?;
+            // What the content database keeps of it goes too, as a job of
+            // its own unit: the line above drops the conversation's.
+            crate::content_upkeep::forget_in(db, &conversation)?;
             Ok(())
         })
         .map_err(io::Error::other)?;

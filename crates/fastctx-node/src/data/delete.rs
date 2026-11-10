@@ -365,6 +365,7 @@ async fn records(
     }
     crate::sentinels::deletion::note_deleted(node, id).map_err(Stop::Failed)?;
     crate::conversation_store::begin(&directory).map_err(|error| Stop::Failed(error.to_string()))?;
+    crate::content_upkeep::forgetting(node);
     crate::conversation_store::purge(&node.database, id.as_str()).map_err(|error| Stop::Failed(error.to_string()))?;
     node.residents
         .forget(&node.world, id, measured.sessions.clone())

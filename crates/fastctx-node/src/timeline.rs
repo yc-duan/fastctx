@@ -35,9 +35,20 @@ const APART: Duration = Duration::from_secs(15);
 /// When each conversation's timeline was last built, in this run of the node.
 static BUILT: LazyLock<Mutex<HashMap<ResidentId, Instant>>> = LazyLock::new(Mutex::default);
 
+/// The scope of what the content database keeps of a conversation.
+pub(crate) fn scope(conversation: &str) -> String {
+    format!("conversation/{conversation}")
+}
+
 /// The stream a conversation's timeline is kept in.
 pub(crate) fn stream(resident: &ResidentId) -> StreamKey {
-    StreamKey::new(format!("conversation/{resident}"), "timeline")
+    StreamKey::new(scope(resident.as_str()), "timeline")
+}
+
+/// The name under which the build keeps how far a conversation's timeline
+/// is built.
+pub(crate) fn checkpoint(conversation: &str) -> String {
+    format!("timeline/{conversation}")
 }
 
 /// Names what builds timelines, before the node's jobs start.

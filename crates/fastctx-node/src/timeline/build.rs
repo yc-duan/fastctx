@@ -46,7 +46,7 @@ fn failure(error: impl std::fmt::Display) -> Failure {
 /// one the timeline was last built from is not read at all.
 pub(crate) async fn build(node: &Arc<Node>, resident: &ResidentId) -> Result<Built, Failure> {
     let content = node.content()?.clone();
-    let name = format!("timeline/{resident}");
+    let name = super::checkpoint(resident.as_str());
     // Taken before the history is read: what is read is at least as new.
     let version = crate::held_history::stamp(node, resident).await?.map(String::into_bytes);
     if let Some(version) = &version {

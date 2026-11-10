@@ -9,6 +9,7 @@
 mod append;
 mod audit;
 mod error;
+mod forget;
 mod frame;
 mod objects;
 mod read;
@@ -20,6 +21,7 @@ mod wake;
 pub use append::{Appended, BATCH_BYTES, Batch, CHECKPOINT_BYTES, Checkpoint};
 pub use audit::Audited;
 pub use error::{Error, Result};
+pub use forget::Forgotten;
 pub use objects::{OBJECTS_DIRECTORY, OBJECTS_FILE, Objects, READ_BYTES, ROW_BYTES};
 pub use read::{Anchor, Item, Page, Place};
 pub use reclaim::Reclaimed;
