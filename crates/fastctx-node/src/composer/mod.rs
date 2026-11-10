@@ -6,6 +6,7 @@ mod failures;
 mod idle;
 mod keeping;
 mod legacy_records;
+mod limits;
 pub(crate) use idle::input_busy;
 pub(crate) use keeping::start as keep;
 mod persistence;
@@ -132,6 +133,7 @@ pub fn here<'a>(
     request: Request,
 ) -> Future<'a, Updated> {
     Box::pin(async move {
+        limits::request(&request)?;
         node.ready_for(id).await;
         if let Request::Sync { input } = request {
             update_document(node, id, *input).await?;
@@ -195,6 +197,7 @@ pub fn here<'a>(
         {
             return Ok(Updated { composer: state.view(), landed: None, delivery: None });
         }
+        limits::edit(state, &mutation)?;
         if let Change::Attach { attachment, .. } = &mutation.change {
             crate::attachments::resolve(node, id, std::slice::from_ref(attachment)).await?;
         }

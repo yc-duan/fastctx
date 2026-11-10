@@ -116,7 +116,7 @@ pub fn update_document<'a>(node: &'a Arc<Node>, id: &'a ResidentId, input: Input
         // An earlier failed stop is first consolidated with the metadata. This
         // exceptional write must not let subsequent typing erase its hold.
         let held = node.composers.holds.lock().expect("composer checkpoint failures").contains_key(id);
-        if held {
+        if held || next.documents().any(|document| document.aliases_changed) {
             publish(node, id, &mut cell, next).await?;
             let state = cell.as_mut().expect("committed");
             let revision = state.revision;

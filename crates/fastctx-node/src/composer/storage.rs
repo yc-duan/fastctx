@@ -45,6 +45,7 @@ pub(super) fn load<'a>(node: &'a Arc<Node>, id: &'a ResidentId, cell: &'a mut Op
             changed |= super::recovery::settle(node, id, &mut state).await?;
             changed |= uploads::recover(node, id, &mut state).await?;
         }
+        changed |= state.documents().any(|document| document.aliases_changed);
         if !state.persisted || changed {
             let prepared = persistence::prepare(id, &mut state)?;
             node.database

@@ -78,6 +78,8 @@ pub struct Stored {
     #[serde(skip)]
     pub persisted: bool,
     #[serde(skip)]
+    pub metadata_bytes: usize,
+    #[serde(skip)]
     pub document_names: HashSet<String>,
     #[serde(skip)]
     pub observed_documents: HashSet<String>,

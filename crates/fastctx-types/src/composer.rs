@@ -2,6 +2,11 @@
 
 pub mod sync;
 
+/// Maximum visible Unicode scalars in a draft or queued message.
+pub const MAX_DOCUMENT_CHARACTERS: usize = 100_000;
+/// Stable explicit rejection understood by composer clients.
+pub const DOCUMENT_TOO_LONG: &str = "the text is longer than this input holds";
+
 use serde::{Deserialize, Serialize};
 
 use crate::attachments::Attachment;

@@ -64,11 +64,15 @@ pub(super) async fn read(node: &Node, id: &ResidentId) -> Result<Stored, Failure
                 .optional()?;
             let mut state: Stored = if let Some((revision, bytes)) = row {
                 let mut state: Stored = serde_json::from_slice(&bytes).map_err(error)?;
+                state.metadata_bytes = bytes.len();
                 let revision = u64::try_from(revision).map_err(error)?;
                 if state.revision > revision {
                     return Err(error("composer metadata is newer than its durable revision"));
                 }
                 state.revision = revision;
+                for document in state.documents_mut() {
+                    document.aliases_changed = false;
+                }
                 state.persisted = true;
                 state
             } else {
@@ -167,8 +171,12 @@ pub(super) fn prepare(id: &ResidentId, state: &mut Stored) -> Result<Prepared, F
             expires: expires("uploads"),
         });
     }
+    for document in state.documents_mut() {
+        document.aliases_changed = false;
+    }
     state.persisted = true;
     let content = serde_json::to_vec(&state).map_err(failure)?;
+    state.metadata_bytes = content.len();
     let bytes = owner.len()
         + content.len()
         + texts.iter().map(TextWrite::bytes).sum::<usize>()
