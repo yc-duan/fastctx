@@ -27,6 +27,9 @@ mod account_records;
 mod afoot;
 mod assists;
 mod catalog;
+#[cfg(feature = "change-drill")]
+#[doc(hidden)]
+pub mod change_drill;
 mod control;
 mod data;
 mod direct;

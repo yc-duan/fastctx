@@ -33,6 +33,13 @@ name = "asset_sync_drill"
 path = "tests/asset_sync_drill/main.rs"
 harness = false
 
+[features]
+change-drill = []
+
+[[example]]
+name = "change_drill"
+required-features = ["change-drill"]
+
 [dependencies]
 arc-swap = "1"
 anyhow.workspace = true

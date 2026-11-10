@@ -95,38 +95,12 @@ fn made(
         // its machine acts for it once more.
         let expired = crate::assists::end_due(&mut store, Timestamp::now())
             .map_err(|error| format!("the hub could not end an assistance past its deadline: {error}"))?;
-        let before = store.book.clone();
-        let action = crate::machine_log::action(&change, &before, &store.hub.updates);
-        let authenticated = may_change(&before.directory, &change, asker, account);
-        let actor =
-            Actor { account: Some(account.clone()), authenticated, member: Some(asker.name.clone()), peer: None };
-        let before_hub = store.hub.clone();
-        let result = (|| {
-            let directory = &before.directory;
-            let found = directory.account(account).cloned().ok_or_else(|| format!("there is no account {account}"))?;
-            if found.locked {
-                return Err(format!("the account {account} is locked"));
-            }
-            if !may_change(directory, &change, asker, account) {
-                return Err(format!("{asker} is not logged in to the account {account}"));
-            }
-            let super_ = found.level == Level::Super;
-            let told = apply(hub, &mut store, asker, account, super_, change, ended)?;
-            store.book.directory.settle_acting(&before.directory);
-            crate::machine_log::effects(&mut store, &before.directory, &actor, &action)?;
-            let committed = match &told {
-                Told::CollabWritten { version } => fastctx_types::machine_log::Action::Collab { version: *version },
-                Told::ProfileWritten { version } => fastctx_types::machine_log::Action::Profile { version: *version },
-                _ => action.clone(),
-            };
-            crate::machine_log::keep(&mut store, &before.directory, actor.clone(), committed, Outcome::Done)?;
-            Ok(told)
-        })();
+        let result = commit(&mut store, asker, account, change, |store, super_, change| {
+            apply(hub, store, asker, account, super_, change, ended)
+        });
         match result {
             Ok(told) => {
-                // What the hub keeps for a renamed machine moves under its
-                // new name once the directory that says it is kept; a hub
-                // stopped in between moves it when it opens.
+                // Names and letters move only after their directory commit.
                 if renaming {
                     match store.settle_names() {
                         Ok(said) => {
@@ -139,9 +113,6 @@ fn made(
                         )),
                     }
                 }
-                // Only now that the directory without them is kept do the
-                // letters waiting for machines taken off go: a change that
-                // was not kept leaves every letter where it was.
                 for (name, refusal) in ended.iter() {
                     if matches!(refusal, Refusal::Removed { .. })
                         && let Err(error) = store.forget_letters(name)
@@ -154,19 +125,6 @@ fn made(
                 Ok(told)
             }
             Err(reason) => {
-                store.book = before;
-                if store.hub != before_hub {
-                    store.hub = before_hub;
-                    store.save_hub().map_err(|error| format!("restoring the hub's settings: {error}"))?;
-                }
-                let directory = store.book.directory.clone();
-                crate::machine_log::keep(
-                    &mut store,
-                    &directory,
-                    actor,
-                    action,
-                    Outcome::Refused { reason: reason.clone() },
-                )?;
                 hub.machine_log_changed.notify_one();
                 drop(store);
                 if expired {
@@ -174,6 +132,56 @@ fn made(
                 }
                 Err(reason)
             }
+        }
+    }
+}
+
+/// Runs the authorized edit and commits its audit in the same transaction.
+/// Callers own the catalog writer and have already settled due assistance.
+pub(crate) fn commit(
+    store: &mut Store,
+    asker: &crate::origin::Origin,
+    account: &AccountName,
+    change: Change,
+    apply: impl FnOnce(&mut Store, bool, Change) -> Result<Told, String>,
+) -> Result<Told, String> {
+    let before = store.book.clone();
+    let action = crate::machine_log::action(&change, &before, &store.hub.updates);
+    let authenticated = may_change(&before.directory, &change, asker, account);
+    let actor = Actor { account: Some(account.clone()), authenticated, member: Some(asker.name.clone()), peer: None };
+    let before_hub = store.hub.clone();
+    let result = (|| {
+        let directory = &before.directory;
+        let found = directory.account(account).cloned().ok_or_else(|| format!("there is no account {account}"))?;
+        if found.locked {
+            return Err(format!("the account {account} is locked"));
+        }
+        if !may_change(directory, &change, asker, account) {
+            return Err(format!("{asker} is not logged in to the account {account}"));
+        }
+        let super_ = found.level == Level::Super;
+        let told = apply(store, super_, change)?;
+        store.book.directory.settle_acting(&before.directory);
+        crate::machine_log::effects(store, &before.directory, &actor, &action)?;
+        let committed = match &told {
+            Told::CollabWritten { version } => fastctx_types::machine_log::Action::Collab { version: *version },
+            Told::ProfileWritten { version } => fastctx_types::machine_log::Action::Profile { version: *version },
+            _ => action.clone(),
+        };
+        crate::machine_log::keep(store, &before.directory, actor.clone(), committed, Outcome::Done)?;
+        Ok(told)
+    })();
+    match result {
+        Ok(told) => Ok(told),
+        Err(reason) => {
+            store.book = before;
+            if store.hub != before_hub {
+                store.hub = before_hub;
+                store.save_hub().map_err(|error| format!("restoring the hub's settings: {error}"))?;
+            }
+            let directory = store.book.directory.clone();
+            crate::machine_log::keep(store, &directory, actor, action, Outcome::Refused { reason: reason.clone() })?;
+            Err(reason)
         }
     }
 }
@@ -190,18 +198,7 @@ fn apply(
     let need_super =
         || if super_ { Ok(()) } else { Err(format!("the account {account} is not the hub's super administrator")) };
     match change {
-        Change::History { on } => {
-            let found = store
-                .book
-                .directory
-                .accounts
-                .iter_mut()
-                .find(|found| found.name == *account)
-                .map(Arc::make_mut)
-                .expect("checked");
-            found.history = on;
-            Ok(Told::Done)
-        }
+        Change::History { on } => history(store, account, on),
         Change::Collab { mut collab } => {
             collab.validate()?;
             let found = store
@@ -921,6 +918,19 @@ const TOKEN_RELAYS: usize = 16;
 /// address of one of its cards, with a port, not one only the relay itself
 /// reaches or that names no one machine. An IPv6 link-local address is the
 /// relay's own card's, which a machine elsewhere names by its own.
+pub(crate) fn history(store: &mut Store, account: &AccountName, on: bool) -> Result<Told, String> {
+    let found = store
+        .book
+        .directory
+        .accounts
+        .iter_mut()
+        .find(|found| found.name == *account)
+        .map(Arc::make_mut)
+        .expect("checked");
+    found.history = on;
+    Ok(Told::Done)
+}
+
 fn relay_reachable(address: &std::net::SocketAddr) -> bool {
     let ip = match address.ip() {
         std::net::IpAddr::V6(ip) => ip.to_ipv4_mapped().map_or(std::net::IpAddr::V6(ip), std::net::IpAddr::V4),
