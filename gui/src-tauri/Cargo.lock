@@ -1991,6 +1991,7 @@ dependencies = [
  "anyhow",
  "arc-swap",
  "bytes",
+ "fastctx-jobs",
  "fastctx-net",
  "fastctx-platform",
  "fastctx-ripgrep",
@@ -2053,6 +2054,15 @@ dependencies = [
  "windows-sys 0.61.2",
  "x509-parser",
  "xattr",
+]
+
+[[package]]
+name = "fastctx-jobs"
+version = "1.0.1-beta.17"
+dependencies = [
+ "fastctx-platform",
+ "fastctx-storage",
+ "tokio",
 ]
 
 [[package]]

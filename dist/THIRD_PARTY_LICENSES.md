@@ -9925,12 +9925,14 @@ Used by:
 - fastctx-agent 1.0.1-beta.17 (https://github.com/yc-duan/fastctx)
 - fastctx-assets 1.0.1-beta.17 (https://github.com/yc-duan/fastctx)
 - fastctx-client 1.0.1-beta.17 (https://github.com/yc-duan/fastctx)
+- fastctx-content 1.0.1-beta.17 (https://github.com/yc-duan/fastctx)
 - fastctx-draft 1.0.1-beta.17 (https://github.com/yc-duan/fastctx)
 - fastctx-file-search 1.0.1-beta.17 (https://github.com/yc-duan/fastctx)
 - fastctx-hands 1.0.1-beta.17 (https://github.com/yc-duan/fastctx)
 - fastctx-hosts 1.0.1-beta.17 (https://github.com/yc-duan/fastctx)
 - fastctx-hub 1.0.1-beta.17 (https://github.com/yc-duan/fastctx)
 - fastctx-install 1.0.1-beta.17 (https://github.com/yc-duan/fastctx)
+- fastctx-jobs 1.0.1-beta.17 (https://github.com/yc-duan/fastctx)
 - fastctx-net 1.0.1-beta.17 (https://github.com/yc-duan/fastctx)
 - fastctx-node 1.0.1-beta.17 (https://github.com/yc-duan/fastctx)
 - fastctx-office 1.0.1-beta.17 (https://github.com/yc-duan/fastctx)
@@ -9943,7 +9945,7 @@ Used by:
 - fastctx-sync 1.0.1-beta.17 (https://github.com/yc-duan/fastctx)
 - fastctx-tui 1.0.1-beta.17 (https://github.com/yc-duan/fastctx)
 - fastctx-types 1.0.1-beta.17 (https://github.com/yc-duan/fastctx)
-- fastctx-uninstall 1.0.1-beta.16
+- fastctx-uninstall 1.0.1-beta.17
 - fastctx-update 1.0.1-beta.17 (https://github.com/yc-duan/fastctx)
 - fastctx-watch 1.0.1-beta.17 (https://github.com/yc-duan/fastctx)
 - pdf_oxide 0.3.78 (https://github.com/yfedoseev/pdf_oxide)
@@ -87070,4 +87072,4 @@ Source archives for the crates.io dependencies recorded by this build follow. Ea
 - zvariant_derive 5.15.0: https://static.crates.io/crates/zvariant_derive/zvariant_derive-5.15.0.crate
 - zvariant_utils 4.2.0: https://static.crates.io/crates/zvariant_utils/zvariant_utils-4.2.0.crate
 
-<!-- fastctx-notices-inputs: e3e85f55f54f8acbf9ad34242534a21f6b95826add26b342de230c222ff7dd0c -->
+<!-- fastctx-notices-inputs: db6a3380ddc44b519c12edb25dd7e47564630b7f95b23016f5a0fe03d72511dd -->
