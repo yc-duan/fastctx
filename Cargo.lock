@@ -1523,6 +1523,10 @@ version = "1.0.1-beta.17"
 dependencies = [
  "fastctx-platform",
  "fastctx-storage",
+ "fastctx-types",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
  "tokio",
 ]
 

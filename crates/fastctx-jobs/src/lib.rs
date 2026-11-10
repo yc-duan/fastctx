@@ -14,6 +14,7 @@
 mod measures;
 mod operations;
 mod run;
+pub mod submitted;
 mod table;
 
 pub use operations::{Operation, RESULT_BYTES, Standing, accept, settle, standing};
@@ -126,6 +127,11 @@ impl Jobs {
         if let Some(runtime) = self.runtime.get() {
             run::serve_once(runtime, self.database.clone(), registered);
         }
+    }
+
+    /// The database the jobs are kept in.
+    pub fn database(&self) -> &Database {
+        &self.database
     }
 
     /// Tells the kind's runner that a job was submitted and committed.
