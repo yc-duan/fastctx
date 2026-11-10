@@ -2,14 +2,15 @@
 
 use super::{
     Asked,
-    scope::{self, Target},
+    scope::{self, Authority, Target},
 };
 use crate::{
     Node,
     submitted::Family,
     town::caller::{self, Caller},
 };
-use fastctx_types::{Call, Reply, ipc::Failure};
+use fastctx_net::link::Link;
+use fastctx_types::{AccountName, Call, HubName, Reply, ipc::Failure};
 use serde::{Deserialize, Serialize};
 use std::{sync::Arc, time::Duration};
 
@@ -21,6 +22,7 @@ const RECORDS: Family = family("call/account-records");
 const COLLAB: Family = family("call/collaboration-settings");
 const SUBAGENTS: Family = family("call/subagents");
 const PROFILE: Family = family("call/profile");
+// Replaying a committed boolean could overwrite a later choice made on another device.
 const HISTORY_SWITCH: Family = family("call/history-switch");
 const MCP_REMOVE: Family = family("call/mcp-remove");
 
@@ -67,100 +69,151 @@ pub(super) fn register(node: &Arc<Node>) {
     }
 }
 
-fn user(node: &Node, peer: &fastctx_types::ipc::Peer) -> Result<Caller, Failure> {
-    crate::server::users_voice(node, peer)?;
-    caller::of(node, peer)
+fn user(node: &Node, asked: &Asked) -> Result<(), Failure> {
+    crate::server::users_voice(node, &asked.peer)
 }
 
-fn check(node: &Arc<Node>, asked: &Asked, target: Option<&Resolved>) -> Result<Resolved, Failure> {
+fn validate(node: &Node, asked: &Asked) -> Result<Caller, Failure> {
     // Credential-bearing calls must never enter a durable recording (2026-11-10).
     if !handles(&asked.call) {
         return Err(Failure::not_run("this is not a submitted account change"));
     }
     let caller = caller::of(node, &asked.peer)?;
     crate::admission::local::admit(node, &asked.peer, &asked.call)?;
-    let (hub, account) = match &*asked.call {
-        Call::AccountRecords { hub, account, request } => {
+    match &*asked.call {
+        Call::AccountRecords { request, .. } => {
             crate::plan::records_allowed(node, &caller, request)?;
-            request.validate().map_err(Failure::not_run)?;
-            (hub, account)
+            request.validate().map_err(Failure::new)?;
         }
-        Call::SkillFiles { hub, account, request } => {
-            user(node, &asked.peer)?;
-            request.validate().map_err(Failure::not_run)?;
-            (hub, account)
+        Call::SkillFiles { request, .. } => {
+            user(node, asked)?;
+            request.validate().map_err(Failure::new)?;
         }
-        Call::CollabWrite { hub, account, collab } => {
-            user(node, &asked.peer)?;
-            collab.validate().map_err(Failure::not_run)?;
+        Call::CollabWrite { account, collab, hub } => {
+            user(node, asked)?;
             if account.is_none() {
                 crate::server::own_settings(hub.as_ref())?;
-                if node.connected_anywhere() {
-                    return Err(Failure::not_run(
-                        "this computer is in a network, where model collaboration is set for each account; name the account",
-                    ));
-                }
-                let logins = collab.callers.iter().chain(collab.callees.iter().map(|callee| &callee.login));
-                if let Some(other) = logins.map(|login| &login.machine).find(|machine| !node.is_me(machine)) {
-                    return Err(Failure::not_run(format!(
-                        "{other} is not this computer, {}: a computer in no network calls and is called only by its own logins",
-                        node.machine()
-                    )));
-                }
-                return Ok(Resolved::Own);
+                collab.validate().map_err(Failure::not_run)?;
+            } else {
+                collab.validate().map_err(Failure::new)?;
             }
-            (hub, account)
         }
-        Call::HistorySwitchWrite { hub, account, .. } => {
-            user(node, &asked.peer)?;
-            (hub, account)
-        }
-        Call::ProfileSubagents { hub, account, operation } => {
+        Call::HistorySwitchWrite { .. } => user(node, asked)?,
+        Call::ProfileSubagents { operation, .. } => {
             use fastctx_types::profile::{SubagentOperation, Subagents};
             match operation {
                 SubagentOperation::Save { agent, .. } => {
-                    fastctx_types::profile::validate_subagent(agent).map_err(Failure::not_run)?
+                    fastctx_types::profile::validate_subagent(agent).map_err(Failure::new)?
                 }
                 SubagentOperation::Instructions { text, .. } => {
-                    Subagents { agents: Vec::new(), instructions: text.clone() }.validate().map_err(Failure::not_run)?
+                    Subagents { agents: Vec::new(), instructions: text.clone() }.validate().map_err(Failure::new)?
                 }
                 _ => {}
             }
-            (hub, account)
         }
-        Call::ProfileWrite { hub, account, profile } => {
-            profile.validate().map_err(Failure::not_run)?;
-            (hub, account)
+        Call::ProfileWrite { profile, .. } => {
+            // The original writer replaces subagents before validating the profile.
+            let mut input = profile.clone();
+            input.subagents = None;
+            input.validate().map_err(Failure::new)?;
         }
-        Call::Mcp { hub, account, .. } => (hub, account),
+        Call::Mcp { .. } => {}
         _ => return Err(Failure::not_run("this is not a submitted account change")),
+    }
+    Ok(caller)
+}
+
+fn selectors(call: &Call) -> (Option<&HubName>, Option<&AccountName>) {
+    match call {
+        Call::AccountRecords { hub, account, .. }
+        | Call::SkillFiles { hub, account, .. }
+        | Call::CollabWrite { hub, account, .. }
+        | Call::HistorySwitchWrite { hub, account, .. }
+        | Call::ProfileSubagents { hub, account, .. }
+        | Call::ProfileWrite { hub, account, .. }
+        | Call::Mcp { hub, account, .. } => (hub.as_ref(), account.as_ref()),
+        _ => (None, None),
+    }
+}
+
+fn authority(call: &Call) -> Authority {
+    match call {
+        Call::CollabWrite { .. } | Call::HistorySwitchWrite { .. } => Authority::LoggedIn,
+        _ => Authority::Acting,
+    }
+}
+
+async fn resolve(node: &Arc<Node>, asked: &Asked) -> Result<Resolved, Failure> {
+    let caller = caller::of(node, &asked.peer)?;
+    let (hub, account) = selectors(&asked.call);
+    let target = if matches!(&*asked.call, Call::CollabWrite { account: None, .. }) {
+        Resolved::Own
+    } else {
+        scope::selection(node, hub).await?;
+        let target = if matches!(authority(&asked.call), Authority::LoggedIn) {
+            let account = account.cloned().ok_or_else(|| Failure::not_run("name the account"))?;
+            let link = crate::world::hub_link(node, hub)?;
+            scope::capture(&link, account, Authority::LoggedIn)?
+        } else {
+            scope::resolve(node, &caller, hub, account)?
+        };
+        Resolved::Account(target)
     };
-    let resolved = match target {
-        Some(Resolved::Account(target)) => {
-            scope::current(node, &caller, target)?;
-            Resolved::Account(target.clone())
+    execution(node, asked, &target)?;
+    Ok(target)
+}
+
+async fn ready(node: &Node, target: &Resolved) -> Result<(), Failure> {
+    if let Resolved::Account(target) = target {
+        scope::ready(node, target).await?;
+    }
+    Ok(())
+}
+
+fn authorize(node: &Node, asked: &Asked, target: &Resolved) -> Result<Option<Arc<Link>>, Failure> {
+    let caller = caller::of(node, &asked.peer)?;
+    crate::admission::local::admit(node, &asked.peer, &asked.call)?;
+    match target {
+        Resolved::Own => {
+            user(node, asked)?;
+            Ok(None)
         }
-        Some(Resolved::Own) => return Err(Failure::refused("the account change has no account target")),
-        None if matches!(&*asked.call, Call::CollabWrite { .. } | Call::HistorySwitchWrite { .. }) => {
-            let account = account.clone().ok_or_else(|| Failure::not_run("name the account"))?;
-            let link = crate::world::hub_link(node, hub.as_ref())?;
-            Resolved::Account(scope::capture(&link, account)?)
-        }
-        None => Resolved::Account(scope::resolve(node, &caller, hub.as_ref(), account.as_ref())?),
-    };
-    if let Resolved::Account(target) = &resolved {
-        let link = scope::current(node, &caller, target)?;
-        let view = crate::authorization::current_view(&link)?;
-        if matches!(&*asked.call, Call::CollabWrite { .. } | Call::HistorySwitchWrite { .. })
-            && !view.logged_in(&view.me, &target.scope.account)
-        {
-            return Err(Failure::refused("this device is not logged in to the selected account"));
-        }
-        if matches!(&*asked.call, Call::ProfileSubagents { .. } | Call::ProfileWrite { .. } | Call::Mcp { .. }) {
-            link.profile_read(&target.scope.account).map_err(Failure::refused)?;
+        Resolved::Account(target) => {
+            if matches!(authority(&asked.call), Authority::LoggedIn) {
+                user(node, asked)?;
+            }
+            let link = scope::current(node, &caller, target, authority(&asked.call))?;
+            if matches!(&*asked.call, Call::ProfileSubagents { .. } | Call::ProfileWrite { .. } | Call::Mcp { .. }) {
+                link.profile_read(&target.scope.account).map_err(Failure::new)?;
+            }
+            Ok(Some(link))
         }
     }
-    Ok(resolved)
+}
+
+fn execution(node: &Node, asked: &Asked, target: &Resolved) -> Result<Option<Arc<Link>>, Failure> {
+    let link = authorize(node, asked, target)?;
+    if let (Resolved::Own, Call::CollabWrite { collab, .. }) = (target, &*asked.call) {
+        if node.connected_anywhere() {
+            return Err(Failure::not_run(
+                "this computer is in a network, where model collaboration is set for each account; name the account",
+            ));
+        }
+        let logins = collab.callers.iter().chain(collab.callees.iter().map(|callee| &callee.login));
+        if let Some(other) = logins.map(|login| &login.machine).find(|machine| !node.is_me(machine)) {
+            return Err(Failure::not_run(format!(
+                "{other} is not this computer, {}: a computer in no network calls and is called only by its own logins",
+                node.machine()
+            )));
+        }
+    }
+    if let (Call::ProfileWrite { profile, .. }, Resolved::Account(target), Some(link)) = (&*asked.call, target, &link) {
+        let current = link.profile_read(&target.scope.account).map_err(Failure::new)?;
+        if profile.servers != current.profile.servers {
+            return Err(Failure::not_run("change MCP servers through fastctx mcp"));
+        }
+    }
+    Ok(link)
 }
 
 fn admission(call: &Call) -> Result<(Family, serde_json::Value), Failure> {
@@ -190,19 +243,23 @@ fn admission(call: &Call) -> Result<(Family, serde_json::Value), Failure> {
 
 pub(super) async fn local(node: &Arc<Node>, peer: &fastctx_types::ipc::Peer, call: Call) -> Result<Reply, Failure> {
     let asked = Asked { peer: peer.clone(), call: Box::new(call) };
-    let resolved = check(node, &asked, None)?;
-    profile_servers(node, &asked, &resolved)?;
+    validate(node, &asked)?;
     let (family, key) = admission(&asked.call)?;
-    let unit = super::unit(&(&resolved, key))?;
-    let Answer { target, result } = crate::submitted::submit_resolved(node, &family, &unit, &asked, &resolved).await?;
-    check(node, &asked, Some(&target))?;
+    let Answer { target, result } = crate::submitted::submit_resolving(node, &family, &asked, || async {
+        let resolved = resolve(node, &asked).await?;
+        let unit = super::unit(&(&resolved, key))?;
+        Ok((unit, resolved))
+    })
+    .await?;
+    ready(node, &target).await?;
+    let link = authorize(node, &asked, &target)?;
     if let Resolved::Account(target) = &target
         && let Call::AccountRecords { request, .. } = &*asked.call
         && request.kind() == fastctx_types::plan::KIND
     {
         // Legacy plan records have a resource-ownership check at the hub in
         // addition to account access. Recheck it for successful and failed receipts.
-        let link = scope::current(node, &caller::of(node, peer)?, target)?;
+        let link = link.as_ref().ok_or_else(|| Failure::refused("the record has no account target"))?;
         let key = match request {
             fastctx_types::account_records::Request::Write { key, .. }
             | fastctx_types::account_records::Request::Delete { key, .. } => key,
@@ -216,8 +273,7 @@ pub(super) async fn local(node: &Arc<Node>, peer: &fastctx_types::ipc::Peer, cal
         .map_err(Failure::new)?;
     }
     let mut reply = result?;
-    if let Resolved::Account(target) = &target {
-        let link = scope::current(node, &caller::of(node, peer)?, target)?;
+    if let (Resolved::Account(target), Some(link)) = (&target, link) {
         let acting = crate::around::acting_of(node, &caller::of(node, peer)?);
         let usable = |machine: &fastctx_types::MachineName| {
             link.view().rights(&target.scope.account, machine).hands
@@ -246,28 +302,14 @@ pub(super) async fn local(node: &Arc<Node>, peer: &fastctx_types::ipc::Peer, cal
     Ok(*reply)
 }
 
-fn profile_servers(node: &Node, asked: &Asked, resolved: &Resolved) -> Result<(), Failure> {
-    if let Call::ProfileWrite { profile, .. } = &*asked.call
-        && let Resolved::Account(target) = resolved
-    {
-        let caller = caller::of(node, &asked.peer)?;
-        let link = scope::current(node, &caller, target)?;
-        let current = link.profile_read(&target.scope.account).map_err(Failure::new)?;
-        if profile.servers != current.profile.servers {
-            return Err(Failure::not_run("change MCP servers through fastctx mcp"));
-        }
-    }
-    Ok(())
-}
-
-async fn work(node: &Arc<Node>, asked: Asked, resolved: Resolved) -> Result<Answer, Failure> {
-    let target = check(node, &asked, Some(&resolved))?;
-    profile_servers(node, &asked, &target)?;
+async fn work(node: &Arc<Node>, asked: Asked, target: Resolved) -> Result<Answer, Failure> {
+    // Restarted jobs can begin before their links have installed a current view.
+    ready(node, &target)
+        .await
+        .map_err(|failure| Failure::not_run(format!("no change was made: {}", failure.message)))?;
+    validate(node, &asked)?;
+    let link = execution(node, &asked, &target)?;
     let caller = caller::of(node, &asked.peer)?;
-    let link = match &target {
-        Resolved::Account(target) => Some(scope::current(node, &caller, target)?),
-        Resolved::Own => None,
-    };
     let account = match &target {
         Resolved::Account(target) => Some(target.scope.account.clone()),
         Resolved::Own => None,
@@ -313,7 +355,6 @@ async fn work(node: &Arc<Node>, asked: Asked, resolved: Resolved) -> Result<Answ
         Ok(Box::new(reply))
     }
     .await;
-    // Errors can quote private record content too. Keep them inside the same
-    // authorization envelope as a success, under the operation's original target.
+    // Errors can quote private record content too: keep the original target on both outcomes.
     Ok(Answer { target, result })
 }

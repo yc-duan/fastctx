@@ -18,8 +18,8 @@ const DELETE: Family = Family {
     within: Duration::from_secs(30 * 60),
     // Local data calls have no finite caller deadline; wait at most four minutes.
     stays: Duration::from_secs(240),
-    // A repeated deletion cannot reproduce the original freed-byte result.
-    again: false,
+    // Repeating named deletions is safe and finishes a batch interrupted between names.
+    again: true,
 };
 
 const CACHE: Family = Family {
@@ -28,8 +28,8 @@ const CACHE: Family = Family {
     // Cache clearing walks the whole cache, coordinating with active viewers.
     within: Duration::from_secs(30 * 60),
     stays: Duration::from_secs(240),
-    // A second pass could delete cache entries produced after the first one.
-    again: false,
+    // Every entry removed is derived; a repeated pass leaves the source assets intact.
+    again: true,
 };
 
 fn check(node: &Node, asked: &Asked) -> Result<(), Failure> {
@@ -64,7 +64,7 @@ pub(super) async fn local(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<R
         Call::Data(DataCall::ClearCache) => (&CACHE, "data-cache".to_string()),
         _ => return Err(Failure::not_run("this data call is not submitted work")),
     };
-    let reply = crate::submitted::submit(node, family, &unit, &asked).await?;
+    let reply = crate::submitted::submit_resolving(node, family, &asked, || async { Ok((unit, ())) }).await?;
     check(node, &asked)?;
     Ok(reply)
 }
