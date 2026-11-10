@@ -12,28 +12,7 @@ use fastctx_types::sync::{
 };
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Default, Serialize, Deserialize)]
-pub struct Clock {
-    pub accepted: u64,
-    pub created: u64,
-    pub turns: u64,
-}
-impl Clock {
-    pub fn accept(&mut self) -> Result<Sequence, fastctx_sync::store::Error> {
-        increment(&mut self.accepted)
-    }
-    pub fn create(&mut self) -> Result<Sequence, fastctx_sync::store::Error> {
-        increment(&mut self.created)
-    }
-    pub fn turn(&mut self) -> Result<Sequence, fastctx_sync::store::Error> {
-        increment(&mut self.turns)
-    }
-}
-fn increment(n: &mut u64) -> Result<Sequence, fastctx_sync::store::Error> {
-    *n =
-        n.checked_add(1).ok_or_else(|| fastctx_sync::store::Error::Invalid("canonical allocation exhausted".into()))?;
-    Ok(Sequence(*n))
-}
+pub use fastctx_sync::conversation::producer::{CLOCK, Clock};
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Item {
     pub created: Sequence,
@@ -101,8 +80,6 @@ impl Work {
         }
     }
 }
-pub const CLOCK: &str = "conversation-order-v1";
-
 /// Mutable planning state for one semantic unit, never a database transaction.
 pub(super) struct Local<'a, 'source> {
     pub rows: &'a mut super::indexes::Indexes<'source>,

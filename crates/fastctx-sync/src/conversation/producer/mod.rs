@@ -6,6 +6,7 @@ mod anchors;
 mod api;
 mod append;
 mod budget;
+mod clock;
 mod content;
 mod control_facts;
 mod dispatch;
@@ -19,4 +20,5 @@ mod rows;
 mod state;
 
 pub use api::*;
+pub use clock::{CLOCK, Clock};
 pub use plan::plan_step;
