@@ -154,6 +154,10 @@ async fn publish(node: Arc<Node>) {
 }
 
 pub(crate) async fn now(node: &Arc<Node>) -> Result<WorldNow, Failure> {
+    now_known(node, &[]).await
+}
+
+pub(crate) async fn now_known(node: &Arc<Node>, known: &[String]) -> Result<WorldNow, Failure> {
     let here = node.machine();
     let towns = crate::ledger::query::held(node).await?;
     let mut machines = vec![MachineWho::Answered { observation: None, reply: this(node).await? }];
@@ -167,7 +171,8 @@ pub(crate) async fn now(node: &Arc<Node>) -> Result<WorldNow, Failure> {
         others: Vec::new(),
         involved: Vec::new(),
     };
-    Ok(WorldNow { here, who, nodes: nodes(node), towns, accounts: crate::world::accounts(node) })
+    let machine_presence = fastctx_net::machine_presence::of(&node.links(), &who, known);
+    Ok(WorldNow { here, who, nodes: nodes(node), towns, accounts: crate::world::accounts(node), machine_presence })
 }
 
 /// Whether what the hubs told of the other machines is as each session on

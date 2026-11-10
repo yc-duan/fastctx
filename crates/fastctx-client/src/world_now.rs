@@ -14,7 +14,12 @@ use crate::{CallError, Client, Error, World};
 impl World {
     /// The World as it is now.
     pub async fn world_now(&self) -> Result<WorldNow, Error> {
-        match self.ask(Call::WorldNow).await? {
+        self.world_now_known(Vec::new()).await
+    }
+
+    /// Also decides visibility of machines retained by an interface across restarts.
+    pub async fn world_now_known(&self, known: Vec<String>) -> Result<WorldNow, Error> {
+        match self.ask(Call::WorldNow { known }).await? {
             Reply::WorldNow(world) => Ok(*world),
             other => Err(Error::Unexpected(format!("{other:?}"))),
         }
@@ -23,6 +28,11 @@ impl World {
     /// Follows the World: the first `next` gives it as it is, each later
     /// one as it changes.
     pub async fn watch_world(&self) -> Result<WorldWatch, Error> {
+        self.watch_world_known(Vec::new()).await
+    }
+
+    /// Follows current permissions for both listed and previously known machines.
+    pub async fn watch_world_known(&self, known: Vec<String>) -> Result<WorldWatch, Error> {
         let watching = match self.device() {
             Some(device) => Watching::Device {
                 device: device.clone(),
@@ -30,9 +40,10 @@ impl World {
                 first: true,
                 told: None,
                 unready: None,
+                known,
             },
             None => {
-                let (client, id) = self.connect().await?.watch_world().await?;
+                let (client, id) = self.connect().await?.watch_world(known).await?;
                 Watching::Local { client, id, held: None }
             }
         };
@@ -66,6 +77,7 @@ enum Watching {
         told: Option<Box<WorldNow>>,
         /// Since when the hubs have not all told what is afoot whole.
         unready: Option<tokio::time::Instant>,
+        known: Vec<String>,
     },
 }
 
@@ -118,7 +130,7 @@ impl WorldWatch {
                     .into());
                 }
             },
-            Watching::Device { device, changes, first, told, unready } => loop {
+            Watching::Device { device, changes, first, told, unready, known } => loop {
                 if !std::mem::take(first) {
                     let closed = || CallError::Broken(std::io::Error::other("the device closed"));
                     match unready.map(|since| since + READY_WITHIN) {
@@ -137,7 +149,8 @@ impl WorldWatch {
                 } else if unready.get_or_insert_with(tokio::time::Instant::now).elapsed() < READY_WITHIN {
                     continue;
                 }
-                let now = device.world_now().await?;
+                let now = device.world_now_known(known).await?;
+                *known = now.machine_presence.iter().map(|machine| machine.machine.clone()).collect();
                 if told.as_deref() != Some(&now) {
                     *told = Some(Box::new(now.clone()));
                     break now;

@@ -37,7 +37,8 @@ def worlds(fixtures):
     for index in range(max(len(world["who"]), len(world["nodes"]), len(accounts))):
         yield {"here": "desktop", "who": world["who"][index % len(world["who"])],
                "nodes": world["nodes"][index % len(world["nodes"])], "towns": world["towns"],
-               "accounts": accounts[index % len(accounts)]}
+               "accounts": accounts[index % len(accounts)],
+               "machine_presence": world.get("machine_presence", [])}
 
 
 def replies(fixtures):

@@ -4,6 +4,7 @@
 //! page within a round trip and nothing is asked while nothing changes
 //! (`world-network.md`, 近况).
 
+use std::collections::BTreeSet;
 use std::sync::atomic::Ordering;
 
 use fastctx_types::world::WorldNow;
@@ -13,8 +14,8 @@ use tauri::ipc::Channel;
 use crate::Shell;
 
 #[fastctx_gui_command::command]
-pub(crate) async fn world_now(shell: tauri::State<'_, Shell>) -> Result<WorldNow, String> {
-    shell.world().world_now().await.map_err(|error| error.to_string())
+pub(crate) async fn world_now(shell: tauri::State<'_, Shell>, known: Option<Vec<String>>) -> Result<WorldNow, String> {
+    shell.world().world_now_known(known.unwrap_or_default()).await.map_err(|error| error.to_string())
 }
 
 /// What a World watch sends: the World at first, then what changed in it
@@ -59,8 +60,10 @@ fn told(last: &mut Option<serde_json::Value>, seen: fastctx_client::world_now::S
 pub(crate) async fn world_watch(
     shell: tauri::State<'_, Shell>,
     pieces: Channel<crate::watch_delivery::Wake>,
+    known: Option<Vec<String>>,
 ) -> Result<u64, String> {
     let page = shell.page.load(Ordering::Relaxed);
+    let known = known.unwrap_or_default();
     let world = shell.world();
     let id = shell.next.fetch_add(1, Ordering::Relaxed);
     shell.follow_delivery(
@@ -71,10 +74,12 @@ pub(crate) async fn world_watch(
         |_: &Piece| None,
         move |pieces, _| {
             let world = world.clone();
+            let known = known.clone();
             async move {
+                let mut known: BTreeSet<_> = known.into_iter().collect();
                 let mut again = fastctx_client::Again::default();
                 loop {
-                    match world.watch_world().await {
+                    match world.watch_world_known(known.iter().cloned().collect()).await {
                         Ok(mut watch) => {
                             // A watch opened again starts from the whole.
                             let mut last = None;
@@ -82,7 +87,20 @@ pub(crate) async fn world_watch(
                                 match watch.next_seen().await {
                                     Ok(seen) => {
                                         again.came();
-                                        if let Some(piece) = told(&mut last, seen)
+                                        let piece = told(&mut last, seen);
+                                        if let Some(machines) =
+                                            last.as_ref().and_then(|world| world["who"]["machines"].as_array())
+                                        {
+                                            for machine in machines {
+                                                if let Some(name) = machine["reply"]["machine"]
+                                                    .as_str()
+                                                    .or_else(|| machine["machine"].as_str())
+                                                {
+                                                    known.insert(name.to_owned());
+                                                }
+                                            }
+                                        }
+                                        if let Some(piece) = piece
                                             && pieces.send(piece).is_err()
                                         {
                                             return;

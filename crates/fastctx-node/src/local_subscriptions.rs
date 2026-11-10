@@ -37,7 +37,7 @@ pub(crate) fn observe(machine: MachineName, caller: &str, call: &Call) -> Option
         call,
         Call::WatchMany
             | Call::Watch { .. }
-            | Call::WatchWorld
+            | Call::WatchWorld { .. }
             | Call::WatchFeatures
             | Call::WatchTools { .. }
             | Call::WatchAccountRecords { .. }

@@ -46,6 +46,7 @@ import type { RenewalStatus, MaintenanceRequest, MaintenanceResponse, VersionRef
 import type { AccountChange, AccountsReply, TokenPeek } from "../src/world/accounts";
 import type { ConnectionState } from "../src/world/device";
 import type { Choices } from "../src/world/bridge";
+import type { MachinePresence } from "../src/world/presence";
 import type { ComposerSnapshot, ComposerMutation, ComposerUpdated } from "../src/world/composer";
 import type { Tree } from "../src/world/collab-tree";
 import type { DocumentSubscription, DocumentInput, DocumentFrame, DocumentSend } from "../src/world/composer-sync";
@@ -73,7 +74,7 @@ export const fixture = ${json.trimEnd()} satisfies {
     watched: Watched[];
     health_cases: { change: SessionChange; health: Health | null }[];
   };
-  world: { who: WorldWho[]; nodes: NodesReply[]; towns: TownSummary[]; journals: JournalSummary[] };
+  world: { who: WorldWho[]; nodes: NodesReply[]; towns: TownSummary[]; journals: JournalSummary[]; machine_presence: MachinePresence[] };
   // Only the replies reach the interface; calls and the machines' own
   // telephone go through the shell and the node.
   since: { replies: ({ reply: "since" } & WorldSince)[]; calls: unknown; remote_calls: unknown; remote_replies: unknown };

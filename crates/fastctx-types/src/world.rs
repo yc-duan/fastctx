@@ -5,6 +5,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::MachineName;
 
+mod presence;
+pub use presence::{HubMachinePresence, MachineAccess, MachinePresence};
+
 /// What kind of device a machine is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -327,4 +330,8 @@ pub struct WorldNow {
     pub nodes: NodesReply,
     pub towns: Vec<crate::project::TownSummary>,
     pub accounts: crate::accounts::AccountsReply,
+    /// Look permissions and network membership, including machines the interface remembers.
+    /// An older producer supplies no conclusions about machines absent from its listing.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub machine_presence: Vec<MachinePresence>,
 }

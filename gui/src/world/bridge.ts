@@ -57,6 +57,8 @@ export interface WorldNow {
   /** The accounts this computer or device is logged in to, hub by hub,
    *  with what each sees. */
   accounts: AccountsReply;
+  /** Look visibility and its directory revision, decided by the node or device. */
+  machine_presence?: import("./presence").MachinePresence[];
 }
 
 /** A piece of a watched conversation: the page holds a part of it near its
@@ -91,8 +93,8 @@ export type Landed =
   | { kind: "sent" }
   | { kind: "handed"; id: string };
 
-export function worldNow(): Promise<WorldNow> {
-  return invoke<WorldNow>("world_now");
+export function worldNow(known: string[] = []): Promise<WorldNow> {
+  return invoke<WorldNow>("world_now", { known });
 }
 
 export type WorldPiece =
@@ -104,8 +106,8 @@ export type WorldPiece =
 /** Follows the World: first as it is, then after each change, nothing
  *  asked of any machine meanwhile (`world-network.md`, 近况). Resolves to
  *  the id `unwatch` takes. */
-export function watchWorld(onPiece: (piece: WorldPiece) => void): Promise<number> {
-  return observe<WorldPiece, number>("world_watch", {}, onPiece);
+export function watchWorld(onPiece: (piece: WorldPiece) => void, known: string[] = []): Promise<number> {
+  return observe<WorldPiece, number>("world_watch", { known }, onPiece);
 }
 
 /** Watches a resident: the part it opens on, then each piece as it

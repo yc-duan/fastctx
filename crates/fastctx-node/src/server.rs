@@ -339,7 +339,8 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
                 }
             }
         }
-        if let Call::WatchWorld = call {
+        if let Call::WatchWorld { known } = &call {
+            let mut known = known.clone();
             if let Err(failure) = users_voice(node, &hello.peer) {
                 writer.send(&json(&NodeFrame::Reply { id, reply: Err(failure) })).await?;
                 return writer.drain().await;
@@ -357,6 +358,8 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
                 let current = world.borrow_and_update().clone();
                 if let Some(current) = current {
                     let mut now = fastctx_types::world::WorldNow::clone(&current);
+                    now.machine_presence = fastctx_net::machine_presence::of(&node.links(), &now.who, &known);
+                    known = now.machine_presence.iter().map(|machine| machine.machine.clone()).collect();
                     crate::renewal_legacy::world(hello.shapes, &mut now);
                     if hello.shapes >= 3 {
                         let value = serde_json::to_value(&now).map_err(std::io::Error::other)?;
@@ -1966,10 +1969,10 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             crate::features::speak(&node.world, &node.features, &language).map(Reply::Features)
         }
         Call::WatchFeatures => Err(Failure::new("a features watch is answered as it goes, not at once")),
-        Call::WatchWorld => Err(Failure::new("a World watch is answered as it goes, not at once")),
-        Call::WorldNow => {
+        Call::WatchWorld { .. } => Err(Failure::new("a World watch is answered as it goes, not at once")),
+        Call::WorldNow { known } => {
             users_voice(node, peer)?;
-            crate::shown::now(node).await.map(|world| Reply::WorldNow(Box::new(world)))
+            crate::shown::now_known(node, &known).await.map(|world| Reply::WorldNow(Box::new(world)))
         }
         Call::Reopened { .. } => Err(Failure::new("a way opening is waited for on a connection of its own")),
         Call::Nodes => {

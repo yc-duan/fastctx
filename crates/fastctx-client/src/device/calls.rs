@@ -346,7 +346,9 @@ impl Device {
                 let address = Address { machine: machine.name.clone(), resident };
                 return Ok((Reply::Forgetting { resident: address, how }, machine.name));
             }
-            Call::WorldNow => return Ok((Reply::WorldNow(Box::new(self.world_now().await?)), here())),
+            Call::WorldNow { known } => {
+                return Ok((Reply::WorldNow(Box::new(self.world_now_known(&known).await?)), here()));
+            }
             Call::Features => return Ok((Reply::Features(self.features()?), here())),
             Call::SetFeature { feature, on } => return Ok((Reply::Features(self.set_feature(feature, on)?), here())),
             Call::SetLanguage { language } => return Ok((Reply::Features(self.set_language(&language)?), here())),

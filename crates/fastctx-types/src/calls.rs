@@ -261,10 +261,18 @@ pub enum Call {
     WatchFeatures,
     /// The World as an interface shows it, read from what this computer
     /// holds (`crate::world::WorldNow`).
-    WorldNow,
+    WorldNow {
+        /// Machines retained by the interface, whose current visibility the node also decides.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        known: Vec<String>,
+    },
     /// Answered with `NodeFrame::World`: the World as an interface shows it,
     /// then again each time it changes, until the client leaves.
-    WatchWorld,
+    WatchWorld {
+        /// Machines retained across earlier watches or application restarts.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        known: Vec<String>,
+    },
     /// Answered `Done` once a way from this computer to `machine` opens that
     /// was not there when asked: its line to the hub came back, the machine
     /// connected anew, or a direct link with it came up. An interface that

@@ -15,6 +15,7 @@ pub struct Fixtures {
     pub nodes: Vec<NodesReply>,
     pub towns: Vec<TownSummary>,
     pub journals: Vec<JournalSummary>,
+    pub machine_presence: Vec<MachinePresence>,
 }
 
 fn at() -> Timestamp {
@@ -495,5 +496,13 @@ fn journals() -> Vec<JournalSummary> {
 
 pub fn fixtures() -> Fixtures {
     let towns = towns();
-    Fixtures { who: who(&towns), nodes: nodes(), towns, journals: journals() }
+    let machine_presence =
+        [MachineAccess::Granted, MachineAccess::NotGranted, MachineAccess::Unknown, MachineAccess::Stopped]
+            .into_iter()
+            .map(|access| MachinePresence {
+                machine: "laptop".into(),
+                hubs: vec![HubMachinePresence { hub: "w-0123456789abcdef".parse().unwrap(), revision: 17, access }],
+            })
+            .collect();
+    Fixtures { who: who(&towns), nodes: nodes(), towns, journals: journals(), machine_presence }
 }

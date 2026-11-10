@@ -264,6 +264,20 @@ impl<'a> Indexed<'a> {
         crate::authorization::authorize(self, account, action)
     }
 
+    /// The same call decision as `Directory::account_for`, using indexed lookups.
+    pub fn account_for<'n>(
+        &self,
+        accounts: impl IntoIterator<Item = &'n AccountName>,
+        from: &MachineName,
+        to: &MachineName,
+        purpose: fastctx_types::access::Purpose,
+    ) -> Option<AccountName> {
+        accounts
+            .into_iter()
+            .find(|account| self.authorize(account, crate::authorization::Action::Call { from, to, purpose }).is_ok())
+            .cloned()
+    }
+
     pub fn rights(&self, account: &AccountName, machine: &MachineName) -> fastctx_types::access::Rights {
         crate::authorization::rights(self, account, machine)
     }

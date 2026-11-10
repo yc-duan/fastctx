@@ -36,6 +36,7 @@ pub mod lines_read;
 pub mod link;
 pub mod listen;
 pub mod login;
+pub mod machine_presence;
 pub mod mcp_test;
 pub mod memory;
 pub mod message;

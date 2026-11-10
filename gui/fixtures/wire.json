@@ -17888,6 +17888,48 @@
           ]
         }
       }
+    ],
+    "machine_presence": [
+      {
+        "machine": "laptop",
+        "hubs": [
+          {
+            "hub": "w-0123456789abcdef",
+            "revision": 17,
+            "access": "granted"
+          }
+        ]
+      },
+      {
+        "machine": "laptop",
+        "hubs": [
+          {
+            "hub": "w-0123456789abcdef",
+            "revision": 17,
+            "access": "not_granted"
+          }
+        ]
+      },
+      {
+        "machine": "laptop",
+        "hubs": [
+          {
+            "hub": "w-0123456789abcdef",
+            "revision": 17,
+            "access": "unknown"
+          }
+        ]
+      },
+      {
+        "machine": "laptop",
+        "hubs": [
+          {
+            "hub": "w-0123456789abcdef",
+            "revision": 17,
+            "access": "stopped"
+          }
+        ]
+      }
     ]
   },
   "since": {

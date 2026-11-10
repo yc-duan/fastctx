@@ -453,11 +453,11 @@ impl Client {
 
     /// Sends a `WatchWorld` call; the connection carries the World as an
     /// interface shows it from then on.
-    pub(crate) async fn watch_world(mut self) -> Result<(Client, u64), CallError> {
+    pub(crate) async fn watch_world(mut self, known: Vec<String>) -> Result<(Client, u64), CallError> {
         self.next += 1;
         let id = self.next;
         self.connection
-            .send(&to_json(&ClientFrame::Call { id, call: Call::WatchWorld }))
+            .send(&to_json(&ClientFrame::Call { id, call: Call::WatchWorld { known } }))
             .await
             .map_err(CallError::Broken)?;
         Ok((self, id))

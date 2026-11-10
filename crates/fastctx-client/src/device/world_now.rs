@@ -77,7 +77,7 @@ impl Device {
         self.sessions().iter().all(|session| session.link.afoot_ready())
     }
 
-    pub(crate) async fn world_now(self: &Arc<Self>) -> Result<WorldNow, Error> {
+    pub(crate) async fn world_now_known(self: &Arc<Self>, known: &[String]) -> Result<WorldNow, Error> {
         let here = self.here();
         let towns = self.towns_listed();
         let who = WorldWho {
@@ -93,7 +93,9 @@ impl Device {
             (Reply::Accounts(accounts), _) => accounts,
             _ => return Err(failed("the device answered something other than its accounts")),
         };
-        Ok(WorldNow { here, who, nodes: self.machines_now(), towns, accounts })
+        let links: Vec<_> = self.sessions().iter().map(|session| session.link.clone()).collect();
+        let machine_presence = fastctx_net::machine_presence::of(&links, &who, known);
+        Ok(WorldNow { here, who, nodes: self.machines_now(), towns, accounts, machine_presence })
     }
 
     /// The projects as last listed, listed again in the background when a
@@ -137,7 +139,7 @@ impl Device {
             let told = session.link.afoot();
             let logins: Vec<AccountName> = view.me().map(|me| me.logins.iter().cloned().collect()).unwrap_or_default();
             for member in view.machines() {
-                if !logins.iter().any(|account| view.call_rights(&view.me, account, &member.name).any()) {
+                if view.account_for(&logins, &view.me, &member.name, fastctx_types::access::Purpose::Look).is_none() {
                     continue;
                 }
                 let name = member.name.clone();
