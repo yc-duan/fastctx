@@ -94,20 +94,21 @@ async fn serve(database: Database, registered: Arc<Registered>) {
 /// kind runs for.
 fn look(db: &Connection, registered: &Registered, most: usize) -> Result<Looked> {
     let kind = registered.kind.name;
-    let due: Vec<(i64, String, String, Vec<u8>, u32)> = db
+    let at = now();
+    let due: Vec<(i64, String, String, Vec<u8>, u32, i64)> = db
         .prepare_cached(
-            "SELECT id, key, unit, payload, tries FROM jobs \
+            "SELECT id, key, unit, payload, tries, due FROM jobs \
              WHERE kind = ?1 AND state = ?2 AND due <= ?3 ORDER BY due, id LIMIT ?4",
         )?
-        .query_map(params![kind, WAITING, now(), (most * 8).min(LOOKED_AT) as i64], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))
+        .query_map(params![kind, WAITING, at, (most * 8).min(LOOKED_AT) as i64], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?))
         })?
         .collect::<fastctx_storage::rusqlite::Result<_>>()?;
     let mut taken = Vec::new();
     {
         let mut busy = registered.busy.lock().expect("busy units");
         let mut take = db.prepare_cached("UPDATE jobs SET state = ?2, tries = tries + 1 WHERE id = ?1")?;
-        for (id, key, unit, payload, tries) in due {
+        for (id, key, unit, payload, tries, was_due) in due {
             if taken.len() == most {
                 break;
             }
@@ -115,6 +116,7 @@ fn look(db: &Connection, registered: &Registered, most: usize) -> Result<Looked>
                 continue;
             }
             take.execute(params![id, RUNNING])?;
+            registered.measures.waited.record(Duration::from_millis((at - was_due).max(0) as u64));
             busy.insert(unit.clone());
             taken.push(Next { id, taken: Taken { key, unit, payload, attempt: tries + 1 } });
         }
@@ -132,10 +134,18 @@ async fn run(database: Database, registered: Arc<Registered>, next: Next, place:
     let Next { id, taken } = next;
     let (unit, attempt) = (taken.unit.clone(), taken.attempt);
     let kind = registered.kind;
+    let began = std::time::Instant::now();
     let outcome = match tokio::time::timeout(kind.within, (registered.run)(taken)).await {
         Ok(outcome) => outcome,
         Err(_) => Outcome::Failed(format!("{} did not finish within {:?}", kind.name, kind.within)),
     };
+    registered.measures.ran.record(began.elapsed());
+    if matches!(outcome, Outcome::Failed(_)) {
+        registered.measures.failed.add(1);
+        if attempt >= kind.tries {
+            registered.measures.set_aside.add(1);
+        }
+    }
     // A run's end that is not recorded leaves the job running until the
     // process starts again, so it is written until it is.
     let mut wait = BACKOFF;

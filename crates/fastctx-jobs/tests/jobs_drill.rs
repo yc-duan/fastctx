@@ -193,6 +193,16 @@ async fn drill(database: Database) -> Outcome_<()> {
         COUNTED as f64 / took.as_secs_f64()
     );
 
+    // The queue measures itself: each run timed, and the table counted
+    // when it is asked after.
+    jobs.measure().await?;
+    let readings = fastctx_platform::readings::snapshot();
+    let ran = readings.timings.iter().find(|timing| timing.name == "job.ran.count").map(|timing| timing.count);
+    let waiting = readings.levels.iter().find(|level| level.name == "job.waiting.count").map(|level| level.value);
+    if ran.is_none_or(|ran| ran < COUNTED as u64) || waiting != Some(0) {
+        return Err(format!("the queue's measures say {ran:?} runs and {waiting:?} waiting").into());
+    }
+
     // Asked for again while it waits, a job is one job with what was asked
     // last; asked for while it runs, it runs once more.
     for payload in [b"first".as_slice(), b"second", b"third"] {

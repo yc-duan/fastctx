@@ -11,6 +11,7 @@
 //! Jobs are not answers. What a job did is in the state it changed, which
 //! whoever asked reads or is told of.
 
+mod measures;
 mod operations;
 mod run;
 mod table;
@@ -87,6 +88,7 @@ struct Registered {
     stirred: tokio::sync::Notify,
     /// The units a job of the kind runs for now.
     busy: Mutex<HashSet<String>>,
+    measures: measures::Measures,
 }
 
 impl Jobs {
@@ -98,7 +100,13 @@ impl Jobs {
     /// Names what runs a kind's jobs. Every kind is registered before `start`.
     pub fn register(&self, kind: Kind, run: Run) {
         assert!(kind.at_once > 0 && kind.tries > 0, "a kind runs at least one job, at least once");
-        let registered = Registered { kind, run, stirred: tokio::sync::Notify::new(), busy: Mutex::default() };
+        let registered = Registered {
+            kind,
+            run,
+            stirred: tokio::sync::Notify::new(),
+            busy: Mutex::default(),
+            measures: measures::Measures::of(kind.name),
+        };
         let known = self.kinds.lock().expect("job kinds").insert(kind.name, Arc::new(registered));
         assert!(known.is_none(), "the job kind {} is registered twice", kind.name);
     }

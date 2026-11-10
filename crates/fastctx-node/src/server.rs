@@ -1483,6 +1483,10 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             })
             .await
             .map_err(|error| Failure::new(error.to_string()))?;
+            // What the queue's table holds is counted when it is asked after.
+            if let Err(error) = node.durable_jobs.measure().await {
+                node.log.line(format_args!("measuring the job queue: {error}"));
+            }
             Ok(Reply::DoctorReadings {
                 readings: Box::new(fastctx_platform::readings::snapshot()),
                 health: fastctx_platform::health::summary(),
