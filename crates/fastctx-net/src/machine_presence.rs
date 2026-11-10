@@ -4,7 +4,7 @@ use std::collections::{BTreeSet, HashSet};
 use std::sync::Arc;
 
 use fastctx_types::access::{Purpose, Written};
-use fastctx_types::town::{MachineWho, WorldWho};
+use fastctx_types::town::WorldWho;
 use fastctx_types::world::{HubMachinePresence, MachineAccess, MachinePresence};
 
 use crate::directory::View;
@@ -40,10 +40,7 @@ pub fn of(links: &[Arc<Link>], who: &WorldWho, known: &[String]) -> Vec<MachineP
         })
         .collect();
     let mut names: BTreeSet<String> = known.iter().cloned().collect();
-    names.extend(who.machines.iter().map(|machine| match machine {
-        MachineWho::Answered { reply, .. } => reply.machine.to_string(),
-        MachineWho::Offline { machine, .. } | MachineWho::NoAnswer { machine, .. } => machine.to_string(),
-    }));
+    names.extend(who.machines.iter().map(|machine| machine.written().to_string()));
     names
         .into_iter()
         .map(|machine| {
