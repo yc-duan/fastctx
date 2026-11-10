@@ -42,7 +42,10 @@ pub async fn offers(node: &Arc<Node>, resident: &ResidentId) -> Result<Offers, F
     let (codex, thread) = thread(node, resident).await?;
     let (about, _) = node.residents.about(resident).ok_or_else(|| Failure::new("unknown conversation"))?;
     crate::logins::workbench::works(node, &about)?;
-    let mut offers = codex.offers(&thread).await.map_err(Failure::new)?;
+    let mut offers = codex
+        .offers(&thread, crate::account_features::conversation(node, resident).await.goals)
+        .await
+        .map_err(Failure::new)?;
     if crate::assists::assisting(node, &about.acting) {
         if crate::assists::host::kept(node, resident)? != Some(true) {
             offers.controls.clear();
@@ -206,8 +209,8 @@ pub async fn control(node: &Arc<Node>, resident: &ResidentId, mut control: Contr
             ))
         }
         Control::Command { name, args, path: None } if name == "goal" => {
-            if !fastctx_platform::preview() {
-                return Err(Failure::not_run(fastctx_types::goals::words::UNOFFERED));
+            if !crate::account_features::conversation(node, resident).await.goals {
+                return Err(Failure::not_run(fastctx_types::goals::words::DISABLED));
             }
             done(&codex.goal(&thread, &args).await.map_err(Failure::new)?.to_string())
         }
@@ -223,7 +226,10 @@ pub async fn control(node: &Arc<Node>, resident: &ResidentId, mut control: Contr
         }
         Control::Command { name, args, path } => {
             if path.is_none() {
-                let catalog = codex.offers(&thread).await.map_err(Failure::new)?;
+                let catalog = codex
+                    .offers(&thread, crate::account_features::conversation(node, resident).await.goals)
+                    .await
+                    .map_err(Failure::new)?;
                 if name == "tier" {
                     if args.trim().is_empty() {
                         let model = catalog.models.iter().find(|model| Some(&model.id) == catalog.model.as_ref());

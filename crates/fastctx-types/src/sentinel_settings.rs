@@ -8,6 +8,10 @@ pub const RECORD_KEY: &str = "default";
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Settings {
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub sentinels: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub goals: bool,
     pub home: Option<MachineName>,
     pub model: Option<ModelSettings>,
     pub search: Option<SearchSettings>,

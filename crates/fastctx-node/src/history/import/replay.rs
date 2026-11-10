@@ -178,6 +178,9 @@ pub(super) async fn topic(
             if index == 0 && current.is_some() {
                 return Err("a history name was taken while its import was starting; retrying with another name".into());
             }
+            if !super::super::switch::enabled(node, &transfer.account) {
+                return Err(super::super::switch::COPIES_OFF.into());
+            }
             let result = link
                 .conversation_history_save(
                     &transfer.account.account,

@@ -60,12 +60,10 @@ pub(crate) async fn route(
     turn: Option<String>,
     request: AgentRequest,
 ) -> Result<Updated, Failure> {
-    if !fastctx_platform::preview() {
-        return Err(Failure::not_run(words::UNOFFERED));
-    }
     if node.is_me(&target.machine) {
         return here(node, actor, account, turn, request).await;
     }
+    crate::account_features::require_goals(node, &account).await?;
     let link = node.link_of(&account.hub).ok_or_else(|| Failure::not_run(words::ACCOUNT_MISSING))?;
     if !link.view().goal_commands {
         return Err(Failure::not_run(words::OLDER_COMMAND_HUB));
@@ -105,6 +103,7 @@ pub(crate) async fn here(
         actor.machine = node.machine();
     }
     let account = scope::resolve(node, &resident, Some(&account)).await?;
+    crate::account_features::require_goals(node, &account).await?;
     let address = Address { machine: node.machine(), resident: resident.clone() };
     if matches!(request, AgentRequest::Read) {
         if !node.goals.records.available() {

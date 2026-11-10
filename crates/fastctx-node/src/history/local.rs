@@ -66,6 +66,9 @@ pub(crate) async fn call(
 ) -> Result<HistoryReply, Failure> {
     let scope = request.scope().clone();
     if request.writes() {
+        if !super::switch::alone(node) {
+            return Err(Failure::not_run(fastctx_types::history::words::DISABLED));
+        }
         if super::import::pending(node, &scope) {
             return Err(super::import::writing());
         }

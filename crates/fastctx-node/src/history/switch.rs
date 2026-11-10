@@ -53,7 +53,13 @@ pub(crate) async fn write(
 ) -> Result<(), Failure> {
     match account {
         Some(account) => {
-            crate::world::hub_link(node, hub)?.history_switch_write(account, on).await.map_err(Failure::new)
+            let link = crate::world::hub_link(node, hub)?;
+            link.history_switch_write(account, on).await.map_err(Failure::new)?;
+            if on {
+                super::import::schedule(node);
+                crate::ledger::joined(node, &link.membership().id);
+            }
+            Ok(())
         }
         None => {
             own(node, hub)?;

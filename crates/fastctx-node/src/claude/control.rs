@@ -272,13 +272,13 @@ pub async fn offers(node: &Arc<Node>, resident: &ResidentId) -> Result<Offers, F
         let checkpoints = about
             .session
             .as_ref()
-            .map(|session| files::read_message(&files::directory(node.world.path(), session).join("checkpoints.json")))
-            .transpose();
-        let checkpoints = match checkpoints {
-            Ok(value) => value.filter(|value| value["full"] == true),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-            Err(error) => return Err(failure(error)),
-        };
+            .map(|session| {
+                files::read_message_if_present(&files::directory(node.world.path(), session).join("checkpoints.json"))
+            })
+            .transpose()
+            .map_err(failure)?
+            .flatten()
+            .filter(|value| value["full"] == true);
         // A sleeping session's model is chosen as a running one's is: kept
         // for its next turn, among the models its login was last seen to
         // offer. One chosen before Claude Code names the session, in the few

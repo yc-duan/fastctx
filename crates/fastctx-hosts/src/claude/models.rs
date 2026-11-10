@@ -9,7 +9,8 @@
 //! conversation starts, and the request's model when the user switches.
 //!
 //! The rows, their order and their efforts were read from Claude Code 2.1.296;
-//! the order is that of its own picker. A login may lack a family (Fable on some plans): the mod
+//! the order is that of its own picker. Fable 5.2 comes from 2.1.321's model
+//! registry, where it is the Fable family's newest. A login may lack a family (Fable on some plans): the mod
 //! reports which aliases the login offers, and a family it does not offer is
 //! left out.
 //!
@@ -47,11 +48,12 @@ pub struct ClaudeModel {
 
 pub const MODELS: &[ClaudeModel] = &[
     row("claude-opus-5-5", "Opus 5.5", "opus", FIVE, Some("medium"), MILLION),
-    row("claude-fable-5-1", "Fable 5.1", "fable", FIVE, Some("high"), MILLION),
+    row("claude-fable-5-2", "Fable 5.2", "fable", FIVE, Some("medium"), MILLION),
     row("claude-sonnet-5-5", "Sonnet 5.5", "sonnet", FIVE, Some("medium"), MILLION),
     row("claude-haiku-4-5-20251001", "Haiku 4.5", "haiku", NONE, None, TWO_HUNDRED_THOUSAND),
     row("claude-sonnet-5", "Sonnet 5", "sonnet", FIVE, Some("high"), MILLION),
     row("claude-opus-5", "Opus 5", "opus", FIVE, Some("high"), MILLION),
+    row("claude-fable-5-1", "Fable 5.1", "fable", FIVE, Some("high"), MILLION),
     row("claude-fable-5", "Fable 5", "fable", FIVE, Some("high"), MILLION),
     row("claude-opus-4-8", "Opus 4.8", "opus", FIVE, Some("high"), MILLION),
     row("claude-opus-4-7", "Opus 4.7", "opus", FIVE, Some("xhigh"), MILLION),

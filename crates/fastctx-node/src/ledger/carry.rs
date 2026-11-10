@@ -11,6 +11,13 @@ mod retained;
 #[path = "carry_topics.rs"]
 mod topics;
 use retained::Retained;
+#[path = "carry_journal.rs"]
+mod journal;
+#[path = "carry_translation.rs"]
+mod translation;
+use journal::keep;
+pub(crate) use journal::towns;
+use translation::translated;
 
 #[derive(Serialize, Deserialize)]
 struct Journal {
@@ -18,6 +25,8 @@ struct Journal {
     target: Place,
     account: AccountName,
     opened: jiff::Timestamp,
+    #[serde(default)]
+    translated_on: Option<MachineName>,
     #[serde(default)]
     originals: Option<Vec<Original>>,
     #[serde(default)]
@@ -82,14 +91,22 @@ pub(super) fn originals(world: &WorldDir, town: &TownName) -> io::Result<Option<
 }
 
 /// Startup completes only a handoff whose remote prefix was already verified.
-pub(crate) fn recover(world: &WorldDir, town: &TownName) -> io::Result<()> {
+pub(crate) fn recover(world: &WorldDir, town: &TownName, history_enabled: bool) -> io::Result<()> {
     if let Some(mut journal) = fastctx_net::link::state::read_or::<Option<Journal>>(&path(world, town), None)?
         && !journal.finished
         && journal.originals.is_some()
+        && (history_enabled || !has_history_originals(world, town, &journal))
     {
         finish(world, town, &mut journal)?;
     }
     Ok(())
+}
+
+fn has_history_originals(world: &WorldDir, town: &TownName, journal: &Journal) -> bool {
+    let history = world.town(town).ledger().join("history");
+    !journal.skipped.is_empty()
+        || journal.originals.iter().flatten().any(|original| original.source().starts_with(&history))
+        || journal.retained.iter().any(|retained| retained.source().starts_with(&history))
 }
 
 fn finish(world: &WorldDir, town: &TownName, journal: &mut Journal) -> io::Result<()> {
@@ -97,21 +114,29 @@ fn finish(world: &WorldDir, town: &TownName, journal: &mut Journal) -> io::Resul
         for retained in &journal.retained {
             retained.finish()?;
         }
+        let identity = world.town(town).path().join("project.json");
+        let installed = names::place(world, town)?.as_ref() == Some(&journal.target);
         for original in journal.originals.as_ref().expect("verified handoff") {
-            original.finish()?;
+            if installed && original.source() == identity {
+                // Earlier synchronizers could install this target before archived
+                // was durable (2026-11-09); its original must still verify.
+                original.verify_archived()?;
+            } else {
+                original.finish()?;
+            }
         }
         let directory = world.town(town);
         archive::empty(&directory.signed())?;
         archive::empty(&directory.ledger())?;
         // The new identity reuses project.json; its old source must never be archived again.
         journal.archived = true;
-        fastctx_net::link::state::write(&path(world, town), journal)?;
+        keep(world, town, journal)?;
     }
     names::set_place(world, town, &journal.target)?;
     journal.finished = true;
     journal.originals = None;
     journal.retained.clear();
-    fastctx_net::link::state::write(&path(world, town), journal)
+    keep(world, town, journal)
 }
 
 pub(crate) async fn run(node: &Arc<Node>, hub: &HubId) -> Vec<String> {
@@ -120,7 +145,7 @@ pub(crate) async fn run(node: &Arc<Node>, hub: &HubId) -> Vec<String> {
         return vec![format!("asking the hub: {error}")];
     }
     let Some(home) = link.view().me().and_then(|me| me.home.clone()) else { return Vec::new() };
-    let towns = match node.world.towns() {
+    let towns = match towns(&node.world) {
         Ok(towns) => towns,
         Err(error) => return vec![error.to_string()],
     };
@@ -141,8 +166,22 @@ async fn one(node: &Arc<Node>, link: &Arc<Link>, home: &AccountName, town: &Town
     let (mut journal, entries) = {
         let _history = crate::history::import::lock(node, &scope).await;
         let _syncing = node.syncing.lock().await;
+        let prior: Option<Journal> =
+            fastctx_net::link::state::read_or(&path(&node.world, town), None).map_err(|error| error.to_string())?;
+        let history_enabled = crate::history::switch::on(link, home);
+        if let Some(journal) = prior.as_ref().filter(|journal| !journal.finished) {
+            if journal.target.hub != link.membership().id
+                || journal.account != *home
+                || link.view().account(home).is_none_or(|account| account.opened != journal.opened)
+            {
+                return Err("the standalone ledger is being imported into another account or hub incarnation".into());
+            }
+            if !history_enabled && has_history_originals(&node.world, town, journal) {
+                return Ok(());
+            }
+        }
         let recovering = originals(&node.world, town).map_err(|error| error.to_string())?.is_some();
-        recover(&node.world, town).map_err(|error| error.to_string())?;
+        recover(&node.world, town, history_enabled).map_err(|error| error.to_string())?;
         if recovering {
             crate::context::invalidations::project(node, town);
             crate::replicas::updates::schedule(node, link.hub(), crate::replicas::updates::Change::All);
@@ -153,6 +192,10 @@ async fn one(node: &Arc<Node>, link: &Arc<Link>, home: &AccountName, town: &Town
             return Ok(());
         }
         let entries = read_all(&node.world, &node.world.town(town)).map_err(|error| error.to_string())?;
+        if !history_enabled && entries.iter().any(|(_, entry, _)| fastctx_net::topic_history::has_history(&entry.files))
+        {
+            return Ok(());
+        }
         if entries.is_empty() {
             return Ok(());
         }
@@ -164,6 +207,7 @@ async fn one(node: &Arc<Node>, link: &Arc<Link>, home: &AccountName, town: &Town
                 target: Place { hub: link.membership().id, town: source.town.clone() },
                 account: home.clone(),
                 opened,
+                translated_on: Some(node.machine()),
                 originals: None,
                 retained: Vec::new(),
                 skipped: BTreeMap::new(),
@@ -179,9 +223,14 @@ async fn one(node: &Arc<Node>, link: &Arc<Link>, home: &AccountName, town: &Town
         {
             return Err("the standalone ledger is being imported into another account or hub incarnation".into());
         }
-        fastctx_net::link::state::write(&path(&node.world, town), &journal).map_err(|error| error.to_string())?;
+        keep(&node.world, town, &journal).map_err(|error| error.to_string())?;
         (journal, entries)
     };
+    let has_history = entries.iter().any(|(_, entry, _)| fastctx_net::topic_history::has_history(&entry.files));
+    let enabled = || !has_history || crate::history::switch::on(link, home);
+    if !enabled() {
+        return Ok(());
+    }
     let own = own_key(&node.world).map_err(|error| error.to_string())?.public();
     let open = fastctx_net::wire::Change::OpenProject {
         town: journal.target.town.clone(),
@@ -197,7 +246,7 @@ async fn one(node: &Arc<Node>, link: &Arc<Link>, home: &AccountName, town: &Town
     if !journal.classified {
         journal.skipped = topics::skipped(link, home, id, &entries).await?;
         journal.classified = true;
-        fastctx_net::link::state::write(&path(&node.world, town), &journal).map_err(|error| error.to_string())?;
+        keep(&node.world, town, &journal).map_err(|error| error.to_string())?;
     }
     let selected = entries
         .iter()
@@ -208,9 +257,14 @@ async fn one(node: &Arc<Node>, link: &Arc<Link>, home: &AccountName, town: &Town
             Err(error) => Some(Err(error)),
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let mut written = prefix(node, link, id, &entries, &selected, &own).await?;
+    let here = translation::machine(node, link, town, &mut journal, &entries, &selected, &own).await?;
+    let id = &journal.target.town;
+    let mut written = prefix(&here, link, id, &entries, &selected, &own).await?;
     while written < selected.len() {
-        let entry = translated(node, link, &entries[selected[written]].1, &own)?;
+        if !enabled() {
+            return Ok(());
+        }
+        let entry = translated(&here, link, &entries[selected[written]].1, &own)?;
         let signed = link.sign_entry(&entry);
         let result = if fastctx_net::topic_history::has_history(&entry.files) {
             link.history_write(home, id, signed).await
@@ -222,7 +276,7 @@ async fn one(node: &Arc<Node>, link: &Arc<Link>, home: &AccountName, town: &Town
         match result {
             Ok(seq) if seq == written as u64 + 1 => written += 1,
             result => {
-                let checked = prefix(node, link, id, &entries, &selected, &own).await?;
+                let checked = prefix(&here, link, id, &entries, &selected, &own).await?;
                 if checked <= written {
                     return Err(result.err().unwrap_or_else(|| "the hub inserted an unrelated ledger entry".into()));
                 }
@@ -231,11 +285,14 @@ async fn one(node: &Arc<Node>, link: &Arc<Link>, home: &AccountName, town: &Town
         }
     }
     // Verify every entry, including writes whose acknowledgment arrived normally.
-    if prefix(node, link, id, &entries, &selected, &own).await? != selected.len() {
+    if prefix(&here, link, id, &entries, &selected, &own).await? != selected.len() {
         return Err("the carried ledger is incomplete".into());
     }
     let _history = crate::history::import::lock(node, &scope).await;
     let _syncing = node.syncing.lock().await;
+    if !enabled() {
+        return Ok(());
+    }
     if names::place(&node.world, town).map_err(|error| error.to_string())?.as_ref() != Some(&journal.source)
         || link.view().account(home).is_none_or(|account| account.opened != journal.opened)
         || link.view().me().and_then(|me| me.home.as_ref()) != Some(home)
@@ -281,7 +338,7 @@ async fn one(node: &Arc<Node>, link: &Arc<Link>, home: &AccountName, town: &Town
                 .any(|name| original.source().starts_with(directory.ledger().join("history").join(name)))
     });
     journal.originals = Some(originals);
-    fastctx_net::link::state::write(&path(&node.world, town), &journal).map_err(|error| error.to_string())?;
+    keep(&node.world, town, &journal).map_err(|error| error.to_string())?;
     finish(&node.world, town, &mut journal).map_err(|error| error.to_string())?;
     crate::context::invalidations::project(node, town);
     crate::replicas::updates::schedule(node, &journal.target.hub, crate::replicas::updates::Change::All);
@@ -291,32 +348,8 @@ async fn one(node: &Arc<Node>, link: &Arc<Link>, home: &AccountName, town: &Town
     Ok(())
 }
 
-fn translated(node: &Node, link: &Link, entry: &Entry, own: &fastctx_net::sign::PublicKey) -> Result<Entry, String> {
-    let here = node.machine();
-    let old = &entry.author;
-    let ours = entry.key == *own && *old != here;
-    let renamed = |name: &MachineName| if ours && name == old { here.clone() } else { name.clone() };
-    let mut files = Vec::new();
-    for file in &entry.files {
-        let bytes = if ours {
-            Bytes(crate::town::rename::file(&file.path, &file.bytes.0, old, &here)?)
-        } else {
-            file.bytes.clone()
-        };
-        files.push(File { path: file.path.clone(), bytes });
-    }
-    if ours {
-        crate::town::rename::memory(&mut files, old, &here)?;
-    }
-    history::stamp(entry, &mut files)?;
-    let mut carried =
-        link.entry(&entry.town, entry.machines.as_ref().map(|machines| machines.iter().map(renamed).collect()), files);
-    carried.at = entry.at;
-    Ok(carried)
-}
-
 async fn prefix(
-    node: &Node,
+    here: &MachineName,
     link: &Link,
     town: &TownId,
     source: &[(u64, Entry, Signed)],
@@ -338,7 +371,7 @@ async fn prefix(
             }
             let entry = item.entry.ok_or_else(|| item.refused.unwrap_or_else(|| "unreadable carried entry".into()))?;
             let original = &source[selected[through]].1;
-            let expected = translated(node, link, original, own)?;
+            let expected = translated(here, link, original, own)?;
             if item.seq != through as u64 + 1
                 || !history::matches(original, &expected.files, &entry.files)
                 || entry.at != expected.at
@@ -370,5 +403,5 @@ fn report(node: &Node, town: &TownName) -> Result<(), String> {
             directory.path().join("not-imported").display(), directory.ledger().join("history").join(name).display()));
     }
     journal.reported = true;
-    fastctx_net::link::state::write(&path(&node.world, town), &journal).map_err(|error| error.to_string())
+    keep(&node.world, town, &journal).map_err(|error| error.to_string())
 }

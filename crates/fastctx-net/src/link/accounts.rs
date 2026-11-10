@@ -306,7 +306,13 @@ impl Link {
             me: Some(view.me.clone()),
             hub_machine: view.hub_machine.clone(),
             machine_notices: view.machine_notices.clone(),
-            troubles: view.troubles.clone(),
+            // An earlier hub still tells of rules broken; they are not shown.
+            troubles: view
+                .troubles
+                .iter()
+                .filter(|trouble| trouble.kind != fastctx_types::trouble::TroubleKind::Violations)
+                .cloned()
+                .collect(),
             health: view.health,
             renames: view.renames,
             managed: view.managed,

@@ -59,7 +59,7 @@ export const specimenClaudeOffers: Offers = {
     { name: "deploy-checklist", description: "部署任何服务之前：要核对的事与回滚的路" },
     { name: "weekly-report", description: "写本周的进展周报，照团队的格式" },
   ],
-  models: ["opus", "fable", "sonnet", "haiku"].map((id, index) => ({
+  models: import.meta.env.DEV ? ["opus", "fable", "sonnet", "haiku"].map((id, index) => ({
     id,
     name: id[0]!.toUpperCase() + id.slice(1),
     description: "",
@@ -68,7 +68,7 @@ export const specimenClaudeOffers: Offers = {
     default: index === 0,
     service_tiers: [],
     default_service_tier: null,
-  })),
+  })) : [],
   model: "opus",
   effort: "medium",
   service_tier: null,

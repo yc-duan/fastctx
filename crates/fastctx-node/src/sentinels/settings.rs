@@ -30,6 +30,7 @@ pub(crate) async fn settings(
         }
         match fastctx_sentinel::settings::write(records, &scope, change).await {
             Ok(record) => {
+                crate::account_features::changed(node, scope.clone());
                 (Some(record.version), serde_json::from_value(record.value).map_err(|e| Failure::new(e.to_string()))?)
             }
             Err(records::Error::Conflict { current_version }) => {

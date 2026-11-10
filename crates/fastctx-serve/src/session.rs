@@ -769,7 +769,7 @@ impl Session {
             })
             .await
         {
-            Ok(Reply::Machines { here, others, groups, collab, mut scratch, speaks, asker }) => {
+            Ok(Reply::Machines { here, others, groups, collab, mut scratch, speaks, asker, sentinels }) => {
                 if !client.scratch_locations {
                     scratch = here
                         .iter()
@@ -778,7 +778,7 @@ impl Session {
                         .map(|name| (name, Err(fastctx_types::scratch::words::OLD_NODE.into())))
                         .collect();
                 }
-                Ok(Some(crate::tools::Machines { here, others, groups, collab, scratch, speaks, asker }))
+                Ok(Some(crate::tools::Machines { here, others, groups, collab, scratch, speaks, asker, sentinels }))
             }
             Ok(other) => Err(format!("the node answered something else: {other:?}")),
             Err(error) => Err(error.to_string()),

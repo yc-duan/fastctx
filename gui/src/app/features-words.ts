@@ -79,6 +79,8 @@ export interface FeaturesWords {
 
 /** The sentinels' page: its film and its settings (`sentinel-form.ts`). */
 export interface SentinelWords {
+  enableSentinels: string;
+  enableGoals: string;
   name: string;
   line: string;
   /** The page of every watcher, from here. */
@@ -173,12 +175,14 @@ export const zhFeatures: FeaturesWords = {
   reading: "正在读取设置",
   retry: "重试",
   sentinels: {
+    enableSentinels: "开启观测",
+    enableGoals: "开启目标",
     name: "观测",
     line: "会话等待时，由观测代为留意",
     all: "全部观测",
     film: { captions: ["会话需要等待，留下一项观测", "会话休息，观测代为巡检那台机器", "条件成立，观测唤醒会话继续工作"] },
     after: "此账号下的会话均可留下观测",
-    offWhat: "会话将不能留下观测，进行中的观测全部撤销；此处的设置与钥匙保留，重新开启后照旧。",
+    offWhat: "会话将不能留下观测，进行中的观测暂停；此处的设置与钥匙保留，重新开启后继续。",
     home: "所在机器",
     homeStatus: { forbidden: "此账号无权使用这台机器", offline: "这台机器不在线", too_old: "这台机器的 Fastctx 版本过旧", unavailable: "这台机器暂不可用" },
     model: "模型",
@@ -307,12 +311,14 @@ export const enFeatures: FeaturesWords = {
   reading: "Reading the settings",
   retry: "Retry",
   sentinels: {
+    enableSentinels: "Enable watchers",
+    enableGoals: "Enable goals",
     name: "Watchers",
     line: "While a conversation waits, a watcher keeps an eye out",
     all: "All watchers",
     film: { captions: ["A conversation that must wait leaves a watcher", "It rests while the watcher checks that machine", "When the condition holds, the watcher wakes it to go on"] },
     after: "Conversations working for this account can leave watchers",
-    offWhat: "Conversations can no longer leave watchers, and those under way are withdrawn; the settings and keys here are kept for next time.",
+    offWhat: "Conversations can no longer leave watchers, and those under way pause; the settings and keys here are kept for next time.",
     home: "Lives on",
     homeStatus: { forbidden: "This account can't use that machine", offline: "That machine is offline", too_old: "Fastctx there is too old", unavailable: "That machine can't be used now" },
     model: "Model",

@@ -16,7 +16,11 @@ pub(super) struct Work {
 }
 
 pub(crate) fn schedule(node: &Arc<Node>) {
-    if node.links().is_empty() {
+    if !node
+        .links()
+        .iter()
+        .any(|link| link.view().accounts.iter().any(|account| super::super::switch::on(link, &account.name)))
+    {
         return;
     }
     let mut work = node.history_imports.work.lock().expect("never poisoned");
@@ -79,11 +83,19 @@ async fn one(node: &Arc<Node>, resident: &ResidentId) -> Result<(), String> {
         let (about, _) = node.residents.about(resident).ok_or("the conversation was removed")?;
         let inventory = state::inventory(&records).map_err(|error| error.to_string())?;
         let transfer = match state::read(&records).map_err(|error| error.to_string())? {
-            Some(transfer) => transfer,
+            Some(transfer) => {
+                if !super::super::switch::enabled(node, &transfer.account) {
+                    return Ok(());
+                }
+                transfer
+            }
             None => {
                 let account = crate::placement::account(node, &about.acting, None)
                     .map_err(|error| error.message)?
                     .ok_or("the standalone history needs an unambiguous importing account")?;
+                if !super::super::switch::enabled(node, &account) {
+                    return Ok(());
+                }
                 let link = node.link_of(&account.hub).ok_or("the importing hub is unavailable")?;
                 let opened =
                     link.view().account(&account.account).ok_or("the importing account is unavailable")?.opened;
@@ -120,6 +132,9 @@ async fn one(node: &Arc<Node>, resident: &ResidentId) -> Result<(), String> {
     let link = node.link_of(&transfer.account.hub).ok_or("the importing hub is unavailable")?;
     let authorized = || -> Result<(), String> {
         let (about, _) = node.residents.about(resident).ok_or("the conversation was removed")?;
+        if !super::super::switch::enabled(node, &transfer.account) {
+            return Err(super::super::switch::COPIES_OFF.into());
+        }
         if !node.serves(&about.acting, &transfer.account.hub, &transfer.account.account)
             || link.view().account(&transfer.account.account).is_none_or(|account| account.opened != transfer.opened)
         {
@@ -155,6 +170,9 @@ async fn one(node: &Arc<Node>, resident: &ResidentId) -> Result<(), String> {
             .collect();
         let mut errors = Vec::new();
         for (name, versions) in &inventory {
+            if !super::super::switch::enabled(node, &transfer.account) {
+                return Ok(());
+            }
             if let Err(error) = super::replay::topic(
                 node,
                 &link,
@@ -176,6 +194,9 @@ async fn one(node: &Arc<Node>, resident: &ResidentId) -> Result<(), String> {
         }
     }
     let _history = super::lock(node, &scope).await;
+    if !super::super::switch::enabled(node, &transfer.account) {
+        return Ok(());
+    }
     let (about, _) = node.residents.about(resident).ok_or("the conversation was removed")?;
     if !node.serves(&about.acting, &transfer.account.hub, &transfer.account.account)
         || link.view().account(&transfer.account.account).is_none_or(|account| account.opened != transfer.opened)

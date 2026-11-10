@@ -12,7 +12,10 @@ mod damaged;
 #[cfg(feature = "storage-drill")]
 pub(crate) use damaged::drill as damaged_drill;
 mod duplicates;
+mod imports;
+
 pub(super) use duplicates::settle as settle_duplicates;
+pub(crate) use imports::{import_journals, keep_import, with_import_gate};
 
 static DAMAGED: LazyLock<&'static readings::Counter> = LazyLock::new(|| readings::counter("migration.damaged_files"));
 pub(crate) static DAMAGED_KEPT: LazyLock<&'static readings::Gauge> =

@@ -344,6 +344,8 @@ pub(crate) struct Inner {
     /// This machine's place on the hub as its membership file keeps it: its
     /// name there changes when the hub renames it (`Inner::follow_name`).
     membership: Mutex<Membership>,
+    /// Explicit removal survives a disconnected restart until readmission.
+    membership_ended: std::sync::atomic::AtomicBool,
     /// The membership file is written one write at a time, off the lock
     /// that holds the membership (`change_membership`).
     membership_writing: Mutex<()>,
@@ -540,6 +542,7 @@ impl Link {
             Err(error) => return Err(error),
         };
         let policy = update_policy::UpdatePolicy::read(dir.path())?;
+        let membership_ended = fastctx_platform::disk::exists(dir.ended())?;
         let (status, _) = watch::channel(Status::Connecting { since: Timestamp::now(), last_error: None });
         let receiving = dir.path().display().to_string();
         let inner = Arc::new_cyclic(|this| Inner {
@@ -550,6 +553,7 @@ impl Link {
             cert: membership.cert,
             kind: membership.kind,
             membership: Mutex::new(membership),
+            membership_ended: std::sync::atomic::AtomicBool::new(membership_ended),
             membership_writing: Mutex::new(()),
             key: Arc::new(key),
             node,
@@ -685,6 +689,12 @@ impl Link {
     /// `hub_addresses`.
     pub fn membership(&self) -> Membership {
         self.inner.membership()
+    }
+
+    /// Whether this place on the hub remains valid, including while offline.
+    /// Explicit removal is restored from disk and cleared only on readmission.
+    pub fn membership_active(&self) -> bool {
+        !self.inner.membership_ended.load(Ordering::Acquire)
     }
 
     /// The hub this link is to.

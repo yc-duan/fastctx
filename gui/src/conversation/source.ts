@@ -74,15 +74,12 @@ export const watched: ConversationSource = {
           feed.resumed();
           return;
         case "event":
-          feed.resumed();
           feed.happened(piece.at, piece.event);
           return;
         case "window":
-          feed.resumed();
           feed.window(piece.window, parts);
           return;
         case "extended":
-          feed.resumed();
           feed.extended(piece.start, piece.events);
           return;
         case "rebased":

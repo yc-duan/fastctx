@@ -1,4 +1,6 @@
 //! Sentinel command and delivery wording, collected for editorial review.
+pub const DISABLED: &str =
+    "Watchers are turned off for this account. Ask the user to enable Watchers (观测) in Fastctx account settings.";
 pub const HELP: &str = r#"fastctx sense '<what to wait for>' [--at <time>]... [--web] [--tell '<note>']
 
 Leave a sentinel to wait for something that takes judgment to see, and wake

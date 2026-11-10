@@ -202,10 +202,7 @@ export class Updates {
     const asked = state.take === offered.manifest.version || this.unfinished(state, offered.manifest.version);
     // The node says which release automatic updates may take; a node before
     // it said so is reckoned with here, under the hubs' major version.
-    const within =
-      state.automatic !== undefined
-        ? state.automatic === offered.manifest.version
-        : state.hub_major === undefined || majorOf(offered.manifest.version) <= state.hub_major;
+    const within = this.within(state, offered.manifest.version);
     if (!asked && !(this.automatic(state) && within)) return;
     if (offered.stage.kind === "offered") this.go();
     else if (offered.stage.kind === "waiting" && this.idle()) this.install(offered.manifest.version);
@@ -252,8 +249,18 @@ export class Updates {
   private unfinished(state: UpdateState, version: string): boolean {
     const target = state.app?.target;
     const failed = state.failed;
-    const refused = failed?.reason?.kind === "no_package" || failed?.reason?.kind === "not_newer";
+    const refused = failed?.reason?.kind === "no_package" || failed?.reason?.kind === "not_newer" || failed?.reason?.kind === "withdrawn";
     return this.failed?.version === version || (!!failed && !refused && failed.version === version && failed.target === target);
+  }
+
+  /** Missing candidates from beta.8 and later are decisions, not old nodes. */
+  private within(state: UpdateState, version: string): boolean {
+    // Older nodes restore the rollout but cannot calculate its batch offline.
+    const oldNode = state.running === undefined || compareVersions(state.running, "1.0.1-beta.17") < 0;
+    if (oldNode && state.network?.policy.rollout && !state.network.rolled) return false;
+    if (state.automatic != null) return state.automatic === version;
+    const legacy = state.running === undefined || compareVersions(state.running, "1.0.1-beta.8") < 0;
+    return legacy && (state.hub_major === undefined || majorOf(version) <= state.hub_major);
   }
 
   /** Whether this device takes new releases by itself, as its node says. */
@@ -264,7 +271,8 @@ export class Updates {
   private offerOf(state: UpdateState): Offered | null {
     const manifest = state.available ?? state.offer;
     const target = state.app?.target;
-    if (!manifest || !target || !this.known || compareVersions(manifest.version, this.known) <= 0) return null;
+    if (!manifest || !target || !this.known || compareVersions(manifest.version, this.known) <= 0
+      || state.network?.policy.withdrawn?.includes(manifest.version)) return null;
     const pack = manifest.platforms[target];
     if (!pack) return null;
     const minimum = state.network?.policy.minimum;
@@ -289,7 +297,8 @@ export class Updates {
     }
     if (state.kept?.some((kept) => kept.version === manifest.version && kept.target === target)) {
       if (this.permission) return { ...base, stage: { kind: "permission" } };
-      const waits = this.automatic(state) || state.take === manifest.version || this.unfinished(state, manifest.version);
+      const waits = (this.automatic(state) && this.within(state, manifest.version))
+        || state.take === manifest.version || this.unfinished(state, manifest.version);
       return { ...base, stage: { kind: waits ? "waiting" : "ready" } };
     }
     if (ofThis) return { ...base, stage: { kind: "failed", why: failed.why, ...(failed.reason ? { reason: failed.reason } : {}) } };

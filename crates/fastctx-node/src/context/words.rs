@@ -35,15 +35,25 @@ pub(super) const PLAN_NOT_PREPARED: &str =
 /// How a conversation keeps its plan (`world-plan.md`, 交给模型的那段说明):
 /// the Markdown file at `path` on `machine`. `asker` is the conversation
 /// that asked a colleague, which reads the colleague's plan.
-pub(super) fn plan_guide(path: &str, machine: &str, replicated: bool, asker: Option<&ResidentId>) -> String {
-    // Sentinels are not offered in a release yet (`world.md`,
-    // 这一版不发的).
-    let live = if fastctx_platform::preview() {
+pub(super) fn plan_guide(
+    path: &str,
+    machine: &str,
+    replicated: bool,
+    asker: Option<&ResidentId>,
+    sentinels: bool,
+    history: bool,
+) -> String {
+    let live = if sentinels {
         "- For how a colleague, a sentinel or a job stands right now. Write its id
   (codex-7f3a, s-a1b2c3, j-k3x9a2) and the panel shows its state, live."
     } else {
         "- For how a colleague or a job stands right now. Write its id (codex-7f3a,
   j-k3x9a2) and the panel shows its state, live."
+    };
+    let lasting = if history {
+        "The plan holds how this work stands, and changes as it moves. What will still matter when it is over goes in the history, and a line here can point to it."
+    } else {
+        "The plan holds how this work stands, the decisions that still matter, and what comes next."
     };
     let kept = if replicated {
         "It is the user's, shown to them beside the conversation, and Fastctx keeps it in sync on all their computers."
@@ -92,9 +102,7 @@ that it always reads as where things stand rather than as a log of how they got 
 say each thing once, where it belongs. When a part is done, keep what came of it and drop
 how you got there.
 
-The plan holds how this work stands, and changes as it moves. What will still matter when
-it is over, a decision of the user's, a finding that took real work, a path that failed and
-why, goes in the history, and a line here can point to it.
+{lasting}
 
 ## When to change it
 - Before work that is more than a quick answer or a small change: lay it out.

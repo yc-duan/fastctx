@@ -1246,6 +1246,9 @@ pub enum Reply {
         /// `message_colleague` reaches (`world-colleagues.md`, 两个工具).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         asker: Option<crate::Address>,
+        /// Whether this conversation's account enabled watchers.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        sentinels: bool,
     },
     /// A job stopped, or found already ended: on `machine`, as its record
     /// now stands.

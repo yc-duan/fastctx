@@ -34,7 +34,8 @@ pub async fn query(node: &Arc<Node>, town: Option<&TownName>) -> Result<Vec<Town
                 if have >= latest {
                     continue;
                 }
-                super::local_name(node, &link, &id)?
+                let Some(name) = super::sync_name(node, &link, &id)? else { continue };
+                name
             };
             super::take(node, &link, &name, &id, latest).await?;
         }

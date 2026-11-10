@@ -137,6 +137,8 @@ export class SideHome implements SidePage {
     ].filter(Boolean);
     // Said where no card stands, the goal's left to its bar among them.
     this.element.innerHTML = `${cards.join("")}<p class="sh-none">${escape(this.words.home.none)}</p>`;
+    this.element.classList.toggle("sh-has-cards", cards.length > 0);
+    this.element.classList.toggle("sh-has-unbarred", this.element.querySelector(".sh-card:not(.barred)") !== null);
     // The plan's page is one element, kept as it is drawn anew around it.
     this.element.querySelector(".sh-plan")?.append(this.planPage);
     this.tick();

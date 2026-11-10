@@ -70,7 +70,7 @@ export function packageFor(manifest: Manifest | undefined, state: UpdateState): 
 }
 
 /** Every manifest `state` knows, by version. */
-export function manifestsOf(state: UpdateState): Map<string, Manifest> {
+export function manifestsOf(state: UpdateState, includeWithdrawn = false): Map<string, Manifest> {
   const found = new Map<string, Manifest>();
   const known = [
     ...(state.looked.newer ?? []),
@@ -81,22 +81,29 @@ export function manifestsOf(state: UpdateState): Map<string, Manifest> {
     state.network?.stable,
     state.network?.beta,
   ];
-  for (const manifest of known) if (manifest && !found.has(manifest.version)) found.set(manifest.version, manifest);
+  for (const manifest of known) {
+    if (manifest && (includeWithdrawn || !state.network?.policy.withdrawn?.includes(manifest.version)) && !found.has(manifest.version)) {
+      found.set(manifest.version, manifest);
+    }
+  }
   return found;
 }
 
 /** The releases a machine can be shown, the newest first. */
-export function rowsOf(subject: VersionSubject): Row[] {
+export function rowsOf(subject: VersionSubject, includeWithdrawn = false): Row[] {
   const { state, running } = subject;
-  const manifests = manifestsOf(state);
+  const manifests = manifestsOf(state, includeWithdrawn);
   const listed = new Map<string, { day: string | null; test: boolean }>();
   for (const release of state.looked.releases ?? []) {
+    if (!includeWithdrawn && state.network?.policy.withdrawn?.includes(release.version)) continue;
     listed.set(release.version, { day: release.published ?? null, test: release.prerelease === true || isTest(release.version) });
   }
   for (const manifest of manifests.values()) {
     if (!listed.has(manifest.version)) listed.set(manifest.version, { day: manifest.pub_date ?? null, test: isTest(manifest.version) });
   }
-  if (!listed.has(running)) listed.set(running, { day: null, test: isTest(running) });
+  if (!listed.has(running) && (includeWithdrawn || !state.network?.policy.withdrawn?.includes(running))) {
+    listed.set(running, { day: null, test: isTest(running) });
+  }
   return [...listed.entries()]
     .map(([version, { day, test }]) => {
       const newer = compareVersions(version, running) > 0;
@@ -234,7 +241,7 @@ export class VersionWindow {
     const { sheet, subject, purpose, words } = this;
     if (!sheet || !subject || !purpose) return;
     const { state } = subject;
-    const rows = rowsOf(subject).filter((row) => this.filter === "all" || (this.filter === "test") === row.test);
+    const rows = rowsOf(subject, purpose.kind === "rollout").filter((row) => this.filter === "all" || (this.filter === "test") === row.test);
     const minimum = purpose.kind === "minimum" ? purpose.current : null;
     const withdrawn = purpose.kind === "rollout" ? purpose.withdrawn() : new Set<string>();
     // The one to press is what an automatic update there would take: the

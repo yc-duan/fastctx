@@ -20,7 +20,7 @@ export interface SentinelFormOptions {
   /** The machines of the account the sentinels may live on, and what
    *  kind of machine each is. */
   machines(): { name: string; form: "desktop" | "laptop" | "server" }[];
-  /** The settings saved, with a home: the feature is on. */
+  /** The account settings just accepted by the hub. */
   saved(view: SentinelSettingsView): void;
 }
 
@@ -57,6 +57,11 @@ export class SentinelForm {
       }
       if (target.closest("[data-act='save']")) void this.save();
       if (target.closest("[data-act='try']")) void this.tryOut();
+    });
+    this.element.addEventListener("change", (event) => {
+      const input = event.target as HTMLInputElement;
+      const feature = input.dataset.feature;
+      if (feature === "sentinels" || feature === "goals") void this.toggle(feature, input.checked);
     });
     this.element.addEventListener("input", (event) => {
       const input = event.target as HTMLInputElement;
@@ -103,7 +108,13 @@ export class SentinelForm {
     const keySaid = (set: boolean | undefined) =>
       set === undefined ? "" : `<span class="sf-key-said">${set ? `${glyph("check", 14)}<span>${escape(words.keySet)}</span>` : escape(words.keyMissing)}</span>`;
     const keys = this.view?.keys ?? undefined;
+    const enabled = draft.sentinels === true || draft.goals === true;
     this.element.innerHTML = `
+      <section class="feature-section sf-switches">
+        <label><input type="checkbox" data-feature="sentinels"${draft.sentinels ? " checked" : ""}${this.busy ? " disabled" : ""}> ${escape(words.enableSentinels)}</label>
+        <label><input type="checkbox" data-feature="goals"${draft.goals ? " checked" : ""}${this.busy ? " disabled" : ""}> ${escape(words.enableGoals)}</label>
+      </section>
+      <div class="sf-configuration"${enabled ? "" : " hidden"}>
       <section class="feature-section"><h2 class="feature-heading">${escape(words.home)}</h2>
         <div class="feature-chips">${machines.map((one) => chip("data-home", one.name, one.name, one.name === draft.home, glyph(one.form, 14))).join("")}</div>
         ${homeSaid ? `<p class="feature-quiet sf-home-said">${homeSaid}</p>` : ""}
@@ -113,17 +124,17 @@ export class SentinelForm {
         <div class="sf-fields">
           <label class="feature-field"><span>${escape(words.endpoint)}</span><input type="url" data-field="endpoint" value="${escape(model?.endpoint ?? "")}" placeholder="${escape(model?.protocol === "anthropic" ? "https://api.anthropic.com" : "https://api.openai.com/v1")}" spellcheck="false" autocomplete="off"></label>
           <label class="feature-field"><span>${escape(words.modelName)}</span><input type="text" data-field="model" value="${escape(model?.model ?? "")}" spellcheck="false" autocomplete="off"></label>
-          <label class="feature-field" title="${escape(draft.home ? words.keyGoes(draft.home) : "")}"><span class="sf-key-label">${escape(words.key)}${keySaid(keys?.model)}</span><input type="password" data-field="model-key" placeholder="${escape(keys?.model ? words.keyReplace : "")}" autocomplete="off"></label>
+          <label class="feature-field" title="${escape(draft.home ? words.keyGoes(draft.home) : "")}"><span class="sf-key-label">${escape(words.key)}${keySaid(keys?.model)}</span><input type="password" data-field="model-key" value="${escape(this.keys.model)}" placeholder="${escape(keys?.model ? words.keyReplace : "")}" autocomplete="off"></label>
         </div>
       </section>
       <section class="feature-section"><h2 class="feature-heading">${escape(words.search)}</h2>
         <div class="sf-fields">
           <label class="feature-field"><span>${escape(words.searchEndpoint)}</span><input type="url" data-field="search-endpoint" value="${escape(draft.search?.endpoint ?? "")}" placeholder="https://api.tavily.com/search" spellcheck="false" autocomplete="off"></label>
-          <label class="feature-field" title="${escape(draft.home ? words.keyGoes(draft.home) : "")}"><span class="sf-key-label">${escape(words.key)}${keySaid(keys?.search)}</span><input type="password" data-field="search-key" placeholder="${escape(keys?.search ? words.keyReplace : "")}" autocomplete="off"></label>
+          <label class="feature-field" title="${escape(draft.home ? words.keyGoes(draft.home) : "")}"><span class="sf-key-label">${escape(words.key)}${keySaid(keys?.search)}</span><input type="password" data-field="search-key" value="${escape(this.keys.search)}" placeholder="${escape(keys?.search ? words.keyReplace : "")}" autocomplete="off"></label>
         </div>
       </section>
       <section class="feature-section sf-try"><button class="feature-chip sf-try-go" type="button" data-act="try"></button><div class="sf-tried"></div></section>
-      <div class="feature-save-bar"><span class="feature-problem"></span><button class="sheet-go feature-save" type="button" data-act="save">${escape(words.save)}</button></div>`;
+      </div><div class="feature-save-bar"><span class="feature-problem"></span><button class="sheet-go feature-save" type="button" data-act="save">${escape(words.save)}</button></div>`;
     this.drawSave();
     this.drawTrial();
   }
@@ -135,7 +146,7 @@ export class SentinelForm {
     const section = this.element.querySelector<HTMLElement>(".sf-try");
     if (!section) return;
     const view = this.view;
-    const offered = !!view?.settings.home && !!view.settings.model && view.home_status.kind === "ready";
+    const offered = (view?.settings.sentinels === true || view?.settings.goals === true) && !!view?.settings.home && !!view.settings.model && view.home_status.kind === "ready";
     section.hidden = !offered;
     const go = section.querySelector<HTMLButtonElement>(".sf-try-go")!;
     const trying = this.trial?.kind === "trying";
@@ -195,7 +206,7 @@ export class SentinelForm {
   /** Saving takes a machine, a model's address and its name. */
   private complete(): boolean {
     const model = this.draft.model;
-    return !!this.draft.home && !!model && /^https?:\/\/\S+$/.test(model.endpoint.trim()) && model.model.trim() !== "";
+    return !model || /^https?:\/\/\S+$/.test(model.endpoint.trim()) && model.model.trim() !== "";
   }
 
   private drawSave(): void {
@@ -206,6 +217,32 @@ export class SentinelForm {
     const problem = bar.querySelector<HTMLElement>(".feature-problem")!;
     problem.textContent = this.problem?.text ?? "";
     problem.title = this.problem?.detail ?? "";
+  }
+
+  private async toggle(feature: "sentinels" | "goals", on: boolean): Promise<void> {
+    if (this.busy || !this.view) return;
+    const { seam, login, words } = this.options;
+    this.busy = true;
+    this.problem = null;
+    this.draw();
+    try {
+      const reply = await seam.write(login.hub, login.account, this.view.version, { ...this.view.settings, [feature]: on });
+      if (reply.kind === "conflict") {
+        this.show(await seam.read(login.hub, login.account));
+        this.problem = { text: words.changedElsewhere, detail: "" };
+      } else {
+        this.view = reply.view;
+        this.draft = { ...this.draft, [feature]: on };
+        this.trial = null;
+        this.shown += 1;
+        this.options.saved(reply.view);
+      }
+    } catch (error) {
+      this.problem = { text: words.notSaved, detail: detailOf(error) };
+    } finally {
+      this.busy = false;
+      this.draw();
+    }
   }
 
   private async save(): Promise<void> {

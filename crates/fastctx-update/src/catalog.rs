@@ -11,6 +11,12 @@ pub async fn manifest(
     links: &[Arc<Link>],
     version: &str,
 ) -> Result<Manifest, String> {
+    state.check_release(version).map_err(|problem| problem.why)?;
+    for link in links {
+        if let Some(network) = link.update_network() {
+            network.policy.check_release(version).map_err(|problem| problem.why)?;
+        }
+    }
     let known = state
         .offer
         .iter()

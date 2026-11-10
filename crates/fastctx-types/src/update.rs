@@ -15,6 +15,7 @@ pub use view::*;
 
 mod status;
 pub use status::*;
+mod withdrawal;
 
 /// The first release accepting selected versions and remote update settings.
 pub const ASKED_SINCE: &str = "1.0.1-beta.3";
@@ -232,7 +233,6 @@ pub struct Report {
     pub repair_supported: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repair: Option<crate::repair::Report>,
-
 }
 
 impl Report {
@@ -259,7 +259,6 @@ pub struct Running {
     pub hub_here: bool,
     #[serde(default)]
     pub repair_supported: bool,
-
 }
 
 /// What the network's administrators set for updates: the version it asks
@@ -285,7 +284,7 @@ pub struct Policy {
     /// Set by its own change, as `withdrawn` is.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rollout: Option<Rollout>,
-    /// Versions no machine takes by itself any more.
+    /// Versions no machine acquires or installs, even on an explicit request.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub withdrawn: BTreeSet<String>,
 }
@@ -641,9 +640,14 @@ pub struct State {
     /// The line it follows: that of the version it runs.
     #[serde(deserialize_with = "crate::tolerant::read")]
     pub channel: Channel,
-    /// Whether it takes new releases by itself now (`Settings::auto_for`).
+    /// Whether it takes new releases by itself now. Rollout holds and unknown
+    /// network policies suspend this without changing the saved preferences.
     #[serde(default)]
     pub auto: bool,
+    /// The enabled preference under device defaults and network policy, before
+    /// a rollout temporarily holds automatic updating. Absent on older nodes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_enabled: Option<bool>,
     /// The release its owner chose to update to, when it is not the newest.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chosen: Option<Manifest>,
@@ -663,8 +667,9 @@ pub struct State {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub available: Option<Manifest>,
     /// The newest compatible candidate within the hubs' major version,
-    /// independent of whether automatic updates are enabled.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// independent of whether automatic updates are enabled. Null explicitly
+    /// means no candidate; older interfaces distinguish it from an absent field.
+    #[serde(default)]
     pub automatic: Option<String>,
     /// The offered compatible release exceeds the automatic major-version limit.
     #[serde(default)]
@@ -713,7 +718,6 @@ pub struct State {
     /// Can route the distinct repair request to another machine.
     #[serde(default)]
     pub repair_routing: bool,
-
 }
 
 /// A change of this machine's World program, as it goes.

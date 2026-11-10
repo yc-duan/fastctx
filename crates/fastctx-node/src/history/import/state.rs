@@ -43,7 +43,7 @@ fn live<T>(records: &Path, work: impl FnOnce() -> io::Result<T>) -> io::Result<T
 }
 
 pub(super) fn keep(records: &Path, transfer: &Transfer) -> io::Result<()> {
-    live(records, || state::write(&path(records), transfer))
+    live(records, || crate::record_migration::archive::keep_import(&path(records), transfer))
 }
 
 pub(super) fn finish(records: &Path, transfer: &mut Transfer) -> io::Result<()> {
@@ -57,7 +57,7 @@ pub(super) fn finish(records: &Path, transfer: &mut Transfer) -> io::Result<()> 
         transfer.done = true;
         transfer.originals = None;
         transfer.sources.clear();
-        state::write(&path(records), transfer)
+        crate::record_migration::archive::keep_import(&path(records), transfer)
     })
 }
 

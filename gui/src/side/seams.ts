@@ -46,7 +46,7 @@ export interface SideSeams {
   /** The colleagues the conversation asked: who each is and how it
    *  stands, as the World is pushed; with `detail`, each one's goal and the
    *  host's agents it sent too, read only while a page shows them. */
-  colleagues(show: (nodes: CollabNode[]) => void): Following;
+  colleagues(show: (nodes: CollabNode[], reading?: boolean) => void): Following;
   /** Where it works, followed as the World changes. */
   where(show: (where: WhereShown | null) => void): () => void;
   /** Shows a folder of this computer in the system's own window, where this

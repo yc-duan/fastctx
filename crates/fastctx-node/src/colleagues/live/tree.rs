@@ -6,7 +6,6 @@ use super::{Following, SETTLE, Sender, Told, stopping, tell};
 use crate::Node;
 use crate::watch::Events;
 use fastctx_net::watch_queue::TryRecvError;
-use fastctx_types::collab_prompt::TREE_DEADLINE;
 use fastctx_types::{
     Address, ResidentId,
     access::{Acting, Written},
@@ -20,11 +19,6 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::sync::{Notify, watch};
-
-/// How long the first telling waits for a colleague's first branch, and
-/// after that how long a colleague is left out before it is told as not
-/// read.
-const FIRST: Duration = Duration::from_secs(10);
 
 /// The longest a colleague that could not be followed waits before it is
 /// followed again.
@@ -73,25 +67,15 @@ pub(super) async fn keep(node: &Arc<Node>, id: &ResidentId, acting: &Acting, tol
         for (address, label) in found {
             if let std::collections::btree_map::Entry::Vacant(vacant) = colleagues.entry(address) {
                 let address = vacant.key().clone();
-                vacant.insert(Colleague::follow(node, &owner, address, label, acting, &changed).await);
+                vacant.insert(Colleague::follow(node, &owner, address, label, acting, &changed));
             }
         }
-        // A colleague is told once its first branch came, or once it was
-        // waited for long enough; the first telling waits for them all.
-        let mut late: Option<Instant> = None;
         if let Some(conversation) = &conversation {
-            let mut branches = Vec::new();
-            for colleague in colleagues.values() {
-                let due = colleague.since + FIRST;
-                match colleague.branch.borrow().clone() {
-                    Some(branch) => branches.push(branch),
-                    None if Instant::now() >= due => branches.push(colleague.unread(TREE_DEADLINE)),
-                    None => late = Some(late.map_or(due, |at| at.min(due))),
-                }
-            }
-            if late.is_none() || told.borrow().is_some() {
-                tell(node, told, Tree { conversation: conversation.clone(), colleagues: branches });
-            }
+            let branches = colleagues
+                .values()
+                .map(|colleague| colleague.branch.borrow().clone().unwrap_or_else(|| colleague.reading()))
+                .collect();
+            tell(node, told, Tree { conversation: conversation.clone(), colleagues: branches });
         }
         let asks = tokio::select! {
             changed = own.changed() => if changed.is_err() { return stopping() } else { false },
@@ -104,7 +88,6 @@ pub(super) async fn keep(node: &Arc<Node>, id: &ResidentId, acting: &Acting, tol
                 }
             },
             changed = residents.changed() => if changed.is_err() { return stopping() } else { false },
-            () = tokio::time::sleep_until(late.map_or_else(far, tokio::time::Instant::from_std)), if late.is_some() => false,
             () = tokio::time::sleep_until(again.map_or_else(far, tokio::time::Instant::from_std)), if again.is_some() => true,
         };
         tokio::time::sleep(SETTLE).await;
@@ -150,13 +133,12 @@ fn far() -> tokio::time::Instant {
 struct Colleague {
     address: Address,
     label: String,
-    since: Instant,
     branch: watch::Receiver<Option<Branch>>,
     _following: Task,
 }
 
 impl Colleague {
-    async fn follow(
+    fn follow(
         node: &Arc<Node>,
         owner: &Address,
         address: Address,
@@ -164,12 +146,12 @@ impl Colleague {
         acting: &Acting,
         changed: &Arc<Notify>,
     ) -> Self {
-        let place = place(node, owner, &address, acting).await;
+        let (owner, acting) = (owner.clone(), acting.clone());
         let (sender, branch) = watch::channel(None);
         let (node, changed) = (node.clone(), changed.clone());
         let (following, unread) = (address.clone(), label.clone());
         let task = fastctx_platform::task::spawn(async move {
-            match place {
+            match place(&node, &owner, &following, &acting).await {
                 Ok((machine, acting)) => follow(node, following, unread, machine, acting, sender, changed).await,
                 Err(failure) => {
                     sender.send_replace(Some(unread_branch(following, unread, failure.message)));
@@ -177,11 +159,15 @@ impl Colleague {
                 }
             }
         });
-        Self { address, label, since: Instant::now(), branch, _following: Task(task) }
+        Self { address, label, branch, _following: Task(task) }
     }
 
-    fn unread(&self, why: &str) -> Branch {
-        unread_branch(self.address.clone(), self.label.clone(), why.to_string())
+    fn reading(&self) -> Branch {
+        let mut branch = unread_branch(self.address.clone(), self.label.clone(), String::new());
+        branch.goal = Ok(None);
+        branch.unavailable.clear();
+        branch.reading = true;
+        branch
     }
 }
 
@@ -224,13 +210,26 @@ async fn follow(
         loop {
             match super::next(&mut following).await {
                 Some(Ok((_, tree))) => {
-                    sender.send_replace(Some(tree.conversation));
+                    let mut branch = tree.conversation;
+                    if let Some(previous) = sender.borrow().as_ref() {
+                        crate::colleagues::partial::retain_agents(&mut branch, previous);
+                    }
+                    sender.send_replace(Some(branch));
                     changed.notify_one();
                     wait = Duration::from_secs(1);
                 }
                 Some(Err(failure)) => {
-                    sender.send_replace(Some(unread_branch(address.clone(), label.clone(), failure.message)));
+                    let terminal = failure.is_refused() || failure.is_deleted();
+                    let previous = sender.borrow().clone().filter(|_| !terminal);
+                    let mut branch = unread_branch(address.clone(), label.clone(), failure.message);
+                    if let Some(previous) = previous {
+                        branch = Branch { reading: true, unavailable: branch.unavailable, ..previous };
+                    }
+                    sender.send_replace(Some(branch));
                     changed.notify_one();
+                    if terminal {
+                        return;
+                    }
                     break;
                 }
                 None => return,
@@ -252,6 +251,7 @@ fn unread_branch(address: Address, label: String, why: String) -> Branch {
         goal: Err(why.clone()),
         plan: None,
         agents: Vec::new(),
+        reading: false,
         unavailable: vec![why],
     }
 }

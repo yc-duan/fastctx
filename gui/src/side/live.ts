@@ -22,7 +22,7 @@ import type { CollabNode, GoalShown, NodeState, PastGoal, WhereShown } from "./t
 import { whereOf } from "./where-live";
 import type { SideWords } from "./words";
 import { sentinelList, type SentinelSummary } from "../world/sentinels";
-import { PREVIEW } from "../app/preview";
+import { accountFeatures, featureAccount } from "../app/account-features";
 
 /** The colleagues the conversation asked, as the World reports them, each
  *  with its goal and the agents it sent. The conversation's own agents come
@@ -59,6 +59,7 @@ function branchNode(branch: Branch, agent: "claude" | "codex", store: Store, now
     task: branch.label ?? branch.now?.title ?? "",
     state,
     why: why || null,
+    reading: Boolean(branch.reading),
     goal: treeGoal(branch.goal),
     branchOf: "Ok" in branch.goal ? (branch.goal.Ok?.parent ?? null) : null,
     took: Number.isFinite(born) ? Math.max(0, (busy ? now : Number.isFinite(since) ? since : now) - born) : 0,
@@ -84,6 +85,8 @@ function agentNode(agent: NativeAgent, parent: "claude" | "codex", now: number):
     name: agent.name ?? agent.id,
     task: agent.task ?? "",
     state,
+    reading: Boolean(agent.reading),
+    why: agent.unavailable ?? null,
     goal: null,
     took: agent.duration_ms ?? (Number.isFinite(started) ? Math.max(0, now - started) : 0),
     began: Number.isFinite(started) ? started : null,
@@ -230,12 +233,8 @@ async function changeGoal(owner: string, seen: number | null, change: GoalChange
 
 /** The account a conversation works for, where it is one, by its hub's name. */
 function accountOf(store: Store, address: Address): PlanAccount | null {
-  const world = store.world.peek();
-  const acting = residentsOf(world).find((r) => r.about.id === address.resident)?.about.acting;
-  if (acting?.kind !== "accounts" || acting.accounts.length !== 1) return null;
-  const [one] = acting.accounts;
-  const hub = world?.accounts?.hubs.find((seen) => seen.hub === one!.hub)?.name;
-  return hub ? { hub, account: one!.account } : null;
+  const account = featureAccount(store.whole.peek(), address);
+  return account ? { hub: account.hubName, account: account.account } : null;
 }
 
 /** The plan page's shape, read from the World's stored plan. */
@@ -276,10 +275,8 @@ export function liveSide(options: LiveSide): SideSeams {
         let alive = true;
         let watching: number | null = null;
         let shown: PlanShown | null = null;
-        // Sentinels are not offered in a release yet. Where they are, one the
-        // plan names says how it stands as its home last answered, asked one
-        // question at a time, and only while the plan names one.
-        const naming = () => PREVIEW && /s-[0-9a-z]{6,16}/.test(shown?.source ?? "");
+        const naming = () => accountFeatures.talk(options.store.whole.peek(), options.address).sentinels
+          && /\bs-[0-9a-z]{6,16}\b/.test(shown?.source ?? "");
         const refresh = () => {
           planRead(owner, at(), bareName(options.address.machine))
             .then((page) => {
@@ -293,7 +290,7 @@ export function liveSide(options: LiveSide): SideSeams {
         const ask = () => {
           if (reading) return;
           reading = true;
-          void sentinelList(options.address)
+          void sentinelList(options.address, at() ?? undefined)
             .then(
               (listed) => {
                 const changed = JSON.stringify(listed.map((one) => [one.definition.id, one.phase])) !== JSON.stringify(sentinels.map((one) => [one.definition.id, one.phase]));
@@ -306,7 +303,7 @@ export function liveSide(options: LiveSide): SideSeams {
               reading = false;
             });
         };
-        const asking = PREVIEW ? window.setInterval(() => naming() && void ask(), 30_000) : 0;
+        const asking = window.setInterval(() => naming() && void ask(), 30_000);
         refresh();
         watchPlan(
           owner,
@@ -380,7 +377,8 @@ export function liveSide(options: LiveSide): SideSeams {
         const colleagues = told
           ? broken === null ? told : told.map((node) => ({ ...node, state: "unknown" as const, why: broken }))
           : worldColleagues(options.store, options.address, now);
-        show([...colleagues, ...sideNodes(options.store, options.address, options.words, now)]);
+        const reading = detail && (tree === null || Boolean(tree.conversation.reading) || tree.colleagues.some((branch) => branch.reading));
+        show([...colleagues, ...sideNodes(options.store, options.address, options.words, now)], reading);
       };
       const follow = () => {
         const mine = ++following;
@@ -430,8 +428,10 @@ export function liveSide(options: LiveSide): SideSeams {
         detail: (shown) => {
           if (shown === detail) return;
           detail = shown;
-          if (shown) follow();
-          else {
+          if (shown) {
+            follow();
+            draw();
+          } else {
             letGo();
             draw();
           }

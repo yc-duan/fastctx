@@ -24,6 +24,8 @@ pub(super) async fn exercise(
             Some(WriteSettings {
                 expected: view.version,
                 settings: Settings {
+                    sentinels: true,
+                    goals: true,
                     home: Some(machine("alice-two")),
                     model: Some(ModelSettings {
                         protocol: ModelProtocol::OpenAi,

@@ -62,10 +62,10 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
         return Ok(());
     }
     let welcome = Welcome::Accepted {
-        goal_runtime: fastctx_platform::preview() && node.goals.available(),
+        goal_runtime: node.goals.available(),
         watch_many: true,
-        sentinels: fastctx_platform::preview(),
-        goal_commands: fastctx_platform::preview(),
+        sentinels: true,
+        goal_commands: true,
         profiles: true,
         account_records: true,
         conversation_plans: true,
@@ -1990,6 +1990,7 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                     collab: None,
                     scratch: Default::default(),
                     speaks: false,
+                    sentinels: false,
                     asker: None,
                 });
             }
@@ -2324,6 +2325,7 @@ async fn machines(
                     collab: None,
                     scratch: Default::default(),
                     speaks: false,
+                    sentinels: false,
                     asker: None,
                 });
             }
@@ -2355,7 +2357,11 @@ async fn machines(
     };
     let speaks = resident.is_some_and(|id| crate::voice::speaks(node, id));
     let asker = resident.filter(|_| speaks).and_then(|id| crate::voice::asker_of(node, id)).map(|(asker, _)| asker);
-    Ok(Reply::Machines { here, others, groups, collab, scratch, speaks, asker })
+    let sentinels = match resident {
+        Some(id) => crate::account_features::conversation(node, id).await.sentinels,
+        None => false,
+    };
+    Ok(Reply::Machines { here, others, groups, collab, scratch, speaks, asker, sentinels })
 }
 
 /// `fastctx nodes`: this computer, and hub by hub the machines whoever asks

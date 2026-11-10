@@ -74,6 +74,7 @@ async fn cancelling_a_call_during_its_probe_keeps_the_original_arrival() {
                 others: vec![],
                 collab: None,
                 speaks: false,
+                sentinels: false,
                 asker: None,
             }),
         };
@@ -95,6 +96,7 @@ async fn cancelling_a_call_during_its_probe_keeps_the_original_arrival() {
                 groups: vec![],
                 collab: None,
                 speaks: false,
+                sentinels: false,
                 asker: None,
             },
         )

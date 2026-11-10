@@ -907,16 +907,22 @@ export class ConversationPage {
   /** Where the reader was, kept while the page is out of view: following
    *  the newest, or a block and how far down it they were. */
   private place: { key: string; offset: number } | null = null;
+  private suspended = false;
 
   /** The page goes out of view and stays alive, its conversation still
    *  followed. */
   suspend(): void {
+    this.suspended = true;
     if (this.element.isConnected) this.place = this.following ? null : this.view.anchor();
   }
 
   /** The page is shown again, as it was left and as the conversation now
    *  stands. */
   resume(): void {
+    if (this.suspended) {
+      this.suspended = false;
+      void this.askOffers();
+    }
     // The desk wakes its pages before the shell mounts it. Restore only
     // once the scroll region has its on-screen dimensions.
     cancelAnimationFrame(this.frame);
@@ -1830,6 +1836,7 @@ export class ConversationPage {
    *  while one is out, it asks once more after that one, for every wish
    *  made meanwhile, so whoever waits gets an answer begun after it asked. */
   private askOffers(): Promise<void> {
+    if (this.suspended || this.left) return Promise.resolve();
     if (!this.offersAsking) {
       const asking = this.askOffersNow().finally(() => {
         this.offersAsking = null;

@@ -5,7 +5,6 @@
 use super::{SETTLE, Sender, stopping, tell};
 use crate::Node;
 use crate::colleagues::native;
-use crate::watch::Events;
 use fastctx_net::watch_queue::TryRecvError;
 use fastctx_types::{
     Address, ResidentId,
@@ -14,7 +13,6 @@ use fastctx_types::{
     collaboration::{Branch, Tree},
     ipc::Failure,
     residents::Origin,
-    session::SessionEvent,
 };
 use std::{sync::Arc, time::Duration};
 use tokio::time::Instant;
@@ -23,8 +21,7 @@ use tokio::time::Instant;
 /// query of its collaboration allows.
 const READING: Duration = Duration::from_secs(120);
 
-/// How long after a read that could not follow the conversation's events it
-/// is read again.
+/// How long after an incomplete read it is continued.
 const AGAIN: Duration = Duration::from_secs(30);
 
 pub(super) async fn keep(node: &Arc<Node>, id: &ResidentId, acting: &Acting, told: &Sender) -> Failure {
@@ -33,20 +30,13 @@ pub(super) async fn keep(node: &Arc<Node>, id: &ResidentId, acting: &Acting, tol
     let Some((about, _)) = node.residents.about(id) else {
         return crate::forget::gone(node, id);
     };
-    if let Err(failure) = crate::colleagues::tree::visible(node, acting, id) {
-        return failure;
-    }
     let label = match &about.origin {
         Origin::Colleague { label, .. } => Some(label.clone()),
         Origin::User => None,
     };
-    let reading = std::time::Instant::now();
-    let mut native = Native::open(node, id).await;
-    if reading.elapsed() > std::time::Duration::from_secs(2) {
-        node.log
-            .line(format_args!("reading {id}'s agents for its collaboration took {}", crate::talk::lasted(reading)));
-    }
-    let mut goal = goal(node, id, label.is_some()).await;
+    let mut native = Native { read: native::Read::default(), again: Instant::now() };
+    let mut goal = Ok(None);
+    let mut next = Next::Read;
     loop {
         if node.residents.about(id).is_none() {
             return crate::forget::gone(node, id);
@@ -54,18 +44,44 @@ pub(super) async fn keep(node: &Arc<Node>, id: &ResidentId, acting: &Acting, tol
         if let Err(failure) = crate::colleagues::tree::visible(node, acting, id) {
             return failure;
         }
-        let conversation = Branch {
+        // Read the goal before opening a history, and whenever a live event
+        // says it changed. Child histories never delay the first goal.
+        let goals = match next {
+            Next::Folded { goal } => goal,
+            Next::Read => native.read.events.is_none(),
+        };
+        if goals {
+            goal = self::goal(node, id, label.is_some()).await;
+            if let Err(failure) = crate::colleagues::tree::visible(node, acting, id) {
+                return failure;
+            }
+        }
+        let mut conversation = Branch {
             address: Address { machine: node.machine(), resident: id.clone() },
             label: label.clone(),
             born_at: Some(about.born_at),
             now: node.residents.now(id),
             goal: goal.clone(),
             plan: Some(crate::colleagues::plan::access(&about)),
-            agents: native.fold.agents(),
-            unavailable: native.unavailable.clone(),
+            agents: native.read.fold.agents(),
+            reading: native.read.reading(),
+            unavailable: native.read.unavailable.clone(),
         };
-        tell(node, told, Tree { conversation, colleagues: Vec::new() });
-        let mut next = tokio::select! {
+        tell(node, told, Tree { conversation: conversation.clone(), colleagues: Vec::new() });
+        if matches!(next, Next::Read) {
+            native = Native::open(node, id, std::mem::take(&mut native.read), |fold, unavailable, reading| {
+                if crate::colleagues::tree::visible(node, acting, id).is_ok() {
+                    conversation.agents = fold.agents();
+                    conversation.unavailable = unavailable.to_vec();
+                    conversation.reading = reading;
+                    tell(node, told, Tree { conversation: conversation.clone(), colleagues: Vec::new() });
+                }
+            })
+            .await;
+            next = Next::Folded { goal: std::mem::take(&mut native.read.goal_changed) };
+            continue;
+        }
+        next = tokio::select! {
             changed = views.changed() => if changed.is_err() { return stopping() } else { Next::Folded { goal: false } },
             changed = residents.changed() => if changed.is_err() { return stopping() } else { Next::Folded { goal: false } },
             next = native.next() => next,
@@ -74,21 +90,11 @@ pub(super) async fn keep(node: &Arc<Node>, id: &ResidentId, acting: &Acting, tol
             tokio::time::sleep(SETTLE).await;
             next = match native.drain() {
                 Next::Folded { goal: drained } => Next::Folded { goal: goal || drained },
-                Next::Lost => Next::Lost,
+                Next::Read => Next::Read,
             };
         }
         views.borrow_and_update();
         residents.borrow_and_update();
-        let goals = match next {
-            Next::Folded { goal } => goal,
-            Next::Lost => {
-                native = Native::open(node, id).await;
-                true
-            }
-        };
-        if goals {
-            goal = self::goal(node, id, label.is_some()).await;
-        }
     }
 }
 
@@ -103,65 +109,82 @@ async fn goal(node: &Arc<Node>, id: &ResidentId, colleague: bool) -> Result<Opti
     }
 }
 
-/// A conversation's native agents as read once and then folded from its
-/// events, which it follows while it can.
+/// A conversation's native agents and live stream, retained between batches.
 struct Native {
-    fold: native::Fold,
-    unavailable: Vec<String>,
-    events: Option<Events>,
-    /// When a read that could not follow the events is read again.
+    read: native::Read,
     again: Instant,
 }
 
 enum Next {
     /// Events came and were folded in; whether one told of the goal.
     Folded { goal: bool },
-    /// The events can no longer be followed: the conversation is read again.
-    Lost,
+    /// Continue unread child histories, rebuilding the parent only if its
+    /// event stream was lost.
+    Read,
 }
 
 impl Native {
-    async fn open(node: &Arc<Node>, id: &ResidentId) -> Self {
-        let read = native::open(node, id, Instant::now() + READING).await;
-        Self { fold: read.fold, unavailable: read.unavailable, events: read.events, again: Instant::now() + AGAIN }
+    async fn open(
+        node: &Arc<Node>,
+        id: &ResidentId,
+        read: native::Read,
+        progress: impl FnMut(&native::Fold, &[String], bool),
+    ) -> Self {
+        let began = std::time::Instant::now();
+        let read = native::open(node, id, Instant::now() + READING, read, progress).await;
+        if began.elapsed() > Duration::from_secs(2) {
+            node.log
+                .line(format_args!("reading {id}'s agents for its collaboration took {}", crate::talk::lasted(began)));
+        }
+        Self { read, again: Instant::now() + AGAIN }
     }
 
     /// Waits for the next event and folds it in.
     async fn next(&mut self) -> Next {
-        let Some(events) = &mut self.events else {
-            tokio::time::sleep_until(self.again).await;
-            return Next::Lost;
+        let history = self.read.history_again();
+        let again = if self.read.agents_reading() {
+            Some(history.map_or(self.again, |at| at.min(self.again)))
+        } else {
+            history
         };
-        match events.recv().await {
-            Ok(Some(event)) => Next::Folded { goal: fold_in(&mut self.fold, &event) },
+        let wait = async {
+            match again {
+                Some(at) => tokio::time::sleep_until(at).await,
+                None => std::future::pending().await,
+            }
+        };
+        let Some(events) = &mut self.read.events else {
+            wait.await;
+            return Next::Read;
+        };
+        let event = tokio::select! {
+            event = events.recv() => event,
+            () = wait => return Next::Read,
+        };
+        match event {
+            Ok(Some(event)) => {
+                self.read.event(&event);
+                Next::Folded { goal: std::mem::take(&mut self.read.goal_changed) }
+            }
             Ok(None) | Err(_) => {
-                self.events = None;
-                Next::Lost
+                self.read.lost();
+                Next::Read
             }
         }
     }
 
     /// Folds in the events that came meanwhile.
     fn drain(&mut self) -> Next {
-        let Some(events) = &mut self.events else {
-            return Next::Folded { goal: false };
-        };
-        let mut goal = false;
-        loop {
+        while let Some(events) = &mut self.read.events {
             match events.try_recv() {
-                Ok(event) => goal |= fold_in(&mut self.fold, &event),
-                Err(TryRecvError::Empty) => return Next::Folded { goal },
+                Ok(event) => self.read.event(&event),
+                Err(TryRecvError::Empty) => break,
                 Err(TryRecvError::Lagged | TryRecvError::Disconnected) => {
-                    self.events = None;
-                    return Next::Lost;
+                    self.read.lost();
+                    return Next::Read;
                 }
             }
         }
+        Next::Folded { goal: std::mem::take(&mut self.read.goal_changed) }
     }
-}
-
-/// Folds one event into the agents; whether it told of the goal.
-fn fold_in(fold: &mut native::Fold, event: &SessionEvent) -> bool {
-    fold.event(&event.happened, event.at, None, true);
-    crate::goals::watch::is_goal(event)
 }

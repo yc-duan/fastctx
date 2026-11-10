@@ -19,9 +19,6 @@ use crate::troubles::Detail;
 const STUCK: Duration = Duration::from_secs(60);
 /// Earlier records failing to move this long are told of.
 const MIGRATION: Duration = Duration::from_secs(10 * 60);
-/// Rules broken in each of this many windows of `WINDOW` running are told of.
-const BROKEN_WINDOWS: u32 = 3;
-const WINDOW: Duration = Duration::from_secs(5 * 60);
 
 /// What one session's heartbeats told of its machine's health.
 #[derive(Default)]
@@ -39,9 +36,6 @@ pub(crate) struct Heard {
     migration_heard: bool,
     /// Since when some of its earlier records fail to move, and whether that was told.
     migration: Option<(Instant, bool)>,
-    /// Since when this window runs, the rules broken by its start, and in how
-    /// many windows running more were broken; from the first health told.
-    window: Option<(Instant, u64, u32)>,
 }
 
 impl Heard {
@@ -132,15 +126,8 @@ impl Heard {
             }
             None => self.migration = None,
         }
-        let (began, broken, running) = self.window.get_or_insert((now, health.violations, 0));
-        if now.duration_since(*began) >= WINDOW {
-            *running = if health.violations > *broken { *running + 1 } else { 0 };
-            *began = now;
-            *broken = health.violations;
-            if *running >= BROKEN_WINDOWS {
-                *running = 0;
-                hub.troubles.raise(hub, machine, TroubleKind::Violations, Detail::default());
-            }
-        }
+        // The rules a machine broke are a developer's reading, kept in its
+        // own diagnostics (`fastctx doctor readings`), never told as trouble
+        // (`specs/world-foundation.md`, 规矩由机器守).
     }
 }

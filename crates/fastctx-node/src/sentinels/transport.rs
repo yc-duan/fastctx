@@ -122,5 +122,24 @@ pub(crate) async fn home_call_for(
         return super::shared_home::call(node, scope, from, actor, owner, request).await;
     }
     let host = super::worker::engine(node)?;
+    let id = match request {
+        HomeRequest::Begin { id, .. } => Some(id),
+        HomeRequest::Judge { request } => Some(&request.id),
+        _ => None,
+    };
+    if let Some(id) = id {
+        let registration = fastctx_sentinel::lifecycle::get(host.records.as_ref(), scope, id)
+            .await
+            .map_err(|error| error.to_string())?;
+        let goal = registration.as_ref().is_some_and(|(_, r)| r.definition.kind == fastctx_types::sentinel::Kind::Goal);
+        if !crate::account_features::sentinel(node, scope, goal).await.map_err(|error| error.message)? {
+            return Err(if goal {
+                fastctx_types::goals::words::DISABLED
+            } else {
+                fastctx_types::sentinel_words::DISABLED
+            }
+            .into());
+        }
+    }
     host.call(scope, request).await
 }

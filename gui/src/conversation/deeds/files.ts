@@ -54,6 +54,7 @@ export function viewedFiles(lines: OutputLines, machine: string | null): Found<F
 
 /** A heading's machine and path: `lab:/srv/x.rs`, `E:/x.rs`, `/srv/x.rs`. */
 function placeOf(said: string): { at: string | null; path: string } {
+  if (/^[A-Za-z]:[\\/]/.test(said)) return { at: null, path: said };
   const match = /^([^:/\\]+):((?:[A-Za-z]:)?[\\/].*)$/.exec(said);
   return match ? { at: match[1]!, path: match[2]! } : { at: null, path: said };
 }

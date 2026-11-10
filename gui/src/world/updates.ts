@@ -63,7 +63,7 @@ export interface Policy {
   intake?: number | null;
   /** A version going out a batch at a time (`specs/world-engine.md`, 发布与推广). */
   rollout?: Rollout;
-  /** Versions no machine takes by itself any more. */
+  /** Versions no machine acquires or installs, even on an explicit request. */
   withdrawn?: string[];
 }
 
@@ -86,6 +86,8 @@ export interface UpdateNetwork {
   stable?: Manifest;
   beta?: Manifest;
   policy: Policy;
+  /** Whether this machine is in the rollout's current batch. */
+  rolled?: { version: string; takes: boolean };
   machines?: Record<string, Running>;
   /** The version the hub runs; none from a hub before 1.0.1 beta 3. */
   hub?: string;
@@ -146,6 +148,8 @@ export interface UpdateState {
   channel: Channel;
   /** Whether it takes new releases by itself now. */
   auto?: boolean;
+  /** Enabled preference before a rollout temporarily holds automatic updating. */
+  auto_enabled?: boolean;
   /** The release its owner chose to update to, when not the newest. */
   chosen?: Manifest;
   /** The oldest major version among its hubs; an unknown hub uses the
@@ -155,7 +159,8 @@ export interface UpdateState {
   network?: UpdateNetwork;
   offer?: Manifest;
   available?: Manifest;
-  automatic?: string;
+  /** Null means the node explicitly allows no automatic candidate. */
+  automatic?: string | null;
   above_hub?: boolean;
   fetching?: Fetching;
   failed?: { version: string; target: string; why: string; reason?: FailureReason };
@@ -349,7 +354,7 @@ export function newestKnown(state: UpdateState | null | undefined, running: stri
   const known = [state.offer, state.looked.stable, state.looked.beta, state.network?.stable, state.network?.beta, ...(state.looked.newer ?? [])];
   let best: string | null = null;
   for (const manifest of known) {
-    if (!manifest || (!test && isTest(manifest.version))) continue;
+    if (!manifest || (!test && isTest(manifest.version)) || state.network?.policy.withdrawn?.includes(manifest.version)) continue;
     if (compareVersions(manifest.version, running) > 0 && (!best || compareVersions(manifest.version, best) > 0)) best = manifest.version;
   }
   return best;

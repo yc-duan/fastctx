@@ -25,6 +25,13 @@ impl Original {
         &self.source
     }
 
+    pub(crate) fn verify_archived(&self) -> io::Result<()> {
+        if archive::fingerprint(&self.target)? != self.signature {
+            return Err(io::Error::other("the archived import source changed after verification"));
+        }
+        Ok(())
+    }
+
     pub(crate) fn readable(&self) -> &Path {
         if disk::is_there(&self.source) { &self.source } else { &self.target }
     }

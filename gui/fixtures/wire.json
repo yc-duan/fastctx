@@ -909,6 +909,49 @@
         "preferences": true,
         "repair_supported": false,
         "repair_routing": false
+      },
+      {
+        "running": "1.0.1-beta.17",
+        "settings": {
+          "auto": true,
+          "chosen": true,
+          "relays": true
+        },
+        "channel": "stable",
+        "auto": false,
+        "auto_enabled": true,
+        "looked": {
+          "checking": false,
+          "failures": 0
+        },
+        "network": {
+          "policy": {
+            "channel": "stable",
+            "managed_auto": true
+          },
+          "updates_view": false,
+          "repair_supported": false,
+          "rolled": {
+            "version": "1.0.2",
+            "takes": false
+          }
+        },
+        "available": {
+          "version": "1.0.2",
+          "notes": "An update.",
+          "pub_date": "2026-10-20T12:00:00Z",
+          "platforms": {}
+        },
+        "automatic": null,
+        "above_hub": false,
+        "kernel_target": "",
+        "stage": {
+          "kind": "idle"
+        },
+        "progress": false,
+        "preferences": false,
+        "repair_supported": false,
+        "repair_routing": false
       }
     ],
     "checks": [
@@ -23748,6 +23791,74 @@
     ],
     "host_text": "=== from fastctx (user attachments, v3) ===\nThe user attached these files; sizes are in bytes. A script finds each at $FASTCTX_SCRATCH/<path> on whichever machine it runs; `fastctx view` on an image shows it to you.\n{\"delivery\":\"talk-ab12\",\"from\":\"phone\",\"files\":[{\"id\":\"attachment-ab12\",\"name\":\"截图.png\",\"media_type\":\"image/png\",\"size\":3145728,\"path\":\"attachments/attachment-ab12/截图.png\"}]}\n=== user's words (verbatim) ===\n看这张图。\nKeep my words verbatim."
   },
+  "collaboration": [
+    {
+      "conversation": {
+        "address": {
+          "machine": "desktop",
+          "resident": "codex-ab12"
+        },
+        "label": null,
+        "born_at": null,
+        "now": null,
+        "goal": {
+          "Ok": null
+        },
+        "plan": null,
+        "agents": [
+          {
+            "id": "agent-1",
+            "name": null,
+            "task": null,
+            "model": null,
+            "state": null,
+            "started_at": null,
+            "ended_at": null,
+            "duration_ms": null,
+            "children": [],
+            "reading": false,
+            "unavailable": null
+          }
+        ],
+        "reading": false,
+        "unavailable": []
+      },
+      "colleagues": []
+    },
+    {
+      "conversation": {
+        "address": {
+          "machine": "desktop",
+          "resident": "codex-ab12"
+        },
+        "label": null,
+        "born_at": null,
+        "now": null,
+        "goal": {
+          "Ok": null
+        },
+        "plan": null,
+        "agents": [
+          {
+            "id": "agent-1",
+            "name": null,
+            "task": null,
+            "model": null,
+            "state": null,
+            "started_at": null,
+            "ended_at": null,
+            "duration_ms": null,
+            "children": [],
+            "reading": true,
+            "unavailable": null
+          }
+        ],
+        "reading": true,
+        "unavailable": []
+      },
+      "colleagues": []
+    }
+  ],
   "composer": {
     "snapshots": [
       {
