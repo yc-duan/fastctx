@@ -120,8 +120,21 @@ pub async fn control(node: &Arc<Node>, resident: &ResidentId, control: Control) 
             serde_json::from_value(result).map_err(|error| Failure::new(format!("Claude control reply: {error}")))
         }
         control => {
+            let selecting = matches!(control, Control::Model { .. });
             let result =
                 invoke_action(node, resident, serde_json::to_value(control).expect("control serializes")).await?;
+            // What the session goes on with is what the conversation starts
+            // again with, continued as a copy or once this session is gone.
+            if selecting
+                && result["kind"] == "selected"
+                && let Some(model) = result["model"].as_str()
+            {
+                let effort = result["effort"].as_str().map(str::to_owned);
+                if let Err(failure) = crate::session_options::set_model(node, resident, model.to_owned(), effort).await
+                {
+                    node.log.line(format_args!("keeping the model {resident} starts again with: {}", failure.message));
+                }
+            }
             serde_json::from_value(result).map_err(|error| Failure::new(format!("Claude control reply: {error}")))
         }
     }
