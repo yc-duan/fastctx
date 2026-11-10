@@ -211,7 +211,7 @@ async fn plan(source: &dyn SourceIngest, request: MergeRequest<'_>) -> Result<Pr
         }
     }
     let ready_work = engine.has("work/").await?;
-    let waiting_dependencies = engine.has("pending/").await?;
+    let waiting_dependencies = engine.has("pending/").await? || engine.has("unresolved-placement/").await?;
     let facts =
         emit::encode_batch(&engine.content, &engine.target, request.after, &engine.inputs, &engine.changes, true)?;
     let (effects, _) = effects(&engine, &request.other_effects)?;

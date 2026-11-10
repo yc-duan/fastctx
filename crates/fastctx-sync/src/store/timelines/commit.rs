@@ -127,7 +127,7 @@ fn index(db: &Connection, conversation: &ObjectKey, change: &IndexChange) -> Res
                     item.position.accepted.0.to_be_bytes().as_slice(),
                     position,
                     serde_json::to_vec(item.as_ref()).map_err(|error| sql::invalid(error.to_string()))?,
-                    item.turn.as_str(),
+                    item.turn.as_ref().map(|id| id.as_str()),
                     item.parent.as_ref().map(|parent| parent.as_str())
                 ])?;
             Ok(changed == 1)

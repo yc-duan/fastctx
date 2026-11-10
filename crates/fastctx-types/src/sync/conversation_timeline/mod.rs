@@ -18,8 +18,10 @@ mod display;
 mod display_validation;
 pub use display::*;
 mod fact;
+mod order;
 pub use body::*;
 pub use fact::*;
+pub use order::*;
 
 pub const KIND: &str = "conversation.timeline";
 pub const SCHEMA: u16 = 1;

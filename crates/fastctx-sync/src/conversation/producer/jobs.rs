@@ -8,6 +8,7 @@ pub(super) enum JobKind {
     Wake { dependency: String },
     AppendWaiters { item: ObjectId },
     Children { parent: ObjectId },
+    Anchors { anchor: ObjectId },
     Rebind { from: ObjectId, to: ObjectId },
     Aliases { target: ObjectId },
     Members { branch: ObjectId },
@@ -17,7 +18,7 @@ impl JobKind {
         match self {
             Self::Wake { .. } | Self::AppendWaiters { .. } => 0,
             Self::Rebind { .. } => 1,
-            Self::Children { .. } => 2,
+            Self::Children { .. } | Self::Anchors { .. } => 2,
             Self::Aliases { .. } => 3,
             Self::Members { .. } => 4,
         }
@@ -52,6 +53,7 @@ impl Engine<'_> {
             JobKind::Wake { dependency } => format!("pending/{dependency}/"),
             JobKind::AppendWaiters { item } => format!("pending/append/{}/", item.as_str()),
             JobKind::Children { parent } => format!("reverse/parent/{}/", parent.as_str()),
+            JobKind::Anchors { anchor } => format!("reverse/anchor/{}/", anchor.as_str()),
             JobKind::Aliases { target } => format!("reverse/alias/{}/", target.as_str()),
             JobKind::Members { branch } => format!("branch/member/{}/", branch.as_str()),
             JobKind::Rebind { from, .. } => match job.phase {
@@ -64,6 +66,8 @@ impl Engine<'_> {
                 6 => format!("pending/placement/{}/", from.as_str()),
                 7 => format!("pending/parent/{}/", from.as_str()),
                 8 => format!("pending/append/{}/", from.as_str()),
+                9 => format!("reverse/anchor/{}/", from.as_str()),
+                10 => format!("pending/anchor/{}/", from.as_str()),
                 _ => {
                     self.delete(&key).await?;
                     return Ok(true);
@@ -78,7 +82,7 @@ impl Engine<'_> {
                     let input = self.waiting_input(event).await?;
                     Box::pin(self.apply(&input, &job.trigger)).await?;
                 }
-                JobKind::Children { .. } => {
+                JobKind::Children { .. } | JobKind::Anchors { .. } => {
                     self.refresh(&decode::<ObjectId>(relation)?, &job.trigger).await?;
                 }
                 JobKind::Aliases { .. } => {
@@ -111,7 +115,7 @@ impl Engine<'_> {
                 JobKind::Rebind { from, to } => {
                     let old_key = self.rows.suffix(&relation.key)?.to_owned();
                     match job.phase {
-                        0 => {
+                        0 | 9 => {
                             let child: ObjectId = decode(relation)?;
                             self.refresh(&child, &job.trigger).await?;
                             self.delete(&old_key).await?;
@@ -156,7 +160,7 @@ impl Engine<'_> {
                 job.after = Some(row.key);
                 self.put(&key, &job).await?;
             }
-            None if matches!(job.kind, JobKind::Rebind { .. }) && job.phase < 8 => {
+            None if matches!(job.kind, JobKind::Rebind { .. }) && job.phase < 10 => {
                 job.phase += 1;
                 job.after = None;
                 self.put(&key, &job).await?;

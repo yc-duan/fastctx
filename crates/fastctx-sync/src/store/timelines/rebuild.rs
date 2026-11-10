@@ -31,7 +31,7 @@ struct Row {
     accepted: Sequence,
     position: Vec<u8>,
     body: Vec<u8>,
-    turn: ObjectId,
+    turn: Option<ObjectId>,
     parent: Option<ObjectId>,
 }
 enum Prepared {

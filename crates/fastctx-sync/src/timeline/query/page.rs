@@ -36,6 +36,7 @@ impl<'a> Builder<'a> {
         if self.items.len() >= self.plan.limit.items as usize {
             return Ok(false);
         }
+        item.validate_channel().map_err(Error::Invalid)?;
         item.display.validate().map_err(Error::Invalid)?;
         item.display.validate_scopes(&self.plan.fence.conversation.scope).map_err(Error::Invalid)?;
         item.body.validate().map_err(Error::Invalid)?;

@@ -28,7 +28,7 @@ impl Engine<'_> {
                 causes.push(alias.event.evidence.record);
             }
         }
-        let pending = match &fact {
+        let mut pending = match &fact {
             TimelineFact::Observed { observation } => {
                 Box::pin(self.reduce_observed(input, trigger, observation, causes)).await?
             }
@@ -57,6 +57,18 @@ impl Engine<'_> {
                 return Err(MergeError::InvalidInput("canonical revisions are outputs, not producer inputs".into()));
             }
         };
+        if pending.iter().any(|d| matches!(d, Dependency::Anchor(_))) {
+            let item = match &fact {
+                TimelineFact::Observed { observation } => Some(observation.identity.id()),
+                TimelineFact::Placement { item, .. } => Some(item.clone()),
+                _ => None,
+            };
+            if let Some(item) = item {
+                // A newer placement can supersede a missing old anchor forever.
+                // Revisit the retained input when its item is placed elsewhere.
+                pending.push(Dependency::Placement(item));
+            }
+        }
         self.set_waiting(input, pending).await
     }
     pub(super) async fn unique(
@@ -95,6 +107,7 @@ impl Engine<'_> {
         let mut effects = Effects::default();
         self.reduced(trigger, crate::conversation::placement::position(&mut state, neighbors.as_refs(), &mut effects))?;
         self.reduced(trigger, crate::conversation::placement::publish(&mut state, &mut effects))?;
+        self.placement_waiting(&state.id(), &effects.pending).await?;
         let mut causes = state.causes();
         causes.extend(neighbors.causes());
         Box::pin(self.save_item(Some(&old), &state, trigger)).await?;

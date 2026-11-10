@@ -46,11 +46,13 @@ pub struct StreamPage {
 }
 
 /// Allocated by the conversation's canonical projector, not the receiving
-/// device. The display path includes this item's creation key, so parents are
-/// prefixes of their children and a subtree stays before its next sibling.
-/// It is not the host's full causal chain. Creation keys do not change on edit.
+/// device. The opaque display path encodes native sibling order and witnessed
+/// gaps, independently of creation identity. Parents are prefixes of children,
+/// so a subtree stays before its next sibling. A position may change on a
+/// stronger placement without changing the item ID or any native sibling.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct TimelinePosition {
+    /// Zero is the session channel; real turn declarations start at one.
     pub turn: Sequence,
     pub display_ancestry: Vec<Sequence>,
     pub accepted: Sequence,
@@ -60,12 +62,23 @@ pub struct TimelinePosition {
 pub struct TimelineItem {
     pub id: ObjectId,
     pub revision: Revision,
-    pub turn: ObjectId,
+    /// None denotes the session channel; its position.turn is zero.
+    pub turn: Option<ObjectId>,
     pub parent: Option<ObjectId>,
     pub position: TimelinePosition,
     pub body: ContentRef,
     /// Bounded public display metadata; expanding a part never reads host JSON.
     pub display: Box<super::conversation_timeline::ItemDisplayV1>,
+}
+impl TimelineItem {
+    /// The session channel has no fabricated turn or display parent.
+    pub fn validate_channel(&self) -> Result<(), String> {
+        if self.turn.is_none() != (self.position.turn.0 == 0) || self.turn.is_none() && self.parent.is_some() {
+            Err("timeline item channel differs from its turn or parent".into())
+        } else {
+            Ok(())
+        }
+    }
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TimelineFence {

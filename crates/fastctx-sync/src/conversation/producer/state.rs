@@ -34,16 +34,26 @@ pub(super) struct NeighborRows {
     turn: Option<TurnState>,
     parent: Option<ItemState>,
     resolved: Option<ItemState>,
-    aliases: Vec<crate::catalog::RecordRef>,
+    pub(super) anchor: Option<ItemState>,
+    pub(super) resolved_anchor: Option<ItemState>,
+    pub(super) aliases: Vec<crate::catalog::RecordRef>,
 }
 impl NeighborRows {
     pub fn as_refs(&self) -> Neighbors<'_> {
-        Neighbors { turn: self.turn.as_ref(), parent: self.parent.as_ref(), resolved_parent: self.resolved.as_ref() }
+        Neighbors {
+            turn: self.turn.as_ref(),
+            parent: self.parent.as_ref(),
+            resolved_parent: self.resolved.as_ref(),
+            anchor: self.anchor.as_ref(),
+            resolved_anchor: self.resolved_anchor.as_ref(),
+        }
     }
     pub fn causes(&self) -> Vec<crate::catalog::RecordRef> {
         let mut result = self.aliases.clone();
         result.extend(self.turn.iter().map(|r| r.evidence.record.clone()).collect::<Vec<_>>());
-        for parent in self.parent.iter().chain(self.resolved.iter()) {
+        for parent in
+            self.parent.iter().chain(self.resolved.iter()).chain(self.anchor.iter()).chain(self.resolved_anchor.iter())
+        {
             result.extend(parent.causes());
         }
         result
@@ -91,9 +101,19 @@ impl Engine<'_> {
         Ok(id.clone())
     }
     pub async fn neighbors(&mut self, placement: Option<&Versioned<Placement>>) -> Result<NeighborRows> {
-        let mut result = NeighborRows { turn: None, parent: None, resolved: None, aliases: Vec::new() };
+        let mut result = NeighborRows {
+            turn: None,
+            parent: None,
+            resolved: None,
+            anchor: None,
+            resolved_anchor: None,
+            aliases: Vec::new(),
+        };
         if let Some(placed) = placement {
-            result.turn = self.get(&format!("turn/{}", placed.value.turn.as_str())).await?;
+            if let Some(turn) = &placed.value.turn {
+                result.turn = self.get(&format!("turn/{}", turn.as_str())).await?;
+            }
+            self.anchor_neighbors(&placed.value, &mut result).await?;
             if let DisplaySlot::Child { parent } = &placed.value.slot {
                 result.parent = self.item(parent).await?;
                 if let Some(target) = result.parent.as_ref().and_then(|p| p.alias.as_ref()) {
@@ -110,6 +130,7 @@ impl Engine<'_> {
         Ok(result)
     }
     pub async fn save_item(&mut self, old: Option<&ItemState>, state: &ItemState, trigger: &Evidence) -> Result<()> {
+        self.save_anchor(old, state, trigger).await?;
         let changed = old != Some(state);
         if changed {
             self.put(&keys::item(&state.id()), state).await?;
@@ -145,15 +166,15 @@ impl Engine<'_> {
         if let Some(parent) = new_parent {
             self.put(&format!("reverse/parent/{}/{}", parent.as_str(), state.id().as_str()), &state.id()).await?;
         }
-        if let Some(old_turn) = old.and_then(|s| s.placement.as_ref()).map(|p| p.value.turn.clone())
-            && (state.alias.is_some() || state.placement.as_ref().map(|p| &p.value.turn) != Some(&old_turn))
+        if let Some(old_turn) = old.and_then(|s| s.placement.as_ref()).and_then(|p| p.value.turn.clone())
+            && (state.alias.is_some()
+                || state.placement.as_ref().and_then(|p| p.value.turn.as_ref()) != Some(&old_turn))
         {
             self.delete(&format!("reverse/turn/{}/{}", old_turn.as_str(), state.id().as_str())).await?;
         }
         if state.alias.is_none() {
-            if let Some(placed) = &state.placement {
-                self.put(&format!("reverse/turn/{}/{}", placed.value.turn.as_str(), state.id().as_str()), &state.id())
-                    .await?;
+            if let Some(turn) = state.placement.as_ref().and_then(|p| p.value.turn.as_ref()) {
+                self.put(&format!("reverse/turn/{}/{}", turn.as_str(), state.id().as_str()), &state.id()).await?;
             }
             if let Some(run) = &state.run {
                 let call = self.effective(&run.value.call).await?;

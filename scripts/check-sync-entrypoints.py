@@ -102,6 +102,7 @@ CALLERS = {
         "crates/fastctx-sync/tests/sync_drill/source_confirmation.rs",
         "crates/fastctx-sync/tests/sync_drill/source_acceptance.rs",
         "crates/fastctx-sync/tests/sync_drill/canonical_producer.rs",
+        "crates/fastctx-sync/tests/sync_drill/canonical_producer/ordering.rs",
         "crates/fastctx-sync/tests/sync_drill/timeline_install.rs",
         "crates/fastctx-sync/tests/sync_drill/metadata.rs",
         "crates/fastctx-sync/tests/sync_drill/pending_basis.rs",

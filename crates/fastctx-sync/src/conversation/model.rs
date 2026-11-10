@@ -125,13 +125,16 @@ pub struct Neighbors<'a> {
     pub parent: Option<&'a ItemState>,
     /// Destination row when the requested parent has a retained alias.
     pub resolved_parent: Option<&'a ItemState>,
+    /// The original gap anchor and its canonical destination after an alias.
+    pub anchor: Option<&'a ItemState>,
+    pub resolved_anchor: Option<&'a ItemState>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PreparedPut {
     pub id: ObjectId,
     pub revision: Revision,
-    pub turn: ObjectId,
+    pub turn: Option<ObjectId>,
     pub parent: Option<ObjectId>,
     pub position: TimelinePosition,
     pub body: ProjectedBody,
@@ -167,6 +170,7 @@ pub enum Dependency {
     Placement(ObjectId),
     Turn(ObjectId),
     Parent(ObjectId),
+    Anchor(ObjectId),
     Append { item: ObjectId, previous: OperationId },
     Generation { source: SourceId, previous: HostGeneration },
 }

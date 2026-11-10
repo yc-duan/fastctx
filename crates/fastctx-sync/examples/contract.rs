@@ -10,6 +10,8 @@ mod hub_source;
 mod indexes;
 #[path = "contract/manifests.rs"]
 mod manifests;
+#[path = "contract/ordering.rs"]
+mod ordering;
 #[path = "contract/progress.rs"]
 mod progress;
 #[path = "contract/scopes.rs"]
@@ -107,7 +109,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             item: TimelineItem {
                 id: ObjectId::from_bytes([item; 32]),
                 revision: Revision(revision),
-                turn: ObjectId::from_bytes([20; 32]),
+                turn: Some(ObjectId::from_bytes([20; 32])),
                 parent: None,
                 position: TimelinePosition {
                     turn: Sequence(1),
@@ -128,6 +130,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             },
         });
     }
+    let ordering_sample = match &timeline[0] {
+        TimelineChange::Put { item } => ordering::sample(item)?,
+        _ => unreachable!(),
+    };
     let (accepted, accepted_binding) = acceptance::sample(scope.clone(), device.clone())?;
     let (index_messages, index_payloads) =
         indexes::sample(&holding, &cursor, &accepted, &accepted_binding, &signed, &batch, &timeline)?;
@@ -237,6 +243,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "decoded_index_payloads": index_payloads,
             "asset_transport": transfer::sample(&holding)?,
             "projection_progress": progress::sample(holding.scope.clone())?,
+            "timeline_ordering": ordering_sample,
         }))?
     );
     Ok(())

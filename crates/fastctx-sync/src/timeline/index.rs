@@ -12,6 +12,7 @@ pub enum IndexChange {
 pub fn index_changes(previous: Option<&TimelineItem>, change: &TimelineChange) -> Result<Option<IndexChange>, Error> {
     match change {
         TimelineChange::Put { item } => {
+            item.validate_channel().map_err(Error::Invalid)?;
             if let Some(old) = previous {
                 if old.id != item.id || old.revision > item.revision {
                     return Err(Error::Invalid("timeline index revision goes backwards or changes identity".into()));

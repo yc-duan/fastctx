@@ -203,6 +203,7 @@ pub(crate) fn timeline_references(scope: &ScopeKey, payload: &TimelinePayload) -
     let mut previous = None;
     for entry in &page.items {
         let item = &entry.item;
+        item.validate_channel().map_err(Error::Invalid)?;
         if item.position.item != item.id
             || item.revision.0 == 0
             || item.position.display_ancestry.is_empty()

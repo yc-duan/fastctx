@@ -61,7 +61,7 @@ pub(super) fn commit(
             }
             for row in rows {
                 db.prepare_cached("INSERT INTO sync_timeline_items(hub,scope,conversation,item,revision,accepted,position,body,turn,parent,active,index_generation) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,1,?11) ON CONFLICT(hub,scope,conversation,item,revision) DO UPDATE SET accepted=excluded.accepted,position=excluded.position,body=excluded.body,turn=excluded.turn,parent=excluded.parent,active=1,index_generation=excluded.index_generation")?
-                    .execute(params![object.scope.hub.to_string(),object.scope.scope.as_str(),object.object.as_str(),row.id.as_str(),row.revision.0.to_be_bytes().as_slice(),row.accepted.0.to_be_bytes().as_slice(),&row.position,&row.body,row.turn.as_str(),row.parent.as_ref().map(|id|id.as_str()),head.projection.0.to_be_bytes().as_slice()])?;
+                    .execute(params![object.scope.hub.to_string(),object.scope.scope.as_str(),object.object.as_str(),row.id.as_str(),row.revision.0.to_be_bytes().as_slice(),row.accepted.0.to_be_bytes().as_slice(),&row.position,&row.body,row.turn.as_ref().map(|id|id.as_str()),row.parent.as_ref().map(|id|id.as_str()),head.projection.0.to_be_bytes().as_slice()])?;
             }
             Progress {
                 projection: head.projection,

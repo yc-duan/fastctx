@@ -2,6 +2,7 @@
 //! Planning never commits. Publish the plan in its issued step, then commit its
 //! facts and effects together with the consumed input prefix's checkpoint.
 mod alias_facts;
+mod anchors;
 mod api;
 mod append;
 mod budget;

@@ -127,7 +127,7 @@ impl Depot {
         Ok(TimelineItem {
             id: object.clone(),
             revision: Revision(revision),
-            turn: ObjectId::from_bytes([91; 32]),
+            turn: Some(ObjectId::from_bytes([91; 32])),
             parent: None,
             position: TimelinePosition {
                 turn: Sequence(1),

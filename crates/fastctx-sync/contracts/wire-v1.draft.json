@@ -2446,6 +2446,75 @@
     }
   },
   "signature_status": "shape_only_not_validated",
+  "timeline_ordering": {
+    "gap": {
+      "order": {
+        "at": "2026-01-01T00:00:20Z",
+        "before": "o-0101010101010101010101010101010101010101010101010101010101010101",
+        "by": "gap",
+        "identity": "o-3030303030303030303030303030303030303030303030303030303030303030",
+        "sequence": "7"
+      },
+      "proof": {
+        "proof": "causal"
+      },
+      "slot": {
+        "slot": "sibling"
+      },
+      "turn": "o-1414141414141414141414141414141414141414141414141414141414141414"
+    },
+    "session": {
+      "order": {
+        "by": "native",
+        "sequence": "1"
+      },
+      "proof": {
+        "proof": "causal"
+      },
+      "slot": {
+        "slot": "session"
+      },
+      "turn": null
+    },
+    "session_item": {
+      "change": "put",
+      "item": {
+        "body": {
+          "block": {
+            "algorithm": "sha256",
+            "digest": "0101010101010101010101010101010101010101010101010101010101010101",
+            "domain": {
+              "hub": "w-0101010101010101",
+              "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+            }
+          },
+          "decoded_bytes": 1,
+          "kind": "single"
+        },
+        "display": {
+          "append": null,
+          "kind": "system",
+          "more": null,
+          "parts": [],
+          "status": null,
+          "tool": null,
+          "version": 1
+        },
+        "id": "o-0101010101010101010101010101010101010101010101010101010101010101",
+        "parent": null,
+        "position": {
+          "accepted": "1",
+          "display_ancestry": [
+            "1"
+          ],
+          "item": "o-0101010101010101010101010101010101010101010101010101010101010101",
+          "turn": "0"
+        },
+        "revision": "1",
+        "turn": null
+      }
+    }
+  },
   "timeline_payload_shapes": [
     {
       "change": "put",

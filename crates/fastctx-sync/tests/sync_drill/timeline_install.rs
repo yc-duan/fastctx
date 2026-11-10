@@ -193,7 +193,7 @@ pub(super) async fn run(root: &Path) -> Result<()> {
     let item = TimelineItem {
         id: first.id(),
         revision: Revision(1),
-        turn: turn.clone(),
+        turn: Some(turn.clone()),
         parent: None,
         position: TimelinePosition {
             turn: Sequence(1),
@@ -310,7 +310,7 @@ pub(super) async fn run(root: &Path) -> Result<()> {
     let item_two = TimelineItem {
         id: other.id(),
         revision: Revision(1),
-        turn: turn.clone(),
+        turn: Some(turn.clone()),
         parent: None,
         position: TimelinePosition {
             turn: Sequence(1),

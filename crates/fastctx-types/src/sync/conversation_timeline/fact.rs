@@ -41,6 +41,8 @@ impl PlacementProof {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "slot", rename_all = "snake_case", deny_unknown_fields)]
 pub enum DisplaySlot {
+    /// Conversation metadata independent of any native or inferred turn.
+    Session,
     /// Reserved when the turn is created, even before its question arrives.
     Opening,
     Sibling,
@@ -52,9 +54,14 @@ pub enum DisplaySlot {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Placement {
-    pub turn: ObjectId,
+    /// None only for the Session channel.
+    pub turn: Option<ObjectId>,
     pub slot: DisplaySlot,
     pub proof: PlacementProof,
+    /// Absent on early inputs: their creation key supplies the native ordinal.
+    /// New adapters retain an explicit native ordinal or a witnessed World gap.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub order: Option<super::DisplayOrder>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

@@ -1,4 +1,7 @@
 //! Canonical production, restart and installation share the real source writer.
+#[path = "canonical_producer/ordering.rs"]
+mod ordering;
+
 use super::{
     source_ingest::{Gate, Signer, checkpoint, count},
     source_steps::target,
@@ -238,9 +241,10 @@ pub(super) async fn run(root: &Path) -> Result<()> {
                     text_bytes: ByteCount(5),
                 },
                 placement: Some(Placement {
-                    turn: turn.key.id(),
+                    turn: Some(turn.key.id()),
                     slot: DisplaySlot::Sibling,
                     proof: PlacementProof::NativeTurn,
+                    order: None,
                 }),
             },
         },
@@ -417,6 +421,7 @@ pub(super) async fn run(root: &Path) -> Result<()> {
         .await?
         .ok_or("missing resumed state")?;
     assert_eq!(serde_json::from_slice::<ItemState>(&row.value)?, before);
+    Box::pin(ordering::run(root)).await?;
     println!(
         "canonical producer: deterministic atomic input, durable dependency replay, text append, exact operation replay and real timeline installation passed"
     );

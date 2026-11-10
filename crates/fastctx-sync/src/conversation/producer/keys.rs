@@ -20,6 +20,7 @@ pub(super) fn dependency(dep: &Dependency) -> String {
         Dependency::Placement(id) => format!("placement/{}", id.as_str()),
         Dependency::Turn(id) => format!("turn/{}", id.as_str()),
         Dependency::Parent(id) => format!("parent/{}", id.as_str()),
+        Dependency::Anchor(id) => format!("anchor/{}", id.as_str()),
         Dependency::Append { item, previous } => format!("append/{}/{}", item.as_str(), previous.as_str()),
         Dependency::Generation { source, previous } => format!("generation/{}/{}", source.as_str(), previous.as_str()),
     }

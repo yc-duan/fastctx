@@ -34,6 +34,7 @@ impl Engine<'_> {
             causes.extend(neighbors.causes());
             let reduction =
                 self.reduced(evidence, observe(old.as_ref(), observation, evidence, neighbors.as_refs()))?;
+            self.placement_waiting(&reduction.state.id(), &reduction.effects.pending).await?;
             causes.extend(reduction.state.causes());
             Box::pin(self.save_item(old.as_ref(), &reduction.state, trigger)).await?;
             Box::pin(self.publish_effects(reduction.effects, trigger, causes)).await?
@@ -63,6 +64,7 @@ impl Engine<'_> {
             let neighbors = self.neighbors(selected.as_ref()).await?;
             causes.extend(neighbors.causes());
             let reduction = self.reduced(evidence, place(&old, placement, evidence, neighbors.as_refs()))?;
+            self.placement_waiting(&reduction.state.id(), &reduction.effects.pending).await?;
             causes.extend(reduction.state.causes());
             Box::pin(self.save_item(Some(&old), &reduction.state, trigger)).await?;
             Box::pin(self.publish_effects(reduction.effects, trigger, causes)).await?

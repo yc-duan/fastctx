@@ -25,25 +25,33 @@ pub(super) fn position(state: &mut ItemState, neighbors: Neighbors<'_>, effects:
         effects.pending.push(Dependency::Placement(id));
         return Ok(());
     };
-    let Some(turn) = neighbors.turn else {
-        effects.pending.push(Dependency::Turn(placed.value.turn.clone()));
-        return Ok(());
+    let turn_order = match (&placed.value.slot, &placed.value.turn) {
+        (DisplaySlot::Session, None) => Sequence(0),
+        (DisplaySlot::Session, Some(_)) | (_, None) => return Err(Error::InvalidPlacement),
+        (_, Some(id)) => {
+            let Some(turn) = neighbors.turn else {
+                effects.pending.push(Dependency::Turn(id.clone()));
+                return Ok(());
+            };
+            if turn.declaration.key.id() != *id {
+                return Err(Error::WrongKey);
+            }
+            if &turn.declaration.key.conversation != state.identity.conversation() {
+                return Err(Error::WrongConversation);
+            }
+            turn.declaration.order
+        }
     };
-    if turn.declaration.key.id() != placed.value.turn {
-        return Err(Error::WrongKey);
-    }
-    if &turn.declaration.key.conversation != state.identity.conversation() {
-        return Err(Error::WrongConversation);
-    }
     let mut display_parent = None;
-    let path = match &placed.value.slot {
+    let mut path = match &placed.value.slot {
+        DisplaySlot::Session => vec![Sequence(0)],
         DisplaySlot::Opening => {
             if state.identity.role() != ItemRole::User {
                 return Err(Error::InvalidPlacement);
             }
-            vec![Sequence(0), state.display_created]
+            vec![Sequence(0)]
         }
-        DisplaySlot::Sibling => vec![Sequence(1), state.display_created],
+        DisplaySlot::Sibling => vec![Sequence(1)],
         DisplaySlot::Child { parent } => {
             if parent == &id {
                 return Err(Error::Cycle);
@@ -79,24 +87,23 @@ pub(super) fn position(state: &mut ItemState, neighbors: Neighbors<'_>, effects:
                 return Ok(());
             };
             if parent_state.positioned.as_ref().map(|p| &p.turn) != Some(&placed.value.turn)
-                || parent_state.placement.as_ref().map(|p| (&p.value.turn, &p.value.slot))
-                    != parent_state.positioned.as_ref().map(|p| (&p.turn, &p.slot))
+                || parent_state.placement.as_ref().map(|p| &p.value) != parent_state.positioned.as_ref()
             {
                 effects.pending.push(Dependency::Parent(parent_state.id()));
                 return Ok(());
             }
-            // Creation keys are unique within a canonical producer. The leading
-            // 0/1 is a reserved slot, so only the remaining keys can be ancestors.
-            if parent_position.display_ancestry.iter().skip(1).any(|key| key == &state.display_created) {
+            if super::order::contains(&parent_position.display_ancestry, &id)? {
                 return Err(Error::Cycle);
             }
-            let mut path = parent_position.display_ancestry.clone();
-            path.push(state.display_created);
-            path
+            parent_position.display_ancestry.clone()
         }
     };
+    let Some(sibling) = super::order::sibling(state, &placed.value, &path, &neighbors, effects)? else {
+        return Ok(());
+    };
+    path.extend(sibling);
     let new = TimelinePosition {
-        turn: turn.declaration.order,
+        turn: turn_order,
         display_ancestry: path,
         accepted: state.display_created,
         item: id.clone(),
@@ -121,7 +128,7 @@ pub(super) fn publish(state: &mut ItemState, effects: &mut Effects) -> Result<()
     let Some(located) = state.positioned.as_ref() else {
         return Ok(());
     };
-    if located.turn != placed.value.turn || located.slot != placed.value.slot {
+    if located != &placed.value {
         return Ok(());
     }
     let signature = fastctx_types::sync::identity::Digest::of(
@@ -132,7 +139,8 @@ pub(super) fn publish(state: &mut ItemState, effects: &mut Effects) -> Result<()
         return Ok(());
     }
     // An unresolved relocation must not publish the new turn with an old position.
-    if effects.pending.iter().any(|p| matches!(p, Dependency::Turn(_) | Dependency::Parent(_))) {
+    if effects.pending.iter().any(|p| matches!(p, Dependency::Turn(_) | Dependency::Parent(_) | Dependency::Anchor(_)))
+    {
         return Ok(());
     }
     state.revision = next(state.revision)?;

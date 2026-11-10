@@ -474,7 +474,7 @@ CREATE TABLE sync_peer_capabilities (
 CREATE TABLE sync_timeline_items (
     hub TEXT NOT NULL, scope TEXT NOT NULL, conversation TEXT NOT NULL, item TEXT NOT NULL,
     revision BLOB NOT NULL CHECK(length(revision)=8), accepted BLOB NOT NULL CHECK(length(accepted)=8),
-    position BLOB NOT NULL, body BLOB NOT NULL, turn TEXT NOT NULL, parent TEXT,
+    position BLOB NOT NULL, body BLOB NOT NULL, turn TEXT, parent TEXT,
     active INTEGER NOT NULL CHECK(active IN (0,1)),
     -- Ordinary index patches use zero; a rebuild stamps its target projection.
     index_generation BLOB NOT NULL DEFAULT X'0000000000000000' CHECK(length(index_generation)=8),
