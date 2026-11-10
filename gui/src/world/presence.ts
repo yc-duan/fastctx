@@ -4,6 +4,7 @@ export interface MachinePresence {
   hubs: {
     hub: string;
     revision: number;
+    current?: boolean;
     access: "granted" | "not_granted" | "unknown" | "stopped";
   }[];
 }

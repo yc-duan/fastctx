@@ -27,6 +27,9 @@ impl crate::tolerant::Tolerant for MachineAccess {
 pub struct HubMachinePresence {
     pub hub: crate::access::HubId,
     pub revision: u64,
+    /// Whether this directory was received on the connection running now.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub current: bool,
     #[serde(default, deserialize_with = "crate::tolerant::read")]
     pub access: MachineAccess,
 }

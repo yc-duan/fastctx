@@ -103,7 +103,8 @@ async fn publish(node: Arc<Node>) {
             residents.borrow_and_update();
             shown.borrow_and_update();
             while jobs.try_recv().is_ok() {}
-            let held = if ready(&node) {
+            // Once shown, link and permission changes must not wait for a new afoot snapshot.
+            let held = if told.borrow().is_some() || ready(&node) {
                 unready = None;
                 false
             } else {

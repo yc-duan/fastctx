@@ -501,7 +501,12 @@ pub fn fixtures() -> Fixtures {
             .into_iter()
             .map(|access| MachinePresence {
                 machine: "laptop".into(),
-                hubs: vec![HubMachinePresence { hub: "w-0123456789abcdef".parse().unwrap(), revision: 17, access }],
+                hubs: vec![HubMachinePresence {
+                    hub: "w-0123456789abcdef".parse().unwrap(),
+                    revision: 17,
+                    current: matches!(access, MachineAccess::Granted | MachineAccess::NotGranted),
+                    access,
+                }],
             })
             .collect();
     Fixtures { who: who(&towns), nodes: nodes(), towns, journals: journals(), machine_presence }

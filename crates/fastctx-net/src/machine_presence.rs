@@ -91,7 +91,12 @@ pub fn of(links: &[Arc<Link>], who: &WorldWho, known: &[String]) -> Vec<MachineP
                     } else {
                         MachineAccess::Unknown
                     };
-                    HubMachinePresence { hub: view.hub.clone(), revision: view.revision, access }
+                    HubMachinePresence {
+                        hub: view.hub.clone(),
+                        revision: view.revision,
+                        current: directory.current,
+                        access,
+                    }
                 })
                 .collect();
             MachinePresence { machine, hubs }

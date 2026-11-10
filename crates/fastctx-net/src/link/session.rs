@@ -542,6 +542,7 @@ async fn connected(
                 }
             }
             inner.view_synced.store(generation, std::sync::atomic::Ordering::Release);
+            inner.node.directory_changed();
             let _ = view_ready.send(true);
             // Records may have changed while disconnected even when the directory
             // itself is identical. Readers reconcile once this view is current.
@@ -552,7 +553,6 @@ async fn connected(
             inner.afoot_synced(generation);
             inner.versions_synced(generation);
             tell_worked(&inner).await;
-            inner.node.directory_changed();
             inner.node.connected();
             // Whatever the projects' ledgers gained while this machine was
             // away is taken now.

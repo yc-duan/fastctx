@@ -17896,6 +17896,7 @@
           {
             "hub": "w-0123456789abcdef",
             "revision": 17,
+            "current": true,
             "access": "granted"
           }
         ]
@@ -17906,6 +17907,7 @@
           {
             "hub": "w-0123456789abcdef",
             "revision": 17,
+            "current": true,
             "access": "not_granted"
           }
         ]

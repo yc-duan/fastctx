@@ -142,9 +142,8 @@ impl WorldWatch {
                     }
                 }
                 changes.borrow_and_update();
-                // Until the hubs have told what is afoot again, what was
-                // told before stands, for a few seconds at most.
-                if device.afoot_ready() {
+                // The first answer may wait for afoot; later link and permission changes go at once.
+                if told.is_some() || device.afoot_ready() {
                     *unready = None;
                 } else if unready.get_or_insert_with(tokio::time::Instant::now).elapsed() < READY_WITHIN {
                     continue;
