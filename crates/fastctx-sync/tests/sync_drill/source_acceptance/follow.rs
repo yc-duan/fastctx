@@ -61,7 +61,7 @@ async fn append_to_hub(authority: &SqliteAuthority, object: &ObjectKey, after: u
     let batch = SourceBatch {
         format: 1,
         scope: object.scope.clone(),
-        stream: StreamId::of(object, KIND),
+        stream: StreamId::of(&timeline(object), KIND),
         producer: Producer::Device { device: DeviceId::from_bytes([3; 32]) },
         epoch: epoch.clone(),
         operation: operation.clone(),

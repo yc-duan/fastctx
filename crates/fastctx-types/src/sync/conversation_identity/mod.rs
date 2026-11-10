@@ -27,7 +27,9 @@ mod encoding;
 mod evidence;
 mod keys;
 mod native;
+mod source;
 mod sources;
+pub use source::source_object;
 pub use sources::{canonical_timeline_source, claude_transcript_source};
 
 pub use evidence::{AliasBinding, AliasSource, ReplayEvidence, ReplayMatch};

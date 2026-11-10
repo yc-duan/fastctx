@@ -65,18 +65,22 @@ pub(super) fn bind(
             "this source needs its registered job or workspace provenance",
         ));
     };
-    let object = ObjectKey { scope: context.scope.clone(), object: conversation.clone() };
+    let conversation = ObjectKey { scope: context.scope.clone(), object: conversation.clone() };
+    let source_object =
+        fastctx_types::sync::conversation_identity::source_object(&conversation.object, kind.registration().id)
+            .ok_or_else(|| {
+                fastctx_storage::Error::with_kind(
+                    fastctx_storage::ErrorKind::Unavailable,
+                    "source kind has no canonical conversation object contract",
+                )
+            })?;
+    let object = ObjectKey { scope: context.scope.clone(), object: source_object };
     let source = Custody {
         context: context.clone(),
         kind,
         object: object.clone(),
         purpose: HoldingUse::RuntimeSource {
-            host: HostBinding {
-                conversation: object.clone(),
-                account: account.clone(),
-                host: device.clone(),
-                epoch: epoch.clone(),
-            },
+            host: HostBinding { conversation, account: account.clone(), host: device.clone(), epoch: epoch.clone() },
         },
         holding: holding.clone(),
     };

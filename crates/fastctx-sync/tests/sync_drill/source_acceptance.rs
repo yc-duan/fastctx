@@ -40,6 +40,12 @@ fn conversation(n: u8) -> ObjectKey {
         object,
     }
 }
+fn timeline(conversation: &ObjectKey) -> ObjectKey {
+    ObjectKey {
+        scope: conversation.scope.clone(),
+        object: fastctx_types::sync::conversation_identity::source_object(&conversation.object, KIND).unwrap(),
+    }
+}
 fn account() -> AccountIdentity {
     let name = "alice".parse().unwrap();
     let opened = serde_json::from_str("\"2023-11-14T22:13:20Z\"").unwrap();
@@ -138,7 +144,7 @@ fn node(dir: &Path, object: &ObjectKey) -> Result<(Database, SqliteBlocks, Sqlit
     let custody = Custody {
         context: context(object),
         kind: REGISTRY.asset(KIND)?.registered(),
-        object: object.clone(),
+        object: timeline(object),
         holding: holding(object),
         purpose: HoldingUse::RuntimeSource {
             host: fastctx_sync::store::access::HostBinding {
@@ -152,7 +158,7 @@ fn node(dir: &Path, object: &ObjectKey) -> Result<(Database, SqliteBlocks, Sqlit
     let primary = SourceTarget {
         source: SourceId::from_bytes([42; 32]),
         custody,
-        stream: StreamId::of(object, KIND),
+        stream: StreamId::of(&timeline(object), KIND),
         epoch,
         producer: Producer::Device { device: DeviceId::from_bytes([3; 32]) },
     };
@@ -335,6 +341,12 @@ pub(super) async fn run(root: &Path) -> Result<()> {
     let (run, service) = authority(&blocks, 1, &gate).await?;
     let directory = SqliteDirectory::new(blocks.clone(), run, Arc::new(Signer(true)));
     describe(&directory, &object, 214).await?;
+    let mut metadata_stream = first.clone();
+    metadata_stream.stream = StreamId::of(&object, KIND);
+    assert!(matches!(
+        service.accept(context(&object), holding(&object), Signer(false).source(&metadata_stream)?).await,
+        Err(Error::Invalid(reason)) if reason.contains("does not derive from the described object")
+    ));
     upload_payloads(&service, &second).await?;
     let result = service.accept(context(&object), holding(&object), Signer(false).source(&second)?).await?;
     assert!(matches!(result, SourceAccepted::AwaitingEpoch { .. }));
@@ -357,6 +369,8 @@ pub(super) async fn run(root: &Path) -> Result<()> {
     .with_sources(Arc::new(service.clone()));
     let (receipt, complete) = answered(&metadata, &first).await?;
     assert!(!complete, "accepting facts never claims the missing attachment");
+    assert_eq!(receipt.head.key, timeline(&object));
+    assert_ne!(receipt.head.key, object);
     assert_eq!(receipt.head.completeness, fastctx_sync::cursor::Completeness::MetadataOnly);
     assert_eq!(answered(&metadata, &first).await?.0, receipt);
     settle(&db, &blocks, None, Some(&service)).await?;
