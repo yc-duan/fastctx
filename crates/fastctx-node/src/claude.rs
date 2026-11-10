@@ -2327,15 +2327,20 @@ pub(crate) fn untrust(directory: &Path, home: Option<&Path>) -> Result<(), Strin
 /// turned off, since the World's take their place, the session working in
 /// place rather than in a worktree of its own directory, which no repository
 /// it edits on any machine lives in, and the conversation, which its plugin
-/// reads back from them when it starts. The session runs without approvals
-/// (`background::settings_args`), so nothing else needs allowing.
+/// reads back from them when it starts. Claude Code's guess at the user's
+/// next words is turned off: it asks the model again after every turn with
+/// the whole conversation, on the model the session was started with, and
+/// no interface of the World shows what comes back. The session runs without
+/// approvals (`background::settings_args`), so nothing else needs allowing.
 pub(crate) fn settings_json(id: &ResidentId) -> String {
     let mut settings = serde_json::json!({
         "env": {
             "MAX_MCP_OUTPUT_TOKENS": fastctx_hosts::claude::MAX_MCP_OUTPUT_TOKENS.to_string(),
             "CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH": fastctx_hosts::claude::MAX_MCP_DESCRIPTION_LENGTH.to_string(),
             "FASTCTX_CONVERSATION": id.as_str(),
+            "CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION": "0",
         },
+        "promptSuggestionEnabled": false,
         "permissions": {
             // The World's own tools take these places: its shell and files,
             // the plan, the goal, and a sentinel or an alarm for any later
