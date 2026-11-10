@@ -212,25 +212,7 @@ pub(crate) async fn run(root: &Path) -> Result<()> {
     Ok(())
 }
 fn serde_contract(primary: &SourceTarget, fence: &TimelineFence, fixture: &fixture::Fixture) -> Result<()> {
-    use fastctx_types::{ResidentId, timeline_reads::TimelineCall};
-    let resident: ResidentId = "claude-a1b2c3d4".parse()?;
     for path in [Vec::new(), vec![fixture.item.body.clone()]] {
-        let call = TimelineCall::Content {
-            resident: resident.clone(),
-            fence: Box::new(fence.clone()),
-            item: fixture.item.id.clone(),
-            content: fixture.original.clone(),
-            range: None,
-            path: path.clone(),
-        };
-        let value = serde_json::to_value(&call)?;
-        assert!(value["path"].is_array());
-        let mut omitted = value.clone();
-        omitted.as_object_mut().unwrap().remove("path");
-        let restored: TimelineCall = serde_json::from_value(omitted)?;
-        assert!(matches!(restored, TimelineCall::Content { path, .. } if path.is_empty()));
-        let restored: TimelineCall = serde_json::from_value(value)?;
-        assert!(matches!(restored, TimelineCall::Content { path: got, .. } if got == path));
         let read = TimelineContentRead {
             fence: fence.clone(),
             item: fixture.item.id.clone(),

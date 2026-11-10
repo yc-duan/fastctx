@@ -8,7 +8,6 @@
 
 use crate::ResidentId;
 use serde::{Deserialize, Serialize};
-use serde_json::value::RawValue;
 
 /// The most events one page holds, whatever is asked.
 pub const PAGE_EVENTS: u32 = 400;
@@ -48,7 +47,15 @@ pub enum TimelineAsk {
     Object { resident: ResidentId, object: String, offset: u64, length: u32 },
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+impl TimelineAsk {
+    pub fn resident(&self) -> &ResidentId {
+        match self {
+            Self::Page { resident, .. } | Self::Moved { resident, .. } | Self::Object { resident, .. } => resident,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum TimelineTold {
     Page {
@@ -71,7 +78,7 @@ pub enum TimelineTold {
     },
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TimelineEvent {
     pub place: TimelinePlace,
     /// The timeline's count of records as this event was written: a reader
@@ -81,13 +88,14 @@ pub struct TimelineEvent {
     pub shown: TimelineShown,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "shown", rename_all = "snake_case")]
 pub enum TimelineShown {
-    /// The event, a `SessionEvent` as its machine wrote it.
-    Event { event: Box<RawValue> },
+    /// The event as JSON. Readers decode each event independently, skipping
+    /// those they do not understand.
+    Event { event: serde_json::Value },
     /// An event too large for a page: how long it is, the event slimmed to
     /// what is drawn of it when that is small, and the object that holds it
     /// whole.
-    Oversized { bytes: u64, slim: Option<Box<RawValue>>, object: String },
+    Oversized { bytes: u64, slim: Option<serde_json::Value>, object: String },
 }

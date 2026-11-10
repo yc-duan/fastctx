@@ -629,6 +629,7 @@ pub fn facts(node: &Node) -> MachineFacts {
         replicated_records: true,
         collaboration_tree: true,
         collaboration_watch: true,
+        timeline_reads: true,
         shell: shell(),
         form: Some(form()),
         node_lifetime: Some(Box::new(node.lifetime.clone())),
@@ -975,6 +976,19 @@ impl fastctx_net::link::Node for Handler {
                                 &node, &asker, &link, &from, resident, watch, composer, held, now, goal, stream,
                             )
                             .await
+                        }
+                    }
+                    RemoteCall::Timeline { request } => {
+                        let admitted = RemoteCall::Timeline { request: request.clone() };
+                        let mut stream =
+                            stream.ok_or_else(|| Failure::new("a timeline read requires its data connection"))?;
+                        let reading =
+                            crate::timeline::api::checked(&node, crate::timeline::api::here(&node, request), || {
+                                crate::admission::admit(&node, &link, &caller, &admitted).map(|_| ())
+                            });
+                        tokio::select! {
+                            result = reading => result.map(RemoteReply::Timeline),
+                            () = stream.closed() => Err(Failure::new("the timeline reader disconnected")),
                         }
                     }
                     RemoteCall::Agents => crate::agents::here(&node)

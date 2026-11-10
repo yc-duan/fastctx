@@ -88,8 +88,11 @@ pub enum Call {
     },
     History(crate::history::HistoryCall),
     /// A conversation's installed timeline, read without its host's record
-    /// (`crate::timeline_reads`).
-    Timeline(crate::timeline_reads::TimelineCall),
+    /// (`crate::timeline_pages`).
+    Timeline {
+        machine: Option<Written>,
+        request: crate::timeline_pages::TimelineAsk,
+    },
     WatchHistory {
         scope: crate::history::Scope,
     },
@@ -1006,7 +1009,7 @@ pub enum Reply {
     },
     Collaboration(Box<crate::collaboration::Tree>),
     History(crate::history::HistoryReply),
-    Timeline(crate::timeline_reads::TimelineReply),
+    Timeline(crate::timeline_pages::TimelineTold),
     Memory(crate::memory::MemoryReply),
     MemorySettings(crate::memory::Settings),
     Layer(crate::layers::Chosen),
@@ -1526,14 +1529,7 @@ impl Call {
             | Self::Who { .. }
             | Self::WorldNow { .. }
             | Self::Write { .. } => None,
-            Self::Timeline(
-                crate::timeline_reads::TimelineCall::Read { .. }
-                | crate::timeline_reads::TimelineCall::Item { .. }
-                | crate::timeline_reads::TimelineCall::Release { .. }
-                | crate::timeline_reads::TimelineCall::Wait { .. }
-                | crate::timeline_reads::TimelineCall::Changes { .. }
-                | crate::timeline_reads::TimelineCall::Content { .. },
-            ) => Some(Purpose::AssetSync),
+            Self::Timeline { .. } => Some(Purpose::AssetSync),
         }
     }
 }
@@ -1641,17 +1637,7 @@ impl Reply {
             | Self::Who { .. }
             | Self::WorldNow { .. }
             | Self::Written { .. } => None,
-            Self::Timeline(
-                crate::timeline_reads::TimelineReply::Read { .. }
-                | crate::timeline_reads::TimelineReply::Item { .. }
-                | crate::timeline_reads::TimelineReply::Moved { .. }
-                | crate::timeline_reads::TimelineReply::Unchanged { .. }
-                | crate::timeline_reads::TimelineReply::Changes { .. }
-                | crate::timeline_reads::TimelineReply::Content { .. }
-                | crate::timeline_reads::TimelineReply::Released
-                | crate::timeline_reads::TimelineReply::Closed { .. }
-                | crate::timeline_reads::TimelineReply::Unavailable,
-            ) => Some(Purpose::AssetSync),
+            Self::Timeline(_) => Some(Purpose::AssetSync),
         }
     }
 }

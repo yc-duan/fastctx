@@ -171,11 +171,8 @@ mod stop;
 mod stops;
 mod stuck;
 mod talk;
-// Nothing calls the timeline yet: the page call that reads it and the job
-// that builds it are the next things joined to it.
-#[expect(dead_code, unused_imports, reason = "the timeline's page call and build job are not joined yet")]
-mod timeline;
 pub mod thumbnail;
+mod timeline;
 pub mod timers;
 mod to_end;
 mod town;

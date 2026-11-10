@@ -211,6 +211,8 @@ export interface WhoFor {
 }
 
 export interface MachineFacts {
+  /** Answers bounded timeline queries. */
+  timeline_reads?: boolean;
   control_letters?: boolean;
   run_stops?: boolean;
   node_lifetime?: {

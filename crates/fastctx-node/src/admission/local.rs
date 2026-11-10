@@ -134,6 +134,7 @@ fn reached<'a>(node: &Node, call: &'a Call) -> Option<&'a ResidentId> {
         {
             Some(resident)
         }
+        Call::Timeline { machine, request } if here(machine.as_ref()) => Some(request.resident()),
         Call::Forget { resident, machine } if node.is_here(machine) => Some(resident),
         Call::Attach { resident }
         | Call::HoldHost { resident }

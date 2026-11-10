@@ -389,6 +389,11 @@ impl Device {
                 let machine = self.find(&resident, machine).await?;
                 (machine, RemoteCall::Goal { resident: resident.clone(), request }, Some(resident))
             }
+            Call::Timeline { machine, request } => {
+                let resident = request.resident().clone();
+                let machine = self.find(&resident, machine).await?;
+                (machine, RemoteCall::Timeline { request }, Some(resident))
+            }
             Call::Composer { resident, machine, request } => {
                 let machine = self.find(&resident, machine).await?;
                 (machine, RemoteCall::Composer { resident: resident.clone(), request }, Some(resident))
@@ -629,6 +634,17 @@ impl Device {
             }
             None => session.account_for(&machine, purpose)?,
         };
+        if matches!(&remote, RemoteCall::Timeline { .. }) {
+            let facts = session
+                .link
+                .call(&machine, &account, fastctx_types::access::Purpose::Look, RemoteCall::Facts)
+                .await
+                .map_err(failed)?
+                .map_err(failed)?;
+            if !matches!(facts, RemoteReply::Facts(facts) if facts.timeline_reads) {
+                return Err(failed("this machine does not answer timeline pages; update it"));
+            }
+        }
         if matches!(&remote, RemoteCall::Goal { .. }) {
             if !session.link.view().goal_control {
                 return Err(failed(fastctx_types::goals::words::OLDER_HUB));
@@ -695,7 +711,10 @@ impl Device {
         }
         let answer = if matches!(
             &remote,
-            RemoteCall::Thumbnail { .. } | RemoteCall::AttachmentThumbnail { .. } | RemoteCall::Lines { .. }
+            RemoteCall::Thumbnail { .. }
+                | RemoteCall::AttachmentThumbnail { .. }
+                | RemoteCall::Lines { .. }
+                | RemoteCall::Timeline { .. }
         ) {
             fastctx_net::cancellable::call(&session.link, &machine, &account, remote.clone()).await
         } else {
@@ -707,6 +726,7 @@ impl Device {
         .map_err(|failure| Error::from(crate::CallError::Failed(failure)))?;
         let address = resident.map(|resident| Address { machine: machine.clone(), resident });
         let reply = match (remote, answer) {
+            (RemoteCall::Timeline { .. }, RemoteReply::Timeline(told)) => Reply::Timeline(told),
             (RemoteCall::Goal { .. }, RemoteReply::Goal { updated }) => Reply::Goal { updated },
             (RemoteCall::Collaboration { .. }, RemoteReply::Collaboration(tree)) => Reply::Collaboration(tree),
             (RemoteCall::Composer { .. }, RemoteReply::Composer(updated)) => Reply::Composer(updated),

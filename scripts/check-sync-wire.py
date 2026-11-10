@@ -33,6 +33,8 @@ DISPATCHERS = {
     "crates/fastctx-net/src/peer.rs::Intent": ("asset_sync.transport", "asset_sync_purpose"),
     "crates/fastctx-types/src/calls.rs::Call": ("node_ipc", "purpose"),
     "crates/fastctx-types/src/calls.rs::Reply": ("node_ipc", "answer_purpose"),
+    "crates/fastctx-types/src/remote.rs::RemoteCall": ("timeline_reads", "transfer_purpose"),
+    "crates/fastctx-types/src/remote.rs::RemoteReply": ("timeline_reads", "answer_purpose"),
 }
 FROZEN_SHA256 = "fbccea156dd77cd25a679487d83a21a85a82a0c64f51235f878e020b9b3c5ca2"
 

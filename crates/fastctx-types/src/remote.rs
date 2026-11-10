@@ -458,6 +458,11 @@ pub enum RemoteCall {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         resumes: bool,
     },
+    /// Reads a page of a resident's timeline, waits for its revision, or
+    /// reads a range of an object that timeline names.
+    Timeline {
+        request: crate::timeline_pages::TimelineAsk,
+    },
     /// Watch a resident there: what it hands over goes over the call's data
     /// connection until the caller closes it, each piece signed by the
     /// machine that holds the session, naming `watch` and numbered from 0.
@@ -721,6 +726,7 @@ impl RemoteCall {
             | RemoteCall::Ask { .. }
             | RemoteCall::Talk { .. }
             | RemoteCall::Watch { .. }
+            | RemoteCall::Timeline { .. }
             | RemoteCall::Open { .. }
             | RemoteCall::Stop { .. }
             | RemoteCall::Manage { .. }
@@ -867,6 +873,7 @@ pub enum RemoteReply {
     },
     /// A watch ended: the caller left, or the session's machine stopped it.
     Watched,
+    Timeline(crate::timeline_pages::TimelineTold),
     /// A conversation's setting there changed as asked.
     Set,
     Facts(MachineFacts),
@@ -896,6 +903,180 @@ pub enum RemoteReply {
 
 /// The answer to a call, as the called machine gave it.
 pub type RemoteResult = Result<RemoteReply, Failure>;
+
+/// A call's transport class, separate from its authorization purpose.
+impl RemoteCall {
+    pub fn transfer_purpose(&self) -> Option<crate::sync::transfer::Purpose> {
+        use crate::sync::transfer::Purpose;
+        match self {
+            Self::Timeline { .. } => Some(Purpose::Observation),
+            Self::AddAgentLogin { .. }
+            | Self::AgentActivity { .. }
+            | Self::AgentCalls { .. }
+            | Self::AgentFolder { .. }
+            | Self::AgentLogins { .. }
+            | Self::AgentUsage { .. }
+            | Self::Agents { .. }
+            | Self::Ask { .. }
+            | Self::AttachmentPlaces { .. }
+            | Self::AttachmentReferences { .. }
+            | Self::AttachmentThumbnail { .. }
+            | Self::Book { .. }
+            | Self::Canon { .. }
+            | Self::ChangeAgentLogin { .. }
+            | Self::ChangeAgentModels { .. }
+            | Self::ClaudeConsent { .. }
+            | Self::Collaboration { .. }
+            | Self::CommitAttachment { .. }
+            | Self::Composer { .. }
+            | Self::Control { .. }
+            | Self::ConversationDebt { .. }
+            | Self::CopyFetch { .. }
+            | Self::CopyReceive { .. }
+            | Self::CopySend { .. }
+            | Self::EnterProject { .. }
+            | Self::Facts { .. }
+            | Self::Find { .. }
+            | Self::FindFiles { .. }
+            | Self::Folders { .. }
+            | Self::Follow { .. }
+            | Self::Forget { .. }
+            | Self::Goal { .. }
+            | Self::GoalCommand { .. }
+            | Self::Homes { .. }
+            | Self::Inspect { .. }
+            | Self::Interfaces { .. }
+            | Self::ItemDetail { .. }
+            | Self::Lines { .. }
+            | Self::Look { .. }
+            | Self::Manage { .. }
+            | Self::Mcp { .. }
+            | Self::McpServe { .. }
+            | Self::MemoryFolders { .. }
+            | Self::MemoryRoom { .. }
+            | Self::Offers { .. }
+            | Self::On { .. }
+            | Self::OnReceipt { .. }
+            | Self::Open { .. }
+            | Self::Outline { .. }
+            | Self::PageAction { .. }
+            | Self::PipeOut { .. }
+            | Self::Place { .. }
+            | Self::Plan { .. }
+            | Self::PreviewAgentChange { .. }
+            | Self::ReadAgentLimits { .. }
+            | Self::ReadAttachment { .. }
+            | Self::ReadFile { .. }
+            | Self::ReadLineNotes { .. }
+            | Self::ReadLines { .. }
+            | Self::Relay { .. }
+            | Self::ReserveAttachment { .. }
+            | Self::Run { .. }
+            | Self::ScanAgents { .. }
+            | Self::Scratch { .. }
+            | Self::SentinelControl { .. }
+            | Self::SentinelHome { .. }
+            | Self::SentinelKey { .. }
+            | Self::SentinelKeys { .. }
+            | Self::SentinelSettings { .. }
+            | Self::SentinelTry { .. }
+            | Self::SetAgentResetInPlace { .. }
+            | Self::SetAgentTitle { .. }
+            | Self::Since { .. }
+            | Self::Stats { .. }
+            | Self::Stop { .. }
+            | Self::StopJob { .. }
+            | Self::StopOn { .. }
+            | Self::Talk { .. }
+            | Self::Thumbnail { .. }
+            | Self::TurnInterrupted { .. }
+            | Self::UpdateWorld { .. }
+            | Self::Updates { .. }
+            | Self::Upload { .. }
+            | Self::WaitingJobs { .. }
+            | Self::Watch { .. }
+            | Self::Who { .. }
+            | Self::WordsCame { .. }
+            | Self::WorkingCopy { .. }
+            | Self::Write { .. } => None,
+        }
+    }
+}
+
+/// An answer's transport class, kept exhaustive as the calls' are.
+impl RemoteReply {
+    pub fn answer_purpose(&self) -> Option<crate::sync::transfer::Purpose> {
+        use crate::sync::transfer::Purpose;
+        match self {
+            Self::Timeline { .. } => Some(Purpose::Observation),
+            Self::AgentActivity { .. }
+            | Self::AgentCalls { .. }
+            | Self::AgentChangePreview { .. }
+            | Self::AgentLoginChanged { .. }
+            | Self::AgentLogins { .. }
+            | Self::AgentUsage { .. }
+            | Self::Agents { .. }
+            | Self::Asked { .. }
+            | Self::AttachmentPlaces { .. }
+            | Self::AttachmentReferences { .. }
+            | Self::Book { .. }
+            | Self::Canon { .. }
+            | Self::ClaudeConsent { .. }
+            | Self::Collaboration { .. }
+            | Self::Composer { .. }
+            | Self::ComposerUploaded { .. }
+            | Self::ControlResult { .. }
+            | Self::Controlled { .. }
+            | Self::ConversationDebt { .. }
+            | Self::Copied { .. }
+            | Self::Entered { .. }
+            | Self::Facts { .. }
+            | Self::FileRead { .. }
+            | Self::FilesFound { .. }
+            | Self::Folders { .. }
+            | Self::Found { .. }
+            | Self::Goal { .. }
+            | Self::Inspected { .. }
+            | Self::Interfaces { .. }
+            | Self::ItemDetail { .. }
+            | Self::JobStopped { .. }
+            | Self::Lines { .. }
+            | Self::Looked { .. }
+            | Self::Managed { .. }
+            | Self::Mcp { .. }
+            | Self::MemoryFolders { .. }
+            | Self::MemoryRoom { .. }
+            | Self::Offers { .. }
+            | Self::OnDone { .. }
+            | Self::OnReceipt { .. }
+            | Self::Opened { .. }
+            | Self::Outlined { .. }
+            | Self::PageAction { .. }
+            | Self::Plan { .. }
+            | Self::Relayed { .. }
+            | Self::Run { .. }
+            | Self::Said { .. }
+            | Self::Scratch { .. }
+            | Self::SentinelControl { .. }
+            | Self::SentinelHome { .. }
+            | Self::SentinelKeys { .. }
+            | Self::SentinelSettings { .. }
+            | Self::SentinelTried { .. }
+            | Self::Set { .. }
+            | Self::Since { .. }
+            | Self::Stats { .. }
+            | Self::Stopped { .. }
+            | Self::Thumbnail { .. }
+            | Self::Update { .. }
+            | Self::Uploaded { .. }
+            | Self::WaitingJobs { .. }
+            | Self::Watched { .. }
+            | Self::Who { .. }
+            | Self::WorkingCopy { .. }
+            | Self::Written { .. } => None,
+        }
+    }
+}
 
 /// A letter: something for a resident of another machine, delivered when
 /// that machine is reachable, however long that takes.

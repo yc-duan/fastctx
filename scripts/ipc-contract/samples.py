@@ -261,6 +261,11 @@ def samples(root, shipped):
             {"call": "thumbnail", "machine": "laptop", "request": {"path": "C:/a.png", "max": 96}},
             {"call": "lines", "machine": "laptop", "request": {"kind": "open", "path": "C:/a.txt", "decoding": {"kind": "file", "encoding": None}}},
             {"call": "read_lines", "machine": "laptop", "request": {"source": "line-source", "start": 0, "count": 5}},
+            {"call": "timeline", "machine": "laptop", "request": {"do": "page", "resident": ADDRESS["resident"],
+             "from": {"from": "latest"}, "max_events": 400, "max_bytes": 1048576}},
+            {"call": "timeline", "machine": None, "request": {"do": "moved", "resident": ADDRESS["resident"], "after": 3}},
+            {"call": "timeline", "machine": "laptop", "request": {"do": "object", "resident": ADDRESS["resident"],
+             "object": "ab" * 32, "offset": 1, "length": 262144}},
         ]:
             yield {"mode": "current_request", "protocol": protocol, "peer": PEER, "admitted": False,
                    "value": {"kind": "call", "id": 37, "call": call}}

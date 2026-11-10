@@ -316,6 +316,9 @@ impl Client {
 
     /// Sends `call` and waits for its answer.
     pub async fn call(&mut self, call: Call) -> Result<Reply, CallError> {
+        if !self.timeline_reads && matches!(call, Call::Timeline { .. }) {
+            return Err(CallError::Failed(Failure::not_run("this node does not answer timeline pages; update it")));
+        }
         if !self.conversation_plans
             && matches!(call, Call::Plan { .. } | Call::PlanRead { .. } | Call::PlanWrite { .. })
         {

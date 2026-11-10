@@ -377,14 +377,11 @@
     "capability": "node_ipc",
     "mapping": "crates/fastctx-types/src/calls.rs",
     "nested": {
-      "type": "crates/fastctx-types/src/timeline_reads.rs::TimelineCall",
+      "type": "crates/fastctx-types/src/timeline_pages.rs::TimelineAsk",
       "variants": [
-        "Read",
-        "Item",
-        "Release",
-        "Wait",
-        "Changes",
-        "Content"
+        "Page",
+        "Moved",
+        "Object"
       ]
     }
   },
@@ -395,17 +392,11 @@
     "capability": "node_ipc",
     "mapping": "crates/fastctx-types/src/calls.rs",
     "nested": {
-      "type": "crates/fastctx-types/src/timeline_reads.rs::TimelineReply",
+      "type": "crates/fastctx-types/src/timeline_pages.rs::TimelineTold",
       "variants": [
-        "Read",
-        "Item",
+        "Page",
         "Moved",
-        "Unchanged",
-        "Changes",
-        "Content",
-        "Released",
-        "Closed",
-        "Unavailable"
+        "Object"
       ]
     }
   },
@@ -464,5 +455,19 @@
     "purpose": "AssetSync",
     "capability": "asset_sync",
     "mapping": "crates/fastctx-types/src/sync/transfer.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/remote.rs::RemoteCall",
+    "variant": "Timeline",
+    "purpose": "Observation",
+    "capability": "timeline_reads",
+    "mapping": "crates/fastctx-types/src/remote.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/remote.rs::RemoteReply",
+    "variant": "Timeline",
+    "purpose": "Observation",
+    "capability": "timeline_reads",
+    "mapping": "crates/fastctx-types/src/remote.rs"
   }
 ]

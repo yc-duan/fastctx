@@ -109,7 +109,7 @@ pub enum Welcome {
         account_records: bool,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         conversation_plans: bool,
-        /// Fenced timeline pages, changes, long polls and item-owned content.
+        /// Reads timeline pages, waits for revisions and reads named objects.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         timeline_reads: bool,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]

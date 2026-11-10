@@ -7,7 +7,6 @@ mod conversations;
 mod identity;
 mod maintenance;
 mod policy;
-pub(crate) mod reads;
 mod tasks;
 
 use std::{
@@ -33,7 +32,6 @@ const LEASE: Duration = Duration::from_secs(60);
 pub(crate) struct Foundation {
     blocks: SqliteBlocks,
     sources: SqliteSources,
-    timelines: SqliteTimelines,
     scopes: SqliteScopes,
     alone: HubId,
     device: DeviceId,
@@ -76,7 +74,6 @@ impl Foundation {
             worker: Mutex::new(Some(worker)),
             blocks,
             sources,
-            timelines,
             scopes,
             alone: identity.alone,
             device: identity.device,
@@ -97,9 +94,7 @@ impl Foundation {
     pub(crate) fn sources(&self) -> &SqliteSources {
         &self.sources
     }
-    pub(crate) fn timelines(&self) -> &SqliteTimelines {
-        &self.timelines
-    }
+
     /// Wakes the task worker after a commit that made work due, such as an
     /// ingested step whose timeline now needs installing.
     #[allow(dead_code, reason = "the conversation ingestion adapter's entry")]

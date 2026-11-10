@@ -45,6 +45,7 @@ fn resident_of(call: &RemoteCall) -> Option<&ResidentId> {
             request: fastctx_types::sentinel_control::Request::Conversation { owner, .. },
         } => Some(&owner.resident),
         RemoteCall::GoalCommand { actor, request, .. } => Some(request.resident(actor)),
+        RemoteCall::Timeline { request } => Some(request.resident()),
         RemoteCall::Plan { resident: who, .. }
         | RemoteCall::Goal { resident: who, .. }
         | RemoteCall::ConversationDebt { resident: who, .. }

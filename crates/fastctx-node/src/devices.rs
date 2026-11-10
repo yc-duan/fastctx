@@ -62,6 +62,7 @@ pub fn admit(view: &View, from: &MachineName, call: &RemoteCall) -> Result<(), F
             | RemoteCall::ItemDetail { .. }
             | RemoteCall::AgentActivity { .. }
             | RemoteCall::Watch { .. }
+            | RemoteCall::Timeline { .. }
             // Reading the user's own files, from the machine that has them,
             // and a file the user attaches to their words, kept in that
             // agent's own place: byte streams, which no relay carries.

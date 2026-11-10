@@ -28,6 +28,7 @@ const SLIM_BYTES: usize = 32 * 1024;
 
 /// What a build came to.
 #[derive(Clone, Copy, Debug)]
+#[expect(dead_code, reason = "the timeline build job is not joined yet")]
 pub(crate) struct Built {
     /// The events of the history read.
     pub events: usize,
@@ -43,6 +44,7 @@ fn failure(error: impl std::fmt::Display) -> Failure {
 
 /// Reads the conversation's history, without keeping its host awake for the
 /// reading, and brings its timeline to it.
+#[expect(dead_code, reason = "the timeline build job is not joined yet")]
 pub(crate) async fn build(node: &Arc<Node>, resident: &ResidentId) -> Result<Built, Failure> {
     let content = node.content()?.clone();
     let crate::talk::HistoryRead { history, unread, .. } = crate::talk::history_quietly(node, resident).await?;

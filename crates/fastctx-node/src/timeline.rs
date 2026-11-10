@@ -6,11 +6,13 @@
 //! are made by `build`, which reads the history as the World and the host
 //! keep it and writes what changed.
 
+pub(crate) mod api;
 mod build;
 mod identity;
 mod order;
 pub(crate) mod reads;
 
+#[expect(unused_imports, reason = "the timeline build job is not joined yet")]
 pub(crate) use build::{Built, build};
 
 use fastctx_content::StreamKey;
