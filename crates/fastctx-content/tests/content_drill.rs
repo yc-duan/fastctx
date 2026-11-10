@@ -63,6 +63,7 @@ fn main() -> Outcome<()> {
     println!("walked back {pages} pages, slowest {slowest:.1?}");
 
     revisions(&content, &stream)?;
+    named(&content)?;
     let began = Instant::now();
     let audited = content.audit(&stream)?;
     println!(
@@ -137,6 +138,51 @@ fn record(number: usize, bytes: usize) -> Record {
         order: (number as u64).to_be_bytes().to_vec(),
         state: State::Is { body: body(number as u64, bytes), objects: Vec::new() },
     }
+}
+
+/// The items whose identities begin with a prefix are found by the prefix,
+/// those and no others, whatever bytes it ends with.
+fn named(content: &Content) -> Outcome<()> {
+    let stream = StreamKey::new("drill/named", "items");
+    let identities: [&[u8]; 7] =
+        [&[1, 1, 9], &[1, 1, 0xFF], &[1, 2], &[1, 0xFF, 0xFF, 7], &[1, 0xFF, 0xFF], &[2], &[0xFF, 0xFF, 3]];
+    let records = identities
+        .iter()
+        .enumerate()
+        .map(|(at, identity)| Record {
+            item: identity.to_vec(),
+            order: (at as u64).to_be_bytes().to_vec(),
+            state: State::Is { body: vec![b'x'], objects: Vec::new() },
+        })
+        .collect();
+    content.append(Batch { stream: stream.clone(), generation: 0, records, checkpoint: None, durable: false })?;
+    let found = |prefix: &[u8], most: u32| -> Outcome<Vec<Vec<u8>>> {
+        Ok(content.named(&stream, prefix, most)?.into_iter().map(|place| place.item).collect())
+    };
+    // A prefix, how many are asked for at most, and the identities it finds.
+    type Found<'a> = (&'a [u8], u32, Vec<&'a [u8]>);
+    let expected: [Found; 7] = [
+        (&[1, 1], 9, vec![&[1, 1, 9], &[1, 1, 0xFF]]),
+        (&[1, 1], 1, vec![&[1, 1, 9]]),
+        (&[1, 0xFF, 0xFF], 9, vec![&[1, 0xFF, 0xFF], &[1, 0xFF, 0xFF, 7]]),
+        (&[1], 9, vec![&[1, 1, 9], &[1, 1, 0xFF], &[1, 2], &[1, 0xFF, 0xFF], &[1, 0xFF, 0xFF, 7]]),
+        (&[0xFF, 0xFF], 9, vec![&[0xFF, 0xFF, 3]]),
+        (&[3], 9, vec![]),
+        (&[2, 0], 9, vec![]),
+    ];
+    for (prefix, most, items) in expected {
+        let found = found(prefix, most)?;
+        if found != items.iter().map(|item| item.to_vec()).collect::<Vec<_>>() {
+            return Err(format!("the items named by {prefix:?} came as {found:?}, not {items:?}").into());
+        }
+    }
+    if !content.named(&StreamKey::new("drill/named", "none"), &[1], 9)?.is_empty()
+        || content.named(&stream, &[], 9).is_ok()
+    {
+        return Err("a stream that is not there named items, or an empty prefix was taken".into());
+    }
+    println!("named: prefixes of identities find their items and no others");
+    Ok(())
 }
 
 fn fill(content: &Content, stored: usize) -> Outcome<()> {

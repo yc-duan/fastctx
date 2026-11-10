@@ -99,6 +99,37 @@ impl Content {
         })?)
     }
 
+    /// Where the items of a stream stand whose identities begin with
+    /// `prefix`, in the order of their identities and `most` of them at
+    /// most: what a producer that names its items so asks to learn whether
+    /// one of a name is in the stream already, and where, without reading
+    /// the stream. It reads the index by identity, never a state.
+    pub fn named(&self, stream: &StreamKey, prefix: &[u8], most: u32) -> Result<Vec<Place>> {
+        stream.check()?;
+        if prefix.is_empty() || prefix.len() > record::KEY_BYTES {
+            return Err(Error::Invalid(format!("a prefix of identities is 1 to {} bytes", record::KEY_BYTES)));
+        }
+        // What begins with the prefix lies from it up to, and without, the
+        // prefix with its last byte that can be raised raised by one.
+        let mut past = prefix.to_vec();
+        while past.last() == Some(&u8::MAX) {
+            past.pop();
+        }
+        let past = past.split_last().map(|(last, kept)| [kept, &[last + 1][..]].concat());
+        Ok(self.0.database.read_now(|db| {
+            let snapshot = db.unchecked_transaction()?;
+            let Some((id, _)) = locate(&snapshot, stream)? else { return Ok(Vec::new()) };
+            let mut indexed = snapshot.prepare_cached(
+                "SELECT place, item FROM items INDEXED BY items_by_identity \
+                 WHERE stream = ?1 AND item >= ?2 AND (?3 IS NULL OR item < ?3) ORDER BY item LIMIT ?4",
+            )?;
+            let places = indexed
+                .query_map(params![id, prefix, past, most], |row| Ok(Place { order: row.get(0)?, item: row.get(1)? }))?
+                .collect::<fastctx_storage::rusqlite::Result<_>>()?;
+            Ok(places)
+        })?)
+    }
+
     /// The stream's revision; none when the stream is not here.
     pub fn revision(&self, stream: &StreamKey) -> Result<Option<u64>> {
         stream.check()?;
