@@ -120,7 +120,9 @@ pub(crate) async fn submit<C: Serialize, T: DeserializeOwned>(
 /// does what was asked of what it meant then and not of what it would mean
 /// when the work's turn comes; and it is no part of what tells this asking
 /// from another, so the call asked again is the same operation though it
-/// would resolve otherwise by then.
+/// would resolve otherwise by then. `unit` is not part of that either, and
+/// is best the thing resolved to: the work waits its turn behind the other
+/// work on that thing.
 #[expect(
     dead_code,
     reason = "the first family whose entrance resolves what its calls leave implicit is not merged yet"

@@ -125,6 +125,15 @@ fn named(name: &str, asked: &[u8]) -> String {
     hash.finalize()[..16].iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
+/// The operation of a family that goes by `id`. It is known by its family
+/// and that name alone. The unit its job runs for is no part of it: the
+/// unit says whose turn the job waits for, and may come of what the call's
+/// entrance resolved, which a later asking under the same name would
+/// resolve otherwise; that asking is still this operation.
+fn operation(kind: &'static str, id: &str) -> Operation {
+    Operation { kind, unit: String::new(), id: id.to_string() }
+}
+
 fn failed(failure: &Failure) -> Standing {
     Standing::Failed(serde_json::to_string(failure).unwrap_or_else(|_| failure.message.clone()))
 }
@@ -176,9 +185,11 @@ impl Asking {
 /// service keeps with it, such as whom the caller acted as and what its
 /// entrance made of what the call left to how things stood. `asked` is what
 /// was asked alone, as bytes: with the caller's name it tells this asking
-/// from another, so what the service adds is no part of that. `caller` is
-/// the name the call came with, bound to who asked. `recorded` is called
-/// once the call has done what a submission does, before it stays.
+/// from another, and nothing else does. Neither what the service adds nor
+/// `unit` is part of that: the unit is whose turn the job waits for, and
+/// may be named after what the entrance resolved. `caller` is the name the
+/// call came with, bound to who asked. `recorded` is called once the call
+/// has done what a submission does, before it stays.
 pub async fn submit<S: Service, C: Serialize, T: DeserializeOwned>(
     service: &S,
     family: &Family,
@@ -195,7 +206,7 @@ pub async fn submit<S: Service, C: Serialize, T: DeserializeOwned>(
         Some(submission) => named(&submission.name, asked),
         None => service.fresh().map_err(|error| Failure::not_run(format!("naming {kind}: {error}")))?,
     };
-    let operation = Operation { kind, unit: unit.to_string(), id: id.clone() };
+    let operation = operation(kind, &id);
     let payload = if payload.len() > INLINE_BYTES { keep(service, kind, payload).await? } else { payload };
     let job = Job { kind, key: id, unit: unit.to_string(), payload };
     let accepted = operation.clone();
@@ -294,23 +305,21 @@ async fn kept_of<S: Service>(service: &S, payload: &[u8]) -> Result<Option<Vec<u
 /// settled as not done, for `why`. Work that has begun goes on.
 pub async fn withdraw<S: Service>(service: &S, family: &Family, unit: &str, why: &str) -> Result<usize, Failure> {
     let kind = family.name;
-    let (unit, reason) = (unit.to_string(), failed(&Failure::not_run(why)));
-    let withdrawn = unit.clone();
+    let (withdrawn, reason) = (unit.to_string(), failed(&Failure::not_run(why)));
     let keys = service
         .jobs()
         .database()
         .write(WRITE_BYTES, move |db| {
             let keys = crate::withdraw(db, kind, &withdrawn)?;
             for key in &keys {
-                let operation = Operation { kind, unit: withdrawn.clone(), id: key.clone() };
-                crate::settle(db, &operation, &reason, SETTLED_FOR)?;
+                crate::settle(db, &operation(kind, key), &reason, SETTLED_FOR)?;
             }
             Ok(keys)
         })
         .await
         .map_err(|error| Failure::new(format!("withdrawing {kind}: {error}")))?;
     for key in &keys {
-        service.jobs().told(&Operation { kind, unit: unit.clone(), id: key.clone() });
+        service.jobs().told(&operation(kind, key));
     }
     Ok(keys.len())
 }
@@ -350,7 +359,7 @@ where
             let Some(service) = service else { return Outcome::Failed("the service is stopping".into()) };
             let Some(_held) = service.begins() else { return Outcome::Again { after: ASKS_AGAIN } };
             let kind = family.name;
-            let operation = Operation { kind, unit: taken.unit.clone(), id: taken.key.clone() };
+            let operation = operation(kind, &taken.key);
             // The work runs as a task of its own: nothing that gives up on
             // this job, not the queue and not the service handing over, cuts
             // it short between two of its steps.
