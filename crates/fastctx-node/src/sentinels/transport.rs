@@ -101,13 +101,13 @@ impl Transport {
             _ => return Err("upgrade the sentinel home to use sentinels".into()),
         }
         let call = RemoteCall::SentinelHome { request };
+        let asking = crate::submitted::Asking::begin();
         loop {
             match link.call(home, &scope.account, call.purpose(), call.clone()).await.map_err(|e| e.to_string())? {
                 Ok(RemoteReply::SentinelHome(reply)) => return Ok(*reply),
                 Ok(_) => return Err("the sentinel home answered another kind of call".into()),
-                // Named submissions retain the same operation on each ask; the lifecycle caller bounds this wait.
-                Err(failure) if failure.is_accepted() => tokio::time::sleep(std::time::Duration::from_secs(1)).await,
-                Err(failure) => return Err(failure.message),
+                // Named submissions retain the same operation on each ask.
+                Err(failure) => asking.accepted(failure).await.map_err(|failure| failure.message)?,
             }
         }
     }

@@ -45,6 +45,8 @@ const SETTLED_FOR: Duration = Duration::from_secs(24 * 60 * 60);
 const TRIES: u32 = 3;
 /// How soon work that waits on another machine's accepted work asks again.
 const ASKS_AGAIN: Duration = Duration::from_secs(1);
+/// How long it goes on asking: as long as a client goes on asking a machine.
+const ASKS_FOR: Duration = Duration::from_secs(60 * 60);
 /// Bytes a transaction here retains beyond what was asked.
 const WRITE_BYTES: usize = 1024;
 /// What was asked is a job's payload up to this size; a larger one is kept
@@ -103,6 +105,46 @@ fn named(name: &str, asked: &[u8]) -> String {
     hash.update(name.as_bytes());
     hash.update(asked);
     hash.finalize()[..16].iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// One call of another machine that it may answer as accepted, made again
+/// under the name it was first made with until that machine says what came
+/// of the work, or the hour is up.
+pub(crate) struct Asking {
+    began: tokio::time::Instant,
+}
+
+impl Asking {
+    pub(crate) fn begin() -> Self {
+        Self { began: tokio::time::Instant::now() }
+    }
+
+    /// Takes a failure the other machine answered. When it only says the
+    /// work is accepted, this waits a moment and the call is made again;
+    /// any other failure is the answer. An acceptance an hour old is told
+    /// as work whose effect is not known, not as one to go on asking after.
+    pub(crate) async fn accepted(&self, failure: Failure) -> Result<(), Failure> {
+        if !failure.is_accepted() {
+            return Err(failure);
+        }
+        if self.began.elapsed() >= ASKS_FOR {
+            return Err(Failure::new(format!(
+                "{} An hour on, it has not said what came of it; whether it takes effect is not known",
+                failure.message
+            )));
+        }
+        tokio::time::sleep(ASKS_AGAIN).await;
+        Ok(())
+    }
+
+    /// What the other machine answered, when that is its answer; none when
+    /// the call is to be made again (`accepted`).
+    pub(crate) async fn settled<T>(&self, reply: Result<T, Failure>) -> Option<Result<T, Failure>> {
+        match reply {
+            Err(failure) => self.accepted(failure).await.err().map(Err),
+            reply => Some(reply),
+        }
+    }
 }
 
 fn failed(failure: &Failure) -> Standing {

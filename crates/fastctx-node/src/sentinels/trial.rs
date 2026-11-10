@@ -57,6 +57,7 @@ pub(super) async fn route_work(
         return Err(Failure::not_run("the sentinel home is offline"));
     }
     let call = RemoteCall::SentinelTry;
+    let asking = crate::submitted::Asking::begin();
     loop {
         match link
             .call(&home, account, call.purpose(), call.clone())
@@ -65,8 +66,7 @@ pub(super) async fn route_work(
         {
             Ok(RemoteReply::SentinelTried(report)) => return Ok(*report),
             Ok(_) => return Err(Failure::new("the sentinel home answered another kind of call")),
-            Err(failure) if failure.is_accepted() => tokio::time::sleep(Duration::from_secs(1)).await,
-            Err(failure) => return Err(failure),
+            Err(failure) => asking.accepted(failure).await?,
         }
     }
 }

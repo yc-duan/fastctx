@@ -65,14 +65,13 @@ pub async fn talk(
         return Ok((Address { machine: here, resident: to }, landed));
     }
     let call = RemoteCall::Talk { to: to.clone(), text, attachments, files_on, id };
+    let asking = crate::submitted::Asking::begin();
     let reply = loop {
         let reply = node
             .call(&Acting::Here, &machine, Purpose::Agents, call.clone())
             .await
             .map_err(crate::authorization::call_failure)?;
-        if reply.as_ref().is_err_and(|failure| failure.is_accepted()) {
-            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-        } else {
+        if let Some(reply) = asking.settled(reply).await {
             break reply;
         }
     };
@@ -1034,14 +1033,13 @@ pub async fn open(
                 home: choices.home,
                 files_on: choices.files_on,
             };
+            let asking = crate::submitted::Asking::begin();
             let reply = loop {
                 let reply = node
                     .call(&acting, &target, Purpose::Agents, call.clone())
                     .await
                     .map_err(|failure| Failure::new(failure.to_string()))?;
-                if reply.as_ref().is_err_and(|failure| failure.is_accepted()) {
-                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                } else {
+                if let Some(reply) = asking.settled(reply).await {
                     break reply;
                 }
             };

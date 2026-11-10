@@ -180,12 +180,15 @@ async fn ask_for_account(
         prompt: request.prompt,
         started,
     };
+    let asking = crate::submitted::Asking::begin();
     let reply = loop {
-        let reply = link.call(&lives_on.name, account, Purpose::Agents, call.clone()).await;
-        if matches!(&reply, Ok(Err(failure)) if failure.is_accepted()) {
-            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-        } else {
-            break reply;
+        match link.call(&lives_on.name, account, Purpose::Agents, call.clone()).await {
+            Ok(reply) => {
+                if let Some(reply) = asking.settled(reply).await {
+                    break Ok(reply);
+                }
+            }
+            Err(failure) => break Err(failure),
         }
     };
     match reply {

@@ -155,6 +155,7 @@ pub(super) async fn set_work(
         return Err(Failure::not_run("the sentinel home is offline"));
     }
     let call = RemoteCall::SentinelKey { key, value };
+    let asking = crate::submitted::Asking::begin();
     loop {
         match link
             .call(&home, account, call.purpose(), call.clone())
@@ -163,8 +164,7 @@ pub(super) async fn set_work(
         {
             Ok(RemoteReply::SentinelKeys(status)) => return Ok(status),
             Ok(_) => return Err(Failure::new("the sentinel home answered another kind of call")),
-            Err(failure) if failure.is_accepted() => tokio::time::sleep(Duration::from_secs(1)).await,
-            Err(failure) => return Err(failure),
+            Err(failure) => asking.accepted(failure).await?,
         }
     }
 }
