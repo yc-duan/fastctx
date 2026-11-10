@@ -41,6 +41,33 @@ pub(crate) fn current_view(link: &Link) -> Result<Arc<View>, Failure> {
     Ok(view)
 }
 
+/// The hub's current view on `link`, waited for `within` at most: for work
+/// accepted earlier that begins as the node starts, before its hubs gave
+/// their views, so that it is not judged by a view that was only late.
+/// What is asked and answered at once does not wait; its caller asks again.
+#[expect(dead_code, reason = "the submitted families that judge by a hub's view as their work begins take it up")]
+pub(crate) async fn awaited_view(node: &Node, link: &Link, within: std::time::Duration) -> Result<Arc<View>, Failure> {
+    let mut views = node.views.subscribe();
+    let until = tokio::time::Instant::now() + within;
+    loop {
+        match current_view(link) {
+            Err(pending) if view_pending(&pending) => {
+                let now = tokio::time::Instant::now();
+                if now >= until {
+                    return Err(pending);
+                }
+                // A line that came up changes no view by itself: it is
+                // looked at again each second as well.
+                let next = (now + std::time::Duration::from_secs(1)).min(until);
+                if let Ok(Err(_)) = tokio::time::timeout_at(next, views.changed()).await {
+                    return Err(pending);
+                }
+            }
+            judged => return judged,
+        }
+    }
+}
+
 /// Whether `failure` only says a hub's view of this connection has not come
 /// yet: no judgement, which one made once it comes may reverse.
 pub(crate) fn view_pending(failure: &Failure) -> bool {
