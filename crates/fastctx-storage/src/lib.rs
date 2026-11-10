@@ -47,6 +47,20 @@ const READERS: usize = 16;
 /// Those of them background reads leave to the reads someone waits for.
 const INTERACTIVE_READERS: usize = 2;
 
+/// How a database's file is laid out and held in memory, for one whose rows
+/// are larger or whose writes come in larger batches than a service's
+/// records. What is not given stays as SQLite has it.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Shape {
+    /// The size of a page. It holds for a database made by this open; one
+    /// that exists keeps the size it was made with.
+    pub page_bytes: Option<u32>,
+    /// The pages the writer keeps in memory, in bytes.
+    pub cache_bytes: Option<u32>,
+    /// The pages of log after which a commit folds the log into the database.
+    pub checkpoint_pages: Option<u32>,
+}
+
 /// What makes a database's guard from the opened database, if it has one.
 type Maker<'a> = Option<&'a dyn Fn(&rusqlite::Connection) -> Result<Box<dyn Guard>>>;
 
@@ -143,7 +157,13 @@ impl Database {
         schema: &str,
         initialize: impl Fn(&rusqlite::Connection) -> Result<()>,
     ) -> Result<Self> {
-        Self::open_kept(path, schema, &initialize, None)
+        Self::open_kept(path, schema, &initialize, None, Shape::default())
+    }
+
+    /// Opens as `open` does, with the file laid out and cached as `shape` says.
+    #[track_caller]
+    pub fn open_shaped(path: &Path, schema: &str, shape: Shape) -> Result<Self> {
+        Self::open_kept(path, schema, &|_| Ok(()), None, shape)
     }
 
     /// Opens as `open_initialized`, the writer keeping the rules of `guard`,
@@ -155,7 +175,7 @@ impl Database {
         guard: impl Fn(&rusqlite::Connection) -> Result<Box<dyn Guard>>,
         initialize: impl Fn(&rusqlite::Connection) -> Result<()>,
     ) -> Result<Self> {
-        Self::open_kept(path, schema, &initialize, Some(&guard))
+        Self::open_kept(path, schema, &initialize, Some(&guard), Shape::default())
     }
 
     #[track_caller]
@@ -164,6 +184,7 @@ impl Database {
         schema: &str,
         initialize: &dyn Fn(&rusqlite::Connection) -> Result<()>,
         guard: Maker<'_>,
+        shape: Shape,
     ) -> Result<Self> {
         fastctx_platform::roles::in_place("opening a database", || {
             let parent = path.parent().ok_or_else(|| Error::new("the database has no parent directory"))?;
@@ -173,13 +194,13 @@ impl Database {
                 fastctx_platform::ensure_private_dir(parent)?;
             }
             let kept = keeper::keep(path)?;
-            match Self::open_once(path, schema, initialize, guard, &kept) {
+            match Self::open_once(path, schema, initialize, guard, &kept, shape) {
                 // Damage the cheap checks did not see is set aside and salvaged
                 // as theirs is, and the salvage opened instead; only when no
                 // other connection to it is open.
                 Err(error) if error.is_database_damage() && kept.sole => {
                     recovery::mark_damaged(path, &error.to_string())?;
-                    Self::open_once(path, schema, initialize, guard, &kept)
+                    Self::open_once(path, schema, initialize, guard, &kept, shape)
                 }
                 opened => opened,
             }
@@ -192,6 +213,7 @@ impl Database {
         initialize: &dyn Fn(&rusqlite::Connection) -> Result<()>,
         guard: Maker<'_>,
         kept: &keeper::Kept,
+        shape: Shape,
     ) -> Result<Self> {
         let readings = readings::Readings::of(path);
         // Another handle of this process has it open, or is closing it: its
@@ -203,10 +225,17 @@ impl Database {
         let mut connection = rusqlite::Connection::open(path)?;
         connection.busy_timeout(ADMISSION)?;
         connection.set_prepared_statement_cache_capacity(64);
+        if let Some(page) = shape.page_bytes {
+            // Before the log's mode: a database in it keeps its page size.
+            connection.pragma_update(None, "page_size", page)?;
+        }
         connection.pragma_update(None, "journal_mode", "WAL")?;
         connection.pragma_update(None, "synchronous", "FULL")?;
         connection.pragma_update(None, "foreign_keys", "ON")?;
-        connection.pragma_update(None, "wal_autocheckpoint", 1000)?;
+        connection.pragma_update(None, "wal_autocheckpoint", shape.checkpoint_pages.unwrap_or(1000))?;
+        if let Some(cache) = shape.cache_bytes {
+            connection.pragma_update(None, "cache_size", -i64::from(cache / 1024))?;
+        }
         connection.pragma_update(None, "journal_size_limit", 8 * 1024 * 1024)?;
         let transaction = connection.transaction()?;
         versions::engine(&transaction)?;
@@ -280,7 +309,7 @@ impl Database {
         schema: &str,
         initialize: impl Fn(&rusqlite::Connection) -> Result<()>,
     ) -> Self {
-        Self::or_unavailable(path, Self::open_kept(path, schema, &initialize, None))
+        Self::or_unavailable(path, Self::open_kept(path, schema, &initialize, None, Shape::default()))
     }
 
     /// Opens as `open_or_unavailable`, the writer keeping `guard`'s rules.
@@ -291,7 +320,7 @@ impl Database {
         guard: impl Fn(&rusqlite::Connection) -> Result<Box<dyn Guard>>,
         initialize: impl Fn(&rusqlite::Connection) -> Result<()>,
     ) -> Self {
-        Self::or_unavailable(path, Self::open_kept(path, schema, &initialize, Some(&guard)))
+        Self::or_unavailable(path, Self::open_kept(path, schema, &initialize, Some(&guard), Shape::default()))
     }
 
     /// Keeps startup refusal available to diagnostics without touching the file.
