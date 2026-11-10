@@ -975,6 +975,7 @@ pub async fn run_prepared(
         // work below names its own kinds then.
         timeline::register(&node);
         management::register(&node);
+        control::submission::register(&node);
         goals::submission::register(&node);
         sentinels::submission::register(&node);
         logins::submitted::register(&node);

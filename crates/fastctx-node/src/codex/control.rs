@@ -92,6 +92,23 @@ fn limits(kept: &AgentLimits) -> Vec<Limit> {
         .collect()
 }
 
+/// Argument refusals that need neither a host lookup nor a conversation gate.
+pub(crate) fn validate(control: &Control) -> Result<(), Failure> {
+    match control {
+        Control::Rename { name } if name.trim().is_empty() => Err(Failure::new("a conversation name cannot be empty")),
+        Control::Command { name, args, path: None } => match name.as_str() {
+            "model" => Err(Failure::not_run(crate::control::MODEL_COMMAND)),
+            "compact" | "fork" | "status" | "usage" | "skills" | "debug-config" => no_args(args),
+            "rename" if args.trim().is_empty() => Err(Failure::new("a conversation name cannot be empty")),
+            "mcp" if !matches!(args.trim(), "" | "verbose") => {
+                Err(Failure::new("/mcp takes only the optional argument verbose"))
+            }
+            _ => Ok(()),
+        },
+        _ => Ok(()),
+    }
+}
+
 pub async fn control(node: &Arc<Node>, resident: &ResidentId, mut control: Control) -> Result<Controlled, Failure> {
     let (codex, thread) = thread(node, resident).await?;
     let (about, _) = node.residents.about(resident).ok_or_else(|| Failure::new("unknown conversation"))?;

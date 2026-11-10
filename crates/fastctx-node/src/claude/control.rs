@@ -55,6 +55,19 @@ struct Request {
     completed: Arc<tokio::sync::watch::Sender<Option<Result<Answer, Failure>>>>,
 }
 
+/// Refusals known without waking or reading the host's control bridge.
+pub(crate) fn validate(control: &Control) -> Result<(), Failure> {
+    match control {
+        Control::Command { name, path: None, .. } if name == "model" => {
+            Err(Failure::not_run(crate::control::MODEL_COMMAND))
+        }
+        Control::Rewind { .. } if !REWIND_SUPPORTED => Err(Failure::not_run(
+            "Claude Code has no supported in-place rewind; fork through the selected turn instead",
+        )),
+        _ => Ok(()),
+    }
+}
+
 pub async fn control(node: &Arc<Node>, resident: &ResidentId, control: Control) -> Result<Controlled, Failure> {
     let (about, _) = node.residents.about(resident).ok_or_else(|| Failure::new("unknown conversation"))?;
     node.settled_for(&about.acting).await;

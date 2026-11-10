@@ -15,6 +15,8 @@ use fastctx_types::{Address, ResidentId};
 
 use crate::Node;
 
+pub(crate) mod submission;
+
 /// Why `/model` is refused: the model is chosen in the conversation's model
 /// panel alone (`world-gui.md`, 对话).
 pub(crate) const MODEL_COMMAND: &str =
@@ -80,6 +82,9 @@ pub async fn offers(
 /// Does `control` to a resident of this machine, through its host. Sessions
 /// the World does not hold (the user's own Codex in an app) take nothing.
 pub async fn control_here(node: &Arc<Node>, resident: &ResidentId, control: Control) -> Result<Controlled, Failure> {
+    if submission::takes(&control) {
+        return submission::here(node, resident, control).await;
+    }
     // Its queue, its retries and what it tells go on to their end if whoever
     // asked goes away; a long control goes on in a task of its own.
     let (node, resident) = (node.clone(), resident.clone());
