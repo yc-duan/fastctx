@@ -48,15 +48,10 @@ pub(crate) fn run(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
         }
         output.flush()?;
     }
-    database.write_now(128, |db| {
-        db.execute_batch("CREATE TRIGGER step_view_fault BEFORE INSERT ON run_steps WHEN NEW.id='step-50' BEGIN SELECT RAISE(ABORT,'injected recovery failure'); END;")?;
-        Ok(())
-    })?;
+    let file = world.path().join("node.sqlite3");
+    crate::storage_drill::outside(&file, "CREATE TRIGGER step_view_fault BEFORE INSERT ON run_steps WHEN NEW.id='step-50' BEGIN SELECT RAISE(ABORT,'injected recovery failure'); END;")?;
     assert!(step_view::refresh(&path).is_err());
-    database.write_now(128, |db| {
-        db.execute_batch("DROP TRIGGER step_view_fault")?;
-        Ok(())
-    })?;
+    crate::storage_drill::outside(&file, "DROP TRIGGER step_view_fault")?;
     step_view::refresh(&path)?;
     let hidden = path.with_extension("steps.hidden");
     disk::rename(path.with_extension("steps.jsonl"), &hidden)?;
@@ -90,7 +85,7 @@ pub(crate) fn run(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let (steps, folded) = step_view::read(&path)?;
     assert_eq!(steps.len(), 200);
     assert_eq!(folded.iter().map(|row| row.count).sum::<u64>(), 99_801);
-    super::drill_frames::run(&database, &path)?;
+    super::drill_frames::run(&file, &path)?;
     println!("executor interrupted recovery and resumed append: passed");
     Ok(())
 }

@@ -1,14 +1,13 @@
 //! Publication failure and transport retry over a page larger than one letter.
 use super::{frame_queue, updates::Emitted};
 use crate::job_metadata::Job;
-use fastctx_storage::Database;
 use fastctx_types::{run::RunState, run_facts::*};
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::Path,
 };
 
-pub(super) fn run(database: &Database, path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+pub(super) fn run(file: &Path, path: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let record = fastctx_hands::run::record::read(path)?;
     let update = JobFacts {
         record: Some(path.to_string_lossy().into()),
@@ -53,16 +52,10 @@ pub(super) fn run(database: &Database, path: &Path) -> Result<(), Box<dyn std::e
     assert!(original > 16 * 1024 * 1024, "the fixture must reproduce the transport rejection");
     let job = Job::open(path)?;
     let mut emitted = Emitted::default();
-    database.write_now(512, |db| {
-        db.execute_batch("CREATE TRIGGER fact_queue_fault BEFORE INSERT ON conversation_records WHEN NEW.family LIKE '%/facts-queue' BEGIN SELECT RAISE(ABORT,'injected manifest failure'); END;")?;
-        Ok(())
-    })?;
+    crate::storage_drill::outside(file, "CREATE TRIGGER fact_queue_fault BEFORE INSERT ON conversation_records WHEN NEW.family LIKE '%/facts-queue' BEGIN SELECT RAISE(ABORT,'injected manifest failure'); END;")?;
     assert!(frame_queue::publish(&job, update.clone(), &mut emitted).is_err());
     assert!(job.get::<Emitted>("facts-state")?.is_none(), "failed publication advanced the source cursor");
-    database.write_now(128, |db| {
-        db.execute_batch("DROP TRIGGER fact_queue_fault")?;
-        Ok(())
-    })?;
+    crate::storage_drill::outside(file, "DROP TRIGGER fact_queue_fault")?;
     job.put("facts-pending", &update)?;
     frame_queue::publish(&job, update.clone(), &mut emitted)?;
     assert!(job.raw("facts-pending")?.is_none(), "legacy source must retire with the manifest");
