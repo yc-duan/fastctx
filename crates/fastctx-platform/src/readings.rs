@@ -149,6 +149,25 @@ pub fn timing(name: &'static str) -> &'static Timing {
 /// the rest share the family's `other`.
 const KINDS: usize = 256;
 
+/// The counter named `family.kind`, with the same bounded kind registry as
+/// dynamic timings. Kinds beyond the first 256 share the family's `other`.
+pub fn counter_of(family: &'static str, kind: &str) -> &'static Counter {
+    static NAMED: LazyLock<Mutex<HashMap<&'static str, HashMap<String, &'static Counter>>>> =
+        LazyLock::new(Default::default);
+    let mut named = NAMED.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let kinds = named.entry(family).or_default();
+    if let Some(counter) = kinds.get(kind) {
+        return counter;
+    }
+    let kind = if kinds.len() < KINDS { kind } else { "other" };
+    if let Some(counter) = kinds.get(kind) {
+        return counter;
+    }
+    let made = counter(Box::leak(format!("{family}.{kind}").into_boxed_str()));
+    kinds.insert(kind.to_string(), made);
+    made
+}
+
 /// The timing named `family.kind`, for what is known only as the program
 /// runs, such as a lock's name or a call's kind.
 pub fn timing_of(family: &'static str, kind: &str) -> &'static Timing {

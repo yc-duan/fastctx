@@ -134,6 +134,8 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
             writer.drain().await?;
             continue;
         }
+        let kind = crate::labels::kind_of(&call);
+        let processing = fastctx_platform::call_timing::ResponseTime::start(call.response());
         let _subscription = crate::local_subscriptions::observe(node.machine(), &caller, &call);
         if let Call::McpRelay { name } = call {
             return crate::mcp::local::serve(node, &hello.peer, name, id, reader, writer).await;
@@ -324,7 +326,11 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
                     reply: Err(Failure::not_run("project memory was replaced by history; update the app")),
                 }))
                 .await?;
-            return writer.drain().await;
+            writer.drain().await?;
+            if let Some(processing) = processing {
+                processing.answered("local", &kind);
+            }
+            return Ok(());
         }
         if let Call::WatchFeatures = call {
             // An interface follows the switches for as long as it is open:
@@ -580,6 +586,9 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
                 node.machine()
             )));
             writer.send(&json(&NodeFrame::Reply { id, reply })).await?;
+            if let Some(processing) = processing {
+                processing.answered("local", &kind);
+            }
             continue;
         };
         // A copy holds the node back only while a try of it runs (`copy`).
@@ -655,12 +664,14 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
             let reply = Err::<Reply, _>(node.residents.active(removed).expect_err("removed resident"));
             writer.send(&json(&NodeFrame::Reply { id, reply })).await?;
             writer.drain().await?;
+            if let Some(processing) = processing {
+                processing.answered("local", &kind);
+            }
             continue;
         }
         let arriving = matches!(&call, Call::Arrive { host, hints } if host.agent.as_str() != "claude" && hints.tool_use_id.is_none());
         // From the door to the answer written, under the call's kind; what
         // answering it costs, under its kind and who asked.
-        let kind = crate::labels::kind_of(&call);
         let timed = fastctx_platform::readings::timing_of("call", &kind);
         let account = fastctx_platform::cost::account(&format!("{kind} by {}", asking(&hello.peer)));
         // What only reads or waits stops once its client is gone; a change
@@ -698,6 +709,11 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
                             | Call::RecordRunFailure { .. }
                     );
                     let handling = fastctx_net::submission::scope(submission, handled(node, &hello.peer, call));
+                    let handling: std::pin::Pin<Box<dyn Future<Output = Result<Reply, Failure>> + Send + '_>> =
+                        match &processing {
+                            Some(processing) => Box::pin(processing.handling(handling)),
+                            None => Box::pin(handling),
+                        };
                     if internal { handling.await } else { crate::gate_waits::asked_since(requested, handling).await }
                 }
             }
@@ -733,6 +749,9 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
         }
         writer.send(&crate::renewal_legacy::frame(hello.protocol, id, &reply)).await?;
         writer.drain().await?;
+        if let Some(processing) = processing {
+            processing.answered("local", &kind);
+        }
         timed.record(requested.elapsed());
     }
     Ok(())

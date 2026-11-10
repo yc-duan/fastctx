@@ -39,12 +39,23 @@ use crate::message::Body;
 use crate::sign::sha256;
 use crate::wire::{self, Carried, End, Ticket, Up};
 
+mod request_limits;
+
 struct Held {
     guards: Vec<Box<dyn Send>>,
     came: tokio::time::Instant,
     deadline: Option<tokio::time::Instant>,
     /// The call's kind, once its body is in.
     kind: Option<String>,
+    processing: Option<fastctx_platform::call_timing::ResponseTime>,
+}
+
+impl Held {
+    fn answered(&mut self) {
+        if let Some(processing) = self.processing.take() {
+            processing.answered("remote", self.kind.as_deref().expect("a running call has its kind"));
+        }
+    }
 }
 
 /// Checks a call from another machine, and does what it asks.
@@ -133,7 +144,7 @@ pub(super) async fn answer(inner: Arc<Inner>, replier: Replier, message: Envelop
         )),
     };
     // Kept until the answer has gone, or is given up.
-    let mut held = Held { guards: Vec::new(), came, deadline: None, kind: None };
+    let mut held = Held { guards: Vec::new(), came, deadline: None, kind: None, processing: None };
     let Some(result) = work(&inner, &caller, &message, &endpoint, &mut stop, &mut held).await else {
         // Nobody is left to hear the answer.
         return;
@@ -165,8 +176,9 @@ pub(super) async fn answer(inner: Arc<Inner>, replier: Replier, message: Envelop
             }
         };
         if fits {
-            if let Err(error) = send(&replier, answer_envelope(&inner, &message, Kind::Answer, None, &small)).await {
-                inner.node.log(format!("sending an answer to {}: {error}", caller.machine));
+            match send(&replier, answer_envelope(&inner, &message, Kind::Answer, None, &small)).await {
+                Ok(()) => held.answered(),
+                Err(error) => inner.node.log(format!("sending an answer to {}: {error}", caller.machine)),
             }
             return;
         }
@@ -191,8 +203,9 @@ pub(super) async fn answer(inner: Arc<Inner>, replier: Replier, message: Envelop
             sent = crate::data::source(&endpoint, &inner.key, stream, &bytes) => sent,
             _ = stop.stopping() => Err("its caller gave it up".to_string()),
         };
-        if let Err(error) = sent {
-            inner.node.log(format!("sending a large answer to {}: {error}", caller.machine));
+        match sent {
+            Ok(()) => held.answered(),
+            Err(error) => inner.node.log(format!("sending a large answer to {}: {error}", caller.machine)),
         }
         drop(held);
     };
@@ -227,6 +240,13 @@ async fn work(
         Ok(body) => body,
         Err(error) => return Some(refused(format!("{error}; a newer Fastctx may make calls this one does not know"))),
     };
+    // Check recognized requests before processing admission (2026-11-10):
+    // oversized work must not occupy a queue or a processing place.
+    if let Body::Call { call, .. } | Body::StreamCall { call } = &body
+        && let Err(failure) = request_limits::small(call, message)
+    {
+        return Some(Err(failure));
+    }
     // A large call's own kind is known only once it is in: it comes in in
     // a place for calls coming in, and then takes its own.
     let pool = match &body {
@@ -328,7 +348,12 @@ async fn work(
     }
     let kind = remote.kind();
     held.kind = Some(kind.clone());
+    held.processing = fastctx_platform::call_timing::ResponseTime::start(contract.response);
     let doing = crate::submission::scope(submission, inner.node.call(caller.clone(), remote, stream));
+    let doing: super::BoxFuture<RemoteResult> = match &held.processing {
+        Some(processing) => Box::pin(processing.handling(doing)),
+        None => Box::pin(doing),
+    };
     let past = async {
         match contract.within {
             Some(within) => tokio::time::sleep_until(came + within).await,
@@ -470,6 +495,9 @@ async fn open_call(
             let remote: RemoteCall = serde_json::from_slice(&bytes).map_err(|error| {
                 format!("it cannot be read: {error}; a newer Fastctx may make calls this one does not know")
             })?;
+            // The receiving place precedes knowing the kind; the processing
+            // place is acquired only after this check (2026-11-10).
+            request_limits::large(&remote, bytes.len()).map_err(|failure| failure.message)?;
             if details != crate::call_details::CallDetails::of(&call.from, &remote)
                 || call.purpose != Some(details.purpose)
             {

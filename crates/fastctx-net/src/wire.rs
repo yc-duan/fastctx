@@ -44,7 +44,7 @@ pub const DATA_PATH: &str = "/fastctx/world/4/data";
 /// The largest frame on a control connection. Heartbeats, calls and
 /// letters share that connection, so nothing on it may be large enough to
 /// hold the others up; anything larger goes over a data connection.
-pub const MAX_CONTROL_FRAME: usize = 256 * 1024;
+pub const MAX_CONTROL_FRAME: usize = fastctx_types::contract::CONTROL_FRAME_BYTES;
 
 /// The largest binary message on a data connection.
 pub const MAX_DATA_MESSAGE: usize = 1024 * 1024;

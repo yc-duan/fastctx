@@ -11,6 +11,7 @@ pub mod atomic;
 pub mod awake;
 pub mod bounded;
 pub mod call_readings;
+pub mod call_timing;
 #[cfg(any(target_os = "linux", target_os = "macos", windows))]
 pub mod child;
 pub mod conduct;
