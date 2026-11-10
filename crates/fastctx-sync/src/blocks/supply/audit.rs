@@ -137,12 +137,7 @@ pub(super) fn retained(db: &Connection, request: &Request) -> Result<bool> {
             "SELECT EXISTS(SELECT 1 FROM sync_source_proofs p JOIN sync_stream_records f ON f.hub=p.hub AND f.scope=p.scope AND f.stream=p.stream AND f.epoch=p.epoch AND f.batch_proof=p.proof JOIN sync_stream_roots r ON r.hub=f.hub AND r.scope=f.scope AND r.stream=f.stream AND r.epoch=f.epoch AND r.sequence=f.sequence JOIN sync_stream_heads h ON h.hub=p.hub AND h.scope=p.scope AND h.stream=p.stream AND h.epoch=p.epoch WHERE p.hub=?1 AND p.scope=?2 AND p.stream=?3 AND p.operation=?4 AND h.object=?5 AND f.kind=?6 AND r.hash=?7 AND r.root_kind=?8 AND r.decoded_bytes IS ?9)",
             params![object.scope.hub.to_string(),object.scope.scope.as_str(),stream.as_str(),request.operation.as_str(),object.object.as_str(),request.kind,hash,form,length],|row|row.get(0),
         ).map_err(Into::into),
-        SupplyOwner::Source {source} => {
-            db.query_row(
-                "SELECT EXISTS(SELECT 1 FROM sync_asset_uploads u JOIN sync_source_step_targets t ON t.hub=u.hub AND t.scope=u.source_scope AND t.source=u.source AND t.step=u.source_step AND t.target_scope=u.scope AND t.object=u.object AND t.kind=u.kind JOIN sync_source_proofs p ON p.hub=t.hub AND p.scope=t.target_scope AND p.stream=t.stream AND p.operation=u.operation JOIN sync_stream_roots r ON r.hub=p.hub AND r.scope=p.scope AND r.stream=p.stream AND r.epoch=p.epoch AND r.sequence BETWEEN p.first_sequence AND p.last_sequence JOIN sync_stream_records f ON f.hub=r.hub AND f.scope=r.scope AND f.stream=r.stream AND f.epoch=r.epoch AND f.sequence=r.sequence AND f.batch_proof=p.proof WHERE u.hub=?1 AND u.scope=?2 AND u.object=?3 AND u.kind=?4 AND u.operation=?5 AND t.target_source=?6 AND r.hash=?7 AND r.root_kind=?8 AND r.decoded_bytes IS ?9 AND f.kind=u.kind)",
-                params![object.scope.hub.to_string(),object.scope.scope.as_str(),object.object.as_str(),request.kind,request.operation.as_str(),source.as_str(),hash,form,length],|row|row.get(0),
-            ).map_err(Into::into)
-        }
+        SupplyOwner::Source {source} => super::source_owner::retained(db, request, source),
     }
 }
 fn retained_use(db: &Connection, request: &Request, usage: &RootUse) -> Result<bool> {

@@ -94,7 +94,7 @@ impl ProofSigner for IdentitySigner {
                 ProofPurpose::SourceBatchV1
             }
         };
-        let data = encode(value)?;
+        let data = fastctx_sync::proof::encode_source_batch(value)?;
         validation::source(value)?;
         Ok(SignedSourceBatch { proof: self.signed(purpose, data) })
     }

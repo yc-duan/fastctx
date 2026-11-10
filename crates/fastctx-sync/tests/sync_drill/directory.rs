@@ -132,9 +132,9 @@ impl AccessPolicy for HubPolicy {
 
 /// Carries each request and answer through its JSON encoding, as a transport
 /// would, to the hub's service for one authenticated device.
-struct Loopback {
-    service: Arc<Service>,
-    peer: Peer,
+pub(super) struct Loopback {
+    pub(super) service: Arc<Service>,
+    pub(super) peer: Peer,
 }
 impl Upstream for Loopback {
     fn exchange(&self, request: Message) -> fastctx_sync::store::FutureResult<'_, Message> {

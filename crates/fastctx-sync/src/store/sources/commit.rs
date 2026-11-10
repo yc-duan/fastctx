@@ -28,10 +28,10 @@ use fastctx_storage::{
 use fastctx_types::sync::proof::SignedSourceBatch;
 use std::sync::Arc;
 
-/// One destination's inputs, prepared outside the writer: its signed batch and
+/// One destination's inputs, prepared outside the writer: its signed batches and
 /// the payload bytes its authorizer judges.
 struct Prepared {
-    signed: Option<(SourceBatch, SignedSourceBatch)>,
+    signed: Vec<(SourceBatch, SignedSourceBatch)>,
     payloads: Vec<Vec<u8>>,
     authorizer: Arc<dyn SourceAuthorizer>,
 }
@@ -78,20 +78,29 @@ impl SqliteSources {
             StepState::Cancelled => return Err(Error::Invalid("the source step was cancelled".into())),
             StepState::Active => {}
         }
+        let parts = operation
+            .batches()
+            .iter()
+            .map(|batch| match &batch.facts {
+                None => Ok(Vec::new()),
+                Some(IngestFacts::Local { batch }) => crate::proof::split_source_batch(batch),
+                Some(IngestFacts::Proven { .. }) => Err(Error::Invalid(
+                    "forwarded source evidence is accepted through the authority, not a local step".into(),
+                )),
+            })
+            .collect::<Result<Vec<_>, Error>>()?;
         let mut prepared = Vec::with_capacity(operation.batches().len());
         let mut permits = Vec::new();
-        for batch in operation.batches() {
+        for (batch, parts) in operation.batches().iter().zip(parts) {
             let custody = &batch.target.target().custody;
             let authorizer = self.authorizer(custody)?.clone();
-            let signed = match &batch.facts {
-                None => None,
-                Some(IngestFacts::Local { batch: facts }) => Some((facts.clone(), self.signer.source(facts)?)),
-                Some(IngestFacts::Proven { .. }) => {
-                    return Err(Error::Invalid(
-                        "forwarded source evidence is accepted through the authority, not a local step".into(),
-                    ));
-                }
-            };
+            let signed = parts
+                .into_iter()
+                .map(|facts| {
+                    let signed = self.signer.source(&facts)?;
+                    Ok((facts, signed))
+                })
+                .collect::<Result<Vec<_>, Error>>()?;
             let mut payloads = Vec::new();
             for record in signed.iter().flat_map(|(facts, _)| &facts.records) {
                 let (bytes, permit) = self.blocks.read_supplied(operation.step(), custody, &record.payload)?;
@@ -157,20 +166,23 @@ fn write(
         let target = batch.target.target();
         source_commit::authorize(db, holder, policy, &target.custody)?;
         source_commit::require_bound(db, step, target)?;
-        if let Some((facts, _)) = &inputs.signed {
+        let facts = match &batch.facts {
+            Some(IngestFacts::Local { batch }) => Some(batch),
+            _ => None,
+        };
+        if let Some(facts) = facts {
             streams::check(db, target, facts)?;
         }
         effects::check(db, target, &batch.effects)?;
-        let payloads: Vec<_> = inputs
-            .signed
-            .iter()
-            .flat_map(|(facts, _)| &facts.records)
+        let payloads: Vec<_> = facts
+            .into_iter()
+            .flat_map(|facts| &facts.records)
             .zip(&inputs.payloads)
             .map(|(record, bytes)| SourcePayload { record, bytes })
             .collect();
         let change = PreparedSourceChange {
             target,
-            batch: inputs.signed.as_ref().map(|(facts, _)| facts),
+            batch: facts,
             payloads: &payloads,
             checkpoint: operation.next(),
             effects: &batch.effects,
@@ -187,12 +199,10 @@ fn write(
     let mut sources = Vec::with_capacity(prepared.len());
     for (batch, inputs) in operation.batches().iter().zip(prepared) {
         let target = batch.target.target();
-        let status = match &inputs.signed {
-            None => IngestStatus::CheckpointOnly,
-            Some((facts, signed)) => {
-                IngestStatus::Applied { progress: streams::append(db, content, target, facts, signed, local)? }
-            }
-        };
+        let mut status = IngestStatus::CheckpointOnly;
+        for (facts, signed) in &inputs.signed {
+            status = IngestStatus::Applied { progress: streams::append(db, content, target, facts, signed, local)? };
+        }
         effects::apply(db, content, step, target, &batch.effects, local, &mut leases)?;
         sources.push(receipt(target, operation.next(), status));
     }

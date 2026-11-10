@@ -3,6 +3,8 @@
 use super::*;
 #[path = "source_acceptance/fixture.rs"]
 mod fixture;
+#[path = "source_pages.rs"]
+mod source_pages;
 use fastctx_sync::{
     catalog::{Lifecycle, SourceBatch, SourceRecord},
     cursor::{Sequence, StreamCursor},
@@ -419,6 +421,7 @@ pub(super) async fn run(root: &Path) -> Result<()> {
     assert_eq!(answered(&metadata, &first).await?, (receipt.clone(), true));
     assert!(answered(&metadata, &second).await?.1);
     assert_eq!(count_scope(&db, "sync_changes", &object)?, 3);
+    source_pages::run(root).await?;
     println!(
         "hub source acceptance: out-of-order persistence, FULL rollback, restart, initial epoch confirmation, exact replay, conflicting proof retention, missing attachment, hub semantic refusal and continued producer prefixes passed"
     );

@@ -174,6 +174,7 @@ pub(super) fn append(
         through,
         records: vec![record.clone()],
     };
+    crate::proof::encode_source_batch(&batch).map_err(|error| sql::invalid(error.to_string()))?;
     let signed = signer.source(&batch).map_err(|error| sql::invalid(error.to_string()))?;
     let (_, prefix) = feed::stream_advance(&stream.prefix, &record).map_err(sql::invalid)?;
     let proof = signed.proof.id();

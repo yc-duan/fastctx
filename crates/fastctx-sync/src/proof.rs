@@ -1,5 +1,9 @@
 //! Cryptographic adapters preserve original evidence and validate its authority.
 
+mod source_budget;
+pub use source_budget::encode_source_batch;
+pub(crate) use source_budget::{SOURCE_RECORDS, part_operation, split_source_batch};
+
 use crate::{catalog::SourceBatch, store::Error};
 pub use fastctx_types::sync::proof::*;
 
