@@ -11,6 +11,7 @@ mod content;
 mod control_facts;
 mod dispatch;
 mod emit;
+pub mod host_row;
 mod item_facts;
 mod jobs;
 mod keys;
