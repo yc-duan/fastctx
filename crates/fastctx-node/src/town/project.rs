@@ -15,6 +15,12 @@ use crate::town::caller::Caller;
 use crate::town::{map, read};
 
 pub async fn call(node: &Arc<Node>, caller: &Caller, call: ProjectCall) -> Result<Reply, Failure> {
+    selected(node, caller, call, None).await
+}
+
+pub(crate) async fn selected(
+    node: &Arc<Node>, caller: &Caller, call: ProjectCall, owner: Option<Option<HubAccount>>,
+) -> Result<Reply, Failure> {
     if matches!(&call, ProjectCall::New { fields, .. } | ProjectCall::Edit { fields, .. } if fields.canon.is_some()) {
         return Err(Failure::not_run(fastctx_types::memory::LEGACY));
     }
@@ -22,7 +28,7 @@ pub async fn call(node: &Arc<Node>, caller: &Caller, call: ProjectCall) -> Resul
         crate::history::identity::author(node, caller).await?;
     }
     match call {
-        ProjectCall::New { town, fields, account, hub } => new(node, caller, town, fields, account, hub).await,
+        ProjectCall::New { town, fields, account, hub } => new(node, caller, town, fields, account, hub, owner).await,
         ProjectCall::Edit { town, fields } => {
             let town = caller.town_or(node, town)?;
             edit(node, caller, town, fields).await
@@ -79,8 +85,21 @@ async fn new(
     fields: RecordFields,
     account: Option<AccountName>,
     hub: Option<HubName>,
+    selected: Option<Option<HubAccount>>,
 ) -> Result<Reply, Failure> {
-    let owner = owner(node, caller, account, hub)?;
+    let owner = match selected {
+        Some(owner) => {
+            if let Some(owner) = &owner {
+                let link = node.link_of(&owner.hub).ok_or_else(|| Failure::refused("the selected project's network is unavailable"))?;
+                let acting = crate::around::acting_of(node, caller);
+                if !node.accounts_on(&link, &acting).contains(&owner.account) {
+                    return Err(Failure::refused("the caller no longer serves the selected project's account"));
+                }
+            }
+            owner
+        }
+        None => owner(node, caller, account, hub)?,
+    };
     crate::ledger::query(node, Some(&town)).await.map_err(Failure::new)?;
     if blocking(node, &town, read::latest).await?.is_some() {
         return Err(Failure::new(format!(

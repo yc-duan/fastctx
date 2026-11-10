@@ -24,7 +24,14 @@ pub async fn call(
     opened_on: &MachineName,
     call: PageCall,
 ) -> Result<Reply, Failure> {
-    let mut reply = answer(node, caller, opened_on, call).await?;
+    selected(node, caller, opened_on, call, None).await
+}
+
+pub(crate) async fn selected(
+    node: &Arc<Node>, caller: &Caller, opened_on: &MachineName, call: PageCall,
+    identity: Option<&fastctx_types::pages::PageIdentity>,
+) -> Result<Reply, Failure> {
+    let mut reply = answer(node, caller, opened_on, call, identity).await?;
     // Who published a page and who consented to it, and where, as whoever
     // asks may know them (`ledger::query::usable`).
     let acting = crate::around::acting_of(node, caller);
@@ -48,7 +55,10 @@ pub async fn call(
     Ok(reply)
 }
 
-async fn answer(node: &Arc<Node>, caller: &Caller, opened_on: &MachineName, call: PageCall) -> Result<Reply, Failure> {
+async fn answer(
+    node: &Arc<Node>, caller: &Caller, opened_on: &MachineName, call: PageCall,
+    fixed: Option<&fastctx_types::pages::PageIdentity>,
+) -> Result<Reply, Failure> {
     match call {
         PageCall::Publish { town, page, base, draft } => {
             publisher(caller)?;
@@ -121,7 +131,10 @@ async fn answer(node: &Arc<Node>, caller: &Caller, opened_on: &MachineName, call
             let stored = stored(node, &town, &page)?;
             check_base(&page, Some(version), stored.current().map(|v| v.version))?;
             let current = stored.current().expect("checked current version");
-            let identity = identity::resolve(node, caller, opened_on, &town, account.as_ref())?;
+            let identity = match fixed {
+                Some(identity) => { identity::check(node, caller, opened_on, &town, identity)?; identity.clone() }
+                None => identity::resolve(node, caller, opened_on, &town, account.as_ref())?,
+            };
             let consent = stored.consents.get(&identity).map(|(consent, _)| consent);
             let current_consent = consent.map(|c| c.version);
             if base != current_consent {
@@ -142,7 +155,7 @@ async fn answer(node: &Arc<Node>, caller: &Caller, opened_on: &MachineName, call
                 stamp: Stamp { by: Writer::User, on: Some(opened_on.clone()), at: Timestamp::now() },
             };
             let files = vec![(account_consent_path(&page, &identity, consent.version), pretty(&consent)?)];
-            identity::resolve(node, caller, opened_on, &town, account.as_ref())?;
+            identity::check(node, caller, opened_on, &town, &identity)?;
             crate::ledger::write(node, &town, files, None).await.map_err(|failure| {
                 Failure::new(format!(
                     "changing consent for {page}: {failure}; read the page before changing consent again"
@@ -153,7 +166,10 @@ async fn answer(node: &Arc<Node>, caller: &Caller, opened_on: &MachineName, call
         PageCall::Act { town, page, version, action, account } => {
             user(caller)?;
             let town = caller.town_or(node, town)?;
-            let identity = identity::resolve(node, caller, opened_on, &town, account.as_ref())?;
+            let identity = match fixed {
+                Some(identity) => { identity::check(node, caller, opened_on, &town, identity)?; identity.clone() }
+                None => identity::resolve(node, caller, opened_on, &town, account.as_ref())?,
+            };
             actions::relay(node, opened_on, identity, town, page, version, action)
                 .await
                 .map(|result| Reply::PageAct { result })
@@ -173,7 +189,7 @@ fn require_town(node: &Node, town: &TownName) -> Result<(), Failure> {
     Ok(())
 }
 
-pub(super) async fn refresh(node: &Arc<Node>, town: &TownName) -> Result<(), Failure> {
+pub(crate) async fn refresh(node: &Arc<Node>, town: &TownName) -> Result<(), Failure> {
     crate::town::map::query(node, town).await?;
     current(node, town, true).await
 }

@@ -14,6 +14,7 @@ use fastctx_types::{
     residents::About,
 };
 mod observed;
+pub(crate) mod selection;
 use observed::{Seen, keep as keep_seen, read as seen};
 
 fn remember(node: &Node, id: &ResidentId, account: HubAccount, page: &Page) -> Result<(), Failure> {
@@ -47,33 +48,8 @@ pub(crate) async fn call(
     if node.is_me(&address.machine) {
         return here(node, &address.resident, hub.as_ref(), account.as_ref(), None, operation, of).await;
     }
-    let mut choices = Vec::new();
-    let (reading, owner) = (node.clone(), address.clone());
-    let running = fastctx_platform::task::spawn_blocking(move || {
-        crate::jobs::running_for(&reading.world, &reading.names(), &owner)
-    })
-    .await
-    .map_err(|error| Failure::new(error.to_string()))?;
-    for acting in running {
-        let Some(link) = node.link_of(&acting.hub) else { continue };
-        if hub.as_ref().is_some_and(|hub| link.hub_name() != *hub)
-            || account.as_ref().is_some_and(|account| *account != acting.account)
-        {
-            continue;
-        }
-        link.refresh().await.map_err(Failure::new)?;
-        let view = link.view();
-        if view.admits(&view.me, &acting.account, &address.machine, Purpose::Echo).is_ok() {
-            choices.push((link, acting));
-        }
-    }
-    if choices.len() != 1 {
-        return Err(Failure::refused(words::ROUTE));
-    }
-    let (link, acting) = choices.pop().expect("one route");
-    if !link.view().conversation_plans {
-        return Err(Failure::not_run(words::OLDER));
-    }
+    let acting = selection::remote(node, address, hub.as_ref(), account.as_ref()).await?;
+    let link = node.link_of(&acting.hub).ok_or_else(|| Failure::refused(words::ROUTE))?;
     let call = RemoteCall::Plan { resident: address.resident.clone(), operation, of };
     match crate::record_changes::transport::linked(&link, &address.machine, &acting.account, Purpose::Echo, call)
         .await?
@@ -92,34 +68,38 @@ pub(crate) async fn here(
     operation: Operation,
     of: Option<plan::Of>,
 ) -> Result<plan::Result, Failure> {
+    work(node, id, (hub, account, requesting), operation, of, None).await
+}
+
+pub(crate) async fn here_selected(
+    node: &Arc<Node>, id: &ResidentId, scope: &selection::Scope,
+    preparation: Option<&crate::placement::location::selection::Selected>,
+    operation: Operation, of: Option<plan::Of>,
+) -> Result<plan::Result, Failure> {
+    work(node, id, (None, None, None), operation, of, Some((scope, preparation))).await
+}
+
+async fn work(
+    node: &Arc<Node>, id: &ResidentId,
+    options: (Option<&HubName>, Option<&AccountName>, Option<&HubAccount>),
+    operation: Operation, of: Option<plan::Of>,
+    fixed: Option<(&selection::Scope, Option<&crate::placement::location::selection::Selected>)>,
+) -> Result<plan::Result, Failure> {
+    let (hub, account, requesting) = options;
     let gate = node.residents.management(id)?;
     let _one = crate::gate_waits::alone(node, id, &gate).await?;
     node.residents.active(id)?;
-    let (reading, resident) = (node.clone(), id.clone());
-    fastctx_platform::task::spawn_blocking(move || crate::context::plugin_heard(&reading, &resident))
-        .await
-        .map_err(|error| Failure::new(error.to_string()))?
-        .map_err(|error| Failure::new(error.to_string()))?;
+    heard(node, id).await?;
     let (about, _) = node.residents.about(id).ok_or_else(|| Failure::refused(words::RESIDENT))?;
     let whose = Address { machine: about.machine.clone(), resident: id.clone() };
     let previous = observed::load(node, id).await?;
-    let caller = Caller::Resident(Address { machine: node.machine(), resident: id.clone() });
-    let selected = requesting.or_else(|| {
-        if hub.is_none() && account.is_none() { previous.as_ref().map(|seen| &seen.account) } else { None }
-    });
-    let (link, account) = match selected {
-        Some(acting) => {
-            if !node.serves(&about.acting, &acting.hub, &acting.account)
-                && !crate::record_ownership::allows(node, &about, &acting.hub, &acting.account)
-            {
-                return Err(Failure::refused(words::ROUTE));
-            }
-            let link = node.link_of(&acting.hub).ok_or_else(|| Failure::refused(words::ROUTE))?;
-            (link, acting.account.clone())
-        }
-        None => crate::profile::scope(node, &caller, hub, account)?,
+    let selected = match fixed {
+        Some((selected, _)) => { selected.check(node, id)?; selected.clone() }
+        None => selection::here(node, id, &about, previous.as_ref().map(|seen| &seen.account), hub, account, requesting)?,
     };
-    let scope = HubAccount { hub: link.membership().id, account: account.clone() };
+    let scope = selected.account;
+    let link = node.link_of(&scope.hub).ok_or_else(|| Failure::refused(words::ROUTE))?;
+    let account = scope.account.clone();
     let result = match operation {
         Operation::Read => {
             // Another conversation's plan is read as the account sees it, and
@@ -141,9 +121,10 @@ pub(crate) async fn here(
         // it whole is told where the file is.
         Operation::Write { .. } => {
             let _ = (previous, scope);
-            let location = crate::placement::location::prepare(node, id, &about.origin, &about.acting)
-                .await?
-                .ok_or_else(|| Failure::not_run("there is no online working computer for the plan file"))?;
+            let location = match fixed.and_then(|(_, preparation)| preparation) {
+                Some(preparation) => preparation.prepare(node, id, &about.origin, &about.acting).await?,
+                None => crate::placement::location::prepare(node, id, &about.origin, &about.acting).await?,
+            }.ok_or_else(|| Failure::not_run("there is no online working computer for the plan file"))?;
             return Err(Failure::not_run(words::file(
                 std::path::Path::new(&crate::placement::plan_path(&location)),
                 &location.machine,
@@ -156,6 +137,14 @@ pub(crate) async fn here(
         publish_observed(node, id, scope, page).await?;
     }
     Ok(result)
+}
+
+async fn heard(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {
+    let (reading, resident) = (node.clone(), id.clone());
+    fastctx_platform::task::spawn_blocking(move || crate::context::plugin_heard(&reading, &resident))
+        .await
+        .map_err(|error| Failure::new(error.to_string()))?
+        .map_err(|error| Failure::new(error.to_string()))
 }
 
 /// Refreshes the plan projection without advancing the conversation's observed

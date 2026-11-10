@@ -1,6 +1,8 @@
 //! The host chooses one place between turns. The account record is the
 //! authority; a local receipt pins the coordinates already told this turn.
 
+pub(crate) mod selection;
+
 use crate::Node;
 use fastctx_types::{
     Address, MachineName, ResidentId,
@@ -142,19 +144,25 @@ pub(crate) async fn prepare(
         let receipt = receipt.clone();
         return Ok(fastctx_platform::task::blocking(move || read(&receipt)).await?.flatten());
     }
-    // Where this machine keeps it, written as the World writes paths.
-    let here = || {
-        let (machine, room) = (node.machine(), room.path().to_path_buf());
-        async move {
-            Location { machine, path: fastctx_platform::task::blocking(move || crate::world::native(&room)).await }
-        }
-    };
     let Some(scope) = crate::plan::load_account(node, id, acting).await? else {
         if node.links().is_empty() && matches!(acting, Acting::Here) {
-            return Ok(Some(here().await));
+            return Ok(Some(here(node, id).await));
         }
         return Ok(None);
     };
+    prepare_for(node, id, origin, acting, &scope).await
+}
+
+async fn here(node: &Node, id: &ResidentId) -> Location {
+    let (machine, room) = (node.machine(), node.world.conversation(id).path().to_path_buf());
+    Location { machine, path: fastctx_platform::task::blocking(move || crate::world::native(&room)).await }
+}
+
+pub(crate) async fn prepare_for(
+    node: &Arc<Node>, id: &ResidentId, origin: &Origin, acting: &Acting, scope: &HubAccount,
+) -> Result<Option<Location>, Failure> {
+    let room = node.world.conversation(id);
+    let receipt = room.path().join("working-place.json");
     let link = node.link_of(&scope.hub).ok_or_else(|| failure("the plan's hub is unavailable"))?;
     if link.view().shared_records {
         let location = crate::replicas::location::prepare(
@@ -162,7 +170,7 @@ pub(crate) async fn prepare(
             id,
             origin,
             acting,
-            &scope,
+            scope,
             fastctx_types::placement::Resource::Plan,
         )
         .await?;
@@ -178,7 +186,7 @@ pub(crate) async fn prepare(
     if !link.view().plan_copies {
         if crate::plan_file::allowed(node, id)? {
             crate::plan_file::request(node, id);
-            return Ok(Some(here().await));
+            return Ok(Some(here(node, id).await));
         }
         return Err(failure(OLD_HUB));
     }
@@ -198,12 +206,12 @@ pub(crate) async fn prepare(
     if known && let Some(location) = read::<Option<Location>>(&receipt)? {
         return Ok(location);
     }
-    let (selected, settled) = usable(node, &link, &scope, candidates).await?;
+    let (selected, settled) = usable(node, &link, scope, candidates).await?;
     let mut desired =
         Place { owner: owner.clone(), machine: selected.as_ref().map(|choice| choice.machine.name.clone()) };
     let mut placement = None;
     for _ in 0..8 {
-        let (version, current) = read_place(&link, &scope, &owner).await?;
+        let (version, current) = read_place(&link, scope, &owner).await?;
         if let Some(current) = &current {
             desired.owner = current.owner.clone();
         }

@@ -48,7 +48,7 @@ pub struct Born {
 /// Starts the named callee configured by an account the caller serves.
 pub async fn ask(
     node: &Arc<Node>,
-    asker: ResidentId,
+    requester: Requester,
     town: Option<TownName>,
     label: String,
     prompt: String,
@@ -56,7 +56,8 @@ pub async fn ask(
     login: Option<&fastctx_types::collab::Caller>,
 ) -> Result<Born, Failure> {
     let at = Timestamp::now();
-    let turn = node.residents.now(&asker).and_then(|now| now.turn);
+    let Requester { address, turn } = requester;
+    let asker = address.resident;
     let (about, _) =
         node.residents.about(&asker).ok_or_else(|| Failure::not_run(format!("no resident {asker} lives here")))?;
     let choices = crate::collab::require(node, &asker, login).await?;

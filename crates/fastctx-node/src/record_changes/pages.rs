@@ -20,18 +20,7 @@ pub(super) fn changes(call: &PageCall) -> bool {
     )
 }
 
-pub(super) fn explicit(call: &PageCall) -> bool {
-    changes(call)
-        && call.town().is_some()
-        && (!matches!(call, PageCall::Consent { .. } | PageCall::Act { .. }) || call.account().is_some())
-}
-
-pub(super) fn check(
-    node: &Arc<Node>,
-    caller: &Caller,
-    opened_on: &MachineName,
-    call: &PageCall,
-) -> Result<String, Failure> {
+pub(super) fn parameters(caller: &Caller, call: &PageCall) -> Result<(), Failure> {
     match call {
         PageCall::Publish { base, draft, .. } => {
             crate::pages::publisher(caller)?;
@@ -48,10 +37,24 @@ pub(super) fn check(
             crate::pages::user(caller)?;
             crate::pages::next(*base)?;
         }
-        PageCall::Act { .. } => crate::pages::user(caller)?,
+        PageCall::Act { action, .. } => {
+            crate::pages::user(caller)?;
+            declaration(&action.act())?;
+        }
         _ => return Err(Failure::not_run("this page call is not a change")),
     }
-    let town = super::town(node, caller, call.town())?;
+    Ok(())
+}
+
+pub(super) fn check(
+    node: &Arc<Node>,
+    caller: &Caller,
+    opened_on: &MachineName,
+    call: &PageCall,
+    fixed_town: Option<&TownName>,
+) -> Result<String, Failure> {
+    parameters(caller, call)?;
+    let town = super::town(node, caller, fixed_town.or_else(|| call.town()))?;
     if let Some(account) = call.account()
         && !node.links().iter().any(|link| link.view().logged_in(opened_on, account))
     {
@@ -146,7 +149,7 @@ pub(super) fn remote_check(node: &Arc<Node>, asker: &Asker, call: &RemoteCall) -
             }
             let mut call = call;
             call.for_account(asker.account.clone());
-            check(node, &Caller::User, &asker.machine, &call)
+            check(node, &Caller::User, &asker.machine, &call, None)
         }
         _ => Err(Failure::not_run("this is not a page change")),
     }

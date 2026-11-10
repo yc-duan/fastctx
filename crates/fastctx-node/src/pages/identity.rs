@@ -7,7 +7,7 @@ use fastctx_types::{AccountName, MachineName, TownName};
 
 use crate::{Node, town::caller::Caller};
 
-pub(super) fn resolve(
+pub(crate) fn resolve(
     node: &Node,
     caller: &Caller,
     opened_on: &MachineName,
@@ -43,6 +43,24 @@ pub(super) fn resolve(
         return Err(Failure::refused("choose the account whose page consent to use"));
     }
     Ok(PageIdentity::Account { hub: place.hub, account })
+}
+
+/// Revalidates the selected identity without choosing a different account.
+pub(crate) fn check(
+    node: &Node,
+    caller: &Caller,
+    opened_on: &MachineName,
+    town: &TownName,
+    identity: &PageIdentity,
+) -> Result<(), Failure> {
+    let selected = match identity {
+        PageIdentity::Account { account, .. } => Some(account),
+        PageIdentity::Local { .. } => None,
+    };
+    if &resolve(node, caller, opened_on, town, selected)? != identity {
+        return Err(Failure::refused("the page's selected identity is no longer available"));
+    }
+    Ok(())
 }
 
 /// An environment claim must match a live job the node admitted.

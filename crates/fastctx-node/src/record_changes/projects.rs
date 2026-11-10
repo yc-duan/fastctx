@@ -3,7 +3,12 @@ use crate::{Node, town::caller::Caller};
 use fastctx_types::{ProjectCall, ipc::Failure, project::RecordFields};
 use std::sync::Arc;
 
-pub(super) fn check(node: &Arc<Node>, caller: &Caller, call: &ProjectCall) -> Result<String, Failure> {
+pub(super) fn check(
+    node: &Arc<Node>,
+    caller: &Caller,
+    call: &ProjectCall,
+    resolved: &super::Resolved,
+) -> Result<String, Failure> {
     match call {
         ProjectCall::Enter { .. } => {
             let Caller::Resident(address) = caller else {
@@ -14,7 +19,7 @@ pub(super) fn check(node: &Arc<Node>, caller: &Caller, call: &ProjectCall) -> Re
             }
             super::unit(&("conversation", &address.resident))
         }
-        ProjectCall::New { town, fields, account, hub } => {
+        ProjectCall::New { town, fields, .. } => {
             fields_check(node, caller, fields)?;
             if fields.name.is_none() {
                 return Err(Failure::new("a new project needs its name (--name)"));
@@ -22,20 +27,47 @@ pub(super) fn check(node: &Arc<Node>, caller: &Caller, call: &ProjectCall) -> Re
             if fields.what.is_none() {
                 return Err(Failure::new("a new project needs to say what it is (--what)"));
             }
-            crate::town::project::owner(node, caller, account.clone(), hub.clone())?;
+
             super::unit(&("project", town))
         }
-        ProjectCall::Edit { town, fields } => {
+        ProjectCall::Edit { fields, .. } => {
             fields_check(node, caller, fields)?;
             if fields == &RecordFields::default() {
                 return Err(Failure::new("nothing to change: give what the next version says"));
             }
-            let town = super::town(node, caller, town.as_ref())?;
+            let super::Resolved::ProjectEdit { town } = resolved else {
+                return Err(Failure::not_run("the project has no selected coordinates"));
+            };
             super::unit(&("project", town))
         }
         _ => Err(Failure::not_run("this project call is not a change")),
     }
 }
+pub(super) fn parameters(node: &Node, caller: &Caller, call: &ProjectCall) -> Result<(), Failure> {
+    match call {
+        ProjectCall::New { fields, .. } => {
+            fields_check(node, caller, fields)?;
+            if fields.name.is_none() {
+                return Err(Failure::new("a new project needs its name (--name)"));
+            }
+            if fields.what.is_none() {
+                return Err(Failure::new("a new project needs to say what it is (--what)"));
+            }
+        }
+        ProjectCall::Edit { fields, .. } => {
+            fields_check(node, caller, fields)?;
+            if fields == &RecordFields::default() {
+                return Err(Failure::new("nothing to change: give what the next version says"));
+            }
+        }
+        ProjectCall::Enter { .. } if !matches!(caller, Caller::Resident(_)) => {
+            return Err(Failure::not_run("only an agent's resident conversation enters a project"));
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 fn fields_check(node: &Node, caller: &Caller, fields: &RecordFields) -> Result<(), Failure> {
     if fields.canon.is_some() {
         return Err(Failure::not_run(fastctx_types::memory::LEGACY));

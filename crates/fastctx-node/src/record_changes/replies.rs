@@ -7,8 +7,18 @@ use fastctx_types::{
     remote::{RemoteCall, RemoteReply},
 };
 
-pub(super) fn local(node: &Node, caller: &Caller, call: &Call, reply: &mut Reply) -> Result<(), Failure> {
-    filter(node, &crate::around::acting_of(node, caller), call, reply)
+pub(super) fn local(
+    node: &Node,
+    caller: &Caller,
+    call: &Call,
+    reply: &mut Reply,
+    resolved: &super::Resolved,
+) -> Result<(), Failure> {
+    let fixed = match resolved {
+        super::Resolved::Page { town, .. } | super::Resolved::ProjectEdit { town } => Some(town),
+        _ => None,
+    };
+    filter(node, &crate::around::acting_of(node, caller), call, reply, fixed)
 }
 
 pub(super) fn remote(node: &Node, asker: &Asker, call: &RemoteCall, reply: &mut RemoteReply) -> Result<(), Failure> {
@@ -18,7 +28,7 @@ pub(super) fn remote(node: &Node, asker: &Asker, call: &RemoteCall, reply: &mut 
             let call: Call = serde_json::from_value(made.clone()).map_err(|error| Failure::new(error.to_string()))?;
             let mut reply: Reply =
                 serde_json::from_value(answer.take()).map_err(|error| Failure::new(error.to_string()))?;
-            filter(node, &acting, &call, &mut reply)?;
+            filter(node, &acting, &call, &mut reply, None)?;
             *answer = serde_json::to_value(reply).map_err(|error| Failure::new(error.to_string()))?;
         }
         (RemoteCall::EnterProject { town, .. }, RemoteReply::Entered { map, .. }) => {
@@ -36,15 +46,21 @@ pub(super) fn remote(node: &Node, asker: &Asker, call: &RemoteCall, reply: &mut 
     Ok(())
 }
 
-fn filter(node: &Node, acting: &Acting, call: &Call, reply: &mut Reply) -> Result<(), Failure> {
-    let town = match call {
+fn filter(
+    node: &Node,
+    acting: &Acting,
+    call: &Call,
+    reply: &mut Reply,
+    fixed: Option<&fastctx_types::TownName>,
+) -> Result<(), Failure> {
+    let town = fixed.or_else(|| match call {
         Call::Page(call) => call.town(),
         Call::Project(fastctx_types::ProjectCall::New { town, .. } | fastctx_types::ProjectCall::Enter { town }) => {
             Some(town)
         }
         Call::Project(fastctx_types::ProjectCall::Edit { town, .. }) => town.as_ref(),
         _ => None,
-    };
+    });
     let Some(town) = town else { return Ok(()) };
     crate::town::access::check(node, acting, town)?;
     let Some(usable) = crate::ledger::query::usable(node, acting, town).map_err(failure)? else { return Ok(()) };

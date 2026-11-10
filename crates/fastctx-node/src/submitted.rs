@@ -128,10 +128,6 @@ pub(crate) async fn submit<C: Serialize, T: DeserializeOwned>(
 /// call is an operation already; where resolving can fail by then, or the
 /// entrance should not wait for it twice, `submit_resolving` resolves only
 /// what is new.
-#[expect(
-    dead_code,
-    reason = "the first family whose entrance resolves what its calls leave implicit is not merged yet"
-)]
 pub(crate) async fn submit_resolved<C: Serialize, R: Serialize, T: DeserializeOwned>(
     node: &Node,
     family: &Family,
@@ -223,10 +219,6 @@ where
 
 /// `register` for a family whose entrance is `submit_resolved`: `doing` is
 /// given what was asked and what the entrance resolved.
-#[expect(
-    dead_code,
-    reason = "the first family whose entrance resolves what its calls leave implicit is not merged yet"
-)]
 pub(crate) fn register_resolved<C, R, T, F, Doing>(node: &Arc<Node>, family: Family, doing: F)
 where
     C: DeserializeOwned + Send + 'static,
