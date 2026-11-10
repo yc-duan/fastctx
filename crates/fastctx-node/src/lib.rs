@@ -968,6 +968,28 @@ pub async fn run_prepared(
     let recovering = node.clone();
     fastctx_platform::task::spawn(async move {
         let node = recovering;
+        // The queue starts whatever becomes of recovery: controls, answers
+        // and waking a host wait on it, and what runs them waits for its
+        // conversation to be ready itself. What is started with recovered
+        // work below names its own kinds then.
+        timeline::register(&node);
+        management::register(&node);
+        content_upkeep::register(&node);
+        outbox::register(&node);
+        control_queue::register(&node);
+        lifecycle::retry::register(&node);
+        let (durable_jobs, log) = (node.durable_jobs.clone(), node.log.clone());
+        fastctx_platform::task::spawn(async move {
+            let (mut again, mut said) = (crate::again::Again::default(), String::new());
+            while let Err(error) = durable_jobs.start().await {
+                let error = error.to_string();
+                if error != said {
+                    log.line(format_args!("starting durable jobs; trying again: {error}"));
+                    said = error;
+                }
+                tokio::time::sleep(again.next().max(std::time::Duration::from_secs(1))).await;
+            }
+        });
         if let Err(error) = node.record_migration.wait_started().await {
             node.log.line(format_args!("record recovery remains unavailable: {error}"));
             node.effects_ready.store(true, std::sync::atomic::Ordering::Release);
@@ -982,7 +1004,6 @@ pub async fn run_prepared(
             return;
         }
         let log = node.log.clone();
-        let durable_jobs = node.durable_jobs.clone();
         if let Err(error) = fastctx_platform::task::spawn_blocking(move || {
             stops::recover(&node);
             delivery::work::recover(&node);
@@ -1007,22 +1028,10 @@ pub async fn run_prepared(
             afoot::start(&node);
             usage::watch(&node);
             forget::start(&node);
-            timeline::register(&node);
-            management::register(&node);
-            content_upkeep::register(&node);
-            outbox::register(&node);
-            control_queue::register(&node);
-            lifecycle::retry::register(&node);
         })
         .await
         {
             log.line(format_args!("starting recovered work: {error}"));
-            return;
-        }
-        // Subsystems register their kinds before the queue starts recovering work.
-        // Unfinished runs stay durable and are taken again by the successor.
-        if let Err(error) = durable_jobs.start().await {
-            log.line(format_args!("starting durable jobs: {error}"));
         }
     });
     // The foundation's tasks start with bulk migration, after the upgrade's

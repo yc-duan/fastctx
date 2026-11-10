@@ -36,20 +36,36 @@ type Looked = (Vec<Next>, Option<i64>);
 
 impl Jobs {
     /// Starts running jobs, on the runtime this is called in. Jobs a stopped
-    /// process left running are waiting again first.
+    /// process left running are waiting again first; where that cannot be
+    /// written nothing is started, and starting may be tried again.
     pub async fn start(self: &Arc<Self>) -> Result<()> {
         assert!(!self.started.swap(true, Ordering::AcqRel), "jobs are started once");
-        self.database
+        let waiting_again = self
+            .database
             .write(WRITE_BYTES, |db| {
                 db.execute("UPDATE jobs SET state = ?1 WHERE state = ?2", params![WAITING, RUNNING])?;
                 Ok(())
             })
-            .await?;
+            .await;
+        if let Err(error) = waiting_again {
+            self.started.store(false, Ordering::Release);
+            return Err(error);
+        }
+        // From here a kind that is registered starts its own runner.
+        let runtime = self.runtime.get_or_init(tokio::runtime::Handle::current);
         let kinds: Vec<_> = self.kinds.lock().expect("job kinds").values().cloned().collect();
         for registered in kinds {
-            fastctx_platform::task::spawn(serve(self.database.clone(), registered));
+            serve_once(runtime, self.database.clone(), registered);
         }
         Ok(())
+    }
+}
+
+/// Starts a kind's runner unless it was started.
+pub(crate) fn serve_once(runtime: &tokio::runtime::Handle, database: Database, registered: Arc<Registered>) {
+    if !registered.served.swap(true, Ordering::AcqRel) {
+        let _entered = runtime.enter();
+        fastctx_platform::task::spawn(serve(database, registered));
     }
 }
 

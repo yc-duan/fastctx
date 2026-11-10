@@ -212,6 +212,21 @@ async fn drill(database: Database) -> Outcome_<()> {
         return Err(format!("the queue's measures say {ran:?} runs and {left:?} waiting").into());
     }
 
+    // A kind named after the jobs were started runs from then.
+    let late = Arc::new(AtomicUsize::new(0));
+    let ran_late = late.clone();
+    let named_late: Run = Arc::new(move |_: Taken| {
+        ran_late.fetch_add(1, Ordering::AcqRel);
+        Box::pin(async { Outcome::Done })
+    });
+    jobs.register(Kind { name: "late", at_once: 1, within: Duration::from_secs(5), tries: 3 }, named_late);
+    database.write(256, |db| submit(db, &job("late", "one", "unit", b""))).await?;
+    jobs.stir("late");
+    emptied(&database, "late", Duration::from_secs(10)).await?;
+    if late.load(Ordering::Acquire) != 1 {
+        return Err("a kind registered after the start did not run its job once".into());
+    }
+
     // A job that waits for more than time is run again once it is roused,
     // not when its hour is up.
     database.write(256, |db| submit(db, &job("wait", "one", "unit", b""))).await?;

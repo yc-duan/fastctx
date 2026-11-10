@@ -77,6 +77,8 @@ pub struct Jobs {
     database: Database,
     kinds: Mutex<HashMap<&'static str, Arc<Registered>>>,
     started: AtomicBool,
+    /// The runtime the jobs run on, once they are started.
+    runtime: std::sync::OnceLock<tokio::runtime::Handle>,
     /// The operations someone waits for the settling of.
     waited: Mutex<HashMap<Operation, tokio::sync::watch::Sender<u64>>>,
 }
@@ -89,26 +91,41 @@ struct Registered {
     /// The units a job of the kind runs for now.
     busy: Mutex<HashSet<String>>,
     measures: measures::Measures,
+    /// Whether the kind's runner was started: it is started once, by
+    /// whichever of `register` and `start` comes second.
+    served: AtomicBool,
 }
 
 impl Jobs {
     /// The jobs kept in `database`, whose schema includes `SCHEMA`.
     pub fn new(database: Database) -> Arc<Self> {
-        Arc::new(Self { database, kinds: Mutex::default(), started: AtomicBool::new(false), waited: Mutex::default() })
+        Arc::new(Self {
+            database,
+            kinds: Mutex::default(),
+            started: AtomicBool::new(false),
+            runtime: std::sync::OnceLock::new(),
+            waited: Mutex::default(),
+        })
     }
 
-    /// Names what runs a kind's jobs. Every kind is registered before `start`.
+    /// Names what runs a kind's jobs. A kind registered before `start` runs
+    /// from the start; one registered after runs from then, on the runtime
+    /// the jobs were started on.
     pub fn register(&self, kind: Kind, run: Run) {
         assert!(kind.at_once > 0 && kind.tries > 0, "a kind runs at least one job, at least once");
-        let registered = Registered {
+        let registered = Arc::new(Registered {
             kind,
             run,
             stirred: tokio::sync::Notify::new(),
             busy: Mutex::default(),
             measures: measures::Measures::of(kind.name),
-        };
-        let known = self.kinds.lock().expect("job kinds").insert(kind.name, Arc::new(registered));
+            served: AtomicBool::new(false),
+        });
+        let known = self.kinds.lock().expect("job kinds").insert(kind.name, registered.clone());
         assert!(known.is_none(), "the job kind {} is registered twice", kind.name);
+        if let Some(runtime) = self.runtime.get() {
+            run::serve_once(runtime, self.database.clone(), registered);
+        }
     }
 
     /// Tells the kind's runner that a job was submitted and committed.

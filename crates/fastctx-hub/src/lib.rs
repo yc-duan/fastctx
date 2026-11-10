@@ -1020,10 +1020,21 @@ async fn serving(
         moving::out::drive(&hub);
     }
     // Subsystems register their job kinds before the queue starts and
-    // requests are heard. A queue that does not start is told and left:
-    // the hub serves without what would have run on it.
+    // requests are heard. A queue that does not start is told and tried
+    // again beside the hub, which serves meanwhile.
     if let Err(error) = hub.durable_jobs.start().await {
-        hub.log.line(format_args!("starting the hub's durable jobs: {error}"));
+        hub.log.line(format_args!("starting the hub's durable jobs; trying again: {error}"));
+        let starting = Arc::downgrade(&hub);
+        fastctx_platform::task::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                let Some(hub) = starting.upgrade() else { return };
+                match hub.durable_jobs.start().await {
+                    Ok(()) => return,
+                    Err(error) => hub.log.line(format_args!("starting the hub's durable jobs; trying again: {error}")),
+                }
+            }
+        });
     }
     let settled = dissolve::settled(&hub);
     tokio::pin!(settled);
