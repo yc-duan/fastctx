@@ -30,6 +30,8 @@ export interface Window {
   events: SessionEvent[];
   /** What its turns read of what came before them. */
   carry: SessionEvent[];
+  /** Opaque timeline paging has no full-history ordinal or turn count. */
+  pages?: { older: boolean; newer: boolean; keys?: string[]; objects: { at: number; bytes: number; object: string }[] };
 }
 
 /** A part read from the shell. */
@@ -42,9 +44,12 @@ export interface PartRead {
   events: SessionEvent[];
   /** Facts its runs told after it. */
   late: SessionEvent[];
+  /** A bounded replacement, when the shell reads directly from the node. */
+  window?: Window;
 }
 
 export type Edge =
+  | { edge: "latest" }
   | { edge: "before"; at: number; floor: number }
   | { edge: "after"; at: number; ceiling: number }
   | { edge: "around"; at: number; floor: number; ceiling: number };
@@ -75,6 +80,8 @@ export interface Found {
 /** Where the parts a page does not hold are read from. */
 export interface PartSource {
   part(generation: number, edge: Edge): Promise<PartRead | null>;
+  object?(generation: number, at: number): Promise<SessionEvent>;
+  follow?(revision: number, following: boolean): Promise<void>;
   /** Where a turn first appears. */
   locate(generation: number, turn: string): Promise<number | null>;
   cut(generation: number, events: number): Promise<Cut | null>;
@@ -102,6 +109,10 @@ export class Conversation {
   /** The parts held, in order; the last is the latest, and live. */
   private parts: Held[];
   private generation = 0;
+  private pageWindow: Window | null = null;
+  private expanded = new Map<string, SessionEvent>();
+  private followRevision = 0;
+  private follows: boolean | null = null;
   private source: PartSource | null = null;
   /** Moves when parts come and go. */
   private structure = 0;
@@ -196,9 +207,18 @@ export class Conversation {
   /** The part the page opens on, in place of all it held. */
   open(window: Window, source: PartSource | null): void {
     this.generation = window.generation;
+    this.pageWindow = window.pages ? window : null;
+    this.follows = null;
+    const objects = new Set(window.pages?.objects.map((object) => object.object));
+    for (const object of this.expanded.keys()) if (!objects.has(object)) this.expanded.delete(object);
     this.source = source;
     const tail = this.live;
-    tail.history(window.events, window.carry);
+    const events = [...window.events];
+    for (const object of window.pages?.objects ?? []) {
+      const expanded = this.expanded.get(object.object);
+      if (expanded) events[object.at] = expanded;
+    }
+    tail.history(events, window.carry, window.pages?.keys, !window.pages);
     this.parts = [{ start: window.start, end: window.start + window.events.length, turnsBefore: window.turns_before, turns: 0, fold: tail }];
     this.reading.clear();
     this.structure += 1;
@@ -219,8 +239,70 @@ export class Conversation {
     if (at !== this.tail.end) return false;
     this.route(event);
     this.live.event(event);
+    this.pageWindow?.events.push(event);
     this.tail.end += 1;
     return true;
+  }
+
+  /** Fetches only after the reader explicitly opens a deferred event. */
+  async readFull(key: string): Promise<void> {
+    const entry = this.get(key);
+    const window = this.pageWindow;
+    const source = this.source;
+    const object = entry && this.objectOf(entry);
+    if (!object || !source?.object || !window) return;
+    const generation = this.generation;
+    const event = await source.object(generation, object.at);
+    if (source !== this.source || !this.pageWindow) return;
+    const current = this.pageWindow.pages?.objects.find((held) => held.object === object.object);
+    if (!current) return;
+    // Expanded bodies have an independent 8 MiB cache. Older expansions can
+    // be opened again; the original bounded previews remain the base.
+    this.expanded.set(current.object, event);
+    let bytes = [...this.expanded.values()].reduce((sum, e) => sum + JSON.stringify(e).length * 2, 0);
+    while (bytes > 8 * 1024 * 1024 && this.expanded.size > 1) {
+      const first = this.expanded.keys().next().value!;
+      bytes -= JSON.stringify(this.expanded.get(first)).length * 2;
+      this.expanded.delete(first);
+    }
+    const active = this.pageWindow;
+    const events = [...active.events];
+    for (const object of active.pages?.objects ?? []) {
+      const expanded = this.expanded.get(object.object);
+      if (expanded) events[object.at] = expanded;
+    }
+    this.live.history(events, active.carry, active.pages?.keys, false);
+    this.structure += 1;
+    this.changed();
+  }
+
+  deferred(key: string): boolean {
+    const entry = this.get(key);
+    const object = entry && this.objectOf(entry);
+    return !!object && !this.expanded.has(object.object);
+  }
+
+  private objectOf(entry: Entry): NonNullable<Window["pages"]>["objects"][number] | undefined {
+    const window = this.pageWindow;
+    return window?.pages?.objects.find((object) => {
+      const event = window.events[object.at];
+      if (event && (event.event === "finished" || event.event === "began" || event.event === "updated") && "item" in entry && "turn" in entry) {
+        return event.turn === entry.turn && (event.item.id === entry.item || event.item.draft === entry.item);
+      }
+      return object.at === entry.at;
+    });
+  }
+
+  get paged(): boolean { return this.pageWindow !== null; }
+
+  follow(following: boolean): void {
+    if (!this.pageWindow || this.follows === following) return;
+    this.follows = following;
+    void this.source?.follow?.(++this.followRevision, following).catch((error: unknown) => console.warn("the reader's position could not be sent", error));
+  }
+
+  async newest(): Promise<void> {
+    if (this.pageWindow?.pages?.newer) await this.source?.part(this.generation, { edge: "latest" });
   }
 
   /** Facts a run's job told about a run an earlier part holds go to it as
@@ -261,6 +343,7 @@ export class Conversation {
    *  next to the part after it, when the reader comes from below; from its
    *  start otherwise. */
   async fill(gap: Gap, side: "end" | "start"): Promise<void> {
+    if (this.pageWindow) side = gap.first ? "end" : "start";
     const edge: Edge = side === "end" ? { edge: "before", at: gap.end, floor: gap.start } : { edge: "after", at: gap.start, ceiling: gap.end };
     await this.read(gap, edge);
   }
@@ -372,6 +455,17 @@ export class Conversation {
     const version = `${this.structure}|${this.parts.map((part) => part.fold.clock).join(",")}`;
     if (this.cache?.version === version) return this.cache.blocks;
     const blocks: Block[] = [];
+    if (this.pageWindow?.pages) {
+      const pages = this.pageWindow.pages;
+      const end = this.tail.end;
+      const before = `timeline:${this.generation}:before`;
+      const after = `timeline:${this.generation}:after`;
+      if (pages.older) blocks.push({ kind: "gap", key: before, stamp: this.reading.has(before) ? 1 : 0, start: 0, end: 0, turns: 0, first: true, loading: this.reading.has(before), paged: true });
+      blocks.push(...this.live.blocks());
+      if (pages.newer) blocks.push({ kind: "gap", key: after, stamp: this.reading.has(after) ? 1 : 0, start: end, end, turns: 0, first: false, loading: this.reading.has(after), later: true, paged: true });
+      this.cache = { version, blocks };
+      return blocks;
+    }
     let end = 0;
     let turns = 0;
     const forkAt = this.parts.findIndex((part) => part.fold.holdsFork);
@@ -789,6 +883,7 @@ export class Conversation {
 
   event(event: SessionEvent): void {
     this.live.event(event);
+    this.pageWindow?.events.push(event);
     this.tail.end += 1;
   }
 }

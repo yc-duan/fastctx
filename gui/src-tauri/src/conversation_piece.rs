@@ -7,6 +7,8 @@ use serde::Serialize;
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub(crate) enum Piece {
     Resumed,
+    /// Renegotiate the backend after the node changed its capabilities.
+    Reopen,
     /// Events kept after all the page was given, from `start` on.
     Extended {
         start: usize,
@@ -32,6 +34,8 @@ pub(crate) enum Piece {
     },
     /// One thing as it happened, the `at`th event of the conversation.
     Event {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        generation: Option<u64>,
         at: usize,
         event: Box<serde_json::value::RawValue>,
     },

@@ -1,16 +1,10 @@
-// Where a conversation is read from, as one seam: the part its page opens
-// on, then each thing as it happens. Today that is the World's watch on the
-// session (`../world/bridge.ts`), whose shell keeps the whole conversation
-// and hands the page its latest turns, and the rest a part at a time as the
-// reader comes to it (`src-tauri/src/transcript.rs`). A copy kept on this
-// device (`world-gui.md`, 对话: 每台设备上的缓存) answers at once with what
-// it holds, then with what is new since, then live; the page draws the
-// first answer at once and each later part as it comes, keeping what it
-// drew wherever the keys are the same.
+// A reading owns its live subscription and bounded page window. Part replies
+// may replace that window; generation numbers keep crossed replies from
+// changing a newer reading. Older nodes keep the original Watch path.
 
 import type { Address, SessionEvent } from "../world/events";
 import { after, whyOf } from "../world/again";
-import { conversationCut, conversationFind, conversationIndex, conversationLocate, conversationPart, unwatch, watch, type Piece } from "../world/bridge";
+import { conversationCut, conversationFind, conversationIndex, conversationLocate, conversationFollow, conversationObject, conversationPart, unwatch, watch, type Piece } from "../world/bridge";
 import type { PartSource, Window } from "./conversation";
 
 export interface ConversationFeed {
@@ -64,8 +58,29 @@ export const watched: ConversationSource = {
       if (id === null) throw new Error("the conversation is not watched now");
       return id;
     };
+    let generation: number | null = null;
+    let pending: Extract<Piece, { kind: "event" }>[] = [];
+    const install = (window: Window) => {
+      if (window.pages && generation !== null && window.generation < generation) return;
+      generation = window.pages ? window.generation : null;
+      feed.window(window, parts);
+      const events = pending;
+      pending = [];
+      for (const event of events) {
+        if (event.generation === generation) feed.happened(event.at, event.event);
+        else if (event.generation! > (generation ?? -1)) pending.push(event);
+      }
+    };
     const parts: PartSource = {
-      part: async (generation, edge) => conversationPart(current(), generation, edge),
+      part: async (generation, edge) => {
+        const owner = current();
+        const part = await conversationPart(owner, generation, edge);
+        if (id !== owner || closed) return null;
+        if (part?.window) { install(part.window); return null; }
+        return part;
+      },
+      object: async (generation, at) => conversationObject(current(), generation, at),
+      follow: async (revision, following) => conversationFollow(current(), revision, following),
       locate: async (generation, turn) => conversationLocate(current(), generation, turn),
       cut: async (generation, events) => conversationCut(current(), generation, events),
       index: async (generation, start, end, docs) => conversationIndex(current(), generation, start, end, docs),
@@ -79,14 +94,24 @@ export const watched: ConversationSource = {
     };
     const take = (piece: Piece, attempted: string | null) => {
       switch (piece.kind) {
+        case "reopen":
+          restart();
+          return;
         case "resumed":
           feed.resumed();
           return;
         case "event":
+          if (piece.generation !== undefined && piece.generation !== generation) {
+            if (piece.generation > (generation ?? -1)) {
+              pending.push(piece);
+              if (pending.length > 800) restart();
+            }
+            return;
+          }
           feed.happened(piece.at, piece.event);
           return;
         case "window":
-          feed.window(piece.window, parts);
+          install(piece.window);
           return;
         case "extended":
           feed.extended(piece.start, piece.events);
@@ -134,7 +159,9 @@ export const watched: ConversationSource = {
           id = started.id;
           tries = 0;
           since = null;
-          feed.window(started.window, parts);
+          generation = null;
+          pending = [];
+          install(started.window);
           for (const piece of early) {
             if (closed || refused || mine !== reading) break;
             take(piece, attempted);
@@ -172,6 +199,8 @@ export const watched: ConversationSource = {
       waiting = null;
       if (id !== null) void unwatch(id);
       id = null;
+      generation = null;
+      pending = [];
       refused = false;
       read();
     }

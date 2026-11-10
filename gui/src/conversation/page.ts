@@ -495,7 +495,7 @@ export class ConversationPage {
       // Words the user just sent stand at the top of the view.
       sent: (key) => this.sent(key),
       // Turns not held are read as the reader comes near them.
-      near: (gap, side) => void this.fillGap(gap, side),
+      near: (gap, side, explicit) => void this.fillGap(gap, side, explicit),
       // Words being sent leave from where they were typed.
       departure: () => departureOf(this.input),
       here: options.here,
@@ -685,6 +685,7 @@ export class ConversationPage {
     const up = () => {
       reading();
       this.following = false;
+      this.options.conversation.follow(false);
       this.drawLatest();
     };
     // Any move of the reader's own makes the view theirs, down as well as
@@ -697,28 +698,57 @@ export class ConversationPage {
     // block) moves that, not the view; keys in a field move its caret.
     this.scroller.addEventListener(
       "wheel",
-      (event) => (event.deltaY < 0 && !scrollsUpWithin(event.target as Element, this.scroller) ? up() : moved()),
+      (event) => {
+        const nested = event.deltaY < 0 && scrollsUpWithin(event.target as Element, this.scroller);
+        if (!nested) {
+          this.pageDirection = event.deltaY < 0 ? "before" : "after";
+          this.pageGesture += 1;
+          this.view.readerMoved();
+        }
+        if (event.deltaY < 0 && !nested) up(); else moved();
+      },
       { passive: true },
     );
-    this.scroller.addEventListener("touchmove", moved, { passive: true });
+    let touchY = 0;
+    this.scroller.addEventListener("touchstart", (event) => { touchY = event.touches[0]?.clientY ?? 0; }, { passive: true });
+    this.scroller.addEventListener("touchmove", (event) => {
+      const y = event.touches[0]?.clientY ?? touchY;
+      this.pageDirection = y > touchY ? "before" : "after";
+      touchY = y;
+      this.pageGesture += 1;
+      this.view.readerMoved();
+      moved();
+    }, { passive: true });
     // The scroll bar is the region itself, not anything in it.
     this.scroller.addEventListener("pointerdown", (event) => {
-      if (event.target === this.scroller) moved();
+      if (event.target === this.scroller) {
+        this.pointerPaging = true;
+        window.addEventListener("pointerup", () => { this.pointerPaging = false; }, { once: true });
+        moved();
+      }
     });
     this.scroller.addEventListener("keydown", (event) => {
       if ((event.target as Element).closest("input, textarea, select, [contenteditable]")) return;
-      if (event.key === "PageUp" || event.key === "ArrowUp" || event.key === "Home") up();
-      else if (event.key === "PageDown" || event.key === "ArrowDown" || event.key === "End" || event.key === " ") moved();
+      if (event.key === "PageUp" || event.key === "ArrowUp" || event.key === "Home") {
+        this.pageDirection = "before"; this.pageGesture += 1; this.view.readerMoved(); up();
+      } else if (event.key === "PageDown" || event.key === "ArrowDown" || event.key === "End" || event.key === " ") {
+        this.pageDirection = "after"; this.pageGesture += 1; this.view.readerMoved(); moved();
+      }
     });
     // Otherwise only a scroll the reader made says whether they still
     // follow: one that comes with the region or its content changing size
     // (the browser keeping the view anchored) does not.
-    let sized = { client: 0, content: 0 };
+    let sized = { client: 0, content: 0, top: 0 };
     this.scroller.addEventListener("scroll", () => {
       const { scrollTop, clientHeight, scrollHeight } = this.scroller;
       this.element.classList.toggle("scrolled", scrollTop > 0);
       const resized = clientHeight !== sized.client || scrollHeight !== sized.content;
-      sized = { client: clientHeight, content: scrollHeight };
+      if (this.pointerPaging && scrollTop !== sized.top) {
+        this.pageDirection = scrollTop < sized.top ? "before" : "after";
+        this.pageGesture += 1;
+        this.view.readerMoved();
+      }
+      sized = { client: clientHeight, content: scrollHeight, top: scrollTop };
       if (resized && !this.reading()) {
         if (this.following) this.scroller.scrollTop = scrollHeight;
         return;
@@ -753,12 +783,18 @@ export class ConversationPage {
 
   /** Back to the newest: at once, however far, and following it from
    *  there, as the reader asked, until they move the view again. */
+  private latestRead = 0;
   private toLatest(): void {
+    const request = ++this.latestRead;
     this.following = true;
+    this.options.conversation.follow(true);
     this.dropRoom();
-    this.render();
-    this.scroller.scrollTop = this.scroller.scrollHeight;
-    this.drawLatest();
+    void this.options.conversation.newest().then(() => {
+      if (request !== this.latestRead || !this.following) return;
+      this.render();
+      this.scroller.scrollTop = this.scroller.scrollHeight;
+      this.drawLatest();
+    }).catch((error: unknown) => console.warn("the newest page could not be read", error));
   }
 
   /** The next words the user sends are put at the top of the view. */
@@ -803,8 +839,24 @@ export class ConversationPage {
   }
 
   /** Reads the turns of a gap the reader came near, then draws them. */
-  private async fillGap(gap: Gap, side: "end" | "start"): Promise<void> {
-    await this.options.conversation.fill(gap, side);
+  private pointerPaging = false;
+  private pageDirection: "before" | "after" | null = null;
+  private pageGesture = 0;
+  private pagedGesture = 0;
+  private paging = false;
+  private async fillGap(gap: Gap, side: "end" | "start", explicit = false): Promise<void> {
+    if (gap.paged && (this.paging || (!explicit && (this.following || this.pageGesture === this.pagedGesture || this.pageDirection !== (gap.first ? "before" : "after"))))) {
+      this.view.retryGap(gap.key);
+      return;
+    }
+    if (gap.paged) {
+      this.following = false;
+      this.pagedGesture = this.pageGesture;
+      this.paging = true;
+      this.pointerPaging = false;
+    }
+    try { await this.options.conversation.fill(gap, side); }
+    finally { this.paging = false; }
     this.update({ read: true });
   }
 
@@ -891,6 +943,7 @@ export class ConversationPage {
     this.frame = 0;
     if (!this.element.isConnected) return;
     const follow = this.following;
+    this.options.conversation.follow(this.following);
     this.view.update(this.read);
     this.read = false;
     this.drawAgents();
@@ -964,6 +1017,11 @@ export class ConversationPage {
     cancelAnimationFrame(this.frame);
     this.render();
     if (this.view.restore(place)) return;
+    if (this.options.conversation.paged) {
+      const near = this.options.conversation.live.blocks()[0];
+      if (near) this.view.restore({ key: near.key, offset: place.offset });
+      return;
+    }
     if (!turn) return;
     void this.options.conversation.reachTurn(turn).then((reached) => {
       this.render();

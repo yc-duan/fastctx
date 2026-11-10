@@ -103,6 +103,7 @@ pub fn open(app: tauri::AppHandle) {
                     connection,
                     watches: Default::default(),
                     transcripts: Default::default(),
+                    timeline_readers: Default::default(),
                     deliveries: Default::default(),
                     composer_inputs: Default::default(),
                     next: AtomicU64::new(0),

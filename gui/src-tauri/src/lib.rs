@@ -110,6 +110,11 @@ mod titlebar;
 mod unix_instance;
 
 mod conversation_watch;
+mod timeline_body;
+mod timeline_objects;
+mod timeline_preview;
+mod timeline_watch;
+mod timeline_window;
 mod watch_delivery;
 
 struct Shell {
@@ -117,6 +122,7 @@ struct Shell {
     watches: Arc<Mutex<HashMap<u64, JoinHandle<()>>>>,
     /// What each watched conversation holds for its page.
     transcripts: Arc<transcript::Transcripts>,
+    timeline_readers: timeline_watch::Readers,
     deliveries: watch_delivery::Deliveries,
     composer_inputs: composer_documents::Inputs,
     next: AtomicU64,
@@ -141,6 +147,7 @@ impl Shell {
             watch.abort();
         }
         self.transcripts.close_all();
+        self.timeline_readers.clear();
         self.deliveries.close_all();
         self.composer_inputs.clear();
     }
@@ -315,11 +322,9 @@ fn machine(name: Option<String>) -> Result<Option<fastctx_types::access::Written
     name.map(|name| name.parse::<fastctx_types::access::Written>().map_err(|error| error.to_string())).transpose()
 }
 
-/// Starts watching a resident: returns the part of it the page opens on,
-/// its latest turns, from what this device keeps of it at once where it
-/// keeps it, and sends what follows down `pieces` until the page lets go.
-/// The shell keeps the rest of it for the page to ask for
-/// (`transcript.rs`).
+/// Opens the latest timeline page after registering realtime events. Older
+/// nodes retain the whole-history Watch path. Both feed the same page window
+/// and send what follows down `pieces` until the page lets go.
 #[fastctx_gui_command::command]
 async fn watch(
     shell: tauri::State<'_, Shell>,
@@ -331,6 +336,29 @@ async fn watch(
     let world = shell.world();
     let resident = resident(resident_id)?;
     let machine = machine(machine_name)?;
+    if let Some(opened) = timeline_watch::open(&world, resident.clone(), machine.clone()).await? {
+        let id = shell.next.fetch_add(1, Ordering::Relaxed);
+        let reader = opened.reader;
+        let transcript = reader.lock().await.transcript.clone();
+        shell.transcripts.insert(id, transcript);
+        shell.timeline_readers.insert(id, reader.clone());
+        let mut initial = Some(opened.watching);
+        if let Err(error) = shell.follow_delivery(
+            page,
+            id,
+            pieces,
+            |piece| match piece {
+                Piece::Now { .. } => Some("now".into()),
+                _ => None,
+            },
+            move |pieces, _| timeline_watch::stream(reader.clone(), initial.take(), pieces),
+        ) {
+            shell.transcripts.close(id);
+            shell.timeline_readers.close(id);
+            return Err(error.into());
+        }
+        return Ok(Watch { id, window: opened.window });
+    }
     #[cfg(not(target_os = "android"))]
     let (conversation, history) = match &machine {
         Some(machine) => Conversation::open(&world, resident.clone(), machine.clone()).await,
@@ -374,6 +402,7 @@ fn unwatch(shell: tauri::State<'_, Shell>, id: u64) {
         task.abort();
     }
     shell.transcripts.close(id);
+    shell.timeline_readers.close(id);
     shell.deliveries.close(id);
     shell.composer_inputs.close(id);
 }
@@ -1262,6 +1291,8 @@ pub fn run() {
             unwatch,
             watch_delivery::watch_delivery_read,
             transcript::conversation_part,
+            transcript::conversation_follow,
+            timeline_objects::conversation_object,
             transcript::conversation_cut,
             transcript::conversation_locate,
             transcript::conversation_index,

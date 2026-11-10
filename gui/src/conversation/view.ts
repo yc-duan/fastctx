@@ -29,6 +29,7 @@
 // quiet line on the left; what was done to a turn (copy, ask again, fork)
 // appears only once the turn is over.
 
+import { retainedRows, retainKeys } from "./view-retained";
 import { diffCard, unifiedDiff, type DiffCard, type DiffKind } from "./diff-card";
 import { handOnAtEdge } from "../scroll-handoff";
 import { noticeAnswer } from "./notice-answer";
@@ -116,7 +117,7 @@ export interface Context {
   following?: (() => boolean) | undefined;
   /** A gap came near the reader: its turns are read, from its end when the
    *  reader is below it, from its start when above. */
-  near?: ((gap: Gap, side: "end" | "start") => void) | undefined;
+  near?: ((gap: Gap, side: "end" | "start", explicit?: boolean) => void) | undefined;
   /** Where words being sent leave from (`flight.ts`). */
   departure?: (() => Departure | null) | undefined;
   /** Words just sent are on the page, laid out: the newest of them. */
@@ -256,6 +257,7 @@ function heldIcon(button: HTMLElement): GlyphName {
 }
 
 export class ConversationView {
+  private retainedWindow: readonly unknown[] | null = null;
   private openRows = new Set<string>();
   /** The user's long messages opened whole. */
   private readonly unfolded = new Set<string>();
@@ -453,6 +455,7 @@ export class ConversationView {
     // words of a conversation just begun) rose where they were sent.
     if (!this.live) for (const block of blocks) if (block.kind === "heard" && block.sending) this.flown.add(block.key);
     this.adopt(blocks);
+    this.retainWindow();
     const drawn = this.lay(read);
     this.unfolding.clear();
     const says = this.context.nested ? null : this.lineSays(blocks);
@@ -505,6 +508,25 @@ export class ConversationView {
       blocks.map((block) => block.key),
       (key, index) => this.measured.get(key) ?? this.guess(blocks[index]!, index),
     );
+  }
+
+  /** Releases derived content only when the held page window is replaced. */
+  private retainWindow(): void {
+    const held = this.conversation.held();
+    if (!this.conversation.paged || held === this.retainedWindow) return;
+    this.retainedWindow = held;
+    const keys = retainedRows(held.flatMap((part) => part.fold.entries), [...this.conversation.blocks(), ...this.conversation.chatBlocks()], this.cards, this.bunches);
+    for (const state of [this.deedsRead, this.openRows, this.openStretches, this.closedStretches, this.unfolded, this.stretchRows, this.seen, this.readAhead, this.flown]) retainKeys(state, keys);
+    this.findWrites.retain(keys);
+    this.findContent.clear();
+    this.prefetching?.abort();
+    for (const key of this.findRead.keys()) if (!keys.has(key)) {
+      this.findRead.delete(key);
+      this.findRemoved.add(key);
+    }
+    for (const [key, row] of this.agentRows) if (!keys.has(key) || !row.isConnected) this.agentRows.delete(key);
+    this.jobsRead = null;
+    this.jobs.clear();
   }
 
   /** The blocks near the reader, drawn and in order between the two
@@ -592,11 +614,22 @@ export class ConversationView {
   }
 
   /** Lays out again where the reader scrolled, once a frame. */
+  readerMoved(): void {
+    this.asked.clear();
+    this.readerLayout = true;
+    this.scrolled();
+  }
+  private readerLayout = false;
+
+  retryGap(key: string): void { this.asked.delete(key); }
+
   private scrolled = (): void => {
     if (this.laying) return;
     this.laying = requestAnimationFrame(() => {
       this.laying = 0;
-      if (this.root.isConnected && this.scrollNeedsLayout()) this.lay();
+      const readerMoved = this.readerLayout;
+      this.readerLayout = false;
+      if (this.root.isConnected && (readerMoved || this.scrollNeedsLayout())) this.lay();
     });
   };
 
@@ -957,7 +990,7 @@ export class ConversationView {
       const signature = `${this.findSignature(block)}|${slot?.findRevision ?? 0}`;
       if (this.findRead.get(block.key) === signature) continue;
       this.findRead.set(block.key, signature);
-      const parts = this.findContent.parts(block);
+      const parts = this.findParts(block);
       changed.push({ key: block.key, parts: block.kind === "activity-group" ? parts : (function* () {
         for (const part of parts) yield { ...part, stamp: `${signature}|${part.stamp}` };
       })() });
@@ -969,7 +1002,17 @@ export class ConversationView {
 
   /** What finding reads of a block, as it would read it here. */
   findParts(block: Block): Iterable<FindPart> {
-    return this.findContent.parts(block);
+    const held = this.conversation.held();
+    const current = () => !this.conversation.paged || held === this.conversation.held();
+    const parts = this.findContent.parts(block);
+    return (function* () {
+      const iterator = parts[Symbol.iterator]();
+      while (current()) {
+        const next = iterator.next();
+        if (next.done) return;
+        yield next.value;
+      }
+    })();
   }
 
   /** Draws and opens just the selected match's ancestry. Existing folds
@@ -1114,6 +1157,8 @@ export class ConversationView {
   }
 
   private async findWrite(key: string, signal: AbortSignal): Promise<string> {
+    const window = this.conversation.held();
+    const current = () => !this.conversation.paged || window === this.conversation.held();
     const split = key.indexOf(WRITE);
     const entry = this.conversation.get(key.slice(0, split));
     const write = entry?.kind === "tool" ? entry.tool.run?.writes.find((one) => one.id === key.slice(split + 1)) : undefined;
@@ -1137,8 +1182,9 @@ export class ConversationView {
         });
         await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
         signal.throwIfAborted();
+        if (!current()) return "";
       }
-      this.findWrites.set(key, { signature: JSON.stringify(write), lines: kept });
+      if (current()) this.findWrites.set(key, { signature: JSON.stringify(write), lines: kept });
       return shown.join("\n");
     } catch (error) {
       if (signal.aborted) throw signal.reason;
@@ -1313,6 +1359,25 @@ export class ConversationView {
       for (const plan of element.querySelectorAll<HTMLElement>(".ask-plan")) handOnAtEdge(plan);
       if (this.openRows.has(block.key)) this.fill(block.key, element);
     } finally {
+      const keys = block.kind === "activity-group" ? block.members.filter((member) => member.kind === "prose").map((member) => member.key) : [block.key];
+      const deferred = keys.filter((key) => this.conversation.deferred(key));
+      const fullParent = block.kind === "activity-group" ? slot.stretch!.rows : element;
+      let full = fullParent.querySelector<HTMLElement>(":scope > [data-event-full-list]");
+      if (deferred.length && !full) {
+        full = document.createElement("div");
+        full.dataset.eventFullList = "";
+        fullParent.append(full);
+      }
+      full?.replaceChildren();
+      if (!deferred.length) full?.remove();
+      for (const key of deferred) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "tool-more";
+        button.dataset.eventWhole = key;
+        button.textContent = this.context.words.showMore;
+        full!.append(button);
+      }
       this.reading = reading;
     }
   }
@@ -1321,7 +1386,7 @@ export class ConversationView {
    *  they are read, a mark that moves. */
   private gapRow(gap: Gap): string {
     const { words } = this.context;
-    const said = gap.first ? words.turnsEarlier(gap.turns) : words.turnsBetween(gap.turns);
+    const said = gap.paged ? (gap.later ? (this.context.english ? "Later events" : "后续内容") : (this.context.english ? "Earlier events" : "更早的内容")) : gap.first ? words.turnsEarlier(gap.turns) : words.turnsBetween(gap.turns);
     return `<button class="gap-row${gap.loading ? " loading" : ""}" type="button" data-gap="${escape(gap.key)}"><span class="gap-line" aria-hidden="true"></span><span class="gap-said">${escape(said)}</span><span class="gap-line" aria-hidden="true"></span></button>`;
   }
 
@@ -2929,6 +2994,19 @@ export class ConversationView {
       return;
     }
     const card = this.cards.get(key);
+    const owners = card ? [...new Set(card.sources.map((source) => source.entry))] : [key];
+    const deferred = owners.filter((owner) => this.conversation.deferred(owner));
+    if (deferred.length) queueMicrotask(() => {
+      if (!content.isConnected || !row.contains(content)) return;
+      for (const owner of deferred.filter((owner) => this.conversation.deferred(owner))) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "tool-more";
+        button.dataset.eventWhole = owner;
+        button.textContent = this.context.words.showMore;
+        content.append(button);
+      }
+    });
     if (card) {
       this.fillCard(key, card, content);
       return;
@@ -3236,6 +3314,7 @@ export class ConversationView {
   /** Lets go of what a row held open. */
   private letGo(key: string): void {
     this.filling.delete(key);
+    this.agentRows.delete(key);
     for (const long of this.longs.get(key) ?? []) long.destroy();
     this.longs.delete(key);
     for (const close of this.closers.get(key) ?? []) close();
@@ -3377,6 +3456,16 @@ export class ConversationView {
       this.context.openFile(name.dataset.nameMachine ?? this.context.residentMachine, name.dataset.namePath!);
       return;
     }
+    const wholeEvent = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-event-whole]");
+    if (wholeEvent) {
+      this.context.reading();
+      wholeEvent.disabled = true;
+      void this.conversation.readFull(wholeEvent.dataset.eventWhole!).catch((error: unknown) => {
+        wholeEvent.disabled = false;
+        wholeEvent.textContent = String(error);
+      });
+      return;
+    }
     const target = (event.target as HTMLElement).closest<HTMLElement>(
       "[data-open], [data-fold], [data-gap], [data-earlier], [data-asked], .code-copy, .ask-option, [data-ask], [data-copy], [data-copy-turn], [data-turn-act], [data-turn-calls]",
     );
@@ -3411,7 +3500,7 @@ export class ConversationView {
       if (gap?.kind !== "gap" || gap.loading) return;
       const index = this.heights.index(gap.key) ?? 0;
       const reader = this.heights.find(Math.max(0, this.context.scroller.scrollTop - this.origin()));
-      this.context.near?.(gap, index <= reader ? "end" : "start");
+      this.context.near?.(gap, index <= reader ? "end" : "start", true);
       return;
     }
     if (target.dataset.turnCalls) {

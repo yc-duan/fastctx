@@ -36,13 +36,20 @@ export class RowsKept {
       this.kept.delete(key);
       this.size -= before.size;
     }
-    const size = rows.lines.reduce((sum, line) => sum + line.length, 0);
+    const size = key.length + rows.signature.length + rows.lines.reduce((sum, line) => sum + line.length + 16, 64);
     if (size > this.budget) return;
     this.kept.set(key, { rows, size });
     this.size += size;
     for (const [oldest, one] of this.kept) {
       if (this.size <= this.budget) break;
       this.kept.delete(oldest);
+      this.size -= one.size;
+    }
+  }
+
+  retain(keys: ReadonlySet<string>): void {
+    for (const [key, one] of this.kept) if (!keys.has(key)) {
+      this.kept.delete(key);
       this.size -= one.size;
     }
   }

@@ -199,6 +199,8 @@ export interface Gap {
   first: boolean;
   /** Its turns are being read. */
   loading: boolean;
+  later?: boolean;
+  paged?: boolean;
 }
 
 /** What the agent said to the user through the World's `message_user`
@@ -398,11 +400,11 @@ export class Fold {
   /** What came before, replacing what is shown; `carry`, what the part's
    *  turns read of what came before it (its title, its context, the model
    *  that answered), read first as nothing of its own. */
-  history(events: SessionEvent[], carry: SessionEvent[] = []): void {
+  history(events: SessionEvent[], carry: SessionEvent[] = [], places?: readonly string[], keepWaiting = true): void {
     // Requests still waiting are kept: the host asked them, and they are
     // not part of the history it gives back. So are words sent from here
     // that this reading does not hold yet.
-    const waiting = this.entries.filter((entry) => entry.kind === "ask" && entry.state.state === "waiting");
+    const waiting = keepWaiting ? this.entries.filter((entry) => entry.kind === "ask" && entry.state.state === "waiting") : [];
     const pending = this.entries.filter((entry): entry is Heard => entry.kind === "heard" && entry.sending !== undefined);
     const known = new Set(this.entries.filter((entry) => entry.kind === "heard").map((entry) => entry.key));
     const halted = this.halted;
@@ -414,6 +416,8 @@ export class Fold {
     this.endedTurns.clear();
     this.over.clear();
     this.stretches.clear();
+    this.pagedGroups = places !== undefined;
+    if (!this.pagedGroups) this.previousGroups.clear();
     this.sequences.clear();
     this.stale = false;
     this.halted = null;
@@ -432,7 +436,7 @@ export class Fold {
     } finally {
       this.replaying = false;
     }
-    this.extend(events);
+    this.extend(events, places);
     // A history the node gives whole is as it stands after every change it
     // holds: a change of history among its events is shown already, and is
     // no reason to read it again. One that comes after it is.
@@ -464,18 +468,22 @@ export class Fold {
 
   /** More of what came before, after what is shown: a reading given in
    *  parts, as a cache answers and then what is new since. */
-  extend(events: SessionEvent[]): void {
+  extend(events: SessionEvent[], places?: readonly string[]): void {
     this.replaying = true;
     try {
-      for (const event of events) this.event(event);
+      for (const [index, event] of events.entries()) this.event(event, places?.[index]);
     } finally {
       this.replaying = false;
     }
   }
 
   /** One more event of this fold's part. */
-  event(event: SessionEvent): void {
+  private currentPlace = "";
+  private placed = false;
+  event(event: SessionEvent, place?: string): void {
     this.current = this.folded;
+    this.placed = place !== undefined;
+    this.currentPlace = place ?? `${this.scope}@${this.current}`;
     this.folded += 1;
     this.read(event);
   }
@@ -570,10 +578,10 @@ export class Fold {
             ? `h:${event.delivery}`
             : heard.message?.id
               ? `h:m:${heard.message.id}`
-              : turnKey
+              : this.placed ? `h:${this.currentPlace}` : turnKey
                 ? `h:${turnKey}:${ordinal}`
-                : `h:${this.scope}@${this.current}`;
-          const shown = this.byKey.has(key) ? `${key}:${this.scope}@${this.current}` : key;
+                : `h:${this.currentPlace}`;
+          const shown = this.byKey.has(key) ? `${key}:${this.currentPlace}` : key;
           this.add({
             kind: "heard",
             key: shown,
@@ -843,7 +851,7 @@ export class Fold {
   private health(health: Health): void {
     const last = this.entries[this.entries.length - 1];
     if (last?.kind === "health" && last.health.kind === health.kind && last.health.text === health.text) return;
-    this.add({ kind: "health", key: `x:${this.scope}@${this.current}`, stamp: 0, at: 0, health });
+    this.add({ kind: "health", key: `x:${this.currentPlace}`, stamp: 0, at: 0, health });
   }
 
   /** An item began or finished: shown where it first appeared, as it now
@@ -852,7 +860,7 @@ export class Fold {
     const startedAt = native.started_at ? Date.parse(native.started_at) : at;
     const id = native.id;
     if (id && native.draft) this.renamed(turn, native.draft, id);
-    const key = id ? itemEntryKey(turn, id) : `n:${this.scope}@${this.current}`;
+    const key = id ? itemEntryKey(turn, id) : `n:${this.currentPlace}`;
     if (id && !finished && this.over.has(key)) return;
     if (id && finished) this.over.add(key);
     const said = native.kind === "message" || native.kind === "thinking" || native.kind === "plan" || native.kind === "tool" || native.kind === "compaction";
@@ -1550,6 +1558,8 @@ export class Fold {
    *  A message not yet begun is nothing to show. Words sent into a turn
    *  under way and not yet taken in come last, in the order sent: they
    *  stand below the turn's line and divide nothing. */
+  private pagedGroups = false;
+  private previousGroups = new Map<string, string>();
   blocks(): Block[] {
     if (this.blocksCache?.clock === this.clock) return this.blocksCache.blocks;
     const blocks: Block[] = [];
@@ -1598,6 +1608,18 @@ export class Fold {
       }
     }
     blocks.push(...below);
+    if (this.pagedGroups) {
+      const reused = new Set<string>();
+      const next = new Map<string, string>();
+      for (const block of blocks) {
+        if (block.kind !== "activity-group") continue;
+        const known = block.members.map((member) => this.previousGroups.get(member.key)).find((key) => key !== undefined && !reused.has(key));
+        if (known) block.key = known;
+        reused.add(block.key);
+        for (const member of block.members) next.set(member.key, block.key);
+      }
+      this.previousGroups = next;
+    }
     this.blocksCache = { clock: this.clock, blocks };
     return blocks;
   }
