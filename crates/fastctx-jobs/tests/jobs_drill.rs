@@ -6,6 +6,9 @@
 //!
 //! jobs_drill --root ABSOLUTE_DIRECTORY_THAT_DOES_NOT_EXIST
 
+#[path = "jobs_drill/submitting.rs"]
+mod submitting;
+
 use fastctx_jobs::{Job, Jobs, Kind, Operation, Outcome, Run, Standing, Taken, accept, settle, submit};
 use fastctx_storage::Database;
 use fastctx_storage::rusqlite::params;
@@ -411,5 +414,5 @@ async fn drill(database: Database) -> Outcome_<()> {
         }
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
-    Ok(())
+    submitting::drill(&jobs).await
 }
