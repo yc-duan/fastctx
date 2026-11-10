@@ -60,6 +60,7 @@ mod ending;
 mod future_sizes;
 pub use ending::flush_log;
 mod asset_preservation;
+mod content_upkeep;
 mod conversation_store;
 mod facts;
 mod features;
@@ -1011,6 +1012,7 @@ pub async fn run_prepared(
             forget::start(&node);
             timeline::register(&node);
             management::register(&node);
+            content_upkeep::register(&node);
         })
         .await
         {

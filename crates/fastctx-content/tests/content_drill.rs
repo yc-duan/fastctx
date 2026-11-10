@@ -72,7 +72,7 @@ fn main() -> Outcome<()> {
         audited.items,
         began.elapsed()
     );
-    objects(&content)?;
+    objects(&content, root)?;
     let began = Instant::now();
     content.settle()?;
     println!("settled to the disk in {:.1?}", began.elapsed());
@@ -280,7 +280,7 @@ fn revisions(content: &Content, stream: &StreamKey) -> Outcome<()> {
 
 /// Objects are kept once by their content, read a range at a time, and
 /// readable by a scope for as long as its records refer to them.
-fn objects(content: &Content) -> Outcome<()> {
+fn objects(content: &Content, root: &Path) -> Outcome<()> {
     let store = content.objects();
     let small = body(1, 9_000);
     let large = body(2, 3 * 1024 * 1024 + 17);
@@ -329,5 +329,75 @@ fn objects(content: &Content) -> Outcome<()> {
         return Err("a removed object is still here".into());
     }
     println!("objects: {} and {} bytes put in {took:.1?}; ranges, counts and removal hold", small.len(), large.len());
+    reclaiming(content, &stream, root)
+}
+
+/// An object goes once nothing refers to it and it was put a while ago; one
+/// put again, or referred to, stays.
+fn reclaiming(content: &Content, stream: &StreamKey, root: &Path) -> Outcome<()> {
+    let store = content.objects();
+    let (row, file, held) = (body(11, 5_000), body(12, 200_000), body(13, 70_000));
+    let (kept_row, kept_file, kept_held) = (store.put(&row)?, store.put(&file)?, store.put(&held)?);
+    let refer = |state| {
+        content.append(Batch {
+            stream: stream.clone(),
+            generation: 0,
+            records: vec![Record { item: b"held".to_vec(), order: vec![2], state }],
+            checkpoint: None,
+            durable: false,
+        })
+    };
+    refer(State::Is { body: b"holds one".to_vec(), objects: vec![kept_held] })?;
+    // What a put that was stopped halfway leaves behind.
+    let left = root.join(fastctx_content::OBJECTS_DIRECTORY).join("incoming").join("left-by-a-stopped-put");
+    std::fs::write(&left, b"half")?;
+    let all = |grace: Duration| -> Outcome<fastctx_content::Reclaimed> {
+        let mut whole = fastctx_content::Reclaimed::default();
+        loop {
+            let pass = content.reclaim(grace)?;
+            whole.looked += pass.looked;
+            whole.removed += pass.removed;
+            whole.bytes += pass.bytes;
+            if !pass.more {
+                return Ok(whole);
+            }
+        }
+    };
+    let early = all(Duration::from_secs(3600))?;
+    if early.removed != 0 || store.size(&kept_row.hash)?.is_none() || !left.exists() {
+        return Err(format!("objects put just now were reclaimed: {early:?}").into());
+    }
+    std::thread::sleep(Duration::from_millis(30));
+    let began = Instant::now();
+    let late = all(Duration::ZERO)?;
+    let took = began.elapsed();
+    if store.size(&kept_row.hash)?.is_some() || store.size(&kept_file.hash)?.is_some() {
+        return Err(format!("objects nothing refers to stayed: {late:?}").into());
+    }
+    if store.read(&kept_held.hash, 0, 16)?.as_deref() != Some(&held[..16]) {
+        return Err("an object a record refers to was reclaimed".into());
+    }
+    if left.exists() {
+        return Err("what a stopped put left stayed".into());
+    }
+    if late.bytes < (row.len() + file.len()) as u64 {
+        return Err(format!("reclaiming does not say what it removed: {late:?}").into());
+    }
+    // Put again, it is here again; and its mark keeps it through a pass
+    // that looks only at what was put before.
+    if store.put(&file)? != kept_file || store.read(&kept_file.hash, 199_990, 100)?.as_deref() != Some(&file[199_990..])
+    {
+        return Err("an object put again after it was reclaimed is not here".into());
+    }
+    refer(State::Gone)?;
+    std::thread::sleep(Duration::from_millis(30));
+    all(Duration::ZERO)?;
+    if store.size(&kept_held.hash)?.is_some() || store.size(&kept_file.hash)?.is_some() {
+        return Err("an object whose last record is gone stayed".into());
+    }
+    println!(
+        "reclaiming: {} objects looked at, {} removed ({} bytes) in {took:.1?}",
+        late.looked, late.removed, late.bytes
+    );
     Ok(())
 }

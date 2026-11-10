@@ -12,6 +12,7 @@ mod error;
 mod frame;
 mod objects;
 mod read;
+mod reclaim;
 mod record;
 mod schema;
 mod wake;
@@ -21,6 +22,7 @@ pub use audit::Audited;
 pub use error::{Error, Result};
 pub use objects::{OBJECTS_DIRECTORY, OBJECTS_FILE, Objects, READ_BYTES, ROW_BYTES};
 pub use read::{Anchor, Item, Page, Place};
+pub use reclaim::Reclaimed;
 pub use record::{FRAME_BYTES, FRAME_RECORDS, KEY_BYTES, ObjectRef, RECORD_BYTES, RECORD_OBJECTS, Record, State};
 
 use fastctx_storage::Database;
@@ -74,6 +76,7 @@ struct Inner {
     database: Database,
     objects: Objects,
     wakes: wake::Wakes,
+    reclaiming: std::sync::Mutex<reclaim::Passes>,
 }
 
 impl Content {
@@ -87,7 +90,12 @@ impl Content {
         };
         let database = Database::open_shaped(&directory.join(FILE), schema::SCHEMA, shape)?;
         let objects = Objects::open(directory)?;
-        Ok(Self(Arc::new(Inner { database, objects, wakes: wake::Wakes::default() })))
+        Ok(Self(Arc::new(Inner {
+            database,
+            objects,
+            wakes: wake::Wakes::default(),
+            reclaiming: std::sync::Mutex::default(),
+        })))
     }
 
     /// The objects the records here refer to.
