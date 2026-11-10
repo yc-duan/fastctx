@@ -1,8 +1,8 @@
 import { difference, scalarOffset } from "./characters";
 
-/** Bound per-character edit storage (2026-11-09). Keep in step with
+/** Bound per-character edit storage. Keep in step with
  * fastctx_types::composer::MAX_DOCUMENT_CHARACTERS. */
-export const MAX_DOCUMENT_CHARACTERS = 100_000;
+export const MAX_DOCUMENT_CHARACTERS = 30_000;
 
 export function characterCount(value: string): number {
   let count = 0;

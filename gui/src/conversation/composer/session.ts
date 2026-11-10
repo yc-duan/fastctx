@@ -657,7 +657,7 @@ export class ComposerSession {
     try {
       await preserve(text);
       // Closing hands this outbox to a later writer. A late upload or copy
-      // must never delete that writer's newer edits (2026-11-09).
+      // must never delete that writer's newer edits.
       if (this.closed || this.closing) return;
       document.discardPending();
       await this.save(entry);

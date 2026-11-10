@@ -72,7 +72,7 @@ function copyText(text: string, words: TextWords, say: (text: string) => void, n
     });
     // Explicit copying also works when this WebView denies the asynchronous
     // clipboard API. Only a full selection preserves the outbox text; keep
-    // it alive until the native copy completes (2026-11-09).
+    // it alive until the native copy completes.
     input.addEventListener("copy", (event) => {
       if (event.isTrusted && !event.defaultPrevented && input.selectionStart === 0 && input.selectionEnd === text.length) setTimeout(finish, 0);
     });
