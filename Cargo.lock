@@ -1361,6 +1361,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "fastctx-content"
+version = "1.0.1-beta.17"
+dependencies = [
+ "fastctx-storage",
+ "sha2 0.10.9",
+ "tokio",
+ "zstd",
+]
+
+[[package]]
 name = "fastctx-draft"
 version = "1.0.1-beta.17"
 dependencies = [
@@ -1504,6 +1514,15 @@ dependencies = [
  "windows-sys 0.61.2",
  "x509-parser",
  "xattr",
+]
+
+[[package]]
+name = "fastctx-jobs"
+version = "1.0.1-beta.17"
+dependencies = [
+ "fastctx-platform",
+ "fastctx-storage",
+ "tokio",
 ]
 
 [[package]]

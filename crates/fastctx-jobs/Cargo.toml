@@ -1,0 +1,24 @@
+[package]
+name = "fastctx-jobs"
+description = "The durable queue of work a call leaves to be done after it is answered"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[[test]]
+name = "jobs_drill"
+harness = false
+
+[dependencies]
+fastctx-platform = { path = "../fastctx-platform" }
+fastctx-storage = { path = "../fastctx-storage" }
+tokio = { workspace = true, features = ["rt", "sync", "time"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+
+[lints]
+workspace = true
