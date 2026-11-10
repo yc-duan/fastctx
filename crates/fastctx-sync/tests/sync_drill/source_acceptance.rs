@@ -9,6 +9,8 @@ pub(crate) mod follow;
 mod source_pages;
 #[path = "source_acceptance/upload/mod.rs"]
 pub(crate) mod upload;
+#[path = "source_acceptance/supply.rs"]
+mod supply;
 use fastctx_sync::{
     catalog::{Lifecycle, SourceBatch, SourceRecord},
     cursor::{Sequence, StreamCursor},
@@ -447,6 +449,7 @@ pub(super) async fn run(root: &Path) -> Result<()> {
     assert_eq!(count_scope(&db, "sync_changes", &object)?, 3);
     source_pages::run(root).await?;
     Box::pin(upload::run(root)).await?;
+    Box::pin(supply::run(&dir)).await?;
     println!(
         "hub source acceptance: out-of-order persistence, FULL rollback, restart, initial epoch confirmation, exact replay, conflicting proof retention, missing attachment, hub semantic refusal and continued producer prefixes passed"
     );

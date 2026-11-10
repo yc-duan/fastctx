@@ -28,6 +28,11 @@ name = "soak_drill"
 path = "tests/soak_drill/main.rs"
 harness = false
 
+[[test]]
+name = "asset_sync_drill"
+path = "tests/asset_sync_drill/main.rs"
+harness = false
+
 [dependencies]
 arc-swap = "1"
 anyhow.workspace = true
