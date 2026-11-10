@@ -672,6 +672,12 @@ fn shell() -> String {
     SHELL.get_or_init(|| shell).clone()
 }
 
+/// What a call that is submitted before calls are dispatched is answered
+/// with, should it come to be dispatched all the same.
+fn submitted_before() -> Failure {
+    Failure::not_run("this call is submitted as work before it is dispatched, and came to be dispatched")
+}
+
 /// A path as the World writes it: in full, with no trailing slash, and on
 /// Windows with forward slashes. Windows hands out some paths, such as the
 /// temporary directory, in their short 8.3 form, which resolving undoes.
@@ -824,7 +830,7 @@ impl fastctx_net::link::Node for Handler {
                         let stream = stream.ok_or_else(|| Failure::new("MCP requires a data connection"))?;
                         crate::mcp::serve(&node, &hub, &caller.account, &name, stream).await.map(|()| RemoteReply::Set)
                     }
-                    RemoteCall::PageAction { .. } => unreachable!("page actions are submitted before dispatch"),
+                    RemoteCall::PageAction { .. } => Err(submitted_before()),
                     RemoteCall::Relay { made } => crate::devices::relay(&node, &asker, made).await,
                     // A resident of the calling machine works here (`world-run.md`,
                     // 这里).
@@ -1182,7 +1188,7 @@ impl fastctx_net::link::Node for Handler {
                         ))
                     }),
                     RemoteCall::Canon { .. } => Err(Failure::not_run(fastctx_types::memory::LEGACY)),
-                    RemoteCall::WorkingCopy { .. } => unreachable!("working copies are submitted before dispatch"),
+                    RemoteCall::WorkingCopy { .. } => Err(submitted_before()),
                     RemoteCall::MemoryFolders { .. } => {
                         Err(Failure::not_run("project memory was replaced by history; update the requesting computer"))
                     }
@@ -1192,9 +1198,7 @@ impl fastctx_net::link::Node for Handler {
                             .await
                             .map(|result| RemoteReply::Plan { result })
                     }
-                    RemoteCall::EnterProject { .. } => {
-                        unreachable!("project entry is submitted before dispatch")
-                    }
+                    RemoteCall::EnterProject { .. } => Err(submitted_before()),
                     RemoteCall::GoalCommand { actor, turn, request } => {
                         let account =
                             fastctx_types::access::HubAccount { hub: hub.clone(), account: caller.account.clone() };

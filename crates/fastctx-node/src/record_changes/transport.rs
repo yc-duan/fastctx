@@ -1,4 +1,5 @@
-//! Ask after accepted remote work under its original submission name.
+//! Asks another machine for a record change under one name: again, while
+//! that machine only says it accepted the work (`crate::submitted::Asking`).
 use crate::Node;
 use fastctx_net::link::Link;
 use fastctx_types::{
@@ -8,15 +9,16 @@ use fastctx_types::{
     remote::{RemoteCall, RemoteReply},
     submission::Submission,
 };
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
+/// The name the asking goes under: the one the work it is part of has, or
+/// one of its own.
 fn name() -> Result<Submission, Failure> {
     if let Some(submission) = fastctx_net::submission::current() {
         return Ok(submission);
     }
-    let mut bytes = [0; 16];
-    getrandom::fill(&mut bytes).map_err(|error| Failure::new(error.to_string()))?;
-    Ok(Submission { name: bytes.iter().map(|byte| format!("{byte:02x}")).collect(), waits_ms: u32::MAX })
+    let name = fastctx_net::sign::random::<16>().map_err(|error| Failure::new(error.to_string()))?;
+    Ok(Submission { name: name.iter().map(|byte| format!("{byte:02x}")).collect(), waits_ms: u32::MAX })
 }
 
 pub(crate) async fn linked(
@@ -27,14 +29,12 @@ pub(crate) async fn linked(
     call: RemoteCall,
 ) -> Result<RemoteReply, Failure> {
     fastctx_net::submission::scope(Some(name()?), async {
+        let asking = crate::submitted::Asking::begin();
         loop {
-            match link
-                .call(to, account, purpose, call.clone())
-                .await
-                .map_err(|error| Failure::new(error.to_string()))?
-            {
-                Err(failure) if failure.is_accepted() => tokio::time::sleep(Duration::from_secs(1)).await,
-                result => return result,
+            let reply =
+                link.call(to, account, purpose, call.clone()).await.map_err(|error| Failure::new(error.to_string()))?;
+            if let Some(reply) = asking.settled(reply).await {
+                return reply;
             }
         }
     })
@@ -49,10 +49,12 @@ pub(crate) async fn on(
     call: RemoteCall,
 ) -> Result<RemoteReply, Failure> {
     fastctx_net::submission::scope(Some(name()?), async {
+        let asking = crate::submitted::Asking::begin();
         loop {
-            match node.call(acting, to, purpose, call.clone()).await.map_err(|error| Failure::new(error.to_string()))? {
-                Err(failure) if failure.is_accepted() => tokio::time::sleep(Duration::from_secs(1)).await,
-                result => return result,
+            let reply =
+                node.call(acting, to, purpose, call.clone()).await.map_err(|error| Failure::new(error.to_string()))?;
+            if let Some(reply) = asking.settled(reply).await {
+                return reply;
             }
         }
     })
