@@ -9,7 +9,6 @@
 //! it records what happened while it was away, such as jobs whose
 //! supervisor did not survive a restart of the machine.
 
-pub mod conversation_ingest;
 mod account_records;
 pub mod activity;
 mod activity_book;
@@ -47,6 +46,7 @@ mod control_letters;
 mod control_long;
 mod control_posts;
 mod control_queue;
+pub mod conversation_ingest;
 mod copy;
 mod cut_history;
 mod data;
@@ -216,6 +216,7 @@ pub(crate) struct Node {
     /// The unified data foundation's engines on `database`, when it opened
     /// (`foundation`).
     foundation: Option<foundation::Foundation>,
+    ingestion: std::sync::OnceLock<Arc<conversation_ingest::watcher::Service>>,
     book_database: fastctx_storage::Database,
     record_migration: record_migration::Service,
     controls_due: std::sync::Mutex<std::collections::HashMap<fastctx_types::ResidentId, bool>>,
@@ -795,6 +796,7 @@ pub async fn run_prepared(
                 world,
                 database,
                 foundation,
+                ingestion: Default::default(),
                 book_database,
                 record_migration,
                 controls_due: Default::default(),

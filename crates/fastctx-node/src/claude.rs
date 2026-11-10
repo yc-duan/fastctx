@@ -192,6 +192,7 @@ impl Claude {
 /// Writes the plugin and starts watching the sessions.
 pub fn start(node: &Arc<Node>) -> std::io::Result<()> {
     claude::control::write(&node.world.path().join("claude-controller.json"), &fastctx_platform::current_identity()?)?;
+    crate::conversation_ingest::watcher::start(node)?;
     calls::sweep(node);
     let plugin = claude::write_plugin(node.world.path())?;
     let checking = node.clone();
@@ -579,6 +580,12 @@ async fn look(node: &Arc<Node>, directory: &Path) -> bool {
     }
     if let Err(error) = settle::name_record(node, &resident, directory, &session) {
         node.log.line(format_args!("finding where Claude Code keeps {session}'s record: {error}"));
+        settled = false;
+    }
+    if reads_host
+        && let Err(error) = crate::conversation_ingest::watcher::register(node, &resident, directory, &session)
+    {
+        node.log.line(format_args!("watching Claude's source for ingestion: {error}"));
         settled = false;
     }
     if reads_host && let Err(error) = titles::start(node, &resident, directory).await {
