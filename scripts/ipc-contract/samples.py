@@ -317,6 +317,9 @@ def samples(root, shipped):
     # says no later notices, so a sentinel's finding and the later World facts
     # are words to it.
     for reader, shapes in shipped.items():
+        for call in ["world_now", "watch_world"]:
+            yield {"mode": "additive_request", "protocol": 13, "reader": reader,
+                   "value": {"kind": "call", "id": 37, "call": {"call": call, "known": ["laptop"]}}}
         # Its interface follows the World: the node sends it the whole, shaped
         # for what it says it reads.
         for now in worlds(fixtures):
