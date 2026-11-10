@@ -225,6 +225,7 @@ def calls(fixtures):
         yield {"call": "nodes"}, peer, False
     yield {"call": "nodes"}, {"kind": "command", "resident": None, "session": None}, False
     yield {"call": "watch", "resident": ADDRESS["resident"], "machine": None}, PEER, False
+    yield {"call": "watch", "resident": ADDRESS["resident"], "machine": None, "live_only": True, "now": True}, PEER, False
     yield {"call": "since", "since": AT, "town": None}, PEER, False
     yield {"call": "agents", "machine": None}, PEER, False
     for call in fixtures["pages"]["calls"]:
@@ -278,7 +279,7 @@ def samples(root, shipped):
         yield {"mode": "welcome", "protocol": protocol,
                "value": {"kind": "accepted", "machine": "desktop", "version": "1.0.0", "collaboration_watch": True}}
         yield {"mode": "welcome", "protocol": protocol,
-               "value": {"kind": "accepted", "machine": "desktop", "version": "1.0.0", "timeline_reads": True}}
+               "value": {"kind": "accepted", "machine": "desktop", "version": "1.0.0", "timeline_reads": True, "watch_live": True}}
         yield {"mode": "watched", "protocol": protocol, "value": MARKED_LIVE}
         for reply in replies(fixtures):
             if protocol == 5 and reply["reply"] == "server_invitation":
@@ -337,7 +338,7 @@ def samples(root, shipped):
         yield {"mode": "welcome", "protocol": 13, "reader": reader,
                "value": {"kind": "accepted", "machine": "desktop", "version": "1.0.0", "collaboration_watch": True}}
         yield {"mode": "welcome", "protocol": 13, "reader": reader,
-               "value": {"kind": "accepted", "machine": "desktop", "version": "1.0.0", "timeline_reads": True}}
+               "value": {"kind": "accepted", "machine": "desktop", "version": "1.0.0", "timeline_reads": True, "watch_live": True}}
         yield {"mode": "watched", "protocol": 13, "reader": reader, "value": MARKED_LIVE}
         for reply in replies(fixtures):
             notice = reply["notices"][0]["notice"] if reply["reply"] == "notices" else {}

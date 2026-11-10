@@ -31,7 +31,7 @@ impl World {
         };
         let account = view.account;
         let watching = if let Some(device) = self.device() {
-            Watching::device(device.watch(resident, machine, None, None, false, Some(account.clone())).await?)
+            Watching::device(device.watch(resident, machine, None, None, false, false, Some(account.clone())).await?)
         } else {
             self.local_watches
                 .watch(
@@ -42,6 +42,7 @@ impl World {
                         composer: None,
                         held: None,
                         now: false,
+                        live_only: false,
                         goal: Some(account.clone()),
                         collaboration: false,
                     },

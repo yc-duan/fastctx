@@ -346,7 +346,7 @@ async fn run(
         let account = fastctx_types::access::HubAccount { hub: asker.hub.clone(), account: asker.account.clone() };
         (None, crate::goals::watch::opening(node, &request.resident, &account).await?)
     } else {
-        opening(node, &request.resident, request.composer.clone(), held.as_ref()).await?
+        opening(node, &request.resident, request.composer.clone(), held.as_ref(), request.live_only).await?
     };
     drop(held);
     drop(memory);

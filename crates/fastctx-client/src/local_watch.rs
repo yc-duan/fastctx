@@ -70,6 +70,7 @@ impl Pool {
             wake: Notify::new(),
             goal_runtime: client.goal_runtime,
             collaboration_watch: client.collaboration_watch,
+            watch_live: client.watch_live && client.timeline_reads,
         });
         let watching = shared.subscribe(request)?;
         *slot = Arc::downgrade(&shared);
@@ -83,6 +84,9 @@ fn watching(watching: Watching) -> crate::Watching {
 }
 fn older_goal() -> CallError {
     CallError::Failed(Failure::not_run(fastctx_types::goals::words::OLDER_NODE))
+}
+pub(crate) fn older_timeline() -> CallError {
+    CallError::Failed(Failure::unsupported("this node does not support live-only watches; update it"))
 }
 pub(crate) fn older_collaboration() -> CallError {
     CallError::Failed(Failure::not_run(fastctx_types::collab_prompt::WATCH_NODE_OLD))
@@ -105,6 +109,7 @@ struct Shared {
     wake: Notify,
     goal_runtime: bool,
     collaboration_watch: bool,
+    watch_live: bool,
 }
 impl Shared {
     fn closed(&self) -> bool {
@@ -118,6 +123,9 @@ impl Shared {
     fn subscribe(self: &Arc<Self>, request: Subscription) -> Result<Watching, CallError> {
         if request.goal.is_some() && !self.goal_runtime {
             return Err(older_goal());
+        }
+        if request.live_only && !self.watch_live {
+            return Err(older_timeline());
         }
         if request.collaboration && !self.collaboration_watch {
             return Err(older_collaboration());

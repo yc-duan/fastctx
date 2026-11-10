@@ -22,6 +22,9 @@ pub struct Subscription {
     pub held: Option<Held>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub now: bool,
+    /// Subscribe before a timeline snapshot, without reading history.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub live_only: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub goal: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -37,6 +40,7 @@ impl Subscription {
             documents: self.documents.clone(),
             held: self.held.clone(),
             now: self.now,
+            live_only: self.live_only,
             goal: self.goal,
             collaboration: self.collaboration,
             multiplex,

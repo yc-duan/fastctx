@@ -112,6 +112,9 @@ pub enum Welcome {
         /// Reads timeline pages, waits for revisions and reads named objects.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         timeline_reads: bool,
+        /// Supports Watch.live_only with a post-registration Resumed barrier.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        watch_live: bool,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         scratch_locations: bool,
         /// Follows a conversation's collaboration on a watch
@@ -249,6 +252,8 @@ pub enum CapacityReason {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FailureCode {
+    /// The advertised capability required by this request is unavailable.
+    Unsupported,
     OriginalGone,
     /// The job is absent; this does not distinguish expiry from earlier collection.
     OutputNotRetained,
@@ -287,6 +292,10 @@ pub enum FailureCode {
 }
 
 impl Failure {
+    pub fn unsupported(message: impl Into<String>) -> Self {
+        Self { code: Some(FailureCode::Unsupported), not_run: true, ..Self::new(message) }
+    }
+
     pub fn capacity(mut self, reason: CapacityReason) -> Self {
         self.capacity = Some(reason);
         self

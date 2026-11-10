@@ -714,6 +714,10 @@ pub enum Call {
         /// The viewer reads `session::Watched::Now`.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         now: bool,
+        /// Only events from the subscription onward, acknowledged by Resumed.
+        /// Requires watch_live; no history is prepared or transmitted.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        live_only: bool,
         /// Follows the conversation's collaboration instead of its history
         /// (`session::Watched::Collaboration`); said only to a node whose
         /// welcome says `collaboration_watch`.

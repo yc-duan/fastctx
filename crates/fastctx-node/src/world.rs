@@ -630,6 +630,7 @@ pub fn facts(node: &Node) -> MachineFacts {
         collaboration_tree: true,
         collaboration_watch: true,
         timeline_reads: true,
+        watch_live: true,
         shell: shell(),
         form: Some(form()),
         node_lifetime: Some(Box::new(node.lifetime.clone())),
@@ -943,6 +944,7 @@ impl fastctx_net::link::Node for Handler {
                         documents,
                         held,
                         now,
+                        live_only,
                         goal,
                         collaboration,
                         multiplex,
@@ -961,6 +963,7 @@ impl fastctx_net::link::Node for Handler {
                                     documents,
                                     held,
                                     now,
+                                    live_only,
                                     goal,
                                     collaboration,
                                 },
@@ -973,7 +976,8 @@ impl fastctx_net::link::Node for Handler {
                                 .await
                         } else {
                             crate::talk::serve_watch(
-                                &node, &asker, &link, &from, resident, watch, composer, held, now, goal, stream,
+                                &node, &asker, &link, &from, resident, watch, composer, held, now, live_only, goal,
+                                stream,
                             )
                             .await
                         }

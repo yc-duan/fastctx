@@ -126,6 +126,9 @@ pub struct MachineFacts {
     /// Answers bounded timeline queries (`RemoteCall::Timeline`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub timeline_reads: bool,
+    /// Supports Watch.live_only with a post-registration Resumed barrier.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub watch_live: bool,
     /// The bash `run` uses there, such as `bash 5.2.37 (Git for Windows,
     /// MSYS)`: on MSYS, arguments shaped like Unix paths are rewritten
     /// before a Windows program sees them (`world-run.md`). Empty when the

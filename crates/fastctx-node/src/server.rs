@@ -70,6 +70,7 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
         account_records: true,
         conversation_plans: true,
         timeline_reads: true,
+        watch_live: true,
         scratch_locations: true,
         collaboration_watch: true,
         machine: node.machine(),
@@ -147,7 +148,7 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
             }
             return watching::serve(node.clone(), hello.peer, reader, writer).await;
         }
-        if let Call::Watch { resident, machine, composer, held, now, goal, collaboration } = call.clone() {
+        if let Call::Watch { resident, machine, composer, held, now, live_only, goal, collaboration } = call.clone() {
             // Watching a conversation anywhere is the user's, with this
             // computer's logins.
             if let Err(failure) = users_voice(node, &hello.peer) {
@@ -163,7 +164,7 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
                 if collaboration {
                     crate::colleagues::live::watch(node, resident, machine).await
                 } else {
-                    crate::talk::watch(node, resident, machine, composer, held, now, goal).await
+                    crate::talk::watch(node, resident, machine, composer, held, now, live_only, goal).await
                 }
             };
             let opening = tokio::select! {

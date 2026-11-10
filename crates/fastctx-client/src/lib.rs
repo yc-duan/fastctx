@@ -131,6 +131,7 @@ pub struct Client {
     pub account_records: bool,
     pub conversation_plans: bool,
     pub timeline_reads: bool,
+    pub watch_live: bool,
     pub goal_runtime: bool,
     pub watch_many: bool,
     pub scratch_locations: bool,
@@ -185,6 +186,7 @@ impl Client {
                 account_records,
                 conversation_plans,
                 timeline_reads,
+                watch_live,
                 goal_runtime,
                 watch_many,
                 scratch_locations,
@@ -201,6 +203,7 @@ impl Client {
                 account_records,
                 conversation_plans,
                 timeline_reads,
+                watch_live,
                 goal_runtime,
                 watch_many,
                 scratch_locations,
@@ -453,6 +456,9 @@ impl Client {
 
     /// Sends a `Watch` call; the connection carries the watch from then on.
     pub async fn watch(mut self, call: Call) -> Result<Watching, CallError> {
+        if !(self.watch_live && self.timeline_reads) && matches!(call, Call::Watch { live_only: true, .. }) {
+            return Err(local_watch::older_timeline());
+        }
         if !self.goal_runtime && matches!(call, Call::Watch { goal: Some(_), .. }) {
             return Err(CallError::Failed(Failure::not_run(fastctx_types::goals::words::OLDER_NODE)));
         }

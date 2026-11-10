@@ -201,6 +201,9 @@ pub enum Watched {
     /// For a viewer that said the mark of the last live event it took
     /// (`held::Held::since`): what it holds stands, and the events after
     /// that mark follow as live ones; nothing of the history is sent.
+    /// Also acknowledges a `live_only` subscription after registration and
+    /// after its current pending requests and before new events. Running-item
+    /// snapshots follow on the live stream. A timeline page may now be read.
     Resumed,
     /// For a viewer that said what it holds (`held::Held`): the history is
     /// still the version it holds.

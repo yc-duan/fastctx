@@ -489,6 +489,10 @@ pub enum RemoteCall {
         /// it reads past this and sends none.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         now: bool,
+        /// Only events from the subscription onward, acknowledged by Resumed.
+        /// Requires watch_live; no history is prepared or transmitted.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        live_only: bool,
         /// Follows the conversation's collaboration instead of its history
         /// (`session::Watched::Collaboration`); said only to a machine whose
         /// facts say `collaboration_watch`.

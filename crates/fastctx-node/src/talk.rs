@@ -93,6 +93,7 @@ pub async fn talk_here(
 /// returned channel until the watch ends, with why when something went
 /// wrong; dropping the channel ends the watch. A viewer that says what it
 /// holds of the history (`held`) is sent it as segments, slimmed.
+#[allow(clippy::too_many_arguments)]
 pub async fn watch(
     node: &Arc<Node>,
     resident: ResidentId,
@@ -100,6 +101,7 @@ pub async fn watch(
     composer: Option<String>,
     held: Option<Held>,
     now: bool,
+    live_only: bool,
     goal: Option<fastctx_types::access::HubAccount>,
 ) -> Result<watch_queue::Receiver<Result<Watched, Failure>>, Failure> {
     let local = machine.is_none() && node.residents.about(&resident).is_some();
@@ -119,7 +121,7 @@ pub async fn watch(
             }
             (None, crate::goals::watch::opening(node, &resident, account).await?)
         } else {
-            opening(node, &resident, composer, held.as_ref()).await?
+            opening(node, &resident, composer, held.as_ref(), live_only).await?
         };
         let Opening { pieces, mut events, slim } = opened;
         let node = node.clone();
@@ -174,12 +176,21 @@ pub async fn watch(
         documents: None,
         held,
         now,
+        live_only,
         goal: goal.is_some(),
         collaboration: None,
     };
     let mut watching = None;
     let mut refused = None;
     for (link, account) in node.speakers(&acting, &machine, Purpose::Agents).map_err(|e| Failure::new(e.to_string()))? {
+        if live_only {
+            match link.call(&machine.name, &account, Purpose::Look, fastctx_types::remote::RemoteCall::Facts).await {
+                Ok(Ok(RemoteReply::Facts(facts))) if facts.timeline_reads && facts.watch_live => {}
+                Ok(Err(failure)) => return Err(failure),
+                Err(error) => return Err(Failure::new(error.to_string())),
+                _ => return Err(Failure::unsupported("this machine does not support live-only watches; update it")),
+            }
+        }
         match link.watch_shared(&machine.name, &account, request.clone()).await {
             Ok(opened) => {
                 watching = Some(opened);
@@ -230,6 +241,7 @@ async fn opening(
     resident: &ResidentId,
     composer: Option<String>,
     held: Option<&Held>,
+    live_only: bool,
 ) -> Result<(Option<crate::composer::Lease>, Opening), Failure> {
     if let Some(name) = composer {
         let lease = crate::composer::watch(node, resident, name).await?;
@@ -237,6 +249,12 @@ async fn opening(
         crate::composer::snapshot(node, resident).await?;
         let pieces = vec![Watched::History { events: Vec::new() }];
         return Ok((Some(lease), Opening { pieces, events, slim: None }));
+    }
+    if live_only {
+        let (events, pending) = subscribe(node, resident)?;
+        let mut pieces: Vec<_> = pending.into_iter().map(|event| Watched::Live { event, mark: None }).collect();
+        pieces.push(Watched::Resumed);
+        return Ok((None, Opening { pieces, events, slim: None }));
     }
     if let Some(held) = held {
         return Ok((None, crate::held_history::opening(node, resident, held).await?));
@@ -698,6 +716,7 @@ pub async fn serve_watch(
     composer: Option<String>,
     held: Option<Held>,
     now: bool,
+    live_only: bool,
     goal: bool,
     mut stream: Stream,
 ) -> Result<RemoteReply, Failure> {
@@ -717,7 +736,7 @@ pub async fn serve_watch(
             let account = fastctx_types::access::HubAccount { hub: asker.hub.clone(), account: asker.account.clone() };
             Ok((None, crate::goals::watch::opening(node, &resident, &account).await?))
         } else {
-            opening(node, &resident, composer, held.as_ref()).await
+            opening(node, &resident, composer, held.as_ref(), live_only).await
         }
     };
     let (_lease, opened) = tokio::select! {

@@ -36,6 +36,7 @@ impl World {
                     composer: None,
                     held: None,
                     now: false,
+                    live_only: false,
                     goal: None,
                     collaboration: true,
                 };

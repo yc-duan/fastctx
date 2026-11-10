@@ -182,6 +182,7 @@ async fn run(
                 request.composer,
                 held,
                 request.now,
+                request.live_only,
                 request.goal,
             )
             .await

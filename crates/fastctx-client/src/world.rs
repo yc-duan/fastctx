@@ -699,7 +699,7 @@ impl World {
         machine: Option<Written>,
         held: fastctx_types::session::held::Held,
     ) -> Result<Watching, Error> {
-        self.watch_as(resident, machine, None, Some(held), false).await
+        self.watch_as(resident, machine, None, Some(held), false, false).await
     }
 
     /// Watches a resident for an interface: as [`World::watch_held`], or from
@@ -711,7 +711,7 @@ impl World {
         machine: Option<Written>,
         held: Option<fastctx_types::session::held::Held>,
     ) -> Result<Watching, Error> {
-        self.watch_as(resident, machine, None, held, true).await
+        self.watch_as(resident, machine, None, held, true, false).await
     }
 
     pub(crate) async fn watch_with_composer(
@@ -720,7 +720,13 @@ impl World {
         machine: Option<Written>,
         composer: Option<String>,
     ) -> Result<Watching, Error> {
-        self.watch_as(resident, machine, composer, None, false).await
+        self.watch_as(resident, machine, composer, None, false, false).await
+    }
+
+    /// Subscribes without preparing history. Wait for `Watched::Resumed`
+    /// before reading the first timeline page. Requires `watch_live`.
+    pub async fn watch_live(&self, resident: ResidentId, machine: Option<Written>) -> Result<Watching, Error> {
+        self.watch_as(resident, machine, None, None, true, true).await
     }
 
     async fn watch_as(
@@ -730,9 +736,10 @@ impl World {
         composer: Option<String>,
         held: Option<fastctx_types::session::held::Held>,
         now: bool,
+        live_only: bool,
     ) -> Result<Watching, Error> {
         if let Some(device) = &self.device {
-            return Ok(Watching::device(device.watch(resident, machine, composer, held, now, None).await?));
+            return Ok(Watching::device(device.watch(resident, machine, composer, held, now, live_only, None).await?));
         }
         self.local_watches
             .watch(
@@ -743,6 +750,7 @@ impl World {
                     composer,
                     held,
                     now,
+                    live_only,
                     goal: None,
                     collaboration: false,
                 },

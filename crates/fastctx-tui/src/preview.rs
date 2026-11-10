@@ -397,6 +397,7 @@ fn nodes(now: Timestamp) -> NodesReply {
         memory_folders: false,
         collaboration_tree: false,
         timeline_reads: false,
+        watch_live: false,
         completion_receipts: false,
         control_letters: false,
         run_stops: false,
