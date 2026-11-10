@@ -92,6 +92,7 @@ pub(super) async fn prepare(root: &Path, c: &Config, per_record: u32) -> anyhow:
     let display = ItemDisplayV1 {
         version: 1,
         kind: DisplayKind::User,
+        facts: None,
         tool: None,
         status: None,
         append: None,
