@@ -180,6 +180,7 @@ pub(crate) fn view_for_in(
     Ok(View {
         shared_records: true,
         ledger_parts: true,
+        named_asks: true,
         project_memory: true,
         collaboration_tree: true,
         history_switch: true,

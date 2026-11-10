@@ -24,6 +24,13 @@ pub async fn scope<F: Future>(submission: Option<Submission>, answering: F) -> F
     ANSWERED.scope(submission, answering).await
 }
 
+/// A name no other call has, under which the one asking stays for as long
+/// as it is kept.
+pub fn fresh() -> std::io::Result<Submission> {
+    let name = crate::sign::random::<16>()?;
+    Ok(Submission { name: name.iter().map(|byte| format!("{byte:02x}")).collect(), waits_ms: u32::MAX })
+}
+
 /// The submission as the machine answering it knows it: its name bound to
 /// who asked, so one asker's names are no other's. `asker` is every fact
 /// that tells askers apart, such as the account and the machine.

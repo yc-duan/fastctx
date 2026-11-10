@@ -112,6 +112,7 @@ pub fn fits(entry: &Entry) -> Result<usize, usize> {
     let sent = crate::wire::encode(&crate::wire::Up::Ask {
         id: u64::MAX,
         question: crate::wire::Question::LedgerWrite { town: entry.town.clone(), entry: signed.clone() },
+        submission: None,
     })
     .len();
     let size = handed_size(&signed).max(sent);

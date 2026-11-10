@@ -215,12 +215,12 @@ async fn session(
             _ = work.tick() => {
                 if identity.controller && matches!(*phase.borrow(), 0 | 2) {
                     let change = Change::Group { machine: "m0".parse().map_err(anyhow::Error::msg)?, group: Some(format!("group-{question}")) };
-                    dial::send(&mut socket, &Up::Ask { id: question, question: Question::Manage { account: identity.account.clone(), change } }).await.map_err(anyhow::Error::msg)?;
+                    dial::send(&mut socket, &Up::Ask { id: question, question: Question::Manage { account: identity.account.clone(), change }, submission: None }).await.map_err(anyhow::Error::msg)?;
                     stats.pending_changes.fetch_add(1, Ordering::Relaxed);
                     question += 1;
                 } else if !identity.controller && queried.is_none() && last_view.elapsed() >= Duration::from_secs(30) {
                     queried = Some((question, Instant::now()));
-                    dial::send(&mut socket, &Up::Ask { id: question, question: Question::Directory }).await.map_err(anyhow::Error::msg)?;
+                    dial::send(&mut socket, &Up::Ask { id: question, question: Question::Directory, submission: None }).await.map_err(anyhow::Error::msg)?;
                     question += 1;
                     last_view = Instant::now();
                 }

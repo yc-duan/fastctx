@@ -2,9 +2,15 @@
 
 use crate::wire::{self, Question, Up};
 
-/// A small question is unchanged. Large ledger writes use the hub's advertised capability.
-pub fn frames(id: u64, question: Question, supported: bool) -> Result<Vec<Up>, String> {
-    let whole = Up::Ask { id, question };
+/// A small question is unchanged. Large ledger writes use the hub's advertised
+/// capability; a question sent in parts goes without its name.
+pub fn frames(
+    id: u64,
+    question: Question,
+    submission: Option<fastctx_types::submission::Submission>,
+    supported: bool,
+) -> Result<Vec<Up>, String> {
+    let whole = Up::Ask { id, question, submission };
     if wire::encode(&whole).len() <= wire::MAX_CONTROL_FRAME {
         return Ok(vec![whole]);
     }

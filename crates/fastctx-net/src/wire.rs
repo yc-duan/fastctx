@@ -111,8 +111,15 @@ pub enum Up {
     /// This machine holds the letter the hub numbered `seq`, and all
     /// before it.
     Ack { seq: u64 },
-    /// A question for the hub itself.
-    Ask { id: u64, question: Question },
+    /// A question for the hub itself. `submission` names it for a hub whose
+    /// view says it takes named questions (`View::named_asks`): asked again
+    /// under the name, a question that asks for work is the same asking.
+    Ask {
+        id: u64,
+        question: Question,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        submission: Option<fastctx_types::submission::Submission>,
+    },
     /// A ledger question in ordered JSON parts, only for hubs advertising ledger_parts.
     QuestionPart { id: u64, index: u32, total: u32, text: String },
     /// Abandons only an incomplete question; an accepted append still finishes.
@@ -1235,6 +1242,10 @@ pub enum Told {
         view: Box<View>,
     },
     Done,
+    /// The hub recorded the work the question asks for and is doing it;
+    /// asked again under the same name, it says what came of it. Told only
+    /// of a question that came with a name.
+    Accepted,
     /// The hub holds the package asked for, of this many bytes.
     Package {
         size: u64,
@@ -1323,7 +1334,8 @@ impl Told {
         use fastctx_types::sync::transfer::Purpose;
         match self {
             Self::SyncSessionReady { .. } => Some(Purpose::AssetSync),
-            Self::AccountRecords { .. }
+            Self::Accepted
+            | Self::AccountRecords { .. }
             | Self::CollabWritten { .. }
             | Self::Directory { .. }
             | Self::Done { .. }

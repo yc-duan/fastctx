@@ -8,6 +8,7 @@ mod projection;
 mod registration;
 mod replicas;
 mod sentinels;
+pub(crate) mod submission;
 
 use crate::{
     Hub,
@@ -148,6 +149,34 @@ fn resolve(hub: &Hub, actor: &AccountName, address: &Address) -> Result<(Access,
     Ok((Access { actor: actor.clone(), conversation }, opened))
 }
 
+/// Whether the member that asks is still the device it was, acting for the
+/// account it names.
+fn acts_for(hub: &Hub, from: &MachineName, key: &PublicKey, account: &AccountName) -> Result<(), String> {
+    let store = hub.store();
+    store.book.directory.authorize(account, Action::ActFor(from)).map_err(|error| error.to_string())?;
+    if store.book.directory.member(from).is_none_or(|member| member.key != *key) {
+        return Err("the record reader's device was replaced".into());
+    }
+    Ok(())
+}
+
+/// Answers a question about conversation records as it comes from a member:
+/// what asks for work is submitted, under `named` when the question came
+/// with a name; the rest is answered where it stands.
+pub(crate) async fn asked(
+    hub: &Arc<Hub>,
+    from: MachineName,
+    key: PublicKey,
+    account: AccountName,
+    request: Request,
+    named: Option<fastctx_types::submission::Submission>,
+) -> Result<Told, String> {
+    match request {
+        Request::Delete { resident } => submission::delete(hub, from, key, account, resident, named.as_ref()).await,
+        request => ask(hub, from, key, account, request).await,
+    }
+}
+
 pub(crate) async fn ask(
     hub: &Arc<Hub>,
     from: MachineName,
@@ -155,13 +184,7 @@ pub(crate) async fn ask(
     account: AccountName,
     request: Request,
 ) -> Result<Told, String> {
-    {
-        let store = hub.store();
-        store.book.directory.authorize(&account, Action::ActFor(&from)).map_err(|error| error.to_string())?;
-        if store.book.directory.member(&from).is_none_or(|member| member.key != key) {
-            return Err("the record reader's device was replaced".into());
-        }
-    }
+    acts_for(hub, &from, &key, &account)?;
     let mut response = match request {
         Request::Register { resident, shared, previous, born_at } => {
             let conversation =

@@ -75,6 +75,7 @@ mod skill_files;
 mod skill_storage;
 mod store;
 mod strain;
+mod submitted;
 pub mod third;
 mod troubles;
 mod updates;
@@ -1022,6 +1023,7 @@ async fn serving(
     // Subsystems register their job kinds before the queue starts and
     // requests are heard. A queue that does not start is told and tried
     // again beside the hub, which serves meanwhile.
+    owned_records::submission::register(&hub);
     if let Err(error) = hub.durable_jobs.start().await {
         hub.log.line(format_args!("starting the hub's durable jobs; trying again: {error}"));
         let starting = Arc::downgrade(&hub);

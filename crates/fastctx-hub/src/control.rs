@@ -365,7 +365,7 @@ pub(crate) async fn session(
                 };
                 uploads = returned;
                 match complete {
-                    Ok(Some(complete)) => (Up::Ask { id, question: complete.question }, Some(complete.reservation)),
+                    Ok(Some(complete)) => (Up::Ask { id, question: complete.question, submission: None }, Some(complete.reservation)),
                     Ok(None) => continue,
                     Err(why) => {
                         let _ = out.send(Out::Frame(Down::Told { id, answer: Err(why) }));
@@ -762,7 +762,7 @@ fn handle(
                 lines(hub, name, generation, paths);
             }
         }
-        Up::Ask { id, question: Question::Manage { account, change: Change::Direct { machine, at } } } => {
+        Up::Ask { id, question: Question::Manage { account, change: Change::Direct { machine, at } }, .. } => {
             let (hub, out) = (hub.clone(), out.clone());
             let held = crate::moving::Moving::hold(&hub);
             fastctx_platform::task::spawn(async move {
@@ -783,10 +783,10 @@ fn handle(
         Up::Unfetched { id, why } => crate::updates::unfetched(hub, name, id, why),
         Up::FetchProgress { id, progress } => crate::updates::progress(hub, name, generation, id, progress),
         Up::PackageDone { id } => crate::updates::done(hub, name, generation, id),
-        Up::Ask { id, question: Question::Package { version, target, progress } } => {
+        Up::Ask { id, question: Question::Package { version, target, progress }, .. } => {
             crate::updates::ask(hub, name, generation, id, version, target, progress, out.clone());
         }
-        Up::Ask { id, question: Question::NetworkUpdates { account, request } } => {
+        Up::Ask { id, question: Question::NetworkUpdates { account, request }, .. } => {
             let held = crate::moving::Moving::hold(hub);
             let (hub, out) = (hub.clone(), out.clone());
             fastctx_platform::task::spawn(async move {
@@ -795,7 +795,7 @@ fn handle(
                 let _ = out.send(Out::Frame(Down::Told { id, answer }));
             });
         }
-        Up::Ask { id, question: Question::PrepareUpdate { machine, version } } => {
+        Up::Ask { id, question: Question::PrepareUpdate { machine, version }, .. } => {
             let held = crate::moving::Moving::hold(hub);
             let (hub, out) = (hub.clone(), out.clone());
             fastctx_platform::task::spawn(async move {
@@ -810,6 +810,7 @@ fn handle(
                 question @ (Question::HistoryCatalog { .. }
                 | Question::HistoryRead { .. }
                 | Question::HistorySubmitted { .. }),
+                ..
         } => {
             let (hub, out) = (hub.clone(), out.clone());
             fastctx_platform::task::spawn(async move {
@@ -838,12 +839,13 @@ fn handle(
                 let _ = out.send(Out::Frame(Down::Told { id, answer }));
             });
         }
-        Up::Ask { id, question: question @ (Question::ProjectIndex { .. } | Question::MemoryRead { .. }) } => {
+        Up::Ask { id, question: question @ (Question::ProjectIndex { .. } | Question::MemoryRead { .. }), .. } => {
             crate::ledger::requests::ask(hub, &origin, out, id, question);
         }
         Up::Ask {
             id,
             question: Question::MemoryWrite { town, account, entry } | Question::HistoryWrite { town, account, entry },
+            ..
         } => {
             let (hub, writer, out) = (hub.clone(), name.clone(), out.clone());
             let held = crate::moving::Moving::hold(&hub);
@@ -853,14 +855,14 @@ fn handle(
                 let _ = out.send(Out::Frame(Down::Told { id, answer }));
             });
         }
-        Up::Ask { id, question: Question::LedgerProjection { town, after } } => {
+        Up::Ask { id, question: Question::LedgerProjection { town, after }, .. } => {
             crate::ledger::projection(hub, &origin, out, id, town, after);
         }
-        Up::Ask { id, question: Question::LedgerRead { town, after } } => {
+        Up::Ask { id, question: Question::LedgerRead { town, after }, .. } => {
             crate::ledger::ask(hub, &origin, out, id, town, after);
         }
         // Written off the store's lock, one entry of a project at a time.
-        Up::Ask { id, question: Question::LedgerWrite { town, entry } } => {
+        Up::Ask { id, question: Question::LedgerWrite { town, entry }, .. } => {
             let (hub, writer, out) = (hub.clone(), name.clone(), out.clone());
             let held = crate::moving::Moving::hold(&hub);
             fastctx_platform::task::spawn(async move {
@@ -889,7 +891,14 @@ fn handle(
         // The answer goes out before any session the change ends, the
         // asker's own among them: a machine that renamed or removed itself
         // hears that it did.
-        Up::Ask { id, question: Question::OwnedRecords { account, request } } => {
+        Up::Ask { id, question: Question::OwnedRecords { account, request }, submission } => {
+            let named = match submission.map(|submission| crate::submitted::named(name, &submission)).transpose() {
+                Ok(named) => named,
+                Err(why) => {
+                    reply(Down::Told { id, answer: Err(why) });
+                    return Ok(());
+                }
+            };
             let (hub, from, out) = (hub.clone(), name.clone(), out.clone());
             let held = crate::moving::Moving::hold(&hub);
             fastctx_platform::task::spawn(async move {
@@ -907,7 +916,7 @@ fn handle(
                 } else {
                     None
                 };
-                let work = crate::owned_records::ask(&hub, from, key, account, request);
+                let work = crate::owned_records::asked(&hub, from, key, account, request, named);
                 let answer = match reader {
                     Some(reader) => crate::readers::run(reader, &out, deadline, work).await,
                     None => work.await,
@@ -915,7 +924,7 @@ fn handle(
                 let _ = out.send(Out::Frame(Down::Told { id, answer }));
             });
         }
-        Up::Ask { id, question: Question::AccountRecords { account, request } } => {
+        Up::Ask { id, question: Question::AccountRecords { account, request }, .. } => {
             let opened = match crate::account_records::begin(hub, name, &key, &account, &request) {
                 Ok(opened) => opened,
                 Err(why) => {
@@ -952,7 +961,7 @@ fn handle(
                 let _ = out.send(Out::Frame(Down::Told { id, answer }));
             });
         }
-        Up::Ask { id, question: Question::PlanCopies { account, request } } => {
+        Up::Ask { id, question: Question::PlanCopies { account, request }, .. } => {
             let opened = request.validate().and_then(|()| {
                 crate::account_records::begin(
                     hub,
@@ -980,7 +989,7 @@ fn handle(
                 let _ = out.send(Out::Frame(Down::Told { id, answer }));
             });
         }
-        Up::Ask { id, question: Question::SkillFiles { account, request } } => {
+        Up::Ask { id, question: Question::SkillFiles { account, request }, .. } => {
             let opened = request.validate().and_then(|()| {
                 crate::account_records::begin(
                     hub,
@@ -1009,7 +1018,7 @@ fn handle(
                 let _ = out.send(Out::Frame(Down::Told { id, answer }));
             });
         }
-        Up::Ask { id, question: Question::Manage { account, change } } => {
+        Up::Ask { id, question: Question::Manage { account, change }, .. } => {
             let (answer, ended) = crate::manage::change(hub, &origin, &account, change);
             reply(Down::Told { id, answer });
             crate::manage::end(hub, ended);
@@ -1019,7 +1028,7 @@ fn handle(
             crate::updates::tell(hub, None);
             crate::updates::prune(hub);
         }
-        Up::Ask { id, question: Question::KernelRelease { version, allow_partial, wanted } } => {
+        Up::Ask { id, question: Question::KernelRelease { version, allow_partial, wanted }, .. } => {
             let releases = hub.releases.clone();
             let out = out.clone();
             let hub = hub.clone();
@@ -1049,7 +1058,7 @@ fn handle(
                 let _ = out.send(Out::Frame(Down::Told { id, answer }));
             });
         }
-        Up::Ask { id, question } => {
+        Up::Ask { id, question, .. } => {
             let view = matches!(question, Question::Directory);
             let answer = ask(hub, name, key, generation, question);
             let told = view && answer.is_ok();

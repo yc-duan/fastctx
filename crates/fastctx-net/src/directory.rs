@@ -654,6 +654,10 @@ pub struct View {
     /// The hub takes ledger questions in parts and serves large ledger entries.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub ledger_parts: bool,
+    /// The hub takes a question's name, and may answer a named question
+    /// that it accepted the work asked for (`wire::Told::Accepted`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub named_asks: bool,
     /// Account-scoped project indices and signed memory reads/writes.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub project_memory: bool,
@@ -866,6 +870,7 @@ impl View {
         Self {
             shared_records: false,
             ledger_parts: false,
+            named_asks: false,
             project_memory: false,
             collaboration_tree: false,
             history_switch: false,

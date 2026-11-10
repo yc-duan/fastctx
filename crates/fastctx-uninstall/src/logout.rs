@@ -128,7 +128,7 @@ async fn open_saying(
 /// answer, and none of it is taken up; a call left unanswered is lost to
 /// its caller when the session ends.
 async fn ask(socket: &mut dial::HubSocket, id: u64, question: wire::Question) -> anyhow::Result<Option<wire::Told>> {
-    dial::send(socket, &wire::Up::Ask { id, question }).await.map_err(anyhow::Error::msg)?;
+    dial::send(socket, &wire::Up::Ask { id, question, submission: None }).await.map_err(anyhow::Error::msg)?;
     let deadline = tokio::time::Instant::now() + wire::SILENCE;
     loop {
         let heard = tokio::time::timeout_at(deadline, dial::hear(socket))

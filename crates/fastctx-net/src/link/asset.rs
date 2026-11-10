@@ -43,6 +43,7 @@ impl Drop for Registered {
         let _ = self.control.up.send(Up::Ask {
             id: self.inner.next_id(),
             question: Question::CloseSyncSession { request: SessionClose { session: self.session.clone() } },
+            submission: None,
         });
     }
 }
