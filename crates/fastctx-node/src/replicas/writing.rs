@@ -38,9 +38,21 @@ async fn viewed(node: &Arc<Node>, owner: &fastctx_types::Address, path: &Path, t
     use fastctx_types::files::SeenVersion;
     let directory = node.world.owner(&node.names(), owner);
     let (path, shown) = (path.to_path_buf(), fastctx_hands::files::content_hash(text.as_bytes()));
+    let (log, told) = (node.log.clone(), owner.to_string());
     fastctx_platform::task::blocking(move || -> std::io::Result<bool> {
         let seen = crate::write::load_seen_for(&directory, std::slice::from_ref(&path))?;
-        Ok(seen.values().any(|seen| matches!(&seen.version, SeenVersion::Full { sha256 } if *sha256 == shown)))
+        let viewed =
+            seen.values().any(|seen| matches!(&seen.version, SeenVersion::Full { sha256 } if *sha256 == shown));
+        if !viewed {
+            // Told, since the resident is refused for it: which of the two
+            // it is says whether it viewed nothing or an earlier text.
+            let held: Vec<_> = seen.values().map(|seen| &seen.version).collect();
+            log.line(format_args!(
+                "{told} has not viewed {} as it is ({shown}): its record of views holds {held:?}",
+                path.display()
+            ));
+        }
+        Ok(viewed)
     })
     .await
     .map_err(failure)
