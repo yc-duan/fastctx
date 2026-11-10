@@ -1,7 +1,7 @@
 //! A claimed generation cannot be reused while its physical files are removed.
 use super::SqliteBlocks;
 use crate::{
-    blocks::{files::FileKey, root_holds, rows, uploads},
+    blocks::{files::FileKey, location::Location, root_holds, rows, uploads},
     identity::{Digest, HubId, ScopeId, ScopeKey},
     manifest::{BlobId, ContentBlock, DigestAlgorithm},
     metrics::{Cause, Counter, Metrics, PlatformMetrics},
@@ -177,13 +177,19 @@ fn claim(db: &Connection, candidate: Candidate) -> Result<Option<Claimed>> {
         if let Some(length) = length {
             let content = ContentBlock { id: id.clone(), decoded_bytes: length };
             let mut query=db.prepare_cached("SELECT representation,envelope,encoded_digest,encoded_bytes,storage_key,verified FROM sync_asset_representations WHERE hub=?1 AND scope=?2 AND hash=?3 ORDER BY representation LIMIT 3")?;
-            files = query
+            let representations = query
                 .query_map(params![hub, scope, hash], |row| rows::stored(row, content.clone()))?
-                .map(|row| row.map(|stored| stored.key))
-                .collect::<fastctx_storage::rusqlite::Result<_>>()?;
-            if files.len() > 2 {
+                .collect::<fastctx_storage::rusqlite::Result<Vec<_>>>()?;
+            if representations.len() > 2 {
                 return Err(sql::invalid("garbage representation page exceeds v1 encodings"));
             }
+            files = representations
+                .into_iter()
+                .filter_map(|stored| match stored.location {
+                    Location::File(key) => Some(key),
+                    Location::Inline => None,
+                })
+                .collect();
         }
         db.execute(
             "UPDATE sync_asset_blocks SET verified=0 WHERE hub=?1 AND scope=?2 AND hash=?3",

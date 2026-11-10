@@ -1,5 +1,8 @@
 //! Two-phase content publication: durable pin, file IO, then a FULL index commit.
-use super::{access, budget::Budget, codec, files::Files, leases::Leases, manifest, pages, pins, rows, uploads::Owner};
+use super::{
+    access, budget::Budget, codec, files::Files, leases::Leases, location::Location, manifest, pages, pins, rows,
+    uploads::Owner,
+};
 use crate::{
     cursor::Holder,
     identity::{Digest, OperationId, ScopeKey},
@@ -28,6 +31,8 @@ mod gc;
 mod metadata_custody;
 #[path = "metadata_work.rs"]
 mod metadata_work;
+#[path = "payload.rs"]
+mod payload;
 #[path = "reader_content.rs"]
 mod reader_content;
 #[path = "replica_content.rs"]
@@ -126,6 +131,9 @@ impl SqliteBlocks {
     pub fn process(&self, lease: crate::scheduler::Lease) -> FutureResult<'_, crate::scheduler::Outcome> {
         Box::pin(work::process(self, lease))
     }
+    fn encoded_bytes(&self, stored: &rows::Stored) -> Result<Vec<u8>, Error> {
+        payload::encoded(&self.db, &self.files, &self.worker, stored)
+    }
     fn same_scope(custody: &Custody, id: &BlobId) -> Result<(), Error> {
         if custody.object.scope != id.domain {
             return Err(Error::Denied("content belongs to another object scope".into()));
@@ -210,7 +218,10 @@ impl SqliteBlocks {
         let content = stored.representation.content.clone();
         let representation = stored.representation.id();
         if !stored.verified {
-            self.files.put(&stored.key, &encoded)?;
+            let Location::File(key) = &stored.location else {
+                return Err(Error::Corrupt("unpublished block has no file reservation".into()));
+            };
+            self.files.put(key, &encoded)?;
             let policy = self.policy.clone();
             let holder = self.holder.clone();
             let request = custody;
@@ -370,10 +381,7 @@ impl BlockStore for SqliteBlocks {
                 .read(move |db| rows::representation(db, &selected))
                 .await
                 .map_err(|error| sql::error(error, self.worker.clone()))?;
-            let bytes = self.files.read(&stored.key, stored.representation.encoded_bytes)?;
-            if Digest::of(&bytes) != stored.representation.encoded_digest {
-                return Err(Error::Corrupt("published content failed its encoded digest".into()));
-            }
+            let bytes = self.encoded_bytes(&stored)?;
             let holder = self.holder.clone();
             let policy = self.policy.clone();
             self.db

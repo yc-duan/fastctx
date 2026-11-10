@@ -156,7 +156,7 @@ pub(super) fn payload_bytes(
             + extra
             + codec::decode_workspace(stored.representation.envelope.encoding),
     )?;
-    let encoded = store.files.read(&stored.key, stored.representation.encoded_bytes)?;
+    let encoded = store.encoded_bytes(&stored)?;
     let decoded = codec::decode(&stored.representation, encoded)?;
     buffer.shrink_to(decoded.capacity().checked_add(extra).ok_or(Error::Busy)?)?;
     Ok(Some((decoded, buffer)))

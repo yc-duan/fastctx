@@ -284,6 +284,13 @@ CREATE TABLE sync_asset_representations (
     FOREIGN KEY(hub,scope,hash) REFERENCES sync_asset_blocks(hub,scope,hash)
 ) WITHOUT ROWID;
 CREATE UNIQUE INDEX sync_asset_encoding ON sync_asset_representations(hub,scope,hash,envelope);
+CREATE TABLE sync_asset_inline (
+    hub TEXT NOT NULL, scope TEXT NOT NULL, hash TEXT NOT NULL, representation TEXT NOT NULL,
+    bytes BLOB NOT NULL CHECK(length(bytes)<=1114112),
+    PRIMARY KEY(hub,scope,hash,representation),
+    FOREIGN KEY(hub,scope,hash,representation)
+        REFERENCES sync_asset_representations(hub,scope,hash,representation) ON DELETE CASCADE
+);
 CREATE TABLE sync_asset_access (
     hub TEXT NOT NULL, scope TEXT NOT NULL, object TEXT NOT NULL, kind TEXT NOT NULL,
     hash TEXT NOT NULL, root_kind TEXT NOT NULL CHECK(root_kind IN ('block','manifest')),

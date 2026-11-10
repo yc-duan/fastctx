@@ -54,6 +54,7 @@ fn permits(table: &str) -> bool {
             table,
             "sync_asset_blocks"
                 | "sync_asset_representations"
+                | "sync_asset_inline"
                 | "sync_asset_manifests"
                 | "sync_asset_edges"
                 | "sync_asset_access"

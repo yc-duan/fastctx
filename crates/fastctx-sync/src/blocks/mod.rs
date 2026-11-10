@@ -9,6 +9,7 @@ pub(crate) use budget::Permit;
 pub mod codec;
 mod files;
 mod leases;
+mod location;
 pub mod manifest;
 pub(crate) mod metadata;
 mod pages;

@@ -1,5 +1,5 @@
 //! Bounded SQL metadata operations; file IO is always outside the writer.
-use super::{files::FileKey, pins};
+use super::{files::FileKey, location::Location, pins};
 use crate::{
     identity::OperationId,
     manifest::{BlobId, ContentBlock, Descriptor, Envelope, Representation},
@@ -12,7 +12,7 @@ use fastctx_storage::{
 
 pub(super) struct Stored {
     pub representation: Representation,
-    pub key: FileKey,
+    pub location: Location,
     pub verified: bool,
 }
 
@@ -47,27 +47,27 @@ pub(super) fn reserve(db: &Connection, value: Representation, operation: Operati
         Some(found) => {
             // Only a hidden slot may be rewritten under the exclusive IO lease.
             // Reusing its physical generation leaves no unindexed partial file.
-            let key = found.key.rebind(&value).map_err(|error| sql::invalid(error.to_string()))?;
+            let key = found.location.rebind(&value).map_err(|error| sql::invalid(error.to_string()))?;
             db.execute("DELETE FROM sync_asset_representations WHERE hub=?1 AND scope=?2 AND hash=?3 AND representation=?4 AND verified=0",params![id.domain.hub.to_string(),id.domain.scope.as_str(),id.digest.as_str(),found.representation.id().as_str()])?;
             key
         }
-        None => FileKey::new(&value, operation),
+        None => Location::File(FileKey::new(&value, operation)),
     };
     db.execute(
         "INSERT INTO sync_asset_representations(hub,scope,hash,representation,envelope,encoded_digest,encoded_bytes,storage_key,verified) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,0)",
-        params![id.domain.hub.to_string(),id.domain.scope.as_str(),id.digest.as_str(),value.id().as_str(),envelope,value.encoded_digest.as_str(),value.encoded_bytes,key.json().map_err(|error|sql::invalid(error.to_string()))?]
+        params![id.domain.hub.to_string(),id.domain.scope.as_str(),id.digest.as_str(),value.id().as_str(),envelope,value.encoded_digest.as_str(),value.encoded_bytes,key.storage_key().map_err(|error|sql::invalid(error.to_string()))?]
     )?;
-    Ok(Stored { representation: value, key, verified: false })
+    Ok(Stored { representation: value, location: key, verified: false })
 }
 
 pub(super) fn publish(db: &Connection, value: &Stored) -> Result<()> {
     let id = &value.representation.content.id;
     let count=db.execute(
         "UPDATE sync_asset_representations SET verified=1 WHERE hub=?1 AND scope=?2 AND hash=?3 AND representation=?4 AND storage_key=?5",
-        params![id.domain.hub.to_string(),id.domain.scope.as_str(),id.digest.as_str(),value.representation.id().as_str(),value.key.json().map_err(|error|sql::invalid(error.to_string()))?]
+        params![id.domain.hub.to_string(),id.domain.scope.as_str(),id.digest.as_str(),value.representation.id().as_str(),value.location.storage_key().map_err(|error|sql::invalid(error.to_string()))?]
     )?;
     if count != 1 {
-        return Err(sql::invalid("publication no longer owns its reserved file generation"));
+        return Err(sql::invalid("publication no longer owns its reserved storage location"));
     }
     db.execute(
         "UPDATE sync_asset_blocks SET verified=1 WHERE hub=?1 AND scope=?2 AND hash=?3",
@@ -129,8 +129,8 @@ pub(super) fn stored(
     if value.id().as_str() != row.get::<_, String>(0)? {
         return Err(parse(0, "encoded representation identity mismatch".into()));
     }
-    let key = FileKey::decode(&row.get::<_, String>(4)?, &value).map_err(|error| parse(4, error.to_string()))?;
-    Ok(Stored { representation: value, key, verified: row.get(5)? })
+    let key = Location::decode(&row.get::<_, String>(4)?, &value).map_err(|error| parse(4, error.to_string()))?;
+    Ok(Stored { representation: value, location: key, verified: row.get(5)? })
 }
 
 pub(super) fn complete(db: &Connection, root: &crate::manifest::ContentRef) -> Result<bool> {
