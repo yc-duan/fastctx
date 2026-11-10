@@ -58,6 +58,7 @@ mod update;
 mod view;
 mod w;
 mod wait;
+mod work;
 mod world;
 mod writers;
 
@@ -376,6 +377,9 @@ enum Command {
 }
 
 fn main() -> ExitCode {
+    if std::env::args_os().nth(1).is_some_and(|argument| argument == "work") {
+        return finish(work::run().map(|()| ExitCode::SUCCESS));
+    }
     // Image workers must set their memory limit before starting a runtime or
     // entering the World; failures remain isolated from the serving node.
     if std::env::args_os().nth(1).is_some_and(|argument| argument == "thumbnail-worker") {

@@ -100,6 +100,8 @@ mod windows_job;
 mod windows_process;
 #[cfg(windows)]
 mod windows_user;
+#[cfg(any(target_os = "linux", target_os = "macos", windows))]
+pub mod worker;
 
 pub use atomic::{Permissions, PublishFailure, Staged, publish, publish_changed, publish_checked, publish_new};
 #[cfg(any(target_os = "linux", target_os = "macos", windows))]
