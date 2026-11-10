@@ -107,14 +107,20 @@ async fn serve(database: Database, registered: Arc<Registered>) {
 }
 
 /// Takes the earliest due jobs, `most` at most, each of a unit no job of the
-/// kind runs for.
+/// kind runs for, and each the first asked for of those its unit waits on:
+/// a unit's jobs of one kind run in the order they were asked for, whatever
+/// the clock said as each was, and one that waits to be tried again keeps
+/// the ones asked for after it waiting. One set aside keeps none.
 fn look(db: &Connection, registered: &Registered, most: usize) -> Result<Looked> {
     let kind = registered.kind.name;
     let at = now();
     let due: Vec<(i64, String, String, Vec<u8>, u32, i64)> = db
         .prepare_cached(
-            "SELECT id, key, unit, payload, tries, due FROM jobs \
-             WHERE kind = ?1 AND state = ?2 AND due <= ?3 ORDER BY due, id LIMIT ?4",
+            "SELECT id, key, unit, payload, tries, due FROM jobs AS job \
+             WHERE kind = ?1 AND state = ?2 AND due <= ?3 AND NOT EXISTS (\
+                 SELECT 1 FROM jobs AS earlier WHERE earlier.kind = job.kind AND earlier.unit = job.unit \
+                 AND earlier.state = ?2 AND earlier.id < job.id) \
+             ORDER BY due, id LIMIT ?4",
         )?
         .query_map(params![kind, WAITING, at, (most * 8).min(LOOKED_AT) as i64], |row| {
             Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?))

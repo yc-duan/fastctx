@@ -1,7 +1,8 @@
 //! Runs jobs through their queue on this machine: every piece of work asked
-//! for is done, one of a unit at a time and a few of a kind at once; asking
-//! again merges; failures wait longer each time and are set aside; a run
-//! that overstays is dropped; what a stopped process left running runs again.
+//! for is done, one of a unit at a time in the order asked for, and a few of
+//! a kind at once; asking again merges; failures wait longer each time and
+//! are set aside; a run that overstays is dropped; what a stopped process
+//! left running runs again.
 //!
 //! jobs_drill --root ABSOLUTE_DIRECTORY_THAT_DOES_NOT_EXIST
 
@@ -226,6 +227,40 @@ async fn drill(database: Database) -> Outcome_<()> {
     if late.load(Ordering::Acquire) != 1 {
         return Err("a kind registered after the start did not run its job once".into());
     }
+
+    // A unit's jobs run in the order they were asked for, though the clock
+    // went back between one and the next: each is due before the one asked
+    // for before it.
+    let ordered = Arc::new(Mutex::new(HashMap::<String, Vec<u32>>::new()));
+    let in_order = ordered.clone();
+    let order: Run = Arc::new(move |taken: Taken| {
+        let number = u32::from_le_bytes(taken.payload.as_slice().try_into().expect("a number"));
+        in_order.lock().expect("ordered").entry(taken.unit).or_default().push(number);
+        Box::pin(async {
+            tokio::task::yield_now().await;
+            Outcome::Done
+        })
+    });
+    jobs.register(Kind { name: "order", at_once: AT_ONCE, within: Duration::from_secs(5), tries: 3 }, order);
+    database
+        .write(64 * 1024, |db| {
+            for number in 0..300u32 {
+                submit(db, &job("order", format!("o{number}"), format!("u{}", number % 3), &number.to_le_bytes()))?;
+            }
+            db.execute("UPDATE jobs SET due = due - id * 1000 WHERE kind = 'order'", [])?;
+            Ok(())
+        })
+        .await?;
+    jobs.stir("order");
+    emptied(&database, "order", Duration::from_secs(30)).await?;
+    {
+        let ordered = ordered.lock().expect("ordered");
+        let ran: usize = ordered.values().map(Vec::len).sum();
+        if ran != 300 || ordered.values().any(|numbers| !numbers.is_sorted()) {
+            return Err(format!("{ran} of 300 ordered jobs ran, or a unit's ran out of the order asked for").into());
+        }
+    }
+    println!("300 jobs of 3 units ran in the order asked for, each due before the one asked for before it");
 
     // A job that waits for more than time is run again once it is roused,
     // not when its hour is up.

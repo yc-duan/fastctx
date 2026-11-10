@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS jobs (
 );
 CREATE INDEX IF NOT EXISTS jobs_due ON jobs (kind, state, due);
 CREATE INDEX IF NOT EXISTS jobs_unit ON jobs (unit);
+CREATE INDEX IF NOT EXISTS jobs_order ON jobs (kind, unit, state, id);
 ";
 
 pub(crate) fn now() -> i64 {
