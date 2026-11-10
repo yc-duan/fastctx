@@ -58,9 +58,9 @@ pub struct TimelineContentRead {
     pub content: ContentRef,
     pub range: Option<ByteRange>,
     /// Ancestors from a directly owned root, excluding `content` itself.
-    /// Some([]) requires direct ownership and never searches for a witness.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub path: Option<Vec<ContentRef>>,
+    /// An empty or omitted path requires direct ownership and never searches.
+    #[serde(default)]
+    pub path: Vec<ContentRef>,
 }
 
 /// Bytes are decoded logical content: a metadata page's payload, or a range of

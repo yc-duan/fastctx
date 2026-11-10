@@ -85,7 +85,7 @@ async fn bytes(
                     item: item.clone(),
                     content: content.clone(),
                     range: Some(ByteRange { offset, bytes: 3 }),
-                    path: None,
+                    path: Vec::new(),
                 },
             )
             .await?;
@@ -125,7 +125,7 @@ pub(super) async fn content(
                     item: item.id.clone(),
                     content: part.clone(),
                     range: None,
-                    path: None
+                    path: Vec::new()
                 }
             )
             .await?,
@@ -145,7 +145,7 @@ pub(super) async fn content(
                     item: item.id.clone(),
                     content: foreign_scope,
                     range: None,
-                    path: None,
+                    path: Vec::new(),
                 }
             )
             .await,
@@ -163,7 +163,7 @@ pub(super) async fn content(
                 item: item.id.clone(),
                 content: foreign,
                 range: None,
-                path: None,
+                path: Vec::new(),
             },
         )
         .await;

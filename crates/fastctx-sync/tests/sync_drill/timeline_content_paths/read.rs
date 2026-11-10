@@ -42,7 +42,7 @@ pub(super) async fn request(
     fence: &TimelineFence,
     fixture: &fixture::Fixture,
     content: ContentRef,
-    path: Option<Vec<ContentRef>>,
+    path: Vec<ContentRef>,
     range: Option<ByteRange>,
 ) -> std::result::Result<TimelineContentResult, fastctx_sync::store::Error> {
     timelines
@@ -61,7 +61,7 @@ pub(super) async fn bytes(
     path: &[ContentRef],
 ) -> Result<(Vec<u8>, Fetches)> {
     let before = Fetches::now();
-    let result = request(timelines, primary, fence, fixture, content.clone(), Some(path.to_vec()), None).await?;
+    let result = request(timelines, primary, fence, fixture, content.clone(), path.to_vec(), None).await?;
     let fetches = Fetches::now().since(before);
     let TimelineContentResult::Content { base64, offset, total, next } = result else {
         return Err(format!("descriptor was not readable: {result:?}").into());
@@ -73,21 +73,29 @@ pub(super) async fn bytes(
     assert!(fetches.ownership + fetches.content <= 1024);
     Ok((bytes, fetches))
 }
-pub(super) async fn legacy_limit(
+pub(super) async fn denied_without_path(
     timelines: &SqliteTimelines,
     primary: &SourceTarget,
     fence: &TimelineFence,
     fixture: &fixture::Fixture,
     target: &ContentRef,
 ) -> Result<()> {
+    let read = TimelineContentRead {
+        fence: fence.clone(),
+        item: fixture.item.id.clone(),
+        content: target.clone(),
+        range: None,
+        path: Vec::new(),
+    };
+    let mut wire = serde_json::to_value(read)?;
+    assert!(wire.as_object_mut().unwrap().remove("path").is_some());
+    let read: TimelineContentRead = serde_json::from_value(wire)?;
+    assert!(read.path.is_empty());
     let before = Fetches::now();
-    let result = request(timelines, primary, fence, fixture, target.clone(), None, None).await;
+    let result = timelines.content(primary.custody.context.clone(), read).await;
     let fetches = Fetches::now().since(before);
-    assert!(
-        matches!(result, Err(Error::Invalid(ref text)) if text == "content ownership path required; repeat the request with path"),
-        "wide legacy lookup terminates with a path request: {result:?}"
-    );
-    assert_eq!(fetches.ownership, 512);
+    assert!(matches!(result, Err(Error::Denied(_))), "non-direct content needs an explicit ownership path: {result:?}");
+    assert_eq!(fetches.ownership, 0);
     assert_eq!(fetches.content, 0);
     Ok(())
 }
@@ -216,7 +224,7 @@ pub(super) async fn ranges(
             fence,
             fixture,
             content.clone(),
-            Some(path.to_vec()),
+            path.to_vec(),
             Some(ByteRange { offset, bytes: 17 }),
         )
         .await?;

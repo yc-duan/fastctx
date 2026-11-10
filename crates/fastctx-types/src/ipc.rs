@@ -112,9 +112,6 @@ pub enum Welcome {
         /// Fenced timeline pages, changes, long polls and item-owned content.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         timeline_reads: bool,
-        /// Content ownership can be proved by a bounded chain of parent references.
-        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-        timeline_content_paths: bool,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         scratch_locations: bool,
         /// Follows a conversation's collaboration on a watch

@@ -28,7 +28,7 @@ impl SqliteTimelines {
         if request.content.id().domain != request.fence.conversation.scope {
             return Err(Error::Denied("the content belongs to another scope".into()));
         }
-        ownership::validate_path(&request.fence.conversation.scope, &request.content, request.path.as_deref())?;
+        ownership::validate_path(&request.fence.conversation.scope, &request.content, &request.path)?;
         let item = match self.item(context.clone(), request.fence.clone(), request.item.clone()).await? {
             ItemRead::Item { item: Some(item) } => item,
             ItemRead::Item { item: None } => return Err(Error::Denied("the item is absent from this snapshot".into())),
@@ -46,7 +46,7 @@ impl SqliteTimelines {
         custody.context = context.clone();
         let io = Io::new(&self.blocks, custody);
         let result = async {
-            let owned = ownership::contains(&io, &item, &request.content, request.path.as_deref());
+            let owned = ownership::contains(&io, &item, &request.content, &request.path);
             io.finish_ownership();
             if !owned? {
                 return Err(Error::Denied("the content is not owned by this item at the fence".into()));

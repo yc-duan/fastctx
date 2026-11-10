@@ -70,9 +70,9 @@ pub(crate) async fn run(root: &Path) -> Result<()> {
     for fixture in [&pictures, &outputs] {
         let leaves = read::walk(&timelines, &primary, &fence, fixture).await?;
         let left = &leaves[0];
-        read::legacy_limit(&timelines, &primary, &fence, fixture, &left.content).await?;
+        read::denied_without_path(&timelines, &primary, &fence, fixture, &left.content).await?;
         assert!(matches!(
-            read::request(&timelines, &primary, &fence, fixture, left.content.clone(), Some(Vec::new()), None).await,
+            read::request(&timelines, &primary, &fence, fixture, left.content.clone(), Vec::new(), None).await,
             Err(Error::Denied(_))
         ));
         assert!(
@@ -83,7 +83,7 @@ pub(crate) async fn run(root: &Path) -> Result<()> {
                     &fence,
                     fixture,
                     fixture.item.body.clone(),
-                    Some(vec![fixture.index.clone()]),
+                    vec![fixture.index.clone()],
                     None
                 )
                 .await,
@@ -94,7 +94,7 @@ pub(crate) async fn run(root: &Path) -> Result<()> {
         let wrong_form = ContentRef::Single { block: left.content.id().clone(), decoded_bytes: 1 };
         assert!(
             matches!(
-                read::request(&timelines, &primary, &fence, fixture, wrong_form, Some(left.path.clone()), None).await,
+                read::request(&timelines, &primary, &fence, fixture, wrong_form, left.path.clone(), None).await,
                 Err(Error::Denied(_))
             ),
             "matching hashes do not excuse a different reference kind"
@@ -102,7 +102,7 @@ pub(crate) async fn run(root: &Path) -> Result<()> {
         let mut skipped = left.path.clone();
         skipped.remove(skipped.len() - 1);
         assert!(matches!(
-            read::request(&timelines, &primary, &fence, fixture, left.content.clone(), Some(skipped), None).await,
+            read::request(&timelines, &primary, &fence, fixture, left.content.clone(), skipped, None).await,
             Err(Error::Denied(_))
         ));
         let (payload, _) = read::bytes(&timelines, &primary, &fence, fixture, &left.content, &left.path).await?;
@@ -110,12 +110,12 @@ pub(crate) async fn run(root: &Path) -> Result<()> {
         let mut repeated = left.path.clone();
         repeated.push(repeated[0].clone());
         assert!(matches!(
-            read::request(&timelines, &primary, &fence, fixture, left.content.clone(), Some(repeated), None).await,
+            read::request(&timelines, &primary, &fence, fixture, left.content.clone(), repeated, None).await,
             Err(Error::Invalid(_))
         ));
         let excessive = vec![fixture.item.body.clone(); 129];
         assert!(matches!(
-            read::request(&timelines, &primary, &fence, fixture, left.content.clone(), Some(excessive), None).await,
+            read::request(&timelines, &primary, &fence, fixture, left.content.clone(), excessive, None).await,
             Err(Error::Invalid(_))
         ));
         reports.push(read::measure(&timelines, &primary, &fence, fixture, &leaves).await?);
@@ -124,8 +124,7 @@ pub(crate) async fn run(root: &Path) -> Result<()> {
     let left = &walked[0][0];
     assert!(
         matches!(
-            read::request(&timelines, &primary, &fence, &outputs, left.content.clone(), Some(left.path.clone()), None)
-                .await,
+            read::request(&timelines, &primary, &fence, &outputs, left.content.clone(), left.path.clone(), None).await,
             Err(Error::Denied(_))
         ),
         "another item's valid object grant is insufficient"
@@ -141,33 +140,23 @@ pub(crate) async fn run(root: &Path) -> Result<()> {
     let ContentRef::Single { decoded_bytes, .. } = &mut forged_length else { unreachable!() };
     *decoded_bytes += 1;
     assert!(matches!(
-        read::request(&timelines, &primary, &fence, &pictures, forged_length, Some(image_path.clone()), None).await,
+        read::request(&timelines, &primary, &fence, &pictures, forged_length, image_path.clone(), None).await,
         Err(Error::Denied(_))
     ));
     let mut foreign_path = image_path.clone();
     let ContentRef::Manifest { root } = &mut foreign_path[0] else { unreachable!() };
     root.0.domain.scope = ScopeId::from_bytes([199; 32]);
     assert!(matches!(
-        read::request(&timelines, &primary, &fence, &pictures, image.clone(), Some(foreign_path), None).await,
+        read::request(&timelines, &primary, &fence, &pictures, image.clone(), foreign_path, None).await,
         Err(Error::Denied(_))
     ));
     let mut single_parent = image_path;
     single_parent.push(image);
     assert!(matches!(
-        read::request(&timelines, &primary, &fence, &pictures, pictures.original.clone(), Some(single_parent), None)
-            .await,
+        read::request(&timelines, &primary, &fence, &pictures, pictures.original.clone(), single_parent, None).await,
         Err(Error::Denied(_))
     ));
-    let direct = read::request(&timelines, &primary, &fence, &pictures, pictures.item.body.clone(), None, None).await?;
-    assert!(matches!(direct, TimelineContentResult::Content { .. }), "legacy directly owned roots still work");
     let original_path = vec![pictures.item.body.clone()];
-    assert!(
-        matches!(
-            read::request(&timelines, &primary, &fence, &pictures, pictures.original.clone(), None, None).await?,
-            TimelineContentResult::Content { .. }
-        ),
-        "a small legacy closure still works"
-    );
     read::bytes(&timelines, &primary, &fence, &pictures, &pictures.original, &original_path).await?;
     serde_contract(&primary, &fence, &pictures)?;
     fastctx_platform::disk::write(directory.join("measurements.json"), serde_json::to_vec_pretty(&reports)?)?;
@@ -202,11 +191,11 @@ pub(crate) async fn run(root: &Path) -> Result<()> {
             &fence,
             &pictures,
             leaf.parts[0].content.clone(),
-            Some({
+            {
                 let mut path = left.path.clone();
                 path.push(left.content.clone());
                 path
-            }),
+            },
             None
         )
         .await?,
@@ -214,19 +203,18 @@ pub(crate) async fn run(root: &Path) -> Result<()> {
     ));
     timelines.release(primary.custody.context.clone(), fence.clone()).await?;
     assert!(matches!(
-        read::request(&timelines, &primary, &fence, &pictures, left.content.clone(), Some(left.path.clone()), None)
-            .await?,
+        read::request(&timelines, &primary, &fence, &pictures, left.content.clone(), left.path.clone(), None).await?,
         TimelineContentResult::ReanchorNeeded
     ));
     println!(
-        "timeline content paths: exact references, terminal legacy limit, public pagination, ranges, missing ancestor Pending, unrelated missing sibling and released fences passed"
+        "timeline content paths: exact references, missing paths denied without content fetches, public pagination, ranges, missing ancestor Pending, unrelated missing sibling and released fences passed"
     );
     Ok(())
 }
 fn serde_contract(primary: &SourceTarget, fence: &TimelineFence, fixture: &fixture::Fixture) -> Result<()> {
     use fastctx_types::{ResidentId, timeline_reads::TimelineCall};
     let resident: ResidentId = "claude-a1b2c3d4".parse()?;
-    for path in [None, Some(Vec::new()), Some(vec![fixture.item.body.clone()])] {
+    for path in [Vec::new(), vec![fixture.item.body.clone()]] {
         let call = TimelineCall::Content {
             resident: resident.clone(),
             fence: Box::new(fence.clone()),
@@ -236,7 +224,11 @@ fn serde_contract(primary: &SourceTarget, fence: &TimelineFence, fixture: &fixtu
             path: path.clone(),
         };
         let value = serde_json::to_value(&call)?;
-        assert_eq!(value.get("path").is_some(), path.is_some());
+        assert!(value["path"].is_array());
+        let mut omitted = value.clone();
+        omitted.as_object_mut().unwrap().remove("path");
+        let restored: TimelineCall = serde_json::from_value(omitted)?;
+        assert!(matches!(restored, TimelineCall::Content { path, .. } if path.is_empty()));
         let restored: TimelineCall = serde_json::from_value(value)?;
         assert!(matches!(restored, TimelineCall::Content { path: got, .. } if got == path));
         let read = TimelineContentRead {
@@ -248,6 +240,10 @@ fn serde_contract(primary: &SourceTarget, fence: &TimelineFence, fixture: &fixtu
         };
         let restored: TimelineContentRead = serde_json::from_slice(&serde_json::to_vec(&read)?)?;
         assert_eq!(restored, read);
+        let mut omitted = serde_json::to_value(&read)?;
+        omitted.as_object_mut().unwrap().remove("path");
+        let restored: TimelineContentRead = serde_json::from_value(omitted)?;
+        assert!(restored.path.is_empty());
     }
     assert_eq!(primary.custody.object, fence.conversation);
     Ok(())

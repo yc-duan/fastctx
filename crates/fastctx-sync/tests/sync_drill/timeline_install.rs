@@ -478,7 +478,7 @@ pub(super) async fn run(drill_root: &Path) -> Result<()> {
                     item: item.id.clone(),
                     content: item.body.clone(),
                     range: None,
-                    path: None,
+                    path: Vec::new(),
                 }
             )
             .await?,
@@ -527,7 +527,7 @@ pub(super) async fn run(drill_root: &Path) -> Result<()> {
                     item: item.id,
                     content,
                     range: None,
-                    path: None,
+                    path: Vec::new(),
                 }
             )
             .await?,
