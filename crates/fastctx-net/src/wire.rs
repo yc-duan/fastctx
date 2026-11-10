@@ -1334,8 +1334,8 @@ impl Told {
         use fastctx_types::sync::transfer::Purpose;
         match self {
             Self::SyncSessionReady { .. } => Some(Purpose::AssetSync),
-            Self::Accepted
-            | Self::AccountRecords { .. }
+            Self::Accepted => Some(Purpose::ExecutionControl),
+            Self::AccountRecords { .. }
             | Self::CollabWritten { .. }
             | Self::Directory { .. }
             | Self::Done { .. }

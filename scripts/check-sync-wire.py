@@ -29,7 +29,7 @@ DISPATCHERS = {
     "crates/fastctx-types/src/sync/session.rs::SessionBindingRequest": ("asset_sync.transport", "binding_purpose"),
     "crates/fastctx-net/src/wire.rs::Intent": ("asset_sync.transport", "asset_sync_purpose"),
     "crates/fastctx-net/src/wire.rs::Question": ("asset_sync.transport", "question_purpose"),
-    "crates/fastctx-net/src/wire.rs::Told": ("asset_sync.transport", "told_purpose"),
+    "crates/fastctx-net/src/wire.rs::Told": (("asset_sync.transport", "named_asks"), "told_purpose"),
     "crates/fastctx-net/src/peer.rs::Intent": ("asset_sync.transport", "asset_sync_purpose"),
     "crates/fastctx-types/src/calls.rs::Call": ("node_ipc", "purpose"),
     "crates/fastctx-types/src/calls.rs::Reply": ("node_ipc", "answer_purpose"),
@@ -147,7 +147,9 @@ def check():
         if key in mapped or item["purpose"] not in {"AssetSync", "ExecutionControl", "Observation", "Bootstrap"}:
             raise ValueError(f"invalid or duplicate wire purpose: {key}")
         dispatcher = DISPATCHERS.get(item["type"])
-        if (dispatcher is None or item["capability"] != dispatcher[0]
+        # An enum whose variants came under more than one capability names each.
+        capabilities = () if dispatcher is None else dispatcher[0]
+        if (dispatcher is None or item["capability"] not in ((capabilities,) if isinstance(capabilities, str) else capabilities)
                 or item["mapping"] != item["type"].split("::")[0]):
             raise ValueError(f"new channel needs a registered dispatcher: {key}")
         source = code((ROOT / item["mapping"]).read_text(encoding="utf-8"))

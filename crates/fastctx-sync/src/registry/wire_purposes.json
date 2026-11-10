@@ -453,6 +453,13 @@
     "mapping": "crates/fastctx-net/src/wire.rs"
   },
   {
+    "type": "crates/fastctx-net/src/wire.rs::Told",
+    "variant": "Accepted",
+    "purpose": "ExecutionControl",
+    "capability": "named_asks",
+    "mapping": "crates/fastctx-net/src/wire.rs"
+  },
+  {
     "type": "crates/fastctx-types/src/sync/transfer.rs::Message",
     "variant": "Blocks",
     "purpose": "AssetSync",
