@@ -84,6 +84,17 @@ __FASTCTX_FAILURES__
 __FASTCTX_TURN_FAILURES__
 __FASTCTX_GOAL__
 
+// Names reports, registrations and moments in the order they happen: a
+// clock that never goes back and a count within its millisecond. Every
+// session of this process shares it, so a session's switch keeps its order
+// when the wall clock steps back or two happen in one tick, and two contexts
+// writing into one session directory (/clear can leave the closed one still
+// reporting) never give a report the same name.
+const clock = { time: 0, count: 0 }
+
+// The contexts that write reports into each session directory.
+const writers = new Map()
+
 // /clear may replace even the same session ID. Keep the old object alive for
 // its timers, queued writes and late turn/tool results; never reset it in place.
 function conversation(sessionId, previous) {
@@ -94,8 +105,6 @@ function conversation(sessionId, previous) {
     timer: null,
     busy: false,
     turn: null,
-    sequence: 0,
-    logicalTime: 0,
     hostProcess: null,
     registration: null,
     // Submissions Claude Code took, oldest first, each waiting for its turn.
@@ -129,7 +138,7 @@ function conversation(sessionId, previous) {
     transcriptPath: null,
     transcriptTold: null
   }
-  context.shown = presentation(() => reserved(context), () => context.turn)
+  context.shown = presentation(() => reserved(), () => context.turn)
   return context
 }
 
@@ -169,29 +178,44 @@ async function readReport($, path) {
   return value
 }
 
-function reserved(context) {
-  const id = nextName(context)
-  // Six sequence digits fill the six sub-millisecond digits of a Rust
-  // timestamp. The counter's carry in nextName keeps this monotonic.
-  const at = new Date(context.logicalTime).toISOString().replace('Z', String(context.sequence).padStart(6, '0') + 'Z')
+function reserved() {
+  const id = nextName()
+  // Six count digits fill the six sub-millisecond digits of a Rust
+  // timestamp. The count's carry in nextName keeps this monotonic.
+  const at = new Date(clock.time).toISOString().replace('Z', String(clock.count).padStart(6, '0') + 'Z')
   return { id, at }
 }
 
-function nextName(context) {
+function nextName() {
   const now = Date.now()
-  if (now > context.logicalTime) { context.logicalTime = now; context.sequence = 0 }
-  context.sequence += 1
+  if (now > clock.time) { clock.time = now; clock.count = 0 }
+  clock.count += 1
   // Carry at the six-digit field boundary so lexical order remains causal.
-  if (context.sequence === 1000000) { context.logicalTime += 1; context.sequence = 0 }
-  return String(context.logicalTime).padStart(15, '0') + '-' + String(context.sequence).padStart(6, '0')
+  if (clock.count === 1000000) { clock.time += 1; clock.count = 0 }
+  return String(clock.time).padStart(15, '0') + '-' + String(clock.count).padStart(6, '0')
+}
+
+// The earliest report named for this context's directory and not yet whole
+// on disk, or `own` when every earlier one is. The node lets go of what it
+// kept for the reports named before it (`exchange/applied.rs`).
+function floor(context, own) {
+  let lowest = own
+  for (const writer of writers.get(context.dir) ?? [context]) {
+    for (const reports of [writer.unwritten, writer.accountingReports]) {
+      // A map keeps its keys in the order they were named.
+      const first = reports === undefined ? undefined : reports.keys().next().value
+      if (first !== undefined && first < lowest) lowest = first
+    }
+  }
+  return lowest + '.json'
 }
 
 function event($, context, kind, fields) {
   if (!context.dir) return context.writing
   context.streamBatch = null
-  const { id: name, at } = reserved(context)
+  const { id: name, at } = reserved()
   const pending = [...context.unwritten.keys()].map((name) => name + '.json')
-  const body = JSON.stringify({ kind, at, ...fields, pending })
+  const body = JSON.stringify({ kind, at, ...fields, pending, floor: floor(context, name) })
   const goalStop = kind === 'turn_complete' && (fields.aborted === true || fields.reason === 'aborted') && context.goal?.active === true
   if (goalStop) {
     context.goalStopping = true
@@ -226,7 +250,7 @@ async function writePending($, context, name) {
 function streamEvent($, context, entry) {
   let batch = context.streamBatch
   if (batch === null) {
-    const { id: name } = reserved(context)
+    const { id: name } = reserved()
     batch = { kind: 'batch', events: [], pending: [...context.unwritten.keys()].map((name) => name + '.json') }
     context.streamBatch = batch
     const report = { body: null, sequence: null }
@@ -234,8 +258,9 @@ function streamEvent($, context, entry) {
     const ready = new Promise((resolve) => { $.clock.after(0, resolve) })
     const written = context.writing.then(() => ready).then(async () => {
       if (context.streamBatch === batch) context.streamBatch = null
+      batch.floor = floor(context, name)
       report.body = JSON.stringify(batch)
-      report.sequence = nextName(context)
+      report.sequence = nextName()
       await writePending($, context, name)
     })
     // Keep the batch to be written again; failure must not reject or cancel
@@ -246,7 +271,7 @@ function streamEvent($, context, entry) {
       retry($, context)
     })
   }
-  batch.events.push({ ...entry, at: reserved(context).at })
+  batch.events.push({ ...entry, at: reserved().at })
 }
 
 // The scanner follows $ only through this file's top-level functions. Give
@@ -749,6 +774,8 @@ async function startSession($, context) {
   const reserving = reserveDirectory($, context)
   reservations.set(id, reserving)
   context.dir = await reserving
+  if (!writers.has(context.dir)) writers.set(context.dir, new Set())
+  writers.get(context.dir).add(context)
   // A reload can happen in the same clock tick, with old reports still
   // pending. Their reserved names survive in events or applied.
   for (const sub of ['events', 'applied', 'accounting']) {
@@ -759,11 +786,11 @@ async function startSession($, context) {
       const match = /^(\d+)-(?:end-)?(\d+)\./.exec(name)
       if (!match) continue
       const time = Number(match[1]), count = Number(match[2])
-      if (time > context.logicalTime) { context.logicalTime = time; context.sequence = count }
-      else if (time === context.logicalTime) context.sequence = Math.max(context.sequence, count)
+      if (time > clock.time) { clock.time = time; clock.count = count }
+      else if (time === clock.time) clock.count = Math.max(clock.count, count)
     }
   }
-  const instance = reserved(context)
+  const instance = reserved()
   // A session can be resumed in the same process, even in the same clock
   // tick. Preserve the registration's generation independently of reports.
   await $.fs.write(context.dir + '/applied/' + instance.id + '.sequence', '')
@@ -1009,8 +1036,8 @@ async function endSession($, context, e, next) {
   const along = context.alongTaken.splice(0, context.alongTaken.length)
   if (along.length > 0) await uncertain($, context, along.map((delivery) => delivery.id), 'the session ended before a turn took what went in beside its prompt')
   context.entered = 0
-  const { id: name, at } = reserved(context)
-  const body = JSON.stringify({ kind: 'session_end', at, instance: context.registration.instance, reason: e.reason, pending: [...context.unwritten.keys()].map((name) => name + '.json') })
+  const { id: name, at } = reserved()
+  const body = JSON.stringify({ kind: 'session_end', at, instance: context.registration.instance, reason: e.reason, pending: [...context.unwritten.keys()].map((name) => name + '.json'), floor: floor(context, name) })
   context.unwritten.set(name, { body })
   try {
     await writePending($, context, name)
@@ -1137,17 +1164,6 @@ async function session($, registry, id, renew = false) {
   if (!context || (renew && context.closed) || retried) {
     context = conversation(id, retried ? context.previous : registry.cleared)
     context.registeredAgents = registry.registeredAccountAgents
-    // Session switches keep their order even within one clock tick or when
-    // the wall clock moves backwards. The node uses registration time to
-    // keep late reports from moving the resident's delivery address back.
-    for (const prior of registry.sessions.values()) {
-      if (prior.logicalTime > context.logicalTime) {
-        context.logicalTime = prior.logicalTime
-        context.sequence = prior.sequence
-      } else if (prior.logicalTime === context.logicalTime) {
-        context.sequence = Math.max(context.sequence, prior.sequence)
-      }
-    }
     if (!retried) registry.cleared = null
     registry.sessions.set(id, context)
     const starting = context

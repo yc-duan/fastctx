@@ -22,7 +22,9 @@ use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+mod applied;
 mod damaged;
+pub use applied::{Vouched, compact as compact_applied};
 pub use damaged::recover_readable;
 
 /// Where the sessions' directories are.
@@ -344,6 +346,14 @@ struct Refusal {
 pub struct Report {
     pub name: String,
     pub events: Vec<Reported>,
+    /// The earliest report its mod had named and not yet written whole when
+    /// it made this one: every report named before it is on disk or applied.
+    pub floor: Option<String>,
+}
+
+/// Whether the report `name` of the session in `directory` was applied.
+pub(super) fn was_applied(directory: &Path, name: &str) -> io::Result<bool> {
+    applied::has(directory, name)
 }
 
 pub fn acknowledge(directory: &Path, name: &str) -> io::Result<()> {
@@ -382,7 +392,7 @@ pub fn harvest(directory: &Path) -> io::Result<(Vec<Report>, Vec<String>)> {
     names.sort();
     let mut reported = Vec::new();
     for name in &names {
-        if directory.join("applied").join(name).exists() {
+        if applied::has(directory, name)? {
             acknowledge(directory, name)?;
             continue;
         }
@@ -391,12 +401,12 @@ pub fn harvest(directory: &Path) -> io::Result<(Vec<Report>, Vec<String>)> {
         if !done.exists() {
             break;
         }
-        match read_report(&path).map(|bytes| serde_json::from_slice::<ModEvent>(&bytes)) {
-            Ok(Ok(event)) => {
+        match read_report(&path).map(|(bytes, floor)| (serde_json::from_slice::<ModEvent>(&bytes), floor)) {
+            Ok((Ok(event), floor)) => {
                 let at = Timestamp::try_from(path.metadata()?.modified()?).map_err(io::Error::other)?;
-                reported.push(Report { name: name.clone(), events: translate(event, at) });
+                reported.push(Report { name: name.clone(), events: translate(event, at), floor });
             }
-            Ok(Err(error)) => {
+            Ok((Err(error), _)) => {
                 let damaged = directory.join("damaged");
                 ensure_private_dir(&damaged)?;
                 fastctx_platform::owned_directory::move_to(&path, &damaged.join(name))?;
@@ -434,7 +444,8 @@ pub fn recover_reports(directory: &Path) -> io::Result<Vec<String>> {
         if path.extension().is_none_or(|extension| extension != "json") || path.with_extension("done").exists() {
             continue;
         }
-        match read_report(&path).and_then(|bytes| serde_json::from_slice::<ModEvent>(&bytes).map_err(io::Error::other))
+        match read_report(&path)
+            .and_then(|(bytes, _)| serde_json::from_slice::<ModEvent>(&bytes).map_err(io::Error::other))
         {
             Ok(_) => publish(&path.with_extension("done"), b"", Permissions::Private)?,
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
@@ -445,12 +456,14 @@ pub fn recover_reports(directory: &Path) -> io::Result<Vec<String>> {
 }
 
 pub(super) fn checked_report(path: &Path) -> io::Result<Vec<u8>> {
-    let bytes = read_report(path)?;
+    let (bytes, _) = read_report(path)?;
     serde_json::from_slice::<ModEvent>(&bytes).map_err(io::Error::other)?;
     Ok(bytes)
 }
 
-fn read_report(path: &Path) -> io::Result<Vec<u8>> {
+/// A report's bytes and the floor it declares, once every report it names as
+/// written before it has been applied.
+fn read_report(path: &Path) -> io::Result<(Vec<u8>, Option<String>)> {
     let mut bytes = std::fs::read(path)?;
     let mut value: Value = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
     if let Some(parts) = value.get("parts").and_then(Value::as_u64) {
@@ -461,18 +474,19 @@ fn read_report(path: &Path) -> io::Result<Vec<u8>> {
         value = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
     }
     if let Some(pending) = value.get("pending").and_then(Value::as_array) {
-        let applied = path.parent().and_then(Path::parent).expect("an event is inside a session").join("applied");
+        let session = path.parent().and_then(Path::parent).expect("an event is inside a session");
         for name in pending {
             let name = name.as_str().ok_or_else(|| io::Error::other("invalid report dependency"))?;
             if Path::new(name).file_name().is_none_or(|file| file != name) {
                 return Err(io::Error::other("invalid report dependency path"));
             }
-            if !applied.join(name).exists() {
+            if !applied::has(session, name)? {
                 return Err(io::ErrorKind::WouldBlock.into());
             }
         }
     }
-    Ok(bytes)
+    let floor = value.get("floor").and_then(Value::as_str).filter(|name| applied::ordered(name)).map(str::to_string);
+    Ok((bytes, floor))
 }
 
 fn translate(event: ModEvent, recorded_at: Timestamp) -> Vec<Reported> {

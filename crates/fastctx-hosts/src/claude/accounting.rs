@@ -16,7 +16,7 @@ pub(super) fn promote(directory: &Path, writer_ended: bool) -> io::Result<Vec<St
             continue;
         }
         let name = path.file_name().expect("receipt name");
-        if directory.join("applied").join(name).exists() {
+        if name.to_str().map(|name| super::exchange::was_applied(directory, name)).transpose()? == Some(true) {
             clean(directory, name)?;
             continue;
         }

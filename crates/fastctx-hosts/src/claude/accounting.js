@@ -72,7 +72,7 @@ function recoverAccounting($, context) {
 function accountingReport($, context, usage, fields = {}) {
   if (context.accountingOrigin === null) return Promise.resolve()
   const counted = { ...usage, counted: { ...context.accountingOrigin, meter: true, ...fields } }
-  const stamp = reserved(context)
+  const stamp = reserved()
   const body = JSON.stringify({ kind: 'session', at: stamp.at,
     happened: { event: 'changed', turn: null, change: { kind: 'usage', usage: counted } } })
   context.accountingReports ??= new Map()

@@ -64,7 +64,11 @@ fn collect_session(session: &Path) -> io::Result<()> {
             fastctx_platform::owned_directory::delete(&path)?;
         }
     }
-    readies(&directory)
+    readies(&directory)?;
+    if !alive {
+        super::markers::compact_ended(session)?;
+    }
+    Ok(())
 }
 
 /// How long what a control left stays once nothing may take it again, for

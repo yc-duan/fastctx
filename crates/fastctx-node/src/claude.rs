@@ -43,6 +43,7 @@ pub(crate) use image_flush::wait_for_image;
 pub(crate) mod lifecycle;
 mod listing;
 pub mod management;
+mod markers;
 pub(crate) mod model_list;
 mod oldest;
 pub(crate) mod pairing;
@@ -103,6 +104,8 @@ pub struct Claude {
     /// Each session's receipts, as far as this run of the node has read and
     /// settled them.
     receipts: receipts::Receipts,
+    /// How far each session is from having its applied markers compacted.
+    markers: markers::Markers,
 }
 
 /// How many sessions' reports are read and applied at once.
@@ -154,6 +157,7 @@ impl Claude {
             looking: Default::default(),
             looks: Arc::new(tokio::sync::Semaphore::new(LOOKS)),
             receipts: Default::default(),
+            markers: Default::default(),
         }
     }
 
@@ -623,7 +627,9 @@ async fn look(node: &Arc<Node>, directory: &Path) -> bool {
     for problem in problems {
         node.log.line(problem);
     }
+    let (mut acknowledged, mut floor) = (0_u32, None::<String>);
     for report in reported {
+        let declared = report.floor.clone();
         let applied = async {
             for reported in report.events {
                 match reported {
@@ -725,6 +731,22 @@ async fn look(node: &Arc<Node>, directory: &Path) -> bool {
             ));
             return false;
         }
+        acknowledged += 1;
+        if declared.as_ref().is_some_and(|declared| floor.as_ref().is_none_or(|known| declared > known)) {
+            floor = declared;
+        }
+    }
+    if acknowledged > 0
+        && let Some(before) = node.claude.markers.applied(&session, acknowledged, floor)
+    {
+        let compacting = directory.to_path_buf();
+        let compacted = fastctx_platform::task::spawn_blocking(move || {
+            exchange::compact_applied(&compacting, exchange::Vouched::Before(&before))
+        })
+        .await;
+        if let Ok(Err(error)) = compacted {
+            node.log.line(format_args!("letting go of the markers of what {session} reported: {error}"));
+        }
     }
     // Each receipt is settled once in this run, and again only while what it
     // names still waits in the inbox (`receipts`).
@@ -808,6 +830,7 @@ async fn look(node: &Arc<Node>, directory: &Path) -> bool {
     if state.sessions.get(&session).is_some_and(|entry| entry.registration == registration) {
         state.sessions.remove(&session);
         node.claude.receipts.forget(directory);
+        node.claude.markers.forget(&session);
     }
     if state.sessions.is_empty() {
         state.sessions = HashMap::new();

@@ -44,7 +44,7 @@ function agentReports(base, agentId) {
 
 function agentPresentation(context, id) {
   context.agents ??= new Map()
-  if (!context.agents.has(id)) context.agents.set(id, presentation(() => reserved(context), () => null))
+  if (!context.agents.has(id)) context.agents.set(id, presentation(() => reserved(), () => null))
   return context.agents.get(id)
 }
 
