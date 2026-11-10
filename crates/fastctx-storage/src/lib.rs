@@ -515,6 +515,29 @@ impl Database {
         write: impl FnOnce(&rusqlite::Connection) -> Result<T> + Send + 'static,
         committed: impl FnOnce(&T) + Send + 'static,
     ) -> Result<T> {
+        self.write_committed_at(priority, bytes, true, write, committed).await
+    }
+
+    /// Publishes after commit without requiring a disk synchronization. The
+    /// notification survives cancellation or timeout of the awaiting caller.
+    pub async fn write_relaxed_then_at<T: Send + 'static>(
+        &self,
+        priority: Priority,
+        bytes: usize,
+        write: impl FnOnce(&rusqlite::Connection) -> Result<T> + Send + 'static,
+        committed: impl FnOnce(&T) + Send + 'static,
+    ) -> Result<T> {
+        self.write_committed_at(priority, bytes, false, write, committed).await
+    }
+
+    async fn write_committed_at<T: Send + 'static>(
+        &self,
+        priority: Priority,
+        bytes: usize,
+        durable: bool,
+        write: impl FnOnce(&rusqlite::Connection) -> Result<T> + Send + 'static,
+        committed: impl FnOnce(&T) + Send + 'static,
+    ) -> Result<T> {
         self.available()?;
         let permit = tokio::time::timeout(QUEUE_WAIT, self.0.writes.admit(priority, bytes))
             .await
@@ -523,7 +546,7 @@ impl Database {
         let (send, receive) = oneshot::channel();
         self.submit(
             priority,
-            writer::job(permit, true, write, committed, move |result| {
+            writer::job(permit, durable, write, committed, move |result| {
                 let _ = send.send(result);
             }),
         )?;
@@ -538,26 +561,7 @@ impl Database {
         bytes: usize,
         write: impl FnOnce(&rusqlite::Connection) -> Result<T> + Send + 'static,
     ) -> Result<T> {
-        self.available()?;
-        let priority = Priority::Normal;
-        let permit = tokio::time::timeout(QUEUE_WAIT, self.0.writes.admit(priority, bytes))
-            .await
-            .map_err(|_| busy("write admission"))??;
-        self.admitted(priority);
-        let (send, receive) = oneshot::channel();
-        self.submit(
-            priority,
-            writer::job(
-                permit,
-                false,
-                write,
-                |_| {},
-                move |result| {
-                    let _ = send.send(result);
-                },
-            ),
-        )?;
-        tokio::time::timeout(ANSWER, receive).await.map_err(|_| unknown())?.map_err(|_| unknown())?
+        self.write_relaxed_then_at(Priority::Normal, bytes, write, |_| {}).await
     }
 
     /// Blocking-thread compatibility; it parks on the same admission and commit
