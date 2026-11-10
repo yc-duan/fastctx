@@ -1,60 +1,64 @@
-//! Text-only commits update one indexed document and the owner's scalar version.
-//! Queue metadata is not serialized or rewritten for ordinary typing.
+//! Text-only commits append one update and advance small indexed revisions.
 
 use super::*;
 use fastctx_types::composer::sync::{Bytes, Update};
+use std::sync::Arc;
 
 pub(super) struct TextWrite {
     key: documents::Key,
     revision: u64,
     updates: Vec<Vec<u8>>,
-    checkpoint: Option<Vec<u8>>,
+    migration: Option<Vec<u8>>,
+    compact_due: bool,
 }
 impl TextWrite {
     pub fn prepare(owner: &str, document: &mut state::Document) -> Result<Self, Failure> {
         let mut updates = std::mem::take(&mut document.pending);
-        if updates.is_empty() {
+        if updates.is_empty() && document.revision == 0 {
             updates.push(document.checkpoint());
         }
         let added = updates.iter().map(Vec::len).sum::<usize>();
-        let checkpoint = (document.revision == 0
-            || document.tail_updates + updates.len() >= 128
-            || document.tail_bytes.saturating_add(added) >= 256 * 1024)
-            .then(|| document.checkpoint());
+        let next_updates = document.tail_updates.saturating_add(updates.len());
+        let next_bytes = document.tail_bytes.saturating_add(added);
+        let compact_due = document.tail_updates / 128 != next_updates / 128
+            || document.tail_bytes / (256 * 1024) != next_bytes / (256 * 1024);
+        let migration = document.checkpoint_migration.take();
         let revision = document.revision;
         document.revision = revision.checked_add(updates.len() as u64).ok_or_else(|| failure("revision overflow"))?;
-        if checkpoint.is_some() {
-            document.tail_updates = 0;
-            document.tail_bytes = 0;
-        } else {
-            document.tail_updates += updates.len();
-            document.tail_bytes += added;
-        }
-        Ok(Self { key: key(owner, &document.id), revision, updates, checkpoint })
+        document.tail_updates = next_updates;
+        document.tail_bytes = next_bytes;
+        Ok(Self { key: key(owner, &document.id), revision, updates, migration, compact_due })
     }
     pub fn bytes(&self) -> usize {
         self.key.bytes()
             + self.updates.iter().map(Vec::len).sum::<usize>()
-            + self.checkpoint.as_ref().map_or(0, Vec::len)
+            + self.migration.as_ref().map_or(0, Vec::len)
     }
     pub fn update(&self) -> Result<Update, Failure> {
         Ok(Update {
             document: self.key.name.clone(),
             revision: self.revision + self.updates.len() as u64,
-            update: Bytes(fastctx_draft::merge(&self.updates).map_err(failure)?),
+            update: Bytes(match self.updates.as_slice() {
+                [update] => update.clone(),
+                updates => fastctx_draft::merge(updates).map_err(failure)?,
+            }),
         })
     }
-    pub fn commit(self, transaction: &Connection) -> StoredResult<()> {
-        let last = self.updates.len() - 1;
+    pub fn compact_due(&self) -> bool {
+        self.compact_due
+    }
+    pub fn commit(self, db: &Connection, compactor: Option<&super::super::compaction::Compactor>) -> StoredResult<()> {
         let mut revision = self.revision;
-        for (index, update) in self.updates.into_iter().enumerate() {
-            revision = documents::append(
-                transaction,
-                &self.key,
-                revision,
-                &update,
-                if index == last { self.checkpoint.as_deref() } else { None },
-            )?;
+        for update in self.updates {
+            revision = documents::append(db, &self.key, revision, &update, None)?;
+        }
+        if let Some(checkpoint) = self.migration {
+            journal::checkpoint(db, &self.key, &checkpoint)?;
+        }
+        if self.compact_due
+            && let Some(compactor) = compactor
+        {
+            (compactor.submit)(db, &self.key)?;
         }
         Ok(())
     }
@@ -65,9 +69,9 @@ pub(in crate::composer) struct Prepared {
     previous: u64,
     revision: u64,
     text: TextWrite,
+    compactor: Option<Arc<super::super::compaction::Compactor>>,
     pub bytes: usize,
 }
-
 pub(in crate::composer) fn prepare(id: &ResidentId, state: &mut Stored, document: &str) -> Result<Prepared, Failure> {
     if !state.persisted {
         return Err(failure("the composer has no durable metadata"));
@@ -79,24 +83,31 @@ pub(in crate::composer) fn prepare(id: &ResidentId, state: &mut Stored, document
     let text = TextWrite::prepare(&owner, state.editable_document(document)?)?;
     state.revision = revision;
     let bytes = owner.len() + text.bytes();
-    Ok(Prepared { owner, previous, revision, text, bytes })
+    Ok(Prepared { owner, previous, revision, text, compactor: None, bytes })
 }
 impl Prepared {
+    pub fn with_compactor(mut self, compactor: Option<Arc<super::super::compaction::Compactor>>) -> Self {
+        if self.text.compact_due() {
+            self.compactor = compactor;
+        }
+        self
+    }
+    pub fn compaction_wake(&self) -> Option<Arc<dyn Fn() + Send + Sync>> {
+        self.compactor.as_ref().map(|compactor| compactor.wake.clone())
+    }
     pub fn update(&self) -> Result<Update, Failure> {
         self.text.update()
     }
-    pub fn commit(self, transaction: &Connection) -> StoredResult<()> {
-        let changed = transaction.execute(
-            "UPDATE composers SET revision=?2 WHERE owner=?1 AND revision=?3",
-            params![
+    pub fn commit(self, db: &Connection) -> StoredResult<()> {
+        let changed =
+            db.prepare_cached("UPDATE composers SET revision=?2 WHERE owner=?1 AND revision=?3")?.execute(params![
                 self.owner,
                 i64::try_from(self.revision).map_err(error)?,
                 i64::try_from(self.previous).map_err(error)?
-            ],
-        )?;
+            ])?;
         if changed != 1 {
             return Err(error("the composer changed before its text could commit; synchronize it again"));
         }
-        self.text.commit(transaction)
+        self.text.commit(db, self.compactor.as_deref())
     }
 }

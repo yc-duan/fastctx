@@ -67,7 +67,12 @@ pub fn watch_documents<'a>(
         let cell = node.composers.cell(id);
         let mut cell = cell.lock().await;
         load(node, id, &mut cell).await?;
-        let state = cell.as_ref().expect("loaded");
+        drop(cell);
+        drop(_reading);
+        let mut state = persistence::read(node, id).await?;
+        node.residents.active(id)?;
+        failures::apply(node, id, &mut state);
+        watching::restore(node, id, &mut state);
         let mut known = HashMap::new();
         for vector in subscription.known {
             if known.insert(vector.document, vector.vector).is_some() {
@@ -103,6 +108,7 @@ pub fn watch_documents<'a>(
 /// accepted, its owner continues this future even when that stream disconnects.
 pub fn update_document<'a>(node: &'a Arc<Node>, id: &'a ResidentId, input: Input) -> Future<'a, Frame> {
     Box::pin(async move {
+        limits::update(&input)?;
         node.ready_for(id).await;
         let Input::Update { number, document, update } = input;
         let gate = node.residents.management(id)?;
@@ -112,11 +118,15 @@ pub fn update_document<'a>(node: &'a Arc<Node>, id: &'a ResidentId, input: Input
         let mut cell = cell.lock().await;
         load(node, id, &mut cell).await?;
         let mut next = cell.take().expect("loaded");
-        next.editable_document(&document)?.merge(&update.0)?;
+        let metadata_changed = {
+            let document = next.editable_document(&document)?;
+            document.merge(&update.0)?;
+            document.metadata_dirty()
+        };
         // An earlier failed stop is first consolidated with the metadata. This
         // exceptional write must not let subsequent typing erase its hold.
         let held = node.composers.holds.lock().expect("composer checkpoint failures").contains_key(id);
-        if held || next.documents().any(|document| document.aliases_changed) {
+        if held || metadata_changed {
             publish(node, id, &mut cell, next).await?;
             let state = cell.as_mut().expect("committed");
             let revision = state.revision;
@@ -127,13 +137,14 @@ pub fn update_document<'a>(node: &'a Arc<Node>, id: &'a ResidentId, input: Input
                 revision,
             });
         }
-        let prepared = persistence::prepare_text(id, &mut next, &document)?;
+        let prepared = persistence::prepare_text(id, &mut next, &document)?
+            .with_compactor(node.composers.compactor.get().cloned());
+        let wake = prepared.compaction_wake();
         let changed = prepared.update()?;
         let document_revision = changed.revision;
         let revision = next.revision;
         let publication = node.composers.streams.prepare(id, Frame::Update { revision, document: changed });
-        let legacy = watching::legacy(node, id).then(|| Arc::new(next.view()));
-        let busy = idle::busy(&next);
+        let legacy = watching::legacy(node, id);
         let (committed_node, committed_id, runtime) = (node.clone(), id.clone(), tokio::runtime::Handle::current());
         let result = node
             .database
@@ -143,9 +154,12 @@ pub fn update_document<'a>(node: &'a Arc<Node>, id: &'a ResidentId, input: Input
                 move |transaction| prepared.commit(transaction),
                 move |_| {
                     publication.committed();
-                    match legacy {
-                        Some(view) => publication::committed(&committed_node, &runtime, &committed_id, view, busy),
-                        None => publication::invalidate(&committed_node, &committed_id, revision),
+                    if let Some(wake) = wake {
+                        wake();
+                    }
+                    publication::invalidate(&committed_node, &runtime, &committed_id, revision);
+                    if legacy {
+                        legacy_refresh::request(&committed_node, &runtime, &committed_id, revision);
                     }
                 },
             )

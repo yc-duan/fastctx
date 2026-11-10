@@ -2,10 +2,8 @@
 
 pub mod sync;
 
-/// Maximum visible Unicode scalars in a draft or queued message. Every
-/// character of a draft keeps an identity of its own that is written and sent
-/// whole with each edit, so the bound keeps one keystroke near fifty
-/// milliseconds and a few megabytes; longer text goes in as an attachment.
+/// Maximum visible Unicode scalars in a draft or queued message. Longer text
+/// goes in as an attachment; native edits carry only their Yjs update.
 pub const MAX_DOCUMENT_CHARACTERS: usize = 30_000;
 /// Stable explicit rejection understood by composer clients.
 pub const DOCUMENT_TOO_LONG: &str = "the text is longer than this input holds";

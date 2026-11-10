@@ -40,6 +40,7 @@ mod colleagues;
 mod completion_debt;
 mod completion_delivery;
 mod composer;
+pub use composer::compaction::{Compactor as ComposerCompactor, compact_document as compact_composer_document};
 mod consent;
 pub mod context;
 mod control;

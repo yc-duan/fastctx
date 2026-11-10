@@ -1,11 +1,14 @@
 //! The only writer and release coordinator of each conversation's composer.
 
 mod commands;
+pub(crate) mod compaction;
 mod document;
+use compaction::Compactor;
 mod failures;
 mod idle;
 mod keeping;
 mod legacy_records;
+mod legacy_refresh;
 mod limits;
 pub(crate) use idle::input_busy;
 pub(crate) use keeping::start as keep;
@@ -67,6 +70,8 @@ pub struct Composers {
     releases: Mutex<HashMap<ResidentId, bool>>,
     upload_failures: Arc<Mutex<HashMap<ResidentId, HashMap<String, String>>>>,
     snapshots: publication::Snapshots,
+    compactor: std::sync::OnceLock<Arc<Compactor>>,
+    legacy_refreshes: legacy_refresh::Refreshes,
 }
 
 pub fn removed(node: &Node, id: &ResidentId) {
@@ -157,7 +162,16 @@ pub fn here<'a>(
             let cell = node.composers.cell(id);
             let mut cell = cell.lock().await;
             load(node, id, &mut cell).await?;
-            return Ok(Updated { composer: cell.as_ref().expect("loaded").view(), landed: None, delivery: None });
+            drop(cell);
+            drop(_reading);
+            let (composer, _) = legacy_refresh::snapshot(node, id).await?;
+            publication::cache(
+                &node.composers.snapshots,
+                &tokio::runtime::Handle::current(),
+                id,
+                Arc::new(composer.clone()),
+            );
+            return Ok(Updated { composer, landed: None, delivery: None });
         }
         let gate = node.residents.management(id)?;
         let _reading = crate::gate_waits::shared(node, id, &gate).await?;
@@ -197,6 +211,10 @@ pub fn here<'a>(
         {
             return Ok(Updated { composer: state.view(), landed: None, delivery: None });
         }
+        if let Change::Edit { target, epoch, .. } = &mutation.change {
+            cell.as_mut().expect("loaded").document(target, *epoch)?.reconcile_legacy();
+        }
+        let state = cell.as_ref().expect("loaded");
         limits::edit(state, &mutation)?;
         if let Change::Attach { attachment, .. } = &mutation.change {
             crate::attachments::resolve(node, id, std::slice::from_ref(attachment)).await?;

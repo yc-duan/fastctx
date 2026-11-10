@@ -7,6 +7,9 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error};
 
 pub const VERSION: u32 = 1;
+/// A paste of 30,000 four-byte scalars uses 120,000 bytes plus a short Yjs header.
+/// The remaining space admits metadata while bounding work before editor locks.
+pub const MAX_UPDATE_BYTES: usize = 128 * 1024;
 
 /// A Yjs v1 update or state vector, encoded as base64 in JSON.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

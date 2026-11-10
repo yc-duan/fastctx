@@ -3,6 +3,7 @@
 
 mod aliases;
 mod editing;
+mod journaling;
 use super::{failure, limits};
 use aliases::Aliases;
 use fastctx_types::composer::{Character, CharacterId, Draft};
@@ -17,8 +18,16 @@ pub(super) struct Document {
     pub epoch: u64,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     atoms: Vec<Atom>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        default,
+        serialize_with = "journaling::serialize_aliases",
+        deserialize_with = "journaling::deserialize_aliases"
+    )]
     aliases: Vec<Alias>,
+    #[serde(skip)]
+    aliases_persisted: bool,
+    #[serde(skip)]
+    pub checkpoint_migration: Option<Vec<u8>>,
     #[serde(skip)]
     indexed: Aliases,
     #[serde(skip)]
@@ -61,6 +70,8 @@ impl Default for Document {
             epoch: 0,
             atoms: Vec::new(),
             aliases: Vec::new(),
+            aliases_persisted: true,
+            checkpoint_migration: None,
             indexed: Aliases::default(),
             aliases_changed: false,
             attachments: Vec::new(),
@@ -91,6 +102,7 @@ impl Document {
             live.apply(&update).map_err(failure)?;
         }
         if !self.atoms.is_empty() {
+            self.aliases_persisted = false;
             if self.revision != 0 {
                 return Err(failure("the legacy draft and its text journal both contain data"));
             }
@@ -180,7 +192,6 @@ impl Document {
         let before = self.text().character_count();
         self.text_mut().apply(update).map_err(failure)?;
         limits::growth(before, self.text().character_count())?;
-        self.prune_aliases();
         self.pending.push(update.to_vec());
         Ok(())
     }
@@ -252,6 +263,7 @@ impl Document {
     fn add_alias(&mut self, alias: Alias) {
         self.indexed.insert(&alias, self.aliases.len());
         self.aliases.push(alias);
+        self.aliases_changed = true;
     }
     fn reindex_aliases(&mut self) {
         self.indexed = Aliases::default();
@@ -299,6 +311,7 @@ impl Document {
         self.attachments.clear();
         self.uploads.clear();
         self.files_on = None;
+        self.aliases_changed |= !self.aliases.is_empty();
         self.aliases.clear();
         self.indexed = Aliases::default();
         self.epoch = self.epoch.checked_add(1).ok_or_else(|| failure("draft epoch overflow"))?;

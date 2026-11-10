@@ -6,6 +6,9 @@ use fastctx_types::composer::{
 use fastctx_types::ipc::Failure;
 
 pub(super) fn request(request: &Request) -> Result<(), Failure> {
+    if let Request::Sync { input } = request {
+        update(input)?;
+    }
     if let Request::Mutate { mutation } = request
         && let Change::Edit { after, delete, insert, .. } = &mutation.change
     {
@@ -21,6 +24,14 @@ pub(super) fn request(request: &Request) -> Result<(), Failure> {
     Ok(())
 }
 
+pub(super) fn update(input: &fastctx_types::composer::sync::Input) -> Result<(), Failure> {
+    let fastctx_types::composer::sync::Input::Update { document, update, .. } = input;
+    if update.0.len() > fastctx_types::composer::sync::MAX_UPDATE_BYTES || document.len() > 256 {
+        return Err(Failure::new(DOCUMENT_TOO_LONG));
+    }
+    Ok(())
+}
+
 pub(super) fn edit(state: &super::state::Stored, mutation: &Mutation) -> Result<(), Failure> {
     let Change::Edit { target, epoch, after, delete, insert } = &mutation.change else { return Ok(()) };
     let document = match target {
@@ -28,7 +39,7 @@ pub(super) fn edit(state: &super::state::Stored, mutation: &Mutation) -> Result<
         Target::Queued { id } => state.queue.iter().find(|entry| &entry.id == id).map(|entry| &entry.document),
     };
     let Some(document) = document.filter(|document| document.epoch == *epoch) else { return Ok(()) };
-    let other_metadata = state.metadata_bytes.saturating_sub(document.alias_bytes());
+    let other_metadata = state.metadata_bytes;
     document.check_edit(&mutation.operation, after, delete, insert, other_metadata)
 }
 

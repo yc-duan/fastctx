@@ -45,15 +45,20 @@ pub(super) fn load<'a>(node: &'a Arc<Node>, id: &'a ResidentId, cell: &'a mut Op
             changed |= super::recovery::settle(node, id, &mut state).await?;
             changed |= uploads::recover(node, id, &mut state).await?;
         }
-        changed |= state.documents().any(|document| document.aliases_changed);
+        changed |= state.documents().any(|document| document.metadata_dirty());
         if !state.persisted || changed {
-            let prepared = persistence::prepare(id, &mut state)?;
+            let prepared =
+                persistence::prepare(id, &mut state)?.with_compactor(node.composers.compactor.get().cloned());
+            let wake = prepared.compaction_wake();
             node.database
                 .write_at(fastctx_storage::Priority::Interactive, prepared.bytes, move |transaction| {
                     prepared.commit(transaction)
                 })
                 .await
                 .map_err(failure)?;
+            if let Some(wake) = wake {
+                wake();
+            }
         }
         // The draft file an older node kept goes once the database holds
         // the draft; where removing it fails, the database is read first.
@@ -63,13 +68,17 @@ pub(super) fn load<'a>(node: &'a Arc<Node>, id: &'a ResidentId, cell: &'a mut Op
         }
         watching::restore(node, id, &mut state);
         failures::apply(node, id, &mut state);
-        let view = state.view();
+        let revision = state.revision;
         let busy = super::idle::busy(&state);
         *cell = Some(state);
+        let runtime = tokio::runtime::Handle::current();
         if recover {
-            publication::committed(node, &tokio::runtime::Handle::current(), id, Arc::new(view), busy);
+            publication::settled(node, &runtime, id, revision, busy);
+            if watching::legacy(node, id) {
+                legacy_refresh::request(node, &runtime, id, revision);
+            }
         } else {
-            cache(node, id, view);
+            publication::invalidate(node, &runtime, id, revision);
         }
         Ok(())
     })
@@ -111,9 +120,11 @@ pub(super) fn publish_then<'a>(
         if !node.residents.knows(id) {
             return Err(failure("unknown resident"));
         }
-        let prepared = persistence::prepare(id, &mut next)?;
+        let prepared = persistence::prepare(id, &mut next)?.with_compactor(node.composers.compactor.get().cloned());
+        let wake = prepared.compaction_wake();
         let documents = node.composers.streams.prepare(id, synchronized(&mut next, &prepared)?);
-        let view = Arc::new(next.view());
+        let view = watching::legacy(node, id).then(|| Arc::new(next.view()));
+        let revision = next.revision;
         let busy = super::idle::busy(&next);
         let (weak, published_id, runtime) = (Arc::downgrade(node), id.clone(), tokio::runtime::Handle::current());
         let result = node
@@ -124,8 +135,14 @@ pub(super) fn publish_then<'a>(
                 move |transaction| prepared.commit(transaction),
                 move |_| {
                     documents.committed();
+                    if let Some(wake) = wake {
+                        wake();
+                    }
                     if let Some(node) = weak.upgrade() {
-                        publication::committed(&node, &runtime, &published_id, view, busy);
+                        match view {
+                            Some(view) => publication::committed(&node, &runtime, &published_id, view, busy),
+                            None => publication::settled(&node, &runtime, &published_id, revision, busy),
+                        }
                     }
                     committed();
                 },
@@ -177,10 +194,6 @@ fn synchronized(
     }
     state.observed_documents = visible;
     Ok(Frame::State { version: sync::VERSION, state: Box::new(state.metadata()), documents })
-}
-
-pub(super) fn cache(node: &Node, id: &ResidentId, composer: fastctx_types::composer::Composer) {
-    publication::cache(&node.composers.snapshots, id, Arc::new(composer));
 }
 
 pub(super) fn event(composer: fastctx_types::composer::Composer) -> SessionEvent {
