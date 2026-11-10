@@ -1013,6 +1013,7 @@ pub async fn run_prepared(
             timeline::register(&node);
             management::register(&node);
             content_upkeep::register(&node);
+            outbox::register(&node);
         })
         .await
         {

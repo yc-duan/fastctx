@@ -17,7 +17,7 @@ mod run;
 mod table;
 
 pub use operations::{Operation, RESULT_BYTES, Standing, accept, settle, standing};
-pub use table::{KEY_BYTES, PAYLOAD_BYTES, SCHEMA, forget, submit};
+pub use table::{KEY_BYTES, PAYLOAD_BYTES, SCHEMA, forget, rouse, submit};
 
 use fastctx_storage::Database;
 use std::collections::{HashMap, HashSet};

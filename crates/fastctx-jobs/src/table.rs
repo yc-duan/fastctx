@@ -76,6 +76,17 @@ pub fn submit(db: &Connection, job: &Job) -> Result<()> {
     Ok(())
 }
 
+/// Makes a kind's waiting jobs due now: what they wait for besides time,
+/// such as a way to another machine, may be there. `Jobs::stir` then has
+/// them looked at.
+pub fn rouse(db: &Connection, kind: &str) -> Result<usize> {
+    Ok(db.prepare_cached("UPDATE jobs SET due = ?2 WHERE kind = ?1 AND state = ?3 AND due > ?2")?.execute(params![
+        kind,
+        now(),
+        WAITING
+    ])?)
+}
+
 /// Drops a unit's jobs, in the transaction that ends the unit. One running
 /// then finishes into nothing.
 pub fn forget(db: &Connection, unit: &str) -> Result<usize> {

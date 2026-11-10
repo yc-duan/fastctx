@@ -115,6 +115,15 @@ async fn drill(database: Database) -> Outcome_<()> {
     });
     jobs.register(Kind { name: "fail", at_once: 1, within: Duration::from_secs(5), tries: 3 }, fail);
 
+    let waited = Arc::new(AtomicUsize::new(0));
+    let waiting_runs = waited.clone();
+    let wait: Run = Arc::new(move |_: Taken| {
+        // What it waits for is not there the first time it runs.
+        let first = waiting_runs.fetch_add(1, Ordering::AcqRel) == 0;
+        Box::pin(async move { if first { Outcome::Again { after: Duration::from_secs(3600) } } else { Outcome::Done } })
+    });
+    jobs.register(Kind { name: "wait", at_once: 1, within: Duration::from_secs(5), tries: 3 }, wait);
+
     let operating = Arc::new(tokio::sync::Semaphore::new(0));
     let operated = Arc::new(AtomicUsize::new(0));
     let (opening, counted, settling) = (operating.clone(), operated.clone(), jobs.clone());
@@ -198,9 +207,33 @@ async fn drill(database: Database) -> Outcome_<()> {
     jobs.measure().await?;
     let readings = fastctx_platform::readings::snapshot();
     let ran = readings.timings.iter().find(|timing| timing.name == "job.ran.count").map(|timing| timing.count);
-    let waiting = readings.levels.iter().find(|level| level.name == "job.waiting.count").map(|level| level.value);
-    if ran.is_none_or(|ran| ran < COUNTED as u64) || waiting != Some(0) {
-        return Err(format!("the queue's measures say {ran:?} runs and {waiting:?} waiting").into());
+    let left = readings.levels.iter().find(|level| level.name == "job.waiting.count").map(|level| level.value);
+    if ran.is_none_or(|ran| ran < COUNTED as u64) || left != Some(0) {
+        return Err(format!("the queue's measures say {ran:?} runs and {left:?} waiting").into());
+    }
+
+    // A job that waits for more than time is run again once it is roused,
+    // not when its hour is up.
+    database.write(256, |db| submit(db, &job("wait", "one", "unit", b""))).await?;
+    jobs.stir("wait");
+    let began = Instant::now();
+    while waited.load(Ordering::Acquire) < 1 {
+        if began.elapsed() > Duration::from_secs(10) {
+            return Err("a submitted job did not run".into());
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    if waited.load(Ordering::Acquire) != 1 || waiting(&database, "wait").await? != 1 {
+        return Err("a job that asked to be run again in an hour did not wait".into());
+    }
+    let roused = database.write(256, |db| fastctx_jobs::rouse(db, "wait")).await?;
+    jobs.stir("wait");
+    emptied(&database, "wait", Duration::from_secs(10)).await?;
+    if roused != 1 || waited.load(Ordering::Acquire) != 2 {
+        return Err(
+            format!("rousing {roused} jobs ran the waiting one {} times", waited.load(Ordering::Acquire)).into()
+        );
     }
 
     // Asked for again while it waits, a job is one job with what was asked
