@@ -34,6 +34,7 @@ pub mod dissolve;
 mod expiry;
 mod forget;
 mod foundation;
+pub use foundation::Installation as FoundationInstallation;
 mod health;
 mod history_author;
 mod history_limits;
@@ -737,7 +738,18 @@ pub(crate) async fn bind(kept: Option<Kept>, listen: SocketAddr) -> anyhow::Resu
 /// `threads` builds, its threads in their roles (`specs/world-engine.md`,
 /// 线程的三种角色): the command and every drill that serves a hub in its own
 /// process run it so.
-pub fn run(dir: &Path, leave: Leave, mut threads: tokio::runtime::Builder) -> anyhow::Result<()> {
+pub fn run(dir: &Path, leave: Leave, threads: tokio::runtime::Builder) -> anyhow::Result<()> {
+    run_with_foundation(dir, leave, threads, FoundationInstallation::default())
+}
+
+/// Runs with policies installed by the trusted process composition. Requests
+/// cannot install or replace policies through this entry point.
+pub fn run_with_foundation(
+    dir: &Path,
+    leave: Leave,
+    mut threads: tokio::runtime::Builder,
+    installation: FoundationInstallation,
+) -> anyhow::Result<()> {
     let runtime = threads
         .thread_name("fastctx-hub-work")
         // A runtime's threads may block until they first wake to run tasks,
@@ -748,12 +760,15 @@ pub fn run(dir: &Path, leave: Leave, mut threads: tokio::runtime::Builder) -> an
         .build()?;
     // This thread runs the hub's tasks as the runtime's own threads do.
     fastctx_platform::roles::set(fastctx_platform::roles::Role::Work);
-    runtime.block_on(serve(dir, leave))
+    runtime.block_on(serve_installed(dir, leave, installation))
 }
 
 /// Runs the hub kept in `dir` until the process is stopped: serving, or
 /// standing by for a move here, or forwarding after a move away.
 pub async fn serve(dir: &Path, leave: Leave) -> anyhow::Result<()> {
+    serve_installed(dir, leave, FoundationInstallation::default()).await
+}
+async fn serve_installed(dir: &Path, leave: Leave, installation: FoundationInstallation) -> anyhow::Result<()> {
     let place = dir.join("hub.log");
     let log = Arc::new(fastctx_platform::task::spawn_blocking(move || log::Log::open(&place)).await??);
     // What went wrong, written down while it lasts, and how long tasks wait
@@ -772,7 +787,7 @@ pub async fn serve(dir: &Path, leave: Leave) -> anyhow::Result<()> {
         let next = match mode {
             moving::Mode::Serving => {
                 let watched = (work.clone(), network.watched());
-                serving(dir, kept.take(), log.clone(), network.handle(), watched).await?
+                serving(dir, kept.take(), log.clone(), network.handle(), watched, installation.clone()).await?
             }
             moving::Mode::Standby(arriving) => {
                 moving::standby::run(dir, kept.take(), arriving, log.clone(), &leave).await?
@@ -817,11 +832,12 @@ struct Opened {
 
 /// Opens the hub kept in `dir` for serving: its files and databases read,
 /// written and set up, as only a blocking thread may.
-fn open(dir: &Path, log: Arc<log::Log>) -> anyhow::Result<Opened> {
+fn open(dir: &Path, log: Arc<log::Log>, installation: FoundationInstallation) -> anyhow::Result<Opened> {
     let mut store = Store::open_logged(dir, Some(log.clone()))?;
-    let foundation = foundation::Foundation::open(dir, store.shelf.0.clone(), store.hub.id.clone(), log.clone())
-        .inspect_err(|error| log.line(format_args!("the data foundation did not open: {error:#}")))
-        .ok();
+    let foundation =
+        foundation::Foundation::open(dir, store.shelf.0.clone(), store.hub.id.clone(), log.clone(), installation)
+            .inspect_err(|error| log.line(format_args!("the data foundation did not open: {error:#}")))
+            .ok();
     // An assistance whose deadline passed while the hub was stopped is
     // ended before any member is heard.
     assists::end_due(&mut store, Timestamp::now())?;
@@ -878,11 +894,12 @@ async fn serving(
     network: tokio::runtime::Handle,
     // How far the work runtime and the network runtime ran (`watchdog`).
     watched: (fastctx_platform::task::Watched, fastctx_platform::task::Watched),
+    installation: FoundationInstallation,
 ) -> anyhow::Result<Next> {
     let opened = {
         let dir = dir.to_path_buf();
         let opening_log = log.clone();
-        fastctx_platform::task::spawn_blocking(move || open(&dir, opening_log)).await??
+        fastctx_platform::task::spawn_blocking(move || open(&dir, opening_log, installation)).await??
     };
     let Opened {
         catalog,

@@ -5,6 +5,8 @@
 
 mod conversations;
 mod identity;
+mod installation;
+pub use installation::Installation;
 mod policy;
 mod sources;
 
@@ -49,6 +51,7 @@ pub(crate) struct Foundation {
     scheduler: SqliteScheduler,
     report: Arc<dyn Fn(String) + Send + Sync>,
     sessions: fastctx_net::asset_transport::sessions::Sessions,
+    installation: Installation,
 }
 
 impl Foundation {
@@ -95,21 +98,36 @@ impl Foundation {
         self.authority()?.service.check_source_block(peer, object, upload).await
     }
     /// Builds the engines on the hub's open database; nothing runs until `run`.
-    pub(crate) fn open(dir: &Path, database: Database, hub: HubId, log: Arc<crate::log::Log>) -> anyhow::Result<Self> {
+    pub(crate) fn open(
+        dir: &Path,
+        database: Database,
+        hub: HubId,
+        log: Arc<crate::log::Log>,
+        installation: Installation,
+    ) -> anyhow::Result<Self> {
         let holder = Holder::Hub { hub: hub.clone() };
         let claims = claims(&hub);
         let blocks = SqliteBlocks::new(
             database.clone(),
             dir.join("sync").join("blocks"),
             holder.clone(),
-            Arc::new(policy::HubPolicy),
+            installation.access.clone(),
             claims.clone(),
             CONTENT_BUFFERS,
         )?;
         let scheduler = SqliteScheduler::new(database, claims, holder, LEASE)?;
         let report: Arc<dyn Fn(String) + Send + Sync> = Arc::new(move |line| log.line(line));
         let sessions = fastctx_net::asset_transport::sessions::Sessions::new(blocks.buffer_budget());
-        Ok(Self { dir: dir.to_path_buf(), hub, blocks, authority: OnceCell::new(), scheduler, report, sessions })
+        Ok(Self {
+            dir: dir.to_path_buf(),
+            hub,
+            blocks,
+            authority: OnceCell::new(),
+            scheduler,
+            report,
+            sessions,
+            installation,
+        })
     }
 
     /// Loads or first creates the hub's service key, then begins this run's
@@ -125,15 +143,13 @@ impl Foundation {
                     [identity.key.clone()],
                     Arc::new(fastctx_sync::metrics::PlatformMetrics),
                 ));
-                // Composition installs real per-kind source policies with AccessState;
-                // an empty set keeps source intake unavailable.
                 let sources = Arc::new(SqliteAuthority::new(
                     self.blocks.clone(),
                     run.clone(),
                     signer.clone(),
                     verifier,
                     identity.clone(),
-                    Vec::new(),
+                    self.installation.sources.clone(),
                     8 * 1024 * 1024,
                 )?);
                 let directory = Arc::new(SqliteDirectory::new(self.blocks.clone(), run, signer));

@@ -1,6 +1,7 @@
 //! Two real processes discover and install signed scopes over the gated asset
 //! connection. All keys, memberships and databases belong to this isolated run.
 #![allow(clippy::disallowed_methods)]
+mod chain;
 mod fixture;
 mod node;
 use fastctx_sync::{
@@ -24,7 +25,13 @@ impl Drop for Process {
 fn main() -> anyhow::Result<()> {
     let args: Vec<_> = std::env::args().skip(1).collect();
     let mut runtime = tokio::runtime::Builder::new_multi_thread();
-    runtime.worker_threads(2).max_blocking_threads(16);
+    runtime.worker_threads(2).max_blocking_threads(16).thread_stack_size(8 * 1024 * 1024);
+    if args.first().is_some_and(|a| a == "chain-hub") {
+        return chain::hub(Path::new(&args[1]), runtime);
+    }
+    if args.first().is_some_and(|a| a == "chain-a" || a == "chain-b" || a == "chain-perf") {
+        return runtime.enable_all().build()?.block_on(chain::child(&args));
+    }
     if args.first().is_some_and(|a| a == "hub") {
         return fastctx_hub::run(
             Path::new(&args[1]),
@@ -39,6 +46,9 @@ fn main() -> anyhow::Result<()> {
             .ok_or_else(|| anyhow::anyhow!("--root requires an isolated absolute directory"))?,
     );
     anyhow::ensure!(root.is_absolute() && !root.exists(), "drill root must be a new absolute directory");
+    if args.iter().any(|a| a == "--chain" || a == "--benchmark") {
+        return runtime.enable_all().build()?.block_on(chain::run(&root, args.iter().any(|a| a == "--benchmark")));
+    }
     runtime.enable_all().build()?.block_on(drill(root))
 }
 async fn drill(root: PathBuf) -> anyhow::Result<()> {
