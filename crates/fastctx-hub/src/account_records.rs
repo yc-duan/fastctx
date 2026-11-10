@@ -71,6 +71,26 @@ pub(crate) fn begin(
     Ok(opened)
 }
 
+/// Routes record deletions that erase every historical version to durable work.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn asked(
+    hub: &Arc<Hub>,
+    from: MachineName,
+    member_key: PublicKey,
+    account: AccountName,
+    opened: Timestamp,
+    request: Request,
+    named: Option<fastctx_types::submission::Submission>,
+) -> Result<Told, String> {
+    if matches!(&request, Request::Delete { kind, .. } if matches!(kind.as_str(), fastctx_types::plan::KIND | fastctx_types::history::RECORD_KIND))
+    {
+        crate::owned_records::record_deletions::account(hub, from, member_key, account, opened, request, named.as_ref())
+            .await
+    } else {
+        ask(hub, from, member_key, account, opened, request).await
+    }
+}
+
 pub(crate) async fn ask(
     hub: &Arc<Hub>,
     from: MachineName,

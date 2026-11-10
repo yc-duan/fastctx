@@ -5,6 +5,7 @@ pub(crate) mod hints;
 pub(crate) mod index;
 mod plans;
 mod projection;
+pub(crate) mod record_deletions;
 mod registration;
 mod replicas;
 mod sentinels;
@@ -173,6 +174,9 @@ pub(crate) async fn asked(
 ) -> Result<Told, String> {
     match request {
         Request::Delete { resident } => submission::delete(hub, from, key, account, resident, named.as_ref()).await,
+        Request::Record { conversation, request: request @ RecordRequest::Delete { .. } } => {
+            record_deletions::owned(hub, from, key, account, conversation, request, named.as_ref()).await
+        }
         request => ask(hub, from, key, account, request).await,
     }
 }

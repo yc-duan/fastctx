@@ -1421,7 +1421,20 @@ pub(crate) fn within(question: &Question) -> std::time::Duration {
 fn submits(question: &Question) -> bool {
     matches!(
         question,
-        Question::OwnedRecords { request: fastctx_types::owned_records::Request::Delete { .. }, .. }
+        Question::OwnedRecords {
+            request: fastctx_types::owned_records::Request::Delete { .. }
+                | fastctx_types::owned_records::Request::Record {
+                    request: fastctx_types::account_records::Request::Delete { .. },
+                    ..
+                },
+            ..
+        }
+    ) || matches!(
+        question,
+        Question::AccountRecords {
+            request: fastctx_types::account_records::Request::Delete { kind, .. },
+            ..
+        } if matches!(kind.as_str(), fastctx_types::plan::KIND | fastctx_types::history::RECORD_KIND)
     )
 }
 

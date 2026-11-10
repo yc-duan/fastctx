@@ -35,6 +35,7 @@ harness = false
 
 [features]
 change-drill = []
+submission-drill = []
 
 [[example]]
 name = "change_drill"

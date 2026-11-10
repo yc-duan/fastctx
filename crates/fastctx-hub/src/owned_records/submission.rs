@@ -35,6 +35,8 @@ struct Asked {
 pub(crate) fn register(hub: &Arc<Hub>) {
     crate::submitted::register(hub, FAMILY, |hub: Arc<Hub>, asked: Asked| async move {
         let Asked { from, key, account, resident } = asked;
+        #[cfg(feature = "submission-drill")]
+        crate::submission_drill::deleting(&hub, &resident).await;
         // As the question would have been answered: whether the member may
         // still ask is seen again as the work begins.
         super::ask(&hub, from, key, account, Request::Delete { resident }).await.map_err(Failure::new)
@@ -53,5 +55,8 @@ pub(super) async fn delete(
     super::acts_for(hub, &from, &key, &account)?;
     let unit = format!("{account}/{resident}");
     let asked = Asked { from, key, account, resident };
-    crate::submitted::told(crate::submitted::submit(hub, &FAMILY, &unit, &asked, named).await)
+    let came = crate::submitted::submit(hub, &FAMILY, &unit, &asked, named).await;
+    #[cfg(feature = "submission-drill")]
+    crate::submission_drill::answered(hub, &asked.resident, named, &came);
+    crate::submitted::told(came)
 }

@@ -31,6 +31,7 @@ mod scale;
 mod shared_controls;
 mod sharing;
 mod skills;
+mod submissions;
 use anyhow::{Context, Result};
 use fastctx_client::World;
 use fastctx_net::{
@@ -257,6 +258,7 @@ fn serve(base: &Path) -> Result<Child> {
         .env("HOME", base.join("user"))
         .env("LANG", "C.UTF-8")
         .env("FASTCTX_UPDATE_RELEASES", "http://127.0.0.1:9/releases")
+        .env("FASTCTX_HUB_HEALTH_SECONDS", "1")
         .args(["hub", "serve", "--dir"])
         .arg(base.join("hub"))
         .stdin(Stdio::null())
@@ -781,6 +783,7 @@ async fn main() -> Result<()> {
     let endpoint = std::env::args().nth(3).context("goal mock endpoint")?;
     goals::exercise(&wa, &host, &moved, &sa.to.resident, &endpoint).await?;
     history::exercise(&wa, &host, &alice_two, &sa.to.resident, &writer.to).await?;
+    submissions::exercise(&base, &wo, &host, &home).await?;
     sharing::exercise(&base, &host, &owner_pc, &wo, &wb, &so.to.resident, &sb.to, &home).await?;
     host_node.kill()?;
     host_node.wait()?;

@@ -76,6 +76,8 @@ mod skill_storage;
 mod store;
 mod strain;
 mod submitted;
+#[cfg(feature = "submission-drill")]
+mod submission_drill;
 pub mod third;
 mod troubles;
 mod updates;
@@ -1024,6 +1026,7 @@ async fn serving(
     // requests are heard. A queue that does not start is told and tried
     // again beside the hub, which serves meanwhile.
     owned_records::submission::register(&hub);
+    owned_records::record_deletions::register(&hub);
     if let Err(error) = hub.durable_jobs.start().await {
         hub.log.line(format_args!("starting the hub's durable jobs; trying again: {error}"));
         let starting = Arc::downgrade(&hub);

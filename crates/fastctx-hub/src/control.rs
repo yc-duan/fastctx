@@ -924,9 +924,16 @@ fn handle(
                 let _ = out.send(Out::Frame(Down::Told { id, answer }));
             });
         }
-        Up::Ask { id, question: Question::AccountRecords { account, request }, .. } => {
+        Up::Ask { id, question: Question::AccountRecords { account, request }, submission } => {
             let opened = match crate::account_records::begin(hub, name, &key, &account, &request) {
                 Ok(opened) => opened,
+                Err(why) => {
+                    reply(Down::Told { id, answer: Err(why) });
+                    return Ok(());
+                }
+            };
+            let named = match submission.map(|submission| crate::submitted::named(name, &submission)).transpose() {
+                Ok(named) => named,
                 Err(why) => {
                     reply(Down::Told { id, answer: Err(why) });
                     return Ok(());
@@ -953,7 +960,7 @@ fn handle(
                 } else {
                     None
                 };
-                let work = crate::account_records::ask(&hub, from, key, account, opened, request);
+                let work = crate::account_records::asked(&hub, from, key, account, opened, request, named);
                 let answer = match reader {
                     Some(reader) => crate::readers::run(reader, &out, deadline, work).await,
                     None => work.await,
