@@ -23,6 +23,7 @@ mod row_index;
 mod row_state;
 pub mod source_io;
 
+mod state_cache;
 pub mod state_read;
 pub mod step_content;
 pub(crate) mod watcher;

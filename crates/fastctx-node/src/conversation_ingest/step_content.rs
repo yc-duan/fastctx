@@ -21,7 +21,7 @@ use std::{
 
 /// Decoder buffers, codec copies, one read page and a bounded planning scratch
 /// remain outside the cache, but inside the same complete source window.
-const SCRATCH_BYTES: usize = 6 * 1024 * 1024;
+const SCRATCH_BYTES: usize = 6 * 1024 * 1024 + super::state_cache::BYTES;
 const DECODER_BUFFERS: usize = 3 * 1024 * 1024;
 /// Conservative map, identifier and reference-count allocation cost per entry.
 const ENTRY_BYTES: usize = 1024;
@@ -38,6 +38,7 @@ pub struct StepContent<'a> {
     checkpoint: Option<Revision>,
     window: Arc<SourceWindow>,
     cache: Mutex<Cache>,
+    prior: Mutex<super::state_cache::StateCache>,
 }
 /// Keeps the source window alive while the canonical merger borrows new content.
 pub struct SuppliedContent {
@@ -69,7 +70,14 @@ impl<'a> StepContent<'a> {
                 SourceAdmission::Granted(window) => window,
                 SourceAdmission::ReleaseRequired => return Err(Error::Busy),
             };
-        Ok(Self { source, target, checkpoint, window: Arc::new(window), cache: Mutex::new(Cache::default()) })
+        Ok(Self {
+            source,
+            target,
+            checkpoint,
+            window: Arc::new(window),
+            cache: Mutex::new(Cache::default()),
+            prior: Mutex::new(super::state_cache::StateCache::default()),
+        })
     }
     pub fn target(&self) -> &SourceStepTarget {
         &self.target
@@ -140,6 +148,9 @@ impl<'a> StepContent<'a> {
         if let Some(bytes) = self.cached_block(&block) {
             return Ok(bytes.to_vec());
         }
+        if let Some(bytes) = self.prior.lock().expect("never poisoned").get(&block) {
+            return Ok(bytes.to_vec());
+        }
         let checkpoint =
             self.checkpoint.ok_or_else(|| Error::Invalid("there is no previous parser checkpoint".into()))?;
         let reply = self
@@ -153,7 +164,9 @@ impl<'a> StepContent<'a> {
             }
             _ => return Err(Error::Corrupt("state reader returned a non-block reply".into())),
         };
-        checked_bytes(&block, bytes)
+        let bytes = checked_bytes(&block, bytes)?;
+        self.prior.lock().expect("never poisoned").put(&block, &bytes);
+        Ok(bytes)
     }
     pub async fn state_manifest(&self, root: ManifestRoot) -> Result<ManifestReply, Error> {
         if let Some(page) = self.cached_manifest(&root) {
