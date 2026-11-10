@@ -381,7 +381,8 @@
       "variants": [
         "Page",
         "Moved",
-        "Object"
+        "Object",
+        "Changes"
       ]
     }
   },
@@ -396,7 +397,9 @@
       "variants": [
         "Page",
         "Moved",
-        "Object"
+        "Object",
+        "Changes",
+        "Reread"
       ]
     }
   },

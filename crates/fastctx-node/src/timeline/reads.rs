@@ -1,9 +1,12 @@
 //! Reading a conversation's timeline: a page of its events, whether it has
-//! moved, and the bytes of an event kept whole as an object. A reading is
-//! one bounded range of the timeline's index, whatever the history's length.
+//! moved, what its records brought since a reading, and the bytes of an
+//! event kept whole as an object. A page is one bounded range of the
+//! timeline's index, whatever the history's length; its changes are the
+//! records written since, however much the timeline holds.
 
 use super::build::{EVENT, OVERSIZED};
 use crate::Node;
+use fastctx_content::State;
 pub(crate) use fastctx_content::{Anchor, ObjectRef, Place};
 use fastctx_types::ResidentId;
 use fastctx_types::ipc::Failure;
@@ -35,6 +38,24 @@ pub(crate) struct Read {
     pub entries: Vec<Entry>,
     pub older: Option<Place>,
     pub newer: Option<Place>,
+    /// How many records the timeline held as the page was read.
+    pub through: u64,
+}
+
+pub(crate) enum Change {
+    /// The event stands at its place as shown from this record on.
+    Is(Entry),
+    /// The timeline holds the item no more.
+    Gone { item: Vec<u8> },
+}
+
+pub(crate) struct Changed {
+    pub revision: Option<u64>,
+    /// In the order they were written.
+    pub changes: Vec<Change>,
+    /// The count of records these reach to.
+    pub through: u64,
+    pub more: bool,
 }
 
 fn failure(error: impl std::fmt::Display) -> Failure {
@@ -58,24 +79,61 @@ pub(crate) fn page(
         .items
         .into_iter()
         .map(|item| {
-            let place = item.place();
-            let shown = match item.body.split_first() {
-                Some((&EVENT, event)) => Shown::Event(event.to_vec()),
-                Some((&OVERSIZED, told)) => {
-                    let told: serde_json::Value = serde_json::from_slice(told).map_err(failure)?;
-                    let object = *item.objects.first().ok_or_else(|| failure("an oversized event names no object"))?;
-                    let slim = match &told["slim"] {
-                        serde_json::Value::Null => None,
-                        slim => Some(serde_json::to_vec(slim).map_err(failure)?),
-                    };
-                    Shown::Oversized { bytes: told["bytes"].as_u64().unwrap_or(object.size), slim, object }
-                }
-                _ => return Err(failure("the timeline holds an item it cannot read")),
-            };
-            Ok(Entry { place, sequence: item.sequence, shown })
+            Ok(Entry { place: item.place(), sequence: item.sequence, shown: shown(&item.body, &item.objects)? })
         })
         .collect::<Result<_, Failure>>()?;
-    Ok(Read { revision: page.revision, entries, older: page.older, newer: page.newer })
+    Ok(Read { revision: page.revision, entries, older: page.older, newer: page.newer, through: page.through })
+}
+
+/// What a timeline record's body shows: the event, or what stands for one
+/// kept whole as an object.
+fn shown(body: &[u8], objects: &[ObjectRef]) -> Result<Shown, Failure> {
+    match body.split_first() {
+        Some((&EVENT, event)) => Ok(Shown::Event(event.to_vec())),
+        Some((&OVERSIZED, told)) => {
+            let told: serde_json::Value = serde_json::from_slice(told).map_err(failure)?;
+            let object = *objects.first().ok_or_else(|| failure("an oversized event names no object"))?;
+            let slim = match &told["slim"] {
+                serde_json::Value::Null => None,
+                slim => Some(serde_json::to_vec(slim).map_err(failure)?),
+            };
+            Ok(Shown::Oversized { bytes: told["bytes"].as_u64().unwrap_or(object.size), slim, object })
+        }
+        _ => Err(failure("the timeline holds an item it cannot read")),
+    }
+}
+
+/// What the timeline's records brought after its first `after`: none when
+/// it does not hold its records from there on, and the reader reads its
+/// pages again. It blocks for the read: on a task thread it waits in place.
+pub(crate) fn changes(
+    node: &Node,
+    resident: &ResidentId,
+    after: u64,
+    max_items: u32,
+    max_bytes: u32,
+) -> Result<Option<Changed>, Failure> {
+    let read = node
+        .content()?
+        .changes(&super::stream(resident), after, max_items.clamp(1, PAGE_ITEMS), max_bytes.min(PAGE_BYTES))
+        .map_err(failure)?;
+    let Some(read) = read else { return Ok(None) };
+    let changes = read
+        .changes
+        .into_iter()
+        .map(|change| {
+            let record = change.record;
+            Ok(match record.state {
+                State::Is { body, objects } => Change::Is(Entry {
+                    shown: shown(&body, &objects)?,
+                    place: Place { order: record.order, item: record.item },
+                    sequence: change.sequence,
+                }),
+                State::Gone => Change::Gone { item: record.item },
+            })
+        })
+        .collect::<Result<_, Failure>>()?;
+    Ok(Some(Changed { revision: read.revision, changes, through: read.through, more: read.more }))
 }
 
 /// Waits until the conversation's timeline is past `after`, `within` at

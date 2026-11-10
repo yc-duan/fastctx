@@ -267,6 +267,8 @@ def samples(root, shipped):
             {"call": "timeline", "machine": None, "request": {"do": "moved", "resident": ADDRESS["resident"], "after": 3}},
             {"call": "timeline", "machine": "laptop", "request": {"do": "object", "resident": ADDRESS["resident"],
              "object": "ab" * 32, "offset": 1, "length": 262144}},
+            {"call": "timeline", "machine": "laptop", "request": {"do": "changes", "resident": ADDRESS["resident"],
+             "after": 7, "max_events": 400, "max_bytes": 1048576}},
         ]:
             yield {"mode": "current_request", "protocol": protocol, "peer": PEER, "admitted": False,
                    "value": {"kind": "call", "id": 37, "call": call}}

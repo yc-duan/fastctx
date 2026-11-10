@@ -437,7 +437,7 @@ fn timeline(request: &crate::timeline_pages::TimelineAsk) -> Response {
     use crate::timeline_pages::TimelineAsk;
     match request {
         TimelineAsk::Moved { .. } => Response::Stream,
-        TimelineAsk::Page { .. } | TimelineAsk::Object { .. } => Response::Answer,
+        TimelineAsk::Page { .. } | TimelineAsk::Object { .. } | TimelineAsk::Changes { .. } => Response::Answer,
     }
 }
 

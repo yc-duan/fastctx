@@ -64,6 +64,7 @@ fn main() -> Outcome<()> {
 
     revisions(&content, &stream)?;
     named(&content)?;
+    changes(&content)?;
     let began = Instant::now();
     let audited = content.audit(&stream)?;
     println!(
@@ -182,6 +183,92 @@ fn named(content: &Content) -> Outcome<()> {
         return Err("a stream that is not there named items, or an empty prefix was taken".into());
     }
     println!("named: prefixes of identities find their items and no others");
+    Ok(())
+}
+
+/// What was appended is read back from any place in the stream's sequence,
+/// in the order it was appended, across frames and within the bounds asked.
+fn changes(content: &Content) -> Outcome<()> {
+    const FIRST: usize = 5_000;
+    let stream = StreamKey::new("drill/changes", "items");
+    let none = content.changes(&stream, 0, 9, 1024)?.ok_or("a stream that is not there had lost its records")?;
+    if none.revision.is_some() || !none.changes.is_empty() || none.through != 0 || none.more {
+        return Err("a stream that is not there brought changes".into());
+    }
+    if content.changes(&stream, 3, 9, 1024)?.is_some() {
+        return Err("a stream that is not there answered a place it never reached".into());
+    }
+    // More than one frame holds, then an item set again, one moved and one gone.
+    let mut appended: Vec<Record> = (0..FIRST).map(|number| record(number, 8)).collect();
+    let batch = |records: Vec<Record>| Batch {
+        stream: stream.clone(),
+        generation: 0,
+        records,
+        checkpoint: None,
+        durable: false,
+    };
+    content.append(batch(appended.clone()))?;
+    let mut again = record(7, 8);
+    again.state = State::Is { body: b"revised".to_vec(), objects: Vec::new() };
+    let mut moved = record(9, 8);
+    moved.order = (FIRST as u64 + 5).to_be_bytes().to_vec();
+    let mut gone = record(11, 0);
+    gone.state = State::Gone;
+    let later = vec![again, moved, gone];
+    content.append(batch(later.clone()))?;
+    appended.extend(later);
+    let end = appended.len() as u64;
+
+    let mut read = Vec::new();
+    let mut from = 0;
+    loop {
+        let part = content.changes(&stream, from, 1_000, 1024 * 1024)?.ok_or("the stream lost its records")?;
+        if part.revision != Some(2) || part.changes.first().is_some_and(|change| change.sequence != from) {
+            return Err(format!("changes from {from} came of revision {:?} or another place", part.revision).into());
+        }
+        from = part.through;
+        read.extend(part.changes);
+        if !part.more {
+            break;
+        }
+    }
+    if from != end
+        || read.len() != appended.len()
+        || read.iter().enumerate().any(|(at, change)| change.sequence != at as u64 || change.record != appended[at])
+    {
+        return Err("the changes read from the start are not the records appended, in their order".into());
+    }
+    // Across the end of a frame, bounded by count and then by bytes.
+    let across = content.changes(&stream, 4_094, 4, 1024 * 1024)?.ok_or("the stream lost its records")?;
+    let sequences: Vec<u64> = across.changes.iter().map(|change| change.sequence).collect();
+    if sequences != [4_094, 4_095, 4_096, 4_097] || across.through != 4_098 || !across.more {
+        return Err(format!("changes across a frame's end came as {sequences:?}").into());
+    }
+    let one = content.changes(&stream, 2, 100, 1)?.ok_or("the stream lost its records")?;
+    if one.changes.len() != 1 || one.through != 3 || !one.more {
+        return Err("changes under a byte bound smaller than a record are not one record".into());
+    }
+    let began = Instant::now();
+    let tail = content.changes(&stream, FIRST as u64, 400, 1024 * 1024)?.ok_or("the stream lost its records")?;
+    let took = began.elapsed();
+    if tail.changes.len() != 3
+        || tail.through != end
+        || tail.more
+        || !matches!(tail.changes[2].record.state, State::Gone)
+    {
+        return Err("the last batch's changes are not its three records".into());
+    }
+    let nothing = content.changes(&stream, end, 400, 1024)?.ok_or("the stream lost its records")?;
+    if !nothing.changes.is_empty() || nothing.through != end || nothing.more || nothing.revision != Some(2) {
+        return Err("a reader at the stream's end was brought changes".into());
+    }
+    if content.changes(&stream, end + 1, 400, 1024)?.is_some() {
+        return Err("a place past the stream's end was answered".into());
+    }
+    if content.page(&stream, &Anchor::Latest, 1, 1024)?.through != end {
+        return Err("a page does not say where its stream's changes are read on from".into());
+    }
+    println!("changes: {end} records read back in order from any place; the last batch's in {took:.1?}");
     Ok(())
 }
 

@@ -45,12 +45,21 @@ pub enum TimelineAsk {
     Moved { resident: ResidentId, after: u64 },
     /// A range of an event kept whole as an object, named as a page named it.
     Object { resident: ResidentId, object: String, offset: u64, length: u32 },
+    /// What the timeline's records brought after the first `after` of them:
+    /// the events written and those gone, in the order they were. `after`
+    /// is the `through` an earlier page or changes gave. A reader that holds
+    /// part of the timeline brings it up to date by these, and reads no
+    /// page again.
+    Changes { resident: ResidentId, after: u64, max_events: u32, max_bytes: u32 },
 }
 
 impl TimelineAsk {
     pub fn resident(&self) -> &ResidentId {
         match self {
-            Self::Page { resident, .. } | Self::Moved { resident, .. } | Self::Object { resident, .. } => resident,
+            Self::Page { resident, .. }
+            | Self::Moved { resident, .. }
+            | Self::Object { resident, .. }
+            | Self::Changes { resident, .. } => resident,
         }
     }
 }
@@ -67,6 +76,11 @@ pub enum TimelineTold {
         older: Option<TimelinePlace>,
         /// Where to read on from towards the end, when there may be more.
         newer: Option<TimelinePlace>,
+        /// How many records the timeline held as the page was read: what
+        /// `Changes` is asked after, for what comes after this page. None
+        /// from a machine that answers no changes.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        through: Option<u64>,
     },
     Moved {
         revision: Option<u64>,
@@ -76,6 +90,31 @@ pub enum TimelineTold {
         /// timeline refers to no such object.
         base64: Option<String>,
     },
+    Changes {
+        /// The timeline's revision as its records were read.
+        revision: Option<u64>,
+        /// In the order they were written. An event may be among them more
+        /// than once: the last is how it stands.
+        changes: Vec<TimelineChange>,
+        /// What to ask `Changes` after next.
+        through: u64,
+        /// Whether the timeline holds records after these.
+        more: bool,
+    },
+    /// The timeline does not hold its records from the place asked after,
+    /// as one made anew: the reader reads its pages again.
+    Reread,
+}
+
+/// One record of a timeline: an event as it stands from then on, or its end.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "change", rename_all = "snake_case")]
+pub enum TimelineChange {
+    /// The event stands at its place as shown. A reader that holds an event
+    /// of the same item holds this one instead, where this one stands.
+    Is { event: TimelineEvent },
+    /// The timeline no longer holds the item.
+    Gone { item: String },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -50,6 +50,9 @@ pub struct Page {
     pub older: Option<Place>,
     /// Where to read on from towards its end, when there may be more that way.
     pub newer: Option<Place>,
+    /// How many records the stream held as the page was read: where
+    /// `Content::changes` reads on from, for what comes after this page.
+    pub through: u64,
 }
 
 const COLUMNS: &str = "place, item, sequence, body, objects";
@@ -197,6 +200,8 @@ fn page(
     // The stream's revision and its items are read as of one moment.
     let snapshot = db.unchecked_transaction()?;
     let Some((id, revision)) = locate(&snapshot, stream)? else { return Ok(Page::default()) };
+    let through: i64 =
+        snapshot.prepare_cached("SELECT next FROM streams WHERE id = ?1")?.query_row([id], |row| row.get(0))?;
     let limit = max_items as i64 + 1;
     let mut items = Vec::new();
     let mut more = false;
@@ -242,5 +247,5 @@ fn page(
         Anchor::Before(_) => (first.filter(|_| more), last),
         Anchor::After(_) => (first, last.filter(|_| more)),
     };
-    Ok(Page { revision: Some(revision), items, older, newer })
+    Ok(Page { revision: Some(revision), items, older, newer, through: through as u64 })
 }

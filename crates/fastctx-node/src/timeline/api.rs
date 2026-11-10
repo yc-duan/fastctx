@@ -1,13 +1,13 @@
 //! Timeline calls use the same routes and admission as watching a conversation.
 
-use super::reads::{self, Anchor, Place, Shown};
+use super::reads::{self, Anchor, Change, Entry, Place, Shown};
 use crate::Node;
 use base64::{Engine, engine::general_purpose::STANDARD};
 use fastctx_types::access::{Acting, Purpose, Written};
 use fastctx_types::ipc::Failure;
 use fastctx_types::remote::{RemoteCall, RemoteReply};
 use fastctx_types::timeline_pages::{
-    OBJECT_BYTES, TimelineAsk, TimelineEvent, TimelineFrom, TimelinePlace, TimelineShown, TimelineTold,
+    OBJECT_BYTES, TimelineAsk, TimelineChange, TimelineEvent, TimelineFrom, TimelinePlace, TimelineShown, TimelineTold,
 };
 use std::{sync::Arc, time::Duration};
 
@@ -106,29 +106,31 @@ pub(crate) async fn here(node: &Arc<Node>, request: TimelineAsk) -> Result<Timel
             };
             fastctx_platform::roles::in_place("reading a timeline page", || {
                 let read = reads::page(node, &resident, &anchor, max_events, max_bytes)?;
-                let events = read
-                    .entries
-                    .into_iter()
-                    .map(|entry| {
-                        let shown = match entry.shown {
-                            Shown::Event(event) => {
-                                TimelineShown::Event { event: serde_json::from_slice(&event).map_err(failure)? }
-                            }
-                            Shown::Oversized { bytes, slim, object } => TimelineShown::Oversized {
-                                bytes,
-                                slim: slim.map(|slim| serde_json::from_slice(&slim)).transpose().map_err(failure)?,
-                                object: hex(&object.hash),
-                            },
-                        };
-                        Ok(TimelineEvent { place: encode_place(entry.place), sequence: entry.sequence, shown })
-                    })
-                    .collect::<Result<_, Failure>>()?;
                 Ok(TimelineTold::Page {
                     revision: read.revision,
-                    events,
+                    events: read.entries.into_iter().map(event).collect::<Result<_, Failure>>()?,
                     older: read.older.map(encode_place),
                     newer: read.newer.map(encode_place),
+                    through: Some(read.through),
                 })
+            })
+        }
+        TimelineAsk::Changes { resident, after, max_events, max_bytes } => {
+            fastctx_platform::roles::in_place("reading a timeline's changes", || {
+                let Some(read) = reads::changes(node, &resident, after, max_events, max_bytes)? else {
+                    return Ok(TimelineTold::Reread);
+                };
+                let changes = read
+                    .changes
+                    .into_iter()
+                    .map(|change| {
+                        Ok(match change {
+                            Change::Is(entry) => TimelineChange::Is { event: event(entry)? },
+                            Change::Gone { item } => TimelineChange::Gone { item: hex(&item) },
+                        })
+                    })
+                    .collect::<Result<_, Failure>>()?;
+                Ok(TimelineTold::Changes { revision: read.revision, changes, through: read.through, more: read.more })
             })
         }
         TimelineAsk::Object { resident, object, offset, length } => {
@@ -145,6 +147,19 @@ pub(crate) async fn here(node: &Arc<Node>, request: TimelineAsk) -> Result<Timel
 
 fn failure(error: impl std::fmt::Display) -> Failure {
     Failure::new(error.to_string())
+}
+
+/// An event of the timeline as a reader is told it.
+fn event(entry: Entry) -> Result<TimelineEvent, Failure> {
+    let shown = match entry.shown {
+        Shown::Event(event) => TimelineShown::Event { event: serde_json::from_slice(&event).map_err(failure)? },
+        Shown::Oversized { bytes, slim, object } => TimelineShown::Oversized {
+            bytes,
+            slim: slim.map(|slim| serde_json::from_slice(&slim)).transpose().map_err(failure)?,
+            object: hex(&object.hash),
+        },
+    };
+    Ok(TimelineEvent { place: encode_place(entry.place), sequence: entry.sequence, shown })
 }
 
 fn decode_place(place: TimelinePlace) -> Result<Place, Failure> {
