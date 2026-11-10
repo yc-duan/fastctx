@@ -55,6 +55,7 @@ pub(super) async fn change(node: &Arc<Node>, dir: PathBuf, change: FolderChange)
             if let Some(searching) = node.logins.searches.get(&walk::key(&dir)) {
                 searching.stop.store(true, Ordering::Relaxed);
             }
+            super::submitted::withdraw_folder(node, &dir, "the folder's search was stopped before it began").await?;
             super::here(node).await
         }
         FolderChange::Forget => forget(node, dir).await,
@@ -102,6 +103,7 @@ async fn forget(node: &Arc<Node>, dir: PathBuf) -> Result<MachineLogins, Failure
     if let Some(searching) = node.logins.searches.0.lock().expect("never poisoned").remove(&walk::key(&dir)) {
         searching.stop.store(true, Ordering::Relaxed);
     }
+    super::submitted::withdraw_folder(node, &dir, "the folder was forgotten before its search began").await?;
     {
         let (node, dir) = (node.clone(), dir.clone());
         fastctx_platform::task::spawn_blocking(move || {

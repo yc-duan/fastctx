@@ -246,7 +246,6 @@ async fn kept_of(node: &Node, payload: &[u8]) -> Result<Option<Vec<u8>>, String>
 /// Takes back what a family was asked for `unit` and has not begun, as
 /// when what it would have worked on is stopped: each such operation is
 /// settled as not done, for `why`. Work that has begun goes on.
-#[expect(dead_code, reason = "the first family whose work can be stopped before it begins is not merged yet")]
 pub(crate) async fn withdraw(node: &Node, family: &Family, unit: &str, why: &str) -> Result<usize, Failure> {
     let kind = family.name;
     let (unit, reason) = (unit.to_string(), failed(&Failure::not_run(why)));

@@ -26,6 +26,7 @@ pub(crate) mod refresh;
 pub(crate) mod remote;
 pub(crate) mod scan;
 mod sign_in;
+pub(crate) mod submitted;
 pub(crate) mod watch;
 pub(crate) mod workbench;
 

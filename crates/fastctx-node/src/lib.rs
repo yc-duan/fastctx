@@ -977,6 +977,7 @@ pub async fn run_prepared(
         management::register(&node);
         goals::submission::register(&node);
         sentinels::submission::register(&node);
+        logins::submitted::register(&node);
         content_upkeep::register(&node);
         outbox::register(&node);
         control_queue::register(&node);

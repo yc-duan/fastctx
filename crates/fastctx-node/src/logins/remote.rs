@@ -147,7 +147,7 @@ fn other(machine: &Written) -> Failure {
 
 pub(crate) async fn scan(node: &Arc<Node>, machine: Written, stop: bool) -> Result<MachineLogins, Failure> {
     if node.is_here(&machine) {
-        return super::scan::scan(node, stop).await;
+        return super::submitted::scan(node, stop).await;
     }
     match ask(node, &machine, Purpose::Hands, RemoteCall::ScanAgents { stop }).await? {
         RemoteReply::AgentLogins(logins) => Ok(*logins),
@@ -162,7 +162,7 @@ pub(crate) async fn add(
     dir: PathBuf,
 ) -> Result<MachineLogins, Failure> {
     if node.is_here(&machine) {
-        return super::take_up(node, agent, dir).await;
+        return super::submitted::add(node, agent, dir).await;
     }
     match ask(node, &machine, Purpose::Hands, RemoteCall::AddAgentLogin { agent, dir }).await? {
         RemoteReply::AgentLogins(logins) => Ok(*logins),
@@ -177,7 +177,7 @@ pub(crate) async fn folder(
     change: FolderChange,
 ) -> Result<MachineLogins, Failure> {
     if node.is_here(&machine) {
-        return super::folders::change(node, dir, change).await;
+        return super::submitted::folder(node, dir, change).await;
     }
     match ask(node, &machine, Purpose::Hands, RemoteCall::AgentFolder { dir, change }).await? {
         RemoteReply::AgentLogins(logins) => Ok(*logins),
@@ -217,7 +217,8 @@ pub(crate) async fn change(
     workbench: Option<bool>,
 ) -> Result<LoginChange, Failure> {
     if node.is_here(&machine) {
-        return super::change::change(node, agent, dir, into, raise_output_limit, take_back, expected, workbench).await;
+        return super::submitted::change(node, agent, dir, into, raise_output_limit, take_back, expected, workbench)
+            .await;
     }
     let call = RemoteCall::ChangeAgentLogin { agent, dir, into, raise_output_limit, take_back, expected, workbench };
     match ask(node, &machine, Purpose::Hands, call).await? {
@@ -233,8 +234,7 @@ pub(crate) async fn read_limits(
     dir: PathBuf,
 ) -> Result<MachineLogins, Failure> {
     if node.is_here(&machine) {
-        super::limits::read(node, &agent, &dir).await?;
-        return super::here(node).await;
+        return super::submitted::read_limits(node, agent, dir, false).await;
     }
     match ask(node, &machine, Purpose::Look, RemoteCall::ReadAgentLimits { agent, dir }).await? {
         RemoteReply::AgentLogins(logins) => Ok(*logins),
@@ -253,9 +253,7 @@ pub(crate) async fn set_resets_in_place(
     on: bool,
 ) -> Result<MachineLogins, Failure> {
     if node.is_here(&machine) {
-        super::set_resets_in_place(node, &agent, &dir, on)?;
-        crate::usage::after_reading(node, agent.as_str(), &dir).await;
-        return super::here(node).await;
+        return super::submitted::set_resets_in_place(node, agent, dir, on).await;
     }
     match ask(node, &machine, Purpose::Hands, RemoteCall::SetAgentResetInPlace { agent, dir, on }).await? {
         RemoteReply::AgentLogins(logins) => Ok(*logins),
@@ -384,17 +382,15 @@ pub(crate) async fn answer(
     let logins = |logins: MachineLogins| RemoteReply::AgentLogins(Box::new(seen(view, asker, logins)));
     match call {
         RemoteCall::AgentLogins => super::here(node).await.map(logins),
-        RemoteCall::ScanAgents { stop } => super::scan::scan(node, stop).await.map(logins),
-        RemoteCall::AddAgentLogin { agent, dir } => super::take_up(node, agent, dir).await.map(logins),
-        RemoteCall::AgentFolder { dir, change } => super::folders::change(node, dir, change).await.map(logins),
+        RemoteCall::ScanAgents { stop } => super::submitted::scan(node, stop).await.map(logins),
+        RemoteCall::AddAgentLogin { agent, dir } => super::submitted::add(node, agent, dir).await.map(logins),
+        RemoteCall::AgentFolder { dir, change } => super::submitted::folder(node, dir, change).await.map(logins),
         RemoteCall::SetAgentTitle { agent, dir, on } => {
             super::set_title(node, &agent, &dir, on)?;
             super::here(node).await.map(logins)
         }
         RemoteCall::SetAgentResetInPlace { agent, dir, on } => {
-            super::set_resets_in_place(node, &agent, &dir, on)?;
-            crate::usage::after_reading(node, agent.as_str(), &dir).await;
-            super::here(node).await.map(logins)
+            super::submitted::set_resets_in_place(node, agent, dir, on).await.map(logins)
         }
         RemoteCall::ChangeAgentModels { agent, dir, change } => {
             super::models::change(node, &agent, &dir, &change)?;
@@ -406,26 +402,20 @@ pub(crate) async fn answer(
                 .map(|preview| RemoteReply::AgentChangePreview(Box::new(preview)))
         }
         RemoteCall::ChangeAgentLogin { agent, dir, into, raise_output_limit, take_back, expected, workbench } => {
-            super::change::change(node, agent, dir, into, raise_output_limit, take_back, expected, workbench)
+            super::submitted::change(node, agent, dir, into, raise_output_limit, take_back, expected, workbench)
                 .await
                 .map(|change| RemoteReply::AgentLoginChanged(Box::new(change)))
         }
         RemoteCall::ReadAgentLimits { agent, dir } => {
-            let record = super::here(node).await?;
-            let side = record.of(agent.as_str()).ok_or_else(|| Failure::not_run(format!("{agent} keeps no logins")))?;
-            let login = side
-                .listed
-                .iter()
-                .chain(&side.candidates)
-                .find(|login| crate::homes::same_dir(&login.dir, &dir))
-                // One a login only assists does not read its account's windows.
-                .filter(|login| asker.hands && may_see(view, asker, &agent, &login.dir, login.default))
-                .ok_or_else(|| {
-                    Failure::not_run(format!("no {agent} login {} here is the account's to see", dir.display()))
-                })?;
-            let dir = login.dir.clone();
-            super::limits::read(node, &agent, &dir).await?;
-            super::here(node).await.map(logins)
+            // Only a holder reads account windows. Check before recording work;
+            // the job resolves the requested login from the machine's record.
+            if !asker.hands {
+                return Err(Failure::not_run(format!(
+                    "no {agent} login {} here is the account's to see",
+                    dir.display()
+                )));
+            }
+            super::submitted::read_limits(node, agent, dir, true).await.map(logins)
         }
         RemoteCall::AgentUsage { agent, dir } => {
             let record = super::here(node).await?;

@@ -28,6 +28,7 @@ use crate::Node;
 pub(crate) async fn scan(node: &Arc<Node>, stop: bool) -> Result<MachineLogins, Failure> {
     if stop {
         super::folders::stop_all(node);
+        super::submitted::withdraw_scan(node).await?;
         return super::here(node).await;
     }
     if node.logins.scanning.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire).is_err() {
