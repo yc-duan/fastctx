@@ -137,9 +137,8 @@ pub fn update_document<'a>(node: &'a Arc<Node>, id: &'a ResidentId, input: Input
                 revision,
             });
         }
-        let prepared = persistence::prepare_text(id, &mut next, &document)?
-            .with_compactor(node.composers.compactor.get().cloned());
-        let wake = prepared.compaction_wake();
+        let prepared = persistence::prepare_text(id, &mut next, &document)?;
+        let compact_due = prepared.compact_due();
         let changed = prepared.update()?;
         let document_revision = changed.revision;
         let revision = next.revision;
@@ -154,8 +153,8 @@ pub fn update_document<'a>(node: &'a Arc<Node>, id: &'a ResidentId, input: Input
                 move |transaction| prepared.commit(transaction),
                 move |_| {
                     publication.committed();
-                    if let Some(wake) = wake {
-                        wake();
+                    if compact_due {
+                        committed_node.durable_jobs.stir(compaction::KIND);
                     }
                     publication::invalidate(&committed_node, &runtime, &committed_id, revision);
                     if legacy {

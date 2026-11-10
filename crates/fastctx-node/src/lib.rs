@@ -40,7 +40,7 @@ mod colleagues;
 mod completion_debt;
 mod completion_delivery;
 mod composer;
-pub use composer::compaction::{Compactor as ComposerCompactor, compact_document as compact_composer_document};
+pub use composer::compaction::compact_document as compact_composer_document;
 mod consent;
 pub mod context;
 mod control;
@@ -978,6 +978,7 @@ pub async fn run_prepared(
         content_upkeep::register(&node);
         outbox::register(&node);
         control_queue::register(&node);
+        composer::compaction::register(&node);
         lifecycle::retry::register(&node);
         let (durable_jobs, log) = (node.durable_jobs.clone(), node.log.clone());
         fastctx_platform::task::spawn(async move {

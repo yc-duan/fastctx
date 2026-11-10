@@ -163,11 +163,11 @@ async fn migrate_one(node: &Arc<Node>, id: &ResidentId) -> Result<bool, Failure>
     if state.persisted {
         return Ok(false);
     }
-    let prepared = persistence::prepare(id, &mut state)?.with_compactor(node.composers.compactor.get().cloned());
-    let wake = prepared.compaction_wake();
+    let prepared = persistence::prepare(id, &mut state)?;
+    let compact_due = prepared.compact_due();
     node.database.write(prepared.bytes, move |transaction| prepared.commit(transaction)).await.map_err(failure)?;
-    if let Some(wake) = wake {
-        wake();
+    if compact_due {
+        node.durable_jobs.stir(compaction::KIND);
     }
     // No snapshot is needed for an unopened input. Its text otherwise remains
     // resident in every idle conversation after a first upgrade.

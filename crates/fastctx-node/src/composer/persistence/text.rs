@@ -2,7 +2,6 @@
 
 use super::*;
 use fastctx_types::composer::sync::{Bytes, Update};
-use std::sync::Arc;
 
 pub(super) struct TextWrite {
     key: documents::Key,
@@ -33,6 +32,7 @@ impl TextWrite {
         self.key.bytes()
             + self.updates.iter().map(Vec::len).sum::<usize>()
             + self.migration.as_ref().map_or(0, Vec::len)
+            + if self.compact_due { super::super::compaction::job_bytes(&self.key) } else { 0 }
     }
     pub fn update(&self) -> Result<Update, Failure> {
         Ok(Update {
@@ -47,7 +47,7 @@ impl TextWrite {
     pub fn compact_due(&self) -> bool {
         self.compact_due
     }
-    pub fn commit(self, db: &Connection, compactor: Option<&super::super::compaction::Compactor>) -> StoredResult<()> {
+    pub fn commit(self, db: &Connection) -> StoredResult<()> {
         let mut revision = self.revision;
         for update in self.updates {
             revision = documents::append(db, &self.key, revision, &update, None)?;
@@ -55,10 +55,8 @@ impl TextWrite {
         if let Some(checkpoint) = self.migration {
             journal::checkpoint(db, &self.key, &checkpoint)?;
         }
-        if self.compact_due
-            && let Some(compactor) = compactor
-        {
-            (compactor.submit)(db, &self.key)?;
+        if self.compact_due {
+            super::super::compaction::submit(db, &self.key)?;
         }
         Ok(())
     }
@@ -69,7 +67,6 @@ pub(in crate::composer) struct Prepared {
     previous: u64,
     revision: u64,
     text: TextWrite,
-    compactor: Option<Arc<super::super::compaction::Compactor>>,
     pub bytes: usize,
 }
 pub(in crate::composer) fn prepare(id: &ResidentId, state: &mut Stored, document: &str) -> Result<Prepared, Failure> {
@@ -83,17 +80,11 @@ pub(in crate::composer) fn prepare(id: &ResidentId, state: &mut Stored, document
     let text = TextWrite::prepare(&owner, state.editable_document(document)?)?;
     state.revision = revision;
     let bytes = owner.len() + text.bytes();
-    Ok(Prepared { owner, previous, revision, text, compactor: None, bytes })
+    Ok(Prepared { owner, previous, revision, text, bytes })
 }
 impl Prepared {
-    pub fn with_compactor(mut self, compactor: Option<Arc<super::super::compaction::Compactor>>) -> Self {
-        if self.text.compact_due() {
-            self.compactor = compactor;
-        }
-        self
-    }
-    pub fn compaction_wake(&self) -> Option<Arc<dyn Fn() + Send + Sync>> {
-        self.compactor.as_ref().map(|compactor| compactor.wake.clone())
+    pub fn compact_due(&self) -> bool {
+        self.text.compact_due()
     }
     pub fn update(&self) -> Result<Update, Failure> {
         self.text.update()
@@ -108,6 +99,6 @@ impl Prepared {
         if changed != 1 {
             return Err(error("the composer changed before its text could commit; synchronize it again"));
         }
-        self.text.commit(db, self.compactor.as_deref())
+        self.text.commit(db)
     }
 }

@@ -47,17 +47,16 @@ pub(super) fn load<'a>(node: &'a Arc<Node>, id: &'a ResidentId, cell: &'a mut Op
         }
         changed |= state.documents().any(|document| document.metadata_dirty());
         if !state.persisted || changed {
-            let prepared =
-                persistence::prepare(id, &mut state)?.with_compactor(node.composers.compactor.get().cloned());
-            let wake = prepared.compaction_wake();
+            let prepared = persistence::prepare(id, &mut state)?;
+            let compact_due = prepared.compact_due();
             node.database
                 .write_at(fastctx_storage::Priority::Interactive, prepared.bytes, move |transaction| {
                     prepared.commit(transaction)
                 })
                 .await
                 .map_err(failure)?;
-            if let Some(wake) = wake {
-                wake();
+            if compact_due {
+                node.durable_jobs.stir(compaction::KIND);
             }
         }
         // The draft file an older node kept goes once the database holds
@@ -120,8 +119,8 @@ pub(super) fn publish_then<'a>(
         if !node.residents.knows(id) {
             return Err(failure("unknown resident"));
         }
-        let prepared = persistence::prepare(id, &mut next)?.with_compactor(node.composers.compactor.get().cloned());
-        let wake = prepared.compaction_wake();
+        let prepared = persistence::prepare(id, &mut next)?;
+        let compact_due = prepared.compact_due();
         let documents = node.composers.streams.prepare(id, synchronized(&mut next, &prepared)?);
         let view = watching::legacy(node, id).then(|| Arc::new(next.view()));
         let revision = next.revision;
@@ -135,10 +134,10 @@ pub(super) fn publish_then<'a>(
                 move |transaction| prepared.commit(transaction),
                 move |_| {
                     documents.committed();
-                    if let Some(wake) = wake {
-                        wake();
-                    }
                     if let Some(node) = weak.upgrade() {
+                        if compact_due {
+                            node.durable_jobs.stir(compaction::KIND);
+                        }
                         match view {
                             Some(view) => publication::committed(&node, &runtime, &published_id, view, busy),
                             None => publication::settled(&node, &runtime, &published_id, revision, busy),

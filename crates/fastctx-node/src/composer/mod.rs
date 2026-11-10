@@ -3,7 +3,6 @@
 mod commands;
 pub(crate) mod compaction;
 mod document;
-use compaction::Compactor;
 mod failures;
 mod idle;
 mod keeping;
@@ -70,7 +69,6 @@ pub struct Composers {
     releases: Mutex<HashMap<ResidentId, bool>>,
     upload_failures: Arc<Mutex<HashMap<ResidentId, HashMap<String, String>>>>,
     snapshots: publication::Snapshots,
-    compactor: std::sync::OnceLock<Arc<Compactor>>,
     legacy_refreshes: legacy_refresh::Refreshes,
 }
 

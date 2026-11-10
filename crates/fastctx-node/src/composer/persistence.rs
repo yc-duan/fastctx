@@ -77,7 +77,6 @@ pub(super) struct Prepared {
     texts: Vec<TextWrite>,
     deleted: Vec<documents::Key>,
     records: Vec<Record>,
-    compactor: Option<Arc<super::compaction::Compactor>>,
     pub bytes: usize,
 }
 
@@ -150,18 +149,12 @@ pub(super) fn prepare(id: &ResidentId, state: &mut Stored) -> Result<Prepared, F
         + texts.iter().map(TextWrite::bytes).sum::<usize>()
         + deleted.iter().map(documents::Key::bytes).sum::<usize>()
         + records.iter().map(|record| record.name.len() + record.content.len()).sum::<usize>();
-    Ok(Prepared { owner, previous, revision: state.revision, content, texts, deleted, records, compactor: None, bytes })
+    Ok(Prepared { owner, previous, revision: state.revision, content, texts, deleted, records, bytes })
 }
 
 impl Prepared {
-    pub fn with_compactor(mut self, compactor: Option<Arc<super::compaction::Compactor>>) -> Self {
-        if self.texts.iter().any(TextWrite::compact_due) {
-            self.compactor = compactor;
-        }
-        self
-    }
-    pub fn compaction_wake(&self) -> Option<Arc<dyn Fn() + Send + Sync>> {
-        self.compactor.as_ref().map(|compactor| compactor.wake.clone())
+    pub fn compact_due(&self) -> bool {
+        self.texts.iter().any(TextWrite::compact_due)
     }
     pub fn updates(&self) -> Result<Vec<fastctx_types::composer::sync::Update>, Failure> {
         self.texts.iter().map(TextWrite::update).collect()
@@ -184,7 +177,7 @@ impl Prepared {
             )?;
         }
         for text in self.texts {
-            text.commit(transaction, self.compactor.as_deref())?;
+            text.commit(transaction)?;
         }
         for key in self.deleted {
             journal::delete(transaction, &key)?;
