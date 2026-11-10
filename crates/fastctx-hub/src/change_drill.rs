@@ -1,5 +1,8 @@
 //! Measures a directory edit without a listener or a network connection.
 
+mod exercise;
+mod verify;
+
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
@@ -14,7 +17,7 @@ use crate::{Book, Store};
 /// Runs the opt-in local benchmark. Each size gets a fresh database under `--root`.
 pub fn run() -> anyhow::Result<()> {
     let mut args = std::env::args().skip(1);
-    let (mut root, mut sizes, mut iterations) = (None, vec![1000, 10_000], 1000usize);
+    let (mut root, mut sizes, mut iterations) = (None, vec![1000usize, 10_000], 1000usize);
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--root" => root = args.next().map(PathBuf::from),
@@ -32,10 +35,10 @@ pub fn run() -> anyhow::Result<()> {
     }
     let root = root.ok_or_else(|| anyhow::anyhow!("--root is required"))?;
     anyhow::ensure!(
-        iterations > 0 && sizes.iter().all(|size| *size >= 4),
-        "positive iterations and sizes >= 4 required"
+        iterations > 0 && sizes.iter().all(|size| *size >= 4 && size.is_multiple_of(2)),
+        "positive iterations and even sizes >= 4 required"
     );
-    std::fs::create_dir_all(&root)?;
+    fastctx_platform::disk::create_dir_all(&root)?;
     let runtime = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build()?;
     let _entered = runtime.enter();
     println!(
@@ -128,7 +131,7 @@ fn fixture(machines: usize) -> Book {
 
 fn measure(root: &Path, machines: usize, iterations: usize) -> anyhow::Result<()> {
     let dir = root.join(format!("machines-{machines}"));
-    anyhow::ensure!(!dir.exists(), "{} already exists; choose a fresh --root", dir.display());
+    anyhow::ensure!(!fastctx_platform::disk::exists(&dir)?, "{} already exists; choose a fresh --root", dir.display());
     let book = fixture(machines);
     let target = account(machines / 2 - 1);
     let name = machine(machines - 1);
@@ -150,6 +153,7 @@ fn measure(root: &Path, machines: usize, iterations: usize) -> anyhow::Result<()
     let mut store = Store::open(&dir)?;
     store.enable_runtime()?;
     let catalog = crate::catalog::Catalog::new(store)?;
+    let frozen = catalog.read();
     let mut times = Vec::with_capacity(iterations);
     for i in 0..iterations {
         let mut store = catalog.edit();
@@ -162,6 +166,10 @@ fn measure(root: &Path, machines: usize, iterations: usize) -> anyhow::Result<()
         })
         .map_err(anyhow::Error::msg)?;
         times.push(began.elapsed().as_secs_f64() * 1000.0);
+        anyhow::ensure!(
+            !frozen.book.directory.account(&target).expect("frozen account").history,
+            "old snapshots remain immutable"
+        );
         drop(store);
         if (i + 1) % 100 == 0 {
             eprintln!("machines={machines} committed={}/{}", i + 1, iterations);
@@ -180,6 +188,24 @@ fn measure(root: &Path, machines: usize, iterations: usize) -> anyhow::Result<()
     );
     let logs: u64 = snapshot.shelf.meta("machine_log.next")?.expect("durable audit sequence");
     anyhow::ensure!(logs == iterations as u64, "durable audit count");
+    let records: i64 = snapshot.shelf.0.read_now(|connection| {
+        connection.query_row("SELECT count(*) FROM machine_log", [], |row| row.get(0)).map_err(Into::into)
+    })?;
+    anyhow::ensure!(records == i64::try_from(iterations)?, "every audit record is durable");
+    verify::check(&frozen, &snapshot, machines)?;
+    let mut copies = Vec::with_capacity(iterations);
+    for _ in 0..iterations {
+        let began = Instant::now();
+        let copied = std::hint::black_box((*snapshot.book).clone());
+        drop(copied);
+        copies.push(began.elapsed().as_secs_f64() * 1000.0);
+    }
+    copies.sort_by(f64::total_cmp);
+    println!(
+        "machines={machines} book_copy_p50_ms={:.6} book_copy_p99_ms={:.6}",
+        copies[(iterations - 1) / 2],
+        copies[(iterations - 1) * 99 / 100]
+    );
     times.sort_by(f64::total_cmp);
     println!(
         "machines={machines} accounts={} shares={machines} assists={machines} acting={} samples={iterations} p50_ms={:.6} p99_ms={:.6} max_ms={:.6}",
@@ -189,5 +215,6 @@ fn measure(root: &Path, machines: usize, iterations: usize) -> anyhow::Result<()
         times[(iterations - 1) * 99 / 100],
         times[iterations - 1]
     );
+    exercise::run(&catalog, &origin, machines)?;
     Ok(())
 }

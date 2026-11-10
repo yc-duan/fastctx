@@ -8,6 +8,7 @@
 //! its copies (`Arc`), so an entry that did not change is the very one the
 //! rows were written from, and telling it apart costs a pointer.
 
+mod patch;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io;
 use std::sync::Arc;

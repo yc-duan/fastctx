@@ -51,6 +51,7 @@ mod login;
 mod machine_log;
 mod mailbox;
 mod manage;
+mod manage_edit;
 mod measure;
 mod moving;
 mod network;
@@ -650,6 +651,14 @@ impl Hub {
                 let _ = out.send(Out::Frame(Down::Presence { machine: name.clone(), presence, rev }));
             }
         }
+    }
+
+    /// Publishes configuration and audit changes that do not alter authority.
+    fn configuration_changed(&self) {
+        afoot::directory_changed(self);
+        self.machine_log_changed.notify_one();
+        self.assists_changed.notify_one();
+        self.directory_changed.notify_one();
     }
 
     /// The directory changed, or who is online did: every member is told to

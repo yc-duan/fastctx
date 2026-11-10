@@ -1,6 +1,6 @@
 //! The last committed rows of the book, sharing unchanged entries with it.
 use super::{
-    Book,
+    Book, BookEdit,
     rows::{Changes, Listed, Mapped},
     shelf::Shelf,
 };
@@ -103,37 +103,45 @@ impl BookRows {
         };
         Ok((book, state))
     }
-    pub(super) fn save(&mut self, shelf: &Shelf, book: &mut Book) -> io::Result<()> {
-        self.save_with(shelf, book, Changes::default())
+    pub(super) fn save(&mut self, shelf: &Shelf, book: &mut Book, edit: &BookEdit) -> io::Result<BookEdit> {
+        self.save_with(shelf, book, Changes::default(), edit)
     }
 
-    pub(super) fn save_with(&mut self, shelf: &Shelf, book: &mut Book, mut changes: Changes) -> io::Result<()> {
+    pub(super) fn save_with(
+        &mut self,
+        shelf: &Shelf,
+        book: &mut Book,
+        mut changes: Changes,
+        edit: &BookEdit,
+    ) -> io::Result<BookEdit> {
+        let edit = if self.uncertain { BookEdit::Full } else { edit.clone() };
         if self.uncertain {
             changes.log_after = Some(self.log_next);
         }
-        let accounts = self.accounts.changes(&book.directory.accounts, |row| key("accounts", row), &mut changes)?;
-        let members = self.members.changes(&book.directory.members, |row| key("members", row), &mut changes)?;
-        let shares = self.shares.changes(&book.directory.shares, |row| key("shares", row), &mut changes)?;
-        let assists = self.assists.changes(&book.directory.assists, |row| key("lends", row), &mut changes)?;
-        let plans = self.plans.changes(&book.directory.plans, |row| key("plans", row), &mut changes)?;
-        let acting = self.acting.changes(&book.directory.acting, |row| key("acting", row), &mut changes)?;
-        let projects = self.projects.changes(&book.directory.projects, |row| key("projects", row), &mut changes)?;
-        let tokens = self.tokens.changes(&book.tokens, |row| key("tokens", row), &mut changes)?;
-        let removed = self.removed.changes(&book.removed, |row| key("removed", row), &mut changes)?;
-        let archived = self.archived.changes(&book.archived, |row| key("archived", row), &mut changes)?;
-        let project_deletions = self.project_deletions.changes(
-            &book.project_deletions,
-            |row| key("project_deletions", row),
-            &mut changes,
-        )?;
-        let forgetting =
-            self.forgetting.changes(&book.forgetting.pending, |row| key("forgetting", row), &mut changes)?;
-        let account_forgetting = self.account_forgetting.changes(
-            &book.account_forgetting.pending,
-            |row| key("account_forgetting", row),
-            &mut changes,
-        )?;
-        let passwords = self.passwords.changes(&book.passwords, |key| key.to_string(), &mut changes)?;
+        macro_rules! stage {
+            ($field:ident, $entries:expr, $kind:literal) => {{
+                let (changed, positions) = edit.list($kind);
+                self.$field.stage($entries, changed, positions, |row| key($kind, row), &mut changes)?
+            }};
+        }
+        let accounts = stage!(accounts, &book.directory.accounts, "accounts");
+        let members = stage!(members, &book.directory.members, "members");
+        let shares = stage!(shares, &book.directory.shares, "shares");
+        let assists = stage!(assists, &book.directory.assists, "lends");
+        let plans = stage!(plans, &book.directory.plans, "plans");
+        let acting = stage!(acting, &book.directory.acting, "acting");
+        let projects = stage!(projects, &book.directory.projects, "projects");
+        let tokens = stage!(tokens, &book.tokens, "tokens");
+        let removed = stage!(removed, &book.removed, "removed");
+        let archived = stage!(archived, &book.archived, "archived");
+        let project_deletions = stage!(project_deletions, &book.project_deletions, "project_deletions");
+        let forgetting = stage!(forgetting, &book.forgetting.pending, "forgetting");
+        let account_forgetting = stage!(account_forgetting, &book.account_forgetting.pending, "account_forgetting");
+        let passwords = if edit.is_full() {
+            Some(self.passwords.changes(&book.passwords, |key| key.to_string(), &mut changes)?)
+        } else {
+            None
+        };
         if self.uncertain || self.log_next != book.machine_log.next {
             changes.meta("machine_log.next", super::rows::body(&book.machine_log.next)?);
         }
@@ -163,24 +171,26 @@ impl BookRows {
             return Err(error);
         }
         self.uncertain = false;
-        self.accounts.kept(accounts);
-        self.members.kept(members);
-        self.shares.kept(shares);
-        self.assists.kept(assists);
-        self.plans.kept(plans);
-        self.acting.kept(acting);
-        self.projects.kept(projects);
-        self.tokens.kept(tokens);
-        self.removed.kept(removed);
-        self.archived.kept(archived);
-        self.project_deletions.kept(project_deletions);
-        self.forgetting.kept(forgetting);
-        self.account_forgetting.kept(account_forgetting);
-        self.passwords.kept(passwords);
+        self.accounts.keep_stage(accounts);
+        self.members.keep_stage(members);
+        self.shares.keep_stage(shares);
+        self.assists.keep_stage(assists);
+        self.plans.keep_stage(plans);
+        self.acting.keep_stage(acting);
+        self.projects.keep_stage(projects);
+        self.tokens.keep_stage(tokens);
+        self.removed.keep_stage(removed);
+        self.archived.keep_stage(archived);
+        self.project_deletions.keep_stage(project_deletions);
+        self.forgetting.keep_stage(forgetting);
+        self.account_forgetting.keep_stage(account_forgetting);
+        if let Some(passwords) = passwords {
+            self.passwords.kept(passwords);
+        }
         self.log_next = book.machine_log.next;
         self.forgetting_last = book.forgetting.last;
         self.account_forgetting_last = book.account_forgetting.last;
         book.machine_log.committed();
-        Ok(())
+        Ok(edit)
     }
 }

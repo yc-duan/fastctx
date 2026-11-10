@@ -35,6 +35,7 @@ pub(crate) fn change(
     change: Change,
 ) -> (Result<Told, String>, Vec<(MachineName, Refusal)>) {
     let mut ended = Vec::new();
+    let configuration = crate::manage_edit::configuration(&change);
     let renaming = matches!(change, Change::Rename { .. });
     let dissolving = matches!(change, Change::Dissolve { .. });
     let deleting = match &change {
@@ -42,7 +43,7 @@ pub(crate) fn change(
         _ => None,
     };
     let deleting_account = matches!(change, Change::DeleteAccount { .. });
-    let told = match made(hub, asker, account, change, &mut ended, renaming) {
+    let (told, reconcile) = match made(hub, asker, account, change, &mut ended, renaming) {
         Ok(told) => told,
         Err(reason) => return (Err(reason), Vec::new()),
     };
@@ -62,7 +63,11 @@ pub(crate) fn change(
     if deleting_account {
         crate::forget::accounts::tell(hub, None);
     }
-    hub.changed();
+    if configuration && !reconcile {
+        hub.configuration_changed();
+    } else {
+        hub.changed();
+    }
     if dissolving {
         crate::dissolve::changed(hub);
     }
@@ -85,7 +90,7 @@ fn made(
     change: Change,
     ended: &mut Vec<(MachineName, Refusal)>,
     renaming: bool,
-) -> Result<Told, String> {
+) -> Result<(Told, bool), String> {
     {
         let mut store = hub.edit_store();
         asker.check(&store.book.directory)?;
@@ -95,6 +100,7 @@ fn made(
         // its machine acts for it once more.
         let expired = crate::assists::end_due(&mut store, Timestamp::now())
             .map_err(|error| format!("the hub could not end an assistance past its deadline: {error}"))?;
+        let reconcile = expired || !store.acting_clean;
         let result = commit(&mut store, asker, account, change, |store, super_, change| {
             apply(hub, store, asker, account, super_, change, ended)
         });
@@ -122,7 +128,7 @@ fn made(
                         ));
                     }
                 }
-                Ok(told)
+                Ok((told, reconcile))
             }
             Err(reason) => {
                 hub.machine_log_changed.notify_one();
@@ -137,7 +143,8 @@ fn made(
 }
 
 /// Runs the authorized edit and commits its audit in the same transaction.
-/// Callers own the catalog writer and have already settled due assistance.
+/// Callers own the catalog writer. All earlier book changes, including
+/// assistance expiration, must already be committed.
 pub(crate) fn commit(
     store: &mut Store,
     asker: &crate::origin::Origin,
@@ -145,24 +152,29 @@ pub(crate) fn commit(
     change: Change,
     apply: impl FnOnce(&mut Store, bool, Change) -> Result<Told, String>,
 ) -> Result<Told, String> {
+    let edit = crate::manage_edit::rows(store, account, &change);
+    let settle = !crate::manage_edit::configuration(&change) || !store.acting_clean;
+    store.book_edit = edit.clone();
     let before = store.book.clone();
     let action = crate::machine_log::action(&change, &before, &store.hub.updates);
-    let authenticated = may_change(&before.directory, &change, asker, account);
+    let authenticated = may_change(&store.indexed(), &change, asker, account);
     let actor = Actor { account: Some(account.clone()), authenticated, member: Some(asker.name.clone()), peer: None };
     let before_hub = store.hub.clone();
     let result = (|| {
-        let directory = &before.directory;
-        let found = directory.account(account).cloned().ok_or_else(|| format!("there is no account {account}"))?;
+        let found =
+            store.indexed().account(account).cloned().ok_or_else(|| format!("there is no account {account}"))?;
         if found.locked {
             return Err(format!("the account {account} is locked"));
         }
-        if !may_change(directory, &change, asker, account) {
+        if !may_change(&store.indexed(), &change, asker, account) {
             return Err(format!("{asker} is not logged in to the account {account}"));
         }
         let super_ = found.level == Level::Super;
         let told = apply(store, super_, change)?;
-        store.book.directory.settle_acting(&before.directory);
-        crate::machine_log::effects(store, &before.directory, &actor, &action)?;
+        if settle {
+            store.book.directory.settle_acting(&before.directory);
+            crate::machine_log::effects(store, &before.directory, &actor, &action)?;
+        }
         let committed = match &told {
             Told::CollabWritten { version } => fastctx_types::machine_log::Action::Collab { version: *version },
             Told::ProfileWritten { version } => fastctx_types::machine_log::Action::Profile { version: *version },
@@ -175,6 +187,7 @@ pub(crate) fn commit(
         Ok(told) => Ok(told),
         Err(reason) => {
             store.book = before;
+            store.book_edit = if edit.is_full() { crate::store::BookEdit::Full } else { crate::store::BookEdit::Audit };
             if store.hub != before_hub {
                 store.hub = before_hub;
                 store.save_hub().map_err(|error| format!("restoring the hub's settings: {error}"))?;
@@ -481,12 +494,16 @@ fn apply(
                 return Err(format!("the machines of {owner} are not the account {account}'s to group"));
             }
             let to = to.as_deref().map(fastctx_types::accounts::group_name).transpose()?.flatten();
-            let mut grouped = 0;
-            for member in store.book.directory.members.iter_mut() {
-                if member.home.as_ref() == Some(&owner) && member.group.as_deref() == Some(from.as_str()) {
-                    Arc::make_mut(member).group = to.clone();
-                    grouped += 1;
-                }
+            let positions: Vec<_> = store
+                .indexed()
+                .owned(&owner)
+                .iter()
+                .copied()
+                .filter(|&at| store.book.directory.members[at].group.as_deref() == Some(from.as_str()))
+                .collect();
+            let grouped = positions.len();
+            for at in positions {
+                Arc::make_mut(&mut store.book.directory.members[at]).group = to.clone();
             }
             if grouped == 0 {
                 return Err(format!("{owner} has no group {from}"));
@@ -914,23 +931,16 @@ const RELAY_ADDRESSES: usize = 8;
 /// most, and a machine joining tries each in turn.
 const TOKEN_RELAYS: usize = 16;
 
+pub(crate) fn history(store: &mut Store, account: &AccountName, on: bool) -> Result<Told, String> {
+    let at = *store.indexed().accounts_named(account).first().expect("checked");
+    Arc::make_mut(&mut store.book.directory.accounts[at]).history = on;
+    Ok(Told::Done)
+}
+
 /// Whether another machine on a network may reach a relay at `address`: an
 /// address of one of its cards, with a port, not one only the relay itself
 /// reaches or that names no one machine. An IPv6 link-local address is the
 /// relay's own card's, which a machine elsewhere names by its own.
-pub(crate) fn history(store: &mut Store, account: &AccountName, on: bool) -> Result<Told, String> {
-    let found = store
-        .book
-        .directory
-        .accounts
-        .iter_mut()
-        .find(|found| found.name == *account)
-        .map(Arc::make_mut)
-        .expect("checked");
-    found.history = on;
-    Ok(Told::Done)
-}
-
 fn relay_reachable(address: &std::net::SocketAddr) -> bool {
     let ip = match address.ip() {
         std::net::IpAddr::V6(ip) => ip.to_ipv4_mapped().map_or(std::net::IpAddr::V6(ip), std::net::IpAddr::V4),
@@ -944,7 +954,7 @@ fn relay_reachable(address: &std::net::SocketAddr) -> bool {
 }
 
 fn may_change(
-    directory: &fastctx_net::directory::Directory,
+    directory: &fastctx_net::directory_index::Indexed<'_>,
     change: &Change,
     asker: &MachineName,
     account: &AccountName,

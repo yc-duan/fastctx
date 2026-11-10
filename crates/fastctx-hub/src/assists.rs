@@ -15,7 +15,6 @@ use std::io;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::Duration;
 
-use fastctx_net::directory::Assist;
 use fastctx_types::machine_log::{Action, Actor, Outcome};
 use jiff::Timestamp;
 
@@ -45,7 +44,7 @@ pub(crate) async fn expire(hub: &Hub) -> io::Result<()> {
                         );
                         false
                     });
-                let next = store.book.directory.assists.iter().filter_map(|assist| assist.until).min();
+                let next = store.assist_ends.next();
                 // One that could not be ended is due still: looked at again in a minute.
                 let next = if next.is_some_and(|next| next <= Timestamp::now()) {
                     Timestamp::now().checked_add(jiff::SignedDuration::from_secs(60)).ok()
@@ -99,8 +98,7 @@ pub(crate) fn heard(hub: &Hub) {
 /// Ends the assistance due at `now`, each recorded as the hub's own doing;
 /// whether there was any.
 pub(crate) fn end_due(store: &mut Store, now: Timestamp) -> io::Result<bool> {
-    let due: Vec<std::sync::Arc<Assist>> =
-        store.book.directory.assists.iter().filter(|assist| !assist.live(now)).cloned().collect();
+    let due = store.assist_ends.due(now);
     let hub = Actor { account: None, authenticated: true, member: None, peer: None };
     for assist in &due {
         let before = store.book.directory.clone();

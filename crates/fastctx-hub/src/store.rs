@@ -37,7 +37,10 @@ use fastctx_net::sign::{Bytes, PublicKey};
 use fastctx_platform::{Permissions, ensure_private_dir, publish, publish_new};
 use fastctx_types::{AccountName, HubName, MachineName};
 use jiff::Timestamp;
+mod assist_ends;
+mod book_edit;
 mod book_rows;
+pub(crate) use book_edit::BookEdit;
 mod conflicts;
 mod counts;
 mod format;
@@ -418,6 +421,9 @@ pub struct Snapshot {
     pub(crate) view_reads: Arc<std::sync::atomic::AtomicU64>,
     pub(crate) index: Arc<fastctx_net::directory_index::Index>,
     pub(crate) audience: Arc<crate::presence::Audience>,
+    pub(crate) assist_ends: Arc<assist_ends::AssistEnds>,
+    /// Acting rows name existing accounts and members; expired grants may remain.
+    pub(crate) acting_clean: bool,
     pub(crate) tokens: Arc<std::collections::HashMap<AccountName, Vec<usize>>>,
     pub(crate) letters: crate::post::Read,
     pub(crate) worked: Arc<crate::worked::Worked>,
@@ -437,6 +443,7 @@ pub struct Store {
     pub(crate) published: Option<Arc<arc_swap::ArcSwap<Snapshot>>>,
     pub(crate) post: Option<Arc<crate::post::Post>>,
     previous: Option<Arc<Snapshot>>,
+    pub(crate) book_edit: BookEdit,
     pub letters: LetterRows,
     book_rows: book_rows::BookRows,
     hub_rows: hub_rows::HubRows,
@@ -495,6 +502,7 @@ impl Store {
     }
 
     pub(crate) fn reset_committed(&mut self) {
+        self.book_edit = BookEdit::Full;
         if let Some(published) = &self.published {
             self.metadata = (**published.load()).clone();
         }
@@ -513,8 +521,28 @@ impl Store {
         Ok(post)
     }
 
+    fn refresh_edit(&mut self, edit: &BookEdit) {
+        match edit {
+            BookEdit::Full => self.refresh(),
+            BookEdit::Tokens => self.metadata.tokens = Self::token_index(&self.book),
+            BookEdit::Audit | BookEdit::Account(_) | BookEdit::Groups(_) => {}
+        }
+    }
+
+    fn check_acting(&mut self) {
+        let index = self.indexed();
+        self.acting_clean = self
+            .book
+            .directory
+            .acting
+            .iter()
+            .all(|acting| index.member(&acting.machine).is_some() && index.account(&acting.account).is_some());
+    }
+
     pub(crate) fn refresh(&mut self) {
         self.metadata.index = Arc::new(fastctx_net::directory_index::Index::new(&self.book.directory));
+        self.metadata.assist_ends = Arc::new(assist_ends::AssistEnds::new(&self.book.directory));
+        self.check_acting();
         self.metadata.tokens = Self::token_index(&self.book);
         if let Some(post) = &self.post {
             self.metadata.letters = post.view(&self.book.directory);
@@ -523,8 +551,12 @@ impl Store {
     }
 
     fn publish(&mut self, book: bool, hub: bool, moves: bool) {
+        self.publish_edit(book, hub, moves, &BookEdit::Full);
+    }
+
+    fn publish_edit(&mut self, book: bool, hub: bool, moves: bool, edit: &BookEdit) {
         if book {
-            self.refresh();
+            self.refresh_edit(edit);
         }
         if let Some(published) = &self.published {
             let previous = published.load_full();
@@ -536,6 +568,8 @@ impl Store {
                 next.index = self.index.clone();
                 next.tokens = self.tokens.clone();
                 next.audience = self.audience.clone();
+                next.assist_ends = self.assist_ends.clone();
+                next.acting_clean = self.acting_clean;
                 next.letters = self.metadata.letters.clone();
                 next.book_saves = self.book_saves;
             }
@@ -660,6 +694,8 @@ impl Store {
                 hub: hub.into(),
                 index: Arc::new(fastctx_net::directory_index::Index::new(&book.directory)),
                 audience: Arc::default(),
+                assist_ends: Arc::new(assist_ends::AssistEnds::new(&book.directory)),
+                acting_clean: false,
                 tokens: Self::token_index(&book),
                 book: book.into(),
                 shelf,
@@ -674,6 +710,7 @@ impl Store {
             published: None,
             post: None,
             previous: None,
+            book_edit: BookEdit::Full,
             letters,
             book_rows,
             hub_rows,
@@ -685,6 +722,7 @@ impl Store {
             records: std::sync::Arc::new(crate::records::Records::new()),
             counts: std::collections::HashMap::new(),
         };
+        store.check_acting();
         if changed {
             store.save_letters_now()?;
         }
@@ -981,9 +1019,10 @@ impl Store {
     }
 
     pub fn save_book(&mut self) -> io::Result<()> {
-        self.book_rows.save(&self.metadata.shelf, &mut self.metadata.book)?;
+        let edit = std::mem::take(&mut self.book_edit);
+        let edit = self.book_rows.save(&self.metadata.shelf, &mut self.metadata.book, &edit)?;
         self.metadata.book_saves += 1;
-        self.publish(true, false, false);
+        self.publish_edit(true, false, false, &edit);
         Ok(())
     }
 
@@ -992,13 +1031,17 @@ impl Store {
     pub(crate) fn save_hub_and_book(&mut self) -> io::Result<()> {
         let mut changes = rows::Changes::default();
         let next = self.hub_rows.stage(&self.metadata.hub, &mut changes)?;
-        if let Err(error) = self.book_rows.save_with(&self.metadata.shelf, &mut self.metadata.book, changes) {
-            self.hub_rows.lost();
-            return Err(error);
-        }
+        let edit = std::mem::take(&mut self.book_edit);
+        let edit = match self.book_rows.save_with(&self.metadata.shelf, &mut self.metadata.book, changes, &edit) {
+            Ok(edit) => edit,
+            Err(error) => {
+                self.hub_rows.lost();
+                return Err(error);
+            }
+        };
         self.hub_rows.committed(next);
         self.metadata.book_saves += 1;
-        self.publish(true, true, false);
+        self.publish_edit(true, true, false, &edit);
         Ok(())
     }
 
