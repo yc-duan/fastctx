@@ -976,6 +976,7 @@ pub async fn run_prepared(
         timeline::register(&node);
         management::register(&node);
         control::submission::register(&node);
+        talk::submission::register(&node);
         goals::submission::register(&node);
         sentinels::submission::register(&node);
         logins::submitted::register(&node);

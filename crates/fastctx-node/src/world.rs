@@ -920,7 +920,7 @@ impl fastctx_net::link::Node for Handler {
                     RemoteCall::Ask { asker: resident, requester_turn, town, label, prompt, started } => {
                         let acting = Acting::one(hub.clone(), caller.account.clone());
                         let asker = Address { machine: from, resident };
-                        let (colleague, waiting) = crate::colleagues::ask_here(
+                        let (colleague, waiting) = crate::talk::submission::ask_here(
                             &node,
                             crate::colleagues::Requester { address: asker, turn: requester_turn },
                             acting,
@@ -932,11 +932,17 @@ impl fastctx_net::link::Node for Handler {
                         .await?;
                         Ok(RemoteReply::Asked { colleague, waiting })
                     }
-                    RemoteCall::Talk { to, text, attachments, files_on, id } => {
-                        crate::talk::talk_here(&node, &from, &to, text, attachments, files_on.as_ref(), id.as_deref())
-                            .await
-                            .map(|landed| RemoteReply::Said { landed })
-                    }
+                    RemoteCall::Talk { to, text, attachments, files_on, id } => crate::talk::submission::talk_here(
+                        &node,
+                        &from,
+                        &to,
+                        text,
+                        attachments,
+                        files_on.as_ref(),
+                        id.as_deref(),
+                    )
+                    .await
+                    .map(|landed| RemoteReply::Said { landed }),
                     RemoteCall::Watch {
                         resident,
                         watch,
@@ -1083,7 +1089,7 @@ impl fastctx_net::link::Node for Handler {
                         let options =
                             fastctx_types::agents::SessionOptions { model, reasoning_effort, ..Default::default() };
                         let choices = fastctx_types::agents::Choices { account: None, focus, home, files_on, mcp_off };
-                        let (resident, landed) = crate::talk::open_here(
+                        let (resident, landed) = crate::talk::submission::open_here(
                             &node,
                             &from,
                             acting,

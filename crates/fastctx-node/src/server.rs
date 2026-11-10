@@ -1365,7 +1365,7 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             // Named as the machine they go to names them: by the machine
             // they were typed on and the device's own id for them.
             let delivery = id.as_deref().map(|id| crate::speech::fixed_id("talk", &[node.machine().as_str(), id]));
-            crate::talk::talk(node, to, machine, text, attachments, files_on, id)
+            crate::talk::submission::talk(node, to, machine, text, attachments, files_on, id)
                 .await
                 .map(|(to, landed)| Reply::Spoken { to, landed, delivery })
         }
@@ -1528,7 +1528,7 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             crate::managed::refuse(node)?;
 
             let options = fastctx_types::agents::SessionOptions { model, reasoning_effort, ..Default::default() };
-            crate::talk::open(node, agent, town, target, text, options, attachments, choices)
+            crate::talk::submission::open(node, agent, town, target, text, options, attachments, choices)
                 .await
                 .map(|(resident, landed)| Reply::Opened { resident, landed })
         }
@@ -1646,8 +1646,8 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
         Call::Collect { .. } | Call::Taken { .. } => Err(Failure::new("this is asked on a session's own connection")),
         Call::Wait { .. } => Err(Failure::new("a wait is asked on a command's own connection")),
         Call::Ask { resident, label, prompt, callee, login } => {
-            let town = town_of(node, &resident)?;
-            crate::colleagues::ask(node, resident, town, label, prompt, callee, login.as_ref())
+            present(node, &resident)?;
+            crate::talk::submission::ask(node, resident, label, prompt, callee, login)
                 .await
                 .map(|born| Reply::Asked { colleague: born.colleague, waiting: born.waiting })
         }

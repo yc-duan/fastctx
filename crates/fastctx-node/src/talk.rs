@@ -31,6 +31,7 @@ use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 mod forwarding;
 pub(crate) mod multiplex;
+pub(crate) mod submission;
 
 use crate::Node;
 use crate::speech::{self, Owed};
@@ -64,7 +65,18 @@ pub async fn talk(
         return Ok((Address { machine: here, resident: to }, landed));
     }
     let call = RemoteCall::Talk { to: to.clone(), text, attachments, files_on, id };
-    match node.call(&Acting::Here, &machine, Purpose::Agents, call).await.map_err(crate::authorization::call_failure)? {
+    let reply = loop {
+        let reply = node
+            .call(&Acting::Here, &machine, Purpose::Agents, call.clone())
+            .await
+            .map_err(crate::authorization::call_failure)?;
+        if reply.as_ref().is_err_and(|failure| failure.is_accepted()) {
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        } else {
+            break reply;
+        }
+    };
+    match reply {
         Ok(RemoteReply::Said { landed }) => Ok((Address { machine: machine.name, resident: to }, landed)),
         Ok(_) => Err(Failure::new(format!("{machine} answered something other than a talk"))),
         Err(failure) => Err(failure),
@@ -1022,14 +1034,24 @@ pub async fn open(
                 home: choices.home,
                 files_on: choices.files_on,
             };
-            let reply = node.call(&acting, &target, Purpose::Agents, call).await;
-            match reply.map_err(|failure| Failure::new(failure.to_string()))? {
+            let reply = loop {
+                let reply = node
+                    .call(&acting, &target, Purpose::Agents, call.clone())
+                    .await
+                    .map_err(|failure| Failure::new(failure.to_string()))?;
+                if reply.as_ref().is_err_and(|failure| failure.is_accepted()) {
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                } else {
+                    break reply;
+                }
+            };
+            match reply {
                 Ok(RemoteReply::Opened { resident, landed }) => {
                     Ok((Address { machine: target.name, resident }, landed))
                 }
                 Ok(_) => Err(Failure::new(format!("{target} answered something other than an opened session"))),
                 // What went wrong there is said of that machine, not this one.
-                Err(failure) => Err(Failure::new(format!("on {target}: {}", failure.message))),
+                Err(failure) => Err(Failure { message: format!("on {target}: {}", failure.message), ..failure }),
             }
         }
     }

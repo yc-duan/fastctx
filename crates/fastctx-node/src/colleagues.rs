@@ -180,7 +180,15 @@ async fn ask_for_account(
         prompt: request.prompt,
         started,
     };
-    match link.call(&lives_on.name, account, Purpose::Agents, call).await {
+    let reply = loop {
+        let reply = link.call(&lives_on.name, account, Purpose::Agents, call.clone()).await;
+        if matches!(&reply, Ok(Err(failure)) if failure.is_accepted()) {
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        } else {
+            break reply;
+        }
+    };
+    match reply {
         Ok(Ok(RemoteReply::Asked { colleague, waiting })) => {
             Ok(Born { colleague: Address { machine: lives_on.name.clone(), resident: colleague }, waiting })
         }
@@ -621,6 +629,33 @@ pub async fn message(
     text: String,
     login: Option<&fastctx_types::collab::Caller>,
 ) -> Result<(Address, Landed), Failure> {
+    let local = to_machine.as_ref().map_or_else(|| node.residents.active(&to).is_ok(), |machine| node.is_here(machine));
+    if local && crate::voice::asker_of(node, &from).is_none() {
+        return crate::talk::submission::message_here(node, from, to, to_machine, text, login.cloned()).await;
+    }
+    message_now(node, from, to, to_machine, text, login, true).await
+}
+
+pub(crate) async fn message_work(
+    node: &Arc<Node>,
+    from: ResidentId,
+    to: ResidentId,
+    to_machine: Option<Written>,
+    text: String,
+    login: Option<&fastctx_types::collab::Caller>,
+) -> Result<(Address, Landed), Failure> {
+    message_now(node, from, to, to_machine, text, login, false).await
+}
+
+async fn message_now(
+    node: &Arc<Node>,
+    from: ResidentId,
+    to: ResidentId,
+    to_machine: Option<Written>,
+    text: String,
+    login: Option<&fastctx_types::collab::Caller>,
+    submit_local: bool,
+) -> Result<(Address, Landed), Failure> {
     if let Some((asker, _)) = crate::voice::asker_of(node, &from) {
         if to != asker.resident || to_machine.as_ref().is_some_and(|machine| machine.name != asker.machine) {
             return Err(Failure::not_run(fastctx_types::collab_prompt::only_asker(&asker.resident)));
@@ -643,6 +678,7 @@ pub async fn message(
     let here = node.machine();
     let at = Timestamp::now();
     let turn = node.residents.now(&from).and_then(|now| now.turn);
+    let requested_machine = to_machine.clone();
     let machine = match to_machine {
         Some(machine) => machine,
         None => locate(node, &from, &to).await?,
@@ -678,6 +714,17 @@ pub async fn message(
             return Err(Failure::not_run(
                 "this colleague works for none of the accounts that enable collaboration for this caller",
             ));
+        }
+        if submit_local {
+            return crate::talk::submission::message_here(
+                node,
+                from,
+                to.resident,
+                requested_machine,
+                text,
+                login.cloned(),
+            )
+            .await;
         }
     }
     let notice = Notice::Words {
