@@ -428,5 +428,40 @@
     "purpose": "AssetSync",
     "capability": "asset_sync",
     "mapping": "crates/fastctx-types/src/sync/transfer.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/sync/session.rs::SessionBindingRequest",
+    "variant": "Hub",
+    "purpose": "AssetSync",
+    "capability": "asset_sync.transport",
+    "mapping": "crates/fastctx-types/src/sync/session.rs"
+  },
+  {
+    "type": "crates/fastctx-net/src/wire.rs::Question",
+    "variant": "OpenSyncSession",
+    "purpose": "AssetSync",
+    "capability": "asset_sync.transport",
+    "mapping": "crates/fastctx-net/src/wire.rs"
+  },
+  {
+    "type": "crates/fastctx-net/src/wire.rs::Question",
+    "variant": "CloseSyncSession",
+    "purpose": "AssetSync",
+    "capability": "asset_sync.transport",
+    "mapping": "crates/fastctx-net/src/wire.rs"
+  },
+  {
+    "type": "crates/fastctx-net/src/wire.rs::Told",
+    "variant": "SyncSessionReady",
+    "purpose": "AssetSync",
+    "capability": "asset_sync.transport",
+    "mapping": "crates/fastctx-net/src/wire.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/sync/transfer.rs::Message",
+    "variant": "Blocks",
+    "purpose": "AssetSync",
+    "capability": "asset_sync",
+    "mapping": "crates/fastctx-types/src/sync/transfer.rs"
   }
 ]

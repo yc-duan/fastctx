@@ -38,6 +38,7 @@ pub fn accepts(protocol: u32) -> bool {
 }
 
 pub const CONTROL_PATH: &str = "/fastctx/world/4";
+pub const ASSET_SYNC_PATH: &str = "/fastctx/world/4/assets";
 pub const DATA_PATH: &str = "/fastctx/world/4/data";
 
 /// The largest frame on a control connection. Heartbeats, calls and
@@ -269,6 +270,8 @@ pub enum Intent {
         /// place of being told to ask for the whole view again.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         view_deltas: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        asset_sync: Option<Box<crate::sync_transport::Advertisement>>,
     },
     /// A password login to `account`: the first OPAQUE message. The hub
     /// answers `Down::LoginResponse`; the device finishes with
@@ -410,6 +413,8 @@ pub enum Down {
         /// This hub separately acknowledges completion of its initial status snapshot.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         afoot_pending: Option<bool>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        asset_sync: Option<Box<crate::sync_transport::Advertisement>>,
     },
     /// The hub's half of a password login.
     LoginResponse {
@@ -706,6 +711,12 @@ pub enum CallStatus {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum Question {
+    OpenSyncSession {
+        request: fastctx_types::sync::session::SessionOpen,
+    },
+    CloseSyncSession {
+        request: fastctx_types::sync::session::SessionClose,
+    },
     RecordWatching {
         account: AccountName,
         record_kind: String,
@@ -1172,6 +1183,9 @@ pub enum Change {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum Told {
+    SyncSessionReady {
+        ready: fastctx_types::sync::session::SessionReady,
+    },
     SkillFiles {
         reply: fastctx_types::skill_files::Reply,
     },
@@ -1262,4 +1276,78 @@ pub enum Told {
 /// Encodes a frame for the wire.
 pub fn encode(frame: &impl Serialize) -> Vec<u8> {
     serde_json::to_vec(frame).expect("frames always serialize")
+}
+
+impl Question {
+    pub fn question_purpose(&self) -> Option<fastctx_types::sync::transfer::Purpose> {
+        use fastctx_types::sync::transfer::Purpose;
+        match self {
+            Self::OpenSyncSession { .. } | Self::CloseSyncSession { .. } => Some(Purpose::AssetSync),
+            Self::AccountRecords { .. }
+            | Self::Directory { .. }
+            | Self::Forget { .. }
+            | Self::HistoryCatalog { .. }
+            | Self::HistoryRead { .. }
+            | Self::HistorySubmitted { .. }
+            | Self::HistoryWrite { .. }
+            | Self::HubArrival { .. }
+            | Self::HubMove { .. }
+            | Self::KernelRelease { .. }
+            | Self::LedgerCatalog { .. }
+            | Self::LedgerProjection { .. }
+            | Self::LedgerRead { .. }
+            | Self::LedgerTowns { .. }
+            | Self::LedgerWrite { .. }
+            | Self::Listening { .. }
+            | Self::MachineLog { .. }
+            | Self::Manage { .. }
+            | Self::MemoryRead { .. }
+            | Self::MemoryWrite { .. }
+            | Self::NetworkUpdates { .. }
+            | Self::OwnedRecords { .. }
+            | Self::Package { .. }
+            | Self::PlanCopies { .. }
+            | Self::PrepareUpdate { .. }
+            | Self::ProjectDeleted { .. }
+            | Self::ProjectIndex { .. }
+            | Self::RecordFollowing { .. }
+            | Self::RecordWatching { .. }
+            | Self::SkillFiles { .. }
+            | Self::Worked { .. } => None,
+        }
+    }
+}
+
+impl Told {
+    pub fn told_purpose(&self) -> Option<fastctx_types::sync::transfer::Purpose> {
+        use fastctx_types::sync::transfer::Purpose;
+        match self {
+            Self::SyncSessionReady { .. } => Some(Purpose::AssetSync),
+            Self::AccountRecords { .. }
+            | Self::CollabWritten { .. }
+            | Self::Directory { .. }
+            | Self::Done { .. }
+            | Self::Entries { .. }
+            | Self::HistoryCatalog { .. }
+            | Self::HistoryDocument { .. }
+            | Self::HistorySubmitted { .. }
+            | Self::HubIdentity { .. }
+            | Self::HubMove { .. }
+            | Self::KernelRelease { .. }
+            | Self::LedgerProjection { .. }
+            | Self::MachineLog { .. }
+            | Self::MemoryDocument { .. }
+            | Self::NetworkUpdates { .. }
+            | Self::OwnedRecords { .. }
+            | Self::Package { .. }
+            | Self::PlanCopies { .. }
+            | Self::ProfileWritten { .. }
+            | Self::ProjectIndex { .. }
+            | Self::RegisterResponse { .. }
+            | Self::SkillFiles { .. }
+            | Self::Token { .. }
+            | Self::Towns { .. }
+            | Self::Written { .. } => None,
+        }
+    }
 }

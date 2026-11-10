@@ -28,6 +28,8 @@ DISPATCHERS = {
     "crates/fastctx-types/src/sync/session.rs::TransportControl": ("asset_sync.transport", "purpose"),
     "crates/fastctx-types/src/sync/session.rs::SessionBindingRequest": ("asset_sync.transport", "binding_purpose"),
     "crates/fastctx-net/src/wire.rs::Intent": ("asset_sync.transport", "asset_sync_purpose"),
+    "crates/fastctx-net/src/wire.rs::Question": ("asset_sync.transport", "question_purpose"),
+    "crates/fastctx-net/src/wire.rs::Told": ("asset_sync.transport", "told_purpose"),
     "crates/fastctx-net/src/peer.rs::Intent": ("asset_sync.transport", "asset_sync_purpose"),
     "crates/fastctx-types/src/calls.rs::Call": ("node_ipc", "purpose"),
     "crates/fastctx-types/src/calls.rs::Reply": ("node_ipc", "answer_purpose"),

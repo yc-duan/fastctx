@@ -246,6 +246,12 @@ pub enum Message {
         manifest: ManifestRoot,
         missing: Vec<BlockRange>,
     },
+    Blocks {
+        holding: HoldingPeriod,
+        manifest: ManifestRoot,
+        blocks: Vec<super::manifest::IndexedBlock>,
+        remaining: Vec<BlockRange>,
+    },
     Acknowledge {
         durable: DurableAck,
     },
@@ -307,6 +313,7 @@ impl Message {
             | Self::GetDescriptor { .. }
             | Self::Descriptor { .. }
             | Self::WantBlocks { .. }
+            | Self::Blocks { .. }
             | Self::Acknowledge { .. }
             | Self::Advanced { .. }
             | Self::Reset { .. }

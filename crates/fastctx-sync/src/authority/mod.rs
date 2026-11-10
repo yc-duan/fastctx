@@ -7,6 +7,7 @@ mod read;
 mod source_transfer;
 mod sources;
 mod stream;
+mod supply;
 pub use sources::PeerUpload;
 
 use crate::{
@@ -91,6 +92,11 @@ impl Service {
                         stream::page(db, holding, request, max)
                     })
                     .await
+                }
+                Message::GetManifest { holding, root } => self.manifest(peer, holding, root).await,
+                Message::GetDescriptor { holding, blob } => self.descriptor(peer, holding, blob).await,
+                Message::WantBlocks { holding, manifest, missing } => {
+                    self.wanted(peer, holding, manifest, missing).await
                 }
                 Message::GetEpoch { scope, lookup } => {
                     self.read(peer.clone(), scope.clone(), None, move |db, _| {

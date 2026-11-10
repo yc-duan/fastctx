@@ -10,8 +10,8 @@
 pub use super::identity::{MessageId, PartId, SessionId, TransferId};
 use super::{
     cursor::{BlockRange, ByteCount, Count, DurableAck, HoldingPeriod, Sequence},
-    identity::{Digest, ObjectKey, OperationId, ProducerEpoch, ScopeKey},
-    manifest::{BlobId, ContentBlock, Encoding, ManifestRoot, Representation},
+    identity::{Digest, HubId, ObjectKey, OperationId, ProducerEpoch, ScopeKey},
+    manifest::{BlobId, ContentBlock, ContentRef, Encoding, ManifestRoot, Representation},
     transfer::{BlockFrame, KindVersion, Purpose},
 };
 use serde::{Deserialize, Serialize};
@@ -74,23 +74,26 @@ pub struct SessionOpen {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "binding", rename_all = "snake_case", deny_unknown_fields)]
 pub enum SessionBindingRequest {
+    Hub { hub: HubId },
     Object { object: ObjectKey, kind: KindVersion },
     Scope { scope: ScopeKey },
 }
 impl SessionBindingRequest {
     pub fn binding_purpose(&self) -> Purpose {
         match self {
-            Self::Object { .. } | Self::Scope { .. } => Purpose::AssetSync,
+            Self::Hub { .. } | Self::Object { .. } | Self::Scope { .. } => Purpose::AssetSync,
         }
     }
-    pub fn scope(&self) -> &ScopeKey {
+    pub fn scope(&self) -> Option<&ScopeKey> {
         match self {
-            Self::Object { object, .. } => &object.scope,
-            Self::Scope { scope } => scope,
+            Self::Hub { .. } => None,
+            Self::Object { object, .. } => Some(&object.scope),
+            Self::Scope { scope } => Some(scope),
         }
     }
     pub fn contains(&self, request: &TransferRequest) -> bool {
         match self {
+            Self::Hub { hub } => hub == &request.object.scope.hub,
             Self::Object { object, kind } => object == &request.object && kind == &request.kind,
             Self::Scope { scope } => scope == &request.object.scope,
         }
@@ -100,7 +103,8 @@ impl SessionBindingRequest {
 #[serde(deny_unknown_fields)]
 pub struct SessionReady {
     pub session: SessionId,
-    pub holding: HoldingPeriod,
+    /// Hub binding carries no scope grant; content requests authorize separately.
+    pub holding: Option<HoldingPeriod>,
     pub limits: TransportLimits,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -147,10 +151,14 @@ pub struct TransferRequest {
     pub transfer: TransferId,
     pub operation: OperationId,
     pub direction: TransferDirection,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upload_cause: Option<UploadCause>,
     pub object: ObjectKey,
     pub kind: KindVersion,
     pub holding: HoldingPeriod,
     pub target: TransferTarget,
+    /// Accepted content root whose closure owns a requested download block.
+    pub root: Box<ContentRef>,
     pub representation: RepresentationChoice,
     pub priority: TransferPriority,
 }
@@ -182,6 +190,13 @@ impl TransferRequest {
     /// Checks shape and scope consistency, not permissions or root membership.
     pub fn validate(&self) -> Result<(), String> {
         validate_kind(&self.kind)?;
+        self.root.validate()?;
+        if self.root.id().domain != self.object.scope {
+            return Err("transfer root differs from its object scope".into());
+        }
+        if (self.direction == TransferDirection::Upload) != self.upload_cause.is_some() {
+            return Err("upload requires an explicit cause; download cannot carry one".into());
+        }
         if self.holding.scope != self.object.scope {
             return Err("holding scope differs from object".into());
         }
@@ -226,7 +241,17 @@ impl TransferRequest {
         let mut bytes = b"fastctx.sync.transfer-request.v1\0".to_vec();
         serde_json::to_writer(
             &mut bytes,
-            &(&self.transfer, &self.operation, self.direction, &self.object, &self.kind, &self.holding, &self.target),
+            &(
+                &self.transfer,
+                &self.operation,
+                self.direction,
+                &self.object,
+                &self.kind,
+                &self.holding,
+                &self.target,
+                &self.root,
+                &self.upload_cause,
+            ),
         )
         .map_err(|error| error.to_string())?;
         Ok(Digest::of(&bytes))

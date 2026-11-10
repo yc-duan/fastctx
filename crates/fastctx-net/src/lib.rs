@@ -67,3 +67,5 @@ pub mod watch_stream;
 pub mod web;
 pub mod window;
 pub mod wire;
+
+pub mod asset_transport;

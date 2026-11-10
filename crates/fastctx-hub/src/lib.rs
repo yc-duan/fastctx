@@ -326,6 +326,7 @@ const VIEW_CHANGE_AT_MOST: usize = 192 * 1024;
 
 /// A member's open control connection.
 pub(crate) struct Session {
+    asset_sync: Option<Arc<fastctx_net::sync_transport::Advertisement>>,
     replicated_records: bool,
     key: PublicKey,
     account_records: bool,
@@ -1071,6 +1072,7 @@ pub(crate) async fn connected(
     binding: [u8; 32],
     hello: Up,
     peer: SocketAddr,
+    asset_frames: Option<fastctx_sync::admission::BytePermit>,
 ) {
     let Up::Hello { protocol, version, intent } = hello else {
         hub.log.line(format_args!("{peer}: refused a connection on {path} whose first frame was not a hello"));
@@ -1084,7 +1086,7 @@ pub(crate) async fn connected(
     }
     let stopped = hub.clone();
     tokio::select! {
-        () = intended(hub, socket, path, binding, intent, peer) => {}
+        () = intended(hub, socket, path, binding, intent, peer, asset_frames) => {}
         // The hub moved away: what is still open here ends.
         () = stopped.moving.stopped() => {}
     }
@@ -1097,6 +1099,7 @@ async fn intended(
     binding: [u8; 32],
     intent: Intent,
     peer: SocketAddr,
+    asset_frames: Option<fastctx_sync::admission::BytePermit>,
 ) {
     // A dissolved network lets nobody in again: a device asking to is told
     // so, a member's own session by its removal (`Hub::member`).
@@ -1129,6 +1132,12 @@ async fn intended(
         None => None,
     };
     match (path.as_str(), intent) {
+        (_, Intent::AssetSyncData { session, key, proof }) if path.starts_with(wire::ASSET_SYNC_PATH) => {
+            if let Some(frames) = asset_frames {
+                asset_sync::connected(hub, socket, path, binding, session, (key, proof), frames).await;
+            }
+        }
+
         (
             wire::CONTROL_PATH,
             Intent::Session {
@@ -1166,6 +1175,7 @@ async fn intended(
                 parts,
                 call_details,
                 view_deltas,
+                asset_sync,
             },
         ) => {
             let said = control::Said {
@@ -1200,6 +1210,7 @@ async fn intended(
                 parts,
                 call_details,
                 view_deltas,
+                asset_sync,
             };
             control::session(hub, socket, peer, binding, key, proof, letters, said).await;
         }
@@ -1289,3 +1300,5 @@ fn presence_of(session: &Session) -> views::Presence {
         strain: session.strain,
     }
 }
+
+mod asset_sync;

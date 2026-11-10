@@ -15,6 +15,32 @@ use crate::{
 };
 
 impl Service {
+    /// An authenticated upload cannot relabel a scope's canonical source object.
+    pub fn check_source_block<'a>(
+        &'a self,
+        peer: &'a Peer,
+        object: &'a crate::identity::ObjectKey,
+        upload: &'a PeerUpload,
+    ) -> FutureResult<'a, ()> {
+        Box::pin(async move {
+            let context = self.source_context(peer, &upload.holding).await?;
+            let sources = self
+                .sources
+                .as_ref()
+                .ok_or_else(|| Error::Unavailable("this hub has no source receiver installed".into()))?;
+            let actual = sources.check_upload(&SourceUpload {
+                context,
+                holding: upload.holding.clone(),
+                kind: upload.kind.clone(),
+                epoch: upload.epoch.clone(),
+                operation: upload.operation.clone(),
+            })?;
+            if &actual != object {
+                return Err(Error::Denied("source upload differs from the described object".into()));
+            }
+            Ok(())
+        })
+    }
     pub(super) async fn source_context(&self, peer: &Peer, holding: &HoldingPeriod) -> Result<AccessContext, Error> {
         if holding.holder != (Holder::Device { device: peer.device.clone() }) {
             return Err(Error::Denied("source holding is not the authenticated peer".into()));

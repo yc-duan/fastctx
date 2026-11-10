@@ -74,9 +74,15 @@ impl BytePermit {
     pub fn bytes(&self) -> usize {
         self.permit.num_permits()
     }
+    /// Transfers part of an existing reservation without joining the queue or
+    /// increasing the working set. Both returned owners release independently.
+    pub fn split(&mut self, bytes: usize) -> Result<Self, Error> {
+        let permit = self.permit.split(bytes).ok_or_else(|| Error::Invalid("split exceeds byte reservation".into()))?;
+        Ok(Self { permit })
+    }
     /// Releases transient workspace after it has been freed, retaining the same
     /// admission for the buffers that remain alive. This never reacquires bytes.
-    pub(crate) fn shrink_to(&mut self, bytes: usize) -> Result<(), Error> {
+    pub fn shrink_to(&mut self, bytes: usize) -> Result<(), Error> {
         if bytes > self.bytes() {
             return Err(Error::Invalid("a retained working set cannot grow its existing admission".into()));
         }

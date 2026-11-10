@@ -118,11 +118,25 @@ async fn respond(
     session: bool,
 ) -> Result<Response<Body>, Infallible> {
     let path = request.uri().path().to_owned();
-    if !session && (path == wire::CONTROL_PATH || path == wire::DATA_PATH) {
+    let asset_path = path.starts_with(&format!("{}/", wire::ASSET_SYNC_PATH));
+    let asset_opening = match &host {
+        Host::Hub(hub) => match crate::asset_sync::configuration(hub, &path) {
+            Ok(opening) => opening,
+            Err(fastctx_sync::store::Error::Busy) => {
+                return Ok(text(StatusCode::SERVICE_UNAVAILABLE, "Asset resources occupied"));
+            }
+            Err(_) => return Ok(text(StatusCode::NOT_FOUND, "Asset session unavailable")),
+        },
+        Host::Standby(_) => None,
+    };
+    if asset_path && asset_opening.is_none() {
+        return Ok(text(StatusCode::NOT_FOUND, "Asset session unavailable"));
+    }
+    if !session && (path == wire::CONTROL_PATH || path == wire::DATA_PATH || asset_path) {
         host.log().line(format_args!("{peer}: refused a session over TLS 1.2 on {path}"));
         return Ok(text(StatusCode::UPGRADE_REQUIRED, "Sessions need TLS 1.3"));
     }
-    if path == wire::CONTROL_PATH || path == wire::DATA_PATH {
+    if path == wire::CONTROL_PATH || path == wire::DATA_PATH || asset_path {
         let upgrade = hyper::upgrade::on(&mut request);
         let response = match tokio_tungstenite::tungstenite::handshake::server::create_response(&request.map(|_| ())) {
             Ok(response) => response.map(|_| full(Bytes::new())),
@@ -136,7 +150,13 @@ async fn respond(
                 let upgraded = upgrade.await.map_err(|error| error.to_string())?;
                 let parts = upgraded.downcast::<TokioIo<TlsStream>>().map_err(|_| "unexpected upgraded transport")?;
                 let limit = wire::MAX_DATA_MESSAGE + wire::MAX_CONTROL_FRAME;
-                let config = if path == wire::CONTROL_PATH {
+                let (asset_config, asset_frames) = match asset_opening {
+                    Some(opening) => (Some(opening.config), Some(opening.frames)),
+                    None => (None, None),
+                };
+                let config = if let Some(config) = asset_config {
+                    config
+                } else if path == wire::CONTROL_PATH {
                     // Default per-socket buffers took 2 GiB at
                     // ten thousand idle members. Frames still retain their
                     // existing bounds and grow the receive buffer when needed.
@@ -152,11 +172,11 @@ async fn respond(
                 )
                 .await;
                 let hello = crate::recv(&mut socket).await?.ok_or("closed before saying hello")?;
-                Ok::<_, String>((socket, hello))
+                Ok::<_, String>((socket, hello, asset_frames))
             };
             match tokio::time::timeout_at(deadline, opened).await {
-                Ok(Ok((socket, hello))) => match host {
-                    Host::Hub(hub) => crate::connected(hub, socket, path, binding, hello, peer).await,
+                Ok(Ok((socket, hello, asset_frames))) => match host {
+                    Host::Hub(hub) => crate::connected(hub, socket, path, binding, hello, peer, asset_frames).await,
                     Host::Standby(standby) => {
                         crate::moving::standby::connected(standby, socket, path, binding, hello, peer).await;
                     }

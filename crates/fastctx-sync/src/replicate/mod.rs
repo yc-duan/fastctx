@@ -23,12 +23,13 @@ use crate::{
 };
 
 /// One block of an object, under the device's current holding of its scope.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct BlockRequest {
     pub holding: HoldingPeriod,
     pub object: ObjectKey,
     pub kind: KindVersion,
     pub block: ContentBlock,
+    pub root: crate::manifest::ContentRef,
 }
 
 /// One block a device stages at the hub under `operation`, before it submits

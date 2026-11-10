@@ -45,6 +45,14 @@ pub struct ContentBlock {
     pub decoded_bytes: u32,
 }
 
+/// A storage-block ordinal in an ordered Blocks/Branch manifest tree.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct IndexedBlock {
+    pub index: Count,
+    pub content: ContentBlock,
+}
+
 /// Multiple representations may coexist for one BlobId. The encoded digest
 /// identifies selected transfer bytes, and never changes the content identity.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

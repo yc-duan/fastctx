@@ -206,11 +206,8 @@ fn validate(frame: &Frame<'_>, limits: &TransportLimits) -> Result<(), CodecErro
         Frame::MetadataPart { header, payload } => validate_metadata(header, payload.len(), limits),
     }
 }
-pub(super) fn validate_metadata(
-    header: &MetadataPart,
-    bytes: usize,
-    limits: &TransportLimits,
-) -> Result<(), CodecError> {
+/// Validates one bounded, contiguous-on-assembly metadata fragment.
+pub fn validate_metadata(header: &MetadataPart, bytes: usize, limits: &TransportLimits) -> Result<(), CodecError> {
     if header.total_bytes.0 > u64::from(limits.max_metadata_bytes) {
         return Err(CodecError::TooLarge);
     }

@@ -52,6 +52,8 @@ CALLERS = {
         "crates/fastctx-sync/tests/sync_drill/source_acceptance/upload/mod.rs",
         "crates/fastctx-sync/src/store/replica/receipts.rs",
         "crates/fastctx-sync/tests/sync_drill/source_acceptance/follow.rs",
+        "crates/fastctx-sync/src/authority/supply.rs",
+        "crates/fastctx-hub/tests/asset_sync_drill/fixture.rs",
         "crates/fastctx-sync/src/blocks/replica_commit.rs",
         "crates/fastctx-sync/src/blocks/replica_content.rs",
         "crates/fastctx-sync/src/store/replica/sqlite.rs",

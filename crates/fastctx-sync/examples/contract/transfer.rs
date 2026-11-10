@@ -1,4 +1,5 @@
 //! Frozen framing and flow-control examples; no storage or service is started.
+use fastctx_sync::transport_flow::{MetadataBudget, MetadataReassembly};
 use fastctx_types::sync::{
     cursor::{BlockRange, ByteCount, Count, DurableAck, HoldingPeriod, Sequence},
     identity::{Digest, ObjectId, ObjectKey, OperationId},
@@ -6,7 +7,7 @@ use fastctx_types::sync::{
     session::*,
     transfer::{BlockFrame, KindVersion, Message},
     transport_codec::{self as codec, CodecError, Frame},
-    transport_flow::{CreditWindow, FlowError, MetadataBudget, MetadataReassembly},
+    transport_flow::{CreditWindow, FlowError},
 };
 use serde_json::{Value, json};
 
@@ -36,10 +37,12 @@ pub fn sample(holding: &HoldingPeriod) -> Result<Value, Box<dyn std::error::Erro
         envelope: Envelope { version: 1, encoding: Encoding::Raw, protection: Protection::Plain },
     };
     let request = TransferRequest {
+        root: Box::new(content.clone().into()),
         session: session.clone(),
         transfer: transfer.clone(),
         operation: operation.clone(),
         direction: TransferDirection::Download,
+        upload_cause: None,
         object: object.clone(),
         kind: kind.clone(),
         holding: holding.clone(),
@@ -59,7 +62,7 @@ pub fn sample(holding: &HoldingPeriod) -> Result<Value, Box<dyn std::error::Erro
         binding: SessionBindingRequest::Object { object: object.clone(), kind: kind.clone() },
         limits: limits.clone(),
     };
-    let ready = SessionReady { session: session.clone(), holding: holding.clone(), limits: limits.clone() };
+    let ready = SessionReady { session: session.clone(), holding: Some(holding.clone()), limits: limits.clone() };
     let close = SessionClose { session: session.clone() };
     let mut controls = vec![
         TransportControl::SessionOpen(open.clone()),
@@ -67,9 +70,25 @@ pub fn sample(holding: &HoldingPeriod) -> Result<Value, Box<dyn std::error::Erro
             binding: SessionBindingRequest::Scope { scope: holding.scope.clone() },
             ..open.clone()
         }),
+        TransportControl::SessionOpen(SessionOpen {
+            binding: SessionBindingRequest::Hub { hub: holding.scope.hub.clone() },
+            ..open.clone()
+        }),
+        TransportControl::SessionReady(SessionReady { holding: None, ..ready.clone() }),
         TransportControl::SessionReady(ready.clone()),
+        TransportControl::TransferRequest(TransferRequest {
+            direction: TransferDirection::Upload,
+            upload_cause: Some(UploadCause::Mutation),
+            ..request.clone()
+        }),
         TransportControl::TransferRequest(request.clone()),
-        TransportControl::TransferRequest(TransferRequest { direction: TransferDirection::Upload, ..request.clone() }),
+        TransportControl::TransferRequest(TransferRequest {
+            direction: TransferDirection::Upload,
+            upload_cause: Some(UploadCause::Source {
+                epoch: fastctx_types::sync::identity::ProducerEpoch::from_bytes([46; 32]),
+            }),
+            ..request.clone()
+        }),
         TransportControl::TransferRequest(TransferRequest {
             representation: RepresentationChoice::Exact {
                 content: content.id.clone(),
@@ -240,7 +259,7 @@ pub fn sample(holding: &HoldingPeriod) -> Result<Value, Box<dyn std::error::Erro
     })?;
     assert_eq!(sender.available(), before);
 
-    let budget = MetadataBudget::new(8 * 8192);
+    let budget = MetadataBudget::new(8 * 8192)?;
     let metadata_limits = TransportLimits { max_metadata_bytes: 8192, ..limits.clone() };
     let mut assembly = MetadataReassembly::new(session.clone(), metadata_limits.clone(), budget.clone())?;
     let other_session = SessionId::from_bytes([50; 16]);
@@ -267,20 +286,20 @@ pub fn sample(holding: &HoldingPeriod) -> Result<Value, Box<dyn std::error::Erro
         meta_receiver.consume(1024)?;
         complete = assembly.push(&part, &payload)?;
         meta_sender.apply(&meta_receiver.grant(1024)?)?;
-        assert_eq!(budget.used(), 8192);
+        assert_eq!(budget.reserved(), 8192);
         assert!(matches!(assembly.push(&blocked, &[0]), Err(CodecError::Busy)));
         let independent = MetadataPart { session: other_session.clone(), ..blocked.clone() };
         assert!(other.push(&independent, &[0])?.is_none());
-        assert_eq!(budget.used(), 2 * 8192);
+        assert_eq!(budget.reserved(), 2 * 8192);
         other.cancel(&independent.message_id);
-        assert_eq!(budget.used(), 8192);
+        assert_eq!(budget.reserved(), 8192);
     }
     assert_eq!(complete.as_ref().unwrap().bytes().len(), 8192);
-    assert_eq!(budget.used(), 8192);
+    assert_eq!(budget.reserved(), 8192);
     drop(assembly);
-    assert_eq!(budget.used(), 8192);
+    assert_eq!(budget.reserved(), 8192);
     drop(complete);
-    assert_eq!(budget.used(), 0);
+    assert_eq!(budget.reserved(), 0);
 
     let mut reconnected = request.clone();
     reconnected.session = SessionId::from_bytes([49; 16]);
@@ -292,6 +311,17 @@ pub fn sample(holding: &HoldingPeriod) -> Result<Value, Box<dyn std::error::Erro
         "tags":{"transport_control":1,"block_data":2,"metadata_part":3},
         "limits":limits, "control_plane":[Message::OpenSyncSession { request:open },Message::SessionReady { ready },Message::SessionClose { close }],
         "controls":controls,"data_header":header,"envelopes":envelopes,
+        "block_lookup":[
+            Message::WantBlocks {
+                holding:holding.clone(), manifest:ManifestRoot(content.id.clone()),
+                missing:vec![BlockRange { start:Count(0), end:Count(2) }]
+            },
+            Message::Blocks {
+                holding:holding.clone(), manifest:ManifestRoot(content.id.clone()),
+                blocks:vec![fastctx_types::sync::manifest::IndexedBlock { index:Count(0), content:content.clone() }],
+                remaining:vec![BlockRange { start:Count(1), end:Count(2) }]
+            }
+        ],
         "negative_envelopes":[
             {"name":"unknown_tag","hex":hex(&unknown),"error":"unknown_tag"},
             {"name":"whole_frame_too_long","hex":hex(&long),"error":"too_large"},

@@ -200,10 +200,21 @@ pub(crate) fn network_changed() {
 /// only for the first contact of a password login, which proves the hub
 /// itself.
 pub async fn dial(hub: &[SocketAddr], pin: Option<CertPin>, path: &str, max_message: usize) -> Result<Dialed, String> {
+    dial_configured(hub, pin, path, config(max_message)).await
+}
+
+async fn dial_configured(
+    hub: &[SocketAddr],
+    pin: Option<CertPin>,
+    path: &str,
+    configuration: WebSocketConfig,
+) -> Result<Dialed, String> {
     let (hub, path) = (hub.to_vec(), path.to_string());
     on_own_task(async move {
         watching_android(|| {
-            reach(&hub, |tcp, address| tls_websocket(Transport::tcp(tcp), address, pin, &path, max_message))
+            reach(&hub, |tcp, address| {
+                tls_websocket_configured(Transport::tcp(tcp), address, pin, &path, configuration)
+            })
         })
         .await
     })
@@ -245,8 +256,19 @@ pub async fn dial_upstream(
     path: &str,
     max_message: usize,
 ) -> Result<Dialed, String> {
+    dial_upstream_configured(upstream, hub, pin, path, config(max_message)).await
+}
+
+/// Asset callers install negotiated frame and buffer bounds at the WebSocket handshake.
+pub async fn dial_upstream_configured(
+    upstream: &Upstream,
+    hub: &HubId,
+    pin: CertPin,
+    path: &str,
+    configuration: WebSocketConfig,
+) -> Result<Dialed, String> {
     match upstream {
-        Upstream::Hub(addresses) => dial(addresses, Some(pin), path, max_message).await,
+        Upstream::Hub(addresses) => dial_configured(addresses, Some(pin), path, configuration).await,
         Upstream::Through(forwarder) => {
             let forward = format!("{}/{hub}", crate::peer::FORWARD_PATH);
             let (at, path) = (forwarder.at.clone(), path.to_string());
@@ -269,7 +291,7 @@ pub async fn dial_upstream(
                             .await
                             .map_err(|error| format!("asking it to forward: {error}"))?;
                             let inner = Transport::forwarded(WsIo::new(socket));
-                            tls_websocket(inner, address, Some(pin), &path, max_message)
+                            tls_websocket_configured(inner, address, Some(pin), &path, configuration)
                                 .await
                                 .map_err(|error| format!("the hub through it: {error}"))
                         }
@@ -354,10 +376,9 @@ where
                     return Ok(dialed);
                 }
                 Ok(Err(error)) => failures.push(format!("{address} {exit}: {error}")),
-                Err(_) if reached.load(std::sync::atomic::Ordering::Relaxed) => failures.push(format!(
-                    "{address} {exit}: connected, then no answer within {} s",
-                    SILENCE.as_secs()
-                )),
+                Err(_) if reached.load(std::sync::atomic::Ordering::Relaxed) => {
+                    failures.push(format!("{address} {exit}: connected, then no answer within {} s", SILENCE.as_secs()))
+                }
                 Err(_) => failures.push(format!("{address} {exit}: no connection within {} s", SILENCE.as_secs())),
             }
         }
@@ -447,15 +468,22 @@ async fn tls_websocket(
     path: &str,
     max_message: usize,
 ) -> Result<Dialed, String> {
+    tls_websocket_configured(transport, address, pin, path, config(max_message)).await
+}
+
+async fn tls_websocket_configured(
+    transport: Transport,
+    address: SocketAddr,
+    pin: Option<CertPin>,
+    path: &str,
+    configuration: WebSocketConfig,
+) -> Result<Dialed, String> {
     let (tls, binding, certificate) = tls(transport, address, pin).await?;
     let url = format!("ws://{address}{path}");
-    let (socket, _) = tokio_tungstenite::client_async_with_config(
-        url,
-        tokio_rustls::TlsStream::Client(tls),
-        Some(config(max_message)),
-    )
-    .await
-    .map_err(|error| format!("WebSocket: {error}"))?;
+    let (socket, _) =
+        tokio_tungstenite::client_async_with_config(url, tokio_rustls::TlsStream::Client(tls), Some(configuration))
+            .await
+            .map_err(|error| format!("WebSocket: {error}"))?;
     Ok(Dialed { socket, binding, address, route: Route::System, certificate })
 }
 

@@ -75,6 +75,10 @@ impl SqliteAuthority {
     pub(crate) fn upload_custody(&self, request: &SourceUpload) -> Result<crate::store::access::Custody, Error> {
         access::upload(self, request)
     }
+    /// Checks source custody before a transport admits any offered body.
+    pub fn check_upload(&self, request: &SourceUpload) -> Result<crate::identity::ObjectKey, Error> {
+        access::upload(self, request).map(|custody| custody.object)
+    }
     pub fn put_block(
         &self,
         request: SourceUpload,

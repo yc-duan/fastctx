@@ -99,7 +99,7 @@ impl Service {
         Ok(answer)
     }
 }
-fn authorize(
+pub(super) fn authorize(
     db: &Connection,
     peer: &Peer,
     scope: &ScopeKey,

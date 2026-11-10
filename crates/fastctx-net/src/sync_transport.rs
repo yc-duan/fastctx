@@ -17,6 +17,84 @@ use tokio_tungstenite::{
     tungstenite::{Message, protocol::WebSocketConfig},
 };
 
+/// Opened only after both authenticated control peers advertise this service.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct Advertisement {
+    pub capabilities: Capabilities,
+    pub limits: TransportLimits,
+    pub identity: Option<fastctx_types::sync::proof::HubSigningIdentity>,
+}
+impl Advertisement {
+    pub fn local(identity: Option<fastctx_types::sync::proof::HubSigningIdentity>) -> Self {
+        Self {
+            capabilities: Capabilities {
+                protocols: vec!["fastctx-sync/v1".into()],
+                envelopes: vec!["plain/v1".into()],
+                encodings: vec!["raw".into(), "zstd".into()],
+                transports: vec![TRANSPORT_PROTOCOL.into()],
+                receive_window: fastctx_types::sync::cursor::ByteCount(4 * 1024 * 1024),
+                max_page_bytes: fastctx_types::sync::PAGE_BYTES,
+                ..Capabilities::default()
+            },
+            limits: TransportLimits {
+                max_frame_bytes: 64 * 1024,
+                max_control_bytes: 16 * 1024,
+                max_metadata_bytes: fastctx_types::sync::PAGE_BYTES,
+                max_active_transfers: 1,
+                max_active_parts: 1,
+            },
+            identity,
+        }
+    }
+    /// Retains only understood capability claims. Authentication is independent;
+    /// a device's claimed hub identity is never a trust input or retained state.
+    pub fn normalized_peer(&self) -> Result<Self, String> {
+        let selected = Self::local(None).negotiate(self)?;
+        let mut kept = Self::local(None);
+        kept.limits = selected.limits().clone();
+        kept.capabilities.max_page_bytes = kept.limits.max_metadata_bytes;
+        kept.capabilities.receive_window = self.capabilities.receive_window;
+        kept.capabilities.encodings = selected
+            .encodings()
+            .iter()
+            .map(|encoding| match encoding {
+                fastctx_types::sync::manifest::Encoding::Raw => "raw".into(),
+                fastctx_types::sync::manifest::Encoding::Zstd => "zstd".into(),
+            })
+            .collect();
+        static KINDS: std::sync::OnceLock<std::collections::BTreeMap<&'static str, u16>> = std::sync::OnceLock::new();
+        let known = KINDS.get_or_init(|| {
+            fastctx_sync::registry::REGISTRY
+                .entries()
+                .iter()
+                .filter(|kind| {
+                    matches!(
+                        kind.class,
+                        fastctx_sync::registry::DataClass::Asset | fastctx_sync::registry::DataClass::Derived
+                    )
+                })
+                .map(|kind| (kind.id, kind.schema))
+                .collect()
+        });
+        let mut kinds = std::collections::BTreeSet::new();
+        for kind in &self.capabilities.kinds {
+            if let Some((&name, &schema)) = known.get_key_value(kind.kind.as_str())
+                && schema == kind.schema
+            {
+                kinds.insert((name, schema));
+            }
+        }
+        kept.capabilities.kinds = kinds
+            .into_iter()
+            .map(|(kind, schema)| fastctx_types::sync::transfer::KindVersion { kind: kind.into(), schema })
+            .collect();
+        Ok(kept)
+    }
+    pub fn negotiate(&self, remote: &Self) -> Result<NegotiatedTransport, String> {
+        NegotiatedTransport::select(&self.capabilities, &remote.capabilities, &self.limits, &remote.limits)
+    }
+}
+
 /// Selection proves compatible framing, not authorization or service readiness.
 /// Create it only from capabilities obtained through the legacy-readable
 /// authenticated handshake; never send a new Hello merely to probe an old peer.
@@ -24,6 +102,8 @@ use tokio_tungstenite::{
 pub struct NegotiatedTransport {
     limits: TransportLimits,
     selection: Selection,
+    encodings: Vec<fastctx_types::sync::manifest::Encoding>,
+    receive_window: u32,
 }
 impl NegotiatedTransport {
     pub fn select(
@@ -42,20 +122,24 @@ impl NegotiatedTransport {
                 return Err("asset transport was not mutually advertised".into());
             }
         }
-        let encoding = [fastctx_types::sync::manifest::Encoding::Raw, fastctx_types::sync::manifest::Encoding::Zstd]
-            .into_iter()
-            .find(|encoding| {
-                let name = match encoding {
-                    fastctx_types::sync::manifest::Encoding::Raw => "raw",
-                    _ => "zstd",
-                };
-                local.encodings.iter().any(|e| e == name) && remote.encodings.iter().any(|e| e == name)
-            })
-            .ok_or_else(|| "no mutually advertised asset encoding".to_string())?;
+        let encodings: Vec<_> =
+            [fastctx_types::sync::manifest::Encoding::Raw, fastctx_types::sync::manifest::Encoding::Zstd]
+                .into_iter()
+                .filter(|encoding| {
+                    let name = match encoding {
+                        fastctx_types::sync::manifest::Encoding::Raw => "raw",
+                        _ => "zstd",
+                    };
+                    local.encodings.iter().any(|e| e == name) && remote.encodings.iter().any(|e| e == name)
+                })
+                .collect();
+        let encoding = *encodings.first().ok_or_else(|| "no mutually advertised asset encoding".to_string())?;
         let mut limits = local_limits.intersect(remote_limits)?;
         limits.max_metadata_bytes = limits.max_metadata_bytes.min(local.max_page_bytes).min(remote.max_page_bytes);
         Ok(Self {
+            receive_window: local.receive_window.0.min(remote.receive_window.0).min(4 * 1024 * 1024) as u32,
             limits,
+            encodings,
             selection: Selection {
                 protocol: SelectedProtocol::V1,
                 envelope: SelectedEnvelope::V1,
@@ -63,6 +147,19 @@ impl NegotiatedTransport {
                 transport: Some(SelectedTransport::V1),
             },
         })
+    }
+    pub fn restrict(&mut self, limits: &TransportLimits) -> Result<(), String> {
+        self.limits = self.limits.intersect(limits)?;
+        Ok(())
+    }
+    pub fn receive_window(&self) -> u32 {
+        self.receive_window
+    }
+    pub fn encodings(&self) -> &[fastctx_types::sync::manifest::Encoding] {
+        &self.encodings
+    }
+    pub fn supports_encoding(&self, encoding: fastctx_types::sync::manifest::Encoding) -> bool {
+        self.encodings.contains(&encoding)
     }
     pub fn limits(&self) -> &TransportLimits {
         &self.limits

@@ -325,6 +325,7 @@ pub fn greeting(identity: &Identity, binding: &[u8; 32], position: Letters, addr
         protocol: wire::GREETING_PROTOCOL,
         version: env!("CARGO_PKG_VERSION").into(),
         intent: Intent::Session {
+            asset_sync: None,
             key: identity.key.public(),
             proof,
             letters: Letters { epoch: position.epoch, taken: position.taken },

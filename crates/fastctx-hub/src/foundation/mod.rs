@@ -27,16 +27,14 @@ use fastctx_sync::{
 use tokio::sync::OnceCell;
 
 /// Codec and read buffers the content engine may hold at once.
-const CONTENT_BUFFERS: usize = 16 * 1024 * 1024;
+const CONTENT_BUFFERS: usize = 32 * 1024 * 1024;
 /// How long a claimed task stays this worker's before another may take it.
 const LEASE: Duration = Duration::from_secs(60);
 
 /// What exists only once the hub has begun its authority run.
 struct Authority {
     directory: Arc<SqliteDirectory>,
-    #[allow(dead_code, reason = "the asset sync transport's entry")]
     service: Service,
-    #[allow(dead_code, reason = "the asset sync transport's advertisement")]
     identity: HubSigningIdentity,
     worker: Mutex<Option<Worker>>,
     wake: Wake,
@@ -50,9 +48,52 @@ pub(crate) struct Foundation {
     authority: OnceCell<Authority>,
     scheduler: SqliteScheduler,
     report: Arc<dyn Fn(String) + Send + Sync>,
+    sessions: fastctx_net::asset_transport::sessions::Sessions,
 }
 
 impl Foundation {
+    pub(crate) fn asset_sessions(&self) -> &fastctx_net::asset_transport::sessions::Sessions {
+        &self.sessions
+    }
+    pub(crate) fn advertisement(&self) -> Option<fastctx_net::sync_transport::Advertisement> {
+        self.authority().ok().map(|a| fastctx_net::sync_transport::Advertisement::local(Some(a.identity.clone())))
+    }
+    pub(crate) async fn recheck_message(
+        &self,
+        peer: &fastctx_sync::authority::Peer,
+        request: &fastctx_sync::transfer::Message,
+    ) -> Result<(), Error> {
+        self.authority()?.service.recheck_message(peer, request).await
+    }
+    pub(crate) async fn recheck(
+        &self,
+        peer: &fastctx_sync::authority::Peer,
+        holding: &fastctx_sync::cursor::HoldingPeriod,
+    ) -> Result<(), Error> {
+        self.authority()?.service.recheck(peer, holding).await
+    }
+    pub(crate) async fn check_supply(
+        &self,
+        peer: &fastctx_sync::authority::Peer,
+        request: &fastctx_sync::replicate::BlockRequest,
+    ) -> Result<(), Error> {
+        self.authority()?.service.check_supply(peer, request).await
+    }
+    pub(crate) async fn supply(
+        &self,
+        peer: &fastctx_sync::authority::Peer,
+        request: fastctx_sync::replicate::BlockRequest,
+    ) -> Result<fastctx_sync::replicate::Received<Vec<u8>>, Error> {
+        self.authority()?.service.supply(peer, request).await
+    }
+    pub(crate) async fn check_source_block(
+        &self,
+        peer: &fastctx_sync::authority::Peer,
+        object: &fastctx_sync::identity::ObjectKey,
+        upload: &fastctx_sync::authority::PeerUpload,
+    ) -> Result<(), Error> {
+        self.authority()?.service.check_source_block(peer, object, upload).await
+    }
     /// Builds the engines on the hub's open database; nothing runs until `run`.
     pub(crate) fn open(dir: &Path, database: Database, hub: HubId, log: Arc<crate::log::Log>) -> anyhow::Result<Self> {
         let holder = Holder::Hub { hub: hub.clone() };
@@ -67,7 +108,8 @@ impl Foundation {
         )?;
         let scheduler = SqliteScheduler::new(database, claims, holder, LEASE)?;
         let report: Arc<dyn Fn(String) + Send + Sync> = Arc::new(move |line| log.line(line));
-        Ok(Self { dir: dir.to_path_buf(), hub, blocks, authority: OnceCell::new(), scheduler, report })
+        let sessions = fastctx_net::asset_transport::sessions::Sessions::new(blocks.buffer_budget());
+        Ok(Self { dir: dir.to_path_buf(), hub, blocks, authority: OnceCell::new(), scheduler, report, sessions })
     }
 
     /// Loads or first creates the hub's service key, then begins this run's

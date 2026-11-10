@@ -1,5 +1,81 @@
 {
   "asset_transport": {
+    "block_lookup": [
+      {
+        "holding": {
+          "acl_revision": "1",
+          "holder": {
+            "device": "d-0303030303030303030303030303030303030303030303030303030303030303",
+            "holder": "device"
+          },
+          "publication_epoch": "1",
+          "scope": {
+            "hub": "w-0101010101010101",
+            "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+          }
+        },
+        "manifest": {
+          "algorithm": "sha256",
+          "digest": "80e8b52f11fb9a81f8f707743bac2811bc2dca1b78dd37a9c8db43fe37deacd5",
+          "domain": {
+            "hub": "w-0101010101010101",
+            "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+          }
+        },
+        "message": "want_blocks",
+        "missing": [
+          {
+            "end": "2",
+            "start": "0"
+          }
+        ]
+      },
+      {
+        "blocks": [
+          {
+            "content": {
+              "decoded_bytes": 7,
+              "id": {
+                "algorithm": "sha256",
+                "digest": "80e8b52f11fb9a81f8f707743bac2811bc2dca1b78dd37a9c8db43fe37deacd5",
+                "domain": {
+                  "hub": "w-0101010101010101",
+                  "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+                }
+              }
+            },
+            "index": "0"
+          }
+        ],
+        "holding": {
+          "acl_revision": "1",
+          "holder": {
+            "device": "d-0303030303030303030303030303030303030303030303030303030303030303",
+            "holder": "device"
+          },
+          "publication_epoch": "1",
+          "scope": {
+            "hub": "w-0101010101010101",
+            "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+          }
+        },
+        "manifest": {
+          "algorithm": "sha256",
+          "digest": "80e8b52f11fb9a81f8f707743bac2811bc2dca1b78dd37a9c8db43fe37deacd5",
+          "domain": {
+            "hub": "w-0101010101010101",
+            "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+          }
+        },
+        "message": "blocks",
+        "remaining": [
+          {
+            "end": "2",
+            "start": "1"
+          }
+        ]
+      }
+    ],
     "control_plane": [
       {
         "message": "open_sync_session",
@@ -105,6 +181,33 @@
         "session": "ss-29292929292929292929292929292929"
       },
       {
+        "binding": {
+          "binding": "hub",
+          "hub": "w-0101010101010101"
+        },
+        "limits": {
+          "max_active_parts": 2,
+          "max_active_transfers": 4,
+          "max_control_bytes": 16384,
+          "max_frame_bytes": 65536,
+          "max_metadata_bytes": 262144
+        },
+        "message": "session_open",
+        "session": "ss-29292929292929292929292929292929"
+      },
+      {
+        "holding": null,
+        "limits": {
+          "max_active_parts": 2,
+          "max_active_transfers": 4,
+          "max_control_bytes": 16384,
+          "max_frame_bytes": 65536,
+          "max_metadata_bytes": 262144
+        },
+        "message": "session_ready",
+        "session": "ss-29292929292929292929292929292929"
+      },
+      {
         "holding": {
           "acl_revision": "1",
           "holder": {
@@ -126,6 +229,73 @@
         },
         "message": "session_ready",
         "session": "ss-29292929292929292929292929292929"
+      },
+      {
+        "direction": "upload",
+        "holding": {
+          "acl_revision": "1",
+          "holder": {
+            "device": "d-0303030303030303030303030303030303030303030303030303030303030303",
+            "holder": "device"
+          },
+          "publication_epoch": "1",
+          "scope": {
+            "hub": "w-0101010101010101",
+            "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+          }
+        },
+        "kind": {
+          "kind": "conversation.image",
+          "schema": 1
+        },
+        "message": "transfer_request",
+        "object": {
+          "object": "o-2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d",
+          "scope": {
+            "hub": "w-0101010101010101",
+            "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+          }
+        },
+        "operation": "m-2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c",
+        "priority": "interactive",
+        "representation": {
+          "choice": "encodings",
+          "preferred": [
+            "raw",
+            "zstd"
+          ]
+        },
+        "root": {
+          "block": {
+            "algorithm": "sha256",
+            "digest": "80e8b52f11fb9a81f8f707743bac2811bc2dca1b78dd37a9c8db43fe37deacd5",
+            "domain": {
+              "hub": "w-0101010101010101",
+              "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+            }
+          },
+          "decoded_bytes": 7,
+          "kind": "single"
+        },
+        "session": "ss-29292929292929292929292929292929",
+        "target": {
+          "content": {
+            "decoded_bytes": 7,
+            "id": {
+              "algorithm": "sha256",
+              "digest": "80e8b52f11fb9a81f8f707743bac2811bc2dca1b78dd37a9c8db43fe37deacd5",
+              "domain": {
+                "hub": "w-0101010101010101",
+                "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+              }
+            }
+          },
+          "target": "single"
+        },
+        "transfer": "tr-2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a",
+        "upload_cause": {
+          "cause": "mutation"
+        }
       },
       {
         "direction": "download",
@@ -161,6 +331,18 @@
             "raw",
             "zstd"
           ]
+        },
+        "root": {
+          "block": {
+            "algorithm": "sha256",
+            "digest": "80e8b52f11fb9a81f8f707743bac2811bc2dca1b78dd37a9c8db43fe37deacd5",
+            "domain": {
+              "hub": "w-0101010101010101",
+              "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+            }
+          },
+          "decoded_bytes": 7,
+          "kind": "single"
         },
         "session": "ss-29292929292929292929292929292929",
         "target": {
@@ -214,6 +396,18 @@
             "zstd"
           ]
         },
+        "root": {
+          "block": {
+            "algorithm": "sha256",
+            "digest": "80e8b52f11fb9a81f8f707743bac2811bc2dca1b78dd37a9c8db43fe37deacd5",
+            "domain": {
+              "hub": "w-0101010101010101",
+              "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+            }
+          },
+          "decoded_bytes": 7,
+          "kind": "single"
+        },
         "session": "ss-29292929292929292929292929292929",
         "target": {
           "content": {
@@ -229,7 +423,11 @@
           },
           "target": "single"
         },
-        "transfer": "tr-2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"
+        "transfer": "tr-2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a",
+        "upload_cause": {
+          "cause": "source",
+          "epoch": "p-2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e"
+        }
       },
       {
         "direction": "download",
@@ -270,6 +468,18 @@
             }
           },
           "representation": "2d5004397010edd8fd6b849b39c8e569d47ff9ce83f1bb97aeec7537b2025181"
+        },
+        "root": {
+          "block": {
+            "algorithm": "sha256",
+            "digest": "80e8b52f11fb9a81f8f707743bac2811bc2dca1b78dd37a9c8db43fe37deacd5",
+            "domain": {
+              "hub": "w-0101010101010101",
+              "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+            }
+          },
+          "decoded_bytes": 7,
+          "kind": "single"
         },
         "session": "ss-29292929292929292929292929292929",
         "target": {
@@ -322,6 +532,18 @@
             "raw",
             "zstd"
           ]
+        },
+        "root": {
+          "block": {
+            "algorithm": "sha256",
+            "digest": "80e8b52f11fb9a81f8f707743bac2811bc2dca1b78dd37a9c8db43fe37deacd5",
+            "domain": {
+              "hub": "w-0101010101010101",
+              "scope": "s-0202020202020202020202020202020202020202020202020202020202020202"
+            }
+          },
+          "decoded_bytes": 7,
+          "kind": "single"
         },
         "session": "ss-29292929292929292929292929292929",
         "target": {
@@ -680,7 +902,7 @@
     },
     "envelopes": [
       {
-        "hex": "465853540101000000000082000000007b226d657373616765223a22637265646974222c2273657373696f6e223a2273732d3239323932393239323932393239323932393239323932393239323932393239222c2273747265616d223a7b2273747265616d223a226d65746164617461227d2c22616c6c6f7765645f7061796c6f61645f746f74616c223a2234303936227d",
+        "hex": "46585354010100000000026a000000007b226d657373616765223a22706172745f6f66666572222c2273657373696f6e223a2273732d3239323932393239323932393239323932393239323932393239323932393239222c227472616e73666572223a2274722d3261326132613261326132613261326132613261326132613261326132613261222c2270617274223a2270742d3262326232623262326232623262326232623262326232623262326232623262222c22626c6f636b5f696e646578223a6e756c6c2c22726570726573656e746174696f6e223a7b22636f6e74656e74223a7b226964223a7b22646f6d61696e223a7b22687562223a22772d30313031303130313031303130313031222c2273636f7065223a22732d30323032303230323032303230323032303230323032303230323032303230323032303230323032303230323032303230323032303230323032303230323032227d2c22616c676f726974686d223a22736861323536222c22646967657374223a2238306538623532663131666239613831663866373037373433626163323831316263326463613162373864643337613963386462343366653337646561636435227d2c226465636f6465645f6279746573223a377d2c22656e636f6465645f6279746573223a372c22656e636f6465645f646967657374223a2238306538623532663131666239613831663866373037373433626163323831316263326463613162373864643337613963386462343366653337646561636435222c22656e76656c6f7065223a7b2276657273696f6e223a312c22656e636f64696e67223a22726177222c2270726f74656374696f6e223a22706c61696e227d7d7d",
         "name": "control"
       },
       {
