@@ -231,7 +231,6 @@ pub(crate) struct Node {
     ingestion: std::sync::OnceLock<Arc<conversation_ingest::watcher::Service>>,
     book_database: fastctx_storage::Database,
     record_migration: record_migration::Service,
-    controls_due: std::sync::Mutex<std::collections::HashMap<fastctx_types::ResidentId, bool>>,
     /// This program's own copy under the World, which everything the node
     /// starts from itself runs from (`own.rs`).
     fastctx: PathBuf,
@@ -821,7 +820,6 @@ pub async fn run_prepared(
                 ingestion: Default::default(),
                 book_database,
                 record_migration,
-                controls_due: Default::default(),
                 fastctx,
                 machine: RwLock::new(machine),
                 jobs: jobs::Jobs::new(),
@@ -1014,6 +1012,7 @@ pub async fn run_prepared(
             management::register(&node);
             content_upkeep::register(&node);
             outbox::register(&node);
+            control_queue::register(&node);
         })
         .await
         {

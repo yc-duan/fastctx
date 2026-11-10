@@ -7,6 +7,7 @@ use fastctx_types::ipc::FailureCode;
 use fastctx_types::session::control::{Control, ControlState, Controlled, PendingControl};
 use fastctx_types::session::{Happened, SessionChange, SessionEvent};
 use fastctx_types::{ResidentId, ipc::Failure};
+use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 pub(crate) use storage::pending;
@@ -466,39 +467,48 @@ fn drain_now<'a>(
     })))
 }
 
-struct Scheduled {
-    node: Arc<Node>,
-    id: ResidentId,
-    released: bool,
-}
-impl Drop for Scheduled {
-    fn drop(&mut self) {
-        if !self.released {
-            self.node.controls_due.lock().expect("control scheduling").remove(&self.id);
+/// The kind of job that drains a conversation's waiting controls.
+const DRAINING: &str = "controls/drain";
+/// Conversations drained at once. A drain mostly waits, for the
+/// conversation's gate or its host, so many may.
+const DRAINED_AT_ONCE: usize = 64;
+/// The longest one drain may take: a control it runs may be a compaction.
+const DRAINS_WITHIN: Duration = Duration::from_secs(45 * 60);
+/// Drains in a row that may be dropped for taking too long before the job
+/// is set aside until the conversation is poked again.
+const DRAIN_TRIES: u32 = 5;
+
+/// The drains in a row that failed, and what the last said, by conversation:
+/// what paces the next and keeps the log from repeating itself.
+static FAILING: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<ResidentId, (u32, String)>>> =
+    std::sync::LazyLock::new(Default::default);
+
+/// Asks for the conversation's waiting controls to be drained, as a job
+/// (`fastctx_jobs`): one for the conversation however often it is asked.
+/// Asked while a drain waits to be tried again, that one is due now; asked
+/// while one runs, another follows it.
+pub(crate) fn schedule(node: &Arc<Node>, id: &ResidentId) {
+    let job = fastctx_jobs::Job { kind: DRAINING, key: id.to_string(), unit: id.to_string(), payload: Vec::new() };
+    let (database, jobs) = (node.database.clone(), node.durable_jobs.clone());
+    fastctx_platform::task::spawn(async move {
+        let bytes = job.key.len() * 2 + 64;
+        if database.write_relaxed(bytes, move |db| fastctx_jobs::submit(db, &job)).await.is_ok() {
+            jobs.stir(DRAINING);
         }
-    }
+    });
 }
 
-pub(crate) fn schedule(node: &Arc<Node>, id: &ResidentId) {
-    {
-        use std::collections::hash_map::Entry;
-        let mut due = node.controls_due.lock().expect("control scheduling");
-        match due.entry(id.clone()) {
-            Entry::Occupied(mut entry) => {
-                *entry.get_mut() = true;
-                return;
-            }
-            Entry::Vacant(entry) => {
-                entry.insert(false);
-            }
-        }
-    }
-    let (node, id) = (node.clone(), id.clone());
-    fastctx_platform::task::spawn(async move {
-        let mut scheduled = Scheduled { node: node.clone(), id: id.clone(), released: false };
-        node.ready_for(&id).await;
-        let (mut again, mut said) = (crate::again::Again::default(), String::new());
-        loop {
+/// Names what drains waiting controls, before the node's jobs start.
+pub(crate) fn register(node: &Arc<Node>) {
+    use fastctx_jobs::{Kind, Outcome, Taken};
+    let jobs = node.durable_jobs.clone();
+    let node = Arc::downgrade(node);
+    let run = move |taken: Taken| -> std::pin::Pin<Box<dyn Future<Output = Outcome> + Send>> {
+        let node = node.upgrade();
+        Box::pin(async move {
+            let Some(node) = node else { return Outcome::Failed("the node is stopping".into()) };
+            let Ok(id) = taken.unit.parse::<ResidentId>() else { return Outcome::Done };
+            node.ready_for(&id).await;
             let failed = {
                 let gate = gate(&node, &id);
                 let _action = gate.lock().await;
@@ -509,24 +519,27 @@ pub(crate) fn schedule(node: &Arc<Node>, id: &ResidentId) {
             };
             // A pass that failed, as to keep how a control ended, is made
             // again later rather than left until something else asks.
-            if let Some(error) = failed {
-                if error.message != said {
+            let Some(error) = failed else {
+                FAILING.lock().expect("never poisoned").remove(&id);
+                return Outcome::Done;
+            };
+            let failures = {
+                let mut failing = FAILING.lock().expect("never poisoned");
+                let (failures, said) = failing.entry(id.clone()).or_default();
+                if *said != error.message {
                     node.log.line(format_args!("executing {id}'s queued controls; trying again: {error}"));
-                    said = error.message;
+                    *said = error.message;
                 }
-                tokio::time::sleep(again.next()).await;
-                continue;
-            }
-            let mut due = node.controls_due.lock().expect("control scheduling");
-            if due.get(&id) == Some(&true) {
-                due.insert(id.clone(), false);
-            } else {
-                due.remove(&id);
-                scheduled.released = true;
-                break;
-            }
-        }
-    });
+                *failures = failures.saturating_add(1);
+                *failures
+            };
+            Outcome::Again { after: fastctx_net::again::backoff(failures) }
+        })
+    };
+    jobs.register(
+        Kind { name: DRAINING, at_once: DRAINED_AT_ONCE, within: DRAINS_WITHIN, tries: DRAIN_TRIES },
+        Arc::new(run),
+    );
 }
 
 /// Whether words handed to the host (before `before`, where given) have not
