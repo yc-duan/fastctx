@@ -5,6 +5,7 @@ mod changes;
 mod commit;
 mod content;
 mod epochs;
+mod fresh;
 mod install;
 mod notices;
 mod pages;

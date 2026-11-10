@@ -32,6 +32,8 @@ use fastctx_types::sync::{
     cursor::{LocalSequence, Sequence, StreamCursor},
 };
 
+#[path = "timeline_fresh.rs"]
+mod fresh;
 #[path = "timeline_merkle.rs"]
 mod merkle;
 #[path = "timeline_reader.rs"]
@@ -175,8 +177,8 @@ fn head(db: &Database) -> Result<(u64, Option<String>, Option<u64>, u64)> {
     })?)
 }
 
-pub(super) async fn run(root: &Path) -> Result<()> {
-    let dir = root.join("timeline-install");
+pub(super) async fn run(drill_root: &Path) -> Result<()> {
+    let dir = drill_root.join("timeline-install");
     fastctx_platform::ensure_private_dir(&dir)?;
     let db = open(&dir.join("replica.sqlite3"))?;
     let blocks = SqliteBlocks::new(db.clone(), dir.join("files"), holder(), policy(false), operation(95), 1 << 24)?;
@@ -509,6 +511,7 @@ pub(super) async fn run(root: &Path) -> Result<()> {
         fastctx_sync::timeline::TimelineContentResult::Pending { .. }
     ));
     timelines.release(reader, page.fence).await?;
+    fresh::run(drill_root).await?;
     println!(
         "timeline install: item revisions to snapshot and index, indexed and fenced reads, item and stream reads, notices, release, input-only passes, retraction, branch index rebuild, idempotent rerun, head retention, hosted scopes and pending owned content after cache reopen passed"
     );

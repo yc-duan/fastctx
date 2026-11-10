@@ -91,11 +91,12 @@ impl<'tx> ContentCommit<'tx> {
             RootChange::Acquire(request) => {
                 if matches!(request.usage, RootUse::Timeline { .. }) {
                     return match self.writer.acquire_timeline(step.operation(), request)? {
-                        RootAcquired::Held { lease } => Ok(Some(*lease)),
-                        RootAcquired::Pending { .. } => Err(fastctx_storage::Error::with_kind(
+                        Some(RootAcquired::Held { lease }) => Ok(Some(*lease)),
+                        Some(RootAcquired::Pending { .. }) => Err(fastctx_storage::Error::with_kind(
                             fastctx_storage::ErrorKind::Busy,
                             "timeline metadata is not ready",
                         )),
+                        None => Err(sql::invalid(crate::store::roots::AcquireRootError::TimelineUnbound.to_string())),
                     };
                 }
                 let ticket = self.supplies.usage(&request.lease)?;

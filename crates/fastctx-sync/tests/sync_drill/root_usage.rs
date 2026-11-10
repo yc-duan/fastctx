@@ -172,7 +172,10 @@ async fn advanced_holding(root: &Path) -> Result<()> {
     assert!(blocks.acquire_root(operation(50), root_request).await.is_err());
     let mut next = request(current.clone(), lease.root.clone(), 51);
     next.bases.push(fastctx_sync::store::roots::SupplyBasis::Held { lease: Box::new(lease.clone()) });
-    assert!(matches!(blocks.acquire_root(operation(51), next.clone()).await, Err(fastctx_sync::store::Error::Busy)));
+    assert!(matches!(
+        blocks.acquire_root(operation(51), next.clone()).await,
+        Err(fastctx_sync::store::roots::AcquireRootError::Store(fastctx_sync::store::Error::Busy))
+    ));
     drop(blocks);
     drop(db);
     super::super::scheduler::closed(&path).await?;

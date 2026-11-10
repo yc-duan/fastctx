@@ -7,7 +7,7 @@ use crate::{
         Error, FutureResult,
         access::Custody,
         boundary::{self, Role},
-        roots::{self, AcquireRoot, RootAcquired, RootLease, RootStore},
+        roots::{self, AcquireRoot, AcquireRootError, AcquireRootResult, RootAcquired, RootLease, RootStore},
         sql,
     },
 };
@@ -55,7 +55,7 @@ impl SqliteBlocks {
 }
 impl roots::sealed::RootWriter for SqliteBlocks {}
 impl RootStore for SqliteBlocks {
-    fn acquire_root(&self, operation: OperationId, request: AcquireRoot) -> FutureResult<'_, RootAcquired> {
+    fn acquire_root(&self, operation: OperationId, request: AcquireRoot) -> AcquireRootResult<'_> {
         Box::pin(async move {
             request.validate()?;
             let policy = self.policy.clone();
@@ -67,7 +67,7 @@ impl RootStore for SqliteBlocks {
                     pins::authorize(db, &holder, policy.as_ref(), &request.custody)?;
                     let now = now();
                     if let Some(previous) = root_holds::existing(db, &id, &request, now)? {
-                        return Ok(previous);
+                        return Ok(Some(previous));
                     }
                     let writer = crate::blocks::supply::writer(db, &holder, policy.as_ref(), now)?;
                     if matches!(request.usage, crate::store::roots::RootUse::Timeline { .. }) {
@@ -84,10 +84,10 @@ impl RootStore for SqliteBlocks {
                     match writer.step(&ticket, crate::blocks::supply::SupplyBudget::default())? {
                         crate::blocks::supply::SupplyProgress::Ready => {
                             let ready = writer.recheck(&request.custody, &ticket)?;
-                            Ok(RootAcquired::Held { lease: Box::new(writer.acquire(ready, &request)?) })
+                            Ok(Some(RootAcquired::Held { lease: Box::new(writer.acquire(ready, &request)?) }))
                         }
                         crate::blocks::supply::SupplyProgress::Pending { .. } => {
-                            Ok(RootAcquired::Pending { completeness: crate::cursor::Completeness::MetadataOnly })
+                            Ok(Some(RootAcquired::Pending { completeness: crate::cursor::Completeness::MetadataOnly }))
                         }
                         crate::blocks::supply::SupplyProgress::Rejected { node, reason } => Err(sql::invalid(format!(
                             "content {} has no qualified supply: {reason:?}",
@@ -100,7 +100,8 @@ impl RootStore for SqliteBlocks {
                     }
                 })
                 .await
-                .map_err(|error| sql::error(error, operation))
+                .map_err(|error| AcquireRootError::Store(sql::error(error, operation)))?
+                .ok_or(AcquireRootError::TimelineUnbound)
         })
     }
     fn release_root(&self, custody: Custody, lease: RootLease) -> FutureResult<'_, ()> {

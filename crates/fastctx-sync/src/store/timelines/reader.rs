@@ -1,17 +1,19 @@
 //! Pages of a conversation's installed timeline, read locally. A fresh read
 //! holds its snapshot root for a while; the current snapshot answers from the
 //! position index, an older or rebuilding one from its immutable pages.
-use super::{SqliteTimelines, pages::Loaded, state};
+use super::{
+    SqliteTimelines,
+    fresh::{Fresh, now},
+    pages::Loaded,
+    state,
+};
 use crate::{
     cursor::LocalSequence,
-    identity::{Digest, ObjectId, ObjectKey, OperationId, RootLeaseId},
-    manifest::ContentRef,
+    identity::{ObjectId, ObjectKey},
     registry::REGISTRY,
     store::{
         Error, FutureResult, PageLimit,
         access::{AccessContext, Decision},
-        ingest::StreamProgress,
-        roots::{AcquireRoot, RootAcquired, RootStore, RootUse},
         sql,
     },
     timeline::{
@@ -23,10 +25,7 @@ use crate::{
 };
 use fastctx_storage::rusqlite::params;
 use fastctx_types::sync::conversation_timeline::KIND;
-use std::sync::atomic::{AtomicU64, Ordering};
 
-/// How long a fresh read holds its snapshot; a reader paging longer re-anchors.
-const HOLD_MILLIS: i64 = 10 * 60 * 1000;
 /// T2's allowance for decoding one page or item from immutable pages.
 pub(super) const READ_BUDGET: Budget = Budget { work_bytes: 16 * 1024 * 1024, max_pages: 256, max_changes: 0 };
 
@@ -61,17 +60,7 @@ impl TimelineReader for SqliteTimelines {
         })
     }
     fn timeline(&self, context: AccessContext, request: TimelineRead) -> FutureResult<'_, TimelineResult> {
-        Box::pin(async move {
-            let conversation = request.conversation.clone();
-            let result = self.read_timeline(context.clone(), request).await?;
-            self.authorize(&context, &conversation)?;
-            if let TimelineResult::Page { page } = &result
-                && !self.held(&page.fence).await?
-            {
-                return Ok(TimelineResult::ReanchorNeeded);
-            }
-            Ok(result)
-        })
+        Box::pin(self.read_timeline(context, request))
     }
     fn item(&self, context: AccessContext, fence: TimelineFence, item: ObjectId) -> FutureResult<'_, ItemRead> {
         Box::pin(async move {
@@ -83,11 +72,6 @@ impl TimelineReader for SqliteTimelines {
             Ok(result)
         })
     }
-}
-
-pub(super) enum Fresh {
-    Fence(TimelineFence),
-    Pending(Option<StreamProgress>),
 }
 
 impl SqliteTimelines {
@@ -160,31 +144,56 @@ impl SqliteTimelines {
 
     async fn read_timeline(&self, context: AccessContext, request: TimelineRead) -> Result<TimelineResult, Error> {
         let conversation = request.conversation.clone();
-        self.authorize(&context, &conversation)?;
-        let limit = PageLimit { items: request.max_items, bytes: request.max_bytes };
-        let fence = match request.fence {
-            Some(fence) => {
-                if fence.conversation != conversation {
-                    return Err(Error::Invalid("the fence belongs to another conversation".into()));
+        let mut acquired = None;
+        let outcome = async {
+            self.authorize(&context, &conversation)?;
+            let limit = PageLimit { items: request.max_items, bytes: request.max_bytes };
+            let fence = match request.fence {
+                Some(fence) => {
+                    if fence.conversation != conversation {
+                        return Err(Error::Invalid("the fence belongs to another conversation".into()));
+                    }
+                    if !self.held(&fence).await? {
+                        return Ok(TimelineResult::ReanchorNeeded);
+                    }
+                    fence
                 }
-                if !self.held(&fence).await? {
-                    return Ok(TimelineResult::ReanchorNeeded);
-                }
-                fence
+                None => match self.fresh(&conversation).await? {
+                    Fresh::Fence(fence) => {
+                        acquired = Some(fence.clone());
+                        fence
+                    }
+                    Fresh::Pending(progress) => return Ok(TimelineResult::Pending { progress }),
+                },
+            };
+            let head = self.current(&conversation).await?;
+            let plan = query::query_plan(&head, fence, request.anchor, limit)?;
+            if plan.route == Route::CurrentSql
+                && let Some(page) = self.indexed(&head, &plan).await?
+            {
+                return Ok(TimelineResult::Page { page: Box::new(page) });
             }
-            None => match self.fresh(&conversation).await? {
-                Fresh::Fence(fence) => fence,
-                Fresh::Pending(progress) => return Ok(TimelineResult::Pending { progress }),
-            },
-        };
-        let head = self.current(&conversation).await?;
-        let plan = query::query_plan(&head, fence, request.anchor, limit)?;
-        if plan.route == Route::CurrentSql
-            && let Some(page) = self.indexed(&head, &plan).await?
-        {
-            return Ok(TimelineResult::Page { page: Box::new(page) });
+            self.immutable(&plan).await
         }
-        self.immutable(&plan).await
+        .await;
+        let outcome = async {
+            let result = outcome?;
+            self.authorize(&context, &conversation)?;
+            if let TimelineResult::Page { page } = &result
+                && !self.held(&page.fence).await?
+            {
+                return Ok(TimelineResult::ReanchorNeeded);
+            }
+            Ok(result)
+        }
+        .await;
+        if let Some(fence) = acquired
+            && !matches!(outcome, Ok(TimelineResult::Page { .. }))
+        {
+            // This hold was never disclosed; releasing it must also work after revocation.
+            self.blocks.release_use(conversation.scope, fence.lease).await?;
+        }
+        outcome
     }
 
     async fn read_item(&self, context: AccessContext, fence: TimelineFence, id: ObjectId) -> Result<ItemRead, Error> {
@@ -206,52 +215,6 @@ impl SqliteTimelines {
                 },
             }
         }
-    }
-
-    /// Holds the current snapshot root and returns the fence that names it.
-    pub(super) async fn fresh(&self, conversation: &ObjectKey) -> Result<Fresh, Error> {
-        let holder = self.blocks.holder().clone();
-        let read = conversation.clone();
-        let snapshot = self
-            .blocks
-            .database()
-            .read(move |db| {
-                let Some(head) = state::head(db, &read)? else {
-                    return Ok(None);
-                };
-                let progress = state::progress(db, &read, &head.through)?;
-                Ok(Some((head, progress, state::custody(db, &holder, &read)?)))
-            })
-            .await
-            .map_err(|error| sql::error(error, self.blocks.worker().clone()))?;
-        let Some((head, progress, custody)) = snapshot else {
-            return Ok(Fresh::Pending(None));
-        };
-        let Some(root) = head.root.clone() else {
-            return Ok(Fresh::Pending(Some(progress)));
-        };
-        let lease = lease(conversation, head.local);
-        let request = AcquireRoot {
-            lease: lease.clone(),
-            custody,
-            root: ContentRef::Manifest { root: root.clone() },
-            usage: RootUse::Timeline { projection: head.projection },
-            bases: Vec::new(),
-            expires_at_millis: Some(now().saturating_add(HOLD_MILLIS)),
-        };
-        let operation = OperationId::from_bytes(Digest::of(lease.as_str().as_bytes()).bytes());
-        Ok(match self.blocks.acquire_root(operation, request).await? {
-            RootAcquired::Held { .. } => Fresh::Fence(TimelineFence {
-                conversation: conversation.clone(),
-                projection: head.projection,
-                through: progress,
-                applied: head.applied,
-                local: head.local,
-                root,
-                lease,
-            }),
-            RootAcquired::Pending { .. } => Fresh::Pending(Some(progress)),
-        })
     }
 
     async fn current(&self, conversation: &ObjectKey) -> Result<Head, Error> {
@@ -335,29 +298,4 @@ impl SqliteTimelines {
             }
         }
     }
-}
-
-/// A distinct use per read, so one reader's release never ends another's.
-pub(super) fn lease(conversation: &ObjectKey, local: LocalSequence) -> RootLeaseId {
-    static READS: AtomicU64 = AtomicU64::new(0);
-    let nanos =
-        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |duration| duration.as_nanos());
-    let digest = Digest::of(
-        format!(
-            "fastctx-sync/timeline-read/v1\0{}\0{}\0{}\0{}\0{}",
-            conversation.scope.scope.as_str(),
-            conversation.object.as_str(),
-            local.0,
-            READS.fetch_add(1, Ordering::Relaxed),
-            nanos
-        )
-        .as_bytes(),
-    );
-    RootLeaseId::from_bytes(digest.bytes())
-}
-
-pub(super) fn now() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |duration| i64::try_from(duration.as_millis()).unwrap_or(i64::MAX))
 }

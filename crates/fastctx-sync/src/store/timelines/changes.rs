@@ -1,9 +1,5 @@
 //! Executes a pure two-snapshot diff while retaining both exact root uses.
-use super::{
-    SqliteTimelines,
-    pages::Loaded,
-    reader::{Fresh, READ_BUDGET},
-};
+use super::{SqliteTimelines, fresh::Fresh, pages::Loaded, reader::READ_BUDGET};
 use crate::{
     store::{Error, PageLimit, access::AccessContext},
     timeline::{TimelineChangesRead, TimelineChangesResult, changes, pages::Outcome},
@@ -65,7 +61,7 @@ impl SqliteTimelines {
         .await;
         // A retry must not accumulate undisclosed holds when the target is partial.
         if fresh && !matches!(outcome, Ok(TimelineChangesResult::Page { .. })) {
-            self.release(context, to).await?;
+            self.blocks.release_use(to.conversation.scope, to.lease).await?;
         }
         outcome
     }

@@ -1,6 +1,6 @@
 //! Resume a position-index rebuild in bounded pages. The immutable head remains
 //! authoritative until copying and retirement finish under its final CAS.
-use super::{SqliteTimelines, pages::Loaded, reader, state::Head};
+use super::{SqliteTimelines, fresh, pages::Loaded, state::Head};
 use crate::{
     cursor::{Revision, Sequence},
     identity::{ObjectId, ObjectKey, OperationId},
@@ -64,7 +64,7 @@ pub(super) async fn process(timelines: &SqliteTimelines, lease: Lease) -> Result
         return Ok(Outcome::Completed { through: lease.task.wanted });
     };
     let root = head.root.clone().ok_or_else(|| Error::Unavailable("a pending index has no snapshot root".into()))?;
-    let id = reader::lease(&object, head.local);
+    let id = fresh::lease(&object, head.local);
     let operation = OperationId::from_bytes(crate::identity::Digest::of(id.as_str().as_bytes()).bytes());
     let acquired = blocks
         .acquire_root(
@@ -75,7 +75,7 @@ pub(super) async fn process(timelines: &SqliteTimelines, lease: Lease) -> Result
                 root: ContentRef::Manifest { root },
                 usage: RootUse::Timeline { projection: head.projection },
                 bases: Vec::new(),
-                expires_at_millis: Some(reader::now().saturating_add(60_000)),
+                expires_at_millis: Some(fresh::now().saturating_add(60_000)),
             },
         )
         .await;
@@ -103,7 +103,7 @@ pub(super) async fn process(timelines: &SqliteTimelines, lease: Lease) -> Result
             Err(error) => Err(error),
         },
         Ok(RootAcquired::Pending { .. }) => Err(Error::Unavailable("the index snapshot root is not local yet".into())),
-        Err(error) => Err(error),
+        Err(error) => Err(error.into()),
     };
     // A cancelled process leaves only a finite hold; restart resumes from the
     // persisted row cursor, never from this process's transient root lease.

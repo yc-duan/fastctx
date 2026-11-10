@@ -6,6 +6,7 @@ use crate::{
     manifest::ContentRef,
     registry::REGISTRY,
 };
+use std::{future::Future, pin::Pin};
 
 /// These local uses never advertise a new replicated asset or grant body reads.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -40,7 +41,7 @@ pub struct AcquireRoot {
     pub root: ContentRef,
     pub usage: RootUse,
     pub bases: Vec<SupplyBasis>,
-    /// Only runtime usage expires. Asset retention is independent of this lease.
+    /// Timeline and runtime holds may expire. Asset retention is independent.
     pub expires_at_millis: Option<i64>,
 }
 impl AcquireRoot {
@@ -98,6 +99,38 @@ pub enum RootAcquired {
     Pending { completeness: Completeness },
 }
 
+/// A timeline head can move between choosing its root and acquiring its hold.
+/// Conversion preserves the ordinary invalid-request behavior for callers that
+/// do not re-read the committed head to establish that this was a race.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AcquireRootError {
+    TimelineUnbound,
+    Store(Error),
+}
+impl std::fmt::Display for AcquireRootError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::TimelineUnbound => f.write_str("timeline root differs from its committed projection or live fence"),
+            Self::Store(error) => error.fmt(f),
+        }
+    }
+}
+impl std::error::Error for AcquireRootError {}
+impl From<Error> for AcquireRootError {
+    fn from(error: Error) -> Self {
+        Self::Store(error)
+    }
+}
+impl From<AcquireRootError> for Error {
+    fn from(error: AcquireRootError) -> Self {
+        match error {
+            AcquireRootError::TimelineUnbound => Self::Invalid(error.to_string()),
+            AcquireRootError::Store(error) => error,
+        }
+    }
+}
+pub type AcquireRootResult<'a> = Pin<Box<dyn Future<Output = Result<RootAcquired, AcquireRootError>> + Send + 'a>>;
+
 pub(crate) mod sealed {
     pub trait RootWriter {}
 }
@@ -109,7 +142,7 @@ pub(crate) mod sealed {
 /// The writer uses RootChange for joint commits with runtime intents;
 /// neither path re-uploads bytes or borrows the process-local IO lease.
 pub trait RootStore: sealed::RootWriter + Send + Sync {
-    fn acquire_root(&self, operation: OperationId, request: AcquireRoot) -> FutureResult<'_, RootAcquired>;
+    fn acquire_root(&self, operation: OperationId, request: AcquireRoot) -> AcquireRootResult<'_>;
     /// Releasing the same persisted generation twice succeeds without touching
     /// another use. Old holding periods remain releasable by the same holder;
     /// reacquisition still requires current custody. Revocation cleanup has its

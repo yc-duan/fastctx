@@ -144,7 +144,7 @@ pub(super) async fn run(root: &Path) -> Result<()> {
     current.holding.acl_revision = Revision(2);
     assert!(matches!(
         blocks.acquire_root(operation(100), request(current.clone(), root.clone(), 70)).await,
-        Err(Error::Busy)
+        Err(fastctx_sync::store::roots::AcquireRootError::Store(Error::Busy))
     ));
     let queue = SqliteScheduler::new(db.clone(), operation(246), holder(), Duration::from_secs(10))?;
     let mut interrupted = None;
