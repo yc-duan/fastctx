@@ -18,8 +18,10 @@ const lastAnswered = new Map<string, Answered>();
 const keptKey = "fastctx.last-answered";
 
 function loginsThere(world: WorldNow, machine: string): { hub: string; account: string }[] {
-  const bare = machine.split(".")[0]!;
-  return [...indexOf(world).hubs.values()].flatMap(({ hub, named }) => (named.get(bare)?.[0]?.logins ?? []).map((account) => ({ hub: hub.hub, account })));
+  const [bare, network] = machine.split(".");
+  return [...indexOf(world).hubs.values()]
+    .filter(({ hub }) => !network || hub.name === network)
+    .flatMap(({ hub, computer }) => (computer.get(bare!)?.logins ?? []).map((account) => ({ hub: hub.hub, account })));
 }
 
 /** A current answer updates what it contains; missing residents remain last-known content. */
