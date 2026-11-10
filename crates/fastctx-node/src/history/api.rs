@@ -75,12 +75,25 @@ pub(crate) async fn network(
 }
 
 pub(crate) async fn call(node: &Arc<Node>, caller: &Caller, request: HistoryCall) -> Result<HistoryReply, Failure> {
-    if !fastctx_platform::preview() {
-        return Err(Failure::not_run("history is not enabled in this release"));
-    }
+    super::offered::check(node, caller)?;
     let changed = request.writes();
     let scope = request.scope().clone();
     let author = if request.writes() { Some(author(node, caller).await?) } else { None };
+    let _history = super::import::lock(node, &scope).await;
+    if super::import::pending(node, &scope) {
+        let acting = crate::around::acting_of(node, caller);
+        super::import::authorize(node, &acting, &scope)?;
+        if !matches!(request, HistoryCall::List { .. }) {
+            node.authorize_here(&acting)?;
+        }
+        super::import::schedule(node);
+        if request.writes() {
+            return Err(super::import::writing());
+        }
+        let mut reply = super::local::call(node, request, author).await?;
+        redact(&mut reply, &|machine| node.authorize_machine(&acting, &machine.into()).is_ok());
+        return Ok(reply);
+    }
     let network = network(node, caller, request.scope()).await?;
     let acting = crate::around::acting_of(node, caller);
     if !matches!(request, HistoryCall::List { .. }) {

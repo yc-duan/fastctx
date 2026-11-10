@@ -355,6 +355,18 @@ impl World {
         machine_logins(self.ask(Call::SetAgentResetInPlace { machine, agent, dir, on }).await?)
     }
 
+    /// Changes the models the World offers in a Claude Code login, for
+    /// everyone who uses it.
+    pub async fn change_agent_models(
+        &self,
+        machine: Written,
+        agent: fastctx_types::AgentName,
+        dir: std::path::PathBuf,
+        change: fastctx_types::logins::models::ModelChange,
+    ) -> Result<fastctx_types::logins::MachineLogins, Error> {
+        machine_logins(self.ask(Call::ChangeAgentModels { machine, agent, dir, change }).await?)
+    }
+
     /// What putting the World's tools into a login (`into`), or taking them
     /// out, would change; with `take_back`, rewriting what the user changed
     /// of them too.

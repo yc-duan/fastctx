@@ -57,6 +57,19 @@ pub(crate) async fn register(
     acting: &Acting,
 ) -> Result<(), fastctx_types::ipc::Failure> {
     let Some(scope) = crate::placement::account(node, acting, None)? else { return Ok(()) };
+    register_at(node, resident, acting, &scope).await
+}
+
+/// Continues a handoff for the account selected before other logins arrived.
+pub(crate) async fn register_at(
+    node: &std::sync::Arc<Node>,
+    resident: &ResidentId,
+    acting: &Acting,
+    scope: &fastctx_types::access::HubAccount,
+) -> Result<(), fastctx_types::ipc::Failure> {
+    if !node.serves(acting, &scope.hub, &scope.account) {
+        return Err(fastctx_types::ipc::Failure::refused("the conversation no longer serves its record account"));
+    }
     let Some(link) = node.link_of(&scope.hub) else { return Ok(()) };
     if !link.view().shared_records {
         return Ok(());

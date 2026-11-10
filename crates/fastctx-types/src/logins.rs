@@ -10,6 +10,8 @@
 //! into (`fastctx apply`); putting them in lists a candidate, taking them
 //! out (removing it) returns it to the candidates.
 
+pub mod models;
+
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
@@ -155,6 +157,11 @@ pub struct Login {
     /// The models a conversation in it can start on, as last read.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub models: Vec<AgentModel>,
+    /// For Claude Code: what those who hold the machine changed in the
+    /// models it offers (`models`); none from a node that cannot change
+    /// them, and for other agents, whose models are their own to list.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_edits: Option<models::ModelEdits>,
     /// The change running in it now, or the last one since the node
     /// started, step by step.
     #[serde(default, skip_serializing_if = "Option::is_none")]

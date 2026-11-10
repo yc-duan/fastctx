@@ -19,6 +19,7 @@ mod accounting;
 mod requests;
 pub use accounting::recorded_turn_facts;
 mod answers;
+mod app_package;
 mod cache;
 mod children;
 mod commands;
@@ -1872,7 +1873,8 @@ pub fn world_tools(binary: &Path, env: &[(String, String)], tools: &[&str], budg
             "goals": false,
             "send_message_to_user_async": false,
         },
-        // `message_user` speaks to the user, asking too, without stopping.
+        // A session asks the user in its answer, a colleague with
+        // `message_user`; neither stops its turn for a question.
         "tools": { "update_plan": { "enabled": false }, "experimental_request_user_input": { "enabled": false } },
         "tool_output_token_limit": limit,
         "mcp_servers": { SERVER_NAME: {

@@ -103,7 +103,7 @@ pub fn context(index: &Index) -> String {
 }
 
 pub mod words {
-    pub const INTRO: &str = "SKILLS\nInstructions the user keeps for kinds of work. Before work one of them applies to, read it with `fastctx skill NAME` and follow it.";
+    pub const INTRO: &str = "SKILLS\nInstructions the user keeps for kinds of work. Before work one of them applies to, read it with `fastctx skill NAME` and follow it. A message from the user beginning with `$NAME` asks you to do it with that skill.";
     pub const NAME: &str =
         "a skill's name is lowercase letters, digits and hyphens, starting with a letter, at most 64 characters";
     pub const DESCRIPTION: &str = "a skill needs a sentence on when it applies, on one line, at most 300 characters";

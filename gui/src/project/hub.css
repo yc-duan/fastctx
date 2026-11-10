@@ -100,16 +100,8 @@
   height: 24px;
 }
 
-.ph-need-ask,
-.ph-need-urgent {
+.ph-need-ask {
   color: var(--accent);
-}
-
-.ph-drop {
-  width: 7px;
-  height: 7px;
-  border-radius: var(--radius-full);
-  background: var(--text-2);
 }
 
 .ph-colleague.ph-busy {

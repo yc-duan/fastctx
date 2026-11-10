@@ -28,14 +28,14 @@ pub(crate) fn folder(node: &Node, scope: &Scope) -> PathBuf {
 }
 
 fn locate(node: &Node, path: &Path) -> Result<Option<(Scope, String)>, Failure> {
-    if !node.links().is_empty() {
-        return Ok(None);
-    }
     let path = fastctx_platform::local_path(path).map_err(failure)?;
     let Some(name) = path.file_name().and_then(|name| name.to_str()).and_then(|name| name.strip_suffix(".md")) else {
         return Ok(None);
     };
     let Some(parent) = path.parent() else { return Ok(None) };
+    if parent.file_name().is_none_or(|name| name != "history") {
+        return Ok(None);
+    }
     let mut scopes =
         node.world.towns().map_err(failure)?.into_iter().map(|project| Scope::Project { project }).collect::<Vec<_>>();
     scopes.extend(
@@ -46,6 +46,9 @@ fn locate(node: &Node, path: &Path) -> Result<Option<(Scope, String)>, Failure> 
     );
     for scope in scopes {
         if crate::replicas::state::path_key(&folder(node, &scope)) == crate::replicas::state::path_key(parent) {
+            if !node.links().is_empty() && !super::import::pending(node, &scope) {
+                return Ok(None);
+            }
             fastctx_types::history::markdown::check_name(name).map_err(failure)?;
             if crate::replicas::state::path_key(&fastctx_hands::files::canonical_path(&path).map_err(failure)?)
                 != crate::replicas::state::path_key(&path)
@@ -78,8 +81,14 @@ pub(crate) async fn intercept(
     }
     let Some(path) = paths.first() else { return Ok(None) };
     let Some((scope, name)) = locate(node, path)? else { return Ok(None) };
-    if !fastctx_platform::preview() {
-        return Err(Failure::not_run("history is not enabled in this release"));
+    super::offered::check(node, caller)?;
+    let _history = super::import::lock(node, &scope).await;
+    if super::import::pending(node, &scope) {
+        super::import::schedule(node);
+        return Err(super::import::writing());
+    }
+    if !node.links().is_empty() {
+        return Ok(None);
     }
     let author = super::api::author(node, caller).await?;
     super::api::network(node, caller, &scope).await?;
@@ -112,15 +121,34 @@ pub(crate) async fn intercept(
     {
         let seen = crate::write::load_seen(&node.world.owner(&node.names(), owner).seen()).map_err(failure)?;
         let canonical = fastctx_hands::files::canonical_path(path).map_err(failure)?;
-        if let Some(seen) = seen.get(&canonical)
-            && let fastctx_types::files::SeenVersion::Full { sha256 } = &seen.version
-            && fastctx_hands::files::content_hash(before.as_bytes()) != *sha256
-        {
-            let found = match &document {
-                Some(_) => super::local::seen(node, &scope, &name, sha256).await?,
-                None => None,
-            };
-            before = found.ok_or_else(|| failure("the observed history version is unavailable; read it again"))?;
+        match seen.get(&canonical).map(|seen| &seen.version) {
+            None if document.is_some() => {
+                return Ok(Some(Err("write replaces this whole history document; view it with fastctx view \
+                     before replacing it, or change part of it with edit"
+                    .to_string()
+                    .into())));
+            }
+            Some(fastctx_types::files::SeenVersion::Full { sha256 })
+                if fastctx_hands::files::content_hash(before.as_bytes()) != *sha256 =>
+            {
+                let found = match &document {
+                    Some(_) => super::local::seen(node, &scope, &name, sha256).await?,
+                    None => None,
+                };
+                before = found.ok_or_else(|| failure("the observed history version is unavailable; read it again"))?;
+            }
+            Some(fastctx_types::files::SeenVersion::Partial { size, modified }) => {
+                let unchanged = fastctx_platform::disk::metadata(&canonical).is_ok_and(|metadata| {
+                    metadata.len() == *size
+                        && metadata.len() == before.len() as u64
+                        && metadata.modified().is_ok_and(|time| time == *modified)
+                        && fastctx_platform::disk::read(&canonical).is_ok_and(|bytes| bytes == before.as_bytes())
+                });
+                if !unchanged {
+                    return Err(failure("the file changed since it was viewed; view it again before writing"));
+                }
+            }
+            _ => {}
         }
     }
     let proposed = fastctx_hands::write::candidate::prepare(operation, document.as_ref().map(|_| before.as_bytes()))
@@ -198,18 +226,37 @@ pub(crate) async fn intercept(
 }
 
 pub(crate) async fn repair(node: &Arc<Node>) -> Result<(), Failure> {
-    if !node.links().is_empty() || !fastctx_platform::preview() {
+    if !fastctx_platform::history() || (!node.connected_anywhere() && !super::switch::alone(node)) {
         return Ok(());
     }
-    let mut scopes =
-        node.world.towns().map_err(failure)?.into_iter().map(|project| Scope::Project { project }).collect::<Vec<_>>();
-    scopes.extend(
-        node.residents
-            .everyone()
-            .filter(|resident| resident.removed.is_none())
-            .map(|resident| Scope::Conversation { resident: resident.id, machine: node.machine() }),
-    );
+    let scopes = if node.connected_anywhere() {
+        super::import::copies::scopes(node)
+    } else {
+        let mut scopes = node
+            .world
+            .towns()
+            .map_err(failure)?
+            .into_iter()
+            .map(|project| Scope::Project { project })
+            .collect::<Vec<_>>();
+        scopes.extend(
+            node.residents
+                .everyone()
+                .filter(|resident| resident.removed.is_none())
+                .map(|resident| Scope::Conversation { resident: resident.id, machine: node.machine() }),
+        );
+        scopes
+    };
     for scope in scopes {
+        if !super::import::copies::enabled(node, &scope).map_err(failure)? {
+            continue;
+        }
+        let _history = super::import::lock(node, &scope).await;
+        if node.connected_anywhere()
+            && super::import::authorize(node, &fastctx_types::access::Acting::Here, &scope).is_err()
+        {
+            continue;
+        }
         super::local::call(node, HistoryCall::List { scope }, None).await?;
     }
     Ok(())

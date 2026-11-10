@@ -98,6 +98,7 @@ pub(crate) fn view_for_in(
         if !mine.contains(&account.name) {
             let account = std::sync::Arc::make_mut(account);
             account.collab = None;
+            account.history = false;
             account.profile = account.profile.as_ref().map(|profile| profile.located(|machine| x.same(machine, me)));
         }
     }
@@ -181,6 +182,7 @@ pub(crate) fn view_for_in(
         ledger_parts: true,
         project_memory: true,
         collaboration_tree: true,
+        history_switch: true,
         call_details: true,
         machine_log: true,
         layers: true,

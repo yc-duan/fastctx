@@ -30,15 +30,29 @@ const SAME_RESET: SignedDuration = SignedDuration::from_secs(120);
 
 /// `agent`'s login `dir` here, as `only` may see it: everyone's use, or the
 /// use of that one account alone.
-pub(crate) fn report(node: &Node, agent: &str, dir: &Path, only: Option<&HubAccount>) -> io::Result<UsageReport> {
+pub(crate) fn report(
+    node: &Node,
+    agent: &str,
+    dir: &Path,
+    only: Option<&HubAccount>,
+    owner: bool,
+) -> io::Result<UsageReport> {
     let ledger = super::ledger(node, agent, dir);
     let now = Timestamp::now();
     let oldest = now - SignedDuration::from_hours(24 * super::KEPT_DAYS);
     let since = Timestamp::from_second(oldest.as_second().div_euclid(86400) * 86400).expect("retained day");
     super::with_book(node, &ledger, |book| {
-        let mut entries = book.history.entries(&ledger, since, now, book.reading.as_ref())?;
+        let history = book.reset_history();
+        let mut entries = book.history.entries(&ledger, since, now, book.reading.as_ref(), &history)?;
         entries.extend(book.balances().into_iter().filter(|row| row.at() >= since));
-        summarize(agent, only, now, book.reading.as_ref(), entries)
+        let resets = (owner && only.is_none()).then(|| {
+            let mut resets: Vec<_> = history.iter().map(|(_, reset)| reset.clone()).collect();
+            resets.sort_by_key(|reset| std::cmp::Reverse(reset.confirmed_at));
+            resets
+        });
+        let mut report = summarize(agent, only, now, book.reading.as_ref(), entries, &history)?;
+        report.resets = resets;
+        Ok(report)
     })
 }
 
@@ -48,6 +62,7 @@ pub(super) fn summarize(
     now: Timestamp,
     reading: Option<&Reading>,
     entries: Vec<Entry>,
+    resets: &[(Option<String>, fastctx_types::usage::UsageReset)],
 ) -> io::Result<UsageReport> {
     let day = now - SignedDuration::from_hours(24);
     let week = super::readings::week(reading, now);
@@ -71,7 +86,7 @@ pub(super) fn summarize(
         }),
         _ => None,
     };
-    let spans = spans(&entries, week);
+    let spans = spans(&entries, week, resets);
     let span_of = |at: Timestamp| {
         let index = spans.partition_point(|span| span.start <= at).checked_sub(1)?;
         (at < spans[index].end).then_some(index)
@@ -104,6 +119,21 @@ pub(super) fn summarize(
             if only.is_some() {
                 continue;
             }
+            // Until confirmation, stored snapshots still carried the previous
+            // maximum. They are not observations of the newly established week.
+            let windows: Vec<_> = windows
+                .iter()
+                .filter(|window| {
+                    !resets.iter().any(|(account, reset)| {
+                        *account == owner_of(&entry)
+                            && reset.window == window.name
+                            && at >= reset.since
+                            && at < reset.confirmed_at
+                            && window.resets_at.is_some_and(|end| same(end, reset.resets_at))
+                    })
+                })
+                .cloned()
+                .collect();
             if let Some(span) = span_of(at)
                 && owner_of(&entry) == spans[span].account
                 && let Some(window) = windows.iter().find(|window| {
@@ -163,6 +193,7 @@ pub(super) fn summarize(
         hours: hours.into_iter().map(|((at, person), sum)| UsageHour { at, person, sum }).collect(),
         week: UsageWeek { start: Some(week.start), end: Some(week.end), window: week.window, went: all.went() },
         readings,
+        resets: None,
         weeks: spans
             .iter()
             .enumerate()
@@ -221,7 +252,11 @@ fn weight(agent: &str, tokens: Option<&Tokens>, usd: Option<Usd>) -> f64 {
 /// week back from each reset of its seven-day window a reading had, each
 /// ended where the next began if that was sooner, as when another account
 /// logged in. Only weeks a reading recorded: none before the first.
-pub(super) fn spans(entries: &[Entry], current: Week) -> Vec<Span> {
+pub(super) fn spans(
+    entries: &[Entry],
+    current: Week,
+    resets: &[(Option<String>, fastctx_types::usage::UsageReset)],
+) -> Vec<Span> {
     if !current.window {
         return Vec::new();
     }
@@ -233,10 +268,10 @@ pub(super) fn spans(entries: &[Entry], current: Week) -> Vec<Span> {
         })
         .collect();
     owners.sort_by_key(|(at, _)| *at);
-    let mut resets: Vec<(Timestamp, Option<String>, Timestamp)> = entries
+    let mut periods: Vec<(Timestamp, Option<String>, Timestamp)> = entries
         .iter()
         .filter_map(|entry| match entry {
-            Entry::Reading { at, windows, account } => {
+            Entry::Reading { at, windows, account, .. } => {
                 let reset = super::readings::window(windows, 10_080)?.resets_at?;
                 let account = account.clone().or_else(|| {
                     owners
@@ -252,16 +287,16 @@ pub(super) fn spans(entries: &[Entry], current: Week) -> Vec<Span> {
         })
         .filter(|(reset, _, _)| *reset < current.end && !same(*reset, current.end))
         .collect();
-    resets.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2)));
-    resets.dedup_by(|later, earlier| later.1 == earlier.1 && same(later.0, earlier.0));
-    resets.sort_by_key(|(reset, _, seen)| (*reset, *seen));
+    periods.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2)));
+    periods.dedup_by(|later, earlier| later.1 == earlier.1 && same(later.0, earlier.0));
+    periods.sort_by_key(|(reset, _, seen)| (*reset, *seen));
     let week = SignedDuration::from_secs(WEEK_SECONDS);
-    let mut spans: Vec<Span> = resets
+    let mut spans: Vec<Span> = periods
         .into_iter()
         .map(|(reset, account, _)| Span { start: reset - week, end: reset, reset, account })
         .collect();
     spans.push(Span {
-        start: current.start,
+        start: current.end - week,
         end: current.end,
         reset: current.end,
         account: owners.last().map(|(_, key)| key.clone()),
@@ -274,6 +309,29 @@ pub(super) fn spans(entries: &[Entry], current: Week) -> Vec<Span> {
     }
     spans.retain(|span| span.start < span.end);
     spans
+        .into_iter()
+        .flat_map(|span| {
+            let mut cuts: Vec<_> = resets
+                .iter()
+                .filter(|(account, reset)| {
+                    *account == span.account
+                        && same(reset.resets_at, span.reset)
+                        && reset.since > span.start
+                        && reset.since < span.end
+                })
+                .map(|(_, reset)| reset.since)
+                .collect();
+            if same(span.reset, current.end) && current.start > span.start && current.start < span.end {
+                cuts.push(current.start);
+            }
+            cuts.extend([span.start, span.end]);
+            cuts.sort();
+            cuts.dedup();
+            cuts.windows(2)
+                .map(|cut| Span { start: cut[0], end: cut[1], reset: span.reset, account: span.account.clone() })
+                .collect::<Vec<_>>()
+        })
+        .collect()
 }
 
 /// What a week's committed per-model uses went to.

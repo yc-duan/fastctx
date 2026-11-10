@@ -295,7 +295,11 @@ impl History {
             Action::Settings { .. } | Action::Updates { .. } | Action::Dissolve { .. } => {
                 accounts.extend(directory.accounts.iter().map(|account| account.name.clone()));
             }
-            Action::Collab { .. } | Action::Profile { .. } | Action::Forget { .. } | Action::Forgotten { .. } => {}
+            Action::History { .. }
+            | Action::Collab { .. }
+            | Action::Profile { .. }
+            | Action::Forget { .. }
+            | Action::Forgotten { .. } => {}
         }
         let mut members = BTreeSet::new();
         for name in names {
@@ -508,6 +512,7 @@ pub(crate) fn action(change: &Change, book: &Book, policy: &fastctx_types::updat
             .map(|project| project.name.clone())
     };
     match change {
+        Change::History { on } => Action::History { on: *on },
         Change::Collab { collab } => Action::Collab { version: collab.version },
         Change::Profile { profile } => Action::Profile { version: profile.version },
         Change::Subagents { version, .. } | Change::MemorySettings { version, .. } | Change::Layer { version, .. } => {

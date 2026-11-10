@@ -8,7 +8,7 @@ import { Channel, invoke } from "@tauri-apps/api/core";
 import { closeDelivery, observe, retryDeliveries } from "./delivery";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { HomeChange, WorldAgents } from "./agents";
-import type { ChangePreview, FolderChange, LoginChange, MachineLogins, WorldLogins } from "./logins";
+import type { ChangePreview, FolderChange, LoginChange, MachineLogins, ModelChange, WorldLogins } from "./logins";
 import type { Control, Controlled, Offers } from "./control";
 import type { WorldSince } from "./since";
 import type { FileRange } from "./file-read";
@@ -388,6 +388,11 @@ export function setAgentTitle(machine: MachineName, agent: string, dir: string, 
  *  a login. */
 export function setAgentResetInPlace(machine: MachineName, agent: string, dir: string, on: boolean): Promise<MachineLogins> {
   return invoke("set_agent_reset_in_place", { machineName: machine, agentName: agent, dir, on });
+}
+
+/** Changes the models a Claude Code login offers, for everyone who uses it. */
+export function changeAgentModels(machine: MachineName, agent: string, dir: string, change: ModelChange): Promise<MachineLogins> {
+  return invoke("change_agent_models", { machineName: machine, agentName: agent, dir, change });
 }
 
 /** What a login on a machine was used for, as this device's accounts may

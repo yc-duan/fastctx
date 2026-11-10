@@ -67,15 +67,17 @@ def world_path(codex_dir):
 class Disk:
     """A disk of the node's own: a sparse ext4 file on a loop device, mounted under the root."""
 
-    def __init__(self, root):
+    def __init__(self, root, gib=6, reserved_percent=5):
         self.image = root / "disk.img"
         self.mount = root / "disk"
         self.device = None
+        self.gib = gib
+        self.reserved_percent = reserved_percent
 
     def __enter__(self):
         self.mount.mkdir(parents=True, exist_ok=True)
-        run("truncate", "-s", "6G", self.image)
-        run("mkfs.ext4", "-q", "-F", self.image)
+        run("truncate", "-s", f"{self.gib}G", self.image)
+        run("mkfs.ext4", "-q", "-F", "-m", str(self.reserved_percent), self.image)
         self.device = subprocess.run(["losetup", "--find", "--show", str(self.image)], check=True,
                                      capture_output=True, text=True).stdout.strip()
         run("mount", self.device, self.mount)

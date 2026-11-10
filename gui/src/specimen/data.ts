@@ -8,7 +8,7 @@ const MB = 1024 * 1024;
 let cacheBytes = 240 * MB;
 const hoursAgo = (hours: number) => new Date(Date.now() - hours * 3_600_000).toISOString();
 
-const conversations: ConversationSpace[] = [
+const conversations: ConversationSpace[] = import.meta.env.DEV ? [
   {
     name: "codex-7f3a",
     group: "listed",
@@ -66,7 +66,7 @@ const conversations: ConversationSpace[] = [
     bytes: 71 * MB,
     parts: { records: 6 * MB, command_output: 65 * MB, host: { kept: "none" } },
   },
-];
+] : [];
 
 let outputDays = 7;
 

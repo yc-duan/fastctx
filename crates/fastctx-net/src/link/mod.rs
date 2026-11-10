@@ -28,6 +28,8 @@ mod collab;
 mod conversation_history;
 mod direct;
 mod history_api;
+mod history_catalogs;
+mod history_switch;
 mod kernel;
 mod layer;
 mod ledger;
@@ -342,6 +344,8 @@ pub(crate) struct Inner {
     /// This machine's place on the hub as its membership file keeps it: its
     /// name there changes when the hub renames it (`Inner::follow_name`).
     membership: Mutex<Membership>,
+    /// Explicit removal survives a disconnected restart until readmission.
+    membership_ended: std::sync::atomic::AtomicBool,
     /// The membership file is written one write at a time, off the lock
     /// that holds the membership (`change_membership`).
     membership_writing: Mutex<()>,
@@ -364,6 +368,8 @@ pub(crate) struct Inner {
     held_now: AtomicU64,
     /// Replaced whole on each refresh, so a reader holds it as it was.
     view: Mutex<Arc<View>>,
+    /// Publish a view and notify its readers before another view supersedes it.
+    publishing_view: Mutex<()>,
     /// One refresh of the view at a time, or one change to it; others wait,
     /// and one that waited takes what a refresh begun meanwhile found.
     refreshing: tokio::sync::Mutex<Refreshed>,
@@ -378,6 +384,7 @@ pub(crate) struct Inner {
     kept_at: Mutex<Option<std::time::Instant>>,
     status: watch::Sender<Status>,
     record_changes: tokio::sync::broadcast::Sender<Option<fastctx_types::account_records::Changed>>,
+    history_catalogs: history_catalogs::Catalogs,
     connection: Mutex<Option<Connection>>,
     calls: Mutex<HashMap<u64, Waiter>>,
     watching: watching::Pools,
@@ -535,6 +542,7 @@ impl Link {
             Err(error) => return Err(error),
         };
         let policy = update_policy::UpdatePolicy::read(dir.path())?;
+        let membership_ended = fastctx_platform::disk::exists(dir.ended())?;
         let (status, _) = watch::channel(Status::Connecting { since: Timestamp::now(), last_error: None });
         let receiving = dir.path().display().to_string();
         let inner = Arc::new_cyclic(|this| Inner {
@@ -545,6 +553,7 @@ impl Link {
             cert: membership.cert,
             kind: membership.kind,
             membership: Mutex::new(membership),
+            membership_ended: std::sync::atomic::AtomicBool::new(membership_ended),
             membership_writing: Mutex::new(()),
             key: Arc::new(key),
             node,
@@ -556,6 +565,7 @@ impl Link {
             letters: Mutex::new(Letters { file: letters_file, next }),
             letters_writing: Mutex::new(()),
             view: Mutex::new(Arc::new(view)),
+            publishing_view: Mutex::new(()),
             refreshing: tokio::sync::Mutex::new(Refreshed::default()),
             refreshes: AtomicU64::new(0),
             view_synced: AtomicU64::new(0),
@@ -563,6 +573,7 @@ impl Link {
             kept_at: Mutex::new(None),
             status,
             record_changes: tokio::sync::broadcast::channel(1024).0,
+            history_catalogs: history_catalogs::Catalogs::default(),
             connection: Mutex::new(None),
             calls: Mutex::new(HashMap::new()),
             watching: Mutex::new(HashMap::new()),
@@ -678,6 +689,12 @@ impl Link {
     /// `hub_addresses`.
     pub fn membership(&self) -> Membership {
         self.inner.membership()
+    }
+
+    /// Whether this place on the hub remains valid, including while offline.
+    /// Explicit removal is restored from disk and cleared only on readmission.
+    pub fn membership_active(&self) -> bool {
+        !self.inner.membership_ended.load(Ordering::Acquire)
     }
 
     /// The hub this link is to.

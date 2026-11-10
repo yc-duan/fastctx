@@ -32,6 +32,44 @@ fn authority(node: &Node, acting: &Acting, town: &TownName, entry: &Entry) -> u6
     hash(&(permitted, usable.is_some(), names))
 }
 impl Projects {
+    /// Network callbacks compare metadata only; project content may need disk IO.
+    pub(super) fn observed(&self, node: &Node, acting: &Acting, town: &TownName) -> u64 {
+        let kept = self.0.lock().expect("never poisoned").get(&key(acting, town)).cloned();
+        let here = node.works_here(acting).is_ok();
+        let links: Vec<_> = node
+            .links()
+            .into_iter()
+            .filter(|link| {
+                kept.as_ref().and_then(|entry| entry.place.as_ref()).is_none_or(|place| &place.hub == link.hub())
+            })
+            .map(|link| {
+                let view = link.view();
+                let accounts = node.accounts_on(&link, acting);
+                let permitted = accounts.iter().any(|account| {
+                    kept.as_ref().and_then(|entry| entry.place.as_ref()).map_or_else(
+                        || view.project_named(account, town).is_some(),
+                        |place| view.in_project(account, &place.town),
+                    )
+                });
+                let names: Vec<_> = kept
+                    .as_ref()
+                    .into_iter()
+                    .flat_map(|entry| &entry.machines)
+                    .map(|name| {
+                        let name = view.canonical(name);
+                        (
+                            name,
+                            (view.is_me(name) && here)
+                                || accounts.iter().any(|account| view.rights(account, name).hands),
+                        )
+                    })
+                    .collect();
+                hash(&(link.hub(), permitted, names))
+            })
+            .collect();
+        hash(&(kept.as_ref().map(|entry| (&entry.place, entry.text)), here, links))
+    }
+
     pub(super) fn signature(&self, node: &Node, acting: &Acting, town: &TownName) -> u64 {
         let kept = self.0.lock().expect("never poisoned").get(&key(acting, town)).cloned();
         if let Some(kept) = kept

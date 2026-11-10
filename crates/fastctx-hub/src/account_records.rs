@@ -2,6 +2,8 @@
 //! serializes its own operations; disk work never holds the registry lock.
 
 pub(crate) mod history;
+mod history_submission;
+pub(crate) mod revisions;
 pub(crate) mod storage;
 
 use std::sync::Arc;
@@ -94,7 +96,7 @@ pub(crate) async fn ask_as(
     let slot = hub.account_records.account(&account, opened);
     let mut records = slot.records.clone().lock_owned().await;
     let hub = hub.clone();
-    fastctx_platform::task::spawn_blocking(move || {
+    crate::readers::blocking(move || {
         permitted(&hub, &hub.store(), &from, &member_key, &account, opened, access.as_ref())?;
         for metadata in crate::skill_storage::recover(&slot, &mut records)? {
             tell(&hub, &account, opened, &metadata);
@@ -239,6 +241,13 @@ pub(crate) async fn ask_as(
                         let _ = before;
                     }
                 }
+                if kind == fastctx_types::history::RECORD_KIND
+                    && !deleted
+                    && let Some(metadata) = history_submission::accepted(&slot, &records, &key, &body)?
+                {
+                    permitted(&hub, &hub.store(), &from, &member_key, &account, opened, access.as_ref())?;
+                    return Ok(Told::AccountRecords { response: Response::Written { metadata } });
+                }
                 let version = before.map(|entry| entry.metadata.version);
                 if expected != version {
                     return Ok(Told::AccountRecords {
@@ -343,10 +352,23 @@ pub(crate) async fn ask_as(
                     return Err(words::kind_limit());
                 }
                 let version = before.map_or(0, |entry| entry.metadata.version).checked_add(1).ok_or(words::REVISION)?;
+                let mut history_author = None;
                 if kind == fastctx_types::history::RECORD_KIND && !deleted {
                     let stored: fastctx_types::history::stored::Stored =
                         serde_json::from_value(body.clone()).map_err(|error| error.to_string())?;
                     stored.validate()?;
+                    crate::history_author::check(
+                        &hub,
+                        &hub.store(),
+                        &from,
+                        &member_key,
+                        access.as_ref().map_or(&account, |access| &access.actor),
+                        &stored.revision.author,
+                        stored.submission.is_some(),
+                    )?;
+                    history_author = Some((stored.revision.author.clone(), stored.submission.is_some()));
+                    fastctx_types::history::markdown::parse_written(&stored.revision.name, &stored.text)?;
+                    crate::history_limits::conversation(&records, &key)?;
                     if stored.revision.version != version
                         || key.rsplit('/').next() != Some(stored.revision.name.as_str())
                     {
@@ -413,6 +435,18 @@ pub(crate) async fn ask_as(
                             let store = publishing.edit_store();
                             permitted(&publishing, &store, &author, &member_key, &owner, opened, access.as_ref())
                                 .map_err(std::io::Error::other)?;
+                            if let Some((history_author, submitted)) = &history_author {
+                                crate::history_author::check(
+                                    &publishing,
+                                    &store,
+                                    &author,
+                                    &member_key,
+                                    access.as_ref().map_or(&owner, |access| &access.actor),
+                                    history_author,
+                                    *submitted,
+                                )
+                                .map_err(std::io::Error::other)?;
+                            }
                             Ok(store)
                         },
                     );
@@ -476,19 +510,40 @@ pub(crate) async fn ask_as(
 }
 
 pub(crate) fn tell(hub: &Hub, account: &AccountName, opened: Timestamp, metadata: &Metadata) {
-    let readers: Vec<_> = hub
-        .sessions()
-        .iter()
-        .filter(|(_, session)| {
-            session.account_records && session.record_keys.as_ref().is_none_or(|keys| keys.wants(account, metadata))
-        })
-        .map(|(name, session)| (name.clone(), session.key, session.out.clone()))
-        .collect();
     let store = hub.store();
+    let directory = store.indexed();
+    if directory.account(account).is_none_or(|owner| owner.opened != opened) {
+        return;
+    }
+    let conversation = hub
+        .account_records
+        .owners
+        .lock()
+        .expect("never poisoned")
+        .of_record(account, opened, &metadata.kind, &metadata.key)
+        .cloned();
+    let mut candidates = directory.acting_members(account);
+    if let Some(conversation) = &conversation {
+        candidates.extend(directory.record_readers(
+            std::slice::from_ref(&conversation.account),
+            crate::owned_records::born_on(&directory, conversation),
+        ));
+    }
+    let readers: Vec<_> = {
+        let sessions = hub.sessions();
+        fastctx_net::directory_index::ordered(candidates)
+            .into_iter()
+            .filter_map(|at| {
+                let name = &directory.all.members[at].name;
+                let session = sessions.get(name)?;
+                (session.account_records
+                    && session.record_keys.as_ref().is_none_or(|keys| keys.wants(account, metadata)))
+                .then(|| (name.clone(), session.key, session.out.clone()))
+            })
+            .collect()
+    };
     for (reader, key, out) in readers {
-        if store.book.directory.account(account).is_some_and(|owner| owner.opened == opened)
-            && crate::owned_records::hint(hub, &store.book.directory, &reader, &key, account, metadata)
-        {
+        if crate::owned_records::hint(hub, &directory, &reader, &key, account, metadata) {
             let changed = Changed { account: account.clone(), metadata: metadata.clone() };
             let _ = out.send(crate::Out::Frame(Down::AccountRecordChanged { changed }));
         }

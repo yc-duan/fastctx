@@ -3,6 +3,7 @@
 
 import type { GlyphName } from "../conversation/glyphs";
 import type { CollaborationWords } from "../film/collaboration";
+import type { HistoryFilmWords } from "../film/history";
 import type { SentinelFilmWords } from "../film/sentinel";
 import type { WorkbenchWords } from "../film/workbench";
 
@@ -28,6 +29,9 @@ export interface FeaturesWords {
    *  away and what carries on once it is off. */
   conversations: { name: string; line: string; film: WorkbenchWords; after: string; offWhat: string };
   collaboration: { name: string; line: string; film: CollaborationWords; gives: [GlyphName, string][]; after: string; offWhat: string };
+  /** History (`world-history.md`): a switch, and no settings. `unread`
+   *  when the switch cannot be read; `hubOld` where the hub cannot keep it. */
+  history: { name: string; line: string; film: HistoryFilmWords; gives: [GlyphName, string][]; after: string; offWhat: string; unread: string; hubOld: string };
   /** While the settings are being read. */
   reading: string;
   retry: string;
@@ -75,6 +79,8 @@ export interface FeaturesWords {
 
 /** The sentinels' page: its film and its settings (`sentinel-form.ts`). */
 export interface SentinelWords {
+  enableSentinels: string;
+  enableGoals: string;
   name: string;
   line: string;
   /** The page of every watcher, from here. */
@@ -99,6 +105,16 @@ export interface SentinelWords {
   save: string;
   notSaved: string;
   changedElsewhere: string;
+  /** Trying what is saved, from the machine they live on. */
+  tryIt: string;
+  trying: string;
+  tryWhat: string;
+  trySaveFirst: string;
+  searchName: string;
+  worked: string;
+  failed: string;
+  seconds(ms: number): string;
+  tryFailed: string;
 }
 
 export const zhFeatures: FeaturesWords = {
@@ -143,15 +159,30 @@ export const zhFeatures: FeaturesWords = {
     after: "选中的调用方，对话里有了请 GPT 的工具",
     offWhat: "智能体的对话里不再有请 GPT 的工具；这里的设置留着，再开时照旧。",
   },
+  history: {
+    name: "笔记",
+    line: "项目与对话留给后来者的记录",
+    film: { captions: ["对话把经过、定下的、否掉的，写进笔记", "第二天醒来的，不论是哪一家的模型", "一搜就找到那一行，接着往下做", "每台电脑上都是一份纯文本"] },
+    gives: [
+      ["journal", "每个项目一本，每段不在项目里的对话一本；模型自己写，你也能写"],
+      ["search", "纯文本放在你的每台电脑上，哪一家的模型都用\u00a0rg\u00a0读"],
+    ],
+    after: "对话的角上与项目页里有了笔记；模型从下一轮起拿到它的名单",
+    offWhat: "对话里的模型不再拿到笔记，界面上收起它的入口；已经写下的每一篇都留着，再开时照旧。",
+    unread: "读不到笔记的开关",
+    hubOld: "这个网络的中枢还存不了这个开关，更新中枢后可用",
+  },
   reading: "正在读取设置",
   retry: "重试",
   sentinels: {
+    enableSentinels: "开启观测",
+    enableGoals: "开启目标",
     name: "观测",
     line: "会话等待时，由观测代为留意",
     all: "全部观测",
     film: { captions: ["会话需要等待，留下一项观测", "会话休息，观测代为巡检那台机器", "条件成立，观测唤醒会话继续工作"] },
     after: "此账号下的会话均可留下观测",
-    offWhat: "会话将不能留下观测，进行中的观测全部撤销；此处的设置与钥匙保留，重新开启后照旧。",
+    offWhat: "会话将不能留下观测，进行中的观测暂停；此处的设置与钥匙保留，重新开启后继续。",
     home: "所在机器",
     homeStatus: { forbidden: "此账号无权使用这台机器", offline: "这台机器不在线", too_old: "这台机器的 Fastctx 版本过旧", unavailable: "这台机器暂不可用" },
     model: "模型",
@@ -168,6 +199,15 @@ export const zhFeatures: FeaturesWords = {
     save: "保存",
     notSaved: "未能保存",
     changedElsewhere: "已在别处修改，现已载入最新版本",
+    tryIt: "试一下",
+    trying: "正在试",
+    tryWhat: "由所在机器用保存的设置与钥匙，向模型和搜索各发一次请求",
+    trySaveFirst: "保存后再试",
+    searchName: "搜索",
+    worked: "可用",
+    failed: "不可用",
+    seconds: (ms) => `${(ms / 1000).toFixed(1)} 秒`,
+    tryFailed: "没能试成",
   },
   callers: "调用方",
   callersSaid: "这些智能体的对话里会有请 GPT 的工具",
@@ -248,15 +288,37 @@ export const enFeatures: FeaturesWords = {
     after: "The callers you choose get the tools to ask a GPT in their conversations",
     offWhat: "Conversations no longer get the tools to ask a GPT; these settings stay for when you turn it on again.",
   },
+  history: {
+    name: "Notes",
+    line: "What projects and conversations leave for whoever comes next",
+    film: {
+      captions: [
+        "A conversation writes down what happened, what was decided and what was let go",
+        "The next day a model wakes to the same work, from whichever vendor",
+        "One search finds the line, and it carries on",
+        "On every computer, a plain text file",
+      ],
+    },
+    gives: [
+      ["journal", "One for each project and one for each conversation outside a project; models write them, and so can you"],
+      ["search", "Plain text on each of your computers, read with rg by any vendor's model"],
+    ],
+    after: "Conversations and projects show their notes; models get their list from their next turn",
+    offWhat: "Models in conversations no longer get the notes, and their ways in fold away; every note written stays, as it is, for when you turn them on again.",
+    unread: "Couldn't read the notes switch",
+    hubOld: "This network's hub can't keep this switch yet; update the hub to use it",
+  },
   reading: "Reading the settings",
   retry: "Retry",
   sentinels: {
+    enableSentinels: "Enable watchers",
+    enableGoals: "Enable goals",
     name: "Watchers",
     line: "While a conversation waits, a watcher keeps an eye out",
     all: "All watchers",
     film: { captions: ["A conversation that must wait leaves a watcher", "It rests while the watcher checks that machine", "When the condition holds, the watcher wakes it to go on"] },
     after: "Conversations working for this account can leave watchers",
-    offWhat: "Conversations can no longer leave watchers, and those under way are withdrawn; the settings and keys here are kept for next time.",
+    offWhat: "Conversations can no longer leave watchers, and those under way pause; the settings and keys here are kept for next time.",
     home: "Lives on",
     homeStatus: { forbidden: "This account can't use that machine", offline: "That machine is offline", too_old: "Fastctx there is too old", unavailable: "That machine can't be used now" },
     model: "Model",
@@ -273,6 +335,15 @@ export const enFeatures: FeaturesWords = {
     save: "Save",
     notSaved: "Not saved",
     changedElsewhere: "Changed elsewhere; that version is loaded",
+    tryIt: "Try it",
+    trying: "Trying",
+    tryWhat: "The machine they live on asks the model and the search once, with the saved settings and keys",
+    trySaveFirst: "Save first",
+    searchName: "Search",
+    worked: "Works",
+    failed: "Doesn't work",
+    seconds: (ms) => `${(ms / 1000).toFixed(1)} s`,
+    tryFailed: "Couldn't try",
   },
   callers: "Callers",
   callersSaid: "Conversations with these agents get the tools to ask a GPT",

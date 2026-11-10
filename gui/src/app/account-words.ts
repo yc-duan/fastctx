@@ -1110,6 +1110,8 @@ export const zhMachines: MachinesWords = {
         return `${a.on} 上删除 ${a.conversation.resident}`;
       case "dissolve":
         return `解散网络 ${a.name}`;
+      case "history":
+        return a.on ? "开启笔记" : "关闭笔记";
       case "updates":
         if (a.intake !== undefined) return `中枢取新版本每秒至多 ${megabytes(a.intake)} MB`;
         return a.managed_auto === undefined
@@ -1454,6 +1456,8 @@ export const enMachines: MachinesWords = {
         return `${a.conversation.resident} deleted on ${a.on}`;
       case "dissolve":
         return `Dissolved the network ${a.name}`;
+      case "history":
+        return a.on ? "Turned notes on" : "Turned notes off";
       case "updates":
         if (a.intake !== undefined) return `The hub takes new releases in at ${megabytes(a.intake)} MB a second at most`;
         return a.managed_auto === undefined

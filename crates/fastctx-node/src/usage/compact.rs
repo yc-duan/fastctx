@@ -39,7 +39,7 @@ pub(crate) fn collect(node: &Node) -> io::Result<()> {
             }
             let all = ledger::entries(&path, Timestamp::MIN)?;
             let week = super::readings::week(book.reading.as_ref(), now);
-            let boundaries = super::report::boundaries(&super::report::spans(&all, week), week);
+            let boundaries = super::report::boundaries(&super::report::spans(&all, week, &book.reset_history()), week);
             for day in ledger::days(&path, Timestamp::MIN)? {
                 let date = day.file_stem().and_then(|s| s.to_str()).unwrap_or_default();
                 if date < oldest.as_str() && !ledger::read(&day)?.iter().any(|row| pending_receipt(row, &pending)) {
@@ -51,7 +51,7 @@ pub(crate) fn collect(node: &Node) -> io::Result<()> {
                 }
                 let (old, mut recent): (Vec<_>, Vec<_>) =
                     ledger::read(&day)?.into_iter().partition(|row| row.at() < detail_since);
-                let mut rows = fold(&old, &boundaries, now, &pending);
+                let mut rows = fold(&old, &boundaries, now, &pending, &book.reset_history());
                 rows.append(&mut recent);
                 rows.sort_by_key(Entry::at);
                 let bytes = encode(&rows)?;
@@ -68,13 +68,20 @@ pub(crate) fn collect(node: &Node) -> io::Result<()> {
 
 type HourUses = BTreeMap<(Timestamp, String, String, bool), (Option<HubAccount>, Use)>;
 
-pub(super) fn fold(rows: &[Entry], boundaries: &[Timestamp], now: Timestamp, pending: &HashSet<String>) -> Vec<Entry> {
+pub(super) fn fold(
+    rows: &[Entry],
+    boundaries: &[Timestamp],
+    now: Timestamp,
+    pending: &HashSet<String>,
+    history: &[(Option<String>, fastctx_types::usage::UsageReset)],
+) -> Vec<Entry> {
     let mut uses = HourUses::new();
     let mut checkpoints: BTreeMap<Identity, (Timestamp, fastctx_types::usage::Usd, Vec<Timestamp>)> = BTreeMap::new();
     let mut readings: BTreeMap<String, Entry> = BTreeMap::new();
     let mut periods: Vec<Timestamp> = Vec::new();
     let mut last = BTreeMap::new();
     let mut accounts = Vec::new();
+    let mut resets = BTreeMap::new();
     let mut meters = BTreeMap::new();
     let mut receipts = Vec::new();
     let mut receipts_at = Timestamp::MIN;
@@ -140,7 +147,28 @@ pub(super) fn fold(rows: &[Entry], boundaries: &[Timestamp], now: Timestamp, pen
                     kept.2.extend(reports);
                 }
             }
-            Entry::Reading { windows, account, .. } => {
+            Entry::Reading { at, windows, account, resets: confirmed } => {
+                let mut written = confirmed.clone();
+                for (owner, reset) in history.iter().filter(|(_, reset)| reset.confirmed_at == *at) {
+                    if account.as_ref().is_none_or(|account| Some(account) == owner.as_ref())
+                        && windows.iter().any(|window| super::resets::valid(reset, window, *at))
+                        && !written.contains(reset)
+                    {
+                        written.push(reset.clone());
+                    }
+                }
+                if !written.is_empty() {
+                    resets.insert(
+                        format!("confirmed:{at}"),
+                        Entry::Reading { at: *at, windows: windows.clone(), account: account.clone(), resets: written },
+                    );
+                }
+                for window in windows.iter().filter(|window| window.minutes == Some(10_080)) {
+                    if let Some(since) = window.since {
+                        let key = format!("legacy:{account:?}:{}:{:?}:{since}", window.name, window.resets_at);
+                        resets.entry(key).or_insert_with(|| row.clone());
+                    }
+                }
                 for window in windows.iter().filter(|w| w.minutes == Some(10_080)) {
                     let reset = window
                         .resets_at
@@ -197,7 +225,7 @@ pub(super) fn fold(rows: &[Entry], boundaries: &[Timestamp], now: Timestamp, pen
     }
     folded.extend(accounts);
     folded.extend(meters.into_values().map(|meter| Entry::Meter { meter: Box::new(meter) }));
-    let mut kept: Vec<_> = readings.into_values().collect();
+    let mut kept: Vec<_> = resets.into_values().chain(readings.into_values()).collect();
     kept.sort_by_key(Entry::at);
     kept.dedup_by_key(|row| row.at());
     folded.extend(kept);

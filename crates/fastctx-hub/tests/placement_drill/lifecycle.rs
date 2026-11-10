@@ -5,12 +5,13 @@ use fastctx_types::{
     history::{HistoryCall, HistoryReply, Scope},
 };
 
-pub(super) fn seed(root: &Path, machine_name: &str, id: &ResidentId) -> Result<PathBuf> {
+pub(super) fn seed(root: &Path, machine_name: &str, id: &ResidentId, home: Option<&Path>) -> Result<PathBuf> {
     let directory = root.join("world/conversations").join(id.as_str());
     std::fs::create_dir_all(&directory)?;
     let about: fastctx_types::residents::About = serde_json::from_value(json!({
         "id":id, "host":{"agent":"codex","client":"record-lifecycle-drill","version":"0"},
-        "machine":machine_name,"born_at":jiff::Timestamp::now(),"origin":{"kind":"user"},"session":null
+        "machine":machine_name,"born_at":jiff::Timestamp::now(),"origin":{"kind":"user"},"session":null,
+        "home":home
     }))?;
     std::fs::write(directory.join("about"), serde_json::to_vec(&about)?)?;
     Ok(directory)
@@ -38,11 +39,25 @@ pub(super) async fn exercise(
     source_node: &mut Child,
     destination_node: &mut Child,
     listen: SocketAddr,
+    mock_configuration: &[u8],
 ) -> Result<()> {
+    // The moved conversation writes notes, which a login offers only with
+    // the workbench open in it.
+    let login = base.join("alice-two-codex");
+    std::fs::create_dir_all(&login)?;
+    std::fs::write(login.join("config.toml"), mock_configuration)?;
+    world.add_agent_login("alice-two".parse()?, "codex".parse()?, login.clone()).await?;
+    let opened = world
+        .change_agent_login("alice-two".parse()?, "codex".parse()?, login.clone(), true, true, true, None, Some(true))
+        .await?;
+    anyhow::ensure!(
+        matches!(opened.end, Some(fastctx_types::logins::ChangeEnd::Done { .. })),
+        "opening the workbench in alice-two's login failed: {opened:?}"
+    );
     source_node.kill()?;
     source_node.wait()?;
     let id: ResidentId = "codex-1234abcd".parse()?;
-    let original = seed(source, "alice-pc", &id)?;
+    let original = seed(source, "alice-pc", &id, Some(&login))?;
     let birth = std::fs::read(original.join("about"))?;
     *source_node = start(source)?;
     ready(world, &id, "alice-pc").await?;
@@ -84,6 +99,7 @@ pub(super) async fn exercise(
     let changed = text.replace("MOVING_HISTORY", "MOVED_HISTORY_WRITE");
     let local = relocated.join("history/moving-record.md");
     anyhow::ensure!(file_is(&local, text).await, "the moved history was not published");
+    saw_as(destination, &owner, &local).await?;
     write_as(destination, &owner, &local, &changed).await?;
     let source_copy = WorldDir::under(source)
         .owner(&fastctx_types::layout::Names { me: machine("alice-pc"), was: Vec::new(), renamed: Vec::new() }, &owner)

@@ -11,7 +11,8 @@ pub enum ModelProtocol {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ModelSettings {
     pub protocol: ModelProtocol,
-    /// Full endpoint URL, including `/chat/completions` or `/messages`.
+    /// The provider's base URL, or the full endpoint including
+    /// `/chat/completions` or `/messages`; the client adds what is missing.
     pub endpoint: String,
     pub model: String,
     /// OpenAI-compatible endpoints differ here; Anthropic always uses max_tokens.

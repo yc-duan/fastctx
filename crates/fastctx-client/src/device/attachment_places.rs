@@ -25,9 +25,7 @@ impl Device {
                     continue;
                 }
                 identities.push(identity);
-                for machine in
-                    view.machines().filter(|machine| machine.online && view.holds(account, &machine.name))
-                {
+                for machine in view.machines().filter(|machine| machine.online && view.holds(account, &machine.name)) {
                     if view.admits(&view.me, account, &machine.name, Purpose::Hands).is_ok() {
                         machines.push(Written { name: machine.name.clone(), hub: Some(session.link.hub_name()) });
                     }

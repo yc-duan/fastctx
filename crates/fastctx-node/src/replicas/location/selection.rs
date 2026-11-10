@@ -23,6 +23,14 @@ impl Selection<'_> {
         let Self { view, account, resource, ownership, focus, here, speaking } = self;
         let mut candidates = Vec::new();
         for member in view.machines().filter(|member| member.online) {
+            // Another account's switch is hidden; its computer answers when asked.
+            if matches!(resource, Resource::History { .. })
+                && let Some(home) = &member.home
+                && view.may_act_for(home, &view.me)
+                && !view.account(home).is_some_and(|account| account.history && !account.locked)
+            {
+                continue;
+            }
             let keeps = match &resource {
                 Resource::History { scope: fastctx_types::history::Scope::Project { project } } => view
                     .project_named(&account.account, project)

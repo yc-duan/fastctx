@@ -300,6 +300,15 @@ function framed(delivery) {
   return 'A message from fastctx, not typed by the user:\n\n' + delivery.text
 }
 
+// The user's own words as a plugin submits them. Claude Code refuses a
+// plugin's prompt that begins with "/", which typed would run a command;
+// words that only begin so, with a path most often, go in behind one more
+// zero-width space, which the model reads past and the node takes away
+// again (`claude::as_said`).
+function asTyped(text) {
+  return /^\u200B*\//.test(text) ? '\u200B' + text : text
+}
+
 // The user's own words, sent into a turn already running: the model reads
 // them beside the tool's result in the words Claude Code itself gives a
 // prompt typed while a turn runs (2.1.300).
@@ -390,7 +399,7 @@ async function flush($, context, how) {
     while (at < context.held.length && context.held[at].as_user !== true && context.held[at].along === undefined && goalPermits(context, context.held[at])) deliveries.push(...context.held.splice(at, 1))
   }
   const prompt = deliveries[0].as_user === true
-    ? { text: deliveries[0].text, asUser: true }
+    ? { text: asTyped(deliveries[0].text), asUser: true }
     : { text: deliveries.map(framed).join('\n\n') }
   if (!(await submit($, context, deliveries, prompt))) context.held.splice(at, 0, ...deliveries)
 }
@@ -679,7 +688,7 @@ async function looked($, context) {
     context.handled.add(name)
     // The user's own words, typed on one of the user's machines: only these
     // go in as the user.
-    const prompt = delivery.as_user === true ? { text: delivery.text, asUser: true } : { text: framed(delivery) }
+    const prompt = delivery.as_user === true ? { text: asTyped(delivery.text), asUser: true } : { text: framed(delivery) }
     if (!(await submit($, context, [delivery], prompt))) {
       context.handled.delete(name)
       continue

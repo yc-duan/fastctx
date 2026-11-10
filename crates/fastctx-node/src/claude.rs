@@ -26,6 +26,7 @@ pub(crate) mod control_outcome;
 mod copies;
 mod fork;
 mod fork_attachments;
+mod fork_carried;
 mod fork_history;
 mod fork_ready;
 mod fork_source;
@@ -42,6 +43,7 @@ pub(crate) use image_flush::wait_for_image;
 pub(crate) mod lifecycle;
 mod listing;
 pub mod management;
+pub(crate) mod model_list;
 mod oldest;
 pub(crate) mod pairing;
 mod plugin_check;
@@ -530,7 +532,7 @@ async fn look(node: &Arc<Node>, directory: &Path) -> bool {
     if node.residents.deleted_session(&session).is_some() {
         return true;
     }
-    match exchange::registration(directory) {
+    match fastctx_platform::roles::in_place("reading Claude registration", || exchange::registration(directory)) {
         Ok(Some(registration)) if registration.session == session => hear(node, registration).await,
         Ok(Some(_)) => {
             node.log.line(format_args!("{} contains a registration for a different session", directory.display()));
@@ -704,7 +706,9 @@ async fn look(node: &Arc<Node>, directory: &Path) -> bool {
                     }
                 }
             }
-            exchange::acknowledge(directory, &report.name)
+            fastctx_platform::roles::in_place("acknowledging Claude report", || {
+                exchange::acknowledge(directory, &report.name)
+            })
         }
         .await;
         if let Err(error) = applied {
@@ -717,13 +721,14 @@ async fn look(node: &Arc<Node>, directory: &Path) -> bool {
     }
     // Each receipt is settled once in this run, and again only while what it
     // names still waits in the inbox (`receipts`).
-    let receipts = match node.claude.receipts.listed(directory) {
-        Ok(receipts) => receipts,
-        Err(error) => {
-            node.log.line(format_args!("reading consumption receipts for {session}: {error}"));
-            return false;
-        }
-    };
+    let receipts =
+        match fastctx_platform::roles::in_place("reading Claude receipts", || node.claude.receipts.listed(directory)) {
+            Ok(receipts) => receipts,
+            Err(error) => {
+                node.log.line(format_args!("reading consumption receipts for {session}: {error}"));
+                return false;
+            }
+        };
     let conversation = node.world.conversation(&resident);
     let ids: Vec<String> = receipts.iter().map(|(id, _)| id.clone()).collect();
     let waiting = match crate::inbox::waiting_among(&conversation, &ids) {
@@ -753,7 +758,9 @@ async fn look(node: &Arc<Node>, directory: &Path) -> bool {
             node.claude.receipts.settle(directory, &id);
         }
     }
-    match exchange::handed_over(directory, |id| !waiting.contains(id) && node.claude.receipts.cleared(directory, id)) {
+    match fastctx_platform::roles::in_place("clearing Claude handovers", || {
+        exchange::handed_over(directory, |id| !waiting.contains(id) && node.claude.receipts.cleared(directory, id))
+    }) {
         Ok(cleared) => node.claude.receipts.clear(directory, cleared),
         Err(error) => {
             node.log.line(format_args!("clearing what {session}'s mod handed over: {error}"));
@@ -1824,6 +1831,21 @@ async fn running(node: &Arc<Node>, home: Option<&Path>, session: &str) -> Result
     .map_err(Failure::new)
 }
 
+/// Writes again the instructions a session the World started launches with,
+/// as this version words them: Claude Code reads them from the file each
+/// time it starts the session's process, a wake and a continuation too.
+fn reword(node: &Node, resident: &ResidentId) -> std::io::Result<()> {
+    let Some((about, town)) = node.residents.about(resident) else { return Ok(()) };
+    let path = node.world.conversation(resident).claude_instructions();
+    let kept = match fastctx_platform::disk::read_to_string(&path) {
+        Ok(kept) => kept,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    let words = crate::colleagues::words(resident, town.as_ref(), &about.origin, false);
+    if kept == words { Ok(()) } else { fastctx_platform::disk::write(&path, words) }
+}
+
 pub(crate) async fn wake(
     node: &Arc<Node>,
     resident: &ResidentId,
@@ -1832,6 +1854,9 @@ pub(crate) async fn wake(
     words: String,
     id: fastctx_types::NoticeId,
 ) -> Result<Landed, crate::lifecycle::wake::WakeFailure> {
+    if let Err(error) = reword(node, resident) {
+        node.log.line(format_args!("rewording {resident}'s instructions before it wakes: {error}"));
+    }
     if let Some(source) = isolation::source(node, resident)? {
         let _waking = node.claude.copies.waking();
         crate::inbox::unbind(&node.world.conversation(resident), &id)
@@ -2016,21 +2041,38 @@ pub async fn open_here(
     opened: crate::talk::Opened,
     town: Option<TownName>,
     text: String,
-    options: fastctx_types::agents::SessionOptions,
+    mut options: fastctx_types::agents::SessionOptions,
     attachments: Vec<fastctx_types::attachments::Attachment>,
 ) -> Result<(ResidentId, Landed), Failure> {
     if let Some(town) = &town {
         crate::town::access::ready(node, &opened.acting, town).await?;
     }
     // Nothing of the conversation is made for a Claude Code that cannot
-    // run it.
+    // run it, nor on a model its login does not offer.
     let launching = command(node, opened.home.as_deref())?;
     oldest::check(node, &launching).await?;
+    let offering = crate::logins::models::Offering::of(node, opened.home.as_deref())?;
+    // It starts on a model named in full (`world-gui.md`, 对话): the one
+    // asked for, which the login must offer, else the account's own choice
+    // when the login offers it, else the login's first.
+    let model = match options.model.take() {
+        Some(model) => {
+            offering.require(&model)?;
+            model
+        }
+        None => {
+            crate::profile::session::ready(node, &opened.acting).await?;
+            let profile = crate::profile::session::get(node, &opened.acting);
+            offering.starting(profile.claude.get("model").and_then(serde_json::Value::as_str))?
+        }
+    };
+    options.reasoning_effort = crate::logins::models::effort_for(&model, options.reasoning_effort.take());
+    options.model = Some(model);
     let agent = AgentName::try_from("claude").expect("a valid agent name");
     let (id, _opening) = crate::attachments::opening(node, &agent, &opened.acting, town.as_ref(), &attachments).await?;
     crate::placement::location::speaking(node, &id, typed_on)?;
     crate::focus::open(node, &node.world.conversation(&id), &opened.acting, &opened.focus).await?;
-    let _birth = crate::here::born(node, &id, opened.acting.clone());
+    let _birth = crate::here::born(node, &id, opened.acting.clone(), Origin::User);
     // A login assisting another account starts without the browser of this
     // machine (`background::Start::assisting`), as kept now.
     crate::profile::session::ready(node, &opened.acting).await?;
@@ -2289,9 +2331,9 @@ pub(crate) fn settings_json(id: &ResidentId) -> String {
         },
         "permissions": {
             // The World's own tools take these places: its shell and files,
-            // the plan, the goal, `message_user` (`world-voice.md`), which
-            // asks without stopping as well, and a sentinel for any later
-            // wake-up (`world-senses.md`).
+            // the plan, the goal, and a sentinel or an alarm for any later
+            // wake-up (`world-senses.md`). A session asks the user in its
+            // answer, a colleague with `message_user` (`world-voice.md`).
             "deny": ["Bash", "PowerShell", "Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "Grep", "Glob",
                 "TodoWrite", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet", "ProposeGoal",
                 "SendUserMessage", "AskUserQuestion", "PushNotification", "CronCreate", "CronDelete", "CronList",

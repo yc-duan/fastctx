@@ -115,7 +115,7 @@ impl CodexHost {
         Ok(skills)
     }
 
-    pub async fn offers(self: &Arc<Self>, thread: &str) -> Result<Offers, String> {
+    pub async fn offers(self: &Arc<Self>, thread: &str, goals: bool) -> Result<Offers, String> {
         let server = self.server().await?;
         // Inspecting a sleeping resident must not subscribe it again.
         // Catalogs are server-wide; unavailable per-thread usage is reported.
@@ -147,8 +147,7 @@ impl CodexHost {
         if !speeds.any() {
             commands.retain(|command| command.name != "tier");
         }
-        // Goals are not offered in a release yet (`world.md`, 这一版不发的).
-        if !fastctx_platform::preview() {
+        if !goals {
             commands.retain(|command| command.name != "goal");
         }
         for skill in skills {
@@ -249,6 +248,8 @@ impl CodexHost {
             automatic_model: None,
             controls,
             commands,
+            // The account's skills are the World's to add (`fastctx_node::control`).
+            skills: Vec::new(),
             models,
             model,
             effort,

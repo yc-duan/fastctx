@@ -1,5 +1,6 @@
 //! Give the native CLI a retained prefix without editing the source transcript.
 
+use std::collections::HashSet;
 use std::io::{BufRead, Read, Write};
 use std::path::{Path, PathBuf};
 
@@ -48,7 +49,15 @@ pub(super) fn prefix(
     output.set_len(boundary).map_err(failure)?;
     output.sync_all().map_err(failure)?;
     drop(output);
-    let read = transcript::read(&path).map_err(failure)?;
+    let mut read = transcript::read(&path).map_err(failure)?;
+    // A source resumed from its file holds none of the messages that said
+    // nothing there; its checkpoints name the ones it holds.
+    if read.context_uuids.len() != count
+        && let Some(held) = checkpoints.as_ref().and_then(|checkpoints| checkpoints["uuids"].as_array())
+    {
+        let held: HashSet<&str> = held.iter().filter_map(Value::as_str).collect();
+        read.pass_over(|uuid| held.contains(uuid));
+    }
     if !read.problems.is_empty()
         || read.context_uuids.len() != count
         || read.context_uuids.last().map(String::as_str) != Some(anchor)

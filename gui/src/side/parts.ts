@@ -110,6 +110,9 @@ export class SideParts implements PartSet {
   fresh = false;
   /** The side showing these parts, while their conversation is in focus. */
   frame: PartsFrame | null = null;
+  /** Its history's part, and what the mark that opens it is named; none
+   *  without a history. */
+  history: { part: string; label: string } | null = null;
   private readonly bar: GoalBar;
   private readonly home: SideHome;
   private readonly collab: CollabPage;
@@ -119,6 +122,7 @@ export class SideParts implements PartSet {
   private readonly planPage: PlanPage;
   private readonly stops: (() => void)[] = [];
   private colleagues: CollabNode[] = [];
+  private teamReading = false;
   /** The colleagues followed, read in full while a page shows them. */
   private following: Following | null = null;
   private detailed = false;
@@ -165,10 +169,9 @@ export class SideParts implements PartSet {
     this.home = new SideHome(
       words,
       {
-        page: (part) => this.frame?.show(part === "goal" ? PART.goal : PART.history),
+        page: () => this.frame?.show(PART.goal),
         node: (node) => this.openNode(node),
         team: () => this.openTeam(),
-        link: (name) => seams.history?.link(name) ?? "",
       },
       !seams.noGoal,
       this.planPage.element,
@@ -177,20 +180,29 @@ export class SideParts implements PartSet {
       { id: PART.home, name: words.home.name, page: this.home },
       ...(seams.noGoal ? [] : [{ id: PART.goal, name: words.pages.goal, page: this.goalPage }]),
     ];
-    // A conversation in no project keeps its own history, a page of its own.
+    // The history its model works with, a page of its own that the mark in
+    // the desk's corner opens: its project's, else its own.
     if (seams.history) {
       const history = seams.history;
-      const card = new HistoryCard({ words: history.words, link: history.link, write: history.write });
+      const earlier = history.earlier;
+      const card = new HistoryCard({
+        words: history.words,
+        link: history.link,
+        write: history.write,
+        ...(history.project ? { project: history.project } : {}),
+        ...(earlier ? { earlier: (name: string) => earlier.link(name) } : {}),
+      });
       this.parts.push({ id: PART.history, name: words.pages.history, page: card });
-      this.stops.push(
-        history.watch((catalog) => {
-          card.show(catalog);
-          this.home.history(catalog);
-        }),
-      );
+      this.history = {
+        part: PART.history,
+        label: history.project ? history.words.of(history.project.name) : words.pages.history,
+      };
+      this.stops.push(history.watch((catalog) => card.show(catalog)));
+      if (earlier) this.stops.push(earlier.watch((catalog) => card.showEarlier(catalog)));
     }
-    this.following = seams.colleagues((nodes) => {
+    this.following = seams.colleagues((nodes, reading = false) => {
       this.colleagues = nodes;
+      this.teamReading = reading;
       this.goalPage.showTeam(nodes);
       this.drawTeam();
     });
@@ -198,7 +210,7 @@ export class SideParts implements PartSet {
     this.stops.push(
       seams.where((where) => this.where.show(where)),
       seams.plan.watch((plan) => this.plan(plan)),
-      seams.goal.watch((goal) => this.goal(goal)),
+      ...(seams.noGoal ? [] : [seams.goal.watch((goal) => this.goal(goal))]),
       () => following.stop(),
     );
     this.drawTeam();
@@ -367,8 +379,9 @@ export class SideParts implements PartSet {
     }
     const doing = this.context.doing?.bind(this.context);
     const nodes = [...this.colleagues, ...top.map((run) => nodeOf(run, this.context.host, under, now, doing))];
-    if (JSON.stringify(nodes, minutes) === this.shownTeam) return;
-    this.shownTeam = JSON.stringify(nodes, minutes);
+    const shown = JSON.stringify([nodes, this.teamReading], minutes);
+    if (shown === this.shownTeam) return;
+    this.shownTeam = shown;
     // What is new is told by what the World pushes, the same whether a
     // page reads the colleagues in full or not: a colleague's goal and its
     // agents come and go with the page and tell nothing.
@@ -379,7 +392,7 @@ export class SideParts implements PartSet {
     const key = JSON.stringify([...colleagues, ...nodes.filter((node) => node.kind !== "colleague")], minutes);
     const fresh = this.drawnTeam !== "" && key !== this.drawnTeam;
     this.drawnTeam = key;
-    this.collab.show(nodes);
+    this.collab.show(nodes, this.teamReading);
     this.home.team(nodes);
     if (fresh) {
       this.fresh = true;

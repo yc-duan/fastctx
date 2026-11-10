@@ -89,11 +89,13 @@ pub(super) async fn run(base: &Path) -> Result<()> {
         pause().await;
     }
     let (device, world) = device(base, "scale-phone", "owner", listen).await?;
+    // Notes are off until the account turns them on.
+    world.history_switch_write(None, Some(name("owner")), true).await?;
     let (origin, mut origin_node) = node(base, "scale-origin", "owner", listen).await?;
     origin_node.kill()?;
     origin_node.wait()?;
     for index in 0..CONVERSATIONS {
-        lifecycle::seed(&origin, "scale-origin", &resident(index))?;
+        lifecycle::seed(&origin, "scale-origin", &resident(index), None)?;
     }
     origin_node = start(&origin)?;
     anyhow::ensure!(online(&origin).await, "scale origin did not restart");

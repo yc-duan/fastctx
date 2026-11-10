@@ -6,6 +6,8 @@ use fastctx_types::update::{Channel, FailureReason, Kind, Manifest, Network, Pro
 pub struct Context {
     pub kind: Kind,
     pub connected: bool,
+    /// Every membership has supplied its live or durable update policy.
+    pub policies_known: bool,
     pub hub_here: bool,
     pub networks: Vec<Network>,
     pub cached: Vec<Manifest>,
@@ -64,9 +66,11 @@ pub fn calculate(mut state: State, context: Context) -> State {
     };
     state.network = merge(context.networks);
     state.auto = state.settings.auto_for(context.kind, state.network.as_ref().map(|n| &n.policy));
+    state.auto_enabled = Some(state.auto);
     // A version its network withdrew is taken by no machine, offered to none.
     let withdrawn = state.network.as_ref().map(|n| n.policy.withdrawn.clone()).unwrap_or_default();
     let kept = |m: &Manifest| !withdrawn.contains(&m.version);
+    state.kept.retain(|package| !withdrawn.contains(&package.version));
     state.chosen = state.chosen.filter(|m| m.newer_than(running) && kept(m));
     state.offer = state.chosen.clone().or_else(|| {
         [state.looked.on(state.channel), state.network.as_ref().and_then(|n| n.on(state.channel))]
@@ -96,10 +100,23 @@ pub fn calculate(mut state: State, context: Context) -> State {
     // A version going out a batch at a time is the one a machine takes by
     // itself, once it is in the batch (`fastctx_types::update::Rollout`).
     let rolled = state.network.as_ref().and_then(|n| n.rolled.as_ref());
-    let taken = |m: &&Manifest| rolled.is_none_or(|rolled| rolled.takes && m.version == rolled.version);
+    let rollout_known =
+        rolled.is_some() || state.network.as_ref().is_none_or(|network| network.policy.rollout.is_none());
+    let taken = |m: &&Manifest| {
+        context.policies_known
+            && rollout_known
+            && rolled.is_none_or(|rolled| rolled.takes && m.version == rolled.version)
+    };
     state.automatic = latest_for(state.chosen.iter(), running, target, state.hub_major)
         .or_else(|| latest_for(candidates.iter().copied().filter(taken), running, target, state.hub_major))
         .map(|m| m.version.clone());
+    // Old application bridges omit a null candidate when serializing it again.
+    // Their existing auto flag must also carry a rollout or unknown-policy hold.
+    let rolling =
+        state.network.as_ref().is_some_and(|network| network.rolled.is_some() || network.policy.rollout.is_some());
+    if !context.policies_known || (rolling && state.automatic.is_none()) {
+        state.auto = false;
+    }
     state.above_hub = state
         .available
         .as_ref()
@@ -107,6 +124,7 @@ pub fn calculate(mut state: State, context: Context) -> State {
         .is_some_and(|v| state.hub_major.is_some_and(|major| v.major > major));
     if !fastctx_platform::follows_releases() {
         state.auto = false;
+        state.auto_enabled = Some(false);
         state.available = None;
         state.automatic = None;
         state.above_hub = false;
@@ -124,12 +142,19 @@ pub fn calculate(mut state: State, context: Context) -> State {
 
 fn stage(state: &State, activity: Option<Stage>, running: &str) -> Stage {
     if let Some(repair) = &state.repair
-        && (repair.finished.is_none() || release(&repair.version) >= release(running)) {
+        && (repair.finished.is_none() || release(&repair.version) >= release(running))
+    {
         if repair.finished.is_none() {
-            return Stage::Repairing { version: repair.version.clone(), layer: repair.steps.last().map(|s| s.layer.clone()).unwrap_or_else(|| "package".into()) };
+            return Stage::Repairing {
+                version: repair.version.clone(),
+                layer: repair.steps.last().map(|s| s.layer.clone()).unwrap_or_else(|| "package".into()),
+            };
         }
         if !repair.success {
-            return Stage::Failed { version: repair.version.clone(), problem: Problem::from(repair.error.clone().unwrap_or_else(|| "repair did not complete".into())) };
+            return Stage::Failed {
+                version: repair.version.clone(),
+                problem: Problem::from(repair.error.clone().unwrap_or_else(|| "repair did not complete".into())),
+            };
         }
     }
     if let Some(failed) = &state.failed {

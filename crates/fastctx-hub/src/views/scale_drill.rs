@@ -85,6 +85,7 @@ fn network() -> Directory {
             locked: i > 0 && i % 97 == 0,
             opened: at,
             collab: None,
+            history: false,
             profile: None,
             promotion: false,
         }));

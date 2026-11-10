@@ -128,6 +128,7 @@ impl History {
         since: Timestamp,
         now: Timestamp,
         reading: Option<&Reading>,
+        resets: &[(Option<String>, fastctx_types::usage::UsageReset)],
     ) -> io::Result<Vec<Entry>> {
         let files = ledger::days(path, since)?;
         self.days.retain(|file, _| files.contains(file));
@@ -148,7 +149,7 @@ impl History {
             .collect();
         let mut entries: Vec<Entry> = days.iter().flat_map(|day| day.readings.iter().cloned()).collect();
         let week = super::readings::week(reading, now);
-        let periods = super::report::boundaries(&super::report::spans(&entries, week), week);
+        let periods = super::report::boundaries(&super::report::spans(&entries, week, resets), week);
         let mut cuts = periods.clone();
         cuts.extend([now - SignedDuration::from_hours(24), week.start, week.end.max(now)]);
         for day in days {

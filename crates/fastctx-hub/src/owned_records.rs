@@ -1,6 +1,7 @@
 //! Resource-level record access keeps the reader separate from the opener.
 
 mod deletion;
+pub(crate) mod hints;
 pub(crate) mod index;
 mod plans;
 mod projection;
@@ -27,8 +28,8 @@ pub(crate) struct Access {
     pub conversation: Conversation,
 }
 
-pub(crate) fn allows(
-    directory: &fastctx_net::directory::Directory,
+pub(crate) fn allows<L: fastctx_net::authorization::Lookup + ?Sized>(
+    directory: &L,
     actor: &AccountName,
     conversation: &Conversation,
 ) -> bool {
@@ -43,27 +44,30 @@ pub(crate) fn allows(
 /// The machine a conversation was born on, while the member of that name is
 /// the very machine it was born on: one that took the name after the first
 /// left the network (or was renamed to it) holds none of its records.
-pub(crate) fn born_on<'a>(
-    directory: &fastctx_net::directory::Directory,
+pub(crate) fn born_on<'a, L: fastctx_net::authorization::Lookup + ?Sized>(
+    directory: &L,
     conversation: &'a Conversation,
 ) -> Option<&'a MachineName> {
     let machine = conversation.shared_on.as_ref()?;
     born_there(directory, machine, conversation.born_seal.as_deref()).then_some(machine)
 }
 
-pub(crate) fn born_there(
-    directory: &fastctx_net::directory::Directory,
+pub(crate) fn born_there<L: fastctx_net::authorization::Lookup + ?Sized>(
+    directory: &L,
     machine: &MachineName,
     seal: Option<&str>,
 ) -> bool {
     seal.is_some_and(|seal| {
-        directory.member(machine).and_then(fastctx_net::record_ownership::seal).is_some_and(|now| now == seal)
+        directory.find_member(machine).and_then(fastctx_net::record_ownership::seal).is_some_and(|now| now == seal)
     })
 }
 
 /// A conversation as it is told to others: its birth machine only while
 /// that machine is still the one it was born on.
-pub(crate) fn verified(directory: &fastctx_net::directory::Directory, conversation: &Conversation) -> Conversation {
+pub(crate) fn verified<L: fastctx_net::authorization::Lookup + ?Sized>(
+    directory: &L,
+    conversation: &Conversation,
+) -> Conversation {
     let mut told = conversation.clone();
     if born_on(directory, conversation).is_none() {
         told.shared_on = None;
@@ -185,7 +189,7 @@ pub(crate) async fn ask(
             check(hub, &hub.store(), &from, &key, &access.conversation.account, opened, &access)?;
             let exists = records.entries.contains_key(&(kind.clone(), record_key_name.clone()));
             let (path, history) = (slot.path(&kind, &record_key_name), slot.history(&kind, &record_key_name));
-            let record = fastctx_platform::task::spawn_blocking(move || {
+            let record = crate::readers::blocking(move || {
                 let current = if exists { Some(storage::read(&path)?) } else { None };
                 account_records::history::submitted(current.as_ref(), &history, &submission)
             })
@@ -248,9 +252,7 @@ pub(crate) async fn ask(
             check(hub, &hub.store(), &from, &key, &access.conversation.account, opened, &access)?;
             let mut catalog = fastctx_types::history::Catalog {
                 documents: records
-                    .entries
-                    .values()
-                    .filter(|entry| record_key(&access.conversation, &entry.metadata.kind, &entry.metadata.key).is_ok())
+                    .history(access.conversation.address.resident.as_str())
                     .filter_map(|entry| entry.history.clone())
                     .collect(),
             };
@@ -266,18 +268,24 @@ pub(crate) async fn ask(
             let slot = hub.account_records.account(&access.conversation.account, opened);
             let records = slot.records.lock().await;
             check(hub, &hub.store(), &from, &key, &access.conversation.account, opened, &access)?;
-            let path = if records
+            let current = records
                 .entries
                 .get(&(kind.clone(), record_key_name.clone()))
-                .is_some_and(|entry| entry.metadata.version == version)
-            {
+                .is_some_and(|entry| entry.metadata.version == version);
+            let path = if current {
                 slot.path(&kind, &record_key_name)
             } else {
                 slot.history(&kind, &record_key_name).join(format!("{version}.json"))
             };
-            let record = fastctx_platform::task::spawn_blocking(move || storage::read(&path))
-                .await
-                .map_err(|error| error.to_string())??;
+            // Only the current file can be replaced while it is being read.
+            let _current = if current {
+                Some(records)
+            } else {
+                drop(records);
+                None
+            };
+            let record =
+                crate::readers::blocking(move || storage::read(&path)).await.map_err(|error| error.to_string())??;
             check(hub, &hub.store(), &from, &key, &access.conversation.account, opened, &access)?;
             Response::Revision { record }
         }
@@ -307,60 +315,46 @@ async fn revisions(
     name: &str,
 ) -> Result<Vec<fastctx_types::owned_records::Version>, String> {
     let slot = hub.account_records.account(&access.conversation.account, opened);
-    let _gate = slot.records.lock().await;
-    check(hub, &hub.store(), from, key, &access.conversation.account, opened, access)?;
-    let (path, history) = (slot.path(kind, name), slot.history(kind, name));
-    let records = fastctx_platform::task::spawn_blocking(move || {
-        let mut records = Vec::new();
-        let summary = |path: &std::path::Path| {
-            let record = storage::read(path)?;
-            let history = storage::history_head(&record).map_err(|error| error.to_string())?;
-            Ok::<_, String>(fastctx_types::owned_records::Version { metadata: record.metadata, history })
-        };
-        match fastctx_platform::disk::metadata(&path) {
-            Ok(_) => records.push(summary(&path)?),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error.to_string()),
-        }
-        match fastctx_platform::disk::read_dir(history) {
-            Ok(files) => {
-                for file in files {
-                    let path = file.map_err(|error| error.to_string())?.path();
-                    if path.extension().is_some_and(|extension| extension == "json") {
-                        records.push(summary(&path)?);
-                    }
-                }
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error.to_string()),
-        }
-        records.sort_by_key(|record| record.metadata.version);
-        records.dedup_by_key(|record| record.metadata.version);
-        Ok::<_, String>(records)
-    })
-    .await
-    .map_err(|error| error.to_string())??;
+    let current = {
+        let records = slot.records.lock().await;
+        check(hub, &hub.store(), from, key, &access.conversation.account, opened, access)?;
+        records.entries.get(&(kind.to_owned(), name.to_owned())).map(|entry| fastctx_types::owned_records::Version {
+            metadata: entry.metadata.clone(),
+            history: entry.history.clone(),
+        })
+    };
+    let history = slot.history(kind, name);
+    let mut records = crate::readers::blocking(move || account_records::revisions::list(&history))
+        .await
+        .map_err(|error| error.to_string())??;
+    // A concurrent writer may have archived revisions beyond the captured end.
+    if let Some(current) = current {
+        records.retain(|record| record.metadata.version <= current.metadata.version);
+        records.push(current);
+    }
+    records.sort_by_key(|record| record.metadata.version);
+    records.dedup_by_key(|record| record.metadata.version);
     check(hub, &hub.store(), from, key, &access.conversation.account, opened, access)?;
     Ok(records)
 }
 
-/// Rechecked immediately before sending, so queued hints cannot outlive a grant.
-pub(crate) fn hint(
+/// Selects recipients before the hint enters their outgoing queues.
+pub(crate) fn hint<L: fastctx_net::authorization::Lookup + ?Sized>(
     hub: &Hub,
-    directory: &fastctx_net::directory::Directory,
+    directory: &L,
     from: &MachineName,
     key: &PublicKey,
     account: &AccountName,
     metadata: &fastctx_types::account_records::Metadata,
 ) -> bool {
-    let Some(member) = directory.member(from).filter(|member| member.key == *key) else { return false };
-    if directory.authorize(account, Action::ActFor(from)).is_ok() {
+    let Some(member) = directory.find_member(from).filter(|member| member.key == *key) else { return false };
+    if fastctx_net::authorization::authorize(directory, account, Action::ActFor(from)).is_ok() {
         return true;
     }
     if !crate::record_subscriptions::replica_reader(hub, from, key) {
         return false;
     }
-    let Some(owner) = directory.account(account) else { return false };
+    let Some(owner) = directory.find_account(account) else { return false };
     let owners = hub.account_records.owners.lock().expect("never poisoned");
     let Some(conversation) = owners.of_record(account, owner.opened, &metadata.kind, &metadata.key) else {
         return false;
@@ -392,13 +386,11 @@ pub(crate) fn legacy_plan(
 pub(crate) fn notify(hub: &Hub, conversation: &Conversation) {
     let recipients: Vec<_> = {
         let store = hub.store();
-        store
-            .book
-            .directory
-            .members
-            .iter()
-            .filter(|member| member.logins.iter().any(|account| allows(&store.book.directory, account, conversation)))
-            .map(|member| member.name.clone())
+        let directory = store.indexed();
+        directory
+            .record_readers(std::slice::from_ref(&conversation.account), born_on(&directory, conversation))
+            .into_iter()
+            .map(|at| directory.all.members[at].name.clone())
             .collect()
     };
     for machine in recipients {

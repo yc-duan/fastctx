@@ -12,6 +12,7 @@ use std::sync::{Arc, Mutex};
 use fastctx_types::access::{Acting, HubAccount, Purpose, Written};
 use fastctx_types::ipc::Failure;
 use fastctx_types::remote::{RemoteCall, RemoteReply};
+use fastctx_types::residents::Origin;
 use fastctx_types::run::{RunReply, RunRequest, RunState};
 use fastctx_types::{Address, JobId, MachineName, ResidentId, TownName};
 
@@ -53,6 +54,7 @@ pub struct Births(Mutex<HashMap<ResidentId, Born>>);
 
 struct Born {
     acting: Acting,
+    origin: Origin,
 }
 
 /// A resident whose initial setup is in progress; dropping it ends the birth,
@@ -69,15 +71,20 @@ impl Drop for Birth {
     }
 }
 
-/// `id` is being born here, working for `acting`.
-pub(crate) fn born(node: &Arc<Node>, id: &ResidentId, acting: Acting) -> Birth {
-    node.births.0.lock().expect("never poisoned").insert(id.clone(), Born { acting });
+/// `id` is being born here, working for `acting`, from `origin`.
+pub(crate) fn born(node: &Arc<Node>, id: &ResidentId, acting: Acting, origin: Origin) -> Birth {
+    node.births.0.lock().expect("never poisoned").insert(id.clone(), Born { acting, origin });
     Birth { node: node.clone(), id: id.clone() }
 }
 
 /// Initial setup may still be publishing the first input after the resident record exists.
 pub(crate) fn being_born(node: &Node, id: &ResidentId) -> bool {
     node.births.0.lock().expect("never poisoned").contains_key(id)
+}
+
+/// Where `id` comes from while it is being born, before its record says.
+pub(crate) fn birth_origin(node: &Node, id: &ResidentId) -> Option<Origin> {
+    node.births.0.lock().expect("never poisoned").get(id).map(|born| born.origin.clone())
 }
 
 /// Whom `id` works for, as its record says, or as its birth does until the

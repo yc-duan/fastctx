@@ -9,11 +9,18 @@
 //! conversation starts, and the request's model when the user switches.
 //!
 //! The rows, their order and their efforts were read from Claude Code 2.1.296;
-//! the order is that of its own picker. A login may lack a family (Fable on some plans): the mod
+//! the order is that of its own picker. Fable 5.2 comes from 2.1.321's model
+//! registry, where it is the Fable family's newest. A login may lack a family (Fable on some plans): the mod
 //! reports which aliases the login offers, and a family it does not offer is
 //! left out.
+//!
+//! Those who hold a login's machine may change what it offers
+//! (`fastctx_types::logins::models`): rows they took out are left out, and
+//! the model ids they added follow the rows, with no efforts named, since
+//! the World knows nothing of them.
 
 use fastctx_types::agents::{AgentModel, ReasoningEffort};
+use fastctx_types::logins::models::ModelEdits;
 use fastctx_types::session::control::ModelOffer;
 
 const FIVE: &[&str] = &["low", "medium", "high", "xhigh", "max"];
@@ -41,11 +48,12 @@ pub struct ClaudeModel {
 
 pub const MODELS: &[ClaudeModel] = &[
     row("claude-opus-5-5", "Opus 5.5", "opus", FIVE, Some("medium"), MILLION),
-    row("claude-fable-5-1", "Fable 5.1", "fable", FIVE, Some("high"), MILLION),
+    row("claude-fable-5-2", "Fable 5.2", "fable", FIVE, Some("medium"), MILLION),
     row("claude-sonnet-5-5", "Sonnet 5.5", "sonnet", FIVE, Some("medium"), MILLION),
     row("claude-haiku-4-5-20251001", "Haiku 4.5", "haiku", NONE, None, TWO_HUNDRED_THOUSAND),
     row("claude-sonnet-5", "Sonnet 5", "sonnet", FIVE, Some("high"), MILLION),
     row("claude-opus-5", "Opus 5", "opus", FIVE, Some("high"), MILLION),
+    row("claude-fable-5-1", "Fable 5.1", "fable", FIVE, Some("high"), MILLION),
     row("claude-fable-5", "Fable 5", "fable", FIVE, Some("high"), MILLION),
     row("claude-opus-4-8", "Opus 4.8", "opus", FIVE, Some("high"), MILLION),
     row("claude-opus-4-7", "Opus 4.7", "opus", FIVE, Some("xhigh"), MILLION),
@@ -66,15 +74,58 @@ const fn row(
     ClaudeModel { id, name, family, efforts, default_effort, context_window }
 }
 
-/// The rows a login offers. `aliases` are the model aliases its Claude Code
-/// listed in a session (`None` before any session has run there, when every
-/// family is offered).
-pub fn offered(aliases: Option<&[String]>) -> impl Iterator<Item = &'static ClaudeModel> {
+/// One model a login offers: a row of the table, or a model id added for it.
+pub enum Offered<'a> {
+    Row(&'static ClaudeModel),
+    Added(&'a str),
+}
+
+impl Offered<'_> {
+    pub fn id(&self) -> &str {
+        match self {
+            Self::Row(model) => model.id,
+            Self::Added(id) => id,
+        }
+    }
+}
+
+/// The models a login offers. `aliases` are the model aliases its Claude
+/// Code listed in a session (`None` before any session has run there, when
+/// every family is offered); `edits` what those who hold it changed. An id
+/// added that the table holds is offered as its row, once.
+pub fn offered<'a>(aliases: Option<&[String]>, edits: &'a ModelEdits) -> Vec<Offered<'a>> {
     let families: Option<Vec<String>> = aliases.map(|aliases| aliases.iter().map(|alias| family_of(alias)).collect());
-    MODELS.iter().filter(move |model| match &families {
-        Some(families) => families.iter().any(|family| family == model.family),
-        None => true,
-    })
+    let mut offered: Vec<Offered<'a>> = MODELS
+        .iter()
+        .filter(|model| match &families {
+            Some(families) => families.iter().any(|family| family == model.family),
+            None => true,
+        })
+        .filter(|model| !edits.removed.iter().any(|id| id == model.id))
+        .map(Offered::Row)
+        .collect();
+    for id in &edits.added {
+        if !offered.iter().any(|model| model.id() == id) {
+            offered.push(find(id).map_or(Offered::Added(id), Offered::Row));
+        }
+    }
+    offered
+}
+
+/// Whether the table offers `id` to a login by itself, its family being
+/// one the login offers.
+pub fn by_family(aliases: Option<&[String]>, id: &str) -> bool {
+    offers(aliases, &ModelEdits::default(), id)
+}
+
+/// The efforts `id` takes among a login's models: none for an id added.
+pub fn efforts_of(id: &str) -> &'static [&'static str] {
+    find(id).map_or(NONE, |model| model.efforts)
+}
+
+/// Whether a login offers the full model id `id`.
+pub fn offers(aliases: Option<&[String]>, edits: &ModelEdits, id: &str) -> bool {
+    offered(aliases, edits).iter().any(|model| model.id() == id)
 }
 
 /// The family an alias Claude Code lists belongs to: `sonnet[1m]` and
@@ -92,43 +143,71 @@ pub fn find(id: &str) -> Option<&'static ClaudeModel> {
     MODELS.iter().find(|model| model.id == id)
 }
 
-/// The table as the agent picker lists it; the first offered row is the
+/// A login's models as the agent picker lists them; the first is the
 /// default when the user has chosen none.
-pub fn agent_models(aliases: Option<&[String]>) -> Vec<AgentModel> {
-    offered(aliases)
+pub fn agent_models(aliases: Option<&[String]>, edits: &ModelEdits) -> Vec<AgentModel> {
+    offered(aliases, edits)
+        .iter()
         .enumerate()
-        .map(|(at, model)| AgentModel {
-            id: model.id.to_string(),
-            model: model.id.to_string(),
-            display_name: model.name.to_string(),
-            description: String::new(),
-            is_default: at == 0,
-            default_reasoning_effort: model.default_effort.unwrap_or_default().to_string(),
-            reasoning_efforts: model
-                .efforts
-                .iter()
-                .map(|effort| ReasoningEffort { effort: (*effort).to_string(), description: String::new() })
-                .collect(),
-            context_window: Some(model.context_window),
-            max_context_window: Some(model.context_window),
+        .map(|(at, offered)| match offered {
+            Offered::Row(model) => AgentModel {
+                id: model.id.to_string(),
+                model: model.id.to_string(),
+                display_name: model.name.to_string(),
+                description: String::new(),
+                is_default: at == 0,
+                default_reasoning_effort: model.default_effort.unwrap_or_default().to_string(),
+                reasoning_efforts: model
+                    .efforts
+                    .iter()
+                    .map(|effort| ReasoningEffort { effort: (*effort).to_string(), description: String::new() })
+                    .collect(),
+                context_window: Some(model.context_window),
+                max_context_window: Some(model.context_window),
+            },
+            Offered::Added(id) => AgentModel {
+                id: (*id).to_string(),
+                model: (*id).to_string(),
+                display_name: (*id).to_string(),
+                description: String::new(),
+                is_default: at == 0,
+                default_reasoning_effort: String::new(),
+                reasoning_efforts: Vec::new(),
+                context_window: None,
+                max_context_window: None,
+            },
         })
         .collect()
 }
 
-/// The table as a conversation's model panel lists it.
-pub fn model_offers(aliases: Option<&[String]>) -> Vec<ModelOffer> {
-    offered(aliases)
+/// A login's models as a conversation's model panel lists them.
+pub fn model_offers(aliases: Option<&[String]>, edits: &ModelEdits) -> Vec<ModelOffer> {
+    offered(aliases, edits)
+        .iter()
         .enumerate()
-        .map(|(at, model)| ModelOffer {
-            id: model.id.to_string(),
-            name: Some(model.name.to_string()),
-            description: None,
-            efforts: model.efforts.iter().map(|effort| (*effort).to_string()).collect(),
-            default_effort: model.default_effort.map(str::to_owned),
-            default: at == 0,
-            service_tiers: Vec::new(),
-            default_service_tier: None,
-            context_window: Some(model.context_window),
+        .map(|(at, offered)| match offered {
+            Offered::Row(model) => ModelOffer {
+                id: model.id.to_string(),
+                name: Some(model.name.to_string()),
+                description: None,
+                efforts: model.efforts.iter().map(|effort| (*effort).to_string()).collect(),
+                default_effort: model.default_effort.map(str::to_owned),
+                default: at == 0,
+                service_tiers: Vec::new(),
+                default_service_tier: None,
+                context_window: Some(model.context_window),
+            },
+            Offered::Added(id) => ModelOffer {
+                id: (*id).to_string(),
+                name: None,
+                description: None,
+                efforts: Vec::new(),
+                default_effort: None,
+                default: at == 0,
+                service_tiers: Vec::new(),
+                default_service_tier: None,
+                context_window: None,
+            },
         })
         .collect()
 }

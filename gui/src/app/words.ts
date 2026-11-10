@@ -1123,6 +1123,7 @@ export const zhComposer: ComposerWords = {
     remove: "移除",
     sending: "上传中…",
     resuming: "等待续传",
+    removing: "正在移除…",
     failed: failure(zhProblems, "上传失败"),
     retry: "重试",
     size: (bytes) => sizeOf(bytes, ["B", "KB", "MB", "GB"]),
@@ -1199,7 +1200,6 @@ export const zhComposer: ComposerWords = {
   commands: {
     world: "Fastctx",
     compact: "压缩对话",
-    model: "切换模型",
     rename: "重命名",
     fork: "分叉对话",
     stop: "停止",
@@ -1210,6 +1210,9 @@ export const zhComposer: ComposerWords = {
     current: "当前",
     renameArgs: "<名称>",
     needsArgs: (usage) => `需要参数：${usage}`,
+    skill: "技能",
+    skillWords: "要它做什么，也可以不写",
+    unpick: "去掉",
     host: {
       compact: "压缩对话",
       model: "切换模型与推理强度",
@@ -1336,6 +1339,7 @@ export const enComposer: ComposerWords = {
     remove: "Remove",
     sending: "Uploading…",
     resuming: "Waiting to resume",
+    removing: "Removing…",
     failed: failure(enProblems, "Upload failed"),
     retry: "Retry",
     size: (bytes) => sizeOf(bytes, ["B", "KB", "MB", "GB"]),
@@ -1412,7 +1416,6 @@ export const enComposer: ComposerWords = {
   commands: {
     world: "Fastctx",
     compact: "Compact conversation",
-    model: "Switch model",
     rename: "Rename",
     fork: "Fork conversation",
     stop: "Stop",
@@ -1423,6 +1426,9 @@ export const enComposer: ComposerWords = {
     current: "current",
     renameArgs: "<name>",
     needsArgs: (usage) => `Needs arguments: ${usage}`,
+    skill: "Skill",
+    skillWords: "What to do with it, if anything",
+    unpick: "Remove",
     host: {
       compact: "Compact conversation",
       model: "Switch model and reasoning",

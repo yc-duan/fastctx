@@ -190,6 +190,18 @@ fn apply(
     let need_super =
         || if super_ { Ok(()) } else { Err(format!("the account {account} is not the hub's super administrator")) };
     match change {
+        Change::History { on } => {
+            let found = store
+                .book
+                .directory
+                .accounts
+                .iter_mut()
+                .find(|found| found.name == *account)
+                .map(Arc::make_mut)
+                .expect("checked");
+            found.history = on;
+            Ok(Told::Done)
+        }
         Change::Collab { mut collab } => {
             collab.validate()?;
             let found = store
@@ -288,7 +300,11 @@ fn apply(
             // each login: the machines that open it by login would not
             // follow. A machine asking keeps it by account still, and
             // gates by it.
-            if store.book.directory.member(asker).is_some_and(|member| member.kind == fastctx_net::directory::Kind::Phone)
+            if store
+                .book
+                .directory
+                .member(asker)
+                .is_some_and(|member| member.kind == fastctx_net::directory::Kind::Phone)
             {
                 return Err(fastctx_types::layers::MOVED.into());
             }
@@ -576,6 +592,7 @@ fn apply(
                 locked: false,
                 opened: Timestamp::now(),
                 collab: None,
+                history: false,
                 profile: None,
                 promotion: false,
             }));

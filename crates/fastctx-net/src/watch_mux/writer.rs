@@ -1,41 +1,7 @@
-use super::{INFLIGHT_PACKETS, MAX_PACKET, Part, QUANTUM, SUBSCRIPTIONS, VERSION};
-use crate::{
-    data::WriteHalf,
-    link::Link,
-    reassembly::Reservation,
-    sign::{Domain, Signed},
-};
-use fastctx_types::watching::Packet;
+use super::{Encoded, INFLIGHT_PACKETS, Part, QUANTUM, SUBSCRIPTIONS, VERSION};
+use crate::data::WriteHalf;
 use std::collections::{HashMap, VecDeque};
-use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
-
-pub struct Encoded {
-    subscription: u64,
-    number: u64,
-    signed: Signed,
-    _memory: Reservation,
-}
-
-pub async fn encode(link: Arc<Link>, packet: Packet) -> Result<Encoded, String> {
-    let bytes = crate::watch_queue::size(&packet);
-    if bytes > MAX_PACKET {
-        return Err("the watch packet exceeds 64 MiB; its history must be sent in smaller pieces".into());
-    }
-    let memory = Reservation::new(bytes.saturating_mul(2).saturating_add(2 * QUANTUM))?;
-    let encode = move || {
-        let signed = link.sign_bytes(Domain::Event, crate::history::pack(&packet));
-        if signed.data.0.is_empty() || signed.data.0.len() > MAX_PACKET {
-            return Err("the encoded watch packet exceeds its bound".into());
-        }
-        Ok(Encoded { subscription: packet.subscription, number: packet.number, signed, _memory: memory })
-    };
-    if bytes <= QUANTUM {
-        encode()
-    } else {
-        fastctx_platform::task::spawn_blocking(encode).await.map_err(|e| format!("encoding the watch packet: {e}"))?
-    }
-}
 
 pub enum Output {
     Packet { encoded: Encoded, sent: oneshot::Sender<()> },

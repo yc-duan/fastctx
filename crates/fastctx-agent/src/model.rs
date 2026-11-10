@@ -1,5 +1,6 @@
 //! Protocol-neutral model messages and clients. Requests execute on this machine.
 mod anthropic;
+mod endpoint;
 mod http;
 mod openai;
 
@@ -94,10 +95,33 @@ pub trait Model: Send + Sync {
     fn complete<'a>(&'a self, request: &'a Request) -> ModelFuture<'a>;
 }
 
-/// Credentials are supplied by the host and never serialized into run snapshots.
-pub fn client(settings: ModelSettings, key: String) -> Box<dyn Model> {
-    match settings.protocol {
-        ModelProtocol::OpenAi => Box::new(OpenAi::new(settings, key)),
-        ModelProtocol::Anthropic => Box::new(Anthropic::new(settings, key)),
+/// Credentials are supplied by the host and never serialized into run
+/// snapshots; a provider that writes the key back into an error has it
+/// hidden there before the error goes anywhere.
+pub fn client(mut settings: ModelSettings, key: String) -> Box<dyn Model> {
+    settings.endpoint = endpoint::of(settings.protocol, &settings.endpoint);
+    let inner: Box<dyn Model> = match settings.protocol {
+        ModelProtocol::OpenAi => Box::new(OpenAi::new(settings, key.clone())),
+        ModelProtocol::Anthropic => Box::new(Anthropic::new(settings, key.clone())),
+    };
+    Box::new(Keyless { inner, key })
+}
+
+/// A model whose errors never carry its key.
+struct Keyless {
+    inner: Box<dyn Model>,
+    key: String,
+}
+
+impl Model for Keyless {
+    fn complete<'a>(&'a self, request: &'a Request) -> ModelFuture<'a> {
+        Box::pin(async move {
+            self.inner.complete(request).await.map_err(|mut error| {
+                if !self.key.is_empty() {
+                    error.reason = error.reason.replace(&self.key, "***");
+                }
+                error
+            })
+        })
     }
 }

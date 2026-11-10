@@ -100,6 +100,10 @@ pub fn fixtures() -> Fixtures {
                         path: None,
                     },
                 ],
+                skills: vec![fastctx_types::skills::Listed {
+                    name: "deploy-checklist".into(),
+                    description: "Before deploying a service".into(),
+                }],
                 models: vec![ModelOffer {
                     id: "model".into(),
                     name: Some("Model".into()),

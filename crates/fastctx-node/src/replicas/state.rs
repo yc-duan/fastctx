@@ -1,5 +1,10 @@
 //! Durable current copies and pending edits. Historical revisions stay at the hub.
+//!
+//! What identifies a copy stays in memory; its texts do not. Each is kept once
+//! on disk under the copy's own folder of bodies, named by its hash, and read
+//! when an operation needs it (`bodies`).
 
+use super::bodies::{self, Text};
 use fastctx_types::{
     access::HubAccount,
     history::Author,
@@ -15,21 +20,35 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+/// An edit waiting for the document's hub. Each becomes a revision of its
+/// own once the hub has it.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct Pending {
     pub id: String,
     pub base: Option<u64>,
-    pub before: String,
-    pub text: String,
-    pub operation: WriteOp,
+    /// The text the edit was made on.
+    pub before: Text,
+    pub text: Text,
+    /// The edit as asked, replayed on a newer revision; none for a whole write.
+    pub edit: Option<WriteOp>,
     pub author: Author,
     pub offline: bool,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+/// The exact text a conversation saw, retained as a body. The hub revision
+/// lets older records recover a missing body when it was already synchronized.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Observed {
     pub version: Option<u64>,
     pub hash: Option<String>,
+}
+
+/// What this computer last wrote at a copy's path: the file still holds it
+/// while its length and modification time are these.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct Projected {
+    pub text: Text,
+    pub modified: Option<i128>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -39,16 +58,23 @@ pub(crate) struct Copy {
     pub account: HubAccount,
     pub head: Head,
     pub path: PathBuf,
-    pub text: String,
+    /// The hub's text of `head.version`.
+    pub body: Text,
+    #[serde(default)]
+    pub projected: Option<Projected>,
     #[serde(default)]
     pub observed: BTreeMap<String, Observed>,
     #[serde(default)]
     pub pending: Vec<Pending>,
+    /// Paths this copy moved away from, whose projections are still to go.
+    #[serde(default)]
+    pub left: Vec<PathBuf>,
 }
 
 impl Copy {
-    pub(crate) fn effective(&self) -> &str {
-        self.pending.iter().rfind(|pending| pending.offline).map_or(&self.text, |pending| &pending.text)
+    /// The text the copy shows: its last edit made offline, else the hub's.
+    pub(crate) fn effective(&self) -> &Text {
+        self.pending.iter().rfind(|pending| pending.offline).map_or(&self.body, |pending| &pending.text)
     }
     pub(crate) fn id(&self) -> String {
         identity(&self.account, &self.head)
@@ -62,17 +88,24 @@ pub(crate) struct Folder {
     pub path: PathBuf,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Route {
     pub epoch: u64,
     pub account: HubAccount,
     pub head: Head,
     pub path: PathBuf,
+    pub left: Vec<PathBuf>,
 }
 
 impl From<&Copy> for Route {
     fn from(copy: &Copy) -> Self {
-        Self { epoch: copy.epoch, account: copy.account.clone(), head: copy.head.clone(), path: copy.path.clone() }
+        Self {
+            epoch: copy.epoch,
+            account: copy.account.clone(),
+            head: copy.head.clone(),
+            path: copy.path.clone(),
+            left: copy.left.clone(),
+        }
     }
 }
 
@@ -123,29 +156,30 @@ pub(crate) fn scope_key(scope: &Scope) -> String {
     }
 }
 
-fn root(world: &fastctx_types::layout::WorldDir) -> PathBuf {
+pub(crate) fn root(world: &fastctx_types::layout::WorldDir) -> PathBuf {
     world.path().join("replicas")
 }
 
-pub(crate) fn save(world: &fastctx_types::layout::WorldDir, copy: &Copy) -> io::Result<()> {
+/// Keeps a copy's metadata, then lets go of the texts it no longer names.
+/// The texts it names were put before.
+pub(crate) fn save(world: &fastctx_types::layout::WorldDir, copy: &Copy) -> io::Result<Option<String>> {
     let directory = root(world).join("copies");
     fastctx_platform::ensure_private_dir(&directory)?;
-    fastctx_platform::publish(
-        &directory.join(format!("{}.json", copy.id())),
-        &serde_json::to_vec(copy)?,
-        fastctx_platform::Permissions::Private,
-    )
+    let warning = super::storage::publish(&directory.join(format!("{}.json", copy.id())), &serde_json::to_vec(copy)?)?;
+    if warning.is_some() {
+        // The previous record may survive a power loss; retain its bodies too.
+        return Ok(warning);
+    }
+    Ok(bodies::tidy(world, copy)
+        .err()
+        .map(|error| format!("replica {} was saved, but removing unused bodies failed: {error}", copy.id())))
 }
 
-pub(crate) fn save_folder(world: &fastctx_types::layout::WorldDir, folder: &Folder) -> io::Result<()> {
+pub(crate) fn save_folder(world: &fastctx_types::layout::WorldDir, folder: &Folder) -> io::Result<Option<String>> {
     let directory = root(world).join("folders");
     fastctx_platform::ensure_private_dir(&directory)?;
     let id = folder_id(folder);
-    fastctx_platform::publish(
-        &directory.join(format!("{id}.json")),
-        &serde_json::to_vec(folder)?,
-        fastctx_platform::Permissions::Private,
-    )
+    super::storage::publish(&directory.join(format!("{id}.json")), &serde_json::to_vec(folder)?)
 }
 
 fn folder_id(folder: &Folder) -> String {
@@ -159,19 +193,20 @@ fn folder_id(folder: &Folder) -> String {
 }
 
 pub(crate) fn delete_folder(world: &fastctx_types::layout::WorldDir, folder: &Folder) -> io::Result<()> {
-    super::files::delete(&folder.path)?;
-    super::files::delete(&root(world).join("folders").join(format!("{}.json", folder_id(folder))))
+    super::removal::delete(world, &folder.path)?;
+    super::removal::delete(world, &root(world).join("folders").join(format!("{}.json", folder_id(folder))))
 }
 
 pub(crate) fn delete(world: &fastctx_types::layout::WorldDir, copy: &Route) -> io::Result<()> {
-    super::files::withdraw(&copy.path)?;
-    match fastctx_platform::disk::remove_file(
-        root(world).join("copies").join(format!("{}.json", identity(&copy.account, &copy.head))),
-    ) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error),
+    super::files::withdraw(world, &copy.path)?;
+    for path in &copy.left {
+        super::files::withdraw(world, path)?;
     }
+    let id = identity(&copy.account, &copy.head);
+    bodies::remove(world, &id)?;
+    super::legacy::delete(world, &id)?;
+    // The record remains the cleanup task until all its texts are gone.
+    super::removal::delete(world, &root(world).join("copies").join(format!("{id}.json")))
 }
 
 impl State {
@@ -180,36 +215,31 @@ impl State {
         if *loaded {
             return Ok(());
         }
-        let read = |path: &Path| -> io::Result<Vec<Vec<u8>>> {
-            let mut bytes = Vec::new();
+        let each = |path: &Path, read: &mut dyn FnMut(PathBuf) -> io::Result<()>| -> io::Result<()> {
             match fastctx_platform::disk::read_dir(path) {
                 Ok(entries) => {
                     for entry in entries {
                         let path = entry?.path();
                         if path.extension().is_some_and(|extension| extension == "json") {
-                            bytes.push(fastctx_platform::disk::read(path)?);
+                            read(path)?;
                         }
                     }
+                    Ok(())
                 }
-                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-                Err(error) => return Err(error),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+                Err(error) => Err(error),
             }
-            Ok(bytes)
         };
-        let copies = read(&root(world).join("copies"))?
-            .into_iter()
-            .map(|bytes| serde_json::from_slice::<Copy>(&bytes))
-            .collect::<Result<Vec<_>, _>>()?;
-        let folders = read(&root(world).join("folders"))?
-            .into_iter()
-            .map(|bytes| serde_json::from_slice::<Folder>(&bytes))
-            .collect::<Result<Vec<_>, _>>()?;
-        for copy in copies {
+        each(&root(world).join("copies"), &mut |path| {
+            let copy = super::legacy::read(world, &path)?;
             self.insert(copy);
-        }
-        for folder in folders {
+            Ok(())
+        })?;
+        each(&root(world).join("folders"), &mut |path| {
+            let folder: Folder = serde_json::from_slice(&fastctx_platform::disk::read(path)?)?;
             self.folders.lock().expect("never poisoned").insert(folder.path.clone(), folder);
-        }
+            Ok(())
+        })?;
         *loaded = true;
         self.read_in.store(true, std::sync::atomic::Ordering::Release);
         Ok(())

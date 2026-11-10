@@ -169,6 +169,9 @@ impl RemoteCall {
             }
             Self::SentinelSettings { change: Some(_) } => Contract::CHANGE,
             Self::SentinelKeys => Contract { within: Some(Duration::from_secs(30)), ..Contract::QUERY },
+            // The home may take a minute to read the settings, and the model
+            // has 90 s more to answer.
+            Self::SentinelTry => Contract { within: Some(Duration::from_secs(180)), ..Contract::QUERY },
             Self::SentinelKey { .. } => Contract::CHANGE,
             Self::Mcp {
                 mcp:
@@ -199,6 +202,7 @@ impl RemoteCall {
             | Self::ItemDetail { .. }
             | Self::AgentActivity { .. }
             | Self::Stats { .. }
+            | Self::Inspect { .. }
             | Self::MemoryRoom { bytes: None }
             | Self::Book { .. }
             | Self::Interfaces
@@ -234,6 +238,7 @@ impl RemoteCall {
             | Self::AgentFolder { .. }
             | Self::SetAgentTitle { .. }
             | Self::SetAgentResetInPlace { .. }
+            | Self::ChangeAgentModels { .. }
             | Self::ChangeAgentLogin { .. }
             | Self::MemoryRoom { bytes: Some(_) }
             | Self::Open { .. }
@@ -373,10 +378,12 @@ impl Call {
             Self::SentinelSettings { change: None, .. } => Leaving::Stop,
             Self::SentinelSettings { change: Some(_), .. } => Leaving::Finish,
             Self::SentinelKey { .. } => Leaving::Finish,
+            Self::SentinelTry { .. } => Leaving::Stop,
             Self::AttachmentPlaces { .. }
             | Self::McpRelay { .. }
             | Self::MachineLog { .. }
             | Self::CollabRead { .. }
+            | Self::HistorySwitchRead { .. }
             | Self::ProfileRead { .. }
             | Self::Mcp {
                 mcp: McpCall::List | McpCall::Test { .. } | McpCall::Found { .. } | McpCall::Candidates { .. },
@@ -429,6 +436,7 @@ impl Call {
             | Self::TurnEvidence { .. }
             | Self::CompactBetweenTurns { .. }
             | Self::CollabWrite { .. }
+            | Self::HistorySwitchWrite { .. }
             | Self::ProfileWrite { .. }
             | Self::ProfileSubagents { .. }
             | Self::ClaudeSubagents { .. }
@@ -459,6 +467,7 @@ impl Call {
             | Self::AgentFolder { .. }
             | Self::SetAgentTitle { .. }
             | Self::SetAgentResetInPlace { .. }
+            | Self::ChangeAgentModels { .. }
             | Self::ChangeAgentLogin { .. }
             | Self::Talk { .. }
             | Self::Upload { .. }

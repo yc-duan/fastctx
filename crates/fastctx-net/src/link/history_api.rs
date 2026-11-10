@@ -19,14 +19,26 @@ enum Source {
 }
 
 impl Link {
+    pub(crate) fn require_history_write(&self, account: &AccountName) -> Result<(), String> {
+        let view = self.view();
+        if view.history_switch && view.account(account).is_some_and(|account| account.history && !account.locked) {
+            Ok(())
+        } else {
+            Err(fastctx_types::history::words::DISABLED.into())
+        }
+    }
+
     pub async fn history_call(
         &self,
         account: &AccountName,
         request: HistoryCall,
         author: Option<Author>,
     ) -> Result<HistoryReply, String> {
-        if !fastctx_platform::preview() {
+        if !fastctx_platform::history() {
             return Err("history is not enabled in this release".into());
+        }
+        if request.writes() {
+            self.require_history_write(account)?;
         }
         let scope = match request.scope() {
             Scope::Project { project } => Source::Project(
@@ -85,8 +97,14 @@ impl Link {
 impl Target<'_> {
     async fn catalog(&self) -> Result<Catalog, String> {
         match &self.scope {
-            Source::Project(town) => self.link.history_catalog(self.account, town).await,
-            Source::Conversation(address) => self.link.conversation_history_catalog(self.account, address).await,
+            Source::Project(town) => {
+                self.link.shared_history_catalog(self.account, town).await.map(|catalog| (*catalog).clone())
+            }
+            Source::Conversation(address) => self
+                .link
+                .shared_conversation_history_catalog(self.account, address)
+                .await
+                .map(|catalog| (*catalog).clone()),
         }
     }
 

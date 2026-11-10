@@ -19,6 +19,7 @@ pub(crate) mod heard;
 pub(crate) mod identify;
 pub(crate) mod kept;
 pub(crate) mod limits;
+pub(crate) mod models;
 mod others;
 mod program;
 pub(crate) mod refresh;
@@ -198,8 +199,7 @@ fn assemble(node: &Node) -> Result<MachineLogins, Failure> {
     {
         scan.usual = Stage::Failed { at: jiff::Timestamp::now(), reason: "the node stopped during it".into() };
     }
-    let claude_models = fastctx_hosts::claude::exchange::models(node.world.path())
-        .map_err(|error| Failure::new(format!("reading Claude's model rows: {error}")))?;
+    let claude_aliases = fastctx_hosts::claude::exchange::aliases(node.world.path());
     let changes = node.logins.changes.lock().expect("never poisoned").clone();
     let mut logins = MachineLogins {
         machine: node.machine(),
@@ -226,16 +226,13 @@ fn assemble(node: &Node) -> Result<MachineLogins, Failure> {
             };
             let listed = integration == Integration::In;
             let limits = if agent == "codex" { limits::of(node, &kept, dir) } else { claude_limits(node, dir) };
-            let models = if agent == "codex" {
-                known.map(|login| login.models.clone()).unwrap_or_default()
-            } else {
-                claude_models
-                    .iter()
-                    .find(|(transcript, _, _)| {
-                        owner(&homes, transcript).is_some_and(|home| crate::homes::same_dir(home, dir))
-                    })
-                    .map(|(_, _, models)| models.clone())
-                    .unwrap_or_else(|| fastctx_hosts::claude::models::agent_models(None))
+            let model_edits = (agent == "claude").then(|| models::edits(&kept, dir));
+            let models = match &model_edits {
+                None => known.map(|login| login.models.clone()).unwrap_or_default(),
+                Some(edits) => fastctx_hosts::claude::models::agent_models(
+                    models::aliases(&claude_aliases, &homes, dir).as_deref(),
+                    edits,
+                ),
             };
             // The permission is read only where the World's tools are in,
             // which granted it: a candidate's settings are not the World's
@@ -265,6 +262,7 @@ fn assemble(node: &Node) -> Result<MachineLogins, Failure> {
                 reset_in_place: crate::usage::resets_in_place(node, agent, dir),
                 launcher: program::now(node, agent, dir, known),
                 models,
+                model_edits,
                 change,
                 drift: if listed { refresh::of(node, agent, dir) } else { None },
                 workbench: listed

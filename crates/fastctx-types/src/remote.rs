@@ -83,6 +83,9 @@ pub enum RemoteCall {
     },
     /// Which of the account's sentinel keys its home holds.
     SentinelKeys,
+    /// Has the account's sentinel home try its model and search once, with
+    /// the keys it holds.
+    SentinelTry,
     /// A running job returns its resident's project selection to its home.
     /// This call is relayed and authorized by a hub supporting project entry.
     EnterProject {
@@ -319,6 +322,13 @@ pub enum RemoteCall {
         agent: AgentName,
         dir: std::path::PathBuf,
         on: bool,
+    },
+    /// Change the models offered in a Claude Code login there; only for
+    /// those who hold the machine.
+    ChangeAgentModels {
+        agent: AgentName,
+        dir: std::path::PathBuf,
+        change: crate::logins::models::ModelChange,
     },
     /// What a change of a login there would do; only for the machine's
     /// owner.
@@ -564,6 +574,15 @@ pub enum RemoteCall {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         seen: Option<crate::stats::StatsSeen>,
     },
+    /// A read-only look at that machine for a World agent of the account
+    /// (`crate::inspect`): only for an account that may work on it. With
+    /// `evidence_of`, it may read in the folder where the World keeps that
+    /// conversation's evidence, as a goal's judge does.
+    Inspect {
+        inspect: crate::inspect::Inspect,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        evidence_of: Option<crate::Address>,
+    },
     /// What that machine keeps free in memory for its agents; sets it first
     /// when `bytes` is given. Only for an account that may work on it.
     MemoryRoom {
@@ -625,7 +644,8 @@ impl RemoteCall {
             Self::Goal { .. } | Self::GoalCommand { .. } => Purpose::Agents,
             Self::EnterProject { .. } | Self::Plan { .. } => Purpose::Echo,
             Self::SentinelSettings { .. } | Self::SentinelControl { .. } | Self::SentinelKeys => Purpose::Look,
-            Self::SentinelKey { .. } => Purpose::Hands,
+            // A try spends the account's key on the home, as a sentinel would.
+            Self::SentinelKey { .. } | Self::SentinelTry => Purpose::Hands,
             Self::SentinelHome { request: crate::sentinel_control::HomeRequest::Conversation { request, .. } } => {
                 if matches!(request.as_ref(), crate::sentinel_control::HomeRequest::Withdraw { .. }) {
                     Purpose::Hands
@@ -682,11 +702,13 @@ impl RemoteCall {
             | RemoteCall::AgentFolder { .. }
             | RemoteCall::SetAgentTitle { .. }
             | RemoteCall::SetAgentResetInPlace { .. }
+            | RemoteCall::ChangeAgentModels { .. }
             | RemoteCall::PreviewAgentChange { .. }
             | RemoteCall::ChangeAgentLogin { .. }
             | RemoteCall::UpdateWorld
             | RemoteCall::Updates { .. }
             | RemoteCall::Stats { .. }
+            | RemoteCall::Inspect { .. }
             | RemoteCall::MemoryRoom { .. }
             | RemoteCall::Book { .. } => Purpose::Hands,
             RemoteCall::Collaboration { .. }
@@ -753,6 +775,7 @@ pub enum RemoteReply {
     SentinelHome(Box<crate::sentinel_control::HomeReply>),
     SentinelSettings(Box<crate::sentinel_settings::SettingsReply>),
     SentinelKeys(crate::sentinel_settings::KeyStatus),
+    SentinelTried(Box<crate::sentinel_settings::TryReport>),
     Entered {
         town: TownName,
         map: Box<crate::project::MapView>,
@@ -851,6 +874,7 @@ pub enum RemoteReply {
         used: Vec<bool>,
     },
     Stats(Box<crate::stats::MachineStats>),
+    Inspected(crate::inspect::Inspected),
     MemoryRoom {
         bytes: u64,
     },

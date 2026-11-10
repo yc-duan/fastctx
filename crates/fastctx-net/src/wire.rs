@@ -231,6 +231,9 @@ pub enum Intent {
         /// machine log page with one.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         machine_updates: bool,
+        /// Reads account history switch changes in the machine log.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        history_switch: bool,
         /// Reads account record invalidations independently of the directory.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         account_records: bool,
@@ -876,6 +879,10 @@ pub enum Firewall {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "change")]
 pub enum Change {
+    /// Sets only this account's history switch; the last committed choice wins.
+    History {
+        on: bool,
+    },
     Collab {
         collab: fastctx_types::collab::Collab,
     },

@@ -1,6 +1,6 @@
 // What the workbench brings that has settings of its own (`world-layers.md`):
-// model collaboration, reached from the kernels, and the sentinels, reached
-// from Settings. Each is a page: off, the film that tells
+// history and model collaboration, tabs of the conversations' settings, and
+// the sentinels, reached from Settings. Each is a page: off, the film that tells
 // what it does, playing on a loop, and the button that turns it on under
 // it; turned on, a page over the window says it is on and what the
 // interface gained. On, its page shows a still of the film, to be watched
@@ -35,11 +35,11 @@ import { effect } from "./signals";
 import { residentsOf, type Store } from "./store";
 import { leave } from "./leave";
 import { collaboration } from "../film/collaboration";
-import { sentinelFilm } from "../film/sentinel";
-import { SentinelForm } from "./sentinel-form";
-import type { SentinelSeam, SentinelSettingsView } from "../world/sentinels";
+import { sentinelFeature } from "./sentinel-feature";
+import type { SentinelSeam } from "../world/sentinels";
 import { Film } from "../film/film";
 import type { Built, Shape } from "../film/reel";
+import { HistoryFeature, type FeatureFrame } from "./history-feature";
 
 /** Whether model collaboration can be turned on; a node offers a colleague
  *  only as `collab.rs` lets it. */
@@ -102,7 +102,7 @@ export class FeaturesPage implements Page {
 
   constructor(private readonly options: FeaturesOptions) {
     const { words, feature } = options;
-    this.title = feature === "sentinels" ? words.sentinels.name : words.collaboration.name;
+    this.title = feature === "sentinels" ? words.sentinels.name : feature === "history" ? words.history.name : words.collaboration.name;
     this.element = document.createElement("div");
     this.element.className = "features-page";
     this.element.innerHTML = `${options.head(`<h1 class="page-title">${escape(this.title)}</h1>`)}<div class="features-body scroller"></div>`;
@@ -111,6 +111,7 @@ export class FeaturesPage implements Page {
       if ((event.target as HTMLElement).closest("[data-act='replay']")) this.replay();
     });
     if (feature === "sentinels") this.sentinels();
+    else if (feature === "history") this.history();
     else this.collaboration();
   }
 
@@ -230,74 +231,38 @@ export class FeaturesPage implements Page {
     return first ? { hub: first.hubName, account: first.account } : null;
   }
 
-  /** Sentinels: their film and, on, their settings; on is a machine for
-   *  them to live on, chosen and saved. */
   private sentinels(): void {
-    const { words } = this.options;
-    const label = words.sentinels.name;
-    const make = (shape: Shape) => sentinelFilm(words.sentinels.film, shape);
-    this.replayFilm = () => this.watch(make, label);
-    const login = this.login();
-    const seam = this.options.sentinels.seam;
-    let view: SentinelSettingsView | null = null;
-    const form = login
-      ? new SentinelForm({
-          words: words.sentinels,
-          seam,
-          login,
-          machines: () => (login ? this.options.sentinels.machines(login.hub, login.account) : []),
-          saved: (saved) => {
-            const was = view?.settings.home ?? null;
-            view = saved;
-            if (was === null && saved.settings.home !== null) {
-              draw(true);
-              this.celebrate(label, words.sentinels.after, make);
-            }
-          },
-        })
-      : null;
-    const draw = (on: boolean, starting = false) => {
-      this.dropFilms();
-      this.body.classList.toggle("features-film", !on && !starting);
-      this.body.classList.toggle("features-on", on || starting);
-      this.body.innerHTML =
-        on || starting
-          ? `${on ? this.onTop(words.sentinels.after, false, `<a class="text-button quiet-button" href="${link({ kind: "sentinels" })}">${glyph("sentinel", 14)}<span>${escape(words.sentinels.all)}</span></a>`) : ""}<div class="sf-holder"></div>${on ? this.offWay(label) : ""}`
-          : `<div class="feature-intro"><div class="feature-film"></div><button class="sheet-go feature-turn" type="button" data-turn="1"${form ? "" : " disabled"}>${escape(words.turnOn)}</button></div>`;
-      if (form && (on || starting)) {
-        this.body.querySelector(".sf-holder")!.append(form.element);
-        if (starting && !view?.settings.home) form.start();
-        else if (view) form.show(view);
-      }
-      if (on) this.film(this.body.querySelector(".feature-still"), make, label, true);
-      else if (!starting) this.film(this.body.querySelector(".feature-film"), make, label);
-    };
-    draw(false);
-    if (login)
-      seam.read(login.hub, login.account).then(
-        (read) => {
-          view = read;
-          draw(read.settings.home !== null);
-        },
-        () => {},
-      );
-    this.body.addEventListener("click", (event) => {
-      const target = event.target as HTMLElement;
-      if (target.closest("[data-turn]")) return draw(false, true);
-      if (target.closest("[data-act='turn-off']") && login && view) {
-        const current = view;
-        this.askOff(
-          label,
-          words.sentinels.offWhat,
-          async () => {
-            const reply = await seam.write(login.hub, login.account, current.version, { ...current.settings, home: null });
-            if (reply.kind === "conflict") throw new Error(words.sentinels.changedElsewhere);
-            view = reply.view;
-          },
-          () => draw(false),
-        );
-      }
+    const { store, words, english, sentinels } = this.options;
+    this.stop = sentinelFeature(this.body, store, words, english, sentinels.seam, sentinels.machines);
+  }
+
+  /** History: a switch alone (`history-feature.ts`), kept for the account,
+   *  or for this computer while it is in no network. */
+  private history(): void {
+    const { store, words } = this.options;
+    let drawn = false;
+    this.stop = effect(() => {
+      const world = store.world.get();
+      if (drawn || !world) return;
+      drawn = true;
+      const feature = new HistoryFeature(this.frame(), inNoNetwork(world) ? null : (this.login() ?? "none"));
+      this.replayFilm = () => this.watch(feature.film, words.history.name);
     });
+  }
+
+  /** What a feature drawn from its own file borrows of this page. */
+  private frame(): FeatureFrame {
+    return {
+      body: this.body,
+      words: this.options.words,
+      film: (holder, make, label, still) => this.film(holder, make, label, still),
+      dropFilms: () => this.dropFilms(),
+      celebrate: (name, gained, make) => this.celebrate(name, gained, make),
+      onTop: (gained, solo) => this.onTop(gained, solo),
+      offWay: (name) => this.offWay(name),
+      askOff: (name, what, off, done) => this.askOff(name, what, off, done),
+      gives: (list) => this.gives(list),
+    };
   }
 
   private collaboration(): void {
@@ -582,8 +547,8 @@ export class FeaturesPage implements Page {
   /** What model collaboration gives the user: a ready text that teaches
    *  the calling model how to ask for what it wants, and nothing to
    *  operate by hand. */
-  private gives(): string {
-    return `<ul class="feature-gives">${this.options.words.collaboration.gives
+  private gives(list = this.options.words.collaboration.gives): string {
+    return `<ul class="feature-gives">${list
       .map(([mark, line]) => `<li><span class="feature-give-mark">${glyph(mark, 16)}</span><span>${escape(line)}</span></li>`)
       .join("")}</ul>`;
   }

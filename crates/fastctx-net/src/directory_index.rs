@@ -6,6 +6,8 @@
 //! it holds, so what is gathered from it comes out in the directory's own
 //! order, as a scan would give it.
 
+mod audience;
+
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 use fastctx_types::access::TownId;

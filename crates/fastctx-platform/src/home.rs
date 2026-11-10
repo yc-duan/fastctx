@@ -11,13 +11,20 @@ use std::path::{Path, PathBuf};
 /// runs: in `.fastctx-dev`, off the PATH, looking for no new versions.
 pub const RELEASED: bool = option_env!("FASTCTX_RELEASE").is_some();
 
-/// Whether the features not offered in a release yet run here: sentinels,
-/// project memory and goals. Their code is kept and a development build
-/// runs them; a release offers none of them to the user or the model, and
-/// runs them only where `FASTCTX_PREVIEW` is set (`world.md`, 这一版不发的).
+/// Whether this is a development build that offers preview-only features.
 pub fn preview() -> bool {
-    !RELEASED || std::env::var_os("FASTCTX_PREVIEW").is_some()
+    !RELEASED
 }
+
+/// Whether this build supports history. The account opt-in and the login's
+/// workbench setting decide whether a conversation receives it.
+pub fn history() -> bool {
+    HISTORY_SHIPS
+}
+
+/// Whether releases offer history; the interface keeps the same switch
+/// (`gui/src/app/preview.ts`).
+const HISTORY_SHIPS: bool = true;
 
 /// Whether this program takes part in its networks' versions, looking for
 /// new releases and telling its hubs what it runs: a release does, and a

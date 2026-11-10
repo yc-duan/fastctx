@@ -11,6 +11,7 @@ use std::sync::Arc;
 use fastctx_types::AgentName;
 use fastctx_types::access::{Acting, HubAccount, Purpose};
 use fastctx_types::ipc::Failure;
+use fastctx_types::logins::models::ModelChange;
 use fastctx_types::logins::{ChangePreview, FolderChange, LoginChange, MachineLogins, MachineLoginsHeard, WorldLogins};
 use fastctx_types::remote::{RemoteCall, RemoteReply};
 use fastctx_types::usage::UsageReport;
@@ -281,6 +282,25 @@ pub(crate) async fn set_title(
     }
 }
 
+/// Changes the models a Claude Code login offers, here or on another of the
+/// user's machines.
+pub(crate) async fn change_models(
+    node: &Arc<Node>,
+    machine: Written,
+    agent: AgentName,
+    dir: PathBuf,
+    change: ModelChange,
+) -> Result<MachineLogins, Failure> {
+    if node.is_here(&machine) {
+        super::models::change(node, &agent, &dir, &change)?;
+        return super::here(node).await;
+    }
+    match ask(node, &machine, Purpose::Hands, RemoteCall::ChangeAgentModels { agent, dir, change }).await? {
+        RemoteReply::AgentLogins(logins) => Ok(*logins),
+        _ => Err(other(&machine)),
+    }
+}
+
 /// What `agent`'s login `dir` on `machine` was used for, as this computer's
 /// user may see it.
 pub(crate) async fn usage(
@@ -290,7 +310,7 @@ pub(crate) async fn usage(
     dir: PathBuf,
 ) -> Result<UsageReport, Failure> {
     if node.is_here(&machine) {
-        return here_usage(node, agent, dir, None).await;
+        return here_usage(node, agent, dir, None, true).await;
     }
     match ask(node, &machine, Purpose::Look, RemoteCall::AgentUsage { agent, dir }).await? {
         RemoteReply::AgentUsage(report) => Ok(*report),
@@ -342,12 +362,15 @@ async fn here_usage(
     agent: AgentName,
     dir: PathBuf,
     only: Option<HubAccount>,
+    owner: bool,
 ) -> Result<UsageReport, Failure> {
     let node = node.clone();
-    fastctx_platform::task::spawn_blocking(move || crate::usage::report(&node, agent.as_str(), &dir, only.as_ref()))
-        .await
-        .map_err(|error| Failure::new(error.to_string()))?
-        .map_err(|error| Failure::new(format!("reading what the login was used for: {error}")))
+    fastctx_platform::task::spawn_blocking(move || {
+        crate::usage::report(&node, agent.as_str(), &dir, only.as_ref(), owner)
+    })
+    .await
+    .map_err(|error| Failure::new(error.to_string()))?
+    .map_err(|error| Failure::new(format!("reading what the login was used for: {error}")))
 }
 
 /// Answers another machine's call about this machine's logins, for
@@ -371,6 +394,10 @@ pub(crate) async fn answer(
         RemoteCall::SetAgentResetInPlace { agent, dir, on } => {
             super::set_resets_in_place(node, &agent, &dir, on)?;
             crate::usage::after_reading(node, agent.as_str(), &dir).await;
+            super::here(node).await.map(logins)
+        }
+        RemoteCall::ChangeAgentModels { agent, dir, change } => {
+            super::models::change(node, &agent, &dir, &change)?;
             super::here(node).await.map(logins)
         }
         RemoteCall::PreviewAgentChange { agent, dir, into, take_back, workbench } => {
@@ -412,7 +439,8 @@ pub(crate) async fn answer(
                     Failure::not_run(format!("no {agent} login {} here is the account's to see", dir.display()))
                 })?;
             let only = (!asker.hands).then(|| HubAccount { hub: asker.hub.clone(), account: asker.account.clone() });
-            here_usage(node, agent, login.dir.clone(), only)
+            let owner = crate::placement::owned(view.member(&view.me), &asker.account);
+            here_usage(node, agent, login.dir.clone(), only, owner)
                 .await
                 .map(|report| RemoteReply::AgentUsage(Box::new(report)))
         }

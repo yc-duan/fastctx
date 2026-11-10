@@ -14,6 +14,11 @@ pub fn catalog(catalog: &Catalog) -> String {
 }
 
 pub fn context(catalogue: &Catalog, path: &str, machine: &str, project: bool) -> String {
+    context_with_topics(&catalog(catalogue), path, machine, project)
+}
+
+/// Render an already ordered, complete list of topic names and descriptions.
+pub fn context_with_topics(topics: &str, path: &str, machine: &str, project: bool) -> String {
     let mut template = words::TEMPLATE.to_string();
     if !project {
         template = template.replace("This project's history", "This conversation's history");
@@ -21,7 +26,7 @@ pub fn context(catalogue: &Catalog, path: &str, machine: &str, project: bool) ->
     template
         .replace("<path>", path)
         .replace("<machine>", machine)
-        .replace("{{ name: description, one a line }}", &catalog(catalogue))
+        .replace("{{ name: description, one a line }}", topics)
 }
 
 pub fn changed(revision: &fastctx_types::history::HistoryRevision) -> String {

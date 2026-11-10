@@ -74,6 +74,7 @@ pub(super) async fn run(inner: Arc<Inner>, mut changes: Option<super::changes::C
         };
         match ended {
             Ended::Stop(reason) => {
+                inner.membership_ended.store(true, std::sync::atomic::Ordering::Release);
                 inner.node.log(format!("the link to the hub stopped: {reason}"));
                 let dissolved = inner.dissolved.load(std::sync::atomic::Ordering::Relaxed);
                 let then = *inner.then.lock().expect("never poisoned");
@@ -323,6 +324,7 @@ async fn greet(inner: &Arc<Inner>, upstream: &Upstream, dialed: dial::Dialed) ->
             forgets_accounts: true,
             profiles: true,
             machine_updates: true,
+            history_switch: true,
             account_records: true,
             record_keys: computer,
             skill_files: true,
@@ -404,6 +406,15 @@ async fn connected(
     let keeping = inner.clone();
     let kept = inner
         .blocking(move || -> Result<(), String> {
+            // The hub took this machine again, as after a removal and a new
+            // enrollment: its place has not ended.
+            match fastctx_platform::disk::remove_file(keeping.dir.ended()) {
+                Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+                    return Err(format!("forgetting that the hub ended this machine's place: {error}"));
+                }
+                _ => {}
+            }
+            keeping.membership_ended.store(false, std::sync::atomic::Ordering::Release);
             held(&keeping, taken).map_err(|error| format!("recording what the hub holds: {error}"))?;
             keeping
                 .change_letters(|letters| {
@@ -530,6 +541,8 @@ async fn connected(
             let _ = view_ready.send(true);
             // Records may have changed while disconnected even when the directory
             // itself is identical. Readers reconcile once this view is current.
+            inner.history_catalogs.ownership();
+            inner.history_catalogs.invalidate(|_| true);
             let _ = inner.record_changes.send(None);
             // The directory and the initial status snapshot complete independently.
             inner.afoot_synced(generation);
@@ -848,10 +861,18 @@ async fn handle_frame(
                 inner.node.directory_changed();
             });
         }
-        Down::HistoryChanged { town, name, version } => inner.node.history_changed(town, name, version),
-        Down::ReplicasChanged => inner.node.replicas_changed(),
+        Down::HistoryChanged { town, name, version } => {
+            inner.history_catalogs.project(&town);
+            inner.node.history_changed(town, name, version);
+        }
+        Down::ReplicasChanged => {
+            // Ownership removal can hide its own tombstone from former readers.
+            inner.history_catalogs.ownership();
+            inner.node.replicas_changed();
+        }
         Down::LedgerChanged { town } => inner.node.ledger_changed(Some(town)),
         Down::AccountRecordChanged { changed } => {
+            inner.history_catalogs.record(&changed);
             inner.node.account_record_changed(&changed);
             let _ = inner.record_changes.send(Some(changed));
         }

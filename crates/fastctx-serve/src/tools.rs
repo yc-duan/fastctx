@@ -20,8 +20,10 @@ pub struct Machines {
     pub groups: Vec<fastctx_types::world::MachineGroup>,
     pub collab: Option<fastctx_types::collab::Offered>,
     pub scratch: fastctx_types::scratch::Descriptions,
-    /// Whether the session speaks to the user through `message_user`.
+    /// Whether the session speaks to the user through `message_user`: a
+    /// colleague's does, as its last words go to the agent that asked it.
     pub speaks: bool,
+    pub sentinels: bool,
     /// For a colleague, the agent that asked it, which its
     /// `message_colleague` reaches.
     pub asker: Option<fastctx_types::Address>,
@@ -58,8 +60,8 @@ pub fn list_changed() -> Value {
 /// The tools this session lists: the shell, and the colleague tools where
 /// an account enabled for this caller, which a colleague never has: the
 /// World is one level deep (`world-colleagues.md`). A colleague messages the
-/// agent that asked it instead, and its `message_user` reaches the user as
-/// everyone's does.
+/// agent that asked it instead, and answers the user with `message_user`; a
+/// session working for the user answers in its own last words.
 /// Writing files and going to other machines are commands in the shell
 /// (`world-run.md`, `world-write.md`). `woken` says whether the World can
 /// start a turn here when a job ends or an answer comes; elsewhere they come
@@ -74,8 +76,10 @@ pub fn definitions(writes_off: bool, woken: bool, codex: bool, machines: Option<
     } else if colleague {
         tools.push(message_asker_definition());
     }
-    if machines.is_some_and(|machines| machines.speaks) {
-        tools.push(message_user_definition(colleague));
+    // A node from before `message_user` was a colleague's alone says that
+    // every session it started speaks; only a colleague is given it here.
+    if colleague && machines.is_some_and(|machines| machines.speaks) {
+        tools.push(message_user_definition());
     }
     for tool in &mut tools {
         // Claude Code counts UTF-16 code units here. An answer of BUDGET
@@ -115,7 +119,7 @@ fn run_definition(writes_off: bool, woken: bool, codex: bool, machines: Option<&
     // A session the World holds keeps its projects, pages, plan and
     // sentinels; one the user opened on their own is given `run` alone
     // (`world-layers.md`).
-    let sense = if woken && fastctx_platform::preview() { RUN_COMMANDS_SENSE } else { "" };
+    let sense = if woken && machines.is_some_and(|machines| machines.sentinels) { RUN_COMMANDS_SENSE } else { "" };
     let held = if woken { RUN_COMMANDS_HELD } else { "" };
     let ends = if woken { RUN_ENDS_WOKEN } else { RUN_ENDS_ASKED };
     let exec = if codex { RUN_EXEC } else { "" };
@@ -286,7 +290,7 @@ const RUN_COMMANDS_HELD: &str = "
 - `fastctx page` publishes an HTML page the user opens in the World app.
 - `fastctx plan` shows this conversation's plan, which is a Markdown file your instructions name: change it as any file. `fastctx plan ID` shows another conversation's, such as a colleague's.";
 
-/// Sentinels, not offered in a release yet (`fastctx_platform::preview`).
+/// Commands offered after the session's account enables sentinels.
 const RUN_COMMANDS_SENSE: &str = "
 - `fastctx sense` leaves a sentinel to wait for something and wake you when it happens.";
 
@@ -393,15 +397,12 @@ fn message_asker_definition() -> Value {
     })
 }
 
-/// `message_user`, as a colleague reads it where `colleague`: the same
-/// person, whose words it answers, while its work goes to the agent that
-/// asked it.
-fn message_user_definition(colleague: bool) -> Value {
-    let description =
-        if colleague { fastctx_types::voice::COLLEAGUE_DESCRIPTION } else { fastctx_types::voice::DESCRIPTION };
+/// `message_user`, as a colleague reads it: the person whose words it
+/// answers, while its work goes to the agent that asked it.
+fn message_user_definition() -> Value {
     json!({
         "name": fastctx_types::voice::TOOL,
-        "description": description,
+        "description": fastctx_types::voice::DESCRIPTION,
         "inputSchema": {
             "type": "object",
             "properties": {

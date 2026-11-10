@@ -50,6 +50,7 @@ pub fn prepare(
             locked: false,
             opened: jiff::Timestamp::now(),
             collab: None,
+            history: false,
             profile: None,
             promotion: false,
         })?);

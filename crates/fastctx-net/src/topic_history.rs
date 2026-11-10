@@ -25,6 +25,11 @@ pub struct Index {
 }
 
 impl Index {
+    /// The number of distinct documents, including retired ones.
+    pub fn document_count(&self) -> usize {
+        self.documents.len()
+    }
+
     pub fn latest(&self, name: &str) -> Option<&HistoryRevision> {
         self.documents.get(name).and_then(|versions| versions.last()).map(|stored| &stored.revision)
     }
@@ -146,7 +151,7 @@ pub fn revision_files(
     author: Author,
     submission: Option<String>,
 ) -> Result<(HistoryRevision, Vec<File>), String> {
-    let description = markdown::parse(name, text)?.description;
+    let description = markdown::parse_written(name, text)?.description;
     let version = expected.unwrap_or(0).checked_add(1).ok_or("history revision numbers are exhausted")?;
     let revision = HistoryRevision { name: name.into(), description, version, retired, author };
     let stored = Revision { revision: revision.clone(), submission };

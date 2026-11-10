@@ -69,7 +69,7 @@ pub fn fixtures() -> Fixtures {
         CheckFailure::Unreadable,
         CheckFailure::Other,
     ];
-    let states = stages
+    let mut states: Vec<_> = stages
         .into_iter()
         .map(|stage| State {
             stage,
@@ -101,6 +101,19 @@ pub fn fixtures() -> Fixtures {
             ..Default::default()
         })
         .collect();
+    states.push(State {
+        running: Some("1.0.1-beta.17".into()),
+        settings: Settings { auto: true, chosen: true, ..Default::default() },
+        available: Some(manifest.clone()),
+        automatic: None,
+        auto: false,
+        auto_enabled: Some(true),
+        network: Some(Network {
+            rolled: Some(Rolled { version: version.clone(), takes: false }),
+            ..Default::default()
+        }),
+        ..Default::default()
+    });
     let machine = MachineUpdate {
         repair_supported: true,
         repair_due: None,

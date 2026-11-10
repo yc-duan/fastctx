@@ -19,6 +19,7 @@ export const zhStartup: StartupWords = {
   failed: "Fastctx 没能打开",
   steps: {
     open_connection: "没连上这台设备上的 Fastctx。",
+    interface: "界面未能载入，请重试。",
   },
   stepOther: "打开时出了问题。",
   retry: "重试",
@@ -31,6 +32,7 @@ export const enStartup: StartupWords = {
   failed: "Fastctx didn't open",
   steps: {
     open_connection: "Couldn't connect to Fastctx on this device.",
+    interface: "The interface could not load. Try again.",
   },
   stepOther: "Something went wrong while opening.",
   retry: "Try again",

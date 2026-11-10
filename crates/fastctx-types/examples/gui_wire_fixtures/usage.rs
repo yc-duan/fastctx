@@ -27,6 +27,15 @@ pub fn fixtures() -> Fixtures {
     // Claude Code: the machine's own sessions and an account it assists,
     // in dollars too, its week the login's own seven-day window.
     let claude = UsageReport {
+        resets: Some(vec![UsageReset {
+            window: "seven_day".into(),
+            since: at("2026-10-08T18:00:00Z"),
+            confirmed_at: at("2026-10-08T18:05:00Z"),
+            resets_at: at("2026-10-15T18:00:00Z"),
+            before_used_tenths: Some(730),
+            used_tenths: 10,
+            source: UsageResetSource::Scheduled,
+        }]),
         people: vec![
             UsagePerson {
                 account: None,
@@ -137,6 +146,7 @@ pub fn fixtures() -> Fixtures {
     // Codex: tokens alone, over the seven days up to now while no window
     // was read.
     let codex = UsageReport {
+        resets: None,
         people: vec![UsagePerson { account: None, week: sum(17_000_000, None), day: None, fable: None, went: None }],
         hours: vec![UsageHour { at: at("2026-10-12T10:00:00Z"), person: 0, sum: sum(2_400_000, None) }],
         week: UsageWeek {

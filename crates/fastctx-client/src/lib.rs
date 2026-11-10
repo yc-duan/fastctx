@@ -31,6 +31,7 @@ mod frozen_lines;
 mod frozen_output;
 pub mod goals;
 pub mod history;
+mod history_switch;
 pub mod host;
 mod layers;
 mod line_rows;
@@ -319,16 +320,20 @@ impl Client {
         if !self.account_records && matches!(call, Call::AccountRecords { .. } | Call::WatchAccountRecords { .. }) {
             return Err(CallError::Failed(Failure::not_run(fastctx_types::account_records::words::NODE_OLD)));
         }
-        // A release offers neither yet, whatever the node runs (`world.md`,
-        // 这一版不发的); where it does, a node without them is an older one.
-        let offered = fastctx_platform::preview();
+        let offered = true;
         if !self.goal_runtime && matches!(call, Call::Goal { .. } | Call::GoalCommand { .. }) {
             let why =
                 if offered { fastctx_types::goals::words::OLDER_NODE } else { fastctx_types::goals::words::UNOFFERED };
             return Err(CallError::Failed(Failure::not_run(why)));
         }
         if !self.sentinels
-            && matches!(call, Call::SentinelSettings { .. } | Call::SentinelKey { .. } | Call::Sentinel { .. })
+            && matches!(
+                call,
+                Call::SentinelSettings { .. }
+                    | Call::SentinelKey { .. }
+                    | Call::SentinelTry { .. }
+                    | Call::Sentinel { .. }
+            )
         {
             let why = if offered {
                 format!("upgrade {} to use sentinels", self.machine)

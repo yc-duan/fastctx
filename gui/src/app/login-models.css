@@ -1,0 +1,147 @@
+/* A Claude Code login's models (`login-models-sheet.ts`): one row a model,
+   its name and full id, taken out with the cross at its end; then a field
+   to add a model id, and the built-in rows taken out, each to offer again. */
+@media (min-width: 761px) {
+  .login-models-sheet {
+    margin: auto;
+  }
+}
+
+.login-models-sheet .sheet-body {
+  width: min(560px, 100vw - 32px);
+  max-height: calc(100dvh - 48px);
+  overflow-y: auto;
+}
+
+.lm-rows {
+  list-style: none;
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.lm-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: var(--space-3);
+  min-height: 40px;
+  padding: 0 var(--space-1) 0 var(--space-3);
+  border-radius: var(--radius-m);
+}
+
+.lm-row:hover {
+  background: var(--hover);
+}
+
+.lm-name {
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.lm-id {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-code);
+  font-size: var(--size-text);
+  color: var(--text-3);
+}
+
+/* A model id added here has no other name: the id is the name, and a quiet
+   word says whose it is. */
+.lm-own {
+  justify-self: start;
+  padding: 1px 8px;
+  border-radius: var(--radius-full);
+  background: var(--accent-wash);
+  font-size: var(--size-text);
+  color: var(--text-2);
+}
+
+.lm-row:has(.lm-own) .lm-name {
+  font-family: var(--font-code);
+}
+
+.lm-take {
+  color: var(--text-3);
+}
+
+.lm-take:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.lm-take:disabled {
+  opacity: 0.35;
+}
+
+.lm-add {
+  margin-top: var(--space-5);
+}
+
+.lm-add-line {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: var(--space-2);
+  align-items: center;
+}
+
+.lm-add-line input {
+  font-family: var(--font-code);
+}
+
+.lm-add .field-hint {
+  margin-top: var(--space-1);
+}
+
+/* The built-in rows taken out: the id alone, quieter, offered again in
+   place. */
+.lm-removed {
+  margin-top: var(--space-5);
+}
+
+.lm-out {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.lm-out .lm-id {
+  color: var(--text-3);
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, var(--text-3) 50%, transparent);
+}
+
+@media (max-width: 760px) {
+  .login-models-sheet .sheet-body {
+    width: 100%;
+    max-height: 92dvh;
+  }
+
+  .lm-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    row-gap: 2px;
+    padding-top: var(--space-1);
+    padding-bottom: var(--space-1);
+  }
+
+  .lm-row > .lm-id,
+  .lm-row > .lm-own {
+    grid-row: 2;
+    grid-column: 1;
+  }
+
+  .lm-row > .lm-take {
+    grid-row: 1 / span 2;
+    grid-column: 2;
+  }
+
+  .lm-out {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .lm-out > .lm-id {
+    grid-row: 1;
+  }
+}

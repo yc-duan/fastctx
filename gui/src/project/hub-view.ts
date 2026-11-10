@@ -69,20 +69,11 @@ function sessionRow(session: HubSession, options: HubViewOptions): string {
   </a></li>`;
 }
 
-/** What waits for the user, a mark each: a question in clay, something
- *  urgent a clay ※, something that can wait a drop of ink. */
+/** What waits for the user: a question in clay. */
 function needMarks(session: HubSession, options: HubViewOptions): string {
+  if (session.asked === null) return "";
   const { words } = options;
-  const marks: string[] = [];
-  if (session.asked !== null) {
-    marks.push(`<span class="ph-need ph-need-ask" title="${escape([words.needAsked, oneLine(session.asked)].filter(Boolean).join("\n"))}">${glyph("ask", 16)}</span>`);
-  }
-  if (session.unseen?.status === "urgent") {
-    marks.push(`<span class="ph-need ph-need-urgent" title="${escape(`${words.needUrgent}\n${oneLine(session.unseen.text)}`)}"><span aria-hidden="true">※</span></span>`);
-  } else if (session.unseen) {
-    marks.push(`<span class="ph-need ph-need-info" title="${escape(`${words.needInfo}\n${oneLine(session.unseen.text)}`)}"><span class="ph-drop"></span></span>`);
-  }
-  return marks.join("");
+  return `<span class="ph-need ph-need-ask" title="${escape([words.needAsked, oneLine(session.asked)].filter(Boolean).join("\n"))}">${glyph("ask", 16)}</span>`;
 }
 
 /** Its colleagues and its senses, a small mark each. */

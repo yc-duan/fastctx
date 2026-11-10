@@ -36,17 +36,21 @@ pub async fn fork(
     // to the fork. The same selection is passed through the official CLI.
     let running = super::control::running(node, resident)?;
     let selection = super::control::selection(node, resident, running).await?;
-    let model = selection.model;
-    let effort = selection.reasoning_effort;
+    // It goes on with the source's model while its login offers it, else
+    // with the one the login starts on (`world-gui.md`, 对话).
+    let offering = crate::logins::models::Offering::of(node, source.home.as_deref())?;
+    let profile = crate::profile::session::get(node, &source.acting);
+    let (model, effort) = offering.kept_or_starting(
+        selection.model,
+        selection.reasoning_effort,
+        profile.claude.get("model").and_then(serde_json::Value::as_str),
+    )?;
+    let (model, effort) = (Some(model), effort);
     let mut checkpoints = if running {
         Some(super::control::invoke(node, resident, json!({"do":"checkpoint_export"})).await?)
     } else {
         let path = fastctx_hosts::claude::control::directory(node.world.path(), &session).join("checkpoints.json");
-        match fastctx_hosts::claude::control::read_message(&path) {
-            Ok(value) => Some(value),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-            Err(error) => return Err(failure(error)),
-        }
+        fastctx_hosts::claude::control::read_message_if_present(&path).map_err(failure)?
     }
     .filter(|value| value["full"] == true);
     let checkpoint = match &through {
@@ -149,7 +153,7 @@ pub async fn fork(
             }
             None => session.clone(),
         };
-        let expected_attachments = super::fork_attachments::expected(node, &session, snapshot.as_deref()).await?;
+        let expected = super::fork_carried::expected(node, &session, snapshot.as_deref()).await?;
         let selected_model = model.clone();
         let selected_effort = effort.clone();
 
@@ -222,7 +226,9 @@ pub async fn fork(
             )
             .await
             .map_err(failure)?;
-            if let Some(checkpoints) = checkpoints {
+            let carried = super::fork_carried::confirm(node, &id, &expected).await?;
+            if let Some(mut checkpoints) = checkpoints {
+                super::fork_carried::without(&mut checkpoints, &carried.left_out);
                 let imported =
                     super::control::invoke(node, &id, json!({"do":"checkpoint_import", "checkpoints":checkpoints}))
                         .await;
@@ -232,7 +238,7 @@ pub async fn fork(
                 node,
                 resident,
                 &id,
-                &expected_attachments,
+                carried,
                 super::fork_attachments::Inheritance {
                     _source_gate: gate.clone(),
                     _source: source_guard.clone(),

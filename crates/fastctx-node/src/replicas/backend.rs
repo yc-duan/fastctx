@@ -4,7 +4,7 @@ use super::state::{Copy, Pending};
 use fastctx_net::link::Link;
 use fastctx_types::{
     owned_records::{Request, Response},
-    replicas::{Document, Scope},
+    replicas::{Document, Head, Scope},
 };
 
 pub(crate) async fn accepted(link: &Link, copy: &Copy, pending: &Pending) -> Result<bool, String> {
@@ -64,8 +64,19 @@ pub(crate) async fn base(link: &Link, copy: &Copy, version: Option<u64>) -> Resu
     }
 }
 
-/// False is a CAS collision; an unknown outcome remains an error with its receipt pending.
-pub(crate) async fn submit(link: &Link, copy: &mut Copy, pending: &Pending, text: String) -> Result<bool, String> {
+pub(crate) struct Submitted {
+    pub head: Head,
+    pub text: String,
+}
+
+/// The accepted revision, not yet installed locally; none on a CAS collision.
+/// An unknown outcome remains an error with its receipt pending.
+pub(crate) async fn submit(
+    link: &Link,
+    copy: &Copy,
+    pending: &Pending,
+    text: String,
+) -> Result<Option<Submitted>, String> {
     match &copy.head.document {
         Document::Plan { owner } => {
             let author = match &pending.author.stamp.by {
@@ -85,10 +96,12 @@ pub(crate) async fn submit(link: &Link, copy: &mut Copy, pending: &Pending, text
                 )
                 .await?;
             match result {
-                fastctx_types::plan::Result::Conflict { .. } => return Ok(false),
+                fastctx_types::plan::Result::Conflict { .. } => Ok(None),
                 fastctx_types::plan::Result::Page { page } => {
-                    copy.head.version = page.version();
-                    copy.text = page.body.map_or(String::new(), |body| body.markdown);
+                    let mut head = copy.head.clone();
+                    head.version = page.version();
+                    head.retired = page.deleted();
+                    Ok(Some(Submitted { head, text: page.body.map_or(String::new(), |body| body.markdown) }))
                 }
             }
         }
@@ -122,13 +135,14 @@ pub(crate) async fn submit(link: &Link, copy: &mut Copy, pending: &Pending, text
             };
             let revision = match result {
                 Ok(revision) => revision,
-                Err(error) if error.starts_with("the document changed;") => return Ok(false),
+                Err(error) if error.starts_with("the document changed;") => return Ok(None),
                 Err(error) => return Err(error),
             };
-            copy.head.version = Some(revision.version);
-            copy.head.history = Some(revision);
-            copy.text = text;
+            let mut head = copy.head.clone();
+            head.version = Some(revision.version);
+            head.retired = revision.retired;
+            head.history = Some(revision);
+            Ok(Some(Submitted { head, text }))
         }
     }
-    Ok(true)
 }

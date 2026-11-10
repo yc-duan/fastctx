@@ -1,6 +1,6 @@
 """A loopback Chat Completions fixture for the placement drill's goal sentinel."""
 import json
-import shlex
+import re
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -9,6 +9,8 @@ class GoalMock:
     def __init__(self):
         self.requests = []
         self.errors = []
+        self.evidence = None
+        self.world_facts_read = False
         owner = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -48,25 +50,39 @@ class GoalMock:
         full = review["full"]
         if full["machine"] != "alice-two":
             raise AssertionError("the goal's complete materials must be on its working computer")
-        results = [json.loads(message["content"]) for message in messages if message["role"] == "tool"]
+        results = [observed(message["content"]) for message in messages if message["role"] == "tool"]
+        machine = full["machine"]
         if not results:
-            code = ("import json,os,sys\np=sys.argv[1];x=json.load(open(p));readonly=False\n"
-                    "try: open(p+'.write','w').write('unexpected')\nexcept OSError: readonly=True\n"
-                    "print(json.dumps({'objective':x['objective'],'evidence':(x.get('world_actions') or {}).get('full_path'),"
-                    "'readonly':readonly,'world_hidden':not os.path.exists(p.split('/world/conversations/')[0]+'/world/node.sock')}))")
-            name, arguments = "look", {"machine": full["machine"], "command": "python3 -c " + shlex.quote(code) + " " + shlex.quote(full["path"])}
-        else:
-            result = results[-1]
-            if result.get("exit_code") != 0:
-                raise AssertionError("the sentinel could not read its working-computer material: " + str(result))
-            observed = json.loads(result["text"])
-            if len(results) == 1 and (not observed.get("readonly") or not observed.get("world_hidden")):
-                raise AssertionError("the original read-only observation walls must remain in force")
-            if len(results) == 1 and observed.get("evidence"):
-                code = "import json,sys;x=json.load(open(sys.argv[1]));print(json.dumps({'turns':len(x['turns']),'jobs':len(x['jobs']),'marker':'WORLD_FACTS_READ'}))"
-                name, arguments = "look", {"machine": full["machine"], "command": "python3 -c " + shlex.quote(code) + " " + shlex.quote(observed["evidence"])}
+            name, arguments = "read_file", {"machine": machine, "path": full["path"]}
+        elif len(results) == 1:
+            material = results[0]
+            if "PLACEMENT_GOAL_CANARY" not in material:
+                raise AssertionError("the sentinel could not read its working-computer material: " + material[:500])
+            found = re.search(r'"full_path"\s*:\s*"([^"]+)"', material)
+            self.evidence = found.group(1) if found else None
+            world = full["path"].split("/world/conversations/")[0] + "/world"
+            name, arguments = "list_directory", {"machine": machine, "path": world}
+        elif len(results) == 2:
+            if "World's own directory" not in results[1]:
+                raise AssertionError("a look read the World's own directory: " + results[1][:500])
+            if self.evidence:
+                name, arguments = "read_file", {"machine": machine, "path": self.evidence, "matching": "turns"}
             else:
                 name, arguments = "report", {"sound": True, "reason": "PLACEMENT_REVIEW_CANARY"}
+        else:
+            if '"turns"' not in results[2] or '"jobs"' not in results[2]:
+                raise AssertionError("the sentinel could not read the World's facts of the work: " + results[2][:500])
+            self.world_facts_read = True
+            name, arguments = "report", {"sound": True, "reason": "PLACEMENT_REVIEW_CANARY"}
         return {"choices": [{"message": {"role": "assistant", "content": None, "tool_calls": [
             {"id": f"placement-{len(results)}", "type": "function", "function": {"name": name, "arguments": json.dumps(arguments)}}
         ]}, "finish_reason": "tool_calls"}], "usage": {"prompt_tokens": 10, "completion_tokens": 10}}
+
+
+def observed(content):
+    """What a look saw, as its tool answer carries it, or why it was refused."""
+    try:
+        answer = json.loads(content)
+    except ValueError:
+        return content
+    return answer.get("text", content) if isinstance(answer, dict) else content

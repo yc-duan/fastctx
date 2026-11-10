@@ -1,6 +1,6 @@
 //! The two-field header is searchable text; the document body is kept verbatim.
 
-use super::MAX_DOCUMENT_BYTES;
+use super::{MAX_DESCRIPTION_BYTES, MAX_DOCUMENT_BYTES};
 
 pub struct Parsed<'a> {
     pub description: String,
@@ -68,6 +68,19 @@ pub fn parse<'a>(name: &str, text: &'a str) -> Result<Parsed<'a>, String> {
         }
     }
     Err("the history header needs a closing ---".into())
+}
+
+/// `parse`, for a revision being written: its description also keeps to the
+/// length every new one does. Revisions kept before the limit still parse.
+pub fn parse_written<'a>(name: &str, text: &'a str) -> Result<Parsed<'a>, String> {
+    let parsed = parse(name, text)?;
+    if parsed.description.len() > MAX_DESCRIPTION_BYTES {
+        return Err(format!(
+            "a history description is limited to {MAX_DESCRIPTION_BYTES} bytes: one line saying what the topic \
+             covers, then the words someone would search for it with"
+        ));
+    }
+    Ok(parsed)
 }
 
 fn scalar(value: &str) -> Result<String, String> {

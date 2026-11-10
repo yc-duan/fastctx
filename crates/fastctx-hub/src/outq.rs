@@ -316,6 +316,11 @@ impl Outq {
         }
     }
 
+    /// Identifies this connection while a clone keeps its queue alive.
+    pub(crate) fn identity(&self) -> usize {
+        Arc::as_ptr(&self.0) as usize
+    }
+
     /// Resolves once the queue is shut.
     pub(crate) async fn closed(&self) {
         let mut shut = self.0.shut.subscribe();

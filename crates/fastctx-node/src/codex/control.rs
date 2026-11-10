@@ -42,7 +42,10 @@ pub async fn offers(node: &Arc<Node>, resident: &ResidentId) -> Result<Offers, F
     let (codex, thread) = thread(node, resident).await?;
     let (about, _) = node.residents.about(resident).ok_or_else(|| Failure::new("unknown conversation"))?;
     crate::logins::workbench::works(node, &about)?;
-    let mut offers = codex.offers(&thread).await.map_err(Failure::new)?;
+    let mut offers = codex
+        .offers(&thread, crate::account_features::conversation(node, resident).await.goals)
+        .await
+        .map_err(Failure::new)?;
     if crate::assists::assisting(node, &about.acting) {
         if crate::assists::host::kept(node, resident)? != Some(true) {
             offers.controls.clear();
@@ -115,23 +118,9 @@ pub async fn control(node: &Arc<Node>, resident: &ResidentId, mut control: Contr
                 no_args(args)?;
                 Control::Compact
             }
-            "model" => {
-                let words: Vec<_> = args.split_whitespace().collect();
-                match words.as_slice() {
-                    [] => {
-                        let offers = offers(node, resident).await?;
-                        return Ok(Controlled::ModelMenu {
-                            models: offers.models,
-                            model: offers.model,
-                            effort: offers.effort,
-                            service_tier: offers.service_tier,
-                        });
-                    }
-                    [model] => Control::Model { model: Some((*model).into()), effort: None },
-                    [model, effort] => Control::Model { model: Some((*model).into()), effort: Some((*effort).into()) },
-                    _ => return Err(Failure::new("/model takes <model> [effort]")),
-                }
-            }
+            // The model is chosen in the conversation's model panel alone
+            // (`world-gui.md`, 对话).
+            "model" => return Err(Failure::not_run(crate::control::MODEL_COMMAND)),
             "rename" => Control::Rename { name: args.clone() },
             "fork" => {
                 no_args(args)?;
@@ -220,8 +209,8 @@ pub async fn control(node: &Arc<Node>, resident: &ResidentId, mut control: Contr
             ))
         }
         Control::Command { name, args, path: None } if name == "goal" => {
-            if !fastctx_platform::preview() {
-                return Err(Failure::not_run(fastctx_types::goals::words::UNOFFERED));
+            if !crate::account_features::conversation(node, resident).await.goals {
+                return Err(Failure::not_run(fastctx_types::goals::words::DISABLED));
             }
             done(&codex.goal(&thread, &args).await.map_err(Failure::new)?.to_string())
         }
@@ -237,7 +226,10 @@ pub async fn control(node: &Arc<Node>, resident: &ResidentId, mut control: Contr
         }
         Control::Command { name, args, path } => {
             if path.is_none() {
-                let catalog = codex.offers(&thread).await.map_err(Failure::new)?;
+                let catalog = codex
+                    .offers(&thread, crate::account_features::conversation(node, resident).await.goals)
+                    .await
+                    .map_err(Failure::new)?;
                 if name == "tier" {
                     if args.trim().is_empty() {
                         let model = catalog.models.iter().find(|model| Some(&model.id) == catalog.model.as_ref());
@@ -295,7 +287,7 @@ async fn fork(
     let gate = node.residents.management(parent)?;
     let source_guard = crate::gate_waits::shared_owned(node, parent, &gate).await?;
     node.residents.active(parent)?;
-    let _birth = crate::here::born(node, &id, source.acting.clone());
+    let _birth = crate::here::born(node, &id, source.acting.clone(), Origin::User);
     {
         // Its host mode is recorded on its disk.
         let (recording, assisted, child) = (node.clone(), codex.assisted_cwd().is_some(), id.clone());

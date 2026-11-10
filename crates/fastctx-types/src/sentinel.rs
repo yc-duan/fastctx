@@ -23,19 +23,28 @@ pub struct Definition {
     pub kind: Kind,
     pub tell: String,
 }
+/// What a reflex repeats: one of the sentinel's read-only looks at a
+/// machine, or a public page read; never a program (`world-senses.md`,
+/// 反射).
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Probe {
-    Look { machine: MachineName, command: String },
+    Look { machine: MachineName, inspect: crate::inspect::Inspect },
     Web { url: String },
 }
+/// When what a reflex saw wakes its sentinel.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Predicate {
+    /// A line holds `text`.
     Contains { text: String },
+    /// No line holds `text`.
+    Absent { text: String },
+    /// The number after `prefix`, in the last line that holds it, compares
+    /// with `value` as `comparison` says.
     Number { prefix: String, comparison: Comparison, value: f64 },
+    /// What it saw differs from the last time.
     Changed,
-    ExitNonzero,
 }
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -61,7 +70,6 @@ pub struct Observation {
     pub at: i64,
     pub source: String,
     pub text: String,
-    pub exit_code: Option<i32>,
     pub full_path: Option<String>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -131,18 +139,8 @@ pub struct FullMaterial {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum TimerAction {
-    WakeSentinel {
-        scope: crate::access::HubAccount,
-        id: SentinelId,
-        generation: u64,
-        wake: ScheduledWake,
-    },
-    RunReflex {
-        scope: crate::access::HubAccount,
-        id: SentinelId,
-        generation: u64,
-        reflex: String,
-    },
+    WakeSentinel { scope: crate::access::HubAccount, id: SentinelId, generation: u64, wake: ScheduledWake },
+    RunReflex { scope: crate::access::HubAccount, id: SentinelId, generation: u64, reflex: String },
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]

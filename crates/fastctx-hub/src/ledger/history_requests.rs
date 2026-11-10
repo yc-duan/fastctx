@@ -47,7 +47,7 @@ pub(crate) async fn ask(hub: &Arc<Hub>, from: &crate::origin::Origin, question: 
         (ledgers.dir.join(town.as_str()).join(format!("{seq:020}.json")), versions, store.hub.id.clone())
     };
     let project = town.clone();
-    let entry = fastctx_platform::task::spawn_blocking(move || {
+    let entry = crate::readers::blocking(move || {
         let signed = super::reading::entry(&path).map_err(|error| error.to_string())?;
         let entry = fastctx_net::ledger::open(&signed, &identity, &project)?;
         let stored = fastctx_net::topic_history::decode(&entry.files)?.ok_or("the entry has no history revision")?;

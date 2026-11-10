@@ -57,6 +57,9 @@ pub(super) async fn start(
         // Its settings name the conversation, as a new conversation's do.
         let mcp =
             crate::profile::session::claude(&node, &resident, false).map_err(|failure| unstarted(failure.message))?;
+        if let Err(error) = super::reword(&node, &resident) {
+            node.log.line(format_args!("rewording {resident}'s instructions before it continues: {error}"));
+        }
         let directory = node.world.conversation(&resident);
         let (settings, instructions) = (directory.claude_settings(), directory.claude_instructions());
         let plugin = claude::plugin_dir(node.world.path());

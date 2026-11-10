@@ -1,4 +1,5 @@
-//! Claude Code 2.1.303's built-in prices, in dollars per million tokens.
+//! Claude Code's built-in prices, in dollars per million tokens: 2.1.303's,
+//! and 2.1.321's for Fable 5.2.
 //! These weights only divide the host's reported cost; they never price a bill.
 
 use fastctx_types::usage::Tokens;
@@ -32,6 +33,7 @@ pub fn prices(model: &str, prompt: u64) -> Option<Prices> {
             (5.0, 25.0, 6.25, 0.5)
         }
         "claude-fable-5" | "claude-mythos-5" => (10.0, 50.0, 12.5, 1.0),
+        "claude-fable-5-1" | "claude-mythos-5-1" => (10.0, 50.0, 12.5, 0.25),
         _ if model.contains("haiku") => {
             if prompt > 100_000 {
                 (0.5, 2.5, 0.625, 0.05)
@@ -41,7 +43,7 @@ pub fn prices(model: &str, prompt: u64) -> Option<Prices> {
         }
         _ if model.contains("sonnet") => (2.0, 10.0, 2.5, 0.1),
         _ if model.contains("opus") => (4.0, 20.0, 5.0, 0.2),
-        _ if is_fable(model) => (10.0, 50.0, 12.5, 0.25),
+        _ if is_fable(model) => (8.0, 40.0, 10.0, 0.2),
         _ => return None,
     };
     Some(Prices([input, read, write, output]))

@@ -33,15 +33,29 @@ pub(crate) struct Scan {
 
 impl Scan {
     pub(crate) fn inputs(&mut self, node: &Node, about: &About, town: Option<&TownName>) -> [u64; COUNT] {
+        self.read_inputs(node, about, town, false)
+    }
+
+    pub(super) fn observed_inputs(&mut self, node: &Node, about: &About, town: Option<&TownName>) -> [u64; COUNT] {
+        self.read_inputs(node, about, town, true)
+    }
+
+    fn read_inputs(&mut self, node: &Node, about: &About, town: Option<&TownName>, observing: bool) -> [u64; COUNT] {
         let account = self
             .accounts
             .entry(serde_json::to_string(&about.acting).expect("acting serializes"))
             .or_insert_with(|| accounts(node, &about.acting));
-        let focus = hash(&crate::focus::allowed(node, &about.acting, &about.focus));
+        let focus = focus(node, about);
         let identity = hash(&(node.machine(), &about.acting, &about.origin, &about.focus));
         let project = town.map(|town| {
             let key = (serde_json::to_string(&about.acting).expect("acting serializes"), town.clone());
-            *self.projects.entry(key).or_insert_with(|| node.contexts.projects.signature(node, &about.acting, town))
+            *self.projects.entry(key).or_insert_with(|| {
+                if observing {
+                    node.contexts.projects.observed(node, &about.acting, town)
+                } else {
+                    node.contexts.projects.signature(node, &about.acting, town)
+                }
+            })
         });
         let guide_route = node.contexts.routes.signature(node, about, town, Part::Guide, &mut self.routes);
         let history_route = node.contexts.routes.signature(node, about, town, Part::History, &mut self.routes);
@@ -57,7 +71,7 @@ impl Scan {
         };
         inputs[Part::Plan as usize] = hash(&(node.machine(), account.plan));
         inputs[Part::Skills as usize] = account.skills;
-        inputs[Part::History as usize] = if fastctx_platform::preview() {
+        inputs[Part::History as usize] = if crate::history::offered::to(node, about) {
             hash(&(
                 identity,
                 project,
@@ -72,6 +86,25 @@ impl Scan {
     }
 }
 
+fn focus(node: &Node, about: &About) -> u64 {
+    let focus = crate::focus::allowed(node, &about.acting, &about.focus);
+    let ways: Vec<_> = focus
+        .machines
+        .iter()
+        .filter(|machine| !machine.folders.is_empty() && !node.is_here(&machine.machine))
+        .flat_map(|machine| {
+            node.locate(&machine.machine).unwrap_or_default().into_iter().map(move |link| {
+                let way = link.way_to(&machine.machine.name).map(|way| match way {
+                    fastctx_net::link::Way::Hub { line, since } => (0, line, since),
+                    fastctx_net::link::Way::Direct { link } => (1, link, None),
+                });
+                (link.hub().clone(), way)
+            })
+        })
+        .collect();
+    hash(&(focus, ways))
+}
+
 fn accounts(node: &Node, acting: &Acting) -> AccountInputs {
     let mut authority = Vec::new();
     let mut presence = Vec::new();
@@ -83,31 +116,38 @@ fn accounts(node: &Node, acting: &Acting) -> AccountInputs {
             continue;
         }
         let view = link.view();
+        let index = fastctx_net::directory_index::Index::new(&view);
+        let indexed = fastctx_net::directory_index::Indexed::new(&view, &index);
         let current = crate::authorization::current_view(&link).is_ok();
         let identities: Vec<_> = accounts
             .iter()
             .map(|name| {
                 (
                     name,
-                    view.account(name).map(|account| (account.locked, account.opened)),
-                    view.may_act_for(name, &view.me),
+                    indexed.account(name).map(|account| (account.locked, account.opened)),
+                    indexed.may_act_for(name, &view.me),
                 )
             })
             .collect();
         let mut machines = Vec::new();
         let mut online = Vec::new();
         for member in view.machines() {
-            let rights: Vec<_> = accounts.iter().map(|account| view.rights(account, &member.name).hands).collect();
+            let rights: Vec<_> = accounts
+                .iter()
+                .map(|account| {
+                    indexed.authorize(account, fastctx_net::authorization::Action::Work(&member.name)).is_ok()
+                })
+                .collect();
             if !view.is_me(&member.name) && !rights.iter().any(|right| *right) {
                 continue;
             }
             // A machine's other holders also decide which account records it
             // may keep. Their lock status changes that without changing our rights.
-            let shares: Vec<_> = view
-                .shares
+            let shares: Vec<_> = indexed
+                .shares_by_machine(&member.name)
                 .iter()
-                .filter(|share| share.machine == member.name)
-                .map(|share| (&share.account, view.holds(&share.account, &member.name)))
+                .map(|position| &view.shares[*position])
+                .map(|share| (&share.account, indexed.holds(&share.account, &member.name)))
                 .collect();
             machines.push(hash(&(
                 &member.name,

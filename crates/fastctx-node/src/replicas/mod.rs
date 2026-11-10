@@ -1,10 +1,16 @@
 //! Current plan and history copies on every eligible computer.
 
 pub(crate) mod backend;
+pub(crate) mod bodies;
+pub(crate) mod cleanup;
 pub(crate) mod files;
+mod legacy;
 pub(crate) mod location;
+mod observations;
 pub(crate) mod publication;
+mod removal;
 pub(crate) mod state;
+mod storage;
 pub(crate) mod sync;
 pub(crate) mod updates;
 pub(crate) mod writing;
@@ -14,6 +20,7 @@ pub(crate) struct Copies {
     pub state: state::State,
     pub updates: updates::Updates,
     pub repairs: Repairs,
+    pub cleanup: cleanup::Cleanup,
 }
 
 /// Restorings of every projection, asked for at once, run once for them

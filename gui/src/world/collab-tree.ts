@@ -30,6 +30,7 @@ export interface NativeAgent {
   ended_at?: Timestamp | null;
   duration_ms?: number | null;
   children: NativeAgent[];
+  reading?: boolean;
   unavailable?: string | null;
 }
 
@@ -40,7 +41,9 @@ export interface Branch {
   now?: { activity?: string; trouble?: unknown; title?: string | null; since?: Timestamp; waiting_for_user?: boolean } | null;
   /** The colleague's goal, or the reason it could not be read (Rust Result). */
   goal: { Ok: TreeGoal | null } | { Err: string };
+  plan?: { owner: Address; read_only: boolean } | null;
   agents: NativeAgent[];
+  reading?: boolean;
   unavailable: string[];
 }
 

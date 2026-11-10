@@ -1,9 +1,10 @@
-//! What a session tells the user (`world-voice.md`). The words themselves
-//! stay in the conversation's record as the `message_user` call; the node
-//! keeps the latest as the conversation's `told`, which notifications and
-//! the project's page read. `message_user` reaches the person in every
-//! conversation, a colleague's too; a colleague tells the agent that asked
-//! it with `message_colleague` (`world-colleagues.md`, 两个工具).
+//! What a colleague tells the user (`world-voice.md`, 同事的 message_user).
+//! A session working for the user answers in its own last words; a
+//! colleague's last words go to the agent that asked it, so the user it
+//! answers hears it through `message_user`, and that agent through
+//! `message_colleague` (`world-colleagues.md`, 两个工具). The words stay in
+//! the conversation's record as the call; the node keeps the latest as the
+//! conversation's `told`, which notifications read.
 
 use std::sync::Arc;
 
@@ -16,15 +17,14 @@ use jiff::Timestamp;
 
 use crate::Node;
 
-/// Whether `id` speaks through `message_user`: a conversation the World
-/// started, for the user or as a colleague, and one it is starting, whose
-/// host lists its tools before its record is written. A session the user
-/// opened in a host's own window is read there.
+/// Whether `id` speaks through `message_user`: a colleague the World
+/// started, or one it is starting, whose host lists its tools before its
+/// record is written.
 pub(crate) fn speaks(node: &Node, id: &ResidentId) -> bool {
     node.residents.removed(id).is_none()
         && node.residents.about(id).map_or_else(
-            || crate::here::being_born(node, id),
-            |(about, _)| about.world_started && matches!(about.origin, Origin::User | Origin::Colleague { .. }),
+            || crate::here::birth_origin(node, id).is_some_and(|origin| matches!(origin, Origin::Colleague { .. })),
+            |(about, _)| about.world_started && matches!(about.origin, Origin::Colleague { .. }),
         )
 }
 
@@ -37,7 +37,9 @@ pub(crate) async fn say(
     attachments: &[Attachment],
 ) -> Result<(), Failure> {
     if !speaks(node, id) {
-        return Err(Failure::not_run("only a conversation the World started speaks with message_user"));
+        return Err(Failure::not_run(
+            "the user reads this conversation itself: write what they should read in your answer, as the last thing you say in your turn",
+        ));
     }
     if message.trim().is_empty() {
         return Err(Failure::not_run("the message is empty"));
@@ -66,20 +68,14 @@ pub(crate) async fn say(
     Ok(())
 }
 
-/// What `id` asked without stopping: to the agent it works for, when it is
-/// a colleague, otherwise to the user, as something that can wait until
-/// they look.
-pub(crate) async fn asked_without_stopping(node: &Arc<Node>, id: &ResidentId, said: &str) -> Result<(), Failure> {
-    if asker_of(node, id).is_some() {
-        return tell_asker(node, id, said, &[]).await.map(|_| ());
-    }
-    say(node, id, said, TellStatus::Info, &[]).await
-}
-
 /// The agent the colleague `id` was asked by, and the task it was asked
 /// for; none for a conversation that is no colleague.
 pub(crate) fn asker_of(node: &Node, id: &ResidentId) -> Option<(Address, String)> {
-    match node.residents.about(id)?.0.origin {
+    let origin = match node.residents.about(id) {
+        Some((about, _)) => about.origin,
+        None => crate::here::birth_origin(node, id)?,
+    };
+    match origin {
         Origin::Colleague { asked_by, label } => Some((asked_by, label)),
         Origin::User => None,
     }

@@ -385,18 +385,17 @@ pub struct Now {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub last_compacted: bool,
     /// Whether the latest turn that ended took words the user sent: its end
-    /// stands for an answer it gave without `message_user`, while a turn the
-    /// World started that said nothing tells the user nothing
-    /// (`world-voice.md`). None from a node that does not say.
+    /// is an answer the user is called about, while a turn the World started
+    /// is not called about (`world-voice.md`, 送到哪里). None from a node
+    /// that does not say.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_heard_user: Option<bool>,
     /// What the agent asked the user and has not had answered: what a
     /// notification of it says.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub asked: Option<Asked>,
-    /// What the agent last told the user through `message_user`: what a
-    /// notification of it and the conversation's line on its project's page
-    /// say (`world-voice.md`).
+    /// What a colleague last told the user through `message_user`: what a
+    /// notification of it says (`world-voice.md`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub told: Option<Told>,
 }
@@ -405,7 +404,7 @@ pub struct Now {
 /// characters.
 pub const TOLD_CHARS: usize = 500;
 
-/// Something the agent told the user through `message_user`.
+/// Something a colleague told the user through `message_user`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Told {
     /// New for each message: a new one is something new said.

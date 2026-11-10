@@ -54,7 +54,9 @@ pub enum TroubleKind {
     /// A store of the machine's records was found damaged: what could be
     /// read of it is salvaged, and some of it may be lost.
     Damaged,
-    /// The machine went on breaking the rules of its threads.
+    /// The machine went on breaking the rules of its threads. Only earlier
+    /// hubs tell it; it stays so that what they tell still reads, and
+    /// interfaces do not show it.
     Violations,
     /// Many of the network's machines lost their line together.
     Outage,

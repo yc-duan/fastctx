@@ -99,7 +99,8 @@ impl Link {
         author: Author,
         submission: Option<String>,
     ) -> Result<HistoryRevision, String> {
-        let description = history::markdown::parse(name, &text)?.description;
+        self.require_history_write(account)?;
+        let description = history::markdown::parse_written(name, &text)?.description;
         let revision = HistoryRevision {
             name: name.into(),
             description,
@@ -126,6 +127,9 @@ impl Link {
             Response::Record { response: RecordResponse::Written { metadata } }
                 if metadata.version == revision.version =>
             {
+                self.inner.history_catalogs.invalidate(|(_, source)| {
+                    matches!(source, super::history_catalogs::Source::Conversation(address) if address.resident == conversation.resident)
+                });
                 Ok(revision)
             }
             Response::Record { response: RecordResponse::Conflict { current } } => {

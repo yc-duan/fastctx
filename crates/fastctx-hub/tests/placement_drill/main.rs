@@ -7,12 +7,26 @@
 mod attachments;
 mod colleagues;
 mod controls;
+#[path = "../../../../gui/src-tauri/src/conversation_piece.rs"]
+#[allow(dead_code)]
+mod conversation_piece;
 mod earlier;
 mod goals;
+#[path = "../../../../gui/src-tauri/src/held_events.rs"]
+#[allow(unused_imports)]
+mod held_events;
 mod history;
 mod lifecycle;
+mod read_scale;
 mod release_colleague;
 mod resume;
+#[path = "../../../../gui/src-tauri/src/transcript/core.rs"]
+#[allow(dead_code)]
+mod transcript;
+use conversation_piece::Piece;
+fn epoch_ms(at: std::time::SystemTime) -> u64 {
+    at.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64
+}
 mod scale;
 mod shared_controls;
 mod sharing;
@@ -75,6 +89,9 @@ fn command(root: &Path, bin: &Path) -> Command {
         .env("LANG", "C.UTF-8")
         .current_dir(base.join("user"))
         .stdin(Stdio::null());
+    if base.join("scale-config.json").is_file() {
+        c.env("TMPDIR", base.join("tmp"));
+    }
     strictly(&mut c);
     c
 }
@@ -284,6 +301,21 @@ async fn main() -> Result<()> {
     let base = PathBuf::from(std::env::args().nth(1).context("base")?);
     KERNEL.set(PathBuf::from(std::env::args().nth(2).context("kernel")?)).expect("one kernel");
     std::fs::create_dir_all(&base)?;
+    if std::env::args().any(|argument| argument == "--calibrate-scale") {
+        return read_scale::calibrate::run(&base, std::env::args().any(|argument| argument == "--all"));
+    }
+    if std::env::args().any(|argument| argument == "--scale-page") {
+        let request = PathBuf::from(std::env::args().nth(4).context("page request")?);
+        let result = read_scale::page_worker::run(&base, &request).await;
+        if let Err(error) = &result {
+            eprintln!("page worker: {error:#}");
+        }
+        // The probe owns this process; detached blocking work must end with its result.
+        std::process::exit(if result.is_ok() { 0 } else { 1 });
+    }
+    if std::env::args().any(|argument| argument == "--read-scale") {
+        return read_scale::run(&base).await;
+    }
     if std::env::args().any(|argument| argument == "--scale") {
         return scale::run(&base).await;
     }
@@ -586,6 +618,15 @@ async fn main() -> Result<()> {
         idle_after(&alice_pc, writer.to.resident.as_str(), None).await,
         "the offline writer did not settle"
     );
+    // Notes are off until each account turns them on.
+    for (world, account) in [(&wa, "alice"), (&wo, "owner"), (&wb, "bob")] {
+        world.history_switch_write(None, Some(name(account)), true).await?;
+        record(
+            "the account's notes switch reads back on",
+            world.history_switch_read(None, Some(name(account))).await?.on,
+            json!(account),
+        );
+    }
     let offline_scope = fastctx_types::history::Scope::Conversation {
         resident: sa.to.resident.clone(),
         machine: sa.to.machine.clone(),
@@ -600,6 +641,8 @@ async fn main() -> Result<()> {
     .await?;
     let offline_path = pa.parent().unwrap().join("history/offline-history.md");
     anyhow::ensure!(file_is(&offline_path, offline_original).await, "offline history did not reach its computer");
+    // A whole history document is replaced only by one who has seen it.
+    saw_as(&alice_pc, &writer.to, &offline_path).await?;
     hub.kill()?;
     hub.wait()?;
     for _ in 0..120 {
@@ -682,6 +725,17 @@ async fn main() -> Result<()> {
         pause().await;
     }
     anyhow::ensure!(reachable, "the assisting host did not reconnect");
+    // The hub restarted above; a turn begun before the focused computer is
+    // back has no working computer to place its files on.
+    let mut focused_back = false;
+    for _ in 0..240 {
+        if online_now(&alice_pc, "alice-two").await {
+            focused_back = true;
+            break;
+        }
+        pause().await;
+    }
+    anyhow::ensure!(focused_back, "the focused computer did not reconnect");
     wa.manage(sa.to.resident.clone(), Some("host".parse()?), Management::Focus { focus: focused("alice-two") }).await?;
     let before = last_turn(&host, &a);
     wa.talk(sa.to.resident.clone(), Some("host".parse()?), "ALICE_NEW_PLACE".into()).await?;
@@ -753,7 +807,17 @@ async fn main() -> Result<()> {
                 .is_ok(),
         json!(null),
     );
-    lifecycle::exercise(&base, &wa, &alice_pc, &alice_two, &mut alice_node, &mut alice_two_node, listen).await?;
+    lifecycle::exercise(
+        &base,
+        &wa,
+        &alice_pc,
+        &alice_two,
+        &mut alice_node,
+        &mut alice_two_node,
+        listen,
+        &mock_configuration,
+    )
+    .await?;
     std::fs::write(
         base.join("expectations.json"),
         serde_json::to_vec(
@@ -784,6 +848,28 @@ async fn online_now(root: &Path, label: &str) -> bool {
 
 async fn write_as(root: &Path, owner: &fastctx_types::Address, path: &Path, text: &str) -> Result<()> {
     operation_as(root, owner, json!({"tool":"write","file_path":path,"content":text})).await
+}
+
+/// Records that `owner` read `path` whole, as `fastctx view` does.
+async fn saw_as(root: &Path, owner: &fastctx_types::Address, path: &Path) -> Result<()> {
+    use sha2::Digest as _;
+    let bytes = tokio::fs::read(path).await?;
+    let seen = fastctx_types::residents::Seen {
+        path: path.to_string_lossy().into_owned(),
+        at: jiff::Timestamp::now(),
+        sha256: Some(format!("{:x}", sha2::Sha256::digest(&bytes))),
+        size: bytes.len() as u64,
+        modified: None,
+        encoding: Some("utf-8".into()),
+        encoding_selection: None,
+    };
+    let mut client = fastctx_client::Client::connect(
+        &WorldDir::under(root),
+        Peer::Command { resident: Some(owner.clone()), session: None },
+    )
+    .await?;
+    client.call(fastctx_types::Call::Saw { owner: owner.clone(), town: None, seen: vec![seen] }).await?;
+    Ok(())
 }
 
 async fn operation_as(root: &Path, owner: &fastctx_types::Address, operation: Value) -> Result<()> {
