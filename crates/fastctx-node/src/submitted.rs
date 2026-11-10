@@ -18,6 +18,12 @@
 //! what does its work (`register`) and having its entrance `submit`. The
 //! work must not submit to its own family for its own unit: that job would
 //! wait for the one asking for it.
+//!
+//! The work is never cut short: as a call's work went on to its end past
+//! the time its caller waited, a family's work goes on past `within`, the
+//! unit kept for it, and only its operation is settled meanwhile as still
+//! being done. What was asked and what was answered may be of any size:
+//! past a few dozen KiB each is kept as an object.
 
 use crate::Node;
 use fastctx_jobs::{Job, Kind, Operation, Outcome, Standing, Taken};
@@ -44,9 +50,13 @@ const WRITE_BYTES: usize = 1024;
 /// What was asked is a job's payload up to this size; a larger one is kept
 /// as an object, which the payload names.
 const INLINE_BYTES: usize = 48 * 1024;
-/// The first byte of a payload that names the object holding what was
-/// asked; what was asked itself is JSON, which never begins so.
+/// The first byte of a payload, or of an answer, that names the object
+/// holding it; what it holds itself is JSON, which never begins so.
 const KEPT: u8 = b'@';
+/// The longest the queue lets one job of a family run. The work is not cut
+/// short at `Family::within`; this only keeps a job that never ends from
+/// holding its place for ever.
+const LONGEST: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 
 /// One family of submitting calls and how its work is run.
 #[derive(Clone, Copy, Debug)]
@@ -55,7 +65,9 @@ pub(crate) struct Family {
     pub name: &'static str,
     /// How many of the family are done at once; one of a unit at a time.
     pub at_once: usize,
-    /// The longest doing one may take; past it the work is dropped.
+    /// How long doing one is expected to take at most. Past it the work
+    /// goes on, and those who wait are told that whether it takes effect
+    /// is not known yet.
     pub within: Duration,
     /// The longest a caller is kept for the outcome, under the time its
     /// call is waited for (`fastctx_types::contract`).
@@ -152,8 +164,12 @@ pub(crate) async fn submit<C: Serialize, T: DeserializeOwned>(
             .map_err(|error| Failure::new(format!("reading what came of {kind}: {error}")))?,
     };
     match standing {
-        Some(Standing::Done(answer)) => serde_json::from_slice(&answer)
-            .map_err(|error| Failure::new(format!("{kind} was done, and its answer cannot be read: {error}"))),
+        Some(Standing::Done(answer)) => {
+            let unread = |why: String| Failure::new(format!("{kind} was done, and its answer cannot be read: {why}"));
+            let answer =
+                kept_of(node, &answer).await.map_err(unread)?.ok_or_else(|| unread("it is no longer kept".into()))?;
+            serde_json::from_slice(&answer).map_err(|error| unread(error.to_string()))
+        }
         Some(Standing::Failed(why)) => Err(serde_json::from_str(&why).unwrap_or_else(|_| Failure::new(why))),
         Some(Standing::Accepted) if caller.is_some() => Err(Failure::accepted(format!(
             "{} accepted {kind} and is doing it; asked again the same way, it says what came of it",
@@ -188,10 +204,10 @@ fn named_by(payload: &[u8]) -> Option<Option<[u8; 32]>> {
     Some(read.then_some(hash))
 }
 
-/// Keeps what was asked as an object and gives the payload that names it.
-/// The object is put before the job that reads it is recorded, and is
-/// reclaimed a day after (`crate::content_upkeep`): work asked for is done
-/// within the day.
+/// Keeps what was asked, or answered, as an object and gives what names
+/// it. The object is put before what reads it is recorded, and is reclaimed
+/// a day after (`crate::content_upkeep`): work asked for is done within the
+/// day, and an answer is kept as long as its operation is.
 async fn keep(node: &Node, kind: &'static str, asked: Vec<u8>) -> Result<Vec<u8>, Failure> {
     let content = node.content()?.clone();
     let kept = fastctx_platform::task::spawn_blocking(move || content.objects().put(&asked))
@@ -201,9 +217,9 @@ async fn keep(node: &Node, kind: &'static str, asked: Vec<u8>) -> Result<Vec<u8>
     Ok(naming(&kept.hash))
 }
 
-/// What was asked, as a job's payload holds or names it; none when the
-/// object that held it is no longer kept.
-async fn asked_of(node: &Node, payload: &[u8]) -> Result<Option<Vec<u8>>, String> {
+/// What was asked or answered, as a payload or a settled answer holds or
+/// names it; none when the object that held it is no longer kept.
+async fn kept_of(node: &Node, payload: &[u8]) -> Result<Option<Vec<u8>>, String> {
     let hash = match named_by(payload) {
         None => return Ok(Some(payload.to_vec())),
         Some(None) => return Err("the payload names no object".into()),
@@ -227,8 +243,46 @@ async fn asked_of(node: &Node, payload: &[u8]) -> Result<Option<Vec<u8>>, String
     .map_err(|error| error.to_string())?
 }
 
-/// Names what does the work of a family's calls, before the node's jobs
-/// start. `doing` is given what `submit` was asked with.
+/// Takes back what a family was asked for `unit` and has not begun, as
+/// when what it would have worked on is stopped: each such operation is
+/// settled as not done, for `why`. Work that has begun goes on.
+#[expect(dead_code, reason = "the first family whose work can be stopped before it begins is not merged yet")]
+pub(crate) async fn withdraw(node: &Node, family: &Family, unit: &str, why: &str) -> Result<usize, Failure> {
+    let kind = family.name;
+    let (unit, reason) = (unit.to_string(), failed(&Failure::not_run(why)));
+    let withdrawn = unit.clone();
+    let keys = node
+        .database
+        .write(WRITE_BYTES, move |db| {
+            let keys = fastctx_jobs::withdraw(db, kind, &withdrawn)?;
+            for key in &keys {
+                let operation = Operation { kind, unit: withdrawn.clone(), id: key.clone() };
+                fastctx_jobs::settle(db, &operation, &reason, SETTLED_FOR)?;
+            }
+            Ok(keys)
+        })
+        .await
+        .map_err(|error| Failure::new(format!("withdrawing {kind}: {error}")))?;
+    for key in &keys {
+        node.durable_jobs.told(&Operation { kind, unit: unit.clone(), id: key.clone() });
+    }
+    Ok(keys.len())
+}
+
+/// Settles an operation and tells those who wait for it.
+async fn settle(node: &Node, operation: &Operation, standing: Standing) -> Result<(), String> {
+    let settled = operation.clone();
+    let bytes = WRITE_BYTES + operation.id.len() + operation.unit.len();
+    node.database
+        .write(bytes, move |db| fastctx_jobs::settle(db, &settled, &standing, SETTLED_FOR))
+        .await
+        .map_err(|error| error.to_string())?;
+    node.durable_jobs.told(operation);
+    Ok(())
+}
+
+/// Names what does the work of a family's calls. `doing` is given what
+/// `submit` was asked with.
 pub(crate) fn register<C, T, F, Doing>(node: &Arc<Node>, family: Family, doing: F)
 where
     C: DeserializeOwned + Send + 'static,
@@ -243,20 +297,33 @@ where
         let (node, doing) = (node.upgrade(), doing.clone());
         Box::pin(async move {
             let Some(node) = node else { return Outcome::Failed("the node is stopping".into()) };
-            let operation = Operation { kind: family.name, unit: taken.unit.clone(), id: taken.key.clone() };
-            let standing = match work(&node, &family, &taken, doing.as_ref()).await {
-                Some(standing) => standing,
-                None => return Outcome::Again { after: ASKS_AGAIN },
-            };
-            let settled = operation.clone();
-            let bytes = WRITE_BYTES + taken.payload.len();
-            let written =
-                node.database.write(bytes, move |db| fastctx_jobs::settle(db, &settled, &standing, SETTLED_FOR)).await;
-            match written {
-                Ok(()) => {
-                    node.durable_jobs.told(&operation);
-                    Outcome::Done
+            let kind = family.name;
+            let operation = Operation { kind, unit: taken.unit.clone(), id: taken.key.clone() };
+            // The work runs as a task of its own: nothing that gives up on
+            // this job, not the queue and not the node handing over, cuts
+            // it short between two of its steps.
+            let mut working = fastctx_platform::task::spawn(work(node.clone(), family, taken, doing));
+            let came = match tokio::time::timeout(family.within, &mut working).await {
+                Ok(came) => came,
+                Err(_) => {
+                    let unknown = failed(&Failure::new(format!(
+                        "{} did not finish {kind} within {} s; it is still being done there, and whether it takes effect is not known yet",
+                        node.machine(),
+                        family.within.as_secs()
+                    )));
+                    if let Err(error) = settle(&node, &operation, unknown).await {
+                        node.log.line(format_args!("recording that {kind} goes on: {error}"));
+                    }
+                    working.await
                 }
+            };
+            let standing = match came {
+                Ok(Some(standing)) => standing,
+                Ok(None) => return Outcome::Again { after: ASKS_AGAIN },
+                Err(error) => failed(&Failure::new(format!("{kind} ended unexpectedly: {error}"))),
+            };
+            match settle(&node, &operation, standing).await {
+                Ok(()) => Outcome::Done,
                 Err(error) => Outcome::Failed(format!("recording what came of it: {error}")),
             }
         })
@@ -265,12 +332,12 @@ where
     // and settles its operation as failed, where a job set aside would
     // leave its caller waiting.
     let tries = if family.again { TRIES + 1 } else { 2 };
-    jobs.register(Kind { name: family.name, at_once: family.at_once, within: family.within, tries }, Arc::new(run));
+    jobs.register(Kind { name: family.name, at_once: family.at_once, within: LONGEST, tries }, Arc::new(run));
 }
 
 /// Does one job's work and says how its operation stands after; none when
 /// it waits on another machine's accepted work and is to ask again.
-async fn work<C, T, F, Doing>(node: &Arc<Node>, family: &Family, taken: &Taken, doing: &F) -> Option<Standing>
+async fn work<C, T, F, Doing>(node: Arc<Node>, family: Family, taken: Taken, doing: Arc<F>) -> Option<Standing>
 where
     C: DeserializeOwned,
     T: Serialize,
@@ -287,7 +354,7 @@ where
     }
     let unreadable =
         |why: String| Some(failed(&Failure::not_run(format!("{kind} as it was recorded cannot be read: {why}"))));
-    let recorded = match asked_of(node, &taken.payload).await {
+    let recorded = match kept_of(&node, &taken.payload).await {
         Ok(Some(recorded)) => recorded,
         Ok(None) => return unreadable("what was asked is no longer kept".into()),
         Err(why) => return unreadable(why),
@@ -305,11 +372,15 @@ where
     let working = crate::record_access::within(access, working);
     match fastctx_net::submission::scope(Some(naming), working).await {
         Ok(answer) => Some(match serde_json::to_vec(&answer) {
-            Ok(answer) if answer.len() <= fastctx_jobs::RESULT_BYTES => Standing::Done(answer),
-            Ok(answer) => failed(&Failure::new(format!(
-                "{kind} was done; its answer of {} bytes is more than is kept, so read what it changed",
-                answer.len()
-            ))),
+            Ok(answer) if answer.len() <= INLINE_BYTES => Standing::Done(answer),
+            // A large answer is kept beside its operation, for as long.
+            Ok(answer) => match keep(&node, kind, answer).await {
+                Ok(named) => Standing::Done(named),
+                Err(failure) => failed(&Failure::new(format!(
+                    "{kind} was done, and its answer could not be kept: {}",
+                    failure.message
+                ))),
+            },
             Err(error) => failed(&Failure::new(format!("{kind} was done, and its answer cannot be kept: {error}"))),
         }),
         Err(failure) if failure.is_accepted() && family.again => None,

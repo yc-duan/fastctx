@@ -87,6 +87,17 @@ pub fn rouse(db: &Connection, kind: &str) -> Result<usize> {
     ])?)
 }
 
+/// Takes back a unit's jobs of a kind that have not begun, and names them:
+/// what asked for them is told they were not done. One that runs goes on.
+pub fn withdraw(db: &Connection, kind: &str, unit: &str) -> Result<Vec<String>> {
+    let mut withdrawn =
+        db.prepare_cached("DELETE FROM jobs WHERE kind = ?1 AND unit = ?2 AND state = ?3 RETURNING key")?;
+    let keys = withdrawn
+        .query_map(params![kind, unit, WAITING], |row| row.get(0))?
+        .collect::<fastctx_storage::rusqlite::Result<_>>()?;
+    Ok(keys)
+}
+
 /// Drops a unit's jobs, in the transaction that ends the unit. One running
 /// then finishes into nothing.
 pub fn forget(db: &Connection, unit: &str) -> Result<usize> {
