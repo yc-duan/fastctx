@@ -66,6 +66,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             .build()?
             .block_on(blocks::source_acceptance::upload::run(&root));
     }
+    if std::env::args().nth(2).as_deref() == Some("admission") {
+        return tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()?
+            .block_on(admission::run());
+    }
     format_upgrade::run(&root)?;
     if std::env::args().nth(2).as_deref() == Some("upgrade") {
         return Ok(());

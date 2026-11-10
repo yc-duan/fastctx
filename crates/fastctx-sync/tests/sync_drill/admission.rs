@@ -1,4 +1,6 @@
 //! Waiting and cancellation must conserve byte permits and preserve FIFO order.
+#[path = "admission_window.rs"]
+mod window;
 use fastctx_sync::{admission::ByteBudget, store::Error};
 use std::{future::Future, task::Context, task::Waker, time::Duration};
 use tokio::time::Instant;
@@ -51,5 +53,6 @@ pub(super) async fn run() -> Result<()> {
     drop(held);
     assert_eq!(budget.reserved(), 0);
     println!("byte admission: FIFO, partial cancellation, deadlines, close and permit release passed");
+    window::run().await?;
     Ok(())
 }

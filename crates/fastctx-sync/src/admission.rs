@@ -1,10 +1,12 @@
 //! Shared byte admission for bounded runtime working sets.
+mod window;
 use crate::store::Error;
 use std::sync::Arc;
 use tokio::{
     sync::{OwnedSemaphorePermit, Semaphore, TryAcquireError},
     time::Instant,
 };
+pub use window::{BudgetWindow, WindowExhausted};
 
 /// Clones share one fixed capacity. Queued multi-byte requests are FIFO,
 /// including a large request ahead of smaller ones.
@@ -17,7 +19,8 @@ pub struct ByteBudget {
 /// Dropping a waiting acquisition also returns its partial reservation.
 #[derive(Debug)]
 pub struct BytePermit {
-    permit: OwnedSemaphorePermit,
+    permit: Option<OwnedSemaphorePermit>,
+    return_to: Option<window::ReturnTo>,
 }
 impl ByteBudget {
     pub fn new(capacity: usize) -> Result<Self, Error> {
@@ -43,7 +46,7 @@ impl ByteBudget {
             TryAcquireError::NoPermits => Error::Busy,
             TryAcquireError::Closed => Error::Unavailable("byte admission closed".into()),
         })?;
-        Ok(BytePermit { permit })
+        Ok(BytePermit { permit: Some(permit), return_to: None })
     }
     /// Waits in FIFO order until the absolute deadline. Impossible requests
     /// never enter the queue; cancellation releases all reserved bytes.
@@ -62,7 +65,19 @@ impl ByteBudget {
         if Instant::now() >= deadline {
             return Err(Error::Busy);
         }
-        Ok(BytePermit { permit })
+        Ok(BytePermit { permit: Some(permit), return_to: None })
+    }
+    /// Admits the complete working set in FIFO order before any of its buffers
+    /// are allocated. Loans taken from the result never acquire global bytes.
+    /// Impossible requests are Invalid; only global contention can time out Busy.
+    pub async fn window_until(&self, bytes: usize, deadline: Instant) -> Result<BudgetWindow, Error> {
+        let mut permit = self.acquire_until(bytes, deadline).await?;
+        Ok(BudgetWindow::new(permit.permit.take().expect("new admission owns its permit")))
+    }
+    /// Prepared consumers reject a window from another pool before allocating.
+    /// Clones of this budget identify the same reservation source.
+    pub fn owns_window(&self, window: &BudgetWindow) -> bool {
+        window.belongs_to(&self.semaphore)
     }
     /// Prevents new admissions and wakes queued callers with Unavailable.
     /// Outstanding permits remain responsible for their working sets.
@@ -72,22 +87,35 @@ impl ByteBudget {
 }
 impl BytePermit {
     pub fn bytes(&self) -> usize {
-        self.permit.num_permits()
+        self.permit.as_ref().expect("live byte permit").num_permits()
     }
     /// Transfers part of an existing reservation without joining the queue or
     /// increasing the working set. Both returned owners release independently.
     pub fn split(&mut self, bytes: usize) -> Result<Self, Error> {
-        let permit = self.permit.split(bytes).ok_or_else(|| Error::Invalid("split exceeds byte reservation".into()))?;
-        Ok(Self { permit })
+        let permit = self
+            .permit
+            .as_mut()
+            .expect("live byte permit")
+            .split(bytes)
+            .ok_or_else(|| Error::Invalid("split exceeds byte reservation".into()))?;
+        Ok(Self { permit: Some(permit), return_to: self.return_to.clone() })
     }
     /// Releases transient workspace after it has been freed, retaining the same
-    /// admission for the buffers that remain alive. This never reacquires bytes.
+    /// admission for the buffers that remain alive. Window loans return idle bytes
+    /// to that window; ordinary permits return them globally. Neither reacquires bytes.
     pub fn shrink_to(&mut self, bytes: usize) -> Result<(), Error> {
         if bytes > self.bytes() {
             return Err(Error::Invalid("a retained working set cannot grow its existing admission".into()));
         }
         let released = self.bytes() - bytes;
-        drop(self.permit.split(released).expect("released bytes belong to this permit"));
+        drop(self.split(released).expect("released bytes belong to this permit"));
         Ok(())
+    }
+}
+impl Drop for BytePermit {
+    fn drop(&mut self) {
+        if let Some(permit) = self.permit.take() {
+            window::return_loan(permit, self.return_to.as_ref());
+        }
     }
 }

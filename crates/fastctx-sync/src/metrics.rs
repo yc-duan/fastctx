@@ -18,6 +18,7 @@ macro_rules! measures {
 }
 measures!(Counter {
     IngestBytes => "sync.ingest_bytes",
+    BudgetWindowExhausted => "sync.budget_window_exhausted",
     SourceOpenCalls => "sync.source_open_calls",
     SourceReadCalls => "sync.source_read_calls",
     SourceRpcCalls => "sync.source_rpc_calls",
