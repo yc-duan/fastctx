@@ -69,7 +69,8 @@ pub(crate) async fn submit<C: Serialize, T: DeserializeOwned>(
 ) -> Result<T, Failure> {
     let told_apart =
         serde_json::to_vec(asked).map_err(|error| Failure::not_run(format!("recording {}: {error}", family.name)))?;
-    fastctx_jobs::submitted::submit(hub, family, unit, asked, &told_apart, caller, || {}).await
+    let make = || async { Ok((unit.to_string(), asked)) };
+    fastctx_jobs::submitted::submit(hub, family, &told_apart, caller, make, || {}).await
 }
 
 /// Names what does the work of a family's questions. `doing` is given what

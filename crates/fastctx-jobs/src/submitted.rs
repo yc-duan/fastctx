@@ -178,53 +178,75 @@ impl Asking {
     }
 }
 
-/// Records what a call of `family` asks for `unit` and stays for what comes
-/// of it: the work's answer, its failure, or that it is accepted.
+/// Records what a call of `family` asks and stays for what comes of it: the
+/// work's answer, its failure, or that it is accepted.
 ///
-/// `recording` is what the work is given: what was asked, and whatever the
-/// service keeps with it, such as whom the caller acted as and what its
-/// entrance made of what the call left to how things stood. `asked` is what
-/// was asked alone, as bytes: with the caller's name it tells this asking
-/// from another, and nothing else does. Neither what the service adds nor
-/// `unit` is part of that: the unit is whose turn the job waits for, and
-/// may be named after what the entrance resolved. `caller` is the name the
-/// call came with, bound to who asked. `recorded` is called once the call
-/// has done what a submission does, before it stays.
-pub async fn submit<S: Service, C: Serialize, T: DeserializeOwned>(
+/// `asked` is what was asked, as bytes: with `caller`, the name the call
+/// came with bound to who asked, it tells this asking from another, and
+/// nothing else does. A call that is an operation already is answered from
+/// it. For one that is not, `make` gives the unit whose turn its job waits
+/// for and what the work is given: what was asked, and whatever the service
+/// keeps with it, such as whom the caller acted as and what its entrance
+/// made of what the call left to how things stood. So what `make` does,
+/// and may fail at or come out otherwise by, is done once for an operation,
+/// as it is first asked. `recorded` is called once the call has done what a
+/// submission does, before it stays.
+pub async fn submit<S, C, T, Making>(
     service: &S,
     family: &Family,
-    unit: &str,
-    recording: &C,
     asked: &[u8],
     caller: Option<&Submission>,
+    make: impl FnOnce() -> Making,
     recorded: impl FnOnce(),
-) -> Result<T, Failure> {
+) -> Result<T, Failure>
+where
+    S: Service,
+    C: Serialize,
+    T: DeserializeOwned,
+    Making: Future<Output = Result<(String, C), Failure>>,
+{
     let kind = family.name;
-    let payload =
-        serde_json::to_vec(recording).map_err(|error| Failure::not_run(format!("recording {kind}: {error}")))?;
+    let unrecorded = |error: fastctx_storage::Error| Failure::not_run(format!("recording {kind}: {error}"));
     let id = match caller {
         Some(submission) => named(&submission.name, asked),
         None => service.fresh().map_err(|error| Failure::not_run(format!("naming {kind}: {error}")))?,
     };
     let operation = operation(kind, &id);
-    let payload = if payload.len() > INLINE_BYTES { keep(service, kind, payload).await? } else { payload };
-    let job = Job { kind, key: id, unit: unit.to_string(), payload };
-    let accepted = operation.clone();
-    let known = service
-        .jobs()
-        .database()
-        .write(WRITE_BYTES + job.payload.len(), move |db| {
-            let known = crate::accept(db, &accepted)?;
+    let known = match caller {
+        Some(_) => {
+            let asked = operation.clone();
+            service.jobs().database().read(move |db| crate::standing(db, &asked)).await.map_err(unrecorded)?
+        }
+        // A name just made is no operation yet.
+        None => None,
+    };
+    let known = match known {
+        Some(known) => Some(known),
+        None => {
+            let (unit, recording) = make().await?;
+            let payload = serde_json::to_vec(&recording)
+                .map_err(|error| Failure::not_run(format!("recording {kind}: {error}")))?;
+            let payload = if payload.len() > INLINE_BYTES { keep(service, kind, payload).await? } else { payload };
+            let job = Job { kind, key: id, unit, payload };
+            let accepted = operation.clone();
+            let known = service
+                .jobs()
+                .database()
+                .write(WRITE_BYTES + job.payload.len(), move |db| {
+                    let known = crate::accept(db, &accepted)?;
+                    if known.is_none() {
+                        crate::submit(db, &job)?;
+                    }
+                    Ok(known)
+                })
+                .await
+                .map_err(unrecorded)?;
             if known.is_none() {
-                crate::submit(db, &job)?;
+                service.jobs().stir(kind);
             }
-            Ok(known)
-        })
-        .await
-        .map_err(|error| Failure::not_run(format!("recording {kind}: {error}")))?;
-    if known.is_none() {
-        service.jobs().stir(kind);
-    }
+            known
+        }
+    };
     // The call has done what a submission does; the rest is its caller
     // staying for the outcome.
     recorded();

@@ -30,7 +30,7 @@ struct Recording<'a, C, R> {
     access: Option<crate::record_access::Access>,
     asked: &'a C,
     #[serde(skip_serializing_if = "Option::is_none")]
-    resolved: Option<&'a R>,
+    resolved: Option<R>,
 }
 
 #[derive(serde::Deserialize)]
@@ -111,7 +111,7 @@ pub(crate) async fn submit<C: Serialize, T: DeserializeOwned>(
     unit: &str,
     asked: &C,
 ) -> Result<T, Failure> {
-    record(node, family, unit, asked, None::<&()>).await
+    record(node, family, asked, || async { Ok((unit.to_string(), None::<()>)) }).await
 }
 
 /// `submit` for a call that leaves something to how things stand as it is
@@ -123,6 +123,11 @@ pub(crate) async fn submit<C: Serialize, T: DeserializeOwned>(
 /// would resolve otherwise by then. `unit` is not part of that either, and
 /// is best the thing resolved to: the work waits its turn behind the other
 /// work on that thing.
+///
+/// An entrance that calls this has resolved before it knows whether the
+/// call is an operation already; where resolving can fail by then, or the
+/// entrance should not wait for it twice, `submit_resolving` resolves only
+/// what is new.
 #[expect(
     dead_code,
     reason = "the first family whose entrance resolves what its calls leave implicit is not merged yet"
@@ -134,26 +139,66 @@ pub(crate) async fn submit_resolved<C: Serialize, R: Serialize, T: DeserializeOw
     asked: &C,
     resolved: &R,
 ) -> Result<T, Failure> {
-    record(node, family, unit, asked, Some(resolved)).await
+    record(node, family, asked, || async { Ok((unit.to_string(), Some(resolved))) }).await
 }
 
-async fn record<C: Serialize, R: Serialize, T: DeserializeOwned>(
+/// `submit_resolved` that resolves only a call that is not an operation
+/// yet: `resolve` gives the unit and what the entrance made of what the
+/// call leaves implicit. A call asked again under its name is answered
+/// from the operation it is, though resolving it now would fail or come
+/// out otherwise.
+#[expect(dead_code, reason = "the families whose entrances resolve are moved to it as they are merged")]
+pub(crate) async fn submit_resolving<C, R, T, Resolving>(
     node: &Node,
     family: &Family,
-    unit: &str,
     asked: &C,
-    resolved: Option<&R>,
-) -> Result<T, Failure> {
+    resolve: impl FnOnce() -> Resolving,
+) -> Result<T, Failure>
+where
+    C: Serialize,
+    R: Serialize,
+    T: DeserializeOwned,
+    Resolving: Future<Output = Result<(String, R), Failure>>,
+{
+    record(node, family, asked, || async {
+        let (unit, resolved) = resolve().await?;
+        Ok((unit, Some(resolved)))
+    })
+    .await
+}
+
+async fn record<C, R, T, Resolving>(
+    node: &Node,
+    family: &Family,
+    asked: &C,
+    resolve: impl FnOnce() -> Resolving,
+) -> Result<T, Failure>
+where
+    C: Serialize,
+    R: Serialize,
+    T: DeserializeOwned,
+    Resolving: Future<Output = Result<(String, Option<R>), Failure>>,
+{
     let told_apart =
         serde_json::to_vec(asked).map_err(|error| Failure::not_run(format!("recording {}: {error}", family.name)))?;
-    let recording = Recording { access: crate::record_access::current(), asked, resolved };
+    let access = crate::record_access::current();
     let caller = fastctx_net::submission::current();
-    fastctx_jobs::submitted::submit(node, family, unit, &recording, &told_apart, caller.as_ref(), || {
-        // The rest is the caller staying for the outcome, which takes no
-        // place from the calls after it.
-        fastctx_platform::call_timing::recorded();
-        fastctx_net::link::admission::stays();
-    })
+    fastctx_jobs::submitted::submit(
+        node,
+        family,
+        &told_apart,
+        caller.as_ref(),
+        || async {
+            let (unit, resolved) = resolve().await?;
+            Ok((unit, Recording { access, asked, resolved }))
+        },
+        || {
+            // The rest is the caller staying for the outcome, which takes
+            // no place from the calls after it.
+            fastctx_platform::call_timing::recorded();
+            fastctx_net::link::admission::stays();
+        },
+    )
     .await
 }
 

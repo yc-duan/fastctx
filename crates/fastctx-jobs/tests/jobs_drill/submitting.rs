@@ -18,6 +18,8 @@ struct Lab {
     /// Whether the service takes work on: a node on its way out does not.
     serving: AtomicBool,
     named: AtomicUsize,
+    /// How often what the work is given was made.
+    made: AtomicUsize,
     /// How often each thing asked for was done.
     done: Mutex<HashMap<String, usize>>,
     /// Closed while work is to take long.
@@ -82,7 +84,11 @@ fn told(came: Result<String, Failure>) -> String {
 
 async fn ask(lab: &Lab, family: &Family, unit: &str, asked: &str, name: Option<&str>) -> Result<String, Failure> {
     let caller = name.map(named);
-    submit(lab, family, unit, &asked, asked.as_bytes(), caller.as_ref(), || {}).await
+    let make = || async {
+        lab.made.fetch_add(1, Ordering::AcqRel);
+        Ok((unit.to_string(), asked))
+    };
+    submit(lab, family, asked.as_bytes(), caller.as_ref(), make, || {}).await
 }
 
 pub(crate) async fn drill(jobs: &Arc<Jobs>) -> Outcome_<()> {
@@ -91,6 +97,7 @@ pub(crate) async fn drill(jobs: &Arc<Jobs>) -> Outcome_<()> {
         kept: Mutex::default(),
         serving: AtomicBool::new(true),
         named: AtomicUsize::new(0),
+        made: AtomicUsize::new(0),
         done: Mutex::default(),
         gate: tokio::sync::Semaphore::new(0),
     });
@@ -116,9 +123,11 @@ pub(crate) async fn drill(jobs: &Arc<Jobs>) -> Outcome_<()> {
     // time.
     let first = ask(&lab, &QUICK, "u1", "a thing", Some("n1")).await;
     let again = ask(&lab, &QUICK, "u2", "a thing", Some("n1")).await;
+    // What the work is given is made for the operation, not for each asking.
     if first.as_deref().ok() != Some("did a thing")
         || again.as_deref().ok() != Some("did a thing")
         || done("a thing") != 1
+        || lab.made.load(Ordering::Acquire) != 1
     {
         return Err(
             format!("a named call asked twice: {}, {}, done {}", told(first), told(again), done("a thing")).into()
