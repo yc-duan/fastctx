@@ -29,7 +29,24 @@ pub(super) fn current(db: &Connection, holding: &HoldingPeriod) -> Result<()> {
     {
         return Err(sql::invalid("replica holding period is no longer current"));
     }
+    let stopped: bool = db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sync_replica_scopes WHERE hub=?1 AND scope=?2 AND following='stopped')",
+        params![holding.scope.hub.to_string(), holding.scope.scope.as_str()],
+        |row| row.get(0),
+    )?;
+    if stopped {
+        return Err(sql::invalid("replica following is stopped for this scope"));
+    }
     Ok(())
+}
+pub(super) fn generation(db: &Connection, scope: &crate::identity::ScopeKey) -> Result<crate::cursor::Revision> {
+    db.query_row(
+        "SELECT generation FROM sync_replica_scopes WHERE hub=?1 AND scope=?2",
+        params![scope.hub.to_string(), scope.scope.as_str()],
+        |row| sql::counter(row, 0),
+    )
+    .map(crate::cursor::Revision)
+    .map_err(Into::into)
 }
 pub(super) fn custody(context: &ReplicaContext, object: &ObjectKey, kind: &str) -> Result<Custody> {
     if object.scope != context.holding.scope {

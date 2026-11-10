@@ -67,7 +67,7 @@ pub(super) fn install(
     context: &ReplicaContext,
     change: &CatalogChange,
     accepted: Option<&AcceptedEvidence>,
-) -> Result<()> {
+) -> Result<bool> {
     let head = &change.head;
     let custody = rows::custody(context, &head.key, &head.kind)?;
     let registration = custody.kind.registration();
@@ -78,7 +78,7 @@ pub(super) fn install(
     }
     match blocks.policy().can_keep(&custody.context, custody.kind, &custody.object, &custody.purpose) {
         Decision::Allowed { revision } if revision == context.holding.acl_revision => {}
-        Decision::Denied { revision, .. } if revision == context.holding.acl_revision => return Ok(()),
+        Decision::Denied { revision, .. } if revision == context.holding.acl_revision => return Ok(false),
         _ => {
             return Err(fastctx_storage::Error::with_kind(
                 fastctx_storage::ErrorKind::Busy,
@@ -163,7 +163,11 @@ pub(super) fn install(
     db.execute("INSERT INTO sync_local_changes(sequence,hub,scope,object,kind,authority_epoch,revision,origin,operation) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)",params![local.0.to_be_bytes().as_slice(),hub,scope,object,head.kind,head.revision.authority_epoch.bytes().as_slice(),head.revision.revision.0.to_be_bytes().as_slice(),encode(&origin)?,change.operation.as_str()])?;
     if head.lifecycle == Lifecycle::Deleted {
         db.execute("INSERT INTO sync_tombstones(hub,scope,object,authority_epoch,revision,operation) VALUES(?1,?2,?3,?4,?5,?6) ON CONFLICT DO NOTHING",params![hub,scope,object,head.revision.authority_epoch.bytes().as_slice(),head.revision.revision.0.to_be_bytes().as_slice(),change.operation.as_str()])?;
-        return Ok(());
+        db.execute(
+            "UPDATE sync_replica_streams SET pending=0 WHERE hub=?1 AND scope=?2 AND object=?3",
+            params![hub, scope, object],
+        )?;
+        return Ok(true);
     }
     if let HeadEvidence::Stream { epoch, through, prefix_digest } = &head.evidence {
         if head.content.is_some() || head.history.is_some() {
@@ -176,7 +180,7 @@ pub(super) fn install(
         }) {
             return Err(sql::invalid("a stream target cannot rewind or fork within one epoch"));
         }
-        db.execute("INSERT INTO sync_replica_streams(hub,scope,stream,epoch_proof,object,kind,schema,holding,purpose,wanted,prefix_digest) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11) ON CONFLICT(hub,scope,stream,epoch_proof) DO UPDATE SET wanted=excluded.wanted,prefix_digest=excluded.prefix_digest,holding=excluded.holding,purpose=excluded.purpose",params![hub,scope,stream.as_str(),epoch.as_str(),object,head.kind,head.schema,encode(&custody.holding)?,encode(&custody.purpose)?,through.0.to_be_bytes().as_slice(),prefix_digest.as_str()])?;
+        db.execute("INSERT INTO sync_replica_streams(hub,scope,stream,epoch_proof,object,kind,schema,holding,purpose,wanted,prefix_digest) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11) ON CONFLICT(hub,scope,stream,epoch_proof) DO UPDATE SET wanted=excluded.wanted,prefix_digest=excluded.prefix_digest,holding=excluded.holding,purpose=excluded.purpose,pending=1",params![hub,scope,stream.as_str(),epoch.as_str(),object,head.kind,head.schema,encode(&custody.holding)?,encode(&custody.purpose)?,through.0.to_be_bytes().as_slice(),prefix_digest.as_str()])?;
         crate::scheduler::replica_changed(
             db,
             &custody.holding,
@@ -184,7 +188,7 @@ pub(super) fn install(
             local,
         )?;
     }
-    Ok(())
+    Ok(true)
 }
 fn lifecycle(value: Lifecycle) -> &'static str {
     match value {

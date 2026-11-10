@@ -534,12 +534,24 @@ CREATE TABLE sync_supply_work (
 CREATE TABLE sync_replica_scopes (
     hub TEXT NOT NULL, scope TEXT NOT NULL, holding BLOB NOT NULL,
     cursor BLOB NOT NULL, view BLOB NOT NULL CHECK(length(view)<=262144),
-    local BLOB NOT NULL CHECK(length(local)=8), PRIMARY KEY(hub,scope)
+    local BLOB NOT NULL CHECK(length(local)=8),
+    generation BLOB NOT NULL DEFAULT X'0000000000000000' CHECK(length(generation)=8),
+    following TEXT NOT NULL DEFAULT 'active' CHECK(following IN ('active','stopped')),
+    stop_reason BLOB CHECK(stop_reason IS NULL OR length(stop_reason)<=4096),
+    CHECK((following='stopped')=(stop_reason IS NOT NULL)),
+    PRIMARY KEY(hub,scope)
 ) WITHOUT ROWID;
 CREATE TABLE sync_replica_pages (
     hub TEXT NOT NULL, scope TEXT NOT NULL, holding BLOB NOT NULL, page TEXT NOT NULL,
+    generation BLOB NOT NULL DEFAULT X'0000000000000000' CHECK(length(generation)=8),
     local BLOB NOT NULL CHECK(length(local)=8), cursor BLOB NOT NULL,
-    PRIMARY KEY(hub,scope,holding,page)
+    PRIMARY KEY(hub,scope,generation,holding,page)
+) WITHOUT ROWID;
+-- Installing a new feed must not reinstall an already applied historical head.
+CREATE TABLE sync_replica_head_receipts (
+    hub TEXT NOT NULL, scope TEXT NOT NULL, holding BLOB NOT NULL,
+    object TEXT NOT NULL, operation TEXT NOT NULL, head_digest TEXT NOT NULL,
+    PRIMARY KEY(hub,scope,holding,object,operation)
 ) WITHOUT ROWID;
 CREATE TABLE sync_replica_versions (
     hub TEXT NOT NULL, scope TEXT NOT NULL, object TEXT NOT NULL,
@@ -552,9 +564,11 @@ CREATE TABLE sync_replica_streams (
     object TEXT NOT NULL, kind TEXT NOT NULL, schema INTEGER NOT NULL,
     holding BLOB NOT NULL, purpose BLOB NOT NULL,
     wanted BLOB NOT NULL CHECK(length(wanted)=8), prefix_digest TEXT,
+    pending INTEGER NOT NULL DEFAULT 1 CHECK(pending IN (0,1)),
     PRIMARY KEY(hub,scope,stream,epoch_proof)
 ) WITHOUT ROWID;
 CREATE INDEX sync_replica_streams_object ON sync_replica_streams(hub,scope,object,kind);
+CREATE INDEX sync_replica_streams_pending ON sync_replica_streams(hub,scope,holding,stream,epoch_proof) WHERE pending=1;
 -- One page waiting for each unknown epoch; backpressure bounds the global bytes.
 CREATE TABLE sync_replica_waiting (
     hub TEXT NOT NULL, scope TEXT NOT NULL, stream TEXT NOT NULL, epoch_proof TEXT NOT NULL,

@@ -149,6 +149,7 @@ fn permits(table: &str) -> bool {
                 | "sync_replica_epoch_fences"
                 | "sync_replica_scopes"
                 | "sync_replica_pages"
+                | "sync_replica_head_receipts"
                 | "sync_replica_versions"
                 | "sync_replica_streams"
                 | "sync_replica_waiting"

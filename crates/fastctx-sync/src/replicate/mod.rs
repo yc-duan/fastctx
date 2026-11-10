@@ -2,8 +2,10 @@
 //! [`Upstream`]; the network runner and the in-process loopback implement it,
 //! and neither turns a peer's message into a permission.
 mod directory;
+mod follow;
 
-pub use directory::{DirectoryFollower, Discovered};
+pub use directory::{DirectoryFollower, Discovered, DiscoveredPage};
+pub use follow::{FollowDiscovery, FollowPage, FollowProgress, ReplicaFollower};
 
 use crate::{
     cursor::{DurableAck, HoldingPeriod},

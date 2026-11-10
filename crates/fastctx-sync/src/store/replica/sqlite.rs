@@ -15,8 +15,13 @@ use std::sync::Arc;
 mod changes;
 #[path = "epoch_chain.rs"]
 mod epoch_chain;
+#[path = "follow.rs"]
+mod follow;
 #[path = "heads.rs"]
 mod heads;
+#[path = "receipts.rs"]
+mod receipts;
+pub use follow::{FollowScope, FollowStop, StreamNeed};
 #[path = "rows.rs"]
 mod rows;
 #[path = "stream_rows.rs"]

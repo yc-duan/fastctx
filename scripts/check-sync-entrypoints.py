@@ -11,6 +11,9 @@ wire = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(wire)
 CALLERS = {
     "SqliteReplica": {
+        "crates/fastctx-sync/src/store/replica/follow.rs",
+        "crates/fastctx-sync/src/replicate/follow.rs",
+        "crates/fastctx-sync/tests/sync_drill/source_acceptance/follow.rs",
         "crates/fastctx-sync/src/store/replica.rs",
         "crates/fastctx-sync/src/store/replica/sqlite.rs",
         "crates/fastctx-sync/src/store/replica/targets.rs",
@@ -45,6 +48,8 @@ CALLERS = {
         "crates/fastctx-sync/tests/sync_drill/pending.rs",
     },
     "SqliteBlocks": {
+        "crates/fastctx-sync/src/store/replica/receipts.rs",
+        "crates/fastctx-sync/tests/sync_drill/source_acceptance/follow.rs",
         "crates/fastctx-sync/src/blocks/replica_commit.rs",
         "crates/fastctx-sync/src/blocks/replica_content.rs",
         "crates/fastctx-sync/src/store/replica/sqlite.rs",
@@ -116,6 +121,7 @@ CALLERS = {
         "crates/fastctx-net/tests/sync_access_drill/fixture.rs",
     },
     "enter_typed_write": {
+        "crates/fastctx-sync/src/store/replica/follow.rs",
         "crates/fastctx-sync/src/blocks/replica_content.rs",
         "crates/fastctx-sync/src/store/replica/changes.rs",
         "crates/fastctx-sync/src/store/replica/streams.rs",

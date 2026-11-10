@@ -59,6 +59,10 @@ impl SqliteScopes {
         Self { blocks, alone, device }
     }
 
+    pub(crate) fn device(&self) -> &DeviceId {
+        &self.device
+    }
+
     /// Opens, or confirms, the scope of a conversation this World hosts under its
     /// alone hub. `conversation` is the canonical conversation identity, and the
     /// scope is derived from it rather than chosen. A scope closed because its

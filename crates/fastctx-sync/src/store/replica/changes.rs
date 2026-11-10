@@ -113,11 +113,12 @@ impl SqliteReplica {
             let _role=boundary::enter_typed_write(Role::Replica);
             rows::current(db,&context.holding)?;
             let period=encode(&context.holding)?;
-            let previous=db.prepare_cached("SELECT local,cursor FROM sync_replica_pages WHERE hub=?1 AND scope=?2 AND holding=?3 AND page=?4")?
-                .query_row(params![context.holding.scope.hub.to_string(),context.holding.scope.scope.as_str(),period,digest.as_str()],|r|Ok((sql::counter(r,0)?,r.get::<_,Vec<u8>>(1)?))).optional()?;
+            let generation=rows::generation(db,&context.holding.scope)?;
+            let previous=db.prepare_cached("SELECT local,cursor FROM sync_replica_pages WHERE hub=?1 AND scope=?2 AND holding=?3 AND page=?4 AND generation=?5")?
+                .query_row(params![context.holding.scope.hub.to_string(),context.holding.scope.scope.as_str(),period,digest.as_str(),generation.0.to_be_bytes().as_slice()],|r|Ok((sql::counter(r,0)?,r.get::<_,Vec<u8>>(1)?))).optional()?;
             if let Some((local,cursor))=previous {return Ok(ReplicaCommit{local:LocalSequence(local),cursor:Some(decode(&cursor)?),next:None});}
             let (stored,_)=rows::cursor(db,&context.holding)?.ok_or_else(||sql::invalid("initialize the replica view before receiving changes"))?;
-            if stored!=page.after {return Err(sql::invalid("changes page does not continue the durable replica cursor"));}
+            if stored!=page.after {return Err(fastctx_storage::Error::with_kind(fastctx_storage::ErrorKind::Busy,"changes page does not continue the durable replica cursor"));}
             let view:Vec<u8>=db.query_row("SELECT view FROM sync_replica_scopes WHERE hub=?1 AND scope=?2",params![stored.scope.hub.to_string(),stored.scope.scope.as_str()],|r|r.get(0))?;
             let view:ViewDefinition=decode(&view)?;
             for entry in &page.entries {
@@ -125,11 +126,11 @@ impl SqliteReplica {
                 if !view.kinds.iter().any(|k|k.kind==change.head.kind && k.schema==change.head.schema) {
                     return Err(sql::invalid("changed kind/schema is outside the negotiated view"));
                 }
-                super::heads::install(db,&blocks,&context,change,match &change.head.evidence {crate::catalog::HeadEvidence::Accepted{proof}=>accepted.get(proof),crate::catalog::HeadEvidence::Stream{..}=>None})?;
+                super::receipts::install(db,&blocks,&context,change,match &change.head.evidence {crate::catalog::HeadEvidence::Accepted{proof}=>accepted.get(proof),crate::catalog::HeadEvidence::Stream{..}=>None})?;
             }
             let local=local_head::advance(db)?;
             db.execute("UPDATE sync_replica_scopes SET cursor=?3,local=?4 WHERE hub=?1 AND scope=?2",params![stored.scope.hub.to_string(),stored.scope.scope.as_str(),encode(&page.through)?,local.0.to_be_bytes().as_slice()])?;
-            db.execute("INSERT INTO sync_replica_pages(hub,scope,holding,page,local,cursor) VALUES(?1,?2,?3,?4,?5,?6)",params![stored.scope.hub.to_string(),stored.scope.scope.as_str(),period,digest.as_str(),local.0.to_be_bytes().as_slice(),encode(&page.through)?])?;
+            db.execute("INSERT INTO sync_replica_pages(hub,scope,holding,page,local,cursor,generation) VALUES(?1,?2,?3,?4,?5,?6,?7)",params![stored.scope.hub.to_string(),stored.scope.scope.as_str(),period,digest.as_str(),local.0.to_be_bytes().as_slice(),encode(&page.through)?,generation.0.to_be_bytes().as_slice()])?;
             Ok(ReplicaCommit{local,cursor:Some(page.through),next:None})
         }).await.map_err(|e|sql::error(e,self.blocks.worker().clone()))
     }
