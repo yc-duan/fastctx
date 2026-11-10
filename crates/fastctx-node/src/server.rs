@@ -1160,6 +1160,7 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
     }
     match call {
         call if crate::record_changes::handles(&call) => crate::record_changes::local(node, peer, call).await,
+        call if crate::record_writes::handles(&call) => crate::record_writes::local(node, peer, call).await,
         Call::Goal { resident, machine, account, request } => {
             users_voice(node, peer)?;
             crate::goals::calls::user(node, resident, machine, account, request)
@@ -2050,7 +2051,7 @@ async fn reopened(node: &Arc<Node>, machine: crate::reach::Written) -> Result<Re
 }
 
 /// This computer's own model collaboration belongs to no hub.
-fn own_settings(hub: Option<&fastctx_types::HubName>) -> Result<(), Failure> {
+pub(crate) fn own_settings(hub: Option<&fastctx_types::HubName>) -> Result<(), Failure> {
     match hub {
         Some(hub) => Err(Failure::not_run(format!(
             "name the account at {hub}; without one, the settings are this computer's own"
@@ -2061,7 +2062,7 @@ fn own_settings(hub: Option<&fastctx_types::HubName>) -> Result<(), Failure> {
 
 /// Only the user speaks as the user: words from a resident's session, or
 /// from a command one of them ran, are not the user's (`world.md`, 身份照实).
-fn users_voice(node: &Node, peer: &Peer) -> Result<(), Failure> {
+pub(crate) fn users_voice(node: &Node, peer: &Peer) -> Result<(), Failure> {
     match caller::of(node, peer)? {
         Caller::User => Ok(()),
         Caller::Page(page) => Err(Failure::new(format!("{page} runs this; only the user speaks as the user"))),

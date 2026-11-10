@@ -142,6 +142,7 @@ mod record_migration;
 mod record_ownership;
 mod record_payloads;
 mod record_value;
+mod record_writes;
 mod records;
 mod recovery;
 mod removed;
@@ -977,6 +978,7 @@ pub async fn run_prepared(
         timeline::register(&node);
         management::register(&node);
         record_changes::register(&node);
+        record_writes::register(&node);
         control::submission::register(&node);
         talk::submission::register(&node);
         goals::submission::register(&node);
