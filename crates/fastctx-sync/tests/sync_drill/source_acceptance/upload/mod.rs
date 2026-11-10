@@ -54,10 +54,15 @@ async fn promote(blocks: &SqliteBlocks, directory: &SqliteDirectory) -> Result<(
 }
 async fn drive(uploader: &SourceUploader, upstream: &Arc<UploadLoopback>) -> Result<()> {
     for _ in 0..128 {
-        match uploader.step(upstream.clone(), key()).await? {
-            SourceUploadProgress::Idle(state) if state.through == Sequence(2) => return Ok(()),
-            SourceUploadProgress::Stopped(state) => return Err(format!("upload stopped: {:?}", state.stopped).into()),
-            _ => {}
+        match uploader.step(upstream.clone(), key()).await {
+            Ok(SourceUploadProgress::Idle(state)) if state.through == Sequence(2) => return Ok(()),
+            Ok(SourceUploadProgress::Stopped(state)) => {
+                return Err(format!("upload stopped: {:?}", state.stopped).into());
+            }
+            Err(Error::Busy) => tokio::task::yield_now().await,
+            result => {
+                result?;
+            }
         }
     }
     Err("source upload did not settle".into())

@@ -9,6 +9,21 @@ mod format_upgrade;
 mod scheduler;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Windows gives the entry thread 1 MiB, which the combined debug fixture
+    // polls can exceed. Match the runtime workers' 2 MiB instead.
+    if cfg!(windows) {
+        std::thread::Builder::new()
+            .name("sync-drill".into())
+            .stack_size(2 * 1024 * 1024)
+            .spawn(|| run().map_err(|error| error.to_string()))?
+            .join()
+            .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+            .map_err(Into::into)
+    } else {
+        run()
+    }
+}
+fn run() -> Result<(), Box<dyn std::error::Error>> {
     let root = std::env::args_os().nth(1).map(std::path::PathBuf::from).ok_or("usage: sync_drill DISPOSABLE_ROOT")?;
     if std::env::args().nth(2).as_deref() == Some("replica-child") {
         return blocks::replica::child(&root, std::env::args().nth(3).ok_or("missing crash point")?.parse()?);
