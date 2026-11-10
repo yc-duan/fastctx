@@ -1,6 +1,10 @@
 //! Measures a directory edit without a listener or a network connection.
 
+mod audit;
+mod equivalence;
 mod exercise;
+mod forwarding;
+mod local_hub;
 mod verify;
 
 use std::path::{Path, PathBuf};
@@ -16,6 +20,9 @@ use crate::{Book, Store};
 
 /// Runs the opt-in local benchmark. Each size gets a fresh database under `--root`.
 pub fn run() -> anyhow::Result<()> {
+    if std::env::args().any(|arg| arg == "--equivalence") {
+        return equivalence::run();
+    }
     let mut args = std::env::args().skip(1);
     let (mut root, mut sizes, mut iterations) = (None, vec![1000usize, 10_000], 1000usize);
     while let Some(arg) = args.next() {

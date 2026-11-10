@@ -16,6 +16,8 @@
 //! to the same accounts see of a machine is the same, so it is worked out
 //! once for them all and kept once.
 
+#[cfg(feature = "change-drill")]
+pub(crate) mod change_probe;
 mod publishing;
 mod state;
 pub(crate) use state::Afoots;

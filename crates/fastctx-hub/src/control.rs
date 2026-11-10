@@ -131,6 +131,8 @@ impl Standing {
     }
 }
 
+#[cfg(feature = "change-drill")]
+pub(crate) mod change_probe;
 mod in_flight;
 
 pub(crate) use in_flight::InFlight;

@@ -100,7 +100,7 @@ fn made(
         // its machine acts for it once more.
         let expired = crate::assists::end_due(&mut store, Timestamp::now())
             .map_err(|error| format!("the hub could not end an assistance past its deadline: {error}"))?;
-        let reconcile = expired || !store.acting_clean;
+        let reconcile = expired || !store.acting_clean || store.moves.iter().any(crate::moving::Incoming::forwarding);
         let result = commit(&mut store, asker, account, change, |store, super_, change| {
             apply(hub, store, asker, account, super_, change, ended)
         });

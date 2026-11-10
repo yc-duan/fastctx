@@ -20,6 +20,8 @@
 //! how many pairs may be relayed at once is bounded, so one
 //! machine gone wrong cannot fill the hub with transfers.
 
+#[cfg(feature = "change-drill")]
+pub(crate) mod change_probe;
 mod lifetime;
 
 pub(crate) use lifetime::expire;

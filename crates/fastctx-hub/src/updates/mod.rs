@@ -9,6 +9,8 @@
 //! memory: each tells the rest again.
 
 mod announce;
+#[cfg(feature = "change-drill")]
+pub(crate) mod change_probe;
 mod due_batch;
 mod publishing;
 pub(crate) use publishing::start;
