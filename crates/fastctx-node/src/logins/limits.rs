@@ -122,7 +122,7 @@ pub(super) fn of(node: &Node, kept: &kept::Kept, dir: &Path) -> Fact<AgentLimits
 fn raw_of(kept: &kept::Kept, dir: &Path) -> Fact<AgentLimits> {
     let account = kept.codex.logins.iter().find(|login| crate::homes::same_dir(&login.dir, dir)).and_then(|login| {
         match &login.identified.who {
-            Fact::Known { value } => Some(crate::usage::accounts::key(value, &login.signed)),
+            Fact::Known { value } => Some(crate::usage::accounts::key(value, login.account_generation())),
             _ => None,
         }
     });
@@ -177,7 +177,10 @@ pub(crate) async fn read(node: &Arc<Node>, agent: &AgentName, dir: &Path) -> Res
             if let Some(login) = record.codex.logins.iter_mut().find(|login| crate::homes::same_dir(&login.dir, &home))
             {
                 login.identified = asked.identified.clone();
-                login.signed = Some(super::sign_in::now(&context, "codex", &home));
+                login.sign(
+                    super::sign_in::now(&context, "codex", &home),
+                    super::sign_in::credential(&context, "codex", &home),
+                );
             }
         })?;
         keep(&keeping, super::identify::limits_read(&home, at, answer, &asked.identified.who))

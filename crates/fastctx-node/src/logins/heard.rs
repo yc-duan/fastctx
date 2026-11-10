@@ -48,6 +48,7 @@ fn keep(node: &Node, report: SaidReport) -> Result<(), String> {
     };
     let asked_file = FileStamp::of(&launcher.path);
     let signed = super::sign_in::now(&context, "codex", &home);
+    let credential = super::sign_in::credential(&context, "codex", &home);
     let models = match said.models {
         Fact::Known { value } => Some(value),
         _ => None,
@@ -58,7 +59,7 @@ fn keep(node: &Node, report: SaidReport) -> Result<(), String> {
             Some(login) => {
                 if at >= login.identified.at && matches!(said.who, Fact::Known { .. }) {
                     login.identified = Identified { at, who: said.who };
-                    login.signed = Some(signed);
+                    login.sign(signed, credential);
                 }
                 if let Some(models) = models {
                     login.models = models;
@@ -66,15 +67,21 @@ fn keep(node: &Node, report: SaidReport) -> Result<(), String> {
                 login.launcher = Some(launcher);
                 login.asked_file = asked_file;
             }
-            None => logins.push(KeptLogin {
-                dir: home,
-                found,
-                identified: Identified { at, who: said.who },
-                launcher: Some(launcher),
-                asked_file,
-                models: models.unwrap_or_default(),
-                signed: Some(signed),
-            }),
+            None => {
+                let mut login = KeptLogin {
+                    dir: home,
+                    found,
+                    identified: Identified { at, who: said.who },
+                    launcher: Some(launcher),
+                    asked_file,
+                    models: models.unwrap_or_default(),
+                    signed: None,
+                    credential: None,
+                    account_signed: None,
+                };
+                login.sign(signed, credential);
+                logins.push(login);
+            }
         }
     })
     .map_err(|error| format!("keeping the agents' logins: {error}"))

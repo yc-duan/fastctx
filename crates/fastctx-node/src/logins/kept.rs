@@ -3,7 +3,8 @@
 //! with them, and each chosen folder's last search; and what the user chose
 //! in `<world>/agent-homes.json`, the logins taken up and the folders
 //! searched (`world-agent-logins.md`). Nothing in either is a credential:
-//! who is logged in, as the agents said it, and paths.
+//! who is logged in, as the agents said it, paths, and a digest that tells
+//! one sign-in from another without telling what it is.
 
 use std::collections::BTreeMap;
 use std::io;
@@ -118,9 +119,32 @@ pub(super) struct KeptLogin {
     /// (`super::sign_in`); none in a record kept before they were.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signed: Option<Vec<Option<FileStamp>>>,
+    /// What tells this sign-in from another (`super::sign_in::credential`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credential: Option<String>,
+    /// How the sign-in files stood when this sign-in was first asked. An
+    /// account no one is named for is known by it (`usage::accounts::key`):
+    /// it holds while the sign-in does, however its files are written again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account_signed: Option<Vec<Option<FileStamp>>>,
 }
 
 impl KeptLogin {
+    /// What an unnamed account of this login is known by; in a record kept
+    /// before sign-ins were told apart, how its files stood when last asked.
+    pub fn account_generation(&self) -> &Option<Vec<Option<FileStamp>>> {
+        if self.account_signed.is_some() { &self.account_signed } else { &self.signed }
+    }
+
+    /// Keeps how the sign-in files stand now. The same credential, or files
+    /// that did not change, are the same sign-in, and its account stays.
+    pub fn sign(&mut self, signed: Vec<Option<FileStamp>>, credential: Option<String>) {
+        let same = self.signed.as_ref() == Some(&signed) || (credential.is_some() && self.credential == credential);
+        self.account_signed = if same { self.account_generation().clone() } else { Some(signed.clone()) };
+        self.signed = Some(signed);
+        self.credential = credential;
+    }
+
     /// The login `dir`, found as `found`, as asking it gave while its
     /// sign-in files stood as `signed`. What asking did not learn stays as
     /// `before`, the login as last kept, had it: who is logged in, its
@@ -130,6 +154,7 @@ impl KeptLogin {
         found: Found,
         asked: super::identify::Asked,
         signed: Vec<Option<FileStamp>>,
+        credential: Option<String>,
         before: Option<&KeptLogin>,
     ) -> Self {
         let mut launcher = asked.launcher;
@@ -147,15 +172,19 @@ impl KeptLogin {
             Some(before) if !known(&asked.identified) && known(&before.identified) => before.identified.clone(),
             _ => asked.identified,
         };
-        Self {
+        let mut login = Self {
             dir,
             found,
             identified,
             launcher,
             asked_file,
             models: asked.models.or_else(|| before.map(|before| before.models.clone())).unwrap_or_default(),
-            signed: Some(signed),
-        }
+            signed: before.and_then(|before| before.signed.clone()),
+            credential: before.and_then(|before| before.credential.clone()),
+            account_signed: before.and_then(|before| before.account_signed.clone()),
+        };
+        login.sign(signed, credential);
+        login
     }
 }
 
@@ -222,7 +251,7 @@ pub(super) fn write(node: &Node, kept: &Kept) -> io::Result<()> {
                     node,
                     agent,
                     &login.dir,
-                    crate::usage::accounts::key(value, &login.signed),
+                    crate::usage::accounts::key(value, login.account_generation()),
                     login.identified.at,
                 )?;
             }
@@ -240,7 +269,7 @@ pub(super) fn write(node: &Node, kept: &Kept) -> io::Result<()> {
                     node,
                     agent,
                     &login.dir,
-                    crate::usage::accounts::key(value, &login.signed),
+                    crate::usage::accounts::key(value, login.account_generation()),
                     login.identified.at,
                 )?;
             }

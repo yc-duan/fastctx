@@ -428,7 +428,7 @@ pub(crate) async fn take_up(node: &Arc<Node>, agent: AgentName, dir: PathBuf) ->
     if !dir.is_absolute() {
         return Err(Failure::not_run(format!("{} is not an absolute path", dir.display())));
     }
-    let (found, default, programs, signed, env) = {
+    let (found, default, programs, signed, credential, env) = {
         let (node, dir) = (node.clone(), dir.clone());
         fastctx_platform::task::spawn_blocking(move || {
             if !fastctx_platform::disk::is_dir(&dir) {
@@ -450,7 +450,8 @@ pub(crate) async fn take_up(node: &Arc<Node>, agent: AgentName, dir: PathBuf) ->
                 Found::Added
             };
             let signed = sign_in::now(&context, agent, &dir);
-            Ok::<_, Failure>((found, default, kept.of(agent).programs.clone(), signed, context.env))
+            let credential = sign_in::credential(&context, agent, &dir);
+            Ok::<_, Failure>((found, default, kept.of(agent).programs.clone(), signed, credential, context.env))
         })
         .await
         .map_err(|error| Failure::new(error.to_string()))??
@@ -466,7 +467,7 @@ pub(crate) async fn take_up(node: &Arc<Node>, agent: AgentName, dir: PathBuf) ->
                     .position(|known| crate::homes::same_dir(&known.dir, &dir))
                     .map(|at| logins.remove(at));
                 logins.retain(|known| !crate::homes::same_dir(&known.dir, &dir));
-                logins.push(kept::KeptLogin::asked(dir, found, asked, signed, before.as_ref()));
+                logins.push(kept::KeptLogin::asked(dir, found, asked, signed, credential, before.as_ref()));
             })
             .map_err(|error| Failure::new(format!("keeping the login: {error}")))
         })

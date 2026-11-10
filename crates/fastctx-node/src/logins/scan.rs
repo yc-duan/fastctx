@@ -131,9 +131,10 @@ async fn usual(node: &Arc<Node>, started_at: Timestamp) -> Result<(), Failure> {
             let env = context.env.clone();
             let default = crate::homes::same_dir(&dir, context.default_of(agent));
             let signed = super::sign_in::now(&context, agent, &dir);
+            let credential = super::sign_in::credential(&context, agent, &dir);
             asking.push(fastctx_platform::task::spawn(async move {
                 let asked = identify::asked(&node, agent, &dir, default, agent_programs, env).await;
-                (agent, dir, found, asked, signed)
+                (agent, dir, found, asked, signed, credential)
             }));
         }
     }
@@ -147,10 +148,10 @@ async fn usual(node: &Arc<Node>, started_at: Timestamp) -> Result<(), Failure> {
             kept.claude.programs = programs.claude;
             let codex = std::mem::take(&mut kept.codex.logins);
             let claude = std::mem::take(&mut kept.claude.logins);
-            for (agent, dir, found, asked, signed) in answers {
+            for (agent, dir, found, asked, signed, credential) in answers {
                 let before = if agent == "codex" { &codex } else { &claude };
                 let before = before.iter().find(|login| crate::homes::same_dir(&login.dir, &dir));
-                kept.of_mut(agent).logins.push(KeptLogin::asked(dir, found, asked, signed, before));
+                kept.of_mut(agent).logins.push(KeptLogin::asked(dir, found, asked, signed, credential, before));
             }
             for (agent, logins) in others {
                 kept.of_mut(agent).logins = logins;

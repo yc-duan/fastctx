@@ -94,6 +94,8 @@ fn asked(context: &Context, dir: PathBuf, found: Found, agent: &Agent) -> KeptLo
         asked_file: None,
         models: Vec::new(),
         signed: None,
+        credential: None,
+        account_signed: None,
     }
 }
 
