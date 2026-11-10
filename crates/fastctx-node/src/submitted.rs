@@ -33,7 +33,7 @@ use std::time::Duration;
 
 /// How long an operation's outcome is kept after it settles, for a caller
 /// that asks again late: a device that was offline, an answer lost on the way.
-const KEPT: Duration = Duration::from_secs(24 * 60 * 60);
+const SETTLED_FOR: Duration = Duration::from_secs(24 * 60 * 60);
 /// Tries a job of a family whose work may be done again is given before its
 /// operation fails.
 const TRIES: u32 = 3;
@@ -41,6 +41,12 @@ const TRIES: u32 = 3;
 const ASKS_AGAIN: Duration = Duration::from_secs(1);
 /// Bytes a transaction here retains beyond what was asked.
 const WRITE_BYTES: usize = 1024;
+/// What was asked is a job's payload up to this size; a larger one is kept
+/// as an object, which the payload names.
+const INLINE_BYTES: usize = 48 * 1024;
+/// The first byte of a payload that names the object holding what was
+/// asked; what was asked itself is JSON, which never begins so.
+const KEPT: u8 = b'@';
 
 /// One family of submitting calls and how its work is run.
 #[derive(Clone, Copy, Debug)]
@@ -103,13 +109,6 @@ pub(crate) async fn submit<C: Serialize, T: DeserializeOwned>(
     let recording = Recording { access: crate::record_access::current(), asked };
     let payload =
         serde_json::to_vec(&recording).map_err(|error| Failure::not_run(format!("recording {kind}: {error}")))?;
-    if payload.len() > fastctx_jobs::PAYLOAD_BYTES {
-        return Err(Failure::not_run(format!(
-            "{kind} takes at most {} bytes, and this is {}",
-            fastctx_jobs::PAYLOAD_BYTES,
-            payload.len()
-        )));
-    }
     let caller = fastctx_net::submission::current();
     let id = match &caller {
         Some(submission) => named(&submission.name, &payload),
@@ -120,6 +119,7 @@ pub(crate) async fn submit<C: Serialize, T: DeserializeOwned>(
             .collect(),
     };
     let operation = Operation { kind, unit: unit.to_string(), id: id.clone() };
+    let payload = if payload.len() > INLINE_BYTES { keep(node, kind, payload).await? } else { payload };
     let job = Job { kind, key: id, unit: unit.to_string(), payload };
     let accepted = operation.clone();
     let known = node
@@ -168,6 +168,65 @@ pub(crate) async fn submit<C: Serialize, T: DeserializeOwned>(
     }
 }
 
+/// The payload that names the object holding what was asked.
+fn naming(hash: &[u8; 32]) -> Vec<u8> {
+    let mut payload = vec![KEPT];
+    payload.extend(hash.iter().flat_map(|byte| format!("{byte:02x}").into_bytes()));
+    payload
+}
+
+/// The object a payload names: none when the payload is what was asked
+/// itself, and none within when it names an object badly.
+fn named_by(payload: &[u8]) -> Option<Option<[u8; 32]>> {
+    let (&KEPT, name) = payload.split_first()? else { return None };
+    let mut hash = [0u8; 32];
+    let read = name.len() == 64
+        && name.chunks(2).zip(hash.iter_mut()).all(|(pair, byte)| {
+            let read = std::str::from_utf8(pair).ok().and_then(|pair| u8::from_str_radix(pair, 16).ok());
+            read.map(|read| *byte = read).is_some()
+        });
+    Some(read.then_some(hash))
+}
+
+/// Keeps what was asked as an object and gives the payload that names it.
+/// The object is put before the job that reads it is recorded, and is
+/// reclaimed a day after (`crate::content_upkeep`): work asked for is done
+/// within the day.
+async fn keep(node: &Node, kind: &'static str, asked: Vec<u8>) -> Result<Vec<u8>, Failure> {
+    let content = node.content()?.clone();
+    let kept = fastctx_platform::task::spawn_blocking(move || content.objects().put(&asked))
+        .await
+        .map_err(|error| Failure::not_run(format!("recording {kind}: {error}")))?
+        .map_err(|error| Failure::not_run(format!("recording {kind}: {error}")))?;
+    Ok(naming(&kept.hash))
+}
+
+/// What was asked, as a job's payload holds or names it; none when the
+/// object that held it is no longer kept.
+async fn asked_of(node: &Node, payload: &[u8]) -> Result<Option<Vec<u8>>, String> {
+    let hash = match named_by(payload) {
+        None => return Ok(Some(payload.to_vec())),
+        Some(None) => return Err("the payload names no object".into()),
+        Some(Some(hash)) => hash,
+    };
+    let content = node.content().map_err(|failure| failure.message)?.clone();
+    fastctx_platform::task::spawn_blocking(move || -> Result<Option<Vec<u8>>, String> {
+        let objects = content.objects();
+        let Some(size) = objects.size(&hash).map_err(|error| error.to_string())? else { return Ok(None) };
+        let mut asked = Vec::with_capacity(size as usize);
+        while (asked.len() as u64) < size {
+            match objects.read(&hash, asked.len() as u64, fastctx_content::READ_BYTES) {
+                Ok(Some(piece)) if !piece.is_empty() => asked.extend_from_slice(&piece),
+                Ok(_) => return Ok(None),
+                Err(error) => return Err(error.to_string()),
+            }
+        }
+        Ok(Some(asked))
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
 /// Names what does the work of a family's calls, before the node's jobs
 /// start. `doing` is given what `submit` was asked with.
 pub(crate) fn register<C, T, F, Doing>(node: &Arc<Node>, family: Family, doing: F)
@@ -192,7 +251,7 @@ where
             let settled = operation.clone();
             let bytes = WRITE_BYTES + taken.payload.len();
             let written =
-                node.database.write(bytes, move |db| fastctx_jobs::settle(db, &settled, &standing, KEPT)).await;
+                node.database.write(bytes, move |db| fastctx_jobs::settle(db, &settled, &standing, SETTLED_FOR)).await;
             match written {
                 Ok(()) => {
                     node.durable_jobs.told(&operation);
@@ -226,11 +285,16 @@ where
             node.machine()
         ))));
     }
-    let Recorded { access, asked } = match serde_json::from_slice::<Recorded<C>>(&taken.payload) {
+    let unreadable =
+        |why: String| Some(failed(&Failure::not_run(format!("{kind} as it was recorded cannot be read: {why}"))));
+    let recorded = match asked_of(node, &taken.payload).await {
+        Ok(Some(recorded)) => recorded,
+        Ok(None) => return unreadable("what was asked is no longer kept".into()),
+        Err(why) => return unreadable(why),
+    };
+    let Recorded { access, asked } = match serde_json::from_slice::<Recorded<C>>(&recorded) {
         Ok(recorded) => recorded,
-        Err(error) => {
-            return Some(failed(&Failure::not_run(format!("{kind} as it was recorded cannot be read: {error}"))));
-        }
+        Err(error) => return unreadable(error.to_string()),
     };
     // What the work asks of other machines is asked under this operation's
     // name, so doing the work again asks them the same thing again. It is
@@ -267,6 +331,16 @@ mod tests {
         assert_ne!(named("n", b"asked"), named("m", b"asked"));
         assert_ne!(named("ab", b"c"), named("a", b"bc"));
         assert_eq!(named("n", b"asked").len(), 32);
+    }
+
+    #[test]
+    fn a_payload_is_what_was_asked_or_names_its_object() {
+        let hash: [u8; 32] = std::array::from_fn(|at| at as u8 * 7);
+        assert_eq!(named_by(&naming(&hash)), Some(Some(hash)));
+        assert_eq!(named_by(br#"{"asked":1}"#), None);
+        assert_eq!(named_by(b""), None);
+        assert_eq!(named_by(b"@short"), Some(None));
+        assert_eq!(named_by(&[&b"@"[..], &[b'g'; 64][..]].concat()), Some(None));
     }
 
     #[test]
