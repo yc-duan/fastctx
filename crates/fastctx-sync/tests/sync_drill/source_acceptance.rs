@@ -3,6 +3,8 @@
 use super::*;
 #[path = "source_acceptance/fixture.rs"]
 mod fixture;
+#[path = "source_acceptance/follow.rs"]
+pub(crate) mod follow;
 #[path = "source_pages.rs"]
 mod source_pages;
 use fastctx_sync::{
@@ -318,6 +320,7 @@ async fn answered(server: &fastctx_sync::authority::Service, batch: &SourceBatch
     }
 }
 pub(super) async fn run(root: &Path) -> Result<()> {
+    Box::pin(follow::run(root)).await?;
     let dir = root.join("source-acceptance");
     let hub_dir = dir.join("hub");
     let node_dir = dir.join("node");

@@ -13,6 +13,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if std::env::args().nth(2).as_deref() == Some("replica-child") {
         return blocks::replica::child(&root, std::env::args().nth(3).ok_or("missing crash point")?.parse()?);
     }
+    if std::env::args().nth(2).as_deref() == Some("follow-child") {
+        return blocks::source_acceptance::follow::child(&root);
+    }
     if root.exists() {
         return Err("the drill root must not exist".into());
     }

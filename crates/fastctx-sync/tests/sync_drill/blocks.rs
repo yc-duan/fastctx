@@ -16,7 +16,7 @@ pub(crate) mod replica;
 #[path = "root_usage.rs"]
 mod root_usage;
 #[path = "source_acceptance.rs"]
-mod source_acceptance;
+pub(crate) mod source_acceptance;
 #[path = "source_confirmation.rs"]
 mod source_confirmation;
 #[path = "source_ingest.rs"]
