@@ -1013,6 +1013,7 @@ pub async fn run_prepared(
             content_upkeep::register(&node);
             outbox::register(&node);
             control_queue::register(&node);
+            lifecycle::retry::register(&node);
         })
         .await
         {
