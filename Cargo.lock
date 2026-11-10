@@ -1452,6 +1452,7 @@ dependencies = [
  "fastctx-client",
  "fastctx-hosts",
  "fastctx-install",
+ "fastctx-jobs",
  "fastctx-net",
  "fastctx-platform",
  "fastctx-ripgrep",

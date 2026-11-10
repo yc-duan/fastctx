@@ -58,6 +58,11 @@ impl Shelf {
         let observed = super::format::prepare(dir)?;
         let database =
             Database::open_guarded(&dir.join(FILE), SCHEMA, fastctx_sync::store::boundary::guard, |connection| {
+                fastctx_storage::versions::apply(
+                    connection,
+                    "hub.jobs",
+                    &[fastctx_storage::versions::Migration { version: 1, sql: fastctx_jobs::SCHEMA }],
+                )?;
                 super::migrate::import(connection, dir)?;
                 super::format::initialize(connection, &observed)
             })

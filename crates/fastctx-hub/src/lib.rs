@@ -79,6 +79,8 @@ mod views;
 mod watchdog;
 mod workbench;
 mod worked;
+mod workers;
+pub use workers::ROLES as WORKER_ROLES;
 
 use crate::locks::{Guard as MutexGuard, Mutex};
 use fastctx_platform::doing::Rank;
@@ -249,6 +251,9 @@ pub fn arriving(dir: &Path) -> io::Result<Option<(fastctx_net::ids::HubId, Strin
 
 /// What every connection shares.
 pub(crate) struct Hub {
+    /// Durable service work submitted with its triggering state change.
+    durable_jobs: Arc<fastctx_jobs::Jobs>,
+    workers: workers::Pools,
     releases: Arc<releases::Releases>,
     catalog: catalog::Catalog,
     post: Arc<post::Post>,
@@ -811,6 +816,8 @@ async fn serve_installed(dir: &Path, leave: Leave, installation: FoundationInsta
 /// What the hub keeps in its directory, opened for serving, and what opening
 /// it found to tell once the hub listens.
 struct Opened {
+    durable_jobs: Arc<fastctx_jobs::Jobs>,
+    workers: workers::Pools,
     catalog: catalog::Catalog,
     post: Arc<post::Post>,
     troubles: troubles::Troubles,
@@ -834,6 +841,8 @@ struct Opened {
 /// written and set up, as only a blocking thread may.
 fn open(dir: &Path, log: Arc<log::Log>, installation: FoundationInstallation) -> anyhow::Result<Opened> {
     let mut store = Store::open_logged(dir, Some(log.clone()))?;
+    let durable_jobs = fastctx_jobs::Jobs::new(store.shelf.0.clone());
+    let workers = workers::Pools::new(std::env::current_exe()?);
     let foundation =
         foundation::Foundation::open(dir, store.shelf.0.clone(), store.hub.id.clone(), log.clone(), installation)
             .inspect_err(|error| log.line(format_args!("the data foundation did not open: {error:#}")))
@@ -869,6 +878,8 @@ fn open(dir: &Path, log: Arc<log::Log>, installation: FoundationInstallation) ->
     let hub = format!("hub {} ({}) {}", store.hub.name, store.hub.id, env!("CARGO_PKG_VERSION"));
     let listen = store.hub.listen;
     Ok(Opened {
+        durable_jobs,
+        workers,
         catalog: catalog::Catalog::new(store)?,
         post,
         troubles,
@@ -902,6 +913,8 @@ async fn serving(
         fastctx_platform::task::spawn_blocking(move || open(&dir, opening_log, installation)).await??
     };
     let Opened {
+        durable_jobs,
+        workers,
         catalog,
         post,
         troubles,
@@ -925,6 +938,8 @@ async fn serving(
     }
     let (switched, mut switch) = tokio::sync::oneshot::channel();
     let hub = Arc::new(Hub {
+        durable_jobs,
+        workers,
         releases: Arc::new(releases),
         catalog,
         post,
@@ -991,6 +1006,12 @@ async fn serving(
     afoot::start(&hub);
     if driven {
         moving::out::drive(&hub);
+    }
+    // Subsystems register their job kinds before the queue starts and
+    // requests are heard. A queue that does not start is told and left:
+    // the hub serves without what would have run on it.
+    if let Err(error) = hub.durable_jobs.start().await {
+        hub.log.line(format_args!("starting the hub's durable jobs: {error}"));
     }
     let settled = dissolve::settled(&hub);
     tokio::pin!(settled);

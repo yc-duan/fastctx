@@ -6,7 +6,7 @@ use std::io;
 use fastctx_platform::worker::{self, Role};
 
 const BUILTIN: &[Role] = &[Role { name: "echo", serve: echo }];
-const ROLES: &[&[Role]] = &[BUILTIN, fastctx_node::WORKER_ROLES];
+const ROLES: &[&[Role]] = &[BUILTIN, fastctx_node::WORKER_ROLES, fastctx_hub::WORKER_ROLES];
 
 fn echo(memory: u64) -> io::Result<()> {
     worker::serve(memory, |request| Ok(request.to_vec()))

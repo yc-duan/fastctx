@@ -36,6 +36,7 @@ harness = false
 [dependencies]
 arc-swap = "1"
 anyhow.workspace = true
+fastctx-jobs = { path = "../fastctx-jobs" }
 fastctx-net = { path = "../fastctx-net" }
 fastctx-platform = { path = "../fastctx-platform" }
 fastctx-storage = { path = "../fastctx-storage" }
