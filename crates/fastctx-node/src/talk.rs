@@ -29,6 +29,7 @@ use fastctx_types::session::{SessionEvent, Watched};
 use fastctx_types::{Address, AgentName, MachineName, ResidentId, TownName};
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
+mod forwarding;
 pub(crate) mod multiplex;
 
 use crate::Node;
@@ -146,13 +147,13 @@ pub async fn watch(
                             if !crate::goals::visible(&node, crate::admission::seen::Looker::Here(&Acting::Here), &resident, &event) { continue; }
                             let marked = Arc::unwrap_or_clone(event);
                             let Some(event) = live(marked.event, slim.as_ref()) else { continue };
-                            if sender.send(Ok(Watched::Live { event, mark: marked.mark })).is_err() { return }
+                            if forwarding::send(&sender, Watched::Live { event, mark: marked.mark }).await.is_err() { return }
                         }
                         Ok(None) => return,
                         Err(_) => { sender.lag(); return; },
                     },
                     now = told.changed(&node) => {
-                        if let Some(now) = now && sender.send(Ok(now)).is_err() { return }
+                        if let Some(now) = now && forwarding::send(&sender, now).await.is_err() { return }
                     }
                     () = sender.closed() => return,
                 }
@@ -196,13 +197,7 @@ pub async fn watch(
             let piece = tokio::select! { piece = watching.next() => piece, () = sender.closed() => return };
             match piece {
                 Ok(Some(piece)) => {
-                    let history = !matches!(piece, Watched::Live { .. } | Watched::Now { .. });
-                    let sent = if history {
-                        sender.send_wait(Ok(piece), std::time::Duration::from_secs(30)).await
-                    } else {
-                        sender.send(Ok(piece))
-                    };
-                    if sent.is_err() {
+                    if forwarding::send(&sender, piece).await.is_err() {
                         return;
                     }
                 }

@@ -57,8 +57,15 @@ pub(super) async fn run(
                         return Ok(());
                     }
                 }
-            } else if sender.send(Ok((piece.n, piece.watched))).is_err() {
-                return Ok(());
+            } else {
+                let sent = if crate::watch_queue::replaceable(&piece.watched) {
+                    sender.send_wait(Ok((piece.n, piece.watched)), std::time::Duration::from_secs(30)).await
+                } else {
+                    sender.send(Ok((piece.n, piece.watched)))
+                };
+                if sent.is_err() {
+                    return Ok(());
+                }
             }
         }
         return Ok(());
