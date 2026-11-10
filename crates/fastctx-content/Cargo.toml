@@ -1,0 +1,22 @@
+[package]
+name = "fastctx-content"
+description = "Scope logs, the index of their items, and how their readers are told of change"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[[test]]
+name = "content_drill"
+harness = false
+
+[dependencies]
+fastctx-storage = { path = "../fastctx-storage" }
+sha2 = "0.10"
+tokio = { workspace = true, features = ["sync", "time"] }
+zstd = { version = "0.14", default-features = false }
+
+[lints]
+workspace = true
