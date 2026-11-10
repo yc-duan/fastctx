@@ -725,6 +725,17 @@ async fn main() -> Result<()> {
         pause().await;
     }
     anyhow::ensure!(reachable, "the assisting host did not reconnect");
+    // The hub restarted above; a turn begun before the focused computer is
+    // back has no working computer to place its files on.
+    let mut focused_back = false;
+    for _ in 0..240 {
+        if online_now(&alice_pc, "alice-two").await {
+            focused_back = true;
+            break;
+        }
+        pause().await;
+    }
+    anyhow::ensure!(focused_back, "the focused computer did not reconnect");
     wa.manage(sa.to.resident.clone(), Some("host".parse()?), Management::Focus { focus: focused("alice-two") }).await?;
     let before = last_turn(&host, &a);
     wa.talk(sa.to.resident.clone(), Some("host".parse()?), "ALICE_NEW_PLACE".into()).await?;
