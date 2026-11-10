@@ -657,6 +657,7 @@ async fn remove_places(node: &Arc<Node>, measured: &Measured) -> Result<(u64, u6
             if place.parent() == Some(node.world.conversations().as_path()) {
                 let directory = fastctx_types::layout::ConversationDir::at(place);
                 crate::conversation_store::begin(&directory)?;
+                crate::content_upkeep::forgetting(&node);
                 let (_, conversation) = crate::record_database::get(&directory)?;
                 database_bytes +=
                     crate::conversation_store::purge(&node.database, &conversation).map_err(std::io::Error::other)?;
