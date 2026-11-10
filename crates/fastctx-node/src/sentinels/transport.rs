@@ -86,7 +86,7 @@ impl Transport {
             return Err("this account may not use the sentinel home".into());
         }
         if view.is_me(home) {
-            return home_call_for(&self.0, scope, &self.0.machine(), &request).await;
+            return home_call_for(&self.0, scope, &self.0.machine(), &request).await.map_err(|failure| failure.message);
         }
         if !view.member(home).is_some_and(|member| member.online) {
             return Err("the sentinel home is offline".into());
@@ -101,18 +101,42 @@ impl Transport {
             _ => return Err("upgrade the sentinel home to use sentinels".into()),
         }
         let call = RemoteCall::SentinelHome { request };
-        match link
-            .call(home, &scope.account, call.purpose(), call)
-            .await
-            .map_err(|e| e.to_string())?
-            .map_err(|e| e.message)?
-        {
-            RemoteReply::SentinelHome(reply) => Ok(*reply),
-            _ => Err("the sentinel home answered another kind of call".into()),
+        loop {
+            match link.call(home, &scope.account, call.purpose(), call.clone()).await.map_err(|e| e.to_string())? {
+                Ok(RemoteReply::SentinelHome(reply)) => return Ok(*reply),
+                Ok(_) => return Err("the sentinel home answered another kind of call".into()),
+                // Named submissions retain the same operation on each ask; the lifecycle caller bounds this wait.
+                Err(failure) if failure.is_accepted() => tokio::time::sleep(std::time::Duration::from_secs(1)).await,
+                Err(failure) => return Err(failure.message),
+            }
         }
     }
 }
 pub(crate) async fn home_call_for(
+    node: &Arc<Node>,
+    scope: &HubAccount,
+    from: &fastctx_types::MachineName,
+    request: &HomeRequest,
+) -> Result<HomeReply, fastctx_types::ipc::Failure> {
+    if let HomeRequest::Judge { request } = request
+        && (request.request_id.len() > 256 || request.request_id.trim().is_empty())
+    {
+        return Ok(HomeReply::Judged {
+            judgment: fastctx_types::sentinel::Judgment::NotJudged { reason: "invalid goal review ID".into() },
+        });
+    }
+    let changes = matches!(
+        request,
+        HomeRequest::Begin { .. } | HomeRequest::Judge { .. } | HomeRequest::Withdraw { .. }
+    ) || matches!(request, HomeRequest::Conversation { request, .. } if matches!(request.as_ref(), HomeRequest::Withdraw { .. }));
+    if changes {
+        node.sentinels.records()?;
+        return super::submission::home(node, scope, from, request).await;
+    }
+    home_work(node, scope, from, request).await.map_err(fastctx_types::ipc::Failure::new)
+}
+
+pub(super) async fn home_work(
     node: &Arc<Node>,
     scope: &HubAccount,
     from: &fastctx_types::MachineName,

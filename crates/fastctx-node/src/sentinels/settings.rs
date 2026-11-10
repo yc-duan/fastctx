@@ -17,6 +17,27 @@ pub(crate) async fn settings(
     account: &AccountName,
     change: Option<WriteSettings>,
 ) -> Result<SettingsReply, Failure> {
+    let Some(change) = change else { return work(node, link, account, None).await };
+    node.sentinels.records()?;
+    fastctx_types::sentinel_settings::validate(&change.settings).map_err(Failure::not_run)?;
+    if let Some(home) = &change.settings.home {
+        let view = crate::authorization::current_view(link)?;
+        if !view.member(home).is_some_and(|member| member.is_machine())
+            || !view.call_rights(&view.me, account, home).hands
+        {
+            return Err(Failure::refused("the sentinel home is not a machine this account may use"));
+        }
+    }
+    let scope = HubAccount { hub: link.membership().id.clone(), account: account.clone() };
+    super::submission::settings(node, scope, change).await
+}
+
+pub(super) async fn work(
+    node: &Arc<Node>,
+    link: &Arc<Link>,
+    account: &AccountName,
+    change: Option<WriteSettings>,
+) -> Result<SettingsReply, Failure> {
     let scope = HubAccount { hub: link.membership().id.clone(), account: account.clone() };
     let records = node.sentinels.records()?;
     let (version, settings) = if let Some(change) = change {

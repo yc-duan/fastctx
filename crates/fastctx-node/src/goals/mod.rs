@@ -27,6 +27,7 @@ mod wiring;
 pub(crate) use wiring::connected;
 pub(crate) mod scope;
 mod state;
+pub(crate) mod submission;
 pub(crate) mod waiting;
 pub(crate) mod watch;
 mod watching;

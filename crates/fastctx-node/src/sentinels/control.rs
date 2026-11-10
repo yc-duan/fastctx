@@ -118,6 +118,35 @@ pub(crate) async fn control(
     account: &AccountName,
     request: Request,
 ) -> Result<Reply, Failure> {
+    let changes = matches!(request, Request::Create { .. } | Request::Stop { .. })
+        || matches!(&request, Request::Conversation { request, .. } if matches!(request.as_ref(), Request::Stop { .. }));
+    if !changes {
+        return work(node, caller, link, account, request).await;
+    }
+    node.sentinels.records()?;
+    if let Request::Create { request } = &request {
+        let Caller::Resident(owner) = caller else {
+            return Err(Failure::refused(words::NEED_CONVERSATION));
+        };
+        if !node.is_me(&owner.machine) {
+            return Err(Failure::refused(words::ON_ITS_MACHINE));
+        }
+        if node.residents.about(&owner.resident).is_none_or(|(about, _)| !about.world_managed()) {
+            return Err(Failure::refused(crate::speech::OWN_SESSION));
+        }
+        request.validate(jiff::Timestamp::now().as_millisecond()).map_err(Failure::not_run)?;
+    }
+    let scope = HubAccount { hub: link.membership().id.clone(), account: account.clone() };
+    super::submission::control(node, caller, scope, request).await
+}
+
+pub(super) async fn work(
+    node: &Arc<Node>,
+    caller: &Caller,
+    link: &Arc<Link>,
+    account: &AccountName,
+    request: Request,
+) -> Result<Reply, Failure> {
     let scope = HubAccount { hub: link.membership().id.clone(), account: account.clone() };
     if matches!(request, Request::Create { .. } | Request::Help)
         && !crate::account_features::read(node, &scope).await?.sentinels

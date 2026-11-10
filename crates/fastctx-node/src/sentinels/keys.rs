@@ -89,6 +89,20 @@ pub(crate) async fn keep_here(
     key: KeyName,
     value: Option<Secret>,
 ) -> Result<KeyStatus, Failure> {
+    if value.is_none() {
+        node.sentinels.records()?;
+        return super::submission::delete_key(node, scope, key, false).await;
+    }
+    // Submitted payloads are durable; credential values must stay solely in their private key file (2026-11-10).
+    keep_work(node, scope, key, value).await
+}
+
+pub(super) async fn keep_work(
+    node: &Arc<Node>,
+    scope: &HubAccount,
+    key: KeyName,
+    value: Option<Secret>,
+) -> Result<KeyStatus, Failure> {
     let _held = node.sentinels.keys.lock().await;
     let settings = settings(node, scope).await?;
     if !home_is_here(node, scope, &settings)? {
@@ -112,11 +126,27 @@ pub(crate) async fn set(
     key: KeyName,
     value: Option<Secret>,
 ) -> Result<KeyStatus, Failure> {
+    if value.is_none() {
+        node.sentinels.records()?;
+        let scope = HubAccount { hub: link.membership().id.clone(), account: account.clone() };
+        return super::submission::delete_key(node, &scope, key, true).await;
+    }
+    set_work(node, link, account, key, value).await
+}
+
+pub(super) async fn set_work(
+    node: &Arc<Node>,
+    link: &Arc<Link>,
+    account: &AccountName,
+    key: KeyName,
+    value: Option<Secret>,
+) -> Result<KeyStatus, Failure> {
     let scope = HubAccount { hub: link.membership().id.clone(), account: account.clone() };
     let home = settings(node, &scope).await?.home.ok_or_else(|| Failure::refused("choose the sentinel home first"))?;
     let view = crate::authorization::current_view(link)?;
     if view.is_me(&home) {
-        return keep_here(node, &scope, key, value).await;
+        // Avoid resubmitting local work to the same family and unit (2026-11-10).
+        return keep_work(node, &scope, key, value).await;
     }
     if !view.call_rights(&view.me, account, &home).hands {
         return Err(Failure::refused("this account may not use the sentinel home"));
@@ -125,9 +155,17 @@ pub(crate) async fn set(
         return Err(Failure::not_run("the sentinel home is offline"));
     }
     let call = RemoteCall::SentinelKey { key, value };
-    match link.call(&home, account, call.purpose(), call).await.map_err(|error| Failure::new(error.to_string()))?? {
-        RemoteReply::SentinelKeys(status) => Ok(status),
-        _ => Err(Failure::new("the sentinel home answered another kind of call")),
+    loop {
+        match link
+            .call(&home, account, call.purpose(), call.clone())
+            .await
+            .map_err(|error| Failure::new(error.to_string()))?
+        {
+            Ok(RemoteReply::SentinelKeys(status)) => return Ok(status),
+            Ok(_) => return Err(Failure::new("the sentinel home answered another kind of call")),
+            Err(failure) if failure.is_accepted() => tokio::time::sleep(Duration::from_secs(1)).await,
+            Err(failure) => return Err(failure),
+        }
     }
 }
 

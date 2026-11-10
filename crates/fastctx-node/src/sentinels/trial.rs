@@ -30,6 +30,16 @@ const SAID: usize = 600;
 /// The account's sentinel home tries its model and search: here, or asked of
 /// that machine.
 pub(crate) async fn tried(node: &Arc<Node>, link: &Arc<Link>, account: &AccountName) -> Result<TryReport, Failure> {
+    node.sentinels.records()?;
+    let scope = HubAccount { hub: link.membership().id.clone(), account: account.clone() };
+    super::submission::tried(node, &scope, true).await
+}
+
+pub(super) async fn route_work(
+    node: &Arc<Node>,
+    link: &Arc<Link>,
+    account: &AccountName,
+) -> Result<TryReport, Failure> {
     let scope = HubAccount { hub: link.membership().id.clone(), account: account.clone() };
     let home = super::keys::settings(node, &scope)
         .await?
@@ -37,7 +47,8 @@ pub(crate) async fn tried(node: &Arc<Node>, link: &Arc<Link>, account: &AccountN
         .ok_or_else(|| Failure::refused("choose the sentinel home first"))?;
     let view = crate::authorization::current_view(link)?;
     if view.is_me(&home) {
-        return here(node, &scope).await;
+        // Avoid resubmitting local work to the same family and unit (2026-11-10).
+        return work(node, &scope).await;
     }
     if !view.call_rights(&view.me, account, &home).hands {
         return Err(Failure::refused("this account may not use the sentinel home"));
@@ -46,15 +57,31 @@ pub(crate) async fn tried(node: &Arc<Node>, link: &Arc<Link>, account: &AccountN
         return Err(Failure::not_run("the sentinel home is offline"));
     }
     let call = RemoteCall::SentinelTry;
-    match link.call(&home, account, call.purpose(), call).await.map_err(|error| Failure::new(error.to_string()))?? {
-        RemoteReply::SentinelTried(report) => Ok(*report),
-        _ => Err(Failure::new("the sentinel home answered another kind of call")),
+    loop {
+        match link
+            .call(&home, account, call.purpose(), call.clone())
+            .await
+            .map_err(|error| Failure::new(error.to_string()))?
+        {
+            Ok(RemoteReply::SentinelTried(report)) => return Ok(*report),
+            Ok(_) => return Err(Failure::new("the sentinel home answered another kind of call")),
+            Err(failure) if failure.is_accepted() => tokio::time::sleep(Duration::from_secs(1)).await,
+            Err(failure) => return Err(failure),
+        }
     }
 }
 
 /// Tries the account's model and search here, while this machine is its
 /// sentinel home; each that is set up, at once.
 pub(crate) async fn here(node: &Arc<Node>, scope: &HubAccount) -> Result<TryReport, Failure> {
+    node.sentinels.records()?;
+    if node.link_of(&scope.hub).is_none() {
+        return Err(Failure::not_run("the account's network is not connected"));
+    }
+    super::submission::tried(node, scope, false).await
+}
+
+pub(super) async fn work(node: &Arc<Node>, scope: &HubAccount) -> Result<TryReport, Failure> {
     let settings = super::keys::settings(node, scope).await?;
     if !super::keys::home_is_here(node, scope, &settings)? {
         return Err(Failure::refused("this machine is not the account's sentinel home"));

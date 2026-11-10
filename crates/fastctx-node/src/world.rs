@@ -1237,7 +1237,6 @@ impl fastctx_net::link::Node for Handler {
                         crate::sentinels::home_call_for(&node, &scope, &from, &request)
                             .await
                             .map(|reply| RemoteReply::SentinelHome(Box::new(reply)))
-                            .map_err(Failure::new)
                     }
                     RemoteCall::SentinelSettings { change } => {
                         crate::sentinels::settings(&node, &link, &caller.account, change)
