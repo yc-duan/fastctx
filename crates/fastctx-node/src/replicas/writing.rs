@@ -29,6 +29,23 @@ async fn locate(node: &Arc<Node>, path: &Path) -> Result<Option<Slot>, Failure> 
     locate_inner(node, path, true).await
 }
 
+/// Whether the resident's own record of what it viewed holds the file as it
+/// is now. A view that came before this copy was known here, as just after
+/// a conversation moved or its node started, is among no copy's
+/// observations; the resident's record has it all the same, as it has what
+/// it viewed of a copy kept only on this machine (`history::local_copy`).
+async fn viewed(node: &Arc<Node>, owner: &fastctx_types::Address, path: &Path, text: &str) -> Result<bool, Failure> {
+    use fastctx_types::files::SeenVersion;
+    let directory = node.world.owner(&node.names(), owner);
+    let (path, shown) = (path.to_path_buf(), fastctx_hands::files::content_hash(text.as_bytes()));
+    fastctx_platform::task::blocking(move || -> std::io::Result<bool> {
+        let seen = crate::write::load_seen_for(&directory, std::slice::from_ref(&path))?;
+        Ok(seen.values().any(|seen| matches!(&seen.version, SeenVersion::Full { sha256 } if *sha256 == shown)))
+    })
+    .await
+    .map_err(failure)
+}
+
 async fn locate_inner(node: &Arc<Node>, path: &Path, refresh: bool) -> Result<Option<Slot>, Failure> {
     node.replicas.state.load(&node.world).map_err(failure)?;
     let native = fastctx_platform::local_path(path).map_err(failure)?;
@@ -198,7 +215,10 @@ pub(crate) async fn intercept(
         match copy.observed.get(&owner.key()) {
             // A history document is shared: replacing one unseen would drop
             // what others wrote in it since.
-            None if matches!(copy.head.document, Document::History { .. }) && !previous.is_empty() => {
+            None if matches!(copy.head.document, Document::History { .. })
+                && !previous.is_empty()
+                && !viewed(node, owner, &copy.path, &previous).await? =>
+            {
                 return Ok(Some(Err("write replaces this whole history document; view it with fastctx view \
                      before replacing it, or change part of it with edit"
                     .to_string()
