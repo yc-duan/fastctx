@@ -25,6 +25,8 @@ pub(super) fn open(dir: &Path) -> anyhow::Result<Arc<Hub>> {
     let post = store.enable_runtime()?;
     let (switched, _switch) = tokio::sync::oneshot::channel();
     let hub = Arc::new(Hub {
+        durable_jobs: fastctx_jobs::Jobs::new(store.shelf.0.clone()),
+        workers: crate::workers::Pools::new(std::env::current_exe()?),
         releases: Arc::new(releases),
         catalog: crate::catalog::Catalog::new(store)?,
         post,
