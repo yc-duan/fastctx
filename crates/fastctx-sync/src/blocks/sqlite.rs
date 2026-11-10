@@ -1,4 +1,4 @@
-//! Two-phase content publication: durable pin, file IO, then a FULL index commit.
+//! Inline bytes publish with their index; files retain two-phase publication.
 use super::{
     access, budget::Budget, codec, files::Files, leases::Leases, location::Location, manifest, pages, pins, rows,
     uploads::Owner,
@@ -190,7 +190,7 @@ impl SqliteBlocks {
         let request = custody.clone();
         let id = operation.clone();
         let staged = step.clone();
-        let (stored, pin) = self
+        let (stored, pin, encoded) = self
             .content_write(step.is_some(), encoded.len() + 16384, move |db| {
                 let _boundary = boundary::enter_typed_write(Role::Content);
                 pins::authorize(db, &holder, policy.as_ref(), &request)?;
@@ -201,7 +201,15 @@ impl SqliteBlocks {
                     ContentRef::from(representation.content.clone()),
                     owner(&staged),
                 )?;
-                let stored = rows::reserve(db, representation, id)?;
+                let mut stored = rows::reserve(db, representation, id)?;
+                if !stored.verified && matches!(stored.location, Location::Inline) {
+                    super::inline::put(db, &stored, &encoded)?;
+                    rows::publish(db, &stored)?;
+                    if !rows::complete(db, &pin.root)? {
+                        return Err(sql::invalid("published inline block is not complete under its pinned reference"));
+                    }
+                    stored.verified = true;
+                }
                 if stored.verified {
                     pins::ready(db, &request, &pin, owner(&staged))?;
                     // New object custody can unblock an existing index payload.
@@ -211,7 +219,7 @@ impl SqliteBlocks {
                         format!("complete:{}", stored.representation.content.id.digest.as_str()),
                     )?;
                 }
-                Ok((stored, pin))
+                Ok((stored, pin, encoded))
             })
             .await
             .map_err(|error| sql::error(error, operation.clone()))?;

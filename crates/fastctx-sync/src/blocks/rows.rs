@@ -1,5 +1,5 @@
 //! Bounded SQL metadata operations; file IO is always outside the writer.
-use super::{files::FileKey, location::Location, pins};
+use super::{location::Location, pins};
 use crate::{
     identity::OperationId,
     manifest::{BlobId, ContentBlock, Descriptor, Envelope, Representation},
@@ -47,11 +47,11 @@ pub(super) fn reserve(db: &Connection, value: Representation, operation: Operati
         Some(found) => {
             // Only a hidden slot may be rewritten under the exclusive IO lease.
             // Reusing its physical generation leaves no unindexed partial file.
-            let key = found.location.rebind(&value).map_err(|error| sql::invalid(error.to_string()))?;
+            let key = found.location.rebind(&value, operation).map_err(|error| sql::invalid(error.to_string()))?;
             db.execute("DELETE FROM sync_asset_representations WHERE hub=?1 AND scope=?2 AND hash=?3 AND representation=?4 AND verified=0",params![id.domain.hub.to_string(),id.domain.scope.as_str(),id.digest.as_str(),found.representation.id().as_str()])?;
             key
         }
-        None => Location::File(FileKey::new(&value, operation)),
+        None => Location::new(&value, operation),
     };
     db.execute(
         "INSERT INTO sync_asset_representations(hub,scope,hash,representation,envelope,encoded_digest,encoded_bytes,storage_key,verified) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,0)",

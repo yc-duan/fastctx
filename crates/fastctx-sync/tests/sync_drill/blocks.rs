@@ -31,7 +31,7 @@ mod timeline_hold;
 mod timeline_install;
 use fastctx_storage::{Database, rusqlite::params};
 use fastctx_sync::{
-    blocks::{SqliteBlocks, codec},
+    blocks::{INLINE_BYTES, SqliteBlocks, codec},
     cursor::{ByteCount, Holder, HoldingPeriod, Revision},
     identity::*,
     manifest::{BlobId, BlockStore, DigestAlgorithm, Encoding, ManifestPage, ManifestReply, ManifestRoot},
@@ -176,6 +176,12 @@ fn complete(db: &Database, root: &ManifestRoot) -> Result<bool> {
     })?)
 }
 
+fn file_body(text: &[u8]) -> Vec<u8> {
+    let mut bytes = vec![0; INLINE_BYTES as usize + 1];
+    bytes[..text.len()].copy_from_slice(text);
+    bytes
+}
+
 fn physical_files(root: &Path) -> Result<usize> {
     let mut pending = vec![root.to_path_buf()];
     let mut files = 0;
@@ -236,6 +242,11 @@ pub async fn run(root: &Path) -> Result<()> {
     let compressed_pin =
         store.put(a.clone(), operation(3), compressed.representation.clone(), compressed.bytes).await?;
     assert_eq!(raw_pin.content, compressed_pin.content);
+    assert!(compressed.representation.encoded_bytes <= INLINE_BYTES);
+    assert_eq!(
+        store.read(a.clone(), compressed_pin.content.id.clone(), compressed_pin.representation.clone()).await?,
+        compressed_bytes
+    );
     let mut alternate = compressed_bytes;
     alternate.extend(zstd::stream::encode_all(&b""[..], 1)?);
     let mut descriptor = compressed.representation.clone();
@@ -262,7 +273,7 @@ pub async fn run(root: &Path) -> Result<()> {
     stale.holding.publication_epoch = Revision(2);
     assert!(store.descriptor(stale, raw_pin.content.id.clone()).await.is_err());
 
-    // The same JSON stored as a normal file must not retain a manifest's children.
+    // The same JSON stored as a content block must not retain a manifest's children.
     let json_block = codec::encode(scope(), manifest.page_json.as_bytes().to_vec(), Encoding::Raw)?;
     assert_eq!(json_block.representation.content.id, manifest.root.0);
     let json_pin = store.put(b.clone(), operation(6), json_block.representation, json_block.bytes).await?;
@@ -285,7 +296,13 @@ pub async fn run(root: &Path) -> Result<()> {
         )?))?,
         0
     );
-    assert_eq!(physical_files(&dir.join("files"))?, 2);
+    assert_eq!(physical_files(&dir.join("files"))?, 1);
+    assert_eq!(
+        database.read_now(|db| Ok(
+            db.query_row("SELECT COUNT(*) FROM sync_asset_inline", [], |row| row.get::<_, u32>(0))?
+        ))?,
+        1
+    );
     assert_eq!(
         store.read(b.clone(), json_pin.content.id.clone(), json_pin.representation.clone()).await?,
         manifest.page_json.as_bytes()
@@ -304,9 +321,16 @@ pub async fn run(root: &Path) -> Result<()> {
             .is_err()
     );
     store.collect(128).await?;
+    assert_eq!(
+        database.read_now(|db| Ok(
+            db.query_row("SELECT COUNT(*) FROM sync_asset_inline", [], |row| row.get::<_, u32>(0))?
+        ))?,
+        0
+    );
 
     // A deterministic filesystem fault leaves only hidden metadata, never a receipt.
-    let failed = codec::encode(scope(), b"a disk operation that cannot publish".to_vec(), Encoding::Raw)?;
+    let failed_body = file_body(b"a disk operation that cannot publish");
+    let failed = codec::encode(scope(), failed_body.clone(), Encoding::Raw)?;
     let parent = dir.join("files").join(scope().hub.to_string()).join(scope().scope.as_str());
     fastctx_platform::ensure_private_dir(&parent)?;
     let obstruction = parent.join(&failed.representation.content.id.digest.as_str()[..2]);
@@ -318,19 +342,16 @@ pub async fn run(root: &Path) -> Result<()> {
     let recovered = store.put(a.clone(), operation(7), failed.representation, failed.bytes).await?;
     assert_eq!(
         store.read(a.clone(), recovered.content.id.clone(), recovered.representation.clone()).await?,
-        b"a disk operation that cannot publish"
+        failed_body
     );
     gate.enabled.store(false, Ordering::Release);
     assert!(store.read(a.clone(), recovered.content.id.clone(), recovered.representation.clone()).await.is_err());
     gate.enabled.store(true, Ordering::Release);
-    assert_eq!(
-        store.read(a.clone(), recovered.content.id.clone(), recovered.representation).await?,
-        b"a disk operation that cannot publish"
-    );
+    assert_eq!(store.read(a.clone(), recovered.content.id.clone(), recovered.representation).await?, failed_body);
     assert!(store.retire_uploads(scope(), 1).await.is_err());
     assert_eq!(store.cancel_upload(a.clone(), operation(7), 1).await?, 1);
     assert_eq!(store.cancel_upload(a.clone(), operation(7), 1).await?, 0);
-    let cancelled = codec::encode(scope(), b"a disk operation that cannot publish".to_vec(), Encoding::Raw)?;
+    let cancelled = codec::encode(scope(), failed_body, Encoding::Raw)?;
     assert!(store.put(a.clone(), operation(7), cancelled.representation, cancelled.bytes).await.is_err());
     assert_eq!(store.collect(128).await?, 1);
     assert_eq!(store.cancel_upload(a.clone(), operation(9), 1).await?, 0);
@@ -354,7 +375,7 @@ pub async fn run(root: &Path) -> Result<()> {
     let db = open(&raced.join("replica.sqlite3"))?;
     let racing =
         SqliteBlocks::new(db.clone(), raced.join("files"), holder(), policy(true), operation(202), 8 * 1024 * 1024)?;
-    let bytes = codec::encode(scope(), b"not acknowledged after custody changed".to_vec(), Encoding::Raw)?;
+    let bytes = codec::encode(scope(), file_body(b"not acknowledged after custody changed"), Encoding::Raw)?;
     assert!(racing.put(a, operation(8), bytes.representation, bytes.bytes).await.is_err());
     assert_eq!(
         db.read_now(|db| Ok(

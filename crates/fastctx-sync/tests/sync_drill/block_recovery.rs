@@ -70,7 +70,7 @@ async fn interrupted_gc(root: &Path) -> Result<()> {
     let store =
         SqliteBlocks::new(db.clone(), dir.join("files"), holder(), policy(false), operation(212), 8 * 1024 * 1024)?;
     let owner = custody(40, "conversation.artifact");
-    let bytes = codec::encode(scope(), b"reserved but no bucket was ever created".to_vec(), Encoding::Raw)?;
+    let bytes = codec::encode(scope(), file_body(b"reserved but no bucket was ever created"), Encoding::Raw)?;
     let obstruction = dir.join("files").join(scope().hub.to_string());
     fastctx_platform::disk::write(&obstruction, b"prevent namespace preparation")?;
     assert!(store.put(owner.clone(), operation(40), bytes.representation.clone(), bytes.bytes.clone()).await.is_err());
@@ -82,8 +82,8 @@ async fn interrupted_gc(root: &Path) -> Result<()> {
     assert_eq!(store.collect(8).await?, 1, "the previous claim must not block new publication");
 
     let mut blocks = vec![
-        codec::encode(scope(), b"one uncollectable generation".to_vec(), Encoding::Raw)?,
-        codec::encode(scope(), b"one independently collectable generation".to_vec(), Encoding::Raw)?,
+        codec::encode(scope(), file_body(b"one uncollectable generation"), Encoding::Raw)?,
+        codec::encode(scope(), file_body(b"one independently collectable generation"), Encoding::Raw)?,
     ];
     blocks.sort_by(|a, b| a.representation.content.id.digest.cmp(&b.representation.content.id.digest));
     let bad_hash = blocks[0].representation.content.id.digest.clone();

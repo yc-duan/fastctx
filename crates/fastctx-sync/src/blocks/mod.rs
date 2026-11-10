@@ -8,6 +8,8 @@ pub(crate) use budget::Permit;
 
 pub mod codec;
 mod files;
+mod inline;
+pub use inline::INLINE_BYTES;
 mod leases;
 mod location;
 pub mod manifest;

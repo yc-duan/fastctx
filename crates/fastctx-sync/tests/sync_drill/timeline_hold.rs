@@ -82,7 +82,7 @@ pub(super) async fn run(root: &Path) -> Result<()> {
     blocks.release(owner.clone(), payload.pin).await?;
     assert_eq!(blocks.collect(128).await?, 0);
     assert_eq!(grants()?, authorized, "fencing metadata did not add body grants");
-    blocks.release_root(owner, *lease).await?;
+    blocks.release_root(owner.clone(), *lease).await?;
     for _ in 0..8 {
         if blocks.collect(128).await? == 0 {
             break;
@@ -91,7 +91,13 @@ pub(super) async fn run(root: &Path) -> Result<()> {
     // The committed head still names the snapshot, so its stored page and
     // payload stay after the fence ends; superseded heads are collected in
     // the installation lifecycle.
-    assert_eq!(physical_files(&dir.join("files"))?, 2);
+    assert_eq!(physical_files(&dir.join("files"))?, 1);
+    assert!(blocks.read(owner, payload.content.id.clone(), payload.representation).await.is_err());
+    let retained = db.read_now(|db| Ok(db.query_row(
+        "SELECT COUNT(*) FROM sync_asset_inline i JOIN sync_asset_representations r USING(hub,scope,hash,representation) WHERE i.hash=?1 AND r.verified=1",
+        [payload.content.id.digest.as_str()], |row| row.get::<_, u32>(0),
+    )?))?;
+    assert_eq!(retained, 1);
     println!(
         "timeline usage: incomplete head root held without a grant, missing bodies remain private, the head retains it after release"
     );
