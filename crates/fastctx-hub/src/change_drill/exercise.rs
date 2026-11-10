@@ -45,11 +45,14 @@ pub(super) fn run(catalog: &Catalog, origin: &Origin, machines: usize) -> anyhow
         );
         anyhow::ensure!(store.book.directory == before.directory, "apply failure restored directory");
     }
-    let database = catalog.read().shelf.0.clone();
-    database.write_now(0, |c| {
-        c.execute_batch("CREATE TRIGGER change_drill_fail BEFORE INSERT ON hub_rows WHEN NEW.kind='accounts' BEGIN SELECT RAISE(ABORT, 'injected row failure'); END;")?;
-        Ok(())
-    })?;
+    // The service writer rejects runtime DDL. This test connection injects a
+    // failing trigger into the synthetic database while its guards stay active.
+    let faults = fastctx_storage::rusqlite::Connection::open_with_flags(
+        old.dir().join(crate::store::shelf::FILE),
+        fastctx_storage::rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE
+            | fastctx_storage::rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
+    faults.execute_batch("CREATE TRIGGER change_drill_fail BEFORE INSERT ON hub_rows WHEN NEW.kind='accounts' BEGIN SELECT RAISE(ABORT, 'injected row failure'); END;")?;
     let before_failure = catalog.read();
     {
         let mut store = catalog.edit();
@@ -57,15 +60,20 @@ pub(super) fn run(catalog: &Catalog, origin: &Origin, machines: usize) -> anyhow
             crate::manage::commit(&mut store, origin, &target, Change::History { on: !original }, |store, _, _| {
                 crate::manage::history(store, &target, !original)
             });
-        anyhow::ensure!(result.is_err(), "durable failure reported");
+        let reason = result.err().ok_or_else(|| anyhow::anyhow!("durable failure was not injected"))?;
+        anyhow::ensure!(reason.contains("injected row failure"), "durable failure reached account write: {reason}");
     }
     let failed = catalog.read();
     anyhow::ensure!(failed.book.directory == before_failure.book.directory, "failed write not published");
     anyhow::ensure!(failed.book.machine_log.next == before_failure.book.machine_log.next, "failed audit not published");
-    database.write_now(0, |c| {
-        c.execute_batch("DROP TRIGGER change_drill_fail;")?;
-        Ok(())
-    })?;
+    let failed_directory = crate::store::Store::read_directory(failed.dir())?;
+    anyhow::ensure!(failed_directory == before_failure.book.directory, "failed transaction preserved durable rows");
+    let failed_sequence: u64 = failed.shelf.meta("machine_log.next")?.expect("audit sequence");
+    anyhow::ensure!(
+        failed_sequence == before_failure.book.machine_log.next,
+        "failed transaction preserved durable audit"
+    );
+    faults.execute_batch("DROP TRIGGER change_drill_fail;")?;
     {
         let mut store = catalog.edit();
         crate::manage::commit(&mut store, origin, &target, Change::History { on: !original }, |store, _, _| {
