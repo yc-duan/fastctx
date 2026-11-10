@@ -28,6 +28,7 @@ pub(crate) fn guard(db: &Connection) -> Result<Box<dyn Guard>> {
     };
     Ok(Box::new(Fences {
         scoped,
+        jobs: if db.table_exists(None, "jobs")? { Some(column(db, "jobs", "unit")?) } else { None },
         deletion: column(db, DELETIONS, "name")?,
         transfer: column(db, TRANSFERS, "name")?,
         rejected: column(db, TRANSFERS, "rejected")?,
@@ -41,6 +42,8 @@ pub(crate) fn guard(db: &Connection) -> Result<Box<dyn Guard>> {
 struct Fences {
     /// Each table with a conversation, and the column that tells it.
     scoped: HashMap<String, usize>,
+    // Unit ownership keeps jobs fenced without adding them to record transfers.
+    jobs: Option<usize>,
     deletion: usize,
     transfer: usize,
     rejected: usize,
@@ -111,7 +114,8 @@ impl Fences {
         if action != Action::Delete && held(&self.deleted) {
             return Err(Error::with_kind(ErrorKind::Invalid, "the conversation was deleted"));
         }
-        if held(&self.importing) {
+        // Jobs can drive an import, so its record fence cannot block their bookkeeping (2026-11-10).
+        if change.table() != "jobs" && held(&self.importing) {
             return Err(Error::with_kind(ErrorKind::Invalid, "the conversation is being imported"));
         }
         Ok(())
@@ -174,6 +178,11 @@ impl Guard for Fences {
     fn check(&mut self, change: &Change<'_>) -> Result<()> {
         if fastctx_sync::migration::is_summary(change)? {
             return Ok(());
+        }
+        if change.table() == "jobs"
+            && let Some(column) = self.jobs
+        {
+            return self.scoped(change, column);
         }
         if let Some(&column) = self.scoped.get(change.table()) {
             return self.scoped(change, column);

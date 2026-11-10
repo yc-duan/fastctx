@@ -3,6 +3,7 @@
 pub mod handlers;
 mod kinds;
 pub mod legacy;
+pub mod runtime;
 pub mod source_families;
 pub mod text;
 pub static REGISTRY: Registry = Registry::new(kinds::KINDS);
@@ -202,6 +203,9 @@ impl Registry {
         self.kind(id, DataClass::Scratch)
     }
     pub fn validate(&self) -> Result<(), String> {
+        for table in runtime::TABLES {
+            self.runtime(table.kind)?;
+        }
         let mut ids = std::collections::BTreeSet::new();
         for entry in self.registrations {
             if entry.id.is_empty() || !ids.insert(entry.id) {

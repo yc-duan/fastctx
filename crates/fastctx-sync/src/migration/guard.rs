@@ -34,6 +34,7 @@ pub(super) fn make(db: &Connection) -> Result<Box<dyn Guard>> {
         .collect::<std::result::Result<Vec<_>, _>>()?;
     for table in tables {
         let registered = crate::store::schema::TABLES.contains(&table.as_str())
+            || crate::registry::runtime::TABLES.iter().any(|entry| entry.name == table)
             || crate::registry::legacy::ENTRIES.iter().any(|entry| {
                 matches!(
                     entry.surface,

@@ -4,6 +4,8 @@ use fastctx_storage::{Result, rusqlite::Connection};
 pub(super) const MACHINE_TABLES: &[&str] = &[
     "storage_versions",
     "storage_salvaged",
+    // Jobs use unit ownership and are discarded locally, never exported as records.
+    "jobs",
     "receipts",
     "receipt_references",
     "receipt_watermarks",
@@ -72,6 +74,11 @@ pub(crate) fn tables(db: &Connection) -> Result<Vec<Table>> {
 }
 
 pub(crate) fn initialize(db: &Connection) -> Result<()> {
+    fastctx_storage::versions::apply(
+        db,
+        "node.jobs",
+        &[fastctx_storage::versions::Migration { version: 1, sql: fastctx_jobs::SCHEMA }],
+    )?;
     db.execute_batch(crate::record_migration::SCHEMA)?;
     db.execute_batch(crate::records::MIGRATION_PROOF_SCHEMA)?;
     db.execute_batch(crate::context::records::SCHEMA)?;

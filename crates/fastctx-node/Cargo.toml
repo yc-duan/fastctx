@@ -31,6 +31,7 @@ fastctx-file-search = { path = "../fastctx-file-search" }
 fastctx-hosts = { path = "../fastctx-hosts" }
 fastctx-hub = { path = "../fastctx-hub" }
 fastctx-install = { path = "../fastctx-install" }
+fastctx-jobs = { path = "../fastctx-jobs" }
 fastctx-net = { path = "../fastctx-net" }
 fastctx-agent = { path = "../fastctx-agent" }
 fastctx-sentinel = { path = "../fastctx-sentinel" }

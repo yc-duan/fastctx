@@ -1580,6 +1580,7 @@ dependencies = [
  "fastctx-hosts",
  "fastctx-hub",
  "fastctx-install",
+ "fastctx-jobs",
  "fastctx-net",
  "fastctx-platform",
  "fastctx-ripgrep",

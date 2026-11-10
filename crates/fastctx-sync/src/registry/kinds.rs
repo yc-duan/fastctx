@@ -620,6 +620,23 @@ pub(super) const KINDS: &[Registration] = &[
         GenericTombstone
     ),
     kind!(
+        "runtime.jobs",
+        Runtime,
+        Local,
+        Local,
+        LocalOwner,
+        UntilResolved,
+        LocalOnly,
+        "fastctx-jobs",
+        Foundation,
+        Bytes,
+        false,
+        false,
+        false,
+        Confirmed,
+        GenericTombstone
+    ),
+    kind!(
         "runtime.host",
         Runtime,
         Machine,

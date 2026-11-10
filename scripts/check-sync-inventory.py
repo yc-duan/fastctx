@@ -62,6 +62,15 @@ def check(registry):
     if additions.keys() - known:
         raise ValueError("unused additions evidence")
     tables = {r[1] for r in entries if r[0] in ("Table", "Migration")}
+    kinds = dict(re.findall(r'kind!\(\s*"([^"]+)",\s*(\w+),', (registry / "kinds.rs").read_text(encoding="utf-8")))
+    runtime = rows(registry / "runtime_tables.tsv")
+    for record in runtime:
+        if len(record) != 3:
+            raise ValueError("runtime tables need a name, kind and owner")
+        table, kind, owner = record
+        if not table or table in tables or kinds.get(kind) != "Runtime" or not (ROOT / owner).is_file():
+            raise ValueError(f"invalid current runtime table: {record}")
+        tables.add(table)
     for path in (ROOT / "crates").rglob("*.rs"):
         name = path.as_posix()
         if "/src/" not in name or "/fastctx-sync/" in name or any(x in path.name for x in ("test", "drill")):
@@ -84,7 +93,7 @@ def check(registry):
         raise ValueError("unregistered transitional carrier")
     if {row[0] for row in carriers} != actual & {row[0] for row in approved}:
         raise ValueError("a transitional carrier must leave the inventory with its table")
-    print(f"sync inventory: {len(entries)} entries; {len(actual)} shadow tables; baseline evidence verified")
+    print(f"sync inventory: {len(entries)} entries; {len(runtime)} current runtime tables; {len(actual)} shadow tables; baseline evidence verified")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

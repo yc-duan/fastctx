@@ -190,6 +190,8 @@ mod waiting;
 mod watch;
 mod watchdog;
 mod who;
+mod workers;
+pub use workers::ROLES as WORKER_ROLES;
 mod world;
 mod world_format;
 mod world_program;
@@ -215,6 +217,9 @@ pub(crate) struct Node {
     root: PathBuf,
     world: WorldDir,
     database: fastctx_storage::Database,
+    /// Durable service work submitted with its triggering state change.
+    durable_jobs: Arc<fastctx_jobs::Jobs>,
+    workers: workers::Pools,
     /// The unified data foundation's engines on `database`, when it opened
     /// (`foundation`).
     foundation: Option<foundation::Foundation>,
@@ -806,6 +811,8 @@ pub async fn run_prepared(
             let node = Arc::new_cyclic(|weak: &std::sync::Weak<Node>| Node {
                 root: fastctx_root.to_path_buf(),
                 world,
+                durable_jobs: fastctx_jobs::Jobs::new(database.clone()),
+                workers: Default::default(),
                 database,
                 foundation,
                 content,
@@ -976,6 +983,7 @@ pub async fn run_prepared(
             return;
         }
         let log = node.log.clone();
+        let durable_jobs = node.durable_jobs.clone();
         if let Err(error) = fastctx_platform::task::spawn_blocking(move || {
             stops::recover(&node);
             delivery::work::recover(&node);
@@ -1004,6 +1012,12 @@ pub async fn run_prepared(
         .await
         {
             log.line(format_args!("starting recovered work: {error}"));
+            return;
+        }
+        // Subsystems register their kinds before the queue starts recovering work.
+        // Unfinished runs stay durable and are taken again by the successor.
+        if let Err(error) = durable_jobs.start().await {
+            log.line(format_args!("starting durable jobs: {error}"));
         }
     });
     // The foundation's tasks start with bulk migration, after the upgrade's

@@ -1,4 +1,4 @@
-//! Compiles the closed inventory; additions require baseline source evidence.
+//! Compiles the frozen legacy inventory and current service table registrations.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -66,6 +66,24 @@ fn main() {
             output.push_str(&format!("LegacyEntry {{ surface: Surface::{surface}, selector: {selector:?}, classification: {classification}, owner: {owner:?}, stage: Stage::{stage}, decision: DecisionState::{decision}, note: {note:?} }},\n"));
         }
     }
+    let mut runtime = String::from("pub const TABLES: &[Table] = &[\n");
+    let mut runtime_names = BTreeSet::new();
+    for row in rows("src/registry/runtime_tables.tsv") {
+        let [table, kind, owner] = <[String; 3]>::try_from(row).expect("runtime tables need a name, kind and owner");
+        assert!(!table.is_empty() && !kind.is_empty() && !owner.is_empty(), "runtime table fields cannot be empty");
+        assert!(runtime_names.insert(table.clone()), "duplicate runtime table: {table}");
+        assert!(
+            !keys.contains(&("Table".into(), table.clone())) && !keys.contains(&("Migration".into(), table.clone())),
+            "a current runtime table cannot be in the legacy inventory: {table}"
+        );
+        runtime.push_str(&format!("Table {{ name: {table:?}, kind: {kind:?}, owner: {owner:?} }},\n"));
+    }
+    runtime.push_str("];\n");
+    fs::write(
+        PathBuf::from(env::var_os("OUT_DIR").expect("Cargo output directory")).join("runtime_tables.rs"),
+        runtime,
+    )
+    .expect("write current runtime table registry");
     output.push_str("];\n");
     fs::write(
         PathBuf::from(env::var_os("OUT_DIR").expect("Cargo output directory")).join("legacy_registry.rs"),

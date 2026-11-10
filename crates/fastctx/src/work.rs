@@ -6,8 +6,7 @@ use std::io;
 use fastctx_platform::worker::{self, Role};
 
 const BUILTIN: &[Role] = &[Role { name: "echo", serve: echo }];
-// Add an owning crate's exported &[Role] here as roles are introduced.
-const ROLES: &[&[Role]] = &[BUILTIN];
+const ROLES: &[&[Role]] = &[BUILTIN, fastctx_node::WORKER_ROLES];
 
 fn echo(memory: u64) -> io::Result<()> {
     worker::serve(memory, |request| Ok(request.to_vec()))
