@@ -61,15 +61,7 @@ impl Document {
         let update = Update::decode_v1(bytes).map_err(error)?;
         let mut transaction = self.doc.transact_mut();
         transaction.apply_update(update).map_err(error)?;
-        let mut length = 0;
-        self.text.visit_chunks(&transaction, |chunk| {
-            if !chunk.deleted
-                && let Some(text) = chunk.text
-            {
-                length += text.chars().count();
-            }
-        });
-        self.scalar_len = length;
+        self.scalar_len = self.text.scalar_len(&transaction) as usize;
         Ok(())
     }
 

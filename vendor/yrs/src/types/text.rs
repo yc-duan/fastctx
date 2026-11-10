@@ -159,6 +159,12 @@ mod chunks;
 pub use chunks::TextChunk;
 
 pub trait Text: AsRef<Branch> + Sized {
+    /// Returns the visible Unicode scalar count in constant time. Embedded values
+    /// contribute zero; string items update the count when integrated or deleted.
+    fn scalar_len<T: ReadTxn>(&self, _txn: &T) -> u32 {
+        self.as_ref().text_scalar_len
+    }
+
     /// Returns a number of characters visible in a current text data structure.
     fn len<T: ReadTxn>(&self, _txn: &T) -> u32 {
         self.as_ref().content_len

@@ -746,6 +746,9 @@ impl ItemPtr {
                     // adjust length of parent
                     parent_ref.block_len += this.len;
                     parent_ref.content_len += this.content_len(encoding);
+                    if let ItemContent::String(text) = &this.content {
+                        parent_ref.text_scalar_len += text.as_str().chars().count() as u32;
+                    }
                 }
                 #[cfg(feature = "weak")]
                 match (this.left, this.right) {
