@@ -8,6 +8,8 @@
 
 pub(crate) mod api;
 mod build;
+#[cfg(feature = "timeline-drill")]
+mod drill;
 mod identity;
 mod order;
 mod preview;
@@ -54,6 +56,8 @@ pub(crate) fn checkpoint(conversation: &str) -> String {
 
 /// Names what builds timelines, before the node's jobs start.
 pub(crate) fn register(node: &Arc<crate::Node>) {
+    #[cfg(feature = "timeline-drill")]
+    drill::start(node);
     let jobs = node.durable_jobs.clone();
     let node = Arc::downgrade(node);
     let run = move |taken: Taken| -> std::pin::Pin<Box<dyn Future<Output = Outcome> + Send>> {
@@ -82,7 +86,7 @@ async fn run(node: &Arc<crate::Node>, resident: &ResidentId) -> Outcome {
     match build::build(node, resident).await {
         Ok(built) => {
             BUILT.lock().expect("built timelines").insert(resident.clone(), Instant::now());
-            if built.written + built.gone > 0 {
+            if built.written + built.gone > 0 || cfg!(feature = "timeline-drill") {
                 node.log.line(format_args!(
                     "{resident}'s timeline: {} events, {} written, {} gone",
                     built.events, built.written, built.gone

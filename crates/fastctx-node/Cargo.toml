@@ -19,6 +19,7 @@ required-features = ["storage-drill"]
 
 [features]
 storage-drill = []
+timeline-drill = []
 
 [dependencies]
 tempfile = "3"
