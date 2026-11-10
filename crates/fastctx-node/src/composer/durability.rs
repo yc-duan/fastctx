@@ -11,6 +11,9 @@ use std::{
 const AFTER: Duration = Duration::from_millis(500);
 const WITHIN: Duration = Duration::from_secs(1);
 const RETRY: Duration = Duration::from_millis(100);
+/// The longest a barrier that keeps failing waits before it is tried again:
+/// a disk that stays broken is tried, and told of, every few seconds.
+const RETRY_AT_MOST: Duration = Duration::from_secs(5);
 
 #[derive(Default)]
 struct Pending {
@@ -49,6 +52,7 @@ impl Durability {
         }
         let (state, database) = (self.clone(), database.clone());
         fastctx_platform::task::spawn_on(runtime, async move {
+            let mut retry = RETRY;
             loop {
                 let due = {
                     let mut pending = state.pending.lock().expect("composer disk barriers");
@@ -82,7 +86,10 @@ impl Durability {
                         pending.first = Some(pending.first.map_or(first, |next| next.min(first)));
                     }
                     failed(&error);
-                    tokio::time::sleep(RETRY).await;
+                    tokio::time::sleep(retry).await;
+                    retry = (retry * 2).min(RETRY_AT_MOST);
+                } else {
+                    retry = RETRY;
                 }
                 // Commits while the barrier was in flight remain pending for the
                 // next pass; clearing that state would race a later NORMAL commit.
