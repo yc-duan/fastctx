@@ -352,7 +352,9 @@ fn cut_in(x: &Indexed<'_>, me: &MachineName, mine: &BTreeSet<AccountName>, users
         for account in users {
             at.extend(x.logged(account));
             for &acting in x.acting_by_account(account) {
-                at.extend(x.naming(&all.acting[acting].machine));
+                if x.may_act_for(account, &all.acting[acting].machine) {
+                    at.extend(x.naming(&all.acting[acting].machine));
+                }
             }
         }
         ordered(at)
@@ -425,7 +427,9 @@ fn cut_in(x: &Indexed<'_>, me: &MachineName, mine: &BTreeSet<AccountName>, users
         acting: ordered(accounts.iter().flat_map(|account| x.acting_by_account(account)).copied())
             .into_iter()
             .map(|at| &all.acting[at])
-            .filter(|acting| seen.contains(&acting.machine))
+            // A use kept from an ended assistance acts for no one, and no
+            // member is told of it until the assistance is given again.
+            .filter(|acting| seen.contains(&acting.machine) && x.may_act_for(&acting.account, &acting.machine))
             .cloned()
             .collect(),
         projects: Vec::new(),

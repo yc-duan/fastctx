@@ -105,7 +105,7 @@ pub(crate) fn end_due(store: &mut Store, now: Timestamp) -> io::Result<bool> {
     for assist in &due {
         let before = store.book.directory.clone();
         store.book.directory.assists.retain(|kept| !kept.same(assist));
-        store.book.directory.settle_acting();
+        store.book.directory.settle_acting(&before);
         let action = Action::AssistEnded {
             machine: assist.machine.clone(),
             to: assist.account.clone(),

@@ -112,7 +112,7 @@ fn made(
             }
             let super_ = found.level == Level::Super;
             let told = apply(hub, &mut store, asker, account, super_, change, ended)?;
-            store.book.directory.settle_acting();
+            store.book.directory.settle_acting(&before.directory);
             crate::machine_log::effects(&mut store, &before.directory, &actor, &action)?;
             let committed = match &told {
                 Told::CollabWritten { version } => fastctx_types::machine_log::Action::Collab { version: *version },

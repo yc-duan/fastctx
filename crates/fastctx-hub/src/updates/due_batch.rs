@@ -81,7 +81,7 @@ pub(super) fn apply(
                             *kept = None;
                         }
                     }
-                    store.book.directory.settle_acting();
+                    store.book.directory.settle_acting(&before.directory);
                     acting_changed = store.book.directory.acting.len() != before.directory.acting.len();
                     crate::machine_log::effects(&mut store, &before.directory, &actor, &action)?;
                 }

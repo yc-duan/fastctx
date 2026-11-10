@@ -1380,6 +1380,8 @@ fn use_agent(
             false
         } else {
             let before = store.book.clone();
+            // A use kept from an ended assistance gives way to this one.
+            store.book.directory.acting.retain(|kept| !(kept.account == *account && kept.machine == *to));
             store.book.directory.acting.push(std::sync::Arc::new(fastctx_net::directory::ActsFor {
                 machine: to.clone(),
                 account: account.clone(),

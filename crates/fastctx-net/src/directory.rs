@@ -574,13 +574,31 @@ impl Directory {
         accounts.into_iter().find(|account| self.admits(from, account, to, purpose).is_ok()).cloned()
     }
 
-    /// Drops what no longer stands of what acts for accounts: a machine acts
+    /// Drops what no longer stands of what acts for accounts, `before` being
+    /// the directory as it was before the change just made. A machine acts
     /// for an account that used an agent there only while the account may
-    /// still use agents there, so a share or an assistance ended takes it
-    /// along, and assisting again needs another use.
-    pub fn settle_acting(&mut self) {
-        let keep: Vec<bool> =
-            self.acting.iter().map(|acting| self.machine_rights(&acting.account, &acting.machine).agents).collect();
+    /// still use agents there (`authorization`, ActFor), so a use kept
+    /// without that right does nothing. A use is dropped when the machine or
+    /// the account is gone, and when the account loses the agents there that
+    /// came without an assistance, such as a share taken back: sharing again
+    /// needs another use. An assistance ending keeps it, so the owner
+    /// assisting the same account again lets the machine act for it again at
+    /// once (`world-network.md`, 别人机器上的智能体什么时候能访问你的机器).
+    pub fn settle_acting(&mut self, before: &Directory) {
+        let now = Timestamp::now();
+        let keep: Vec<bool> = self
+            .acting
+            .iter()
+            .map(|acting| {
+                let (account, machine) = (&acting.account, &acting.machine);
+                if self.member(machine).is_none() || self.account(account).is_none() {
+                    return false;
+                }
+                let unassisted = before.machine_rights(account, machine).agents
+                    && !crate::authorization::Lookup::assists(before, account, machine, now, &|_| true);
+                self.machine_rights(account, machine).agents || !unassisted
+            })
+            .collect();
         let mut keep = keep.into_iter();
         self.acting.retain(|_| keep.next().expect("one per entry"));
     }

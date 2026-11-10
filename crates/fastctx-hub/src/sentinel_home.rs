@@ -22,6 +22,7 @@ pub(crate) fn chosen(hub: &Hub, by: &MachineName, account: &AccountName, body: &
             return;
         }
         let before = store.book.clone();
+        store.book.directory.acting.retain(|kept| !(kept.account == *account && kept.machine == machine));
         store.book.directory.acting.push(std::sync::Arc::new(fastctx_net::directory::ActsFor {
             machine: machine.clone(),
             account: account.clone(),

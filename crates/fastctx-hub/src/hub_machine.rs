@@ -55,7 +55,7 @@ pub(crate) fn settle(hub: &Hub) -> Result<(), String> {
     }
     let before = store.book.clone();
     store.book.directory.shares.retain(|share| !before.directory.same(&share.machine, &machine));
-    store.book.directory.settle_acting();
+    store.book.directory.settle_acting(&before.directory);
     let actor = Actor { account: None, authenticated: true, member: None, peer: None };
     let result = (|| {
         for (index, share) in shares.into_iter().enumerate() {
