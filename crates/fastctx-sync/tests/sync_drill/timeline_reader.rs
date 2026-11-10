@@ -85,6 +85,7 @@ async fn bytes(
                     item: item.clone(),
                     content: content.clone(),
                     range: Some(ByteRange { offset, bytes: 3 }),
+                    path: None,
                 },
             )
             .await?;
@@ -119,7 +120,13 @@ pub(super) async fn content(
         timelines
             .content(
                 context.clone(),
-                TimelineContentRead { fence: forged, item: item.id.clone(), content: part.clone(), range: None }
+                TimelineContentRead {
+                    fence: forged,
+                    item: item.id.clone(),
+                    content: part.clone(),
+                    range: None,
+                    path: None
+                }
             )
             .await?,
         TimelineContentResult::ReanchorNeeded
@@ -138,6 +145,7 @@ pub(super) async fn content(
                     item: item.id.clone(),
                     content: foreign_scope,
                     range: None,
+                    path: None,
                 }
             )
             .await,
@@ -150,7 +158,13 @@ pub(super) async fn content(
     let refused = timelines
         .content(
             context.clone(),
-            TimelineContentRead { fence: page.fence.clone(), item: item.id.clone(), content: foreign, range: None },
+            TimelineContentRead {
+                fence: page.fence.clone(),
+                item: item.id.clone(),
+                content: foreign,
+                range: None,
+                path: None,
+            },
         )
         .await;
     assert!(

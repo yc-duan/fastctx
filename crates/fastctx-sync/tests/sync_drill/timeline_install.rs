@@ -32,6 +32,8 @@ use fastctx_types::sync::{
     cursor::{LocalSequence, Sequence, StreamCursor},
 };
 
+#[path = "timeline_content_paths.rs"]
+pub(super) mod content_paths;
 #[path = "timeline_fresh.rs"]
 mod fresh;
 #[path = "timeline_merkle.rs"]
@@ -86,6 +88,19 @@ async fn commit(
     after: u64,
     facts: Vec<Fact>,
 ) -> Result<SourceCheckpoint> {
+    let (operation, next) = prepare_commit(sources, step, bound, primary, expected, after, facts).await?;
+    sources.ingest(operation).await?;
+    Ok(next)
+}
+async fn prepare_commit(
+    sources: &SqliteSources,
+    step: &SourceStep,
+    bound: &SourceStepTarget,
+    primary: &SourceTarget,
+    expected: Option<SourceCheckpoint>,
+    after: u64,
+    facts: Vec<Fact>,
+) -> Result<(IngestOperation, SourceCheckpoint)> {
     let kind = REGISTRY.asset("conversation.timeline").unwrap();
     let mut records = Vec::new();
     for (index, fact) in facts.into_iter().enumerate() {
@@ -126,26 +141,32 @@ async fn commit(
     let next = checkpoint(primary, step, after * 100 + 100, None);
     let dirty =
         DirtyProjection { kind: REGISTRY.projection("derived.timeline")?, object: primary.custody.object.clone() };
-    sources
-        .ingest(IngestOperation::new(
-            step.clone(),
-            expected,
-            next.clone(),
-            vec![IngestBatch {
-                target: bound.clone(),
-                facts: Some(IngestFacts::Local { batch }),
-                effects: SourceEffects::new(Vec::new(), vec![dirty], Vec::new())?,
-            }],
-        )?)
-        .await?;
-    Ok(next)
+    let operation = IngestOperation::new(
+        step.clone(),
+        expected,
+        next.clone(),
+        vec![IngestBatch {
+            target: bound.clone(),
+            facts: Some(IngestFacts::Local { batch }),
+            effects: SourceEffects::new(Vec::new(), vec![dirty], Vec::new())?,
+        }],
+    )?;
+    Ok((operation, next))
 }
 
 /// Runs content and installation work to quiescence; returns the passes.
 async fn settle(db: &Database, blocks: &SqliteBlocks, timelines: &SqliteTimelines) -> Result<u32> {
+    settle_bounded(db, blocks, timelines, 256).await
+}
+async fn settle_bounded(
+    db: &Database,
+    blocks: &SqliteBlocks,
+    timelines: &SqliteTimelines,
+    passes: usize,
+) -> Result<u32> {
     let scheduler = SqliteScheduler::new(db.clone(), operation(223), holder(), Duration::from_secs(10))?;
     let mut installs = 0;
-    for _ in 0..256 {
+    for _ in 0..passes {
         let leases = scheduler.due(now_millis(), 16).await?;
         if leases.is_empty() {
             return Ok(installs);
@@ -457,6 +478,7 @@ pub(super) async fn run(drill_root: &Path) -> Result<()> {
                     item: item.id.clone(),
                     content: item.body.clone(),
                     range: None,
+                    path: None,
                 }
             )
             .await?,
@@ -505,6 +527,7 @@ pub(super) async fn run(drill_root: &Path) -> Result<()> {
                     item: item.id,
                     content,
                     range: None,
+                    path: None,
                 }
             )
             .await?,
@@ -512,6 +535,7 @@ pub(super) async fn run(drill_root: &Path) -> Result<()> {
     ));
     timelines.release(reader, page.fence).await?;
     fresh::run(drill_root).await?;
+    content_paths::run(drill_root).await?;
     println!(
         "timeline install: item revisions to snapshot and index, indexed and fenced reads, item and stream reads, notices, release, input-only passes, retraction, branch index rebuild, idempotent rerun, head retention, hosted scopes and pending owned content after cache reopen passed"
     );

@@ -192,6 +192,10 @@ fn physical_files(root: &Path) -> Result<usize> {
     Ok(files)
 }
 
+pub async fn run_content_paths(root: &Path) -> Result<()> {
+    timeline_install::content_paths::run(root).await
+}
+
 pub async fn run_timeline(root: &Path) -> Result<()> {
     timeline_install::run(root).await?;
     timeline_hold::run(root).await

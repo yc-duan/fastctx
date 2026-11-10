@@ -70,12 +70,12 @@ pub(crate) async fn call(node: &Arc<Node>, call: TimelineCall) -> Result<Timelin
             let read = TimelineChangesRead { from: *from, to: to.map(|to| *to), after, max_items, max_bytes };
             timelines.changes(context, read).await.map(|result| TimelineReply::Changes { result })
         }
-        TimelineCall::Content { fence, item, content, range, .. } => {
+        TimelineCall::Content { fence, item, content, range, path, .. } => {
             if fence.conversation != hosted.timeline {
                 return Err(Failure::refused("the fence belongs to another conversation"));
             }
             timelines
-                .content(context, TimelineContentRead { fence: *fence, item, content, range })
+                .content(context, TimelineContentRead { fence: *fence, item, content, range, path })
                 .await
                 .map(|read| TimelineReply::Content { read })
         }

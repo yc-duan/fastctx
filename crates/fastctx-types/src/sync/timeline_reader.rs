@@ -48,12 +48,19 @@ pub struct ByteRange {
     pub bytes: u32,
 }
 
+/// At most this many parent-to-child ownership edges may precede a target.
+pub const CONTENT_PATH_DEPTH: usize = 128;
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TimelineContentRead {
     pub fence: TimelineFence,
     pub item: ObjectId,
     pub content: ContentRef,
     pub range: Option<ByteRange>,
+    /// Ancestors from a directly owned root, excluding `content` itself.
+    /// Some([]) requires direct ownership and never searches for a witness.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<Vec<ContentRef>>,
 }
 
 /// Bytes are decoded logical content: a metadata page's payload, or a range of

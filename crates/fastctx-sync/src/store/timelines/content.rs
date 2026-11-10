@@ -1,77 +1,19 @@
 //! Item membership is proved at the held snapshot before object custody reads.
+mod io;
 mod ownership;
 mod parts;
 use super::{SqliteTimelines, state};
 use crate::{
-    blocks::SqliteBlocks,
-    conversation::body_tree::{self, BodyExtent, BodyTreeError, BodyTreeIo},
+    conversation::body_tree::{self, BodyExtent, BodyTreeError},
     cursor::ByteCount,
-    manifest::{ContentBlock, ContentRef, ManifestPage, ManifestReply, ManifestRoot},
-    store::{
-        Error, FutureResult,
-        access::{AccessContext, Custody},
-        sql,
-    },
+    manifest::{ContentBlock, ContentRef},
+    store::{Error, access::AccessContext, sql},
     timeline::{ItemRead, TimelineContentRead, TimelineContentResult, TimelineReader},
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use fastctx_types::sync::{PAGE_BYTES, transport_codec::bounded_json};
-use std::sync::{
-    Mutex,
-    atomic::{AtomicUsize, Ordering},
-};
+use io::Io;
 
-struct Io<'a> {
-    blocks: &'a SqliteBlocks,
-    custody: Custody,
-    reads: AtomicUsize,
-    permits: Mutex<Vec<crate::admission::BytePermit>>,
-}
-impl Io<'_> {
-    fn charge(&self) -> Result<(), Error> {
-        if self.reads.fetch_add(1, Ordering::Relaxed) >= 1024 {
-            return Err(Error::Busy);
-        }
-        Ok(())
-    }
-    fn block(&self, block: &ContentBlock) -> Result<Vec<u8>, Error> {
-        self.charge()?;
-        let (bytes, permit) = self.blocks.content_block(&self.custody, block)?;
-        self.permits.lock().expect("never poisoned").push(permit);
-        Ok(bytes)
-    }
-    fn page(&self, root: &ManifestRoot) -> Result<ManifestPage, Error> {
-        self.charge()?;
-        let reply = self.blocks.content_manifest(&self.custody, root)?;
-        crate::blocks::manifest::validate(&self.custody.object.scope, reply.clone())?;
-        serde_json::from_str(&reply.page_json).map_err(|e| Error::Corrupt(e.to_string()))
-    }
-    fn metadata(&self, root: &ManifestRoot, page: &ManifestPage) -> Result<Option<Vec<u8>>, Error> {
-        let ManifestPage::Metadata { codec, payload, references } = page else {
-            return Ok(None);
-        };
-        let bytes = self.block(payload)?;
-        crate::blocks::metadata::validate(&root.0.domain, *codec, payload, &bytes, references)?;
-        Ok(Some(bytes))
-    }
-}
-impl BodyTreeIo for Io<'_> {
-    fn read_manifest(&self, root: ManifestRoot) -> FutureResult<'_, ManifestReply> {
-        Box::pin(async move {
-            self.charge()?;
-            self.blocks.content_manifest(&self.custody, &root)
-        })
-    }
-    fn read_block(&self, block: ContentBlock) -> FutureResult<'_, Vec<u8>> {
-        Box::pin(async move { self.block(&block) })
-    }
-    fn put_manifest(&self, _: ManifestReply) -> FutureResult<'_, ()> {
-        Box::pin(async { Err(Error::Denied("a timeline reader cannot publish content".into())) })
-    }
-    fn put_block(&self, _: Vec<u8>) -> FutureResult<'_, ContentBlock> {
-        Box::pin(async { Err(Error::Denied("a timeline reader cannot publish content".into())) })
-    }
-}
 impl SqliteTimelines {
     pub(super) async fn read_content(
         &self,
@@ -86,6 +28,7 @@ impl SqliteTimelines {
         if request.content.id().domain != request.fence.conversation.scope {
             return Err(Error::Denied("the content belongs to another scope".into()));
         }
+        ownership::validate_path(&request.fence.conversation.scope, &request.content, request.path.as_deref())?;
         let item = match self.item(context.clone(), request.fence.clone(), request.item.clone()).await? {
             ItemRead::Item { item: Some(item) } => item,
             ItemRead::Item { item: None } => return Err(Error::Denied("the item is absent from this snapshot".into())),
@@ -101,9 +44,11 @@ impl SqliteTimelines {
             .await
             .map_err(|error| sql::error(error, self.blocks.worker().clone()))?;
         custody.context = context.clone();
-        let io = Io { blocks: &self.blocks, custody, reads: AtomicUsize::new(0), permits: Mutex::new(Vec::new()) };
+        let io = Io::new(&self.blocks, custody);
         let result = async {
-            if !ownership::contains(&io, &item, &request.content)? {
+            let owned = ownership::contains(&io, &item, &request.content, request.path.as_deref());
+            io.finish_ownership();
+            if !owned? {
                 return Err(Error::Denied("the content is not owned by this item at the fence".into()));
             }
             logical(&io, &request).await

@@ -41,6 +41,9 @@ measures!(Counter {
     SupplyPageBytes => "sync.supply_page_bytes",
     SupplyReused => "sync.supply_reused",
     SupplyRetiredHolds => "sync.supply_retired_holds",
+    TimelineItemReads => "sync.timeline.item_reads",
+    ContentOwnershipReads => "sync.timeline.ownership_reads",
+    ContentBodyReads => "sync.timeline.content_reads",
 });
 measures!(Gauge {
     MissingRecords => "sync.missing_records",

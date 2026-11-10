@@ -169,6 +169,8 @@ def verify(reader):
             read, wire = answer["read"], answer["wire"]
             assert all(wire.get(key) == value for key, value in read.items()), (case, answer)
             assert {"kind", "machine", "version"} <= read.keys(), (case, answer)
+            assert wire.get("timeline_content_paths", False) == case["value"].get("timeline_content_paths", False), (case, answer)
+            assert "timeline_content_paths" not in read, (case, answer)
             assert ("node_lifetime" in read) == ("node_lifetime" in case["value"] and case["protocol"] >= 8), (case, answer)
         else:
             wire = answer["wire"]

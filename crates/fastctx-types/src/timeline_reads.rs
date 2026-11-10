@@ -39,6 +39,10 @@ pub enum TimelineCall {
         item: ObjectId,
         content: ContentRef,
         range: Option<ByteRange>,
+        /// Ancestors from an item-owned root through the target's parent.
+        /// An empty path requires direct ownership; None uses bounded legacy lookup.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        path: Option<Vec<ContentRef>>,
     },
     /// Ends `fence`'s hold once its reader is done with it.
     Release { resident: ResidentId, fence: TimelineFence },

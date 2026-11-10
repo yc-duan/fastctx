@@ -15,6 +15,7 @@ pub(super) struct Loaded {
     manifests: BTreeMap<ManifestRoot, Vec<u8>>,
     payloads: BTreeMap<BlobId, Vec<u8>>,
     bytes: usize,
+    count_item_reads: bool,
 }
 impl PageSource for Loaded {
     fn manifest(&self, root: &ManifestRoot) -> Result<Option<&[u8]>, Error> {
@@ -25,9 +26,16 @@ impl PageSource for Loaded {
     }
 }
 impl Loaded {
+    pub(super) fn for_item() -> Self {
+        Self { count_item_reads: true, ..Self::default() }
+    }
     /// Loads the dependency a plan reported missing; an absent page here means
     /// the local snapshot is incomplete, which installation cannot repair.
     pub(super) fn load(&mut self, blocks: &SqliteBlocks, missing: &ContentRef) -> Result<(), Error> {
+        if self.count_item_reads {
+            use crate::metrics::{Cause, Counter, Metrics, PlatformMetrics};
+            PlatformMetrics.add(Counter::TimelineItemReads, Cause::Ordinary, 1);
+        }
         let bytes = match missing {
             ContentRef::Manifest { root } => {
                 let page = blocks

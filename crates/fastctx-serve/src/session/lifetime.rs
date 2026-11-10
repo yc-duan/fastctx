@@ -38,6 +38,7 @@ async fn cancelling_a_call_during_its_probe_keeps_the_original_arrival() {
                     account_records: false,
                     conversation_plans: false,
                     timeline_reads: false,
+                    timeline_content_paths: false,
                     scratch_locations: false,
                     collaboration_watch: false,
                     machine: "fixture".parse().unwrap(),

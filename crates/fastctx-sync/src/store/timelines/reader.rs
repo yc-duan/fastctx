@@ -201,7 +201,7 @@ impl SqliteTimelines {
         if !self.held(&fence).await? {
             return Ok(ItemRead::ReanchorNeeded);
         }
-        let mut loaded = Loaded::default();
+        let mut loaded = Loaded::for_item();
         loop {
             match query::item(&loaded, &fence, &id, LeaseState::Active, READ_BUDGET)? {
                 Outcome::Ready(ItemResult::Item(item)) => return Ok(ItemRead::Item { item }),
