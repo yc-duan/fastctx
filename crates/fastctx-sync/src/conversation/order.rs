@@ -14,7 +14,7 @@ fn identity(id: &ObjectId) -> [Sequence; 4] {
 
 pub(super) fn contains(path: &[Sequence], id: &ObjectId) -> Result<bool, Error> {
     let frames = path.get(1..).ok_or(Error::InvalidPlacement)?;
-    if frames.len() % WORDS != 0 {
+    if !frames.len().is_multiple_of(WORDS) {
         return Err(Error::InvalidPlacement);
     }
     Ok(frames.chunks_exact(WORDS).any(|frame| frame[NODE..] == identity(id)))
@@ -105,4 +105,40 @@ pub(super) fn sibling(
     words[8] = *sequence;
     words[9..13].copy_from_slice(&identity(stable));
     Ok(Some(words.to_vec()))
+}
+
+/// Self-contained source validation; resolving anchor witnesses remains the
+/// canonical producer's job. No display-order word is an ancestor identity.
+pub(crate) fn valid_position(item: &fastctx_types::sync::timeline::TimelineItem) -> bool {
+    let path = &item.position.display_ancestry;
+    if item.validate_channel().is_err() || path.is_empty() || path[0].0 > 1 || item.turn.is_none() && path[0].0 != 0 {
+        return false;
+    }
+    let frames = &path[1..];
+    if frames.is_empty()
+        || !frames.len().is_multiple_of(WORDS)
+        || item.parent.is_none() && frames.len() != WORDS
+        || item.parent.is_some() && frames.len() < 2 * WORDS
+        || frames[frames.len() - 4..] != identity(&item.id)
+    {
+        return false;
+    }
+    if let Some(parent) = &item.parent {
+        let end = frames.len() - WORDS;
+        if frames[end - 4..end] != identity(parent) {
+            return false;
+        }
+    }
+    let mut nodes = std::collections::BTreeSet::new();
+    frames.chunks_exact(WORDS).all(|frame| {
+        if !nodes.insert(&frame[NODE..]) {
+            return false;
+        }
+        match frame[5].0 {
+            0 => frame[0].0 != 0 && frame[8].0 != 0 && frame[1..5] != frame[NODE..],
+            1 => frame[0].0 != 0 && frame[1..5] == frame[NODE..] && frame[6..NODE].iter().all(|v| v.0 == 0),
+            2 => frame[..5].iter().all(|v| v.0 == u64::MAX) && frame[8].0 != 0,
+            _ => false,
+        }
+    })
 }

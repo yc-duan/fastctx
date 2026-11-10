@@ -22,7 +22,7 @@ impl Fixture {
         let sources = SqliteSources::new(
             blocks.clone(),
             Arc::new(Signer),
-            vec![Arc::new(Gate(AtomicUsize::new(0))) as Arc<dyn SourceAuthorizer>],
+            vec![Arc::new(fastctx_sync::conversation::source::TimelineAuthorizer) as Arc<dyn SourceAuthorizer>],
             fastctx_sync::store::ingest_memory::IngestBudget::new(32 << 20)?,
         )?;
         let timelines = SqliteTimelines::new(blocks.clone());
@@ -30,7 +30,16 @@ impl Fixture {
         let mut owner = custody(97, KIND);
         owner.object.object =
             fastctx_types::sync::conversation_identity::ConversationObject::Timeline.id(&conversation);
-        let primary = target(&owner, 97);
+        let mut primary = target(&owner, 97);
+        primary.stream = fastctx_sync::identity::StreamId::of(&owner.object, KIND);
+        primary.custody.purpose = HoldingUse::RuntimeSource {
+            host: fastctx_sync::store::access::HostBinding {
+                conversation: ObjectKey { scope: scope(), object: conversation.clone() },
+                account: AccountId::from_bytes([97; 32]),
+                host: DeviceId::from_bytes([3; 32]),
+                epoch: primary.epoch.clone(),
+            },
+        };
         let turn = TurnDeclaration {
             key: TurnKey {
                 conversation: conversation.clone(),

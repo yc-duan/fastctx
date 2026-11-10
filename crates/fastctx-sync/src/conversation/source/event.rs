@@ -46,7 +46,7 @@ pub fn validate(conversation: &ObjectId, scope: &ScopeKey, event: &TimelineEvent
                 if matches!(placement.slot, DisplaySlot::Opening) && observation.identity.role() != ItemRole::User {
                     return Err("only a question may occupy its turn's opening slot".into());
                 }
-                child(&observation.identity.id(), &placement.slot)?;
+                placement_shape(&observation.identity.id(), placement)?;
             }
         }
         TimelineFact::Turn { turn } => {
@@ -54,14 +54,13 @@ pub fn validate(conversation: &ObjectId, scope: &ScopeKey, event: &TimelineEvent
                 return Err("turn declaration differs from its conversation or order".into());
             }
         }
-        TimelineFact::Placement { item, placement } => child(item, &placement.slot)?,
+        TimelineFact::Placement { item, placement } => placement_shape(item, placement)?,
         TimelineFact::ItemRevision { change } => match change {
             TimelineChange::Put { item } => {
                 if item.id != item.position.item
                     || item.revision.0 == 0
-                    || item.position.turn.0 == 0
                     || item.position.accepted.0 == 0
-                    || !canonical_position(item)
+                    || !super::super::order::valid_position(item)
                     || item.parent.as_ref() == Some(&item.id)
                     || !matches!(item.body, ContentRef::Manifest { .. })
                 {
@@ -169,11 +168,28 @@ pub fn validate_record(
     Ok(())
 }
 
-fn child(item: &ObjectId, slot: &DisplaySlot) -> Result<(), String> {
-    if matches!(slot, DisplaySlot::Child { parent } if parent == item) {
+fn placement_shape(
+    item: &ObjectId,
+    placement: &fastctx_types::sync::conversation_timeline::Placement,
+) -> Result<(), String> {
+    use fastctx_types::sync::conversation_timeline::DisplayOrder;
+    if matches!(placement.slot, DisplaySlot::Session) != placement.turn.is_none() {
+        return Err("session placement and turn presence differ".into());
+    }
+    if matches!(&placement.slot, DisplaySlot::Child { parent } if parent == item) {
         return Err("item cannot be its own display parent".into());
     }
-    Ok(())
+    match &placement.order {
+        Some(DisplayOrder::Native { sequence }) if sequence.0 == 0 => {
+            Err("native sibling order must be positive".into())
+        }
+        Some(DisplayOrder::Gap { before, sequence, .. })
+            if sequence.0 == 0 || before.as_ref() == Some(item) || matches!(placement.slot, DisplaySlot::Opening) =>
+        {
+            Err("gap order has an invalid source sequence, anchor or opening slot".into())
+        }
+        _ => Ok(()),
+    }
 }
 fn preceding(cause: &RecordRef, event: &TimelineEvent) -> Result<(), String> {
     let own = &event.evidence.record;
@@ -183,18 +199,4 @@ fn preceding(cause: &RecordRef, event: &TimelineEvent) -> Result<(), String> {
         return Err("timeline cause is empty, self-referential or later in its stream".into());
     }
     Ok(())
-}
-
-fn canonical_position(item: &fastctx_types::sync::timeline::TimelineItem) -> bool {
-    let path = &item.position.display_ancestry;
-    let minimum = if item.parent.is_some() { 3 } else { 2 };
-    if path.len() < minimum
-        || (item.parent.is_none() && path.len() != 2)
-        || path[0].0 > 1
-        || path.last() != Some(&item.position.accepted)
-    {
-        return false;
-    }
-    let mut created = std::collections::BTreeSet::new();
-    path.iter().skip(1).all(|key| key.0 != 0 && created.insert(key))
 }
