@@ -16,7 +16,10 @@
 mod body;
 mod display;
 mod display_validation;
+mod facts;
+mod facts_validation;
 pub use display::*;
+pub use facts::*;
 mod fact;
 mod order;
 pub use body::*;

@@ -41,6 +41,12 @@ pub(crate) fn validate(
             page.validate_scopes(scope).map_err(Error::Invalid)?;
             page.owned_content()
         }
+        MetadataCodec::ItemFactsV1 => {
+            let facts =
+                fastctx_types::sync::conversation_timeline::ItemFactBodyV1::decode(bytes).map_err(Error::Invalid)?;
+            facts.validate_scope(scope).map_err(Error::Invalid)?;
+            facts.owned_content()
+        }
         MetadataCodec::BodyV1 => decode::<ProjectedBody>(bytes)?.owned_content().into_iter().cloned().collect(),
     };
     if set(scope, references)? != set(scope, declared.to_vec())? {

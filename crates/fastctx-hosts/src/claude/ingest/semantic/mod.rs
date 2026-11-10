@@ -3,5 +3,8 @@
 pub mod block;
 pub mod children;
 pub mod fields;
+pub mod lines;
+pub mod message;
 pub mod prompt;
 pub mod row;
+pub mod tool;

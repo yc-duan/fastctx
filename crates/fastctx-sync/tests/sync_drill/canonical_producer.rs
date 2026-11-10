@@ -56,6 +56,7 @@ impl Supplied {
             kind: DisplayKind::Message,
             tool: None,
             status: Some(DisplayStatus::Running),
+            facts: None,
             append: Some(DisplayAppend { channel: fastctx_types::session::Part::Text, index: Count(0) }),
             parts: vec![DisplayPart {
                 index: Count(0),

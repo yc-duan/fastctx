@@ -10,6 +10,7 @@ mod display_append;
 pub mod display_pages;
 mod engine;
 pub mod facts;
+mod host_facts;
 mod indexes;
 pub mod item_keys;
 pub mod parts;

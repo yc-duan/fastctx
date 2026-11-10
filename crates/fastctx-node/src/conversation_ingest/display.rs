@@ -26,8 +26,16 @@ pub struct Builder {
 }
 impl Builder {
     pub fn new(kind: DisplayKind, tool: Option<ToolSummary>, status: DisplayStatus) -> Result<Self, Error> {
-        let mut display =
-            ItemDisplayV1 { version: 1, kind, tool, status: Some(status), append: None, parts: Vec::new(), more: None };
+        let mut display = ItemDisplayV1 {
+            version: 1,
+            kind,
+            tool,
+            status: Some(status),
+            facts: None,
+            append: None,
+            parts: Vec::new(),
+            more: None,
+        };
         if let Some(tool) = &mut display.tool {
             clip_tool(tool, 1024);
         }

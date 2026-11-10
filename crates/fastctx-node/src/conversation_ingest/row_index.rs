@@ -140,7 +140,7 @@ async fn index(
         for _ in 0..48 {
             let Some((address, node)) = children.step(reader).await.map_err(super::reading::error)? else { break };
             rows.put(SourceFamily::HostRows, &block_key(claim, row, node.ordinal.0), &address).await?;
-            let kind = fields::text(reader, address, "type").await.map_err(super::reading::error)?;
+            let kind = fields::summary(reader, address, "type", 256).await.map_err(super::reading::error)?;
             work.has_result |= kind.as_deref() == Some("tool_result");
             if kind.as_deref() == Some("tool_result")
                 && let Some((content, _)) = reader.field(address, "content").await.map_err(super::reading::error)?

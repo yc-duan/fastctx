@@ -16,6 +16,9 @@ impl ItemDisplayV1 {
     }
     pub fn validate(&self) -> Result<(), String> {
         version(self.version)?;
+        if let Some(facts) = &self.facts {
+            facts.validate()?;
+        }
         if (self.kind == DisplayKind::Tool) != self.tool.is_some() {
             return Err("tool display and summary differ".into());
         }
@@ -70,6 +73,7 @@ impl ItemDisplayV1 {
     pub fn owned_content(&self) -> Vec<ContentRef> {
         let mut refs: Vec<_> = self.parts.iter().filter_map(owned_part).collect();
         refs.extend(self.more.iter().map(|more| ContentRef::Manifest { root: more.root.clone() }));
+        refs.extend(self.facts.iter().flat_map(|facts| facts.owned_content()));
         refs
     }
     /// Checks the selected part, obtained by bounded index lookup when necessary.
@@ -91,6 +95,9 @@ impl ItemDisplayV1 {
     /// Logical cross-object picture links do not grant access to their bytes.
     /// Same-object content and descriptor subpages stay in the owner's scope.
     pub fn validate_scopes(&self, scope: &ScopeKey) -> Result<(), String> {
+        if let Some(facts) = &self.facts {
+            facts.validate_scope(scope)?;
+        }
         for part in &self.parts {
             part.validate_scope(scope)?;
         }

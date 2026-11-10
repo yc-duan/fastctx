@@ -29,7 +29,7 @@ pub enum RowKind {
     Skipped,
     Invalid { reason: String, queued: Option<String> },
     Unindexed,
-    Title { custom: bool, text: Option<String> },
+    Title { custom: bool, text: Option<crate::claude::ingest::document::Span>, at: Option<Timestamp> },
     Row(Box<Header>),
 }
 /// Filtering precedes UUID replacement, matching the legacy transcript reader.
@@ -42,14 +42,19 @@ pub async fn header(reader: &Reader<'_>, agent: Option<&str>) -> io::Result<RowK
     ) {
         return Ok(RowKind::Unindexed);
     }
-    let Some(kind) = fields::text(reader, root, "type").await? else {
+    let Some(kind) = fields::summary(reader, root, "type", 256).await? else {
         return Ok(RowKind::Invalid { reason: "expected an object with a string type".into(), queued: None });
+    };
+    let at = match super::message::string(reader, root, "timestamp").await? {
+        Some(span) => reader.text(span, 128).await?.and_then(|text| text.parse().ok()),
+        None => None,
     };
     if matches!(kind.as_str(), "custom-title" | "ai-title") {
         let custom = kind == "custom-title";
         return Ok(RowKind::Title {
             custom,
-            text: fields::text(reader, root, if custom { "customTitle" } else { "aiTitle" }).await?,
+            text: super::message::string(reader, root, if custom { "customTitle" } else { "aiTitle" }).await?,
+            at,
         });
     }
     let sidechain = match fields::boolean(reader, root, "isSidechain").await {
@@ -95,13 +100,13 @@ pub async fn header(reader: &Reader<'_>, agent: Option<&str>) -> io::Result<RowK
     if reader.field(root, "uuid").await?.is_some() && uuid.as_ref().is_none_or(String::is_empty) {
         return Ok(RowKind::Invalid { reason: "uuid is not a nonempty string".into(), queued });
     }
-    let at = fields::text(reader, root, "timestamp").await?.and_then(|text| text.parse().ok());
+
     let message = fields::object(reader, root, "message").await?;
     let content =
         if let Some(message) = message { reader.field(message, "content").await?.map(|(a, _)| a) } else { None };
     let response = if let Some(message) = message { fields::text(reader, message, "id").await? } else { None };
     let origin = if let Some(origin) = fields::object(reader, root, "origin").await? {
-        fields::text(reader, origin, "kind").await?
+        fields::summary(reader, origin, "kind", 256).await?
     } else {
         None
     };
@@ -229,6 +234,7 @@ fn bookkeeping(kind: &str) -> bool {
             | "dev-mods"
             | "worktree-state"
             | "cost-state"
+            | "tools-used"
             | "file-history-snapshot"
             | "file-history-delta"
             | "attribution-snapshot"

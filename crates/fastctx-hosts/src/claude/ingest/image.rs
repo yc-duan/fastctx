@@ -95,3 +95,9 @@ async fn text(reader: &Reader<'_>, object: Address, name: &str) -> io::Result<Op
         None => Ok(None),
     }
 }
+
+/// True only for malformed external base64. Storage and cursor failures remain
+/// errors, so callers can abandon a picture without hiding failed source IO.
+pub fn is_invalid_data(error: &io::Error) -> bool {
+    super::image_base64::is_invalid(error)
+}

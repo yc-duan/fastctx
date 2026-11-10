@@ -12,7 +12,16 @@ use fastctx_sync::store::Error;
 use fastctx_types::sync::{conversation_identity::ImageSelector, conversation_timeline::*, cursor::Count};
 
 pub fn empty(kind: DisplayKind, tool: Option<ToolSummary>, status: DisplayStatus) -> ItemDisplayV1 {
-    ItemDisplayV1 { version: 1, kind, tool, status: Some(status), append: None, parts: Vec::new(), more: None }
+    ItemDisplayV1 {
+        version: 1,
+        kind,
+        tool,
+        status: Some(status),
+        facts: None,
+        append: None,
+        parts: Vec::new(),
+        more: None,
+    }
 }
 pub async fn block(
     io: &StepContent<'_>,
@@ -32,7 +41,12 @@ pub async fn block(
                 .await
                 .map_err(super::reading::error)?
                 .ok_or_else(|| Error::Invalid("indexed image lost its source".into()))?;
-            Some(parts::image(io, reader, &source, Count(0), selector).await.map_err(super::reading::error)?)
+            match parts::image(io, reader, &source, Count(0), selector).await {
+                Ok(part) => Some(part),
+                // The exact external value remains in typed tool/native detail.
+                Err(error) if fastctx_hosts::claude::ingest::image::is_invalid_data(&error) => None,
+                Err(error) => return Err(super::reading::error(error)),
+            }
         }
         _ => None,
     };

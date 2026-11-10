@@ -1,8 +1,7 @@
 //! One bounded semantic unit and its local effects. The caller adopts these
 //! effects only when the shared canonical producer consumed the complete unit.
 use super::{
-    bodies::Bodies, claim::Claim, display_append, indexes::Indexes, render, resupply, row_state::*,
-    step_content::StepContent,
+    bodies::Bodies, claim::Claim, display_append, indexes::Indexes, resupply, row_state::*, step_content::StepContent,
 };
 use fastctx_hosts::claude::ingest::{
     checkpoint::{ClaudeCheckpointV1, Partial},
@@ -51,32 +50,49 @@ pub async fn unit(
         document::Completion::Valid(document) => {
             let input = Bodies { content: io };
             let reader = Reader { document, input: &input };
-            match fastctx_hosts::claude::ingest::semantic::row::header(&reader, None)
+            let kind = fastctx_hosts::claude::ingest::semantic::row::header(&reader, None)
                 .await
-                .map_err(super::reading::error)?
+                .map_err(super::reading::error)?;
+            match super::host_facts::session::advance(
+                claim,
+                io,
+                &reader,
+                &kind,
+                row,
+                Local::borrow(&mut rows, &mut clock, &mut work),
+            )
+            .await?
             {
-                RowKind::Skipped | RowKind::Title { .. } => {
-                    work.stage = Stage::Finish;
-                    None
-                }
-                RowKind::Row(header)
-                    if header.problem.is_none()
-                        && header.uuid.as_deref().is_some_and(|id| NativeId::new(id).is_ok()) =>
-                {
-                    super::row_index::advance(
-                        claim,
-                        io,
-                        &reader,
-                        &header,
-                        row,
-                        Local::borrow(&mut rows, &mut clock, &mut work),
-                    )
-                    .await?
-                }
-                _ => {
-                    work.stage = Stage::Finish;
-                    Some(unknown(claim, io, row, Local::borrow(&mut rows, &mut clock, &mut work)).await?)
-                }
+                super::host_facts::session::Advance::More(fact) => fact.map(|fact| *fact),
+                super::host_facts::session::Advance::Done => match kind {
+                    RowKind::Skipped | RowKind::Title { .. } => {
+                        work.stage = Stage::Finish;
+                        None
+                    }
+                    RowKind::Row(header)
+                        if header.problem.is_none()
+                            && header.uuid.as_deref().is_some_and(|id| NativeId::new(id).is_ok()) =>
+                    {
+                        if super::host_facts::session::has_items(io, &reader, &header, row, &mut rows).await? {
+                            super::row_index::advance(
+                                claim,
+                                io,
+                                &reader,
+                                &header,
+                                row,
+                                Local::borrow(&mut rows, &mut clock, &mut work),
+                            )
+                            .await?
+                        } else {
+                            work.stage = Stage::Finish;
+                            None
+                        }
+                    }
+                    _ => {
+                        work.stage = Stage::Finish;
+                        Some(unknown(claim, io, row, Local::borrow(&mut rows, &mut clock, &mut work)).await?)
+                    }
+                },
             }
         }
         document::Completion::Invalid { .. } => {
@@ -84,6 +100,9 @@ pub async fn unit(
             Some(unknown(claim, io, row, Local::borrow(&mut rows, &mut clock, &mut work)).await?)
         }
     };
+    if let Some(TimelineFact::Turn { turn }) = &fact {
+        super::host_facts::remember_turn(&mut rows, turn).await?;
+    }
     let accepted = if fact.is_some() {
         let accepted = clock.accept()?;
         rows.put(SourceFamily::HostRows, CLOCK, &clock).await?;
@@ -93,7 +112,10 @@ pub async fn unit(
     };
     let finished = matches!(work.stage, Stage::Finish);
     if finished {
-        rows.delete(SourceFamily::Consumers, &key).await?;
+        super::host_facts::session::clear(claim, io, &mut rows).await?;
+        if rows.get::<Work>(SourceFamily::Consumers, &key).await?.is_some() {
+            rows.delete(SourceFamily::Consumers, &key).await?;
+        }
     } else {
         rows.put(SourceFamily::Consumers, &key, &work).await?;
     }
@@ -119,7 +141,7 @@ pub(super) async fn observed(
     row: &Row,
     local: Local<'_, '_>,
     identity: ItemIdentity,
-    display: ItemDisplayV1,
+    mut display: ItemDisplayV1,
     complete: bool,
 ) -> Result<TimelineFact, Error> {
     let Local { rows, clock, work } = local;
@@ -134,6 +156,7 @@ pub(super) async fn observed(
         resupply::state_content(io, original(row)).await?;
         work.original_published = true;
     }
+    super::host_facts::attach(io, row, rows, placement.as_ref(), &identity, &mut display).await?;
     let display = display_append::publish(io, &display).await?;
     rows.put(SourceFamily::HostRows, &key, &Item { created, placement: placement.clone(), display: display.clone() })
         .await?;
@@ -167,13 +190,12 @@ pub(super) async fn unknown(
         activation: NativeId::new(io.target().step().generation().as_str()).map_err(identity)?,
         draft: NativeId::new(row.start.0.to_string()).map_err(identity)?,
     });
-    observed(
-        io,
-        row,
-        Local::borrow(rows, clock, work),
-        identity,
-        render::empty(DisplayKind::Unknown, None, DisplayStatus::Failed),
-        true,
-    )
-    .await
+    work.placement = Some(Placement {
+        turn: None,
+        slot: DisplaySlot::Session,
+        proof: PlacementProof::Causal,
+        order: Some(DisplayOrder::Native { sequence: Sequence(row.line.0.checked_add(1).ok_or(Error::Busy)?) }),
+    });
+    let display = super::host_facts::other::diagnostic(io, row, &identity).await?;
+    observed(io, row, Local::borrow(rows, clock, work), identity, display, true).await
 }

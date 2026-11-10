@@ -140,6 +140,7 @@ pub(super) async fn display(
         kind: DisplayKind::User,
         tool: None,
         status: None,
+        facts: None,
         append: None,
         parts: vec![DisplayPart {
             index: Count(0),

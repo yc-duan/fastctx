@@ -23,7 +23,7 @@ impl Base64State {
         for &byte in input {
             if self.ended {
                 self.failed = true;
-                return Err(io::Error::other("base64 bytes follow terminal padding"));
+                return Err(invalid("base64 bytes follow terminal padding"));
             }
             self.quartet[self.used as usize] = byte;
             self.used += 1;
@@ -33,7 +33,7 @@ impl Base64State {
                     Ok(length) => length,
                     Err(error) => {
                         self.failed = true;
-                        return Err(io::Error::other(error));
+                        return Err(invalid(error));
                     }
                 };
                 output.extend_from_slice(&decoded[..length]);
@@ -45,8 +45,23 @@ impl Base64State {
     }
     pub fn finish(&self) -> io::Result<()> {
         if self.failed || self.used != 0 {
-            return Err(io::Error::other("incomplete or invalid base64 image"));
+            return Err(invalid("incomplete or invalid base64 image"));
         }
         Ok(())
     }
+}
+
+#[derive(Debug)]
+struct InvalidImage(String);
+impl std::fmt::Display for InvalidImage {
+    fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(out)
+    }
+}
+impl std::error::Error for InvalidImage {}
+fn invalid(error: impl std::fmt::Display) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, InvalidImage(error.to_string()))
+}
+pub(super) fn is_invalid(error: &io::Error) -> bool {
+    error.get_ref().is_some_and(|error| error.is::<InvalidImage>())
 }

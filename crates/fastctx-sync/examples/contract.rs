@@ -125,6 +125,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     kind: fastctx_types::sync::conversation_timeline::DisplayKind::Message,
                     tool: None,
                     status: None,
+                    facts: None,
                     append: None,
                     parts: Vec::new(),
                     more: None,

@@ -6,6 +6,7 @@ use std::io;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Block {
+    pub address: Address,
     pub ordinal: Count,
     pub raw: Span,
     pub kind: Kind,
@@ -35,7 +36,7 @@ pub struct Pairing {
 pub async fn decode(reader: &Reader<'_>, address: Address) -> io::Result<Block> {
     let node = reader.node(address).await?;
     let mut pairing = None;
-    let kind = match fields::text(reader, address, "type").await?.as_deref() {
+    let kind = match fields::summary(reader, address, "type", 256).await?.as_deref() {
         Some("text") => match reader.field(address, "text").await? {
             Some((_, n)) => match n.value {
                 Value::String { text, .. } => Kind::Text { body: text },
@@ -92,7 +93,7 @@ pub async fn decode(reader: &Reader<'_>, address: Address) -> io::Result<Block> 
         Some("document") => Kind::Document { source: fields::object(reader, address, "source").await? },
         _ => Kind::Other,
     };
-    Ok(Block { ordinal: node.ordinal, raw: node.raw, kind, pairing })
+    Ok(Block { address, ordinal: node.ordinal, raw: node.raw, kind, pairing })
 }
 async fn image(reader: &Reader<'_>, address: Address) -> io::Result<Option<Kind>> {
     if !only_fields(reader, address, &["type", "source"]).await? {

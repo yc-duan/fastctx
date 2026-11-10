@@ -152,6 +152,8 @@ pub struct ItemDisplayV1 {
     pub kind: DisplayKind,
     pub tool: Option<ToolSummary>,
     pub status: Option<DisplayStatus>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub facts: Option<Box<super::DisplayFactsV1>>,
     pub append: Option<DisplayAppend>,
     pub parts: Vec<DisplayPart>,
     pub more: Option<DisplayPartsRef>,

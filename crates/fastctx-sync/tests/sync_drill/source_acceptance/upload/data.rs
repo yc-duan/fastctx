@@ -44,6 +44,7 @@ pub(super) async fn ingest(sources: &SqliteSources, target: &SourceTarget) -> Re
         append: None,
         parts: Vec::new(),
         more: None,
+        facts: None,
     };
     let payload = block(sources, &bound, descriptor.encode()?).await?;
     let display = page(

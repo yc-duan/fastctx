@@ -107,6 +107,7 @@ impl Depot {
             kind: fastctx_types::sync::conversation_timeline::DisplayKind::User,
             tool: None,
             status: None,
+            facts: None,
             append: None,
             parts: Vec::new(),
             more: None,

@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 pub(super) enum Selection {
     Row,
     Message,
+    Usage,
+    TokenDetails,
     Blocks,
     Block,
     Source,
@@ -44,6 +46,13 @@ impl Selection {
             (Row, Some("attachment")) => Attachment,
             (Row, Some("toolUseResult")) => AgentResult,
             (Row, Some("supersedesUuids" | "retractedMessageUuids")) => Strings,
+            (Message, Some("usage")) => Usage,
+            (Usage, Some("output_tokens_details")) => TokenDetails,
+            (
+                Usage,
+                Some("input_tokens" | "cache_read_input_tokens" | "cache_creation_input_tokens" | "output_tokens"),
+            ) => Scalar,
+            (TokenDetails, Some("thinking_tokens")) => Scalar,
             (Message | Block | AgentResult, Some("content")) => Blocks,
             (Block, Some("source")) => Source,
             (Block, Some("input")) => Input,
@@ -82,7 +91,7 @@ impl Selection {
                     | "description",
                 ),
             ) => Scalar,
-            (Message, Some("role" | "id" | "model")) => Scalar,
+            (Message, Some("role" | "id" | "model" | "stop_reason")) => Scalar,
             (Block, Some("type" | "text" | "thinking" | "data" | "id" | "name" | "tool_use_id" | "is_error")) => Scalar,
             (Source, Some("type" | "media_type" | "data")) => Scalar,
             (
