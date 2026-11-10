@@ -197,12 +197,12 @@ export interface Words {
   /** The user archived it: kept to read, not to speak to. */
   removed: string;
   removedNote: string;
-  /** Its machine out of reach for good: an assistance that ended, or a
-   *  machine no longer reachable; what is kept here is still read. */
+  /** The current directory explicitly grants no access; retained content can still be read. */
   assistEnded: string;
   assistEndedNote: string;
   departed: string;
   departedNote: string;
+  notConnected: string;
   waitingForYou: string;
   on(machine: string): string;
   /** Under the title of a conversation with an agent assisting the user. */
@@ -570,6 +570,7 @@ export const zh: Words = {
   assistEndedNote: "协助已结束，对话仅供查看",
   departed: "已无法访问",
   departedNote: "它所在的机器已无法访问，对话仅供查看",
+  notConnected: "未连接",
   waitingForYou: "等待回复",
   on: (machine) => machine,
   assistFrom: (owner) => `来自 ${owner}`,
@@ -954,6 +955,7 @@ export const en: Words = {
   assistEndedNote: "Assistance ended; the conversation is read-only",
   departed: "No longer reachable",
   departedNote: "Its machine is no longer reachable; the conversation is read-only",
+  notConnected: "not connected",
   waitingForYou: "Waiting for your reply",
   on: (machine) => machine,
   assistFrom: (owner) => `from ${owner}`,

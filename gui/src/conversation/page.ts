@@ -2408,7 +2408,7 @@ export class ConversationPage {
           : away === "away"
             ? `${glyph("lock", 16)}<span>${escape(this.options.someone.assistFrom ? this.options.words.assistEndedNote : this.options.words.departedNote)}</span>`
             : away === "unreached" || away === "stopped"
-              ? `${glyph("link", 16)}<span>${escape(this.options.words.watchInterrupted(null))}</span>`
+              ? `${glyph("link", 16)}<span>${escape(away === "stopped" ? this.options.words.notConnected : this.options.words.watchInterrupted(null))}</span>`
               : "";
     this.element.querySelector<HTMLElement>(".talk-menu-toggle")?.toggleAttribute("hidden", away === "deleted");
     this.drawState();
@@ -2639,7 +2639,7 @@ export class ConversationPage {
     const waiting = !this.gone && this.away === null && conversation.waiting();
     // Working for the whole of a turn, not only while something shows.
     const working = !this.gone && this.away === null && !waiting && conversation.busy();
-    // Out of reach for good, that is what is said, not that the line broke.
+    // Current presence takes precedence over an earlier transport error.
     const now =
       (this.away !== null ? null : this.gone) ??
       (this.away !== null
@@ -2649,9 +2649,11 @@ export class ConversationPage {
             ? someone.assistFrom
               ? words.assistEnded
               : words.departed
-            : this.away === "unreached" || this.away === "stopped"
-              ? words.watchInterrupted(null)
-              : words.removed
+            : this.away === "stopped"
+              ? words.notConnected
+              : this.away === "unreached"
+                ? words.watchInterrupted(null)
+                : words.removed
         : waiting
           ? words.waitingForYou
           : working
