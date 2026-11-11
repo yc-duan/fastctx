@@ -127,17 +127,11 @@ function conversation(sessionId, previous) {
     // (`late`).
     ended: 0,
     since: new Map(),
-    // The user stopped the last turn and has not spoken since: only the
-    // user's own words start the next one.
-    hushed: false,
     // A row beside a prompt could not be kept: until a turn ends, what is
     // held goes in one submission at a time.
     plain: false,
     // Looks in a row that each found more for an idle session (`looked`).
     settling: 0,
-    // What Claude Code itself had to tell while the session was hushed, a
-    // background task's end: kept for the user's next words (`alongPrompt`).
-    kept: [],
     handled: new Set(),
     failing: new Set(),
     held: [],
@@ -456,9 +450,8 @@ async function submitted($, context, deliveries, acceptedTurn) {
 // user's own words start it, as the user's, and the rest, the World's
 // telling and the user's earlier words, is one row just before them, each in
 // the order it came, so the model reads them all in the one request. With
-// none of the user's, the World's telling is the prompt. Once the user
-// stopped a turn, only the user's own words start the next (`hushed`). What
-// does not go in is held again, before anything held since.
+// none of the user's, the World's telling is the prompt. What does not go
+// in is held again, before anything held since.
 async function flush($, context) {
   if (context.closed || context.busy || waiting(context)) return
   await readGoal($, context)
@@ -466,7 +459,7 @@ async function flush($, context) {
   // What rides with the next turn starts none: it waits for one.
   const ready = context.held.filter((delivery) => delivery.along === undefined && goalPermits(context, delivery))
   const own = ready.filter((delivery) => delivery.as_user === true)
-  if (ready.length === 0 || (own.length === 0 && context.hushed)) return
+  if (ready.length === 0) return
   const taken = !context.plain ? ready : own.length > 0 ? [own[0]] : ready
   const start = own.length > 0 ? taken.filter((delivery) => delivery.as_user === true).pop() : null
   const beside = start === null ? [] : taken.filter((delivery) => delivery !== start)
@@ -499,10 +492,6 @@ async function replaced($, context, deliveries) {
 const SETTLE_MS = 150
 const SETTLES = 5
 
-// What goes before a notice of Claude Code's own that was kept while the
-// session was hushed.
-const KEPT = 'Claude Code reported this while the session was stopped; it started no turn then:'
-
 // What the next turn reads of the last one the user stopped. Claude Code
 // ends a turn a plugin stops as one ended to deliver a following message,
 // and says so to a call it cut short: the model would not otherwise know
@@ -511,35 +500,20 @@ const STOPPED = 'The user stopped your previous turn on purpose. A tool call it 
 
 // What rides with the next turn, the World's words for it: that the user
 // stopped the last turn, what is held to go along, and `beside`, what a
-// submission brings with its prompt. Once the user stopped a turn, what the
-// World had to tell since rides with the user's next words too. Taken as it
-// is read; `keep` puts back what did not go in.
+// submission brings with its prompt. Taken as it is read; `keep` puts back
+// what did not go in.
 function alongNext(context, beside = []) {
-  const along = context.held.filter((delivery) => goalPermits(context, delivery)
-    && (delivery.along !== undefined || (context.hushed && delivery.as_user !== true)))
+  const along = context.held.filter((delivery) => delivery.along !== undefined && goalPermits(context, delivery))
   for (const delivery of along) context.held.splice(context.held.indexOf(delivery), 1)
   const stopped = context.toldStopped
   context.toldStopped = []
-  const kept = context.kept.splice(0, context.kept.length)
   const texts = [...(stopped.length > 0 ? [framed({ text: STOPPED })] : []), ...along.map(framed),
-    ...kept.map((text) => framed({ text: KEPT + '\n\n' + text })),
     ...beside.map((delivery) => (delivery.as_user === true ? earlierFramed(delivery) : framed(delivery)))]
   const keep = () => {
     context.held.unshift(...along)
     context.toldStopped.unshift(...stopped)
-    context.kept.unshift(...kept)
   }
-  return { along, texts, keep, stopped, kept }
-}
-
-// What is kept of Claude Code's own telling outlives this mod: the notice
-// was dropped where it came in, and is nowhere else.
-async function saveKept($, context) {
-  try {
-    await $.fs.write(context.dir + '/kept-notices.json', JSON.stringify(context.kept))
-  } catch (error) {
-    worldFailure($, 'kept notices', error)
-  }
+  return { along, texts, keep, stopped }
 }
 
 // What waits to ride with the next turn goes in as a row of its own just
@@ -548,7 +522,7 @@ async function saveKept($, context) {
 // whether the row was kept, or there was none to keep.
 async function alongBefore($, context, beside = []) {
   await readGoal($, context)
-  const { along, texts, keep, stopped, kept } = alongNext(context, beside)
+  const { along, texts, keep, stopped } = alongNext(context, beside)
   if (texts.length === 0) return true
   let appended
   try {
@@ -567,7 +541,6 @@ async function alongBefore($, context, beside = []) {
   }
   context.alongTaken.push(...along)
   context.stopTaken.push(...stopped)
-  if (kept.length > 0) await saveKept($, context)
   return true
 }
 
@@ -575,17 +548,9 @@ async function alongBefore($, context, beside = []) {
 // that starts it; the turn it starts takes it (`startTurn`).
 async function alongPrompt($, context, e, next) {
   if (e.turnId !== undefined || e.command !== undefined || context.closed) return next(e)
-  // Once the user stopped a turn, nothing but the user's own words starts
-  // the next: a background task's end, which Claude Code would start a turn
-  // with, is kept here and goes in with those words.
-  if (context.hushed && e.origin?.kind === 'task-notification' && typeof e.text === 'string') {
-    context.kept.push(e.text)
-    await saveKept($, context)
-    return { drop: 'the user stopped the last turn: this waits for the user\'s next words' }
-  }
   await accountAgentsBeforeSubmit($, context)
   await readGoal($, context)
-  const { along, texts, keep, stopped, kept } = alongNext(context)
+  const { along, texts, keep, stopped } = alongNext(context)
   if (texts.length === 0) return next(e)
   let result
   try {
@@ -598,7 +563,6 @@ async function alongPrompt($, context, e, next) {
   else {
     context.alongTaken.push(...along)
     context.stopTaken.push(...stopped)
-    if (kept.length > 0) await saveKept($, context)
   }
   return result
 }
@@ -693,11 +657,8 @@ async function look($, context) {
 // ended is left as it is.
 async function stopping($, context) {
   let asked = null
-  let user = true
   try {
-    const stop = JSON.parse(await $.fs.read(context.dir + '/stop.json'))
-    asked = stop.turn
-    user = stop.source === undefined || stop.source === 'user'
+    asked = JSON.parse(await $.fs.read(context.dir + '/stop.json')).turn
   } catch (error) {
     return
   }
@@ -707,7 +668,6 @@ async function stopping($, context) {
   try {
     await $.turn.abort({ turnId: asked })
     context.toldStopped.push(asked)
-    if (user) context.hushed = true
   } catch (error) {
     // Claude Code refuses an abort only for a turn that is not running: the
     // turn held as running had ended unseen, and is ended here.
@@ -903,17 +863,11 @@ async function startSession($, context) {
   const files = (await $.fs.list(context.dir)).map((entry) => entry.name)
   // A stopped turn remains the next turn's context across host retirement.
   await $.fs.write(context.dir + '/told-stops/.created', '')
-  if (files.includes('kept-notices.json')) {
-    const kept = JSON.parse(await $.fs.read(context.dir + '/kept-notices.json'))
-    if (Array.isArray(kept)) context.kept.push(...kept.filter((text) => typeof text === 'string'))
-  }
   if (files.includes('stop.json')) {
-    const stop = JSON.parse(await $.fs.read(context.dir + '/stop.json'))
-    const requestedStop = stop.turn
+    const requestedStop = JSON.parse(await $.fs.read(context.dir + '/stop.json')).turn
     const stopReceipts = new Set((await $.fs.list(context.dir + '/told-stops')).map((entry) => entry.name))
     if (typeof requestedStop === 'string' && !stopReceipts.has(encodeURIComponent(requestedStop))) {
       context.toldStopped.push(requestedStop)
-      if (stop.source === undefined || stop.source === 'user') context.hushed = true
     }
   }
   if (files.includes('activity.json')) {
@@ -995,8 +949,6 @@ async function startTurn($, context, e, next) {
   context.answered.clear()
   context.asked = 0
   context.streaming = false
-  // Whoever started this turn, the stop before it is behind it.
-  context.hushed = false
   noteTurnPrompt(context, e)
   // The session's cost total as the turn begins: what it has risen by at
   // the turn's end is what the turn cost (`completeTurn`).

@@ -1210,12 +1210,7 @@ async fn ended_for_process(
 }
 
 /// Asks the paired mod to stop this resident's current turn.
-pub fn stop(
-    node: &Node,
-    resident: &ResidentId,
-    turn: &str,
-    source: fastctx_types::turn_evidence::StopSource,
-) -> Result<bool, Failure> {
+pub fn stop(node: &Node, resident: &ResidentId, turn: &str) -> Result<bool, Failure> {
     let session: String = node.claude.state.lock().expect("never poisoned").paired.get(resident).ok_or_else(|| {
         Failure::new(format!("{resident}'s session has not been heard from the World's plugin, which is what stops it"))
     })?;
@@ -1223,8 +1218,7 @@ pub fn stop(
         return Ok(false);
     }
     let directory = exchange::sessions(node.world.path()).join(&session);
-    exchange::stop(&directory, turn, source)
-        .map_err(|error| Failure::new(format!("asking its plugin to stop: {error}")))?;
+    exchange::stop(&directory, turn).map_err(|error| Failure::new(format!("asking its plugin to stop: {error}")))?;
     Ok(true)
 }
 
@@ -1601,20 +1595,9 @@ pub async fn deliver(
             Ok(Landed::Waiting { why: None, answered: true })
         });
     }
-    // Once the user stopped its turn, only the user's own words start the
-    // next one. Anything else waits: with its plugin while its host runs
-    // (`world.js`, `hushed`), here while it does not, and goes in with the
-    // turn the user's words start (`speech::along`).
-    let hushed = !user_action
-        && pending.delivery.notice.along().is_none()
-        && match crate::stops::hushed(node, to) {
-            Ok(hushed) => hushed,
-            Err(error) => return Some(Err(Failure::new(format!("reading how {to}'s last turn ended: {error}")))),
-        };
     // A turn these words would start waits for room in its login
     // (`turn_slots`); words for a running turn go in with it.
     if pending.delivery.notice.along().is_none()
-        && !hushed
         && node.residents.now(to).is_none_or(|now| now.turn.is_none() && now.activity != Activity::Busy)
         && let Err(queued) = crate::turn_slots::admit(node, to, &current)
     {
@@ -1626,10 +1609,6 @@ pub async fn deliver(
         // What rides with the next turn wakes nobody: it waits for the turn
         // that wakes it, and goes in then (`speech::along`).
         false if pending.delivery.notice.along().is_some() => Ok(Landed::Waiting { why: None, answered: true }),
-        false if hushed => Ok(Landed::Waiting {
-            why: Some("the user stopped its last turn; it hears this with the user's next words".to_string()),
-            answered: true,
-        }),
         // Its supervisor stopped it: the words wake it, as they are, and its
         // next turn takes them.
         false => {

@@ -1298,7 +1298,7 @@ pub(crate) async fn stop_here_as(
             None => Ok(false),
         },
         ("claude", _, _) => match targeted {
-            Some(turn) => crate::claude::stop(node, resident, &turn, source),
+            Some(turn) => crate::claude::stop(node, resident, &turn),
             None => Ok(false),
         },
         _ => Err(Failure::new(format!("{resident} is a session the World does not hold; stop it where it is open"))),

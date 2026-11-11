@@ -17,7 +17,7 @@ use fastctx_platform::{Permissions, ensure_private_dir, publish, publish_new};
 use fastctx_types::session::{
     Content, Happened, Health, HealthKind, Item, SessionEvent, ToolStatus, TurnEnd, TurnFacts, TurnHow, What,
 };
-use fastctx_types::turn_evidence::StopSource;
+
 use fastctx_types::usage::Usd;
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
@@ -750,10 +750,9 @@ pub fn deliver(directory: &Path, id: &str, text: &str, how: Delivering<'_>) -> i
 }
 
 /// Asks the mod to stop `turn`, if it is still the one running when the mod
-/// looks. `source` is who stops it: after the user did, the mod starts no
-/// turn until the user speaks again (`world.js`, `hushed`).
-pub fn stop(directory: &Path, turn: &str, source: StopSource) -> io::Result<()> {
-    let bytes = serde_json::to_vec(&serde_json::json!({ "turn": turn, "source": source })).expect("strings serialize");
+/// looks.
+pub fn stop(directory: &Path, turn: &str) -> io::Result<()> {
+    let bytes = serde_json::to_vec(&serde_json::json!({ "turn": turn })).expect("strings serialize");
     publish(&directory.join("stop.json"), &bytes, Permissions::Private)
 }
 
