@@ -5,6 +5,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Mutex;
+use std::time::{Duration, SystemTime};
 
 use fastctx_hosts::claude::exchange;
 
@@ -21,7 +22,22 @@ struct Pace {
     /// The latest floor the session's mod declared. An earlier one stays
     /// true, so the latest is the furthest any of them reaches.
     floor: Option<String>,
+    /// The last report applied in this run, in order: one named up to it
+    /// was applied, as the mod hands its reports over in order.
+    through: Option<String>,
+    /// When the session's `events/` and `accounting/` were last found
+    /// holding nothing, the times they were last changed then.
+    quiet: Option<Changed>,
 }
+
+/// When a session's `events/` and `accounting/` were last changed, each
+/// none when it is not there.
+pub(super) type Changed = (Option<SystemTime>, Option<SystemTime>);
+
+/// How long ago a directory must have last changed for an unchanged time
+/// to say it holds what it held: a file made within the same tick of the
+/// file system's clock leaves its time as it was.
+const SETTLED: Duration = Duration::from_secs(2);
 
 impl Markers {
     /// Notes the reports of `session` applied in one look and the floors
@@ -39,6 +55,39 @@ impl Markers {
         let floor = pace.floor.clone()?;
         pace.applied = 0;
         Some(floor)
+    }
+
+    /// Notes `last`, the last report of `session` applied in order.
+    pub(super) fn applied_through(&self, session: &str, last: &str) {
+        let mut paces = self.0.lock().expect("never poisoned");
+        let pace = paces.entry(session.to_string()).or_default();
+        if pace.through.as_deref().is_none_or(|known| last > known) {
+            pace.through = Some(last.to_string());
+        }
+    }
+
+    /// Whether the report `name` of `session` is one applied in this run.
+    pub(super) fn applied_already(&self, session: &str, name: &str) -> bool {
+        self.0
+            .lock()
+            .expect("never poisoned")
+            .get(session)
+            .and_then(|pace| pace.through.as_deref())
+            .is_some_and(|through| name <= through)
+    }
+
+    /// Whether the session's files are known to hold nothing to take: they
+    /// held nothing when last read, and neither directory changed since,
+    /// long enough ago to tell.
+    pub(super) fn quiet(&self, session: &str, now: Changed) -> bool {
+        let settled = [now.0, now.1].into_iter().flatten().all(|at| at.elapsed().is_ok_and(|since| since >= SETTLED));
+        settled && self.0.lock().expect("never poisoned").get(session).is_some_and(|pace| pace.quiet == Some(now))
+    }
+
+    /// Notes what the session's files held when last read: nothing, as of
+    /// `now`, or something (`None`).
+    pub(super) fn note_quiet(&self, session: &str, now: Option<Changed>) {
+        self.0.lock().expect("never poisoned").entry(session.to_string()).or_default().quiet = now;
     }
 
     pub(super) fn forget(&self, session: &str) {
