@@ -96,7 +96,9 @@ export function specimenComposer(who: Address, busy: () => boolean, queued: stri
 
   function apply(mutation: ComposerMutation): Promise<ComposerUpdated> {
     switch (mutation.do) {
-      case "send_document": return Promise.reject(new Error("native document synchronization is unavailable in the specimen"));
+      case "send_document":
+      case "withdraw":
+        return Promise.reject(new Error("native document synchronization is unavailable in the specimen"));
       case "edit":
         return Promise.resolve(changed(withDraft(mutation.target, (draft) => edited(draft, mutation))));
       case "attach":

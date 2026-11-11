@@ -19,7 +19,20 @@ export interface ComposerTransport {
 export function composing(who: Address): ComposerTransport {
   const address = { residentId: who.resident, machineName: who.machine };
   return {
-    watchDocuments: (known, piece) => observe("composer_watch_documents", { ...address, subscription: { version: 1, known } }, piece),
+    watchDocuments: async (known, piece) => {
+      const opened = await observe<import("./composer-sync").NativePiece, import("./composer-sync").NativeWatching | null>(
+        "composer_watch_documents", { ...address, subscription: { version: 1, known } }, piece);
+      // A node that takes text over this stream and nothing else, as every
+      // node released before this one, is spoken to the way the interfaces
+      // released with it speak to it: sends, the queue and attachments go
+      // over the stream only to a node that says it takes them there.
+      if (opened && !(opened.frame.kind === "state" && opened.frame.mutations === true)) {
+        closeDelivery(opened.id);
+        await invoke("unwatch", { id: opened.id });
+        return null;
+      }
+      return opened;
+    },
     documentInput: (id, input) => invoke("composer_document_input", { id, input }),
     syncText: (input) => invoke("composer_sync_text", { ...address, input }),
     read: () => invoke("composer_read", address),

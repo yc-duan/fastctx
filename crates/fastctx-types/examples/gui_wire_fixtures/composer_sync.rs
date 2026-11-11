@@ -50,6 +50,13 @@ pub fn fixtures() -> Fixtures {
                     },
                 }),
             },
+            Input::Mutate {
+                number: 7,
+                mutation: Box::new(Mutation {
+                    operation: "withdraw-a".into(),
+                    change: Change::Withdraw { send: "send-native".into() },
+                }),
+            },
         ],
         frames: vec![
             Frame::State {
@@ -75,6 +82,41 @@ pub fn fixtures() -> Fixtures {
                     accepted: true,
                     landed: None,
                     failure: None,
+                },
+            },
+            // A send the queue holds: it neither went nor failed.
+            Frame::Result {
+                number: 5,
+                revision: 9,
+                operation: Operation {
+                    operation: "send-queued".into(),
+                    delivery: None,
+                    accepted: false,
+                    landed: None,
+                    failure: None,
+                },
+            },
+            Frame::Result {
+                number: 6,
+                revision: 10,
+                operation: Operation {
+                    operation: "send-native".into(),
+                    delivery: Some("queued-cd34".parse().unwrap()),
+                    accepted: false,
+                    landed: Some(fastctx_types::residents::Landed::NewTurn { turn: "turn-a".into() }),
+                    failure: None,
+                },
+            },
+            // A taking back of words that went.
+            Frame::Result {
+                number: 7,
+                revision: 10,
+                operation: Operation {
+                    operation: "withdraw-a".into(),
+                    delivery: None,
+                    accepted: false,
+                    landed: None,
+                    failure: Some(fastctx_types::composer::ALREADY_SENT.into()),
                 },
             },
             Frame::Update { revision: 8, document: update },

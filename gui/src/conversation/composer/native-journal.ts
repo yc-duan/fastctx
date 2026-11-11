@@ -53,7 +53,7 @@ export class NativeJournalStorage {
     const previous = this.bases.get(key);
     const rows = this.rows.get(key) ?? new Map<number, string>();
     const next = new Map<number, string>();
-    const metadata = journal && native ? { ...journal, native: { document: native.document, next: native.next, holds: native.holds, editing: native.editing, mutations: native.mutations } } : null;
+    const metadata = journal && native ? { ...journal, native: { document: native.document, next: native.next, holds: native.holds, editing: native.editing, mutations: native.mutations, handed: native.handed } } : null;
     const encodedMetadata = JSON.stringify(metadata);
     await new Promise<void>((resolve, reject) => {
       const transaction = this.db.transaction("edits", "readwrite");

@@ -56,6 +56,10 @@ const SENT_ELSEWHERE = "the draft was sent from another device";
  *  not go. */
 const NOT_HANDED = "the conversation's computer could not be reached in time";
 
+/** What the node answers a taking back of words that went, or are going
+ *  (`fastctx_types::composer::ALREADY_SENT`). */
+const ALREADY_SENT = "these words were already sent";
+
 /** Words sent from the input (`ComposerSession::send`): what the node made
  *  of them, and what can be done with them while that is not known
  *  (`specs/world-foundation.md`, 宪法第十一条). */
@@ -720,20 +724,72 @@ export class ComposerSession {
       document.taken(seal);
       return updated;
     } catch (error) {
-      // Taken back, they are not sent again when the line is back.
+      if (!(error instanceof Withdrawn)) {
+        document.unseal(seal);
+        throw error;
+      }
+      let back: boolean;
       try {
-        if (error instanceof Withdrawn) {
-          this.operations.delete(operation.id);
-          try { await this.native?.withdraw(operation.id); }
-          catch (failure) {
-            const entry = this.documents.get(document);
-            if (entry) { entry.error = errorOf(failure); entry.document.setStorageError(entry.error); }
-            this.emit();
-          }
-        }
-      } finally { document.unseal(seal); }
-      throw error;
+        back = await this.takeBack(document, operation, outcome);
+      } catch (failure) {
+        document.unseal(seal);
+        throw failure;
+      }
+      if (back) {
+        document.unseal(seal);
+        throw error;
+      }
+      // The node did not give them back: they went, or wait in its queue,
+      // and what it made of them is still to hear.
+      try {
+        const updated = await this.lasting(operation) as ComposerUpdated;
+        document.taken(seal);
+        return updated;
+      } catch (failure) {
+        document.unseal(seal);
+        throw failure;
+      }
     }
+  }
+
+  /** Takes back the words `send` hands to the node; whether they are back
+   *  in the input. Words that never left this device are taken back here,
+   *  and not sent again when the line is back. Words handed to the node are
+   *  its to give back: it is asked, under a name of the asking's own, and
+   *  either has them back in the shared draft, which shows them here as it
+   *  shows every change to it, or says they went. Until it answers, they
+   *  stay as they are: taken back here alone, words the node did send would
+   *  stand in the input a second time. */
+  private async takeBack(document: ComposerDocument, send: Operation, outcome: Outcome): Promise<boolean> {
+    const native = this.native;
+    if (!native?.handed(send.id)) {
+      this.operations.delete(send.id);
+      try { await native?.withdraw(send.id); }
+      catch (failure) {
+        const entry = this.documents.get(document);
+        if (entry) { entry.error = errorOf(failure); entry.document.setStorageError(entry.error); }
+        this.emit();
+      }
+      return true;
+    }
+    const mutation: ComposerMutation = { operation: crypto.randomUUID(), do: "withdraw", send: send.id };
+    const asking: Operation = { id: mutation.operation, change: { do: "withdraw", send: send.id }, status: "pending", error: null, result: null, attempt: 0,
+      run: () => this.update(mutation) };
+    this.operations.set(asking.id, asking);
+    try {
+      await this.lasting(asking);
+    } catch (failure) {
+      const why = errorOf(failure).message;
+      // Words that went say so themselves, once the node says how they
+      // landed; any other reason is said under them.
+      if (why !== ALREADY_SENT) outcome.late(why);
+      return false;
+    } finally {
+      this.operations.delete(asking.id);
+    }
+    this.operations.delete(send.id);
+    await native.withdraw(send.id);
+    return true;
   }
 
   /** What is done to the draft while words sent from it are on their way

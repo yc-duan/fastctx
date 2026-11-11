@@ -47,6 +47,8 @@ pub fn fixtures() -> Fixtures {
         ],
         offers: vec![
             Offers::default(),
+            // What is known while the host is still being asked for the rest.
+            Offers { gathering: true, model: Some("model".into()), ..Offers::default() },
             Offers {
                 gathering: false,
                 pending_controls: vec![PendingControl {

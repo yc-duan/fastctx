@@ -79,7 +79,9 @@ export type ComposerChange =
   | { readonly do: "detach"; readonly target: ComposerTarget; readonly epoch: number; readonly attachment: NoticeId }
   | { readonly do: "files_on"; readonly target: ComposerTarget; readonly epoch: number; readonly files_on: string | null }
   | { readonly do: "send"; readonly epoch: number }
-
+  /** Takes back the send `send`, an operation's name: the node says whether
+   *  its words are back in the draft, or that they went. */
+  | { readonly do: "withdraw"; readonly send: string }
   | { readonly do: "editing"; readonly id: NoticeId; readonly watch: string; readonly editing: boolean }
   | { readonly do: "delete"; readonly id: NoticeId }
   | { readonly do: "move"; readonly id: NoticeId; readonly before: NoticeId | null }

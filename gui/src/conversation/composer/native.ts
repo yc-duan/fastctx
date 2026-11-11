@@ -16,6 +16,9 @@ export interface NativeJournal {
   checkpoint: string;
   confirmed?: string;
   mutations?: readonly DocumentMutationInput[];
+  /** The operations of `mutations` handed to the node at least once: what
+   *  became of them is the node's to say. */
+  handed?: readonly string[];
   next: number;
   outbox: DocumentTextInput[];
   updates?: readonly { input: DocumentTextInput; pending: boolean }[];
@@ -46,6 +49,8 @@ export const decode = (value: string): Uint8Array => Uint8Array.from(atob(value)
 interface PendingMutation {
   input: DocumentMutationInput;
   sent: boolean;
+  /** It has gone over the connection at least once, in this page or one before it. */
+  handed: boolean;
   cancelled: boolean;
   result?: { revision: number; operation: DocumentOperation };
   removing?: Promise<void>;
@@ -76,7 +81,8 @@ export class NativeComposer {
       const source = journal.native;
       this.record(source.document, source);
       this.next = Math.max(this.next, source.next);
-      for (const input of source.mutations ?? []) this.mutations.set(input.mutation.operation, { input, sent: false, cancelled: false, waiters: [] });
+      // One kept without saying whether it was handed over may have been.
+      for (const input of source.mutations ?? []) this.mutations.set(input.mutation.operation, { input, sent: false, handed: source.handed ? source.handed.includes(input.mutation.operation) : true, cancelled: false, waiters: [] });
     }
   }
   private record(document: string, saved?: NativeJournal): Record {
@@ -332,6 +338,9 @@ export class NativeComposer {
     record.holds = record.holds.filter((hold) => hold.token !== token);
     this.pump();
   }
+  /** Whether `operation` waits here and was handed to the node: one that
+   *  never left can be taken back without asking. */
+  handed(operation: string): boolean { return this.mutations.get(operation)?.handed ?? false; }
   async withdraw(operation: string): Promise<void> {
     const pending = this.mutations.get(operation);
     if (!pending) return;
@@ -351,7 +360,7 @@ export class NativeComposer {
       const record = this.record(this.state.draft.id);
       record.next = this.next = Math.max(this.next, record.next) + 1;
       if (this.mutations.size >= 128) return Promise.reject(new Error("this input has too many operations waiting to synchronize"));
-      pending = { input: { kind: "mutate", number: this.next, mutation }, sent: false, cancelled: false, waiters: [] };
+      pending = { input: { kind: "mutate", number: this.next, mutation }, sent: false, handed: false, cancelled: false, waiters: [] };
       this.mutations.set(mutation.operation, pending);
     } else if (JSON.stringify(pending.input.mutation) !== JSON.stringify(mutation)) return Promise.reject(new Error("a composer operation was reused for different content"));
     pending.sent = false;
@@ -384,7 +393,8 @@ export class NativeComposer {
   status(document: string): { pending: number; error: unknown } { const record = this.record(document); return { pending: record.outbox.length, error: this.storageError ?? record.error }; }
   journal(document: string): NativeJournal {
     const record = this.record(document);
-    return { document, checkpoint: record.checkpoint, confirmed: record.confirmedCheckpoint, updates: [...record.updates.values()], next: record.next, outbox: [...record.outbox], holds: record.holds.filter((hold) => hold.operation && this.mutations.has(hold.operation)), ...(document === this.state.draft.id ? { mutations: [...this.mutations.values()].filter((pending) => !pending.cancelled).map((pending) => pending.input) } : {}) };
+    return { document, checkpoint: record.checkpoint, confirmed: record.confirmedCheckpoint, updates: [...record.updates.values()], next: record.next, outbox: [...record.outbox], holds: record.holds.filter((hold) => hold.operation && this.mutations.has(hold.operation)), ...(document === this.state.draft.id ? { mutations: [...this.mutations.values()].filter((pending) => !pending.cancelled).map((pending) => pending.input),
+        handed: [...this.mutations.values()].filter((pending) => !pending.cancelled && pending.handed).map((pending) => pending.input.mutation.operation) } : {}) };
   }
   snapshot(text = true): ComposerSnapshot {
     const draft = (metadata: SharedDocument): ComposerDraft => {
@@ -424,6 +434,9 @@ export class NativeComposer {
       for (const pending of this.mutations.values()) {
         if (pending.sent || pending.cancelled) continue;
         try {
+          // That it is handed over is kept before it is: taking it back
+          // from then on is asked of the node.
+          pending.handed = true;
           await this.persist(this.state.draft.id);
           if (!this.ready || generation !== this.generation) return;
           pending.sent = true;
