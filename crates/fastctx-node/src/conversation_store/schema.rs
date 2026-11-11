@@ -7,6 +7,10 @@ pub(super) const MACHINE_TABLES: &[&str] = &[
     // Jobs use unit ownership and are discarded locally, never exported as records.
     "jobs",
     "claude_copies",
+    // A Claude wake in flight is this node's own: it neither moves with its
+    // conversation nor goes into its bundle, and a node of another version
+    // takes the conversation without it.
+    "claude_wakes",
     "receipts",
     "receipt_references",
     "receipt_watermarks",
