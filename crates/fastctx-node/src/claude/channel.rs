@@ -45,7 +45,9 @@ pub struct Channel {
     /// Made anew each time the node starts: a session's token changes with
     /// it, and its mod reads `channel.json` again when a request is refused.
     key: [u8; 32],
-    wakes: Mutex<HashMap<String, Arc<Wake>>>,
+    /// A session's wake stays while a wait holds it or its queue is there;
+    /// the count of waits holding it says when it may go.
+    wakes: Mutex<HashMap<String, Held>>,
     /// How many times any session was woken: each wake takes the next count,
     /// and a new wake starts at the count now, so a mod that saw one let go
     /// is never told "nothing new" by its successor, and the counts stay
@@ -90,6 +92,12 @@ struct Batch {
     bytes: usize,
 }
 
+struct Held {
+    wake: Arc<Wake>,
+    /// Changed only with `wakes` locked.
+    waits: usize,
+}
+
 /// How many times the node has left a session something since it started,
 /// and those waiting to hear of the next time.
 struct Wake {
@@ -106,18 +114,17 @@ impl Channel {
         hash.finalize().iter().map(|byte| format!("{byte:02x}")).collect()
     }
 
-    fn wake_of(&self, session: &str) -> Arc<Wake> {
-        self.wakes
-            .lock()
-            .expect("never poisoned")
-            .entry(session.to_string())
-            .or_insert_with(|| {
-                // A new wake starts where the channel's count stands: past
-                // every count an earlier one of this session told.
-                let now = self.ticks.load(Ordering::Acquire);
-                Arc::new(Wake { count: AtomicU64::new(now), changed: tokio::sync::Notify::new() })
-            })
-            .clone()
+    /// The session's wake, held by one more wait.
+    fn hold_wake(&self, session: &str) -> Arc<Wake> {
+        let mut wakes = self.wakes.lock().expect("never poisoned");
+        let held = wakes.entry(session.to_string()).or_insert_with(|| {
+            // A new wake starts where the channel's count stands: past
+            // every count an earlier one of this session told.
+            let now = self.ticks.load(Ordering::Acquire);
+            Held { wake: Arc::new(Wake { count: AtomicU64::new(now), changed: tokio::sync::Notify::new() }), waits: 0 }
+        });
+        held.waits += 1;
+        held.wake.clone()
     }
 
     /// Answers once the session has been left something since `seen`, or
@@ -135,7 +142,7 @@ impl Channel {
                 self.channel.forget_wake(self.session, &self.wake);
             }
         }
-        let waiting = Waiting { channel: self, session, wake: self.wake_of(session) };
+        let waiting = Waiting { channel: self, session, wake: self.hold_wake(session) };
         let wake = &waiting.wake;
         let deadline = tokio::time::Instant::now() + WAIT;
         loop {
@@ -152,15 +159,30 @@ impl Channel {
         }
     }
 
-    /// A session's wake, its last wait over, goes once its queue went:
-    /// nobody waits on it and nothing is handed for it.
+    /// A wait let its session's wake go. With no wait left, it goes once its
+    /// queue went too; a queue that goes after this looks takes it then
+    /// (`unheld_wake`), as the wait is no longer counted.
     fn forget_wake(&self, session: &str, wake: &Arc<Wake>) {
-        if self.queues.lock().expect("never poisoned").contains_key(session) {
-            return;
+        let last = {
+            let mut wakes = self.wakes.lock().expect("never poisoned");
+            match wakes.get_mut(session) {
+                Some(held) if Arc::ptr_eq(&held.wake, wake) => {
+                    held.waits -= 1;
+                    held.waits == 0
+                }
+                _ => false,
+            }
+        };
+        if last && !self.queues.lock().expect("never poisoned").contains_key(session) {
+            self.unheld_wake(session);
         }
+    }
+
+    /// Lets the session's wake go when no wait holds it: a mod that waits
+    /// again gets a new one, and at worst looks once more than it needed.
+    fn unheld_wake(&self, session: &str) {
         let mut wakes = self.wakes.lock().expect("never poisoned");
-        // The map's and this one's.
-        if wakes.get(session).is_some_and(|held| Arc::ptr_eq(held, wake) && Arc::strong_count(held) == 2) {
+        if wakes.get(session).is_some_and(|held| held.waits == 0) {
             wakes.remove(session);
         }
     }
@@ -233,13 +255,22 @@ pub(crate) fn tell(node: &Node, directory: &Path, session: &str, again: bool) {
 /// a stop, a control): a mod waiting on the channel hears of it now.
 pub(crate) fn wake(node: &Node, session: &str) {
     if let Some(channel) = node.claude.channel.get() {
-        let wake = channel.wake_of(session);
+        channel.wake(session);
+    }
+}
+
+impl Channel {
+    fn wake(&self, session: &str) {
         // Counted on the channel, not the wake: counts stay small enough for
         // the mod's JSON numbers, and a wake made anew never tells a count
-        // an earlier one told.
-        let tick = channel.ticks.fetch_add(1, Ordering::AcqRel) + 1;
-        wake.count.fetch_max(tick, Ordering::AcqRel);
-        wake.changed.notify_waiters();
+        // an earlier one told. Counted first: a wake made after this starts
+        // past it, so a session with none yet loses nothing.
+        let tick = self.ticks.fetch_add(1, Ordering::AcqRel) + 1;
+        let wakes = self.wakes.lock().expect("never poisoned");
+        if let Some(held) = wakes.get(session) {
+            held.wake.count.fetch_max(tick, Ordering::AcqRel);
+            held.wake.changed.notify_waiters();
+        }
     }
 }
 
@@ -470,10 +501,7 @@ async fn apply_in_order(
                 }
                 drop(queues);
                 channel.told.lock().expect("never poisoned").remove(&session);
-                let mut wakes = channel.wakes.lock().expect("never poisoned");
-                if wakes.get(&session).is_some_and(|wake| Arc::strong_count(wake) == 1) {
-                    wakes.remove(&session);
-                }
+                channel.unheld_wake(&session);
             }
             return;
         }
@@ -495,12 +523,7 @@ fn retire(node: &Node, session: &str, queue: &Arc<Queue>) -> bool {
     // Told again, should it hand anything again: a `channel.json` written
     // anew, as it is.
     channel.told.lock().expect("never poisoned").remove(session);
-    // A wake nobody holds: a mod that waits again gets a new one, and at
-    // worst looks once more than it needed.
-    let mut wakes = channel.wakes.lock().expect("never poisoned");
-    if wakes.get(session).is_some_and(|wake| Arc::strong_count(wake) == 1) {
-        wakes.remove(session);
-    }
+    channel.unheld_wake(session);
     true
 }
 
@@ -561,4 +584,75 @@ fn watermark(name: &str) -> bool {
 /// Whether two byte strings are equal, taking as long whichever byte differs.
 fn same_bytes(left: &[u8], right: &[u8]) -> bool {
     left.len() == right.len() && left.iter().zip(right).fold(0u8, |differ, (a, b)| differ | (a ^ b)) == 0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn channel() -> Arc<Channel> {
+        Arc::new(Channel {
+            port: 0,
+            key: [0; 32],
+            wakes: Mutex::default(),
+            ticks: AtomicU64::new(0),
+            told: Mutex::default(),
+            queues: Mutex::default(),
+        })
+    }
+
+    fn wakes(channel: &Channel) -> usize {
+        channel.wakes.lock().unwrap().len()
+    }
+
+    #[tokio::test]
+    async fn waits_ending_together_leave_no_wake() {
+        let channel = channel();
+        let waits: Vec<_> = (0..8)
+            .map(|_| {
+                let channel = channel.clone();
+                fastctx_platform::task::spawn(async move { channel.wait("s", 0).await })
+            })
+            .collect();
+        while channel.wakes.lock().unwrap().get("s").is_none_or(|held| held.waits < 8) {
+            tokio::task::yield_now().await;
+        }
+        channel.wake("s");
+        for wait in waits {
+            assert_eq!(wait.await.unwrap(), 1);
+        }
+        assert_eq!(wakes(&channel), 0);
+    }
+
+    #[tokio::test]
+    async fn a_dropped_wait_leaves_no_wake() {
+        let channel = channel();
+        let held = channel.clone();
+        let wait = fastctx_platform::task::spawn(async move { held.wait("s", 0).await });
+        while wakes(&channel) == 0 {
+            tokio::task::yield_now().await;
+        }
+        wait.abort();
+        let _ = wait.await;
+        assert_eq!(wakes(&channel), 0);
+    }
+
+    #[tokio::test]
+    async fn a_wake_stays_with_its_queue_and_goes_with_it() {
+        let channel = channel();
+        let (sender, _receiver) = tokio::sync::mpsc::unbounded_channel();
+        let queue = Arc::new(Queue { sender, state: Mutex::default() });
+        channel.queues.lock().unwrap().insert("s".into(), queue);
+        channel.wake("s");
+        assert_eq!(wakes(&channel), 0, "a wake nobody waits on is not made");
+        // A new wake starts past every count told: a mod that saw none
+        // looks at once.
+        assert_eq!(channel.wait("s", 0).await, 1);
+        assert_eq!(wakes(&channel), 1, "kept while the session's queue is there");
+        let seen = channel.wait("s", 0).await;
+        assert_eq!(seen, 1);
+        channel.queues.lock().unwrap().remove("s");
+        channel.unheld_wake("s");
+        assert_eq!(wakes(&channel), 0);
+    }
 }

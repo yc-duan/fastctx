@@ -307,29 +307,41 @@ fn after_compaction(node: Arc<Node>, id: ResidentId, mut row: PendingControl) {
         // The control is let go only once its words are held or released:
         // were it let go first, a restart would find nothing to hold them by.
         // A restart before it is done settles it then (`recover`).
-        // Tried until it is done: a write that fails now is tried again,
-        // a minute apart at most, so a disk that comes back lets the queue go
-        // on without a restart.
-        let mut wait = Duration::from_secs(1);
-        loop {
-            match crate::composer::forget_command(&node, &id, &row.id, why.as_deref()).await {
-                Ok(()) => break,
-                Err(error) => {
-                    node.log.line(format_args!(
-                        "holding {id}'s queue after its compaction: {}; trying again in {} s",
-                        error.message,
-                        wait.as_secs()
-                    ));
-                    tokio::time::sleep(wait).await;
-                    wait = (wait * 2).min(Duration::from_secs(60));
-                }
+        let held = until_written(&node, &id, "holding its queue after its compaction", || {
+            crate::composer::forget_command(&node, &id, &row.id, why.as_deref())
+        })
+        .await;
+        if held && until_written(&node, &id, "telling how its compaction ended", || finish(&node, &id, &row)).await {
+            schedule(&node, &id);
+        }
+    });
+}
+
+/// Tries a write until it is done: one that fails now is tried again, a
+/// minute apart at most, so a disk that comes back lets the queue go on
+/// without a restart. Says whether it was done: not once the conversation
+/// went, with what it would have written.
+async fn until_written<F, Written>(node: &Node, id: &ResidentId, what: &str, mut write: F) -> bool
+where
+    F: FnMut() -> Written,
+    Written: Future<Output = Result<(), Failure>>,
+{
+    let mut wait = Duration::from_secs(1);
+    loop {
+        match write().await {
+            Ok(()) => return true,
+            Err(_) if node.residents.active(id).is_err() => return false,
+            Err(error) => {
+                node.log.line(format_args!(
+                    "{id}'s controls, {what}: {}; trying again in {} s",
+                    error.message,
+                    wait.as_secs()
+                ));
+                tokio::time::sleep(wait).await;
+                wait = (wait * 2).min(Duration::from_secs(60));
             }
         }
-        if let Err(error) = finish(&node, &id, &row).await {
-            node.log.line(format_args!("telling {id} how its compaction ended: {}", error.message));
-        }
-        schedule(&node, &id);
-    });
+    }
 }
 
 /// Controls done only between turns, waiting for the one under way: those
@@ -633,26 +645,38 @@ pub(crate) fn poke(node: &Arc<Node>, id: &ResidentId) {
 }
 
 pub(crate) async fn recover(node: &Arc<Node>, id: &ResidentId) {
-    let result:Result<(),Failure>=async {
-        for mut row in pending(node,id).await? {
-            if row.state==ControlState::Running {
-                row.state=ControlState::Uncertain;
-                let why = "the node stopped while this control was entering the host; its outcome is unknown and it was not repeated";
-                row.error=Some(why.into());
-                // Not known to have been done: the words after it wait for
-                // the user, as after one that failed. They are held before
-                // the control is let go, so stopping between the two leaves
-                // the control to recover again, never words let through.
-                crate::composer::forget_command(node, id, &row.id, Some(why)).await?;
-                finish(node,id,&row).await?;
-            } else if row.state!=ControlState::Waiting {finish(node,id,&row).await?;}
-        }
-        Ok(())
-    }.await;
-    if let Err(error) = result {
-        node.log.line(format_args!("recovering {id}'s controls: {error}"));
+    if let Err(error) = recovered(node, id).await {
+        // A row left running would keep the queue waiting for a control no
+        // process runs: recovering is tried again, apart from the start.
+        node.log.line(format_args!("recovering {id}'s controls, trying again: {error}"));
+        let (node, id) = (node.clone(), id.clone());
+        fastctx_platform::task::spawn(async move {
+            if until_written(&node, &id, "recovering", || recovered(&node, &id)).await {
+                schedule(&node, &id);
+            }
+        });
+        return;
     }
     schedule(node, id);
+}
+
+async fn recovered(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {
+    for mut row in pending(node, id).await? {
+        if row.state == ControlState::Running {
+            row.state = ControlState::Uncertain;
+            let why = "the node stopped while this control was entering the host; its outcome is unknown and it was not repeated";
+            row.error = Some(why.into());
+            // Not known to have been done: the words after it wait for
+            // the user, as after one that failed. They are held before
+            // the control is let go, so stopping between the two leaves
+            // the control to recover again, never words let through.
+            crate::composer::forget_command(node, id, &row.id, Some(why)).await?;
+            finish(node, id, &row).await?;
+        } else if row.state != ControlState::Waiting {
+            finish(node, id, &row).await?;
+        }
+    }
+    Ok(())
 }
 
 fn failure(error: std::io::Error) -> Failure {

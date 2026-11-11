@@ -506,8 +506,10 @@ export class Fold {
     // no reason to read it again. One that comes after it is.
     this.stale = false;
     // A stop asked of what still runs, or of words still on their way,
-    // stands through a reading again.
-    if (halted && (this.running.size > 0 || halted.size === 0)) this.halt();
+    // stands through a reading again: only on the turns it was asked of,
+    // never on one the reading shows starting after they ended.
+    if (halted?.size === 0) this.halt();
+    else for (const turn of halted ?? []) if (this.running.has(turn)) this.haltTurn(turn);
     for (const turn of this.machineHalted) if (this.running.has(turn)) this.haltTurn(turn);
     for (const ask of waiting) {
       if (ask.kind === "ask" && !this.entries.some((entry) => entry.kind === "ask" && askKey(entry.id) === askKey(ask.id))) this.add(ask);
