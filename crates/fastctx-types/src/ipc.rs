@@ -127,6 +127,9 @@ pub enum Welcome {
         /// An older node says nothing of sentinels, and keeps none.
         #[serde(default)]
         sentinels: bool,
+        /// Bounded timer pages and short handles for oversized legacy rows.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        timer_pages: bool,
         machine: MachineName,
         version: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]

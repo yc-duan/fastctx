@@ -63,14 +63,25 @@ def check(registry):
         raise ValueError("unused additions evidence")
     tables = {r[1] for r in entries if r[0] in ("Table", "Migration")}
     kinds = dict(re.findall(r'kind!\(\s*"([^"]+)",\s*(\w+),', (registry / "kinds.rs").read_text(encoding="utf-8")))
-    runtime = rows(registry / "runtime_tables.tsv")
-    for record in runtime:
-        if len(record) != 3:
-            raise ValueError("runtime tables need a name, kind and owner")
-        table, kind, owner = record
-        if not table or table in tables or kinds.get(kind) != "Runtime" or not (ROOT / owner).is_file():
-            raise ValueError(f"invalid current runtime table: {record}")
-        tables.add(table)
+    service_counts = {}
+    for category, classification in [("runtime", "Runtime"), ("derived", "Derived")]:
+        service = rows(registry / f"{category}_tables.tsv")
+        service_counts[category] = len(service)
+        for record in service:
+            expected = 3 if category == "runtime" else 6
+            if len(record) != expected or any(not value for value in record):
+                raise ValueError("service table registration has incomplete fields")
+            table, kind, owner = record[:3]
+            if table in tables or kinds.get(kind) != classification or not (ROOT / owner).is_file():
+                raise ValueError(f"invalid current {category} table: {record}")
+            if category == "derived":
+                sources, version, rebuild = record[3:]
+                if not version.isdigit() or int(version) == 0:
+                    raise ValueError(f"invalid derived schema version: {record}")
+                file, anchor = rebuild.rsplit("::", 1)
+                if file != owner or anchor not in (ROOT / file).read_text(encoding="utf-8"):
+                    raise ValueError(f"missing derived rebuilder: {record}")
+            tables.add(table)
     for path in (ROOT / "crates").rglob("*.rs"):
         name = path.as_posix()
         if "/src/" not in name or "/fastctx-sync/" in name or "/fastctx-content/" in name or any(x in path.name for x in ("test", "drill")):
@@ -93,7 +104,7 @@ def check(registry):
         raise ValueError("unregistered transitional carrier")
     if {row[0] for row in carriers} != actual & {row[0] for row in approved}:
         raise ValueError("a transitional carrier must leave the inventory with its table")
-    print(f"sync inventory: {len(entries)} entries; {len(runtime)} current runtime tables; {len(actual)} shadow tables; baseline evidence verified")
+    print(f"sync inventory: {len(entries)} entries; {service_counts['runtime']} current runtime tables; {service_counts['derived']} derived tables; {len(actual)} shadow tables; baseline evidence verified")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

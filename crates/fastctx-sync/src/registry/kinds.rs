@@ -773,6 +773,23 @@ pub(super) const KINDS: &[Registration] = &[
         GenericTombstone
     ),
     kind!(
+        "derived.timers",
+        Derived,
+        Conversation,
+        Local,
+        Rebuild,
+        Rebuildable,
+        LocalOnly,
+        "fastctx-node::timers",
+        Projection,
+        Json,
+        false,
+        false,
+        false,
+        Confirmed,
+        GenericTombstone
+    ),
+    kind!(
         "derived.timeline",
         Derived,
         Conversation,

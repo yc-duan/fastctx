@@ -42,6 +42,7 @@ async fn cancelling_a_call_during_its_probe_keeps_the_original_arrival() {
                     topics: false,
                     scratch_locations: false,
                     collaboration_watch: false,
+                    timer_pages: true,
                     machine: "fixture".parse().unwrap(),
                     version: env!("CARGO_PKG_VERSION").into(),
                     node_lifetime: None,

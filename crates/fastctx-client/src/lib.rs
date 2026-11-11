@@ -140,6 +140,7 @@ pub struct Client {
     pub sentinels: bool,
     pub goal_commands: bool,
     pub collaboration_watch: bool,
+    pub timer_pages: bool,
     /// The connected node's facts, including when another starter won.
     pub node_lifetime: Option<Box<fastctx_types::node_lifetime::NodeLifetime>>,
 }
@@ -196,6 +197,7 @@ impl Client {
                 sentinels,
                 goal_commands,
                 collaboration_watch,
+                timer_pages,
             } => Ok(Self {
                 connection,
                 next: 0,
@@ -214,6 +216,7 @@ impl Client {
                 sentinels,
                 goal_commands,
                 collaboration_watch,
+                timer_pages,
             }),
             Welcome::Refused { reason, mismatch } => {
                 let mismatch = mismatch.or_else(|| renewal::legacy_mismatch(&reason));
@@ -324,6 +327,11 @@ impl Client {
 
     /// Sends `call` and waits for its answer.
     pub async fn call(&mut self, call: Call) -> Result<Reply, CallError> {
+        if !self.timer_pages && matches!(&call, Call::Timer { timer } if timer.needs_pages()) {
+            return Err(CallError::Failed(Failure::not_run(
+                "this node does not support timer pages or handles; update it",
+            )));
+        }
         if !self.topics && matches!(call, Call::Topics { .. }) {
             return Err(CallError::Failed(Failure::not_run("this node does not tell when its state changes; update it")));
         }

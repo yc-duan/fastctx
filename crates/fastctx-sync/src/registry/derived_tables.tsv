@@ -1,0 +1,10 @@
+# Rebuildable projections only; never register authoritative rows here.
+# Each row names its table, logical Derived kind, owning module, authoritative
+# source rows, schema version and the owner's rebuild SQL. Maintain the
+# projection in the same transaction as its authoritative rows.
+# At startup the owner calls derived::ensure with all owned schema objects.
+# Missing objects, changed definitions or any version mismatch drop and rebuild
+# the projection from the named source rows; these never reject an old cache.
+# Keep object names stable, or pass retired names so recovery removes them too.
+# table	kind	owner	sources	version	rebuild
+conversation_timer_headers	derived.timers	crates/fastctx-node/src/timers/headers.rs	conversation_records WHERE family='timers'	1	crates/fastctx-node/src/timers/headers.rs::REBUILD

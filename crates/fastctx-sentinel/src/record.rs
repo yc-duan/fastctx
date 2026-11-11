@@ -30,7 +30,8 @@ pub fn read(directory: &Path, held: Option<&str>, standing: &str) -> Result<Reco
 }
 
 /// Reads at most 40 wakes, probing at most 400 sequence slots. Sparse histories
-/// continue with a cursor rather than discovering every run directory entry.
+/// continue with a cursor. A legacy directory without a published state still
+/// requires name discovery to preserve its original first response.
 pub fn read_page(directory: &Path, held: Option<&str>, standing: &str, before: Option<u64>) -> Result<Record, String> {
     let (files, mut next_before) = files(directory, WAKES, before)?;
     let mut stamp = Sha256::new();
@@ -41,10 +42,14 @@ pub fn read_page(directory: &Path, held: Option<&str>, standing: &str, before: O
     let version = format!("{:x}", stamp.finalize());
     let mut batches = Vec::new();
     let mut bytes = 0;
-    let mut source_bytes = 0;
+    let mut source_bytes: usize = 0;
     let mut whole = true;
     for (sequence, path, size, _) in files.into_iter().rev() {
-        if source_bytes + size as usize > SOURCE_BYTES {
+        if size > crate::bounded::RUN_BYTES as u64 {
+            whole = false;
+            continue;
+        }
+        if source_bytes.saturating_add(size as usize) > SOURCE_BYTES {
             next_before = Some(sequence.saturating_add(1));
             break;
         }
@@ -60,7 +65,11 @@ pub fn read_page(directory: &Path, held: Option<&str>, standing: &str, before: O
                 whole = false;
                 continue;
             }
-            Err(error) => return Err(error),
+            Err(error) => {
+                source_bytes += error.bytes;
+                whole = false;
+                continue;
+            }
         };
         let events = wake(sequence, &run);
         let size = serde_json::to_vec(&events).map_err(|error| error.to_string())?.len();
@@ -104,9 +113,17 @@ const PROBES: u64 = 400;
 type RunFile = (u64, std::path::PathBuf, u64, u128);
 
 fn files(directory: &Path, limit: usize, before: Option<u64>) -> Result<(Vec<RunFile>, Option<u64>), String> {
-    let state = crate::state::Store::new(directory.to_path_buf())
-        .snapshot()?
-        .ok_or("the sentinel state is unavailable; its home must reconcile it before reading records")?;
+    if !directory.is_dir() {
+        return Err("no such sentinel lives here for this account".into());
+    }
+    let state = match crate::state::Store::new(directory.to_path_buf()).snapshot()? {
+        Some(state) => state,
+        // Without the published state there is no sequence frontier. Directory
+        // iteration is unordered, so legacy recovery must discover all names to
+        // preserve the latest-wake selection (2026-11-11). A derived index will
+        // replace this exceptional scan separately from the bounded read path.
+        None => return legacy_files(directory, limit, before),
+    };
     let last = before.map_or(state.sequence, |before| before.saturating_sub(1).min(state.sequence));
     let lower = last.saturating_sub(PROBES).max(1);
     let mut files = Vec::new();
@@ -115,13 +132,6 @@ fn files(directory: &Path, limit: usize, before: Option<u64>) -> Result<(Vec<Run
         let path = directory.join("runs").join(format!("{sequence:020}.json"));
         match std::fs::metadata(&path) {
             Ok(meta) => {
-                if !meta.is_file() || meta.len() > crate::bounded::RUN_BYTES as u64 {
-                    return Err(format!(
-                        "{} exceeds the {} byte run limit or is not a file",
-                        path.display(),
-                        crate::bounded::RUN_BYTES
-                    ));
-                }
                 let modified = meta.modified().ok().and_then(|at| at.duration_since(std::time::UNIX_EPOCH).ok());
                 files.push((sequence, path, meta.len(), modified.map_or(0, |at| at.as_nanos())));
             }
@@ -137,27 +147,91 @@ fn files(directory: &Path, limit: usize, before: Option<u64>) -> Result<(Vec<Run
     Ok((files, next))
 }
 
+fn legacy_files(directory: &Path, limit: usize, before: Option<u64>) -> Result<(Vec<RunFile>, Option<u64>), String> {
+    let runs = directory.join("runs");
+    let mut paths = match std::fs::read_dir(&runs) {
+        Ok(entries) => entries
+            .filter_map(Result::ok)
+            .filter_map(|entry| {
+                let name = entry.file_name().into_string().ok()?;
+                let sequence = name.strip_suffix(".json")?.parse::<u64>().ok()?;
+                before.is_none_or(|before| sequence < before).then_some((sequence, entry.path()))
+            })
+            .collect::<Vec<_>>(),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(error) => return Err(format!("reading {}: {error}", runs.display())),
+    };
+    paths.sort();
+    let earlier = paths.len() > limit;
+    let selected = paths.split_off(paths.len().saturating_sub(limit));
+    let next = earlier.then(|| selected.first().expect("a nonempty page").0);
+    let files = selected
+        .into_iter()
+        .map(|(sequence, path)| {
+            let meta = std::fs::metadata(&path).map_err(|error| error.to_string())?;
+            let modified = meta.modified().ok().and_then(|at| at.duration_since(std::time::UNIX_EPOCH).ok());
+            Ok((sequence, path, meta.len(), modified.map_or(0, |at| at.as_nanos())))
+        })
+        .collect::<Result<_, String>>()?;
+    Ok((files, next))
+}
+
 /// How many of its latest wakes the overview tells.
 const OVERVIEW_WAKES: usize = 400;
 
-/// Reads the latest 400 sequence slots without enumerating historical runs.
-/// The returned marker includes older sequence slots that were not inspected.
+/// When each wake recorded in the generation directory `directory` began
+/// at or after `since` (milliseconds since the epoch), why, and what it
+/// took, oldest first; and whether earlier wakes were left out. A wake
+/// still being written is read next time.
 pub fn wakes(directory: &Path, since: i64) -> Result<(Vec<Wake>, bool), String> {
-    let (files, next) = files(directory, OVERVIEW_WAKES, None)?;
-    let mut earlier = next.is_some();
+    let runs = directory.join("runs");
+    let mut files = match std::fs::read_dir(&runs) {
+        Ok(entries) => entries
+            .filter_map(|entry| entry.ok())
+            .filter_map(|entry| {
+                let name = entry.file_name().into_string().ok()?;
+                let sequence = name.strip_suffix(".json")?.parse::<u64>().ok()?;
+                Some((sequence, entry.path()))
+            })
+            .collect::<Vec<_>>(),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(error) => return Err(format!("reading {}: {error}", runs.display())),
+    };
+    files.sort();
+    // A wake is written when it ends, so a file last changed before `since`
+    // began before it.
+    let cutoff = std::time::UNIX_EPOCH + std::time::Duration::from_millis(u64::try_from(since).unwrap_or(0));
+    let mut earlier = false;
+    files.retain(|(_, path)| {
+        let recent = std::fs::metadata(path).and_then(|meta| meta.modified()).map_or(true, |at| at >= cutoff);
+        earlier |= !recent;
+        recent
+    });
+    earlier |= files.len() > OVERVIEW_WAKES;
+    let files = files.split_off(files.len().saturating_sub(OVERVIEW_WAKES));
     let mut wakes = Vec::new();
-    let mut bytes = 0;
-    for (_, path, size, _) in files.into_iter().rev() {
-        if bytes + size as usize > SOURCE_BYTES {
+    let mut source_bytes: usize = 0;
+    for (_, path) in files.into_iter().rev() {
+        if source_bytes >= SOURCE_BYTES {
             earlier = true;
             break;
         }
-        let Some((run, size)) =
-            crate::bounded::load_counted::<Run>(&path, crate::bounded::RUN_BYTES.min(SOURCE_BYTES - bytes))?
-        else {
-            continue;
+        let limit = crate::bounded::RUN_BYTES.min(SOURCE_BYTES - source_bytes);
+        let run = match crate::bounded::load_counted::<Run>(&path, limit) {
+            Ok(Some((run, bytes))) => {
+                source_bytes += bytes;
+                run
+            }
+            Ok(None) => {
+                earlier = true;
+                continue;
+            }
+            Err(error) => {
+                source_bytes += error.bytes;
+                earlier = true;
+                continue;
+            }
         };
-        bytes += size;
         let input = match run.messages.first() {
             Some(Message::User { text }) => serde_json::from_str::<Value>(text).unwrap_or(Value::Null),
             _ => Value::Null,

@@ -74,6 +74,7 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
         topics: true,
         scratch_locations: true,
         collaboration_watch: true,
+        timer_pages: true,
         machine: node.machine(),
         version: env!("CARGO_PKG_VERSION").to_string(),
         node_lifetime: Some(Box::new(node.lifetime.clone())),

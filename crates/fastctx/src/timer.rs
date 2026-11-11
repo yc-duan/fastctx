@@ -2,7 +2,7 @@
 
 use clap::{Args, Subcommand};
 use fastctx_types::timers::{Action, Owner, TimerCall};
-use fastctx_types::{Call, Reply, ResidentId};
+use fastctx_types::{Call, NoticeId, Reply, ResidentId};
 
 #[derive(Args)]
 pub struct TimerArgs {
@@ -18,13 +18,26 @@ enum TimerCommand {
         at: jiff::Timestamp,
         text: String,
     },
+    /// Replace a listed timer without repeating its potentially oversized identity.
+    Replace {
+        handle: NoticeId,
+        resident: ResidentId,
+        at: jiff::Timestamp,
+        text: String,
+    },
     Cancel {
         id: String,
+    },
+    CancelHandle {
+        handle: NoticeId,
     },
     List {
         resident: Option<ResidentId>,
         #[arg(long)]
         after: Option<String>,
+        /// Accept a bounded page; use its continuation even when the array is empty.
+        #[arg(long)]
+        page: bool,
     },
 }
 
@@ -35,18 +48,41 @@ pub fn run(args: TimerArgs) -> anyhow::Result<()> {
             owner: Owner::Conversation { resident: resident.clone() },
             due,
             action: Action::Tell { resident, text },
+            handle: None,
         },
-        TimerCommand::Cancel { id } => TimerCall::Cancel { id },
-        TimerCommand::List { resident, after } => {
-            TimerCall::List { owner: resident.map(|resident| Owner::Conversation { resident }), after }
-        }
+        TimerCommand::Replace { handle, resident, at: due, text } => TimerCall::Set {
+            id: String::new(),
+            owner: Owner::Conversation { resident: resident.clone() },
+            due,
+            action: Action::Tell { resident, text },
+            handle: Some(handle),
+        },
+        TimerCommand::Cancel { id } => TimerCall::Cancel { id, handle: None },
+        TimerCommand::CancelHandle { handle } => TimerCall::Cancel { id: String::new(), handle: Some(handle) },
+        TimerCommand::List { resident, after, page } => TimerCall::List {
+            owner: resident.map(|resident| Owner::Conversation { resident }),
+            paged: page || after.is_some(),
+            after,
+        },
     };
     match crate::ask::call(Call::Timer { timer })?.0 {
-        Reply::Timers { timers, next } => {
+        Reply::Timers { timers, next, oversized } => {
+            println!("{}", serde_json::to_string_pretty(&timers)?);
+            for row in oversized {
+                eprintln!(
+                    "Oversized timer {} (identity {} bytes, row {} bytes): {}; cancel with fastctx timer cancel-handle {}",
+                    row.handle,
+                    row.identity_bytes,
+                    row.body_bytes,
+                    serde_json::to_string(&row.identity_preview)?,
+                    row.handle
+                );
+            }
             if let Some(next) = next {
-                println!("{}", serde_json::to_string_pretty(&serde_json::json!({ "timers": timers, "next": next }))?);
-            } else {
-                println!("{}", serde_json::to_string_pretty(&timers)?);
+                eprintln!(
+                    "More timers remain (an empty page is not the end); continue with --page --after {}",
+                    serde_json::to_string(&next)?
+                );
             }
         }
         Reply::Done => {}

@@ -1029,8 +1029,11 @@ pub enum Reply {
     },
     Timers {
         timers: Vec<crate::timers::Timer>,
+        /// Empty pages can still have a continuation, for example during a transfer.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         next: Option<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        oversized: Vec<crate::timers::OversizedTimer>,
     },
     TurnEvidence {
         evidence: Box<crate::turn_evidence::TurnEvidence>,

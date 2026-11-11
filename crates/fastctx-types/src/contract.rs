@@ -327,9 +327,11 @@ impl RemoteCall {
         };
         let max_request_bytes = match self {
             Self::SentinelControl { request: crate::sentinel_control::Request::Create { .. } } => 64 * 1024,
+            // Conversation-wrapped Create requests cannot reach shared controls.
             Self::SentinelControl { .. } => 4096,
             Self::SentinelHome {
-                request: crate::sentinel_control::HomeRequest::Inspect { .. }
+                request:
+                    crate::sentinel_control::HomeRequest::Inspect { .. }
                     | crate::sentinel_control::HomeRequest::Record { .. }
                     | crate::sentinel_control::HomeRequest::Overview
                     | crate::sentinel_control::HomeRequest::Conversation { .. },
@@ -575,8 +577,17 @@ impl Call {
     /// Encoded request budget for local sentinel and timer calls, including their envelope.
     pub fn max_request_bytes(&self) -> usize {
         match self {
-            Self::Timer { timer: crate::timers::TimerCall::Set { .. } } => 128 * 1024,
-            Self::Timer { .. } => 32 * 1024,
+            // Raw legacy identities still select existing rows. Reserve their
+            // worst JSON escaping plus bounded routing/text, capped by the frame
+            // budget; a new identity is rejected at 4096 bytes after point lookup.
+            Self::Timer { timer: crate::timers::TimerCall::Set { id, handle: None, .. } } => {
+                id.len().saturating_mul(6).saturating_add(256 * 1024).min(64 * 1024 * 1024)
+            }
+            Self::Timer { timer: crate::timers::TimerCall::Cancel { id, handle: None } } => {
+                id.len().saturating_mul(6).saturating_add(4096).min(64 * 1024 * 1024)
+            }
+            Self::Timer { timer: crate::timers::TimerCall::Cancel { .. } } => 4096,
+            Self::Timer { .. } => 512 * 1024,
             Self::Sentinel { request: crate::sentinel_control::Request::Create { .. }, .. } => 64 * 1024,
             Self::Sentinel { .. } => 4096,
             Self::SentinelSettings { change: None, .. } => 4096,

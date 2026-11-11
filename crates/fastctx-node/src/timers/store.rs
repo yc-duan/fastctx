@@ -13,7 +13,6 @@ use fastctx_types::{
 use jiff::Timestamp;
 use sha2::{Digest, Sha256};
 use std::{
-    collections::HashMap,
     io,
     path::Path,
     sync::{Arc, Mutex},
@@ -22,23 +21,11 @@ use std::{
 use tokio::sync::Notify;
 
 const FAMILY: &str = "timers";
-#[derive(Default, Clone)]
-struct Claims {
-    active: HashMap<String, NoticeId>,
-    /// Firings put off after their persistence failed, until when: only
-    /// while that is still ahead, and only for a timer's current firing.
-    delayed: HashMap<String, HashMap<NoticeId, Timestamp>>,
-}
+use super::claims::Claims;
 
-impl Claims {
-    /// Forgets the timer `id`'s firings put off: it fires anew, or no more.
-    fn settled(&mut self, id: &str) {
-        self.delayed.remove(id);
-    }
-}
 pub struct Store {
-    directory: ConversationDir,
-    claims: Mutex<Claims>,
+    pub(super) directory: ConversationDir,
+    pub(super) claims: Mutex<Claims>,
     pub changed: Notify,
 }
 impl Store {
@@ -74,7 +61,7 @@ impl Store {
         })?;
         Ok(Self { directory, claims: Mutex::new(Claims::default()), changed: Notify::new() })
     }
-    async fn work<T: Send + 'static>(
+    pub(super) async fn work<T: Send + 'static>(
         self: &Arc<Self>,
         action: impl FnOnce(&Self) -> io::Result<T> + Send + 'static,
     ) -> io::Result<T> {
@@ -110,14 +97,20 @@ impl Store {
                 Priority::Interactive,
                 serde_json::to_vec(&timer)?.len(),
                 move |rows| {
-                    if get_timer(rows, &timer.id)?.is_some_and(|old| old.owner != timer.owner) {
+                    if super::headers::get(rows, &timer.id, false)?
+                        .is_some_and(|old| old.owner.as_ref() != Some(&timer.owner))
+                    {
                         return Err(fastctx_storage::Error::new("cancel a timer before changing its owner"));
                     }
                     save(rows, &timer)?;
                     Ok(timer)
                 },
             )?;
-            store.claims.lock().expect("timer claims").settled(&result.id);
+            {
+                let mut claims = store.claims.lock().expect("timer claims");
+                claims.settled(&result.id);
+                claims.replaced(&result.id, &result.delivery);
+            }
             store.changed.notify_one();
             Ok(result)
         })
@@ -127,11 +120,11 @@ impl Store {
         let id = id.to_string();
         self.work(move |store| records::read(&store.directory, |rows| get_timer(rows, &id))).await
     }
-    pub async fn page(
+    pub(super) async fn page(
         self: &Arc<Self>,
         owner: Option<&Owner>,
         after: Option<&str>,
-    ) -> io::Result<(Vec<Timer>, Option<String>)> {
+    ) -> io::Result<super::page::Page> {
         let owner = owner.cloned();
         let after = after.unwrap_or_default().to_string();
         self.work(move |store| records::read(&store.directory, |rows| super::page::read(rows, owner.as_ref(), &after)))
@@ -164,11 +157,11 @@ impl Store {
         })?;
         Ok(rows
             .into_iter()
-            .filter(|row| !claims.active.contains_key(&row.id))
+            .filter(|row| !claims.active.contains_key(row.id.as_str()))
             .map(|row| {
                 let due = claims
                     .delayed
-                    .get(&row.id)
+                    .get(row.id.as_str())
                     .and_then(|generations| generations.get(&row.delivery))
                     .copied()
                     .unwrap_or(row.next_attempt)
@@ -192,21 +185,19 @@ impl Store {
                     generations.retain(|_, until| *until > now);
                     !generations.is_empty()
                 });
-                if claims.active.contains_key(&timer.id) {
+                if claims.active.contains_key(timer.id.as_str()) {
                     continue;
                 }
-                claims.active.insert(timer.id.clone(), timer.delivery.clone());
-                claims.delayed.remove(&timer.id);
+                let key = claims.alias(&timer.id, &timer.delivery);
+                claims.active.insert(key, timer.delivery.clone());
+                claims.delayed.remove(timer.id.as_str());
                 return Ok(Some(timer));
             }
         })
         .await
     }
     pub fn unclaim(&self, timer: &Timer) {
-        let mut claims = self.claims.lock().expect("timer claims");
-        if claims.active.get(&timer.id) == Some(&timer.delivery) {
-            claims.active.remove(&timer.id);
-        }
+        self.claims.lock().expect("timer claims").unclaim(timer);
         self.changed.notify_one();
     }
     async fn update(
@@ -259,13 +250,15 @@ impl Store {
     }
     /// Failed persistence changes only scheduling, never the durable first firing.
     pub fn release(&self, timer: &Timer, now: Timestamp) {
-        self.claims
-            .lock()
-            .expect("timer claims")
-            .delayed
-            .entry(timer.id.clone())
-            .or_default()
-            .insert(timer.delivery.clone(), now.checked_add(Duration::from_secs(60)).unwrap_or(now));
+        {
+            let mut claims = self.claims.lock().expect("timer claims");
+            let key = claims.alias(&timer.id, &timer.delivery);
+            claims
+                .delayed
+                .entry(key)
+                .or_default()
+                .insert(timer.delivery.clone(), now.checked_add(Duration::from_secs(60)).unwrap_or(now));
+        }
         self.unclaim(timer);
     }
     pub async fn complete(self: &Arc<Self>, timer: &Timer) -> io::Result<bool> {

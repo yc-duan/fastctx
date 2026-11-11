@@ -129,6 +129,14 @@ impl Store {
         }
         Ok(Some(current))
     }
+    /// Reads normally from the bounded published frontier. A missing publication
+    /// keeps the legacy history-discovery recovery and its first response.
+    pub fn read_state(&self) -> Result<Option<State>, String> {
+        match self.snapshot()? {
+            Some(state) => Ok(Some(state)),
+            None => crate::state_read::recover(&self.directory),
+        }
+    }
     pub fn load(&self) -> Result<Option<State>, String> {
         let mut current: Option<State> = load(&self.directory.join("state.json"))?;
         let entries = match std::fs::read_dir(self.directory.join("history")) {

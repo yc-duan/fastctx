@@ -152,6 +152,7 @@ pub(crate) fn open(world: &WorldDir) -> Database {
     fastctx_storage::Database::open_guarded_or_unavailable(&path, crate::composer::SCHEMA, guard, |db| {
         upgrade::payloads(db)?;
         upgrade::records(db)?;
+        crate::timers::ensure_headers(db)?;
         fastctx_storage::versions::apply(
             db,
             "node.attachment-pins",

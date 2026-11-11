@@ -73,7 +73,7 @@ impl Host {
             return Err("sentinel is assigned to another home".into());
         }
         let store = self.store(&registration);
-        let state = store.snapshot()?.ok_or("the sentinel has not begun on this home")?;
+        let state = store.read_state()?.ok_or("the sentinel has not begun on this home")?;
         if state.definition != registration.definition {
             return Err("sentinel assignment changed".into());
         }
@@ -283,7 +283,7 @@ impl ResidentHost for Host {
                     // How it stands, and when it next looks: the earliest of
                     // its reflexes' times and of the times it wakes its
                     // conversation that are still to come.
-                    let (summary, next) = match store.snapshot()? {
+                    let (summary, next) = match store.read_state()? {
                         Some(state) => {
                             let now = self.runtime.now();
                             let due = state.definition.at.iter().copied().filter(|at| *at > now);
@@ -354,7 +354,7 @@ fn overview(scope_dir: &std::path::Path, since: i64) -> Result<Vec<Watched>, Str
             }
             // One whose home has kept nothing of it yet has nothing to show.
             let store = crate::state::Store::new(directory.clone());
-            let Some(state) = store.snapshot()? else { continue };
+            let Some(state) = store.read_state()? else { continue };
             let (wakes, earlier) = crate::record::wakes(&directory, since)?;
             let days = store.tally(since)?;
             watched.push(Watched { summary: storage::summary(&state), wakes, earlier, days });

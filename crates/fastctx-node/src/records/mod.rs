@@ -49,8 +49,6 @@ CREATE INDEX IF NOT EXISTS conversation_records_action ON conversation_records(c
 CREATE INDEX IF NOT EXISTS conversation_records_message ON conversation_records(conversation,json_extract(body,'$.kind'),json_extract(body,'$.turn')) WHERE family='messages';
 CREATE UNIQUE INDEX IF NOT EXISTS conversation_timer_id ON conversation_records(identity) WHERE family='timers';
 CREATE INDEX IF NOT EXISTS conversation_timers_due ON conversation_records(arrival,identity) WHERE family='timers';
-CREATE INDEX IF NOT EXISTS conversation_timers_visible ON conversation_records(identity) WHERE family='timers' AND json_extract(body,'$.action.kind') IS NOT 'sentinel';
-CREATE INDEX IF NOT EXISTS conversation_timers_visible_owner ON conversation_records(category,identity) WHERE family='timers' AND json_extract(body,'$.action.kind') IS NOT 'sentinel';
 CREATE UNIQUE INDEX IF NOT EXISTS conversation_control_request_id ON conversation_records(identity) WHERE family='control-requests';
 CREATE INDEX IF NOT EXISTS conversation_records_expiry ON conversation_records(expires) WHERE expires IS NOT NULL;
 CREATE TABLE IF NOT EXISTS conversation_record_links (
@@ -420,7 +418,7 @@ impl Rows<'_> {
         crate::session_record::append_in(self.connection, self.conversation, key.as_str(), event)
     }
 
-    fn changed(&self, family: &str) -> Result<()> {
+    pub(crate) fn changed(&self, family: &str) -> Result<()> {
         self.connection.execute(
             "INSERT INTO conversation_record_versions(conversation,family,version) VALUES(?1,?2,1)
             ON CONFLICT(conversation,family) DO UPDATE SET version=version+1",

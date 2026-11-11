@@ -66,24 +66,37 @@ fn main() {
             output.push_str(&format!("LegacyEntry {{ surface: Surface::{surface}, selector: {selector:?}, classification: {classification}, owner: {owner:?}, stage: Stage::{stage}, decision: DecisionState::{decision}, note: {note:?} }},\n"));
         }
     }
-    let mut runtime = String::from("pub const TABLES: &[Table] = &[\n");
-    let mut runtime_names = BTreeSet::new();
-    for row in rows("src/registry/runtime_tables.tsv") {
-        let [table, kind, owner] = <[String; 3]>::try_from(row).expect("runtime tables need a name, kind and owner");
-        assert!(!table.is_empty() && !kind.is_empty() && !owner.is_empty(), "runtime table fields cannot be empty");
-        assert!(runtime_names.insert(table.clone()), "duplicate runtime table: {table}");
-        assert!(
-            !keys.contains(&("Table".into(), table.clone())) && !keys.contains(&("Migration".into(), table.clone())),
-            "a current runtime table cannot be in the legacy inventory: {table}"
-        );
-        runtime.push_str(&format!("Table {{ name: {table:?}, kind: {kind:?}, owner: {owner:?} }},\n"));
+    let mut service_names = BTreeSet::new();
+    for category in ["runtime", "derived"] {
+        let mut tables = String::from("pub const TABLES: &[Table] = &[\n");
+        for row in rows(&format!("src/registry/{category}_tables.tsv")) {
+            let expected = if category == "runtime" { 3 } else { 6 };
+            assert_eq!(row.len(), expected, "service table registration has incomplete fields");
+            let (table, kind, owner) = (&row[0], &row[1], &row[2]);
+            assert!(!row.iter().any(String::is_empty), "service table fields cannot be empty");
+            assert!(service_names.insert(table.clone()), "duplicate service table: {table}");
+            assert!(
+                !keys.contains(&("Table".into(), table.clone()))
+                    && !keys.contains(&("Migration".into(), table.clone())),
+                "a current service table cannot be in the legacy inventory: {table}"
+            );
+            if category == "derived" {
+                let (sources, rebuild) = (&row[3], &row[5]);
+                let version: u32 = row[4].parse().expect("derived schema versions are positive integers");
+                assert!(version > 0, "derived schema versions are positive integers");
+                tables.push_str(&format!("Table {{ name: {table:?}, kind: {kind:?}, owner: {owner:?}, sources: {sources:?}, version: {version}, rebuild: {rebuild:?} }},\n"));
+            } else {
+                tables.push_str(&format!("Table {{ name: {table:?}, kind: {kind:?}, owner: {owner:?} }},\n"));
+            }
+        }
+        tables.push_str("];\n");
+        fs::write(
+            PathBuf::from(env::var_os("OUT_DIR").expect("Cargo output directory"))
+                .join(format!("{category}_tables.rs")),
+            tables,
+        )
+        .expect("write current service table registry");
     }
-    runtime.push_str("];\n");
-    fs::write(
-        PathBuf::from(env::var_os("OUT_DIR").expect("Cargo output directory")).join("runtime_tables.rs"),
-        runtime,
-    )
-    .expect("write current runtime table registry");
     output.push_str("];\n");
     fs::write(
         PathBuf::from(env::var_os("OUT_DIR").expect("Cargo output directory")).join("legacy_registry.rs"),

@@ -1,5 +1,6 @@
 //! Every durable kind declares its ownership, mutation and lifetime contract.
 
+pub mod derived;
 pub mod handlers;
 mod kinds;
 pub mod legacy;
@@ -205,6 +206,9 @@ impl Registry {
     pub fn validate(&self) -> Result<(), String> {
         for table in runtime::TABLES {
             self.runtime(table.kind)?;
+        }
+        for table in derived::TABLES {
+            self.projection(table.kind)?;
         }
         let mut ids = std::collections::BTreeSet::new();
         for entry in self.registrations {

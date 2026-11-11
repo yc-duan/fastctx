@@ -1,5 +1,8 @@
 //! Persistent deadlines. The scheduler only indexes records; actions own their effects.
 
+mod claims;
+mod headers;
+pub(crate) use headers::ensure as ensure_headers;
 mod page;
 pub mod store;
 mod words;
@@ -30,9 +33,9 @@ pub(crate) fn table(node: &Node) -> Result<&Arc<Store>, Failure> {
 pub(crate) async fn call(node: &Arc<Node>, call: TimerCall) -> Result<Reply, Failure> {
     call.validate().map_err(Failure::not_run)?;
     let store = table(node)?;
-    if let TimerCall::List { owner, after } = call {
-        let (timers, next) = store.page(owner.as_ref(), after.as_deref()).await.map_err(failure)?;
-        return Ok(Reply::Timers { timers, next });
+    if let TimerCall::List { owner, after, paged } = call {
+        let page = store.page(owner.as_ref(), after.as_deref()).await.map_err(failure)?;
+        return page_reply(page, paged);
     }
     let resident = match &call {
         TimerCall::Set { action: Action::Sentinel { .. }, .. } => {
@@ -49,36 +52,86 @@ pub(crate) async fn call(node: &Arc<Node>, call: TimerCall) -> Result<Reply, Fai
             }
             resident.clone()
         }
-        TimerCall::Cancel { id } => match store.get(id).await.map_err(failure)? {
-            Some(timer) => match timer.action {
-                Action::Tell { resident, .. } => resident,
-                Action::Sentinel { .. } => {
-                    return Err(Failure::refused("sentinel timers are managed by their sentinel"));
-                }
-                Action::Goal { .. } => return Err(Failure::refused("goal timers are managed by the goal runtime")),
-            },
-            None => return Ok(Reply::Done),
-        },
+        TimerCall::Cancel { id, handle } => {
+            let value = handle.as_ref().map_or(id.as_str(), |handle| handle.as_str());
+            match store.header(value, handle.is_some()).await.map_err(failure)? {
+                Some(header) => match header.routing {
+                    headers::Routing::Tell(resident) => resident,
+                    headers::Routing::Sentinel => {
+                        return Err(Failure::refused("sentinel timers are managed by their sentinel"));
+                    }
+                    headers::Routing::Goal => {
+                        return Err(Failure::refused("goal timers are managed by the goal runtime"));
+                    }
+                },
+                None => return Ok(Reply::Done),
+            }
+        }
         TimerCall::List { .. } => unreachable!(),
     };
     let gate = crate::control_queue::gate(node, &resident);
     let _action = gate.lock().await;
     let _place = node.places.using(resident.as_str()).await;
     match call {
-        TimerCall::Set { id, owner, due, action } => {
+        TimerCall::Set { id, owner, due, action, handle } => {
             node.residents.active(&resident)?;
-            if store.get(&id).await.map_err(failure)?.is_some_and(|timer| timer.owner != owner) {
+            let value = handle.as_ref().map_or(id.as_str(), |handle| handle.as_str());
+            let previous = store.header(value, handle.is_some()).await.map_err(failure)?;
+            if previous.as_ref().is_some_and(|header| header.owner.as_ref() != Some(&owner)) {
                 return Err(Failure::new("cancel a timer before changing its owner"));
             }
-            let timer = store.set(id, owner, due, action, crate::speech::new_id("timer")).await.map_err(failure)?;
-            Ok(Reply::Timers { timers: vec![timer], next: None })
+            let delivery = crate::speech::new_id("timer");
+            if handle.is_some() || id.len() > 4096 {
+                let previous = previous.ok_or_else(|| {
+                    Failure::not_run(if handle.is_some() {
+                        "no timer has this handle"
+                    } else {
+                        "a new timer identity exceeds 4096 bytes"
+                    })
+                })?;
+                let timer = store.replace_header(previous, owner, due, action, delivery).await.map_err(failure)?;
+                return Ok(timer.map_or(Reply::Done, |timer| Reply::Timers {
+                    timers: vec![timer],
+                    next: None,
+                    oversized: Vec::new(),
+                }));
+            }
+            let timer = store.set(id, owner, due, action, delivery).await.map_err(failure)?;
+            Ok(Reply::Timers { timers: vec![timer], next: None, oversized: Vec::new() })
         }
-        TimerCall::Cancel { id } => {
-            store.cancel(&id).await.map_err(failure)?;
+        TimerCall::Cancel { id, handle } => {
+            let value = handle.as_ref().map_or(id.as_str(), |handle| handle.as_str());
+            if let Some(header) = store.header(value, handle.is_some()).await.map_err(failure)? {
+                match &header.routing {
+                    headers::Routing::Tell(current) if current == &resident => {}
+                    headers::Routing::Tell(_) => {
+                        return Err(Failure::not_run("the timer's conversation changed; try again"));
+                    }
+                    headers::Routing::Sentinel => {
+                        return Err(Failure::refused("sentinel timers are managed by their sentinel"));
+                    }
+                    headers::Routing::Goal => {
+                        return Err(Failure::refused("goal timers are managed by the goal runtime"));
+                    }
+                }
+                store.cancel_header(header).await.map_err(failure)?;
+            }
             Ok(Reply::Done)
         }
         TimerCall::List { .. } => unreachable!(),
     }
+}
+
+fn page_reply(mut page: page::Page, paged: bool) -> Result<Reply, Failure> {
+    if !paged {
+        if page.next.is_some() || !page.oversized.is_empty() {
+            return Err(Failure::not_run(
+                "the timer list exceeds 128 inspected rows, the 1 MiB reply limit or a stored row limit; use a paging-aware client (fastctx timer list --page)",
+            ));
+        }
+        page.timers.sort_by(|a, b| a.id.cmp(&b.id));
+    }
+    Ok(Reply::Timers { timers: page.timers, next: page.next, oversized: page.oversized })
 }
 
 pub(crate) fn start(node: &Arc<Node>) {
