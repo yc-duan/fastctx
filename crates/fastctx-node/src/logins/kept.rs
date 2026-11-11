@@ -240,24 +240,28 @@ pub(super) fn read(node: &Node) -> io::Result<Kept> {
             format!("agent-scan.json is of version {}, newer than this fastctx reads", kept.version),
         ));
     }
-    bounded(&kept)?;
     Ok(kept)
 }
 
-fn bounded(kept: &Kept) -> io::Result<()> {
-    let logins = kept.codex.logins.len()
-        + kept.claude.logins.len()
-        + kept.others.values().map(|agent| agent.logins.len()).sum::<usize>();
-    if logins > LOGINS || kept.folders.len() > FOLDERS {
+/// Refuses a record grown past its bounds. One past them already, as an
+/// earlier version may have kept it, is still read and still changed: only
+/// what makes it larger is refused.
+fn bounded(kept: &Kept, prior: &Kept) -> io::Result<()> {
+    let logins = |kept: &Kept| {
+        kept.codex.logins.len()
+            + kept.claude.logins.len()
+            + kept.others.values().map(|agent| agent.logins.len()).sum::<usize>()
+    };
+    if logins(kept) > LOGINS.max(logins(prior)) || kept.folders.len() > FOLDERS.max(prior.folders.len()) {
         return Err(io::Error::new(io::ErrorKind::InvalidData, "the login record exceeds 1024 logins or 256 folders"));
     }
     Ok(())
 }
 
 pub(super) fn write(node: &Node, kept: &Kept) -> io::Result<()> {
-    bounded(kept)?;
-    let mut kept = kept.clone();
     let prior = read(node)?;
+    bounded(kept, &prior)?;
+    let mut kept = kept.clone();
     for (agent, record) in [("codex", &prior.codex), ("claude", &prior.claude)] {
         for login in &record.logins {
             if crate::usage::accounts::first(node, agent, &login.dir)?.is_none()
@@ -335,29 +339,24 @@ fn added_path(node: &Node) -> PathBuf {
 }
 
 pub(super) fn chosen(node: &Node) -> io::Result<Added> {
-    let added = match fastctx_platform::durable_file::read_bounded(&added_path(node), CHOSEN_BYTES) {
+    match fastctx_platform::durable_file::read_bounded(&added_path(node), CHOSEN_BYTES) {
         Ok(bytes) => serde_json::from_slice::<Added>(&bytes)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("agent-homes.json: {error}")))?,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Added::default(),
-        Err(error) => return Err(error),
-    };
-    chosen_bound(&added)?;
-    Ok(added)
-}
-
-fn chosen_bound(added: &Added) -> io::Result<()> {
-    if added.added.len() > LOGINS || added.folders.len() > FOLDERS {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "the chosen logins exceed 1024 logins or 256 folders"));
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("agent-homes.json: {error}"))),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Added::default()),
+        Err(error) => Err(error),
     }
-    Ok(())
 }
 
 /// Changes what the user chose, under the node's lock for its records.
 fn choose(node: &Node, edit: impl FnOnce(&mut Added)) -> io::Result<()> {
     let _keeping = node.logins.keeping.lock().expect("never poisoned");
     let mut added = chosen(node)?;
+    let (logins, folders) = (added.added.len(), added.folders.len());
     edit(&mut added);
-    chosen_bound(&added)?;
+    // As with the record: only what grows past the bounds is refused.
+    if added.added.len() > LOGINS.max(logins) || added.folders.len() > FOLDERS.max(folders) {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "the chosen logins exceed 1024 logins or 256 folders"));
+    }
     let mut bytes = serde_json::to_vec_pretty(&added).map_err(io::Error::other)?;
     bytes.push(b'\n');
     if bytes.len() > CHOSEN_BYTES as usize {

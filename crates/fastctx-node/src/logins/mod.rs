@@ -27,7 +27,6 @@ pub(crate) mod submitted;
 pub(crate) mod watch;
 pub(crate) mod workbench;
 
-
 use fastctx_types::access::Written;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
@@ -132,14 +131,33 @@ pub(crate) fn identities(node: &Node, agent: &AgentName) -> Result<Vec<(PathBuf,
         .collect())
 }
 
-/// The record of this machine's logins, without waiting for identification.
+/// The record of this machine's logins, without waiting for identification:
+/// as last projected, which a read waits for only where none was ever made
+/// (`snapshot::before_reading`).
 pub(crate) async fn here(node: &Arc<Node>) -> Result<MachineLogins, Failure> {
+    snapshot::before_reading(node).await;
+    snapshot::read(node)
+}
+
+/// The record once what the call just changed is in it: the answer to a
+/// call that changes a login shows the change.
+pub(crate) async fn changed_here(node: &Arc<Node>) -> Result<MachineLogins, Failure> {
+    snapshot::renew(node).await;
     snapshot::read(node)
 }
 
 /// The same projection in the shape older clients read.
-pub(crate) fn agents(node: &Node) -> Result<fastctx_types::agents::AgentsReply, Failure> {
+pub(crate) async fn agents(node: &Arc<Node>) -> Result<fastctx_types::agents::AgentsReply, Failure> {
+    snapshot::before_reading(node).await;
     snapshot::agents(node)
+}
+
+/// The usage of `agent`'s login `dir` was read anew: its row is projected
+/// again.
+pub(crate) fn usage_read(node: &Node, agent: &str, dir: &Path) {
+    if AGENTS.contains(&agent) {
+        snapshot::quota(node, agent, dir);
+    }
 }
 
 /// Each login of `agent` the World knows here, with how it knows of it:
@@ -373,7 +391,7 @@ pub(crate) async fn take_up(node: &Arc<Node>, agent: AgentName, dir: PathBuf) ->
         .await
         .map_err(|error| Failure::new(error.to_string()))??;
     }
-    here(node).await
+    changed_here(node).await
 }
 
 /// Claude configuration directories already known on this machine.

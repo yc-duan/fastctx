@@ -235,12 +235,12 @@ async fn work(node: &Arc<Node>, asked: Asked) -> Result<Answer, Failure> {
                 dir
             };
             super::limits::read(node, &agent, &dir).await?;
-            super::here(node).await.map(|logins| Answer::Logins(Box::new(logins)))
+            super::changed_here(node).await.map(|logins| Answer::Logins(Box::new(logins)))
         }
         Asked::Resets { agent, dir, on } => {
             super::set_resets_in_place(node, &agent, &dir, on)?;
             crate::usage::after_reading(node, agent.as_str(), &dir).await;
-            super::here(node).await.map(|logins| Answer::Logins(Box::new(logins)))
+            super::changed_here(node).await.map(|logins| Answer::Logins(Box::new(logins)))
         }
     }
 }

@@ -272,7 +272,7 @@ pub(crate) async fn set_title(
 ) -> Result<MachineLogins, Failure> {
     if node.is_here(&machine) {
         super::set_title(node, &agent, &dir, on)?;
-        return super::here(node).await;
+        return super::changed_here(node).await;
     }
     match ask(node, &machine, Purpose::Hands, RemoteCall::SetAgentTitle { agent, dir, on }).await? {
         RemoteReply::AgentLogins(logins) => Ok(*logins),
@@ -291,7 +291,7 @@ pub(crate) async fn change_models(
 ) -> Result<MachineLogins, Failure> {
     if node.is_here(&machine) {
         super::models::change(node, &agent, &dir, &change)?;
-        return super::here(node).await;
+        return super::changed_here(node).await;
     }
     match ask(node, &machine, Purpose::Hands, RemoteCall::ChangeAgentModels { agent, dir, change }).await? {
         RemoteReply::AgentLogins(logins) => Ok(*logins),
@@ -387,14 +387,14 @@ pub(crate) async fn answer(
         RemoteCall::AgentFolder { dir, change } => super::submitted::folder(node, dir, change).await.map(logins),
         RemoteCall::SetAgentTitle { agent, dir, on } => {
             super::set_title(node, &agent, &dir, on)?;
-            super::here(node).await.map(logins)
+            super::changed_here(node).await.map(logins)
         }
         RemoteCall::SetAgentResetInPlace { agent, dir, on } => {
             super::submitted::set_resets_in_place(node, agent, dir, on).await.map(logins)
         }
         RemoteCall::ChangeAgentModels { agent, dir, change } => {
             super::models::change(node, &agent, &dir, &change)?;
-            super::here(node).await.map(logins)
+            super::changed_here(node).await.map(logins)
         }
         RemoteCall::PreviewAgentChange { agent, dir, into, take_back, workbench } => {
             super::change::preview(node, agent, dir, into, take_back, workbench)

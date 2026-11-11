@@ -21,6 +21,15 @@ const BYTES: u32 = 16 * 1024 * 1024;
 const ROWS: usize = 4096;
 const PASS: passes::Pass =
     passes::Pass { name: "logins/listing", within: Duration::from_secs(15), rests: Some(Duration::from_secs(60 * 60)) };
+/// How old a projection a read is content with. Past it the read still
+/// answers at once from what is held, and asks for a projection behind it:
+/// what the user changed outside the World, in a login's own files or its
+/// program, is not watched, and shows on the look after the one that asked.
+const CONTENT: Duration = Duration::from_secs(30);
+/// How long a read waits where no projection was ever made, as on the first
+/// start of a version that keeps one: it answers what was read on the spot
+/// before, not an empty list.
+const FIRST: Duration = Duration::from_secs(30);
 
 #[derive(Default)]
 struct Held {
@@ -38,11 +47,19 @@ struct Held {
     keys: Vec<String>,
     folders: Option<Vec<std::path::PathBuf>>,
     failed: Option<String>,
+    /// Whether `value` is a projection, read from its file or made since;
+    /// not what stands in for one before the first is made.
+    projected: bool,
+    /// When a whole projection was last made, or a read last asked for one.
+    looked: Option<std::time::Instant>,
 }
 
 pub(crate) struct Listing {
     held: Mutex<Held>,
     making: Arc<tokio::sync::Mutex<()>>,
+    /// Held by the read that has the first projection made, so that the
+    /// reads beside it wait for that one.
+    first: tokio::sync::Mutex<()>,
     readers: Arc<tokio::sync::Semaphore>,
     ready: AtomicBool,
 }
@@ -51,6 +68,7 @@ impl Default for Listing {
         Self {
             held: Mutex::new(Held::default()),
             making: Arc::new(tokio::sync::Mutex::new(())),
+            first: tokio::sync::Mutex::new(()),
             readers: Arc::new(tokio::sync::Semaphore::new(2)),
             ready: AtomicBool::new(false),
         }
@@ -121,7 +139,60 @@ fn load(node: &Node, held: &mut Held) -> Result<(), Failure> {
     held.body = serde_json::to_vec(&saved).map_err(|error| Failure::new(error.to_string()))?;
     held.agents = saved.agents.map(Arc::new);
     held.value = Some(Arc::new(saved.logins));
+    held.projected = true;
     Ok(())
+}
+
+/// What a read of the list does before it reads what is held. Where a
+/// projection is held it does not wait: one older than a read is content
+/// with is asked for behind it. Where none was ever made, or the one kept
+/// cannot be read, it waits for one to be made.
+pub(crate) async fn before_reading(node: &Arc<Node>) {
+    restore(node).await;
+    let (projected, old) = {
+        let mut held = node.logins.listing.held.lock().expect("never poisoned");
+        let old = held.looked.is_none_or(|at| at.elapsed() >= CONTENT);
+        if old {
+            held.looked = Some(std::time::Instant::now());
+        }
+        (held.projected && held.failed.is_none(), old)
+    };
+    if !projected {
+        first(node).await;
+    } else if old {
+        ask(node);
+    }
+}
+
+/// Has the first projection made, once for all the reads waiting for it:
+/// every row of it, within `FIRST`. A projection that cannot be made is
+/// left to the passes; the read then says what is held, or why none is.
+async fn first(node: &Arc<Node>) {
+    let _one = node.logins.listing.first.lock().await;
+    let until = std::time::Instant::now() + FIRST;
+    let mut asked = false;
+    loop {
+        {
+            let mut held = node.logins.listing.held.lock().expect("never poisoned");
+            if held.projected && held.failed.is_none() && held.cursor == 0 {
+                return;
+            }
+            if !asked {
+                held.full = true;
+                asked = true;
+            }
+        }
+        if std::time::Instant::now() >= until || matches!(refresh(node).await, passes::Left::Work) {
+            return;
+        }
+    }
+}
+
+/// Projects anew and waits for it, for an answer that shows what its call
+/// just changed.
+pub(crate) async fn renew(node: &Arc<Node>) {
+    node.logins.listing.held.lock().expect("never poisoned").full = true;
+    refresh(node).await;
 }
 
 /// Reads one bounded private file on first use; warm reads do no file IO.
@@ -233,8 +304,15 @@ pub(crate) fn chosen(node: &Node, added: &kept::Added) {
     ask(node);
 }
 pub(crate) fn quota(node: &Node, agent: &str, dir: &Path) {
-    node.logins.listing.held.lock().expect("never poisoned").quota.insert((agent.to_string(), dir.to_path_buf()));
-    if node.logins.listing.ready.load(Ordering::Acquire) {
+    // Usage is read with every step of a turn: a pass is asked for by the
+    // first login waiting for one, and takes all that wait by then.
+    let first = {
+        let mut held = node.logins.listing.held.lock().expect("never poisoned");
+        let first = held.quota.is_empty();
+        held.quota.insert((agent.to_string(), dir.to_path_buf()));
+        first
+    };
+    if first && node.logins.listing.ready.load(Ordering::Acquire) {
         passes::ask(node, PASS.name);
     }
 }
@@ -310,11 +388,11 @@ async fn restore(node: &Arc<Node>) {
         // This is a local holder: no reader's lock covers the disk operation.
         let mut restored = Held::default();
         load(&reading, &mut restored)?;
-        Ok((restored.value, restored.agents, restored.body))
+        Ok((restored.value, restored.agents, restored.body, restored.projected))
     })
     .await;
     match restored {
-        Ok((value, agents, body)) => {
+        Ok((value, agents, body, projected)) => {
             let mut held = node.logins.listing.held.lock().expect("never poisoned");
             if held.value.is_none() {
                 held.loaded = true;
@@ -322,6 +400,7 @@ async fn restore(node: &Arc<Node>) {
                 held.value = value;
                 held.agents = agents;
                 held.body = body;
+                held.projected = projected;
             }
         }
         Err(error) => node.log.line(format_args!("restoring the login list: {}", error.message)),
@@ -372,6 +451,10 @@ pub(crate) async fn refresh(node: &Arc<Node>) -> passes::Left {
                         let mut held = node.logins.listing.held.lock().expect("never poisoned");
                         held.cursor = next;
                         held.keys = keys;
+                        held.projected = true;
+                        if refresh_programs && !more {
+                            held.looked = Some(std::time::Instant::now());
+                        }
                         more || held.full || !held.quota.is_empty()
                     };
                     if again && node.logins.listing.ready.load(Ordering::Acquire) {

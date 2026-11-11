@@ -31,9 +31,10 @@ fn present(agent: &Agent, home: &Path) -> bool {
     if agent.marks.is_empty() {
         return fastctx_platform::disk::is_dir(home);
     }
-    agent.marks.iter().any(|mark| {
-        fastctx_platform::disk::exists(fastctx_install::agents::located(home, mark)).unwrap_or(false)
-    })
+    agent
+        .marks
+        .iter()
+        .any(|mark| fastctx_platform::disk::exists(fastctx_install::agents::located(home, mark)).unwrap_or(false))
 }
 
 /// Where `agent` keeps who is logged in: its data directory where it keeps

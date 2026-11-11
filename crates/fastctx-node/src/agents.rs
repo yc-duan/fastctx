@@ -18,7 +18,7 @@ use crate::Node;
 /// The agents on this machine, one for each login of each, listed and
 /// candidates, as the node keeps them.
 pub async fn here(node: &Arc<Node>) -> Result<AgentsReply, Failure> {
-    crate::logins::agents(node)
+    crate::logins::agents(node).await
 }
 
 /// The record in the shape of an older reply: a login a scan has not asked

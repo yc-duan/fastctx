@@ -21,6 +21,8 @@ use std::{
 const ITEM: Duration = Duration::from_secs(2);
 const TOTAL: Duration = Duration::from_secs(10);
 const CHUNK: usize = 128;
+/// How many logins of one agent the list shows.
+const ROWS_EACH: usize = 1536;
 pub(super) type Aliases = Vec<(PathBuf, jiff::Timestamp, Vec<String>)>;
 pub(super) struct Built {
     pub value: MachineLogins,
@@ -141,8 +143,15 @@ pub(super) async fn all(
                 dirs
             }
         };
-        if dirs.len() > 4096 {
-            return Err(Failure::new("the login directory list exceeds 4096 rows"));
+        let mut dirs = dirs;
+        if dirs.len() > ROWS_EACH {
+            // The list is made of those it has room for: a record past the
+            // bound is a list cut short, not one that cannot be made.
+            node.log.line(format_args!(
+                "the list of {agent} logins shows the first {ROWS_EACH} of the {} known here",
+                dirs.len()
+            ));
+            dirs.truncate(ROWS_EACH);
         }
         side(&mut value, agent).programs = record.of(agent).programs.clone();
         if agent == "claude" {

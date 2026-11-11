@@ -114,7 +114,7 @@ async fn forget(node: &Arc<Node>, dir: PathBuf) -> Result<MachineLogins, Failure
         .map_err(|error| Failure::new(error.to_string()))?
         .map_err(|error| Failure::new(format!("forgetting the folder: {error}")))?;
     }
-    super::here(node).await
+    super::changed_here(node).await
 }
 
 /// Searches every chosen folder again; a search under way goes on.

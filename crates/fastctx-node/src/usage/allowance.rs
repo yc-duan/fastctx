@@ -213,6 +213,9 @@ fn rolling(costs: &[(Timestamp, Usd)], allowance: Usd, span: SignedDuration, now
 /// All conversations are checked, including idle roots with busy background
 /// agents: heavy work, done on a thread that may block.
 pub(crate) async fn after_reading(node: &Arc<Node>, agent: &str, dir: &std::path::Path) {
+    // What the login's row in the list of logins says of its usage is read
+    // anew behind this.
+    crate::logins::usage_read(node, agent, dir);
     let (node, agent, dir) = (node.clone(), agent.to_string(), dir.to_path_buf());
     fastctx_platform::task::blocking(move || super::hold::refresh(&node, Some((&agent, &dir)))).await;
 }
