@@ -20,6 +20,10 @@ use serde::{Deserialize, Serialize};
 use crate::Node;
 
 const VERSION: u32 = 1;
+const RECORD_BYTES: u32 = 16 * 1024 * 1024;
+const CHOSEN_BYTES: u32 = 1024 * 1024;
+const LOGINS: usize = 1024;
+const FOLDERS: usize = 256;
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub(super) struct Kept {
@@ -224,7 +228,7 @@ fn path(node: &Node) -> PathBuf {
 
 /// The record as last kept.
 pub(super) fn read(node: &Node) -> io::Result<Kept> {
-    let kept: Kept = match fastctx_platform::disk::read(path(node)) {
+    let kept: Kept = match fastctx_platform::durable_file::read_bounded(&path(node), RECORD_BYTES) {
         Ok(bytes) => serde_json::from_slice(&bytes)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("agent-scan.json: {error}")))?,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Kept::default()),
@@ -236,10 +240,22 @@ pub(super) fn read(node: &Node) -> io::Result<Kept> {
             format!("agent-scan.json is of version {}, newer than this fastctx reads", kept.version),
         ));
     }
+    bounded(&kept)?;
     Ok(kept)
 }
 
+fn bounded(kept: &Kept) -> io::Result<()> {
+    let logins = kept.codex.logins.len()
+        + kept.claude.logins.len()
+        + kept.others.values().map(|agent| agent.logins.len()).sum::<usize>();
+    if logins > LOGINS || kept.folders.len() > FOLDERS {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "the login record exceeds 1024 logins or 256 folders"));
+    }
+    Ok(())
+}
+
 pub(super) fn write(node: &Node, kept: &Kept) -> io::Result<()> {
+    bounded(kept)?;
     let mut kept = kept.clone();
     let prior = read(node)?;
     for (agent, record) in [("codex", &prior.codex), ("claude", &prior.claude)] {
@@ -278,7 +294,12 @@ pub(super) fn write(node: &Node, kept: &Kept) -> io::Result<()> {
     kept.version = VERSION;
     let mut bytes = serde_json::to_vec_pretty(&kept).map_err(io::Error::other)?;
     bytes.push(b'\n');
+    if bytes.len() > RECORD_BYTES as usize {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "the login record exceeds 16 MiB"));
+    }
     publish(&path(node), &bytes, Permissions::Private)?;
+    super::snapshot::kept(node, &prior, &kept);
+    node.logins.sign_in_watch.notify_one();
     node.topics.changed(fastctx_types::topics::LOGINS);
     Ok(())
 }
@@ -314,12 +335,21 @@ fn added_path(node: &Node) -> PathBuf {
 }
 
 pub(super) fn chosen(node: &Node) -> io::Result<Added> {
-    match fastctx_platform::disk::read(added_path(node)) {
+    let added = match fastctx_platform::durable_file::read_bounded(&added_path(node), CHOSEN_BYTES) {
         Ok(bytes) => serde_json::from_slice::<Added>(&bytes)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("agent-homes.json: {error}"))),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Added::default()),
-        Err(error) => Err(error),
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("agent-homes.json: {error}")))?,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Added::default(),
+        Err(error) => return Err(error),
+    };
+    chosen_bound(&added)?;
+    Ok(added)
+}
+
+fn chosen_bound(added: &Added) -> io::Result<()> {
+    if added.added.len() > LOGINS || added.folders.len() > FOLDERS {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "the chosen logins exceed 1024 logins or 256 folders"));
     }
+    Ok(())
 }
 
 /// Changes what the user chose, under the node's lock for its records.
@@ -327,9 +357,16 @@ fn choose(node: &Node, edit: impl FnOnce(&mut Added)) -> io::Result<()> {
     let _keeping = node.logins.keeping.lock().expect("never poisoned");
     let mut added = chosen(node)?;
     edit(&mut added);
+    chosen_bound(&added)?;
     let mut bytes = serde_json::to_vec_pretty(&added).map_err(io::Error::other)?;
     bytes.push(b'\n');
-    publish(&added_path(node), &bytes, Permissions::Private)
+    if bytes.len() > CHOSEN_BYTES as usize {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "the chosen logins exceed 1 MiB"));
+    }
+    publish(&added_path(node), &bytes, Permissions::Private)?;
+    super::snapshot::chosen(node, &added);
+    node.topics.changed(fastctx_types::topics::LOGINS);
+    Ok(())
 }
 
 /// Adds `dir` to the directories the user took up for `agent`, once.

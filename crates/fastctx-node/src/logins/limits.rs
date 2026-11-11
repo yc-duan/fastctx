@@ -100,6 +100,7 @@ pub(super) fn keep(node: &Node, report: LimitsReport) -> std::io::Result<bool> {
     };
     if !seen_only {
         kept::write(node, &kept)?;
+        super::snapshot::quota(node, "codex", &home);
     }
     Ok(changed)
 }

@@ -1046,6 +1046,7 @@ pub async fn run_prepared(
             context::start(&node);
             turn_evidence::submitted::start(&node);
             network_changes::start(&node);
+            logins::sign_in_refresh::register(&node);
             updates::start(&node);
             afoot::start(&node);
             usage::watch(&node);

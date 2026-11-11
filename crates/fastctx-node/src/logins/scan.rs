@@ -40,7 +40,9 @@ pub(crate) async fn scan(node: &Arc<Node>, stop: bool) -> Result<MachineLogins, 
         let scanned = scan_once(&node).await;
         // What the scan finds is listed as this fastctx writes it.
         super::refresh::all(&node).await;
+        super::snapshot::refresh(&node).await;
         node.logins.scanning.store(false, Ordering::Release);
+        node.topics.changed(fastctx_types::topics::LOGINS);
         scanned
     })
     .await

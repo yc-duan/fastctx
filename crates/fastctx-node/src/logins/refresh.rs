@@ -40,6 +40,8 @@ pub(crate) async fn all(node: &Arc<Node>) {
         Ok(None) => {}
         Err(error) => node.log.line(format_args!("bringing the World's tools up to date: {error}")),
     }
+    super::snapshot::ask(node);
+    node.topics.changed(fastctx_types::topics::LOGINS);
 }
 
 /// The World program's replacement is done: the logins that waited for it

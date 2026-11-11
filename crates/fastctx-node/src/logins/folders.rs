@@ -28,21 +28,21 @@ pub(super) struct Searches(Mutex<HashMap<String, Arc<Searching>>>);
 
 /// One folder's search under way.
 #[derive(Default)]
-struct Searching {
-    stop: AtomicBool,
-    counters: walk::Counters,
+pub(super) struct Searching {
+    pub(super) stop: AtomicBool,
+    pub(super) counters: walk::Counters,
     /// What it found so far, in the order met.
-    found: Mutex<Vec<FoundIn>>,
+    pub(super) found: Mutex<Vec<FoundIn>>,
 }
 
 impl Searches {
-    fn get(&self, key: &str) -> Option<Arc<Searching>> {
+    pub(super) fn get(&self, key: &str) -> Option<Arc<Searching>> {
         self.0.lock().expect("never poisoned").get(key).cloned()
     }
 
     /// Whether `searching` is the search of `key` under way: one stopped
     /// and replaced by a newer search of the same folder no longer is.
-    fn current(&self, key: &str, searching: &Arc<Searching>) -> bool {
+    pub(super) fn current(&self, key: &str, searching: &Arc<Searching>) -> bool {
         self.get(key).is_some_and(|current| Arc::ptr_eq(&current, searching))
     }
 }
@@ -163,6 +163,7 @@ fn search(node: &Arc<Node>, dir: PathBuf) {
         searches.insert(key.clone(), searching.clone());
         searching
     };
+    super::search_progress::follow(node, &key, &searching);
     let spawned = std::thread::Builder::new().name("agents' logins search".into()).spawn({
         let (node, key, searching) = (node.clone(), key.clone(), searching.clone());
         move || {
@@ -173,6 +174,9 @@ fn search(node: &Arc<Node>, dir: PathBuf) {
             if searches.get(&key).is_some_and(|current| Arc::ptr_eq(current, &searching)) {
                 searches.remove(&key);
             }
+            drop(searches);
+            super::snapshot::ask(&node);
+            node.topics.changed(fastctx_types::topics::LOGINS);
         }
     });
     if let Err(error) = spawned {
