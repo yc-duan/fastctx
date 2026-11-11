@@ -181,6 +181,7 @@ pub mod thumbnail;
 mod timeline;
 pub mod timers;
 mod to_end;
+mod topics;
 mod town;
 mod turn_evidence;
 mod turn_slots;
@@ -331,6 +332,9 @@ pub(crate) struct Node {
     /// Moves whenever a hub's view may have changed, or this computer's name
     /// did: what is afoot here is told again then (`afoot`).
     views: tokio::sync::watch::Sender<u64>,
+    /// The pieces of this node's state a reader waits on rather than asks
+    /// for again (`topics`).
+    topics: topics::Topics,
     /// Moves whenever what an interface shows of the World may have changed,
     /// beyond the residents and jobs here (`shown`).
     shown: tokio::sync::watch::Sender<u64>,
@@ -882,6 +886,7 @@ pub async fn run_prepared(
                 links: RwLock::new(std::collections::BTreeMap::new()),
                 ways: tokio::sync::watch::channel(0).0,
                 views: tokio::sync::watch::channel(0).0,
+                topics: topics::Topics::new(),
                 shown: tokio::sync::watch::channel(0).0,
                 world_shown: Default::default(),
                 memory_changes: tokio::sync::watch::channel(0).0,

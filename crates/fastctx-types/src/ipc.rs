@@ -115,6 +115,9 @@ pub enum Welcome {
         /// Supports Watch.live_only with a post-registration Resumed barrier.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         watch_live: bool,
+        /// Tells when a topic of its state changed (`Call::Topics`).
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        topics: bool,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         scratch_locations: bool,
         /// Follows a conversation's collaboration on a watch

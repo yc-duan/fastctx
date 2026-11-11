@@ -404,6 +404,20 @@
     }
   },
   {
+    "type": "crates/fastctx-types/src/calls.rs::Call",
+    "variant": "Topics",
+    "purpose": "Observation",
+    "capability": "node_ipc",
+    "mapping": "crates/fastctx-types/src/calls.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/calls.rs::Reply",
+    "variant": "Topics",
+    "purpose": "Observation",
+    "capability": "node_ipc",
+    "mapping": "crates/fastctx-types/src/calls.rs"
+  },
+  {
     "type": "crates/fastctx-types/src/sync/transfer.rs::Message",
     "variant": "ProbeSource",
     "purpose": "AssetSync",

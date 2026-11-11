@@ -269,6 +269,7 @@ def samples(root, shipped):
              "object": "ab" * 32, "offset": 1, "length": 262144}},
             {"call": "timeline", "machine": "laptop", "request": {"do": "changes", "resident": ADDRESS["resident"],
              "after": 7, "max_events": 400, "max_bytes": 1048576}},
+            {"call": "topics", "request": {"run": "18f0a-1c2", "known": [{"topic": "logins", "revision": 3}]}},
         ]:
             yield {"mode": "current_request", "protocol": protocol, "peer": PEER, "admitted": False,
                    "value": {"kind": "call", "id": 37, "call": call}}
@@ -281,7 +282,8 @@ def samples(root, shipped):
         yield {"mode": "welcome", "protocol": protocol,
                "value": {"kind": "accepted", "machine": "desktop", "version": "1.0.0", "collaboration_watch": True}}
         yield {"mode": "welcome", "protocol": protocol,
-               "value": {"kind": "accepted", "machine": "desktop", "version": "1.0.0", "timeline_reads": True, "watch_live": True}}
+               "value": {"kind": "accepted", "machine": "desktop", "version": "1.0.0", "timeline_reads": True, "watch_live": True,
+                         "topics": True}}
         yield {"mode": "watched", "protocol": protocol, "value": MARKED_LIVE}
         for reply in replies(fixtures):
             if protocol == 5 and reply["reply"] == "server_invitation":
@@ -340,7 +342,8 @@ def samples(root, shipped):
         yield {"mode": "welcome", "protocol": 13, "reader": reader,
                "value": {"kind": "accepted", "machine": "desktop", "version": "1.0.0", "collaboration_watch": True}}
         yield {"mode": "welcome", "protocol": 13, "reader": reader,
-               "value": {"kind": "accepted", "machine": "desktop", "version": "1.0.0", "timeline_reads": True, "watch_live": True}}
+               "value": {"kind": "accepted", "machine": "desktop", "version": "1.0.0", "timeline_reads": True, "watch_live": True,
+                         "topics": True}}
         yield {"mode": "watched", "protocol": 13, "reader": reader, "value": MARKED_LIVE}
         for reply in replies(fixtures):
             notice = reply["notices"][0]["notice"] if reply["reply"] == "notices" else {}

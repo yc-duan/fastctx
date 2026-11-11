@@ -90,6 +90,7 @@ pub mod thumbnail;
 pub mod timeline_pages;
 pub mod timers;
 pub mod tolerant;
+pub mod topics;
 pub mod town;
 pub mod trouble;
 pub mod turn_evidence;

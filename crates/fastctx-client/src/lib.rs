@@ -52,6 +52,7 @@ mod skills;
 mod submission;
 mod thumbnail;
 mod timeline;
+mod topics;
 pub mod town;
 pub mod world;
 pub mod world_now;
@@ -132,6 +133,7 @@ pub struct Client {
     pub conversation_plans: bool,
     pub timeline_reads: bool,
     pub watch_live: bool,
+    pub topics: bool,
     pub goal_runtime: bool,
     pub watch_many: bool,
     pub scratch_locations: bool,
@@ -187,6 +189,7 @@ impl Client {
                 conversation_plans,
                 timeline_reads,
                 watch_live,
+                topics,
                 goal_runtime,
                 watch_many,
                 scratch_locations,
@@ -204,6 +207,7 @@ impl Client {
                 conversation_plans,
                 timeline_reads,
                 watch_live,
+                topics,
                 goal_runtime,
                 watch_many,
                 scratch_locations,
@@ -320,6 +324,9 @@ impl Client {
 
     /// Sends `call` and waits for its answer.
     pub async fn call(&mut self, call: Call) -> Result<Reply, CallError> {
+        if !self.topics && matches!(call, Call::Topics { .. }) {
+            return Err(CallError::Failed(Failure::not_run("this node does not tell when its state changes; update it")));
+        }
         if !self.timeline_reads && matches!(call, Call::Timeline { .. }) {
             return Err(CallError::Failed(Failure::not_run("this node does not answer timeline pages; update it")));
         }

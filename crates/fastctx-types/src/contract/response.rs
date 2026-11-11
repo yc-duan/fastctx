@@ -279,6 +279,8 @@ impl Call {
                 }
             }
             Self::Timeline { request, .. } => timeline(request),
+            // It waits for a change, as a timeline's `Moved` does.
+            Self::Topics { .. } => Response::Stream,
             Self::Data(request) => {
                 use crate::data::DataCall;
                 match request {

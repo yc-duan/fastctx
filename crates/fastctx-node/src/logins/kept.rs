@@ -278,7 +278,9 @@ pub(super) fn write(node: &Node, kept: &Kept) -> io::Result<()> {
     kept.version = VERSION;
     let mut bytes = serde_json::to_vec_pretty(&kept).map_err(io::Error::other)?;
     bytes.push(b'\n');
-    publish(&path(node), &bytes, Permissions::Private)
+    publish(&path(node), &bytes, Permissions::Private)?;
+    node.topics.changed(fastctx_types::topics::LOGINS);
+    Ok(())
 }
 
 /// Changes the kept record under the node's lock for it.

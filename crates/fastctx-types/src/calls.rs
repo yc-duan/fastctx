@@ -93,6 +93,11 @@ pub enum Call {
         machine: Option<Written>,
         request: crate::timeline_pages::TimelineAsk,
     },
+    /// Waits until a piece of this machine's state a reader reads from has
+    /// changed (`crate::topics`), in place of reading it again on a timer.
+    Topics {
+        request: crate::topics::TopicsAsk,
+    },
     WatchHistory {
         scope: crate::history::Scope,
     },
@@ -1014,6 +1019,7 @@ pub enum Reply {
     Collaboration(Box<crate::collaboration::Tree>),
     History(crate::history::HistoryReply),
     Timeline(crate::timeline_pages::TimelineTold),
+    Topics(crate::topics::TopicsTold),
     Memory(crate::memory::MemoryReply),
     MemorySettings(crate::memory::Settings),
     Layer(crate::layers::Chosen),
@@ -1534,6 +1540,7 @@ impl Call {
             | Self::WorldNow { .. }
             | Self::Write { .. } => None,
             Self::Timeline { .. } => Some(Purpose::AssetSync),
+            Self::Topics { .. } => Some(Purpose::Observation),
         }
     }
 }
@@ -1642,6 +1649,7 @@ impl Reply {
             | Self::WorldNow { .. }
             | Self::Written { .. } => None,
             Self::Timeline(_) => Some(Purpose::AssetSync),
+            Self::Topics(_) => Some(Purpose::Observation),
         }
     }
 }
