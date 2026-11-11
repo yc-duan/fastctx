@@ -9,7 +9,9 @@ export interface ComposerJournalStore {
 }
 
 /** Native replicas live in a different database: a released GUI's fallback
- * reader must never mistake them for a legacy draft or queued editor. */
+ * reader must never mistake them for a legacy draft or queued editor. Offline
+ * native text is intentionally invisible after a GUI downgrade; reinstalling a
+ * native-capable GUI recovers it. A legacy Edit mirror could insert it twice. */
 export async function composerJournalStore(recoveryKey: string): Promise<ComposerJournalStore> {
   const legacy = await openJournalDatabase(LEGACY_JOURNAL_DATABASE);
   let documents: IDBDatabase;

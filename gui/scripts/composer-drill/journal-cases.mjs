@@ -26,16 +26,22 @@ export function journalCases(product, legacyURL, blank, initial, assert) {
       } finally { old.close?.(); }
       return { nativeHidden: true, oldWriteRetained: true };
     },
-    async A5mirror() {
+    async A5downgradeBoundary() {
       const key = JSON.stringify([null, "composer-probe", "plaintext-mirror"]);
       const native = new NativeComposer([]); native.receive(initial()); native.replica("draft").edit(0, 0, "offline plaintext");
       const current = await composerJournalStore(key); await current.write("native:replica:draft", savedDraft(native)); current.close?.(); native.dispose();
       const oldVersion = await import(legacyURL);
       const transport = { read: async () => ({ composer: blank(), landed: null }), update: async () => { throw new Error("no mirror edit was expected"); }, watch: async () => ({ id: 1, watch: "old", composer: blank() }), unwatch: async () => {} };
       const session = await oldVersion.ComposerSession.open({ resident: "composer-probe", machine: null }, { transport, recoveryKey: key });
-      try { assert(session.draft.view.characters.map((one) => one.text).join("") === "offline plaintext", "legacy plaintext mirror is not connected; exact native data remains in its isolated database"); }
+      try { assert(session.draft.view.characters.length === 0, "downgraded GUI must not replay a native plaintext mirror"); }
       finally { await session.close(); }
-      return { plaintextVisibleToReleasedGUI: true };
+      const reopened = await composerJournalStore(key);
+      try {
+        const restored = new NativeComposer([...(await reopened.read()).values()]); restored.receive(initial());
+        try { assert(restored.replica("draft").content === "offline plaintext", "reinstalling the new GUI lost its isolated native text"); }
+        finally { restored.dispose(); }
+      } finally { reopened.close?.(); }
+      return { plaintextVisibleToReleasedGUI: false, recoveredByNewGUI: true };
     },
     async A5import() {
       const key = JSON.stringify([null, "composer-probe", "development-import"]);

@@ -2,6 +2,7 @@ import type { Character, ComposerSnapshot, ComposerTarget } from "../../world/co
 import type { ComposerDocumentOptions } from "./document";
 import type { ComposerJournal, ComposerView, Seal } from "./document";
 import type { DocumentSend } from "../../world/composer-sync";
+import { recoveredCapture } from "./recovered-capture";
 import { ComposerDocument } from "./document";
 import { NativeComposer, encode } from "./native";
 import { key } from "./characters";
@@ -19,6 +20,7 @@ export class NativeComposerDocument extends ComposerDocument {
   private readonly native: NativeComposer;
   private anchors: { seal: Seal; tail: Character | undefined; token: string }[] = [];
   private readonly captures = new WeakMap<Seal, Omit<DocumentSend, "operation" | "epoch">>();
+  readonly recovered: { mutation: DocumentSend; seal: Seal; text: string }[] = [];
 
   constructor(native: NativeComposer, target: ComposerTarget, saved?: ComposerJournal) {
     const authority = native.snapshot();
@@ -37,6 +39,16 @@ export class NativeComposerDocument extends ComposerDocument {
     }
     super({ snapshot, target, send: async () => { throw new Error("native typing cannot send a legacy edit"); } });
     this.native = native; this.document = document;
+    if (target.kind === "draft") for (const input of native.recoverableInputs()) {
+      const mutation = input.mutation;
+      if (mutation.do !== "send_document" || mutation.document !== document) continue;
+      const capture = recoveredCapture(mutation, native.replica(document).characters);
+      const seal = this.restoreSeal(capture.characters, mutation.attachments, mutation.epoch!);
+      const token = native.restoreHold(document, mutation.operation, mutation.epoch!, input.number - 1);
+      this.anchors.push({ seal, tail: capture.characters.at(-1), token });
+      this.captures.set(seal, mutation);
+      this.recovered.push({ mutation, seal, text: capture.text });
+    }
   }
   override seal(): Seal {
     if (!this.nativeActive) return super.seal();

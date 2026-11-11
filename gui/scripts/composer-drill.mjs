@@ -49,7 +49,7 @@ try {
   socket.addEventListener("message", (event) => { const message = JSON.parse(event.data); if (!message.id) return; const call = waiting.get(message.id); waiting.delete(message.id); message.error ? call.reject(message.error) : call.resolve(message.result); });
   const send = (method, params = {}) => new Promise((resolve, reject) => { waiting.set(++serial, { resolve, reject }); socket.send(JSON.stringify({ id: serial, method, params })); });
   await send("Page.enable"); await send("Runtime.enable"); await send("Page.navigate", { url: `http://127.0.0.1:${address.port}/` }); await delay(50);
-  const selected = option("--cases", "A4,A2,A6,A7,A8,A12,C1").split(",");
+  const selected = option("--cases", "all").split(",");
   const expression = `(async()=>{const {run}=await import(${JSON.stringify(fixtureURL)});return run(${JSON.stringify(moduleURL)},${JSON.stringify(selected)},${Number(option("--seed", "1"))},${JSON.stringify(legacyURL)});})()`;
   const result = await send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true });
   if (result.exceptionDetails) throw new Error((result.exceptionDetails.exception?.description ?? result.exceptionDetails.text).replace(/data:text\/javascript;base64,[A-Za-z0-9+/=]+/g, "<bundle>"));

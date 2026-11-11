@@ -1,6 +1,7 @@
 import { Clock } from "./clock.mjs";
 import { journalCases } from "./journal-cases.mjs";
 import { inputCases } from "./input-cases.mjs";
+import { recoveryCases } from "./recovery-cases.mjs";
 
 const assert = (yes, why) => { if (!yes) throw new Error(why); };
 const blank = () => ({ revision: 1, draft: { epoch: 0, text: "", characters: [], attachments: [], uploads: [], files_on: null }, queue: [], unobserved: [], commands: [], held: null, awaiting_turn: null });
@@ -15,7 +16,7 @@ export async function run(moduleURL, selected, seed = 1, legacyURL) {
   const nativeFixture = (text = "hello", mutations = true) => {
     const source = new Y.Doc(); source.getText("text").insert(0, text);
     let callback; let revision = 1; let epoch = 0;
-    const inputs = []; const legacy = [];
+    const inputs = []; const legacy = []; const behavior = { mutate: null };
     const state = () => ({ ...metadata(), revision, draft: { ...metadata().draft, epoch, revision } });
     const frame = (update = Y.encodeStateAsUpdate(source)) => ({ kind: "state", version: 1, mutations, state: state(), documents: [{ document: "draft", revision, update: encode(update) }] });
     const snapshot = () => {
@@ -36,7 +37,8 @@ export async function run(moduleURL, selected, seed = 1, legacyURL) {
           Y.applyUpdate(source, Uint8Array.from(atob(input.update), (character) => character.charCodeAt(0))); revision++;
           publish({ kind: "update", revision, document: { document: "draft", revision, update: input.update } });
           publish({ kind: "saved", number: input.number, document: "draft", revision, document_revision: revision });
-        } else if (input.mutation.do === "withdraw") publish({ kind: "refused", number: input.number, failure: { message: "these words were already sent" } });
+        } else if (behavior.mutate) await behavior.mutate(input);
+        else if (input.mutation.do === "withdraw") publish({ kind: "refused", number: input.number, failure: { message: "these words were already sent" } });
         else if (!mutations) publish({ kind: "refused", number: input.number, failure: { message: "unsupported native mutation" } });
       },
       update: async (mutation) => {
@@ -61,7 +63,20 @@ export async function run(moduleURL, selected, seed = 1, legacyURL) {
       watch: async () => ({ id: 2, watch: "legacy", composer: snapshot() }),
       unwatch: async () => {},
     };
-    return { source, transport, inputs, legacy, frame, publish, snapshot };
+    const complete = (input, failure = null) => {
+      Y.applyUpdate(source, Uint8Array.from(atob(input.mutation.take), (one) => one.charCodeAt(0)));
+      epoch++; revision++;
+      if (failure) {
+        const body = new Y.Doc(); Y.applyUpdate(body, Uint8Array.from(atob(input.mutation.snapshot), (one) => one.charCodeAt(0)));
+        source.getText("text").insert(0, body.getText("text").toString()); body.destroy();
+      }
+      publish(frame());
+      const operation = { operation: input.mutation.operation, accepted: false, landed: failure ? null : { kind: "new_turn", turn: "turn" }, delivery: failure ? null : "delivery", failure };
+      publish({ kind: "result", revision, operation });
+      return operation;
+    };
+    const interrupt = () => callback?.({ kind: "interrupted", error: "injected disconnect", since: Date.now() });
+    return { source, transport, inputs, legacy, behavior, complete, frame, publish, snapshot, interrupt };
   };
   const memoryJournal = (entries = []) => {
     const data = new Map(entries);
@@ -70,6 +85,7 @@ export async function run(moduleURL, selected, seed = 1, legacyURL) {
   const cases = {
     ...journalCases(product, legacyURL, blank, initial, assert),
     ...inputCases(product, blank, initial, assert, clock, nativeFixture, legacyURL),
+    ...recoveryCases(product, assert, clock, nativeFixture, memoryJournal),
     async A4prepared() {
       const fixture = nativeFixture(); const session = await ComposerSession.open({ resident: "composer-prepared", machine: null }, { transport: fixture.transport, journal: memoryJournal(), recoveryKey: JSON.stringify([null, "composer-prepared", "prepared"]) });
       const first = session.send(); void first.sent.catch(() => {}); await clock.flush();
@@ -155,8 +171,10 @@ export async function run(moduleURL, selected, seed = 1, legacyURL) {
       const session = await ComposerSession.open({ resident: "composer-probe", machine: null }, { transport: fixture.transport, journal: memoryJournal(), recoveryKey: JSON.stringify([null, "composer-probe", "old-send"]) });
       const sending = session.send(); void sending.sent.catch(() => {}); await clock.flush();
       try {
-        assert(!fixture.inputs.some((input) => input.kind === "mutate"), "mutations=false received a new native mutation");
+        assert(fixture.inputs.length === 0, "mutations=false received traffic on a native stream");
         assert(fixture.legacy.some((mutation) => mutation.do === "send" && !("take" in mutation)), "old node did not receive a legacy send");
+        session.draft.edit(0, 0, "legacy typing"); await clock.flush();
+        assert(fixture.inputs.length === 0 && fixture.legacy.some((mutation) => mutation.do === "edit"), "old-node typing used a mixed protocol path");
       } finally { await session.close(); fixture.source.destroy(); }
       return { legacySend: true };
     },
@@ -258,7 +276,7 @@ export async function run(moduleURL, selected, seed = 1, legacyURL) {
     },
   };
   const results = [];
-  for (const name of selected ?? Object.keys(cases)) {
+  for (const name of !selected || selected.includes("all") ? Object.keys(cases) : selected) {
     try { results.push({ name, passed: true, ...await cases[name]() }); }
     catch (error) { results.push({ name, passed: false, error: String(error?.stack ?? error).replace(/data:text\/javascript;base64,[A-Za-z0-9+/=]+/g, "<bundle>") }); }
   }

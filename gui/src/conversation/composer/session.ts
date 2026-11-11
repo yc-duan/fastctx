@@ -52,9 +52,15 @@ const SENT_ELSEWHERE = "the draft was sent from another device";
  *  not go. */
 const NOT_HANDED = "the conversation's computer could not be reached in time";
 
-/** Words sent from the input (`ComposerSession::send`): what the node made
- *  of them, and what can be done with them while that is not known
- *  (`specs/world-foundation.md`, 宪法第十一条). */
+/** A retained capture and the same controls it had before the page closed. */
+export interface RecoveredSending {
+  readonly operation: string;
+  readonly text: string;
+  readonly attachments: readonly Attachment[];
+  readonly sending: Sending;
+}
+
+/** Words sent from the input: the node's outcome and controls while it is unknown. */
 export interface Sending {
   sent: Promise<ComposerUpdated>;
   /** Sends them again at once, under their own id, while the line is up. */
@@ -123,6 +129,7 @@ function draftKey(target: ComposerTarget): string { return target.kind === "draf
 /** One conversation's shared input. No host state or turn events are used to release messages here. */
 export class ComposerSession {
   readonly draft: ComposerDocument;
+  readonly recoveredSends: RecoveredSending[] = [];
   private snapshot: ComposerSnapshot;
   private connected = false;
   private error: Error | null = null;
@@ -183,8 +190,46 @@ export class ComposerSession {
       };
       native.forget = (id) => this.closed ? Promise.resolve() : this.journal.write(`native:replica:${id}`, null);
       native.transmit = (input) => this.transport.documentInput!(this.watching!.id, input);
-      native.legacyMutate = (mutation) => this.transport.update(mutation);
       native.subscribe(() => { this.receive(native.snapshot(), true, true); });
+      this.restoreSends(native);
+    }
+  }
+
+  private restoreSends(native: NativeComposer): void {
+    if (!(this.draft instanceof NativeComposerDocument)) return;
+    const document = this.draft;
+    for (const { mutation, seal, text } of document.recovered) {
+      const operation: Operation = { id: mutation.operation, change: { do: "send", epoch: mutation.epoch! }, status: "pending", error: null, result: null, attempt: 0,
+        started: native.mayHaveTransmitted(mutation.operation), run: () => { operation.started = true; return this.update(mutation); } };
+      this.operations.set(operation.id, operation);
+      this.sends = seal.settled;
+      void seal.settled.then((taken) => { if (taken) this.takenHere += 1; this.emit(); });
+      let stop = () => {};
+      const outcome: Outcome = { operation, began: Date.now(), late: () => {}, told: false, stop: new Promise<void>((resolve) => { stop = resolve; }) };
+      const resuming = Promise.resolve().then(async (): Promise<ComposerUpdated> => {
+        for (;;) {
+          await this.meanwhile(this.untilConnected(), outcome, true);
+          try {
+            const result = this.lasting(operation, outcome) as Promise<ComposerUpdated>;
+            if (native.isWithdrawing(operation.id)) void controls.withdraw();
+            return await result;
+          } catch (error) {
+            // The opening connection can disappear before run starts. That is
+            // still an unknown send, not a refusal that returns its words.
+            if (!this.connected && !this.closed && !this.closing && !(error instanceof Withdrawn)) continue;
+            throw error;
+          }
+        }
+      });
+      const sent = resuming.then((updated) => { document.taken(seal); return updated; }, (error: unknown) => {
+        if (error instanceof Withdrawn) this.operations.delete(operation.id);
+        document.unseal(seal); throw error;
+      });
+      const controls = this.sendingControls(outcome, stop, sent);
+      void sent.catch(() => {});
+      const attachments = [...this.snapshot.draft.attachments, ...[...this.snapshot.queue, ...this.snapshot.unobserved].flatMap((one) => one.draft.attachments)]
+        .filter((one) => mutation.attachments.includes(one.id));
+      this.recoveredSends.push({ operation: operation.id, text, attachments, sending: controls });
     }
   }
 
@@ -202,9 +247,10 @@ export class ComposerSession {
       if (transport.watchDocuments && ![...saved.values()].some((record) => !record.native && record.pending.length)) {
         const native = new NativeComposer([...saved.values()]);
         const buffered: NativePiece[] = [];
-        const opened = await transport.watchDocuments(native.known(), (piece) => {
+        let opened = await transport.watchDocuments(native.known(), (piece) => {
           if (session) { if (session.generation === 0 && !session.closed) session.nativePiece(piece); } else buffered.push(piece);
         });
+        if (opened && !(opened.frame.kind === "state" && opened.frame.mutations === true)) { await transport.unwatch(opened.id); opened = null; }
         if (opened) {
           native.receive(opened.frame);
           const records = new Map([...saved].filter(([, record]) => !!record.native));
@@ -292,6 +338,11 @@ export class ComposerSession {
     if (this.closed || !this.native) return;
     if (piece.kind === "interrupted") { this.disconnect(piece.error ? errorOf(piece.error) : null); return; }
     if (!this.watching) return;
+    if (piece.frame.kind === "state" && piece.frame.mutations !== true) {
+      this.disconnect(null);
+      void this.reconnect().catch((error: unknown) => this.disconnect(errorOf(error)));
+      return;
+    }
     const changed = this.watching.watch !== piece.watch;
     if (changed) { this.disconnect(null); this.watching = { ...this.watching, watch: piece.watch }; }
     this.native.receive(piece.frame);
@@ -342,10 +393,11 @@ export class ComposerSession {
       if (old) await this.transport.unwatch(old.id);
       let ready = false;
       const buffered: NativePiece[] = [];
-      const opened = await this.transport.watchDocuments!(this.native.known(), (piece) => {
+      let opened = await this.transport.watchDocuments!(this.native.known(), (piece) => {
         if (generation !== this.generation || this.closed) return;
         if (ready) this.nativePiece(piece); else buffered.push(piece);
       });
+      if (opened && !(opened.frame.kind === "state" && opened.frame.mutations === true)) { await this.transport.unwatch(opened.id); opened = null; }
       if (!opened) {
         await this.activateLegacy();
         return this.openWatch();
@@ -620,6 +672,7 @@ export class ComposerSession {
     try {
       this.assertOpen();
       if (document.view.state.composing) throw new Error("finish the input composition before sending");
+      if (!document.view.characters.length && !document.attachments.length) throw new Error("there are no words or attachments to send");
       seal = document.seal();
     } catch (error) {
       return { sent: Promise.reject(error), again: () => {}, withdraw: async () => ({ kind: "withdrawn" }) };
@@ -643,6 +696,10 @@ export class ComposerSession {
       throw error;
     });
     const sent = behind.then(() => this.sendSealed(document, seal, prepared, pressed, outcome));
+    return this.sendingControls(outcome, withdraw, sent);
+  }
+
+  private sendingControls(outcome: Outcome, withdraw: () => void, sent: Promise<ComposerUpdated>): Sending {
     return {
       sent,
       again: () => {
@@ -743,7 +800,7 @@ export class ComposerSession {
     }
     document.asking(seal, epoch);
     const operationId = crypto.randomUUID();
-    const mutation: ComposerMutation = { ...(document instanceof NativeComposerDocument && document.nativeActive && this.native?.supportsMutations ? document.captured(seal, epoch, operationId) : { do: "send" as const, epoch }), operation: operationId };
+    const mutation: ComposerMutation = { ...(document instanceof NativeComposerDocument && document.nativeActive ? document.captured(seal, epoch, operationId) : { do: "send" as const, epoch }), operation: operationId };
     const operation: Operation = { id: mutation.operation, change: { do: "send", epoch }, status: "pending", error: null, result: null, attempt: 0,
       run: () => { operation.started = true; return this.update(mutation); } };
     if (document instanceof NativeComposerDocument && document.nativeActive) document.bindSend(seal, operationId);

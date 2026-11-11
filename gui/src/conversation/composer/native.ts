@@ -60,6 +60,7 @@ interface PendingMutation {
 export class NativeComposer {
   private next = Date.now() * 1000;
   private readonly mutations = new Map<string, PendingMutation>();
+  private readonly completed = new Map<string, { input: DocumentMutationInput; result: ComposerUpdated; failure?: unknown }>();
   private readonly records = new Map<string, Record>();
   private state!: SharedComposer;
   private readonly listeners = new Set<() => void>();
@@ -69,7 +70,7 @@ export class NativeComposer {
   private ready = false;
   private textReady = false;
   private mutationsSupported = false;
-  legacyMutate?: (mutation: ComposerMutation) => Promise<ComposerUpdated>;
+
   get supportsMutations(): boolean { return this.mutationsSupported; }
   private writing = false;
   private generation = 0;
@@ -312,7 +313,9 @@ export class NativeComposer {
     if (pending.cancelled) return;
     if (operation.failure) { void this.rejectMutation(pending, operation.failure === SEND_WITHDRAWN ? new Withdrawn() : new Error(operation.failure)); return; }
     this.mutations.delete(operation.operation);
-    for (const waiter of pending.waiters) waiter.resolve({ composer: this.snapshot(), landed: operation.landed, ...(operation.delivery ? { delivery: operation.delivery } : {}) });
+    const result = { composer: this.snapshot(), landed: operation.landed, ...(operation.delivery ? { delivery: operation.delivery } : {}) };
+    if (!pending.waiters.length) this.completed.set(operation.operation, { input: pending.input, result });
+    for (const waiter of pending.waiters) waiter.resolve(result);
   }
   private rejectMutation(pending: PendingMutation, error: unknown): Promise<void> {
     return pending.removing ??= this.removeMutation(pending, error);
@@ -325,6 +328,7 @@ export class NativeComposer {
       try {
         await this.persist(this.state.draft.id);
         this.mutations.delete(pending.input.mutation.operation);
+        if (!pending.waiters.length) this.completed.set(pending.input.mutation.operation, { input: pending.input, result: { composer: this.snapshot(), landed: null }, failure: error });
         for (const waiter of pending.waiters.splice(0)) waiter.reject(error);
         this.changed(); return;
       } catch (failure) {
@@ -361,19 +365,35 @@ export class NativeComposer {
     if (hold) hold.operation = operation;
   }
   release(document: string, token: string): void {
+    if (this.disposed) return;
     const record = this.record(document);
     record.holds = record.holds.filter((hold) => hold.token !== token);
     this.compact(record); this.pump();
   }
+  /** Includes results delivered in the opening State before a page can attach. */
+  recoverableInputs(): readonly DocumentMutationInput[] {
+    return [...this.mutations.values(), ...this.completed.values()].map((pending) => pending.input).sort((a, b) => a.number - b.number);
+  }
+  isWithdrawing(operation: string): boolean {
+    return this.recoverableInputs().some((input) => input.mutation.do === "withdraw" && input.mutation.send === operation);
+  }
+  restoreHold(document: string, operation: string, epoch: number, through: number): string {
+    const record = this.record(document);
+    const previous = record.holds.find((hold) => hold.operation === operation);
+    if (previous) return previous.token;
+    const token = crypto.randomUUID();
+    record.holds.push({ token, operation, epoch, through });
+    return token;
+  }
   mayHaveTransmitted(operation: string, started = false): boolean {
-    return this.mutations.get(operation)?.everTransmitted ?? started;
+    return this.completed.has(operation) || (this.mutations.get(operation)?.everTransmitted ?? started);
   }
   async withdraw(operation: string, started = false): Promise<"withdrawn" | "sent"> {
     const original = this.mutations.get(operation);
     if (original?.everTransmitted || !original && started) {
       if (!this.ready || !this.supportsMutations) throw new Error("the node cannot confirm withdrawal; this send remains unknown");
-      const existing = [...this.mutations.values()].find((pending) => pending.input.mutation.do === "withdraw" && pending.input.mutation.send === operation);
-      const mutation: ComposerMutation = existing?.input.mutation ?? { operation: crypto.randomUUID(), do: "withdraw", send: operation };
+      const existing = this.recoverableInputs().find((input) => input.mutation.do === "withdraw" && input.mutation.send === operation);
+      const mutation: ComposerMutation = existing?.mutation ?? { operation: crypto.randomUUID(), do: "withdraw", send: operation };
       const controller = new AbortController();
       const disconnected = () => { if (!this.ready || this.disposed) controller.abort(); };
       this.listeners.add(disconnected);
@@ -390,6 +410,12 @@ export class NativeComposer {
     return "withdrawn";
   }
   mutate(mutation: ComposerMutation, signal?: AbortSignal): Promise<ComposerUpdated> {
+    const completed = this.completed.get(mutation.operation);
+    if (completed) {
+      if (JSON.stringify(completed.input.mutation) !== JSON.stringify(mutation)) return Promise.reject(new Error("a composer operation was reused for different content"));
+      this.completed.delete(mutation.operation);
+      return completed.failure ? Promise.reject(completed.failure) : Promise.resolve(completed.result);
+    }
     let pending = this.mutations.get(mutation.operation);
     if (!pending) {
       const record = this.record(this.state.draft.id);
@@ -455,8 +481,7 @@ export class NativeComposer {
     }
   }
   private withdrawing(pending: PendingMutation): boolean {
-    return pending.input.mutation.do !== "withdraw" && [...this.mutations.values()].some((other) => !other.cancelled
-      && other.input.mutation.do === "withdraw" && other.input.mutation.send === pending.input.mutation.operation);
+    return pending.input.mutation.do !== "withdraw" && this.isWithdrawing(pending.input.mutation.operation);
   }
   private pump(): void {
     if (this.disposed || !this.ready || this.writing) return;
@@ -486,7 +511,7 @@ export class NativeComposer {
       for (const pending of this.mutations.values()) {
         writingDocument = this.state.draft.id;
         if (pending.sent || pending.cancelled || pending.storageBlocked || this.withdrawing(pending)) continue;
-        if (!this.supportsMutations && (pending.input.mutation.do === "send_document" || pending.input.mutation.do === "withdraw" || !this.legacyMutate)) {
+        if (!this.supportsMutations) {
           pending.sent = true;
           this.record(this.state.draft.id).error = new Error("this pending captured send requires a newer node; its text is kept");
           this.changed(); continue;
@@ -496,15 +521,7 @@ export class NativeComposer {
           await this.persist(this.state.draft.id);
           if (!this.ready || generation !== this.generation) return;
           pending.sent = true;
-          if (this.supportsMutations) await this.transmit(pending.input);
-          else {
-            const updated = await this.legacyMutate!(pending.input.mutation);
-            if (this.disposed || pending.cancelled) continue;
-            pending.result = { revision: updated.composer.revision, operation: {
-              operation: pending.input.mutation.operation, accepted: false, landed: updated.landed, delivery: updated.delivery ?? null, failure: null,
-            } };
-            if (pending.result.revision <= this.state.revision) this.settle(pending.result.operation);
-          }
+          await this.transmit(pending.input);
         } catch (error) {
           pending.sent = !(error instanceof JournalFailure);
           if (error instanceof JournalFailure) pending.storageBlocked = true;
@@ -540,6 +557,6 @@ export class NativeComposer {
     this.disconnect(); this.changed();
     for (const pending of this.mutations.values()) for (const waiter of pending.waiters.splice(0)) waiter.reject(Object.assign(new Error("the composer is closed"), { again: true }));
     for (const record of this.records.values()) { if (record.checkpointTimer) clearTimeout(record.checkpointTimer); record.replica.dispose(); record.confirmed.destroy(); }
-    this.listeners.clear(); this.records.clear(); this.mutations.clear();
+    this.listeners.clear(); this.records.clear(); this.mutations.clear(); this.completed.clear();
   }
 }

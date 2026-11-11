@@ -1179,6 +1179,7 @@ export class ConversationPage {
       this.fit();
       this.drawAction();
     });
+    for (const recovered of session.recoveredSends) this.sendShared(session, recovered.text, recovered);
   }
 
   /** Shows words of the queue on their way as said, once each. */
@@ -1269,7 +1270,7 @@ export class ConversationPage {
 
   /** Sends the shared words: the node sends them now, or queues them while
    *  a turn is under way. What goes now is shown at once. */
-  private sendShared(session: ComposerSession, text: string): void {
+  private sendShared(session: ComposerSession, text: string, recovered?: ComposerSession["recoveredSends"][number]): void {
     const { conversation, here } = this.options;
     const draft = this.sharedState?.composer;
     // While the shared input is not connected, the words wait here, shown
@@ -1277,7 +1278,7 @@ export class ConversationPage {
     const connected = session.state.connected;
     const queued = connected && this.queues();
     const going = session.state.attachmentsOnTheirWay;
-    const shown = (draft?.draft.attachments ?? []).filter((one) => !going.has(one.id)).map((one) => ({ name: one.name, size: one.size, image: one.media_type.startsWith("image/"), preview: null, ...(one.media_type.startsWith("text/plain") ? { kept: one } : {}) }));
+    const shown = (recovered?.attachments ?? (draft?.draft.attachments ?? []).filter((one) => !going.has(one.id))).map((one) => ({ name: one.name, size: one.size, image: one.media_type.startsWith("image/"), preview: null, ...(one.media_type.startsWith("text/plain") ? { kept: one } : {}) }));
     const key = queued ? null : conversation.sending(text, here || null, shown);
     if (key && !connected) conversation.sent(key, { state: "waiting", why: session.state.error?.message ?? "" });
     // Words that will wait for the turn to end are in the queue at once, as
@@ -1289,7 +1290,7 @@ export class ConversationPage {
     // With no answer within two minutes, words handed to the node are not
     // known to have gone: they say so, and can be sent again or taken back
     // into the input (`Fold.settles`).
-    const sending = session.send((why) => {
+    const sending = recovered?.sending ?? session.send((why) => {
       if (!key) {
         waiting?.late(withdraw);
         return;
@@ -1312,6 +1313,10 @@ export class ConversationPage {
         this.update();
       });
     };
+    if (recovered) {
+      if (key) conversation.sent(key, { state: "unknown", why: session.state.error?.message ?? "" });
+      waiting?.late(withdraw);
+    }
     const sent = sending.sent;
     if (key) conversation.settles(key, { again: sending.again, remove: withdraw });
     this.update();

@@ -220,13 +220,18 @@ export class ComposerDocument {
   seal(): Seal {
     if (this.disposed) throw new Error("the composer is disposed");
     if (this.target.kind !== "draft") throw new Error("only the draft is sent from the input");
+    const gone = this.attachmentsOnTheirWay;
+    return this.restoreSeal(this.characters, this.draft.attachments.map((one) => one.id).filter((id) => !gone.has(id)), null);
+  }
+
+  /** Reconstructs a persisted capture without hiding text typed after it. */
+  protected restoreSeal(characters: readonly Character[], attachments: readonly string[], epoch: number | null): Seal {
     let settle!: (taken: boolean) => void;
     const settled = new Promise<boolean>((resolve) => { settle = resolve; });
-    const gone = this.attachmentsOnTheirWay;
-    const seal: Sealed = { settled, settle, epoch: null,
-      words: new Set(this.characters.map((character) => key(character.id))),
-      attachments: new Set(this.draft.attachments.map((one) => one.id).filter((id) => !gone.has(id))),
-      end: this.model.at(-1)?.id ?? null, context: context(this.model) };
+    const seal: Sealed = { settled, settle, epoch,
+      words: new Set(characters.map((character) => key(character.id))),
+      attachments: new Set(attachments),
+      end: characters.at(-1)?.id ?? null, context: context(this.model) };
     this.seals.push(seal);
     this.project();
     this.emit();
