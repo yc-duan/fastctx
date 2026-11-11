@@ -1715,7 +1715,9 @@ function specimenTalk(address: Address): DeskTalk {
   // `?retrying=<ms>`: words sent at rest wait for a host that does not
   // start, and after the delay their node says so, as it does after a minute.
   // `?turnline=<n>`: they wait for room in their agent login instead, `n`
-  // turns ahead of them.
+  // turns ahead of them. `?starting=<phase>[,<failures>]`: their host is
+  // being started for them, twelve seconds in, after `failures` failed tries.
+  const [startPhase, startFailures] = (params.get("starting") ?? "").split(",");
   const retrying = params.has("retrying")
     ? (id: string) =>
         setTimeout(() => {
@@ -1732,7 +1734,17 @@ function specimenTalk(address: Address): DeskTalk {
             conversation.now(false, null, [{ id, state: "handing", queued: Number(params.get("turnline") || 2) }]);
             page.update();
           }, 300)
-      : undefined;
+      : params.has("starting")
+        ? (id: string) =>
+            setTimeout(() => {
+              const failures = Number(startFailures) || 0;
+              const reason =
+                sample.agent === "claude" ? `Claude Code exited before its session registered: exit status 1` : "the Codex app-server stopped while resuming the thread";
+              const starting = { since: new Date(Date.now() - 12_000).toISOString(), phase: startPhase || "launching", ...(failures ? { failures, reason } : {}) };
+              conversation.now(false, null, [{ id, state: "handing", starting }]);
+              page.update();
+            }, 300)
+        : undefined;
   // `?slow=<taken>,<heard>[,<sent>]` (milliseconds): its node is far away
   // and busy, as `SpecimenSlowness` says.
   const [taken, heard, sentAfter] = (params.get("slow") ?? "").split(",").map(Number);

@@ -38,13 +38,55 @@ const LOOKS_AGAIN: Duration = Duration::from_secs(3);
 pub(crate) struct Progress {
     pub began: Timestamp,
     pub next: Timestamp,
-    failures: u32,
+    /// Starts that failed; what the host said while it started is not one.
+    pub failures: u32,
+    /// Why the last start failed.
     pub reason: Option<String>,
     pub attempted: bool,
     #[serde(default)]
     pub accepted: bool,
     #[serde(default)]
     pub after_activation: Option<String>,
+    /// What watching the host start last said, kept for the log and the
+    /// doctor: never a failure.
+    #[serde(default)]
+    pub observed: Option<String>,
+    /// When the host's process was last asked for, and when it took the
+    /// words: the phases of a start, and how long each took.
+    #[serde(default)]
+    pub attempted_at: Option<Timestamp>,
+    #[serde(default)]
+    pub accepted_at: Option<Timestamp>,
+}
+
+impl Progress {
+    /// How far the start has come (`KeptWords::starting`).
+    pub fn starting(&self) -> fastctx_types::session::Starting {
+        use fastctx_types::session::{StartPhase, Starting};
+        let now = Timestamp::now();
+        let waiting = self.failures > 0 && !self.attempted && self.next > now;
+        let phase = if waiting {
+            StartPhase::Retrying
+        } else if !self.attempted {
+            StartPhase::Preparing
+        } else if !self.accepted {
+            StartPhase::Launching
+        } else {
+            StartPhase::Connecting
+        };
+        Starting {
+            since: self.began,
+            phase,
+            failures: self.failures,
+            reason: (self.failures > 0).then(|| self.reason.clone()).flatten(),
+            next: waiting.then_some(self.next),
+        }
+    }
+}
+
+/// Milliseconds from `from` to now, for the log.
+fn since(from: Timestamp) -> i64 {
+    Timestamp::now().as_millisecond().saturating_sub(from.as_millisecond())
 }
 
 pub(crate) fn directory(node: &Node, id: &ResidentId) -> io::Result<fastctx_types::layout::ConversationDir> {
@@ -71,6 +113,9 @@ fn initial() -> Progress {
         attempted: false,
         accepted: false,
         after_activation: None,
+        observed: None,
+        attempted_at: None,
+        accepted_at: None,
     }
 }
 fn update<T: Send + 'static>(
@@ -112,19 +157,46 @@ pub(crate) fn begin_after(
 }
 /// Commit the host boundary before issuing a command that could accept words.
 pub(crate) fn attempting(node: &Node, id: &ResidentId, input: &NoticeId) -> Result<(), Failure> {
-    update(node, id, input, false, |row| {
+    let row = update(node, id, input, false, |row| {
         row.attempted = true;
         row.accepted = false;
-        Ok(())
+        row.attempted_at = Some(Timestamp::now());
+        Ok(row.clone())
     })?
-    .ok_or_else(|| failure("missing host preflight"))
+    .ok_or_else(|| failure("missing host preflight"))?;
+    node.log.line(format_args!(
+        "lifecycle {id}: launching its host, {} ms after the start began (try {})",
+        since(row.began),
+        row.failures + 1
+    ));
+    Ok(())
 }
 pub(crate) fn accepted(node: &Node, id: &ResidentId, input: &NoticeId) -> Result<(), Failure> {
-    update(node, id, input, false, |row| {
+    let row = update(node, id, input, false, |row| {
         row.accepted = true;
-        Ok(())
-    })
-    .map(|_| ())
+        row.accepted_at = Some(Timestamp::now());
+        Ok(row.clone())
+    })?;
+    if let Some(row) = row {
+        node.log.line(format_args!(
+            "lifecycle {id}: its host took the words, {} ms after the start began, {} ms after launching",
+            since(row.began),
+            row.attempted_at.map_or(0, since)
+        ));
+    }
+    Ok(())
+}
+
+/// Logs how long a start took, phase by phase, once a turn took its words.
+pub(crate) fn started(node: &Node, id: &ResidentId, progress: &Progress) {
+    let at = |phase: Option<Timestamp>| phase.map_or_else(|| "-".to_string(), |at| format!("{} ms", since(at)));
+    node.log.line(format_args!(
+        "lifecycle {id}: a turn took the words {} ms after the start began ({} since launching, {} since its host took them; {} failed tries)",
+        since(progress.began),
+        at(progress.attempted_at),
+        at(progress.accepted_at),
+        progress.failures
+    ));
 }
 
 pub(crate) async fn unavailable(
@@ -224,9 +296,9 @@ pub(crate) fn queued_now(node: &Arc<Node>, id: &ResidentId, input: &NoticeId, re
 pub(crate) fn observing(node: &Node, id: &ResidentId, input: &NoticeId, reason: String) -> Result<(), Failure> {
     let why = reason.clone();
     let changed = update(node, id, input, true, move |row| {
-        let changed = row.reason.as_ref() != Some(&why);
+        let changed = row.observed.as_ref() != Some(&why);
         if changed {
-            row.reason = Some(why);
+            row.observed = Some(why);
         }
         Ok(changed)
     })?

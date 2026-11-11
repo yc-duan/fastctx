@@ -347,6 +347,9 @@ export interface Words {
   /** Words on their way whose agent has not started for a minute and is
    *  being started again; the agent by the name it goes by. */
   hostRetrying(agent: string | undefined): string;
+  /** The turn's line while the agent's host is being started again after
+   *  `failures` starts failed. */
+  startRetrying(failures: number): string;
   /** Why it did not start, for the pointer to rest on: in plain words where
    *  the interface knows them, else as its machine said it. */
   hostRetryWhy(reason: string): string;
@@ -794,6 +797,7 @@ export const zh: Words = {
           ? "排着，等这一轮结束"
           : "等它下次用世界的工具时送到",
   hostRetrying: (agent) => (agent ? `${agent} 未能启动，正在重试` : "未能启动，正在重试"),
+  startRetrying: (failures) => `未能启动 · 第 ${failures} 次重试`,
   hostRetryWhy: (reason) => known(reason, zhProblems) ?? reason,
   queuedTurn: (ahead) => (ahead ? `排队中，前面还有 ${ahead} 个` : "排队中，下一个就轮到它"),
   queuedTurnWhy: "这个智能体登录同时开着的轮已到上限；主人的先开，受协助的人按账号轮流",
@@ -1180,6 +1184,7 @@ export const en: Words = {
           ? "Queued until this turn ends"
           : "Arrives when it next uses a Fastctx tool",
   hostRetrying: (agent) => (agent ? `${agent} couldn't start; retrying` : "Couldn't start; retrying"),
+  startRetrying: (failures) => `Couldn't start · retry ${failures}`,
   hostRetryWhy: (reason) => known(reason, enProblems) ?? reason,
   queuedTurn: (ahead) => (ahead ? `Queued, ${ahead} ahead` : "Queued, next up"),
   queuedTurnWhy: "This agent login runs as many turns at once as it may; the owner's go first, then the assisted accounts' in turn",

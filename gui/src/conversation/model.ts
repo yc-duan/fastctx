@@ -30,8 +30,9 @@ export type Use = "done" | "failed" | "declined" | "cut" | "unknown";
 
 export type SendState =
   /** On their way. `retry` is set once their host has failed to start for
-   *  a minute and is being started again: why it did not start. */
-  | { state: "going"; retry?: string }
+   *  a minute and is being started again: why it did not start. `starting`
+   *  while their host is being started for them, as its machine tells. */
+  | { state: "going"; retry?: string; starting?: Starting }
   /** No answer came yet; they are said again, under the same id, until one
    *  does: why the last try got none. */
   | { state: "waiting"; why: string }
@@ -75,6 +76,35 @@ export interface KeptWords {
   /** Whether they wait for one of their callee's colleagues at work to
    *  end (`world-colleagues.md`, 同事从哪里来、能去哪里). */
   for_callee?: boolean;
+  /** While their host is being started for them: how far that came. */
+  starting?: Starting;
+}
+
+/** A host being started for kept words, as its machine tells it. */
+export interface Starting {
+  /** When the World first asked for the host (an instant, as text). */
+  since: string;
+  /** `preparing`, `launching`, `connecting`, `retrying`, or one of a newer
+   *  version. */
+  phase: string;
+  /** Starts that failed and are tried again. */
+  failures?: number;
+  /** Why the last one failed. */
+  reason?: string;
+  /** When the next try begins, while one waits. */
+  next?: string;
+}
+
+/** How the start of a conversation's host shows on its turn line: since
+ *  when (null where not told), how many tries failed and why the last did,
+ *  and, while it waits in line, how many go before it and for what. */
+export interface StartShown {
+  since: number | null;
+  failures: number;
+  reason: string | null;
+  ahead?: number;
+  memory?: boolean;
+  callee?: boolean;
 }
 
 /** Something the user attached to their words, as it is shown with them. */
@@ -260,6 +290,8 @@ interface Derived {
   latest: string | null;
   moving: boolean;
   waiting: boolean;
+  /** The start the first words kept wait on (`starting`). */
+  start: StartShown | null;
   /** Whether anything of the agent's own has been shown: a turn's work or
    *  words, its end, a request. */
   heardFrom: boolean;
@@ -1682,7 +1714,12 @@ export class Fold {
             : { state: "queued", ahead: words.queued };
       else if (words?.state === "waiting") next = { state: "landed", how: "kept", machine: entry.from?.kind === "user" ? entry.from.machine : "" };
       else if (words === undefined && !busy) next = { state: "settled" };
-      else if (words !== undefined) next = words.host_retry ? { state: "going", retry: words.host_retry.reason } : { state: "going" };
+      else if (words !== undefined)
+        next = {
+          state: "going",
+          ...(words.host_retry ? { retry: words.host_retry.reason } : {}),
+          ...(words.starting ? { starting: words.starting } : {}),
+        };
       if (next && JSON.stringify(next) !== JSON.stringify(entry.sending)) {
         entry.sending = next;
         this.touch(entry);
@@ -1742,6 +1779,13 @@ export class Fold {
     return this.derived().moving;
   }
 
+  /** The start of the agent's host for the first words kept that wait on
+   *  one: in line for room, being started, or tried again. Null when no
+   *  words wait on a start. */
+  starting(): StartShown | null {
+    return this.derived().start;
+  }
+
   private derived(): Derived {
     if (this.derivedCache?.clock === this.clock) return this.derivedCache;
     const lastMessage = new Map<string, string>();
@@ -1750,6 +1794,7 @@ export class Fold {
     let moving = false;
     let waiting = false;
     let heardFrom = false;
+    let start: StartShown | null = null;
     for (const entry of this.entries) {
       switch (entry.kind) {
         case "prose":
@@ -1762,9 +1807,33 @@ export class Fold {
           if (sayOf(entry)) spoke.add(entry.turn);
           heardFrom = true;
           break;
-        case "heard":
-          if (entry.sending?.state === "going") moving = true;
+        case "heard": {
+          // Words on their way, or in line for room, keep the turn's line:
+          // what they wait on is said there.
+          const sending = entry.sending;
+          if (sending?.state === "going" || sending?.state === "queued") moving = true;
+          if (start === null && sending?.state === "queued")
+            start = {
+              since: null,
+              failures: 0,
+              reason: null,
+              ahead: sending.ahead,
+              ...(sending.memory ? { memory: true } : {}),
+              ...(sending.callee ? { callee: true } : {}),
+            };
+          else if (start === null && sending?.state === "going" && (sending.starting || sending.retry)) {
+            const told = sending.starting;
+            const since = told ? Date.parse(told.since) : NaN;
+            start = {
+              since: Number.isFinite(since) ? since : null,
+              // A machine from before `starting` tells only that it failed,
+              // not how often.
+              failures: told ? (told.failures ?? 0) : 0,
+              reason: told ? (told.reason ?? null) : (sending.retry ?? null),
+            };
+          }
           break;
+        }
         case "ask":
           if (entry.state.state === "waiting") waiting = true;
           heardFrom = true;
@@ -1790,7 +1859,7 @@ export class Fold {
           break;
       }
     }
-    this.derivedCache = { clock: this.clock, lastMessage, latest, moving, waiting, heardFrom, spoke };
+    this.derivedCache = { clock: this.clock, lastMessage, latest, moving, waiting, heardFrom, spoke, start };
     return this.derivedCache;
   }
 

@@ -19,7 +19,7 @@ import { askKey, type AskState } from "./ask-state";
 import { inOrder, type ModelRequest } from "./requests";
 import type { SessionEvent, TurnEnd } from "../world/events";
 import type { MachineName } from "../world/events";
-import { Fold, sayOf, type Block, type Entry, type Gap, type KeptWords, type SendState, type Settler, type ShownAttachment } from "./model";
+import { Fold, sayOf, type Block, type Entry, type Gap, type KeptWords, type SendState, type Settler, type ShownAttachment, type StartShown } from "./model";
 import type { AgentRun } from "./agents";
 import { machineNamed } from "./acted-on";
 import type { PendingControl } from "../world/control";
@@ -1004,6 +1004,10 @@ export class Conversation {
   }
   turning(): boolean {
     return this.live.turning();
+  }
+  /** The start the first words kept wait on, as its machine tells it. */
+  starting(): StartShown | null {
+    return this.live.starting();
   }
   /** The turn shown under way, the latest to begin; null when none is. */
   runningTurn(): string | null {

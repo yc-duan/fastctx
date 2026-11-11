@@ -909,7 +909,16 @@ fn kept(node: &Node, resident: &ResidentId) -> Vec<fastctx_types::session::KeptW
     use fastctx_types::residents::PendingState;
     use fastctx_types::session::{KeptWords, WordsState};
     let directory = node.world.conversation(resident);
-    let managed = node.residents.about(resident).is_some_and(|(about, _)| about.world_started);
+    let about = node.residents.about(resident).map(|(about, _)| about);
+    let managed = about.as_ref().is_some_and(|about| about.world_started);
+    let named = about.as_ref().is_some_and(|about| about.session.is_some());
+    // A Codex thread being made ready (resumed, its tools started) is its
+    // first words' start.
+    let mut codex_starting = about.as_ref().filter(|about| about.host.agent.as_str() == "codex").and_then(|about| {
+        let thread = about.session.as_deref()?;
+        let (phase, since) = node.codex.of(node, about).ok()?.starting(thread)?;
+        Some(fastctx_types::session::Starting { since, phase, failures: 0, reason: None, next: None })
+    });
     // The first of what waits, as many as a view shows.
     let mut pending = Vec::new();
     let read = crate::inbox::pages(&directory, |page| {
@@ -939,7 +948,28 @@ fn kept(node: &Node, resident: &ResidentId) -> Vec<fastctx_types::session::KeptW
                 && (pending.state == PendingState::Waiting || waits && pending.state == PendingState::Waking);
             let progress = crate::lifecycle::retry::progress_now(node, resident, &pending.delivery.id).ok().flatten();
             let retrying = progress.is_some();
+            // Its host is being started: a wake keeps how far that came; a
+            // new conversation's first session is launching until Claude
+            // Code says which it is, then coming up.
+            let starting = progress.as_ref().map(crate::lifecycle::retry::Progress::starting).or_else(|| {
+                (pending.state == PendingState::Waking).then(|| fastctx_types::session::Starting {
+                    since: pending.since.unwrap_or(pending.delivery.at),
+                    phase: if named {
+                        fastctx_types::session::StartPhase::Connecting
+                    } else {
+                        fastctx_types::session::StartPhase::Launching
+                    },
+                    failures: 0,
+                    reason: None,
+                    next: None,
+                })
+            })
+            .or_else(|| codex_starting.take());
+            // A view from before `starting` is told only of starts that
+            // failed, a minute on: what the host said while it came up is no
+            // failure.
             let host_retry = progress
+                .filter(|progress| progress.failures > 0)
                 .filter(|progress| Timestamp::now().as_second().saturating_sub(progress.began.as_second()) >= 60)
                 .and_then(|progress| {
                     progress.reason.map(|reason| fastctx_types::session::HostRetry { since: progress.began, reason })
@@ -958,6 +988,7 @@ fn kept(node: &Node, resident: &ResidentId) -> Vec<fastctx_types::session::KeptW
                 queued,
                 for_memory,
                 for_callee,
+                starting,
             }
         })
         .collect()

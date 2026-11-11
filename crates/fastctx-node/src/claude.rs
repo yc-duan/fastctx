@@ -2254,6 +2254,9 @@ pub(super) async fn begin_launch(node: &Arc<Node>, id: &ResidentId, prepared: Pr
     // Until the World knows which session this is, a Claude session's MCP
     // connection it cannot place waits, rather than becoming someone new.
     let _birth = node.claude.births.read().await;
+    let began = first.since.unwrap_or(first.delivery.at);
+    let since = move || Timestamp::now().as_millisecond().saturating_sub(began.as_millisecond());
+    node.log.line(format_args!("lifecycle {id}: launching its first session, {} ms after it was opened", since()));
     let started = fastctx_platform::task::spawn_blocking(fastctx_platform::doing::carried(move || {
         let start = background::Start {
             plugin: &plugin,
@@ -2296,6 +2299,7 @@ pub(super) async fn begin_launch(node: &Arc<Node>, id: &ResidentId, prepared: Pr
             return failed_wake(node, id, &directory, &first.delivery.id, error).await;
         }
     };
+    node.log.line(format_args!("lifecycle {id}: Claude Code started its first session, {} ms after it was opened", since()));
     // The session is known by the start of its id until its mod reports the
     // whole of it, which may have happened already.
     node.residents

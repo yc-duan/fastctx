@@ -1557,6 +1557,10 @@ export class ConversationView {
     if (conversation.halting()) return null;
     const waiting = conversation.waiting();
     const busy = conversation.busy();
+    // Words wait on the agent's host to start, a new conversation's or one
+    // woken alike: in line, being started, tried again.
+    const start = conversation.starting();
+    if (start && !conversation.turning()) return { kind: "starting", ...start };
     // The first words are on their way, and nothing has come back.
     if (!conversation.spoke() && busy) {
       const spoken = blocks.some((block) => block.kind === "heard" && (!block.from || block.from.kind === "user") && !block.notice && block.sending?.state !== "failed");
@@ -2085,13 +2089,8 @@ export class ConversationView {
       if (sending?.state === "landed") {
         note = `<div class="bubble-note"${sending.why ? ` title="${escape(sending.why)}"` : ""}>${escape(words.landed(sending.how, sending.machine, sending.why ?? null))}</div>`;
       }
-      if (sending?.state === "queued") note = sending.memory
-        ? `<div class="bubble-note" title="${escape(words.queuedMemoryWhy)}">${escape(words.queuedMemory(sending.ahead))}</div>`
-        : `<div class="bubble-note" title="${escape(sending.callee ? words.queuedCalleeWhy : words.queuedTurnWhy)}">${escape(words.queuedTurn(sending.ahead))}</div>`;
-      // Still on their way: their host has not started for a minute.
-      if (sending?.state === "going" && sending.retry) {
-        note = `<div class="bubble-note" title="${escape(words.hostRetryWhy(sending.retry))}">${escape(words.hostRetrying(this.context.agent))}</div>`;
-      }
+      // Words in line for room, or whose host is being started again, say
+      // so on the turn's line below them (`lineSays`), not twice.
       // A long message shows its first lines, the rest a press away.
       if (key && longWords(text)) {
         const open = this.unfolded.has(key);

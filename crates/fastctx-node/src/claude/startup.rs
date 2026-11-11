@@ -70,6 +70,7 @@ pub(super) fn observe(node: &Arc<Node>, resident: &ResidentId, id: NoticeId, wak
         // Tried again after waits that double up to a minute, told once for
         // each new reason.
         let (mut again, mut told) = (crate::again::Again::default(), None);
+        let watching = std::time::Instant::now();
         loop {
             let result = async {
                 if !pending(&node, &resident, &id, waking)? {
@@ -80,7 +81,13 @@ pub(super) fn observe(node: &Arc<Node>, resident: &ResidentId, id: NoticeId, wak
                 watch(&node, &resident, &id, &command, waking).await
             }
             .await;
-            let Err(error) = result else { break };
+            let Err(error) = result else {
+                node.log.line(format_args!(
+                    "lifecycle {resident}: its session came up and its words were taken, {} ms after Claude Code took them",
+                    watching.elapsed().as_millis()
+                ));
+                break;
+            };
             let error = error.to_string();
             if let Err(error) = report(&node, &resident, &id, error.clone()) {
                 node.log.line(format_args!("keeping startup observation: {error}"));
