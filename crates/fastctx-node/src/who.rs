@@ -150,6 +150,8 @@ pub(crate) fn running_job(job: fastctx_types::run::JobRecord) -> RunningJob {
         output: job.output,
         stderr: job.stderr,
         account,
+        exited: job.exit.as_ref().map(|exit| exit.status),
+        remaining: job.exit.as_ref().and(job.remaining),
     }
 }
 

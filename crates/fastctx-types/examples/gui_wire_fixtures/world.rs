@@ -254,6 +254,8 @@ fn who(towns: &[TownSummary]) -> Vec<WorldWho> {
                                     hub: "w-0123456789abcdef".parse().unwrap(),
                                     account: "bob".parse().unwrap(),
                                 }),
+                                exited: None,
+                                remaining: None,
                             })
                             .collect(),
                     },

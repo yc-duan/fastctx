@@ -347,6 +347,13 @@ pub struct RunningJob {
     /// The account it runs for, when another machine sent it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub account: Option<crate::access::HubAccount>,
+    /// Its shell exited with this, and processes it started still run:
+    /// none while the shell itself runs, or from an older machine.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exited: Option<crate::run::ExitStatus>,
+    /// How many processes it started still run after its shell exited.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remaining: Option<u32>,
 }
 
 /// `fastctx w` in a town or across the World: each machine's answer, or why

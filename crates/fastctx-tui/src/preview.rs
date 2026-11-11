@@ -211,6 +211,8 @@ fn residents(now: Timestamp) -> (Vec<ResidentNow>, Vec<RunningJob>) {
             output: "~/.fastctx/world/towns/mark50/residents/codex-7f3a/out/j-k3x9a2.log".into(),
             stderr: None,
             account: None,
+            exited: None,
+            remaining: None,
         },
         RunningJob {
             source: None,
@@ -224,6 +226,8 @@ fn residents(now: Timestamp) -> (Vec<ResidentNow>, Vec<RunningJob>) {
             output: "~/.fastctx/world/towns/mark50/residents/codex-0d1e/out/j-p0q1r2.log".into(),
             stderr: None,
             account: None,
+            exited: None,
+            remaining: None,
         },
     ];
     (vec![claude, codex, finder, outside], jobs)

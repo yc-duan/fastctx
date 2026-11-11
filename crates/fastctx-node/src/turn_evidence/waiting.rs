@@ -56,6 +56,8 @@ pub(crate) fn jobs_here(
                     output: record.output.clone(),
                     stderr: record.stderr.clone(),
                     account: record.on.as_ref().and_then(|on| on.account.clone()).or_else(|| record.account.clone()),
+                    exited: None,
+                    remaining: None,
                 };
                 if !crate::admission::seen::job(node, asker, &view) {
                     continue;
