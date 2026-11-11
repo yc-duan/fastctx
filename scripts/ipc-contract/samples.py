@@ -338,8 +338,20 @@ def samples(root, shipped):
         {"kind": "update", "revision": 2, "document": {"document": "document-a", "revision": 2, "update": "AAA="}},
         {"kind": "saved", "number": 3, "document": "document-a", "revision": 2, "document_revision": 2},
         {"kind": "refused", "number": 3, "failure": {"message": "refused"}},
+        # What came of a send: it waits in the queue, it went, or it failed.
+        {"kind": "result", "number": 4, "revision": 2, "operation": {
+            "operation": "native-queued", "delivery": None, "accepted": False, "landed": None, "failure": None}},
+        {"kind": "result", "number": 5, "revision": 2, "operation": {
+            "operation": "native-sent", "delivery": "delivery-b", "accepted": False,
+            "landed": {"kind": "new_turn", "turn": "turn-1"}, "failure": None}},
+        {"kind": "result", "number": 6, "revision": 2, "operation": {
+            "operation": "native-withdraw", "delivery": None, "accepted": False, "landed": None,
+            "failure": "these words were already sent"}},
     ]
-    for shape, value in [("input", native_input),
+    # A send taken back by its name.
+    native_withdraw = {"kind": "mutate", "number": 6,
+                       "mutation": {"operation": "native-withdraw", "do": "withdraw", "send": "native-sent"}}
+    for shape, value in [("input", native_input), ("input", native_withdraw),
                          ("command", {"kind": "composer", "id": 37, "input": native_input})]:
         yield {"mode": "native_composer", "shape": shape, "protocol": 13, "value": value}
     for native_frame in native_frames:

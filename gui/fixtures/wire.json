@@ -22313,6 +22313,16 @@
         "usage": null
       },
       {
+        "gathering": true,
+        "controls": [],
+        "commands": [],
+        "models": [],
+        "model": "model",
+        "effort": null,
+        "service_tier": null,
+        "usage": null
+      },
+      {
         "control_queue": true,
         "controls_told": true,
         "pending_controls": [
@@ -24058,6 +24068,15 @@
           "epoch": 0,
           "files_on": null
         }
+      },
+      {
+        "kind": "mutate",
+        "number": 7,
+        "mutation": {
+          "operation": "withdraw-a",
+          "do": "withdraw",
+          "send": "send-native"
+        }
       }
     ],
     "frames": [
@@ -24126,6 +24145,45 @@
           "accepted": true,
           "landed": null,
           "failure": null
+        }
+      },
+      {
+        "kind": "result",
+        "number": 5,
+        "revision": 9,
+        "operation": {
+          "operation": "send-queued",
+          "delivery": null,
+          "accepted": false,
+          "landed": null,
+          "failure": null
+        }
+      },
+      {
+        "kind": "result",
+        "number": 6,
+        "revision": 10,
+        "operation": {
+          "operation": "send-native",
+          "delivery": "queued-cd34",
+          "accepted": false,
+          "landed": {
+            "kind": "new_turn",
+            "turn": "turn-a"
+          },
+          "failure": null
+        }
+      },
+      {
+        "kind": "result",
+        "number": 7,
+        "revision": 10,
+        "operation": {
+          "operation": "withdraw-a",
+          "delivery": null,
+          "accepted": false,
+          "landed": null,
+          "failure": "these words were already sent"
         }
       },
       {
