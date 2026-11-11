@@ -1,5 +1,6 @@
 //! Product deletion crosses the node, named hub question, job and record store.
 
+mod management;
 mod records;
 
 use super::*;
@@ -63,6 +64,7 @@ pub(super) async fn exercise(base: &Path, world: &World, host: &Path, home: &Pat
     #[cfg(feature = "submission-drill")]
     one(base, world, host, home, true).await?;
     records::exercise(base, world).await?;
+    management::exercise(base, world).await?;
     Ok(())
 }
 

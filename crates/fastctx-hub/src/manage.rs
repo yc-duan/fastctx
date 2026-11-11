@@ -10,6 +10,9 @@
 //! Opening a project is the one change a machine acting for an account may
 //! make for it, as a resident working there opens one.
 
+mod admission;
+pub(crate) mod submission;
+
 use std::sync::Arc;
 
 use fastctx_net::directory::{Account, Assist, Level, LoginPlan, Project, Share};

@@ -1025,6 +1025,25 @@ fn handle(
                 let _ = out.send(Out::Frame(Down::Told { id, answer }));
             });
         }
+        Up::Ask { id, question: Question::Manage { account, change }, submission }
+            if crate::manage::submission::handles(&change) =>
+        {
+            let named = match submission.map(|submission| crate::submitted::named(name, &submission)).transpose() {
+                Ok(named) => named,
+                Err(why) => {
+                    reply(Down::Told { id, answer: Err(why) });
+                    return Ok(());
+                }
+            };
+            let (hub, out) = (hub.clone(), out.clone());
+            let held = crate::moving::Moving::hold(&hub);
+            fastctx_platform::task::spawn(async move {
+                let _held = held;
+                let _reservation = reservation;
+                let answer = crate::manage::submission::change(&hub, origin, account, change, named.as_ref()).await;
+                let _ = out.send(Out::Frame(Down::Told { id, answer }));
+            });
+        }
         Up::Ask { id, question: Question::Manage { account, change }, .. } => {
             let (answer, ended) = crate::manage::change(hub, &origin, &account, change);
             reply(Down::Told { id, answer });
@@ -1062,6 +1081,23 @@ fn handle(
                         Ok(Err(reason)) => Err(reason),
                         Err(error) => Err(format!("reading the kernel release: {error}")),
                     };
+                let _ = out.send(Out::Frame(Down::Told { id, answer }));
+            });
+        }
+        Up::Ask { id, question: Question::Forget { account, conversation }, submission } => {
+            let named = match submission.map(|submission| crate::submitted::named(name, &submission)).transpose() {
+                Ok(named) => named,
+                Err(why) => {
+                    reply(Down::Told { id, answer: Err(why) });
+                    return Ok(());
+                }
+            };
+            let (hub, out) = (hub.clone(), out.clone());
+            let held = crate::moving::Moving::hold(&hub);
+            fastctx_platform::task::spawn(async move {
+                let _held = held;
+                let _reservation = reservation;
+                let answer = crate::forget::submission::ask(&hub, origin, account, conversation, named.as_ref()).await;
                 let _ = out.send(Out::Frame(Down::Told { id, answer }));
             });
         }

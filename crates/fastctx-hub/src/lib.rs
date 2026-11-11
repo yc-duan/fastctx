@@ -1025,6 +1025,8 @@ async fn serving(
     // Subsystems register their job kinds before the queue starts and
     // requests are heard. A queue that does not start is told and tried
     // again beside the hub, which serves meanwhile.
+    manage::submission::register(&hub);
+    forget::submission::register(&hub);
     owned_records::submission::register(&hub);
     owned_records::record_deletions::register(&hub);
     submitted::upkeep(&hub);

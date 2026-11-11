@@ -1426,6 +1426,10 @@ fn submits(question: &Question) -> bool {
             if matches!(kind.as_str(), fastctx_types::plan::KIND | fastctx_types::history::RECORD_KIND))
     };
     match question {
+        Question::Manage {
+            change: crate::wire::Change::DeleteProject { .. } | crate::wire::Change::SetRole { .. },
+            ..
+        } | Question::Forget { .. } => true,
         Question::OwnedRecords { request: owned_records::Request::Delete { .. }, .. } => true,
         Question::OwnedRecords { request: owned_records::Request::Record { request, .. }, .. }
         | Question::AccountRecords { request, .. } => versioned(request),
