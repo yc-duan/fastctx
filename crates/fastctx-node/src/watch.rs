@@ -244,6 +244,19 @@ impl Watchers {
         retire(&self.watching, id);
         watched
     }
+    pub(crate) fn running(&self, id: &ResidentId, turn: &str, item: &str) -> (Option<SessionEvent>, Option<Mark>) {
+        let Some(session) = self.get(id) else { return (None, None) };
+        let session = session.lock().expect("never poisoned");
+        let event = session
+            .live
+            .snapshots()
+            .find(|event| {
+                matches!(&event.happened,
+            fastctx_types::session::Happened::Began { turn: t, item: i } if t == turn && i.id == item)
+            })
+            .cloned();
+        (event, Some(Mark { epoch: session.told.epoch, sequence: session.told.sequence }))
+    }
     pub fn tools(&self, id: &ResidentId) -> Vec<fastctx_types::town::CurrentTool> {
         use fastctx_types::session::Happened;
         let Some(session) = self.get(id) else { return Vec::new() };

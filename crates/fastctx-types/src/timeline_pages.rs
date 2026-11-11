@@ -43,6 +43,8 @@ pub enum TimelineAsk {
     /// Answered once the timeline's revision is past `after`, or after a
     /// while with the revision it has: the asker asks again.
     Moved { resident: ResidentId, after: u64 },
+    /// One current running snapshot, paired with its live-stream watermark.
+    Running { resident: ResidentId, turn: String, item: String },
     /// A range of an event kept whole as an object, named as a page named it.
     Object { resident: ResidentId, object: String, offset: u64, length: u32 },
     /// What the timeline's records brought after the first `after` of them:
@@ -58,6 +60,7 @@ impl TimelineAsk {
         match self {
             Self::Page { resident, .. }
             | Self::Moved { resident, .. }
+            | Self::Running { resident, .. }
             | Self::Object { resident, .. }
             | Self::Changes { resident, .. } => resident,
         }
@@ -67,10 +70,18 @@ impl TimelineAsk {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum TimelineTold {
+    Running {
+        event: Option<Box<crate::session::SessionEvent>>,
+        mark: Option<crate::session::Mark>,
+    },
     Page {
         /// The timeline's revision as the page was read; none while the
         /// conversation's timeline is not made yet.
         revision: Option<u64>,
+        /// Explicitly true until the first complete history reading was installed.
+        /// Older nodes omit this and retain their revision-based behavior.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        initializing: Option<bool>,
         events: Vec<TimelineEvent>,
         /// Where to read on from towards the start, when there may be more.
         older: Option<TimelinePlace>,
@@ -84,6 +95,10 @@ pub enum TimelineTold {
     },
     Moved {
         revision: Option<u64>,
+        /// Explicitly true until the first complete history reading was installed.
+        /// Older nodes omit this and retain their revision-based behavior.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        initializing: Option<bool>,
     },
     Object {
         /// The bytes asked for, in base64; none when the conversation's
@@ -93,6 +108,10 @@ pub enum TimelineTold {
     Changes {
         /// The timeline's revision as its records were read.
         revision: Option<u64>,
+        /// Explicitly true until the first complete history reading was installed.
+        /// Older nodes omit this and retain their revision-based behavior.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        initializing: Option<bool>,
         /// In the order they were written. An event may be among them more
         /// than once: the last is how it stands.
         changes: Vec<TimelineChange>,

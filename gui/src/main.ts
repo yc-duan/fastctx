@@ -2308,9 +2308,9 @@ function liveTalk(address: Address): DeskTalk {
       page.update({ read: true });
     },
     timeline: (delta) => page.reopened(() => { if (!conversation.timeline(delta)) reading.again(); }),
-    live: (event, key, evicted, placement, older) => {
+    live: (event, key, evicted, placement, older, object, body) => {
       heardAt = Date.now();
-      if (!conversation.liveEvent(event, key, evicted, placement, older)) reading.again();
+      if (!conversation.liveEvent(event, key, evicted, placement, older, object, body)) reading.again();
       page.update();
     },
     happened: (at, event) => {

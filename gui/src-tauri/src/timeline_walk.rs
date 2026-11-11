@@ -5,6 +5,7 @@ use fastctx_types::timeline_pages::{PAGE_BYTES, PAGE_EVENTS, TimelineAsk, Timeli
 
 pub(crate) struct Page {
     pub revision: Option<u64>,
+    pub initializing: Option<bool>,
     pub through: Option<u64>,
     pub events: Vec<TimelineEvent>,
     pub older: bool,
@@ -26,8 +27,8 @@ pub(crate) async fn ask(reader: &Shared, request: TimelineAsk) -> Result<Timelin
 pub(crate) async fn page(reader: &Shared, from: TimelineFrom) -> Result<Page, String> {
     let resident = reader.lock().await.resident.clone();
     match ask(reader, TimelineAsk::Page { resident, from, max_events: PAGE_EVENTS, max_bytes: PAGE_BYTES }).await? {
-        TimelineTold::Page { revision, through, events, older, newer } => {
-            Ok(Page { revision, through, events, older: older.is_some(), newer: newer.is_some() })
+        TimelineTold::Page { revision, initializing, through, events, older, newer } => {
+            Ok(Page { revision, initializing, through, events, older: older.is_some(), newer: newer.is_some() })
         }
         _ => Err("the timeline did not answer a page".into()),
     }

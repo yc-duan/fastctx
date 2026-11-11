@@ -167,9 +167,15 @@ async fn until_closed(closed: &AtomicBool, closing: &tokio::sync::Notify) {
 #[derive(Clone, Default)]
 pub(crate) struct Readers(Arc<Mutex<HashMap<u64, Shared>>>);
 impl Readers {
-    pub async fn run(&self, id: u64, reader: Shared, initial: Option<Watching>, pieces: Sender<Piece>) {
+    pub async fn run(&self, _id: u64, reader: Shared, initial: Option<Watching>, pieces: Sender<Piece>) {
+        if initial.is_none() {
+            let snapshot = reader.lock().await.snapshot();
+            let Ok(window) = snapshot else { return };
+            if pieces.send(Piece::Window { window }).is_err() {
+                return;
+            }
+        }
         stream(reader, initial, pieces).await;
-        self.close(id);
     }
     pub fn insert(&self, id: u64, reader: Shared) {
         self.0.lock().expect("timeline readers").insert(id, reader);
@@ -195,7 +201,8 @@ pub(crate) struct Reader {
     pub resident: ResidentId,
     pub machine: Option<Written>,
     pub transcript: Arc<Mutex<Transcript>>,
-    state: timeline_window::Window,
+    pub(crate) state: timeline_window::Window,
+    pub(crate) running_reads: HashMap<(String, String), Option<Mark>>,
     through: Option<u64>,
     catch_up: bool,
     reanchored: bool,
@@ -213,6 +220,7 @@ pub(crate) struct Opened {
 }
 struct Page {
     revision: Option<u64>,
+    initializing: Option<bool>,
     through: Option<u64>,
     events: Vec<TimelineEvent>,
     older: Option<TimelinePlace>,
@@ -239,6 +247,7 @@ pub(crate) async fn open(
         machine,
         transcript: Arc::new(Mutex::new(transcript)),
         state: pending,
+        running_reads: HashMap::new(),
         through: None,
         catch_up: false,
         reanchored: false,
@@ -258,7 +267,7 @@ pub(crate) async fn open(
         reader.complete_edge(&mut page, true).await.map_err(NotWatched::from)?;
     }
     reader.through = page.through;
-    reader.state.preparing = page.revision.is_none();
+    reader.state.preparing = page.initializing.unwrap_or(page.revision.is_none());
     reader.state.replace(page.events, page.revision.unwrap_or(0), page.older.is_some(), false);
     let window = reader.snapshot()?;
     let shared = Arc::new(Handle {
@@ -328,8 +337,8 @@ impl Reader {
             () = until_closed(&self.closed, &self.closing) => return Err(Error::Other("the conversation window closed".into())),
         };
         match reply {
-            TimelineTold::Page { revision, events, older, newer, through } => {
-                Ok(Page { revision, events, older, newer, through })
+            TimelineTold::Page { revision, initializing, events, older, newer, through } => {
+                Ok(Page { revision, initializing, events, older, newer, through })
             }
             _ => Err(Error::Unexpected("the node did not answer a timeline page".into())),
         }
@@ -385,6 +394,7 @@ impl Reader {
             return Err("the conversation's timeline is being prepared".into());
         };
         self.complete_edge(&mut page, backwards || latest).await?;
+        self.state.preparing = page.initializing.unwrap_or(false);
         self.through = page.through;
         self.catch_up = false;
         if latest {
@@ -470,7 +480,7 @@ impl Reader {
             before.events.extend(events);
             events = before.events;
         }
-        self.state.preparing = false;
+        self.state.preparing = first.initializing.unwrap_or(false);
         self.state.replace(events, revision, older, self.state.newer);
         Ok(())
     }
@@ -492,7 +502,7 @@ impl Reader {
                 () = until_closed(&self.closed, &self.closing) => return Err("the conversation window closed".into()),
             };
             match reply {
-                TimelineTold::Changes { revision: Some(revision), changes, through, more }
+                TimelineTold::Changes { revision: Some(revision), initializing, changes, through, more }
                     if revision >= self.state.revision =>
                 {
                     if through < after || (more && through == after) {
@@ -500,7 +510,7 @@ impl Reader {
                     }
                     crate::timeline_changes::apply(&mut self.state, changes, self.following);
                     self.state.revision = revision;
-                    self.state.preparing = false;
+                    self.state.preparing = initializing.unwrap_or(false);
                     self.through = Some(through);
                     if !more {
                         self.catch_up = false;
@@ -512,7 +522,7 @@ impl Reader {
             }
         }
     }
-    fn live(
+    pub(crate) fn live(
         &mut self,
         mut event: SessionEvent,
         mark: Option<Mark>,
@@ -526,6 +536,30 @@ impl Reader {
         if let Some(mark) = mark {
             self.mark = Some(mark);
         }
+        match &event.happened {
+            fastctx_types::session::Happened::Finished { turn, item } => {
+                self.running_reads.retain(|(t, i), _| t != turn || (i != &item.id && item.draft.as_ref() != Some(i)));
+            }
+            fastctx_types::session::Happened::TurnEnded { turn, .. } => {
+                self.running_reads.retain(|(t, _), _| t != turn)
+            }
+            _ => {}
+        }
+        let complete = if matches!(event.happened, fastctx_types::session::Happened::Finished { .. }) {
+            serde_json::to_vec(&event)
+                .ok()
+                .filter(|bytes| {
+                    bytes.len() > crate::timeline_preview::LIVE_EVENT_BYTES
+                        && bytes.len() <= crate::timeline_body::EXPANDED_BYTES as usize
+                })
+                .map(|bytes| {
+                    use sha2::{Digest, Sha256};
+                    let object = Sha256::digest(&bytes).iter().map(|byte| format!("{byte:02x}")).collect::<String>();
+                    (object, event.clone())
+                })
+        } else {
+            None
+        };
         crate::timeline_preview::limit(&mut event);
         if !timeline_window::pending_event(&event)
             && serde_json::to_vec(&event).map_or(0, |v| v.len()) > crate::timeline_preview::LIVE_EVENT_BYTES
@@ -534,16 +568,8 @@ impl Reader {
             // Its materialized page supplies the deferred-content placeholder.
             return Ok(None);
         }
-        if matches!(event.happened, fastctx_types::session::Happened::Grew { .. })
-            && self.state.running(&event).is_none()
-            && !self
-                .state
-                .entries
-                .iter()
-                .filter_map(|entry| entry.event.as_ref())
-                .any(|held| timeline_window::covers(held, &event))
-        {
-            return Err("waiting for the running item's complete snapshot".into());
+        if crate::timeline_running::covered(self, &event, mark) {
+            return Ok(None);
         }
         let aliases = self.state.aliases(&event);
         if !self.state.observe_likeness(&event, likeness) {
@@ -576,7 +602,7 @@ impl Reader {
         let anonymous_after = self.state.anonymous.iter().find(|live| live.key == key).map(|live| live.after.clone());
         let placement = if let Some(after) = anonymous_after {
             Some(crate::timeline_delta::Placement { key: key.clone(), after })
-        } else if aliases.is_empty() {
+        } else if aliases.is_empty() && evicted.is_empty() {
             None
         } else {
             let order = self.state.ordered_keys();
@@ -590,8 +616,16 @@ impl Reader {
             live.published = true;
         }
         let generation = self.transcript.lock().expect("transcript").generation();
+        let (object, body) = match complete {
+            Some((object, body)) => {
+                (Some(object), Some(serde_json::value::to_raw_value(&body).map_err(|e| e.to_string())?))
+            }
+            None => (None, None),
+        };
         Ok(Some(Piece::Live {
             generation,
+            object,
+            body,
             key,
             older: self.state.older,
             placement,
@@ -697,8 +731,17 @@ async fn connected(
                 () = reader.closed() => return Ok(Follow::Closed),
                 result = &mut moved, if advancing.is_none() => {
                     match result? {
-                        TimelineTold::Moved { revision: Some(revision) } if revision != after => { advancing = Some(Box::pin(reader.advanced())); },
-                        TimelineTold::Moved { .. } => break,
+                        TimelineTold::Moved { revision, initializing } => {
+                            let status_changed = {
+                                let mut current = reader.lock().await;
+                                let changed = initializing.is_some_and(|value| value != current.state.preparing);
+                                if let Some(value) = initializing { current.state.preparing = value; }
+                                changed
+                            };
+                            if revision.is_some_and(|revision| revision != after) || status_changed {
+                                advancing = Some(Box::pin(reader.advanced()));
+                            } else { break; }
+                        },
                         _ => return Err(Error::Unexpected("a timeline wait returned another answer".into())),
                     }
                 },
@@ -719,19 +762,24 @@ async fn received(reader: &Shared, pieces: &Sender<Piece>, live: Option<Watched>
                 use fastctx_types::session::SessionChange;
                 match change {
                     SessionChange::HistoryChanged => {
-                        reader.lock().await.state.retain_live(|_| false);
+                        let mut current = reader.lock().await;
+                        current.state.retain_live(|_| false);
+                        current.running_reads.clear();
                         return Ok(Some(Follow::Refresh));
                     }
                     SessionChange::HistoryCut { removed_turns } => {
-                        reader
-                            .lock()
-                            .await
+                        let mut current = reader.lock().await;
+                        current
                             .state
                             .retain_live(|e| !removed_turns.iter().any(|turn| event_turn(e) == Some(turn.as_str())));
+                        current.running_reads.retain(|(turn, _), _| !removed_turns.contains(turn));
                         return Ok(Some(Follow::Refresh));
                     }
                     _ => {}
                 }
+            }
+            if let Some(piece) = crate::timeline_running::recover(reader, &event, mark).await {
+                send(piece)?;
             }
             if let Some(piece) =
                 reader.lock().await.live(event, mark, likeness.map(|value| *value)).map_err(Error::Other)?

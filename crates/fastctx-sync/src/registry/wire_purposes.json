@@ -382,7 +382,8 @@
         "Page",
         "Moved",
         "Object",
-        "Changes"
+        "Changes",
+        "Running"
       ]
     }
   },
@@ -399,7 +400,8 @@
         "Moved",
         "Object",
         "Changes",
-        "Reread"
+        "Reread",
+        "Running"
       ]
     }
   },

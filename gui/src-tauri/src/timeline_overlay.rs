@@ -22,6 +22,7 @@ pub(crate) fn candidates(current: &Window, staged: &Window) -> Vec<Candidate> {
     let mut candidates: Vec<_> = current
         .live
         .iter()
+        .filter(|live| !crate::timeline_running::active(live))
         .filter(|live| !staged.entries.iter().filter_map(|e| e.event.as_ref()).any(|event| covers(event, live)))
         .map(|event| Candidate { key: timeline_window::key(event), event: event.clone(), likeness: None })
         .collect();

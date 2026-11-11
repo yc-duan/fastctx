@@ -16,7 +16,7 @@ export interface ConversationFeed {
   rebased(generation: number, offset: number, turnsAdded: number): void;
   /** One thing as it happens, the `at`th event. */
   happened(at: number, event: SessionEvent): void;
-  live(event: SessionEvent, key: string, evicted?: string[], placement?: { after: string | null }, older?: boolean): void;
+  live(event: SessionEvent, key: string, evicted?: string[], placement?: { after: string | null }, older?: boolean, object?: string, body?: SessionEvent): void;
   timeline(delta: import("./conversation").TimelineDelta): void;
   /** The live part broke and is being read again: why, and since when. */
   interrupted(why: string | null, since: Date): void;
@@ -80,7 +80,7 @@ export const watched: ConversationSource = {
         const at = event.kind === "timeline" ? event.delta.generation : event.generation;
         if (at === generation) {
           if (event.kind === "timeline") feed.timeline(event.delta);
-          else if (event.kind === "live") feed.live(event.event, event.key, event.evicted, event.placement, event.older);
+          else if (event.kind === "live") feed.live(event.event, event.key, event.evicted, event.placement, event.older, event.object, event.body);
           else feed.happened(event.at, event.event);
         } else if (at! > (generation ?? -1)) buffered(event);
       }
@@ -139,7 +139,7 @@ export const watched: ConversationSource = {
             }
             return;
           }
-          if (piece.kind === "live") feed.live(piece.event, piece.key, piece.evicted, piece.placement, piece.older); else feed.happened(piece.at, piece.event);
+          if (piece.kind === "live") feed.live(piece.event, piece.key, piece.evicted, piece.placement, piece.older, piece.object, piece.body); else feed.happened(piece.at, piece.event);
           return;
         case "window":
           install(piece.window);

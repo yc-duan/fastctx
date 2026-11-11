@@ -57,7 +57,7 @@ pub(crate) async fn build(node: &Arc<Node>, resident: &ResidentId) -> Result<Bui
     let crate::talk::HistoryRead { history, unread, .. } = crate::talk::history_quietly(node, resident).await?;
     let stream = super::stream(resident);
     // A reading that missed a record is not the version's history.
-    let checkpoint = version.filter(|_| !unread).map(|state| Checkpoint { name, state });
+    let checkpoint = (!unread).then(|| Checkpoint { name, state: version.unwrap_or_default() });
     fastctx_platform::task::blocking(move || write(&content, &stream, &history, unread, checkpoint)).await
 }
 

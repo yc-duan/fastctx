@@ -18,7 +18,9 @@ pub(crate) fn apply(window: &mut Window, changes: Vec<TimelineChange>, following
                     window.entries.iter().filter(|e| e.place.item == item).filter_map(|e| e.event.clone()).collect();
                 window.entries.retain(|e| e.place.item != item);
                 if !removed.is_empty() {
-                    window.retain_live(|live| !removed.iter().any(|old| covers(old, live)));
+                    window.retain_live(|live| {
+                        crate::timeline_running::active(live) || !removed.iter().any(|old| covers(old, live))
+                    });
                 }
                 if window.right.as_ref().is_some_and(|right| right.item == item) {
                     window.right = None;
@@ -39,7 +41,9 @@ pub(crate) fn apply(window: &mut Window, changes: Vec<TimelineChange>, following
                         .collect();
                     window.entries.retain(|held| held.place.item != event.place.item);
                     if !removed.is_empty() {
-                        window.retain_live(|live| !removed.iter().any(|old| covers(old, live)));
+                        window.retain_live(|live| {
+                            crate::timeline_running::active(live) || !removed.iter().any(|old| covers(old, live))
+                        });
                     }
                     if before {
                         window.older = true;

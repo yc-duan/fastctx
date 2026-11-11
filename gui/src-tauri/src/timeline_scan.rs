@@ -83,6 +83,9 @@ pub(crate) async fn read(reader: Shared, mut cursor: Option<Cursor>) -> Result<S
         }
     });
     let mut page = walk::page(&reader, from.clone()).await?;
+    if page.initializing == Some(true) {
+        return Err("the history is still being prepared".into());
+    }
     let until = cursor
         .as_ref()
         .map(|cursor| cursor.until.clone())

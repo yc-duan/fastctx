@@ -42,6 +42,11 @@ pub(crate) enum Piece {
     /// A realtime change; no transcript journal or whole-window replacement.
     Live {
         generation: u64,
+        /// A bounded complete terminal event already received, before previewing.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        object: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        body: Option<Box<serde_json::value::RawValue>>,
         event: Box<serde_json::value::RawValue>,
         key: String,
         older: bool,

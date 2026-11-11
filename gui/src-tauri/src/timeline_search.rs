@@ -185,7 +185,7 @@ impl Search {
         if state.queued.is_empty() {
             if let Some(from) = state.from.clone() {
                 let page = walk::page(&reader, from).await?;
-                if page.revision.is_none() {
+                if page.initializing == Some(true) || page.revision.is_none() {
                     return Err("the history is still being prepared".into());
                 }
                 if state.through.is_none() {

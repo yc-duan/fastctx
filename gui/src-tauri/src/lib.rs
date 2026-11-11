@@ -31,17 +31,17 @@ mod layers;
 mod local_repair;
 mod plan;
 mod profile;
+mod projects;
 #[cfg(desktop)]
 mod repair_probe;
 mod sentinel_controls;
 mod sentinels;
 mod skills;
 mod startup;
+mod topics;
 mod transcript;
 mod updates;
 mod world_watch;
-mod topics;
-mod projects;
 
 #[cfg(desktop)]
 mod founding;
@@ -119,6 +119,7 @@ mod timeline_groups;
 mod timeline_objects;
 mod timeline_overlay;
 mod timeline_preview;
+mod timeline_running;
 mod timeline_scan;
 mod timeline_search;
 mod timeline_search_index;

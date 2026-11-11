@@ -108,6 +108,7 @@ impl Reader {
         };
         let mut page = Page {
             revision: after.revision,
+            initializing: after.initializing,
             through: after.through,
             events: before.events,
             older: before.older,
@@ -115,6 +116,7 @@ impl Reader {
         };
         page.events.extend(after.events);
         self.focus_edges(&mut page, &place).await?;
+        self.state.preparing = page.initializing.unwrap_or(false);
         let events = page.events;
         if !events.iter().any(|event| event.place.item == place.item) {
             return Err("the requested position is not in this reading; search it again".into());

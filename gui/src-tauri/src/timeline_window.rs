@@ -129,13 +129,13 @@ pub(crate) struct Window {
 }
 impl Window {
     pub fn aliases(&self, event: &SessionEvent) -> Vec<String> {
-        if !matches!(event.happened, Happened::Heard { .. }) {
+        if !matches!(event.happened, Happened::Heard { .. }) && !crate::timeline_running::active(event) {
             return Vec::new();
         }
         let current = key(event);
         self.entries
             .iter()
-            .filter(|held| held.event.as_ref().is_some_and(|old| covers(event, old)))
+            .filter(|held| held.event.as_ref().is_some_and(|old| overlays(event, old)))
             .map(Stored::key)
             .chain(self.live.iter().filter(|held| covers(event, held)).map(key))
             .filter(|key| key != &current)
@@ -147,7 +147,7 @@ impl Window {
                 && entry
                     .event
                     .as_ref()
-                    .is_some_and(|event| self.newer || !self.live.iter().any(|live| covers(live, event)))
+                    .is_some_and(|event| self.newer || !self.live.iter().any(|live| overlays(live, event)))
         })
     }
     pub fn first(&self) -> Option<TimelinePlace> {
@@ -257,6 +257,9 @@ impl Window {
         }
         let held = self.live.len();
         self.live.retain(|live| {
+            if crate::timeline_running::active(live) {
+                return true;
+            }
             let before = self.live_base.get(&name(live)).copied().flatten();
             let replaced = self.entries.iter().any(|held| {
                 before.is_none_or(|before| held.sequence > before)
@@ -294,7 +297,7 @@ impl Window {
             .filter(|old| !self.entries.iter().filter_map(|e| e.event.as_ref()).any(|event| covers(event, old)))
             .cloned()
             .collect();
-        self.retain_live(|live| !removed.iter().any(|old| covers(old, live)));
+        self.retain_live(|live| crate::timeline_running::active(live) || !removed.iter().any(|old| covers(old, live)));
         if reset_sequence {
             for baseline in self.live_base.values_mut() {
                 *baseline = None;
@@ -423,7 +426,7 @@ impl Window {
             }
             _ => {}
         }
-        if self.entries.iter().filter_map(|held| held.event.as_ref()).chain(self.live.iter()).any(|e| {
+        if self.live.iter().any(|e| {
             e == event
                 || (matches!(
                     (&e.happened, &event.happened),
@@ -468,6 +471,9 @@ impl Window {
         if matches!(event.happened, Happened::Grew { .. }) {
             return false;
         }
+        if let Happened::TurnEnded { turn, .. } = &event.happened {
+            self.retain_live(|live| !matches!(&live.happened, Happened::Began { turn: held, .. } | Happened::Updated { turn: held, .. } if held == turn));
+        }
         let replaced = self.live.iter().position(|held| covers(event, held));
         self.live.retain(|held| {
             if !covers(event, held) {
@@ -502,7 +508,7 @@ impl Window {
         let overlaps = self
             .entries
             .iter()
-            .filter(|held| held.event.as_ref().is_some_and(|event| self.live.iter().any(|live| covers(live, event))))
+            .filter(|held| held.event.as_ref().is_some_and(|event| self.live.iter().any(|live| overlays(live, event))))
             .count();
         let mut count = self.entries.len() + self.live.len() + self.anonymous.len() - overlaps;
         while !self.entries.is_empty() && (count > HELD_EVENTS || bytes > HELD_BYTES) {
@@ -512,7 +518,7 @@ impl Window {
             self.left_complete = crate::timeline_groups::boundary(entry.event.as_ref());
             let entry_key = entry.key();
             if let Some(event) = entry.event {
-                if !self.live.iter().any(|live| covers(live, &event)) {
+                if !self.live.iter().any(|live| overlays(live, &event)) {
                     removed.push(entry_key);
                     count -= 1;
                 }
@@ -530,7 +536,7 @@ impl Window {
         let mut keys = Vec::new();
         for entry in &self.entries {
             if let Some(event) = &entry.event {
-                let overlay = (!self.newer).then(|| self.live.iter().find(|live| covers(live, event))).flatten();
+                let overlay = (!self.newer).then(|| self.live.iter().find(|live| overlays(live, event))).flatten();
                 keys.push(overlay.map_or_else(|| entry.key(), key));
             }
         }
@@ -539,7 +545,7 @@ impl Window {
                 self.live
                     .iter()
                     .filter(|event| {
-                        !self.entries.iter().filter_map(|e| e.event.as_ref()).any(|held| covers(event, held))
+                        !self.entries.iter().filter_map(|e| e.event.as_ref()).any(|held| overlays(event, held))
                     })
                     .map(key),
             );
@@ -561,15 +567,17 @@ impl Window {
     }
     pub fn running(&self, event: &SessionEvent) -> Option<SessionEvent> {
         let Happened::Grew { turn, item, .. } = &event.happened else { return None };
-        self.live.iter().find(|e| matches!(&e.happened, Happened::Began { turn: t, item: i } | Happened::Updated { turn: t, item: i } if t == turn && i.id == *item)).cloned()
+        self.live.iter().chain(self.entries.iter().filter_map(|entry| entry.event.as_ref())).find(|e| matches!(&e.happened, Happened::Began { turn: t, item: i } | Happened::Updated { turn: t, item: i } if t == turn && i.id == *item)).cloned()
     }
     pub(crate) fn bound_live(&mut self) {
         while self.live.len() + self.anonymous.len() > HELD_EVENTS / 2
             || self.live_bytes + self.anonymous.iter().map(|event| event.bytes).sum::<usize>() > HELD_BYTES / 2
         {
-            let first = self.ordered_keys().into_iter().find(|key| self.live_at_key(key).is_some());
+            let eligible =
+                |key: &str| self.live_at_key(key).is_some_and(|event| !crate::timeline_running::active(event));
+            let first = self.ordered_keys().into_iter().find(|key| eligible(key));
             let key = first
-                .or_else(|| self.live.first().map(key))
+                .or_else(|| self.live.iter().find(|event| !crate::timeline_running::active(event)).map(key))
                 .or_else(|| self.anonymous.first().map(|event| event.key.clone()));
             let Some(key) = key else { break };
             if let Some(at) = self.anonymous.iter().position(|event| event.key == key) {
@@ -602,7 +610,7 @@ impl Window {
         };
         for entry in &self.entries {
             if let Some(event) = &entry.event {
-                let overlay = (!self.newer).then(|| self.live.iter().find(|live| covers(live, event))).flatten();
+                let overlay = (!self.newer).then(|| self.live.iter().find(|live| overlays(live, event))).flatten();
                 if overlay.is_none()
                     && let Some((bytes, object)) = &entry.object
                 {
@@ -618,7 +626,7 @@ impl Window {
 
         if !self.newer {
             for event in &self.live {
-                if self.entries.iter().filter_map(|e| e.event.as_ref()).any(|held| covers(event, held)) {
+                if self.entries.iter().filter_map(|e| e.event.as_ref()).any(|held| overlays(event, held)) {
                     continue;
                 }
                 events.push(event.clone());
@@ -697,8 +705,16 @@ fn known_name(event: &SessionEvent) -> Option<String> {
         _ => None,
     }
 }
+fn overlays(live: &SessionEvent, held: &SessionEvent) -> bool {
+    (crate::timeline_running::active(live) && covers(held, live)) || covers(live, held)
+}
+
 pub(crate) fn covers(new: &SessionEvent, old: &SessionEvent) -> bool {
     match (&new.happened, &old.happened) {
+        (Happened::Finished { turn, item }, Happened::Finished { turn: t, item: i }) => {
+            if item.id.is_empty() || i.id.is_empty() { new == old } else { turn == t && item.id == i.id }
+        }
+        (Happened::Began { .. } | Happened::Updated { .. }, Happened::Finished { .. }) => false,
         (
             Happened::Finished { turn, item },
             Happened::Began { turn: t, item: i } | Happened::Updated { turn: t, item: i },

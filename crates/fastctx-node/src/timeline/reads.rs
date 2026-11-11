@@ -63,6 +63,11 @@ fn failure(error: impl std::fmt::Display) -> Failure {
     Failure::new(error.to_string())
 }
 
+/// A completed reading always installs a checkpoint, even without a host stamp.
+pub(crate) fn initializing(node: &Node, resident: &ResidentId) -> Result<bool, Failure> {
+    node.content()?.checkpoint(&super::checkpoint(resident.as_str())).map(|state| state.is_none()).map_err(failure)
+}
+
 /// A page of the conversation's timeline. It blocks for the read: on a task
 /// thread it waits in place.
 pub(crate) fn page(

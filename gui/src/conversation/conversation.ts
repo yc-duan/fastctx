@@ -142,6 +142,7 @@ export class Conversation {
   private generation = 0;
   private pageWindow: Window | null = null;
   private expanded = new Map<string, SessionEvent>();
+  private terminalBodies = new Map<string, string>();
   private followRevision = 0;
   private follows: boolean | null = null;
   private source: PartSource | null = null;
@@ -250,6 +251,7 @@ export class Conversation {
     this.generation = window.generation;
     this.pageWindow = window.pages ? window : null;
     this.follows = null;
+    this.terminalBodies.clear();
     const objects = new Set(window.pages?.objects.map((object) => object.object));
     for (const object of this.expanded.keys()) if (!objects.has(object)) this.expanded.delete(object);
     this.source = source;
@@ -286,7 +288,7 @@ export class Conversation {
   }
 
   /** Applies only the realtime change, retaining no raw chunk journal. */
-  liveEvent(event: SessionEvent, key: string, evicted: readonly string[] = [], placement?: { after: string | null }, older?: boolean): boolean {
+  liveEvent(event: SessionEvent, key: string, evicted: readonly string[] = [], placement?: { after: string | null }, older?: boolean, object?: string, body?: SessionEvent): boolean {
     if (event.event === "changed" && (event.change.kind === "request" || event.change.kind === "resolved")) {
       this.live.livePending(event);
       const pages = this.pageWindow?.pages;
@@ -308,8 +310,17 @@ export class Conversation {
       if (at < 0) { held.pages.keys.push(key); held.events.push(snapshot); held.pages.places?.push(null); }
       else { held.events[at] = snapshot; held.pages.objects = held.pages.objects.filter((object) => object.at !== at); }
     }
+    const cached = new Set(this.expanded.keys());
+    if (object && body) { this.terminalBodies.set(object, key); this.rememberBody(object, body); }
     this.route(event);
-    this.live.event(event, key);
+    this.live.event(body ?? event, key);
+    if (held?.pages?.keys && [...cached].some((object) => !this.expanded.has(object))) {
+      const bodies = new Map([...this.terminalBodies].map(([object, key]) => [key, this.expanded.get(object)!]));
+      for (const object of held.pages.objects) { const full = this.expanded.get(object.object); if (full) bodies.set(held.pages.keys[object.at]!, full); }
+      const shown = held.events.map((event, at) => bodies.get(held.pages!.keys![at]!) ?? event);
+      const fold = this.live.revised(held.events, held.pages.keys, shown, held.pages.keys, held.pages.pending ?? []);
+      this.parts = [{ ...this.tail, fold }];
+    }
     const removed = new Set(evicted);
     this.live.evictPlaces([...removed]);
     if (removed.size) {
@@ -354,7 +365,8 @@ export class Conversation {
     if (ordered.some((event) => event === undefined)) return false;
     const window = { ...held, events: ordered as SessionEvent[], pages: { ...delta.pages, keys, places: keys.map((key) => places.get(key) ?? null), pending: delta.pending ?? held.pages.pending ?? [] } };
     const objects = new Set(window.pages.objects.map((object) => object.object));
-    for (const object of this.expanded.keys()) if (!objects.has(object)) this.expanded.delete(object);
+    for (const [object, key] of this.terminalBodies) if (objects.has(object) || !keys.includes(key)) this.terminalBodies.delete(object);
+    for (const object of this.expanded.keys()) if (!objects.has(object) && !this.terminalBodies.has(object)) this.expanded.delete(object);
     const shown = [...window.events];
     for (const object of window.pages.objects) { const full = this.expanded.get(object.object); if (full) shown[object.at] = full; }
     const previous = new Map(held.pages.keys.map((key, at) => [key, held.events[at]]));
@@ -388,13 +400,7 @@ export class Conversation {
     if (!current) return;
     // Expanded bodies are budgeted separately within the held window. Bodies
     // evicted by paging are fetched again after the reader returns.
-    this.expanded.set(current.object, event);
-    let bytes = [...this.expanded.values()].reduce((sum, e) => sum + JSON.stringify(e).length * 2, 0);
-    while (bytes > 8 * 1024 * 1024 && this.expanded.size > 1) {
-      const first = this.expanded.keys().next().value!;
-      bytes -= JSON.stringify(this.expanded.get(first)).length * 2;
-      this.expanded.delete(first);
-    }
+    this.rememberBody(current.object, event);
     const held = this.pageWindow;
     const keys = held.pages?.keys;
     if (!keys) return;
@@ -407,6 +413,17 @@ export class Conversation {
     this.parts = [{ ...this.tail, fold }];
     this.structure += 1;
     this.changed();
+  }
+
+  private rememberBody(object: string, event: SessionEvent): void {
+    this.expanded.set(object, event);
+    let bytes = [...this.expanded.values()].reduce((sum, e) => sum + JSON.stringify(e).length * 2, 0);
+    while (bytes > 8 * 1024 * 1024 && this.expanded.size > 1) {
+      const first = this.expanded.keys().next().value!;
+      bytes -= JSON.stringify(this.expanded.get(first)).length * 2;
+      this.expanded.delete(first);
+    }
+    for (const object of this.terminalBodies.keys()) if (!this.expanded.has(object)) this.terminalBodies.delete(object);
   }
 
   deferred(key: string): boolean {

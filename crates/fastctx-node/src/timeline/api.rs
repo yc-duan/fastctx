@@ -96,7 +96,17 @@ pub(crate) async fn here(node: &Arc<Node>, request: TimelineAsk) -> Result<Timel
     match request {
         TimelineAsk::Moved { resident, after } => {
             let revision = reads::moved(node, &resident, after, Duration::from_secs(25)).await?;
-            Ok(TimelineTold::Moved { revision })
+            let initializing = fastctx_platform::roles::in_place("reading timeline completion", || {
+                reads::initializing(node, &resident)
+            })?;
+            Ok(TimelineTold::Moved { revision, initializing: Some(initializing) })
+        }
+        TimelineAsk::Running { resident, turn, item } => {
+            fastctx_platform::roles::in_place("reading a running snapshot", || {
+                let (event, mark) = node.watchers.running(&resident, &turn, &item);
+                let event = event.filter(|event| fastctx_net::watch_queue::size(event) <= 8 << 20);
+                Ok(TimelineTold::Running { event: event.map(Box::new), mark })
+            })
         }
         TimelineAsk::Page { resident, from, max_events, max_bytes } => {
             let anchor = match from {
@@ -105,9 +115,11 @@ pub(crate) async fn here(node: &Arc<Node>, request: TimelineAsk) -> Result<Timel
                 TimelineFrom::After { place } => Anchor::After(decode_place(place)?),
             };
             fastctx_platform::roles::in_place("reading a timeline page", || {
+                let initializing = reads::initializing(node, &resident)?;
                 let read = reads::page(node, &resident, &anchor, max_events, max_bytes)?;
                 Ok(TimelineTold::Page {
                     revision: read.revision,
+                    initializing: Some(initializing),
                     events: read.entries.into_iter().map(event).collect::<Result<_, Failure>>()?,
                     older: read.older.map(encode_place),
                     newer: read.newer.map(encode_place),
@@ -117,6 +129,7 @@ pub(crate) async fn here(node: &Arc<Node>, request: TimelineAsk) -> Result<Timel
         }
         TimelineAsk::Changes { resident, after, max_events, max_bytes } => {
             fastctx_platform::roles::in_place("reading a timeline's changes", || {
+                let initializing = reads::initializing(node, &resident)?;
                 let Some(read) = reads::changes(node, &resident, after, max_events, max_bytes)? else {
                     return Ok(TimelineTold::Reread);
                 };
@@ -130,7 +143,13 @@ pub(crate) async fn here(node: &Arc<Node>, request: TimelineAsk) -> Result<Timel
                         })
                     })
                     .collect::<Result<_, Failure>>()?;
-                Ok(TimelineTold::Changes { revision: read.revision, changes, through: read.through, more: read.more })
+                Ok(TimelineTold::Changes {
+                    revision: read.revision,
+                    initializing: Some(initializing),
+                    changes,
+                    through: read.through,
+                    more: read.more,
+                })
             })
         }
         TimelineAsk::Object { resident, object, offset, length } => {
