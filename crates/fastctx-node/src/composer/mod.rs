@@ -33,14 +33,14 @@ pub(crate) mod uploads;
 mod watching;
 mod withdrawing;
 
-pub use commands::{forget_command, next_command, place_command};
+pub use commands::{command_failed, forget_command, next_command, place_command};
 use fastctx_types::access::Written;
 pub use storage::prepare_recovery;
 pub(crate) use storage::restore_before_delivery;
 use storage::{event, load, publish};
 pub use submissions::resume;
 use submissions::schedule;
-pub use submissions::{awaits_turn, bound, turn_ended, uncertain};
+pub use submissions::{awaits_turn, bound, stop_asked, turn_ended, uncertain};
 pub use watching::{Lease, snapshot, watch};
 
 use std::collections::{HashMap, HashSet};
@@ -73,6 +73,8 @@ pub struct Composers {
     publications: publication::Publications,
     holds: failures::Holds,
     releases: Mutex<HashMap<ResidentId, bool>>,
+    /// The turn of each conversation the user asked to stop, until it ends.
+    stopping: Mutex<HashMap<ResidentId, String>>,
     upload_failures: Arc<Mutex<HashMap<ResidentId, HashMap<String, String>>>>,
     snapshots: publication::Snapshots,
     legacy_refreshes: legacy_refresh::Refreshes,
@@ -96,6 +98,7 @@ pub async fn deleted(node: &Node, id: &ResidentId) -> Result<(), Failure> {
     node.composers.editors.lock().expect("composer editors").remove(id);
     node.composers.upload_failures.lock().expect("composer upload failures").remove(id);
     node.composers.holds.lock().expect("composer checkpoint failures").remove(id);
+    node.composers.stopping.lock().expect("composer stops").remove(id);
     Ok(())
 }
 
@@ -229,6 +232,7 @@ fn accepting<'a>(
                 .iter()
                 .chain(&state.pending)
                 .find(|flight| flight.operation.as_deref() == Some(mutation.operation.as_str()));
+            let lined = state.lined.iter().any(|lined| lined.operation.as_deref() == Some(mutation.operation.as_str()));
             return Ok((
                 answer::Answer::state(
                     state,
@@ -236,7 +240,7 @@ fn accepting<'a>(
                     receipt.landed.clone(),
                     receipt.delivery.clone().or_else(|| pending.map(|flight| flight.delivery.id.clone())),
                 ),
-                bounded && receipt.delivery.is_none() && pending.is_some(),
+                bounded && receipt.delivery.is_none() && (pending.is_some() || lined),
             ));
         }
         if let Some(outcome) = receipts::outcome(node, id, state, &mutation.operation).await? {
@@ -277,12 +281,27 @@ fn accepting<'a>(
         let mut next = cell.take().expect("loaded");
         let mut flight = None;
         let mut entry = None;
+        // Lined up to go once what is before them has: the node has them,
+        // and says how they went when they have.
+        let mut lined = false;
         match &mutation.change {
             Change::Send { .. } | Change::SendDocument { .. } => {
-                let (queued, reserved) = sending::capture(node, id, &mut next, from, &mutation.change, captured)?;
-                (entry, flight) = (Some(queued), reserved);
+                let captured =
+                    sending::capture(node, id, &mut next, from, &mutation.change, &mutation.operation, captured)?;
+                (entry, flight, lined) = (Some(captured.entry), captured.flight, captured.lined);
             }
-            Change::SendQueued { id } => flight = Some(next.reserve(id, false, false)?),
+            // Asked while other words are being handed over, or while the
+            // turn the user stopped has not ended, words sent at once go
+            // right after them, never refused for it.
+            Change::SendQueued { id: queued } => {
+                let now = node.residents.now(id).ok_or_else(|| failure("unknown resident"))?;
+                if next.sending.is_some() || !next.lined.is_empty() || submissions::stopping(node, id, &now) {
+                    next.line_up(queued, Some(mutation.operation.clone()), false)?;
+                    lined = true;
+                } else {
+                    flight = Some(next.reserve(queued, false, false)?);
+                }
+            }
             Change::Withdraw { send } => withdrawing::withdraw(node, id, &mut next, send).await?,
             Change::Editing { id: entry, watch, editing } => {
                 if node.composers.watches.lock().expect("composer watches").get(watch) != Some(id) {
@@ -338,7 +357,7 @@ fn accepting<'a>(
         drop(_reading);
         let Some((delivery, answer)) = answer else {
             schedule(node, id);
-            return Ok((result, false));
+            return Ok((result, lined));
         };
         // The capture is already durable. Native clients receive its operation
         // state and never wait on a host for more than this foreground interval.

@@ -1187,8 +1187,6 @@ export class ConversationPage {
   private nodeTray: NodeTray | null = null;
   private readonly rescued = new WeakSet<import("./composer").ComposerDocument>();
   private readonly reconciled = new WeakMap<import("./composer").ComposerDocument, number>();
-  /** Words sent straight on from here that the agent has not heard yet. */
-  private straight = 0;
 
   /** Opens the shared input: the words typed here before it opened go into
    *  it, the queue and what is attached become the node's. */
@@ -1410,7 +1408,7 @@ export class ConversationPage {
     const queued = connected && this.queues();
     const going = session.state.attachmentsOnTheirWay;
     const shown = (recovered?.attachments ?? (draft?.draft.attachments ?? []).filter((one) => !going.has(one.id))).map((one) => ({ name: one.name, size: one.size, image: one.media_type.startsWith("image/"), preview: null, ...(one.media_type.startsWith("text/plain") ? { kept: one } : {}) }));
-    const key = queued ? null : conversation.sending(text, here || null, shown);
+    let key = queued ? null : conversation.sending(text, here || null, shown);
     if (key && !connected) conversation.sent(key, { state: "waiting", why: session.state.error?.message ?? "" });
     // Words that will wait for the turn to end are in the queue at once, as
     // sent from here, while the node of the conversation's machine takes
@@ -1448,28 +1446,34 @@ export class ConversationPage {
       if (key) conversation.sent(key, { state: "unknown", why: session.state.error?.message ?? "" });
       waiting?.late(withdraw);
     }
-    const sent = sending.sent;
+    // Words that looked to wait here the node sends straight on: the turn had
+    // ended there, or the user stopped it. They leave the queue for the
+    // conversation as soon as the node says so, not once they have gone.
+    const straightOn = () => {
+      if (key || !waiting) return;
+      waiting.done();
+      key = conversation.sending(text, here || null, shown);
+      conversation.settles(key, { again: sending.again, remove: withdraw });
+      this.update();
+    };
+    void sending.accepted.then(straightOn);
+    const sent = sending.sent.then((updated) => {
+      if (updated?.landed) straightOn();
+      return updated;
+    });
     if (key) conversation.settles(key, { again: sending.again, remove: withdraw });
     this.update();
     if (waiting) void sent.then(waiting.done, waiting.done);
-    if (key) {
-      this.straight += 1;
-      this.nodeQueue?.goingStraight(this.straight);
-      const heard = () => {
-        this.straight -= 1;
-        this.nodeQueue?.goingStraight(this.straight);
-      };
-      void sent.then(heard, heard);
-    }
-    this.follow(key, sent);
+    this.follow(() => key, sent);
   }
 
   /** Words shown below the turn's line while on their way: where they
    *  landed, or that they failed, as the node answers. */
-  private follow(key: string | null, sending: Promise<ComposerUpdated | null>): void {
+  private follow(shown: () => string | null, sending: Promise<ComposerUpdated | null>): void {
     const { conversation } = this.options;
     sending.then(
       (updated) => {
+        const key = shown();
         if (!key) return;
         conversation.settles(key, null);
         if (!updated) {
@@ -1489,6 +1493,7 @@ export class ConversationPage {
       },
       (error: unknown) => {
         const why = error instanceof Error ? error.message : String(error);
+        const key = shown();
         // Words that did not go are where the node keeps them, back in the
         // input or still in the queue: they leave the conversation, and the
         // reason is said by the input, once for words sent after them too.
@@ -1504,10 +1509,12 @@ export class ConversationPage {
 
   /** Whether words sent now wait in the queue: only while the agent works,
    *  a turn just released has not ended, or other words are on their way,
-   *  as the node decides; with it idle they go straight on. */
+   *  as the node decides; with it idle they go straight on. A turn the user
+   *  stopped works no more: words sent after the stop start the next turn,
+   *  which the node begins once the host has ended this one. */
   private queues(): boolean {
     const composer = this.sharedState?.composer;
-    return this.options.conversation.busy() || !!composer?.awaiting_turn || !!composer?.queue.some((item) => item.sending)
+    return this.underWay() || !!composer?.awaiting_turn || !!composer?.queue.some((item) => item.sending)
       || !!this.session?.state.onTheirWay;
   }
 

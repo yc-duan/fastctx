@@ -1248,6 +1248,10 @@ pub(crate) async fn stop_here_as(
     if targeted.is_some() && targeted != node.residents.now(resident).and_then(|now| now.turn) {
         return Ok(false);
     }
+    // What the user sends from now on is for the turn after this one.
+    if let Some(turn) = &targeted {
+        crate::composer::stop_asked(node, resident, turn);
+    }
     let stopped = match (about.host.agent.as_str(), about.world_managed(), &about.session) {
         ("codex", true, Some(thread)) => match &targeted {
             Some(turn) => node.codex.of(node, &about)?.interrupt_turn(thread, turn).await.map_err(Failure::new),

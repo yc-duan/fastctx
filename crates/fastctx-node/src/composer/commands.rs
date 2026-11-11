@@ -21,8 +21,15 @@ pub async fn place_command(node: &Arc<Node>, id: &ResidentId, command: &NoticeId
     publish(node, id, &mut cell, next).await
 }
 
-/// Gives up the place of a command done or withdrawn.
-pub async fn forget_command(node: &Arc<Node>, id: &ResidentId, command: &str) -> Result<(), Failure> {
+/// Gives up the place of a command done or withdrawn. One that ran and did
+/// not get done (`failed`, with why) ends as a turn that failed does: the
+/// words still waiting wait for the user.
+pub async fn forget_command(
+    node: &Arc<Node>,
+    id: &ResidentId,
+    command: &str,
+    failed: Option<&str>,
+) -> Result<(), Failure> {
     let Some(cell) = storage::existing(node, id).await? else {
         return Ok(());
     };
@@ -33,10 +40,34 @@ pub async fn forget_command(node: &Arc<Node>, id: &ResidentId, command: &str) ->
         return Ok(());
     }
     next.queue.retain(|entry| !(entry.command && entry.id.as_str() == command));
+    if let Some(why) = failed {
+        hold_words(&mut next, why);
+    }
     publish(node, id, &mut cell, next).await?;
     drop(cell);
     schedule(node, id);
     Ok(())
+}
+
+/// A command among the words that ended only after its place was given up
+/// (a Codex compaction, which runs as a turn of its own) did not get done:
+/// the words still waiting wait for the user.
+pub async fn command_failed(node: &Arc<Node>, id: &ResidentId, why: &str) -> Result<(), Failure> {
+    let Some(cell) = storage::existing(node, id).await? else {
+        return Ok(());
+    };
+    let mut cell = cell.lock().await;
+    load(node, id, &mut cell).await?;
+    let mut next = cell.take().expect("loaded");
+    hold_words(&mut next, why);
+    publish(node, id, &mut cell, next).await
+}
+
+fn hold_words(state: &mut Stored, why: &str) {
+    if state.queue.iter().any(|entry| !entry.command && !state.on_their_way(&entry.id)) {
+        state.opportunity = None;
+        state.held = Some(format!("a command did not finish ({why}); queued messages wait for the user"));
+    }
 }
 
 /// The waiting command to do now, of `waiting` in the control queue's
@@ -59,14 +90,14 @@ pub async fn next_command(node: &Arc<Node>, id: &ResidentId, waiting: &[String])
     if let Some(unplaced) = waiting.iter().find(|command| !placed(command)) {
         return Ok(Some(unplaced.clone()));
     }
-    let going =
-        |entry: &NoticeId| state.sending.iter().chain(state.pending.iter()).any(|flight| &flight.entry == entry);
     for entry in &state.queue {
         if entry.command {
             if waiting.iter().any(|command| command == entry.id.as_str()) {
                 return Ok(Some(entry.id.to_string()));
             }
-        } else if going(&entry.id) || (state.held.is_none() && entry.error.is_none() && entry.submitted.is_none()) {
+        } else if state.on_their_way(&entry.id)
+            || (state.held.is_none() && entry.error.is_none() && entry.submitted.is_none())
+        {
             return Ok(None);
         }
     }
@@ -88,4 +119,53 @@ pub(super) async fn settle(node: &Arc<Node>, id: &ResidentId, cell: &mut Option<
         publish(node, id, cell, next).await?;
     }
     Ok(cell.as_ref().expect("loaded").queue.first().is_some_and(|entry| entry.command))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fastctx_types::composer::Draft;
+
+    fn entry(words: Option<&str>) -> Entry {
+        let id = crate::speech::new_id(if words.is_some() { "queued" } else { "control" });
+        let machine: MachineName = "desktop".parse().expect("a machine name");
+        match words {
+            Some(words) => Entry {
+                id,
+                from: machine,
+                document: document::Document::from_view(Draft { text: words.into(), ..Draft::default() }).unwrap(),
+                editors: HashSet::new(),
+                error: None,
+                submitted: None,
+                command: false,
+            },
+            None => Entry::command(id, machine),
+        }
+    }
+
+    #[test]
+    fn a_command_that_failed_holds_the_words_after_it() {
+        let mut state = Stored::default();
+        state.queue.push(entry(Some("after the compaction")));
+        state.opportunity = Some("turn-1".into());
+        hold_words(&mut state, "the compaction failed");
+        assert!(state.held.as_deref().is_some_and(|held| held.contains("the compaction failed")));
+        assert!(state.opportunity.is_none());
+    }
+
+    #[test]
+    fn a_command_that_failed_holds_nothing_when_no_words_wait() {
+        let mut state = Stored::default();
+        state.queue.push(entry(None));
+        hold_words(&mut state, "the compaction failed");
+        assert!(state.held.is_none());
+        // Words on their way do not wait for the user either.
+        let mut state = Stored::default();
+        state.queue.push(entry(Some("going")));
+        let id = state.queue[0].id.clone();
+        state.reindex();
+        state.line_up(&id, None, false).unwrap();
+        hold_words(&mut state, "the compaction failed");
+        assert!(state.held.is_none());
+    }
 }

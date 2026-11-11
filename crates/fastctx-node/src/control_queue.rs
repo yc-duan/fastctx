@@ -78,9 +78,9 @@ async fn end_now(
     }
     // What the host did stands: when how it ended cannot be written now,
     // only the telling is tried again, never the control.
-    if let Err(error) = settled(node, id, &row, &result).await {
+    if let Err(error) = settled(node, id, &row, &result, true).await {
         node.log.line(format_args!("telling how {id}'s control {} ended, told again later: {}", row.id, error.message));
-        settle_later(node.clone(), id.clone(), row, result.clone());
+        settle_later(node.clone(), id.clone(), row, result.clone(), true);
     }
     result.map_err(|mut failure| {
         failure.code.get_or_insert(FailureCode::Told);
@@ -89,15 +89,18 @@ async fn end_now(
 }
 
 /// Tells how a control ended in its conversation and lets go of what it
-/// held: its place among the words, its retries.
+/// held: its place among the words, its retries. One that `ran` and failed
+/// leaves the words after it waiting for the user, as a failed turn does.
 async fn settled(
     node: &Arc<Node>,
     id: &ResidentId,
     row: &PendingControl,
     result: &Result<Controlled, Failure>,
+    ran: bool,
 ) -> Result<(), Failure> {
     settle(node, id, row.clone(), result).await?;
-    crate::composer::forget_command(node, id, &row.id).await?;
+    let failed = result.as_ref().err().filter(|_| ran).map(|error| error.message.as_str());
+    crate::composer::forget_command(node, id, &row.id, failed).await?;
     crate::lifecycle::retry::clear(node, id, &control_key(row)?).await.map_err(failure)?;
     node.watchers.changed.tell(id);
     Ok(())
@@ -112,14 +115,14 @@ async fn refused(node: &Arc<Node>, id: &ResidentId, row: PendingControl, error: 
     let (node, id) = (node.clone(), id.clone());
     crate::to_end::run(async move {
         let result = Err(error);
-        match settled(&node, &id, &row, &result).await {
+        match settled(&node, &id, &row, &result, false).await {
             Ok(()) => true,
             Err(failure) => {
                 node.log.line(format_args!(
                     "telling how {id}'s control {} ended, told again later: {}",
                     row.id, failure.message
                 ));
-                settle_later(node.clone(), id.clone(), row, result);
+                settle_later(node.clone(), id.clone(), row, result, false);
                 false
             }
         }
@@ -127,7 +130,7 @@ async fn refused(node: &Arc<Node>, id: &ResidentId, row: PendingControl, error: 
     .await
 }
 
-fn settle_later(node: Arc<Node>, id: ResidentId, row: PendingControl, result: Result<Controlled, Failure>) {
+fn settle_later(node: Arc<Node>, id: ResidentId, row: PendingControl, result: Result<Controlled, Failure>, ran: bool) {
     fastctx_platform::task::spawn(async move {
         let mut again = crate::again::Again::default();
         loop {
@@ -135,7 +138,7 @@ fn settle_later(node: Arc<Node>, id: ResidentId, row: PendingControl, result: Re
             if node.residents.active(&id).is_err() {
                 return;
             }
-            if settled(&node, &id, &row, &result).await.is_ok() {
+            if settled(&node, &id, &row, &result, ran).await.is_ok() {
                 schedule(&node, &id);
                 return;
             }
@@ -285,6 +288,14 @@ fn after_compaction(node: Arc<Node>, id: ResidentId, mut row: PendingControl) {
         if let Err(error) = finish(&node, &id, &row).await {
             node.log.line(format_args!("telling {id} how its compaction ended: {}", error.message));
         }
+        // Not compacted, or not known to be: the words after it wait for
+        // the user, as after a failed turn.
+        if row.state != ControlState::Completed {
+            let why = row.error.as_deref().unwrap_or("the compaction did not finish");
+            if let Err(error) = crate::composer::command_failed(&node, &id, why).await {
+                node.log.line(format_args!("holding {id}'s queue after its compaction: {}", error.message));
+            }
+        }
         schedule(&node, &id);
     });
 }
@@ -297,6 +308,17 @@ pub(crate) fn between_turns(control: &Control) -> bool {
     matches!(control, Control::Compact | Control::Rewind { .. } | Control::Fork { .. } | Control::Rename { .. })
         || matches!(control, Control::Command { name, path: None, .. }
             if matches!(name.as_str(), "compact" | "review" | "code-review" | "fork" | "rename"))
+}
+
+/// Controls a slash command asks for. While a turn runs, every one of them
+/// waits in the queue among the words and is done in its order, the end of
+/// what came before it standing for a turn's end; none is done at once for
+/// being harmless mid-turn. What the model panel chooses, an answer to the
+/// host, and what only reads are no slash commands.
+pub(crate) fn slash(control: &Control) -> bool {
+    matches!(control, Control::Compact | Control::Rename { .. } | Control::Fork { .. })
+        || matches!(control, Control::Command { name, args, path }
+            if !(path.is_none() && name == "model" && args.trim().is_empty()))
 }
 
 /// `busy_now`, asked where finding the conversation's host may block.
@@ -326,7 +348,7 @@ pub(crate) async fn enqueue_if_busy(
 ) -> Result<Option<Controlled>, Failure> {
     // While a long control runs, every control told in the conversation
     // waits for it, not only those that wait for a turn.
-    if !(between_turns(control) || (told(control) && node.long_controls.of(id))) {
+    if !(between_turns(control) || slash(control) || (told(control) && node.long_controls.of(id))) {
         return Ok(None);
     }
     // A fork through a turn already ended takes that turn's history as it
@@ -365,7 +387,7 @@ pub(crate) async fn enqueue_if_busy(
 pub(crate) async fn cancel(node: &Arc<Node>, id: &ResidentId, key: &str) -> Result<Controlled, Failure> {
     node.residents.active(id)?;
     let row = storage::cancel(node, id, key).await?;
-    crate::composer::forget_command(node, id, &row.id).await?;
+    crate::composer::forget_command(node, id, &row.id, None).await?;
     schedule(node, id);
     Ok(Controlled::Done { said: Some("The waiting control was withdrawn.".into()) })
 }
@@ -403,7 +425,9 @@ fn drain_now<'a>(
             }
             if let Some(row) = rows.iter().find(|row| row.state != ControlState::Waiting) {
                 finish(node, id, row).await?;
-                crate::composer::forget_command(node, id, &row.id).await?;
+                let failed = matches!(row.state, ControlState::Failed | ControlState::Uncertain)
+                    .then(|| row.error.as_deref().unwrap_or("how it ended is not known"));
+                crate::composer::forget_command(node, id, &row.id, failed).await?;
                 continue;
             }
             // Words before it in the one order go first; it waits for

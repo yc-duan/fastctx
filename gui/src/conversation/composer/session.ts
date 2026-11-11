@@ -63,6 +63,9 @@ export interface RecoveredSending {
 /** Words sent from the input: the node's outcome and controls while it is unknown. */
 export interface Sending {
   sent: Promise<ComposerUpdated>;
+  /** Resolves once the node has the words to send straight on, by itself,
+   *  before they have gone: they are not waiting in its queue. */
+  accepted: Promise<void>;
   /** Sends them again at once, under their own id, while the line is up. */
   again(): void;
   /** Returns words only after proving that their send was cancelled. */
@@ -78,6 +81,10 @@ interface Outcome {
   told: boolean;
   /** Resolves once they are taken back. */
   readonly stop: Promise<void>;
+  /** Resolves once the node has them and sends them on by itself; `accept`
+   *  says so. */
+  readonly accepted: Promise<void>;
+  readonly accept: () => void;
   /** The operation that hands them to the node, once there is one. */
   operation?: Operation;
   withdrawing?: Promise<Withdrawal>;
@@ -125,6 +132,13 @@ function errorOf(error: unknown): Error {
 }
 
 function draftKey(target: ComposerTarget): string { return target.kind === "draft" ? "draft" : target.id; }
+
+/** That the node took words in to send on by itself, and what says so. */
+function accepting(): { accepted: Promise<void>; accept: () => void } {
+  let accept = () => {};
+  const accepted = new Promise<void>((resolve) => { accept = resolve; });
+  return { accepted, accept };
+}
 
 /** One conversation's shared input. No host state or turn events are used to release messages here. */
 export class ComposerSession {
@@ -199,13 +213,14 @@ export class ComposerSession {
     if (!(this.draft instanceof NativeComposerDocument)) return;
     const document = this.draft;
     for (const { mutation, seal, text } of document.recovered) {
+      let stop = () => {};
+      const outcome: Outcome = { began: Date.now(), late: () => {}, told: false, stop: new Promise<void>((resolve) => { stop = resolve; }), ...accepting() };
       const operation: Operation = { id: mutation.operation, change: { do: "send", epoch: mutation.epoch! }, status: "pending", error: null, result: null, attempt: 0,
-        started: native.mayHaveTransmitted(mutation.operation), run: () => { operation.started = true; return this.update(mutation); } };
+        started: native.mayHaveTransmitted(mutation.operation), run: () => { operation.started = true; return this.update(mutation, () => { document.taken(seal); outcome.accept(); }); } };
+      outcome.operation = operation;
       this.operations.set(operation.id, operation);
       this.sends = seal.settled;
       void seal.settled.then((taken) => { if (taken) this.takenHere += 1; this.emit(); });
-      let stop = () => {};
-      const outcome: Outcome = { operation, began: Date.now(), late: () => {}, told: false, stop: new Promise<void>((resolve) => { stop = resolve; }) };
       const resuming = Promise.resolve().then(async (): Promise<ComposerUpdated> => {
         for (;;) {
           await this.meanwhile(this.untilConnected(), outcome, true);
@@ -675,7 +690,7 @@ export class ComposerSession {
       if (!document.view.characters.length && !document.attachments.length) throw new Error("there are no words or attachments to send");
       seal = document.seal();
     } catch (error) {
-      return { sent: Promise.reject(error), again: () => {}, withdraw: async () => ({ kind: "withdrawn" }) };
+      return { sent: Promise.reject(error), accepted: new Promise<void>(() => {}), again: () => {}, withdraw: async () => ({ kind: "withdrawn" }) };
     }
     const before = this.sends;
     this.sends = seal.settled;
@@ -688,7 +703,7 @@ export class ComposerSession {
     const stop = new Promise<void>((resolve) => {
       withdraw = resolve;
     });
-    const outcome: Outcome = { began: Date.now(), late, told: false, stop };
+    const outcome: Outcome = { began: Date.now(), late, told: false, stop, ...accepting() };
     // Words waiting behind words sent before them are not handed to the node
     // yet: no answer to those by the time one is due, and they did not go.
     const behind = this.meanwhile(before, outcome, false).catch((error: unknown) => {
@@ -702,6 +717,7 @@ export class ComposerSession {
   private sendingControls(outcome: Outcome, withdraw: () => void, sent: Promise<ComposerUpdated>): Sending {
     return {
       sent,
+      accepted: outcome.accepted,
       again: () => {
         const operation = outcome.operation;
         if (operation && this.connected && operation.status === "failed" && operation.broken) {
@@ -801,8 +817,10 @@ export class ComposerSession {
     document.asking(seal, epoch);
     const operationId = crypto.randomUUID();
     const mutation: ComposerMutation = { ...(document instanceof NativeComposerDocument && document.nativeActive ? document.captured(seal, epoch, operationId) : { do: "send" as const, epoch }), operation: operationId };
+    // The node has them once it takes them in to send on by itself: what is
+    // sent after them need not wait for how they go (nor does the input).
     const operation: Operation = { id: mutation.operation, change: { do: "send", epoch }, status: "pending", error: null, result: null, attempt: 0,
-      run: () => { operation.started = true; return this.update(mutation); } };
+      run: () => { operation.started = true; return this.update(mutation, () => { document.taken(seal); outcome.accept(); }); } };
     if (document instanceof NativeComposerDocument && document.nativeActive) document.bindSend(seal, operationId);
     this.operations.set(operation.id, operation);
     outcome.operation = operation;
@@ -980,8 +998,8 @@ export class ComposerSession {
     }
   }
 
-  private update(mutation: ComposerMutation): Promise<ComposerUpdated> {
-    return this.native ? this.native.mutate(mutation) : this.transport.update(mutation);
+  private update(mutation: ComposerMutation, accepted?: () => void): Promise<ComposerUpdated> {
+    return this.native ? this.native.mutate(mutation, undefined, accepted) : this.transport.update(mutation);
   }
 
   private mutate(change: ComposerChange): Promise<ComposerUpdated> {

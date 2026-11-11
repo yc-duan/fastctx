@@ -61,6 +61,21 @@ impl Flight {
     }
 }
 
+/// Words asked to go at once that wait their turn to be handed over: behind
+/// words being handed over now, or behind the end of a turn the user
+/// stopped. They never wait for the user again.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Lined {
+    pub entry: NoticeId,
+    /// The send that asked for them, whose receipt says how they went.
+    #[serde(default)]
+    pub operation: Option<String>,
+    /// Sent from the input once the user stopped the turn: they start the
+    /// next turn, into an idle session only, as words sent straight on do.
+    #[serde(default)]
+    pub straight: bool,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Receipt {
     pub from: MachineName,
@@ -98,6 +113,10 @@ pub struct Stored {
     pub awaiting_turn: Option<String>,
     pub sending: Option<Flight>,
     pub pending: Vec<Flight>,
+    /// Words that go once nothing is being handed over, oldest first
+    /// (`Lined`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lined: Vec<Lined>,
     pub opportunity: Option<String>,
     #[serde(default)]
     pub settled_through: u64,
@@ -121,8 +140,38 @@ impl Stored {
             .filter(|(_, entry)| !entry.command)
             .map(|(index, entry)| (entry.document.id.clone(), index))
             .collect();
-        self.pending_entries = self.pending.iter().map(|flight| flight.entry.clone()).collect();
+        self.pending_entries = self
+            .pending
+            .iter()
+            .map(|flight| flight.entry.clone())
+            .chain(self.lined.iter().map(|lined| lined.entry.clone()))
+            .collect();
     }
+
+    /// Whether these words are being handed over, wait to be, or were
+    /// handed over and wait for the host to take them.
+    pub fn on_their_way(&self, id: &NoticeId) -> bool {
+        self.sending.iter().chain(self.pending.iter()).any(|flight| &flight.entry == id)
+            || self.lined.iter().any(|lined| &lined.entry == id)
+    }
+
+    /// Lines up queued words to go once nothing before them is being handed
+    /// over, as `reserve` would hand them over now.
+    pub fn line_up(&mut self, id: &NoticeId, operation: Option<String>, straight: bool) -> Result<(), Failure> {
+        let entry = self.entry(id)?;
+        if !entry.document.uploads.is_empty() {
+            return Err(Failure::new("this message still has an unfinished attachment upload"));
+        }
+        if entry.submitted.is_some() {
+            return Err(Failure::new(
+                "this message crossed the host boundary without a known acceptance; it cannot be submitted again",
+            ));
+        }
+        self.lined.push(Lined { entry: id.clone(), operation, straight });
+        self.reindex();
+        Ok(())
+    }
+
     pub fn editable_document(&mut self, document: &str) -> Result<&mut Document, Failure> {
         if self.draft.id == document {
             return Ok(&mut self.draft);
@@ -135,6 +184,7 @@ impl Stored {
         let entry = &mut self.queue[index];
         if self.pending_entries.contains(&entry.id)
             || self.sending.as_ref().is_some_and(|flight| flight.entry == entry.id)
+            || self.lined.iter().any(|lined| lined.entry == entry.id)
         {
             return Err(Failure::new("that queued message is being delivered"));
         }
@@ -161,6 +211,15 @@ impl Stored {
             .chain(self.queue.iter_mut().chain(&mut self.unobserved).map(|entry| &mut entry.document))
     }
 
+    /// Words handed back to the input, or out of the queue for good, are
+    /// not lined up to go.
+    pub fn unline(&mut self, id: &NoticeId) {
+        if self.lined.iter().any(|lined| &lined.entry == id) {
+            self.lined.retain(|lined| &lined.entry != id);
+            self.reindex();
+        }
+    }
+
     pub fn retire_unobserved(&mut self, id: &NoticeId) {
         if let Some(position) = self.queue.iter().position(|entry| &entry.id == id) {
             self.unobserved.push(self.queue.remove(position));
@@ -170,6 +229,7 @@ impl Stored {
     /// Whether these words are on their way as sent straight on.
     fn going_straight(&self, id: &NoticeId) -> bool {
         self.sending.iter().chain(self.pending.iter()).any(|flight| &flight.entry == id && flight.straight())
+            || self.lined.iter().any(|lined| &lined.entry == id && lined.straight)
     }
 
     pub fn view(&self) -> Composer {
@@ -189,7 +249,7 @@ impl Stored {
                     from: entry.from.clone(),
                     draft: entry.document.view(),
                     editing: !entry.editors.is_empty(),
-                    sending: self.sending.iter().chain(self.pending.iter()).any(|flight| flight.entry == entry.id),
+                    sending: self.on_their_way(&entry.id),
                     error: entry.error.clone(),
                 })
                 .collect(),
@@ -231,6 +291,18 @@ impl Stored {
                 ))
             })
             .collect();
+        // Lined up, they have no id to go under yet.
+        for lined in &self.lined {
+            if let Some(operation) = &lined.operation {
+                operations.entry(operation.clone()).or_insert_with(|| Operation {
+                    operation: operation.clone(),
+                    delivery: None,
+                    accepted: true,
+                    landed: None,
+                    failure: None,
+                });
+            }
+        }
         for (name, receipt) in &self.receipts {
             if receipt.delivery.is_none() && receipt.failure.is_none() && operations.contains_key(name) {
                 continue;
@@ -256,7 +328,7 @@ impl Stored {
             from: entry.from.clone(),
             document: entry.document.metadata(),
             editing: observed && !entry.editors.is_empty(),
-            sending: observed && self.sending.iter().chain(&self.pending).any(|flight| flight.entry == entry.id),
+            sending: observed && self.on_their_way(&entry.id),
             error: entry.error.clone(),
         };
         State {
@@ -301,7 +373,7 @@ impl Stored {
 
     /// Queued words or a command's place, for moving.
     fn movable(&mut self, id: &NoticeId) -> Result<&mut Entry, Failure> {
-        if self.sending.iter().chain(self.pending.iter()).any(|flight| &flight.entry == id) {
+        if self.on_their_way(id) {
             return Err(Failure::new("that queued message is being delivered"));
         }
         self.queue.iter_mut().find(|e| &e.id == id).ok_or_else(|| Failure::new("that queued message no longer exists"))
@@ -401,5 +473,76 @@ impl Stored {
             self.opportunity = None;
         }
         Ok(flight)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fastctx_types::composer::Draft;
+
+    fn machine() -> MachineName {
+        "desktop".parse().expect("a machine name")
+    }
+
+    /// A composer with these words queued, as sends made while the agent
+    /// was busy leave it; the ids of the entries, in order.
+    fn queued(words: &[&str]) -> (Stored, Vec<NoticeId>) {
+        let mut state = Stored::default();
+        let ids = words
+            .iter()
+            .map(|words| {
+                let id = crate::speech::new_id("queued");
+                let document = Document::from_view(Draft { text: (*words).into(), ..Draft::default() }).unwrap();
+                state.queue.push(Entry {
+                    id: id.clone(),
+                    from: machine(),
+                    document,
+                    editors: HashSet::new(),
+                    error: None,
+                    submitted: None,
+                    command: false,
+                });
+                id
+            })
+            .collect();
+        state.reindex();
+        (state, ids)
+    }
+
+    #[test]
+    fn words_sent_at_once_while_others_are_handed_over_line_up() {
+        let (mut state, ids) = queued(&["one", "two", "three"]);
+        state.reserve(&ids[0], false, false).unwrap();
+        // Another asked for at once is not refused: it goes right after.
+        state.line_up(&ids[1], Some("send-2".into()), false).unwrap();
+        state.line_up(&ids[2], Some("send-3".into()), false).unwrap();
+        assert_eq!(state.lined.iter().map(|lined| &lined.entry).collect::<Vec<_>>(), vec![&ids[1], &ids[2]]);
+        // On their way, they are no longer the queue's to change or move.
+        let view = state.view();
+        assert!(view.queue.iter().all(|item| item.sending));
+        assert_eq!(state.edit_refusal(&ids[1]), Some("that queued message is being delivered".into()));
+        assert!(state.line_up(&ids[1], None, false).is_err());
+        // The node has them: a device waits for how they went, not for them.
+        let operations = state.operations();
+        assert!(operations.iter().any(|operation| operation.operation == "send-2" && operation.accepted));
+        state.unline(&ids[1]);
+        assert_eq!(state.lined.len(), 1);
+        assert!(!state.on_their_way(&ids[1]));
+    }
+
+    #[test]
+    fn words_sent_from_the_input_after_a_stop_are_not_shown_queued() {
+        let (mut state, ids) = queued(&["after the stop"]);
+        state.line_up(&ids[0], Some("send-1".into()), true).unwrap();
+        // The device that sent them shows them in the conversation.
+        assert!(state.view().queue.is_empty());
+        assert!(state.metadata().queue.is_empty());
+    }
+
+    impl Stored {
+        fn edit_refusal(&mut self, id: &NoticeId) -> Option<String> {
+            self.entry(id).err().map(|failure| failure.message)
+        }
     }
 }
