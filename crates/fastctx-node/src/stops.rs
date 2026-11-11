@@ -55,10 +55,13 @@ impl Stops {
 }
 
 /// Stop delivery is independent of the report consumer and never blocks it.
+/// The turn it is for becomes current moments after its words are bound to
+/// it: a try before then is made again at once, and less often as it fails.
 pub(crate) fn deliver(node: &Arc<Node>, resident: &ResidentId, turn: &str, inputs: Vec<NoticeId>) {
     let (node, resident, turn) = (node.clone(), resident.clone(), turn.to_string());
     fastctx_platform::task::spawn(async move {
         let mut problem = None;
+        let mut pause = Duration::from_millis(25);
         loop {
             if node.residents.about(&resident).is_none() {
                 return;
@@ -72,7 +75,8 @@ pub(crate) fn deliver(node: &Arc<Node>, resident: &ResidentId, turn: &str, input
                     }
                 }
             }
-            tokio::time::sleep(Duration::from_secs(3)).await;
+            tokio::time::sleep(pause).await;
+            pause = (pause * 2).min(Duration::from_secs(3));
         }
     });
 }
