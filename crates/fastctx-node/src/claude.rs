@@ -325,6 +325,10 @@ fn unwatched(node: &Node) -> Vec<String> {
         .collect()
 }
 
+/// How many batches of file reports one look takes before it lets the other
+/// sessions have their turn.
+const HARVESTS: usize = 64;
+
 /// How long after a look that left something over the session is looked
 /// at again: twice as long each time, from `AGAIN_FIRST` to `AGAIN_LAST`.
 const AGAIN_FIRST: std::time::Duration = std::time::Duration::from_secs(5);
@@ -764,8 +768,13 @@ pub(crate) async fn receive(
     for problem in problems {
         node.log.line(problem);
     }
-    if !filed.is_empty() && !apply(node, &resident, session, &directory, filed, true).await.1 {
-        return Err(std::io::Error::other("what the session wrote before could not all be applied"));
+    if !filed.is_empty() {
+        if !apply(node, &resident, session, &directory, filed, true).await.1 {
+            return Err(std::io::Error::other("what the session wrote before could not all be applied"));
+        }
+        // A file report waiting for one just applied is taken by a look,
+        // which takes batches until none is left (`look`).
+        look_soon(node, directory.clone());
     }
     let at = Timestamp::now();
     let mut reported: Vec<exchange::Report> = Vec::new();
@@ -878,24 +887,38 @@ async fn look(node: &Arc<Node>, directory: &Path) -> bool {
         node.log.line(format_args!("reading Claude controls for {session}: {error}"));
         settled = false;
     }
-    let harvested = {
-        let directory = directory.to_path_buf();
-        fastctx_platform::task::spawn_blocking(move || exchange::harvest(&directory)).await
-    };
-    let (reported, problems) = match harvested {
-        Ok(Ok(harvested)) => harvested,
-        Ok(Err(error)) => {
-            node.log.line(format_args!("reading what {session} reported: {error}"));
+    channel::tell(node, directory, &session, false);
+    // A report may wait for an earlier one's applied mark: each batch applied
+    // can free the next, so this takes batches until one brings nothing. The
+    // marks the node writes start no look of their own (`own_write`).
+    for taken in 0.. {
+        let harvested = {
+            let directory = directory.to_path_buf();
+            fastctx_platform::task::spawn_blocking(move || exchange::harvest(&directory)).await
+        };
+        let (reported, problems) = match harvested {
+            Ok(Ok(harvested)) => harvested,
+            Ok(Err(error)) => {
+                node.log.line(format_args!("reading what {session} reported: {error}"));
+                return false;
+            }
+            Err(_) => return false,
+        };
+        for problem in problems {
+            node.log.line(problem);
+        }
+        let more = !reported.is_empty();
+        if !apply(node, &resident, &session, directory, reported, true).await.1 {
             return false;
         }
-        Err(_) => return false,
-    };
-    for problem in problems {
-        node.log.line(problem);
-    }
-    channel::tell(node, directory, &session, false);
-    if !apply(node, &resident, &session, directory, reported, true).await.1 {
-        return false;
+        if !more {
+            break;
+        }
+        if taken >= HARVESTS {
+            // Looked at again shortly, beside the other sessions.
+            settled = false;
+            break;
+        }
     }
     // Each receipt is settled once in this run, and again only while what it
     // names still waits in the inbox (`receipts`).

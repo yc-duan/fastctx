@@ -333,11 +333,11 @@ pub(crate) fn claude_default() -> Option<PathBuf> {
     {
         return default.clone();
     }
-    let default = (|| {
-        let env = crate::claude::environment().ok()?;
-        let home = fastctx_platform::user_home().ok()?;
-        Some(crate::homes::claude_default(&env, &home))
-    })();
+    // Kept only when read: a reading that failed is tried again by the next
+    // report, which would otherwise be taken as having no login to count.
+    let env = crate::claude::environment().ok()?;
+    let home = fastctx_platform::user_home().ok()?;
+    let default = Some(crate::homes::claude_default(&env, &home));
     *READ.lock().expect("never poisoned") = Some((std::time::Instant::now(), default.clone()));
     default
 }

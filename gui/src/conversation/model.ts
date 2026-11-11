@@ -376,6 +376,9 @@ export class Fold {
    *  turns then running, or, when none was, the turn the words on their way
    *  start once it does. */
   private halted: Set<string> | null = null;
+  /** The turns the conversation's machine says were asked to stop, by this
+   *  device or another (`now`): calling off this device's stop leaves them. */
+  private machineHalted = new Set<string>();
   private derivedCache: Derived | null = null;
   private blocksCache: { clock: number; blocks: Block[] } | null = null;
   /** In a fork, what this fold held before the point it was made at: what
@@ -476,6 +479,7 @@ export class Fold {
     this.sequences.clear();
     this.stale = false;
     this.halted = null;
+    this.machineHalted.clear();
     this.running.clear();
     this.began.clear();
     this.thoughtTokens.clear();
@@ -592,6 +596,7 @@ export class Fold {
     next.previousGroups = new Map(this.previousGroups);
     next.stretches = new Map([...this.stretches].map(([turn, keys]) => [turn, [...keys]]));
     next.halted = this.halted ? new Set(this.halted) : null;
+    next.machineHalted = new Set(this.machineHalted);
     next.sends = this.sends; next.heardSeq = this.heardSeq;
     next.settlers = new Map(this.settlers);
     next.unclaimed = [...this.unclaimed]; next.claimedHeard = new Set(this.claimedHeard);
@@ -923,6 +928,7 @@ export class Fold {
         this.running.delete(event.turn);
         this.began.delete(event.turn);
         if (this.halted?.delete(event.turn) && this.halted.size === 0) this.halted = null;
+        this.machineHalted.delete(event.turn);
         this.clock += 1;
         if (this.endedTurns.has(event.turn)) return;
         if (!this.replaying) this.endings += 1;
@@ -1610,6 +1616,7 @@ export class Fold {
    *  ended unseen, and stands as cut off, whichever turn it was in. */
   noTurnRuns(): void {
     this.halted = null;
+    this.machineHalted.clear();
     const at = Date.now();
     let changed = this.running.size > 0;
     for (const entry of this.entries) {
@@ -1673,7 +1680,10 @@ export class Fold {
    *  here is read again. */
   unhalt(): void {
     if (!this.halted) return;
-    this.halted = null;
+    // A turn its machine says was asked to stop, from any device, stays
+    // stopped: only this device's own stop is called off.
+    const told = [...this.halted].filter((turn) => this.machineHalted.has(turn));
+    this.halted = told.length > 0 ? new Set(told) : null;
     this.stale = true;
     this.clock += 1;
   }
@@ -1698,7 +1708,10 @@ export class Fold {
     if (!busy) this.noTurnRuns();
     // A stop the user asked for, here or on another device, shows on every
     // viewer at once.
-    if (busy && halted !== null && halted === turn) this.haltTurn(halted);
+    if (busy && halted !== null && halted === turn) {
+      this.machineHalted.add(halted);
+      this.haltTurn(halted);
+    }
     const keeping = new Map(kept.map((words) => [words.id, words]));
     for (const entry of this.entries) {
       if (entry.kind !== "heard" || !entry.sending || entry.delivery === undefined) continue;

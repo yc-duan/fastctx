@@ -409,7 +409,8 @@ pub fn written(directory: &Path) -> io::Result<bool> {
     for place in ["events", "accounting"] {
         match std::fs::read_dir(directory.join(place)) {
             Ok(mut entries) => {
-                if entries.next().is_some() {
+                // The mod's own markers (`.created`) start with a dot.
+                if entries.any(|entry| entry.is_ok_and(|entry| !entry.file_name().to_string_lossy().starts_with('.'))) {
                     return Ok(true);
                 }
             }

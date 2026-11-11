@@ -46,10 +46,11 @@ pub struct Channel {
     /// it, and its mod reads `channel.json` again when a request is refused.
     key: [u8; 32],
     wakes: Mutex<HashMap<String, Arc<Wake>>>,
-    /// How many wakes were made: each new one counts from past every count
-    /// an earlier one gave, so a mod that saw one let go is never told
-    /// "nothing new" by its successor.
-    wakes_made: AtomicU64,
+    /// How many times any session was woken: each wake takes the next count,
+    /// and a new wake starts at the count now, so a mod that saw one let go
+    /// is never told "nothing new" by its successor, and the counts stay
+    /// well inside what the mod's JSON numbers hold exactly.
+    ticks: AtomicU64,
     /// The sessions told where the channel is since the node started.
     told: Mutex<HashSet<String>>,
     queues: Mutex<HashMap<String, Arc<Queue>>>,
@@ -111,8 +112,10 @@ impl Channel {
             .expect("never poisoned")
             .entry(session.to_string())
             .or_insert_with(|| {
-                let made = self.wakes_made.fetch_add(1, Ordering::AcqRel);
-                Arc::new(Wake { count: AtomicU64::new(made << 32), changed: tokio::sync::Notify::new() })
+                // A new wake starts where the channel's count stands: past
+                // every count an earlier one of this session told.
+                let now = self.ticks.load(Ordering::Acquire);
+                Arc::new(Wake { count: AtomicU64::new(now), changed: tokio::sync::Notify::new() })
             })
             .clone()
     }
@@ -128,12 +131,14 @@ impl Channel {
             changed.as_mut().enable();
             let count = wake.count.load(Ordering::Acquire);
             if count != seen {
-                return count;
+                break count;
             }
             if tokio::time::timeout_at(deadline, changed).await.is_err() {
                 break wake.count.load(Ordering::Acquire);
             }
         };
+        // The last wait of a session whose queue went, early or not, takes
+        // its wake with it.
         self.forget_wake(session, wake);
         count
     }
@@ -164,7 +169,7 @@ pub(super) fn start(node: &Arc<Node>) -> io::Result<()> {
             port,
             key,
             wakes: Mutex::default(),
-            wakes_made: AtomicU64::new(0),
+            ticks: AtomicU64::new(0),
             told: Mutex::default(),
             queues: Mutex::default(),
         });
@@ -220,7 +225,11 @@ pub(crate) fn tell(node: &Node, directory: &Path, session: &str, again: bool) {
 pub(crate) fn wake(node: &Node, session: &str) {
     if let Some(channel) = node.claude.channel.get() {
         let wake = channel.wake_of(session);
-        wake.count.fetch_add(1, Ordering::AcqRel);
+        // Counted on the channel, not the wake: counts stay small enough for
+        // the mod's JSON numbers, and a wake made anew never tells a count
+        // an earlier one told.
+        let tick = channel.ticks.fetch_add(1, Ordering::AcqRel) + 1;
+        wake.count.fetch_max(tick, Ordering::AcqRel);
         wake.changed.notify_waiters();
     }
 }
@@ -452,6 +461,10 @@ async fn apply_in_order(
                 }
                 drop(queues);
                 channel.told.lock().expect("never poisoned").remove(&session);
+                let mut wakes = channel.wakes.lock().expect("never poisoned");
+                if wakes.get(&session).is_some_and(|wake| Arc::strong_count(wake) == 1) {
+                    wakes.remove(&session);
+                }
             }
             return;
         }
