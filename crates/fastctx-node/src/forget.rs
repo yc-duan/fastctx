@@ -95,11 +95,6 @@ fn allowed_here(node: &Node, resident: &ResidentId) -> Result<(), Failure> {
 async fn ask_here(node: &Arc<Node>, resident: ResidentId) -> Result<How, Failure> {
     let _call = handing(node)?;
     allowed_here(node, &resident)?;
-    if node.residents.ever_deleted(&resident) {
-        // A replay still wakes the requests saved before the local erase.
-        wake(node);
-        return Ok(How::Deleted);
-    }
     let address = Address { machine: node.machine(), resident: resident.clone() };
     for link in node.links().into_iter().filter(|link| link.view().shared_records) {
         if node.residents.about(&resident).is_none() {
@@ -128,12 +123,17 @@ async fn ask_here(node: &Arc<Node>, resident: ResidentId) -> Result<How, Failure
             .await
             .map_err(|error| Failure::not_run(format!("keeping what to ask the hubs: {error}")))?;
     }
+    // Asked again of a conversation deleted already, this finishes what a
+    // deletion that failed or was interrupted part way left here: deleting
+    // what is gone deletes nothing, and the rest is done as the first time.
     home(node, &resident).await.map_err(Failure::new)?;
     node.log.line(format_args!("deleted {resident}, which lived here, as the user asked"));
     if asks.is_empty() {
+        // The asking before this one may have kept what to ask the hubs and
+        // not come as far as asking it.
+        wake(node);
         return Ok(How::Deleted);
     }
-    wake(node);
     Ok(if send_kept(node).await { How::Asked } else { How::Queued })
 }
 

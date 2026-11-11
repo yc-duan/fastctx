@@ -63,6 +63,9 @@ pub(crate) async fn compact(node: &Arc<Node>, resident: ResidentId) -> Result<Co
         // A concurrent operation found by the engine takes precedence over this
         // preflight, including an Accepted response rather than the local refusal.
         (Err(failure), Some((expected, answer))) if failure == expected => Ok(answer),
+        (Err(failure), _) if crate::submission_fallback::unrecorded(&FAMILY, &failure) => {
+            Ok(super::compact::between_turns(node, &asked.resident).await)
+        }
         (result, _) => result,
     }
 }

@@ -305,11 +305,7 @@ pub(crate) async fn change(
     match submit(node, &asked).await {
         Err(failure) if crate::submission_fallback::unrecorded(&FAMILY, &failure) => {
             let Asked::Change { hub, account, change } = asked else { unreachable!() };
-            if matches!(change, AccountChange::Logout) {
-                crate::world::change(node, hub.as_ref(), &account, change).await
-            } else {
-                Err(failure)
-            }
+            crate::world::change(node, hub.as_ref(), &account, change).await
         }
         result => result.map(|()| None),
     }
@@ -319,5 +315,10 @@ pub(crate) async fn rename(node: &Arc<Node>, to: MachineName) -> Result<(), Fail
     if !node.submission_kinds.has(&FAMILY) {
         return crate::world::rename_here(node, to).await;
     }
-    submit(node, &Asked::Rename { to }).await
+    match submit(node, &Asked::Rename { to: to.clone() }).await {
+        Err(failure) if crate::submission_fallback::unrecorded(&FAMILY, &failure) => {
+            crate::world::rename_here(node, to).await
+        }
+        result => result,
+    }
 }

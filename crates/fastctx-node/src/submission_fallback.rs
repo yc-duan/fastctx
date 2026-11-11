@@ -17,8 +17,10 @@ impl Started {
     }
 }
 
-/// The submission engine could not record the asking. Accepted work, an unread
-/// answer and execution failures must never trigger a second synchronous action.
+/// The submission engine could not record the asking, so nothing of it was
+/// begun: the call is then done where it stands, as it was before its family
+/// submitted. Accepted work, an unread answer and execution failures must
+/// never trigger a second synchronous action.
 pub(crate) fn unrecorded(family: &Family, failure: &Failure) -> bool {
     failure.not_run
         && failure.code.is_none()

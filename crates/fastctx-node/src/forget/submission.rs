@@ -143,7 +143,6 @@ pub(super) async fn ask(node: &Arc<Node>, resident: ResidentId, machine: Written
     if !node.submission_kinds.has(&FAMILY) {
         return direct(node, asked).await;
     }
-    let elsewhere = !node.is_here(&asked.machine);
     // Only users enter this function. The receipt contains deletion status alone;
     // losing access because the deletion succeeded does not conceal its outcome.
     let result = crate::submitted::submit_resolving(node, &FAMILY, &asked, || async {
@@ -174,9 +173,7 @@ pub(super) async fn ask(node: &Arc<Node>, resident: ResidentId, machine: Written
     })
     .await;
     match result {
-        Err(failure) if elsewhere && crate::submission_fallback::unrecorded(&FAMILY, &failure) => {
-            direct(node, asked).await
-        }
+        Err(failure) if crate::submission_fallback::unrecorded(&FAMILY, &failure) => direct(node, asked).await,
         result => result,
     }
 }
