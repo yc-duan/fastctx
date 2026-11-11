@@ -15,23 +15,18 @@
 
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Duration;
 
 use fastctx_hosts::claude::{self, background};
 use fastctx_types::ResidentId;
 
 use crate::Node;
 
-/// How long Claude Code has to start the session, as for a wake.
-const WITHIN: Duration = Duration::from_secs(120);
-
 /// Starts the session `resident` continues in from `session`, given `words`
 /// when there are any, and records it as the conversation's; returns the
 /// short id Claude Code printed for it. `why` explains why its saved startup
-/// options cannot be used again. The caller counts a wake in
-/// flight until this returns (`copies::Copies::waking`): a session reporting
-/// meanwhile without naming its conversation, as the copy stopped before
-/// this, waits for it. The new session names its conversation itself.
+/// options cannot be used again. The caller holds the resident's durable
+/// launch intent until the replacement activation is reconciled. Its settings
+/// name the conversation before the CLI returns the new session's id.
 pub(super) async fn start(
     node: &Arc<Node>,
     resident: &ResidentId,
@@ -40,11 +35,14 @@ pub(super) async fn start(
     words: &str,
     why: &str,
 ) -> Result<String, background::CommandFailure> {
+    let active = super::wake_once::hold(node, resident)
+        .ok_or_else(|| background::CommandFailure { message: super::wake_once::waiting().message, started: false })?;
     let (node, resident, home, source, first_words) =
         (node.clone(), resident.clone(), home.map(Path::to_path_buf), session.to_string(), words.to_string());
     let recording = node.clone();
     let recorded_id = resident.clone();
     let printed = fastctx_platform::task::spawn_blocking(move || {
+        let _active = active;
         let unstarted = |message: String| background::CommandFailure { message, started: false };
         let (about, _) = node.residents.about(&resident).ok_or_else(|| unstarted(format!("{resident} was deleted")))?;
         let super::Command { program, env, .. } =
@@ -76,7 +74,12 @@ pub(super) async fn start(
         };
         super::trust(&[world.as_path(), cwd.as_path()], &env)
             .map_err(|message| background::CommandFailure { message, started: false })?;
-        background::invoke(&program, &background::continue_args(&source, &start), &cwd, &env, WITHIN)
+        super::wake_command::run(
+            &node,
+            &super::Command { program, cwd, env },
+            &background::continue_args(&source, &start),
+        )
+        .map(|printed| printed.out)
     })
     .await
     .map_err(|error| background::CommandFailure {

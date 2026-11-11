@@ -1002,6 +1002,7 @@ pub async fn run_prepared(
         control_queue::register(&node);
         composer::compaction::register(&node);
         lifecycle::retry::register(&node);
+        claude::register(&node);
         let (durable_jobs, log) = (node.durable_jobs.clone(), node.log.clone());
         fastctx_platform::task::spawn(async move {
             let (mut again, mut said) = (crate::again::Again::default(), String::new());

@@ -21,17 +21,6 @@ pub(super) async fn run(node: &Arc<Node>, home: Option<&Path>, args: Vec<OsStrin
     run_command(command, args).await
 }
 
-/// `run_command`, keeping what Claude Code told on its error stream.
-async fn run_telling(command: super::Command, args: Vec<OsString>) -> Result<background::Printed, Failure> {
-    let super::Command { program, cwd, env } = command;
-    fastctx_platform::task::spawn_blocking(fastctx_platform::doing::carried(move || {
-        background::claude_telling(&program, &args, &cwd, &env)
-    }))
-    .await
-    .map_err(|error| Failure::new(error.to_string()))?
-    .map_err(Failure::new)
-}
-
 async fn run_command(command: super::Command, args: Vec<OsString>) -> Result<String, Failure> {
     let super::Command { program, cwd, env } = command;
     fastctx_platform::task::spawn_blocking(fastctx_platform::doing::carried(move || {
@@ -154,54 +143,79 @@ pub async fn retire(node: &Arc<Node>, home: Option<&Path>, session: &str) -> Res
 }
 
 pub async fn wake(node: &Arc<Node>, home: Option<&Path>, session: &str) -> Result<(), Failure> {
-    if let Some(id) = node.residents.resident_of_thread(session)
-        && let Some(source) = super::isolation::source(node, &id)?
-    {
-        let _waking = node.claude.copies.waking();
-        super::isolation::continue_in(node, &id, &source, "").await.map_err(|error| Failure::new(error.message))?;
-        return Ok(());
-    }
-    let record = background_session(node, home, session).await?;
-    let session = match record.as_ref() {
-        Some(record) => record["sessionId"]
-            .as_str()
-            .ok_or_else(|| Failure::new("Claude Code did not provide the background session's full conversation ID"))?,
-        // A closed foreground conversation has a transcript but no supervisor record.
-        None => session,
+    let resident = node
+        .residents
+        .resident_of_thread(session)
+        .or_else(|| session.get(..8).and_then(|short| node.residents.resident_of_thread(short)))
+        .ok_or_else(|| Failure::new("the Claude session has no resident here"))?;
+    let launch = match super::wake_once::begin(node, &resident, home, session).await? {
+        super::wake_once::Admission::Launch(launch) => launch,
+        super::wake_once::Admission::Present | super::wake_once::Admission::Waiting => return Ok(()),
     };
-    if super::running(node, home, session).await? {
+    let super::wake_once::Launch { intent, active: _active } = *launch;
+    let result = wake_inner(node, &resident, home, session).await;
+    let (started, accepted) = match &result {
+        Ok(()) => (true, true),
+        Err(error) => (error.started, false),
+    };
+    super::wake_once::finish(node, &resident, intent, started, accepted)?;
+    result.map_err(|error| Failure::new(error.message))
+}
+
+async fn wake_inner(
+    node: &Arc<Node>,
+    resident: &ResidentId,
+    home: Option<&Path>,
+    session: &str,
+) -> Result<(), background::CommandFailure> {
+    let preflight = |error: Failure| background::CommandFailure { message: error.message, started: false };
+    let attempted = |error: Failure| background::CommandFailure { message: error.message, started: true };
+    if let Some(id) = node.residents.resident_of_thread(session)
+        && let Some(source) = super::isolation::source(node, &id).map_err(preflight)?
+    {
+        super::isolation::continue_in(node, &id, &source, "").await?;
         return Ok(());
     }
     // A Claude Code older than the World takes is not started, as on every
     // other way a session starts.
-    super::oldest::check(node, &super::command(node, home)?).await?;
+    super::oldest::check(node, &super::command(node, home).map_err(preflight)?).await.map_err(preflight)?;
     if let Some(resident) = node.residents.resident_of_thread(session) {
-        crate::profile::session::load_claude(node, &resident, false).await?;
+        crate::profile::session::load_claude(node, &resident, false).await.map_err(preflight)?;
     }
-    let mut command = super::command(node, home)?;
+    let mut command = super::command(node, home).map_err(preflight)?;
     // A foreground history has no saved supervisor cwd: it is resumed where
     // it was opened (`resume_dir`).
     command.cwd = super::resume_dir(node, session);
-    super::trust(&[command.cwd.as_path()], &command.env).map_err(Failure::new)?;
-    // A session that reports while this runs waits to learn whether it is a copy.
-    let waking = node.claude.copies.waking();
-    let printed = run_telling(command, vec!["--resume".into(), session.into(), "--bg".into()]).await?;
+    super::trust(&[command.cwd.as_path()], &command.env)
+        .map_err(|message| background::CommandFailure { message, started: false })?;
+    let session_to_wake = session.to_string();
+    let node_for_launch = node.clone();
+    let active = super::wake_once::hold(node, resident).ok_or_else(|| preflight(super::wake_once::waiting()))?;
+    let printed = fastctx_platform::task::spawn_blocking(move || {
+        let _active = active;
+        super::wake_command::run(
+            node_for_launch.as_ref(),
+            &command,
+            &["--resume".into(), session_to_wake.into(), "--bg".into()],
+        )
+    })
+    .await
+    .map_err(|error| background::CommandFailure { message: error.to_string(), started: true })??;
     let started = background::started(&printed.out).ok_or_else(|| {
-        Failure::new(format!("Claude Code did not identify the resumed background session: {}", printed.out))
+        attempted(Failure::new(format!("Claude Code did not identify the resumed background session: {}", printed.out)))
     })?;
     // Copied instead of woken, the copy goes at once. A session still
     // running takes what this wake was for; one that does not run Claude
     // Code would copy at every wake, so its conversation goes on in a
     // session of the World's (`continuing`).
     if !session.starts_with(&started) {
-        super::copies::discard(node, home, &started).await;
-        if !super::resting(node, home, session).await? {
-            if super::running(node, home, session).await? {
+        super::copies::discard(node, home, &started).await.map_err(attempted)?;
+        let seen = super::wake_once::observe(node, home, session).await.map_err(attempted)?;
+        if !seen.resting {
+            if seen.running {
                 return Ok(());
             }
-            return Err(Failure::new(format!(
-                "{session} was starting; Claude Code started a copy of it instead, which was stopped"
-            )));
+            return Err(attempted(super::wake_once::waiting()));
         }
         let resident = node
             .residents
@@ -211,16 +225,13 @@ pub async fn wake(node: &Arc<Node>, home: Option<&Path>, session: &str) -> Resul
                 Failure::new(format!(
                     "Claude Code copied {session} instead of waking it, and it is no conversation here"
                 ))
-            })?;
+            })
+            .map_err(attempted)?;
         let why = background::copy_note(&printed.told).unwrap_or("it said nothing of why");
         let continued = super::continuing::start(node, &resident, home, session, "", why).await;
-        drop(waking);
-        continued.map_err(|error| Failure::new(error.message))?;
+        continued?;
         return Ok(());
     }
-    drop(waking);
-    if !super::running(node, home, session).await? {
-        return Err(Failure::new("Claude Code accepted resume but does not report the original session running"));
-    }
+    // The CLI receipt does not imply that the worker already registered.
     Ok(())
 }

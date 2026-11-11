@@ -1,2 +1,4 @@
 # table	kind	owner
 jobs	runtime.jobs	crates/fastctx-jobs/src/table.rs
+claude_wakes	runtime.host	crates/fastctx-node/src/claude/wake_store.rs
+claude_copies	runtime.host	crates/fastctx-node/src/claude/wake_store.rs

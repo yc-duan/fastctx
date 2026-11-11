@@ -58,6 +58,7 @@ mod update;
 mod view;
 mod w;
 mod wait;
+mod wake_guard;
 mod work;
 mod world;
 mod writers;

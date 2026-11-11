@@ -299,7 +299,7 @@ fn daemon_said(command: &super::Command, short: &str) -> Option<String> {
 }
 
 /// Whether Claude Code's daemon logged that it settled the session `short`.
-fn settled(command: &super::Command, short: &str) -> bool {
+pub(super) fn settled(command: &super::Command, short: &str) -> bool {
     daemon_said(command, short).is_some_and(|line| line.contains(&format!("bg settled {short}")))
 }
 

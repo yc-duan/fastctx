@@ -6,6 +6,7 @@ pub(super) const MACHINE_TABLES: &[&str] = &[
     "storage_salvaged",
     // Jobs use unit ownership and are discarded locally, never exported as records.
     "jobs",
+    "claude_copies",
     "receipts",
     "receipt_references",
     "receipt_watermarks",
@@ -79,6 +80,7 @@ pub(crate) fn initialize(db: &Connection) -> Result<()> {
         "node.jobs",
         &[fastctx_storage::versions::Migration { version: 1, sql: fastctx_jobs::SCHEMA }],
     )?;
+    db.execute_batch(crate::claude::wake_store::SCHEMA)?;
     db.execute_batch(crate::record_migration::SCHEMA)?;
     db.execute_batch(crate::records::MIGRATION_PROOF_SCHEMA)?;
     db.execute_batch(crate::context::records::SCHEMA)?;
