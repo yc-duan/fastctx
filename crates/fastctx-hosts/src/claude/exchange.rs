@@ -730,7 +730,9 @@ pub struct Delivering<'a> {
 }
 
 /// Puts something in the session's inbox for its mod to hand over. The same
-/// id twice is the same thing and is written once.
+/// id twice is the same thing and is written once. Its files do not wait for
+/// the disk: the node keeps on the disk that it handed this over before it
+/// writes them, and hands over again at its start what a lost power took.
 pub fn deliver(directory: &Path, id: &str, text: &str, how: Delivering<'_>) -> io::Result<()> {
     let Delivering { at, as_user, along, replaces } = how;
     let inbox = directory.join("inbox");
@@ -750,7 +752,7 @@ pub fn deliver(directory: &Path, id: &str, text: &str, how: Delivering<'_>) -> i
             }
             let part = &rest[..end];
             let path = parts.join(count.to_string());
-            match publish_new(&path, part.as_bytes(), Permissions::Private) {
+            match publish_new_unsynced(&path, part.as_bytes(), Permissions::Private) {
                 Ok(()) => {}
                 Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
                     if std::fs::read(&path)? != part.as_bytes() {
@@ -774,7 +776,7 @@ pub fn deliver(directory: &Path, id: &str, text: &str, how: Delivering<'_>) -> i
         }
         bytes = serde_json::to_vec(&value).map_err(io::Error::other)?;
     }
-    match publish_new(&inbox.join(format!("{id}.json")), &bytes, Permissions::Private) {
+    match publish_new_unsynced(&inbox.join(format!("{id}.json")), &bytes, Permissions::Private) {
         Err(error) if error.kind() != io::ErrorKind::AlreadyExists => Err(error),
         _ => Ok(()),
     }
