@@ -1,4 +1,6 @@
-//! Record deletion retains its original comparison and resolved account incarnation.
+//! Deleting one record that keeps every version it had: the versions are
+//! erased with it, however many, so the deletion is submitted work. It keeps
+//! its original comparison and the account incarnation resolved as it came.
 
 use super::*;
 use crate::submitted::Family;
@@ -84,6 +86,13 @@ struct Answered {
     told: Told,
 }
 
+/// Whether records of `kind` keep their earlier versions, which a deletion
+/// erases. Deleting a record of another kind is one small write, answered
+/// where it stands.
+pub(crate) fn versioned(kind: &str) -> bool {
+    matches!(kind, fastctx_types::plan::KIND | fastctx_types::history::RECORD_KIND)
+}
+
 pub(crate) fn register(hub: &Arc<Hub>) {
     crate::submitted::register(hub, FAMILY, |hub: Arc<Hub>, recorded: Recorded| async move {
         let Recorded { asked, opened, access } = recorded;
@@ -167,7 +176,8 @@ async fn submit(
     let identity = serde_json::to_vec(&asked).map_err(|error| error.to_string())?;
     let (from, member_key, actor) = (asked.from.clone(), asked.key, asked.account.clone());
     let recorded = Recorded { asked, opened, access };
-    let came = fastctx_jobs::submitted::submit(hub.as_ref(), &FAMILY, &unit, &recorded, &identity, named, || {}).await;
+    let make = || async { Ok((unit, recorded)) };
+    let came = fastctx_jobs::submitted::submit(hub.as_ref(), &FAMILY, &identity, named, make, || {}).await;
     let Answered { opened, access, told } = match came {
         Ok(answered) => answered,
         Err(failure) => return crate::submitted::told(Err(failure)),

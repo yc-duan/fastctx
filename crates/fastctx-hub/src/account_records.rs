@@ -82,8 +82,7 @@ pub(crate) async fn asked(
     request: Request,
     named: Option<fastctx_types::submission::Submission>,
 ) -> Result<Told, String> {
-    if matches!(&request, Request::Delete { kind, .. } if matches!(kind.as_str(), fastctx_types::plan::KIND | fastctx_types::history::RECORD_KIND))
-    {
+    if matches!(&request, Request::Delete { kind, .. } if crate::owned_records::record_deletions::versioned(kind)) {
         crate::owned_records::record_deletions::account(hub, from, member_key, account, opened, request, named.as_ref())
             .await
     } else {

@@ -174,7 +174,9 @@ pub(crate) async fn asked(
 ) -> Result<Told, String> {
     match request {
         Request::Delete { resident } => submission::delete(hub, from, key, account, resident, named.as_ref()).await,
-        Request::Record { conversation, request: request @ RecordRequest::Delete { .. } } => {
+        Request::Record { conversation, request: request @ RecordRequest::Delete { .. } }
+            if record_deletions::versioned(request.kind()) =>
+        {
             record_deletions::owned(hub, from, key, account, conversation, request, named.as_ref()).await
         }
         request => ask(hub, from, key, account, request).await,

@@ -1419,23 +1419,18 @@ pub(crate) fn within(question: &Question) -> std::time::Duration {
 /// Whether `question` asks the hub for work, which it may answer as accepted:
 /// such a question goes under a name.
 fn submits(question: &Question) -> bool {
-    matches!(
-        question,
-        Question::OwnedRecords {
-            request: fastctx_types::owned_records::Request::Delete { .. }
-                | fastctx_types::owned_records::Request::Record {
-                    request: fastctx_types::account_records::Request::Delete { .. },
-                    ..
-                },
-            ..
-        }
-    ) || matches!(
-        question,
-        Question::AccountRecords {
-            request: fastctx_types::account_records::Request::Delete { kind, .. },
-            ..
-        } if matches!(kind.as_str(), fastctx_types::plan::KIND | fastctx_types::history::RECORD_KIND)
-    )
+    use fastctx_types::{account_records, owned_records};
+    // A record that keeps its versions: deleting it erases them all.
+    let versioned = |request: &account_records::Request| {
+        matches!(request, account_records::Request::Delete { kind, .. }
+            if matches!(kind.as_str(), fastctx_types::plan::KIND | fastctx_types::history::RECORD_KIND))
+    };
+    match question {
+        Question::OwnedRecords { request: owned_records::Request::Delete { .. }, .. } => true,
+        Question::OwnedRecords { request: owned_records::Request::Record { request, .. }, .. }
+        | Question::AccountRecords { request, .. } => versioned(request),
+        _ => false,
+    }
 }
 
 /// How soon a question the hub accepted the work of is asked again, and for
