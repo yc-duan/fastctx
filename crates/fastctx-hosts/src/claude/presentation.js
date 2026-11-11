@@ -11,6 +11,7 @@ const WORLD_FRAMES = [
   'A message from fastctx, not typed by the user:',
   'The fastctx plugin delivers a message from the World.',
   'The user sent a new message while you were working:',
+  'The user also sent this message, before the one that follows:',
 ]
 
 // The user's words as they were said, from a prompt the World's plugin

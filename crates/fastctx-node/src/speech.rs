@@ -312,15 +312,23 @@ async fn receive_here_locked(
 }
 
 /// A turn of `id` began: what waited to ride with the next turn goes into
-/// it now (`Notice::along`).
+/// it now (`Notice::along`), and so does what waited because the user had
+/// stopped the turn before (`stops::hushed`): everything kept for it but
+/// the user's own words, which start turns of their own.
 pub async fn along(node: &Arc<Node>, id: &ResidentId) {
     let Some((about, _)) = node.residents.about(id) else { return };
     let directory = node.world.conversation(id);
+    // Only a Claude session is hushed by a stop (`claude::deliver`).
+    let hushes = about.host.agent.as_str() == "claude";
     let waiting = {
         let directory = directory.clone();
         let riding = move || {
             crate::inbox::those(&directory, |kept| {
-                kept.state == PendingState::Waiting && kept.delivery.notice.along().is_some()
+                let own = matches!(
+                    kept.delivery.notice,
+                    Notice::Words { from: Speaker::User { .. }, .. } | Notice::Attached { .. }
+                );
+                kept.state == PendingState::Waiting && (kept.delivery.notice.along().is_some() || (hushes && !own))
             })
         };
         match fastctx_platform::task::spawn_blocking(riding).await {

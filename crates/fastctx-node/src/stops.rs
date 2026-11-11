@@ -22,6 +22,18 @@ pub(crate) fn requested_turn(node: &Node, resident: &ResidentId, turn: &str) -> 
     crate::records::metadata::exists(&node.world.conversation(resident).book("user-stops").join(key.as_str()))
 }
 
+/// Whether the user stopped the resident's last turn and none has begun
+/// since: until the user speaks again, nothing else starts its next turn.
+pub(crate) fn hushed(node: &Node, resident: &ResidentId) -> io::Result<bool> {
+    match node.residents.now(resident) {
+        Some(now) if now.turn.is_none() => match now.last_turn {
+            Some(last) => requested_turn(node, resident, &last),
+            None => Ok(false),
+        },
+        _ => Ok(false),
+    }
+}
+
 impl Stops {
     /// A start publishes Now before reading these markers. The shared ordering
     /// permit makes that read wait for a stop that observed an unbound turn.
@@ -113,10 +125,12 @@ async fn apply(node: &Arc<Node>, resident: &ResidentId, turn: &str, inputs: &[No
             "claude" => {
                 let exchange = fastctx_hosts::claude::exchange::sessions(node.world.path()).join(session);
                 let turn = turn.to_string();
-                fastctx_platform::task::spawn_blocking(move || fastctx_hosts::claude::exchange::stop(&exchange, &turn))
-                    .await
-                    .map_err(failure)?
-                    .map_err(failure)?;
+                fastctx_platform::task::spawn_blocking(move || {
+                    fastctx_hosts::claude::exchange::stop(&exchange, &turn, source)
+                })
+                .await
+                .map_err(failure)?
+                .map_err(failure)?;
             }
             _ => return Err(Failure::new("the consuming host has no stop entrance")),
         }

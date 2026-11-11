@@ -17,6 +17,7 @@ use fastctx_platform::{Permissions, ensure_private_dir, publish, publish_new};
 use fastctx_types::session::{
     Content, Happened, Health, HealthKind, Item, SessionEvent, ToolStatus, TurnEnd, TurnFacts, TurnHow, What,
 };
+use fastctx_types::turn_evidence::StopSource;
 use fastctx_types::usage::Usd;
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
@@ -304,6 +305,13 @@ enum ModEvent {
         at: Option<Timestamp>,
         turn: Option<String>,
         text: Option<String>,
+    },
+    /// Words waited in a running turn past the end of `calls` of its tool
+    /// calls and went in only when a turn of their own took them.
+    Late {
+        at: Option<Timestamp>,
+        deliveries: Vec<String>,
+        calls: u32,
     },
     Handed {
         deliveries: Vec<String>,
@@ -648,6 +656,15 @@ fn translate(event: ModEvent, recorded_at: Timestamp) -> Vec<Reported> {
             let text = format!("the World's plugin could not stop the turn: {}", text.unwrap_or_default());
             vec![happened(at, Happened::Health { turn, health: Health { kind: HealthKind::Error, text } })]
         }
+        ModEvent::Late { at, deliveries, calls } => {
+            let text = format!(
+                "{} sent to this session waited past {calls} finished tool call{} of a running turn and went in only \
+                 at its end: the handover into a running turn did not happen",
+                if deliveries.len() == 1 { "a message".to_string() } else { format!("{} messages", deliveries.len()) },
+                if calls == 1 { "" } else { "s" },
+            );
+            vec![happened(at, Happened::Health { turn: None, health: Health { kind: HealthKind::Warning, text } })]
+        }
         ModEvent::Handed { deliveries, turn } => vec![Reported::Handed { ids: deliveries, turn: turn_of(turn) }],
         ModEvent::Replaced { deliveries } => vec![Reported::Replaced { ids: deliveries }],
     }
@@ -733,9 +750,10 @@ pub fn deliver(directory: &Path, id: &str, text: &str, how: Delivering<'_>) -> i
 }
 
 /// Asks the mod to stop `turn`, if it is still the one running when the mod
-/// looks.
-pub fn stop(directory: &Path, turn: &str) -> io::Result<()> {
-    let bytes = serde_json::to_vec(&serde_json::json!({ "turn": turn })).expect("strings serialize");
+/// looks. `source` is who stops it: after the user did, the mod starts no
+/// turn until the user speaks again (`world.js`, `hushed`).
+pub fn stop(directory: &Path, turn: &str, source: StopSource) -> io::Result<()> {
+    let bytes = serde_json::to_vec(&serde_json::json!({ "turn": turn, "source": source })).expect("strings serialize");
     publish(&directory.join("stop.json"), &bytes, Permissions::Private)
 }
 

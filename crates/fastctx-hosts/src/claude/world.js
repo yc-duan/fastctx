@@ -113,6 +113,31 @@ function conversation(sessionId, previous) {
     entered: 0,
     // Set while this plugin appends a row of its own at a tool boundary.
     appending: false,
+    // Where the main loop's running step stands (`opening`): its tool calls
+    // whose results the conversation has not kept yet, those it has, how
+    // many its response asked for, and whether that response still arrives.
+    awaited: new Set(),
+    answered: new Set(),
+    asked: 0,
+    streaming: false,
+    // Set while what is held goes in at an opening: two events reach one.
+    opening: false,
+    // How many of the main loop's tool calls have ended, and how many had
+    // when each of the words held now began to wait in a running turn
+    // (`late`).
+    ended: 0,
+    since: new Map(),
+    // The user stopped the last turn and has not spoken since: only the
+    // user's own words start the next one.
+    hushed: false,
+    // A row beside a prompt could not be kept: until a turn ends, what is
+    // held goes in one submission at a time.
+    plain: false,
+    // Looks in a row that each found more for an idle session (`looked`).
+    settling: 0,
+    // What Claude Code itself had to tell while the session was hushed, a
+    // background task's end: kept for the user's next words (`alongPrompt`).
+    kept: [],
     handled: new Set(),
     failing: new Set(),
     held: [],
@@ -342,36 +367,52 @@ function userFramed(delivery) {
     + '\n\nThis is how Claude Code surfaces messages the user sends mid-turn \u2014 within the running turn, often alongside the next tool result, rather than as a separate conversation turn. Address the message above as you continue this turn.'
 }
 
+// The user's own words, sent before the ones that start a turn: they go in
+// just before those, so the model reads every one in the order it was sent.
+function earlierFramed(delivery) {
+  return 'The user also sent this message, before the one that follows:\n' + delivery.text
+}
+
 // Says which turn took what was handed over.
 function handed($, context, deliveries, turn, how) {
   return event($, context, 'handed', { deliveries: deliveries.map((delivery) => delivery.id), turn, how })
 }
 
-// Submits words as a new turn. Returns whether Claude Code took them.
+// Submits words as a new turn, with `beside` kept as a row just before its
+// prompt. Returns those of them Claude Code did not take, to be held again.
 //
 // Which turn takes them is not read from any text: Claude Code keeps the
 // prompt as a row stamped with this plugin as its origin, and finishes every
 // `session.append` hook on a turn's rows before it starts that turn. So the
 // turn that starts after such a row is the one that took it (`entered`,
 // `startTurn`), whether the prompt began its turn at once or waited behind a
-// running one. Until then nothing else is submitted, so each submission is
-// one turn of its own and the order of rows is the order of submissions.
-async function submit($, context, deliveries, prompt) {
-  if (context.closed || context.submitting.length > 0 || context.accepted.length > 0) return false
+// running one. Until then nothing else is submitted, so a submission is one
+// turn of its own and the order of rows is the order of submissions.
+async function submit($, context, deliveries, prompt, beside = []) {
+  if (context.closed || context.submitting.length > 0 || context.accepted.length > 0) return deliveries
   context.submitting.push(...deliveries)
+  const refused = async (those) => {
+    for (const delivery of those) await $.fs.write(context.dir + '/attempts/' + delivery.id, JSON.stringify({ state: 'refused' }))
+    return those
+  }
   try {
-    if (!(await goalPermitsAll($, context, deliveries))) return false
-    if ((await $.session.id()) !== context.sessionId) return false
+    if (!(await goalPermitsAll($, context, deliveries))) return deliveries
+    if ((await $.session.id()) !== context.sessionId) return deliveries
     for (const delivery of deliveries) {
       await $.fs.write(context.dir + '/attempts/' + delivery.id, JSON.stringify({ at: stamp(), turn: context.turn, state: 'submitting' }))
     }
     // What rides with the next turn goes in just before the prompt that
     // starts it: this plugin's own prompt reaches none of its own hooks.
     await accountAgentsBeforeSubmit($, context)
-    await alongBefore($, context)
+    if (!(await alongBefore($, context, beside)) && beside.length > 0) {
+      context.plain = true
+      context.unsettled = true
+      return refused(deliveries)
+    }
     if (!(await goalPermitsAll($, context, deliveries))) {
-      for (const delivery of deliveries) await $.fs.write(context.dir + '/attempts/' + delivery.id, JSON.stringify({ state: 'refused' }))
-      return false
+      // The row beside the prompt is kept: the next turn takes what it holds.
+      context.alongTaken.push(...beside)
+      return refused(deliveries.filter((delivery) => !beside.includes(delivery)))
     }
     // Its row and turn can come before the call answers.
     context.accepted.push(deliveries)
@@ -382,18 +423,19 @@ async function submit($, context, deliveries, prompt) {
     } catch (error) {
       refusal = String(error)
     }
-    if (refusal === null) return true
+    if (refusal === null) return []
     const waiting = context.accepted.indexOf(deliveries)
     // A turn took them already; whatever the call said after that, they went.
     if (waiting < 0) {
       worldFailure($, 'prompt.submit', new Error(refusal))
-      return true
+      return []
     }
     context.accepted.splice(waiting, 1)
-    for (const delivery of deliveries) await $.fs.write(context.dir + '/attempts/' + delivery.id, JSON.stringify({ state: 'refused' }))
+    context.alongTaken.push(...beside)
+    const back = await refused(deliveries.filter((delivery) => !beside.includes(delivery)))
     context.unsettled = true
-    await trouble($, context, deliveries[0].id, 'it could not be handed over: ' + refusal)
-    return false
+    await trouble($, context, back[0].id, 'it could not be handed over: ' + refusal)
+    return back
   } finally {
     context.submitting.splice(0, context.submitting.length)
   }
@@ -410,23 +452,39 @@ async function submitted($, context, deliveries, acceptedTurn) {
   await within($, Promise.all([report, ...deliveries.map((delivery) => receipt($, context, delivery, 'submitted', acceptedTurn))]))
 }
 
-// Hands everything held to the model in one new turn; on failure it is
-// held again, before anything held since.
-async function flush($, context, how) {
+// Hands everything held to the model in one new turn: the last of the
+// user's own words start it, as the user's, and the rest, the World's
+// telling and the user's earlier words, is one row just before them, each in
+// the order it came, so the model reads them all in the one request. With
+// none of the user's, the World's telling is the prompt. Once the user
+// stopped a turn, only the user's own words start the next (`hushed`). What
+// does not go in is held again, before anything held since.
+async function flush($, context) {
   if (context.closed || context.busy || waiting(context)) return
   await readGoal($, context)
   if (context.closed || context.busy || waiting(context)) return
   // What rides with the next turn starts none: it waits for one.
-  const at = context.held.findIndex((delivery) => delivery.along === undefined && goalPermits(context, delivery))
-  if (at < 0) return
-  const deliveries = context.held.splice(at, 1)
-  if (deliveries[0].as_user !== true) {
-    while (at < context.held.length && context.held[at].as_user !== true && context.held[at].along === undefined && goalPermits(context, context.held[at])) deliveries.push(...context.held.splice(at, 1))
-  }
-  const prompt = deliveries[0].as_user === true
-    ? { text: asTyped(deliveries[0].text), asUser: true }
-    : { text: deliveries.map(framed).join('\n\n') }
-  if (!(await submit($, context, deliveries, prompt))) context.held.splice(at, 0, ...deliveries)
+  const ready = context.held.filter((delivery) => delivery.along === undefined && goalPermits(context, delivery))
+  const own = ready.filter((delivery) => delivery.as_user === true)
+  if (ready.length === 0 || (own.length === 0 && context.hushed)) return
+  const taken = !context.plain ? ready : own.length > 0 ? [own[0]] : ready
+  const start = own.length > 0 ? taken.filter((delivery) => delivery.as_user === true).pop() : null
+  const beside = start === null ? [] : taken.filter((delivery) => delivery !== start)
+  const prompt = start === null ? { text: taken.map(framed).join('\n\n') } : { text: asTyped(start.text), asUser: true }
+  for (const delivery of taken) context.held.splice(context.held.indexOf(delivery), 1)
+  const back = await submit($, context, taken, prompt, beside)
+  context.held.unshift(...back)
+  late($, context, taken.filter((delivery) => !back.includes(delivery)))
+}
+
+// Tells the node of words that waited in a running turn past the end of one
+// of its tool calls and went in only now: the handover into a running turn
+// did not happen, which nothing else shows.
+function late($, context, deliveries) {
+  const waited = deliveries.filter((delivery) => context.since.has(delivery.id) && context.ended > context.since.get(delivery.id))
+  const calls = waited.reduce((most, delivery) => Math.max(most, context.ended - context.since.get(delivery.id)), 0)
+  for (const delivery of deliveries) context.since.delete(delivery.id)
+  if (waited.length > 0) event($, context, 'late', { deliveries: waited.map((delivery) => delivery.id), calls }).catch(() => {})
 }
 
 // Told again before they went in, these never will: receipts keep them from
@@ -436,6 +494,15 @@ async function replaced($, context, deliveries) {
   await event($, context, 'replaced', { deliveries: deliveries.map((delivery) => delivery.id) })
 }
 
+// How long an idle session waits for more of what is being handed over
+// before its turn starts, and how many times over at most.
+const SETTLE_MS = 150
+const SETTLES = 5
+
+// What goes before a notice of Claude Code's own that was kept while the
+// session was hushed.
+const KEPT = 'Claude Code reported this while the session was stopped; it started no turn then:'
+
 // What the next turn reads of the last one the user stopped. Claude Code
 // ends a turn a plugin stops as one ended to deliver a following message,
 // and says so to a call it cut short: the model would not otherwise know
@@ -443,28 +510,46 @@ async function replaced($, context, deliveries) {
 const STOPPED = 'The user stopped your previous turn on purpose. A tool call it cut short may have partly taken effect, whatever its result says about why it ended. The commands it was waiting on were stopped; any already left running in the background go on.'
 
 // What rides with the next turn, the World's words for it: that the user
-// stopped the last turn, and what is held to go along. Taken as it is read;
-// `keep` puts back what did not go in.
-function alongNext(context) {
-  const along = context.held.filter((delivery) => delivery.along !== undefined && goalPermits(context, delivery))
+// stopped the last turn, what is held to go along, and `beside`, what a
+// submission brings with its prompt. Once the user stopped a turn, what the
+// World had to tell since rides with the user's next words too. Taken as it
+// is read; `keep` puts back what did not go in.
+function alongNext(context, beside = []) {
+  const along = context.held.filter((delivery) => goalPermits(context, delivery)
+    && (delivery.along !== undefined || (context.hushed && delivery.as_user !== true)))
   for (const delivery of along) context.held.splice(context.held.indexOf(delivery), 1)
   const stopped = context.toldStopped
   context.toldStopped = []
-  const texts = [...(stopped.length > 0 ? [framed({ text: STOPPED })] : []), ...along.map(framed)]
+  const kept = context.kept.splice(0, context.kept.length)
+  const texts = [...(stopped.length > 0 ? [framed({ text: STOPPED })] : []), ...along.map(framed),
+    ...kept.map((text) => framed({ text: KEPT + '\n\n' + text })),
+    ...beside.map((delivery) => (delivery.as_user === true ? earlierFramed(delivery) : framed(delivery)))]
   const keep = () => {
     context.held.unshift(...along)
     context.toldStopped.unshift(...stopped)
+    context.kept.unshift(...kept)
   }
-  return { along, texts, keep, stopped }
+  return { along, texts, keep, stopped, kept }
+}
+
+// What is kept of Claude Code's own telling outlives this mod: the notice
+// was dropped where it came in, and is nowhere else.
+async function saveKept($, context) {
+  try {
+    await $.fs.write(context.dir + '/kept-notices.json', JSON.stringify(context.kept))
+  } catch (error) {
+    worldFailure($, 'kept notices', error)
+  }
 }
 
 // What waits to ride with the next turn goes in as a row of its own just
 // before a prompt this plugin submits; the turn that prompt starts takes it
-// (`startTurn`), and the model reads both in the one request.
-async function alongBefore($, context) {
+// (`startTurn`), and the model reads both in the one request. Returns
+// whether the row was kept, or there was none to keep.
+async function alongBefore($, context, beside = []) {
   await readGoal($, context)
-  const { along, texts, keep, stopped } = alongNext(context)
-  if (texts.length === 0) return
+  const { along, texts, keep, stopped, kept } = alongNext(context, beside)
+  if (texts.length === 0) return true
   let appended
   try {
     context.appending = true
@@ -472,24 +557,35 @@ async function alongBefore($, context) {
   } catch (error) {
     keep()
     worldFailure($, 'session.append', error)
-    return
+    return false
   } finally {
     context.appending = false
   }
-  if (appended.deny !== undefined) keep()
-  else {
-    context.alongTaken.push(...along)
-    context.stopTaken.push(...stopped)
+  if (appended.deny !== undefined) {
+    keep()
+    return false
   }
+  context.alongTaken.push(...along)
+  context.stopTaken.push(...stopped)
+  if (kept.length > 0) await saveKept($, context)
+  return true
 }
 
 // What waits to ride with the next turn goes in beside a prompt someone typed
 // that starts it; the turn it starts takes it (`startTurn`).
 async function alongPrompt($, context, e, next) {
   if (e.turnId !== undefined || e.command !== undefined || context.closed) return next(e)
+  // Once the user stopped a turn, nothing but the user's own words starts
+  // the next: a background task's end, which Claude Code would start a turn
+  // with, is kept here and goes in with those words.
+  if (context.hushed && e.origin?.kind === 'task-notification' && typeof e.text === 'string') {
+    context.kept.push(e.text)
+    await saveKept($, context)
+    return { drop: 'the user stopped the last turn: this waits for the user\'s next words' }
+  }
   await accountAgentsBeforeSubmit($, context)
   await readGoal($, context)
-  const { along, texts, keep, stopped } = alongNext(context)
+  const { along, texts, keep, stopped, kept } = alongNext(context)
   if (texts.length === 0) return next(e)
   let result
   try {
@@ -502,6 +598,7 @@ async function alongPrompt($, context, e, next) {
   else {
     context.alongTaken.push(...along)
     context.stopTaken.push(...stopped)
+    if (kept.length > 0) await saveKept($, context)
   }
   return result
 }
@@ -596,8 +693,11 @@ async function look($, context) {
 // ended is left as it is.
 async function stopping($, context) {
   let asked = null
+  let user = true
   try {
-    asked = JSON.parse(await $.fs.read(context.dir + '/stop.json')).turn
+    const stop = JSON.parse(await $.fs.read(context.dir + '/stop.json'))
+    asked = stop.turn
+    user = stop.source === undefined || stop.source === 'user'
   } catch (error) {
     return
   }
@@ -607,6 +707,7 @@ async function stopping($, context) {
   try {
     await $.turn.abort({ turnId: asked })
     context.toldStopped.push(asked)
+    if (user) context.hushed = true
   } catch (error) {
     // Claude Code refuses an abort only for a turn that is not running: the
     // turn held as running had ended unseen, and is ended here.
@@ -625,7 +726,7 @@ async function staleTurn($, context, turn) {
   const completed = event($, context, 'turn_complete', { turn, aborted: true, reason: 'aborted', refusal: null, ms: null, answer: null, streamed: true })
   const saved = activity($, context)
   await within($, Promise.all([completed, saved]))
-  await flush($, context, 'submitted at the end of a turn')
+  await flush($, context)
 }
 
 async function looked($, context) {
@@ -638,7 +739,6 @@ async function looked($, context) {
     context.unsettled = true
     return
   }
-  if (!context.busy) await flush($, context, 'submitted')
   const receipted = new Set(receipts)
   // Node acknowledgment writes receipts before retiring handed reports.
   // Scan both, then receipts again, so that transition cannot fall between
@@ -702,25 +802,25 @@ async function looked($, context) {
     const older = context.held.filter((held) => (delivery.replaces ?? []).includes(held.id))
     for (const one of older) context.held.splice(context.held.indexOf(one), 1)
     if (older.length > 0) await replaced($, context, older)
-    // What rides with the next turn starts none: it waits for one, or goes
-    // into the one running at its next tool boundary.
-    if (context.busy || waiting(context) || delivery.along !== undefined || !goalPermits(context, delivery)) {
-      context.held.push(delivery)
-      context.handled.add(name)
-      continue
-    }
-    // Taken before the session is asked, so no other look takes it too.
+    // Everything waits where it is held: a running turn takes it at its
+    // next opening, an idle session in one new turn (`flush`), and what
+    // rides with the next turn waits for one.
+    context.held.push(delivery)
     context.handled.add(name)
-    // The user's own words, typed on one of the user's machines: only these
-    // go in as the user.
-    const prompt = delivery.as_user === true ? { text: asTyped(delivery.text), asUser: true } : { text: framed(delivery) }
-    if (!(await submit($, context, [delivery], prompt))) {
-      context.handled.delete(name)
-      continue
-    }
-    context.failing.delete(name)
-    // The turn that takes it writes the receipt together with handed.
+    if (context.busy) context.since.set(delivery.id, context.ended)
   }
+  if (context.busy) return
+  // What comes together goes in together. The node hands over each message
+  // as a file of its own, a queue released at a turn's end one after
+  // another: an idle session's turn starts once a look finds no more.
+  if (read.length > 0 && context.settling < SETTLES) {
+    context.settling += 1
+    context.again = true
+    await new Promise((resolve) => { $.clock.after(SETTLE_MS, resolve) })
+    return
+  }
+  context.settling = 0
+  await flush($, context)
 }
 
 // The conversation the World started this session for, as the settings it
@@ -803,11 +903,17 @@ async function startSession($, context) {
   const files = (await $.fs.list(context.dir)).map((entry) => entry.name)
   // A stopped turn remains the next turn's context across host retirement.
   await $.fs.write(context.dir + '/told-stops/.created', '')
+  if (files.includes('kept-notices.json')) {
+    const kept = JSON.parse(await $.fs.read(context.dir + '/kept-notices.json'))
+    if (Array.isArray(kept)) context.kept.push(...kept.filter((text) => typeof text === 'string'))
+  }
   if (files.includes('stop.json')) {
-    const requestedStop = JSON.parse(await $.fs.read(context.dir + '/stop.json')).turn
+    const stop = JSON.parse(await $.fs.read(context.dir + '/stop.json'))
+    const requestedStop = stop.turn
     const stopReceipts = new Set((await $.fs.list(context.dir + '/told-stops')).map((entry) => entry.name))
     if (typeof requestedStop === 'string' && !stopReceipts.has(encodeURIComponent(requestedStop))) {
       context.toldStopped.push(requestedStop)
+      if (stop.source === undefined || stop.source === 'user') context.hushed = true
     }
   }
   if (files.includes('activity.json')) {
@@ -885,6 +991,12 @@ async function startTurn($, context, e, next) {
   await startControlTurn($, e)
   context.busy = true
   context.turn = e.turnId
+  context.awaited.clear()
+  context.answered.clear()
+  context.asked = 0
+  context.streaming = false
+  // Whoever started this turn, the stop before it is behind it.
+  context.hushed = false
   noteTurnPrompt(context, e)
   // The session's cost total as the turn begins: what it has risen by at
   // the turn's end is what the turn cost (`completeTurn`).
@@ -947,6 +1059,9 @@ async function completeTurn($, context, e, next) {
   const spent = typeof total === 'number' && typeof before === 'number' ? (total >= before ? total - before : total) : null
   if (context.spentBefore?.turn === e.turnId) context.spentBefore = null
   if (context.turn === e.turnId) { context.busy = false; context.turn = null }
+  context.plain = false
+  // A turn cut short had no opening left for what it held.
+  if (e.isAborted) context.since.clear()
   const completed = event($, context, 'turn_complete', {
     turn: e.turnId,
     spent,
@@ -960,67 +1075,108 @@ async function completeTurn($, context, e, next) {
   })
   const saved = activity($, context)
   await within($, Promise.all([completed, saved]))
-  await flush($, context, 'submitted at the end of a turn')
+  await flush($, context)
   return next(e)
 }
 
-// Both successful and failed main-tool boundaries can append World facts.
-// Appending preserves the text without the classic context-size rewrite.
-async function boundary($, context, e, next) {
-  if (e.agent_id !== undefined) return next(e)
-  const result = await next(e)
-  if (context.closed || (await $.session.id()) !== context.sessionId) return result
-  // A first message is read before the model's first request, so before any
-  // tool's end: no read after this one begins it.
-  context.contextFresh = false
-  await contextCurrent($, context)
-  if (await stopping($, context)) return result
-  await readGoal($, context)
-  const acceptedTurn = context.turn
-  if (!context.busy || acceptedTurn === null) return result
-  // Whatever waits goes in beside this result: the World's telling, and
-  // the user's words sent while the turn runs (`world-colleagues.md`).
-  const deliveries = context.held.filter((delivery) => goalPermits(context, delivery))
-  if (deliveries.length === 0) return result
-  const selected = new Set(deliveries)
-  for (let i = context.held.length - 1; i >= 0; i--) if (selected.has(context.held[i])) context.held.splice(i, 1)
-  try {
-    for (const delivery of deliveries) await $.fs.write(context.dir + '/attempts/' + delivery.id, JSON.stringify({ state: 'appending', turn: acceptedTurn }))
-  } catch (error) {
-    // No native append was attempted. Keep these words ahead of later
-    // deliveries; only an uncertain host append must not be replayed.
-    context.held.unshift(...deliveries)
-    throw error
-  }
-  if (!(await goalPermitsAll($, context, deliveries)) || !context.busy || context.turn !== acceptedTurn) {
-    for (const delivery of deliveries) await $.fs.write(context.dir + '/attempts/' + delivery.id, JSON.stringify({ state: 'refused' }))
-    context.held.unshift(...deliveries)
-    return result
-  }
-  try {
-    context.appending = true
-    let appended
-    try {
-      const text = deliveries.map((delivery) => (delivery.as_user === true ? userFramed(delivery) : framed(delivery))).join('\n\n')
-      appended = await $.session.append({ message: { type: 'user', content: [{ type: 'text', text }] } })
-    } finally {
-      context.appending = false
+// The rows the main loop's conversation keeps tell where its step stands:
+// a tool call asked for, and its result. A result kept with none awaited and
+// the response over is an opening.
+async function kept($, context, message) {
+  if (!Array.isArray(message.content)) return
+  let answered = false
+  for (const block of message.content) {
+    if (message.type === 'assistant' && block.type === 'tool_use') {
+      if (!context.answered.has(block.id)) context.awaited.add(block.id)
+    } else if (message.type === 'user' && block.type === 'tool_result') {
+      context.awaited.delete(block.tool_use_id)
+      context.answered.add(block.tool_use_id)
+      context.ended += 1
+      answered = true
     }
-    if (appended.deny !== undefined) {
+  }
+  if (answered && !context.streaming && context.awaited.size === 0 && context.answered.size >= context.asked) await opening($, context)
+}
+
+// A step's response is over, and says how many tool calls it asked for.
+// With every one answered already, as when Claude Code ran them while the
+// response arrived, this is the opening; otherwise the last result's row is.
+async function stepped($, context, result) {
+  context.asked = Array.isArray(result?.toolUses) ? result.toolUses.length : 0
+  if (context.asked > 0 && context.awaited.size === 0 && context.answered.size >= context.asked) await opening($, context)
+}
+
+// An opening: every tool call of the main loop's step has its result and the
+// next request is not made yet. What is held goes in here as one row beside
+// the results, the World's telling and the user's words sent while the turn
+// runs (`world-colleagues.md`); appending keeps the text without the classic
+// context-size rewrite. The step's own events find it (`kept`, `stepped`),
+// which every session has: Claude Code 2.1.322 runs no classic tool hook of
+// a plugin in a session on Fable 5.2, where nothing went in for a day. No
+// row goes between two results of one response, however its calls ran.
+async function opening($, context) {
+  if (context.opening || context.closed) return
+  context.opening = true
+  try {
+    if ((await $.session.id()) !== context.sessionId) return
+    // A first message is read before the model's first request, so before any
+    // tool's end: no read after this one begins it.
+    context.contextFresh = false
+    await contextCurrent($, context)
+    if (await stopping($, context)) return
+    await readGoal($, context)
+    const acceptedTurn = context.turn
+    if (!context.busy || acceptedTurn === null) return
+    const deliveries = context.held.filter((delivery) => goalPermits(context, delivery))
+    // What a paused goal holds back waits on the goal, not on an opening.
+    for (const delivery of context.held) if (!deliveries.includes(delivery)) context.since.delete(delivery.id)
+    if (deliveries.length === 0) return
+    const selected = new Set(deliveries)
+    for (let i = context.held.length - 1; i >= 0; i--) if (selected.has(context.held[i])) context.held.splice(i, 1)
+    try {
+      for (const delivery of deliveries) await $.fs.write(context.dir + '/attempts/' + delivery.id, JSON.stringify({ state: 'appending', turn: acceptedTurn }))
+    } catch (error) {
+      // No native append was attempted. Keep these words ahead of later
+      // deliveries; only an uncertain host append must not be replayed.
+      context.held.unshift(...deliveries)
+      throw error
+    }
+    if (!(await goalPermitsAll($, context, deliveries)) || !context.busy || context.turn !== acceptedTurn) {
       for (const delivery of deliveries) await $.fs.write(context.dir + '/attempts/' + delivery.id, JSON.stringify({ state: 'refused' }))
       context.held.unshift(...deliveries)
-      await trouble($, context, deliveries[0].id, appended.deny)
-      return result
+      return
     }
-    for (const delivery of deliveries) await receipt($, context, delivery, 'appended at a main tool boundary', acceptedTurn)
-    await handed($, context, deliveries, acceptedTurn, 'appended at a main tool boundary')
+    try {
+      context.appending = true
+      let appended
+      try {
+        const text = deliveries.map((delivery) => (delivery.as_user === true ? userFramed(delivery) : framed(delivery))).join('\n\n')
+        appended = await $.session.append({ message: { type: 'user', content: [{ type: 'text', text }] } })
+      } finally {
+        context.appending = false
+      }
+      if (appended.deny !== undefined) {
+        for (const delivery of deliveries) await $.fs.write(context.dir + '/attempts/' + delivery.id, JSON.stringify({ state: 'refused' }))
+        context.held.unshift(...deliveries)
+        await trouble($, context, deliveries[0].id, appended.deny)
+        return
+      }
+      for (const delivery of deliveries) context.since.delete(delivery.id)
+      for (const delivery of deliveries) await receipt($, context, delivery, 'appended at a main tool boundary', acceptedTurn)
+      await within($, handed($, context, deliveries, acceptedTurn, 'appended at a main tool boundary'))
+    } catch (error) {
+      // append may already have crossed the host boundary: retain its
+      // evidence rather than replaying an unconfirmed external effect.
+      await trouble($, context, deliveries[0].id, 'append acceptance needs reconciliation: ' + error)
+      throw error
+    }
   } catch (error) {
-    // append may already have crossed the host boundary: retain its
-    // evidence rather than replaying an unconfirmed external effect.
-    await trouble($, context, deliveries[0].id, 'append acceptance needs reconciliation: ' + error)
-    throw error
+    // The step goes on whatever failed here; a later look or the turn's end
+    // hands over what is still held.
+    worldFailure($, 'opening', error)
+  } finally {
+    context.opening = false
   }
-  return result
 }
 
 async function endSession($, context, e, next) {
@@ -1251,7 +1407,19 @@ export function register(on) {
     const shown = e.agentId === undefined ? context.shown : agentPresentation(context, e.agentId)
     const reported = e.agentId === undefined ? base : agentReports(base, e.agentId)
     const held = await heldStep($, context, input)
-    return yield* measuredStep($, context, shown, reported, input, held ?? next, held !== null)
+    if (e.agentId !== undefined) return yield* measuredStep($, context, shown, reported, input, held ?? next, held !== null)
+    context.awaited.clear()
+    context.answered.clear()
+    context.asked = 0
+    context.streaming = true
+    let result
+    try {
+      result = yield* measuredStep($, context, shown, reported, input, held ?? next, held !== null)
+    } finally {
+      context.streaming = false
+    }
+    await stepped($, context, result)
+    return result
   }).catch(async function* ($, e, next) { return yield* streamWithoutWorld($, 'turn.step', e, next) })
   on('tool.call', async ($, e, next) => {
     try {
@@ -1302,6 +1470,7 @@ export function register(on) {
     const result = await shown.append(reported, e, next)
     if (e.agentId === undefined && e.door === 'prompt' && result.deny === undefined && !context.appending
       && e.origin?.kind === 'plugin' && e.origin.name === $.plugin.name) entered(context)
+    if (e.agentId === undefined && result.deny === undefined) await kept($, context, result.message)
     if (state !== null && result.deny === undefined && ['user', 'assistant', 'attachment', 'system'].includes(result.message.type)) {
       state.lastRawUuid = result.uuid
       state.checkpoints.last_raw_uuid = result.uuid
@@ -1442,14 +1611,6 @@ export function register(on) {
     await stepMeasured($, context, null, true)
     return next(e)
   }).catch(($, e, next) => continueWithoutWorld($, 'session.measure', e, next))
-  on('classic.PostToolUse', async ($, e, next) => {
-    if (await aside($)) return next(e)
-    return boundary($, await route($, registry, 'classic.PostToolUse', e), e, next)
-  }).catch(($, e, next) => continueWithoutWorld($, 'classic.PostToolUse', e, next))
-  on('classic.PostToolUseFailure', async ($, e, next) => {
-    if (await aside($)) return next(e)
-    return boundary($, await route($, registry, 'classic.PostToolUseFailure', e), e, next)
-  }).catch(($, e, next) => continueWithoutWorld($, 'classic.PostToolUseFailure', e, next))
   on('session.end', async ($, e, next) => {
     if (await aside($)) return next(e)
     registry.cleared = e.reason === 'clear' ? e.sessionId : null

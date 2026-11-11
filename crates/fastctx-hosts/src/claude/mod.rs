@@ -90,6 +90,9 @@ const FRAME_V1: &str = "The fastctx plugin delivers a message from the World.";
 /// How the user's words sent into a running turn begin, as the model reads
 /// them beside a tool's result (`world.js`, `userFramed`).
 const USER_FRAME: &str = "The user sent a new message while you were working:";
+/// How the user's earlier words begin where several go in with the ones that
+/// start a turn, in the row just before them (`world.js`, `earlierFramed`).
+const EARLIER_FRAME: &str = "The user also sent this message, before the one that follows:";
 
 /// What the World's plugin puts before the user's words that begin with "/",
 /// after any already there, which Claude Code refuses from a plugin as a
@@ -117,14 +120,16 @@ pub fn framed(text: &str) -> String {
 /// own frame for what a plugin submits, which puts a line of its own before
 /// them (2.1.289).
 pub fn is_framed(text: &str) -> bool {
-    [FRAME, FRAME_V1, USER_FRAME].iter().any(|frame| text.starts_with(frame) || text.contains(&format!("\n{frame}\n")))
+    [FRAME, FRAME_V1, USER_FRAME, EARLIER_FRAME]
+        .iter()
+        .any(|frame| text.starts_with(frame) || text.contains(&format!("\n{frame}\n")))
 }
 
 /// The words before the World's telling, where it went in beside them, as
 /// the context of a prompt that starts a turn; `None` where it is all the
 /// World's, or none of it is.
 pub fn beside_framed(text: &str) -> Option<&str> {
-    let frames = [FRAME, FRAME_V1, USER_FRAME];
+    let frames = [FRAME, FRAME_V1, USER_FRAME, EARLIER_FRAME];
     if frames.iter().any(|frame| text.starts_with(frame)) {
         return None;
     }
