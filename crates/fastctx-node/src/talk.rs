@@ -1215,9 +1215,8 @@ pub(crate) async fn stop_here_as(
 ) -> Result<bool, Failure> {
     node.residents.stoppable(resident)?;
     let targeted = node.residents.now(resident).and_then(|now| now.turn);
-    if source == fastctx_types::turn_evidence::StopSource::User {
-        crate::goals::holding::stop(node, resident, targeted.clone()).await?;
-    }
+    // Why the turn ended is read from this when its end comes: it is kept
+    // before the host is asked, and does not wait for the disk.
     if let Some(turn) = &targeted {
         crate::turn_evidence::remember(node, resident, turn, source)
             .await
@@ -1230,9 +1229,61 @@ pub(crate) async fn stop_here_as(
     // What its run calls wait for stops at once, here and on the machines it
     // works on, not once its host has ended the turn.
     node.interrupts.raise(&Address { machine: node.machine(), resident: resident.clone() });
-    // Words on their way start a turn whose id is not known yet: it stops as
-    // soon as it is. What only rides with the next turn starts none, and
-    // keeps no stop for the turn someone starts later.
+    let targeted = match targeted {
+        Some(turn) => Some(turn),
+        None => match stop_coming(node, resident, source).await? {
+            Coming::Kept => {
+                pause_goal(node, resident, None, source).await;
+                return Ok(true);
+            }
+            Coming::Turn(turn) => {
+                crate::turn_evidence::remember(node, resident, &turn, source)
+                    .await
+                    .map_err(|error| Failure::new(format!("recording why the turn is stopped: {error}")))?;
+                Some(turn)
+            }
+            Coming::Nothing => None,
+        },
+    };
+    if targeted.is_some() && targeted != node.residents.now(resident).and_then(|now| now.turn) {
+        return Ok(false);
+    }
+    let stopped = match (about.host.agent.as_str(), about.world_managed(), &about.session) {
+        ("codex", true, Some(thread)) => match &targeted {
+            Some(turn) => node.codex.of(node, &about)?.interrupt_turn(thread, turn).await.map_err(Failure::new),
+            None => Ok(false),
+        },
+        ("claude", _, _) => match &targeted {
+            Some(turn) => crate::claude::stop(node, resident, turn),
+            None => Ok(false),
+        },
+        _ => Err(Failure::new(format!("{resident} is a session the World does not hold; stop it where it is open"))),
+    };
+    // The host is asked first; the goal is paused after, and again from the
+    // turn's end as one the user stopped (`turns::finish_at`).
+    pause_goal(node, resident, targeted, source).await;
+    stopped
+}
+
+/// What a stop asked while no turn ran is for.
+enum Coming {
+    /// Words on their way: the turn they start stops as soon as it is known.
+    Kept,
+    /// A turn begun since, which took words that were on their way then.
+    Turn(String),
+    Nothing,
+}
+
+/// A stop asked while no turn ran. Words on their way start a turn whose id
+/// is not known yet: it stops as soon as it is. What only rides with the
+/// next turn starts none, and keeps no stop for the turn someone starts
+/// later. A turn begun since is the stop's only when it took words that
+/// were on their way then; one of words that came later is not stopped.
+async fn stop_coming(
+    node: &Arc<Node>,
+    resident: &ResidentId,
+    source: fastctx_types::turn_evidence::StopSource,
+) -> Result<Coming, Failure> {
     let directory = node.world.conversation(resident);
     let reading = directory.clone();
     let coming = fastctx_platform::task::spawn_blocking(move || {
@@ -1250,60 +1301,38 @@ pub(crate) async fn stop_here_as(
     .await
     .map_err(|error| Failure::new(error.to_string()))?
     .map_err(|error| Failure::new(format!("reading what is on its way: {error}")))?;
-    if targeted.is_none()
-        && node
-            .stops
-            .coming(node, resident, coming.clone(), source)
-            .await
-            .map_err(|error| Failure::new(error.to_string()))?
-    {
-        return Ok(true);
+    if node.stops.coming(node, resident, coming.clone(), source).await.map_err(|error| Failure::new(error.to_string()))? {
+        return Ok(Coming::Kept);
     }
-    let current = node.residents.now(resident).and_then(|now| now.turn);
-    if targeted.is_some() && targeted != current {
-        return Ok(false);
-    }
-    let targeted = match (targeted, current) {
-        (Some(turn), _) => turn,
-        // Nothing ran when the stop was asked: a turn begun since is its
-        // only when it took words that were on their way then. One of
-        // words that came later is not stopped by it.
-        (None, Some(turn)) => {
-            let (looking, taken) = (turn.clone(), coming);
-            let took = fastctx_platform::task::spawn_blocking(move || -> std::io::Result<bool> {
-                for id in &taken {
-                    if crate::delivery::input_turn(&directory, id)?.as_deref() == Some(looking.as_str()) {
-                        return Ok(true);
-                    }
-                }
-                Ok(false)
-            })
-            .await
-            .map_err(|error| Failure::new(error.to_string()))?
-            .map_err(|error| Failure::new(format!("reading which words the turn took: {error}")))?;
-            if !took {
-                return Ok(false);
+    let Some(turn) = node.residents.now(resident).and_then(|now| now.turn) else { return Ok(Coming::Nothing) };
+    let looking = turn.clone();
+    let took = fastctx_platform::task::spawn_blocking(move || -> std::io::Result<bool> {
+        for id in &coming {
+            if crate::delivery::input_turn(&directory, id)?.as_deref() == Some(looking.as_str()) {
+                return Ok(true);
             }
-            turn
         }
-        (None, None) => return Ok(false),
-    };
-    let targeted = Some(targeted);
-    if let Some(turn) = &targeted {
-        crate::turn_evidence::remember(node, resident, turn, source)
-            .await
-            .map_err(|error| Failure::new(format!("recording why the turn is stopped: {error}")))?;
+        Ok(false)
+    })
+    .await
+    .map_err(|error| Failure::new(error.to_string()))?
+    .map_err(|error| Failure::new(format!("reading which words the turn took: {error}")))?;
+    Ok(if took { Coming::Turn(turn) } else { Coming::Nothing })
+}
+
+/// A goal the user stopped a turn of waits for them: paused, once the stop
+/// is on its way. Its failure leaves the stop standing and is noted.
+async fn pause_goal(
+    node: &Arc<Node>,
+    resident: &ResidentId,
+    turn: Option<String>,
+    source: fastctx_types::turn_evidence::StopSource,
+) {
+    if source != fastctx_types::turn_evidence::StopSource::User {
+        return;
     }
-    match (about.host.agent.as_str(), about.world_managed(), &about.session) {
-        ("codex", true, Some(thread)) => match targeted {
-            Some(turn) => node.codex.of(node, &about)?.interrupt_turn(thread, &turn).await.map_err(Failure::new),
-            None => Ok(false),
-        },
-        ("claude", _, _) => match targeted {
-            Some(turn) => crate::claude::stop(node, resident, &turn),
-            None => Ok(false),
-        },
-        _ => Err(Failure::new(format!("{resident} is a session the World does not hold; stop it where it is open"))),
+    if let Err(error) = crate::goals::holding::stop(node, resident, turn).await {
+        node.log.line(format_args!("pausing {resident}'s goal after a stop: {}", error.message));
     }
 }
 
