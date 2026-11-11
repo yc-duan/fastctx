@@ -54,16 +54,10 @@ pub(crate) fn register(node: &Arc<Node>) {
 
 /// Answers remain direct human input: their arbitrary JSON may contain
 /// credentials and must not be copied into an operation's durable payload.
+/// A model or a name is a setting the user changes and sees at once: it
+/// answers directly, without a durable operation in its way.
 pub(super) fn takes(control: &Control) -> bool {
-    matches!(
-        control,
-        Control::Command { .. }
-            | Control::Compact
-            | Control::Model { .. }
-            | Control::Rename { .. }
-            | Control::Fork { .. }
-            | Control::Rewind { .. }
-    )
+    matches!(control, Control::Command { .. } | Control::Compact | Control::Fork { .. } | Control::Rewind { .. })
 }
 
 fn family(control: &Control) -> &'static Family {

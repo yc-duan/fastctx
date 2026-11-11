@@ -948,17 +948,11 @@ impl fastctx_net::link::Node for Handler {
                         .await?;
                         Ok(RemoteReply::Asked { colleague, waiting })
                     }
-                    RemoteCall::Talk { to, text, attachments, files_on, id } => crate::talk::submission::talk_here(
-                        &node,
-                        &from,
-                        &to,
-                        text,
-                        attachments,
-                        files_on.as_ref(),
-                        id.as_deref(),
-                    )
-                    .await
-                    .map(|landed| RemoteReply::Said { landed }),
+                    RemoteCall::Talk { to, text, attachments, files_on, id } => {
+                        crate::talk::talk_here(&node, &from, &to, text, attachments, files_on.as_ref(), id.as_deref())
+                            .await
+                            .map(|landed| RemoteReply::Said { landed })
+                    }
                     RemoteCall::Watch {
                         resident,
                         watch,

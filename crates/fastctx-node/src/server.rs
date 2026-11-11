@@ -1386,7 +1386,7 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             // Named as the machine they go to names them: by the machine
             // they were typed on and the device's own id for them.
             let delivery = id.as_deref().map(|id| crate::speech::fixed_id("talk", &[node.machine().as_str(), id]));
-            crate::talk::submission::talk(node, to, machine, text, attachments, files_on, id)
+            crate::talk::talk(node, to, machine, text, attachments, files_on, id)
                 .await
                 .map(|(to, landed)| Reply::Spoken { to, landed, delivery })
         }

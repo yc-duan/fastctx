@@ -350,10 +350,10 @@ fn control(request: &crate::session::control::Control) -> Response {
         Control::Answer { .. }
         | Control::Command { .. }
         | Control::Compact
-        | Control::Model { .. }
-        | Control::Rename { .. }
         | Control::Fork { .. }
         | Control::Rewind { .. } => Response::Submit,
+        // A setting the user changes answers as it is changed.
+        Control::Model { .. } | Control::Rename { .. } => Response::Answer,
         Control::CancelControl { .. } | Control::Agents | Control::AgentMessages { .. } => Response::Answer,
     }
 }
