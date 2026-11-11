@@ -2307,9 +2307,10 @@ function liveTalk(address: Address): DeskTalk {
       conversation.rebased(generation, offset, turnsAdded);
       page.update({ read: true });
     },
-    live: (event, key, evicted) => {
+    timeline: (delta) => page.reopened(() => { if (!conversation.timeline(delta)) reading.again(); }),
+    live: (event, key, evicted, placement, older) => {
       heardAt = Date.now();
-      conversation.liveEvent(event, key, evicted);
+      if (!conversation.liveEvent(event, key, evicted, placement, older)) reading.again();
       page.update();
     },
     happened: (at, event) => {

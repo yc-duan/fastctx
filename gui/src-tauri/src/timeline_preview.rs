@@ -1,7 +1,7 @@
 //! A live item can grow beyond a page before its durable object is available.
 //! Keep a visibly incomplete preview until materialization supplies that object.
 
-use fastctx_types::session::{Content, Happened, Health, HealthKind, SessionEvent, What};
+use fastctx_types::session::{Content, Happened, SessionEvent, What};
 
 pub(crate) const LIVE_EVENT_BYTES: usize = 256 << 10;
 const TEXT_BYTES: usize = 32 << 10;
@@ -56,21 +56,19 @@ pub(crate) fn limit(event: &mut SessionEvent) -> bool {
         }
         Happened::Heard { text, message, notice, .. } => {
             clipped(text);
-            *message = None;
+            if let Some(message) = message {
+                message.attachments.clear();
+                message.images.clear();
+                message.content.clear();
+                message.hook_fragments.clear();
+                message.presentation = serde_json::Value::Null;
+                message.detail = serde_json::Value::Null;
+            }
             *notice = None;
         }
         Happened::Grew { text, .. } | Happened::RealtimeGrew { text, .. } => clipped(text),
         _ => {}
     }
-    if serde_json::to_vec(event).map_or(0, |bytes| bytes.len()) > LIVE_EVENT_BYTES {
-        event.happened = Happened::Health {
-            turn: None,
-            health: Health {
-                kind: HealthKind::Warning,
-                text: "A large event is being saved to the timeline; its complete content will be available there."
-                    .into(),
-            },
-        };
-    }
+
     true
 }

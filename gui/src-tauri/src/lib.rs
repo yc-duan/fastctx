@@ -111,7 +111,10 @@ mod unix_instance;
 
 mod conversation_watch;
 mod timeline_body;
+mod timeline_changes;
+mod timeline_delta;
 mod timeline_objects;
+mod timeline_overlay;
 mod timeline_preview;
 mod timeline_scan;
 mod timeline_watch;

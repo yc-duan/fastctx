@@ -12,6 +12,8 @@ use serde::{Deserialize, Serialize};
 pub(crate) struct Cursor {
     revision: String,
     after: TimelinePlace,
+    #[serde(default)]
+    seeking: bool,
 }
 #[derive(Serialize)]
 pub(crate) struct Scanned {
@@ -28,11 +30,11 @@ async fn page(
         (r.world.clone(), r.resident.clone(), r.machine.clone())
     };
     let response = tokio::select! {
-        response = world.timeline(machine, TimelineAsk::Page { resident, from, max_events: PAGE_EVENTS, max_bytes: PAGE_BYTES }) => response.map_err(|e| e.to_string())?,
+        response = tokio::time::timeout(std::time::Duration::from_secs(30), world.timeline(machine, TimelineAsk::Page { resident, from, max_events: PAGE_EVENTS, max_bytes: PAGE_BYTES })) => response.map_err(|_| "reading the timeline page exceeded 30 s")?.map_err(|e| e.to_string())?,
         () = reader.closed() => return Err("the conversation window closed".into()),
     };
     match response {
-        TimelineTold::Page { revision: Some(revision), events, older, newer } => {
+        TimelineTold::Page { revision: Some(revision), events, older, newer, .. } => {
             Ok((revision, events, older.is_some(), newer.is_some()))
         }
         _ => Err("the timeline is not available for a complete export".into()),
@@ -40,28 +42,24 @@ async fn page(
 }
 
 pub(crate) async fn read(reader: crate::timeline_watch::Shared, cursor: Option<Cursor>) -> Result<Scanned, String> {
-    let first = cursor.is_none();
+    let seeking = cursor.as_ref().is_none_or(|c| c.seeking);
     let expected =
         cursor.as_ref().map(|c| c.revision.parse::<u64>().map_err(|_| "invalid export revision")).transpose()?;
-    let from = cursor.map_or(TimelineFrom::Latest, |c| TimelineFrom::After { place: c.after });
-    let (revision, mut events, mut older, mut newer) = page(&reader, from).await?;
+    let from = cursor.map_or(TimelineFrom::Latest, |c| {
+        if c.seeking { TimelineFrom::Before { place: c.after } } else { TimelineFrom::After { place: c.after } }
+    });
+    let (revision, events, older, mut newer) = page(&reader, from).await?;
     if expected.is_some_and(|r| r != revision) {
         return Err("the conversation changed during export; copy it again".into());
     }
-    // The public API has no earliest selector. Discover its first page without
-    // retaining the intervening pages, then stream forward from that cursor.
-    while first && older {
-        let place = events.first().ok_or("an export page did not advance")?.place.clone();
-        let (current, before, has_older, has_newer) = page(&reader, TimelineFrom::Before { place }).await?;
-        if current != revision {
-            return Err("the conversation changed during export; copy it again".into());
-        }
-        if before.is_empty() {
-            return Err("an export page did not advance".into());
-        }
-        events = before;
-        older = has_older;
-        newer = has_newer;
+    // Seeking is itself paged: one invocation performs at most one page read,
+    // so a caller can cancel and report progress before reaching the start.
+    if seeking && older {
+        let after = events.first().ok_or("an export page did not advance")?.place.clone();
+        return Ok(Scanned {
+            events: Vec::new(),
+            next: Some(Cursor { revision: revision.to_string(), after, seeking: true }),
+        });
     }
     let mut output = Vec::new();
     let mut bytes = 0;
@@ -90,7 +88,11 @@ pub(crate) async fn read(reader: crate::timeline_watch::Shared, cursor: Option<C
     }
     Ok(Scanned {
         events: output,
-        next: if newer { after.map(|after| Cursor { revision: revision.to_string(), after }) } else { None },
+        next: if newer {
+            after.map(|after| Cursor { revision: revision.to_string(), after, seeking: false })
+        } else {
+            None
+        },
     })
 }
 

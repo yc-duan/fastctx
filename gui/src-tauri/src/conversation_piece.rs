@@ -44,8 +44,15 @@ pub(crate) enum Piece {
         generation: u64,
         event: Box<serde_json::value::RawValue>,
         key: String,
+        older: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        placement: Option<crate::timeline_delta::Placement>,
         #[serde(skip_serializing_if = "Vec::is_empty")]
         evicted: Vec<String>,
+    },
+    /// Changed materialized events within the same navigation generation.
+    Timeline {
+        delta: crate::timeline_delta::Delta,
     },
     /// Whether the conversation works now, and on which turn, as its
     /// machine holds it; told after every event before it. A machine too

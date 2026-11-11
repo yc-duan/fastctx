@@ -1,4 +1,5 @@
 import { sameEvent } from "./event-identity";
+import { grown, placeEvent } from "./timeline-events";
 // A conversation as its page holds it (`world-gui.md`, 对话: 很长的对话). The
 // shell keeps every event of it (`src-tauri/src/transcript.rs`); the page
 // holds its latest turns, read as they go on, and whatever earlier parts its
@@ -13,7 +14,7 @@ import { sameEvent } from "./event-identity";
 // Each question goes to the part that holds its answer; what is live (the
 // turn under way, words being sent, requests waiting) is in the latest.
 
-import type { AskState } from "./ask-state";
+import { askKey, type AskState } from "./ask-state";
 import { inOrder, type ModelRequest } from "./requests";
 import type { SessionEvent, TurnEnd } from "../world/events";
 import type { MachineName } from "../world/events";
@@ -33,6 +34,15 @@ export interface Window {
   carry: SessionEvent[];
   /** Opaque timeline paging has no full-history ordinal or turn count. */
   pages?: { older: boolean; newer: boolean; keys?: string[]; live_keys?: string[]; pending?: SessionEvent[]; objects: { at: number; bytes: number; object: string }[] };
+}
+
+export interface TimelineDelta {
+  generation: number;
+  events: { key: string; event: SessionEvent }[];
+  pending?: SessionEvent[];
+  removed: string[];
+  placed: { key: string; after: string | null }[];
+  pages: NonNullable<Window["pages"]>;
 }
 
 /** A part read from the shell. */
@@ -79,7 +89,7 @@ export interface Found {
 }
 
 /** Where the parts a page does not hold are read from. */
-export interface ScanCursor { revision: string; after: { order: string; item: string } }
+export interface ScanCursor { revision: string; after: { order: string; item: string }; seeking?: boolean }
 export interface ExpandedEvent { object: string; event: SessionEvent }
 export interface Scanned { events: SessionEvent[]; next: ScanCursor | null }
 
@@ -251,10 +261,25 @@ export class Conversation {
   }
 
   /** Applies only the realtime change, retaining no raw chunk journal. */
-  liveEvent(event: SessionEvent, key: string, evicted: readonly string[] = []): void {
+  liveEvent(event: SessionEvent, key: string, evicted: readonly string[] = [], placement?: { after: string | null }, older?: boolean): boolean {
     if (event.event === "changed" && (event.change.kind === "request" || event.change.kind === "resolved")) {
       this.live.livePending(event);
-      return;
+      const pages = this.pageWindow?.pages;
+      if (pages) {
+        const id = askKey(event.change.id);
+        const pending = (pages.pending ?? []).filter((event) => event.event !== "changed" || event.change.kind !== "request" || askKey(event.change.id) !== id);
+        if (event.change.kind === "request") pending.push(event);
+        pages.pending = pending;
+      }
+      return true;
+    }
+    const held = this.pageWindow;
+    if (held?.pages?.keys) {
+      if (older !== undefined && held.pages.older !== older) { held.pages.older = older; this.structure += 1; }
+      const at = held.pages.keys.indexOf(key);
+      const snapshot = grown(at < 0 ? undefined : held.events[at], event);
+      if (at < 0) { held.pages.keys.push(key); held.events.push(snapshot); }
+      else { held.events[at] = snapshot; held.pages.objects = held.pages.objects.filter((object) => object.at !== at); }
     }
     this.route(event);
     this.live.event(event, key);
@@ -271,11 +296,36 @@ export class Conversation {
         });
         window.pages.keys = keys;
         window.pages.objects = window.pages.objects.flatMap((object) => { const at = positions.get(object.at); return at === undefined ? [] : [{ ...object, at }]; });
-        if (evicted.length) window.pages.older = true;
+
         this.tail.end = window.events.length;
       }
       this.parts = [...this.parts]; this.structure += 1;
     }
+    if (placement && this.pageWindow && !placeEvent(this.pageWindow, key, placement.after)) return false;
+    return true;
+  }
+
+  /** Materialization reuses unchanged events and preserves the navigation. */
+  timeline(delta: TimelineDelta): boolean {
+    const held = this.pageWindow;
+    if (!held?.pages?.keys || held.generation !== delta.generation) return false;
+    const events = new Map(held.pages.keys.map((key, at) => [key, held.events[at]!]));
+    for (const changed of delta.events) events.set(changed.key, changed.event);
+    const removed = new Set(delta.removed);
+    const keys = held.pages.keys.filter((key) => !removed.has(key));
+    for (const place of delta.placed) {
+      const old = keys.indexOf(place.key);
+      if (old >= 0) keys.splice(old, 1);
+      const at = place.after === null ? -1 : keys.indexOf(place.after);
+      if (place.after !== null && at < 0) return false;
+      keys.splice(at + 1, 0, place.key);
+    }
+    const ordered = keys.map((key) => events.get(key));
+    if (ordered.some((event) => event === undefined)) return false;
+    const follows = this.follows;
+    this.open({ ...held, events: ordered as SessionEvent[], pages: { ...delta.pages, keys, pending: delta.pending ?? held.pages.pending ?? [] } }, this.source);
+    this.follows = follows;
+    return true;
   }
 
   /** Fetches only after the reader explicitly opens a deferred event. */

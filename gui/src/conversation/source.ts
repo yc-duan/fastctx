@@ -16,7 +16,8 @@ export interface ConversationFeed {
   rebased(generation: number, offset: number, turnsAdded: number): void;
   /** One thing as it happens, the `at`th event. */
   happened(at: number, event: SessionEvent): void;
-  live(event: SessionEvent, key: string, evicted?: string[]): void;
+  live(event: SessionEvent, key: string, evicted?: string[], placement?: { after: string | null }, older?: boolean): void;
+  timeline(delta: import("./conversation").TimelineDelta): void;
   /** The live part broke and is being read again: why, and since when. */
   interrupted(why: string | null, since: Date): void;
   /** It came back. */
@@ -61,16 +62,27 @@ export const watched: ConversationSource = {
     };
     let generation: number | null = null;
     let navigation = 0;
-    let pending: Extract<Piece, { kind: "event" | "live" }>[] = [];
+    let pending: Extract<Piece, { kind: "event" | "live" | "timeline" }>[] = [];
+    let pendingBytes = 0;
+    const buffered = (piece: Extract<Piece, { kind: "event" | "live" | "timeline" }>) => {
+      pendingBytes += new TextEncoder().encode(JSON.stringify(piece)).byteLength;
+      if (pending.length >= 800 || pendingBytes > 4 * 1024 * 1024) { restart(); return; }
+      pending.push(piece);
+    };
     const install = (window: Window) => {
       if (window.pages && generation !== null && window.generation < generation) return;
       generation = window.pages ? window.generation : null;
       feed.window(window, parts);
       const events = pending;
       pending = [];
+      pendingBytes = 0;
       for (const event of events) {
-        if (event.generation === generation) { if (event.kind === "live") feed.live(event.event, event.key, event.evicted); else feed.happened(event.at, event.event); }
-        else if (event.generation! > (generation ?? -1)) pending.push(event);
+        const at = event.kind === "timeline" ? event.delta.generation : event.generation;
+        if (at === generation) {
+          if (event.kind === "timeline") feed.timeline(event.delta);
+          else if (event.kind === "live") feed.live(event.event, event.key, event.evicted, event.placement, event.older);
+          else feed.happened(event.at, event.event);
+        } else if (at! > (generation ?? -1)) buffered(event);
       }
     };
     const parts: PartSource = {
@@ -79,8 +91,12 @@ export const watched: ConversationSource = {
         const owner = current();
         const request = ++navigation;
         const part = await conversationPart(owner, generation, edge, request);
-        if (request !== navigation || id !== owner || closed) return null;
+        if (id !== owner || closed) return null;
+        // A committed native generation must be installed even if a later
+        // gesture superseded this request. Only a newer installed window can
+        // supersede it; the later request may legitimately return no window.
         if (part?.window) { install(part.window); return null; }
+        if (request !== navigation) return null;
         return part;
       },
       object: async (generation, object) => {
@@ -109,16 +125,19 @@ export const watched: ConversationSource = {
         case "resumed":
           feed.resumed();
           return;
+        case "timeline":
+          if (piece.delta.generation === generation) feed.timeline(piece.delta);
+          else if (piece.delta.generation > (generation ?? -1)) buffered(piece);
+          return;
         case "live":
         case "event":
           if (piece.generation !== undefined && piece.generation !== generation) {
             if (piece.generation > (generation ?? -1)) {
-              pending.push(piece);
-              if (pending.length > 800) restart();
+              buffered(piece);
             }
             return;
           }
-          if (piece.kind === "live") feed.live(piece.event, piece.key, piece.evicted); else feed.happened(piece.at, piece.event);
+          if (piece.kind === "live") feed.live(piece.event, piece.key, piece.evicted, piece.placement, piece.older); else feed.happened(piece.at, piece.event);
           return;
         case "window":
           install(piece.window);
@@ -156,10 +175,14 @@ export const watched: ConversationSource = {
       const attempted = authority;
       let ready = false;
       const early: Piece[] = [];
+      let earlyBytes = 0;
       watch(address, (piece) => {
         if (closed || refused || mine !== reading) return;
-        if (!ready) early.push(piece);
-        else take(piece, attempted);
+        if (!ready) {
+          earlyBytes += new TextEncoder().encode(JSON.stringify(piece)).byteLength;
+          if (early.length >= 800 || earlyBytes > 4 * 1024 * 1024) { restart(); return; }
+          early.push(piece);
+        } else take(piece, attempted);
       })
         .then((started) => {
           if (closed || mine !== reading) {
@@ -171,6 +194,7 @@ export const watched: ConversationSource = {
           since = null;
           generation = null;
           pending = [];
+          pendingBytes = 0;
           install(started.window);
           for (const piece of early) {
             if (closed || refused || mine !== reading) break;
@@ -212,6 +236,7 @@ export const watched: ConversationSource = {
       generation = null;
       navigation += 1;
       pending = [];
+      pendingBytes = 0;
       refused = false;
       read();
     }

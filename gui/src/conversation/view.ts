@@ -1538,7 +1538,7 @@ export class ConversationView {
       case "compaction":
         return `<div class="divider"><span>${escape(words.compacted)}</span></div>`;
       case "other":
-        return `<div class="note faint">${escape(entry.hostKind)}</div>`;
+        return `<div class="note faint">${escape(entry.hostKind === "fastctx:timeline-preview-unavailable" ? (words.english ? "Content preview unavailable" : "内容预览暂不可用") : entry.hostKind)}</div>`;
       case "ended": {
         const said = words.turn(entry.end.how, entry.end.reason);
         if (!said) return "";

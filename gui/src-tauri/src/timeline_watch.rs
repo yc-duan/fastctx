@@ -24,6 +24,7 @@ use std::{
 pub(crate) type Shared = Arc<Handle>;
 pub(crate) struct Handle {
     pub bodies: Arc<tokio::sync::Semaphore>,
+    pub scan_bodies: Arc<tokio::sync::Semaphore>,
     navigation: AtomicU64,
     navigation_changed: tokio::sync::Notify,
     reader: tokio::sync::Mutex<Reader>,
@@ -70,18 +71,46 @@ impl Handle {
         }
         work.state.inherit_live(&current.state);
         current.state = work.state;
+        current.through = work.through;
+        current.catch_up = work.catch_up;
         if current.follow_revision == following_revision {
             current.following = work.following;
         }
         Ok(Some(Part::replacement(generation, current.snapshot()?)))
     }
-    async fn advanced(&self) -> Result<Option<Window>, String> {
+    async fn advanced(&self) -> Result<Option<Piece>, String> {
         let mut work = self.lock().await.clone();
         let generation = work.transcript.lock().expect("transcript").generation();
         let navigation = self.navigation.load(Ordering::Acquire);
         let following_revision = work.follow_revision;
+        let from = work.through;
+        let base = work.state.clone();
+        work.reanchored = false;
         work.read_advanced().await?;
-        let mut current = self.lock().await;
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
+        let (mut current, rejected) = loop {
+            let candidates = {
+                let current = self.lock().await;
+                crate::timeline_overlay::candidates(&current.state, &work.state)
+            };
+            let keys: std::collections::BTreeSet<_> = candidates.iter().map(timeline_window::key).collect();
+            let rejected = if !work.reanchored
+                && let (Some(from), Some(to)) = (from, work.through)
+            {
+                tokio::select! {
+                    result = tokio::time::timeout_at(deadline, crate::timeline_overlay::rejected(&work.world, work.machine.clone(), work.resident.clone(), &base, &work.state, &candidates, from..to)) => result.map_err(|_| "checking live timeline membership exceeded 30 s")??,
+                    () = self.closed() => return Ok(None),
+                }
+            } else {
+                Default::default()
+            };
+            let current = self.lock().await;
+            let now = crate::timeline_overlay::candidates(&current.state, &work.state);
+            if now.iter().any(|live| !keys.contains(&timeline_window::key(live))) {
+                continue;
+            }
+            break (current, rejected);
+        };
         if self.closed.load(Ordering::Acquire)
             || navigation != self.navigation.load(Ordering::Acquire)
             || current.transcript.lock().expect("transcript").generation() != generation
@@ -89,9 +118,20 @@ impl Handle {
         {
             return Ok(None);
         }
-        work.state.inherit_live(&current.state);
+        let before = current.state.clone();
+        let mut inherited = before.clone();
+        // Only explicit record facts retire these live identities.
+        inherited.retain_live(|live| !rejected.contains(&timeline_window::key(live)));
+        let reset_sequence = work.state.revision < current.state.revision
+            || matches!((work.through, current.through), (Some(next), Some(old)) if next < old);
+        work.state.inherit_reread(&inherited, reset_sequence);
+        let delta = crate::timeline_delta::between(&before, &mut work.state, generation)?;
+        work.state.retired.clear();
         current.state = work.state;
-        current.snapshot().map(Some)
+        current.through = work.through;
+        current.catch_up = false;
+        current.objects = delta.pages.objects.clone();
+        Ok(Some(Piece::Timeline { delta }))
     }
     fn close(&self) {
         self.closed.store(true, Ordering::Release);
@@ -141,6 +181,9 @@ pub(crate) struct Reader {
     pub machine: Option<Written>,
     pub transcript: Arc<Mutex<Transcript>>,
     state: timeline_window::Window,
+    through: Option<u64>,
+    catch_up: bool,
+    reanchored: bool,
     mark: Option<Mark>,
     following: bool,
     follow_revision: u64,
@@ -155,6 +198,7 @@ pub(crate) struct Opened {
 }
 struct Page {
     revision: Option<u64>,
+    through: Option<u64>,
     events: Vec<TimelineEvent>,
     older: Option<TimelinePlace>,
     newer: Option<TimelinePlace>,
@@ -180,6 +224,9 @@ pub(crate) async fn open(
         machine,
         transcript: Arc::new(Mutex::new(transcript)),
         state: timeline_window::Window::default(),
+        through: None,
+        catch_up: false,
+        reanchored: false,
         mark: None,
         following: true,
         follow_revision: 0,
@@ -188,21 +235,36 @@ pub(crate) async fn open(
         closing: Arc::new(tokio::sync::Notify::new()),
     };
     reader.state.pending(pending);
-    let mut page = reader.fetch(TimelineFrom::Latest).await?;
+    let mut page = match reader.fetch_typed(TimelineFrom::Latest, PAGE_EVENTS).await {
+        Ok(page) => page,
+        Err(error) if older(&error) => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
     if page.revision.is_none() {
-        reader
+        match reader
             .world
             .timeline(reader.machine.clone(), TimelineAsk::Moved { resident: reader.resident.clone(), after: 0 })
-            .await?;
-        page = reader.fetch(TimelineFrom::Latest).await?;
+            .await
+        {
+            Ok(_) => {}
+            Err(error) if older(&error) => return Ok(None),
+            Err(error) => return Err(error.into()),
+        }
+        page = match reader.fetch_typed(TimelineFrom::Latest, PAGE_EVENTS).await {
+            Ok(page) => page,
+            Err(error) if older(&error) => return Ok(None),
+            Err(error) => return Err(error.into()),
+        };
         if page.revision.is_none() {
             return Ok(None);
         }
     }
+    reader.through = page.through;
     reader.state.replace(page.events, page.revision.expect("materialized"), page.older.is_some(), false);
     let window = reader.snapshot()?;
     let shared = Arc::new(Handle {
         bodies: Arc::new(tokio::sync::Semaphore::new(1)),
+        scan_bodies: Arc::new(tokio::sync::Semaphore::new(1)),
         navigation: AtomicU64::new(0),
         navigation_changed: tokio::sync::Notify::new(),
         closed: reader.closed.clone(),
@@ -223,6 +285,7 @@ async fn ready(watching: &mut Watching) -> Result<Vec<SessionEvent>, Error> {
                 Some(Watched::Resumed) => return Ok(pending.pending_events()),
                 Some(Watched::Live { event, mark: None }) => {
                     pending.observe(&event);
+                    pending.retired.clear();
                     if pending.pending_over_budget {
                         return Err(Error::Other(
                             "the pending-request snapshot exceeds the conversation window budget".into(),
@@ -252,21 +315,27 @@ impl Reader {
         self.fetch_count(from, PAGE_EVENTS).await
     }
     async fn fetch_count(&self, from: TimelineFrom, max_events: u32) -> Result<Page, String> {
+        self.fetch_typed(from, max_events).await.map_err(|e| e.to_string())
+    }
+    async fn fetch_typed(&self, from: TimelineFrom, max_events: u32) -> Result<Page, Error> {
         let reading = self.world.timeline(
             self.machine.clone(),
             TimelineAsk::Page { resident: self.resident.clone(), from, max_events, max_bytes: PAGE_BYTES },
         );
         let reply = tokio::select! {
-            reply = reading => reply.map_err(|e| e.to_string())?,
-            () = until_closed(&self.closed, &self.closing) => return Err("the conversation window closed".into()),
+            reply = reading => reply?,
+            () = until_closed(&self.closed, &self.closing) => return Err(Error::Other("the conversation window closed".into())),
         };
         match reply {
-            TimelineTold::Page { revision, events, older, newer } => Ok(Page { revision, events, older, newer }),
-            _ => Err("the node did not answer a timeline page".into()),
+            TimelineTold::Page { revision, events, older, newer, through } => {
+                Ok(Page { revision, events, older, newer, through })
+            }
+            _ => Err(Error::Unexpected("the node did not answer a timeline page".into())),
         }
     }
     fn snapshot(&mut self) -> Result<Window, String> {
         let (events, edges) = self.state.shown()?;
+        self.state.retired.clear();
         self.objects = edges.objects.clone();
         self.transcript.lock().expect("transcript").paged(&events, edges)
     }
@@ -290,7 +359,7 @@ impl Reader {
         self.following = matches!(edge, Edge::Latest);
         let latest = matches!(from, TimelineFrom::Latest);
         let mut page = self.fetch(from).await?;
-        if !latest && page.revision != Some(self.state.revision) {
+        if !latest && (self.catch_up || page.revision != Some(self.state.revision)) {
             self.refresh().await?;
             let place = if backwards { self.state.first() } else { self.state.last() };
             let Some(place) = place else {
@@ -306,7 +375,11 @@ impl Reader {
         let Some(revision) = page.revision else {
             return Err("the conversation's timeline is being prepared".into());
         };
+        self.through = page.through;
+        self.catch_up = false;
         if latest {
+            self.state.interval_start = None;
+            self.state.interval_end = None;
             self.state.right = None;
             self.state.replace(page.events, revision, page.older.is_some(), false);
         } else {
@@ -332,11 +405,12 @@ impl Reader {
         }
         Ok(true)
     }
-    /// A revision has no changed-range list. Reread the held neighborhood so
-    /// removals and edits in its middle cannot survive an append-only merge.
+    /// Reconcile a lost changes cursor, or navigation across revisions, by
+    /// rereading only the held neighborhood.
     async fn refresh(&mut self) -> Result<(), String> {
+        self.reanchored = true;
         if !self.following
-            && !self.state.newer
+            && self.state.right.is_none()
             && let Some(place) = self.state.last()
         {
             let mut next = self.fetch_count(TimelineFrom::After { place: place.clone() }, 1).await?;
@@ -348,6 +422,8 @@ impl Reader {
             if let Some(first) = next.events.first() {
                 self.state.right = Some(first.place.clone());
                 self.state.newer = true;
+            } else {
+                self.state.newer = false;
             }
         }
         let wanted = self.state.entries.len().max(1);
@@ -360,6 +436,8 @@ impl Reader {
         let Some(revision) = first.revision else {
             return Err("the conversation's timeline is being prepared".into());
         };
+        self.through = first.through;
+        self.catch_up = false;
         let mut events = first.events;
         let mut bytes: usize = events.iter().map(|e| serde_json::to_vec(e).map_or(0, |v| v.len())).sum();
         let mut older = first.older.is_some();
@@ -383,17 +461,41 @@ impl Reader {
         Ok(())
     }
     async fn read_advanced(&mut self) -> Result<(), String> {
-        if self.following
-            && !self.state.newer
-            && let Some(place) = self.state.last()
-        {
-            let page = self.fetch(TimelineFrom::After { place }).await?;
-            if let Some(revision) = page.revision {
-                self.state.revision = revision;
-                self.state.merge(page.events, false);
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
+        loop {
+            let Some(after) = self.through else { return self.refresh().await };
+            let reading = self.world.timeline(
+                self.machine.clone(),
+                TimelineAsk::Changes {
+                    resident: self.resident.clone(),
+                    after,
+                    max_events: PAGE_EVENTS,
+                    max_bytes: PAGE_BYTES,
+                },
+            );
+            let reply = tokio::select! {
+                reply = tokio::time::timeout_at(deadline, reading) => reply.map_err(|_| "catching up the timeline exceeded 30 s")?.map_err(|e| e.to_string())?,
+                () = until_closed(&self.closed, &self.closing) => return Err("the conversation window closed".into()),
+            };
+            match reply {
+                TimelineTold::Changes { revision: Some(revision), changes, through, more }
+                    if revision >= self.state.revision =>
+                {
+                    if through < after || (more && through == after) {
+                        return Err("the timeline changes did not advance".into());
+                    }
+                    crate::timeline_changes::apply(&mut self.state, changes, self.following);
+                    self.state.revision = revision;
+                    self.through = Some(through);
+                    if !more {
+                        self.catch_up = false;
+                        return Ok(());
+                    }
+                }
+                TimelineTold::Reread | TimelineTold::Changes { revision: Some(_), .. } => return self.refresh().await,
+                _ => return Err("the timeline changes are not available now".into()),
             }
         }
-        self.refresh().await
     }
     fn live(&mut self, mut event: SessionEvent, mark: Option<Mark>) -> Result<Option<Piece>, String> {
         if mark.is_some_and(|mark| {
@@ -405,6 +507,14 @@ impl Reader {
             self.mark = Some(mark);
         }
         crate::timeline_preview::limit(&mut event);
+        if !timeline_window::pending_event(&event)
+            && serde_json::to_vec(&event).map_or(0, |v| v.len()) > crate::timeline_preview::LIVE_EVENT_BYTES
+        {
+            // An unbounded identity cannot be shortened into another event.
+            // Its materialized page supplies the deferred-content placeholder.
+            return Ok(None);
+        }
+        let aliases = self.state.aliases(&event);
         if !self.state.observe(&event) {
             if self.state.pending_over_budget {
                 return Err("the pending-request snapshot exceeds the conversation window budget".into());
@@ -429,13 +539,24 @@ impl Reader {
         if !self.state.newer {
             evicted.extend(self.state.trim_visible());
         }
-        if !evicted.is_empty() {
-            self.objects.retain(|o| self.state.entries.iter().any(|e| e.has_object(&o.object)));
-        }
+        evicted.extend(aliases.iter().cloned());
+        evicted.retain(|old| old != &key);
+        let placement = if aliases.is_empty() {
+            None
+        } else {
+            let order = self.state.ordered_keys();
+            order.iter().position(|held| held == &key).map(|at| crate::timeline_delta::Placement {
+                key: key.clone(),
+                after: at.checked_sub(1).map(|at| order[at].clone()),
+            })
+        };
+        self.objects.retain(|o| self.state.object_visible(&o.object));
         let generation = self.transcript.lock().expect("transcript").generation();
         Ok(Some(Piece::Live {
             generation,
             key,
+            older: self.state.older,
+            placement,
             evicted,
             event: serde_json::value::to_raw_value(&event).map_err(|e| e.to_string())?,
         }))
@@ -455,10 +576,26 @@ pub(crate) async fn stream(reader: Shared, mut initial: Option<Watching>, pieces
                 async {
                     let mut watching = world.watch_live(resident.clone(), machine.clone()).await?;
                     let pending = ready(&mut watching).await?;
-                    reader.lock().await.state.pending(pending);
-                    if let Some(window) = reader.advanced().await.map_err(Error::Other)? {
-                        pieces.send(Piece::Window { window }).map_err(|_| Error::Other("the page closed".into()))?;
+                    {
+                        let mut current = reader.lock().await;
+                        current.state.pending(pending);
+                        current.catch_up = true;
+                        let delta = crate::timeline_delta::Delta {
+                            generation: current.transcript.lock().expect("transcript").generation(),
+                            events: Vec::new(),
+                            removed: Vec::new(),
+                            placed: Vec::new(),
+                            pending: Some(current.state.pending_events()),
+                            pages: timeline_window::Edges {
+                                older: current.state.older,
+                                newer: current.state.newer,
+                                objects: current.objects.clone(),
+                                ..Default::default()
+                            },
+                        };
+                        pieces.send(Piece::Timeline { delta }).map_err(|_| Error::Other("the page closed".into()))?;
                     }
+
                     Ok(watching)
                 }
                 .await
@@ -507,22 +644,25 @@ async fn connected(
     let send = |piece| pieces.send(piece).map_err(|_| Error::Other("the page closed".into()));
     send(Piece::Resumed)?;
     loop {
-        let after = reader.lock().await.state.revision;
+        let (after, catch_up) = {
+            let current = reader.lock().await;
+            (current.state.revision, current.catch_up)
+        };
         let moved = world.timeline(machine.clone(), TimelineAsk::Moved { resident: resident.clone(), after });
         tokio::pin!(moved);
-        let mut advancing = None;
+        let mut advancing = catch_up.then(|| Box::pin(reader.advanced()));
         loop {
             tokio::select! {
                 () = reader.closed() => return Ok(Follow::Closed),
                 result = &mut moved, if advancing.is_none() => {
                     match result? {
-                        TimelineTold::Moved { revision: Some(revision) } if revision > after => { advancing = Some(Box::pin(reader.advanced())); },
+                        TimelineTold::Moved { revision: Some(revision) } if revision != after => { advancing = Some(Box::pin(reader.advanced())); },
                         TimelineTold::Moved { .. } => break,
                         _ => return Err(Error::Unexpected("a timeline wait returned another answer".into())),
                     }
                 },
                 result = async { advancing.as_mut().expect("guarded").await }, if advancing.is_some() => {
-                    if let Some(window) = result.map_err(Error::Other)? { send(Piece::Window { window })?; }
+                    if let Some(piece) = result.map_err(Error::Other)? { send(piece)?; }
                     break;
                 },
                 live = watching.next() => { if let Some(follow) = received(reader, pieces, live?).await? { return Ok(follow); } },
@@ -538,7 +678,7 @@ async fn received(reader: &Shared, pieces: &Sender<Piece>, live: Option<Watched>
                 use fastctx_types::session::SessionChange;
                 match change {
                     SessionChange::HistoryChanged => {
-                        reader.lock().await.state.live.clear();
+                        reader.lock().await.state.retain_live(|_| false);
                         return Ok(Some(Follow::Refresh));
                     }
                     SessionChange::HistoryCut { removed_turns } => {
@@ -546,8 +686,7 @@ async fn received(reader: &Shared, pieces: &Sender<Piece>, live: Option<Watched>
                             .lock()
                             .await
                             .state
-                            .live
-                            .retain(|e| !removed_turns.iter().any(|turn| event_turn(e) == Some(turn.as_str())));
+                            .retain_live(|e| !removed_turns.iter().any(|turn| event_turn(e) == Some(turn.as_str())));
                         return Ok(Some(Follow::Refresh));
                     }
                     _ => {}

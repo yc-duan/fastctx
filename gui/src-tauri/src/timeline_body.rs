@@ -28,11 +28,13 @@ pub(crate) async fn fetch(
     object: crate::timeline_window::Object,
     held: bool,
 ) -> Result<Box<RawValue>, String> {
-    let _permit = reader
-        .bodies
-        .clone()
-        .try_acquire_owned()
-        .map_err(|_| "another event is being opened; try again when it finishes")?;
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(60);
+    let permits = if held { &reader.bodies } else { &reader.scan_bodies };
+    let _permit = tokio::select! {
+        permit = tokio::time::timeout_at(deadline, permits.acquire()) =>
+            permit.map_err(|_| "waiting to open the event exceeded 60 s")?.map_err(|_| "the content reader closed")?,
+        () = reader.closed() => return Err("the conversation window closed".into()),
+    };
     let (world, machine, resident) = {
         let r = reader.lock().await;
         (r.world.clone(), r.machine.clone(), r.resident.clone())
@@ -41,7 +43,6 @@ pub(crate) async fn fetch(
         return Err("This event exceeds 8 MiB. Use the complete output file, when the tool provides one.".into());
     }
     let mut bytes = Vec::with_capacity(object.bytes as usize);
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(60);
     while (bytes.len() as u64) < object.bytes {
         let length = (object.bytes - bytes.len() as u64).min(u64::from(OBJECT_BYTES)) as u32;
         let reading = world.timeline(

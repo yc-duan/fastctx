@@ -108,6 +108,7 @@ export type Entry = {
       /** Words sent from here, once the World answered for them: their id
        *  on the machine they went to, `null` where it gave none. */
       delivery?: string | null;
+      messageId?: string;
       /** Words sent from here while a turn was under way: they wait below
        *  the turn's line until a turn takes them in. Words sent to a
        *  conversation at rest begin the next turn, above it. */
@@ -359,6 +360,8 @@ export class Fold {
   private preferredKeys: Map<string, string> | null = null;
   private add(entry: Entry): void {
     if ("item" in entry && "turn" in entry && typeof entry.turn === "string") entry.key = this.preferredKeys?.get(itemKey(entry.turn, entry.item)) ?? entry.key;
+    if (entry.kind === "heard") entry.key = (entry.delivery ? this.preferredKeys?.get(`heard:d:${entry.delivery}`) : undefined)
+      ?? (entry.messageId ? this.preferredKeys?.get(`heard:m:${entry.messageId}`) : undefined) ?? entry.key;
     entry.stamp = ++this.clock;
     entry.at = this.current;
     this.entries.push(entry);
@@ -406,7 +409,11 @@ export class Fold {
     // Requests still waiting are kept: the host asked them, and they are
     // not part of the history it gives back. So are words sent from here
     // that this reading does not hold yet.
-    this.preferredKeys = places ? new Map(this.entries.flatMap((entry) => "item" in entry && "turn" in entry && typeof entry.turn === "string" ? [[itemKey(entry.turn, entry.item), entry.key]] : [])) : null;
+    this.preferredKeys = places ? new Map(this.entries.flatMap((entry): [string, string][] => {
+      if ("item" in entry && "turn" in entry && typeof entry.turn === "string") return [[itemKey(entry.turn, entry.item), entry.key]];
+      if (entry.kind === "heard") return [...(entry.delivery ? [[`heard:d:${entry.delivery}`, entry.key] as [string, string]] : []), ...(entry.messageId ? [[`heard:m:${entry.messageId}`, entry.key] as [string, string]] : [])];
+      return [];
+    })) : null;
     const waiting = keepWaiting ? this.entries.filter((entry) => entry.kind === "ask" && entry.state.state === "waiting") : [];
     const pending = this.entries.filter((entry): entry is Heard => entry.kind === "heard" && entry.sending !== undefined);
     const known = new Set(this.entries.filter((entry) => entry.kind === "heard").map((entry) => entry.key));
@@ -595,6 +602,19 @@ export class Fold {
         // Words once said not to be known to have gone in did: the host
         // tells them now (`world-concurrency.md`, 一句话从发出到落定).
         if (heard.delivery) this.remove((entry) => entry.kind === "uncertain" && entry.key === `u:${heard.delivery}`);
+        const identified = this.placed ? this.entries.find((entry): entry is Heard => entry.kind === "heard" &&
+          (!!heard.delivery && entry.delivery === heard.delivery || !!heard.message?.id && entry.messageId === heard.message.id)) : undefined;
+        if (identified) {
+          identified.text = heard.text; identified.turn = heard.turn; identified.from = heard.from; identified.time = at;
+          if (heard.delivery) identified.delivery = heard.delivery;
+          if (heard.message?.id) identified.messageId = heard.message.id;
+          if (heard.notice) identified.notice = heard.notice;
+          const attached = this.attachedOf(heard);
+          if (attached.length) { identified.attached = attached; identified.kept = heard.message?.attachments ?? []; }
+          delete identified.sending; delete identified.intoTurn;
+          this.reindex(); this.touch(identified);
+          return;
+        }
         if (heard.from?.kind === "user") {
           const said = heard.text.trim();
           // Known by the id the World gave them where it did, else by what
@@ -627,7 +647,7 @@ export class Fold {
         }
         const turnKey = heard.turn ?? "";
         const known =
-          heard.turn !== null &&
+          !this.placed && heard.turn !== null &&
           (this.byTurn.get(heard.turn) ?? []).some((entry) => entry.kind === "heard" && entry.text.trim() === heard.text.trim());
         if (!known) {
           const attached = this.attachedOf(heard);
@@ -652,6 +672,8 @@ export class Fold {
             from: heard.from,
             text: heard.text,
             turn: heard.turn,
+            ...(heard.delivery ? { delivery: heard.delivery } : {}),
+            ...(heard.message?.id ? { messageId: heard.message.id } : {}),
             ...(attached.length ? { attached, kept: heard.message?.attachments ?? [] } : {}),
             ...(event.event === "heard" && event.notice ? { notice: event.notice } : {}),
           });

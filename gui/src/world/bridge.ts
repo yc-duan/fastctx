@@ -70,7 +70,8 @@ export type Piece =
   | { kind: "extended"; start: number; events: SessionEvent[] }
   /** One thing as it happened, the `at`th event of the conversation. */
   | { kind: "event"; generation?: number; at: number; event: SessionEvent }
-  | { kind: "live"; generation: number; event: SessionEvent; key: string; evicted?: string[] }
+  | { kind: "live"; generation: number; event: SessionEvent; key: string; older: boolean; evicted?: string[]; placement?: { key: string; after: string | null } }
+  | { kind: "timeline"; delta: import("../conversation/conversation").TimelineDelta }
   | { kind: "ended"; error: string | null }
   /** The conversation was deleted: nothing more of it comes. */
   | { kind: "deleted"; error: string }
