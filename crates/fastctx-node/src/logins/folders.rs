@@ -7,8 +7,6 @@
 //! What it finds only looks like a login: no one is asked who is logged in
 //! there until the user takes one up.
 
-mod progress;
-
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -224,28 +222,19 @@ fn run(node: &Arc<Node>, dir: &Path, key: &str, searching: &Arc<Searching>) -> R
         let mounted = fastctx_platform::disks::mount_points()
             .map_err(|error| format!("listing where filesystems are mounted: {error}"))?;
         skip.extend(mounted.iter().filter(|point| !crate::homes::same_dir(point, dir)).map(|point| walk::key(point)));
-
-        let progress = progress::Progress::new(node.topics.clone());
-        walk::walk_with_progress(
-            dir,
-            &skip,
-            &searching.stop,
-            &searching.counters,
-            &mut |one| {
-                if let Ok(path) = one.dir.strip_prefix(dir)
-                    && !path.as_os_str().is_empty()
-                    && let Ok(agent) = AgentName::try_from(one.agent.to_string())
-                {
-                    searching.found.lock().expect("never poisoned").push(FoundIn {
-                        agent,
-                        path: path.to_path_buf(),
-                        traces: one.traces,
-                    });
-                    progress.changed();
-                }
-            },
-            &mut || progress.changed(),
-        );
+        // Readers are told of its progress as it goes (`search_progress::follow`).
+        walk::walk(dir, &skip, &searching.stop, &searching.counters, &mut |one| {
+            if let Ok(path) = one.dir.strip_prefix(dir)
+                && !path.as_os_str().is_empty()
+                && let Ok(agent) = AgentName::try_from(one.agent.to_string())
+            {
+                searching.found.lock().expect("never poisoned").push(FoundIn {
+                    agent,
+                    path: path.to_path_buf(),
+                    traces: one.traces,
+                });
+            }
+        });
         Ok::<_, String>(())
     })();
     let at = Timestamp::now();
