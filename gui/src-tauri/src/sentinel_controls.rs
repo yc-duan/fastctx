@@ -47,6 +47,7 @@ pub(crate) async fn sentinel_overview(shell: tauri::State<'_, Shell>) -> Result<
 /// What a sentinel did, read from its home; `held` names the version the
 /// window already shows.
 #[fastctx_gui_command::command]
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn sentinel_record(
     shell: tauri::State<'_, Shell>,
     hub: Option<String>,
