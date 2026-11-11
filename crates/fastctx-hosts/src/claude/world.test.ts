@@ -253,10 +253,15 @@ test('hands reports to the node on its channel, and to files once it is not reac
   const handed: { name: string; report: { kind: string } }[] = []
   const asked: string[] = []
   let reached = true
+  let cut = false
   on('http.fetch', (_, e) => {
     asked.push(e.url)
     expect(e.url.startsWith('http://127.0.0.1:4321/v1/claude/channelled/')).toBe(true)
     expect(e.init?.headers?.authorization).toBe('Bearer fixture-token')
+    if (cut && e.url.endsWith('/reports')) {
+      cut = false
+      return { deny: 'failed: turn-abort' }
+    }
     if (!reached) return { deny: 'fixture: the node is not reached' }
     if (e.url.endsWith('/reports')) {
       expect(e.init?.method).toBe('POST')
@@ -282,8 +287,20 @@ test('hands reports to the node on its channel, and to files once it is not reac
   expect(filed()).toEqual([])
   expect(asked.some((url) => url.includes('/wake?seen='))).toBe(true)
 
-  reached = false
+  // A stop cuts short one hand-over: that one goes to a file, and the
+  // channel carries the next as before.
+  cut = true
+  const before = handed.length
   for await (const _ of $.turn.step({ turnId: 'reached', index: 1, model: 'fixture', messageCount: 2 })) { /* drained */ }
+  await clock.settle()
+  expect(filed().length > 0).toBe(true)
+  for await (const _ of $.turn.step({ turnId: 'reached', index: 2, model: 'fixture', messageCount: 3 })) { /* drained */ }
+  await clock.settle()
+  expect(handed.length > before).toBe(true)
+  for (const path of filed()) files.delete(path)
+
+  reached = false
+  for await (const _ of $.turn.step({ turnId: 'reached', index: 3, model: 'fixture', messageCount: 4 })) { /* drained */ }
   await clock.settle()
   const after = filed().length
   expect(after > 0).toBe(true)
@@ -292,7 +309,7 @@ test('hands reports to the node on its channel, and to files once it is not reac
   const last = handed[handed.length - 1].name
   expect(filed().some((path) => path.endsWith('/events/' + last))).toBe(true)
   reached = true
-  for await (const _ of $.turn.step({ turnId: 'reached', index: 2, model: 'fixture', messageCount: 3 })) { /* drained */ }
+  for await (const _ of $.turn.step({ turnId: 'reached', index: 4, model: 'fixture', messageCount: 5 })) { /* drained */ }
   await clock.settle()
   expect(filed().length > after).toBe(true)
 })

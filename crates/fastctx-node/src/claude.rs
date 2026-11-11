@@ -744,7 +744,14 @@ pub(crate) async fn receive(
     }
     let at = Timestamp::now();
     let mut reported: Vec<exchange::Report> = Vec::new();
+    // Handed over and also written to a file, as a hand-over a stop cut
+    // short leaves it, a report is applied once: the file came first.
+    let mut already = Vec::new();
     for (name, value) in reports {
+        if exchange::was_applied(&directory, &name)? {
+            already.push(name);
+            continue;
+        }
         let earlier = |named: &str| reported.iter().any(|report| report.name == named);
         match exchange::received(&directory, &name, value, at, &earlier) {
             Ok(report) => reported.push(report),
@@ -756,7 +763,9 @@ pub(crate) async fn receive(
             }
         }
     }
-    Ok(apply(node, &resident, session, &directory, reported).await.0)
+    let mut applied = apply(node, &resident, session, &directory, reported).await.0;
+    applied.extend(already);
+    Ok(applied)
 }
 
 /// Takes what is new in one session's directory; whether it took all of it,

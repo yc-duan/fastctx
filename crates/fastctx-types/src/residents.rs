@@ -249,8 +249,49 @@ impl Notice {
             Notice::World { fact: WorldFact::Moved { .. }, .. } => Some("project"),
             Notice::Question { id, .. } => Some(id),
             Notice::Words { goal_question: Some(question), .. } => Some(&question.id),
+            // A job the user stopped, as stopping the turn stops what it
+            // waits on: a stop is a stop, and wakes no one. The model hears
+            // of it with the next turn, whatever starts that.
+            Notice::JobEnded { job, how: EndedHow::Stopped, stop: Some(stop), taken: false, .. }
+                if stop.by == STOPPED_BY_USER =>
+            {
+                Some(job.as_str())
+            }
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod stopped_jobs {
+    use super::*;
+
+    fn ended(how: EndedHow, by: Option<&str>) -> Notice {
+        Notice::JobEnded {
+            taken: false,
+            job: JobId::try_from("j-abc123").expect("a job id"),
+            machine: "desktop".parse().expect("a machine name"),
+            request: None,
+            follower: None,
+            consumed: Vec::new(),
+            follower_unconfirmed: false,
+            how,
+            status: None,
+            at: Timestamp::UNIX_EPOCH,
+            output: "out.log".into(),
+            stderr: None,
+            last: None,
+            stop: by.map(|by| Box::new(crate::run::StopRequest { by: by.into(), reason: String::new() })),
+            scratch: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_job_the_user_stopped_wakes_no_one() {
+        assert_eq!(ended(EndedHow::Stopped, Some(STOPPED_BY_USER)).along(), Some("j-abc123"));
+        // Stopped otherwise, or ended by itself, it is told as it comes.
+        assert_eq!(ended(EndedHow::Stopped, Some("the script")).along(), None);
+        assert_eq!(ended(EndedHow::Finished, None).along(), None);
     }
 }
 

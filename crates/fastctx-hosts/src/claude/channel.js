@@ -59,6 +59,11 @@ async function channelReport($, context, name, report) {
     channelConfirmed(context, told.applied)
     return true
   } catch (error) {
+    // A stop cuts short what the turn's hooks asked for, this hand-over
+    // too: whether the node took it is not known, so it goes to a file, and
+    // the node, applying the file first, passes over the hand-over should
+    // it have arrived. The channel itself is as good as before.
+    if (/abort/i.test(String(error))) return false
     if (context.channelReports) {
       context.channelReports = false
       $.ui.log('World channel: this session reports through files from now: ' + String(error), { to: 'debug' })

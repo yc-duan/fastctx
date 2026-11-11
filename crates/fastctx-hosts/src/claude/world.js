@@ -150,6 +150,8 @@ function conversation(sessionId, previous) {
     stopped: null,
     // The user stopped the last turn, which the next one is to hear.
     toldStopped: [],
+    // What was held when the user stopped a turn: it starts no turn itself.
+    stopHeld: new Set(),
     stopTaken: [],
     writing: Promise.resolve(),
     streamBatch: null,
@@ -473,11 +475,15 @@ async function flush($, context) {
   const ready = context.held.filter((delivery) => delivery.along === undefined && goalPermits(context, delivery))
   const own = ready.filter((delivery) => delivery.as_user === true)
   if (ready.length === 0) return
+  // What was held when the user stopped the last turn starts no turn: a
+  // stop is a stop. It goes in with the next turn, whatever starts that.
+  if (!ready.some((delivery) => delivery.as_user === true || !context.stopHeld.has(delivery.id))) return
   const taken = !context.plain ? ready : own.length > 0 ? [own[0]] : ready
   const start = own.length > 0 ? taken.filter((delivery) => delivery.as_user === true).pop() : null
   const beside = start === null ? [] : taken.filter((delivery) => delivery !== start)
   const prompt = start === null ? { text: taken.map(framed).join('\n\n') } : { text: asTyped(start.text), asUser: true }
   for (const delivery of taken) context.held.splice(context.held.indexOf(delivery), 1)
+  for (const delivery of taken) context.stopHeld.delete(delivery.id)
   const back = await submit($, context, taken, prompt, beside)
   context.held.unshift(...back)
   late($, context, taken.filter((delivery) => !back.includes(delivery)))
@@ -1042,8 +1048,12 @@ async function completeTurn($, context, e, next) {
   if (context.spentBefore?.turn === e.turnId) context.spentBefore = null
   if (context.turn === e.turnId) { context.busy = false; context.turn = null }
   context.plain = false
-  // A turn cut short had no opening left for what it held.
+  // A turn cut short had no opening left for what it held. One the user
+  // stopped leaves what it held for the next turn, not one of its own.
   if (e.isAborted) context.since.clear()
+  if (e.isAborted && context.stopped === e.turnId) {
+    for (const delivery of context.held) if (delivery.as_user !== true) context.stopHeld.add(delivery.id)
+  }
   const completed = event($, context, 'turn_complete', {
     turn: e.turnId,
     spent,

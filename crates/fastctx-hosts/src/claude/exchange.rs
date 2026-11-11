@@ -360,7 +360,7 @@ pub struct Report {
 }
 
 /// Whether the report `name` of the session in `directory` was applied.
-pub(super) fn was_applied(directory: &Path, name: &str) -> io::Result<bool> {
+pub fn was_applied(directory: &Path, name: &str) -> io::Result<bool> {
     applied::has(directory, name)
 }
 
