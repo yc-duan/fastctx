@@ -122,13 +122,28 @@ impl Content {
         Ok(self.0.database.read_now(|db| {
             let snapshot = db.unchecked_transaction()?;
             let Some((id, _)) = locate(&snapshot, stream)? else { return Ok(Vec::new()) };
-            let mut indexed = snapshot.prepare_cached(
-                "SELECT place, item FROM items INDEXED BY items_by_identity \
-                 WHERE stream = ?1 AND item >= ?2 AND (?3 IS NULL OR item < ?3) ORDER BY item LIMIT ?4",
-            )?;
-            let places = indexed
-                .query_map(params![id, prefix, past, most], |row| Ok(Place { order: row.get(0)?, item: row.get(1)? }))?
-                .collect::<fastctx_storage::rusqlite::Result<_>>()?;
+            // Two statements, not one with a bound that may be absent: an
+            // absent-or-less condition keeps the index from ending the range,
+            // and a prefix no item begins with was then looked for to the
+            // stream's end.
+            let placed = |row: &fastctx_storage::rusqlite::Row<'_>| Ok(Place { order: row.get(0)?, item: row.get(1)? });
+            let places = match &past {
+                Some(past) => snapshot
+                    .prepare_cached(
+                        "SELECT place, item FROM items INDEXED BY items_by_identity \
+                         WHERE stream = ?1 AND item >= ?2 AND item < ?3 ORDER BY item LIMIT ?4",
+                    )?
+                    .query_map(params![id, prefix, past, most], placed)?
+                    .collect::<fastctx_storage::rusqlite::Result<_>>()?,
+                // Nothing lies past a prefix of the highest bytes only.
+                None => snapshot
+                    .prepare_cached(
+                        "SELECT place, item FROM items INDEXED BY items_by_identity \
+                         WHERE stream = ?1 AND item >= ?2 ORDER BY item LIMIT ?3",
+                    )?
+                    .query_map(params![id, prefix, most], placed)?
+                    .collect::<fastctx_storage::rusqlite::Result<_>>()?,
+            };
             Ok(places)
         })?)
     }
