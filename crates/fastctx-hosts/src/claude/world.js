@@ -1075,7 +1075,15 @@ async function completeTurn($, context, e, next) {
   })
   const saved = activity($, context)
   await within($, Promise.all([completed, saved]))
-  await flush($, context)
+  // The node releases the user's queued words as it hears of this end, a
+  // moment from now. With none of the user's held yet, what the World had
+  // to tell waits that moment: the user's words then start the next turn
+  // and the rest goes in with them, not in a turn of its own before theirs.
+  if (!e.isAborted && context.held.length > 0 && !context.held.some((delivery) => delivery.as_user === true)) {
+    $.clock.after(SETTLE_MS, () => look($, context).catch((error) => worldFailure($, 'look', error)))
+  } else {
+    await flush($, context)
+  }
   return next(e)
 }
 
