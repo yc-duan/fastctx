@@ -9,9 +9,11 @@ import { glyph } from "./glyphs";
 import { escape } from "./prose";
 import { FindIndex, type FarHits, type FarMatch, type FindChanges, type FindMatch } from "./find-index";
 import { FindHighlights } from "./find-highlights";
+import type { TimelineFind } from "./timeline-find";
 import { composing } from "../typing";
 
 interface FindView {
+  global?: TimelineFind | undefined;
   findChanges(): FindChanges;
   revealFind(match: FindMatch): Promise<void>;
   findRange(match: FindMatch): Range | null;
@@ -32,6 +34,7 @@ interface FindView {
 }
 
 export interface FindWords {
+  english?: boolean;
   find: string;
   placeholder: string;
   count(current: number, total: number): string;
@@ -52,6 +55,9 @@ export class Finder {
    *  how much was indexed. */
   private farAsked = "";
   private current = -1;
+  private globalRevealPending = false;
+  private globalPreviousTotal = 0;
+  private globalRanked = -1;
   private fresh = false;
   private pending = false;
   private running = false;
@@ -147,6 +153,7 @@ export class Finder {
     const inside = this.element.contains(document.activeElement);
     this.element.hidden = true;
     this.view.far?.close();
+    this.view.global?.close();
     this.farAsked = "";
     if (inside && this.before?.isConnected) this.before.focus({ preventScroll: true });
     this.before = null;
@@ -164,8 +171,9 @@ export class Finder {
 
   private search(fresh: boolean): void {
     this.fresh ||= fresh;
-    if (fresh) this.revision += 1;
+    if (fresh) { this.revision += 1; this.globalRevealPending = true; }
     if (!this.input.value) {
+      this.view.global?.close();
       this.index.search("");
       this.selected = null;
       this.current = -1;
@@ -181,6 +189,21 @@ export class Finder {
     try {
       while (this.pending && this.open && this.input.value) {
         this.pending = false;
+        const global = this.view.global;
+        if (global) {
+          await global.search(this.input.value);
+          if (this.fresh || this.current < 0) this.current = global.total - 1;
+          else if (!global.complete && global.total > this.globalPreviousTotal) this.current += global.total - this.globalPreviousTotal;
+          this.current = Math.min(this.current, global.total - 1);
+          if (global.complete && this.selected && global.grown !== this.globalRanked) {
+            this.globalRanked = global.grown;
+            const known = await global.position();
+            if (known === null) { this.selected = null; this.current = -1; }
+            else this.current = known;
+          }
+          this.globalPreviousTotal = global.total;
+          continue;
+        }
         await this.index.update(this.view.findChanges());
         this.index.search(this.input.value.toLowerCase());
         const far = this.view.far;
@@ -197,7 +220,8 @@ export class Finder {
       const reveal = this.fresh;
       this.fresh = false;
       this.paint();
-      if (reveal && this.open) await this.reveal();
+      if (this.view.global && this.globalRevealPending && this.view.global.total > 0) { this.globalRevealPending = false; if (this.open) await this.reveal(); }
+      else if (reveal && this.open && !this.view.global) await this.reveal();
     } catch (error) {
       if (!this.disposed || !(error instanceof DOMException) || error.name !== "AbortError") throw error;
     } finally {
@@ -208,10 +232,21 @@ export class Finder {
 
   private async step(by: number): Promise<void> {
     await this.ready;
-    if (!this.open || !this.index.total) return;
+    const total = this.view.global?.total ?? this.index.total;
+    if (!this.open || !total) return;
     this.revision += 1;
-    this.current = (this.current + by + this.index.total) % this.index.total;
-    this.selected = this.index.at(this.current);
+    if (this.view.global) {
+      const revision = this.revision;
+      try {
+        const result = await this.view.global.step(by, this.current);
+        if (revision !== this.revision || !this.open) return;
+        this.current = result.ordinal; this.selected = result.match;
+        this.paint(); await this.reveal(true);
+      } catch (error) { this.setScope(String(error)); }
+      return;
+    }
+    this.current = (this.current + by + total) % total;
+    this.selected = this.view.global ? null : this.index.at(this.current);
     this.paint();
     await this.reveal();
   }
@@ -231,20 +266,32 @@ export class Finder {
   private paint(): void {
     const selected = this.open ? this.selected : null;
     const identity = !selected ? null : "far" in selected ? `far|${selected.far.part}|${selected.far.ordinal}` : `${selected.document.key}|${selected.document.stamp}|${selected.start}|${selected.end}`;
-    this.highlights.paint(this.open ? this.input.value.toLowerCase() : "", identity, () => (selected && !("far" in selected) ? this.view.findRange(selected) : null));
+    this.highlights.paint(this.open ? this.input.value.toLowerCase() : "", identity, () => (selected && !("far" in selected) ? this.view.findRange(selected) : null), !!this.view.global);
     const query = this.input.value;
-    const more = this.view.far?.more ? "+" : "";
-    const said = !query ? "" : this.index.total ? `${this.words.count(this.current + 1, this.index.total)}${more}` : more ? "…" : this.words.none;
+    const global = this.view.global;
+    const total = global?.total ?? this.index.total;
+    const more = (global ? !global.complete : this.view.far?.more) ? "+" : "";
+    if (global) this.setScope(!query ? null : global.error ?? `${this.words.english ? "All history" : "全部历史"} · ${global.complete ? "" : this.words.english ? "Searching · " : "搜索中 · "}${global.examined}${this.words.english ? " events" : " 条"}${global.previews ? (this.words.english ? ` · ${global.previews} previews only` : ` · ${global.previews} 条仅预览`) : ""}`);
+    const said = !query ? "" : total ? `${this.words.count(this.current + 1, total)}${more}` : more ? "…" : this.words.none;
     if (this.count.textContent !== said) this.count.textContent = said;
-    this.count.classList.toggle("none", !!query && !this.index.total);
+    this.count.classList.toggle("none", !!query && !total && !more);
   }
 
   /** Brings the current match into view, opening what folds it away; one
    *  where the page holds nothing is read in first. */
-  private async reveal(): Promise<void> {
+  private async reveal(located = false): Promise<void> {
+    const revision = this.revision;
+    if (this.view.global && !located) {
+      this.moved();
+      try {
+        const found = await this.view.global.match(this.current);
+        if (revision !== this.revision || !this.open) return;
+        if (!found) { this.setScope(this.words.english ? "This match changed. Search again." : "这处匹配已变化，请重新搜索。"); return; }
+        this.selected = found;
+      } catch (error) { this.setScope(String(error)); return; }
+    }
     let match = this.selected;
     if (!match) return;
-    const revision = this.revision;
     this.moved();
     if ("far" in match) {
       const found = await this.resolve(match);

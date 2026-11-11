@@ -197,6 +197,9 @@ pub enum Watched {
         /// none.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         mark: Option<Mark>,
+        /// The original event's name and content, without its occurrence count.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        likeness: Option<Box<[u8; 32]>>,
     },
     /// For a viewer that said the mark of the last live event it took
     /// (`held::Held::since`): what it holds stands, and the events after

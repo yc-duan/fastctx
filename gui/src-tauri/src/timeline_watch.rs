@@ -26,6 +26,7 @@ mod navigation;
 
 pub(crate) type Shared = Arc<Handle>;
 pub(crate) struct Handle {
+    pub searches: crate::timeline_search::Searches,
     pub bodies: Arc<tokio::sync::Semaphore>,
     pub scan_bodies: Arc<tokio::sync::Semaphore>,
     navigation: AtomicU64,
@@ -104,7 +105,8 @@ impl Handle {
                 let current = self.lock().await;
                 crate::timeline_overlay::candidates(&current.state, &work.state)
             };
-            let keys: std::collections::BTreeSet<_> = candidates.iter().map(timeline_window::key).collect();
+            let keys: std::collections::BTreeSet<_> =
+                candidates.iter().map(|candidate| candidate.key.clone()).collect();
             let rejected = if !work.reanchored
                 && let (Some(from), Some(to)) = (from, work.through)
             {
@@ -117,7 +119,7 @@ impl Handle {
             };
             let current = self.lock().await;
             let now = crate::timeline_overlay::candidates(&current.state, &work.state);
-            if now.iter().any(|live| !keys.contains(&timeline_window::key(live))) {
+            if now.iter().any(|live| !keys.contains(&live.key)) {
                 continue;
             }
             break (current, rejected);
@@ -132,7 +134,7 @@ impl Handle {
         let before = current.state.clone();
         let mut inherited = before.clone();
         // Only explicit record facts retire these live identities.
-        inherited.retain_live(|live| !rejected.contains(&timeline_window::key(live)));
+        inherited.retire_keys(&rejected);
         let reset_sequence = work.state.revision < current.state.revision
             || matches!((work.through, current.through), (Some(next), Some(old)) if next < old);
         work.state.inherit_retention(&base, &current.state);
@@ -146,6 +148,7 @@ impl Handle {
         Ok(Some(Piece::Timeline { delta }))
     }
     fn close(&self) {
+        self.searches.close();
         self.closed.store(true, Ordering::Release);
         self.closing.notify_waiters();
     }
@@ -259,6 +262,7 @@ pub(crate) async fn open(
     reader.state.replace(page.events, page.revision.unwrap_or(0), page.older.is_some(), false);
     let window = reader.snapshot()?;
     let shared = Arc::new(Handle {
+        searches: crate::timeline_search::Searches::default(),
         bodies: Arc::new(tokio::sync::Semaphore::new(1)),
         scan_bodies: Arc::new(tokio::sync::Semaphore::new(1)),
         navigation: AtomicU64::new(0),
@@ -279,9 +283,9 @@ async fn ready(watching: &mut Watching) -> Result<timeline_window::Window, Error
         loop {
             match watching.next().await? {
                 Some(Watched::Resumed) => return Ok(pending),
-                Some(Watched::Live { mut event, mark: None }) => {
+                Some(Watched::Live { mut event, mark: None, likeness }) => {
                     crate::timeline_preview::limit(&mut event);
-                    pending.observe(&event);
+                    pending.observe_likeness(&event, likeness.map(|value| *value));
                     pending.retired.clear();
                     if pending.pending_over_budget {
                         return Err(Error::Other(
@@ -508,7 +512,12 @@ impl Reader {
             }
         }
     }
-    fn live(&mut self, mut event: SessionEvent, mark: Option<Mark>) -> Result<Option<Piece>, String> {
+    fn live(
+        &mut self,
+        mut event: SessionEvent,
+        mark: Option<Mark>,
+        likeness: Option<[u8; 32]>,
+    ) -> Result<Option<Piece>, String> {
         if mark.is_some_and(|mark| {
             self.mark.is_some_and(|held| mark.epoch == held.epoch && mark.sequence <= held.sequence)
         }) {
@@ -537,7 +546,7 @@ impl Reader {
             return Err("waiting for the running item's complete snapshot".into());
         }
         let aliases = self.state.aliases(&event);
-        if !self.state.observe(&event) {
+        if !self.state.observe_likeness(&event, likeness) {
             if self.state.pending_over_budget {
                 return Err("the pending-request snapshot exceeds the conversation window budget".into());
             }
@@ -556,14 +565,18 @@ impl Reader {
             event = snapshot;
         }
         self.state.previewed = false;
-        let key = timeline_window::key(&event);
+        let key = self.state.received_key.clone().unwrap_or_else(|| timeline_window::key(&event));
         let mut evicted = std::mem::take(&mut self.state.retired);
         if !self.state.newer {
             evicted.extend(self.state.trim_visible());
         }
         evicted.extend(aliases.iter().cloned());
-        evicted.retain(|old| old != &key);
-        let placement = if aliases.is_empty() {
+        let retained = self.state.ordered_keys();
+        evicted.retain(|old| old != &key && !retained.contains(old));
+        let anonymous_after = self.state.anonymous.iter().find(|live| live.key == key).map(|live| live.after.clone());
+        let placement = if let Some(after) = anonymous_after {
+            Some(crate::timeline_delta::Placement { key: key.clone(), after })
+        } else if aliases.is_empty() {
             None
         } else {
             let order = self.state.ordered_keys();
@@ -573,6 +586,9 @@ impl Reader {
             })
         };
         self.objects.retain(|o| self.state.object_visible(&o.object));
+        if let Some(live) = self.state.anonymous.iter_mut().find(|live| live.key == key) {
+            live.published = true;
+        }
         let generation = self.transcript.lock().expect("transcript").generation();
         Ok(Some(Piece::Live {
             generation,
@@ -698,7 +714,7 @@ async fn connected(
 async fn received(reader: &Shared, pieces: &Sender<Piece>, live: Option<Watched>) -> Result<Option<Follow>, Error> {
     let send = |piece| pieces.send(piece).map_err(|_| Error::Other("the page closed".into()));
     match live {
-        Some(Watched::Live { event, mark }) => {
+        Some(Watched::Live { event, mark, likeness }) => {
             if let fastctx_types::session::Happened::Changed { change, .. } = &event.happened {
                 use fastctx_types::session::SessionChange;
                 match change {
@@ -717,7 +733,9 @@ async fn received(reader: &Shared, pieces: &Sender<Piece>, live: Option<Watched>
                     _ => {}
                 }
             }
-            if let Some(piece) = reader.lock().await.live(event, mark).map_err(Error::Other)? {
+            if let Some(piece) =
+                reader.lock().await.live(event, mark, likeness.map(|value| *value)).map_err(Error::Other)?
+            {
                 send(piece)?;
             }
         }

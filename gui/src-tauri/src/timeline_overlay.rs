@@ -12,13 +12,27 @@ use fastctx_types::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 
-pub(crate) fn candidates(current: &Window, staged: &Window) -> Vec<SessionEvent> {
-    current
+pub(crate) struct Candidate {
+    pub key: String,
+    event: SessionEvent,
+    likeness: Option<[u8; 32]>,
+}
+
+pub(crate) fn candidates(current: &Window, staged: &Window) -> Vec<Candidate> {
+    let mut candidates: Vec<_> = current
         .live
         .iter()
         .filter(|live| !staged.entries.iter().filter_map(|e| e.event.as_ref()).any(|event| covers(event, live)))
-        .cloned()
-        .collect()
+        .map(|event| Candidate { key: timeline_window::key(event), event: event.clone(), likeness: None })
+        .collect();
+    // Include consumed occurrences too: each new canonical identity must consume
+    // one occurrence before a later identical live event can claim another.
+    candidates.extend(current.anonymous.iter().map(|event| Candidate {
+        key: event.key.clone(),
+        event: event.event.clone(),
+        likeness: Some(event.likeness),
+    }));
+    candidates
 }
 
 pub(crate) async fn rejected(
@@ -27,7 +41,7 @@ pub(crate) async fn rejected(
     resident: ResidentId,
     base: &Window,
     staged: &Window,
-    candidates: &[SessionEvent],
+    candidates: &[Candidate],
     range: std::ops::Range<u64>,
 ) -> Result<BTreeSet<String>, String> {
     let (from, to) = (range.start, range.end);
@@ -35,13 +49,14 @@ pub(crate) async fn rejected(
         return Ok(BTreeSet::new());
     }
     let mut members: BTreeMap<String, Option<TimelinePlace>> = BTreeMap::new();
-    for candidate in candidates {
+    for candidate in candidates.iter().filter(|candidate| candidate.likeness.is_none()) {
         if let Some(entry) =
-            base.entries.iter().find(|entry| entry.event.as_ref().is_some_and(|event| covers(event, candidate)))
+            base.entries.iter().find(|entry| entry.event.as_ref().is_some_and(|event| covers(event, &candidate.event)))
         {
-            members.insert(timeline_window::key(candidate), Some(entry.place.clone()));
+            members.insert(candidate.key.clone(), Some(entry.place.clone()));
         }
     }
+    let mut anonymous_items: BTreeMap<String, String> = BTreeMap::new();
     let mut after = from;
     while after < to {
         let reply = world
@@ -68,9 +83,23 @@ pub(crate) async fn rejected(
             }
             match change {
                 TimelineChange::Is { event } => {
+                    if let Some(key) = anonymous_items.get(&event.place.item) {
+                        members.insert(key.clone(), Some(event.place.clone()));
+                    } else if let Some(likeness) = event.likeness
+                        && !base.entries.iter().any(|held| held.place.item == event.place.item)
+                        && let Some(candidate) = candidates.iter().find(|candidate| {
+                            candidate.likeness == Some(likeness) && !members.contains_key(&candidate.key)
+                        })
+                    {
+                        anonymous_items.insert(event.place.item.clone(), candidate.key.clone());
+                        members.insert(candidate.key.clone(), Some(event.place.clone()));
+                    }
                     if let Some(canonical) = timeline_window::decoded(&event) {
-                        for candidate in candidates.iter().filter(|live| covers(&canonical, live)) {
-                            members.insert(timeline_window::key(candidate), Some(event.place.clone()));
+                        for candidate in candidates
+                            .iter()
+                            .filter(|candidate| candidate.likeness.is_none() && covers(&canonical, &candidate.event))
+                        {
+                            members.insert(candidate.key.clone(), Some(event.place.clone()));
                         }
                     }
                 }

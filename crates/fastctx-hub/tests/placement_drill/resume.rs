@@ -77,7 +77,7 @@ async fn live(watching: &mut Watching, turns: usize) -> Result<Vec<Mark>> {
             .await
             .context("the turn's events did not come within two minutes")??;
         match piece {
-            Some(Watched::Live { event, mark }) => {
+            Some(Watched::Live { event, mark, .. }) => {
                 marks.extend(mark);
                 if matches!(event.happened, Happened::TurnEnded { .. }) {
                     ended += 1;

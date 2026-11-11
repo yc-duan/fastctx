@@ -797,3 +797,7 @@ export function remoteClose(session: number): Promise<void> {
 export function conversationScan(id: number, cursor: import("../conversation/conversation").ScanCursor | null): Promise<import("../conversation/conversation").Scanned> {
   return invoke("conversation_scan", { id, cursor });
 }
+
+export function conversationSearch(id: number, request: import("../conversation/timeline-find").SearchRequest): Promise<import("../conversation/timeline-find").SearchReply> {
+  return invoke("conversation_search", { id, request });
+}

@@ -21,7 +21,7 @@ LATER_FACTS = ["delivery_failed", "woke"]
 # A live piece as a node now tells it, with where it stands in its telling.
 MARKED_LIVE = {"kind": "watched", "id": 37, "watched": {
     "kind": "live", "event": {"at": AT, "event": "turn_started", "turn": "turn-1"},
-    "mark": {"epoch": 7, "sequence": 3}}}
+    "mark": {"epoch": 7, "sequence": 3}, "likeness": list(range(32))}}
 # The protocol each kind of host control's result came with; the rest came with 13.
 CONTROLLED_SINCE = {"done": 5, "forked": 5, "reported": 10, "refused": 10, "model_menu": 10}
 

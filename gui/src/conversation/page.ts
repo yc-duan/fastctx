@@ -42,6 +42,7 @@ import type { Entry, Gap } from "./model";
 import { escape, render } from "./prose";
 import { shownOf, skillsHtml } from "./said";
 import { Finder } from "./find";
+import { TimelineFind } from "./timeline-find";
 import { FarFind } from "./find-far";
 import { contextOf, type ModelRequest } from "./requests";
 import { UsageBadge, ring } from "./usage-badge";
@@ -315,6 +316,8 @@ export class ConversationPage {
   private chip: HTMLButtonElement;
   private finder: Finder;
   private far: FarFind;
+  private timelineFind: TimelineFind;
+  private findingPosition = 0;
   /** Ctrl+F finds in the conversation while its page is shown and in
    *  focus on the desk. */
   private readonly findKey = (event: KeyboardEvent) => {
@@ -367,11 +370,12 @@ export class ConversationPage {
     this.finder = new Finder(
       transcript,
       this.scroller,
-      words.find,
+      { ...words.find, english: words.english },
       () => {
         this.following = false;
       },
       {
+        get global() { return options.conversation.paged ? owner.timelineFind : undefined; },
         findChanges: () => this.view.findChanges(),
         revealFind: (match) => this.view.revealFind(match),
         findRange: (match) => this.view.findRange(match),
@@ -397,6 +401,19 @@ export class ConversationPage {
     );
     const far = () => this.far;
     this.far = new FarFind(options.conversation, (block) => this.view.findParts(block), () => this.finder.refresh());
+    this.timelineFind = new TimelineFind(options.conversation,
+      (events, query, signal) => this.view.searchCounts(events, query, signal),
+      async (hit, query, signal) => {
+        signal.throwIfAborted();
+        this.findingPosition += 1;
+        try {
+          if (!(await options.conversation.reachPosition(hit.place))) return null;
+          await options.conversation.expandPosition(hit.place);
+          signal.throwIfAborted();
+          cancelAnimationFrame(owner.frame); owner.render();
+          return await this.view.resolveSearch(hit, query, signal);
+        } finally { this.findingPosition -= 1; }
+      }, () => this.finder.refresh());
     this.scroller.before(this.finder.element);
     this.element.querySelector(".find-toggle")!.addEventListener("click", () => (this.finder.open ? this.finder.close() : this.finder.show()));
     this.element.querySelector(".view-steps")!.addEventListener("click", () => this.toggleSteps());
@@ -847,7 +864,7 @@ export class ConversationPage {
   private pagedGesture = 0;
   private paging = false;
   private async fillGap(gap: Gap, side: "end" | "start", explicit = false): Promise<void> {
-    if (gap.paged && (this.paging || this.restoringPosition || (!explicit && (this.following || this.pageGesture === this.pagedGesture || this.pageDirection !== (gap.first ? "before" : "after"))))) {
+    if (gap.paged && (this.paging || this.restoringPosition || this.findingPosition || (!explicit && (this.following || this.pageGesture === this.pagedGesture || this.pageDirection !== (gap.first ? "before" : "after"))))) {
       this.view.retryGap(gap.key);
       return;
     }
@@ -942,7 +959,7 @@ export class ConversationPage {
    *  view when the reader was already there. A page not in view is drawn
    *  when it is shown again. */
   private render(): void {
-    this.finder.setScope(this.options.conversation.paged ? (this.options.words.english ? "Loaded content only" : "仅搜索已加载内容") : null);
+    if (!this.options.conversation.paged) this.finder.setScope(null);
     this.frame = 0;
     if (!this.element.isConnected) return;
     const follow = this.following;
@@ -1026,6 +1043,7 @@ export class ConversationPage {
     const position = place ? this.options.conversation.positionOf(place.key) : null;
     apply();
     this.update({ read: true });
+    if (this.findingPosition) { this.render(); return; }
     if (this.wantedTurn) return this.bringTurn();
     if (!place) return;
     cancelAnimationFrame(this.frame);

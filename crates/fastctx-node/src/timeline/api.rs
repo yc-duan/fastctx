@@ -159,7 +159,7 @@ fn event(entry: Entry) -> Result<TimelineEvent, Failure> {
             object: hex(&object.hash),
         },
     };
-    Ok(TimelineEvent { place: encode_place(entry.place), sequence: entry.sequence, shown })
+    Ok(TimelineEvent { place: encode_place(entry.place), sequence: entry.sequence, likeness: entry.likeness, shown })
 }
 
 fn decode_place(place: TimelinePlace) -> Result<Place, Failure> {

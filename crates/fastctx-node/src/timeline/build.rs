@@ -121,7 +121,7 @@ fn state(content: &Content, event: &SessionEvent, encoded: Vec<u8>) -> Result<St
     let object = content.objects().put(&encoded).map_err(failure)?;
     let mut body = vec![OVERSIZED];
     body.extend_from_slice(
-        &serde_json::to_vec(&serde_json::json!({ "bytes": encoded.len(), "slim": super::preview::preview(event) }))
+        &serde_json::to_vec(&serde_json::json!({ "bytes": encoded.len(), "slim": super::preview::preview(event), "likeness": identity::likeness(event, &encoded) }))
             .map_err(failure)?,
     );
     Ok(State::Is { body, objects: vec![object] })

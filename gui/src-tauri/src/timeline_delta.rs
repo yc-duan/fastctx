@@ -49,9 +49,7 @@ pub(crate) fn between(before: &Window, after: &mut Window, generation: u64) -> R
         .enumerate()
         .filter_map(|(at, (event, key))| {
             let changed = if live.contains(key) {
-                !old_live.contains(key)
-                    || before.live.iter().find(|event| crate::timeline_window::key(event) == *key)
-                        != after.live.iter().find(|event| crate::timeline_window::key(event) == *key)
+                !old_live.contains(key) || before.live_at_key(key) != after.live_at_key(key)
             } else {
                 old_live.contains(key) || old.get(key) != new.get(key)
             };

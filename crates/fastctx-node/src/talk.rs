@@ -30,6 +30,7 @@ use fastctx_types::{Address, AgentName, MachineName, ResidentId, TownName};
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 mod forwarding;
+mod likeness;
 pub(crate) mod multiplex;
 pub(crate) mod submission;
 
@@ -159,8 +160,8 @@ pub async fn watch(
                             if goal.is_some() && !crate::goals::watch::is_goal(&event) { continue; }
                             if !crate::goals::visible(&node, crate::admission::seen::Looker::Here(&Acting::Here), &resident, &event) { continue; }
                             let marked = Arc::unwrap_or_clone(event);
-                            let Some(event) = live(marked.event, slim.as_ref()) else { continue };
-                            if forwarding::send(&sender, Watched::Live { event, mark: marked.mark }).await.is_err() { return }
+                            let Some(event) = likeness::watched(marked.event, marked.mark, slim.as_ref(), live_only) else { continue };
+                            if forwarding::send(&sender, event).await.is_err() { return }
                         }
                         Ok(None) => return,
                         Err(_) => { sender.lag(); return; },
@@ -263,7 +264,8 @@ async fn opening(
     }
     if live_only {
         let (events, pending) = subscribe(node, resident)?;
-        let mut pieces: Vec<_> = pending.into_iter().map(|event| Watched::Live { event, mark: None }).collect();
+        let mut pieces: Vec<_> =
+            pending.into_iter().filter_map(|event| likeness::watched(event, None, None, true)).collect();
         pieces.push(Watched::Resumed);
         return Ok((None, Opening { pieces, events, slim: None }));
     }
@@ -811,7 +813,7 @@ pub async fn serve_watch(
                 Ok(Some(event)) => {
                     if (!goal || crate::goals::watch::is_goal(&event)) && crate::goals::visible(node, crate::admission::seen::Looker::Asker(asker), &resident, &event) {
                         let marked = Arc::unwrap_or_clone(event);
-                        next.extend(live(marked.event, slim.as_ref()).map(|event| Watched::Live { event, mark: marked.mark }));
+                        next.extend(likeness::watched(marked.event, marked.mark, slim.as_ref(), live_only));
                     }
                 },
                 Ok(None) => return ended("this machine stopped telling its events"),

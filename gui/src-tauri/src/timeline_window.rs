@@ -7,7 +7,7 @@ use fastctx_types::{
 };
 use serde::Serialize;
 use sha2::{Digest, Sha256};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 pub(crate) const HELD_EVENTS: usize = 800;
 pub(crate) const HELD_BYTES: usize = 4 << 20;
@@ -36,6 +36,8 @@ pub(crate) struct Object {
 pub(crate) struct Stored {
     pub place: TimelinePlace,
     pub sequence: u64,
+    pub likeness: Option<[u8; 32]>,
+    pub paired_key: Option<String>,
     pub event: Option<SessionEvent>,
     name: Option<String>,
     object: Option<(u64, String)>,
@@ -43,6 +45,9 @@ pub(crate) struct Stored {
 }
 impl Stored {
     pub fn key(&self) -> String {
+        if let Some(key) = &self.paired_key {
+            return key.clone();
+        }
         self.event
             .as_ref()
             .filter(|event| known_name(event).is_some())
@@ -76,7 +81,16 @@ impl From<TimelineEvent> for Stored {
             TimelineShown::Oversized { bytes, object, .. } => Some((bytes, object)),
             _ => None,
         };
-        Self { place: raw.place, sequence: raw.sequence, event, name, object, bytes }
+        Self {
+            place: raw.place,
+            sequence: raw.sequence,
+            likeness: raw.likeness,
+            paired_key: None,
+            event,
+            name,
+            object,
+            bytes,
+        }
     }
 }
 
@@ -86,6 +100,10 @@ pub(crate) struct Window {
     pub interval_start: Option<TimelinePlace>,
     pub interval_end: Option<TimelinePlace>,
     pub live: Vec<SessionEvent>,
+    pub anonymous: Vec<crate::timeline_anonymous::Anonymous>,
+    pub paired_anonymous: std::collections::BTreeSet<String>,
+    pub next_anonymous: u64,
+    pub received_key: Option<String>,
     live_base: BTreeMap<String, Option<u64>>,
     pending: BTreeMap<String, SessionEvent>,
     pending_bytes: usize,
@@ -105,7 +123,7 @@ pub(crate) struct Window {
     pub right: Option<TimelinePlace>,
     pub chunks: usize,
     pub previewed: bool,
-    live_bytes: usize,
+    pub(crate) live_bytes: usize,
     live_sizes: BTreeMap<String, usize>,
     pub retired: Vec<String>,
 }
@@ -168,7 +186,7 @@ impl Window {
             self.oversized_left = false;
             self.oversized_right = false;
         }
-        for event in events.into_iter().map(Stored::from) {
+        for mut event in events.into_iter().map(Stored::from) {
             if let Some(at) = self.entries.iter().position(|held| {
                 held.place.item == event.place.item
                     || event.name.as_ref().is_some_and(|name| held.name.as_ref() == Some(name))
@@ -178,6 +196,7 @@ impl Window {
                     })
             }) {
                 if self.entries[at].sequence <= event.sequence {
+                    event.paired_key = self.entries[at].paired_key.clone();
                     self.entries[at] = event;
                 }
             } else {
@@ -206,7 +225,17 @@ impl Window {
     }
 
     pub fn inherit_live(&mut self, current: &Self) {
+        for entry in &mut self.entries {
+            if let Some(held) = current.entries.iter().find(|held| held.place.item == entry.place.item)
+                && held.paired_key.is_some()
+            {
+                entry.paired_key = held.paired_key.clone();
+            }
+        }
         self.live = current.live.clone();
+        self.anonymous = current.anonymous.iter().filter(|event| !self.retired.contains(&event.key)).cloned().collect();
+        self.paired_anonymous.extend(current.paired_anonymous.iter().cloned());
+        self.next_anonymous = current.next_anonymous;
         self.live_base = current.live_base.clone();
         self.live_sizes = current.live_sizes.clone();
         self.live_bytes = current.live_bytes;
@@ -216,6 +245,7 @@ impl Window {
         self.reconcile();
     }
     fn reconcile(&mut self) {
+        self.reconcile_anonymous();
         for held in &mut self.entries {
             if let Some(event) = &mut held.event {
                 for live in &self.live {
@@ -271,6 +301,16 @@ impl Window {
             }
         }
         self.reconcile();
+    }
+    pub fn retire_keys(&mut self, keys: &BTreeSet<String>) {
+        self.retain_live(|event| !keys.contains(&key(event)));
+        self.anonymous.retain(|event| {
+            if !keys.contains(&event.key) {
+                return true;
+            }
+            self.retired.push(event.key.clone());
+            false
+        });
     }
     pub fn retain_live(&mut self, keep: impl Fn(&SessionEvent) -> bool) {
         self.live.retain(|event| {
@@ -346,7 +386,17 @@ impl Window {
         }
     }
     pub fn observe(&mut self, event: &SessionEvent) -> bool {
+        self.observe_likeness(event, None)
+    }
+    pub fn observe_likeness(&mut self, event: &SessionEvent, likeness: Option<[u8; 32]>) -> bool {
         self.pending_over_budget = false;
+        self.received_key = None;
+        if let Some(likeness) = likeness
+            && known_name(event).is_none()
+            && !pending_event(event)
+        {
+            return self.anonymous(event, likeness);
+        }
 
         use fastctx_types::session::SessionChange;
         match &event.happened {
@@ -445,14 +495,16 @@ impl Window {
     }
 
     pub fn trim_visible(&mut self) -> Vec<String> {
-        let mut bytes: usize = self.entries.iter().map(|e| e.bytes).sum::<usize>() + self.live_bytes;
+        let mut bytes: usize = self.entries.iter().map(|e| e.bytes).sum::<usize>()
+            + self.live_bytes
+            + self.anonymous.iter().map(|event| event.bytes).sum::<usize>();
         let mut removed = Vec::new();
         let overlaps = self
             .entries
             .iter()
             .filter(|held| held.event.as_ref().is_some_and(|event| self.live.iter().any(|live| covers(live, event))))
             .count();
-        let mut count = self.entries.len() + self.live.len() - overlaps;
+        let mut count = self.entries.len() + self.live.len() + self.anonymous.len() - overlaps;
         while !self.entries.is_empty() && (count > HELD_EVENTS || bytes > HELD_BYTES) {
             let entry = self.entries.remove(0);
             bytes = bytes.saturating_sub(entry.bytes);
@@ -492,23 +544,41 @@ impl Window {
                     .map(key),
             );
         }
+        if !self.newer {
+            for event in &self.anonymous {
+                let at = event
+                    .after
+                    .as_ref()
+                    .and_then(|after| keys.iter().position(|key| key == after))
+                    .map_or(keys.len(), |at| at + 1);
+                keys.insert(at, event.key.clone());
+            }
+        }
         keys
     }
     pub fn live_keys(&self) -> Vec<String> {
-        self.live.iter().map(key).collect()
+        self.live.iter().map(key).chain(self.anonymous.iter().map(|event| event.key.clone())).collect()
     }
     pub fn running(&self, event: &SessionEvent) -> Option<SessionEvent> {
         let Happened::Grew { turn, item, .. } = &event.happened else { return None };
         self.live.iter().find(|e| matches!(&e.happened, Happened::Began { turn: t, item: i } | Happened::Updated { turn: t, item: i } if t == turn && i.id == *item)).cloned()
     }
-    fn bound_live(&mut self) {
-        while self.live.len() > HELD_EVENTS / 2 || self.live_bytes > HELD_BYTES / 2 {
-            if self.live.is_empty() {
-                break;
+    pub(crate) fn bound_live(&mut self) {
+        while self.live.len() + self.anonymous.len() > HELD_EVENTS / 2
+            || self.live_bytes + self.anonymous.iter().map(|event| event.bytes).sum::<usize>() > HELD_BYTES / 2
+        {
+            let first = self.ordered_keys().into_iter().find(|key| self.live_at_key(key).is_some());
+            let key = first
+                .or_else(|| self.live.first().map(key))
+                .or_else(|| self.anonymous.first().map(|event| event.key.clone()));
+            let Some(key) = key else { break };
+            if let Some(at) = self.anonymous.iter().position(|event| event.key == key) {
+                self.anonymous.remove(at);
+            } else if let Some(at) = self.live.iter().position(|event| crate::timeline_window::key(event) == key) {
+                self.live.remove(at);
+                self.live_bytes = self.live_bytes.saturating_sub(self.live_sizes.remove(&key).unwrap_or(0));
             }
-            let removed = self.live.remove(0);
-            self.retired.push(key(&removed));
-            self.live_bytes = self.live_bytes.saturating_sub(self.live_sizes.remove(&key(&removed)).unwrap_or(0));
+            self.retired.push(key);
         }
     }
 
@@ -557,6 +627,28 @@ impl Window {
             }
         }
 
+        if !self.newer {
+            for live in &self.anonymous {
+                let at = live
+                    .after
+                    .as_ref()
+                    .and_then(|after| edges.keys.iter().position(|key| key == after))
+                    .map_or(events.len(), |at| at + 1);
+                events.insert(at, live.event.clone());
+                for object in &mut edges.objects {
+                    if object.at >= at {
+                        object.at += 1;
+                    }
+                }
+                edges.keys.insert(at, live.key.clone());
+                edges.places.insert(at, None);
+            }
+        }
+        if !self.newer {
+            for live in &mut self.anonymous {
+                live.published = true;
+            }
+        }
         self.recount_live();
         edges.live_keys = self.live_keys();
         self.prune_bases();

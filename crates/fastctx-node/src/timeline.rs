@@ -11,6 +11,7 @@ mod build;
 #[cfg(feature = "timeline-drill")]
 mod drill;
 mod identity;
+pub(crate) use identity::likeness;
 mod order;
 mod preview;
 pub(crate) mod reads;

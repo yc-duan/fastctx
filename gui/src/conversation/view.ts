@@ -52,7 +52,9 @@ import { effortLabel } from "./effort-slider";
 import { isThinking, runsOf, startsAgent, type Activity, type Block, type Entry, type Gap, type Say, type SendState, type ShownAttachment } from "./model";
 import { AgentBox } from "./agent-box";
 import { toldSaid, type AgentRun } from "./agents";
-import type { Conversation } from "./conversation";
+import { Conversation } from "./conversation";
+import { eventParts, searchText } from "./event-find";
+import type { SearchEvent, SearchHit } from "./timeline-find";
 import { escape, plain, render } from "./prose";
 import { askedSkill } from "./commands";
 import { askedHtml, askedOf } from "./goal-notice";
@@ -359,6 +361,7 @@ export class ConversationView {
     private readonly root: HTMLElement,
     private readonly conversation: Conversation,
     private readonly context: Context,
+    projection = false,
   ) {
     root.classList.add("transcript");
     root.dataset.view = this.mode;
@@ -397,6 +400,7 @@ export class ConversationView {
     // column narrows): its height is kept, and what is above the reader
     // moving moves the view by as much.
     this.sizes = new ResizeObserver((entries) => this.resized(entries));
+    if (projection) return;
     context.scroller.addEventListener("scroll", this.scrolled, { passive: true });
     // The reader moving the view themselves during a change of view lets go
     // of the words it holds.
@@ -1018,6 +1022,68 @@ export class ConversationView {
     })();
   }
 
+  /** One detached projection per batch, released without mounting any rows. */
+  async searchCounts(events: SearchEvent[], query: string, signal: AbortSignal): Promise<number[]> {
+    const conversation = new Conversation();
+    conversation.open({ generation: 0, start: 0, turns_before: 0, carry: [], events: events.map((event) => event.event), pages: { older: false, newer: false, keys: events.map((event) => event.place.item), objects: [], pending: [] } }, null);
+    const projection = new ConversationView(document.createElement("div"), conversation, { ...this.context, scroller: document.createElement("div") }, true);
+    projection.blocks = conversation.blocks();
+    const counts: number[] = [];
+    let began = performance.now();
+    try {
+      for (const event of events) {
+        signal.throwIfAborted();
+        const entries = conversation.live.entries.filter((entry) => conversation.live.placeOf(entry.key) === event.place.item);
+        let count = 0;
+        for (const part of eventParts(entries, projection.blocks, (block) => projection.findContent.parts(block))) {
+          const text = await part.read(signal);
+          count += await searchText(text, query, signal) as number;
+        }
+        counts.push(count);
+        if (performance.now() - began > 8) { await new Promise<void>((resolve) => requestAnimationFrame(() => resolve())); began = performance.now(); }
+      }
+      return counts;
+    } finally { projection.destroy(); }
+  }
+
+  async resolveSearch(hit: SearchHit, query: string, signal: AbortSignal): Promise<FindMatch | null> {
+    const entries = this.conversation.entriesAtPosition(hit.place);
+    let ordinal = hit.ordinal;
+    for (const part of eventParts(entries, this.blocks, (block) => this.findContent.parts(block))) {
+      signal.throwIfAborted();
+      const text = await part.read(signal);
+      const count = await searchText(text, query, signal) as number;
+      if (ordinal >= count) { ordinal -= count; continue; }
+      const selected = await searchText(text, query, signal, ordinal) as TextMatch;
+      const entry = entries.find((entry) => part.target.row?.startsWith(entry.key) || part.target.block === entry.key);
+      if (!entry) return null;
+      const block = this.blocks.find((block) => block.key === entry.key || (block.kind === "activity-group" && block.members.some((member) => member.key === entry.key)));
+      if (!block) return null;
+      const suffix = part.key.slice(part.target.block.length);
+      const available = [...this.findParts(block)];
+      let actual = available.find((candidate) => candidate.key === `${block.key}${suffix}`);
+      let offset = 0;
+      if (!actual && isThinking(entry) && block.kind === "activity-group") {
+        const run = runsOf(block.members).find((run) => run.some((member) => member.key === entry.key));
+        if (!run) return null;
+        const first = run[0]!.key;
+        actual = available.find((candidate) => candidate.key.endsWith("/thinking") && candidate.target.row?.startsWith(first));
+        if (!actual) return null;
+        const shown = await actual.read(signal);
+        const before = run.slice(0, run.findIndex((member) => member.key === entry.key)).filter(isThinking);
+        const prefix = this.findContent.prose(thoughtText(before), false);
+        offset = shown.indexOf(text, prefix.length);
+        if (offset < 0) return null;
+      }
+      if (!actual) return null;
+      const shown = await actual.read(signal);
+      const start = offset + selected.start; const end = offset + selected.end;
+      if (start > shown.length || end > shown.length || !(await searchText(shown.slice(start, end), query, signal, 0))) return null;
+      return { start, end, document: { ...actual, text: shown, hits: [{ start, end }] } };
+    }
+    return null;
+  }
+
   /** Draws and opens just the selected match's ancestry. Existing folds
    * and unrelated line viewports keep their disclosure and scroll state. */
   async revealFind(match: FindMatch): Promise<void> {
@@ -1030,6 +1096,8 @@ export class ConversationView {
       const line = match.document.text.slice(0, match.start).split("\n").length - 1;
       if (long) await long.reveal(line);
     }
+    this.measureMounted();
+    this.lay(false, true);
     for (let node = this.findRange(match)?.startContainer.parentElement; node && node !== slot.element; node = node.parentElement) {
       if (node instanceof HTMLDetailsElement) node.open = true;
     }
@@ -1215,13 +1283,7 @@ export class ConversationView {
     this.lay(false, true);
     // Restoration already uses the mounted DOM's position. Record its real
     // heights now, so ResizeObserver cannot charge the same correction twice.
-    for (const shown of this.shown) {
-      const at = this.heights.index(shown.key);
-      if (at === undefined || !shown.element.isConnected) continue;
-      const height = shown.element.getBoundingClientRect().height;
-      this.measured.set(shown.key, height);
-      this.heights.set(at, height);
-    }
+    this.measureMounted();
     const slot = this.slots.get(anchor.key);
     if (slot?.element.isConnected) scroller.scrollTop += slot.element.getBoundingClientRect().top - scroller.getBoundingClientRect().top + anchor.offset;
     return true;
@@ -1247,6 +1309,16 @@ export class ConversationView {
   readerKey(): string | null {
     const found = this.anchorNow();
     return found?.slot.key ?? null;
+  }
+
+  private measureMounted(): void {
+    for (const shown of this.shown) {
+      const at = this.heights.index(shown.key);
+      if (at === undefined || !shown.element.isConnected) continue;
+      const height = shown.element.getBoundingClientRect().height;
+      this.measured.set(shown.key, height);
+      this.heights.set(at, height);
+    }
   }
 
   /** Lets go of everything drawn, as the page is left for good. */

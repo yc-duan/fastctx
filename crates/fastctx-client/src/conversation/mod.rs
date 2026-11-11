@@ -230,7 +230,7 @@ impl Conversation {
         let mut conversation = Self::reading_after(watching, source);
         let history = loop {
             match conversation.piece().await {
-                Some(Ok(Some(Watched::Live { event, mark }))) => {
+                Some(Ok(Some(Watched::Live { event, mark, .. }))) => {
                     conversation.take_live(event, mark);
                 }
                 Some(Ok(Some(Watched::Now { busy, turn, kept }))) => {
@@ -368,7 +368,7 @@ impl Conversation {
                 return Ok(Update::Now { busy, turn, kept });
             }
             let watched = match self.piece().await {
-                Some(Ok(Some(Watched::Live { event, mark }))) => {
+                Some(Ok(Some(Watched::Live { event, mark, .. }))) => {
                     self.current_due |= self.again.came();
                     self.take_live(event, mark);
                     continue;
@@ -594,7 +594,7 @@ impl Conversation {
                 return Ok(Next::Moment(moment));
             }
             match self.piece().await {
-                Some(Ok(Some(Watched::Live { event, mark }))) => {
+                Some(Ok(Some(Watched::Live { event, mark, .. }))) => {
                     self.current_due |= self.again.came();
                     self.take_live(event, mark);
                 }

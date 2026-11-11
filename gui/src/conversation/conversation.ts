@@ -94,12 +94,14 @@ export interface Found {
 }
 
 /** Where the parts a page does not hold are read from. */
-export interface ScanCursor { revision: string; after: { order: string; item: string }; seeking?: boolean }
+export interface ScanCursor { revision: string; after: TimelinePosition; until: TimelinePosition; through: string | null; seeking?: boolean; restarts?: number }
 export interface ExpandedEvent { object: string; event: SessionEvent }
-export interface Scanned { events: SessionEvent[]; truncated?: { at: number; bytes: number }[]; next: ScanCursor | null }
-export type ExportReading = readonly Entry[] | { previewBytes: number };
+export interface Scanned { events: SessionEvent[]; truncated?: { at: number; bytes: number }[]; restart?: boolean; next: ScanCursor | null }
+export type ExportReading = readonly Entry[] | { previewBytes: number } | { restart: true };
 
 export interface PartSource {
+  identity?(): string;
+  search?(request: import("./timeline-find").SearchRequest): Promise<import("./timeline-find").SearchReply>;
   scan?(cursor: ScanCursor | null): Promise<Scanned>;
   part(generation: number, edge: Edge): Promise<PartRead | null>;
   object?(generation: number, object: string): Promise<ExpandedEvent>;
@@ -128,6 +130,13 @@ type ToolEntry = Extract<Entry, { kind: "tool" }>;
 /** How long after one bubble the next has its moment said above it. */
 const CHAT_GAP_MS = 5 * 60_000;
 export class Conversation {
+  searchVersion = 0;
+  private searchSource = 0;
+  get searchIdentity(): string { return this.source?.identity?.() ?? String(this.searchSource); }
+  search(request: import("./timeline-find").SearchRequest): Promise<import("./timeline-find").SearchReply> {
+    if (!this.source?.search) return Promise.reject(new Error("this source cannot search the complete history"));
+    return this.source.search(request);
+  }
   /** The parts held, in order; the last is the latest, and live. */
   private parts: Held[];
   private generation = 0;
@@ -236,6 +245,8 @@ export class Conversation {
 
   /** The part the page opens on, in place of all it held. */
   open(window: Window, source: PartSource | null): void {
+    this.searchVersion += 1;
+    if (source !== this.source) this.searchSource += 1;
     this.generation = window.generation;
     this.pageWindow = window.pages ? window : null;
     this.follows = null;
@@ -324,6 +335,7 @@ export class Conversation {
 
   /** Materialization reuses unchanged events and preserves the navigation. */
   timeline(delta: TimelineDelta): boolean {
+    this.searchVersion += 1;
     const held = this.pageWindow;
     if (!held?.pages?.keys || held.generation !== delta.generation) return false;
     const events = new Map(held.pages.keys.map((key, at) => [key, held.events[at]!]));
@@ -485,6 +497,18 @@ export class Conversation {
     return at !== undefined && at >= 0 ? this.pageWindow?.pages?.places?.[at] ?? null : null;
   }
 
+  entriesAtPosition(place: TimelinePosition): Entry[] {
+    const at = this.pageWindow?.pages?.places?.findIndex((current) => current?.item === place.item) ?? -1;
+    const key = this.pageWindow?.pages?.keys?.[at];
+    return key ? this.live.entries.filter((entry) => this.live.placeOf(entry.key) === key) : [];
+  }
+
+  async expandPosition(place: TimelinePosition): Promise<void> {
+    const at = this.pageWindow?.pages?.places?.findIndex((current) => current?.item === place.item) ?? -1;
+    const object = this.pageWindow?.pages?.objects.find((object) => object.at === at);
+    if (object && object.bytes <= 8 * 1024 * 1024) await this.readFull(this.entriesAtPosition(place)[0]?.key ?? "");
+  }
+
   async reachPosition(place: TimelinePosition): Promise<boolean> {
     if (!this.source || !this.pageWindow) return false;
     await this.source.part(this.generation, { edge: "position", place });
@@ -570,6 +594,7 @@ export class Conversation {
       let cursor: ScanCursor | null = null;
       do {
         const scanned = await source.scan(cursor);
+        if (scanned.restart) yield { restart: true };
         const fold = new Fold("export");
         fold.thoughtWords = this.thoughts;
         fold.history(scanned.events);

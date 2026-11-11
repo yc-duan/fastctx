@@ -1,10 +1,10 @@
-//! An explicit export walks pages independently of the visible reader window.
+//! Export fixes its initial end, then reads each event's current version.
+//! A rebuilt history restarts the export, at most three attempts in total.
 
+use crate::{timeline_walk as walk, timeline_watch::Shared};
 use fastctx_types::{
     session::SessionEvent,
-    timeline_pages::{
-        PAGE_BYTES, PAGE_EVENTS, TimelineAsk, TimelineEvent, TimelineFrom, TimelinePlace, TimelineShown, TimelineTold,
-    },
+    timeline_pages::{PAGE_BYTES, TimelineEvent, TimelineFrom, TimelinePlace, TimelineShown},
 };
 use serde::{Deserialize, Serialize};
 
@@ -12,8 +12,12 @@ use serde::{Deserialize, Serialize};
 pub(crate) struct Cursor {
     revision: String,
     after: TimelinePlace,
+    until: TimelinePlace,
+    through: Option<String>,
     #[serde(default)]
     seeking: bool,
+    #[serde(default)]
+    restarts: u8,
 }
 #[derive(Serialize)]
 pub(crate) struct Truncated {
@@ -24,95 +28,148 @@ pub(crate) struct Truncated {
 pub(crate) struct Scanned {
     events: Vec<SessionEvent>,
     truncated: Vec<Truncated>,
+    restart: bool,
     next: Option<Cursor>,
 }
 
-async fn page(
-    reader: &crate::timeline_watch::Shared,
-    from: TimelineFrom,
-) -> Result<(u64, Vec<TimelineEvent>, bool, bool), String> {
-    let (world, resident, machine) = {
-        let r = reader.lock().await;
-        (r.world.clone(), r.resident.clone(), r.machine.clone())
-    };
-    let response = tokio::select! {
-        response = tokio::time::timeout(std::time::Duration::from_secs(30), world.timeline(machine, TimelineAsk::Page { resident, from, max_events: PAGE_EVENTS, max_bytes: PAGE_BYTES })) => response.map_err(|_| "reading the timeline page exceeded 30 s")?.map_err(|e| e.to_string())?,
-        () = reader.closed() => return Err("the conversation window closed".into()),
-    };
-    match response {
-        TimelineTold::Page { revision: Some(revision), events, older, newer, .. } => {
-            Ok((revision, events, older.is_some(), newer.is_some()))
+pub(crate) async fn full(reader: &Shared, event: &TimelineEvent) -> Result<(SessionEvent, Option<u64>), String> {
+    match &event.shown {
+        TimelineShown::Event { event } => Ok((serde_json::from_value(event.clone()).map_err(|e| e.to_string())?, None)),
+        TimelineShown::Oversized { bytes, .. } if *bytes > crate::timeline_body::EXPANDED_BYTES => {
+            let preview = crate::timeline_window::Stored::from(event.clone())
+                .event
+                .ok_or("the oversized event has no readable preview")?;
+            Ok((preview, Some(*bytes)))
         }
-        _ => Err("the timeline is not available for a complete export".into()),
+        TimelineShown::Oversized { bytes, object, .. } => {
+            let raw = crate::timeline_body::fetch(
+                reader.clone(),
+                crate::timeline_window::Object { at: 0, bytes: *bytes, object: object.clone() },
+                false,
+            )
+            .await?;
+            Ok((serde_json::from_str(raw.get()).map_err(|e| e.to_string())?, None))
+        }
     }
 }
 
-pub(crate) async fn read(reader: crate::timeline_watch::Shared, cursor: Option<Cursor>) -> Result<Scanned, String> {
-    let seeking = cursor.as_ref().is_none_or(|c| c.seeking);
-    let expected =
-        cursor.as_ref().map(|c| c.revision.parse::<u64>().map_err(|_| "invalid export revision")).transpose()?;
-    let from = cursor.map_or(TimelineFrom::Latest, |c| {
-        if c.seeking { TimelineFrom::Before { place: c.after } } else { TimelineFrom::After { place: c.after } }
-    });
-    let (revision, events, older, mut newer) = page(&reader, from).await?;
-    if expected.is_some_and(|r| r != revision) {
-        return Err("the conversation changed during export; copy it again".into());
+pub(crate) async fn read(reader: Shared, mut cursor: Option<Cursor>) -> Result<Scanned, String> {
+    let mut restart = false;
+    let mut restarts = cursor.as_ref().map_or(0, |cursor| cursor.restarts);
+    if !walk::continuous(
+        &reader,
+        cursor
+            .as_ref()
+            .and_then(|cursor| cursor.through.as_deref())
+            .map(str::parse::<u64>)
+            .transpose()
+            .map_err(|_| "invalid export record cursor")?,
+    )
+    .await?
+    {
+        restarts += 1;
+        if restarts >= 3 {
+            return Err("the history was rebuilt repeatedly during export; copy it again".into());
+        }
+        cursor = None;
+        restart = true;
     }
-    // Seeking is itself paged: one invocation performs at most one page read,
-    // so a caller can cancel and report progress before reaching the start.
-    if seeking && older {
-        let after = events.first().ok_or("an export page did not advance")?.place.clone();
+    let seeking = cursor.as_ref().is_none_or(|cursor| cursor.seeking);
+    let from = cursor.as_ref().map_or(TimelineFrom::Latest, |cursor| {
+        if cursor.seeking {
+            TimelineFrom::Before { place: cursor.after.clone() }
+        } else {
+            TimelineFrom::After { place: cursor.after.clone() }
+        }
+    });
+    let mut page = walk::page(&reader, from.clone()).await?;
+    let until = cursor
+        .as_ref()
+        .map(|cursor| cursor.until.clone())
+        .or_else(|| page.events.last().map(|event| event.place.clone()));
+    let Some(until) = until else {
+        if page.revision.is_none() {
+            return Err("the history is still being prepared".into());
+        }
+        return Ok(Scanned { events: Vec::new(), truncated: Vec::new(), restart, next: None });
+    };
+    let through = cursor
+        .as_ref()
+        .and_then(|cursor| cursor.through.clone())
+        .or_else(|| page.through.map(|value| value.to_string()));
+    let revision = page.revision.ok_or("the history is still being prepared")?;
+    if seeking && page.older {
+        let after = page.events.first().ok_or("an export page did not advance")?.place.clone();
         return Ok(Scanned {
             events: Vec::new(),
             truncated: Vec::new(),
-            next: Some(Cursor { revision: revision.to_string(), after, seeking: true }),
+            restart,
+            next: Some(Cursor { revision: revision.to_string(), after, until, through, seeking: true, restarts }),
         });
     }
-    let mut output = Vec::new();
-    let mut truncated = Vec::new();
-    let mut bytes = 0;
-    let mut after = None;
-    let total = events.len();
-    for (at, event) in events.into_iter().enumerate() {
-        let fallback = if matches!(event.shown, TimelineShown::Oversized { bytes, .. } if bytes > crate::timeline_body::EXPANDED_BYTES)
-        {
-            crate::timeline_window::Stored::from(event.clone()).event
-        } else {
-            None
-        };
-        let full = match event.shown {
-            TimelineShown::Event { event } => serde_json::from_value(event).map_err(|e| e.to_string())?,
-            TimelineShown::Oversized { bytes, .. } if bytes > crate::timeline_body::EXPANDED_BYTES => {
-                truncated.push(Truncated { at: output.len(), bytes });
-                fallback.ok_or("the oversized event has no readable preview")?
+    // An object may have lost its reference between Page and Object. Restart
+    // this page from its original anchor; discard its uncommitted output.
+    for attempt in 0..3 {
+        let mut events = Vec::new();
+        let mut truncated = Vec::new();
+        let mut bytes = 0;
+        let mut after = None;
+        let mut retry = None;
+        let mut more = page.newer;
+        for (index, event) in page.events.iter().enumerate() {
+            if event.place.order > until.order {
+                more = false;
+                break;
             }
-            TimelineShown::Oversized { bytes, object, .. } => {
-                let raw = crate::timeline_body::fetch(
-                    reader.clone(),
-                    crate::timeline_window::Object { at: 0, bytes, object },
-                    false,
-                )
-                .await?;
-                serde_json::from_str(raw.get()).map_err(|e| e.to_string())?
+            match full(&reader, event).await {
+                Ok((event_body, preview)) => {
+                    if let Some(bytes) = preview {
+                        truncated.push(Truncated { at: events.len(), bytes });
+                    }
+                    bytes += serde_json::to_vec(&event_body).map_or(0, |bytes| bytes.len());
+                    events.push(event_body);
+                    after = Some(event.place.clone());
+                }
+                Err(error) => {
+                    retry = Some(error);
+                    break;
+                }
             }
-        };
-        bytes += serde_json::to_vec(&full).map_or(0, |b| b.len());
-        output.push(full);
-        after = Some(event.place);
-        if bytes >= PAGE_BYTES as usize {
-            newer |= at + 1 < total;
-            break;
+            if event.place.order >= until.order {
+                more = false;
+                break;
+            }
+            if bytes >= PAGE_BYTES as usize {
+                more |= index + 1 < page.events.len();
+                break;
+            }
         }
+        if let Some(error) = retry {
+            if attempt == 2 {
+                return Err(format!("the current event could not be read after three page reads: {error}"));
+            }
+            page = walk::page(&reader, from.clone()).await?;
+            continue;
+        }
+        return Ok(Scanned {
+            events,
+            truncated,
+            restart,
+            next: if more {
+                after.map(|after| Cursor {
+                    revision: page.revision.unwrap_or(revision).to_string(),
+                    after,
+                    until,
+                    through,
+                    seeking: false,
+                    restarts,
+                })
+            } else {
+                None
+            },
+        });
     }
-    Ok(Scanned {
-        events: output,
-        truncated,
-        next: if newer {
-            after.map(|after| Cursor { revision: revision.to_string(), after, seeking: false })
-        } else {
-            None
-        },
-    })
+    unreachable!("bounded export attempts return")
 }
 
 #[fastctx_gui_command::command]

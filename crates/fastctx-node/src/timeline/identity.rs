@@ -25,6 +25,17 @@ pub(super) fn name(event: &SessionEvent) -> Option<String> {
     }
 }
 
+/// Pair an original live event with its durable preview, without numbering
+/// repeated occurrences. Both halves are SHA-256 prefixes of the original.
+pub(crate) fn likeness(event: &SessionEvent, encoded: &[u8]) -> [u8; 32] {
+    let content = Sha256::digest(encoded);
+    let named = name(event).map_or_else(|| half(&content), |name| half(&Sha256::digest(name.as_bytes())));
+    let mut likeness = [0; 32];
+    likeness[..16].copy_from_slice(&named);
+    likeness[16..].copy_from_slice(&content[..16]);
+    likeness
+}
+
 fn half(digest: &[u8]) -> [u8; 16] {
     digest[..16].try_into().expect("half a SHA-256")
 }

@@ -130,7 +130,11 @@ async fn from_cut(
 fn told(events: Vec<Arc<crate::watch::Marked>>, owner: &Address) -> impl Iterator<Item = Watched> + '_ {
     events.into_iter().filter_map(|marked| {
         let marked = Arc::unwrap_or_clone(marked);
-        crate::talk::live(marked.event, Some(owner)).map(|event| Watched::Live { event, mark: marked.mark })
+        crate::talk::live(marked.event, Some(owner)).map(|event| Watched::Live {
+            event,
+            mark: marked.mark,
+            likeness: None,
+        })
     })
 }
 
@@ -168,9 +172,9 @@ pub(crate) async fn picture_fingerprints(node: &Arc<Node>, events: &mut [Session
 /// What the resident's host waits on someone to answer now, sent as it
 /// happens rather than kept with the history, which outlives it.
 fn live(pending: Vec<SessionEvent>, owner: &Address) -> impl Iterator<Item = Watched> + '_ {
-    pending
-        .into_iter()
-        .filter_map(|event| crate::talk::live(event, Some(owner)).map(|event| Watched::Live { event, mark: None }))
+    pending.into_iter().filter_map(|event| {
+        crate::talk::live(event, Some(owner)).map(|event| Watched::Live { event, mark: None, likeness: None })
+    })
 }
 
 /// A version of the resident's history, from what it is read from: equal

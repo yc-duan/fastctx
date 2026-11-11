@@ -29,6 +29,7 @@ pub(crate) struct Entry {
     /// The timeline's count of records as this one was written.
     pub sequence: u64,
     pub shown: Shown,
+    pub likeness: Option<[u8; 32]>,
 }
 
 pub(crate) struct Read {
@@ -79,7 +80,12 @@ pub(crate) fn page(
         .items
         .into_iter()
         .map(|item| {
-            Ok(Entry { place: item.place(), sequence: item.sequence, shown: shown(&item.body, &item.objects)? })
+            Ok(Entry {
+                place: item.place(),
+                sequence: item.sequence,
+                shown: shown(&item.body, &item.objects)?,
+                likeness: likeness(&item.body),
+            })
         })
         .collect::<Result<_, Failure>>()?;
     Ok(Read { revision: page.revision, entries, older: page.older, newer: page.newer, through: page.through })
@@ -87,6 +93,19 @@ pub(crate) fn page(
 
 /// What a timeline record's body shows: the event, or what stands for one
 /// kept whole as an object.
+fn likeness(body: &[u8]) -> Option<[u8; 32]> {
+    match body.split_first()? {
+        (&EVENT, encoded) => {
+            let event = serde_json::from_slice(encoded).ok()?;
+            Some(super::identity::likeness(&event, encoded))
+        }
+        (&OVERSIZED, told) => serde_json::from_slice::<serde_json::Value>(told)
+            .ok()
+            .and_then(|value| serde_json::from_value(value.get("likeness")?.clone()).ok()),
+        _ => None,
+    }
+}
+
 fn shown(body: &[u8], objects: &[ObjectRef]) -> Result<Shown, Failure> {
     match body.split_first() {
         Some((&EVENT, event)) => Ok(Shown::Event(event.to_vec())),
@@ -126,6 +145,7 @@ pub(crate) fn changes(
             Ok(match record.state {
                 State::Is { body, objects } => Change::Is(Entry {
                     shown: shown(&body, &objects)?,
+                    likeness: likeness(&body),
                     place: Place { order: record.order, item: record.item },
                     sequence: change.sequence,
                 }),

@@ -71,6 +71,6 @@ pub struct Packet {
 pub enum Event {
     Ready { version: u32, subscriptions: usize },
     Opened,
-    Piece { watched: Watched },
+    Piece { watched: Box<Watched> },
     End { failure: Option<Failure> },
 }

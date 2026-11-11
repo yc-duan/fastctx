@@ -3,7 +3,7 @@
 
 mod input;
 
-use super::{Opening, Told, live, opening};
+use super::{Opening, Told, opening};
 use crate::Node;
 use fastctx_net::{
     data::Stream,
@@ -292,7 +292,7 @@ async fn run(
                     watch,
                     subscription: id,
                     number: next.fetch_add(1, Ordering::Relaxed),
-                    event: Event::Piece { watched },
+                    event: Event::Piece { watched: Box::new(watched) },
                 },
                 consumed,
             )
@@ -331,9 +331,9 @@ async fn run(
                     subscription: id,
                     number: next.fetch_add(1, Ordering::Relaxed),
                     event: Event::Piece {
-                        watched: fastctx_types::session::Watched::Documents {
+                        watched: Box::new(fastctx_types::session::Watched::Documents {
                             frame: Box::new(Arc::unwrap_or_clone(frame)),
-                        },
+                        }),
                     },
                 },
                 consumed,
@@ -362,7 +362,7 @@ async fn run(
                 watch,
                 subscription: id,
                 number: next.fetch_add(1, Ordering::Relaxed),
-                event: Event::Piece { watched },
+                event: Event::Piece { watched: Box::new(watched) },
             },
             consumed,
         )
@@ -374,7 +374,7 @@ async fn run(
                 Ok(Some(event)) => {
                     if request.goal && !crate::goals::watch::is_goal(&event) { continue; }
                     if !crate::goals::visible(node, crate::admission::seen::Looker::Asker(&asker), &request.resident, &event) { continue; }
-                    { let marked = Arc::unwrap_or_clone(event); live(marked.event, slim.as_ref()).map(|event| fastctx_types::session::Watched::Live { event, mark: marked.mark }) }
+                    { let marked = Arc::unwrap_or_clone(event); super::likeness::watched(marked.event, marked.mark, slim.as_ref(), request.live_only) }
                 }
                 Ok(None) => return Ok(()),
                 Err(error) => return Err(Failure::new(error.to_string())),
@@ -389,7 +389,7 @@ async fn run(
                     watch,
                     subscription: id,
                     number: next.fetch_add(1, Ordering::Relaxed),
-                    event: Event::Piece { watched },
+                    event: Event::Piece { watched: Box::new(watched) },
                 },
                 consumed,
             )

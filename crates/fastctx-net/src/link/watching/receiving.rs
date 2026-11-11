@@ -197,7 +197,7 @@ impl Pool {
                     if slot.opened.is_some() {
                         return Err("the shared watch sent data before admitting its subscription".into());
                     }
-                    if slot.pieces.send(Ok((packet.number, watched))).is_err() {
+                    if slot.pieces.send(Ok((packet.number, *watched))).is_err() {
                         remove = true;
                     }
                 }

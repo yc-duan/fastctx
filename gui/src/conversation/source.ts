@@ -4,7 +4,7 @@
 
 import type { Address, SessionEvent } from "../world/events";
 import { after, whyOf } from "../world/again";
-import { conversationScan, conversationCut, conversationFind, conversationIndex, conversationLocate, conversationFollow, conversationObject, conversationPart, unwatch, watch, type Piece } from "../world/bridge";
+import { conversationSearch, conversationScan, conversationCut, conversationFind, conversationIndex, conversationLocate, conversationFollow, conversationObject, conversationPart, unwatch, watch, type Piece } from "../world/bridge";
 import type { PartSource, Window } from "./conversation";
 
 export interface ConversationFeed {
@@ -86,6 +86,8 @@ export const watched: ConversationSource = {
       }
     };
     const parts: PartSource = {
+      identity: () => id === null ? `waiting:${reading}` : String(id),
+      search: async (request) => { const owner = current(); const result = await conversationSearch(owner, request); if (closed || owner !== id) throw new Error("the conversation closed during search"); return result; },
       scan: async (cursor) => { const owner = current(); const scanned = await conversationScan(owner, cursor); if (closed || id !== owner) throw new Error("the conversation closed during export"); return scanned; },
       part: async (generation, edge) => {
         const owner = current();

@@ -3,7 +3,8 @@
 // steps, and what its own agents that went on in the background handed
 // back. Thinking is left out; tool output is left to the conversation. All
 // of it, however long: what the page does not hold is read a part at a
-// time and let go once written.
+// time and let go once written. The initial end stays fixed; each event is
+// its version at reading time. A rebuilt history restarts the export.
 
 import type { Words } from "../words";
 import type { Conversation } from "./conversation";
@@ -33,6 +34,7 @@ export async function markdownOf(conversation: Conversation, words: Words, names
     speaker = who;
   };
   for await (const reading of conversation.everything()) {
+    if ("restart" in reading) { out.splice(1); tools = []; speaker = ""; continue; }
     if ("previewBytes" in reading) {
       flush();
       out.push(words.english

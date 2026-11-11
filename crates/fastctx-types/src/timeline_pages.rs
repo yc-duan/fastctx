@@ -123,6 +123,9 @@ pub struct TimelineEvent {
     /// The timeline's count of records as this event was written: a reader
     /// that holds the event at a lower count takes this one in its place.
     pub sequence: u64,
+    /// The original event's name and content before occurrence numbering or previewing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub likeness: Option<[u8; 32]>,
     #[serde(flatten)]
     pub shown: TimelineShown,
 }

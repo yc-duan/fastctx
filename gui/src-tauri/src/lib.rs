@@ -110,6 +110,7 @@ mod titlebar;
 mod unix_instance;
 
 mod conversation_watch;
+mod timeline_anonymous;
 mod timeline_body;
 mod timeline_changes;
 mod timeline_delta;
@@ -119,6 +120,9 @@ mod timeline_objects;
 mod timeline_overlay;
 mod timeline_preview;
 mod timeline_scan;
+mod timeline_search;
+mod timeline_search_index;
+mod timeline_walk;
 mod timeline_watch;
 mod timeline_window;
 mod watch_delivery;
@@ -1307,6 +1311,7 @@ pub fn run() {
             transcript::conversation_follow,
             timeline_objects::conversation_object,
             timeline_scan::conversation_scan,
+            timeline_search::conversation_search,
             transcript::conversation_cut,
             transcript::conversation_locate,
             transcript::conversation_index,

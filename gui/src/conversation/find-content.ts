@@ -90,7 +90,7 @@ export class FindContent {
         }
       }
       return shown;
-    }).join("");
+    }).reduce((shown, next) => !shown ? next : !next ? shown : `${shown}${shown.endsWith("\n") || next.startsWith("\n") ? "" : "\n"}${next}`, "");
   }
 
   *parts(block: Block): Iterable<FindPart> {
