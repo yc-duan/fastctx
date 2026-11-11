@@ -10,7 +10,9 @@ pub(crate) fn create(directory: &ConversationDir, turn: &str, colleague: &Addres
     crate::inbox::storage::initialize(directory)?;
     loop {
         let (key, colleague, label) = (turn.to_string(), colleague.clone(), label.to_string());
-        let count = records::write_at(directory, Priority::Normal, 16 * (512 + label.len()), move |rows| {
+        // Owed after a durable terminal, which settles before anything reads
+        // these as sent (`records::write_relaxed_at`).
+        let count = records::write_relaxed_at(directory, Priority::Normal, 16 * (512 + label.len()), move |rows| {
             let Some(header) = terminals::header(rows, &key)? else { return Ok(0) };
             let readers = terminals::unowed(rows, &key, 16)?;
             for reader in &readers {

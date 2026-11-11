@@ -13,7 +13,7 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
-use fastctx_platform::{Permissions, ensure_private_dir, publish, publish_new};
+use fastctx_platform::{Permissions, ensure_private_dir, publish, publish_new, publish_new_unsynced, publish_unsynced};
 use fastctx_types::session::{
     Content, Happened, Health, HealthKind, Item, SessionEvent, ToolStatus, TurnEnd, TurnFacts, TurnHow, What,
 };
@@ -364,10 +364,14 @@ pub(super) fn was_applied(directory: &Path, name: &str) -> io::Result<bool> {
     applied::has(directory, name)
 }
 
+/// Lets go of an applied report. The caller has taken what applying it
+/// changed to the disk first; the marker itself does not wait for the disk,
+/// as a marker a lost power takes only has the report applied again, which
+/// its records know (`applied`).
 pub fn acknowledge(directory: &Path, name: &str) -> io::Result<()> {
     let applied = directory.join("applied");
     ensure_private_dir(&applied)?;
-    match publish_new(&applied.join(name), b"", Permissions::Private) {
+    match publish_new_unsynced(&applied.join(name), b"", Permissions::Private) {
         Err(error) if error.kind() != io::ErrorKind::AlreadyExists => return Err(error),
         _ => {}
     }
@@ -753,7 +757,9 @@ pub fn deliver(directory: &Path, id: &str, text: &str, how: Delivering<'_>) -> i
 /// looks.
 pub fn stop(directory: &Path, turn: &str) -> io::Result<()> {
     let bytes = serde_json::to_vec(&serde_json::json!({ "turn": turn })).expect("strings serialize");
-    publish(&directory.join("stop.json"), &bytes, Permissions::Private)
+    // A stop is for the session running now: one a lost power takes went
+    // with that session.
+    publish_unsynced(&directory.join("stop.json"), &bytes, Permissions::Private)
 }
 
 pub fn acknowledge_handover(directory: &Path, ids: &[String], turn: &str) -> io::Result<()> {

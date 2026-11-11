@@ -630,6 +630,8 @@ async fn look(node: &Arc<Node>, directory: &Path) -> bool {
         node.log.line(problem);
     }
     let (mut acknowledged, mut floor) = (0_u32, None::<String>);
+    let mut applied_reports = Vec::new();
+    let mut failed = false;
     for report in reported {
         let declared = report.floor.clone();
         let applied = async {
@@ -721,9 +723,7 @@ async fn look(node: &Arc<Node>, directory: &Path) -> bool {
                     }
                 }
             }
-            fastctx_platform::roles::in_place("acknowledging Claude report", || {
-                exchange::acknowledge(directory, &report.name)
-            })
+            Ok::<(), std::io::Error>(())
         }
         .await;
         if let Err(error) = applied {
@@ -731,12 +731,39 @@ async fn look(node: &Arc<Node>, directory: &Path) -> bool {
                 "applying {} from {session}: {error}; the report remains for recovery",
                 report.name
             ));
-            return false;
+            failed = true;
+            break;
         }
+        applied_reports.push(report.name);
         acknowledged += 1;
         if declared.as_ref().is_some_and(|declared| floor.as_ref().is_none_or(|known| declared > known)) {
             floor = declared;
         }
+    }
+    // What the reports changed went in without waiting for the disk, and is
+    // told live already; it reaches the disk once here, before the mod's
+    // files of it go.
+    if !applied_reports.is_empty() {
+        let (conversation, session_directory) = (node.world.conversation(&resident), directory.to_path_buf());
+        let acknowledging = fastctx_platform::task::spawn_blocking(move || -> std::io::Result<()> {
+            crate::records::settle(&conversation)?;
+            for name in &applied_reports {
+                exchange::acknowledge(&session_directory, name)?;
+            }
+            Ok(())
+        })
+        .await;
+        match acknowledging {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => {
+                node.log.line(format_args!("letting go of what {session} reported: {error}; it remains for recovery"));
+                return false;
+            }
+            Err(_) => return false,
+        }
+    }
+    if failed {
+        return false;
     }
     if acknowledged > 0
         && let Some(before) = node.claude.markers.applied(&session, acknowledged, floor)

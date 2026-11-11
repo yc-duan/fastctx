@@ -131,19 +131,24 @@ pub fn withdraw(directory: &ConversationDir, id: &NoticeId) -> io::Result<()> {
 fn update(
     directory: &ConversationDir,
     id: &NoticeId,
+    durable: bool,
     apply: impl FnOnce(&mut Pending) -> fastctx_storage::Result<()> + Send + 'static,
 ) -> io::Result<()> {
     let key = id.to_string();
-    change(directory, 512, move |rows| {
+    let write = move |rows: &crate::records::Rows<'_>| {
         if let Some(mut row) = rows.get::<Pending>("pending-inputs", &key)? {
             apply(&mut row)?;
             rows.put_ordered("pending-inputs", &key, &row, row.delivery.at)?;
         }
         Ok(())
-    })
+    };
+    if durable { storage::change_durable(directory, 512, write) } else { change(directory, 512, write) }
 }
+/// Where an input stands. Each state it is set to comes before a step
+/// toward its host (handing it over, waking the session, sending it), so it
+/// reaches the disk, with every relaxed change of the inbox before it.
 pub fn set_state(directory: &ConversationDir, id: &NoticeId, state: PendingState) -> io::Result<()> {
-    update(directory, id, move |row| {
+    update(directory, id, true, move |row| {
         row.state = state;
         if matches!(state, PendingState::Handed | PendingState::Waking) {
             row.since = Some(jiff::Timestamp::now());
@@ -153,7 +158,7 @@ pub fn set_state(directory: &ConversationDir, id: &NoticeId, state: PendingState
 }
 pub fn target(directory: &ConversationDir, id: &NoticeId, session: &str) -> io::Result<()> {
     let session = session.to_string();
-    update(directory, id, move |row| {
+    update(directory, id, false, move |row| {
         if row.session.as_deref().is_some_and(|prior| !same_session(prior, &session)) {
             return Err(fastctx_storage::Error::new("these words belong to the prior conversation"));
         }
@@ -169,14 +174,14 @@ pub(crate) fn same_session(bound: &str, session: &str) -> bool {
     bound == session || (short.len() == 8 && long.starts_with(short))
 }
 pub fn unbind(directory: &ConversationDir, id: &NoticeId) -> io::Result<()> {
-    update(directory, id, |row| {
+    update(directory, id, false, |row| {
         row.session = None;
         Ok(())
     })
 }
 pub fn rebind(directory: &ConversationDir, id: &NoticeId, session: &str) -> io::Result<()> {
     let session = session.to_string();
-    update(directory, id, move |row| {
+    update(directory, id, false, move |row| {
         row.session = Some(session);
         Ok(())
     })

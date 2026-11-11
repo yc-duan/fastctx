@@ -144,6 +144,38 @@ pub(crate) fn write_then_at<T: Send + 'static>(
         .map_err(io::Error::other)
 }
 
+/// Commits as `write_at` does without waiting for the disk, as what the
+/// interactive path writes does (`system-architecture`, 11-11): seen at once
+/// and kept when the process stops, but a machine that loses its power may
+/// lose it with the last moments' other relaxed commits. The database's next
+/// durable commit, or `settle`, takes it to the disk with every relaxed
+/// commit before it; whoever is about to do what only these records would
+/// undo, such as handing words to a host or letting go of a host's report,
+/// settles first.
+#[track_caller]
+pub(crate) fn write_relaxed_at<T: Send + 'static>(
+    directory: &ConversationDir,
+    priority: Priority,
+    bytes: usize,
+    action: impl FnOnce(&Rows<'_>) -> Result<T> + Send + 'static,
+) -> io::Result<T> {
+    let (database, conversation) = locate(directory)?;
+    if let Some(error) = database.fault() {
+        return Err(io::Error::other(error.clone()));
+    }
+    database
+        .write_relaxed_now_at(priority, bytes, move |connection| action(&Rows { connection, conversation: &conversation }))
+        .map_err(io::Error::other)
+}
+
+/// Takes every relaxed commit of the conversation's database to the disk
+/// (`write_relaxed_at`); at once when none waits for it.
+#[track_caller]
+pub(crate) fn settle(directory: &ConversationDir) -> io::Result<()> {
+    let (database, _) = locate(directory)?;
+    database.settle_now(Priority::Interactive).map_err(io::Error::other)
+}
+
 impl<'a> Rows<'a> {
     /// Uses the caller's already-open transaction without nesting another read or write.
     pub(crate) fn in_transaction(connection: &'a Connection, conversation: &'a str) -> Self {

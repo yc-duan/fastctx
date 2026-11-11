@@ -151,7 +151,20 @@ pub(crate) fn read_rows<T>(
     initialize(directory)?;
     records::read(directory, read)
 }
+/// Changes the inbox without waiting for the disk (`records::write_relaxed_at`):
+/// what reaches a host is settled first (`change_durable`).
 pub(crate) fn change<T: Send + 'static>(
+    directory: &ConversationDir,
+    bytes: usize,
+    write: impl FnOnce(&records::Rows<'_>) -> fastctx_storage::Result<T> + Send + 'static,
+) -> io::Result<T> {
+    initialize(directory)?;
+    records::write_relaxed_at(directory, fastctx_storage::Priority::Interactive, bytes, write)
+}
+
+/// Changes the inbox on the disk, with every relaxed change before it: for
+/// the step before words cross to a host.
+pub(crate) fn change_durable<T: Send + 'static>(
     directory: &ConversationDir,
     bytes: usize,
     write: impl FnOnce(&records::Rows<'_>) -> fastctx_storage::Result<T> + Send + 'static,

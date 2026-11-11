@@ -37,8 +37,10 @@ pub fn append(directory: &ConversationDir, key: &str, event: &SessionEvent) -> i
     let (database, conversation) = database(directory)?;
     let (key, body) = (key.to_string(), serde_json::to_vec(event)?);
     let tags = search::Tags::of(event);
+    // An event is told live before it is kept and the host keeps its own
+    // record: its row does not wait for the disk (`records::write_relaxed_at`).
     database
-        .write_now_at(fastctx_storage::Priority::Interactive, body.len() + key.len(), move |db| {
+        .write_relaxed_now_at(fastctx_storage::Priority::Interactive, body.len() + key.len(), move |db| {
             sql::append(db, &conversation, &key, &body, &tags)
         })
         .map_err(io::Error::other)

@@ -32,7 +32,18 @@ pub enum Permissions {
 /// Replaces `path` with `bytes`, or creates it.
 #[track_caller]
 pub fn publish(path: &Path, bytes: &[u8], permissions: Permissions) -> io::Result<()> {
-    crate::roles::in_place("publish", || put(path, bytes, permissions, true, || Ok(())))
+    crate::roles::in_place("publish", || put(path, bytes, permissions, true, true, || Ok(())))
+        .map_err(|failure| failure.error)
+}
+
+/// `publish` without waiting for the disk: whole or absent for anyone who
+/// reads it, and kept when the process stops, but a machine that loses its
+/// power may lose it. For files between two processes of this machine that
+/// a lost write only makes one of them do again, such as the markers of a
+/// host's reports applied.
+#[track_caller]
+pub fn publish_unsynced(path: &Path, bytes: &[u8], permissions: Permissions) -> io::Result<()> {
+    crate::roles::in_place("publish", || put(path, bytes, permissions, true, false, || Ok(())))
         .map_err(|failure| failure.error)
 }
 
@@ -51,7 +62,14 @@ pub fn publish_changed(path: &Path, bytes: &[u8], permissions: Permissions) -> i
 /// there already: for records that are written once and never change.
 #[track_caller]
 pub fn publish_new(path: &Path, bytes: &[u8], permissions: Permissions) -> io::Result<()> {
-    crate::roles::in_place("publish", || put(path, bytes, permissions, false, || Ok(())))
+    crate::roles::in_place("publish", || put(path, bytes, permissions, false, true, || Ok(())))
+        .map_err(|failure| failure.error)
+}
+
+/// `publish_new` without waiting for the disk, as `publish_unsynced` says.
+#[track_caller]
+pub fn publish_new_unsynced(path: &Path, bytes: &[u8], permissions: Permissions) -> io::Result<()> {
+    crate::roles::in_place("publish", || put(path, bytes, permissions, false, false, || Ok(())))
         .map_err(|failure| failure.error)
 }
 
@@ -75,20 +93,21 @@ pub fn publish_checked<G>(
     replace: bool,
     verify: impl FnOnce() -> io::Result<G>,
 ) -> Result<(), PublishFailure> {
-    crate::roles::in_place("publish", || put(path, bytes, permissions, replace, verify))
+    crate::roles::in_place("publish", || put(path, bytes, permissions, replace, true, verify))
 }
 
-/// Writes and flushes the file, then moves it into place (`publish_checked`):
-/// it blocks its thread, as each caller was told.
+/// Writes the file, flushed to the disk when `synced`, then moves it into
+/// place (`publish_checked`): it blocks its thread, as each caller was told.
 fn put<G>(
     path: &Path,
     bytes: &[u8],
     permissions: Permissions,
     replace: bool,
+    synced: bool,
     verify: impl FnOnce() -> io::Result<G>,
 ) -> Result<(), PublishFailure> {
     let mut published = false;
-    imp::publish(path, bytes, permissions, replace, verify, &mut published)
+    imp::publish(path, bytes, permissions, replace, synced, verify, &mut published)
         .map_err(|error| PublishFailure { error, published })
 }
 
@@ -164,6 +183,7 @@ mod imp {
         bytes: &[u8],
         permissions: Permissions,
         replace: bool,
+        synced: bool,
         verify: impl FnOnce() -> io::Result<G>,
         published: &mut bool,
     ) -> io::Result<()> {
@@ -183,7 +203,9 @@ mod imp {
                 file.set_permissions(fs::Permissions::from_mode(existing.permissions().mode() & 0o7777))?;
             }
             owned_as_directory(&file, path)?;
-            file.sync_all()?;
+            if synced {
+                file.sync_all()?;
+            }
             let _authority = verify()?;
             if replace {
                 fs::rename(&temporary, path)?;
@@ -203,7 +225,7 @@ mod imp {
                     fs::remove_file(&temporary)?;
                 }
             }
-            sync_directory(path)
+            if synced { sync_directory(path) } else { Ok(()) }
         })();
         if result.is_err() {
             let _ = fs::remove_file(&temporary);
@@ -342,6 +364,7 @@ mod imp {
         bytes: &[u8],
         _permissions: Permissions,
         replace: bool,
+        synced: bool,
         verify: impl FnOnce() -> io::Result<G>,
         published: &mut bool,
     ) -> io::Result<()> {
@@ -351,7 +374,7 @@ mod imp {
         let result = (|| {
             write_all(handle.0, bytes)?;
             // SAFETY: a valid handle opened for writing.
-            if unsafe { FlushFileBuffers(handle.0) } == 0 {
+            if synced && unsafe { FlushFileBuffers(handle.0) } == 0 {
                 return Err(io::Error::last_os_error());
             }
             let _authority = verify()?;
