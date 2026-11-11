@@ -735,26 +735,16 @@ async fn connected(
             // falls this far behind lets the connection go rather than hold
             // the hub's frames without end: the next one starts afresh, and
             // what it missed comes again.
-            frame => match {
-                let view = matches!(frame, Down::View { .. });
-                if view {
-                    views_waiting.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
-                }
-                let sent = frames.try_send(frame);
-                if view && sent.is_err() {
-                    views_waiting.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
-                }
-                sent
-            } {
+            frame => match queue_frame(&frames, &views_waiting, frame) {
                 Ok(()) => {
                     fastctx_platform::health::bound("link.frames").note(FRAMES - frames.capacity(), FRAMES);
                 }
-                Err(mpsc::error::TrySendError::Full(_)) => {
+                Err(Unqueued::Full) => {
                     break Ended::Retry(format!(
                         "the hub's frames piled up faster than this machine does what they say ({FRAMES} waiting)"
                     ));
                 }
-                Err(mpsc::error::TrySendError::Closed(_)) => {
+                Err(Unqueued::Closed) => {
                     break Ended::Retry("doing what the hub's frames say stopped".to_string());
                 }
             },
@@ -822,6 +812,33 @@ impl Drop for Tasks {
 /// The hub sends letters a window at a time and bounds the rest it queues
 /// for one machine, so a node that keeps up never comes near it.
 const FRAMES: usize = 4096;
+
+/// Why a frame could not wait for `handle_frames`.
+enum Unqueued {
+    Full,
+    Closed,
+}
+
+/// Queues a frame for `handle_frames`, counting a view among those waiting
+/// until it is taken in.
+fn queue_frame(
+    frames: &mpsc::Sender<Down>,
+    views_waiting: &std::sync::atomic::AtomicUsize,
+    frame: Down,
+) -> Result<(), Unqueued> {
+    let view = matches!(frame, Down::View { .. });
+    if view {
+        views_waiting.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+    }
+    let sent = frames.try_send(frame).map_err(|error| match error {
+        mpsc::error::TrySendError::Full(_) => Unqueued::Full,
+        mpsc::error::TrySendError::Closed(_) => Unqueued::Closed,
+    });
+    if view && sent.is_err() {
+        views_waiting.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+    }
+    sent
+}
 
 /// Does what the hub's frames say, in the order they came, on the node's
 /// runtime: the line goes on being read and kept while it takes its time.

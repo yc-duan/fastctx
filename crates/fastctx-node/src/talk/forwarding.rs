@@ -114,10 +114,7 @@ impl Forwarder {
     }
 
     fn keep(&mut self, piece: Watched, size: usize, key: Option<String>) -> Result<(), Lagged> {
-        let (piece, size) = match self.merged(piece, size) {
-            Ok(merged) => merged,
-            Err((piece, size)) => (piece, size),
-        };
+        let (piece, size) = self.merged(piece, size);
         if let Some(key) = &key
             && let Some(previous) = self.keys.remove(key)
             && let Some(old) = self.waiting.remove(&previous)
@@ -148,11 +145,12 @@ impl Forwarder {
     /// More of an item whose last piece waiting is also more of it, with
     /// nothing after that every piece must stay behind, joins that piece: it
     /// leaves its place and goes at the end, carrying the newer mark, so the
-    /// marks a watcher sees still only rise.
-    fn merged(&mut self, piece: Watched, size: usize) -> Result<(Watched, usize), (Watched, usize)> {
-        let Watched::Live { event, mark, likeness } = piece else { return Err((piece, size)) };
+    /// marks a watcher sees still only rise. The piece as it goes on, merged
+    /// or as it came, and its size.
+    fn merged(&mut self, piece: Watched, size: usize) -> (Watched, usize) {
+        let Watched::Live { event, mark, likeness } = piece else { return (piece, size) };
         let Happened::Grew { turn, item, part, text, revision } = event.happened else {
-            return Err((Watched::Live { event, mark, likeness }, size));
+            return (Watched::Live { event, mark, likeness }, size);
         };
         let earlier = self
             .items
@@ -172,7 +170,7 @@ impl Forwarder {
                 at,
                 happened: Happened::Grew { turn, item, part, text, revision },
             };
-            return Err((Watched::Live { event, mark, likeness }, size));
+            return (Watched::Live { event, mark, likeness }, size);
         };
         let old = self.waiting.remove(&number).expect("checked above");
         self.bytes -= old.size;
@@ -186,7 +184,7 @@ impl Forwarder {
         let likeness = likeness.and_then(|_| {
             serde_json::to_vec(&event).ok().map(|encoded| Box::new(crate::timeline::likeness(&event, &encoded)))
         });
-        Ok((Watched::Live { event, mark, likeness }, old.size + size))
+        (Watched::Live { event, mark, likeness }, old.size + size)
     }
 }
 
@@ -211,12 +209,15 @@ fn about(piece: &Watched) -> About<'_> {
             About::Item(turn, &item.id)
         }
         Happened::Grew { turn, item, .. } => About::Item(turn, item),
-        Happened::TurnStarted { .. } | Happened::TurnEnded { .. } | Happened::Heard { .. } => About::Everything,
-        Happened::Changed { change, .. } => match change {
-            fastctx_types::session::SessionChange::HistoryChanged
-            | fastctx_types::session::SessionChange::HistoryCut { .. } => About::Everything,
-            _ => About::Itself,
-        },
+        Happened::TurnStarted { .. }
+        | Happened::TurnEnded { .. }
+        | Happened::Heard { .. }
+        | Happened::Changed {
+            change:
+                fastctx_types::session::SessionChange::HistoryChanged
+                | fastctx_types::session::SessionChange::HistoryCut { .. },
+            ..
+        } => About::Everything,
         _ => About::Itself,
     }
 }

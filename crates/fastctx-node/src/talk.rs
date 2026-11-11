@@ -848,8 +848,12 @@ pub async fn serve_watch(
 struct Told {
     resident: ResidentId,
     changes: Option<tokio::sync::watch::Receiver<u64>>,
-    last: Option<(bool, Option<String>, Vec<fastctx_types::session::KeptWords>, Option<String>)>,
+    last: Option<NowTold>,
 }
+
+/// What a `Watched::Now` told: whether it works, its turn, the words kept,
+/// the turn stopped.
+type NowTold = (bool, Option<String>, Vec<fastctx_types::session::KeptWords>, Option<String>);
 
 impl Told {
     fn new(node: &Node, resident: &ResidentId, asked: bool) -> Self {
