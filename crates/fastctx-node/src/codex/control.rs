@@ -38,14 +38,35 @@ pub(super) fn reported(node: &Node, resident: &ResidentId, thread: &str, event: 
     Ok(())
 }
 
+/// The homes whose app-server is being started for what it offers.
+static WARMING: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<std::path::PathBuf>>> =
+    std::sync::LazyLock::new(Default::default);
+
 pub async fn offers(node: &Arc<Node>, resident: &ResidentId) -> Result<Offers, Failure> {
     let (codex, thread) = thread(node, resident).await?;
     let (about, _) = node.residents.about(resident).ok_or_else(|| Failure::new("unknown conversation"))?;
     crate::logins::workbench::works(node, &about)?;
-    let mut offers = codex
-        .offers(&thread, crate::account_features::conversation(node, resident).await.goals)
-        .await
-        .map_err(Failure::new)?;
+    let goals = crate::account_features::conversation(node, resident).await.goals;
+    // Looking at a conversation never waits for Codex to start: after the
+    // node restarted, or once the app-server stopped for want of work, that
+    // took from seconds to two minutes, with the conversation's menus empty
+    // and a place on this machine held all the while. The app-server is
+    // started off this answer, once for its home however many ask, and the
+    // answer says it is not all there is.
+    if !codex.serving() {
+        let home = codex.config_home().to_path_buf();
+        if WARMING.lock().expect("never poisoned").insert(home.clone()) {
+            let (node, resident) = (node.clone(), resident.clone());
+            fastctx_platform::task::spawn(async move {
+                if let Err(error) = codex.offers(&thread, goals).await {
+                    node.log.line(format_args!("starting Codex for what {resident} offers: {error}"));
+                }
+                WARMING.lock().expect("never poisoned").remove(&home);
+            });
+        }
+        return Ok(Offers { gathering: true, model: about.model, ..Offers::default() });
+    }
+    let mut offers = codex.offers(&thread, goals).await.map_err(Failure::new)?;
     if crate::assists::assisting(node, &about.acting) {
         if crate::assists::host::kept(node, resident)? != Some(true) {
             offers.controls.clear();

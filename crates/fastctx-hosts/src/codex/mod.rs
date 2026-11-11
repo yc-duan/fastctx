@@ -429,6 +429,12 @@ impl CodexHost {
         &self.codex_home
     }
 
+    /// Whether its app-server is running now. Asking it anything while it
+    /// is not starts it first, which can take from seconds to minutes.
+    pub fn serving(&self) -> bool {
+        self.lock().server.is_some()
+    }
+
     /// A host for the Codex configured in `codex_home`; its app-server runs
     /// in `workdir` with exactly the environment `env`, and starts at the
     /// first call that needs it.

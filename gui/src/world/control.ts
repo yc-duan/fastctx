@@ -109,6 +109,8 @@ export interface AccountSkill {
 }
 
 export interface Offers {
+  /** Its host is being started to say the rest: asked again a little later. */
+  gathering?: boolean;
   /** The node takes controls to do once a turn ends, and their withdrawal. */
   control_queue?: boolean;
   /** The node tells each control in its conversation as it begins and ends:

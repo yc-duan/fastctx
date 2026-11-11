@@ -48,6 +48,7 @@ pub fn fixtures() -> Fixtures {
         offers: vec![
             Offers::default(),
             Offers {
+                gathering: false,
                 pending_controls: vec![PendingControl {
                     id: "control-1".into(),
                     control: Control::Compact,

@@ -166,6 +166,12 @@ pub enum ControlState {
 /// What a conversation offers now, asked before its menus are shown.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Offers {
+    /// The host is not running to say what it offers, and is being started:
+    /// this is what the node knows without it, and asking again a little
+    /// later gets the rest. Older readers take it for all there is until
+    /// they next ask.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub gathering: bool,
     /// This node accepts CancelControl and reports pending_controls.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub control_queue: bool,

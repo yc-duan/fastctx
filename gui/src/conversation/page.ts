@@ -210,6 +210,9 @@ export interface PageOptions {
 /** How many times what a conversation offers is asked again after asking
  *  failed, before only a turn's end asks again. */
 const OFFERS_TRIES = 5;
+/** How many times what a conversation offers is asked for again while its
+ *  host is still being started: a little over two minutes in all. */
+const GATHERING_TRIES = 12;
 
 /** How long after the reader's own wheel, finger, key or scroll bar the
  *  view is theirs: nothing keeps it at the newest meanwhile. */
@@ -282,6 +285,7 @@ export class ConversationPage {
   /** The next asking of what the conversation offers, after one that
    *  failed, and how many failed in a row. */
   private offersAgain = -1;
+  private offersGathering = 0;
   private offersFailed = 0;
   private wasMoving = false;
   private commandMenu: Menu<MenuCommand> | null = null;
@@ -1909,8 +1913,16 @@ export class ConversationPage {
     try {
       const offered = await controls.offers();
       this.offered = offered;
-      this.offersFailed = 0;
       this.syncControls(offered.pending_controls ?? []);
+      // Its host is still being started: what came is what the node knows
+      // without it, and the rest is asked for again, soon and then less often.
+      this.offersFailed = 0;
+      if (offered.gathering && this.offersGathering < GATHERING_TRIES) {
+        const wait = Math.min(15_000, 1500 * 2 ** this.offersGathering++);
+        this.offersAgain = window.setTimeout(() => void this.askOffers(), wait);
+      } else if (!offered.gathering) {
+        this.offersGathering = 0;
+      }
     } catch {
       // The way to its machine broke for a moment: asked again a few times,
       // soon and then less often; after that, when a turn ends. Its machine
