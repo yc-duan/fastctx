@@ -22255,6 +22255,10 @@
         "answer": {
           "decision": "accept"
         }
+      },
+      {
+        "do": "goal",
+        "objective": "把这一版做完"
       }
     ],
     "controlled": [
@@ -22325,6 +22329,7 @@
       {
         "control_queue": true,
         "controls_told": true,
+        "control_goal": true,
         "pending_controls": [
           {
             "id": "control-1",
