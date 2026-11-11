@@ -1027,6 +1027,7 @@ async fn serving(
     // again beside the hub, which serves meanwhile.
     owned_records::submission::register(&hub);
     owned_records::record_deletions::register(&hub);
+    submitted::upkeep(&hub);
     if let Err(error) = hub.durable_jobs.start().await {
         hub.log.line(format_args!("starting the hub's durable jobs; trying again: {error}"));
         let starting = Arc::downgrade(&hub);
