@@ -64,8 +64,11 @@ pub(super) async fn exercise(base: &Path, world: &World, host: &Path, home: &Pat
     #[cfg(feature = "submission-drill")]
     one(base, world, host, home, true).await?;
     records::exercise(base, world).await?;
-    management::exercise(base, world).await?;
     Ok(())
+}
+
+pub(super) async fn exercise_management(base: &Path, world: &World) -> Result<()> {
+    management::exercise(base, world).await
 }
 
 async fn one(base: &Path, world: &World, host: &Path, home: &Path, slow: bool) -> Result<()> {

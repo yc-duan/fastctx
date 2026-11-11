@@ -785,6 +785,7 @@ async fn main() -> Result<()> {
     history::exercise(&wa, &host, &alice_two, &sa.to.resident, &writer.to).await?;
     submissions::exercise(&base, &wo, &host, &home).await?;
     sharing::exercise(&base, &host, &owner_pc, &wo, &wb, &so.to.resident, &sb.to, &home).await?;
+    submissions::exercise_management(&base, &wo).await?;
     host_node.kill()?;
     host_node.wait()?;
     let host_offline =

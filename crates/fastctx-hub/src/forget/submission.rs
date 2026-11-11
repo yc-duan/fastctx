@@ -16,7 +16,7 @@ const FAMILY: Family = Family {
     again: false,
 };
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 struct Asked {
     from: MachineName,
     key: PublicKey,
@@ -64,10 +64,12 @@ fn check(hub: &Arc<Hub>, asked: &Asked) -> Result<String, String> {
 
 pub(crate) fn register(hub: &Arc<Hub>) {
     crate::submitted::register(hub, FAMILY, |hub: Arc<Hub>, asked: Asked| async move {
-        check(&hub, &asked).map_err(Failure::new)?;
-        hub.blocking(move |hub| super::ask(&hub, &asked.from, asked.account, asked.conversation))
-            .await
-            .map_err(Failure::new)
+        hub.blocking(move |hub| {
+            check(&hub, &asked)?;
+            super::ask(&hub, &asked.from, asked.account, asked.conversation)
+        })
+        .await
+        .map_err(Failure::new)
     });
 }
 
@@ -80,6 +82,10 @@ pub(crate) async fn ask(
 ) -> Result<Told, String> {
     let asked = Asked { from: origin.name, key: origin.key, account, conversation };
     let identity = serde_json::to_vec(&asked).map_err(|error| error.to_string())?;
-    let make = || async { Ok((check(hub, &asked).map_err(Failure::new)?, &asked)) };
+    let make = || async {
+        let checking = asked.clone();
+        let unit = hub.blocking(move |hub| check(&hub, &checking)).await.map_err(Failure::new)?;
+        Ok((unit, &asked))
+    };
     crate::submitted::told(fastctx_jobs::submitted::submit(hub.as_ref(), &FAMILY, &identity, named, make, || {}).await)
 }

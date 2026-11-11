@@ -10,7 +10,6 @@ pub(super) async fn exercise(base: &Path, world: &World) -> Result<()> {
             fastctx_types::project::RecordFields {
                 name: Some("Submitted deletion fixture".into()),
                 what: Some("A project removed through the user's management path".into()),
-                machines: Some(vec![machine("host"), machine("owner-pc")]),
                 ..Default::default()
             },
             Some(name("owner")),

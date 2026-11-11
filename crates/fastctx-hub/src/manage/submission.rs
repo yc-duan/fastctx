@@ -21,7 +21,6 @@ const FAMILY: Family = Family {
 #[derive(Serialize, Deserialize)]
 enum Work {
     DeleteProject { town: TownId },
-
     SetRole { name: AccountName, visitor: bool },
 }
 
@@ -29,7 +28,6 @@ impl Work {
     fn from_change(change: Change) -> Result<Self, String> {
         Ok(match change {
             Change::DeleteProject { town } => Self::DeleteProject { town },
-
             Change::SetRole { name, visitor } => Self::SetRole { name, visitor },
             _ => return Err("this management change is not submitted work".into()),
         })
@@ -38,7 +36,6 @@ impl Work {
     fn change(&self) -> Change {
         match self {
             Self::DeleteProject { town } => Change::DeleteProject { town: town.clone() },
-
             Self::SetRole { name, visitor } => Change::SetRole { name: name.clone(), visitor: *visitor },
         }
     }
@@ -94,7 +91,9 @@ pub(crate) async fn change(
     let identity = serde_json::to_vec(&asked).map_err(|error| error.to_string())?;
     let make = || async {
         let change = asked.work.change();
-        if let Err(why) = super::admission::check(hub, &origin, &account, &change) {
+        let (checking, source, actor) = (change.clone(), origin.clone(), account.clone());
+        let admitted = hub.blocking(move |hub| super::admission::check(&hub, &source, &actor, &checking)).await;
+        if let Err(why) = admitted {
             let why = super::admission::refused(hub, origin.clone(), account.clone(), change, why).await;
             return Err(Failure::new(why));
         }
