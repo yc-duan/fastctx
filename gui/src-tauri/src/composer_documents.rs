@@ -41,7 +41,7 @@ pub async fn composer_watch_documents(
     resident_id: String,
     machine_name: Option<String>,
     subscription: sync::Subscription,
-    pieces: Channel<crate::watch_delivery::Wake>,
+    pieces: Channel<crate::watch_delivery::Push>,
 ) -> Result<Option<Watching>, String> {
     let page = shell.page.load(Ordering::Relaxed);
     let world = shell.world();

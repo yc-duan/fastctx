@@ -492,6 +492,10 @@ async fn connected(
     let (frames_failed, mut frames_failure) = oneshot::channel::<String>();
     let (deliveries, delivered) = mpsc::channel(DELIVERIES);
     let (frames, arriving) = mpsc::channel(FRAMES);
+    // Views queued for the node and not yet taken in: a call to take goes
+    // ahead of the frames waiting only while none is, so it is never judged
+    // by a view older than the one the hub sent before it.
+    let views_waiting = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     // Set once this connection's view is current: letters are admitted by it.
     let (view_ready, view_current) = watch::channel(false);
     let pinged: Arc<std::sync::Mutex<std::collections::HashMap<u64, Instant>>> = Arc::default();
@@ -502,7 +506,15 @@ async fn connected(
         fastctx_platform::task::spawn(heartbeat(inner.clone(), up.clone(), pinged.clone(), pulse.clone())),
         inner.on_node(flush(inner.clone(), up.clone(), taken, outbox_failed)),
         inner.on_node(take_letters(inner.clone(), up.clone(), hub_letters, delivered, view_current, letters_taking)),
-        inner.on_node(handle_frames(inner.clone(), generation, up.clone(), deliveries, arriving, frames_failed)),
+        inner.on_node(handle_frames(
+            inner.clone(),
+            generation,
+            up.clone(),
+            deliveries,
+            arriving,
+            frames_failed,
+            views_waiting.clone(),
+        )),
     ]);
     let (returned, mut preferred_back) = oneshot::channel::<Upstream>();
     let mut preferred = tried[..tried.len() - 1].to_vec();
@@ -707,11 +719,33 @@ async fn connected(
             | Down::Ready => {
                 break Ended::Retry("the hub sent a frame that belongs to another kind of connection".to_string());
             }
+            // A call to take is answered on its own task at once, not after
+            // letters the node is still taking in, as long as no view it may
+            // be judged by waits.
+            Down::Incoming { call, message } if views_waiting.load(std::sync::atomic::Ordering::Acquire) == 0 => {
+                let stop = inner.answers.open(inner, CallOn::Hub(generation), call);
+                fastctx_platform::task::spawn(super::answering::answer(
+                    inner.clone(),
+                    Replier::Hub(up.clone(), call),
+                    message,
+                    stop,
+                ));
+            }
             // The rest is the node's to do, in the order it came. A node that
             // falls this far behind lets the connection go rather than hold
             // the hub's frames without end: the next one starts afresh, and
             // what it missed comes again.
-            frame => match frames.try_send(frame) {
+            frame => match {
+                let view = matches!(frame, Down::View { .. });
+                if view {
+                    views_waiting.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+                }
+                let sent = frames.try_send(frame);
+                if view && sent.is_err() {
+                    views_waiting.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+                }
+                sent
+            } {
                 Ok(()) => {
                     fastctx_platform::health::bound("link.frames").note(FRAMES - frames.capacity(), FRAMES);
                 }
@@ -798,10 +832,16 @@ async fn handle_frames(
     deliveries: mpsc::Sender<(u64, Envelope)>,
     mut arriving: mpsc::Receiver<Down>,
     failed: oneshot::Sender<String>,
+    views_waiting: Arc<std::sync::atomic::AtomicUsize>,
 ) {
     let mut version_parts = super::version_parts::Receiving::default();
     while let Some(frame) = arriving.recv().await {
-        if let Err(reason) = handle_frame(&inner, generation, &up, &deliveries, &mut version_parts, frame).await {
+        let view = matches!(frame, Down::View { .. });
+        let handled = handle_frame(&inner, generation, &up, &deliveries, &mut version_parts, frame).await;
+        if view {
+            views_waiting.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+        }
+        if let Err(reason) = handled {
             let _ = failed.send(reason);
             return;
         }

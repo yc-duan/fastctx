@@ -44,8 +44,11 @@ impl Via {
         }
     }
 
-    fn send_call(&self, id: u64, message: Envelope) -> Result<(), ()> {
+    /// Sends the call; one a person waits on (`soon`) goes ahead of letters
+    /// and large answers on the hub's connection.
+    fn send_call(&self, id: u64, message: Envelope, soon: bool) -> Result<(), ()> {
         match self {
+            Via::Hub(connection) if soon => connection.up.send_soon(Up::Call { id, message }),
             Via::Hub(connection) => connection.up.send(Up::Call { id, message }),
             Via::Peer(conn) => conn.send(crate::peer::Frame::Call { id, message }),
         }
@@ -58,7 +61,7 @@ impl Via {
     fn cancel(&self, id: u64) {
         match self {
             Via::Hub(connection) => {
-                let _ = connection.up.send(Up::Cancel { id });
+                let _ = connection.up.send_soon(Up::Cancel { id });
             }
             Via::Peer(conn) if conn.cancels => {
                 let _ = conn.send(crate::peer::Frame::Cancel { id });
@@ -157,6 +160,7 @@ impl Inner {
         // A phone links directly with a machine only while it has calls to
         // it; the first goes through the hub while the link comes up.
         let _demand = self.demand(to);
+        let soon = waited_on(&call);
         let n = self.number(to)?;
         let ticket = || -> Result<Ticket, CallFailure> {
             let stream = crate::sign::random::<8>().map(u64::from_le_bytes).map_err(|error| {
@@ -262,7 +266,7 @@ impl Inner {
         };
         // The answer, a large one fetched too, within the one time the call
         // is waited for.
-        let reply = self.route(&via, to, n, message, side, &mut feed).await?;
+        let reply = self.route(&via, to, n, message, side, &mut feed, soon).await?;
         self.answer_of(&via, to, reply).await
     }
 
@@ -307,6 +311,7 @@ impl Inner {
 
     /// Sends a call `message`, numbered `n`, to `to` and waits for the
     /// envelope that answers it.
+    #[allow(clippy::too_many_arguments)]
     async fn route(
         self: &Arc<Self>,
         via: &Via,
@@ -315,6 +320,7 @@ impl Inner {
         message: Envelope,
         side: Side,
         feed: &mut Option<Feed>,
+        soon: bool,
     ) -> Result<Envelope, CallFailure> {
         let id = self.next_id();
         let (events, mut received) = mpsc::unbounded_channel();
@@ -327,7 +333,7 @@ impl Inner {
         let mut waiting =
             Waiting { inner: self.clone(), id, via: via.clone(), answered: false, sending, feeding: None };
         let result = async {
-            if via.send_call(id, message).is_err() {
+            if via.send_call(id, message, soon).is_err() {
                 return Err(match via {
                     Via::Hub(_) => {
                         CallFailure::NotConnected { reason: "the connection to the hub just ended".to_string() }
@@ -598,4 +604,13 @@ impl Drop for Waiting {
             self.via.cancel(self.id);
         }
     }
+}
+
+/// Whether a person waits on the call: a stop, words for a conversation, a
+/// control of it, its shared input. It goes the way kept for that.
+fn waited_on(call: &RemoteCall) -> bool {
+    matches!(
+        call,
+        RemoteCall::Stop { .. } | RemoteCall::Talk { .. } | RemoteCall::Control { .. } | RemoteCall::Composer { .. }
+    )
 }

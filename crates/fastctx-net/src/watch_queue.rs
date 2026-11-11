@@ -12,8 +12,11 @@ pub use event_queue::{Lagged, Receiver, Sender, TryRecvError};
 pub type Events = Receiver<Arc<SessionEvent>>;
 static MEMORY: LazyLock<Budget> = LazyLock::new(|| Budget::new(128 << 20));
 
+/// A queue of at most 4 MiB of pieces (one piece alone up to 64 MiB), counted
+/// by bytes rather than by pieces: a conversation running many agents at once
+/// streams thousands of small pieces, and a watch is not cut for that.
 pub fn channel<T>(measure: fn(&T) -> (usize, Option<String>)) -> (Sender<T>, Receiver<T>) {
-    event_queue::channel(256, 4 << 20, 64 << 20, MEMORY.clone(), measure)
+    event_queue::channel(4096, 4 << 20, 64 << 20, MEMORY.clone(), measure)
 }
 
 pub fn events() -> (Sender<Arc<SessionEvent>>, Events) {
