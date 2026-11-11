@@ -1188,7 +1188,7 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
         }
         Call::CompactBetweenTurns { resident } => {
             users_voice(node, peer)?;
-            Ok(Reply::Compacted { result: crate::turn_evidence::compact::between_turns(node, &resident).await })
+            crate::turn_evidence::submitted::compact(node, resident).await.map(|result| Reply::Compacted { result })
         }
         Call::Timer { timer } => {
             users_voice(node, peer)?;
@@ -1746,7 +1746,12 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
         }
         Call::Account { hub, account, change } => {
             users_voice(node, peer)?;
-            crate::world::change(node, hub.as_ref(), &account, change).await.map(|token| Reply::Changed { token })
+            let token = if crate::network_changes::takes(&change) {
+                crate::network_changes::change(node, hub, account, change).await?
+            } else {
+                crate::world::change(node, hub.as_ref(), &account, change).await?
+            };
+            Ok(Reply::Changed { token })
         }
         Call::Accounts => {
             users_voice(node, peer)?;
@@ -1756,7 +1761,7 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
         }
         Call::RenameHere { to } => {
             users_voice(node, peer)?;
-            crate::world::rename_here(node, to).await.map(|()| Reply::Done)
+            crate::network_changes::rename(node, to).await.map(|()| Reply::Done)
         }
         Call::HubProxy { url, change } => {
             users_voice(node, peer)?;

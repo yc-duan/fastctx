@@ -1,6 +1,8 @@
 //! Account changes and the accounts view, as computers and phones alike
 //! make and show them (`fastctx_types::accounts`).
 
+mod admission;
+
 use fastctx_types::AccountName;
 use fastctx_types::accounts::{
     AccountChange, AccountSeen, ActingSeen, AssistSeen, HubAccounts, MemberSeen, PlanSeen, ProjectSeen, ShareSeen,
@@ -38,6 +40,7 @@ impl Link {
         if matches!(&change, AccountChange::UpdateDue { batch: Some(_), .. }) {
             self.inner.refresh().await?;
         }
+        self.check_account_change(&change)?;
         let wire = match change {
             AccountChange::Share { machine, to, shared, jobs } => Change::Share { machine, to, shared, jobs },
             AccountChange::Assist { machine, to, agent, home, assisting, until, weekly, daily, five_hour, turns } => {
@@ -52,61 +55,21 @@ impl Link {
             }
             AccountChange::Plan { machine, agent, home, plan } => Change::Plan { machine, agent, home, plan },
             AccountChange::StopActing { machine } => Change::StopActing { machine },
-            // An older hub would not read the change, and would end the
-            // connection that asked it.
-            AccountChange::Direct { .. } if !self.view().direct_links => {
-                return Err(format!(
-                    "the hub {} runs an older fastctx that does not take direct connections",
-                    self.hub_name()
-                ));
-            }
             AccountChange::Direct { machine, at } => Change::Direct { machine, at },
-            AccountChange::Remove { then: Some(_), .. } if !self.view().uninstalls => {
-                return Err(format!(
-                    "the hub {} runs an older fastctx that has no machine it takes off uninstall Fastctx",
-                    self.hub_name()
-                ));
-            }
             AccountChange::Remove { name, reason, then } => Change::Remove { name, reason, then },
-            AccountChange::Rename { .. } if !self.view().renames => {
-                return Err(format!("the hub {} runs an older fastctx that renames no machine", self.hub_name()));
-            }
             AccountChange::Rename { machine, to } => Change::Rename { machine, to },
-            AccountChange::Group { .. } | AccountChange::RenameGroup { .. } if !self.view().groups => {
-                return Err(format!(
-                    "the hub {} runs an older fastctx that keeps no groups of machines",
-                    self.hub_name()
-                ));
-            }
             AccountChange::Group { machine, group } => Change::Group { machine, group },
             AccountChange::RenameGroup { owner, from, to } => Change::RenameGroup { owner, from, to },
             AccountChange::Logout => Change::Logout,
-            AccountChange::Token { managed, uses, label, .. }
-                if (managed || uses.is_some() || label.is_some()) && !self.view().managed =>
-            {
-                return Err(format!(
-                    "the hub {} runs an older fastctx that makes no code for managed machines or several computers",
-                    self.hub_name()
-                ));
-            }
             AccountChange::Token { register, name, kind, expires, managed, uses, label, way } => {
                 Change::Token { register, name, kind, expires, managed, uses, label, way }
             }
-            AccountChange::RevokeToken { .. } if !self.view().managed => {
-                return Err(format!("the hub {} runs an older fastctx that takes no token back", self.hub_name()));
-            }
             AccountChange::RevokeToken { token } => Change::RevokeToken { token: token.parse()? },
-            AccountChange::SetRole { .. } | AccountChange::AcceptRole { .. } if !self.view().roles => {
-                return Err(format!("the hub {} runs an older fastctx that has no visitors", self.hub_name()));
-            }
             AccountChange::SetRole { name, visitor } => Change::SetRole { name, visitor },
             AccountChange::AcceptRole { accept } => Change::AcceptRole { accept },
             AccountChange::SetPassword { target, password } => {
                 self.set_password(account, &target, &password).await?;
                 return Ok(None);
-            }
-            AccountChange::OpenAccount { visitor: true, .. } if !self.view().roles => {
-                return Err(format!("the hub {} runs an older fastctx that has no visitors", self.hub_name()));
             }
             AccountChange::OpenAccount { name, password, visitor } => {
                 self.manage(account, Change::OpenAccount { name: name.clone(), visitor }).await?;
@@ -117,48 +80,15 @@ impl Link {
             AccountChange::Transfer { to } => Change::Transfer { to },
             AccountChange::DeleteAccount { name } => Change::DeleteAccount { name },
             AccountChange::Settings { self_registration } => Change::Settings { self_registration },
-            AccountChange::Updates { .. } if !self.view().versions => {
-                return Err(format!("the hub {} runs an older fastctx that keeps no versions", self.hub_name()));
-            }
             AccountChange::Updates { policy } => Change::Updates { policy },
-            AccountChange::Intake { .. } if !self.view().paced_intake => {
-                return Err(format!(
-                    "the hub {} runs an older fastctx that sets no ceiling on its intake",
-                    self.hub_name()
-                ));
-            }
             AccountChange::Intake { rate } => Change::Intake { rate },
-            AccountChange::UpdateDue { .. } if !self.view().due => {
-                return Err(format!(
-                    "the hub {} runs an older fastctx that keeps no updates for machines away",
-                    self.hub_name()
-                ));
-            }
-            AccountChange::UpdateDue { batch: Some(_), .. } if !self.view().package_progress => {
-                return Err(format!(
-                    "the hub {} must be updated before it can reserve a batch's packages",
-                    self.hub_name()
-                ));
-            }
             AccountChange::UpdateDue { machine, version, batch } => Change::UpdateDue { machine, version, batch },
-            AccountChange::Dissolve { .. } if !self.view().dissolves => {
-                return Err(format!("the hub {} runs an older fastctx that dissolves no network", self.hub_name()));
-            }
             AccountChange::Dissolve { name } => Change::Dissolve { name },
             AccountChange::ShareProject { town, with, shared } => {
                 Change::ShareProject { town: town_id(&town)?, with, shared }
             }
             AccountChange::MoveProject { town, to } => Change::MoveProject { town: town_id(&town)?, to },
-            AccountChange::DeleteProject { .. } if !self.view().deletes_project_conversations => {
-                return Err(format!(
-                    "the hub {} must be updated before deleting a project and its conversations",
-                    self.hub_name()
-                ));
-            }
             AccountChange::DeleteProject { town } => Change::DeleteProject { town: town_id(&town)? },
-            AccountChange::Relay { .. } if !self.view().lan_relays => {
-                return Err(format!("the hub {} runs an older fastctx that keeps no relays", self.hub_name()));
-            }
             AccountChange::Relay { machine, at } => Change::Relay { machine, at },
             AccountChange::Seen { .. } => return Err("what the user saw stays on their computer".to_string()),
         };

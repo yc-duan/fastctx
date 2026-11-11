@@ -115,6 +115,7 @@ mod managed;
 mod management;
 mod mcp;
 mod memory_room;
+mod network_changes;
 mod obligations;
 mod on;
 mod on_delivery;
@@ -175,6 +176,7 @@ mod step_command;
 mod stop;
 mod stops;
 mod stuck;
+mod submission_fallback;
 mod submitted;
 mod talk;
 pub mod thumbnail;
@@ -226,6 +228,7 @@ pub(crate) struct Node {
     database: fastctx_storage::Database,
     /// Durable service work submitted with its triggering state change.
     durable_jobs: Arc<fastctx_jobs::Jobs>,
+    submission_kinds: submission_fallback::Started,
     workers: workers::Pools,
     /// The unified data foundation's engines on `database`, when it opened
     /// (`foundation`).
@@ -820,6 +823,7 @@ pub async fn run_prepared(
                 root: fastctx_root.to_path_buf(),
                 world,
                 durable_jobs: fastctx_jobs::Jobs::new(database.clone()),
+                submission_kinds: submission_fallback::Started::default(),
                 workers: Default::default(),
                 database,
                 foundation,
@@ -1040,6 +1044,8 @@ pub async fn run_prepared(
             plan_file::start(&node);
             profile::session::start(&node);
             context::start(&node);
+            turn_evidence::submitted::start(&node);
+            network_changes::start(&node);
             updates::start(&node);
             afoot::start(&node);
             usage::watch(&node);

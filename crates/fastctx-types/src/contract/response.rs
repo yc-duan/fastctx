@@ -9,7 +9,8 @@ pub enum Response {
     Answer,
     /// Records the work to do and acknowledges it; execution follows afterwards.
     Submit,
-    /// Carries data or changes for as long as its stream lasts.
+    /// A live transfer or wait whose lifetime is not that of a short answer.
+    /// This timing classification does not change the call's transport or admission.
     Stream,
 }
 
@@ -135,6 +136,8 @@ impl Call {
             | Self::BringIn { .. }
             | Self::ChangeAgentModels { .. }
             | Self::ClaudeConsent { .. }
+            | Self::ClaudeContext { .. }
+            | Self::ClaudeSessionDirectory { .. }
             | Self::CollabRead { .. }
             | Self::Collaboration { .. }
             | Self::DoctorCalls
@@ -146,6 +149,7 @@ impl Call {
             | Self::HubProxy { .. }
             | Self::ItemDetail { .. }
             | Self::Journal(_)
+            | Self::JobChanged { .. }
             | Self::Layer { .. }
             | Self::Look { .. }
             | Self::MachineLog { .. }
@@ -156,6 +160,7 @@ impl Call {
             | Self::Nodes
             | Self::Offers { .. }
             | Self::PlanRead { .. }
+            | Self::PeekToken { .. }
             | Self::PreviewAgentChange { .. }
             | Self::ProfileRead { .. }
             | Self::RecordRunFailure { .. }
@@ -168,7 +173,9 @@ impl Call {
             | Self::Since { .. }
             | Self::Skill { .. }
             | Self::Stats { .. }
+            | Self::Stepped { .. }
             | Self::Stop { .. }
+            | Self::StoreRunFacts { .. }
             | Self::Taken { .. }
             | Self::Thumbnail { .. }
             | Self::Timer { .. }
@@ -176,22 +183,15 @@ impl Call {
             | Self::WatchMemory { .. }
             | Self::Who { .. }
             | Self::WorldNow { .. } => Response::Answer,
-            Self::Account { .. }
-            | Self::AddAgentLogin { .. }
+            Self::AddAgentLogin { .. }
             | Self::Ask { .. }
-            | Self::Attach { .. }
             | Self::ChangeAgentLogin { .. }
-            | Self::ClaudeContext { .. }
-            | Self::ClaudeSessionDirectory { .. }
-            | Self::ClaudeSubagents { .. }
             | Self::CollabWrite { .. }
-            | Self::Collect { .. }
             | Self::CompactBetweenTurns { .. }
             | Self::Forget { .. }
             | Self::HistorySwitchWrite { .. }
             | Self::HubArrived { .. }
             | Self::HubMove { .. }
-            | Self::JobChanged { .. }
             | Self::Login { .. }
             | Self::LoginWithToken { .. }
             | Self::Manage { .. }
@@ -199,7 +199,6 @@ impl Call {
             | Self::NetworkUpdates { .. }
             | Self::Open { .. }
             | Self::OpenAccount { .. }
-            | Self::PeekToken { .. }
             | Self::Plan { .. }
             | Self::PlanWrite { .. }
             | Self::PrepareCopies { .. }
@@ -211,14 +210,15 @@ impl Call {
             | Self::SentinelTry { .. }
             | Self::ServerCommand { .. }
             | Self::SetAgentResetInPlace { .. }
-            | Self::Stepped { .. }
             | Self::StopJob { .. }
-            | Self::StoreRunFacts { .. }
             | Self::Talk { .. }
             | Self::UninstallPrepare
             | Self::UpdateMachine { .. }
             | Self::Write { .. } => Response::Submit,
-            Self::Copy { .. }
+            Self::Attach { .. }
+            | Self::ClaudeSubagents { .. }
+            | Self::Collect { .. }
+            | Self::Copy { .. }
             | Self::HoldHost { .. }
             | Self::McpRelay { .. }
             | Self::On { .. }
@@ -237,6 +237,10 @@ impl Call {
             | Self::WatchTools { .. }
             | Self::WatchWorld { .. } => Response::Stream,
 
+            Self::Account { change, .. } => match change {
+                crate::accounts::AccountChange::Seen { .. } => Response::Answer,
+                _ => Response::Submit,
+            },
             Self::Composer { request, .. } => composer(request),
             Self::Control { control: request, .. } => control(request),
             Self::Goal { request, .. } => goal(request),

@@ -404,8 +404,18 @@ pub async fn change(
     change: AccountChange,
 ) -> Result<Option<String>, Failure> {
     let link = hub_link(node, hub)?;
+    change_on(node, &link, account, change).await
+}
+
+/// Changes through the hub selected when the request was accepted.
+pub(crate) async fn change_on(
+    node: &Arc<Node>,
+    link: &Arc<Link>,
+    account: &AccountName,
+    change: AccountChange,
+) -> Result<Option<String>, Failure> {
     match change {
-        AccountChange::Logout => log_out(node, &link, account).await.map(|()| None),
+        AccountChange::Logout => log_out(node, link, account).await.map(|()| None),
         AccountChange::Seen { name } => crate::admitted::shown(node, &link.membership().id, account, &name)
             .map(|()| None)
             .map_err(|error| Failure::new(format!("recording what was seen: {error}"))),

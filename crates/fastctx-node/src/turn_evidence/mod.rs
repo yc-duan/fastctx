@@ -10,6 +10,7 @@ pub(crate) mod quota;
 mod records;
 pub(crate) mod review;
 pub(crate) mod stopping;
+pub(crate) mod submitted;
 pub(crate) mod waiting;
 pub(crate) mod words;
 pub(crate) use activity::Activities;
