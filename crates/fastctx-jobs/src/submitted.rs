@@ -403,6 +403,18 @@ where
             let Some(_held) = service.begins() else { return Outcome::Again { after: ASKS_AGAIN } };
             let kind = family.name;
             let operation = operation(kind, &taken.key);
+            // An earlier attempt may have settled the operation and ended
+            // before its job was done with. What it recorded stands: this
+            // attempt must not say over a result that it does not know. Work
+            // that is done again where needed may still better a failure.
+            if taken.attempt > 1 {
+                match standing_of(&*service, &operation).await {
+                    Ok(Some(Standing::Done(_))) => return Outcome::Done,
+                    Ok(Some(Standing::Failed(_))) if !family.again => return Outcome::Done,
+                    Ok(_) => {}
+                    Err(error) => return Outcome::Failed(format!("reading how {kind} stands: {error}")),
+                }
+            }
             // The work runs as a task of its own: nothing that gives up on
             // this job, not the queue and not the service handing over, cuts
             // it short between two of its steps.
