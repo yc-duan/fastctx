@@ -2040,6 +2040,13 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
         Call::WatchWorld { .. } => Err(Failure::new("a World watch is answered as it goes, not at once")),
         Call::WorldNow { known } => {
             users_voice(node, peer)?;
+            // As the interfaces watching it were told it, while nothing has
+            // changed since; otherwise worked out now.
+            if known.is_empty()
+                && let Some(world) = crate::shown::current(node)
+            {
+                return Ok(Reply::WorldNow(Box::new((*world).clone())));
+            }
             crate::shown::now_known(node, &known).await.map(|world| Reply::WorldNow(Box::new(world)))
         }
         Call::Reopened { .. } => Err(Failure::new("a way opening is waited for on a connection of its own")),

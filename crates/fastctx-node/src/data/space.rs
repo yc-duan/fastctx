@@ -128,7 +128,7 @@ pub(super) fn measure(node: &Node) -> io::Result<Space> {
         output_retention: Some("unlimited".into()),
         claude_logins: claude_logins(&measured)?,
         unread: (unread.entries > 0)
-            .then(|| fastctx_types::data::Unread { entries: unread.entries, first: unread.first }),
+            .then_some(fastctx_types::data::Unread { entries: unread.entries, first: unread.first }),
     })
 }
 
