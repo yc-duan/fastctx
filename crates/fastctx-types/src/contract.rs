@@ -155,6 +155,9 @@ impl Contract {
     };
 }
 
+/// Encoded byte limit shared by local and remote detail requests.
+pub const LOOK_REQUEST_BYTES: usize = 32 * 1024;
+
 impl RemoteCall {
     /// What this call is (`Contract`).
     pub fn contract(&self) -> Contract {
@@ -337,6 +340,14 @@ impl RemoteCall {
                     | crate::sentinel_control::HomeRequest::Conversation { .. },
             } => 4096,
             Self::SentinelKeys | Self::SentinelSettings { change: None } => 4096,
+            Self::Inspect { inspect: crate::inspect::Inspect::Jobs | crate::inspect::Inspect::Resources, .. } => {
+                4 * 1024
+            }
+            Self::Inspect { inspect: crate::inspect::Inspect::Processes { .. }, .. } => 32 * 1024,
+            Self::Inspect { .. } => 64 * 1024,
+            Self::Stats { .. } => 32 * 1024,
+            Self::Book { .. } | Self::WaitingJobs { .. } | Self::Who { .. } | Self::Since { .. } => 4 * 1024,
+            Self::Look { .. } => LOOK_REQUEST_BYTES,
             _ => contract.max_request_bytes,
         };
         Contract { response: self.response(), max_request_bytes, ..contract }
@@ -591,6 +602,12 @@ impl Call {
             Self::Sentinel { request: crate::sentinel_control::Request::Create { .. }, .. } => 64 * 1024,
             Self::Sentinel { .. } => 4096,
             Self::SentinelSettings { change: None, .. } => 4096,
+            // The local list and diagnostic calls.
+            Self::DoctorCalls | Self::DoctorReadings | Self::Nodes | Self::Data(crate::data::DataCall::List) => 1024,
+            Self::Who { .. } | Self::Since { .. } | Self::Book { .. } => 4 * 1024,
+            Self::Machines { .. } | Self::Stats { .. } => 32 * 1024,
+            Self::Look { .. } => LOOK_REQUEST_BYTES,
+            Self::WorldNow { .. } | Self::WatchWorld { .. } => 32 * 1024 * 1024,
             _ => REQUEST_BYTES,
         }
     }

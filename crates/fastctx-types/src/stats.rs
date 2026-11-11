@@ -334,3 +334,13 @@ pub struct StatsSeen {
     pub run: String,
     pub lines: Vec<(HubName, LineKept)>,
 }
+
+impl StatsSeen {
+    /// Checks client-supplied cursors before sampling or forwarding.
+    pub fn check(&self) -> Result<(), String> {
+        if self.run.len() > 128 || self.lines.len() > 64 {
+            return Err("statistics cursors allow at most 128 bytes for the run and 64 lines".into());
+        }
+        Ok(())
+    }
+}

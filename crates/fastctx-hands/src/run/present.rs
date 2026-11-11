@@ -41,7 +41,7 @@ fn render(reply: &RunReply, project: bool) -> (Vec<Content>, Vec<ModelSpan>) {
     let log = display_path(&output.log);
     // What was left out is told as facts, where it is and how much; how to
     // read it is the model's to choose, so no command is put in its mouth.
-    let mut partial = false;
+    let mut partial = output.sampled.is_some();
     for piece in &output.pieces {
         match piece {
             OutputPiece::Text { text, .. } => answer.output_text(text),
@@ -72,6 +72,7 @@ fn render(reply: &RunReply, project: bool) -> (Vec<Content>, Vec<ModelSpan>) {
                 }
                 answer.image(mime, base64);
             }
+            OutputPiece::Unreadable { line: 0, reason } => answer.output_line(&format!("=== {reason} ===")),
             OutputPiece::Unreadable { line, reason } => answer.output_line(&format!("=== line {line}: {reason} ===")),
         }
     }
@@ -146,6 +147,9 @@ fn facts(reply: &RunReply) -> String {
 
 fn output_facts(output: &OutputWindow) -> Vec<String> {
     let mut facts = Vec::new();
+    if output.sampled.is_some() {
+        facts.push("raw output sampled; line counts and command failure markers were not fully read".into());
+    }
     // Whatever the shell's status: a script goes on past a command that
     // failed, and its output may bury what that command said.
     match output.failed.as_slice() {

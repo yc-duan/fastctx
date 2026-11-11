@@ -55,7 +55,7 @@ pub(super) fn output(
     tail: Option<u32>,
     matching: Option<&str>,
 ) -> Result<Inspected, Failure> {
-    let Some((record, _)) = records(node)?.into_iter().find(|(record, _)| record.id.as_str() == job) else {
+    let Some(record) = find(node, job)? else {
         return Ok(super::noted(format!("no job {job} here")));
     };
     if !of(node, &record, scope) {
@@ -169,4 +169,22 @@ fn entries(path: &Path) -> std::io::Result<Vec<PathBuf>> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
         Err(error) => Err(error),
     }
+}
+
+/// A named output reads only that record in each possible owner directory.
+fn find(node: &Node, job: &str) -> Result<Option<JobRecord>, Failure> {
+    let job: fastctx_types::JobId = job.parse().map_err(|_| Failure::not_run("invalid job ID"))?;
+    let failed = |error: std::io::Error| Failure::new(format!("finding job {job}: {error}"));
+    for parent in node.world.job_parents().map_err(failed)? {
+        for owner in entries(&parent).map_err(failed)? {
+            let path = owner.join("jobs").join(format!("{job}.json"));
+            match fastctx_hands::run::record::read(&path) {
+                Ok(record) if record.id == job => return Ok(Some(record)),
+                Ok(_) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(failed(error)),
+            }
+        }
+    }
+    Ok(None)
 }

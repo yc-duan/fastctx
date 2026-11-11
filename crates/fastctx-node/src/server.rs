@@ -1,5 +1,6 @@
 //! One client's connection: the welcome, then its calls one at a time.
 
+mod list_requests;
 mod watching;
 
 use std::sync::Arc;
@@ -106,8 +107,16 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
             return Err(std::io::Error::other("an MCP frame requires its own relay connection"));
         };
         if frame.len() > call.max_request_bytes() {
-            let limit = call.max_request_bytes();
-            writer.send(&json(&NodeFrame::Reply { id, reply: Err(Failure::not_run(format!("request exceeds {limit} bytes"))) })).await?;
+            let failure = Failure::not_run(format!(
+                "this request exceeds its {}-byte input budget",
+                call.max_request_bytes()
+            ));
+            writer.send(&json(&NodeFrame::Reply { id, reply: Err(failure) })).await?;
+            writer.drain().await?;
+            continue;
+        }
+        if let Err(failure) = list_requests::check(&call) {
+            writer.send(&json(&NodeFrame::Reply { id, reply: Err(failure) })).await?;
             writer.drain().await?;
             continue;
         }
@@ -1157,6 +1166,7 @@ fn uninstalling(node: &Node) -> bool {
 }
 
 pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<Reply, Failure> {
+    list_requests::check(&call)?;
     if uninstalling(node) && !matches!(call, Call::UninstallPrepare | Call::HandOver) {
         return Err(Failure::not_run("this World is being uninstalled"));
     }

@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use fastctx_storage::rusqlite::{self, params_from_iter, types::Value};
 use fastctx_types::access::{Acting, Purpose, Written};
-use fastctx_types::activity_book::{BookAnswer, BookQuery, Deed, Hour, Outcome, TouchHow, Touched};
+use fastctx_types::activity_book::{BookAnswer, BookQuery, Deed, Hour, Outcome};
 use fastctx_types::ipc::Failure;
 use fastctx_types::remote::{RemoteCall, RemoteReply};
 
@@ -142,40 +142,7 @@ fn deeds(
         .collect::<Result<Vec<_>, _>>()?;
     let more = deeds.len() > limit as usize;
     deeds.truncate(limit as usize);
-    if !deeds.is_empty() {
-        let marks: Vec<String> = (1..=deeds.len()).map(|index| format!("?{index}")).collect();
-        let sql = format!(
-            "SELECT deed, path, how, added, removed, seen FROM book_touches WHERE deed IN ({}) ORDER BY path",
-            marks.join(", ")
-        );
-        let mut statement = connection.prepare(&sql)?;
-        let keys = deeds.iter().map(|(key, _)| Value::Text(key.clone()));
-        let rows = statement.query_map(params_from_iter(keys), |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                Touched {
-                    path: row.get(1)?,
-                    how: how(&row.get::<_, String>(2)?),
-                    added: row.get::<_, Option<i64>>(3)?.map(|n| n.max(0) as u32),
-                    removed: row.get::<_, Option<i64>>(4)?.map(|n| n.max(0) as u32),
-                    seen: row.get(5)?,
-                },
-            ))
-        })?;
-        let mut by_deed: std::collections::HashMap<String, Vec<Touched>> = std::collections::HashMap::new();
-        for row in rows {
-            let (key, touched) = row?;
-            by_deed.entry(key).or_default().push(touched);
-        }
-        for (key, deed) in &mut deeds {
-            deed.went = connection
-                .prepare_cached("SELECT machine FROM book_visits WHERE deed=?1 ORDER BY machine")?
-                .query_map([key.as_str()], |row| row.get::<_, String>(0))?
-                .filter_map(|value| value.map(|value| value.parse().ok()).transpose())
-                .collect::<Result<Vec<_>, _>>()?;
-            deed.touched = by_deed.remove(key.as_str()).unwrap_or_default();
-        }
-    }
+    super::query_details::load(connection, &mut deeds)?;
     Ok((deeds.into_iter().map(|(_, deed)| deed).collect(), more))
 }
 
@@ -227,14 +194,5 @@ fn outcome(word: &str) -> Outcome {
         "stopped" => Outcome::Stopped,
         "lost" => Outcome::Lost,
         _ => Outcome::Failed,
-    }
-}
-
-fn how(word: &str) -> TouchHow {
-    match word {
-        "added" => TouchHow::Added,
-        "removed" => TouchHow::Removed,
-        "copied" => TouchHow::Copied,
-        _ => TouchHow::Changed,
     }
 }

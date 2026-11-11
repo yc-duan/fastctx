@@ -136,6 +136,7 @@ pub fn fixtures() -> Fixtures {
                 log: "C:/world/towns/mark50/pages/training/out/j-abc123.log".into(),
                 bytes: 6,
                 lines: 1,
+                sampled: None,
                 pieces: vec![OutputPiece::Text { first_line: 1, text: "hello\n".into() }],
                 legacy: Vec::new(),
                 escaped_lines: 0,

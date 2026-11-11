@@ -3135,7 +3135,7 @@ export class ConversationView {
     const job = run.job;
     const whole = new WholeOutput(
       () => open(kept.machine, kept.path, { kind: "output", job }),
-      { length: kept.lines, complete: !going },
+      { length: kept.lines, complete: !going && (kept.lines > 0 || kept.bytes === 0) },
       (error) => new Said(gone(error) ? words.output.wholeGone : words.output.readFailed, detailOf(error)),
     );
     closers.push(() => whole.close());

@@ -123,6 +123,9 @@ pub(super) fn keep(directory: &ConversationDir, id: &str, facts: &RunFacts, disp
             stored.script = previous.script;
             stored.facts.turn = previous.facts.turn.or(stored.facts.turn);
             stored.facts.record = stored.facts.record.or(previous.facts.record);
+            if let (Some(output), Some(kept)) = (&mut stored.facts.output, &previous.facts.output) {
+                preserve_notes |= super::measurements::preserve(output, kept);
+            }
             if let (Some(output), Some(kept)) = (&mut stored.facts.output, &previous.facts.output)
                 && output.content.is_none()
                 && kept.content.is_some()

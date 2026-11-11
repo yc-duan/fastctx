@@ -14,6 +14,7 @@ mod frames;
 mod journal;
 mod log;
 mod migrate;
+mod measurements;
 #[cfg(feature = "storage-drill")]
 pub(crate) mod migration_drill;
 mod projections;
@@ -70,11 +71,12 @@ pub(crate) fn visits(record: &Path) -> io::Result<Vec<(fastctx_types::MachineNam
 const RUN_INLINE: u64 = 256 * 1024;
 
 pub(crate) fn assemble(reply: &RunReply, record: &Path) -> io::Result<RunFacts> {
-    let cut = reply
-        .output
-        .pieces
-        .iter()
-        .any(|piece| matches!(piece, OutputPiece::Omitted { .. } | OutputPiece::PartOfLine { .. }));
+    let cut = reply.output.sampled.is_some()
+        || reply
+            .output
+            .pieces
+            .iter()
+            .any(|piece| matches!(piece, OutputPiece::Omitted { .. } | OutputPiece::PartOfLine { .. }));
     let mut writes = writes(record)?;
     // What one run keeps with the conversation of its changes' rows is
     // bounded, all of them together: past it, a change is read from its

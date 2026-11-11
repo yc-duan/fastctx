@@ -30,6 +30,9 @@ pub(crate) async fn query(
     after: Option<Timestamp>,
     seen: Option<StatsSeen>,
 ) -> Result<MachineStats, Failure> {
+    if let Some(seen) = &seen {
+        seen.check().map_err(Failure::not_run)?;
+    }
     let Some(target) = machine.filter(|machine| !node.is_here(machine)) else {
         return here(node, after, seen).await;
     };
@@ -93,6 +96,9 @@ pub(crate) async fn here(
     after: Option<Timestamp>,
     seen: Option<StatsSeen>,
 ) -> Result<MachineStats, Failure> {
+    if let Some(seen) = &seen {
+        seen.check().map_err(Failure::not_run)?;
+    }
     let read = || async {
         fastctx_platform::task::spawn_blocking(|| {
             let traffic = fastctx_platform::system::traffic().unwrap_or_default();

@@ -102,6 +102,7 @@ export interface RunReply {
     bytes: number;
     lines: number;
     pieces: OutputPiece[];
+    sampled?: { head_bytes: number; tail_from: number };
     /** Lines shown that were not UTF-8 but decoded in the machine's legacy
      *  code page. */
     legacy: { encoding: string; lines: number }[];

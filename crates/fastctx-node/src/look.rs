@@ -63,6 +63,9 @@ pub async fn look_here(
     node: &Arc<Node>,
     id: &str,
 ) -> Result<(Option<Looked>, Vec<fastctx_types::town::RunningJob>), Failure> {
+    if id.len() > 256 {
+        return Err(Failure::not_run("a detail ID may hold at most 256 bytes"));
+    }
     let record = id
         .parse::<fastctx_types::ResidentId>()
         .ok()

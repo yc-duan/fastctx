@@ -10,6 +10,7 @@ mod migrate;
 #[cfg(feature = "storage-drill")]
 pub(crate) mod migration_drill;
 mod query;
+mod query_details;
 pub(crate) use incremental::{Cursor, consumed, observe};
 mod sealing;
 pub(crate) use sealing::{ACCOUNTS as SEALED_ACCOUNTS, SCHEMA as SEALS, seal, seal_account, seal_elsewhere};

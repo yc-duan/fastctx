@@ -4,10 +4,14 @@
 //! to the answer's budget (`world-view.md`, 一次给多少). Any other output is
 //! shown whole when it fits the window a host's own shell gives; when it
 //! does not, the answer shows a short start and end and names the lines in
-//! between. The log retains every original byte.
+//! between. Captures beyond the replay budget expose raw byte ranges instead
+//! of counting all lines; graphics announced in the header retain their own
+//! fixed image allowance. The log retains every original byte.
+
+mod sampled;
 
 use super::queue::Queue;
-use std::fs::File;
+
 use std::io;
 use std::path::Path;
 
@@ -73,11 +77,14 @@ pub fn window_through(log: &Path, bytes: u64) -> io::Result<OutputWindow> {
 
 fn snapshot(log: &Path, through: Option<u64>) -> io::Result<OutputWindow> {
     use std::io::{Read, Seek, SeekFrom};
-    let mut file = File::open(log)?;
+    let mut file = fastctx_platform::disk::open_regular(log)?;
     let available = file.metadata()?.len();
     let size = through.unwrap_or(available);
     if size > available {
         return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "the log is shorter than its retained output prefix"));
+    }
+    if !sampled::replay(&mut file, size)? {
+        return sampled::read(&mut file, log, size);
     }
     // Which regions `fastctx view` wrote and closed, read in a pass of its
     // own; output that never ran it, nearly all, skips that pass.
@@ -561,6 +568,7 @@ impl Assembly {
             log: log.to_string_lossy().into_owned(),
             bytes,
             lines,
+            sampled: None,
             pieces: self.pieces.finish(),
             legacy: self
                 .legacy
