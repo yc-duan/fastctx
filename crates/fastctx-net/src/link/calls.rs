@@ -45,23 +45,31 @@ impl Via {
     }
 
     /// Sends the call; one a person waits on (`soon`) goes ahead of letters
-    /// and large answers on the hub's connection.
-    fn send_call(&self, id: u64, message: Envelope, soon: bool) -> Result<(), ()> {
+    /// and large answers. Whether it went that way.
+    fn send_call(&self, id: u64, message: Envelope, soon: bool) -> Result<bool, ()> {
         match self {
             Via::Hub(connection) if soon => connection.up.send_soon(Up::Call { id, message }),
-            Via::Hub(connection) => connection.up.send(Up::Call { id, message }),
-            Via::Peer(conn) => conn.send(crate::peer::Frame::Call { id, message }),
+            Via::Hub(connection) => connection.up.send(Up::Call { id, message }).map(|()| false),
+            Via::Peer(conn) if soon => conn.send_soon(crate::peer::Frame::Call { id, message }),
+            Via::Peer(conn) => conn.send(crate::peer::Frame::Call { id, message }).map(|()| false),
         }
     }
 
     /// Tells the machine answering the call `id` that its caller gave it
     /// up: through the hub, which tells it in turn, or over the direct link
     /// when the other machine reads that. An answer nobody waits for is
-    /// dropped where it arrives.
-    fn cancel(&self, id: u64) {
+    /// dropped where it arrives. It goes the way the call went (`soon`), so
+    /// it never arrives before the call.
+    fn cancel(&self, id: u64, soon: bool) {
         match self {
-            Via::Hub(connection) => {
+            Via::Hub(connection) if soon => {
                 let _ = connection.up.send_soon(Up::Cancel { id });
+            }
+            Via::Hub(connection) => {
+                let _ = connection.up.send(Up::Cancel { id });
+            }
+            Via::Peer(conn) if conn.cancels && soon => {
+                let _ = conn.send_soon(crate::peer::Frame::Cancel { id });
             }
             Via::Peer(conn) if conn.cancels => {
                 let _ = conn.send(crate::peer::Frame::Cancel { id });
@@ -331,9 +339,9 @@ impl Inner {
             Side::Opening(task, opened) => (Some(task), Some(opened)),
         };
         let mut waiting =
-            Waiting { inner: self.clone(), id, via: via.clone(), answered: false, sending, feeding: None };
+            Waiting { inner: self.clone(), id, via: via.clone(), answered: false, soon: false, sending, feeding: None };
         let result = async {
-            if via.send_call(id, message, soon).is_err() {
+            let Ok(went_soon) = via.send_call(id, message, soon) else {
                 return Err(match via {
                     Via::Hub(_) => {
                         CallFailure::NotConnected { reason: "the connection to the hub just ended".to_string() }
@@ -343,7 +351,8 @@ impl Inner {
                         reason: "the direct link with it just ended".to_string(),
                     },
                 });
-            }
+            };
+            waiting.soon = went_soon;
             // Once queued to the connection, the call may have reached its
             // target even if the hub's Delivered status never reached us.
             let lost = |reason: String| CallFailure::Unknown { name: to.clone(), reason };
@@ -590,6 +599,8 @@ struct Waiting {
     id: u64,
     via: Via,
     answered: bool,
+    /// Whether the call went the way kept for what a person waits on.
+    soon: bool,
     sending: Option<tokio::task::JoinHandle<()>>,
     feeding: Option<tokio::task::JoinHandle<()>>,
 }
@@ -601,7 +612,7 @@ impl Drop for Waiting {
         }
         self.inner.calls.lock().expect("never poisoned").remove(&self.id);
         if !self.answered {
-            self.via.cancel(self.id);
+            self.via.cancel(self.id, self.soon);
         }
     }
 }

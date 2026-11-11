@@ -835,17 +835,74 @@ async fn handle_frames(
     views_waiting: Arc<std::sync::atomic::AtomicUsize>,
 ) {
     let mut version_parts = super::version_parts::Receiving::default();
-    while let Some(frame) = arriving.recv().await {
+    // What the hub says it holds is written down on a task of its own, in
+    // order and a batch at a time: the frames after it never wait for disk.
+    let (acks, acks_taken) = mpsc::channel(ACKS);
+    let mut recording = fastctx_platform::task::spawn(record_acks(inner.clone(), acks_taken));
+    loop {
+        let frame = tokio::select! {
+            biased;
+            recorded = &mut recording => {
+                let reason = match recorded {
+                    Ok(Err(reason)) => reason,
+                    Ok(Ok(())) => return,
+                    Err(error) => format!("recording what the hub holds: {error}"),
+                };
+                let _ = failed.send(reason);
+                return;
+            }
+            frame = arriving.recv() => match frame {
+                Some(frame) => frame,
+                None => break,
+            },
+        };
         let view = matches!(frame, Down::View { .. });
-        let handled = handle_frame(&inner, generation, &up, &deliveries, &mut version_parts, frame).await;
+        let handled = handle_frame(&inner, generation, &up, &deliveries, &acks, &mut version_parts, frame).await;
         if view {
             views_waiting.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
         }
         if let Err(reason) = handled {
+            recording.abort();
             let _ = failed.send(reason);
             return;
         }
     }
+    // The line is done: what the hub said it holds is still written down.
+    drop(acks);
+    let _ = recording.await;
+}
+
+/// Acknowledgements waiting to be written down; the hub sends at most one
+/// for each letter this machine sent it.
+const ACKS: usize = 4096;
+
+/// Writes down, in the order the hub sent them, the letters it refused and
+/// how far it holds this machine's letters. What waits is taken together:
+/// the refused ones one by one, how far it holds once, at the furthest.
+async fn record_acks(inner: Arc<Inner>, mut acks: mpsc::Receiver<(u64, Option<String>)>) -> Result<(), String> {
+    while let Some(first) = acks.recv().await {
+        let mut batch = vec![first];
+        while batch.len() < ACKS
+            && let Ok(more) = acks.try_recv()
+        {
+            batch.push(more);
+        }
+        let keeping = inner.clone();
+        inner
+            .blocking(move || -> Result<(), String> {
+                for (seq, refused) in &batch {
+                    if let Some(reason) = refused {
+                        refused_letter(&keeping, *seq, reason)
+                            .map_err(|error| format!("recording refused letter {seq}: {error}"))?;
+                    }
+                }
+                let furthest = batch.iter().map(|(seq, _)| *seq).max().expect("a batch is never empty");
+                held(&keeping, furthest).map_err(|error| format!("recording what the hub holds: {error}"))
+            })
+            .await
+            .map_err(|error| format!("recording what the hub holds: {error}"))??;
+    }
+    Ok(())
 }
 
 async fn handle_frame(
@@ -853,22 +910,15 @@ async fn handle_frame(
     generation: u64,
     up: &Outgoing,
     deliveries: &mpsc::Sender<(u64, Envelope)>,
+    acks: &mpsc::Sender<(u64, Option<String>)>,
     version_parts: &mut super::version_parts::Receiving,
     frame: Down,
 ) -> Result<(), String> {
     match frame {
         Down::Ack { seq, refused } => {
-            let keeping = inner.clone();
-            inner
-                .blocking(move || -> Result<(), String> {
-                    if let Some(reason) = refused {
-                        refused_letter(&keeping, seq, &reason)
-                            .map_err(|error| format!("recording refused letter {seq}: {error}"))?;
-                    }
-                    held(&keeping, seq).map_err(|error| format!("recording what the hub holds: {error}"))
-                })
-                .await
-                .map_err(|error| format!("recording what the hub holds: {error}"))??;
+            if tokio::time::timeout(SILENCE, acks.send((seq, refused))).await.is_err() {
+                return Err(format!("what the hub holds could not be written down for {} s", SILENCE.as_secs()));
+            }
         }
         // Letters the hub sends faster than this machine takes them wait
         // for it, for as long as a silence lasts at most: an older hub

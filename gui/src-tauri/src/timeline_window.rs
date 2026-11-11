@@ -94,6 +94,28 @@ impl From<TimelineEvent> for Stored {
     }
 }
 
+/// A window shared until it is changed: the copy a read works on costs
+/// nothing until the read changes it, and a copy kept to compare against
+/// (`timeline_watch::Handle::advanced`) never costs anything.
+#[derive(Clone, Default)]
+pub(crate) struct Held(std::sync::Arc<Window>);
+impl From<Window> for Held {
+    fn from(window: Window) -> Self {
+        Self(std::sync::Arc::new(window))
+    }
+}
+impl std::ops::Deref for Held {
+    type Target = Window;
+    fn deref(&self) -> &Window {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for Held {
+    fn deref_mut(&mut self) -> &mut Window {
+        std::sync::Arc::make_mut(&mut self.0)
+    }
+}
+
 #[derive(Clone, Default)]
 pub(crate) struct Window {
     pub entries: Vec<Stored>,

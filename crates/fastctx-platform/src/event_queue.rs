@@ -56,6 +56,14 @@ pub enum TryRecvError {
     Lagged,
 }
 
+/// Why `try_send_measured` handed the value back.
+pub enum TrySendError<T> {
+    /// The queue holds as much as it may now; `space` says when it has room.
+    Full(T),
+    /// The receiver is gone or already behind.
+    Closed(T),
+}
+
 pub struct Sender<T>(Arc<Shared<T>>);
 pub struct Receiver<T>(Arc<Shared<T>>);
 struct Shared<T> {
@@ -173,6 +181,79 @@ impl<T> Sender<T> {
         drop(state);
         self.0.next.notify_one();
         Ok(())
+    }
+
+    /// Queues `value` when it fits now, never lagging the queue for want of
+    /// room: a sender that keeps what does not fit (and merges what it can)
+    /// uses this with `space`. A value the shared budget cannot hold even so
+    /// lags the queue, as `send` does.
+    pub fn try_send_measured(&self, value: T, size: usize, key: Option<String>) -> Result<(), TrySendError<T>> {
+        let size = size.saturating_add(256).saturating_add(key.as_ref().map_or(0, String::len));
+        let mut state = self.0.state.lock().expect("never poisoned");
+        if !state.receiver {
+            return Err(TrySendError::Closed(value));
+        }
+        let Some(old_bytes) = self.fits(&state, size, key.as_deref()) else {
+            return Err(TrySendError::Full(value));
+        };
+        let Some(memory) = self.0.budget.reserve(size) else {
+            drop(state);
+            self.lag();
+            return Err(TrySendError::Closed(value));
+        };
+        let Some(sequence) = state.sequence.checked_add(1) else {
+            drop(state);
+            self.lag();
+            return Err(TrySendError::Closed(value));
+        };
+        if let Some(previous) = key.as_ref().and_then(|key| state.keys.remove(key)) {
+            state.entries.remove(&previous);
+        }
+        state.sequence = sequence;
+        state.bytes = state.bytes - old_bytes + size;
+        if let Some(key) = &key {
+            state.keys.insert(key.clone(), sequence);
+        }
+        state.entries.insert(sequence, Entry { value, key, memory });
+        drop(state);
+        self.0.next.notify_one();
+        Ok(())
+    }
+
+    /// Resolves once a value of `size` (replacing the state under `key`)
+    /// fits; `Lagged` once the receiver is gone, or when it never can.
+    pub async fn space(&self, size: usize, key: Option<&str>) -> Result<(), Lagged> {
+        let size = size.saturating_add(256).saturating_add(key.map_or(0, str::len));
+        if size > self.0.single {
+            return Err(Lagged);
+        }
+        loop {
+            let space = self.0.space.notified();
+            tokio::pin!(space);
+            space.as_mut().enable();
+            {
+                let state = self.0.state.lock().expect("never poisoned");
+                if !state.receiver {
+                    return Err(Lagged);
+                }
+                if self.fits(&state, size, key).is_some() {
+                    return Ok(());
+                }
+            }
+            space.await;
+        }
+    }
+
+    /// Whether a value of `size` replacing `key` fits, and the bytes of the
+    /// state it replaces.
+    fn fits(&self, state: &State<T>, size: usize, key: Option<&str>) -> Option<usize> {
+        let prior = key.and_then(|key| state.keys.get(key)).copied();
+        let old_bytes = prior.and_then(|n| state.entries.get(&n)).map_or(0, |entry| entry.memory.bytes);
+        let frames = state.entries.len() - usize::from(prior.is_some());
+        (size <= self.0.single
+            && frames < self.0.frames
+            && (frames == 0 || (state.bytes - old_bytes).saturating_add(size) <= self.0.bytes))
+            .then_some(old_bytes)
     }
 
     /// Backpressure for initial history, whose delivery need not keep pace with

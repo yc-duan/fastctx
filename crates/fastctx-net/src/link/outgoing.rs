@@ -72,13 +72,15 @@ impl Outgoing {
     }
 
     /// Sends what a person waits on ahead of letters and large answers; when
-    /// that way is full, with the rest.
-    pub fn send_soon(&self, value: Up) -> Result<(), ()> {
+    /// that way is full, with the rest. Whether it went the soon way: what
+    /// follows it about the same call (a cancel) goes the same way, never
+    /// ahead of it.
+    pub fn send_soon(&self, value: Up) -> Result<bool, ()> {
         let bytes = crate::wire::encode(&value);
         let size = bytes.len();
         match self.soon.try_send(Frame { bytes, written: None }, size) {
-            Ok(()) => Ok(()),
-            Err(frame) => self.queued.send(frame, size).map_err(|_| ()),
+            Ok(()) => Ok(true),
+            Err(frame) => self.queued.send(frame, size).map(|()| false).map_err(|_| ()),
         }
     }
 

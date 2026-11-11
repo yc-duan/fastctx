@@ -4,7 +4,7 @@
 // time, without waiting for the answer; a batch missed is asked for again.
 import { Channel, invoke } from "@tauri-apps/api/core";
 
-type Interrupted = { kind: "interrupted"; error: string; since: number };
+type Interrupted = { kind: "interrupted"; error: string; since: number; gap?: boolean };
 type Push =
   | { kind: "pieces"; id: number; number: number; pieces: unknown[] }
   | { kind: "gap"; id: number; number: number }
@@ -93,7 +93,7 @@ export async function observe<T, R extends Opened | null>(
     asked = false;
     through = push.number;
     if (push.kind === "gap") {
-      deliver({ kind: "interrupted", error: gap, since: Date.now() });
+      deliver({ kind: "interrupted", error: gap, since: Date.now(), gap: true });
       acknowledge(true);
       return;
     }

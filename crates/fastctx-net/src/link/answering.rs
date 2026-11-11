@@ -424,7 +424,7 @@ async fn send(replier: &Replier, message: Envelope) -> Result<(), String> {
         // A short answer goes ahead of letters and large answers: the caller
         // may be a person waiting.
         Replier::Hub(up, call) => up.write_soon(Up::Answer { call: *call, message }).await,
-        Replier::Peer(conn, id) => conn.write(crate::peer::Frame::Answer { id: *id, message }).await,
+        Replier::Peer(conn, id) => conn.write_soon(crate::peer::Frame::Answer { id: *id, message }).await,
     }
 }
 

@@ -8,7 +8,7 @@ use fastctx_types::session::{Happened, SessionChange, SessionEvent, Watched};
 use serde::Serialize;
 use std::sync::{Arc, LazyLock};
 
-pub use event_queue::{Lagged, Receiver, Sender, TryRecvError};
+pub use event_queue::{Lagged, Receiver, Sender, TryRecvError, TrySendError};
 pub type Events = Receiver<Arc<SessionEvent>>;
 static MEMORY: LazyLock<Budget> = LazyLock::new(|| Budget::new(128 << 20));
 

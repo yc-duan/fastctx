@@ -134,7 +134,9 @@ impl Handle {
         let before = current.state.clone();
         let mut inherited = before.clone();
         // Only explicit record facts retire these live identities.
-        inherited.retire_keys(&rejected);
+        if !rejected.is_empty() {
+            inherited.retire_keys(&rejected);
+        }
         let reset_sequence = work.state.revision < current.state.revision
             || matches!((work.through, current.through), (Some(next), Some(old)) if next < old);
         work.state.inherit_retention(&base, &current.state);
@@ -201,7 +203,7 @@ pub(crate) struct Reader {
     pub resident: ResidentId,
     pub machine: Option<Written>,
     pub transcript: Arc<Mutex<Transcript>>,
-    pub(crate) state: timeline_window::Window,
+    pub(crate) state: timeline_window::Held,
     pub(crate) running_reads: HashMap<(String, String), Option<Mark>>,
     through: Option<u64>,
     catch_up: bool,
@@ -246,7 +248,7 @@ pub(crate) async fn open(
         resident,
         machine,
         transcript: Arc::new(Mutex::new(transcript)),
-        state: pending,
+        state: pending.into(),
         running_reads: HashMap::new(),
         through: None,
         catch_up: false,
@@ -481,7 +483,8 @@ impl Reader {
             events = before.events;
         }
         self.state.preparing = first.initializing.unwrap_or(false);
-        self.state.replace(events, revision, older, self.state.newer);
+        let newer = self.state.newer;
+        self.state.replace(events, revision, older, newer);
         Ok(())
     }
     async fn read_advanced(&mut self) -> Result<(), String> {
@@ -641,11 +644,17 @@ pub(crate) async fn stream(reader: Shared, mut initial: Option<Watching>, pieces
         (r.world.clone(), r.resident.clone(), r.machine.clone())
     };
     let mut again = fastctx_client::Again::default();
+    // A watch that ends while the line holds (its watcher fell behind, the
+    // node let it go) is opened again at once, without telling the page:
+    // it is told only when opening again takes longer than `QUIET`, or when
+    // watches keep ending, so "interrupted" means the line is down.
+    let mut quiet: Option<std::time::Instant> = None;
+    let mut owed: Option<fastctx_client::Interruption> = None;
     loop {
         let opened = match initial.take() {
             Some(watching) => Ok(watching),
             None => {
-                async {
+                let opening = async {
                     let mut watching = world.watch_live(resident.clone(), machine.clone()).await?;
                     let pending = ready(&mut watching).await?;
                     {
@@ -672,13 +681,27 @@ pub(crate) async fn stream(reader: Shared, mut initial: Option<Watching>, pieces
                     }
 
                     Ok(watching)
+                };
+                tokio::pin!(opening);
+                let late = tokio::time::sleep(QUIET);
+                tokio::pin!(late);
+                loop {
+                    tokio::select! {
+                        opened = &mut opening => break opened,
+                        () = &mut late, if owed.is_some() => {
+                            let interruption = owed.take().expect("guarded");
+                            if pieces.send(Piece::interrupted(&interruption)).is_err() {
+                                return;
+                            }
+                        }
+                    }
                 }
-                .await
             }
         };
         let result = match opened {
             Ok(watching) => {
                 again.came();
+                owed = None;
                 connected(&reader, &world, &resident, &machine, watching, &pieces).await
             }
             Err(error) => Err(error),
@@ -696,12 +719,25 @@ pub(crate) async fn stream(reader: Shared, mut initial: Option<Watching>, pieces
             let _ = pieces.send(Piece::failed(&error));
             return;
         }
-        if pieces.send(Piece::interrupted(&again.broke(error.to_string()))).is_err() {
+        let interruption = owed.take().unwrap_or_else(|| again.broke(error.to_string()));
+        if quiet.is_none_or(|last| last.elapsed() >= QUIET_EVERY) {
+            quiet = Some(std::time::Instant::now());
+            owed = Some(interruption);
+            continue;
+        }
+        if pieces.send(Piece::interrupted(&interruption)).is_err() {
             return;
         }
         tokio::select! { () = reader.closed() => return, () = again.pause(&world, machine.as_ref()) => {} }
     }
 }
+
+/// How long a watch opened again quietly may take before the page is told
+/// it was interrupted.
+const QUIET: std::time::Duration = std::time::Duration::from_millis(1500);
+/// A watch ends quietly at most once in this long; ending again sooner is
+/// told, and paced as any interruption.
+const QUIET_EVERY: std::time::Duration = std::time::Duration::from_secs(10);
 
 enum Follow {
     Closed,

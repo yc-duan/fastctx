@@ -151,6 +151,9 @@ export const watched: ConversationSource = {
           feed.rebased(piece.generation, piece.offset, piece.turns_added);
           return;
         case "interrupted":
+          // This interface fell behind while the line held: the shell reads
+          // the conversation again at once, its window first; nothing broke.
+          if (piece.gap) return;
           feed.interrupted(piece.error, new Date(piece.since));
           return;
         case "ended":

@@ -145,15 +145,19 @@ pub async fn watch(
                     return;
                 }
             }
+            let mut forwarder = forwarding::Forwarder::new(sender);
             loop {
                 tokio::select! {
                     changed = views.changed() => {
                         if changed.is_err() { return; }
                         views.borrow_and_update();
                         if !crate::admission::seen::resident(&node, crate::admission::seen::Looker::Here(&Acting::Here), &resident) {
-                            let _ = sender.send(Err(Failure::refused("access to this conversation was withdrawn")));
+                            let _ = forwarder.sender().send(Err(Failure::refused("access to this conversation was withdrawn")));
                             return;
                         }
+                    },
+                    room = forwarder.room(), if forwarder.waiting() => {
+                        if room.is_err() || forwarder.flush().is_err() { return }
                     },
                     event = events.recv() => match event {
                         Ok(Some(event)) => {
@@ -161,15 +165,15 @@ pub async fn watch(
                             if !crate::goals::visible(&node, crate::admission::seen::Looker::Here(&Acting::Here), &resident, &event) { continue; }
                             let marked = Arc::unwrap_or_clone(event);
                             let Some(event) = likeness::watched(marked.event, marked.mark, slim.as_ref(), live_only) else { continue };
-                            if forwarding::send(&sender, event).await.is_err() { return }
+                            if forwarder.push(event).is_err() { return }
                         }
                         Ok(None) => return,
-                        Err(_) => { sender.lag(); return; },
+                        Err(_) => { forwarder.sender().lag(); return; },
                     },
                     now = told.changed(&node) => {
-                        if let Some(now) = now && forwarding::send(&sender, now).await.is_err() { return }
+                        if let Some(now) = now && forwarder.push(now).is_err() { return }
                     }
-                    () = sender.closed() => return,
+                    () = forwarder.sender().closed() => return,
                 }
             }
         });
@@ -216,17 +220,29 @@ pub async fn watch(
         return Err(refused.expect("a speaker was tried"));
     };
     fastctx_platform::task::spawn(async move {
+        // The remote machine's pieces are taken as they come, so it hears
+        // they were taken; what this watcher has no room for waits here,
+        // merged, as at the source.
+        let mut forwarder = forwarding::Forwarder::new(sender);
         loop {
-            let piece = tokio::select! { piece = watching.next() => piece, () = sender.closed() => return };
+            let piece = tokio::select! {
+                room = forwarder.room(), if forwarder.waiting() => {
+                    if room.is_err() || forwarder.flush().is_err() { return }
+                    continue;
+                }
+                piece = watching.next() => piece,
+                () = forwarder.sender().closed() => return,
+            };
             match piece {
                 Ok(Some(piece)) => {
-                    if forwarding::send(&sender, piece).await.is_err() {
+                    if forwarder.push(piece).is_err() {
                         return;
                     }
                 }
                 Ok(None) => return,
                 Err(failure) => {
-                    let _ = sender.send(Err(failure));
+                    let _ = forwarder.flush();
+                    let _ = forwarder.sender().send(Err(failure));
                     return;
                 }
             }

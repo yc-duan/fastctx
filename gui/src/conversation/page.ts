@@ -631,8 +631,17 @@ export class ConversationPage {
 
     // It opens in the view it was last read in here (`world-voice.md`).
     this.viewing(this.storedView());
-    // What was read of the conversation from the shell is drawn as it comes.
-    options.conversation.changed = () => this.update({ read: true });
+    // What was read of the conversation from the shell is drawn as it comes:
+    // a batch of pieces the shell pushed at once is taken whole, then the
+    // page looks once at what it changed, and draws in the next frame.
+    options.conversation.changed = () => {
+      if (this.changing) return;
+      this.changing = true;
+      queueMicrotask(() => {
+        this.changing = false;
+        this.update({ read: true });
+      });
+    };
     this.latest = this.element.querySelector<HTMLButtonElement>(".to-latest")!;
     this.latest.addEventListener("click", () => this.toLatest());
     // The way back to each step's context, after one of its rows was
@@ -961,6 +970,8 @@ export class ConversationPage {
 
   private frame = 0;
   private read = false;
+  /** A look at what a batch of pieces changed is on its way. */
+  private changing = false;
 
   /** Draws the page as the conversation now stands; keeps the newest in
    *  view when the reader was already there. A page not in view is drawn

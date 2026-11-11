@@ -85,8 +85,9 @@ export type Piece =
   /** What came before arrived: what the page holds stays, moved along. */
   | { kind: "rebased"; generation: number; offset: number; turns_added: number }
   /** The stream broke and is being read again: why, and since when
-   *  (milliseconds since the epoch). */
-  | { kind: "interrupted"; error: string | null; since: number };
+   *  (milliseconds since the epoch). `gap` when it was this interface that
+   *  fell behind, the line holding: the shell starts it again at once. */
+  | { kind: "interrupted"; error: string | null; since: number; gap?: boolean };
 
 export type Landed =
   | { kind: "uncertain"; why: string }
