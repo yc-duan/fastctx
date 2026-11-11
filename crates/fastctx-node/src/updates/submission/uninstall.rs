@@ -21,5 +21,8 @@ pub(super) fn register(node: &Arc<Node>) {
 }
 
 pub(crate) async fn prepare(node: &Arc<Node>) -> Result<(), Failure> {
+    if !super::started(node) {
+        return crate::uninstall::prepare(node).await;
+    }
     submitted::submit(node, &FAMILY, "this-machine", &Prepare).await
 }

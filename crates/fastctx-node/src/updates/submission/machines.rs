@@ -56,7 +56,7 @@ pub(crate) async fn machine(
     machine: Written,
     update: UpdateCall,
 ) -> Result<State, Failure> {
-    if !matches!(update, UpdateCall::Repair { .. } | UpdateCall::Kernel { .. }) {
+    if !super::started(node) || !matches!(update, UpdateCall::Repair { .. } | UpdateCall::Kernel { .. }) {
         return super::super::machine(node, acting, machine, update).await;
     }
     let asked = Asked { acting: acting.clone(), machine, update };

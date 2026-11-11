@@ -67,6 +67,11 @@ pub(super) fn allowed(update: &UpdateCall) -> Result<(), String> {
     Ok(())
 }
 
+/// Whether the node came as far as starting its updates, which is where
+/// these families' work is named. Before that, and on a node whose recovery
+/// stopped short of it, nothing would take what is submitted: a call is
+/// answered where it stands, as it was before it could be submitted, so a
+/// node in that state can still be moved, updated and uninstalled.
 fn started(node: &Node) -> bool {
     node.updates.held.lock().expect("never poisoned").started
 }

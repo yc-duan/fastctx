@@ -61,7 +61,9 @@ pub(super) fn register(node: &Arc<Node>) {
         Ok::<_, Failure>(Answer { hub, result })
     });
     submitted::register_resolved(node, MOVING, |node: Arc<Node>, asked: Moving, hub: HubId| async move {
-        crate::hub_moving::request(&link(&node, &hub)?, &asked.account, asked.request).await
+        // Nothing was asked of a hub this computer is no longer on.
+        let link = link(&node, &hub).map_err(|failure| Failure::not_run(failure.message))?;
+        crate::hub_moving::request(&link, &asked.account, asked.request).await
     });
     submitted::register(node, ARRIVED, |node: Arc<Node>, asked: Arrived| async move {
         crate::hub_arrival::installed(&node, &asked.hub).await
@@ -74,7 +76,7 @@ pub(crate) async fn network(
     account: AccountName,
     request: ViewCall,
 ) -> Result<ViewReply, Failure> {
-    if matches!(request, ViewCall::View | ViewCall::Release { .. }) {
+    if !super::started(node) || matches!(request, ViewCall::View | ViewCall::Release { .. }) {
         return crate::world::hub_link(node, Some(&hub))?
             .network_updates(&account, request)
             .await
@@ -108,7 +110,7 @@ pub(crate) async fn moving(
     account: AccountName,
     request: HubMoveRequest,
 ) -> Result<HubMoveReply, Failure> {
-    if matches!(request, HubMoveRequest::Targets | HubMoveRequest::Status) {
+    if !super::started(node) || matches!(request, HubMoveRequest::Targets | HubMoveRequest::Status) {
         let link = crate::world::hub_link(node, hub.as_ref())?;
         return crate::hub_moving::request(&link, &account, request).await;
     }
@@ -149,6 +151,9 @@ fn link(node: &Node, hub: &HubId) -> Result<Arc<fastctx_net::link::Link>, Failur
 }
 
 pub(crate) async fn arrived(node: &Arc<Node>, hub: HubId) -> Result<(), Failure> {
+    if !super::started(node) {
+        return crate::hub_arrival::installed(node, &hub).await;
+    }
     let asked = Arrived { hub };
     submitted::submit_resolving(node, &ARRIVED, &asked, || async {
         link(node, &asked.hub)?;
