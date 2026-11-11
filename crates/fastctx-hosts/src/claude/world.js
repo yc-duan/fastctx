@@ -948,7 +948,11 @@ async function startTurn($, context, e, next) {
   // state and what it takes are untouched (Claude Code reports one since
   // 2.1.300; its end is `completeTurn`'s agent branch).
   if (e.agentId !== undefined) return next(e)
-  await startControlTurn($, e)
+  // The turn is this one before anything is waited for, and told first: what
+  // it streams and stores is matched to it (`presentation`) and the World
+  // knows it runs, whatever its controls and the session's figures take. A
+  // production session whose start waited on them was a turn behind for
+  // whole turns, its streamed words shown twice (2026-11-11).
   context.busy = true
   context.turn = e.turnId
   context.awaited.clear()
@@ -957,9 +961,12 @@ async function startTurn($, context, e, next) {
   context.streaming = false
   noteTurnPrompt(context, e)
   // The session's cost total as the turn begins: what it has risen by at
-  // the turn's end is what the turn cost (`completeTurn`).
-  const usage = await sessionUsage($)
-  context.spentBefore = { turn: e.turnId, usd: usage?.cost?.usd }
+  // the turn's end is what the turn cost (`completeTurn`). Asked now and not
+  // waited for; a turn that ends before it answers has no cost of its own.
+  context.spentBefore = { turn: e.turnId, usd: undefined }
+  void sessionUsage($).then((usage) => {
+    if (context.spentBefore?.turn === e.turnId) context.spentBefore.usd = usage?.cost?.usd
+  })
   // The rows of this plugin's prompts kept since the last turn began are
   // what this turn takes (`submit`).
   const took = context.accepted.splice(0, context.entered)
@@ -973,6 +980,8 @@ async function startTurn($, context, e, next) {
   for (const deliveries of took) await submitted($, context, deliveries, e.turnId)
   for (const prior of context.stopTaken) await $.fs.write(context.dir + '/told-stops/' + encodeURIComponent(prior), '')
   context.stopTaken = []
+  // The choices this turn runs with are read before its first step.
+  await startControlTurn($, e)
   return next(e)
 }
 

@@ -134,6 +134,76 @@ test('loads, streams without waiting for disk, and retains the old session after
   expect(JSON.parse(files.get([...files.keys()].find((path) => path.endsWith('/second/activity.json'))!)!).turn).toBe('new')
 })
 
+// A production session's start hook waited for whole turns, and every block
+// it streamed was shown twice: as streamed, and as the row Claude Code stored
+// (2026-11-11). A row takes the block its step streamed by the step itself,
+// whatever the plugin knows of the turn.
+test('a stored row takes the block its step streamed while the turn is not known yet', async ($, on) => {
+  const clock = mock.clock(on)
+  mock.env(on, {})
+  fixtureUi(on)
+  on('mcp.connect', () => ({ value: { isConnected: true, server: serverName } }))
+  on('session.usage', () => ({ value: usage(true) }))
+  on('config.list', () => ({ value: [] }))
+  on('session.messages', () => ({ value: [] }))
+  const files = new Map<string, string>()
+  on('session.id', () => ({ value: 'lagging' }))
+  on('session.cwd', () => ({ value: '/fixture' }))
+  on('settings.read', heldByWorld)
+  on('session.model', () => ({ value: 'fixture' }))
+  on('session.surfaces', () => ({ value: ['terminal'] }))
+  on('session.version', () => ({ value: { version: '2.1.322' } }))
+  on('process.run', (_, e) => ({ value: { exitCode: 0, stdout: JSON.stringify(e.argv[1] === 'claude-session-directory' ? e.argv[2] + '/claude/' + e.argv[3] : { pid: 123, token: 'fixture-lifetime' }), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
+  on('process.spawn', guard)
+  on('fs.write', (_, e) => {
+    files.set(e.path.replaceAll('\\', '/'), e.text)
+    return { value: undefined }
+  })
+  on('fs.read', (_, e) => {
+    if (!files.has(e.path.replaceAll('\\', '/'))) return { deny: 'fixture: file unavailable' }
+    return { value: files.get(e.path.replaceAll('\\', '/'))! }
+  })
+  on('fs.list', (_, e) => ({ value: [...files.keys()]
+    .filter((path) => path.startsWith(e.path.replaceAll('\\', '/') + '/') && !path.slice(e.path.replaceAll('\\', '/').length + 1).includes('/'))
+    .map((path) => ({ name: path.slice(e.path.replaceAll('\\', '/').length + 1), kind: 'file', size: files.get(path)!.length, mtimeMs: 0, isLink: false })) }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('turn.step', async function* (_, e) {
+    yield { kind: 'thinking', index: 0, text: 'weighing' }
+    yield { kind: 'text', index: 1, text: 'once' }
+    return { turnId: e.turnId, index: e.index, answer: 'once', toolUses: [], stopReason: 'end_turn', usage: null }
+  })
+
+  await $.session.start({ cwd: '/fixture', surface: 'terminal', isInteractive: true })
+  // The host runs a turn whose start the plugin has not taken in: no
+  // `turn.start` reaches it. Each block's row is stored as the block closes,
+  // before the step's end.
+  const stream = $.turn.step({ turnId: 'host-turn', index: 0, model: 'fixture', messageCount: 1 })
+  expect((await stream.next()).value).toEqual({ kind: 'thinking', index: 0, text: 'weighing' })
+  expect((await stream.next()).value).toEqual({ kind: 'text', index: 1, text: 'once' })
+  const row = (uuid: string, block: { type: 'thinking'; thinking: string; signature: string } | { type: 'text'; text: string }) =>
+    $.session.append({ door: 'response', origin: { kind: 'model', model: 'fixture' }, uuid,
+      message: { type: 'assistant', role: 'assistant', content: [block] } })
+  await row('row-thinking', { type: 'thinking', thinking: 'weighing', signature: 'fixture' })
+  await row('row-text', { type: 'text', text: 'once' })
+  expect((await stream.next()).done).toBe(true)
+  await clock.settle()
+
+  const told = [...files.entries()]
+    .filter(([path]) => path.includes('/events/') && path.endsWith('.json'))
+    .flatMap(([, body]) => {
+      const report = JSON.parse(body)
+      return report.kind === 'batch' ? report.events.map((entry: { happened: unknown }) => entry.happened)
+        : report.kind === 'session' ? [report.happened] : []
+    }) as { event: string; turn: string; item?: { id: string; draft?: string; text?: string } }[]
+  const renamed = told.filter((happened) => happened.event === 'finished' && happened.item?.draft !== undefined)
+  expect(renamed.map((happened) => [happened.item!.id, happened.item!.draft, happened.turn])).toEqual([
+    [JSON.stringify(['row-thinking', 0]), JSON.stringify(['host-turn', 0, 0, 'thinking']), 'host-turn'],
+    [JSON.stringify(['row-text', 0]), JSON.stringify(['host-turn', 0, 1, 'text']), 'host-turn'],
+  ])
+  // Neither row is told again as a block of its own.
+  expect(told.filter((happened) => happened.event === 'began' && happened.item?.id.startsWith('["row-'))).toEqual([])
+})
+
 // The official engine checks the ownership mapping, that foreign calls are
 // left alone, and that a World call goes through only once its proof is written.
 test('proves only World calls, before they run, and distinguishes clear from resume', async ($, on) => {

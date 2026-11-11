@@ -42,12 +42,38 @@ export function presentation(reserve, currentTurn) {
   // model when one of them ends is shown as that end, as the session's
   // record is read (`subagents.rs`), not as words the user said.
   const agents = new Set()
+  // The steps whose streamed blocks may still be claimed by the rows Claude
+  // Code stores of them, oldest first: a row can come after the next step
+  // began, and the plugin's own idea of the running turn can lag behind a
+  // turn the host began (a start hook still waiting), so a row is matched by
+  // the steps themselves, not by that idea.
+  const recent = []
+  const RECENT_STEPS = 4
   let latestStep = null
   let agentTurn = null
+  // The turn now: the plugin's own idea of it, or the turn the latest step
+  // ran in while that idea has not caught up.
+  const turnNow = () => currentTurn() ?? latestStep?.turn ?? null
   const steps = taskSteps()
   const emit = (reports, happened) => reports.event('session', { happened })
   const item = (id, kind, fields = {}) => ({ id, kind, started_at: reserve().at, ...fields })
   const shownOf = ({ ended, stored, ...shown }) => shown
+  // The earliest streamed block of `kind` no row has claimed, in the oldest
+  // recent step that has one and ran in `turn` when a recent step ran in it
+  // (an idea of the turn that names none of them has fallen behind, and says
+  // nothing). A claim in a step lets go of the steps before it: their rows
+  // are all in.
+  const claim = (kind, turn) => {
+    const known = turn != null && recent.some((step) => step.turn === turn)
+    for (const [at, step] of recent.entries()) {
+      if (step.failed || (known && step.turn !== turn)) continue
+      const shown = [...step.blocks.values()].find((block) => block.kind === kind && !block.stored)
+      if (shown === undefined) continue
+      recent.splice(0, at)
+      return { step, shown }
+    }
+    return undefined
+  }
   const checkpoint = (reports) => reports.save({ tools: [...tools.entries()], requests: [...requests.entries()], tasks: steps.snapshot(), agents: [...agents] })
 
   async function completeTool(reports, call, stored) {
@@ -89,7 +115,10 @@ export function presentation(reserve, currentTurn) {
       const blocks = new Map()
       let responseReported = false
       let observedUsage = null
-      latestStep = { turn: e.turnId, blocks }
+      latestStep = { turn: e.turnId, blocks, failed: false }
+      recent.push(latestStep)
+      if (recent.length > RECENT_STEPS) recent.shift()
+      const step = latestStep
       try {
         for await (const chunk of stream) {
           if (chunk.kind === 'stop') {
@@ -120,6 +149,10 @@ export function presentation(reserve, currentTurn) {
           reports.stream({ event: 'changed', turn: e.turnId, change: { kind: 'model_response', step: e.index, usage: result.usage ?? null } })
         }
         return result
+      } catch (error) {
+        // A failed attempt's blocks are never stored: no later row is theirs.
+        step.failed = true
+        throw error
       } finally {
         // A block whose row was never stored (an interruption, a failed
         // attempt) ends with the step, as exactly the pieces observed.
@@ -136,7 +169,7 @@ export function presentation(reserve, currentTurn) {
 
     async call(reports, e, next) {
       const { tool, tool_use_id: id, consent, agentId, ...input } = e
-      const call = { id, tool, input, turn: agentId === undefined ? currentTurn() : agentTurn, started_at: reserve().at }
+      const call = { id, tool, input, turn: agentId === undefined ? turnNow() : agentTurn, started_at: reserve().at }
       tools.set(id, call)
       await checkpoint(reports)
       await reports.event('tool_start', { turn: call.turn, item: id, tool, input, started_at: call.started_at })
@@ -159,7 +192,7 @@ export function presentation(reserve, currentTurn) {
     },
 
     async append(reports, e, next) {
-      const turn = e.agentId === undefined ? currentTurn() : agentTurn
+      const turn = e.agentId === undefined ? turnNow() : agentTurn
       const result = await next(e)
       if (result.deny !== undefined || rows.has(result.uuid)) return result
       rows.add(result.uuid)
@@ -218,14 +251,15 @@ export function presentation(reserve, currentTurn) {
         } else if (result.message.type === 'assistant' && (block.type === 'text' || block.type === 'thinking' || block.type === 'redacted_thinking')) {
           const kind = block.type === 'text' ? 'message' : 'thinking'
           const text = block.type === 'text' ? block.text : block.type === 'thinking' ? block.thinking : ''
-          // The row is that of the earliest block of its kind the step
+          // The row is that of the earliest block of its kind a recent step
           // streamed and no row has claimed: blocks of one response come one
-          // after another, each stored as it closes. One already ended with
-          // its step (an interruption's partial block, stored after the
-          // stream) is not shown again.
-          const streamed = latestStep?.turn === turn
-            ? [...latestStep.blocks.values()].find((shown) => shown.kind === kind && !shown.stored)
-            : undefined
+          // after another, each stored as it closes, and a step's rows come
+          // before the next step's. One already ended with its step (an
+          // interruption's partial block, stored after the stream) is not
+          // shown again. The plugin's idea of the turn, where it has one,
+          // keeps an earlier turn's leftovers out.
+          const claimed = claim(kind, currentTurn())
+          const streamed = claimed?.shown
           let shown
           if (streamed !== undefined) {
             // Kept now under the name Claude Code's own record gives it, the
@@ -235,7 +269,7 @@ export function presentation(reserve, currentTurn) {
             streamed.ended = true
             shown = { ...shownOf(streamed), id: JSON.stringify([result.uuid, index]), draft: streamed.id,
               ...(typeof text === 'string' && { text }), detail: block }
-            reports.stream({ event: 'finished', turn: turn ?? '', item: shown })
+            reports.stream({ event: 'finished', turn: claimed.step.turn, item: shown })
           } else {
             // A block with nothing streamed (thinking whose display sends no
             // pieces, a non-streamed response) is first seen as it is stored,
@@ -244,7 +278,7 @@ export function presentation(reserve, currentTurn) {
             await emit(reports, { event: 'began', turn: turn ?? '', item: shown })
             await emit(reports, { event: 'finished', turn: turn ?? '', item: shown })
           }
-          if (kind === 'thinking') reports.thought({ uuid: result.uuid, turn: turn ?? '', item: shown.id })
+          if (kind === 'thinking') reports.thought({ uuid: result.uuid, turn: claimed?.step.turn ?? turn ?? '', item: shown.id })
         } else if (result.message.type === 'assistant') {
           const other = item(JSON.stringify([result.uuid, index]), 'other', {
             host_kind: block.type, detail: block,
@@ -261,7 +295,7 @@ export function presentation(reserve, currentTurn) {
 
     async compact(reports, e, next) {
       if (e.agentId !== undefined) return next(e)
-      const turn = currentTurn() ?? ''
+      const turn = turnNow() ?? ''
       const identity = reserve()
       const compacted = { id: 'compact:' + identity.id, kind: 'compaction', started_at: identity.at }
       if (e.trigger === 'precompute') {
