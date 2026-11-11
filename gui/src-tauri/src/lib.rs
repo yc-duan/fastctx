@@ -113,6 +113,8 @@ mod conversation_watch;
 mod timeline_body;
 mod timeline_changes;
 mod timeline_delta;
+mod timeline_fuller;
+mod timeline_groups;
 mod timeline_objects;
 mod timeline_overlay;
 mod timeline_preview;
@@ -340,6 +342,7 @@ async fn watch(
     let world = shell.world();
     let resident = resident(resident_id)?;
     let machine = machine(machine_name)?;
+    #[cfg(desktop)]
     if let Some(opened) = timeline_watch::open(&world, resident.clone(), machine.clone()).await? {
         let id = shell.next.fetch_add(1, Ordering::Relaxed);
         let reader = opened.reader;

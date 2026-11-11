@@ -9,6 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 pub(crate) struct Changed {
     pub key: String,
     pub event: Box<serde_json::value::RawValue>,
+    pub place: Option<fastctx_types::timeline_pages::TimelinePlace>,
 }
 #[derive(Clone, Serialize)]
 pub(crate) struct Placement {
@@ -45,15 +46,18 @@ pub(crate) fn between(before: &Window, after: &mut Window, generation: u64) -> R
     let events = events
         .iter()
         .zip(&pages.keys)
-        .filter_map(|(event, key)| {
+        .enumerate()
+        .filter_map(|(at, (event, key))| {
             let changed = if live.contains(key) {
                 !old_live.contains(key)
+                    || before.live.iter().find(|event| crate::timeline_window::key(event) == *key)
+                        != after.live.iter().find(|event| crate::timeline_window::key(event) == *key)
             } else {
                 old_live.contains(key) || old.get(key) != new.get(key)
             };
             changed.then(|| {
                 serde_json::value::to_raw_value(event)
-                    .map(|event| Changed { key: key.clone(), event })
+                    .map(|event| Changed { key: key.clone(), event, place: pages.places.get(at).cloned().flatten() })
                     .map_err(|e| e.to_string())
             })
         })
@@ -75,6 +79,7 @@ pub(crate) fn between(before: &Window, after: &mut Window, generation: u64) -> R
     let pending = (before.pending_events() != pages.pending).then(|| pages.pending.clone());
     pages.pending.clear();
     pages.keys.clear();
+    pages.places.clear();
     pages.live_keys.clear();
     Ok(Delta { generation, events, pending, removed, placed, pages })
 }

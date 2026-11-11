@@ -16,8 +16,12 @@ pub(crate) const HELD_BYTES: usize = 4 << 20;
 pub(crate) struct Edges {
     pub older: bool,
     pub newer: bool,
+    pub preparing: bool,
+    pub partial_older: bool,
+    pub partial_newer: bool,
     pub objects: Vec<Object>,
     pub keys: Vec<String>,
+    pub places: Vec<Option<TimelinePlace>>,
     pub live_keys: Vec<String>,
     pub pending: Vec<SessionEvent>,
 }
@@ -89,6 +93,13 @@ pub(crate) struct Window {
     pub revision: u64,
     pub older: bool,
     pub newer: bool,
+    pub preparing: bool,
+    pub left_complete: bool,
+    pub right_complete: bool,
+    pub partial_older: bool,
+    pub partial_newer: bool,
+    pub oversized_left: bool,
+    pub oversized_right: bool,
     /// A known position immediately beyond the held right edge. Keeping this
     /// one cursor lets a revision reread exactly the bounded neighborhood.
     pub right: Option<TimelinePlace>,
@@ -136,6 +147,10 @@ impl Window {
             self.interval_end = Some(last.place.clone());
         }
         self.entries.clear();
+        self.left_complete = !older;
+        self.right_complete = !newer;
+        self.oversized_left = false;
+        self.oversized_right = false;
         self.revision = revision;
         self.older = older;
         self.newer = newer;
@@ -143,6 +158,16 @@ impl Window {
     }
 
     pub fn merge(&mut self, events: Vec<TimelineEvent>, backwards: bool) {
+        if events
+            .first()
+            .is_some_and(|event| self.entries.first().is_some_and(|first| event.place.order < first.place.order))
+        {
+            self.left_complete = false;
+        }
+        if events.iter().any(|event| crate::timeline_groups::boundary(decoded(event).as_ref())) {
+            self.oversized_left = false;
+            self.oversized_right = false;
+        }
         for event in events.into_iter().map(Stored::from) {
             if let Some(at) = self.entries.iter().position(|held| {
                 held.place.item == event.place.item
@@ -191,6 +216,15 @@ impl Window {
         self.reconcile();
     }
     fn reconcile(&mut self) {
+        for held in &mut self.entries {
+            if let Some(event) = &mut held.event {
+                for live in &self.live {
+                    if covers(event, live) && crate::timeline_fuller::preserve(event, live) {
+                        held.bytes = held.bytes.max(serde_json::to_vec(event).map_or(0, |bytes| bytes.len() + 128));
+                    }
+                }
+            }
+        }
         let held = self.live.len();
         self.live.retain(|live| {
             let before = self.live_base.get(&name(live)).copied().flatten();
@@ -209,6 +243,18 @@ impl Window {
         self.prune_bases();
     }
 
+    /// Realtime may have advanced the retained floor while a network read
+    /// was in flight. That eviction is part of this navigation's state.
+    pub fn inherit_retention(&mut self, base: &Self, current: &Self) {
+        if let Some(floor) = current.first()
+            && base.first().is_none_or(|old| floor.order > old.order)
+        {
+            self.entries.retain(|entry| entry.place.order >= floor.order);
+            self.interval_start = Some(floor);
+            self.older = current.older;
+            self.left_complete = current.left_complete;
+        }
+    }
     pub fn inherit_reread(&mut self, current: &Self, reset_sequence: bool) {
         self.inherit_live(current);
         let removed: Vec<_> = current
@@ -248,6 +294,27 @@ impl Window {
     }
 
     fn bound(&mut self, backwards: bool) {
+        fn oversized<'a>(entries: impl Iterator<Item = &'a Stored>) -> bool {
+            let (mut count, mut bytes) = (0, 0);
+            for entry in entries {
+                count += 1;
+                bytes += entry.bytes;
+                if count > HELD_EVENTS || bytes > HELD_BYTES {
+                    return true;
+                }
+            }
+            false
+        }
+        self.oversized_left |= oversized(
+            self.entries
+                .iter()
+                .enumerate()
+                .take_while(|(at, entry)| *at == 0 || !crate::timeline_groups::boundary(entry.event.as_ref()))
+                .map(|(_, entry)| entry),
+        );
+        self.oversized_right |= oversized(
+            self.entries.iter().rev().take_while(|entry| !crate::timeline_groups::boundary(entry.event.as_ref())),
+        );
         let mut bytes: usize = self.entries.iter().map(|e| e.bytes).sum();
         while self.entries.len() > HELD_EVENTS || bytes > HELD_BYTES {
             if self.entries.is_empty() {
@@ -257,10 +324,12 @@ impl Window {
             bytes = bytes.saturating_sub(removed.bytes);
             if backwards {
                 self.newer = true;
+                self.right_complete = crate::timeline_groups::boundary(removed.event.as_ref());
                 self.right = Some(removed.place);
                 self.interval_end = self.entries.last().map(|e| e.place.clone());
             } else {
                 self.older = true;
+                self.left_complete = crate::timeline_groups::boundary(removed.event.as_ref());
                 self.interval_start = self.entries.first().map(|e| e.place.clone());
             }
         }
@@ -346,23 +415,8 @@ impl Window {
                 self.chunks += 1;
                 return true;
         }
-        if let Happened::Grew { turn, item, part, text, .. } = &event.happened {
-            if *part != Part::Text {
-                return false;
-            }
-            return self.observe(&SessionEvent {
-                at: event.at,
-                happened: Happened::Began {
-                    turn: turn.clone(),
-                    item: fastctx_types::session::Item {
-                        id: item.clone(),
-                        draft: None,
-                        started_at: None,
-                        detail: None,
-                        what: What::Message { text: text.clone() },
-                    },
-                },
-            });
+        if matches!(event.happened, Happened::Grew { .. }) {
+            return false;
         }
         let replaced = self.live.iter().position(|held| covers(event, held));
         self.live.retain(|held| {
@@ -403,6 +457,7 @@ impl Window {
             let entry = self.entries.remove(0);
             bytes = bytes.saturating_sub(entry.bytes);
             self.interval_start = self.entries.first().map(|e| e.place.clone()).or_else(|| self.interval_end.clone());
+            self.left_complete = crate::timeline_groups::boundary(entry.event.as_ref());
             let entry_key = entry.key();
             if let Some(event) = entry.event {
                 if !self.live.iter().any(|live| covers(live, &event)) {
@@ -461,12 +516,17 @@ impl Window {
         self.bound_live();
         let removed = self.trim_visible();
         self.retired.extend(removed);
+        crate::timeline_groups::align(self);
         let mut events = Vec::new();
         let mut edges = Edges {
             older: self.older,
             newer: self.newer,
+            preparing: self.preparing,
+            partial_older: self.partial_older,
+            partial_newer: self.partial_newer,
             objects: Vec::new(),
             keys: Vec::new(),
+            places: Vec::new(),
             live_keys: self.live_keys(),
             pending: self.pending_events(),
         };
@@ -482,6 +542,7 @@ impl Window {
                 let event = overlay.unwrap_or(event);
                 events.push(event.clone());
                 edges.keys.push(shown_key);
+                edges.places.push(Some(entry.place.clone()));
             }
         }
 
@@ -492,6 +553,7 @@ impl Window {
                 }
                 events.push(event.clone());
                 edges.keys.push(key(event));
+                edges.places.push(None);
             }
         }
 

@@ -847,7 +847,7 @@ export class ConversationPage {
   private pagedGesture = 0;
   private paging = false;
   private async fillGap(gap: Gap, side: "end" | "start", explicit = false): Promise<void> {
-    if (gap.paged && (this.paging || (!explicit && (this.following || this.pageGesture === this.pagedGesture || this.pageDirection !== (gap.first ? "before" : "after"))))) {
+    if (gap.paged && (this.paging || this.restoringPosition || (!explicit && (this.following || this.pageGesture === this.pagedGesture || this.pageDirection !== (gap.first ? "before" : "after"))))) {
       this.view.retryGap(gap.key);
       return;
     }
@@ -954,6 +954,8 @@ export class ConversationPage {
     this.finder.refresh();
     this.drawState();
     this.drawAction();
+    const failure = this.options.conversation.takeReadingFailure();
+    if (failure) this.say(failure);
     if (follow && !this.reading()) this.scroller.scrollTop = this.scroller.scrollHeight;
     this.fitRoom();
     this.drawLatest();
@@ -984,9 +986,13 @@ export class ConversationPage {
 
   /** The page goes out of view and stays alive, its conversation still
    *  followed. */
+  private suspendedPosition: import("./conversation").TimelinePosition | null = null;
   suspend(): void {
     this.suspended = true;
-    if (this.element.isConnected) this.place = this.following ? null : this.view.anchor();
+    if (this.element.isConnected) {
+      this.place = this.following ? null : this.view.anchor();
+      this.suspendedPosition = this.place ? this.options.conversation.positionOf(this.place.key) : null;
+    }
   }
 
   /** The page is shown again, as it was left and as the conversation now
@@ -1003,16 +1009,21 @@ export class ConversationPage {
       this.render();
       if (!this.element.isConnected) return;
       if (this.following) this.scroller.scrollTop = this.scroller.scrollHeight;
-      else if (this.place && !this.view.restore(this.place)) this.toLatest();
+      else if (this.place && !this.view.restore(this.place)) {
+        if (this.options.conversation.paged) this.restoreReading(this.place, this.suspendedPosition);
+        else this.toLatest();
+      }
     });
   }
 
   /** What is held is read again (`conversation.ts`): the reader stays
    *  where they were, the turns they read read again where they are no
    *  longer held. */
+  private restoringPosition = false;
   reopened(apply: () => void): void {
     const place = this.following ? null : this.view.anchor();
     const turn = place ? this.turnOf(place.key) : null;
+    const position = place ? this.options.conversation.positionOf(place.key) : null;
     apply();
     this.update({ read: true });
     if (this.wantedTurn) return this.bringTurn();
@@ -1021,19 +1032,28 @@ export class ConversationPage {
     this.render();
     if (this.view.restore(place)) return;
     if (this.options.conversation.paged) {
-      const near = this.options.conversation.live.blocks()[0];
-      if (near) this.view.restore({ key: near.key, offset: 0 });
+      this.restoreReading(place, position);
       return;
     }
     if (!turn) return;
     void this.options.conversation.reachTurn(turn).then((reached) => {
       this.render();
-      if (!reached || !this.view.restore(place)) this.toLatest();
+      if (!reached || !this.view.restore(place)) this.say(this.options.words.english ? "The requested position could not be found." : "暂时找不到请求的位置。");
     });
   }
 
   /** A turn asked for from elsewhere, as a request in its login's usage,
    *  until it is brought into view. */
+  private restoreReading(place: { key: string; offset: number }, position: import("./conversation").TimelinePosition | null): void {
+    const failed = () => this.say(this.options.words.english ? "This position could not be restored. Search the content again." : "暂时无法恢复这个位置，请重新查找这段内容。");
+    if (this.restoringPosition) return;
+    if (!position) return failed();
+    this.restoringPosition = true;
+    void this.options.conversation.reachPosition(position).then((reached) => {
+      this.render();
+      if (!reached || !this.view.restore(place)) failed();
+    }).catch((error) => this.say(String(error))).finally(() => { this.restoringPosition = false; });
+  }
   private wantedTurn: string | null = null;
 
   /** Brings `turn` into view, read first where it is not held; a page
@@ -1058,14 +1078,16 @@ export class ConversationPage {
     };
     const held = first();
     if (held) return bring(held.key);
+    this.say(this.options.words.english ? "Finding this turn…" : "正在查找这个回合…");
     void conversation.reachTurn(turn).then((reached) => {
       if (this.wantedTurn !== turn) return;
       const found = reached ? first() : undefined;
       if (found) bring(found.key);
-      // A conversation that came without it does not have it: it opens
-      // as it would.
-      else if (conversation.blocks().length) this.wantedTurn = null;
-    });
+      else {
+        this.wantedTurn = null;
+        this.say(this.options.words.english ? "The requested turn is not in the currently readable history." : "当前可读的历史里暂时找不到这个回合。");
+      }
+    }).catch((error) => { if (this.wantedTurn === turn) this.wantedTurn = null; this.say(String(error)); });
   }
 
   /** The turn a block is in. */
@@ -2774,10 +2796,11 @@ export class ConversationPage {
     // where the head has no room for its machine, a long press says it.
     const lives = someone.assistFrom ? this.options.words.assistFrom(someone.assistFrom) : someone.machine;
     who.title = [someone.agent, lives, now, model].filter(Boolean).join("　");
-    const trouble = this.away !== null ? now : this.gone;
+    const preparing = conversation.preparing;
+    const trouble = this.away !== null ? now : this.gone ?? (preparing ? (words.english ? "Preparing history…" : "正在整理历史…") : null);
     this.state.hidden = !trouble;
     if (this.state.textContent !== (trouble ?? "")) this.state.textContent = trouble ?? "";
-    this.state.classList.toggle("gone", trouble !== null);
+    this.state.classList.toggle("gone", this.away !== null || this.gone !== null);
     // How long it has been broken is as of when the pointer comes to it.
     const why = this.interrupted && this.brokenSince
       ? words.brokenFor(words.took(Date.now() - this.brokenSince.getTime()), this.brokenWhy)

@@ -1,5 +1,6 @@
 import { sameEvent } from "./event-identity";
 import { grown, placeEvent } from "./timeline-events";
+import { canReviseItem } from "./timeline-fold";
 // A conversation as its page holds it (`world-gui.md`, 对话: 很长的对话). The
 // shell keeps every event of it (`src-tauri/src/transcript.rs`); the page
 // holds its latest turns, read as they go on, and whatever earlier parts its
@@ -23,6 +24,8 @@ import type { AgentRun } from "./agents";
 import { machineNamed } from "./acted-on";
 import type { PendingControl } from "../world/control";
 
+export interface TimelinePosition { order: string; item: string }
+
 /** The part a page opens on, in place of all it held. */
 export interface Window {
   generation: number;
@@ -33,12 +36,12 @@ export interface Window {
   /** What its turns read of what came before them. */
   carry: SessionEvent[];
   /** Opaque timeline paging has no full-history ordinal or turn count. */
-  pages?: { older: boolean; newer: boolean; keys?: string[]; live_keys?: string[]; pending?: SessionEvent[]; objects: { at: number; bytes: number; object: string }[] };
+  pages?: { older: boolean; newer: boolean; preparing?: boolean; partial_older?: boolean; partial_newer?: boolean; keys?: string[]; places?: (TimelinePosition | null)[]; live_keys?: string[]; pending?: SessionEvent[]; objects: { at: number; bytes: number; object: string }[] };
 }
 
 export interface TimelineDelta {
   generation: number;
-  events: { key: string; event: SessionEvent }[];
+  events: { key: string; event: SessionEvent; place?: TimelinePosition | null }[];
   pending?: SessionEvent[];
   removed: string[];
   placed: { key: string; after: string | null }[];
@@ -61,6 +64,8 @@ export interface PartRead {
 
 export type Edge =
   | { edge: "latest" }
+  | { edge: "position"; place: TimelinePosition }
+  | { edge: "turn"; turn: string }
   | { edge: "before"; at: number; floor: number }
   | { edge: "after"; at: number; ceiling: number }
   | { edge: "around"; at: number; floor: number; ceiling: number };
@@ -91,7 +96,8 @@ export interface Found {
 /** Where the parts a page does not hold are read from. */
 export interface ScanCursor { revision: string; after: { order: string; item: string }; seeking?: boolean }
 export interface ExpandedEvent { object: string; event: SessionEvent }
-export interface Scanned { events: SessionEvent[]; next: ScanCursor | null }
+export interface Scanned { events: SessionEvent[]; truncated?: { at: number; bytes: number }[]; next: ScanCursor | null }
+export type ExportReading = readonly Entry[] | { previewBytes: number };
 
 export interface PartSource {
   scan?(cursor: ScanCursor | null): Promise<Scanned>;
@@ -137,6 +143,12 @@ export class Conversation {
   private chatCache: { version: string; blocks: Block[] } | null = null;
   /** Gaps being read, by key. */
   private reading = new Set<string>();
+  private readingFailure: string | null = null;
+  takeReadingFailure(): string | null {
+    const failure = this.readingFailure;
+    this.readingFailure = null;
+    return failure;
+  }
   /** Folds read aside, as finding reads what the page does not hold:
    *  asked as the others are while they are read. */
   private aside: Fold[] = [];
@@ -214,6 +226,8 @@ export class Conversation {
   }
 
   /** Whether parts of it are read from a shell. */
+  get preparing(): boolean { return this.pageWindow?.pages?.preparing === true; }
+
   get windowed(): boolean {
     return this.source !== null;
   }
@@ -274,11 +288,13 @@ export class Conversation {
       return true;
     }
     const held = this.pageWindow;
+    const oldPlaces = new Map(held?.pages?.keys?.map((key, at) => [key, held.pages?.places?.[at] ?? null]));
     if (held?.pages?.keys) {
       if (older !== undefined && held.pages.older !== older) { held.pages.older = older; this.structure += 1; }
       const at = held.pages.keys.indexOf(key);
       const snapshot = grown(at < 0 ? undefined : held.events[at], event);
-      if (at < 0) { held.pages.keys.push(key); held.events.push(snapshot); }
+      if (!snapshot) return false;
+      if (at < 0) { held.pages.keys.push(key); held.events.push(snapshot); held.pages.places?.push(null); }
       else { held.events[at] = snapshot; held.pages.objects = held.pages.objects.filter((object) => object.at !== at); }
     }
     this.route(event);
@@ -295,6 +311,7 @@ export class Conversation {
           positions.set(at, keys.length); keys.push(window.pages!.keys![at]!); return true;
         });
         window.pages.keys = keys;
+        window.pages.places = keys.map((current) => oldPlaces.get(current) ?? (current === key ? evicted.map((old) => oldPlaces.get(old)).find((place) => !!place) : null) ?? null);
         window.pages.objects = window.pages.objects.flatMap((object) => { const at = positions.get(object.at); return at === undefined ? [] : [{ ...object, at }]; });
 
         this.tail.end = window.events.length;
@@ -310,7 +327,8 @@ export class Conversation {
     const held = this.pageWindow;
     if (!held?.pages?.keys || held.generation !== delta.generation) return false;
     const events = new Map(held.pages.keys.map((key, at) => [key, held.events[at]!]));
-    for (const changed of delta.events) events.set(changed.key, changed.event);
+    const places = new Map(held.pages.keys.map((key, at) => [key, held.pages?.places?.[at] ?? null]));
+    for (const changed of delta.events) { events.set(changed.key, changed.event); places.set(changed.key, changed.place ?? places.get(changed.key) ?? null); }
     const removed = new Set(delta.removed);
     const keys = held.pages.keys.filter((key) => !removed.has(key));
     for (const place of delta.placed) {
@@ -322,9 +340,21 @@ export class Conversation {
     }
     const ordered = keys.map((key) => events.get(key));
     if (ordered.some((event) => event === undefined)) return false;
-    const follows = this.follows;
-    this.open({ ...held, events: ordered as SessionEvent[], pages: { ...delta.pages, keys, pending: delta.pending ?? held.pages.pending ?? [] } }, this.source);
-    this.follows = follows;
+    const window = { ...held, events: ordered as SessionEvent[], pages: { ...delta.pages, keys, places: keys.map((key) => places.get(key) ?? null), pending: delta.pending ?? held.pages.pending ?? [] } };
+    const objects = new Set(window.pages.objects.map((object) => object.object));
+    for (const object of this.expanded.keys()) if (!objects.has(object)) this.expanded.delete(object);
+    const shown = [...window.events];
+    for (const object of window.pages.objects) { const full = this.expanded.get(object.object); if (full) shown[object.at] = full; }
+    const previous = new Map(held.pages.keys.map((key, at) => [key, held.events[at]]));
+    const hasUsage = shown.some((event) => event.event === "changed" && (event.change.kind === "usage" || event.change.kind === "message_usage"));
+    const itemOnly = delta.pending === undefined && delta.removed.length === 0
+      && delta.events.every(({ key, event }) => canReviseItem(previous.get(key), event, hasUsage));
+    let fold = this.live;
+    if (itemOnly) fold.reviseItems(shown, keys, delta.events.map(({ key }) => key), delta.removed);
+    else fold = fold.revised(held.events, held.pages.keys, shown, keys, window.pages.pending);
+    this.pageWindow = window;
+    this.parts = [{ ...this.tail, fold, end: window.start + window.events.length }];
+    this.structure += 1;
     return true;
   }
 
@@ -353,8 +383,16 @@ export class Conversation {
       bytes -= JSON.stringify(this.expanded.get(first)).length * 2;
       this.expanded.delete(first);
     }
-    if (expected && (expected.event === "finished") && expected.item.kind === "other" && expected.item.host_kind === "Content preview unavailable") this.live.evictPlaces([window.pages?.keys?.[object.at] ?? ""]);
-    this.live.event(event);
+    const held = this.pageWindow;
+    const keys = held.pages?.keys;
+    if (!keys) return;
+    const shown = [...held.events];
+    for (const object of held.pages?.objects ?? []) {
+      const full = this.expanded.get(object.object);
+      if (full) shown[object.at] = full;
+    }
+    const fold = this.live.revised(held.events, keys, shown, keys, held.pages?.pending ?? []);
+    this.parts = [{ ...this.tail, fold }];
     this.structure += 1;
     this.changed();
   }
@@ -439,12 +477,30 @@ export class Conversation {
     return this.read(gap, { edge: "around", at, floor: gap.start, ceiling: gap.end });
   }
 
+  positionOf(key: string): TimelinePosition | null {
+    const block = this.blocks().find((block) => block.key === key);
+    const entry = block?.kind === "activity-group" ? block.members[0]?.key : block?.key ?? key;
+    const place = entry ? this.live.placeOf(entry) : null;
+    const at = place ? this.pageWindow?.pages?.keys?.indexOf(place) : -1;
+    return at !== undefined && at >= 0 ? this.pageWindow?.pages?.places?.[at] ?? null : null;
+  }
+
+  async reachPosition(place: TimelinePosition): Promise<boolean> {
+    if (!this.source || !this.pageWindow) return false;
+    await this.source.part(this.generation, { edge: "position", place });
+    return this.pageWindow.pages?.places?.some((current) => current?.item === place.item) === true;
+  }
+
   /** Reads the turns where `turn` first appears, wherever they are; true
    *  once they are held. */
   async reachTurn(turn: string): Promise<boolean> {
     if (this.foldOf(turn)) return true;
     const source = this.source;
     if (!source) return false;
+    if (this.pageWindow) {
+      await source.part(this.generation, { edge: "turn", turn });
+      return this.foldOf(turn) !== null;
+    }
     const at = await source.locate(this.generation, turn).catch(() => null);
     return at !== null && this.reach(at);
   }
@@ -469,7 +525,7 @@ export class Conversation {
       this.parts.splice(at < 0 ? this.parts.length - 1 : at, 0, { start: part.start, end: part.end, turnsBefore: part.turns_before, turns: part.turns, fold });
       return true;
     } catch (error) {
-      console.warn("a part of the conversation could not be read", error);
+      this.readingFailure = String(error);
       return false;
     } finally {
       this.reading.delete(gap.key);
@@ -506,7 +562,7 @@ export class Conversation {
   /** Every entry of the conversation in order, a part at a time: what is
    *  held as it is, the rest read from the shell and let go once passed;
    *  ends early if the conversation is read again meanwhile. */
-  async *everything(): AsyncGenerator<readonly Entry[]> {
+  async *everything(): AsyncGenerator<ExportReading> {
     const source = this.source;
     const generation = this.generation;
     if (this.pageWindow) {
@@ -517,7 +573,15 @@ export class Conversation {
         const fold = new Fold("export");
         fold.thoughtWords = this.thoughts;
         fold.history(scanned.events);
-        yield fold.entries;
+        let start = 0;
+        for (const preview of scanned.truncated ?? []) {
+          const after = fold.entries.findIndex((entry) => entry.at > preview.at);
+          const end = after < 0 ? fold.entries.length : after;
+          yield fold.entries.slice(start, end);
+          yield { previewBytes: preview.bytes };
+          start = end;
+        }
+        yield fold.entries.slice(start);
         cursor = scanned.next;
       } while (cursor);
       return;
@@ -557,7 +621,10 @@ export class Conversation {
       const before = `timeline:${this.generation}:before`;
       const after = `timeline:${this.generation}:after`;
       if (pages.older) blocks.push({ kind: "gap", key: before, stamp: this.reading.has(before) ? 1 : 0, start: 0, end: 0, turns: 0, first: true, loading: this.reading.has(before), paged: true });
-      const current = this.live.blocks();
+      const current = this.live.blocks().map((block, at, all) => block.kind === "activity-group" ? {
+        ...block, partialBefore: at === 0 && pages.partial_older === true,
+        partialAfter: at === all.length - 1 && pages.partial_newer === true,
+      } : block);
       const pending = pages.newer ? current.filter((block) => block.kind === "ask") : [];
       blocks.push(...current.filter((block) => !pages.newer || block.kind !== "ask"));
       if (pages.newer) blocks.push({ kind: "gap", key: after, stamp: this.reading.has(after) ? 1 : 0, start: end, end, turns: 0, first: false, loading: this.reading.has(after), later: true, paged: true });

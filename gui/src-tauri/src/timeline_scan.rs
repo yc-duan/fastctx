@@ -16,8 +16,14 @@ pub(crate) struct Cursor {
     seeking: bool,
 }
 #[derive(Serialize)]
+pub(crate) struct Truncated {
+    at: usize,
+    bytes: u64,
+}
+#[derive(Serialize)]
 pub(crate) struct Scanned {
     events: Vec<SessionEvent>,
+    truncated: Vec<Truncated>,
     next: Option<Cursor>,
 }
 
@@ -58,16 +64,28 @@ pub(crate) async fn read(reader: crate::timeline_watch::Shared, cursor: Option<C
         let after = events.first().ok_or("an export page did not advance")?.place.clone();
         return Ok(Scanned {
             events: Vec::new(),
+            truncated: Vec::new(),
             next: Some(Cursor { revision: revision.to_string(), after, seeking: true }),
         });
     }
     let mut output = Vec::new();
+    let mut truncated = Vec::new();
     let mut bytes = 0;
     let mut after = None;
     let total = events.len();
     for (at, event) in events.into_iter().enumerate() {
+        let fallback = if matches!(event.shown, TimelineShown::Oversized { bytes, .. } if bytes > crate::timeline_body::EXPANDED_BYTES)
+        {
+            crate::timeline_window::Stored::from(event.clone()).event
+        } else {
+            None
+        };
         let full = match event.shown {
             TimelineShown::Event { event } => serde_json::from_value(event).map_err(|e| e.to_string())?,
+            TimelineShown::Oversized { bytes, .. } if bytes > crate::timeline_body::EXPANDED_BYTES => {
+                truncated.push(Truncated { at: output.len(), bytes });
+                fallback.ok_or("the oversized event has no readable preview")?
+            }
             TimelineShown::Oversized { bytes, object, .. } => {
                 let raw = crate::timeline_body::fetch(
                     reader.clone(),
@@ -88,6 +106,7 @@ pub(crate) async fn read(reader: crate::timeline_watch::Shared, cursor: Option<C
     }
     Ok(Scanned {
         events: output,
+        truncated,
         next: if newer {
             after.map(|after| Cursor { revision: revision.to_string(), after, seeking: false })
         } else {

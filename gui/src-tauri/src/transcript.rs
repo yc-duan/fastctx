@@ -85,7 +85,7 @@ pub(crate) async fn conversation_find(
 }
 
 /// The reader owns the view. Revision numbers order overlapping UI commands.
-#[tauri::command]
+#[fastctx_gui_command::command]
 pub(crate) async fn conversation_follow(
     shell: tauri::State<'_, crate::Shell>,
     id: u64,

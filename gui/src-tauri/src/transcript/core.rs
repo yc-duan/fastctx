@@ -103,10 +103,12 @@ pub(crate) struct Part {
 /// Which part a page asks for: the one just before or just after a part it
 /// holds, or the one around an event; never reaching into what it holds
 /// beyond `floor` and `ceiling`.
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(tag = "edge", rename_all = "snake_case")]
 pub(crate) enum Edge {
     Latest,
+    Position { place: fastctx_types::timeline_pages::TimelinePlace },
+    Turn { turn: String },
     Before { at: usize, floor: usize },
     After { at: usize, ceiling: usize },
     Around { at: usize, floor: usize, ceiling: usize },
@@ -458,7 +460,7 @@ impl Transcript {
         }
         let len = self.events.len();
         let (start, end) = match edge {
-            Edge::Latest => return None,
+            Edge::Latest | Edge::Position { .. } | Edge::Turn { .. } => return None,
             Edge::Before { at, floor } => {
                 let end = at.min(len);
                 (self.before(end, floor.min(end), 1), end)

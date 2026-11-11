@@ -23,6 +23,7 @@ import { askKey, forPeople, type AskState } from "./ask-state";
 import { userWords } from "./told";
 import { Agents, type AgentRun } from "./agents";
 import { Requests } from "./requests";
+import { eventBase, sameProjection } from "./timeline-fold";
 import type { PendingControl } from "../world/control";
 
 export type Use = "done" | "failed" | "declined" | "cut" | "unknown";
@@ -179,6 +180,8 @@ export interface Activity {
   key: string;
   turn: string;
   members: Entry[];
+  partialBefore?: boolean;
+  partialAfter?: boolean;
   stamp: number;
   /** One of its tools started or names one of the host's own agents,
    *  which move on their own (`agentStamp`). */
@@ -426,6 +429,8 @@ export class Fold {
       this.requests.clear();
     }
     this.placedEntries.clear();
+    this.eventBases.clear();
+    this.eventSources.clear();
     this.pendingIds = authoritativePending === undefined ? null : new Set(authoritativePending.flatMap((event) => event.event === "changed" && event.change.kind === "request" ? [askKey(event.change.id)] : []));
     this.byKey.clear();
     this.byItem.clear();
@@ -501,6 +506,126 @@ export class Fold {
 
   /** One more event of this fold's part. */
   private placedEntries = new Map<string, Set<string>>();
+  private eventBases = new Map<string, Entry[]>();
+  private eventSources = new Map<string, SessionEvent>();
+
+  /** Item-only changes update their own entries and dependent facts. */
+  reviseItems(events: readonly SessionEvent[], places: readonly string[], changed: readonly string[], removed: readonly string[]): void {
+    this.evictPlaces(removed);
+    const positions = new Map(places.map((place, at) => [place, at]));
+    this.replaying = true;
+    try {
+      for (const place of changed) {
+        const at = positions.get(place)!;
+        const event = events[at]!;
+        this.folded = at;
+        this.event(event, place);
+        if (event.event !== "finished") continue;
+        for (const fact of events) {
+          if (fact.event !== "changed") continue;
+          const change = fact.change;
+          if ((change.kind === "run_facts_updated" && change.update.call_id === event.item.id)
+            || (change.kind === "message_usage" && change.items.includes(event.item.id))
+            || (change.kind === "usage" && fact.turn === event.turn && event.item.kind === "thinking")) this.late(fact);
+        }
+        const entry = this.find(event.turn, event.item.id);
+        if (entry?.kind === "tool" && entry.ended === null && this.endedTurns.has(event.turn)) {
+          const end = events.find((event) => event.event === "turn_ended" && event.turn === entry.turn);
+          entry.ended = { at: end ? Date.parse(end.at) : Date.parse(event.at), use: "cut" };
+          this.touch(entry);
+        }
+      }
+    } finally { this.replaying = false; }
+    const ordered = new Map<string, number>();
+    for (const [place, owned] of this.placedEntries) {
+      const at = positions.get(place);
+      if (at === undefined) continue;
+      for (const key of owned) ordered.set(key, Math.min(at, ordered.get(key) ?? Infinity));
+    }
+    this.entries.sort((a, b) => (ordered.get(a.key) ?? Infinity) - (ordered.get(b.key) ?? Infinity));
+    for (const entry of this.entries) entry.at = ordered.get(entry.key) ?? events.length;
+    this.folded = events.length;
+    this.reindex();
+  }
+
+  /** Reproject changed payloads and the small contextual facts. Unchanged
+   * payloads reuse their pre-fact entries; no transcript is refolded. */
+  revised(before: readonly SessionEvent[], previous: readonly string[], events: readonly SessionEvent[], places: readonly string[], pending: readonly SessionEvent[]): Fold {
+    const old = new Map(previous.map((place, at) => [place, before[at]]));
+    const next = new Fold(this.scope);
+    next.thoughtWords = this.thoughtWords;
+    next.clock = this.clock;
+    next.pagedGroups = true;
+    next.title = this.title; next.context = this.context; next.answeredBy = this.answeredBy;
+    next.previousGroups = new Map(this.previousGroups);
+    next.stretches = new Map([...this.stretches].map(([turn, keys]) => [turn, [...keys]]));
+    next.halted = this.halted ? new Set(this.halted) : null;
+    next.sends = this.sends; next.heardSeq = this.heardSeq;
+    next.settlers = new Map(this.settlers);
+    next.unclaimed = [...this.unclaimed]; next.claimedHeard = new Set(this.claimedHeard);
+    next.pendingIds = new Set(pending.flatMap((event) => event.event === "changed" && event.change.kind === "request" ? [askKey(event.change.id)] : []));
+    next.ignoreHistoricalRequests = true;
+    next.replaying = true;
+    next.preferredKeys = new Map(this.entries.flatMap((entry): [string, string][] => {
+      if ("item" in entry && "turn" in entry && typeof entry.turn === "string") return [[itemKey(entry.turn, entry.item), entry.key]];
+      if (entry.kind === "heard") return [...(entry.delivery ? [[`heard:d:${entry.delivery}`, entry.key] as [string, string]] : []), ...(entry.messageId ? [[`heard:m:${entry.messageId}`, entry.key] as [string, string]] : [])];
+      return [];
+    }));
+    for (let at = 0; at < events.length; at += 1) {
+      const event = events[at]!; const place = places[at]!;
+      next.folded = at; next.current = at;
+      const base = old.get(place) === event && this.eventSources.get(place) === event ? this.eventBases.get(place) : undefined;
+      if (base && (event.event === "finished" || event.event === "began" || event.event === "updated" || event.event === "heard")) {
+        next.currentPlace = place; next.placed = true;
+        if (event.event === "heard") {
+          for (const file of event.message?.attachments ?? []) next.attachments.set(file.path.replaceAll("\\", "/"), file.name);
+          const turn = event.turn ?? "";
+          next.heardIn.set(turn, (next.heardIn.get(turn) ?? 0) + 1);
+        } else {
+          if (event.item.draft) next.renamed(event.turn, event.item.draft, event.item.id);
+          if (["message", "thinking", "plan", "tool", "compaction"].includes(event.item.kind) && !next.find(event.turn, event.item.id)) next.overtaken(event.turn);
+          if (event.event === "finished" && event.item.id) next.over.add(itemEntryKey(event.turn, event.item.id));
+        }
+        const owned = new Set<string>();
+        for (const entry of base) {
+          const restored = { ...entry, at };
+          const held = next.byKey.get(restored.key);
+          if (held?.kind === "tool" && restored.kind === "tool") {
+            restored.began = held.began;
+            restored.ended ??= held.ended;
+            if (!restored.tool.run && held.tool.run) restored.tool = { ...restored.tool, run: held.tool.run };
+          } else if (held?.kind === "prose" && restored.kind === "prose") {
+            if (held.began !== undefined) restored.began = held.began;
+            if (restored.took === undefined && held.took !== undefined) restored.took = held.took;
+            restored.writing = held.writing && restored.writing;
+          }
+          if (held) next.replace(held, restored);
+          else next.add(restored);
+          owned.add(restored.key);
+        }
+        next.placedEntries.set(place, owned);
+        next.eventBases.set(place, base);
+        next.eventSources.set(place, event);
+        next.folded = at + 1;
+      } else next.event(event, place);
+    }
+    next.ignoreHistoricalRequests = false;
+    next.extend([...pending]);
+    next.replaying = false;
+    next.preferredKeys = null;
+    next.stale = false;
+    next.endings = this.endings; next.lastEnding = this.lastEnding;
+    for (const sent of this.entries.filter((entry): entry is Heard => entry.kind === "heard" && entry.sending !== undefined)) {
+      if (!next.entries.some((entry) => entry.kind === "heard" && entry.sending === undefined && entry.text.trim() === sent.text.trim())) next.add(sent);
+    }
+    next.entries = next.entries.map((entry) => {
+      const prior = this.byKey.get(entry.key);
+      if (prior && sameProjection(prior, entry)) { prior.at = entry.at; return prior; }
+      return entry;
+    });
+    next.reindex();
+    return next;
+  }
   private pendingIds: Set<string> | null = null;
   private ignoreHistoricalRequests = false;
   evictPlaces(places: readonly string[]): void {
@@ -509,6 +634,8 @@ export class Fold {
     for (const place of places) {
       for (const key of this.placedEntries.get(place) ?? []) gone.add(key);
       this.placedEntries.delete(place);
+      this.eventBases.delete(place);
+      this.eventSources.delete(place);
     }
     for (const keys of this.placedEntries.values()) for (const key of keys) gone.delete(key);
     if (![...gone].some((key) => this.byKey.has(key))) return;
@@ -518,6 +645,10 @@ export class Fold {
     const items = new Set(this.entries.flatMap((entry) => "turn" in entry && "item" in entry && typeof entry.turn === "string" ? [itemEntryKey(entry.turn, entry.item)] : []));
     for (const key of this.over) if (!items.has(key)) this.over.delete(key);
     for (const turn of this.endedTurns) if (!turns.has(turn)) this.endedTurns.delete(turn);
+  }
+  placeOf(key: string): string | null {
+    for (const [place, entries] of this.placedEntries) if (entries.has(key)) return place;
+    return null;
   }
   livePending(event: SessionEvent): void {
     if (event.event !== "changed") return;
@@ -549,6 +680,13 @@ export class Fold {
     const before = this.clock;
     this.read(event);
     if (place !== undefined) {
+      this.eventSources.set(place, event);
+      let base: Entry | undefined;
+      if (event.event === "finished" || event.event === "began" || event.event === "updated") base = event.item.id ? this.find(event.turn, event.item.id) : this.byKey.get(`n:${place}`);
+      else if (event.event === "grew") base = this.find(event.turn, event.item);
+      else if (event.event === "heard") base = [...this.entries].reverse().find((entry) => entry.kind === "heard" && entry.stamp > before);
+      if (base) this.eventBases.set(place, [eventBase(event, base)]);
+      else this.eventBases.delete(place);
       if (event.event === "grew") {
         const entry = this.find(event.turn, event.item);
         if (entry && !this.placedEntries.has(place)) this.placedEntries.set(place, new Set([entry.key]));

@@ -6,6 +6,7 @@ export function placeEvent(window: Window, key: string, after: string | null): b
   const pages = window.pages;
   if (!pages?.keys) return false;
   const objects = new Map(pages.objects.map((object) => [pages.keys![object.at]!, object]));
+  const positions = new Map(pages.keys.map((key, at) => [key, pages.places?.[at] ?? null]));
   const at = pages.keys.indexOf(key);
   if (at < 0) return false;
   const before = after === null ? -1 : pages.keys.indexOf(after);
@@ -14,11 +15,12 @@ export function placeEvent(window: Window, key: string, after: string | null): b
   pages.keys.splice(at, 1); window.events.splice(at, 1);
   const insert = before + 1 - (before > at ? 1 : 0);
   pages.keys.splice(insert, 0, key); window.events.splice(insert, 0, event);
+  pages.places = pages.keys.map((key) => positions.get(key) ?? null);
   pages.objects = pages.keys.flatMap((key, at) => { const object = objects.get(key); return object ? [{ ...object, at }] : []; });
   return true;
 }
 
-export function grown(previous: SessionEvent | undefined, event: SessionEvent): SessionEvent {
+export function grown(previous: SessionEvent | undefined, event: SessionEvent): SessionEvent | undefined {
   if (event.event !== "grew") return event;
   if (previous && (previous.event === "began" || previous.event === "updated")) {
     const snapshot = { ...previous, item: { ...previous.item } };
@@ -32,5 +34,5 @@ export function grown(previous: SessionEvent | undefined, event: SessionEvent): 
     }
     return snapshot;
   }
-  return { at: event.at, event: "began", turn: event.turn, item: { kind: "message", id: event.item, text: event.text } };
+  return undefined;
 }

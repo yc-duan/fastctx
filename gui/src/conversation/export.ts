@@ -32,7 +32,15 @@ export async function markdownOf(conversation: Conversation, words: Words, names
     if (who !== speaker) out.push(`## ${who}`);
     speaker = who;
   };
-  for await (const entries of conversation.everything()) for (const entry of entries) {
+  for await (const reading of conversation.everything()) {
+    if ("previewBytes" in reading) {
+      flush();
+      out.push(words.english
+        ? `> This event is ${reading.previewBytes} bytes, exceeding 8 MiB. Only its available preview is included. Use the complete output file when one is provided.`
+        : `> 此条内容共 ${reading.previewBytes} 字节，超过 8 MiB，仅导出可用的预览；如有完整输出文件，请从该文件读取全文。`);
+      continue;
+    }
+    for (const entry of reading) {
     switch (entry.kind) {
       case "heard":
         turnTo(
@@ -75,6 +83,7 @@ export async function markdownOf(conversation: Conversation, words: Words, names
       default:
         break;
     }
+  }
   }
   flush();
   return `${out.join("\n\n")}\n`;

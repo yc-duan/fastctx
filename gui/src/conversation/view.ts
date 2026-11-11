@@ -1213,6 +1213,15 @@ export class ConversationView {
     const scroller = this.context.scroller;
     scroller.scrollTop = this.origin() + this.heights.top(index) + anchor.offset;
     this.lay(false, true);
+    // Restoration already uses the mounted DOM's position. Record its real
+    // heights now, so ResizeObserver cannot charge the same correction twice.
+    for (const shown of this.shown) {
+      const at = this.heights.index(shown.key);
+      if (at === undefined || !shown.element.isConnected) continue;
+      const height = shown.element.getBoundingClientRect().height;
+      this.measured.set(shown.key, height);
+      this.heights.set(at, height);
+    }
     const slot = this.slots.get(anchor.key);
     if (slot?.element.isConnected) scroller.scrollTop += slot.element.getBoundingClientRect().top - scroller.getBoundingClientRect().top + anchor.offset;
     return true;
@@ -1271,7 +1280,7 @@ export class ConversationView {
     const conversation = this.conversation;
     switch (block.kind) {
       case "activity-group":
-        return `${block.stamp}|${block.members.length}|${this.openStretches.has(block.key) ? "o" : ""}${block.agents ? `|${conversation.agentStamp}` : ""}`;
+        return `${block.stamp}|${block.partialBefore ? 1 : 0}${block.partialAfter ? 1 : 0}|${block.members.length}|${this.openStretches.has(block.key) ? "o" : ""}${block.agents ? `|${conversation.agentStamp}` : ""}`;
       case "prose": {
         const last = block.prose === "message" && conversation.lastMessageOf(block.turn) === block.key;
         return `${block.stamp}|${last ? `l${conversation.turnEnded(block.turn) ? "e" : ""}${conversation.latestEnded() === block.turn ? "n" : ""}` : ""}${conversation.spokeIn(block.turn) ? "|s" : ""}`;
@@ -1323,7 +1332,7 @@ export class ConversationView {
   private findSignature(block: Block): string {
     switch (block.kind) {
       case "activity-group":
-        return `${block.stamp}|${block.members.length}${block.agents ? `|${this.conversation.agentStamp}` : ""}`;
+        return `${block.stamp}|${block.partialBefore ? 1 : 0}${block.partialAfter ? 1 : 0}|${block.members.length}${block.agents ? `|${this.conversation.agentStamp}` : ""}`;
       case "uncertain":
         return `${block.stamp}|${this.conversation.hasTurns()}`;
       default:
@@ -2079,7 +2088,7 @@ export class ConversationView {
       slot.stretch = stretch;
     }
     // Its heading says how the agents its calls started stand, as they move.
-    const heading = `${group.stamp}|${group.members.length}${group.agents ? `|${this.conversation.agentStamp}` : ""}`;
+    const heading = `${group.stamp}|${group.partialBefore ? 1 : 0}${group.partialAfter ? 1 : 0}|${group.members.length}${group.agents ? `|${this.conversation.agentStamp}` : ""}`;
     if (stretch.heading !== heading) {
       stretch.heading = heading;
       this.heading(stretch, group);
