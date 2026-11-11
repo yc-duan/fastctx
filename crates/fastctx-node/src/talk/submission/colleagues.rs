@@ -68,6 +68,10 @@ pub(super) fn register(node: &Arc<Node>) {
                     (born.colleague, born.waiting)
                 }
                 Asked::Here { requester, acting, label, prompt, started, .. } => {
+                    if let Some(town) = &resolved.town {
+                        crate::town::access::ready(&node, &acting, town).await?;
+                    }
+                    crate::logins::workbench::may_start(&node, &acting, "codex", started.callee.login.home.as_deref())?;
                     let requester = crate::colleagues::Requester { address: requester, turn: resolved.turn.clone() };
                     let (resident, waiting) = crate::colleagues::ask_here(
                         &node,
@@ -111,16 +115,17 @@ pub(crate) async fn ask(
     login: Option<Caller>,
 ) -> Result<crate::colleagues::Born, Failure> {
     node.residents.active(&asker)?;
-    crate::town::access::current(node, &asker)?;
-    let town = node
-        .residents
-        .town_of(&asker)
-        .ok_or_else(|| Failure::not_run(format!("no resident {asker} lives on {}", node.machine())))?;
-    let turn = node.residents.now(&asker).and_then(|now| now.turn);
-    let resolved = Resolved { town, turn };
-    let unit = asker.to_string();
     let asked = Asked::Route { asker: asker.clone(), label, prompt, callee, login };
-    let answer: Answer = crate::submitted::submit_resolved(node, &FAMILY, &unit, &asked, &resolved).await?;
+    let answer: Answer = crate::submitted::submit_resolving(node, &FAMILY, &asked, || async {
+        crate::town::access::current(node, &asker)?;
+        let town = node
+            .residents
+            .town_of(&asker)
+            .ok_or_else(|| Failure::not_run(format!("no resident {asker} lives on {}", node.machine())))?;
+        let turn = node.residents.now(&asker).and_then(|now| now.turn);
+        Ok((asker.to_string(), Resolved { town, turn }))
+    })
+    .await?;
     check_route(node, &asker, &answer.resolved)?;
     let (colleague, waiting) = answer.result?;
     Ok(crate::colleagues::Born { colleague, waiting })
@@ -139,8 +144,6 @@ pub(crate) async fn ask_here(
         return Err(Failure::not_run("the configured callee lives on another machine"));
     }
     crate::logins::workbench::may_start(node, &acting, "codex", started.callee.login.home.as_deref())?;
-    let unit = unit(&requester.address);
-    let resolved = Resolved { town: town.clone(), turn: requester.turn.clone() };
     let asked = Asked::Here {
         requester: requester.address,
         turn: requester.turn,
@@ -150,7 +153,11 @@ pub(crate) async fn ask_here(
         prompt,
         started: Box::new(started),
     };
-    let answer: Answer = crate::submitted::submit_resolved(node, &FAMILY, &unit, &asked, &resolved).await?;
+    let answer: Answer = crate::submitted::submit_resolving(node, &FAMILY, &asked, || async {
+        let Asked::Here { requester, town, turn, .. } = &asked else { unreachable!("local recording") };
+        Ok((unit(requester), Resolved { town: town.clone(), turn: turn.clone() }))
+    })
+    .await?;
     if let Some(town) = &answer.resolved.town {
         crate::town::access::check(node, &acting, town)?;
     }

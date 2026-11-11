@@ -20,7 +20,12 @@ pub(super) fn changes(call: &PageCall) -> bool {
     )
 }
 
-pub(super) fn parameters(caller: &Caller, call: &PageCall) -> Result<(), Failure> {
+pub(super) fn parameters(
+    node: &Node,
+    caller: &Caller,
+    opened_on: &MachineName,
+    call: &PageCall,
+) -> Result<(), Failure> {
     match call {
         PageCall::Publish { base, draft, .. } => {
             crate::pages::publisher(caller)?;
@@ -43,6 +48,11 @@ pub(super) fn parameters(caller: &Caller, call: &PageCall) -> Result<(), Failure
         }
         _ => return Err(Failure::not_run("this page call is not a change")),
     }
+    if let Some(account) = call.account()
+        && !node.links().iter().any(|link| link.view().logged_in(opened_on, account))
+    {
+        return Err(Failure::refused("the page account is not logged in on its opening device"));
+    }
     Ok(())
 }
 
@@ -53,25 +63,31 @@ pub(super) fn check(
     call: &PageCall,
     fixed_town: Option<&TownName>,
 ) -> Result<String, Failure> {
-    parameters(caller, call)?;
-    let town = super::town(node, caller, fixed_town.or_else(|| call.town()))?;
-    if let Some(account) = call.account()
-        && !node.links().iter().any(|link| link.view().logged_in(opened_on, account))
-    {
-        return Err(Failure::refused("the page account is not logged in on its opening device"));
-    }
-    if let PageCall::Act { action, .. } = call {
-        invocation(node, &town, action, false)?;
-    }
+    let town = authorized(node, caller, opened_on, call, fixed_town)?;
     let page = match call {
         PageCall::Publish { page, .. }
         | PageCall::Withdraw { page, .. }
         | PageCall::Restore { page, .. }
         | PageCall::Consent { page, .. }
         | PageCall::Act { page, .. } => page,
-        _ => unreachable!("page changes only"),
+        _ => return Err(Failure::not_run("this page call is not a change")),
     };
     page_unit(&town, page)
+}
+
+fn authorized(
+    node: &Arc<Node>,
+    caller: &Caller,
+    opened_on: &MachineName,
+    call: &PageCall,
+    fixed_town: Option<&TownName>,
+) -> Result<TownName, Failure> {
+    parameters(node, caller, opened_on, call)?;
+    let town = super::town(node, caller, fixed_town.or_else(|| call.town()))?;
+    if let PageCall::Act { action, .. } = call {
+        invocation(node, &town, action, false)?;
+    }
+    Ok(town)
 }
 fn page_unit(town: &TownName, page: &fastctx_types::PageName) -> Result<String, Failure> {
     // Town handles are unique on this node before and after ledger discovery.
@@ -105,6 +121,26 @@ fn invocation(node: &Arc<Node>, town: &TownName, action: &PageInvocation, here: 
 }
 
 pub(super) fn remote_check(node: &Arc<Node>, asker: &Asker, call: &RemoteCall) -> Result<String, Failure> {
+    remote_parameters(node, asker, call)?;
+    remote_unit(call)
+}
+
+pub(super) fn remote_unit(call: &RemoteCall) -> Result<String, Failure> {
+    match call {
+        RemoteCall::PageAction { source, .. } => page_unit(&source.town, &source.page),
+        RemoteCall::Relay { made } => {
+            let text = |field| {
+                made.get(field)
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or_else(|| Failure::not_run("the relayed page has no project or page name"))
+            };
+            super::unit(&("page", text("town")?, text("page")?))
+        }
+        _ => Err(Failure::not_run("this is not a page change")),
+    }
+}
+
+pub(super) fn remote_parameters(node: &Arc<Node>, asker: &Asker, call: &RemoteCall) -> Result<(), Failure> {
     match call {
         RemoteCall::PageAction { source, action } => {
             if source.identity != Some(PageIdentity::Account { hub: asker.hub.clone(), account: asker.account.clone() })
@@ -112,8 +148,7 @@ pub(super) fn remote_check(node: &Arc<Node>, asker: &Asker, call: &RemoteCall) -
                 return Err(Failure::refused("the page action's account differs from its sender"));
             }
 
-            invocation(node, &source.town, action, true)?;
-            page_unit(&source.town, &source.page)
+            invocation(node, &source.town, action, true)
         }
         RemoteCall::Relay { made } => {
             let Call::Page(call) =
@@ -149,7 +184,7 @@ pub(super) fn remote_check(node: &Arc<Node>, asker: &Asker, call: &RemoteCall) -
             }
             let mut call = call;
             call.for_account(asker.account.clone());
-            check(node, &Caller::User, &asker.machine, &call, None)
+            authorized(node, &Caller::User, &asker.machine, &call, None).map(|_| ())
         }
         _ => Err(Failure::not_run("this is not a page change")),
     }

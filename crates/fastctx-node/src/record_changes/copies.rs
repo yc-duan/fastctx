@@ -23,6 +23,34 @@ pub(super) fn check(
     placement: u64,
     resource: &Resource,
 ) -> Result<String, Failure> {
+    parameters(node, asker, placement, resource)?;
+    selected_unit(node, asker, owner, resource)
+}
+
+pub(super) fn selected_unit(
+    node: &Node,
+    asker: &Asker,
+    owner: &Address,
+    resource: &Resource,
+) -> Result<String, Failure> {
+    let scope = HubAccount { hub: asker.hub.clone(), account: asker.account.clone() };
+    match resource {
+        Resource::Skill { name, .. } => super::unit(&("skill", scope, name)),
+        Resource::Files { key, .. } => super::unit(&("artifact", scope, owner, key)),
+        Resource::History { scope: fastctx_types::history::Scope::Project { project } } => {
+            let link =
+                node.link_of(&scope.hub).ok_or_else(|| Failure::refused("the working-copy hub is unavailable"))?;
+            let view = crate::authorization::current_view(&link)?;
+            let project = view
+                .project_named(&asker.account, project)
+                .ok_or_else(|| Failure::refused("this account cannot use the project's history"))?;
+            super::unit(&("project-history", scope.hub, &project.town))
+        }
+        _ => super::unit(&("copy", scope, owner)),
+    }
+}
+
+pub(super) fn parameters(node: &Node, asker: &Asker, placement: u64, resource: &Resource) -> Result<(), Failure> {
     let scope = HubAccount { hub: asker.hub.clone(), account: asker.account.clone() };
     let link = node.link_of(&scope.hub).ok_or_else(|| Failure::refused("the working-copy hub is unavailable"))?;
     let view = crate::authorization::current_view(&link)?;
@@ -47,31 +75,26 @@ pub(super) fn check(
             if !crate::placement::owned(view.member(&node.machine()), &scope.account) {
                 return Err(Failure::refused("skill folders belong on the account's own working computers"));
             }
-            super::unit(&("skill", scope, name))
         }
         Resource::Files { key, files } => {
             crate::placement::artifacts::validate_key(key)?;
             fastctx_types::skill_files::validate_files(files).map_err(Failure::not_run)?;
-            super::unit(&("artifact", scope, owner, key))
         }
         Resource::History { scope: history } => {
             let home = view.me().and_then(|member| member.home.as_ref());
             if !home.is_some_and(|account| crate::history::switch::on(&link, account)) {
                 return Err(Failure::not_run(crate::history::switch::COPIES_OFF));
             }
-            match history {
-                fastctx_types::history::Scope::Project { project } => {
-                    let project = view
-                        .project_named(&asker.account, project)
-                        .ok_or_else(|| Failure::refused("this account cannot use the project's history"))?;
-                    if !view.member_keeps_project(&view.me, &project.town) {
-                        return Err(Failure::refused("this computer does not keep that project's records"));
-                    }
-                    super::unit(&("project-history", scope.hub, &project.town))
+            if let fastctx_types::history::Scope::Project { project } = history {
+                let project = view
+                    .project_named(&asker.account, project)
+                    .ok_or_else(|| Failure::refused("this account cannot use the project's history"))?;
+                if !view.member_keeps_project(&view.me, &project.town) {
+                    return Err(Failure::refused("this computer does not keep that project's records"));
                 }
-                _ => super::unit(&("copy", scope, owner)),
             }
         }
-        _ => super::unit(&("copy", scope, owner)),
+        _ => {}
     }
+    Ok(())
 }

@@ -60,8 +60,13 @@ pub(super) fn parameters(node: &Node, caller: &Caller, call: &ProjectCall) -> Re
                 return Err(Failure::new("nothing to change: give what the next version says"));
             }
         }
-        ProjectCall::Enter { .. } if !matches!(caller, Caller::Resident(_)) => {
-            return Err(Failure::not_run("only an agent's resident conversation enters a project"));
+        ProjectCall::Enter { .. } => {
+            let Caller::Resident(address) = caller else {
+                return Err(Failure::not_run("only an agent's resident conversation enters a project"));
+            };
+            if node.is_me(&address.machine) {
+                node.residents.active(&address.resident)?;
+            }
         }
         _ => {}
     }

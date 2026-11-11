@@ -91,15 +91,22 @@ pub(crate) async fn local(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<R
     let caller = crate::town::caller::of(node, peer)?;
     crate::admission::local::admit(node, peer, &call)?;
     match &call {
-        Call::Page(call) => pages::parameters(&caller, call)?,
+        Call::Page(call) => pages::parameters(node, &caller, &node.machine(), call)?,
         Call::Plan { .. } | Call::PlanWrite { .. } => plans::parameters(node, &caller, &call)?,
         Call::Project(call) => projects::parameters(node, &caller, call)?,
+        Call::PrepareCopies { .. } => node.authorize_here(&crate::around::acting_of(node, &caller))?,
         _ => {}
     }
-    let resolved = Resolved::select(node, &caller, &call).await?;
-    let (family, unit) = local_check(node, &caller, &call, &resolved)?;
+    let family = local_family(&call)?;
     let asked = Asked::Local { peer: peer.clone(), call: Box::new(call) };
-    match submitted::submit_resolved(node, &family, &unit, &asked, &resolved).await? {
+    let answer = submitted::submit_resolving(node, &family, &asked, || async {
+        let Asked::Local { call, .. } = &asked else { unreachable!("local recording") };
+        let resolved = Resolved::select(node, &caller, call).await?;
+        let (_, unit) = local_check(node, &caller, call, &resolved)?;
+        Ok((unit, resolved))
+    })
+    .await?;
+    match answer {
         Answer::Local { reply, resolved } => {
             let caller = crate::town::caller::of(node, peer)?;
             let Asked::Local { call, .. } = &asked else { unreachable!("local recording") };
@@ -122,15 +129,22 @@ pub(crate) async fn remote(
 ) -> Result<RemoteReply, Failure> {
     let link = node.link_of(&scope.hub).ok_or_else(|| Failure::refused("the requesting network is unavailable"))?;
     let asker = crate::admission::admit_for_submission(node, &link, caller, &call)?;
-    let (family, unit) = remote_check(node, &asker, &call)?;
-    let resolved = match &call {
-        RemoteCall::Plan { resident, operation, .. } => Resolved::Plan(
-            crate::plan::selection::resolve_here(node, resident, None, None, Some(&scope), operation).await?
-        ),
-        _ => Resolved::Direct,
-    };
+    remote_parameters(node, &asker, &call)?;
+    let family = remote_family(&call)?;
     let asked = Asked::Remote { scope, from: caller.machine.clone(), key: caller.key, call: Box::new(call) };
-    match submitted::submit_resolved(node, &family, &unit, &asked, &resolved).await? {
+    let answer = submitted::submit_resolving(node, &family, &asked, || async {
+        let Asked::Remote { scope, call, .. } = &asked else { unreachable!("remote recording") };
+        let (_, unit) = remote_check(node, &asker, call)?;
+        let resolved = match call.as_ref() {
+            RemoteCall::Plan { resident, operation, .. } => Resolved::Plan(
+                crate::plan::selection::resolve_here(node, resident, None, None, Some(scope), operation).await?
+            ),
+            _ => Resolved::Direct,
+        };
+        Ok((unit, resolved))
+    })
+    .await?;
+    match answer {
         Answer::Remote { reply, resolved } => {
             let Asked::Remote { call, .. } = &asked else { unreachable!("remote recording") };
             let asker = crate::admission::admit(node, &link, caller, call)?;
@@ -144,6 +158,39 @@ pub(crate) async fn remote(
             Ok(*reply)
         }
         Answer::Local { .. } => Err(Failure::new("the record change returned a local answer")),
+    }
+}
+
+fn local_family(call: &Call) -> Result<Family, Failure> {
+    match call {
+        Call::Page(fastctx_types::pages::PageCall::Act { .. }) => Ok(PAGE_ACT),
+        Call::Page(call) if pages::changes(call) => Ok(PAGES),
+        Call::Plan { .. } | Call::PlanWrite { .. } => Ok(PLANS),
+        Call::Project(_) => Ok(PROJECTS),
+        Call::PrepareCopies { .. } => Ok(COPIES),
+        _ => Err(Failure::not_run("this call is not a submitted record change")),
+    }
+}
+
+fn remote_family(call: &RemoteCall) -> Result<Family, Failure> {
+    match call {
+        RemoteCall::PageAction { .. } => Ok(PAGE_EXECUTE),
+        RemoteCall::Relay { made } => {
+            Ok(if made.get("do").and_then(serde_json::Value::as_str) == Some("act") { PAGE_ACT } else { PAGES })
+        }
+        RemoteCall::Plan { .. } => Ok(PLANS),
+        RemoteCall::EnterProject { .. } => Ok(PROJECTS),
+        RemoteCall::WorkingCopy { .. } => Ok(COPIES),
+        _ => Err(Failure::not_run("this remote call is not a submitted record change")),
+    }
+}
+
+fn remote_parameters(node: &Arc<Node>, asker: &crate::admission::Asker, call: &RemoteCall) -> Result<(), Failure> {
+    match call {
+        RemoteCall::PageAction { .. } | RemoteCall::Relay { .. } => pages::remote_parameters(node, asker, call),
+        RemoteCall::Plan { resident, .. } | RemoteCall::EnterProject { resident, .. } => node.residents.active(resident),
+        RemoteCall::WorkingCopy { placement, resource, .. } => copies::parameters(node, asker, *placement, resource),
+        _ => Err(Failure::not_run("this remote call is not a submitted record change")),
     }
 }
 

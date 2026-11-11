@@ -128,6 +128,7 @@ pub(crate) async fn submit<C: Serialize, T: DeserializeOwned>(
 /// call is an operation already; where resolving can fail by then, or the
 /// entrance should not wait for it twice, `submit_resolving` resolves only
 /// what is new.
+#[expect(dead_code, reason = "kept for entrances that already hold their coordinates; current families resolve lazily")]
 pub(crate) async fn submit_resolved<C: Serialize, R: Serialize, T: DeserializeOwned>(
     node: &Node,
     family: &Family,
@@ -143,7 +144,6 @@ pub(crate) async fn submit_resolved<C: Serialize, R: Serialize, T: DeserializeOw
 /// call leaves implicit. A call asked again under its name is answered
 /// from the operation it is, though resolving it now would fail or come
 /// out otherwise.
-#[expect(dead_code, reason = "the families whose entrances resolve are moved to it as they are merged")]
 pub(crate) async fn submit_resolving<C, R, T, Resolving>(
     node: &Node,
     family: &Family,
