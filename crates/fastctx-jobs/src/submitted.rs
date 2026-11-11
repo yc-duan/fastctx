@@ -53,6 +53,9 @@ const ASKS_AGAIN: Duration = Duration::from_secs(1);
 const ASKS_FOR: Duration = Duration::from_secs(60 * 60);
 /// Bytes a transaction here retains beyond what was asked.
 const WRITE_BYTES: usize = 1024;
+/// The seconds waited before each further try at recording what came of
+/// work that is done.
+const RECORDS_AGAIN: [u64; 5] = [1, 2, 4, 8, 16];
 /// What was asked is a job's payload up to this size; a larger one is kept
 /// apart, and the payload names it.
 const INLINE_BYTES: usize = 48 * 1024;
@@ -405,9 +408,20 @@ where
                 Ok(None) => return Outcome::Again { after: ASKS_AGAIN },
                 Err(error) => failed(&Failure::new(format!("{kind} ended unexpectedly: {error}"))),
             };
-            match settle(&*service, &operation, standing).await {
-                Ok(()) => Outcome::Done,
-                Err(error) => Outcome::Failed(format!("recording what came of it: {error}")),
+            // What came of the work is known only here. Its record is tried
+            // again before the job gives it up: another attempt of work that
+            // is not done twice could only say that it does not know.
+            let mut waits = RECORDS_AGAIN.into_iter();
+            loop {
+                let error = match settle(&*service, &operation, standing.clone()).await {
+                    Ok(()) => return Outcome::Done,
+                    Err(error) => error,
+                };
+                let Some(seconds) = waits.next() else {
+                    return Outcome::Failed(format!("recording what came of it: {error}"));
+                };
+                service.log(format_args!("recording what came of {kind}; trying again in {seconds} s: {error}"));
+                tokio::time::sleep(Duration::from_secs(seconds)).await;
             }
         })
     };
