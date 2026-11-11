@@ -76,6 +76,15 @@ pub struct Lined {
     pub straight: bool,
 }
 
+/// What a stop the user asked for is waiting on (`submissions::stop_asked`):
+/// the turn it stops, or the turn words on their way are about to start.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StopMark {
+    Turn(String),
+    Coming,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Receipt {
     pub from: MachineName,
@@ -118,6 +127,10 @@ pub struct Stored {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub lined: Vec<Lined>,
     pub opportunity: Option<String>,
+    /// The stop the user asked for that has not ended yet, kept so a node
+    /// started again still sends the words that came after it on their own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stopped: Option<StopMark>,
     #[serde(default)]
     pub settled_through: u64,
     pub ended: HashSet<String>,

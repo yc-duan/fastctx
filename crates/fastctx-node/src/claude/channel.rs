@@ -32,6 +32,11 @@ use crate::Node;
 const WAIT: Duration = Duration::from_secs(25);
 /// The most one handing over of reports may hold.
 const BODY_MOST: usize = 64 * 1024 * 1024;
+/// The most reports, and bytes of them, a session may have handed over and
+/// not yet dealt with; past either, the channel answers that it is busy and
+/// the mod turns to files.
+const QUEUED_MOST: usize = 1024;
+const QUEUED_BYTES: usize = 64 * 1024 * 1024;
 /// What the channel says of itself in `channel.json`.
 const VERSION: u32 = 1;
 
@@ -50,11 +55,27 @@ pub struct Channel {
 /// came: they are taken at once, so what the mod does next waits for no
 /// report to be applied, and applied in this order by one task of their own.
 struct Queue {
-    sender: tokio::sync::mpsc::UnboundedSender<Vec<HandedReport>>,
-    /// The last report dealt with: applied, or written back to the session's
-    /// files to be applied there. Its mod keeps every report after it, to
-    /// write to files itself should the node go.
-    through: Mutex<Option<String>>,
+    sender: tokio::sync::mpsc::UnboundedSender<Batch>,
+    state: Mutex<QueueState>,
+}
+
+#[derive(Default)]
+struct QueueState {
+    /// The last report dealt with: every report up to it was applied, or
+    /// written back to the session's files to be applied there. Its mod keeps
+    /// every report after it, to hand again or write to files itself.
+    through: Option<String>,
+    /// A report could neither be applied nor written to the files: the queue
+    /// takes nothing more, so nothing after it is applied before it, and the
+    /// mod writes what it kept to files.
+    refused: bool,
+    queued: usize,
+    bytes: usize,
+}
+
+struct Batch {
+    reports: Vec<HandedReport>,
+    bytes: usize,
 }
 
 /// How many times the node has left a session something since it started,
@@ -222,7 +243,14 @@ async fn route(node: &Arc<Node>, request: Request<Incoming>) -> Result<Value, Re
                 .and_then(|query| query.split('&').find_map(|pair| pair.strip_prefix("seen=")))
                 .and_then(|seen| seen.parse().ok())
                 .unwrap_or(0);
-            Ok(json!({ "wake": channel.wait(session, seen).await }))
+            let wake = channel.wait(session, seen).await;
+            let refused = channel
+                .queues
+                .lock()
+                .expect("never poisoned")
+                .get(session)
+                .is_some_and(|queue| queue.state.lock().expect("never poisoned").refused);
+            Ok(if refused { json!({ "wake": wake, "reports": "refused" }) } else { json!({ "wake": wake }) })
         }
         (Method::POST, "reports") => {
             let body = Limited::new(request.into_body(), BODY_MOST)
@@ -237,11 +265,21 @@ async fn route(node: &Arc<Node>, request: Request<Incoming>) -> Result<Value, Re
                 return Err((StatusCode::BAD_REQUEST, format!("{name} is not a report's name")));
             }
             let queue = queue(node, channel, session);
-            queue
-                .sender
-                .send(handed.reports)
-                .map_err(|_| (StatusCode::SERVICE_UNAVAILABLE, "the session's reports are not taken now".to_string()))?;
-            let through = queue.through.lock().expect("never poisoned").clone();
+            let through = {
+                let mut state = queue.state.lock().expect("never poisoned");
+                if state.refused {
+                    return Err((StatusCode::SERVICE_UNAVAILABLE, "the session's reports go to its files".to_string()));
+                }
+                if state.queued + names.len() > QUEUED_MOST || state.bytes + body.len() > QUEUED_BYTES {
+                    return Err((StatusCode::SERVICE_UNAVAILABLE, "too many of the session's reports wait".to_string()));
+                }
+                queue.sender.send(Batch { reports: handed.reports, bytes: body.len() }).map_err(|_| {
+                    (StatusCode::SERVICE_UNAVAILABLE, "the session's reports are not taken now".to_string())
+                })?;
+                state.queued += names.len();
+                state.bytes += body.len();
+                state.through.clone()
+            };
             Ok(json!({ "received": names, "applied": through }))
         }
         (Method::GET, "subagents") => {
@@ -266,7 +304,7 @@ fn queue(node: &Arc<Node>, channel: &Channel, session: &str) -> Arc<Queue> {
         return queue.clone();
     }
     let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
-    let queue = Arc::new(Queue { sender, through: Mutex::new(None) });
+    let queue = Arc::new(Queue { sender, state: Mutex::default() });
     queues.insert(session.to_string(), queue.clone());
     fastctx_platform::task::spawn(apply_in_order(node.clone(), session.to_string(), queue.clone(), receiver));
     queue
@@ -275,20 +313,24 @@ fn queue(node: &Arc<Node>, channel: &Channel, session: &str) -> Arc<Queue> {
 /// Applies a session's handed reports in the order they came, those that
 /// came meanwhile together. What cannot be applied (a session not known
 /// yet, a report that failed) is written to the session's files, as its mod
-/// would have written it, and applied by the next look as files are.
+/// would have written it, and applied by the next look as files are. A report
+/// that can be neither stops the queue: nothing after it is applied ahead of
+/// it, and the mod, told so, writes what it kept to the files itself.
 async fn apply_in_order(
     node: Arc<Node>,
     session: String,
     queue: Arc<Queue>,
-    mut receiver: tokio::sync::mpsc::UnboundedReceiver<Vec<HandedReport>>,
+    mut receiver: tokio::sync::mpsc::UnboundedReceiver<Batch>,
 ) {
     let directory = fastctx_hosts::claude::exchange::sessions(node.world.path()).join(&session);
-    while let Some(mut batch) = receiver.recv().await {
+    while let Some(first) = receiver.recv().await {
+        let mut taken = first.bytes;
+        let mut batch = first.reports;
         while let Ok(more) = receiver.try_recv() {
-            batch.extend(more);
+            taken += more.bytes;
+            batch.extend(more.reports);
         }
-        let Some(last) = batch.last().map(|report| report.name.clone()) else { continue };
-        let kept: Vec<(String, Value)> = batch.iter().map(|report| (report.name.clone(), report.report.clone())).collect();
+        let count = batch.len();
         let reports = batch.iter().map(|report| (report.name.clone(), report.report.clone())).collect();
         let applied = match super::receive(&node, &session, reports).await {
             Ok(applied) => applied,
@@ -312,29 +354,82 @@ async fn apply_in_order(
                 }
             }
         }
-        let rest: Vec<(String, Value)> = kept.into_iter().filter(|(name, _)| !applied.contains(name)).collect();
-        if !rest.is_empty() {
-            let (writing, count) = (directory.clone(), rest.len());
-            let written = fastctx_platform::task::spawn_blocking(move || to_files(&writing, &rest)).await;
-            if !matches!(written, Ok(Ok(()))) {
-                node.log.line(format_args!("writing {count} of {session}'s handed reports to its files failed"));
+        let rest: Vec<(String, Value)> = batch
+            .iter()
+            .filter(|report| !applied.contains(&report.name))
+            .map(|report| (report.name.clone(), report.report.clone()))
+            .collect();
+        let written = if rest.is_empty() {
+            0
+        } else {
+            let (writing, wanted) = (directory.clone(), rest.len());
+            match fastctx_platform::task::spawn_blocking(move || to_files(&writing, &rest)).await {
+                Ok((written, None)) => written,
+                Ok((written, Some(error))) => {
+                    node.log.line(format_args!(
+                        "writing {session}'s handed reports to its files stopped after {written} of {wanted}: {error}"
+                    ));
+                    written
+                }
+                Err(_) => 0,
             }
+        };
+        let (through, whole) = dealt(&batch, &applied, written);
+        let mut state = queue.state.lock().expect("never poisoned");
+        state.queued = state.queued.saturating_sub(count);
+        state.bytes = state.bytes.saturating_sub(taken);
+        if through.is_some() {
+            state.through = through;
         }
-        *queue.through.lock().expect("never poisoned") = Some(last);
+        if !whole {
+            state.refused = true;
+            drop(state);
+            node.log.line(format_args!("{session}'s reports go to its files from now: one could not be kept"));
+            // What waits behind the one not kept is the mod's to write now.
+            receiver.close();
+            while receiver.try_recv().is_ok() {}
+            wake(&node, &session);
+            return;
+        }
     }
 }
 
-/// Writes reports to the session's files as its mod writes them: the report,
-/// then its marker that it is whole.
-fn to_files(directory: &Path, reports: &[(String, Value)]) -> io::Result<()> {
-    let events = directory.join("events");
-    fastctx_platform::ensure_private_dir(&events)?;
-    for (name, report) in reports {
-        let path = events.join(name);
-        fastctx_platform::publish(&path, &serde_json::to_vec(report)?, fastctx_platform::Permissions::Private)?;
-        fastctx_platform::publish(&path.with_extension("done"), b"", fastctx_platform::Permissions::Private)?;
+/// How far a batch was dealt with, in order: the last report applied or
+/// written to the files with every one before it, and whether all were.
+/// `written` counts the reports not applied, in order, that reached the files.
+fn dealt(batch: &[HandedReport], applied: &[String], written: usize) -> (Option<String>, bool) {
+    let (mut through, mut unapplied) = (None, 0);
+    for report in batch {
+        if !applied.contains(&report.name) {
+            if unapplied == written {
+                return (through, false);
+            }
+            unapplied += 1;
+        }
+        through = Some(report.name.clone());
     }
-    Ok(())
+    (through, true)
+}
+
+/// Writes reports to the session's files as its mod writes them: the report,
+/// then its marker that it is whole. How many it wrote, and why it stopped
+/// short if it did.
+fn to_files(directory: &Path, reports: &[(String, Value)]) -> (usize, Option<io::Error>) {
+    let events = directory.join("events");
+    if let Err(error) = fastctx_platform::ensure_private_dir(&events) {
+        return (0, Some(error));
+    }
+    for (index, (name, report)) in reports.iter().enumerate() {
+        let path = events.join(name);
+        let written = serde_json::to_vec(report).map_err(io::Error::other).and_then(|bytes| {
+            fastctx_platform::publish(&path, &bytes, fastctx_platform::Permissions::Private)?;
+            fastctx_platform::publish(&path.with_extension("done"), b"", fastctx_platform::Permissions::Private)
+        });
+        if let Err(error) = written {
+            return (index, Some(error));
+        }
+    }
+    (reports.len(), None)
 }
 
 #[derive(serde::Deserialize)]

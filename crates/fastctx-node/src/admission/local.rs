@@ -124,7 +124,7 @@ fn reached<'a>(node: &Node, call: &'a Call) -> Option<&'a ResidentId> {
         | Call::Watch { resident, machine, .. }
         | Call::Goal { resident, machine, .. }
         | Call::Composer { resident, machine, .. }
-        | Call::Stop { resident, machine }
+        | Call::Stop { resident, machine, .. }
         | Call::Control { resident, machine, .. }
         | Call::Manage { resident, machine, .. }
         | Call::Offers { resident, machine }

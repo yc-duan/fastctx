@@ -711,8 +711,15 @@ fn overlays(live: &SessionEvent, held: &SessionEvent) -> bool {
 
 pub(crate) fn covers(new: &SessionEvent, old: &SessionEvent) -> bool {
     match (&new.happened, &old.happened) {
+        // A block's stored row (`draft` naming the streamed block) takes the
+        // place of that block ended as streamed: one item, under the row's
+        // name, whichever came first.
         (Happened::Finished { turn, item }, Happened::Finished { turn: t, item: i }) => {
-            if item.id.is_empty() || i.id.is_empty() { new == old } else { turn == t && item.id == i.id }
+            if item.id.is_empty() || i.id.is_empty() {
+                new == old
+            } else {
+                turn == t && (item.id == i.id || item.draft.as_ref() == Some(&i.id))
+            }
         }
         (Happened::Began { .. } | Happened::Updated { .. }, Happened::Finished { .. }) => false,
         (

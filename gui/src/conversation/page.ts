@@ -181,8 +181,9 @@ export interface PageOptions {
   /** Sends the user's words, and what arrived of what was attached;
    *  resolves with what came of them. */
   send(text: string, attached: { refs: unknown[]; shown: Attached[]; filesOn?: string | null }): Promise<Sent> | void;
-  /** Asks the agent to stop; resolves whether a turn was running to stop. */
-  stop(): Promise<boolean> | void;
+  /** Asks the agent to stop the turn shown running (`null` while only words
+   *  are on their way); resolves whether a turn was running to stop. */
+  stop(turn: string | null): Promise<boolean> | void;
   /** Stops one job it started, on the machine it runs on. */
   stopJob?: ((job: string, machine: string) => Promise<void>) | undefined;
   /** A job's output as lines from the machine running it, read as it
@@ -1333,7 +1334,7 @@ export class ConversationPage {
    *  ended. A stop that did not get there shows it going on again, and says
    *  why. */
   private stop(): void {
-    const asked = this.options.stop();
+    const asked = this.options.stop(this.options.conversation.runningTurn());
     if (!asked) return;
     this.options.conversation.halt();
     this.stopOverdue = false;

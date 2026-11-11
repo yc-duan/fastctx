@@ -1430,9 +1430,9 @@ export class Fold {
 
   /** Words the user is sending, shown at once; returns their key. */
   sending(text: string, here: MachineName | null, attached: ShownAttachment[] = []): string {
-    // What the user says after asking to stop is shown as it goes, as is
-    // the turn it starts.
-    this.halted = null;
+    // What the user says after asking to stop starts the turn after the one
+    // stopped (its node waits for that turn's end), so the stopped turn
+    // stays stopped here: its later words still do not grow it.
     const key = `s:${++this.sends}`;
     this.add({
       kind: "heard",
@@ -1618,6 +1618,25 @@ export class Fold {
     this.clock += 1;
   }
 
+  /** A turn the user asked to stop, as its machine tells every viewer: what
+   *  it writes no longer grows here, and what it has under way shows cut
+   *  off, as `halt` does for the device where the stop was pressed. */
+  private haltTurn(turn: string): void {
+    if (this.halted?.has(turn)) return;
+    this.halted = new Set([...(this.halted ?? []), turn]);
+    const at = Date.now();
+    for (const entry of this.byTurn.get(turn) ?? []) {
+      if (entry.kind === "tool" && entry.ended === null) {
+        entry.ended = { at, use: "cut" };
+        this.touch(entry);
+      }
+      if (entry.kind === "prose" && entry.writing) {
+        entry.writing = false;
+        this.touch(entry);
+      }
+    }
+  }
+
   /** The stop did not reach the agent: it goes on, and what was held back
    *  here is read again. */
   unhalt(): void {
@@ -1642,9 +1661,12 @@ export class Fold {
    *  turn it runs is under way; when none runs, nothing shown is; words the
    *  World answered for stand as it keeps them, or, kept no more, as said.
    *  Words whose host has not started for a minute say why on their way. */
-  now(busy: boolean, turn: string | null, kept: KeptWords[]): void {
+  now(busy: boolean, turn: string | null, kept: KeptWords[], halted: string | null = null): void {
     if (busy && turn) this.underWay(turn, Date.now());
     if (!busy) this.noTurnRuns();
+    // A stop the user asked for, here or on another device, shows on every
+    // viewer at once.
+    if (busy && halted !== null && halted === turn) this.haltTurn(halted);
     const keeping = new Map(kept.map((words) => [words.id, words]));
     for (const entry of this.entries) {
       if (entry.kind !== "heard" || !entry.sending || entry.delivery === undefined) continue;
@@ -1683,6 +1705,13 @@ export class Fold {
   /** Whether a turn the World told of is under way. */
   turning(): boolean {
     return this.running.size > 0;
+  }
+
+  /** The turn shown under way, the latest to begin; null when none is. */
+  runningTurn(): string | null {
+    let latest: string | null = null;
+    for (const turn of this.running) latest = turn;
+    return latest;
   }
 
   /** When the turn under way began, as the World told it; null when no

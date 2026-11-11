@@ -1001,11 +1001,29 @@ async function startTurn($, context, e, next) {
 
 async function completeTurn($, context, e, next) {
   context.turnEndedAt = Date.now()
+  // A turn the user stopped is told ended first, at once: its controls, its
+  // presentation's end and the session's figures follow, each let go of
+  // should it hang, and nothing the user does next waits on them.
+  if (e.agentId === undefined && e.isAborted) {
+    if (context.turn === e.turnId) { context.busy = false; context.turn = null }
+    context.plain = false
+    context.since.clear()
+    if (context.spentBefore?.turn === e.turnId) context.spentBefore = null
+    // Whether a goal is on decides how the end is told (`goalStop`): read
+    // first, briefly.
+    await within($, readGoal($, context), 300)
+    const completed = turnCompleted($, context, e, null)
+    await within($, Promise.all([completed, activity($, context)]))
+    await afterEnd($, context, e)
+    await flush($, context)
+    return next(e)
+  }
   // The turn's end is told whatever else fails here: what goes with it is
   // told again later, and an end never told leaves the turn running in the
-  // World, with what waits for it held behind it.
+  // World, with what waits for it held behind it. Nothing before it is
+  // waited on past `within`.
   try {
-    await completeControlTurn($, e)
+    await within($, completeControlTurn($, e))
   } catch (error) {
     worldFailure($, 'turn.complete controls', error)
   }
@@ -1026,35 +1044,23 @@ async function completeTurn($, context, e, next) {
     await observeAgents($, context)
     return next(e)
   }
-  await readGoal($, context)
+  await within($, readGoal($, context))
   try {
-    await context.shown.end(reports($, context), e.turnId)
+    await within($, context.shown.end(reports($, context), e.turnId))
   } catch (error) {
     worldFailure($, 'turn.complete presentation', error)
   }
   // The session's figures as the turn ends reach the node ahead of the end
   // itself, so its ledger and the account's windows stand as the turn left
   // them; what the cost total rose by since the turn began is the turn's.
-  const usage = await stepMeasured($, context, null, true)
+  const usage = await within($, stepMeasured($, context, null, true))
   const before = context.spentBefore?.turn === e.turnId ? context.spentBefore.usd : undefined
   const total = usage?.cost?.usd
   const spent = typeof total === 'number' && typeof before === 'number' ? (total >= before ? total - before : total) : null
   if (context.spentBefore?.turn === e.turnId) context.spentBefore = null
   if (context.turn === e.turnId) { context.busy = false; context.turn = null }
   context.plain = false
-  // A turn cut short had no opening left for what it held.
-  if (e.isAborted) context.since.clear()
-  const completed = event($, context, 'turn_complete', {
-    turn: e.turnId,
-    spent,
-    aborted: e.isAborted,
-    reason: e.reason,
-    refusal: e.reason === 'refusal' ? e.refusal : null,
-    error: completedFailure(context, e),
-    ms: observedMilliseconds(e.durationMs),
-    answer: e.answer ?? null,
-    streamed: true,
-  })
+  const completed = turnCompleted($, context, e, spent)
   const saved = activity($, context)
   await within($, Promise.all([completed, saved]))
   // The node releases the user's queued words as it hears of this end, a
@@ -1067,6 +1073,41 @@ async function completeTurn($, context, e, next) {
     await flush($, context)
   }
   return next(e)
+}
+
+function turnCompleted($, context, e, spent) {
+  return event($, context, 'turn_complete', {
+    turn: e.turnId,
+    spent,
+    aborted: e.isAborted,
+    reason: e.reason,
+    refusal: e.reason === 'refusal' ? e.refusal : null,
+    error: completedFailure(context, e),
+    ms: observedMilliseconds(e.durationMs),
+    answer: e.answer ?? null,
+    streamed: true,
+  })
+}
+
+// What follows a stopped turn's end once it is told: its controls, its
+// presentation's end, the goal and the session's figures, each let go of
+// past `within` should it hang.
+async function afterEnd($, context, e) {
+  try {
+    await within($, completeControlTurn($, e))
+  } catch (error) {
+    worldFailure($, 'turn.complete controls', error)
+  }
+  try {
+    await within($, context.shown.end(reports($, context), e.turnId))
+  } catch (error) {
+    worldFailure($, 'turn.complete presentation', error)
+  }
+  try {
+    await within($, stepMeasured($, context, null, true))
+  } catch (error) {
+    worldFailure($, 'turn.complete figures', error)
+  }
 }
 
 // The rows the main loop's conversation keeps tell where its step stands:

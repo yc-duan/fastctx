@@ -47,8 +47,12 @@ export function presentation(reserve, currentTurn) {
   // began, and the plugin's own idea of the running turn can lag behind a
   // turn the host began (a start hook still waiting), so a row is matched by
   // the steps themselves, not by that idea.
+  // Each step also counts the rows stored of its response (`next`) against the
+  // highest block index its stream named (`last`): a response's blocks are
+  // stored one row each, in order, so the row a step stores next is its block
+  // at that index, streamed or not.
   const recent = []
-  const RECENT_STEPS = 4
+  const RECENT_STEPS = 16
   let latestStep = null
   let agentTurn = null
   // The turn now: the plugin's own idea of it, or the turn the latest step
@@ -74,7 +78,27 @@ export function presentation(reserve, currentTurn) {
     }
     return undefined
   }
-  const checkpoint = (reports) => reports.save({ tools: [...tools.entries()], requests: [...requests.entries()], tasks: steps.snapshot(), agents: [...agents] })
+  // The step whose response a stored row is the next block of: the oldest
+  // recent one with blocks still to be stored, or the latest.
+  const owner = (turn) => {
+    const known = turn != null && recent.some((step) => step.turn === turn)
+    for (const [at, step] of recent.entries()) {
+      if (step.failed || (known && step.turn !== turn)) continue
+      if (step.next <= step.last || at === recent.length - 1) {
+        // The earlier steps of its turn have all their rows in.
+        for (let index = at - 1; index >= 0; index--) if (recent[index].turn === step.turn) recent.splice(index, 1)
+        return step
+      }
+    }
+    return undefined
+  }
+  const ledger = () => recent.map((step) => ({
+    turn: step.turn, failed: step.failed, next: step.next, last: step.last,
+    blocks: [...step.blocks.entries()].map(([key, block]) => [key, {
+      id: block.id, kind: block.kind, started_at: block.started_at, stored: block.stored === true, ended: block.ended === true,
+    }]),
+  }))
+  const checkpoint = (reports) => reports.save({ tools: [...tools.entries()], requests: [...requests.entries()], tasks: steps.snapshot(), agents: [...agents], recent: ledger() })
 
   async function completeTool(reports, call, stored) {
     const result = call.result
@@ -102,6 +126,17 @@ export function presentation(reserve, currentTurn) {
       for (const [id, request] of state.requests) requests.set(id, request)
       steps.restore(state.tasks)
       for (const id of state.agents ?? []) agents.add(id)
+      // The blocks recent steps streamed, so rows stored after a reload still
+      // find the drafts they were shown as.
+      for (const kept of state.recent ?? []) {
+        const blocks = new Map()
+        for (const [key, block] of kept.blocks ?? []) {
+          blocks.set(key, { ...block, text: '', ...(block.stored ? {} : { stored: undefined }), ...(block.ended ? {} : { ended: undefined }) })
+        }
+        recent.push({ turn: kept.turn, blocks, failed: kept.failed === true, next: kept.next ?? 0, last: kept.last ?? -1 })
+      }
+      while (recent.length > RECENT_STEPS) recent.shift()
+      latestStep = recent[recent.length - 1] ?? null
     },
     /** One of the host's own agents started in this conversation. */
     spawned(id) {
@@ -115,12 +150,13 @@ export function presentation(reserve, currentTurn) {
       const blocks = new Map()
       let responseReported = false
       let observedUsage = null
-      latestStep = { turn: e.turnId, blocks, failed: false }
+      latestStep = { turn: e.turnId, blocks, failed: false, next: 0, last: -1 }
       recent.push(latestStep)
       if (recent.length > RECENT_STEPS) recent.shift()
       const step = latestStep
       try {
         for await (const chunk of stream) {
+          if (Number.isInteger(chunk.index) && chunk.index > step.last) step.last = chunk.index
           if (chunk.kind === 'stop') {
             reports.stream({ event: 'changed', turn: e.turnId, change: { kind: 'model_response', step: e.index, usage: chunk.usage ?? null } })
             responseReported = true
@@ -164,6 +200,8 @@ export function presentation(reserve, currentTurn) {
           block.ended = true
           reports.stream({ event: 'finished', turn: e.turnId, item: shownOf(block) })
         }
+        // The step's blocks outlive a reload of the plugin.
+        checkpoint(reports).catch(() => {})
       }
     },
 
@@ -219,7 +257,13 @@ export function presentation(reserve, currentTurn) {
               hook_fragments: [], presentation: null, detail: { uuid: result.uuid, message: result.message } } })
         }
       }
+      const rowTurn = e.agentId === undefined ? currentTurn() : agentTurn
+      const stepOf = result.message.type === 'assistant' ? owner(rowTurn) : undefined
       for (const [index, block] of result.message.content.entries()) {
+        // Where in its step's response this block stands, when the step
+        // named that far in its stream.
+        const position = stepOf === undefined ? null : stepOf.next++
+        const placed = position !== null && position <= stepOf.last
         if (block.type === 'tool_use') {
           requests.set(block.id, { block, turn, at: reserve().at })
           await checkpoint(reports)
@@ -258,7 +302,16 @@ export function presentation(reserve, currentTurn) {
           // interruption's partial block, stored after the stream) is not
           // shown again. The plugin's idea of the turn, where it has one,
           // keeps an earlier turn's leftovers out.
-          const claimed = claim(kind, currentTurn())
+          // The block its step streamed at this place, when it streamed one
+          // there; a row past what the stream named is matched as before, by
+          // the earliest block of its kind no row has claimed.
+          let claimed
+          if (placed) {
+            const there = stepOf.blocks.get((kind === 'message' ? 'text' : 'thinking') + ':' + position)
+            claimed = there !== undefined && !there.stored ? { step: stepOf, shown: there } : undefined
+          } else {
+            claimed = claim(kind, currentTurn())
+          }
           const streamed = claimed?.shown
           let shown
           if (streamed !== undefined) {

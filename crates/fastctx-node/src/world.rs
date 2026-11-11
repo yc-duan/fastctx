@@ -1113,9 +1113,9 @@ impl fastctx_net::link::Node for Handler {
                         .await?;
                         Ok(RemoteReply::Opened { resident, landed })
                     }
-                    RemoteCall::Stop { resident } => {
-                        crate::talk::stop_here(&node, &resident).await.map(|stopped| RemoteReply::Stopped { stopped })
-                    }
+                    RemoteCall::Stop { resident, turn } => crate::talk::stop_seen(&node, &resident, turn.as_deref())
+                        .await
+                        .map(|stopped| RemoteReply::Stopped { stopped }),
                     RemoteCall::Manage { resident, action } => {
                         crate::management::here(&node, &resident, action).await.map(RemoteReply::Managed)
                     }

@@ -733,7 +733,11 @@ pub(crate) async fn receive(
     // reports written while the channel was not reached.
     let harvested = {
         let directory = directory.clone();
-        fastctx_platform::task::spawn_blocking(move || exchange::harvest(&directory)).await.map_err(std::io::Error::other)?
+        fastctx_platform::task::spawn_blocking(move || {
+            if exchange::written(&directory)? { exchange::harvest(&directory) } else { Ok((Vec::new(), Vec::new())) }
+        })
+        .await
+        .map_err(std::io::Error::other)?
     };
     let (filed, problems) = harvested?;
     for problem in problems {
@@ -881,6 +885,9 @@ async fn look(node: &Arc<Node>, directory: &Path) -> bool {
             }
         };
     let conversation = node.world.conversation(&resident);
+    // A receipt settled, and seen no longer waiting, is done for good: an
+    // input once delivered is never kept again. Only the rest are looked up.
+    let receipts = node.claude.receipts.open(directory, receipts);
     let ids: Vec<String> = receipts.iter().map(|(id, _)| id.clone()).collect();
     let waiting = match crate::inbox::waiting_among(&conversation, &ids) {
         Ok(waiting) => waiting,
@@ -891,6 +898,7 @@ async fn look(node: &Arc<Node>, directory: &Path) -> bool {
     };
     for (id, turn) in receipts {
         if !waiting.contains(&id) && node.claude.receipts.settled(directory, &id) {
+            node.claude.receipts.done(directory, &id);
             continue;
         }
         let mut whole = true;

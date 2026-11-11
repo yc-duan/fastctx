@@ -523,6 +523,9 @@ pub enum RemoteCall {
     /// Stop the turn a resident there is running, for the user.
     Stop {
         resident: ResidentId,
+        /// The turn the user saw running (`Call::Stop`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        turn: Option<String>,
     },
     /// Do something to a resident's conversation there, for the user.
     Control {

@@ -9,6 +9,7 @@ mod durability;
 mod failures;
 mod idle;
 mod keeping;
+mod legacy_lined;
 mod legacy_records;
 mod legacy_refresh;
 mod limits;
@@ -40,7 +41,9 @@ pub(crate) use storage::restore_before_delivery;
 use storage::{event, load, publish};
 pub use submissions::resume;
 use submissions::schedule;
-pub use submissions::{awaits_turn, bound, stop_asked, turn_ended, uncertain};
+pub use submissions::{
+    awaits_turn, bound, stop_asked, stop_coming, stop_resolved, stopped_turn, turn_ended, uncertain,
+};
 pub use watching::{Lease, snapshot, watch};
 
 use std::collections::{HashMap, HashSet};
@@ -55,7 +58,7 @@ use fastctx_types::session::{Happened, SessionChange, SessionEvent, TurnHow};
 use fastctx_types::{MachineName, ResidentId};
 
 use crate::Node;
-use state::{Entry, Flight, Receipt, Stored};
+use state::{Entry, Flight, Receipt, StopMark, Stored};
 
 type Cell = crate::leases::Lease<ResidentId, fastctx_platform::doing::Mutex<Option<Stored>>>;
 // These entry points also sit deep in host-report and lifecycle futures.
@@ -73,8 +76,9 @@ pub struct Composers {
     publications: publication::Publications,
     holds: failures::Holds,
     releases: Mutex<HashMap<ResidentId, bool>>,
-    /// The turn of each conversation the user asked to stop, until it ends.
-    stopping: Mutex<HashMap<ResidentId, String>>,
+    /// The stop the user asked for in each conversation, until it ends
+    /// (`submissions::stop_asked`); the composer state keeps it as well.
+    stopping: Mutex<HashMap<ResidentId, submissions::Stop>>,
     upload_failures: Arc<Mutex<HashMap<ResidentId, HashMap<String, String>>>>,
     snapshots: publication::Snapshots,
     legacy_refreshes: legacy_refresh::Refreshes,
@@ -357,6 +361,9 @@ fn accepting<'a>(
         drop(_reading);
         let Some((delivery, answer)) = answer else {
             schedule(node, id);
+            if lined && !bounded {
+                return legacy_lined::answer(node, id, &mutation.operation).await.map(|answer| (answer, false));
+            }
             return Ok((result, lined));
         };
         // The capture is already durable. Native clients receive its operation

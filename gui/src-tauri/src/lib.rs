@@ -598,9 +598,13 @@ async fn stop(
     shell: tauri::State<'_, Shell>,
     resident_id: String,
     machine_name: Option<String>,
+    turn: Option<String>,
 ) -> Result<bool, String> {
-    let (_, stopped) =
-        shell.world().stop(resident(resident_id)?, machine(machine_name)?).await.map_err(|error| error.to_string())?;
+    let (_, stopped) = shell
+        .world()
+        .stop(resident(resident_id)?, machine(machine_name)?, turn)
+        .await
+        .map_err(|error| error.to_string())?;
     Ok(stopped)
 }
 

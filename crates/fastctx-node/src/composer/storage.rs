@@ -67,6 +67,7 @@ pub(super) fn load<'a>(node: &'a Arc<Node>, id: &'a ResidentId, cell: &'a mut Op
         }
         watching::restore(node, id, &mut state);
         failures::apply(node, id, &mut state);
+        submissions::restore_stop(node, id, &state);
         let revision = state.revision;
         let busy = super::idle::busy(&state);
         *cell = Some(state);

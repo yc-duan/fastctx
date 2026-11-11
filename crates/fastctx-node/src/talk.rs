@@ -832,7 +832,7 @@ pub async fn serve_watch(
 struct Told {
     resident: ResidentId,
     changes: Option<tokio::sync::watch::Receiver<u64>>,
-    last: Option<(bool, Option<String>, Vec<fastctx_types::session::KeptWords>)>,
+    last: Option<(bool, Option<String>, Vec<fastctx_types::session::KeptWords>, Option<String>)>,
 }
 
 impl Told {
@@ -855,7 +855,7 @@ impl Told {
         if self.last.is_some() {
             // A change of words kept moves no resident: while some are kept
             // or it works, it is looked at again every few seconds too.
-            let unsettled = self.last.as_ref().is_some_and(|(busy, _, kept)| *busy || !kept.is_empty());
+            let unsettled = self.last.as_ref().is_some_and(|(busy, _, kept, _)| *busy || !kept.is_empty());
             let again =
                 async { if unsettled { tokio::time::sleep(LOOK_AGAIN).await } else { std::future::pending().await } };
             tokio::select! {
@@ -868,13 +868,14 @@ impl Told {
         });
         let (reading, resident) = (node.clone(), self.resident.clone());
         let kept = fastctx_platform::task::blocking(move || kept(&reading, &resident)).await;
-        let state = (busy, turn, kept);
+        let halted = crate::composer::stopped_turn(node, &self.resident).filter(|halted| turn.as_ref() == Some(halted));
+        let state = (busy, turn, kept, halted);
         if self.last.as_ref() == Some(&state) {
             return None;
         }
         self.last = Some(state.clone());
-        let (busy, turn, kept) = state;
-        Some(Watched::Now { busy, turn, kept })
+        let (busy, turn, kept, halted) = state;
+        Some(Watched::Now { busy, turn, kept, halted })
     }
 }
 
@@ -1180,6 +1181,7 @@ pub async fn stop(
     node: &Arc<Node>,
     resident: ResidentId,
     machine: Option<Written>,
+    turn: Option<String>,
 ) -> Result<(Address, bool), Failure> {
     let here = node.machine();
     let local = machine.is_none() && node.residents.about(&resident).is_some();
@@ -1188,10 +1190,10 @@ pub async fn stop(
         None => locate(node, &resident).await?,
     };
     if local || node.is_here(&machine) {
-        let stopped = stop_here(node, &resident).await?;
+        let stopped = stop_seen(node, &resident, turn.as_deref()).await?;
         return Ok((Address { machine: here, resident }, stopped));
     }
-    let call = RemoteCall::Stop { resident: resident.clone() };
+    let call = RemoteCall::Stop { resident: resident.clone(), turn };
     let reply = node.call(&Acting::Here, &machine, Purpose::Agents, call).await;
     match reply.map_err(|failure| Failure::new(failure.to_string()))? {
         Ok(RemoteReply::Stopped { stopped }) => Ok((Address { machine: machine.name, resident }, stopped)),
@@ -1208,13 +1210,34 @@ pub async fn stop_here(node: &Arc<Node>, resident: &ResidentId) -> Result<bool, 
     stop_here_as(node, resident, fastctx_types::turn_evidence::StopSource::User).await
 }
 
+/// Stops, for the user, the turn they saw running (`seen`), and no other:
+/// one that ended meanwhile is left ended, and a turn begun since, by a
+/// notice that came after it, is not theirs to stop. Without `seen` (an
+/// interface before it, a stop while only words were on their way) it
+/// stops what runs, as `stop_here`.
+pub async fn stop_seen(node: &Arc<Node>, resident: &ResidentId, seen: Option<&str>) -> Result<bool, Failure> {
+    stop_turn_as(node, resident, fastctx_types::turn_evidence::StopSource::User, seen).await
+}
+
 pub(crate) async fn stop_here_as(
     node: &Arc<Node>,
     resident: &ResidentId,
     source: fastctx_types::turn_evidence::StopSource,
 ) -> Result<bool, Failure> {
+    stop_turn_as(node, resident, source, None).await
+}
+
+async fn stop_turn_as(
+    node: &Arc<Node>,
+    resident: &ResidentId,
+    source: fastctx_types::turn_evidence::StopSource,
+    seen: Option<&str>,
+) -> Result<bool, Failure> {
     node.residents.stoppable(resident)?;
     let targeted = node.residents.now(resident).and_then(|now| now.turn);
+    if seen.is_some() && targeted.as_deref() != seen {
+        return Ok(false);
+    }
     // Why the turn ended is read from this when its end comes: it is kept
     // before the host is asked, and does not wait for the disk.
     if let Some(turn) = &targeted {
@@ -1233,6 +1256,12 @@ pub(crate) async fn stop_here_as(
         Some(turn) => Some(turn),
         None => match stop_coming(node, resident, source).await? {
             Coming::Kept => {
+                // Words sent from now on wait for the turn the words on their
+                // way start, and its end, as they would for a turn stopped
+                // while it ran.
+                if source == fastctx_types::turn_evidence::StopSource::User {
+                    crate::composer::stop_coming(node, resident);
+                }
                 pause_goal(node, resident, None, source).await;
                 return Ok(true);
             }

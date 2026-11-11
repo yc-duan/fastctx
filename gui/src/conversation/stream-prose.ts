@@ -91,9 +91,53 @@ export class StreamedProse {
     // before it, which can still take it in.
     let open = next.length - 1;
     if (open > 0 && next[open - 1]!.container) open -= 1;
+    // A display formula begun and not closed yet reads as paragraphs until
+    // its end comes, blank lines and all: the blocks from its first line are
+    // read again until then, so its end finds its beginning.
+    const formula = writing && (text.includes("$$") || text.includes("\\[")) ? openFormula(text) : null;
+    if (formula !== null) {
+      let at = -1;
+      next.forEach((part, index) => {
+        if (part.start !== null && part.start <= formula) at = index;
+      });
+      open = Math.min(open, Math.max(at, 0));
+    }
     this.closed = open > 0 && next[open]!.start !== null ? open : 0;
     return true;
   }
+}
+
+/** Where the first line of a display formula (`$$` or `\[`) not yet closed
+ *  begins in `text`, outside code fences; null when every one is closed. */
+function openFormula(text: string): number | null {
+  let fence: string | null = null;
+  let opened: number | null = null;
+  let closer = "";
+  let at = 0;
+  for (const line of text.split("\n")) {
+    const trimmed = line.trimStart();
+    if (opened !== null) {
+      const end = trimmed.indexOf(closer);
+      if (end !== -1 && trimmed.slice(end + closer.length).trim() === "") opened = null;
+    } else {
+      const marker = /^(`{3,}|~{3,})/.exec(trimmed)?.[1];
+      if (fence !== null) {
+        if (marker !== undefined && marker[0] === fence[0] && marker.length >= fence.length) fence = null;
+      } else if (marker !== undefined) {
+        fence = marker;
+      } else {
+        const begins = trimmed.startsWith("$$") ? "$$" : trimmed.startsWith("\\[") ? "\\[" : null;
+        if (begins !== null) {
+          closer = begins === "$$" ? "$$" : "\\]";
+          const rest = trimmed.slice(begins.length);
+          const end = rest.indexOf(closer);
+          if (end === -1 || rest.slice(end + closer.length).trim() !== "") opened = at;
+        }
+      }
+    }
+    at += line.length + 1;
+  }
+  return opened;
 }
 
 /** Where `line` begins in `text`, counting lines from 0. */

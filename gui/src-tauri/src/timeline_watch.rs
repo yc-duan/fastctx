@@ -787,7 +787,7 @@ async fn received(reader: &Shared, pieces: &Sender<Piece>, live: Option<Watched>
                 send(piece)?;
             }
         }
-        Some(Watched::Now { busy, turn, kept, .. }) => send(Piece::Now { busy, turn, kept })?,
+        Some(Watched::Now { busy, turn, kept, halted }) => send(Piece::Now { busy, turn, kept, halted })?,
         Some(Watched::Resumed) => {}
         Some(_) => return Err(Error::Unexpected("a live-only subscription sent history".into())),
         None => return Err(Error::Other("the live subscription ended".into())),

@@ -79,7 +79,7 @@ export type Piece =
   | { kind: "refused"; error: string }
   /** Whether it works now, on which turn, and which words its machine
    *  keeps on their way in. */
-  | { kind: "now"; busy: boolean; turn: string | null; kept?: import("../conversation/model").KeptWords[] }
+  | { kind: "now"; busy: boolean; turn: string | null; kept?: import("../conversation/model").KeptWords[]; halted?: string | null }
   /** The part the page holds is now this, in place of all it held. */
   | { kind: "window"; window: Window }
   /** What came before arrived: what the page holds stays, moved along. */
@@ -293,8 +293,10 @@ export function agents(machine: MachineName | null): Promise<WorldAgents> {
   return invoke("agents", { machineName: machine });
 }
 
-export function stop(who: Address): Promise<boolean> {
-  return invoke("stop", { residentId: who.resident, machineName: who.machine });
+/** Stops the turn the user saw running (`turn`), and no turn begun since;
+ *  without one, whatever runs. */
+export function stop(who: Address, turn: string | null = null): Promise<boolean> {
+  return invoke("stop", { residentId: who.resident, machineName: who.machine, turn });
 }
 
 /** A project's overview: its map, and who is in its town now. */

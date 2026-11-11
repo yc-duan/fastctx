@@ -747,6 +747,10 @@ pub enum Call {
     Stop {
         resident: ResidentId,
         machine: Option<Written>,
+        /// The turn the user saw running: only it is stopped, never one
+        /// begun since. A node before this field stops whatever runs.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        turn: Option<String>,
     },
     /// Does something to a resident's conversation on any machine for the
     /// user, besides speaking into it (`session::control`).

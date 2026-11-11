@@ -596,10 +596,16 @@ impl World {
         }
     }
 
-    /// Stops the turn a resident on any machine is running; returns where it
-    /// lives and whether a turn was running.
-    pub async fn stop(&self, resident: ResidentId, machine: Option<Written>) -> Result<(Address, bool), Error> {
-        match self.ask(Call::Stop { resident, machine }).await? {
+    /// Stops the turn a resident on any machine is running (only `turn`,
+    /// when given: the one the user saw); returns where it lives and whether
+    /// a turn was running.
+    pub async fn stop(
+        &self,
+        resident: ResidentId,
+        machine: Option<Written>,
+        turn: Option<String>,
+    ) -> Result<(Address, bool), Error> {
+        match self.ask(Call::Stop { resident, machine, turn }).await? {
             Reply::Stopped { resident, stopped } => Ok((resident, stopped)),
             other => Err(unexpected(other)),
         }

@@ -92,6 +92,14 @@ async fn apply(node: &Arc<Node>, resident: &ResidentId, turn: &str, inputs: &[No
         .await
         .map_err(failure)?
         .map_err(failure)?;
+    // The user's words sent since the stop wait for this turn's end, or go
+    // now that it has ended.
+    if source == StopSource::User {
+        match &ended {
+            Some(_) => crate::composer::stop_resolved(node, resident),
+            None => crate::composer::stop_asked(node, resident, turn),
+        }
+    }
     if let Some(finished) = ended {
         if source == StopSource::User {
             let (node, resident, turn) = (node.clone(), resident.clone(), turn.to_string());

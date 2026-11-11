@@ -2240,7 +2240,7 @@ function liveTalk(address: Address): DeskTalk {
         go();
       });
     },
-    stop: () => stop(address),
+    stop: (turn) => stop(address, turn),
     // A sentinel's row withdraws it, then the list is asked again.
     stopJob: (job, machine) => (sentinelRows.peek().some((row) => row.job === job) ? sentinelStop(job, machine).then(async () => { await readSentinels(); }) : stopJob(job, machine)),
     jobOutput: (job) => RemoteLines.open(job.machine, job.output, { kind: "output", job: job.job }),
@@ -2334,9 +2334,9 @@ function liveTalk(address: Address): DeskTalk {
       page.refused(why);
       page.update();
     },
-    now: (busy, turn, kept) => {
+    now: (busy, turn, kept, halted) => {
       nowTold = true;
-      conversation.now(busy, turn, kept);
+      conversation.now(busy, turn, kept, halted);
       page.update();
     },
     deleted: () => gone(),

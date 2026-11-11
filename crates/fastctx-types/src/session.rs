@@ -235,6 +235,10 @@ pub enum Watched {
         turn: Option<String>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         kept: Vec<KeptWords>,
+        /// The turn the user asked to stop, until it ends: every viewer shows
+        /// it stopped at once, not only the one where the stop was pressed.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        halted: Option<String>,
     },
     /// For a viewer that follows the conversation's collaboration instead of
     /// its history (the `collaboration` of its watch): the whole of it as it

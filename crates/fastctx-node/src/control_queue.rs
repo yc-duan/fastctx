@@ -98,9 +98,12 @@ async fn settled(
     result: &Result<Controlled, Failure>,
     ran: bool,
 ) -> Result<(), Failure> {
-    settle(node, id, row.clone(), result).await?;
+    // The words after a failed command are held before its row is settled:
+    // a node stopped between the two finds the row still running, and holds
+    // them as it holds the words after a command whose outcome is unknown.
     let failed = result.as_ref().err().filter(|_| ran).map(|error| error.message.as_str());
     crate::composer::forget_command(node, id, &row.id, failed).await?;
+    settle(node, id, row.clone(), result).await?;
     crate::lifecycle::retry::clear(node, id, &control_key(row)?).await.map_err(failure)?;
     node.watchers.changed.tell(id);
     Ok(())
@@ -605,8 +608,12 @@ pub(crate) async fn recover(node: &Arc<Node>, id: &ResidentId) {
         for mut row in pending(node,id).await? {
             if row.state==ControlState::Running {
                 row.state=ControlState::Uncertain;
-                row.error=Some("the node stopped while this control was entering the host; its outcome is unknown and it was not repeated".into());
+                let why = "the node stopped while this control was entering the host; its outcome is unknown and it was not repeated";
+                row.error=Some(why.into());
                 finish(node,id,&row).await?;
+                // Not known to have been done: the words after it wait for
+                // the user, as after one that failed.
+                crate::composer::forget_command(node, id, &row.id, Some(why)).await?;
             } else if row.state!=ControlState::Waiting {finish(node,id,&row).await?;}
         }
         Ok(())

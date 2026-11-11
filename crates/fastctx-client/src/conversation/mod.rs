@@ -154,7 +154,7 @@ impl Conversation {
                 }
                 Some(Watched::History { events }) => events,
                 Some(Watched::Live { event, .. }) => vec![event],
-                Some(Watched::Now { busy, turn, kept }) => {
+                Some(Watched::Now { busy, turn, kept, .. }) => {
                     now = Some(Now { busy, turn, kept });
                     continue;
                 }
@@ -233,7 +233,7 @@ impl Conversation {
                 Some(Ok(Some(Watched::Live { event, mark, .. }))) => {
                     conversation.take_live(event, mark);
                 }
-                Some(Ok(Some(Watched::Now { busy, turn, kept }))) => {
+                Some(Ok(Some(Watched::Now { busy, turn, kept, .. }))) => {
                     conversation.now_due = Some(Now { busy, turn, kept })
                 }
                 Some(Ok(Some(watched))) => {
@@ -374,7 +374,7 @@ impl Conversation {
                     continue;
                 }
                 // Told after what came before it: handed over once that is.
-                Some(Ok(Some(Watched::Now { busy, turn, kept }))) => {
+                Some(Ok(Some(Watched::Now { busy, turn, kept, .. }))) => {
                     self.now_due = Some(Now { busy, turn, kept });
                     continue;
                 }

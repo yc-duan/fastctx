@@ -36,11 +36,14 @@ pub async fn forget_command(
     let mut cell = cell.lock().await;
     load(node, id, &mut cell).await?;
     let mut next = cell.take().expect("loaded");
-    if !next.queue.iter().any(|entry| entry.command && entry.id.as_str() == command) {
+    let Some(place) = next.queue.iter().position(|entry| entry.command && entry.id.as_str() == command) else {
+        *cell = Some(next);
         return Ok(());
-    }
-    next.queue.retain(|entry| !(entry.command && entry.id.as_str() == command));
+    };
+    let after: Vec<NoticeId> = next.queue[place + 1..].iter().map(|entry| entry.id.clone()).collect();
+    next.queue.remove(place);
     if let Some(why) = failed {
+        unline_straight(&mut next, &after);
         hold_words(&mut next, why);
     }
     publish(node, id, &mut cell, next).await?;
@@ -61,6 +64,21 @@ pub async fn command_failed(node: &Arc<Node>, id: &ResidentId, why: &str) -> Res
     let mut next = cell.take().expect("loaded");
     hold_words(&mut next, why);
     publish(node, id, &mut cell, next).await
+}
+
+/// Words sent from the input after a stop that waited behind a command wait
+/// for the user once it failed, as the words queued behind it do; words the
+/// user asked to go at once from the queue still go.
+fn unline_straight(state: &mut Stored, after: &[NoticeId]) {
+    let waiting: Vec<NoticeId> = state
+        .lined
+        .iter()
+        .filter(|lined| lined.straight && after.contains(&lined.entry))
+        .map(|lined| lined.entry.clone())
+        .collect();
+    for entry in &waiting {
+        state.unline(entry);
+    }
 }
 
 fn hold_words(state: &mut Stored, why: &str) {

@@ -210,7 +210,7 @@ impl Transcript {
                 Piece::Event { generation: None, at, event: self.events.get(at) }
             }
             Update::History(history) => return self.history(&history),
-            Update::Now { busy, turn, kept } => Piece::Now { busy, turn, kept },
+            Update::Now { busy, turn, kept } => Piece::Now { busy, turn, kept, halted: None },
             Update::Extended(history) => {
                 let start = self.events.len();
                 for event in &history {

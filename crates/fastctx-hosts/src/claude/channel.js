@@ -5,17 +5,28 @@
 // serve where the channel is not reached, as they do for a mod loaded
 // before it: once one of a session's reports has gone to a file, every
 // later one does, so none overtakes another.
+//
+// A report the node took is kept here until the node says it dealt with it
+// (applied it, or wrote it to the session's files itself). A node that
+// started again listens elsewhere and knows nothing of what its predecessor
+// took: what is kept goes to the new one first, and the node applies each
+// report once whichever way it came.
 
 // How long a wait that failed rests before the channel is asked again,
 // from where `channel.json` says it is then.
 const CHANNEL_AGAIN_MS = 2000
+// The most reports, and bytes of them, kept for a node that has not said it
+// dealt with them; past either, the session's reports go to files.
+const UNCONFIRMED_MOST = 512
+const UNCONFIRMED_BYTES = 32 * 1024 * 1024
 
 // Where the channel is, as the node told this session's directory.
 async function channelOpen($, context) {
   const told = await channelTold($, context)
   context.channel = told
   context.channelReports = told !== null
-  // What the node took and has not said it applied, in the order it went.
+  // What the node took and has not said it dealt with, in the order it went,
+  // each with the channel that took it.
   context.unconfirmed = []
   if (told !== null) void channelWait($, context)
 }
@@ -40,22 +51,42 @@ function channelAsk($, channel, what, init = {}) {
   })
 }
 
-// Hands one report to the node: whether it took it. It takes it at once
-// and applies it in turn, so nothing here waits for that; it is kept here
-// until the node says it applied it. A report it did not take, or a channel
-// not reached, turns this session's reports to files, those it took and
-// has not applied first (`channelSpill`).
+function channelEntry(name, report) {
+  return '{"name":' + JSON.stringify(name + '.json') + ',"sequence":' + JSON.stringify(report.sequence ?? null)
+    + ',"report":' + report.body + '}'
+}
+
+// Hands reports to the node in one request: whether it took every one. The
+// reports kept for a channel that is not the current one go first.
+async function channelHand($, context, handing) {
+  const channel = context.channel
+  const body = '{"reports":[' + handing.map(({ name, report }) => channelEntry(name, report)).join(',') + ']}'
+  const answer = await channelAsk($, channel, 'reports', { method: 'POST', body })
+  if (!answer.ok) throw new Error('the node answered ' + answer.status + ': ' + answer.text)
+  const told = JSON.parse(answer.text)
+  for (const { name } of handing) {
+    if (!told.received.includes(name + '.json')) throw new Error('the node did not take ' + name)
+  }
+  return told
+}
+
+// Hands one report to the node: whether it took it. It takes it at once and
+// deals with it in turn, so nothing here waits for that. A report it did not
+// take, a channel not reached, or more kept than the bounds allow, turns this
+// session's reports to files, those kept first (`channelSpill`).
 async function channelReport($, context, name, report) {
   const channel = context.channel
   if (!context.channelReports || channel === null) return false
+  const again = context.unconfirmed.filter((held) => held.channel !== channel)
+  const bytes = context.unconfirmed.reduce((sum, held) => sum + held.report.body.length, report.body.length)
+  if (context.unconfirmed.length >= UNCONFIRMED_MOST || bytes > UNCONFIRMED_BYTES) {
+    channelToFiles($, context, 'the node has not dealt with ' + context.unconfirmed.length + ' reports')
+    return false
+  }
   try {
-    const body = '{"reports":[{"name":' + JSON.stringify(name + '.json') + ',"sequence":'
-      + JSON.stringify(report.sequence ?? null) + ',"report":' + report.body + '}]}'
-    const answer = await channelAsk($, channel, 'reports', { method: 'POST', body })
-    if (!answer.ok) throw new Error('the node answered ' + answer.status + ': ' + answer.text)
-    const told = JSON.parse(answer.text)
-    if (!told.received.includes(name + '.json')) throw new Error('the node did not take ' + name)
-    context.unconfirmed.push({ name, report })
+    const told = await channelHand($, context, [...again, { name, report }])
+    for (const held of again) held.channel = channel
+    context.unconfirmed.push({ name, report, channel })
     channelConfirmed(context, told.applied)
     return true
   } catch (error) {
@@ -64,32 +95,65 @@ async function channelReport($, context, name, report) {
     // the node, applying the file first, passes over the hand-over should
     // it have arrived. The channel itself is as good as before.
     if (/abort/i.test(String(error))) return false
-    if (context.channelReports) {
-      context.channelReports = false
-      $.ui.log('World channel: this session reports through files from now: ' + String(error), { to: 'debug' })
-    }
+    channelToFiles($, context, String(error))
     return false
   }
 }
 
-// The node applied every report up to `applied`: they are let go of.
+function channelToFiles($, context, why) {
+  if (!context.channelReports) return
+  context.channelReports = false
+  $.ui.log('World channel: this session reports through files from now: ' + why, { to: 'debug' })
+}
+
+// The node dealt with every report up to `applied`, on the channel that
+// answered: they are let go of.
 function channelConfirmed(context, applied) {
   if (typeof applied !== 'string') return
   const through = applied.replace(/\.json$/, '')
   context.unconfirmed = context.unconfirmed.filter((held) => held.name > through)
 }
 
-// What the node took and has not said it applied goes to files, in order,
+// What the node took and has not said it dealt with goes to files, in order,
 // before anything after it: the node may have gone with it. One it did apply
-// is passed over there by its marker.
+// is passed over there by its marker. Each leaves the kept ones only once its
+// file is whole, so a write that fails leaves it to be written again.
 async function channelSpill($, context) {
   const held = context.unconfirmed ?? []
-  context.unconfirmed = []
-  for (const { name, report } of held) {
+  while (held.length > 0) {
+    const { name, report } = held[0]
     if (report.sequence !== undefined && report.sequence !== null) await $.fs.write(context.dir + '/applied/' + report.sequence + '.sequence', '')
     await writeReport($, context.dir + '/events/' + name, report.body)
     await $.fs.write(context.dir + '/events/' + name + '.done', '')
+    held.shift()
   }
+}
+
+// The channel moved (the node started again) or the node gave up on the
+// session's reports: what is kept goes to the node now, in its turn among the
+// session's writes, rather than waiting for the next report.
+function channelSettle($, context) {
+  if ((context.unconfirmed ?? []).length === 0) return
+  const settled = context.writing.then(async () => {
+    const channel = context.channel
+    const again = context.unconfirmed.filter((held) => held.channel !== channel)
+    if (context.channelReports && channel !== null && again.length > 0) {
+      try {
+        const told = await channelHand($, context, again)
+        for (const held of again) held.channel = channel
+        channelConfirmed(context, told.applied)
+        return
+      } catch (error) {
+        if (/abort/i.test(String(error))) return
+        channelToFiles($, context, String(error))
+      }
+    }
+    if (!context.channelReports) await channelSpill($, context)
+  })
+  context.writing = settled.catch((error) => {
+    $.ui.log('World channel: keeping what the node took for later: ' + String(error), { to: 'debug' })
+    retry($, context)
+  })
 }
 
 // The account's subagents for this session, as `fastctx claude-subagents`
@@ -108,14 +172,21 @@ async function channelSubagents($, context) {
 // Waits for the node to leave the session something, over and over, and
 // looks as the control helper's `look` has it look. A wait that fails rests
 // a while and asks again where the channel is: a node that started again
-// listens elsewhere, with another token.
+// listens elsewhere, with another token, and gets what is kept for it.
 async function channelWait($, context) {
   let seen = 0
   while (!context.closed && !gone.seen && context.channel !== null) {
     let woken = null
     try {
       const answer = await channelAsk($, context.channel, 'wake?seen=' + seen)
-      if (answer.ok) woken = JSON.parse(answer.text).wake
+      if (answer.ok) {
+        const told = JSON.parse(answer.text)
+        woken = told.wake
+        if (told.reports === 'refused') {
+          channelToFiles($, context, 'the node refused the channel for this session')
+          channelSettle($, context)
+        }
+      }
     } catch {
       woken = null
     }
@@ -124,7 +195,11 @@ async function channelWait($, context) {
       if (context.closed || gone.seen) return
       const told = await channelTold($, context)
       if (told === null) continue
-      context.channel = told
+      if (context.channel === null || told.base !== context.channel.base || told.token !== context.channel.token) {
+        context.channel = told
+        seen = 0
+        channelSettle($, context)
+      }
       continue
     }
     if (woken === seen) continue

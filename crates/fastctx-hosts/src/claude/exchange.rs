@@ -385,6 +385,25 @@ pub fn acknowledge(directory: &Path, name: &str) -> io::Result<()> {
     }
 }
 
+/// Whether the mod left anything in the session's files to take: a report in
+/// `events/` or an accounting receipt in `accounting/`. A session whose mod
+/// hands its reports over on the channel usually has neither, and is not
+/// read through for nothing (`harvest`).
+pub fn written(directory: &Path) -> io::Result<bool> {
+    for place in ["events", "accounting"] {
+        match std::fs::read_dir(directory.join(place)) {
+            Ok(mut entries) => {
+                if entries.next().is_some() {
+                    return Ok(true);
+                }
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(false)
+}
+
 /// Takes every whole event the mod wrote, oldest first. An event that
 /// cannot be read is moved to `damaged/` and said in the problems; the
 /// first without its marker blocks later reports until its write completes.
