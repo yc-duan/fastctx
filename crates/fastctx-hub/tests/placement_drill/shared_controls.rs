@@ -120,6 +120,7 @@ pub(super) async fn exercise(owner: &World, bob: &World, local: &World, address:
                 home: definition.home.clone(),
                 generation: definition.generation,
                 held: None,
+                before: None,
             },
         )
         .await?;

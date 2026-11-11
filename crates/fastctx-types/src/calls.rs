@@ -1029,6 +1029,8 @@ pub enum Reply {
     },
     Timers {
         timers: Vec<crate::timers::Timer>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        next: Option<String>,
     },
     TurnEvidence {
         evidence: Box<crate::turn_evidence::TurnEvidence>,

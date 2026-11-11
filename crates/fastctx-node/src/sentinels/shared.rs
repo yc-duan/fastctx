@@ -152,6 +152,9 @@ async fn host(
         owner: scope.clone(),
         conversation: conversation.address.clone(),
     };
+    if !matches!(request, Request::List { .. } | Request::Stop { .. } | Request::Record { .. } | Request::Overview) {
+        return Err(Failure::refused("this operation is not a shared sentinel control"));
+    }
     let owned_records::Response::Sentinels { registrations } =
         link.owned_records(actor, owned_records::Request::Sentinels).await.map_err(failure)?
     else {
@@ -185,7 +188,7 @@ async fn host(
                     fastctx_sentinel::lifecycle::stop(records, &homes, &scope, &id, None).await.map_err(failure)?;
                 Ok(Reply::Stopped { id, home_confirmed: reason.is_none(), reason })
             }
-            Request::Record { id, home, generation, held } => {
+            Request::Record { id, home, generation, held, before } => {
                 if !selected.iter().any(|registration| {
                     registration.definition.id == id
                         && link.view().same(&home, &registration.definition.home)
@@ -194,7 +197,7 @@ async fn host(
                     return Err(Failure::refused("this sentinel record belongs to another conversation or generation"));
                 }
                 match homes
-                    .send_to(&scope, &home, HomeRequest::Record { id, generation, held })
+                    .send_to(&scope, &home, HomeRequest::Record { id, generation, held, before })
                     .await
                     .map_err(failure)?
                 {

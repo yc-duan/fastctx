@@ -37,6 +37,9 @@ pub enum Request {
         home: crate::MachineName,
         generation: u64,
         held: Option<String>,
+        /// Read wakes before this sequence; omitted for the latest page.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        before: Option<u64>,
     },
     /// Every sentinel of the account, ended or not, with when each woke and
     /// what each wake took, from the machines they live on.
@@ -146,6 +149,9 @@ pub struct Record {
     /// When it next looks or is woken, in milliseconds since the epoch.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub next: Option<i64>,
+    /// Continue reading older wakes before this sequence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_before: Option<u64>,
 }
 impl Create {
     pub fn validate(&self, now: i64) -> Result<(), String> {
@@ -168,12 +174,32 @@ impl Create {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum HomeRequest {
-    Conversation { actor: crate::AccountName, owner: Address, request: Box<HomeRequest> },
-    Begin { id: SentinelId, version: u64, owner: Address },
-    Inspect { id: SentinelId },
-    Judge { request: Box<GoalRequest> },
-    Withdraw { id: SentinelId },
-    Record { id: SentinelId, generation: u64, held: Option<String> },
+    Conversation {
+        actor: crate::AccountName,
+        owner: Address,
+        request: Box<HomeRequest>,
+    },
+    Begin {
+        id: SentinelId,
+        version: u64,
+        owner: Address,
+    },
+    Inspect {
+        id: SentinelId,
+    },
+    Judge {
+        request: Box<GoalRequest>,
+    },
+    Withdraw {
+        id: SentinelId,
+    },
+    Record {
+        id: SentinelId,
+        generation: u64,
+        held: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        before: Option<u64>,
+    },
     Overview,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -194,4 +220,47 @@ pub struct GoalRequest {
     pub owner: Address,
     pub request_id: String,
     pub review: crate::sentinel::GoalReview,
+}
+
+impl Request {
+    /// Validates request fields before account discovery or home calls.
+    pub fn validate_bounds(&self) -> Result<(), String> {
+        let request = if let Self::Conversation { request, .. } = self {
+            if matches!(request.as_ref(), Self::Conversation { .. }) {
+                return Err("sentinel requests allow at most one conversation wrapper".into());
+            }
+            request.as_ref()
+        } else {
+            self
+        };
+        match request {
+            Self::Record { held: Some(held), .. } if held.len() > 256 => {
+                Err("sentinel record version exceeds 256 bytes".into())
+            }
+            Self::Create { request }
+                if request.condition.len() > 4096 || request.tell.len() > 4096 || request.at.len() > 32 =>
+            {
+                Err("sentinel condition and message allow 4096 bytes each and at most 32 alarm times".into())
+            }
+            _ => Ok(()),
+        }
+    }
+}
+
+impl HomeRequest {
+    /// Validates read fields before reaching the home runtime.
+    pub fn validate_bounds(&self) -> Result<(), String> {
+        let request = if let Self::Conversation { request, .. } = self {
+            if matches!(request.as_ref(), Self::Conversation { .. }) {
+                return Err("sentinel home requests allow at most one conversation wrapper".into());
+            }
+            request.as_ref()
+        } else {
+            self
+        };
+        if matches!(request, Self::Record { held: Some(held), .. } if held.len() > 256) {
+            return Err("sentinel record version exceeds 256 bytes".into());
+        }
+        Ok(())
+    }
 }

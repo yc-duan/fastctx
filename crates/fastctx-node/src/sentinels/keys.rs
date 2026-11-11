@@ -45,12 +45,13 @@ fn path(node: &Node, scope: &HubAccount) -> PathBuf {
     node.world.path().join("sentinel-keys").join(format!("{name:x}.json"))
 }
 fn read(node: &Node, scope: &HubAccount) -> Result<Keys, String> {
-    match fastctx_platform::disk::read(path(node, scope)) {
+    match fastctx_platform::disk::read_bounded(path(node, scope), 128 * 1024) {
         Ok(bytes) => serde_json::from_slice(&bytes).map_err(|error| format!("reading sentinel keys: {error}")),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Keys::default()),
         Err(error) => Err(format!("reading sentinel keys: {error}")),
     }
 }
+
 fn write(node: &Node, scope: &HubAccount, keys: &Keys) -> Result<(), String> {
     let path = path(node, scope);
     if keys.model.is_none() && keys.search.is_none() {
@@ -103,6 +104,9 @@ pub(super) async fn keep_work(
     key: KeyName,
     value: Option<Secret>,
 ) -> Result<KeyStatus, Failure> {
+    if value.as_ref().is_some_and(|value| value.0.len() > 8192) {
+        return Err(Failure::not_run("a sentinel key exceeds 8192 bytes"));
+    }
     let _held = node.sentinels.keys.lock().await;
     let settings = settings(node, scope).await?;
     if !home_is_here(node, scope, &settings)? {

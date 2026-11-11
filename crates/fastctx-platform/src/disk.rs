@@ -4,6 +4,9 @@
 //! the disk. A component that keeps to its threads' roles reaches files only
 //! through here; its `clippy.toml` refuses `std::fs` itself.
 
+mod bounded;
+pub use bounded::read_bounded;
+
 use std::fs::{self, File, Metadata, OpenOptions, ReadDir};
 use std::io;
 use std::path::{Path, PathBuf};

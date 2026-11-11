@@ -118,6 +118,7 @@ pub(crate) async fn control(
     account: &AccountName,
     request: Request,
 ) -> Result<Reply, Failure> {
+    request.validate_bounds().map_err(Failure::not_run)?;
     let changes = matches!(request, Request::Create { .. } | Request::Stop { .. })
         || matches!(&request, Request::Conversation { request, .. } if matches!(request.as_ref(), Request::Stop { .. }));
     if !changes {
@@ -183,9 +184,9 @@ pub(super) async fn work(
             };
             Ok(Reply::Help { text })
         }
-        Request::Record { id, home, generation, held } => {
+        Request::Record { id, home, generation, held, before } => {
             match homes
-                .send_to(&scope, &home, HomeRequest::Record { id, generation, held })
+                .send_to(&scope, &home, HomeRequest::Record { id, generation, held, before })
                 .await
                 .map_err(Failure::new)?
             {

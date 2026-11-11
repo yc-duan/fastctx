@@ -27,13 +27,13 @@ struct Claims {
     active: HashMap<String, NoticeId>,
     /// Firings put off after their persistence failed, until when: only
     /// while that is still ahead, and only for a timer's current firing.
-    delayed: HashMap<(String, NoticeId), Timestamp>,
+    delayed: HashMap<String, HashMap<NoticeId, Timestamp>>,
 }
 
 impl Claims {
     /// Forgets the timer `id`'s firings put off: it fires anew, or no more.
     fn settled(&mut self, id: &str) {
-        self.delayed.retain(|(timer, _), _| timer != id);
+        self.delayed.remove(id);
     }
 }
 pub struct Store {
@@ -127,6 +127,16 @@ impl Store {
         let id = id.to_string();
         self.work(move |store| records::read(&store.directory, |rows| get_timer(rows, &id))).await
     }
+    pub async fn page(
+        self: &Arc<Self>,
+        owner: Option<&Owner>,
+        after: Option<&str>,
+    ) -> io::Result<(Vec<Timer>, Option<String>)> {
+        let owner = owner.cloned();
+        let after = after.unwrap_or_default().to_string();
+        self.work(move |store| records::read(&store.directory, |rows| super::page::read(rows, owner.as_ref(), &after)))
+            .await
+    }
     pub async fn list(self: &Arc<Self>, owner: Option<&Owner>) -> io::Result<Vec<Timer>> {
         let owner = owner.cloned();
         self.work(move |store| store.list_now(owner.as_ref())).await
@@ -158,7 +168,8 @@ impl Store {
             .map(|row| {
                 let due = claims
                     .delayed
-                    .get(&(row.id.clone(), row.delivery.clone()))
+                    .get(&row.id)
+                    .and_then(|generations| generations.get(&row.delivery))
                     .copied()
                     .unwrap_or(row.next_attempt)
                     .max(row.next_attempt);
@@ -177,12 +188,15 @@ impl Store {
                     return Ok(None);
                 }
                 let mut claims = store.claims.lock().expect("timer claims");
-                claims.delayed.retain(|_, until| *until > now);
+                claims.delayed.retain(|_, generations| {
+                    generations.retain(|_, until| *until > now);
+                    !generations.is_empty()
+                });
                 if claims.active.contains_key(&timer.id) {
                     continue;
                 }
                 claims.active.insert(timer.id.clone(), timer.delivery.clone());
-                claims.delayed.remove(&(timer.id.clone(), timer.delivery.clone()));
+                claims.delayed.remove(&timer.id);
                 return Ok(Some(timer));
             }
         })
@@ -245,10 +259,13 @@ impl Store {
     }
     /// Failed persistence changes only scheduling, never the durable first firing.
     pub fn release(&self, timer: &Timer, now: Timestamp) {
-        self.claims.lock().expect("timer claims").delayed.insert(
-            (timer.id.clone(), timer.delivery.clone()),
-            now.checked_add(Duration::from_secs(60)).unwrap_or(now),
-        );
+        self.claims
+            .lock()
+            .expect("timer claims")
+            .delayed
+            .entry(timer.id.clone())
+            .or_default()
+            .insert(timer.delivery.clone(), now.checked_add(Duration::from_secs(60)).unwrap_or(now));
         self.unclaim(timer);
     }
     pub async fn complete(self: &Arc<Self>, timer: &Timer) -> io::Result<bool> {
@@ -303,13 +320,19 @@ fn scope(owner: &Owner) -> &str {
 }
 fn get_timer(rows: &records::Rows<'_>, id: &str) -> Result<Option<Timer>> {
     use fastctx_storage::rusqlite::OptionalExtension;
-    let bytes: Option<Vec<u8>> = rows
+    let bytes: Option<Option<Vec<u8>>> = rows
         .connection()
-        .query_row("SELECT body FROM conversation_records r WHERE family='timers' AND identity=?1 AND NOT EXISTS(SELECT 1 FROM node_conversation_transfers t WHERE t.name=r.conversation AND t.rejected=0)", [id], |row| {
+        .query_row("SELECT CASE WHEN length(body)<=16777216 THEN body ELSE NULL END FROM conversation_records r WHERE family='timers' AND identity=?1 AND NOT EXISTS(SELECT 1 FROM node_conversation_transfers t WHERE t.name=r.conversation AND t.rejected=0)", [id], |row| {
             row.get(0)
         })
         .optional()?;
-    bytes.map(|bytes| records::decode(&bytes)).transpose()
+    bytes
+        .map(|bytes| {
+            let bytes = bytes
+                .ok_or_else(|| fastctx_storage::Error::new("a stored timer exceeds the 16777216 byte read limit"))?;
+            records::decode(&bytes)
+        })
+        .transpose()
 }
 fn delete_timer(rows: &records::Rows<'_>, id: &str) -> Result<bool> {
     Ok(rows.connection().execute("DELETE FROM conversation_records WHERE family='timers' AND identity=?1", [id])? > 0)

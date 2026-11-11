@@ -103,6 +103,12 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
         }) else {
             return Err(std::io::Error::other("an MCP frame requires its own relay connection"));
         };
+        if frame.len() > call.max_request_bytes() {
+            let limit = call.max_request_bytes();
+            writer.send(&json(&NodeFrame::Reply { id, reply: Err(Failure::not_run(format!("request exceeds {limit} bytes"))) })).await?;
+            writer.drain().await?;
+            continue;
+        }
         // A name is checked at the door, and is this computer's own clients'
         // from here on (`fastctx_net::submission`).
         let submission = match submission.map(|named| named.check().map(|()| named)).transpose() {
@@ -1807,6 +1813,7 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             crate::copy::copy(node, &acting, from, to).await.map(Reply::Copied)
         }
         Call::Sentinel { hub, account, request } => {
+            request.validate_bounds().map_err(Failure::not_run)?;
             let caller = caller::of(node, peer)?;
             if hub.is_none()
                 && account.is_none()

@@ -12,11 +12,12 @@ pub async fn read(records: &dyn Records, scope: &HubAccount) -> Result<(Option<u
         .map_err(|_| Error::Unavailable("reading sentinel settings timed out".into()))??
     {
         None => Ok((None, Settings::default())),
-        Some(record) => Ok((
-            Some(record.version),
-            serde_json::from_value(record.value)
-                .map_err(|e| Error::Unavailable(format!("invalid sentinel settings: {e}")))?,
-        )),
+        Some(record) => {
+            let settings = serde_json::from_value(record.value)
+                .map_err(|e| Error::Unavailable(format!("invalid sentinel settings: {e}")))?;
+            validate(&settings).map_err(Error::Unavailable)?;
+            Ok((Some(record.version), settings))
+        }
     }
 }
 pub async fn write(records: &dyn Records, scope: &HubAccount, change: WriteSettings) -> Result<Record, Error> {

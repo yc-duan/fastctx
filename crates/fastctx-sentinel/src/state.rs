@@ -93,6 +93,42 @@ impl Store {
     pub fn directory(&self) -> &Path {
         &self.directory
     }
+    /// Reads the published state and a completed snapshot for its pending wake.
+    /// Full history recovery belongs to reconciliation, outside the read path.
+    pub fn snapshot(&self) -> Result<Option<State>, String> {
+        let Some(current): Option<State> =
+            crate::bounded::load(&self.directory.join("state.json"), crate::bounded::STATE_BYTES)?
+        else {
+            return Ok(None);
+        };
+        if let Some(sequence) = current.sequence.checked_add(1) {
+            let path = self.directory.join("history").join(format!("{sequence:020}.json"));
+            if let Some(recovered) = crate::bounded::load::<State>(&path, crate::bounded::STATE_BYTES)? {
+                if recovered.sequence != sequence
+                    || recovered.pending.is_some()
+                    || recovered.definition != current.definition
+                {
+                    return Err("invalid completed sentinel snapshot".into());
+                }
+                return Ok(Some(recovered));
+            }
+        }
+        if let Some(pending) = &current.pending {
+            let path = self.directory.join("history").join(format!("{:020}.json", current.sequence));
+            if let Some(recovered) = crate::bounded::load::<State>(&path, crate::bounded::STATE_BYTES)? {
+                if recovered.sequence != current.sequence
+                    || recovered.pending.is_some()
+                    || recovered.definition != current.definition
+                {
+                    return Err("invalid completed sentinel snapshot".into());
+                }
+                if recovered.wake_id == pending.id {
+                    return Ok(Some(recovered));
+                }
+            }
+        }
+        Ok(Some(current))
+    }
     pub fn load(&self) -> Result<Option<State>, String> {
         let mut current: Option<State> = load(&self.directory.join("state.json"))?;
         let entries = match std::fs::read_dir(self.directory.join("history")) {
@@ -162,7 +198,7 @@ impl Store {
     /// one it falls in among them.
     pub fn tally(&self, since: i64) -> Result<Vec<fastctx_types::sentinel_control::WakeDay>, String> {
         let mut days: Vec<fastctx_types::sentinel_control::WakeDay> =
-            load(&self.directory.join("tally.json"))?.unwrap_or_default();
+            crate::bounded::load(&self.directory.join("tally.json"), 64 * 1024)?.unwrap_or_default();
         days.retain(|kept| kept.day + DAY_MS > since);
         Ok(days)
     }

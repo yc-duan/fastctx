@@ -12,7 +12,11 @@ pub(super) fn records(db: &Connection) -> Result<()> {
     versions::apply(
         db,
         "node.records",
-        &[Migration { version: 1, sql: crate::records::SCHEMA }, Migration { version: 2, sql: crate::records::SCHEMA }],
+        &[
+            Migration { version: 1, sql: crate::records::SCHEMA },
+            Migration { version: 2, sql: crate::records::SCHEMA },
+            Migration { version: 3, sql: crate::records::SCHEMA },
+        ],
     )?;
     if old {
         rebuild(

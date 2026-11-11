@@ -118,6 +118,7 @@ pub(crate) async fn home_call_for(
     from: &fastctx_types::MachineName,
     request: &HomeRequest,
 ) -> Result<HomeReply, fastctx_types::ipc::Failure> {
+    request.validate_bounds().map_err(fastctx_types::ipc::Failure::not_run)?;
     if let HomeRequest::Judge { request } = request
         && (request.request_id.len() > 256 || request.request_id.trim().is_empty())
     {

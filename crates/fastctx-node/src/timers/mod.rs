@@ -1,5 +1,6 @@
 //! Persistent deadlines. The scheduler only indexes records; actions own their effects.
 
+mod page;
 pub mod store;
 mod words;
 
@@ -27,15 +28,11 @@ pub(crate) fn table(node: &Node) -> Result<&Arc<Store>, Failure> {
 }
 
 pub(crate) async fn call(node: &Arc<Node>, call: TimerCall) -> Result<Reply, Failure> {
+    call.validate().map_err(Failure::not_run)?;
     let store = table(node)?;
-    if let TimerCall::List { owner } = call {
-        let timers = store
-            .list(owner.as_ref())
-            .await
-            .map_err(failure)?
-            .into_iter()
-            .filter(|timer| !matches!(timer.action, Action::Sentinel { .. }));
-        return Ok(Reply::Timers { timers: timers.collect() });
+    if let TimerCall::List { owner, after } = call {
+        let (timers, next) = store.page(owner.as_ref(), after.as_deref()).await.map_err(failure)?;
+        return Ok(Reply::Timers { timers, next });
     }
     let resident = match &call {
         TimerCall::Set { action: Action::Sentinel { .. }, .. } => {
@@ -74,7 +71,7 @@ pub(crate) async fn call(node: &Arc<Node>, call: TimerCall) -> Result<Reply, Fai
                 return Err(Failure::new("cancel a timer before changing its owner"));
             }
             let timer = store.set(id, owner, due, action, crate::speech::new_id("timer")).await.map_err(failure)?;
-            Ok(Reply::Timers { timers: vec![timer] })
+            Ok(Reply::Timers { timers: vec![timer], next: None })
         }
         TimerCall::Cancel { id } => {
             store.cancel(&id).await.map_err(failure)?;

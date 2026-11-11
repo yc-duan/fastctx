@@ -325,7 +325,19 @@ impl RemoteCall {
             Self::AttachmentReferences { .. } | Self::Facts => Contract { cancellable: true, ..Contract::CONTROL },
             Self::WordsCame { .. } => Contract::CONTROL,
         };
-        Contract { response: self.response(), ..contract }
+        let max_request_bytes = match self {
+            Self::SentinelControl { request: crate::sentinel_control::Request::Create { .. } } => 64 * 1024,
+            Self::SentinelControl { .. } => 4096,
+            Self::SentinelHome {
+                request: crate::sentinel_control::HomeRequest::Inspect { .. }
+                    | crate::sentinel_control::HomeRequest::Record { .. }
+                    | crate::sentinel_control::HomeRequest::Overview
+                    | crate::sentinel_control::HomeRequest::Conversation { .. },
+            } => 4096,
+            Self::SentinelKeys | Self::SentinelSettings { change: None } => 4096,
+            _ => contract.max_request_bytes,
+        };
+        Contract { response: self.response(), max_request_bytes, ..contract }
     }
 }
 
@@ -555,6 +567,20 @@ impl Call {
             | Self::SeenDissolved { .. }
             | Self::UninstallPrepare { .. }
             | Self::BringIn { .. } => Leaving::Finish,
+        }
+    }
+}
+
+impl Call {
+    /// Encoded request budget for local sentinel and timer calls, including their envelope.
+    pub fn max_request_bytes(&self) -> usize {
+        match self {
+            Self::Timer { timer: crate::timers::TimerCall::Set { .. } } => 128 * 1024,
+            Self::Timer { .. } => 32 * 1024,
+            Self::Sentinel { request: crate::sentinel_control::Request::Create { .. }, .. } => 64 * 1024,
+            Self::Sentinel { .. } => 4096,
+            Self::SentinelSettings { change: None, .. } => 4096,
+            _ => REQUEST_BYTES,
         }
     }
 }

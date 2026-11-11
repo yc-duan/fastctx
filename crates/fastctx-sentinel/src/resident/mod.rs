@@ -73,7 +73,7 @@ impl Host {
             return Err("sentinel is assigned to another home".into());
         }
         let store = self.store(&registration);
-        let state = store.load()?.ok_or("the sentinel has not begun on this home")?;
+        let state = store.snapshot()?.ok_or("the sentinel has not begun on this home")?;
         if state.definition != registration.definition {
             return Err("sentinel assignment changed".into());
         }
@@ -275,7 +275,7 @@ impl ResidentHost for Host {
                     Ok(HomeReply::Summary { sentinel: Box::new(summary) })
                 }
                 // Only the asking account's own: its sentinels live under it.
-                HomeRequest::Record { id, generation, held } => {
+                HomeRequest::Record { id, generation, held, before } => {
                     let directory =
                         self.assignment(scope, id).parent().expect("assignment directory").join(generation.to_string());
                     let held = held.clone();
@@ -283,7 +283,7 @@ impl ResidentHost for Host {
                     // How it stands, and when it next looks: the earliest of
                     // its reflexes' times and of the times it wakes its
                     // conversation that are still to come.
-                    let (summary, next) = match store.load()? {
+                    let (summary, next) = match store.snapshot()? {
                         Some(state) => {
                             let now = self.runtime.now();
                             let due = state.definition.at.iter().copied().filter(|at| *at > now);
@@ -298,9 +298,10 @@ impl ResidentHost for Host {
                         }
                         None => (None, None),
                     };
+                    let before = *before;
                     let standing = serde_json::to_string(&(&summary, next)).map_err(|error| error.to_string())?;
                     let mut record = fastctx_platform::task::spawn_blocking(move || {
-                        crate::record::read(&directory, held.as_deref(), &standing)
+                        crate::record::read_page(&directory, held.as_deref(), &standing, before)
                     })
                     .await
                     .map_err(|error| error.to_string())??;
@@ -353,7 +354,7 @@ fn overview(scope_dir: &std::path::Path, since: i64) -> Result<Vec<Watched>, Str
             }
             // One whose home has kept nothing of it yet has nothing to show.
             let store = crate::state::Store::new(directory.clone());
-            let Some(state) = store.load()? else { continue };
+            let Some(state) = store.snapshot()? else { continue };
             let (wakes, earlier) = crate::record::wakes(&directory, since)?;
             let days = store.tally(since)?;
             watched.push(Watched { summary: storage::summary(&state), wakes, earlier, days });

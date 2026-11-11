@@ -126,11 +126,13 @@ export interface SentinelRecord {
   summary?: SentinelSummary;
   /** When it next looks or is woken, in milliseconds since the epoch. */
   next?: number;
+  /** Read older wakes with this exclusive sequence cursor. */
+  next_before?: number;
 }
 
 /** Its record, unless it is still as the version `held`. */
-export function sentinelRecord(id: string, home: string, generation: number, held: string | null): Promise<SentinelRecord> {
-  return invoke<{ kind: "record"; record: SentinelRecord }>("sentinel_record", { id, home, generation, held }).then((reply) => reply.record);
+export function sentinelRecord(id: string, home: string, generation: number, held: string | null, before: number | null = null): Promise<SentinelRecord> {
+  return invoke<{ kind: "record"; record: SentinelRecord }>("sentinel_record", { id, home, generation, held, before }).then((reply) => reply.record);
 }
 
 /** Why a sentinel woke (`fastctx_types::residents::Woke`). */
