@@ -2,6 +2,7 @@
 pub(crate) mod accounts;
 mod allowance;
 mod calls;
+mod checkpoint;
 pub(crate) use calls::calls;
 mod claude;
 mod codex;
@@ -222,7 +223,7 @@ pub(crate) fn record_terminal(
 }
 
 fn apply_terminal(book: &mut Book, path: &Path, record: &terminal_record::Record) -> io::Result<()> {
-    if book.keys.contains(&record.key) {
+    if book.keys.contains_key(&record.key) {
         return Ok(());
     }
     if record.session.as_ref().is_some_and(|session| book.modern.contains(session)) {

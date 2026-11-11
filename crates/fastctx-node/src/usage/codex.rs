@@ -64,7 +64,7 @@ pub(super) fn measured(
         None => format!("{}:{}", counted.thread, event.at),
     };
     super::with_book(node, path, |book| {
-        if book.keys.contains(&key) {
+        if book.keys.contains_key(&key) {
             return Ok(false);
         }
         book.commit(

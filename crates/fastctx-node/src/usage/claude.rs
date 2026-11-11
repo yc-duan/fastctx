@@ -135,7 +135,7 @@ pub(super) fn measured(
         };
         let process = counted.as_ref().map(|c| c.process.clone());
         let identity = (session.clone(), process.clone());
-        if book.seen.contains(&(identity.clone(), at)) {
+        if book.seen.contains_key(&(identity.clone(), at)) {
             return Ok(changed);
         }
         let since = counted

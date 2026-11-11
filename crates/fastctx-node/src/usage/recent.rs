@@ -2,7 +2,9 @@
 use fastctx_types::access::HubAccount;
 use fastctx_types::usage::Usd;
 use jiff::Timestamp;
+use serde::{Deserialize, Serialize};
 
+#[derive(Clone, Serialize, Deserialize)]
 pub(super) struct Charge {
     pub at: Timestamp,
     pub who: Option<HubAccount>,
