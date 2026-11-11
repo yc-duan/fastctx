@@ -147,7 +147,11 @@ impl Context {
         let (consumed, acknowledgements) = watch::channel(None);
         let (node, peer, output, done, sequence) =
             (self.node.clone(), self.peer.clone(), self.output.clone(), self.done.clone(), next.clone());
-        let (input, incoming) = mpsc::channel(16);
+        // Room for every change a client may have on its way at once (its
+        // edits go one at a time for each document, its other changes at
+        // most 128 together); each holds its own share of the node's memory
+        // for input. A client past it has its subscription ended.
+        let (input, incoming) = mpsc::channel(256);
         let task = fastctx_platform::task::spawn(async move {
             let result = crate::gate_waits::asked(run(
                 &node,

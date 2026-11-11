@@ -3,6 +3,12 @@
 
 use super::*;
 
+/// The queue is published whole with every change of it: this many
+/// messages wait in it at most.
+const QUEUED_AT_MOST: usize = 256;
+
+/// Makes a queue entry of the draft's words, and reserves it to go at once
+/// when nothing stands before it. Returns the entry with that reservation.
 pub(super) fn capture(
     node: &Node,
     resident: &ResidentId,
@@ -10,7 +16,10 @@ pub(super) fn capture(
     from: &MachineName,
     change: &Change,
     captured: Option<capture::Prepared>,
-) -> Result<Option<Flight>, Failure> {
+) -> Result<(fastctx_types::NoticeId, Option<Flight>), Failure> {
+    if state.queue.len() >= QUEUED_AT_MOST {
+        return Err(failure("the queue holds as many messages as it takes; send or remove some of them first"));
+    }
     let document = match change {
         Change::Send { epoch } => {
             if state.draft.epoch != *epoch {
@@ -56,8 +65,9 @@ pub(super) fn capture(
         && state.sending.is_none()
         && state.pending.is_empty()
     {
-        Ok(Some(state.reserve(&entry, false, true)?))
+        let flight = state.reserve(&entry, false, true)?;
+        Ok((entry, Some(flight)))
     } else {
-        Ok(None)
+        Ok((entry, None))
     }
 }

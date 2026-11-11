@@ -31,6 +31,7 @@ mod synchronizing;
 pub use synchronizing::{update_document, update_document_from, watch_documents};
 pub(crate) mod uploads;
 mod watching;
+mod withdrawing;
 
 pub use commands::{forget_command, next_command, place_command};
 use fastctx_types::access::Written;
@@ -122,6 +123,15 @@ pub async fn request(
     };
     if local || node.is_here(&machine) {
         return here(node, &node.machine(), &resident, request).await;
+    }
+    // A captured send reaches another machine only by the conversation's
+    // document subscription, whose input an older node refuses. As a plain
+    // request an older node would take the fresh snapshot for a whole
+    // replica and leave the sent words in the draft.
+    if let Request::Mutate { mutation } = &request
+        && matches!(mutation.change, Change::SendDocument { take: Some(_), .. })
+    {
+        return Err(Failure::unsupported("a captured send goes by the conversation's document subscription"));
     }
     let call = RemoteCall::Composer { resident, request };
     match node
@@ -266,11 +276,14 @@ fn accepting<'a>(
         let was_uploaded = uploads::listed(state);
         let mut next = cell.take().expect("loaded");
         let mut flight = None;
+        let mut entry = None;
         match &mutation.change {
             Change::Send { .. } | Change::SendDocument { .. } => {
-                flight = sending::capture(node, id, &mut next, from, &mutation.change, captured)?;
+                let (queued, reserved) = sending::capture(node, id, &mut next, from, &mutation.change, captured)?;
+                (entry, flight) = (Some(queued), reserved);
             }
             Change::SendQueued { id } => flight = Some(next.reserve(id, false, false)?),
+            Change::Withdraw { send } => withdrawing::withdraw(node, id, &mut next, send).await?,
             Change::Editing { id: entry, watch, editing } => {
                 if node.composers.watches.lock().expect("composer watches").get(watch) != Some(id) {
                     return Err(failure("the composer watch is no longer open"));
@@ -287,7 +300,14 @@ fn accepting<'a>(
         }
         next.receipts.insert(
             mutation.operation.clone(),
-            Receipt { from: from.clone(), mutation: mutation.clone(), landed: None, delivery: None, failure: None },
+            Receipt {
+                from: from.clone(),
+                mutation: mutation.clone(),
+                landed: None,
+                delivery: None,
+                failure: None,
+                entry,
+            },
         );
         let forsaken = uploads::forsaken(was_uploaded, &next);
         let sending = flight.map(|mut flight| {
@@ -331,7 +351,16 @@ fn accepting<'a>(
                 }
             }
         } else {
-            answer.await.map_err(failure)?
+            match answer.await {
+                Ok(answer) => answer,
+                // The dispatch ended without answering. The capture is
+                // committed all the same: the operation's state tells how
+                // it ended, not an error here.
+                Err(_) => {
+                    result.delivery = Some(delivery);
+                    return Ok((result, true));
+                }
+            }
         };
         let cell = node.composers.cell(id);
         let mut cell = cell.lock().await;

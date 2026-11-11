@@ -24,6 +24,11 @@ fn validate_mutation(mutation: &Mutation) -> Result<(), Failure> {
             receipt(&mutation.operation, after.as_ref(), delete, insert),
         )?;
     }
+    if let Change::Withdraw { send } = &mutation.change
+        && (send.is_empty() || send.len() > 256)
+    {
+        return Err(Failure::new("a withdrawal names the operation of the send it takes back"));
+    }
     if let Change::SendDocument { snapshot, take, document, .. } = &mutation.change
         && (snapshot.0.len() > fastctx_types::composer::sync::MAX_SNAPSHOT_BYTES
             || document.len() > 256

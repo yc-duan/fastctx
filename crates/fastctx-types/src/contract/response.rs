@@ -336,7 +336,8 @@ fn composer(request: &crate::composer::Request) -> Response {
             | Change::FilesOn { .. }
             | Change::Editing { .. }
             | Change::Delete { .. }
-            | Change::Move { .. } => Response::Answer,
+            | Change::Move { .. }
+            | Change::Withdraw { .. } => Response::Answer,
         },
     }
 }

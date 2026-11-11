@@ -70,6 +70,10 @@ pub struct Receipt {
     #[serde(default)]
     pub delivery: Option<NoticeId>,
     pub failure: Option<String>,
+    /// The queue entry a send made of its words: where a withdrawal finds
+    /// them while they have not gone (`withdrawing`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entry: Option<NoticeId>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]

@@ -7,6 +7,12 @@ pub mod sync;
 pub const MAX_DOCUMENT_CHARACTERS: usize = 30_000;
 /// Stable explicit rejection understood by composer clients.
 pub const DOCUMENT_TOO_LONG: &str = "the text is longer than this input holds";
+/// What `Change::Withdraw` fails with when the words went out, or may have:
+/// they stay sent, and the device does not put them back.
+pub const ALREADY_SENT: &str = "these words were already sent";
+/// What a send fails with once it was withdrawn, when it arrives after all
+/// or is asked about again.
+pub const WITHDRAWN: &str = "this send was withdrawn";
 
 use serde::{Deserialize, Serialize};
 
@@ -175,6 +181,16 @@ pub enum Change {
     /// Immediately delivers precisely this item, without advancing other queued items.
     SendQueued {
         id: NoticeId,
+    },
+    /// Takes back a send whose answer the device never got; `send` is that
+    /// send's operation. Words still in the queue return to the shared draft,
+    /// where every device reads them again; a send that never arrived is
+    /// refused when it does (`WITHDRAWN`); words that went out, or are on
+    /// their way to the host, stay sent and this fails with `ALREADY_SENT`.
+    /// A node that does not know this change refuses it: the device then
+    /// keeps the send as one whose outcome is unknown.
+    Withdraw {
+        send: String,
     },
 }
 
