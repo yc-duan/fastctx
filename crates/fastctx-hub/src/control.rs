@@ -762,8 +762,16 @@ fn handle(
                 lines(hub, name, generation, paths);
             }
         }
-        Up::Ask { id, question: Question::Manage { account, change: Change::Direct { machine, at } }, submission } => {
-            let named = match submission.map(|submission| crate::submitted::named(name, &submission)).transpose() {
+        // A node that names its question may be told the hub accepted it and
+        // ask again under that name. One that names none, an older node,
+        // waits on its asking connection for the whole answer, as before
+        // questions had names: its arm follows each of these.
+        Up::Ask {
+            id,
+            question: Question::Manage { account, change: Change::Direct { machine, at } },
+            submission: Some(submission),
+        } => {
+            let named = match crate::submitted::named(name, &submission) {
                 Ok(named) => named,
                 Err(why) => {
                     reply(Down::Told { id, answer: Err(why) });
@@ -775,7 +783,16 @@ fn handle(
             fastctx_platform::task::spawn(async move {
                 let _held = held;
                 let _reservation = reservation;
-                let answer = crate::direct::submission::change(&hub, origin, account, machine, at, named.as_ref()).await;
+                let answer = crate::direct::submission::change(&hub, origin, account, machine, at, Some(&named)).await;
+                let _ = out.send(Out::Frame(Down::Told { id, answer }));
+            });
+        }
+        Up::Ask { id, question: Question::Manage { account, change: Change::Direct { machine, at } }, .. } => {
+            let (hub, out) = (hub.clone(), out.clone());
+            let held = crate::moving::Moving::hold(&hub);
+            fastctx_platform::task::spawn(async move {
+                let _held = held;
+                let answer = crate::direct::change(hub, origin, account, machine, at).await;
                 let _ = out.send(Out::Frame(Down::Told { id, answer }));
             });
         }
@@ -794,10 +811,10 @@ fn handle(
         Up::Ask { id, question: Question::Package { version, target, progress }, .. } => {
             crate::updates::ask(hub, name, generation, id, version, target, progress, out.clone());
         }
-        Up::Ask { id, question: Question::NetworkUpdates { account, request }, submission }
+        Up::Ask { id, question: Question::NetworkUpdates { account, request }, submission: Some(submission) }
             if crate::updates::submission::handles(&request) =>
         {
-            let named = match submission.map(|submission| crate::submitted::named(name, &submission)).transpose() {
+            let named = match crate::submitted::named(name, &submission) {
                 Ok(named) => named,
                 Err(why) => {
                     reply(Down::Told { id, answer: Err(why) });
@@ -809,7 +826,7 @@ fn handle(
             fastctx_platform::task::spawn(async move {
                 let _held = held;
                 let _reservation = reservation;
-                let answer = crate::updates::submission::request(&hub, origin, account, request, named.as_ref()).await;
+                let answer = crate::updates::submission::request(&hub, origin, account, request, Some(&named)).await;
                 let _ = out.send(Out::Frame(Down::Told { id, answer }));
             });
         }
@@ -1052,10 +1069,10 @@ fn handle(
                 let _ = out.send(Out::Frame(Down::Told { id, answer }));
             });
         }
-        Up::Ask { id, question: Question::Manage { account, change }, submission }
+        Up::Ask { id, question: Question::Manage { account, change }, submission: Some(submission) }
             if crate::manage::submission::handles(&change) =>
         {
-            let named = match submission.map(|submission| crate::submitted::named(name, &submission)).transpose() {
+            let named = match crate::submitted::named(name, &submission) {
                 Ok(named) => named,
                 Err(why) => {
                     reply(Down::Told { id, answer: Err(why) });
@@ -1069,7 +1086,7 @@ fn handle(
                 let _held = held;
                 let _reservation = reservation;
                 let (answer, ended) =
-                    crate::manage::submission::change(&hub, origin, account, change, named.as_ref(), move || {
+                    crate::manage::submission::change(&hub, origin, account, change, Some(&named), move || {
                         let _ = recorded.send(());
                     })
                     .await;
@@ -1139,8 +1156,8 @@ fn handle(
                 let _ = out.send(Out::Frame(Down::Told { id, answer }));
             });
         }
-        Up::Ask { id, question: Question::Forget { account, conversation }, submission } => {
-            let named = match submission.map(|submission| crate::submitted::named(name, &submission)).transpose() {
+        Up::Ask { id, question: Question::Forget { account, conversation }, submission: Some(submission) } => {
+            let named = match crate::submitted::named(name, &submission) {
                 Ok(named) => named,
                 Err(why) => {
                     reply(Down::Told { id, answer: Err(why) });
@@ -1152,7 +1169,7 @@ fn handle(
             fastctx_platform::task::spawn(async move {
                 let _held = held;
                 let _reservation = reservation;
-                let answer = crate::forget::submission::ask(&hub, origin, account, conversation, named.as_ref()).await;
+                let answer = crate::forget::submission::ask(&hub, origin, account, conversation, Some(&named)).await;
                 let _ = out.send(Out::Frame(Down::Told { id, answer }));
             });
         }
