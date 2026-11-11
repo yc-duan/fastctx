@@ -7,6 +7,8 @@
 //! What it finds only looks like a login: no one is asked who is logged in
 //! there until the user takes one up.
 
+mod progress;
+
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -223,6 +225,7 @@ fn run(node: &Arc<Node>, dir: &Path, key: &str, searching: &Arc<Searching>) -> R
             .map_err(|error| format!("listing where filesystems are mounted: {error}"))?;
         skip.extend(mounted.iter().filter(|point| !crate::homes::same_dir(point, dir)).map(|point| walk::key(point)));
 
+        let progress = progress::Progress::new(node.topics.clone());
         walk::walk_with_progress(
             dir,
             &skip,
@@ -238,12 +241,11 @@ fn run(node: &Arc<Node>, dir: &Path, key: &str, searching: &Arc<Searching>) -> R
                         path: path.to_path_buf(),
                         traces: one.traces,
                     });
-                    node.topics.changed(fastctx_types::topics::LOGINS);
+                    progress.changed();
                 }
             },
-            &mut || node.topics.changed(fastctx_types::topics::LOGINS),
+            &mut || progress.changed(),
         );
-        node.topics.changed(fastctx_types::topics::LOGINS);
         Ok::<_, String>(())
     })();
     let at = Timestamp::now();

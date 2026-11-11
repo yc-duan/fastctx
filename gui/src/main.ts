@@ -5,6 +5,7 @@
 // `?theme=…`, `?lang=en` and `?live` pick what to look at.
 
 import { projectWho, mergeFormer } from "./project/who";
+import { followFormer } from "./project/former";
 import { localHome } from "./sentinel/local";
 import { configureTopics, followState, mapTopic } from "./world/topics";
 import { followSwitches } from "./app/segment-slide";
@@ -2240,7 +2241,7 @@ function liveTalk(address: Address): DeskTalk {
     },
     stop: () => stop(address),
     // A sentinel's row withdraws it, then the list is asked again.
-    stopJob: (job, machine) => (sentinelRows.peek().some((row) => row.job === job) ? sentinelStop(job, machine).then(() => readSentinels()) : stopJob(job, machine)),
+    stopJob: (job, machine) => (sentinelRows.peek().some((row) => row.job === job) ? sentinelStop(job, machine).then(async () => { await readSentinels(); }) : stopJob(job, machine)),
     jobOutput: (job) => RemoteLines.open(job.machine, job.output, { kind: "output", job: job.job }),
     watchLink,
     lines: (machine, path, decoding) => RemoteLines.open(machine, path, decoding),
@@ -2256,19 +2257,18 @@ function liveTalk(address: Address): DeskTalk {
   const sentinelRows = signal<PanelJob[]>([]);
   // One question at a time: a reading still on its way is the one that
   // answers.
-  let sentinelReading: Promise<void> | null = null;
-  let sentinelFailed = false;
-  const readSentinels = (): Promise<void> =>
+  let sentinelReading: Promise<boolean> | null = null;
+  const readSentinels = (): Promise<boolean> =>
     (sentinelReading ??= (accountFeatures.talk(store.whole.peek(), address).sentinels
       ? sentinelList(address, (() => { const account = featureAccount(store.whole.peek(), address); return account ? { hub: account.hubName, account: account.account } : undefined; })())
       : Promise.resolve([]))
       .then(
         (listed) => {
-          sentinelFailed = false;
           if (!left) sentinelRows.set(listed.filter((one) => one.definition.kind !== "goal").map((one) => sentinelRow(remembered(one))));
+          return true;
         },
         // A home that cannot be asked now keeps the rows last seen.
-        () => { sentinelFailed = true; },
+        () => false,
       )
       .finally(() => {
         sentinelReading = null;
@@ -2286,7 +2286,7 @@ function liveTalk(address: Address): DeskTalk {
   });
   // The sentinels' homes are asked, not followed: as the page opens, every
   // half minute while it is open, and after one is withdrawn.
-  const stopSentinels = features.sentinels ? followState(null, async () => { await readSentinels(); if (sentinelFailed) throw new Error("the sentinel list did not answer"); }, 30_000) : () => {};
+  const stopSentinels = features.sentinels ? followState(null, async () => { if (!await readSentinels()) throw new Error("the sentinel list did not answer"); }, 30_000) : () => {};
   // The conversation as the World's watch reads it (`conversation/source.ts`):
   // the page holds its latest part and reads the rest as the reader comes to
   // it; what is new is shown at once. When the host replaced or removed
@@ -2620,18 +2620,9 @@ function projectPage(town: string): Page {
   };
   const stopMap = followState(mapTopic(town), refresh, 2_000);
   const towns = new Map<string, string | null>();
-  let readingFormer: Promise<void> | null = null;
-  let formerWanted = true;
-  const readFormer = () => {
-    if (left || document.hidden || !formerWanted || readingFormer) return;
-    formerWanted = false;
-    readingFormer = projectFormer(town).then((who) => {
-      if (!left) { former = mergeFormer(former, who); showProject(); }
-    }).catch(() => {}).finally(() => {
-      readingFormer = null;
-      if (formerWanted) readFormer();
-    });
-  };
+  const formerReader = followFormer(() => projectFormer(town), (who) => {
+    if (!left) { former = mergeFormer(former, who); showProject(); }
+  });
   const stopWorld = effect(() => {
     const world = store.world.get();
     for (const machine of world?.who.machines ?? []) {
@@ -2639,15 +2630,12 @@ function projectPage(town: string): Page {
       for (const resident of machine.reply.residents) {
         const key = talkKey({ resident: resident.about.id, machine: resident.about.machine });
         const before = towns.get(key);
-        if (towns.has(key) && before !== resident.town && (before === town || resident.town === town)) formerWanted = true;
+        if (towns.has(key) && before !== resident.town && (before === town || resident.town === town)) formerReader.changed();
         towns.set(key, resident.town);
       }
     }
     showProject();
-    readFormer();
   });
-  const visible = () => { if (!document.hidden) readFormer(); };
-  document.addEventListener("visibilitychange", visible);
   return {
     element: page.element,
     title: store.world.peek()?.towns.find((t) => t.town === town)?.record.name ?? town,
@@ -2657,7 +2645,7 @@ function projectPage(town: string): Page {
       if (historyWatch !== null) void unwatch(historyWatch);
       stopMap();
       stopWorld();
-      document.removeEventListener("visibilitychange", visible);
+      formerReader.close();
       stopSenses();
     },
   };

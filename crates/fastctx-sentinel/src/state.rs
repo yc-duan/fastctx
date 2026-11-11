@@ -187,11 +187,13 @@ impl Store {
         Ok(())
     }
     pub fn commit(&self, state: &State) -> Result<(), String> {
-        save(&self.directory.join("history").join(format!("{:020}.json", state.sequence)), state)?;
+        let result = save(&self.directory.join("history").join(format!("{:020}.json", state.sequence)), state)
+            .and_then(|()| {
+                self.changed();
+                save(&self.directory.join("state.json"), state)
+            });
         self.changed();
-        save(&self.directory.join("state.json"), state)?;
-        self.changed();
-        Ok(())
+        result
     }
     pub fn run_path(&self, sequence: u64) -> PathBuf {
         self.directory.join("runs").join(format!("{sequence:020}.json"))

@@ -3,6 +3,7 @@
 // use a separate clock and leave the shared wait open.
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { inShell, unwatch } from "./bridge";
+import { Backoff } from "./backoff";
 
 export const LOGINS = "logins";
 export const SENTINELS = "sentinels";
@@ -14,7 +15,8 @@ type Read = () => void | Promise<unknown>;
 type Every = number | (() => number | false);
 interface At { topic: string; revision: number }
 interface Told { run: string; changed: At[] }
-type Answer = { kind: "told"; told: Told } | { kind: "unsupported" } | { kind: "error"; error: string };
+type Answer = { kind: "told"; told: Told } | { kind: "unsupported" } | { kind: "aborted" } | { kind: "error"; error: string };
+class WaitAborted extends Error {}
 interface Reader {
   name: () => string | null;
   topic: string | null;
@@ -27,15 +29,22 @@ interface Reader {
   notBefore: number;
 }
 
+// Longer than the node's 25-second wait, including connection/setup time.
+const WAIT_MS = 35_000;
+
 function asking(run: string | null, known: At[], signal: AbortSignal): Promise<Told | null> {
   return new Promise((resolve, reject) => {
     let done = false;
     let cancelled = false;
-    const finish = (answer?: Answer) => {
+    let timer = 0;
+    const finish = (answer?: Answer, error?: unknown) => {
       if (done) return;
       done = true;
+      clearTimeout(timer);
       signal.removeEventListener("abort", abort);
-      if (!answer) reject(new DOMException("cancelled", "AbortError"));
+      if (error !== undefined) reject(error);
+      else if (!answer) reject(new DOMException("cancelled", "AbortError"));
+      else if (answer.kind === "aborted") reject(new WaitAborted("the state's wait was aborted"));
       else if (answer.kind === "error") reject(new Error(answer.error));
       else resolve(answer.kind === "told" ? answer.told : null);
     };
@@ -46,11 +55,14 @@ function asking(run: string | null, known: At[], signal: AbortSignal): Promise<T
     const answer = new Channel<Answer>();
     answer.onmessage = (reply) => { if (!cancelled) finish(reply); };
     const opened = invoke<number>("world_topics", { request: { run, known }, answer });
+    timer = window.setTimeout(() => {
+      cancelled = true;
+      void opened.then(unwatch).catch(() => {});
+      finish(undefined, new Error("the state's wait did not answer in time"));
+    }, WAIT_MS);
     signal.addEventListener("abort", abort, { once: true });
     if (signal.aborted) abort();
-    void opened.catch((error: unknown) => {
-      if (!done) { done = true; signal.removeEventListener("abort", abort); reject(error); }
-    });
+    void opened.catch((error: unknown) => finish(undefined, error ?? new Error("the state's wait could not be opened")));
   });
 }
 
@@ -75,6 +87,9 @@ class Topics {
   private supported: boolean | null = null;
   private negotiateAt = Infinity;
   private retryAt = 0;
+  private readonly backoff = new Backoff();
+  private queued = false;
+  private readersChanged = false;
   private waiting: AbortController | null = null;
   private working = false;
   private timer = 0;
@@ -100,10 +115,10 @@ class Topics {
   follow(name: string | null | (() => string | null), read: Read, every: Every): Following {
     const reader: Reader = { name: typeof name === "function" ? name : () => name, topic: null, read, every, due: 0, fresh: true, reading: false, again: false, notBefore: 0 };
     this.readers.add(reader);
-    this.waiting?.abort();
-    this.tick();
+    this.readersChanged = true;
+    this.schedule();
     const stop: Following = Object.assign(
-      () => { this.readers.delete(reader); this.waiting?.abort(); this.tick(); },
+      () => { this.readers.delete(reader); this.readersChanged = true; this.schedule(); },
       { refresh: () => {
         if (!this.readers.has(reader) || reader.reading) return;
         const interval = typeof every === "function" ? every() : every;
@@ -161,8 +176,15 @@ class Topics {
     return reader.reading || (!this.timed(reader) && !reader.fresh) ? Infinity : reader.due;
   }
 
+  private schedule(): void {
+    if (this.queued) return;
+    this.queued = true;
+    queueMicrotask(() => { this.queued = false; this.tick(); });
+  }
+
   private tick(): void {
     clearTimeout(this.timer);
+    if (this.readersChanged) { this.readersChanged = false; this.waiting?.abort(); }
     if (document.hidden || !this.readers.size) return;
     const names = this.names();
     const now = Date.now();
@@ -197,6 +219,8 @@ class Topics {
       this.waiting = controller;
       try {
         const told = await asking(snapshot ? null : this.run, known, controller.signal);
+        this.backoff.reset();
+        this.retryAt = 0;
         if (told === null) {
           this.supported = false;
           this.negotiateAt = Date.now() + 60_000;
@@ -212,7 +236,15 @@ class Topics {
         }
         for (const reader of readers) if (reader.topic && (changed.has(reader.topic) || (reader.fresh && reader.due <= Date.now()))) this.read(reader);
       } catch (error) {
-        if (!(error instanceof DOMException && error.name === "AbortError")) this.retryAt = Date.now() + 1_000;
+        if (!controller.signal.aborted) {
+          if (error instanceof WaitAborted) {
+            this.supported = null;
+            this.run = null;
+            this.revisions.clear();
+            for (const reader of this.readers) { reader.fresh = true; reader.due = 0; }
+          }
+          this.retryAt = Date.now() + this.backoff.failed();
+        }
         return;
       } finally {
         if (this.waiting === controller) this.waiting = null;

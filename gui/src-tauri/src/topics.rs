@@ -12,7 +12,26 @@ use crate::Shell;
 pub(crate) enum Answer {
     Told { told: TopicsTold },
     Unsupported,
+    Aborted,
     Error { error: String },
+}
+
+struct Answering(Option<Channel<Answer>>);
+
+impl Answering {
+    fn finish(mut self, reply: Answer) {
+        if let Some(answer) = self.0.take() {
+            let _ = answer.send(reply);
+        }
+    }
+}
+
+impl Drop for Answering {
+    fn drop(&mut self) {
+        if let Some(answer) = self.0.take() {
+            let _ = answer.send(Answer::Aborted);
+        }
+    }
 }
 
 /// `unwatch` cancels this wait when the subscriptions or visibility change.
@@ -26,13 +45,15 @@ pub(crate) async fn world_topics(
     let page = shell.page.load(Ordering::Relaxed);
     let id = shell.next.fetch_add(1, Ordering::Relaxed);
     let world = shell.world();
+    // Capture before spawning: even a task aborted before its first poll replies.
+    let answer = Answering(Some(answer));
     shell.follow(page, id, async move {
         let reply = match world.topics_when_supported(request).await {
             Ok(Some(told)) => Answer::Told { told },
             Ok(None) => Answer::Unsupported,
             Err(error) => Answer::Error { error: error.to_string() },
         };
-        let _ = answer.send(reply);
+        answer.finish(reply);
     })?;
     Ok(id)
 }
