@@ -51,6 +51,7 @@ pub(super) fn change_checked(
 ) -> (Result<Told, String>, Vec<(MachineName, Refusal)>) {
     let mut ended = Vec::new();
     let configuration = crate::manage_edit::configuration(&change);
+    let relation = crate::manage_edit::relation(&change);
     let renaming = matches!(change, Change::Rename { .. });
     let dissolving = matches!(change, Change::Dissolve { .. });
     let deleting = match &change {
@@ -80,6 +81,8 @@ pub(super) fn change_checked(
     }
     if configuration && !reconcile {
         hub.configuration_changed();
+    } else if relation && !reconcile {
+        hub.relations_changed();
     } else {
         hub.changed();
     }

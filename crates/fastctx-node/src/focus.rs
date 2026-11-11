@@ -44,14 +44,15 @@ pub(crate) async fn folders(
     acting: &Acting,
     machine: Option<Written>,
     path: Option<String>,
+    cursor: Option<String>,
 ) -> Result<Folders, Failure> {
     let here = node.machine();
     let Some(target) = machine.filter(|machine| !node.is_here(machine)) else {
         node.authorize_here(acting)?;
-        return folders_here(here, path).await;
+        return folders_here(here, path, cursor).await;
     };
     match node
-        .call(acting, &target, Purpose::Hands, RemoteCall::Folders { path })
+        .call(acting, &target, Purpose::Hands, RemoteCall::Folders { path, cursor })
         .await
         .map_err(|failure| Failure::new(failure.to_string()))??
     {
@@ -60,8 +61,8 @@ pub(crate) async fn folders(
     }
 }
 
-pub(crate) async fn folders_here(machine: MachineName, path: Option<String>) -> Result<Folders, Failure> {
-    task::spawn_blocking(move || fastctx_hands::folders::list(machine, path.as_deref()))
+pub(crate) async fn folders_here(machine: MachineName, path: Option<String>, cursor: Option<String>) -> Result<Folders, Failure> {
+    task::spawn_blocking(move || fastctx_hands::folders::list_page(machine, path.as_deref(), cursor.as_deref()))
         .await
         .map_err(|error| Failure::new(error.to_string()))?
 }
@@ -70,13 +71,34 @@ pub(crate) async fn folders_here(machine: MachineName, path: Option<String>) -> 
 /// folder on its own, so one stuck on a slow disk keeps the rest from
 /// nothing; what its reading has not given by then is said so.
 pub(crate) async fn outline_here(folders: Vec<String>, within: Duration) -> Vec<Outlined> {
+    match outline_page(folders, within, Vec::new()).await {
+        Ok(outlined) => outlined,
+        Err(error) => vec![Outlined { path: String::new(), outline: Err(error.message), next_cursor: None, truncated: false }],
+    }
+}
+
+pub(crate) async fn outline_page(
+    folders: Vec<String>,
+    within: Duration,
+    cursors: Vec<Option<String>>,
+) -> Result<Vec<Outlined>, Failure> {
+    fastctx_types::file_limits::paths(&folders).map_err(Failure::not_run)?;
+    if !cursors.is_empty() && cursors.len() != folders.len() {
+        return Err(Failure::not_run("outline cursors must match the paths"));
+    }
+    if cursors.iter().flatten().any(|cursor| cursor.len() > 128) {
+        return Err(Failure::not_run("outline cursor exceeds its 128-byte limit"));
+    }
+    let within = within.min(Duration::from_secs(5));
     let started = tokio::time::Instant::now();
     let deadline = std::time::Instant::now() + within;
     let reading: Vec<_> = folders
         .iter()
-        .map(|path| {
+        .enumerate()
+        .map(|(number, path)| {
             let path = path.clone();
-            task::spawn_blocking(move || fastctx_hands::outline::outline(&path, deadline))
+            let cursor = cursors.get(number).cloned().flatten();
+            task::spawn_blocking(move || fastctx_hands::outline::outline_page(&path, deadline, cursor.as_deref()))
         })
         .collect();
     let mut outlined = Vec::with_capacity(folders.len());
@@ -86,9 +108,10 @@ pub(crate) async fn outline_here(folders: Vec<String>, within: Duration) -> Vec<
             Ok(Err(error)) => Err(format!("reading it stopped: {error}")),
             Err(_) => Err(format!("it was not read within {} seconds", within.as_secs())),
         };
-        outlined.push(Outlined { path, outline });
+        let (outline, next_cursor) = match outline { Ok((text, next)) => (Ok(text), next), Err(error) => (Err(error), None) };
+        outlined.push(Outlined { path, outline, truncated: next_cursor.is_some(), next_cursor });
     }
-    outlined
+    Ok(outlined)
 }
 
 /// The part of a selection the subject may use, before names or contents are disclosed.
@@ -177,7 +200,7 @@ async fn read(node: &Arc<Node>, acting: &Acting, machine: &FocusedMachine) -> Re
     if node.is_here(&machine.machine) {
         return Ok(outline_here(machine.folders.clone(), READING).await);
     }
-    let call = RemoteCall::Outline { folders: machine.folders.clone(), within_ms: READING_THERE.as_millis() as u64 };
+    let call = RemoteCall::Outline { folders: machine.folders.clone(), cursors: Vec::new(), within_ms: READING_THERE.as_millis() as u64 };
     match tokio::time::timeout(READING, node.call(acting, &machine.machine, Purpose::Hands, call)).await {
         Ok(Ok(Ok(RemoteReply::Outlined { outlines }))) => Ok(outlines),
         Ok(Ok(Ok(_))) => Err("it answered something else".to_string()),

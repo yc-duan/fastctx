@@ -10,7 +10,8 @@ pub(crate) fn seed(hub: &Hub, standings: &[Standing]) -> Vec<oneshot::Receiver<S
             standing,
             &standing.from,
             0,
-        );
+        )
+        .expect("one standing for each probe stream");
         let (cut, receiver) = oneshot::channel();
         hub.data
             .lock()

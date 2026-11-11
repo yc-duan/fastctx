@@ -24,6 +24,7 @@
 //! old place, forwards to the new one, as its files say.
 
 mod account_records;
+mod admission;
 mod afoot;
 mod assists;
 mod catalog;
@@ -658,6 +659,18 @@ impl Hub {
         self.directory_changed.notify_one();
     }
 
+    /// A relation changed (`manage_edit::relation`): every member is told to
+    /// look again and what lost the standing it was allowed under ends; the
+    /// passes that follow only accounts and machines are not run.
+    fn relations_changed(&self) {
+        afoot::directory_changed(self);
+        self.machine_log_changed.notify_one();
+        self.assists_changed.notify_one();
+        self.directory_changed.notify_one();
+        control::cut_calls(self);
+        data::cut_streams(self);
+    }
+
     /// The directory changed, or who is online did: every member is told to
     /// look again, and what lost the standing it was allowed under ends.
     fn changed(&self) {
@@ -1017,13 +1030,16 @@ async fn serving(
     let expiring_assists = assists::expire(&hub);
     let stopping = shutdown_signal();
     tokio::pin!(expiring_log, expiring_assists, stopping);
+    let admission = admission::Admission::new();
     let switched = loop {
         tokio::select! {
             accepted = network::accept(&hub.network, &kept.listener) => match accepted {
                 Ok((tcp, peer)) => {
-                    fastctx_net::dial::configure(&tcp);
-                    let host = releases::http::Host::Hub(hub.clone());
-                    fastctx_platform::task::spawn(releases::http::serve(host, tls.clone(), tcp, peer));
+                    if let Some(held) = admission.admit(&hub.log, peer) {
+                        fastctx_net::dial::configure(&tcp);
+                        let host = releases::http::Host::Hub(hub.clone());
+                        fastctx_platform::task::spawn(releases::http::serve(host, tls.clone(), tcp, peer, held));
+                    }
                 }
                 // Out of descriptors, for one: the next accept may succeed.
                 Err(error) => {

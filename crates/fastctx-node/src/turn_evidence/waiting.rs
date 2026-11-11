@@ -97,7 +97,30 @@ pub(crate) fn jobs_here(
     Ok(result)
 }
 
+/// The records in `directory` with an owed marker: those its owed list
+/// names, each checked against its marker; the first time, every record
+/// there, from which the list is made.
 fn owed_paths(directory: &std::path::Path) -> io::Result<Vec<std::path::PathBuf>> {
+    if let Some(listed) = crate::job_metadata::owed_listed(directory)? {
+        let mut paths = Vec::with_capacity(listed.len());
+        for path in listed {
+            match crate::job_metadata::exists(&path.with_extension("owed")) {
+                Ok(true) => paths.push(path),
+                Ok(false) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
+        }
+        return Ok(paths);
+    }
+    let paths = scanned(directory)?;
+    if fastctx_platform::disk::exists(directory)? {
+        crate::job_metadata::complete_owed(directory, &paths)?;
+    }
+    Ok(paths)
+}
+
+fn scanned(directory: &std::path::Path) -> io::Result<Vec<std::path::PathBuf>> {
     let entries = match fastctx_platform::disk::read_dir(directory) {
         Ok(entries) => entries,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -245,7 +268,7 @@ pub(crate) async fn collect(
         result.extend(query.map_err(|error| Failure::new(error.to_string()))??);
     }
     for timer in crate::timers::table(node)?
-        .list(Some(&Owner::Conversation { resident: resident.clone() }))
+        .list(&Owner::Conversation { resident: resident.clone() })
         .await
         .map_err(|e| Failure::new(e.to_string()))?
     {

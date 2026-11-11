@@ -24,7 +24,7 @@ use fastctx_types::contract::Pool;
 use fastctx_types::ipc::{CapacityReason, Failure};
 use tokio::sync::oneshot;
 
-pub(crate) use diagnostics::{dump, snapshot, stuck};
+pub(crate) use diagnostics::{dump, snapshot_bounded, stuck};
 
 use crate::Node;
 
@@ -87,7 +87,7 @@ fn budgets() -> (usize, usize) {
 
 #[derive(Default)]
 struct State {
-    calls: HashMap<u64, Entry>,
+    calls: std::collections::BTreeMap<u64, Entry>,
     pools: HashMap<Pool, queue::PoolQueue>,
     /// What each account's calls hold, of every kind, and everyone's.
     held: HashMap<Account, usize>,

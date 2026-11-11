@@ -225,15 +225,21 @@ pub(crate) fn notices(
     }
     database.read_now(|c| {
         let placeholders = vec!["?";accounts.len()].join(",");
-        let sql = format!("SELECT DISTINCT l.id,l.record FROM machine_log_notified n JOIN machine_log l ON l.id=n.id WHERE n.reader IN ({placeholders}) AND (l.at,l.nano)>(?,?) ORDER BY l.id");
+        // The newest first, so a long history does not ride on every view.
+        let sql = format!("SELECT DISTINCT l.id,l.record FROM machine_log_notified n JOIN machine_log l ON l.id=n.id WHERE n.reader IN ({placeholders}) AND (l.at,l.nano)>(?,?) ORDER BY l.id DESC LIMIT ?");
         let cutoff = now.checked_sub(RETENTION).map_err(|e|Error::new(e.to_string()))?;
         let mut values: Vec<Value> = accounts.iter().map(|(name,opened)|Value::Text(account(name,*opened))).collect();
         values.extend([Value::Integer(cutoff.as_second()),Value::Integer(i64::from(cutoff.subsec_nanosecond()))]);
+        values.push(Value::Integer(crate::machine_log::NOTICES as i64));
         let mut stmt = c.prepare_cached(&sql)?;
         let mut cursor = stmt.query(params_from_iter(values))?;
-        let mut notices = Vec::new();
+        let mut rows = Vec::new();
         while let Some(row) = cursor.next()? {
-            let kept: Kept = shelf::decode(&row.get::<_,Vec<u8>>(1)?)?;
+            rows.push(row.get::<_,Vec<u8>>(1)?);
+        }
+        let mut notices = Vec::new();
+        for bytes in rows.iter().rev() {
+            let kept: Kept = shelf::decode(bytes)?;
             let Some((machine,by,action)) = notification(&kept.record.actor,&kept.record.action) else {continue};
             for (name,opened) in accounts {
                 if kept.notified.get(name) == Some(opened) {

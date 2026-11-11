@@ -1506,14 +1506,17 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             let acting = crate::around::acting_of(node, &caller::of(node, peer)?);
             crate::file_search::call(node, &acting, machine, request).await.map(Reply::FilesFound)
         }
-        Call::Folders { machine, path } => {
+        Call::Folders { machine, path, cursor } => {
             users_voice(node, peer)?;
             let acting = crate::around::acting_of(node, &caller::of(node, peer)?);
-            crate::focus::folders(node, &acting, machine, path).await.map(Reply::Folders)
+            crate::focus::folders(node, &acting, machine, path, cursor).await.map(Reply::Folders)
         }
-        Call::DoctorCalls => {
+        Call::DoctorCalls { after } => {
             users_voice(node, peer)?;
-            Ok(Reply::DoctorCalls { calls: crate::intake::snapshot() })
+            let snapshot = fastctx_platform::task::spawn_blocking(move || crate::intake::snapshot_bounded(after))
+                .await
+                .map_err(|error| Failure::new(error.to_string()))?;
+            Ok(Reply::DoctorCalls { calls: snapshot.calls, partial: snapshot.partial, next: snapshot.next })
         }
         Call::DoctorReadings => {
             users_voice(node, peer)?;

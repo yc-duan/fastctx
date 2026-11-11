@@ -54,16 +54,25 @@ pub(super) fn run() -> anyhow::Result<()> {
                     .with_context(|| format!("seed={seed} change={kind} round={round}"))?;
             }
         }
+        for kind in super::relations::KINDS {
+            for round in 0..2 {
+                super::relations::exercise(&root, &base, seed, kind, round)
+                    .with_context(|| format!("seed={seed} relation={kind} round={round}"))?;
+            }
+        }
         if seed == 0 {
             negative_control(&root, &base)?;
             super::forwarding::run(&root, &base)?;
         }
-        println!("network={seed} changes_checked={}", KINDS.len() * 2);
+        println!("network={seed} changes_checked={}", (KINDS.len() + super::relations::KINDS.len()) * 2);
     }
     for kind in KINDS {
         println!("change={kind} networks=30 changes=60 reopened_pairs=60 persisted_equal=true full_effects_empty=true");
     }
-    println!("unproved_full=Plan,Token,PasswordStart,PasswordFinish,UpdateDue");
+    for kind in super::relations::KINDS {
+        println!("relation={kind} networks=30 changes=60 reopened_pairs=60 persisted_equal=true effects_equal=true");
+    }
+    println!("unproved_full=Token,PasswordStart,PasswordFinish,UpdateDue");
     Ok(())
 }
 
@@ -284,7 +293,7 @@ fn request(kind: &str, round: usize, hub: &Hub) -> Change {
     }
 }
 
-fn effects(hub: &Hub) -> anyhow::Result<Value> {
+pub(super) fn effects(hub: &Hub) -> anyhow::Result<Value> {
     let store = hub.store();
     Ok(json!({
         "records": hub.account_records.health(), "updates": crate::updates::change_probe::snapshot(hub),

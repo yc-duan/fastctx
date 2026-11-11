@@ -54,8 +54,33 @@ pub(crate) fn rows(store: &Store, account: &AccountName, change: &Change) -> Boo
         Change::Settings { .. } | Change::Updates { .. } | Change::Rollout { .. } | Change::Intake { .. } => {
             BookEdit::Audit
         }
+        // A relation's own list, with the acting entries `settle_acting`
+        // may drop after this edit is chosen (`manage::commit`).
+        Change::Share { .. } => BookEdit::Relations(&["shares", "acting"]),
+        Change::Assist { .. } => BookEdit::Relations(&["lends", "acting"]),
+        Change::Plan { .. } => BookEdit::Relations(&["plans", "acting"]),
+        Change::StopActing { .. } => BookEdit::Relations(&["acting"]),
+        Change::ShareProject { .. } => BookEdit::Relations(&["projects", "acting"]),
         _ => BookEdit::Full,
     }
+}
+
+/// Changes to who may do what with whose machines and projects: members
+/// look again and what lost its standing ends (`Hub::relations_changed`),
+/// without the passes that follow accounts and machines coming and going.
+pub(crate) fn relation(change: &Change) -> bool {
+    #[cfg(feature = "change-drill")]
+    if FORCE_FULL.with(std::cell::Cell::get) {
+        return false;
+    }
+    matches!(
+        change,
+        Change::Share { .. }
+            | Change::Assist { .. }
+            | Change::Plan { .. }
+            | Change::StopActing { .. }
+            | Change::ShareProject { .. }
+    )
 }
 
 /// Changes that cannot revoke a running call, transfer, machine or account.

@@ -34,6 +34,9 @@ pub enum Doctor {
     },
     /// Calls being answered, waiting for admission, or still finishing.
     Calls {
+        /// Continue after the last call ID returned by an incomplete snapshot.
+        #[arg(long)]
+        after: Option<u64>,
         /// Print structured diagnostics.
         #[arg(long)]
         json: bool,
@@ -85,7 +88,7 @@ pub fn run(command: Doctor) -> anyhow::Result<()> {
             }
             return Ok(());
         }
-        Doctor::Calls { json } => (fastctx_types::Call::DoctorCalls, json),
+        Doctor::Calls { json, after } => (fastctx_types::Call::DoctorCalls { after }, json),
         Doctor::Readings { json } => (fastctx_types::Call::DoctorReadings, json),
     };
     let world = fastctx_types::layout::WorldDir::under(&fastctx_platform::fastctx_root()?);
@@ -95,7 +98,14 @@ pub fn run(command: Doctor) -> anyhow::Result<()> {
         Ok::<_, anyhow::Error>(client.call(call).await?)
     })?;
     match reply {
-        fastctx_types::Reply::DoctorCalls { calls } => calls_out(calls, json),
+        fastctx_types::Reply::DoctorCalls { calls, partial, next } => {
+            if partial {
+                eprintln!(
+                    "Diagnostic snapshot is incomplete; only the obtained calls and wait descriptions are shown. Next call ID: {next:?}"
+                );
+            }
+            calls_out(calls, json, partial)
+        }
         fastctx_types::Reply::DoctorReadings { readings, health, scenes } => {
             readings_out(&readings, &health, &scenes, json)
         }
@@ -103,11 +113,11 @@ pub fn run(command: Doctor) -> anyhow::Result<()> {
     }
 }
 
-fn calls_out(calls: Vec<fastctx_types::stats::CallWork>, json: bool) -> anyhow::Result<()> {
+fn calls_out(calls: Vec<fastctx_types::stats::CallWork>, json: bool, partial: bool) -> anyhow::Result<()> {
     use fastctx_types::call_diagnostics::{Class, Summary};
     if json {
         println!("{}", serde_json::to_string(&calls)?);
-    } else if calls.is_empty() {
+    } else if calls.is_empty() && !partial {
         println!("No calls in progress.");
     } else {
         let class = |call: &fastctx_types::stats::CallWork| {

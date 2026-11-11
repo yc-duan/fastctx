@@ -185,13 +185,16 @@ pub(crate) async fn run(
         syncing: tokio::sync::Mutex::new(()),
         done: Mutex::new(Some(done)),
     });
+    let admission = crate::admission::Admission::new();
     loop {
         tokio::select! {
             accepted = kept.listener.accept() => match accepted {
                 Ok((tcp, peer)) => {
-                    fastctx_net::dial::configure(&tcp);
-                    let host = crate::releases::http::Host::Standby(standby.clone());
-                    fastctx_platform::task::spawn(crate::releases::http::serve(host, tls.clone(), tcp, peer));
+                    if let Some(held) = admission.admit(&log, peer) {
+                        fastctx_net::dial::configure(&tcp);
+                        let host = crate::releases::http::Host::Standby(standby.clone());
+                        fastctx_platform::task::spawn(crate::releases::http::serve(host, tls.clone(), tcp, peer, held));
+                    }
                 }
                 // Out of descriptors, for one: the next accept may succeed.
                 Err(error) => {

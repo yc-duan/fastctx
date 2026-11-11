@@ -403,9 +403,9 @@ impl Device {
                     machine.ok_or_else(|| failed("choose a machine for file search; a device has no local files"))?;
                 (machine, RemoteCall::FindFiles { request }, None)
             }
-            Call::Folders { machine, path } => {
+            Call::Folders { machine, path, cursor } => {
                 let machine = machine.ok_or_else(|| failed("choose a machine for its folders; a device has none"))?;
-                (machine, RemoteCall::Folders { path }, None)
+                (machine, RemoteCall::Folders { path, cursor }, None)
             }
             Call::Stats { machine, after, seen } => {
                 let machine =

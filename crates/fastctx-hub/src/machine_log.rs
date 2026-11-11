@@ -17,6 +17,12 @@ use serde::{Deserialize, Serialize};
 use crate::store::{Book, Store};
 
 pub(crate) const RETENTION: SignedDuration = SignedDuration::from_hours(90 * 24);
+
+/// How many of the newest records a view carries notices of. A device
+/// calls about the notices it has not seen before, so only the newest
+/// matter to it; the whole log stays readable a page at a time.
+pub(crate) const NOTICES: usize = 256;
+
 pub(crate) use crate::store::log_store::Row;
 
 pub(crate) async fn expire(hub: &std::sync::Arc<crate::Hub>) -> io::Result<()> {
@@ -382,10 +388,16 @@ impl History {
             return crate::store::log_store::notices(database, &accounts, now);
         }
         let mut notices = Vec::new();
-        for kept in &self.records {
-            if kept.record.at.checked_add(RETENTION).expect("timestamp in range") <= now {
-                continue;
-            }
+        let newest: Vec<&Kept> = self.records.iter().rev().filter(|kept| {
+            kept.record.at.checked_add(RETENTION).expect("timestamp in range") > now
+                && notification(&kept.record.actor, &kept.record.action).is_some()
+                && member.logins.iter().any(|account| {
+                    directory
+                        .account(account)
+                        .is_some_and(|found| !found.locked && kept.notified.get(account) == Some(&found.opened))
+                })
+        }).take(NOTICES).collect();
+        for kept in newest.into_iter().rev() {
             let Some((machine, by, action)) = notification(&kept.record.actor, &kept.record.action) else { continue };
             for account in &member.logins {
                 if !directory

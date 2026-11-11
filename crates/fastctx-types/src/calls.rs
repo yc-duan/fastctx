@@ -30,7 +30,10 @@ pub enum Call {
         session: String,
     },
     /// Local operational diagnostics. Never relayed through another machine.
-    DoctorCalls,
+    DoctorCalls {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        after: Option<u64>,
+    },
     /// The node's measures of itself, its health and the scenes it left.
     /// Never relayed through another machine.
     DoctorReadings,
@@ -445,6 +448,8 @@ pub enum Call {
     Folders {
         machine: Option<Written>,
         path: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cursor: Option<String>,
     },
     /// What a machine, or this computer, keeps free in memory for its
     /// agents; sets it first when `bytes` is given (`crate::stats::MEMORY_ROOMS`).
@@ -1002,6 +1007,10 @@ pub enum Reply {
     },
     DoctorCalls {
         calls: Vec<crate::stats::CallWork>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        partial: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        next: Option<u64>,
     },
     DoctorReadings {
         readings: Box<crate::readings::Readings>,

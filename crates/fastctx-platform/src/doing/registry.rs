@@ -1,7 +1,10 @@
 //! The one record of every ranked lock held or waited for and every wait on
 //! something outside the process, with what its task was doing.
 
-use std::collections::{HashMap, HashSet};
+mod limited;
+pub use limited::{TaskWaits, task_waits_bounded};
+
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -49,9 +52,9 @@ enum Who {
 
 #[derive(Default)]
 struct State {
-    held: HashMap<u64, Entry>,
-    waiting: HashMap<u64, Entry>,
-    outside: HashMap<u64, Outside>,
+    held: BTreeMap<u64, Entry>,
+    waiting: BTreeMap<u64, Entry>,
+    outside: BTreeMap<u64, Outside>,
     active: HashMap<u64, Active>,
     /// Out-of-order pairs already told, so each is told once.
     told: HashSet<(&'static str, &'static str)>,
@@ -232,7 +235,7 @@ pub(super) fn taken(lock: Lock<'_>, alone: bool) -> Hold {
 /// one holding a share of it.
 pub(super) fn keeping(lock: u64) -> Option<Arc<str>> {
     let state = state();
-    let of = |entries: &HashMap<u64, Entry>, alone: bool| {
+    let of = |entries: &BTreeMap<u64, Entry>, alone: bool| {
         entries
             .values()
             .filter(|entry| entry.lock == lock && entry.alone == alone)

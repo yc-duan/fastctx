@@ -20,6 +20,7 @@ const NAMED: usize = 100;
 const CHUNK: usize = 64 * 1024;
 
 struct Entry {
+    original: fs::DirEntry,
     name: String,
     folder: bool,
     size: u64,
@@ -29,6 +30,7 @@ struct Entry {
 
 enum Counted {
     Entries(usize),
+    AtLeastEntries(usize),
     Lines(u64),
     /// Not text: only its size is told.
     Binary,
@@ -37,6 +39,14 @@ enum Counted {
 
 /// `path` with what is in it; why it could not be read at all.
 pub fn outline(path: &str, deadline: Instant) -> Result<String, String> {
+    outline_page(path, deadline, None).map(|(text, _)| text)
+}
+
+pub fn outline_page(path: &str, deadline: Instant, cursor: Option<&str>) -> Result<(String, Option<String>), String> {
+    fastctx_types::file_limits::text(path, fastctx_types::file_limits::PATH_BYTES, "path")?;
+    if let Some(cursor) = cursor {
+        fastctx_types::file_limits::text(cursor, 128, "directory cursor")?;
+    }
     let root = Path::new(path);
     if !root.is_absolute() {
         return Err(format!("{path} is not an absolute path"));
@@ -45,16 +55,19 @@ pub fn outline(path: &str, deadline: Instant) -> Result<String, String> {
         return Err(if root.exists() { "it is not a folder".to_string() } else { "it does not exist".to_string() });
     }
     let mut entries = Vec::new();
-    for entry in fs::read_dir(root).map_err(|error| error.to_string())? {
-        let entry = entry.map_err(|error| error.to_string())?;
+    let page = crate::directory_page::read(root, cursor).map_err(|error| error.to_string())?;
+    for entry in page.entries {
         let name = entry.file_name().to_string_lossy().into_owned();
         // A link is told as what it points to.
         let metadata = fs::metadata(entry.path()).or_else(|_| entry.metadata());
         let (folder, size) = metadata.map(|metadata| (metadata.is_dir(), metadata.len())).unwrap_or((false, 0));
-        entries.push(Entry { name, folder, size, count: None });
+        entries.push(Entry { original: entry, name, folder, size, count: None });
     }
     entries.sort_by(|a, b| {
-        b.folder.cmp(&a.folder).then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase())).then(a.name.cmp(&b.name))
+        b.folder
+            .cmp(&a.folder)
+            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+            .then(a.name.cmp(&b.name))
     });
     let rest = entries.split_off(entries.len().min(NAMED));
     let mut stopped = false;
@@ -66,24 +79,47 @@ pub fn outline(path: &str, deadline: Instant) -> Result<String, String> {
             break;
         }
         entry.count = Some(match fs::read_dir(root.join(&entry.name)) {
-            Ok(inside) => Counted::Entries(inside.count()),
+            Ok(mut inside) => {
+                let mut count = 0;
+                loop {
+                    if Instant::now() >= deadline {
+                        break Counted::AtLeastEntries(count);
+                    }
+                    if count >= 4096 {
+                        break if inside.next().is_some() {
+                            Counted::AtLeastEntries(count)
+                        } else {
+                            Counted::Entries(count)
+                        };
+                    }
+                    match inside.next() {
+                        Some(_) => count += 1,
+                        None => break Counted::Entries(count),
+                    }
+                }
+            }
             Err(error) => Counted::Failed(error.to_string()),
         });
     }
     let mut files: Vec<&mut Entry> = entries.iter_mut().filter(|entry| !entry.folder).collect();
     files.sort_by_key(|entry| entry.size);
+    let mut bytes_left = 16 * 1024 * 1024;
     for entry in files {
         if stopped || Instant::now() >= deadline {
             stopped = true;
             break;
         }
-        entry.count = lines(&root.join(&entry.name), deadline);
+        entry.count = lines(&root.join(&entry.name), deadline, &mut bytes_left);
         stopped = entry.count.is_none();
     }
     let mut text = display_path(path);
+    crate::directory_page::unchanged(root, &page.identity).map_err(|error| error.to_string())?;
     if entries.is_empty() {
         text.push_str(" (empty)");
-        return Ok(text);
+        if page.next.is_some() {
+            text.push_str(" (directory listing is incomplete)");
+        }
+        return Ok((text, page.next));
     }
     let folders: Vec<String> = entries.iter().filter(|entry| entry.folder).map(told).collect();
     let files: Vec<String> = entries.iter().filter(|entry| !entry.folder).map(told).collect();
@@ -103,18 +139,43 @@ pub fn outline(path: &str, deadline: Instant) -> Result<String, String> {
         ));
     }
     if stopped {
-        text.push_str("\n  (reading stopped at its time limit)");
+        text.push_str(if bytes_left == 0 {
+            "\n  (reading stopped at its byte limit)"
+        } else {
+            "\n  (reading stopped at its time limit)"
+        });
     }
-    Ok(text)
+    if page.next.is_some() {
+        text.push_str("\n  (directory listing is incomplete)");
+    }
+    let next = if rest.is_empty() {
+        page.next
+    } else {
+        Some(
+            crate::directory_page::prepend(
+                root,
+                rest.into_iter().map(|entry| entry.original).collect(),
+                page.next,
+                &page.identity,
+            )
+            .map_err(|error| error.to_string())?,
+        )
+    };
+    Ok((text, next))
 }
 
 /// The lines of the text file at `path`, as `fastctx view` numbers them;
 /// none when the deadline came first.
-fn lines(path: &Path, deadline: Instant) -> Option<Counted> {
-    let mut file = match fs::File::open(path) {
+fn lines(path: &Path, deadline: Instant, bytes_left: &mut usize) -> Option<Counted> {
+    let mut file = match fastctx_platform::file_read::open(path) {
         Ok(file) => file,
         Err(error) => return Some(Counted::Failed(error.to_string())),
     };
+    match file.metadata() {
+        Ok(metadata) if metadata.is_file() => {}
+        Ok(_) => return Some(Counted::Failed("not an ordinary file".into())),
+        Err(error) => return Some(Counted::Failed(error.to_string())),
+    }
     let mut buffer = vec![0u8; CHUNK];
     let mut newlines = 0u64;
     let mut last = None;
@@ -127,12 +188,26 @@ fn lines(path: &Path, deadline: Instant) -> Option<Counted> {
         if Instant::now() >= deadline {
             return None;
         }
-        let read = match file.read(&mut buffer) {
+        if *bytes_left == 0 {
+            let mut extra = [0];
+            return match file.read(&mut extra) {
+                Ok(0) => Some(Counted::Lines(match last {
+                    None => 0,
+                    Some(true) => newlines,
+                    Some(false) => newlines + 1,
+                })),
+                Ok(_) => None,
+                Err(error) => Some(Counted::Failed(error.to_string())),
+            };
+        }
+        let take = (*bytes_left).min(buffer.len());
+        let read = match file.read(&mut buffer[..take]) {
             Ok(0) => break,
             Ok(read) => read,
             Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
             Err(error) => return Some(Counted::Failed(error.to_string())),
         };
+        *bytes_left = bytes_left.saturating_sub(read);
         let mut bytes = &buffer[..read];
         if first {
             first = false;
@@ -175,6 +250,7 @@ fn told(entry: &Entry) -> String {
         None if entry.folder => format!("{} (not read)", entry.name),
         None => format!("{} ({}, not read)", entry.name, size(entry.size)),
         Some(Counted::Binary) => format!("{} ({})", entry.name, size(entry.size)),
+        Some(Counted::AtLeastEntries(entries)) => format!("{} (at least {})", entry.name, grouped(*entries as u64)),
         Some(Counted::Entries(entries)) => format!("{} ({})", entry.name, grouped(*entries as u64)),
         Some(Counted::Lines(0)) => format!("{} (empty)", entry.name),
         Some(Counted::Lines(1)) => format!("{} (1 line)", entry.name),
@@ -192,7 +268,11 @@ fn size(bytes: u64) -> String {
         value /= 1024.0;
         unit += 1;
     }
-    if unit == 0 || value >= 10.0 { format!("{value:.0} {}", UNITS[unit]) } else { format!("{value:.1} {}", UNITS[unit]) }
+    if unit == 0 || value >= 10.0 {
+        format!("{value:.0} {}", UNITS[unit])
+    } else {
+        format!("{value:.1} {}", UNITS[unit])
+    }
 }
 
 /// A count with thousands set apart: `48,210`.

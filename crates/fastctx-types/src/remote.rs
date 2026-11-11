@@ -270,12 +270,16 @@ pub enum RemoteCall {
     /// The folders in a folder there, for the user to choose one.
     Folders {
         path: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cursor: Option<String>,
     },
     /// What each of these folders there holds, one level deep, read within
     /// `within_ms`, for a conversation pointed at them.
     Outline {
         folders: Vec<String>,
         within_ms: u64,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        cursors: Vec<Option<String>>,
     },
     /// The user's word on Claude Code's bypass-permissions consent there.
     ClaudeConsent {

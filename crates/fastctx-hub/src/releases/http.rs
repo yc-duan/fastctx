@@ -62,7 +62,9 @@ impl Tls {
     }
 }
 
-pub(crate) async fn serve(host: Host, tls: Tls, tcp: TcpStream, peer: SocketAddr) {
+/// `held` is the connection's place on the port (`crate::admission`): kept
+/// until it, and a WebSocket upgraded from it, ends.
+pub(crate) async fn serve(host: Host, tls: Tls, tcp: TcpStream, peer: SocketAddr, held: crate::admission::Held) {
     // Keep the existing initial handshake budget. File transfer itself has
     // no deadline: a slow download must not be cut off by a session policy.
     let deadline = Instant::now() + wire::SILENCE;
@@ -100,7 +102,8 @@ pub(crate) async fn serve(host: Host, tls: Tls, tcp: TcpStream, peer: SocketAddr
         return;
     }
     let log = host.clone();
-    let service = service_fn(move |request| respond(host.clone(), request, peer, binding, deadline, session));
+    let service =
+        service_fn(move |request| respond(host.clone(), request, peer, binding, deadline, session, held.clone()));
     let mut builder = hyper::server::conn::http1::Builder::new();
     builder.timer(TokioTimer::new()).header_read_timeout(deadline.saturating_duration_since(Instant::now()));
     // keep_alive(false) rewrites Connection: Upgrade and breaks WebSockets.
@@ -116,6 +119,7 @@ async fn respond(
     binding: [u8; 32],
     deadline: Instant,
     session: bool,
+    held: crate::admission::Held,
 ) -> Result<Response<Body>, Infallible> {
     let path = request.uri().path().to_owned();
     if !session && (path == wire::CONTROL_PATH || path == wire::DATA_PATH) {
@@ -132,6 +136,7 @@ async fn respond(
             }
         };
         fastctx_platform::task::spawn(async move {
+            let _held = held;
             let opened = async {
                 let upgraded = upgrade.await.map_err(|error| error.to_string())?;
                 let parts = upgraded.downcast::<TokioIo<TlsStream>>().map_err(|_| "unexpected upgraded transport")?;

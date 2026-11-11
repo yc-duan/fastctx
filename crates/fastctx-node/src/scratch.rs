@@ -19,6 +19,14 @@ pub(crate) fn here(node: &Node, owner: &Address) -> String {
     fastctx_hands::run::present::display_path(&path.to_string_lossy())
 }
 
+/// How many machines are asked where a scratch directory is at once, as
+/// other fan-outs ask (`fastctx_net::around`).
+const ASKING_AT_ONCE: usize = 32;
+
+/// How long one machine is given to say, waiting for its hub included: it
+/// is then told as one that gave no answer.
+const ANSWERING: std::time::Duration = std::time::Duration::from_secs(60);
+
 pub(crate) async fn descriptions(
     node: &Arc<Node>,
     id: &ResidentId,
@@ -27,11 +35,14 @@ pub(crate) async fn descriptions(
 ) -> Descriptions {
     let mut pending = tokio::task::JoinSet::new();
     let mut tasks = std::collections::HashMap::new();
+    let asking = Arc::new(tokio::sync::Semaphore::new(ASKING_AT_ONCE));
     for machine in machines {
-        let (node, id, acting) = (node.clone(), id.clone(), acting.clone());
+        let (node, id, acting, asking) = (node.clone(), id.clone(), acting.clone(), asking.clone());
         let name = machine.clone();
         let task = pending.spawn(async move {
-            async {
+            let _turn = asking.acquire_owned().await.map_err(|error| error.to_string())?;
+            let what = format!("{machine}'s scratch directory");
+            fastctx_platform::doing::outside(what, ANSWERING, async {
                 let written = Written::parse(&machine).map_err(|error| error.to_string())?;
                 let owner = Address { machine: node.machine(), resident: id };
                 if node.is_here(&written) {
@@ -55,8 +66,9 @@ pub(crate) async fn descriptions(
                     RemoteReply::Scratch { path } => Ok(path),
                     _ => Err(words::WRONG_REPLY.into()),
                 }
-            }
+            })
             .await
+            .map_err(|late| late.to_string())?
         });
         tasks.insert(task.id(), name);
     }

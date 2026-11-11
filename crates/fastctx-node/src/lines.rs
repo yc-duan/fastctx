@@ -463,17 +463,20 @@ pub(crate) async fn call(
         }
     }
     let result = fastctx_platform::task::spawn_blocking(move || {
-        let mut state = source.state.lock().expect("line source");
-        let index = state.index.as_mut().ok_or_else(|| "line source closed".to_string())?;
-        let result = match request {
+        let (mut state, result) = match request {
             Request::Read { start, count, .. } => {
-                Answer::Lines { start, lines: index.read(start, count, &cancel)?, notes: Vec::new() }
+                let mut state = source.state.lock().expect("line source");
+                let index = state.index.as_mut().ok_or_else(|| "line source closed".to_string())?;
+                let lines = index.read(start, count, &cancel)?;
+                (state, Answer::Lines { start, lines, notes: Vec::new() })
             }
             Request::Find { query, position, direction, .. } => {
-                Answer::Found { found: index.find(&query, &position, direction, &cancel)? }
+                let (state, found) = find(&source, &query, &position, direction, &cancel)?;
+                (state, Answer::Found { found })
             }
             _ => unreachable!("handled before blocking"),
         };
+        let state = &mut *state;
         let snapshot = observe(&source.path).map_err(err)?;
         if source.job_record.is_none() && snapshot != state.snapshot
             || !snapshot.same_file(&state.snapshot)
@@ -487,6 +490,61 @@ pub(crate) async fn call(
     .map_err(failed)?
     .map_err(failed)?;
     Ok(Reply { machine: node.machine(), result })
+}
+
+/// How many bytes of lines one stretch of a search reads holding the
+/// source: between stretches it grows, and is read, as it would without one.
+const SEARCH_STRETCH: u64 = 1 << 20;
+
+/// How many times a search starts over because lines it had searched
+/// changed before it gives up.
+const SEARCH_RESTARTS: usize = 8;
+
+/// Finds `query` from `position` a stretch at a time, letting the source go
+/// between stretches. Lines that grew past where the search reached are
+/// searched as they are now; a change to a line it had searched starts it
+/// over, so it finds what one search holding the source throughout would.
+/// Gives back the source held after the last stretch, for the caller's last
+/// look at the file.
+fn find<'a>(
+    source: &'a Source,
+    query: &str,
+    position: &fastctx_types::lines::Position,
+    direction: fastctx_types::lines::Direction,
+    cancel: &std::sync::atomic::AtomicBool,
+) -> Result<(std::sync::MutexGuard<'a, State>, Option<fastctx_types::lines::Match>), String> {
+    use fastctx_hands::lines::Searched;
+    use fastctx_types::lines::{Direction, Position};
+    let mut at = position.clone();
+    let mut version = None;
+    let mut restarts = 0;
+    loop {
+        let mut state = source.state.lock().expect("line source");
+        let now = state.extent.version;
+        if let Some(seen) = version
+            && seen != now
+        {
+            // The first line the change touched; any, when several came.
+            let first = if now == seen + 1 { state.first } else { 0 };
+            let searched = match direction {
+                Direction::Forward => first < at.line,
+                Direction::Backward => first <= position.line,
+            };
+            if searched {
+                restarts += 1;
+                if restarts > SEARCH_RESTARTS {
+                    return Err("the text kept changing where it was being searched".into());
+                }
+                at = position.clone();
+            }
+        }
+        version = Some(now);
+        let index = state.index.as_mut().ok_or_else(|| "line source closed".to_string())?;
+        match index.find_within(query, &at, position, direction, cancel, SEARCH_STRETCH)? {
+            Searched::Done(found) => return Ok((state, found)),
+            Searched::From(line) => at = Position { line, offset: None },
+        }
+    }
 }
 
 pub(crate) async fn serve(

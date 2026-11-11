@@ -100,9 +100,23 @@ pub(crate) fn counts(hub: &Hub) -> (usize, usize, usize) {
     (pairing.waiting.len(), pairing.live.len(), pairing.registered.len())
 }
 
+/// The most different standings one data connection is registered under.
+/// A call and its answer name one or two; each is checked whenever the
+/// directory changes, so a connection named by calls without end is refused
+/// rather than checked without end.
+const STANDINGS: usize = 16;
+
 /// Notes the data connection `ticket` names, allowed under `standing`, as
-/// the session `generation` of `by` asked.
-pub(crate) fn register(hub: &Hub, ticket: &Ticket, standing: &Standing, by: &MachineName, generation: u64) {
+/// the session `generation` of `by` asked. Refused when it is registered
+/// under `STANDINGS` others already: the call naming it is refused too, as
+/// a standing not kept could not cut it.
+pub(crate) fn register(
+    hub: &Hub,
+    ticket: &Ticket,
+    standing: &Standing,
+    by: &MachineName,
+    generation: u64,
+) -> Result<(), String> {
     // Its ends are known by their names now: the members that come to pair
     // it are.
     let (source, sink) = {
@@ -124,9 +138,12 @@ pub(crate) fn register(hub: &Hub, ticket: &Ticket, standing: &Standing, by: &Mac
         hub.log.line(format_args!(
             "two calls named one data connection between different machines; the second was not registered"
         ));
-        return;
+        return Ok(());
     }
     if !registration.standings.contains(standing) {
+        if registration.standings.len() >= STANDINGS {
+            return Err(format!("its data connection is named by {STANDINGS} calls already"));
+        }
         registration.standings.push(standing.clone());
     }
     let owner = (by.clone(), generation);
@@ -134,6 +151,7 @@ pub(crate) fn register(hub: &Hub, ticket: &Ticket, standing: &Standing, by: &Mac
         registration.by.push(owner.clone());
         pairing.by_session.entry(owner).or_default().insert(ticket.stream);
     }
+    Ok(())
 }
 
 /// The call the data connection `stream` goes with is over before its ends

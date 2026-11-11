@@ -140,7 +140,7 @@ impl Call {
             | Self::ClaudeSessionDirectory { .. }
             | Self::CollabRead { .. }
             | Self::Collaboration { .. }
-            | Self::DoctorCalls
+            | Self::DoctorCalls { .. }
             | Self::DoctorReadings
             | Self::Features
             | Self::Folders { .. }
