@@ -799,6 +799,7 @@ impl Decode for Update {
     fn decode<D: Decoder>(decoder: &mut D) -> Result<Self, Error> {
         // read blocks
         let clients_len: u32 = decoder.read_var()?;
+        decoder.check_count(clients_len as usize)?;
         let mut clients = HashMap::with_hasher(BuildHasherDefault::default());
         clients.try_reserve(clients_len as usize)?;
 
@@ -814,6 +815,7 @@ impl Decode for Update {
                 .or_insert_with(|| VecDeque::new());
             // Attempt to pre-allocate memory for the blocks. If the capacity overflows and
             // allocation fails, return an error.
+            decoder.check_count(blocks_len)?;
             blocks.try_reserve(blocks_len)?;
 
             for _ in 0..blocks_len {
@@ -821,7 +823,7 @@ impl Decode for Update {
                 if let Some(block) = Self::decode_block(id, decoder)? {
                     // due to bug in the past it was possible for empty bugs to be generated
                     // even though they had no effect on the document store
-                    clock += block.len();
+                    clock = clock.checked_add(block.len()).ok_or(Error::UnexpectedValue)?;
                     blocks.push_back(block);
                 }
             }

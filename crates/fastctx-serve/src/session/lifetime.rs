@@ -32,6 +32,7 @@ async fn cancelling_a_call_during_its_probe_keeps_the_original_arrival() {
                 &serde_json::to_vec(&Welcome::Accepted {
                     goal_runtime: false,
                     watch_many: false,
+                    composer_documents: false,
                     sentinels: false,
                     goal_commands: false,
                     profiles: false,

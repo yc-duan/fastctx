@@ -290,7 +290,7 @@ fn interrupted(interruption: fastctx_client::Interruption) -> Piece {
 }
 
 /// A change of whether an Android page is shown; never elsewhere.
-async fn shown(#[cfg(target_os = "android")] visible: &mut tokio::sync::watch::Receiver<bool>) {
+pub(super) async fn shown(#[cfg(target_os = "android")] visible: &mut tokio::sync::watch::Receiver<bool>) {
     #[cfg(target_os = "android")]
     {
         if visible.changed().await.is_err() {

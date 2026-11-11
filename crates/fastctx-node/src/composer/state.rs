@@ -99,6 +99,8 @@ pub struct Stored {
     pub settled_through: u64,
     pub ended: HashSet<String>,
     pub receipts: HashMap<String, Receipt>,
+    #[serde(skip)]
+    pub outcomes: HashMap<String, fastctx_types::composer::sync::Operation>,
     pub uploads: HashMap<String, super::uploads::UploadRecord>,
     /// The edits each sent epoch of the draft took, by `keeping::taken_key`,
     /// till they are written as records of their own.
@@ -205,6 +207,44 @@ impl Stored {
         }
     }
 
+    pub fn operations(&self) -> Vec<fastctx_types::composer::sync::Operation> {
+        use fastctx_types::composer::sync::Operation;
+        let mut operations: HashMap<_, _> = self
+            .sending
+            .iter()
+            .chain(&self.pending)
+            .filter_map(|flight| {
+                let operation = flight.operation.as_ref()?;
+                Some((
+                    operation.clone(),
+                    Operation {
+                        operation: operation.clone(),
+                        delivery: Some(flight.delivery.id.clone()),
+                        accepted: true,
+                        landed: None,
+                        failure: None,
+                    },
+                ))
+            })
+            .collect();
+        for (name, receipt) in &self.receipts {
+            if receipt.delivery.is_none() && receipt.failure.is_none() && operations.contains_key(name) {
+                continue;
+            }
+            operations.insert(
+                name.clone(),
+                Operation {
+                    operation: name.clone(),
+                    delivery: receipt.delivery.clone(),
+                    accepted: false,
+                    landed: receipt.landed.clone(),
+                    failure: receipt.failure.clone(),
+                },
+            );
+        }
+        operations.extend(self.outcomes.iter().map(|(name, outcome)| (name.clone(), outcome.clone())));
+        operations.into_values().collect()
+    }
     pub fn metadata(&self) -> fastctx_types::composer::sync::State {
         use fastctx_types::composer::sync::{Queued, State};
         let queued = |entry: &Entry, observed| Queued {
@@ -228,6 +268,7 @@ impl Stored {
             unobserved: self.unobserved.iter().map(|entry| queued(entry, false)).collect(),
             held: self.held.clone(),
             awaiting_turn: self.awaiting_turn.clone(),
+            operations: self.operations(),
         }
     }
 

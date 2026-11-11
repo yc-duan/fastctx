@@ -3,6 +3,8 @@
 
 use super::*;
 
+type DispatchResult = Result<Option<Landed>, Failure>;
+
 pub(super) async fn dispatch(node: &Arc<Node>, id: &ResidentId, flight: Flight) -> Result<Option<Landed>, Failure> {
     let result = async {
         let mut delivery = flight.delivery.clone();
@@ -15,15 +17,73 @@ pub(super) async fn dispatch(node: &Arc<Node>, id: &ResidentId, flight: Flight) 
         crate::speech::send_composer(node, id, delivery, flight.idle_only).await
     }
     .await;
+    if let Err(error) = &result {
+        node.log.line(format_args!("{id}'s input {} dispatch returned an error: {error}", flight.delivery.id));
+    }
+    let mut retry = std::time::Duration::from_millis(100);
+    let outcome = loop {
+        match complete(node, id, &flight, &result).await {
+            Ok(outcome) => break outcome,
+            Err(error) => {
+                node.log.line(format_args!(
+                    "{id}'s input {} could not record its outcome: {error}; will retry",
+                    flight.delivery.id
+                ));
+                if !node.residents.knows(id) {
+                    return Err(error);
+                }
+                tokio::time::sleep(retry).await;
+                retry = (retry * 2).min(std::time::Duration::from_secs(5));
+            }
+        }
+    };
+    schedule(node, id);
+    outcome
+}
+
+async fn complete(
+    node: &Arc<Node>,
+    id: &ResidentId,
+    flight: &Flight,
+    result: &DispatchResult,
+) -> Result<DispatchResult, Failure> {
     let cell = node.composers.cell(id);
     let mut cell = cell.lock().await;
     load(node, id, &mut cell).await?;
-    let mut next = cell.take().expect("loaded");
-    if next.sending.as_ref().is_none_or(|f| f.delivery.id != flight.delivery.id) {
-        return Err(failure("the delivery reservation changed"));
+    let state = cell.as_ref().expect("loaded");
+    if state.sending.as_ref().is_none_or(|f| f.delivery.id != flight.delivery.id) {
+        // A host callback may already have supplied a stronger result. Never
+        // replace it with the earlier dispatch acknowledgement.
+        if let Some(operation) = &flight.operation {
+            if let Some(receipt) = receipts::receipt(node, id, state, operation).await?
+                && (receipt.delivery.is_some() || receipt.failure.is_some())
+            {
+                return Ok(match receipt.failure {
+                    Some(error) => Err(Failure::new(error)),
+                    None => Ok(receipt.landed),
+                });
+            }
+            if let Some(outcome) = receipts::outcome(node, id, state, operation).await? {
+                return Ok(match outcome.failure {
+                    Some(error) => Err(Failure::new(error)),
+                    None => Ok(outcome.landed),
+                });
+            }
+        }
+        node.log.line(format_args!(
+            "{id}'s input {}: delivery reservation changed; recording the known dispatch outcome",
+            flight.delivery.id
+        ));
+        let mut next = cell.take().expect("loaded");
+        settlement::record(node, id, &mut next, flight, result).await?;
+        publish(node, id, &mut cell, next).await?;
+        return Ok(result.clone());
     }
-    next.sending = None;
-    match &result {
+    let mut next = cell.take().expect("loaded");
+    if next.sending.as_ref().is_some_and(|f| f.delivery.id == flight.delivery.id) {
+        next.sending = None;
+    }
+    match result {
         Ok(None) => {
             // A competing turn started after reservation. The message remains queued.
             next.opportunity = None;
@@ -68,8 +128,13 @@ pub(super) async fn dispatch(node: &Arc<Node>, id: &ResidentId, flight: Flight) 
         // and the reason goes to the device that sent them.
         Err(_) if flight.straight() => {
             if let Some(position) = next.queue.iter().position(|e| e.id == flight.entry) {
-                let entry = next.queue.remove(position);
-                next.draft.take_back(entry.document, crate::speech::new_id("back").as_str())?;
+                if next.draft.can_take_back(&next.queue[position].document).is_ok() {
+                    let entry = next.queue.remove(position);
+                    next.draft.take_back(entry.document, crate::speech::new_id("back").as_str())?;
+                } else {
+                    next.queue[position].error = result.as_ref().err().map(|error| error.message.clone());
+                    next.held = Some("the send failed; its words remain queued because the draft is full".into());
+                }
             }
         }
         Err(error) => {
@@ -79,19 +144,9 @@ pub(super) async fn dispatch(node: &Arc<Node>, id: &ResidentId, flight: Flight) 
             next.held = Some(error.message.clone());
         }
     }
-    if let Some(operation) = &flight.operation {
-        let mut receipt = receipts::receipt(node, id, &next, operation)
-            .await?
-            .ok_or_else(|| failure("the delivery's operation receipt is missing"))?;
-        receipt.landed = result.as_ref().ok().cloned().flatten();
-        receipt.delivery = Some(flight.delivery.id.clone());
-        receipt.failure = result.as_ref().err().map(|error| error.message.clone());
-        next.receipts.insert(operation.clone(), receipt);
-    }
+    settlement::record(node, id, &mut next, flight, result).await?;
     publish(node, id, &mut cell, next).await?;
-    drop(cell);
-    schedule(node, id);
-    result
+    Ok(result.clone())
 }
 
 /// Associates asynchronous host acceptance with its durable composer reservation.
@@ -111,6 +166,10 @@ pub async fn bound(
     let Some(flight) = flight else { return Ok(()) };
     next.queue.retain(|entry| entry.id != flight.entry);
     next.pending.retain(|flight| &flight.delivery.id != delivery);
+    if next.sending.as_ref().is_some_and(|flight| &flight.delivery.id == delivery) {
+        next.sending = None;
+    }
+    settlement::record(node, id, &mut next, &flight, &Ok(Some(Landed::NewTurn { turn: turn.into() }))).await?;
     if flight.automatic && !receipts::ended(node, id, &next, turn).await? {
         next.awaiting_turn = Some(turn.into());
     }
@@ -142,6 +201,10 @@ pub async fn uncertain(
         entry.error = Some(why.into());
     }
     next.retire_unobserved(&flight.entry);
+    if next.sending.as_ref().is_some_and(|flight| &flight.delivery.id == delivery) {
+        next.sending = None;
+    }
+    settlement::record(node, id, &mut next, &flight, &Ok(Some(Landed::Uncertain { why: why.into() }))).await?;
     publish(node, id, &mut cell, next).await
 }
 
@@ -244,10 +307,11 @@ pub(super) fn after_commit(
     move || {
         let work: std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> = Box::pin(async move {
             let result = dispatch(&node, &id, flight).await;
+            if let Err(error) = &result {
+                node.log.line(format_args!("{id}'s committed input: {error}"));
+            }
             if let Some(reply) = reply {
                 let _ = reply.send(result);
-            } else if let Err(error) = result {
-                node.log.line(format_args!("{id}'s committed input: {error}"));
             }
         });
         fastctx_platform::task::spawn_on(&runtime, work);

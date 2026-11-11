@@ -35,51 +35,58 @@ impl Any {
     }
 
     pub fn decode<R: Read>(decoder: &mut R) -> Result<Self, Error> {
-        Ok(match decoder.read_u8()? {
-            // CASE 127: undefined
-            127 => Any::Undefined,
-            // CASE 126: null
-            126 => Any::Null,
-            // CASE 125: integer
-            125 => Any::Number(decoder.read_var::<i64>()? as f64),
-            // CASE 124: float32
-            124 => Any::Number(decoder.read_f32()? as f64),
-            // CASE 123: float64
-            123 => Any::Number(decoder.read_f64()?),
-            // CASE 122: bigint
-            122 => Any::BigInt(decoder.read_i64()?),
-            // CASE 121: boolean (false)
-            121 => Any::Bool(false),
-            // CASE 120: boolean (true)
-            120 => Any::Bool(true),
-            // CASE 119: string
-            119 => {
-                let str = decoder.read_string()?;
-                Any::String(Arc::from(str))
-            }
-            // CASE 118: Map<string,Any>
-            118 => {
-                let len: usize = decoder.read_var()?;
-                let mut map = HashMap::with_capacity(len);
-                for _ in 0..len {
-                    let key = decoder.read_string()?;
-                    map.insert(key.to_owned(), Any::decode(decoder)?);
+        decoder.enter_value()?;
+        let result = (|| {
+            Ok(match decoder.read_u8()? {
+                // CASE 127: undefined
+                127 => Any::Undefined,
+                // CASE 126: null
+                126 => Any::Null,
+                // CASE 125: integer
+                125 => Any::Number(decoder.read_var::<i64>()? as f64),
+                // CASE 124: float32
+                124 => Any::Number(decoder.read_f32()? as f64),
+                // CASE 123: float64
+                123 => Any::Number(decoder.read_f64()?),
+                // CASE 122: bigint
+                122 => Any::BigInt(decoder.read_i64()?),
+                // CASE 121: boolean (false)
+                121 => Any::Bool(false),
+                // CASE 120: boolean (true)
+                120 => Any::Bool(true),
+                // CASE 119: string
+                119 => {
+                    let str = decoder.read_string()?;
+                    Any::String(Arc::from(str))
                 }
-                Any::Map(Arc::new(map))
-            }
-            // CASE 117: Array<Any>
-            117 => {
-                let len: usize = decoder.read_var()?;
-                let mut arr = Vec::with_capacity(len);
-                for _ in 0..len {
-                    arr.push(Any::decode(decoder)?);
+                // CASE 118: Map<string,Any>
+                118 => {
+                    let len: usize = decoder.read_var()?;
+                    decoder.check_count(len)?;
+                    let mut map = HashMap::with_capacity(len);
+                    for _ in 0..len {
+                        let key = decoder.read_string()?;
+                        map.insert(key.to_owned(), Any::decode(decoder)?);
+                    }
+                    Any::Map(Arc::new(map))
                 }
-                Any::Array(Arc::from(arr))
-            }
-            // CASE 116: buffer
-            116 => Any::Buffer(Arc::from(decoder.read_buf()?)),
-            _ => return Err(Error::UnexpectedValue),
-        })
+                // CASE 117: Array<Any>
+                117 => {
+                    let len: usize = decoder.read_var()?;
+                    decoder.check_count(len)?;
+                    let mut arr = Vec::with_capacity(len);
+                    for _ in 0..len {
+                        arr.push(Any::decode(decoder)?);
+                    }
+                    Any::Array(Arc::from(arr))
+                }
+                // CASE 116: buffer
+                116 => Any::Buffer(Arc::from(decoder.read_buf()?)),
+                _ => return Err(Error::UnexpectedValue),
+            })
+        })();
+        decoder.leave_value();
+        result
     }
 
     // Encode data with efficient binary format.

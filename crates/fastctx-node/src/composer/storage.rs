@@ -119,9 +119,10 @@ pub(super) fn publish_then<'a>(
         if !node.residents.knows(id) {
             return Err(failure("unknown resident"));
         }
+        let operations = next.operations();
         let prepared = persistence::prepare(id, &mut next)?;
         let compact_due = prepared.compact_due();
-        let documents = node.composers.streams.prepare(id, synchronized(&mut next, &prepared)?);
+        let documents = node.composers.streams.prepare(id, synchronized(&mut next, &prepared, operations)?);
         let view = watching::legacy(node, id).then(|| Arc::new(next.view()));
         let revision = next.revision;
         let busy = super::idle::busy(&next);
@@ -153,7 +154,7 @@ pub(super) fn publish_then<'a>(
                 Ok(())
             }
             Err(reason) => {
-                let error = failure(reason);
+                let error = failures::storage(reason);
                 failures::hold(node, id, next.revision, next.held.unwrap_or_else(|| error.message.clone()));
                 node.watchers.publish(
                     id,
@@ -174,6 +175,7 @@ pub(super) fn publish_then<'a>(
 fn synchronized(
     state: &mut Stored,
     prepared: &persistence::Prepared,
+    operations: Vec<fastctx_types::composer::sync::Operation>,
 ) -> Result<fastctx_types::composer::sync::Frame, Failure> {
     use fastctx_types::composer::sync::{self, Bytes, Frame, Update};
     let visible = state.visible_document_ids();
@@ -192,7 +194,15 @@ fn synchronized(
         });
     }
     state.observed_documents = visible;
-    Ok(Frame::State { version: sync::VERSION, state: Box::new(state.metadata()), documents })
+    let mut metadata = state.metadata();
+    metadata.operations = operations;
+    Ok(Frame::State {
+        version: sync::VERSION,
+        state: Box::new(metadata),
+        documents,
+        vectors: Vec::new(),
+        mutations: true,
+    })
 }
 
 pub(super) fn event(composer: fastctx_types::composer::Composer) -> SessionEvent {

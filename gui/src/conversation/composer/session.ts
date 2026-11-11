@@ -4,6 +4,9 @@ import type { ComposerAttachmentAdded, ComposerChange, ComposerMutation, Compose
 import { composing } from "../../world/composing";
 import type { ComposerTransport } from "../../world/composing";
 import { ComposerDocument } from "./document";
+import { NativeComposer } from "./native";
+import { NativeComposerDocument } from "./native-document";
+import type { NativePiece } from "../../world/composer-sync";
 import type { ComposerJournal, Seal } from "./document";
 import { composerJournalStore } from "./journal";
 import type { ComposerJournalStore } from "./journal";
@@ -104,7 +107,8 @@ interface Operation extends Omit<ComposerOperation, "broken" | "change"> {
 
 interface DocumentEntry {
   readonly document: ComposerDocument;
-  readonly key: string;
+  key: string;
+  editing: boolean;
   saving?: Promise<void>;
   error: Error | null;
   dirty: boolean;
@@ -128,6 +132,7 @@ export class ComposerSession {
   private watching: { id: number; watch: string } | undefined;
   private generation = 0;
   private closed = false;
+  private ownsJournal = false;
   /** Settles once the words sent last from here settled. */
   /** How many of the words sent from here the node has taken: what moves the
    *  draft's epoch on from this side. */
@@ -142,6 +147,7 @@ export class ComposerSession {
   private readonly files = new Map<string, File>();
   private readonly listeners = new Set<(state: ComposerSessionState) => void>();
   private opening: Promise<void> | undefined;
+  private acquiring = false;
   private closing: Promise<void> | undefined;
   /** What waits for the shared input to be back. */
   private readonly waiting: { resolve: () => void; reject: (error: Error) => void }[] = [];
@@ -150,11 +156,12 @@ export class ComposerSession {
     private readonly transport: ComposerTransport,
     private readonly journal: ComposerJournalStore,
     readonly recoveryKey: string,
-    private readonly releaseWriter: () => void,
+    private readonly releaseWriter: () => Promise<void>,
     snapshot: ComposerSnapshot,
     saved: Awaited<ReturnType<ComposerJournalStore["read"]>>,
     /** The machine of the conversation, where what is asked of it goes. */
     private readonly machine: string | null,
+    private native?: NativeComposer | undefined,
   ) {
     this.snapshot = snapshot;
     const draft = [...saved].find(([key, value]) => key === "draft" && value.target.kind === "draft")
@@ -162,7 +169,24 @@ export class ComposerSession {
     this.draft = this.createDocument({ kind: "draft" }, draft?.[1], draft?.[0]);
     for (const [key, record] of saved) {
       if (key === draft?.[0]) continue;
+      if (record.native && !(record.native.editing ?? !key.startsWith("native:replica:"))) continue;
+
       this.editors.add(this.createDocument(record.target, record, key));
+    }
+    if (native) {
+      native.persist = async (id) => {
+        if (this.closed) return;
+        const entry = [...this.documents.values()].find((entry) => entry.document instanceof NativeComposerDocument && entry.document.document === id);
+        if (entry) await this.save(entry);
+        else {
+          const snapshot = native.snapshot(false);
+          const target: ComposerTarget = native.document({ kind: "draft" }) === id ? { kind: "draft" } : { kind: "queued", id: snapshot.queue.find((entry) => native.document({ kind: "queued", id: entry.id }) === id)?.id ?? id };
+          await this.journal.write(`native:replica:${id}`, { snapshot, target, pending: [], contexts: [], history: [], retired: [], native: native.journal(id) });
+        }
+      };
+      native.forget = (id) => this.closed ? Promise.resolve() : this.journal.write(`native:replica:${id}`, null);
+      native.transmit = (input) => this.transport.documentInput!(this.watching!.id, input);
+      native.subscribe(() => { this.receive(native.snapshot(), true, true); });
     }
   }
 
@@ -170,16 +194,48 @@ export class ComposerSession {
     const transport = options.transport ?? composing(who);
     const writer = await composerWriter(who, options.recoveryKey);
     let session: ComposerSession | undefined;
+    let journal: ComposerJournalStore | undefined;
     try {
-      const journal = options.journal ?? await composerJournalStore(writer.key);
+      journal = options.journal ?? await composerJournalStore(writer.key);
       const saved = await journal.read();
+      // An old identity outbox is drained through its original protocol before
+      // a later open upgrades it. Native records use separate keys and survive
+      // a temporary connection to an older node unchanged.
+      if (transport.watchDocuments && ![...saved.values()].some((record) => !record.native && record.pending.length)) {
+        const native = new NativeComposer([...saved.values()]);
+        const buffered: NativePiece[] = [];
+        const opened = await transport.watchDocuments(native.known(), (piece) => {
+          if (session) { if (session.generation === 0 && !session.closed) session.nativePiece(piece); } else buffered.push(piece);
+        });
+        if (opened) {
+          native.receive(opened.frame);
+          const records = new Map([...saved].filter(([, record]) => !!record.native));
+          session = new ComposerSession(transport, journal, writer.key, writer.release, native.snapshot(), records, who.machine, native);
+          session.ownsJournal = !options.journal;
+          session.watching = opened;
+          session.acquiring = true;
+          native.connect(false);
+          await session.acquireEditors(opened.watch);
+          session.acquiring = false;
+          session.connect();
+          for (const piece of buffered) session.nativePiece(piece);
+          return session;
+        }
+        native.dispose();
+      }
       const initial = await transport.read();
-      session = new ComposerSession(transport, journal, writer.key, writer.release, initial.composer, saved, who.machine);
+      const legacy = new Map([...saved].filter(([, record]) => !record.native));
+      session = new ComposerSession(transport, journal, writer.key, writer.release, initial.composer, legacy, who.machine);
+      session.ownsJournal = !options.journal;
       await session.reconnect();
       return session;
     } catch (error) {
-      if (session) await session.close();
-      else writer.release();
+      try { if (session) await session.close(); }
+      catch (cleanup) { console.error("closing an unopened composer failed", cleanup); }
+      finally {
+        if (!options.journal) journal?.close?.();
+        await writer.release();
+      }
       throw error;
     }
   }
@@ -224,7 +280,77 @@ export class ComposerSession {
     return this.opening;
   }
 
+  private nativePiece(piece: NativePiece): void {
+    if (this.closed || !this.native) return;
+    if (piece.kind === "interrupted") { this.disconnect(piece.error ? errorOf(piece.error) : null); return; }
+    if (!this.watching) return;
+    const changed = this.watching.watch !== piece.watch;
+    if (changed) { this.disconnect(null); this.watching = { ...this.watching, watch: piece.watch }; }
+    this.native.receive(piece.frame);
+    if (changed) this.acquiring = true;
+    this.native.connect(!this.acquiring);
+    if (!changed && !this.connected && !this.acquiring) this.connect();
+    if (changed) {
+      const generation = this.generation;
+      void this.acquireEditors(piece.watch).then(() => {
+        if (generation !== this.generation || this.watching?.watch !== piece.watch || this.closed) return;
+        this.acquiring = false; this.connect();
+      }, (error: unknown) => {
+        if (generation !== this.generation || this.watching?.watch !== piece.watch || this.closed) return;
+        this.acquiring = false; this.disconnect(errorOf(error));
+      });
+    }
+  }
+
   private async openWatch(): Promise<void> {
+    if (this.native) {
+      const generation = ++this.generation;
+      this.disconnect(null);
+      const old = this.watching;
+      this.watching = undefined;
+      if (old) await this.transport.unwatch(old.id);
+      let ready = false;
+      const buffered: NativePiece[] = [];
+      const opened = await this.transport.watchDocuments!(this.native.known(), (piece) => {
+        if (generation !== this.generation || this.closed) return;
+        if (ready) this.nativePiece(piece); else buffered.push(piece);
+      });
+      if (!opened) {
+        let updated: ComposerUpdated;
+        try {
+          for (;;) {
+            if (this.native.pending) {
+              if (!this.transport.syncText) throw new Error("the older node cannot synchronize this retained input yet; the local text is kept");
+              await this.native.drainForLegacy((input) => this.transport.syncText!(input));
+            }
+            updated = await this.transport.read();
+            if (!this.native.pending) break;
+          }
+        } catch (error) { this.draft.setStorageError(errorOf(error)); throw error; }
+        const native = this.native;
+        for (const [document, entry] of this.documents) if (document instanceof NativeComposerDocument) {
+          document.useLegacy(updated.composer, async (mutation) => {
+            await this.save(entry);
+            const updated = await this.transport.update(mutation); this.receive(updated.composer); return updated;
+          });
+          entry.key = draftKey(document.view.state.target);
+        }
+        this.native = undefined; native.dispose(); this.receive(updated.composer, true);
+        return this.openWatch();
+      }
+      if (generation !== this.generation || this.closed) { await this.transport.unwatch(opened.id); return; }
+      this.watching = opened;
+      this.acquiring = true;
+      this.native.receive(opened.frame);
+      ready = true;
+      this.native.connect(false);
+      for (const piece of buffered) this.nativePiece(piece);
+      try {
+        await this.acquireEditors(opened.watch);
+        if (generation === this.generation && !this.closed) { this.acquiring = false; this.connect(); }
+      } catch (error) { this.acquiring = false; this.disconnect(errorOf(error)); throw error; }
+      return;
+    }
     const generation = ++this.generation;
     this.disconnect(null);
     const old = this.watching;
@@ -262,6 +388,7 @@ export class ComposerSession {
   }
 
   private connect(): void {
+    this.native?.connect();
     this.connected = true;
     this.error = null;
     for (const document of this.documents.keys()) document.setConnected(true);
@@ -312,6 +439,7 @@ export class ComposerSession {
   }
 
   private disconnect(error: Error | null): void {
+    this.native?.disconnect();
     this.connected = false;
     this.error = error;
     for (const document of this.documents.keys()) document.setConnected(false);
@@ -328,23 +456,28 @@ export class ComposerSession {
     this.emit();
   }
 
-  private receive(snapshot: ComposerSnapshot, reset = false): void {
+  private receive(snapshot: ComposerSnapshot, reset = false, native = false): void {
+    if (this.native && !native) return;
     if (!reset && snapshot.revision <= this.snapshot.revision) return;
     this.snapshot = snapshot;
     const held = new Set([snapshot.draft, ...snapshot.queue.map((item) => item.draft), ...snapshot.unobserved.map((item) => item.draft)]
       .flatMap((draft) => draft.attachments.map((file) => file.id)));
     for (const id of this.files.keys()) if (!held.has(id)) this.files.delete(id);
     for (const document of this.documents.keys()) document.receive(snapshot, reset);
+    this.retainNative();
     this.emit();
   }
 
+  private retainNative(): void {
+    this.native?.retain([...this.documents.keys()].filter((document): document is NativeComposerDocument => document instanceof NativeComposerDocument).map((document) => document.document));
+  }
   private createDocument(target: ComposerTarget, saved?: ComposerJournal, key = draftKey(target)): ComposerDocument {
     let entry: DocumentEntry;
-    const document = new ComposerDocument({ target: saved?.target ?? target, snapshot: saved?.snapshot ?? this.snapshot,
+    const document = this.native ? new NativeComposerDocument(this.native, target, saved) : new ComposerDocument({ target: saved?.target ?? target, snapshot: saved?.snapshot ?? this.snapshot,
       ...(saved ? { journal: saved } : {}), send: async (mutation) => {
         await this.save(entry);
         try {
-          const updated = await this.transport.update(mutation);
+          const updated = await this.update(mutation);
           this.receive(updated.composer);
           return updated;
         } catch (error) {
@@ -362,7 +495,10 @@ export class ComposerSession {
           throw failure;
         }
       } });
-    entry = { document, key, error: null, dirty: false, unsubscribe: () => {} };
+    // One key per native document prevents a stale editor record from hiding a
+    // newer retained replica and its exact repair outbox after reopening.
+    const journalKey = document instanceof NativeComposerDocument ? `native:replica:${document.document}` : key;
+    entry = { document, key: journalKey, editing: target.kind === "queued", error: null, dirty: false, unsubscribe: () => {} };
     this.documents.set(document, entry);
     document.setConnected(false);
     document.receive(this.snapshot, true);
@@ -374,15 +510,21 @@ export class ComposerSession {
   }
 
   private save(entry: DocumentEntry): Promise<void> {
+    if (this.closed) return Promise.resolve();
     entry.dirty = true;
     if (entry.saving) return entry.saving;
     entry.saving = Promise.resolve().then(async () => {
       while (entry.dirty) {
         entry.dirty = false;
-        await this.journal.write(entry.key, entry.document.checkpoint());
+        const checkpoint = entry.document.checkpoint();
+        await this.journal.write(entry.key, checkpoint?.native ? { ...checkpoint, native: { ...checkpoint.native, editing: entry.editing } } : checkpoint);
       }
-      entry.error = null;
-    }).catch((error: unknown) => { entry.error = errorOf(error); throw entry.error; }).finally(() => { delete entry.saving; this.emit(); });
+      entry.error = null; entry.document.setStorageError(null);
+    }).catch((error: unknown) => {
+      entry.error = errorOf(error);
+      entry.document.setStorageError(entry.error);
+      throw entry.error;
+    }).finally(() => { delete entry.saving; this.emit(); });
     return entry.saving;
   }
 
@@ -408,7 +550,7 @@ export class ComposerSession {
       if (target.kind !== "queued") continue;
       const item = this.snapshot.queue.find((item) => item.id === target.id);
       if (!item || item.sending) continue;
-      const updated = await this.transport.update({ operation: crypto.randomUUID(), do: "editing", id: target.id, watch, editing: true });
+      const updated = await this.update({ operation: crypto.randomUUID(), do: "editing", id: target.id, watch, editing: true });
       this.receive(updated.composer);
     }
   }
@@ -422,7 +564,9 @@ export class ComposerSession {
     try {
       await this.flushMetadata(document.view.state.target, document.view.state.epoch);
       await document.flush();
-      await this.save(this.documents.get(document)!);
+      const entry = this.documents.get(document)!;
+      entry.editing = false;
+      await this.save(entry);
       const target = document.view.state.target;
       if (target.kind === "queued" && this.snapshot.queue.some((item) => item.id === target.id)) {
         this.assertConnected();
@@ -432,8 +576,11 @@ export class ComposerSession {
       this.documents.get(document)!.unsubscribe();
       document.dispose();
       this.documents.delete(document);
-      this.emit();
+      this.retainNative(); this.emit();
     } catch (error) {
+      const entry = this.documents.get(document)!;
+      entry.editing = true;
+      void this.save(entry).catch(() => {});
       document.setClosing(false);
       throw error;
     }
@@ -541,7 +688,10 @@ export class ComposerSession {
           // What was typed goes to the node before the words are sent; a node
           // that does not take it in time leaves them not sent.
           await this.meanwhile(this.flushMetadata({ kind: "draft" }, epoch), outcome, false);
-          await this.meanwhile(this.flushDocuments({ kind: "draft" }), outcome, false);
+          // Only pre-seal updates must be Saved. Later typing remains behind the
+          // hold, so it cannot delay or enter the captured send.
+          if (document instanceof NativeComposerDocument && document.nativeActive) await this.meanwhile(document.flushCaptured(seal), outcome, false);
+          else await this.meanwhile(this.flushDocuments({ kind: "draft" }), outcome, false);
           break;
         } catch (error) {
           if (this.connected || this.closed || this.closing) throw error;
@@ -559,9 +709,10 @@ export class ComposerSession {
       throw new Error(SENT_ELSEWHERE);
     }
     document.asking(seal, epoch);
-    const mutation: ComposerMutation = { do: "send", epoch, operation: crypto.randomUUID() };
+    const operationId = crypto.randomUUID();
+    const mutation: ComposerMutation = { ...(document instanceof NativeComposerDocument && document.nativeActive ? document.captured(seal, epoch, operationId) : { do: "send" as const, epoch }), operation: operationId };
     const operation: Operation = { id: mutation.operation, change: { do: "send", epoch }, status: "pending", error: null, result: null, attempt: 0,
-      run: () => this.transport.update(mutation) };
+      run: () => this.update(mutation) };
     this.operations.set(operation.id, operation);
     outcome.operation = operation;
     try {
@@ -570,8 +721,17 @@ export class ComposerSession {
       return updated;
     } catch (error) {
       // Taken back, they are not sent again when the line is back.
-      if (error instanceof Withdrawn) this.operations.delete(operation.id);
-      document.unseal(seal);
+      try {
+        if (error instanceof Withdrawn) {
+          this.operations.delete(operation.id);
+          try { await this.native?.withdraw(operation.id); }
+          catch (failure) {
+            const entry = this.documents.get(document);
+            if (entry) { entry.error = errorOf(failure); entry.document.setStorageError(entry.error); }
+            this.emit();
+          }
+        }
+      } finally { document.unseal(seal); }
       throw error;
     }
   }
@@ -659,8 +819,19 @@ export class ComposerSession {
       // Closing hands this outbox to a later writer. A late upload or copy
       // must never delete that writer's newer edits.
       if (this.closed || this.closing) return;
+      const priorKey = entry.key;
       document.discardPending();
+      if (document instanceof NativeComposerDocument) {
+        entry.key = `native:replica:${document.document}`;
+        entry.editing = document.view.state.target.kind === "queued";
+      }
       await this.save(entry);
+      if (priorKey !== entry.key) await this.journal.write(priorKey, null);
+      document.setPreservationError(null);
+      this.retainNative();
+    } catch (error) {
+      document.setPreservationError(errorOf(error));
+      throw error;
     } finally { if (!this.closed && !this.closing) document.finishRecovery(); }
   }
 
@@ -728,11 +899,15 @@ export class ComposerSession {
     }
   }
 
+  private update(mutation: ComposerMutation): Promise<ComposerUpdated> {
+    return this.native ? this.native.mutate(mutation) : this.transport.update(mutation);
+  }
+
   private mutate(change: ComposerChange): Promise<ComposerUpdated> {
     this.assertConnected();
     const mutation: ComposerMutation = { ...change, operation: crypto.randomUUID() };
     const operation: Operation = { id: mutation.operation, change, status: "pending", error: null, result: null, attempt: 0,
-      run: () => this.transport.update(mutation) };
+      run: () => this.update(mutation) };
     this.operations.set(operation.id, operation);
     return this.run(operation) as Promise<ComposerUpdated>;
   }
@@ -763,7 +938,7 @@ export class ComposerSession {
         operation.status = "failed";
         operation.broken = unanswered(error) || !this.connected;
         reject(operation.error);
-        void this.transport.read().then((updated) => { this.receive(updated.composer); },
+        if (!this.native) void this.transport.read().then((updated) => { this.receive(updated.composer); },
           (error: unknown) => { this.error = errorOf(error); this.emit(); });
       }).finally(() => {
         if (operation.attempt !== attempt) return;
@@ -796,6 +971,7 @@ export class ComposerSession {
   async retry(): Promise<void> {
     this.assertOpen();
     if (!this.connected) await this.reconnect();
+    else if (this.native) await this.reconnect();
     else {
       const updated = await this.transport.read();
       this.receive(updated.composer);
@@ -818,13 +994,15 @@ export class ComposerSession {
     for (const waiting of this.waiting.splice(0)) waiting.reject(new Error("the composer is closed"));
     try {
       await Promise.all([...this.documents.values()].map((entry) => this.save(entry)));
+      await this.native?.flushRetained();
       for (const entry of this.documents.values()) { entry.unsubscribe(); entry.document.dispose(); }
+      this.native?.dispose();
       this.closed = true;
     } finally {
       const watching = this.watching;
       this.watching = undefined;
       try { if (watching) await this.transport.unwatch(watching.id); }
-      finally { if (this.closed) { this.releaseWriter(); this.listeners.clear(); this.files.clear(); } }
+      finally { if (this.closed) { await this.releaseWriter(); if (this.ownsJournal) this.journal.close?.(); this.listeners.clear(); this.files.clear(); } }
     }
   }
 

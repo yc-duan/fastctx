@@ -133,6 +133,9 @@ impl Document {
         self.prune_aliases();
         Ok(())
     }
+    pub fn vector(&self) -> Result<Vec<u8>, Failure> {
+        Ok(self.text().state_vector())
+    }
     pub fn alias_bytes(&self) -> usize {
         self.indexed.bytes + self.aliases.len().saturating_sub(1)
     }
@@ -188,17 +191,25 @@ impl Document {
     pub fn update_for(&self, vector: Option<&[u8]>) -> Result<Vec<u8>, Failure> {
         self.text().update_for(vector).map_err(failure)
     }
-    pub fn merge(&mut self, update: &[u8]) -> Result<(), Failure> {
+
+    pub fn merge_decoded(&mut self, update: fastctx_draft::DecodedUpdate, bytes: &[u8]) -> Result<(), Failure> {
         let before = self.text().character_count();
-        self.text_mut().apply(update).map_err(failure)?;
+        self.text_mut().apply_decoded(update).map_err(failure)?;
+        // Causal integration can unlock older pending updates, so exact scalar
+        // growth is checked here. The caller owns this tentative state: an error
+        // drops it with the cell empty, and reloads committed authority next time.
         limits::growth(before, self.text().character_count())?;
-        self.pending.push(update.to_vec());
+        self.pending.push(bytes.to_vec());
         Ok(())
     }
 
     /// Capture uses the sender's replica, so authority learned meanwhile remains
-    /// in the original document. Unselected uploads keep their original epoch.
-    pub fn take_snapshot(&mut self, snapshot: &[u8], attachments: &[fastctx_types::NoticeId]) -> Result<Self, Failure> {
+    /// in the original document. Surviving upload identities cross the seal.
+    pub fn take_snapshot(
+        &mut self,
+        captured: super::capture::Prepared,
+        attachments: &[fastctx_types::NoticeId],
+    ) -> Result<Self, Failure> {
         let selected: std::collections::HashSet<_> = attachments.iter().collect();
         if selected.len() != attachments.len() {
             return Err(failure("the send repeats an attachment identity"));
@@ -213,22 +224,17 @@ impl Document {
                     .ok_or_else(|| failure("an attachment selected for sending is no longer on this draft"))
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let mut frozen = fastctx_draft::Document::restore(snapshot).map_err(failure)?;
-        if frozen.character_count() > fastctx_types::composer::MAX_DOCUMENT_CHARACTERS {
-            return Err(Failure::new(fastctx_types::composer::DOCUMENT_TOO_LONG));
-        }
-        let text = frozen.text();
+        let super::capture::Prepared { text, deletion, bytes } = captured;
         if text.trim().is_empty() && files.is_empty() {
             return Err(failure("the captured draft is empty"));
         }
-        let missing = frozen.update_for(Some(&self.text().state_vector())).map_err(failure)?;
-        let taken = frozen.take();
+        self.text().validate_capture(&deletion, &text).map_err(failure)?;
         let mut queued = Self { attachments: files, files_on: self.files_on.clone(), ..Self::default() };
         let update = queued.text_mut().splice(0, 0, &text).map_err(failure)?;
         queued.pending.push(update);
-        self.merge(&missing)?;
-        self.merge(&taken.update)?;
+        self.merge_decoded(deletion, &bytes)?;
         self.attachments.retain(|file| !selected.contains(&file.id));
+        self.epoch = self.epoch.checked_add(1).ok_or_else(|| failure("the draft epoch overflowed"))?;
         if self.attachments.is_empty() && self.uploads.is_empty() && self.text().is_empty() {
             self.files_on = None;
         }
@@ -316,6 +322,12 @@ impl Document {
         self.indexed = Aliases::default();
         self.epoch = self.epoch.checked_add(1).ok_or_else(|| failure("draft epoch overflow"))?;
         Ok(queued)
+    }
+    pub fn can_take_back(&self, words: &Document) -> Result<(), Failure> {
+        let before = self.text().character_count();
+        let newline = !self.text().is_empty() && !words.text().text().ends_with('\n');
+        let after = before.saturating_add(words.text().character_count()).saturating_add(usize::from(newline));
+        limits::growth(before, after)
     }
     pub fn take_back(&mut self, words: Document, _line: &str) -> Result<(), Failure> {
         let words = words.view();

@@ -1,5 +1,7 @@
 //! The only writer and release coordinator of each conversation's composer.
 
+mod answer;
+mod capture;
 mod commands;
 pub(crate) mod compaction;
 mod document;
@@ -12,6 +14,7 @@ mod legacy_refresh;
 mod limits;
 pub(crate) use idle::input_busy;
 pub(crate) use keeping::start as keep;
+pub(crate) use limits::update as validate_document_input;
 mod persistence;
 mod publication;
 mod receipts;
@@ -20,11 +23,12 @@ pub(crate) use persistence::SCHEMA;
 mod rejected;
 pub(crate) use rejected::rejected;
 mod sending;
+mod settlement;
 mod state;
 mod storage;
 mod submissions;
 mod synchronizing;
-pub use synchronizing::{update_document, watch_documents};
+pub use synchronizing::{update_document, update_document_from, watch_documents};
 pub(crate) mod uploads;
 mod watching;
 
@@ -137,13 +141,24 @@ pub fn here<'a>(
     id: &'a ResidentId,
     request: Request,
 ) -> Future<'a, Updated> {
+    Box::pin(async move { accepting(node, from, id, request, false).await.map(|(answer, _)| answer.updated()) })
+}
+
+fn accepting<'a>(
+    node: &'a Arc<Node>,
+    from: &'a MachineName,
+    id: &'a ResidentId,
+    request: Request,
+    bounded: bool,
+) -> Future<'a, (answer::Answer, bool)> {
     Box::pin(async move {
         limits::request(&request)?;
-        node.ready_for(id).await;
+        let captured = capture::prepare(&request)?;
         if let Request::Sync { input } = request {
-            update_document(node, id, *input).await?;
-            return here(node, from, id, Request::Read).await;
+            update_document_from(node, from, id, *input).await?;
+            return here(node, from, id, Request::Read).await.map(|updated| (answer::Answer::legacy(updated), false));
         }
+        node.ready_for(id).await;
         if matches!(request, Request::Read) {
             node.residents.active(id)?;
             let snapshot = node
@@ -154,7 +169,10 @@ pub fn here<'a>(
                 .get(id)
                 .and_then(|snapshot| snapshot.view.clone());
             if let Some(composer) = snapshot.filter(|_| !recovery::pending(node, id)) {
-                return Ok(Updated { composer: (*composer).clone(), landed: None, delivery: None });
+                return Ok((
+                    answer::Answer::legacy(Updated { composer: (*composer).clone(), landed: None, delivery: None }),
+                    false,
+                ));
             }
             let gate = node.residents.management(id)?;
             let _reading = crate::gate_waits::shared(node, id, &gate).await?;
@@ -171,7 +189,7 @@ pub fn here<'a>(
                 id,
                 Arc::new(composer.clone()),
             );
-            return Ok(Updated { composer, landed: None, delivery: None });
+            return Ok((answer::Answer::legacy(Updated { composer, landed: None, delivery: None }), false));
         }
         let gate = node.residents.management(id)?;
         let _reading = crate::gate_waits::shared(node, id, &gate).await?;
@@ -196,11 +214,37 @@ pub fn here<'a>(
             if let Some(error) = &receipt.failure {
                 return Err(Failure::new(error.clone()));
             }
-            return Ok(Updated {
-                composer: state.view(),
-                landed: receipt.landed.clone(),
-                delivery: receipt.delivery.clone(),
-            });
+            let pending = state
+                .sending
+                .iter()
+                .chain(&state.pending)
+                .find(|flight| flight.operation.as_deref() == Some(mutation.operation.as_str()));
+            return Ok((
+                answer::Answer::state(
+                    state,
+                    bounded,
+                    receipt.landed.clone(),
+                    receipt.delivery.clone().or_else(|| pending.map(|flight| flight.delivery.id.clone())),
+                ),
+                bounded && receipt.delivery.is_none() && pending.is_some(),
+            ));
+        }
+        if let Some(outcome) = receipts::outcome(node, id, state, &mutation.operation).await? {
+            if let Some(error) = outcome.failure {
+                return Err(Failure::new(error));
+            }
+            return Ok((answer::Answer::state(state, bounded, outcome.landed, outcome.delivery), false));
+        }
+        if let Some(flight) = state
+            .sending
+            .iter()
+            .chain(&state.pending)
+            .find(|flight| flight.operation.as_deref() == Some(mutation.operation.as_str()))
+        {
+            return Ok((answer::Answer::state(state, bounded, None, Some(flight.delivery.id.clone())), true));
+        }
+        if matches!(&mutation.change, Change::SendDocument { epoch: None, .. }) {
+            return Err(failure("the captured send requires its draft epoch; synchronize before sending"));
         }
         // An edit of an epoch of the draft sent since, from a device whose
         // answer and receipt are gone, was done if that epoch took it: it is
@@ -209,7 +253,7 @@ pub fn here<'a>(
             && *epoch < state.draft.epoch
             && receipts::taken(node, id, state, *epoch, &mutation.operation).await?
         {
-            return Ok(Updated { composer: state.view(), landed: None, delivery: None });
+            return Ok((answer::Answer::state(state, bounded, None, None), false));
         }
         if let Change::Edit { target, epoch, .. } = &mutation.change {
             cell.as_mut().expect("loaded").document(target, *epoch)?.reconcile_legacy();
@@ -224,7 +268,7 @@ pub fn here<'a>(
         let mut flight = None;
         match &mutation.change {
             Change::Send { .. } | Change::SendDocument { .. } => {
-                flight = sending::capture(node, id, &mut next, from, &mutation.change)?;
+                flight = sending::capture(node, id, &mut next, from, &mutation.change, captured)?;
             }
             Change::SendQueued { id } => flight = Some(next.reserve(id, false, false)?),
             Change::Editing { id: entry, watch, editing } => {
@@ -269,19 +313,32 @@ pub fn here<'a>(
             });
         })
         .await?;
-        let view = cell.as_ref().expect("loaded").view();
+        let mut result = answer::Answer::state(cell.as_ref().expect("loaded"), bounded, None, None);
         drop(cell);
         drop(_reading);
         let Some((delivery, answer)) = answer else {
             schedule(node, id);
-            return Ok(Updated { composer: view, landed: None, delivery: None });
+            return Ok((result, false));
         };
-        let delivered = answer.await.map_err(failure)?;
+        // The capture is already durable. Native clients receive its operation
+        // state and never wait on a host for more than this foreground interval.
+        let delivered = if bounded {
+            match tokio::time::timeout(std::time::Duration::from_millis(100), answer).await {
+                Ok(Ok(answer)) => answer,
+                Ok(Err(_)) | Err(_) => {
+                    result.delivery = Some(delivery);
+                    return Ok((result, true));
+                }
+            }
+        } else {
+            answer.await.map_err(failure)?
+        };
         let cell = node.composers.cell(id);
         let mut cell = cell.lock().await;
         load(node, id, &mut cell).await?;
-        let composer = cell.as_ref().expect("loaded").view();
-        delivered.map(|landed| Updated { composer, landed, delivery: Some(delivery) })
+        delivered.map(|landed| {
+            (answer::Answer::state(cell.as_ref().expect("loaded"), bounded, landed, Some(delivery)), false)
+        })
     })
 }
 

@@ -1,9 +1,11 @@
 import type { ComposerJournal } from "./document";
+import { NativeJournalStorage } from "./native-journal";
 
 /** The local outbox holds only unacknowledged edits. Shared drafts and queues live on the node. */
 export interface ComposerJournalStore {
   read(): Promise<ReadonlyMap<string, ComposerJournal>>;
   write(key: string, journal: ComposerJournal | null): Promise<void>;
+  close?(): void;
 }
 
 function database(): Promise<IDBDatabase> {
@@ -21,6 +23,8 @@ export async function composerJournalStore(recoveryKey: string): Promise<Compose
   const db = await database();
   const prefix = `${recoveryKey}\u0000`;
   const range = IDBKeyRange.bound(prefix, `${prefix}\uffff`);
+  const native = new NativeJournalStorage(db, prefix);
+  const nativeKeys = new Set<string>();
   return {
     read: () => new Promise((resolve, reject) => {
       const transaction = db.transaction("edits", "readonly");
@@ -29,20 +33,29 @@ export async function composerJournalStore(recoveryKey: string): Promise<Compose
       request.onsuccess = () => {
         const cursor = request.result;
         if (!cursor) return;
-        entries.set(String(cursor.key).slice(prefix.length), cursor.value as ComposerJournal);
+        const key = String(cursor.key).slice(prefix.length);
+        entries.set(key, cursor.value as ComposerJournal);
+        if ((cursor.value as ComposerJournal).native) nativeKeys.add(key);
         cursor.continue();
       };
-      transaction.oncomplete = () => { resolve(entries); };
+      transaction.oncomplete = () => { native.hydrate(entries).then(resolve, reject); };
       transaction.onabort = () => { reject(transaction.error ?? new Error("the composer outbox read was aborted")); };
     }),
-    write: (key, journal) => new Promise((resolve, reject) => {
+    close: () => db.close(),
+    write: (key, journal) => {
+      if (journal?.native?.updates || nativeKeys.has(key)) {
+        nativeKeys.add(key);
+        return native.write(key, journal);
+      }
+      return new Promise((resolve, reject) => {
       const transaction = db.transaction("edits", "readwrite");
       const store = transaction.objectStore("edits");
       if (journal) store.put(journal, prefix + key);
       else store.delete(prefix + key);
       transaction.oncomplete = () => { resolve(); };
       transaction.onabort = () => { reject(transaction.error ?? new Error("the composer outbox write was aborted")); };
-    }),
+      });
+    },
   };
 }
 
@@ -54,7 +67,7 @@ export async function composerRecoveries(): Promise<string[]> {
     return await new Promise((resolve, reject) => {
       const transaction = db.transaction("edits", "readonly");
       const request = transaction.objectStore("edits").getAllKeys();
-      transaction.oncomplete = () => { resolve([...new Set(request.result.map((key) => String(key).split("\u0000")[0]))]); };
+      transaction.oncomplete = () => { resolve([...new Set(request.result.filter((key) => !String(key).startsWith("\u0001")).map((key) => String(key).split("\u0000")[0]))]); };
       transaction.onabort = () => { reject(transaction.error ?? new Error("the composer outbox read was aborted")); };
     });
   } finally { db.close(); }

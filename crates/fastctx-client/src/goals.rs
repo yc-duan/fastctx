@@ -40,6 +40,7 @@ impl World {
                         resident,
                         machine,
                         composer: None,
+                        documents: None,
                         held: None,
                         now: false,
                         live_only: false,

@@ -8,9 +8,13 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error};
 
 pub const VERSION: u32 = 1;
-/// A paste of 30,000 four-byte scalars uses 120,000 bytes plus a short Yjs header.
-/// The remaining space admits metadata while bounding work before editor locks.
-pub const MAX_UPDATE_BYTES: usize = 128 * 1024;
+/// Bounds decoding before editor locks while admitting 30,000-scalar replacements
+/// with fragmented UTF-16 deletion ranges as well as four-byte pasted text.
+pub const MAX_UPDATE_BYTES: usize = 1024 * 1024;
+/// A fresh frozen body of at most 30,000 scalars, with codec framing.
+pub const MAX_SNAPSHOT_BYTES: usize = 128 * 1024;
+/// At most 30,000 captured scalars, including fragmented UTF-16 identity ranges.
+pub const MAX_TAKE_BYTES: usize = 1024 * 1024;
 
 /// A Yjs v1 update or state vector, encoded as base64 in JSON.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -69,6 +73,8 @@ pub struct State {
     pub unobserved: Vec<Queued>,
     pub held: Option<String>,
     pub awaiting_turn: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub operations: Vec<Operation>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Update {
@@ -83,15 +89,44 @@ pub struct Update {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Input {
     Update { number: u64, document: String, update: Bytes },
+    Mutate { number: u64, mutation: Box<super::Mutation> },
+}
+impl Input {
+    pub fn number(&self) -> u64 {
+        match self {
+            Self::Update { number, .. } | Self::Mutate { number, .. } => *number,
+        }
+    }
+}
+/// A send is accepted after its capture, flight, and receipt commit together.
+/// The same operation later carries dispatch's result on the state stream.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Operation {
+    pub operation: String,
+    pub delivery: Option<NoticeId>,
+    pub accepted: bool,
+    pub landed: Option<crate::residents::Landed>,
+    pub failure: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Frame {
+    Result {
+        number: u64,
+        revision: u64,
+        operation: Operation,
+    },
     State {
         version: u32,
         state: Box<State>,
         documents: Vec<Update>,
+        /// Authority vectors let a retained replica repair accepted, unsynced text.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        vectors: Vec<Vector>,
+        /// Native mutation receipts and bounded send acceptance are supported.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        mutations: bool,
     },
     Update {
         revision: u64,

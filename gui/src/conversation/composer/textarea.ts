@@ -18,6 +18,7 @@ export function bindComposer(
   textarea: HTMLTextAreaElement,
   document: ComposerDocument,
   onState: (state: ComposerState) => void = () => {},
+  sharedNotice?: HTMLElement,
 ): () => void {
   let shown = document.view.characters;
   let epoch = document.view.state.epoch;
@@ -30,6 +31,14 @@ export function bindComposer(
   let detached = false;
   let view = document.view;
   const originalReadOnly = textarea.readOnly;
+  const notice = sharedNotice ?? textarea.ownerDocument.createElement("p");
+  let noticeError = "";
+  if (!sharedNotice) {
+    notice.className = "composer-text-note"; notice.setAttribute("role", "status"); notice.hidden = true;
+    textarea.after(notice);
+    // Queued editors can bind before their field is inserted into the page.
+    queueMicrotask(() => { if (!detached) textarea.after(notice); });
+  }
   textarea.value = textareaText(shown);
 
   const selection = (value = textarea.value): Selection => ({
@@ -45,6 +54,10 @@ export function bindComposer(
   const render = (next: ComposerView): void => {
     if (detached) return;
     view = next;
+    const error = next.state.error instanceof Error ? next.state.error.message : next.state.error ? String(next.state.error) : "";
+    if (error) { notice.textContent = error; notice.hidden = false; }
+    else if (!sharedNotice || notice.textContent === noticeError) { notice.textContent = ""; notice.hidden = true; }
+    noticeError = error;
     try { onState(next.state); } catch (error) { console.error("a composer input observer failed", error); }
     if (composition || before || detached) return;
     const value = textareaText(next.characters);
@@ -183,5 +196,7 @@ export function bindComposer(
     textarea.removeEventListener("compositionstart", compositionStart);
     textarea.removeEventListener("compositionend", compositionEnd);
     textarea.readOnly = originalReadOnly;
+    if (!sharedNotice) notice.remove();
+    else if (noticeError && notice.textContent === noticeError) { notice.textContent = ""; notice.hidden = true; }
   };
 }

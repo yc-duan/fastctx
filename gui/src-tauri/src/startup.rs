@@ -104,6 +104,7 @@ pub fn open(app: tauri::AppHandle) {
                     watches: Default::default(),
                     transcripts: Default::default(),
                     deliveries: Default::default(),
+                    composer_inputs: Default::default(),
                     next: AtomicU64::new(0),
                     page: AtomicU64::new(0),
                     line_requests: Default::default(),

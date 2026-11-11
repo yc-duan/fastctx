@@ -35,6 +35,7 @@ interface Sealed extends Seal {
 
 /** Recovery data for unacknowledged edits, never an authority for the shared draft. */
 export interface ComposerJournal {
+  readonly native?: import("./native").NativeJournal;
   readonly snapshot: ComposerSnapshot;
   readonly target: ComposerTarget;
   readonly pending: readonly { mutation: ComposerEdit; context: number | null; attempted: boolean; observed: boolean }[];
@@ -107,6 +108,9 @@ export class ComposerDocument {
   private rejectedCharacters = false;
   private flight: Pending | undefined;
   private error: unknown = null;
+  private sender: ComposerDocumentOptions["send"] | undefined;
+  private storageFailure: Error | null = null;
+  private preservationFailure: Error | null = null;
   /** An edit no answer came to, or a busy machine did not start, goes again
    *  after this wait: how many times it went, and how to call the wait off. */
   private tries = 0;
@@ -140,6 +144,7 @@ export class ComposerDocument {
     }
   }
 
+  protected setSender(send: ComposerDocumentOptions["send"]): void { this.sender = send; }
   get attachments(): ComposerDraft["attachments"] {
     const going = this.attachmentsOnTheirWay;
     return going.size ? this.draft.attachments.filter((one) => !going.has(one.id)) : this.draft.attachments;
@@ -191,10 +196,10 @@ export class ComposerDocument {
       target: this.target,
       revision: this.snapshot.revision, epoch: this.draft.epoch, pending,
       connected: this.connected, composing: this.composing, closing: this.closing, recovering: this.recovering, reconciled: this.reconciled, targetAvailable: this.available,
-      sending: this.sending, needsSnapshot: this.rejectedEpoch || this.rejectedTarget || this.rejectedCharacters, error: this.error,
+      sending: this.sending, needsSnapshot: this.rejectedEpoch || this.rejectedTarget || this.rejectedCharacters, error: this.preservationFailure ?? this.storageFailure ?? this.error,
       canSend: !this.disposed && !this.recovering && !this.closing && this.connected && !this.composing && this.available && !this.sending
-        && !pending && this.error === null && !this.draft.uploads.length
-        && (/\P{White_Space}/u.test(text(this.characters)) || !!this.draft.attachments.length),
+        && !pending && this.error === null && this.storageFailure === null && !this.draft.uploads.length
+        && (this.characters.some((character) => /\P{White_Space}/u.test(character.text)) || !!this.draft.attachments.length),
     };
     return { characters: this.characters, state, renamed: new Map() };
   }
@@ -244,6 +249,10 @@ export class ComposerDocument {
     this.emit();
   }
 
+  protected selectedAttachments(seal: Seal): readonly string[] {
+    return [...(this.seals.find((one) => one === seal)?.attachments ?? [])];
+  }
+
   /** The node has these words, and any sent before them. */
   taken(seal: Seal): void {
     const at = this.seals.indexOf(seal as Sealed);
@@ -290,10 +299,10 @@ export class ComposerDocument {
       this.error = null;
       this.rejectedTarget = false;
     }
-    const visible = new Set([snapshot.draft, ...snapshot.queue.map((item) => item.draft), ...snapshot.unobserved.map((item) => item.draft)]
-      .flatMap((document) => document.characters.map((character) => character.id.operation)));
-    for (const entry of this.pending) {
-      if (visible.has(entry.mutation.operation)) entry.observed = true;
+    if (this.pending.length) {
+      const visible = new Set([snapshot.draft, ...snapshot.queue.map((item) => item.draft), ...snapshot.unobserved.map((item) => item.draft)]
+        .flatMap((document) => document.characters.map((character) => character.id.operation)));
+      for (const entry of this.pending) if (visible.has(entry.mutation.operation)) entry.observed = true;
     }
     this.refresh();
   }
@@ -348,6 +357,14 @@ export class ComposerDocument {
     return end >= 0 && preceding.id.operation === open.mutation.operation && preceding.id.index === end ? open : undefined;
   }
 
+  setStorageError(error: Error | null): void {
+    if (this.storageFailure?.message === error?.message) return;
+    this.storageFailure = error; this.emit();
+  }
+  setPreservationError(error: Error | null): void {
+    if (this.preservationFailure?.message === error?.message) return;
+    this.preservationFailure = error; this.emit();
+  }
   setConnected(connected: boolean): void {
     this.connected = connected;
     if (!connected) {
@@ -380,9 +397,10 @@ export class ComposerDocument {
   }
 
   /** Freeze the visible projection until it has been preserved outside the outbox. */
-  beginRecovery(): string | null {
-    if (!recoverable(this.error) || this.recovering || this.composing || this.seals.length) return null;
+  beginRecovery(error: unknown = this.error): string | null {
+    if (!recoverable(error) || this.recovering || this.composing || this.seals.length) return null;
     this.recovering = true;
+    this.preservationFailure = null;
     this.emit();
     return text(this.characters);
   }
@@ -423,6 +441,7 @@ export class ComposerDocument {
     this.waiting = undefined;
     this.emit();
     this.listeners.clear();
+    this.history.clear(); this.retired.clear();
   }
 
   private getDraft(snapshot: ComposerSnapshot): ComposerDraft | undefined {
@@ -465,7 +484,7 @@ export class ComposerDocument {
   }
 
   private project(): void {
-    let characters: readonly Character[] = [...this.draft.characters, ...this.carry()];
+    let characters: readonly Character[] = this.pending.length ? [...this.draft.characters, ...this.carry()] : this.draft.characters;
     for (const entry of this.pending) {
       if (entry.mutation.epoch === this.draft.epoch && !entry.observed) characters = overlay(characters, entry.mutation, entry.context);
     }
@@ -596,7 +615,7 @@ export class ComposerDocument {
         return;
       }
       entry.attempted = true;
-      return this.options.send(entry.mutation);
+      return (this.sender ?? this.options.send)(entry.mutation);
     }).then((updated) => {
       if (!updated || generation !== this.generation) return;
       this.flight = undefined;

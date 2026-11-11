@@ -283,7 +283,7 @@ def samples(root, shipped):
                "value": {"kind": "accepted", "machine": "desktop", "version": "1.0.0", "collaboration_watch": True}}
         yield {"mode": "welcome", "protocol": protocol,
                "value": {"kind": "accepted", "machine": "desktop", "version": "1.0.0", "timeline_reads": True, "watch_live": True,
-                         "topics": True, "timer_pages": True}}
+                         "topics": True, "timer_pages": True, "composer_documents": True}}
         yield {"mode": "watched", "protocol": protocol, "value": MARKED_LIVE}
         for reply in replies(fixtures):
             if protocol == 5 and reply["reply"] == "server_invitation":
@@ -321,6 +321,31 @@ def samples(root, shipped):
                 continue
             yield {"mode": "request", "protocol": protocol, "peer": peer, "admitted": admitted,
                    "value": {"kind": "call", "id": 37, "call": call}}
+    # Native stream variants have their own negotiated subprotocol. They are
+    # decoded by the current peer and never offered to a historical reader.
+    mutation = {"operation": "native-contract", "do": "edit", "target": {"kind": "draft"},
+                "epoch": 0, "after": None, "delete": [], "insert": "x"}
+    native_input = {"kind": "mutate", "number": 3, "mutation": mutation}
+    operation = {"operation": "native-contract", "delivery": "delivery-a", "accepted": True,
+                 "landed": None, "failure": None}
+    document = {"id": "document-a", "revision": 1, "epoch": 0,
+                "attachments": [], "uploads": [], "files_on": None}
+    state = {"revision": 1, "draft": document, "queue": [], "commands": [], "unobserved": [],
+             "held": None, "awaiting_turn": None, "operations": [operation]}
+    native_frames = [
+        {"kind": "result", "number": 3, "revision": 1, "operation": operation},
+        {"kind": "state", "version": 1, "state": state, "documents": [], "mutations": True},
+        {"kind": "update", "revision": 2, "document": {"document": "document-a", "revision": 2, "update": "AAA="}},
+        {"kind": "saved", "number": 3, "document": "document-a", "revision": 2, "document_revision": 2},
+        {"kind": "refused", "number": 3, "failure": {"message": "refused"}},
+    ]
+    for shape, value in [("input", native_input),
+                         ("command", {"kind": "composer", "id": 37, "input": native_input})]:
+        yield {"mode": "native_composer", "shape": shape, "protocol": 13, "value": value}
+    for native_frame in native_frames:
+        yield {"mode": "native_composer", "shape": "frame", "protocol": 13, "value": native_frame}
+        yield {"mode": "native_composer", "shape": "watched", "protocol": 13,
+               "value": {"kind": "watched", "id": 37, "watched": {"kind": "documents", "frame": native_frame}}}
     # The releases of protocol 13 read today's replies with the types they
     # shipped: a tool process outlives its node's change of program, so a
     # tool of any shipped release reads a later node's answers as it is. It
@@ -343,7 +368,7 @@ def samples(root, shipped):
                "value": {"kind": "accepted", "machine": "desktop", "version": "1.0.0", "collaboration_watch": True}}
         yield {"mode": "welcome", "protocol": 13, "reader": reader,
                "value": {"kind": "accepted", "machine": "desktop", "version": "1.0.0", "timeline_reads": True, "watch_live": True,
-                         "topics": True, "timer_pages": True}}
+                         "topics": True, "timer_pages": True, "composer_documents": True}}
         yield {"mode": "watched", "protocol": 13, "reader": reader, "value": MARKED_LIVE}
         for reply in replies(fixtures):
             notice = reply["notices"][0]["notice"] if reply["reply"] == "notices" else {}

@@ -148,7 +148,14 @@ pub enum Change {
     /// concurrent text on the authoritative document, whose identity stays stable.
     SendDocument {
         document: String,
+        /// Refuses another device's already-sealed draft. Omitted by early peers.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        epoch: Option<u64>,
         snapshot: sync::Bytes,
+        /// A delete-only update for the captured characters; snapshot then carries
+        /// fresh plain text without historical clients or tombstones.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        take: Option<sync::Bytes>,
         attachments: Vec<NoticeId>,
     },
     /// Pauses a queued item while this watch is editing it. Closing the watch ends it.

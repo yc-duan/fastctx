@@ -56,42 +56,49 @@ pub(super) async fn settle(node: &Node, id: &ResidentId, state: &mut Stored) -> 
     let changed = state.sending.is_some() || !state.pending.is_empty();
     let flights: Vec<_> = state.sending.take().into_iter().chain(state.pending.clone()).collect();
     for flight in flights {
-        if let Some(turn) = crate::delivery::input_turn(&directory, &flight.delivery.id).map_err(failure)? {
-            state.queue.retain(|entry| entry.id != flight.entry);
-            state.pending.retain(|pending| pending.delivery.id != flight.delivery.id);
-            if flight.automatic && !receipts::ended(node, id, state, &turn).await? {
-                state.awaiting_turn = Some(turn);
-            }
-        } else {
-            let why = crate::delivery::input_uncertainty(&directory, &flight.delivery.id).map_err(failure)?;
-            if let Some(why) = why {
+        let landed =
+            if let Some(turn) = crate::delivery::input_turn(&directory, &flight.delivery.id).map_err(failure)? {
+                state.queue.retain(|entry| entry.id != flight.entry);
+                state.pending.retain(|pending| pending.delivery.id != flight.delivery.id);
+                if flight.automatic && !receipts::ended(node, id, state, &turn).await? {
+                    state.awaiting_turn = Some(turn.clone());
+                }
+                Landed::NewTurn { turn }
+            } else if let Some(why) =
+                crate::delivery::input_uncertainty(&directory, &flight.delivery.id).map_err(failure)?
+            {
                 state.pending.retain(|pending| pending.delivery.id != flight.delivery.id);
                 state.held = Some(why.clone());
                 if let Some(entry) = state.queue.iter_mut().find(|entry| entry.id == flight.entry) {
-                    entry.submitted = Some(flight.delivery.id);
-                    entry.error = Some(why);
+                    entry.submitted = Some(flight.delivery.id.clone());
+                    entry.error = Some(why.clone());
                 }
                 state.retire_unobserved(&flight.entry);
-            } else if !state.pending.iter().any(|pending| pending.delivery.id == flight.delivery.id) {
+                Landed::Uncertain { why }
+            } else {
                 let kept = crate::inbox::read(&directory, &flight.delivery.id).map_err(failure)?;
                 if kept.as_ref().is_some_and(|kept| kept.state != fastctx_types::residents::PendingState::Waiting) {
-                    // On its way to the host when the node stopped: whether
-                    // it went in is for the delivery's own recovery to say
-                    // (`speech::recover`), which tells the input as it does.
-                    state.pending.push(flight);
-                    continue;
+                    // Delivery recovery owns the host boundary. Preserve that intent;
+                    // the operation explicitly says it is waiting, never empty success.
+                    if !state.pending.iter().any(|pending| pending.delivery.id == flight.delivery.id) {
+                        state.pending.push(flight.clone());
+                    }
+                    Landed::Waiting {
+                        why: Some("the node restarted while checking this host submission".into()),
+                        answered: true,
+                    }
+                } else {
+                    crate::inbox::withdraw(&directory, &flight.delivery.id).map_err(failure)?;
+                    state.pending.retain(|pending| pending.delivery.id != flight.delivery.id);
+                    let why = "the node restarted before a host submission was recorded; this message remains queued";
+                    state.held = Some(why.into());
+                    if let Some(entry) = state.queue.iter_mut().find(|entry| entry.id == flight.entry) {
+                        entry.error = Some(why.into());
+                    }
+                    Landed::Waiting { why: Some(why.into()), answered: false }
                 }
-                // No consuming turn was acknowledged before the node stopped.
-                // Return a Waiting inbox entry to the composer instead of batching it later.
-                crate::inbox::withdraw(&directory, &flight.delivery.id).map_err(failure)?;
-                state.held = Some(
-                    "the node restarted before a host submission was recorded; this message remains queued".into(),
-                );
-                if let Some(entry) = state.queue.iter_mut().find(|entry| entry.id == flight.entry) {
-                    entry.error = state.held.clone();
-                }
-            }
-        }
+            };
+        settlement::record(node, id, state, &flight, &Ok(Some(landed))).await?;
     }
     Ok(changed)
 }

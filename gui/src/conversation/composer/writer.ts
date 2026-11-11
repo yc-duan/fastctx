@@ -16,13 +16,14 @@ function writes(key: string, who: Address): boolean {
  * A page that keeps no key, as one opened anew or after the app started
  * again, first takes up an outbox of this conversation that no live page
  * holds: what a closed one had not sent yet is sent, not left unread. */
-export async function composerWriter(who: Address, requested?: string): Promise<{ key: string; release: () => void }> {
+export async function composerWriter(who: Address, requested?: string): Promise<{ key: string; release: () => Promise<void> }> {
   const storageKey = JSON.stringify(["world-composer-writer", who.machine, who.resident]);
-  const claim = (key: string): Promise<(() => void) | null> => new Promise((resolve, reject) => {
-    void navigator.locks.request(`world-composer:${key}`, { ifAvailable: true }, async (lock) => {
+  const claim = (key: string): Promise<(() => Promise<void>) | null> => new Promise((resolve, reject) => {
+    const finished = navigator.locks.request(`world-composer:${key}`, { ifAvailable: true }, async (lock) => {
       if (!lock) { resolve(null); return; }
-      await new Promise<void>((release) => { resolve(release); });
-    }).catch(reject);
+      await new Promise<void>((release) => { resolve(async () => { release(); await finished; }); });
+    });
+    void finished.catch(reject);
   });
   const kept = requested ?? sessionStorage.getItem(storageKey);
   if (kept === null) {

@@ -53,6 +53,25 @@ fn main() {
                 };
                 json!({"read": read, "wire": wire})
             }
+            "native_composer" => {
+                // These variants require composer_documents negotiation. The
+                // absent flag on an old Welcome never enables their encoding.
+                let welcome: fastctx_types::ipc::Welcome = serde_json::from_value(json!({
+                    "kind": "accepted", "machine": "desktop", "version": "1.0.0"
+                })).unwrap();
+                let enabled = match welcome {
+                    fastctx_types::ipc::Welcome::Accepted { composer_documents, .. } => composer_documents,
+                    _ => panic!("expected accepted welcome"),
+                };
+                let wire = match case["shape"].as_str().unwrap() {
+                    "input" => serde_json::to_value(serde_json::from_value::<fastctx_types::composer::sync::Input>(value).unwrap()).unwrap(),
+                    "frame" => serde_json::to_value(serde_json::from_value::<fastctx_types::composer::sync::Frame>(value).unwrap()).unwrap(),
+                    "command" => serde_json::to_value(serde_json::from_value::<fastctx_types::watching::local::Command>(value).unwrap()).unwrap(),
+                    "watched" => serde_json::to_value(serde_json::from_value::<fastctx_types::ipc::NodeFrame>(value).unwrap()).unwrap(),
+                    _ => panic!("unknown native composer shape"),
+                };
+                json!({"unnegotiated": enabled, "read": wire})
+            }
             "request" => {
                 let old = decode(reader, value, true);
                 let fastctx_types::ipc::ClientFrame::Call { call, .. } = serde_json::from_value(old).unwrap() else {

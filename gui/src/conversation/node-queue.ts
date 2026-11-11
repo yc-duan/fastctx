@@ -198,7 +198,7 @@ export class NodeQueue {
         await tray.addText(file);
       }, this.note).catch(() => {});
     }, () => textareaText(document.view.characters));
-    const unbind = bindComposer(field, document);
+    const unbind = bindComposer(field, document, undefined, this.note);
     return () => { unlimit(); unbind(); };
   }
 

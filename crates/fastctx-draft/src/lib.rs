@@ -3,11 +3,13 @@
 //! its original bytes commit. A checkpoint includes unresolved causal updates,
 //! so a restart never discards an edit whose predecessor has not arrived yet.
 
+mod capture;
+pub use capture::DecodedUpdate;
 mod identities;
 pub use identities::{Character, Edited, Id};
 
 use yrs::updates::{decoder::Decode, encoder::Encode};
-use yrs::{Doc, GetString, OffsetKind, Options, ReadTxn, StateVector, Text, TextRef, Transact, Update};
+use yrs::{Doc, GetString, OffsetKind, Options, ReadTxn, StateVector, Text, TextRef, Transact};
 
 /// Combines v1 updates without constructing a replica or discarding pending data.
 pub fn merge(updates: impl IntoIterator<Item = impl AsRef<[u8]>>) -> Result<Vec<u8>> {
@@ -58,9 +60,13 @@ impl Document {
     /// fails, the owner reconstructs this document from its durable updates before
     /// accepting more work; decoding errors do not enter a transaction.
     pub fn apply(&mut self, bytes: &[u8]) -> Result<()> {
-        let update = Update::decode_v1(bytes).map_err(error)?;
+        self.apply_decoded(DecodedUpdate::decode(bytes)?)
+    }
+
+    /// Integrates an update already decoded outside the owning editor's lock.
+    pub fn apply_decoded(&mut self, update: DecodedUpdate) -> Result<()> {
         let mut transaction = self.doc.transact_mut();
-        transaction.apply_update(update).map_err(error)?;
+        transaction.apply_update(update.0).map_err(error)?;
         self.scalar_len = self.text.scalar_len(&transaction) as usize;
         Ok(())
     }

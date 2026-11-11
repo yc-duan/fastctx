@@ -10,4 +10,9 @@ export function missingCharacter(error: unknown): boolean {
   return messageOf(error) === "composer: the character is not in this draft";
 }
 
-export function recoverable(error: unknown): boolean { return tooLong(error) || missingCharacter(error); }
+export function recoverable(error: unknown): boolean {
+  const message = messageOf(error);
+  return tooLong(error) || missingCharacter(error)
+    || message === "that shared document no longer exists"
+    || message === "that shared document is being delivered";
+}

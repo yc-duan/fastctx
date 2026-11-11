@@ -14,6 +14,8 @@ pub struct Subscription {
     pub resident: ResidentId,
     pub machine: Option<Written>,
     pub composer: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub documents: Option<crate::composer::sync::Subscription>,
     pub held: Option<Held>,
     pub now: bool,
     /// Subscribe before a timeline snapshot, without reading history.
@@ -45,6 +47,7 @@ pub enum Command {
     Subscribe { id: u64, subscription: Box<Subscription> },
     Unsubscribe { id: u64 },
     Consumed { id: u64, number: u64 },
+    Composer { id: u64, input: Box<crate::composer::sync::Input> },
 }
 
 #[derive(Serialize, Deserialize)]

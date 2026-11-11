@@ -111,6 +111,14 @@ pub(super) fn prepare(id: &ResidentId, state: &mut Stored) -> Result<Prepared, F
             expires: expires("receipts"),
         });
     }
+    for (name, outcome) in std::mem::take(&mut state.outcomes) {
+        records.push(Record {
+            kind: "outcomes",
+            name: receipts::name(&name),
+            content: serde_json::to_vec(&outcome).map_err(failure)?,
+            expires: expires("outcomes"),
+        });
+    }
     for (name, operations) in std::mem::take(&mut state.taken) {
         records.push(Record {
             kind: "taken",

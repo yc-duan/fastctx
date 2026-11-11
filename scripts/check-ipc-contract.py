@@ -155,7 +155,10 @@ def verify(reader):
     answers = [json.loads(line) for line in process.stdout.splitlines()]
     assert len(answers) == len(corpus), (len(answers), len(corpus))
     for case, answer in zip(corpus, answers):
-        if case["mode"] in ("request", "current_request"):
+        if case["mode"] == "native_composer":
+            assert answer["unnegotiated"] is False, (case, answer)
+            assert answer["read"] == case["value"], (case, answer)
+        elif case["mode"] in ("request", "current_request"):
             assert answer["admitted"] == case["admitted"], (case, answer)
         elif case["mode"] == "additive_request":
             assert answer["read"]["call"]["call"] == case["value"]["call"]["call"], (case, answer)

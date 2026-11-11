@@ -26,7 +26,7 @@ export function retryDeliveries(): void {
 }
 
 /** Public watch ids stay unchanged when the shell replaces a lagged subscription. */
-export async function observe<T, R extends Opened>(
+export async function observe<T, R extends Opened | null>(
   command: string,
   args: Record<string, unknown>,
   onPiece: (piece: T | Interrupted) => void,
@@ -142,6 +142,7 @@ export async function observe<T, R extends Opened>(
   };
   try {
     const opened = await invoke<R>(command, { ...args, pieces });
+    if (opened === null) { reader.close(); return opened; }
     bind(typeof opened === "number" ? opened : opened.id);
     return opened;
   } catch (error) {

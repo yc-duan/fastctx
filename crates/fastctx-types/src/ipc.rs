@@ -101,6 +101,9 @@ pub enum Welcome {
         /// Several conversation subscriptions share a dedicated IPC connection.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         watch_many: bool,
+        /// Native composer input and output share a WatchMany subscription.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        composer_documents: bool,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         goal_commands: bool,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]

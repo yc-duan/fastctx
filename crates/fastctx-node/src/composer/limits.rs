@@ -6,12 +6,15 @@ use fastctx_types::composer::{
 use fastctx_types::ipc::Failure;
 
 pub(super) fn request(request: &Request) -> Result<(), Failure> {
-    if let Request::Sync { input } = request {
-        update(input)?;
+    match request {
+        Request::Sync { input } => update(input),
+        Request::Mutate { mutation } => validate_mutation(mutation),
+        Request::Read => Ok(()),
     }
-    if let Request::Mutate { mutation } = request
-        && let Change::Edit { after, delete, insert, .. } = &mutation.change
-    {
+}
+
+fn validate_mutation(mutation: &Mutation) -> Result<(), Failure> {
+    if let Change::Edit { after, delete, insert, .. } = &mutation.change {
         let count = insertion(insert)?;
         write(
             0,
@@ -21,11 +24,25 @@ pub(super) fn request(request: &Request) -> Result<(), Failure> {
             receipt(&mutation.operation, after.as_ref(), delete, insert),
         )?;
     }
+    if let Change::SendDocument { snapshot, take, document, .. } = &mutation.change
+        && (snapshot.0.len() > fastctx_types::composer::sync::MAX_SNAPSHOT_BYTES
+            || document.len() > 256
+            || take.as_ref().is_some_and(|take| take.0.len() > fastctx_types::composer::sync::MAX_TAKE_BYTES))
+    {
+        return Err(Failure::new(DOCUMENT_TOO_LONG));
+    }
     Ok(())
 }
 
-pub(super) fn update(input: &fastctx_types::composer::sync::Input) -> Result<(), Failure> {
-    let fastctx_types::composer::sync::Input::Update { document, update, .. } = input;
+pub(crate) fn update(input: &fastctx_types::composer::sync::Input) -> Result<(), Failure> {
+    let fastctx_types::composer::sync::Input::Update { document, update, .. } = input else {
+        let fastctx_types::composer::sync::Input::Mutate { mutation, .. } = input else { unreachable!() };
+
+        if mutation.operation.len() > 256 {
+            return Err(Failure::new(DOCUMENT_TOO_LONG));
+        }
+        return validate_mutation(mutation);
+    };
     if update.0.len() > fastctx_types::composer::sync::MAX_UPDATE_BYTES || document.len() > 256 {
         return Err(Failure::new(DOCUMENT_TOO_LONG));
     }

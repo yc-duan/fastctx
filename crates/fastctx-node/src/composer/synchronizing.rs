@@ -2,6 +2,7 @@
 //! queue nor serialize a whole legacy composer unless an old viewer needs it.
 
 mod source;
+
 use super::*;
 use fastctx_net::watch_queue;
 use fastctx_types::composer::sync::{self, Bytes, Frame, Input, Subscription, Update};
@@ -96,7 +97,13 @@ pub fn watch_documents<'a>(
             })
             .collect::<Result<Vec<_>, Failure>>()?;
         watching.through = state.revision;
-        let initial = Frame::State { version: sync::VERSION, state: Box::new(metadata), documents };
+        let vectors = state
+            .documents()
+            .filter(|document| visible.contains(document.id.as_str()))
+            .map(|document| Ok(sync::Vector { document: document.id.clone(), vector: Bytes(document.vector()?) }))
+            .collect::<Result<Vec<_>, Failure>>()?;
+        let initial =
+            Frame::State { version: sync::VERSION, state: Box::new(metadata), documents, vectors, mutations: true };
         watching._initial_memory =
             Some(fastctx_net::reassembly::Reservation::new(watch_queue::size(&initial)).map_err(failure)?);
         watching.initial = Some(Arc::new(initial));
@@ -107,10 +114,35 @@ pub fn watch_documents<'a>(
 /// The enclosing stream admits and authorizes each input independently. Once
 /// accepted, its owner continues this future even when that stream disconnects.
 pub fn update_document<'a>(node: &'a Arc<Node>, id: &'a ResidentId, input: Input) -> Future<'a, Frame> {
+    Box::pin(async move { update_document_from(node, &node.machine(), id, input).await })
+}
+
+pub fn update_document_from<'a>(
+    node: &'a Arc<Node>,
+    from: &'a MachineName,
+    id: &'a ResidentId,
+    input: Input,
+) -> Future<'a, Frame> {
     Box::pin(async move {
         limits::update(&input)?;
+        if let Input::Mutate { number, mutation } = input {
+            let operation = mutation.operation.clone();
+            let (updated, accepted) = super::accepting(node, from, id, Request::Mutate { mutation }, true).await?;
+            return Ok(Frame::Result {
+                number,
+                revision: updated.revision,
+                operation: sync::Operation {
+                    operation,
+                    accepted,
+                    landed: updated.landed,
+                    delivery: updated.delivery,
+                    failure: None,
+                },
+            });
+        }
+        let Input::Update { number, document, update } = input else { unreachable!() };
+        let decoded = fastctx_draft::DecodedUpdate::decode(&update.0).map_err(failure)?;
         node.ready_for(id).await;
-        let Input::Update { number, document, update } = input;
         let gate = node.residents.management(id)?;
         let _reading = crate::gate_waits::shared(node, id, &gate).await?;
         node.residents.active(id)?;
@@ -120,7 +152,7 @@ pub fn update_document<'a>(node: &'a Arc<Node>, id: &'a ResidentId, input: Input
         let mut next = cell.take().expect("loaded");
         let metadata_changed = {
             let document = next.editable_document(&document)?;
-            document.merge(&update.0)?;
+            document.merge_decoded(decoded, &update.0)?;
             document.metadata_dirty()
         };
         // An earlier failed stop is first consolidated with the metadata. This
@@ -171,7 +203,7 @@ pub fn update_document<'a>(node: &'a Arc<Node>, id: &'a ResidentId, input: Input
             }
             Err(error) => {
                 failures::hold(node, id, revision, next.held.unwrap_or_else(|| error.to_string()));
-                Err(failure(error))
+                Err(failures::storage(error))
             }
         }
     })

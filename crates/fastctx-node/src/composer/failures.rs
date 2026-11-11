@@ -5,6 +5,17 @@ use super::*;
 
 pub(super) type Holds = Mutex<HashMap<ResidentId, (u64, String)>>;
 
+pub(super) fn storage(error: fastctx_storage::Error) -> Failure {
+    let unknown = error.kind() == fastctx_storage::ErrorKind::OutcomeUnknown;
+    let mut failure = super::failure(error);
+    // A late commit still publishes its effect. Keep the caller's exact
+    // operation until its receipt establishes whether that commit happened.
+    if unknown {
+        failure.code = Some(fastctx_types::ipc::FailureCode::Unanswered);
+    }
+    failure
+}
+
 pub(super) fn hold(node: &Node, id: &ResidentId, revision: u64, reason: String) {
     let mut holds = node.composers.holds.lock().expect("composer checkpoint failures");
     // A timeout can race a successful commit. Its callback updates the cache

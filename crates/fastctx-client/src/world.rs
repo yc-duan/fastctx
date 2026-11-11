@@ -748,6 +748,7 @@ impl World {
                     resident,
                     machine,
                     composer,
+                    documents: None,
                     held,
                     now,
                     live_only,

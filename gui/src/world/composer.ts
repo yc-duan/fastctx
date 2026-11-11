@@ -73,6 +73,7 @@ export interface ComposerUpdated {
 }
 
 export type ComposerChange =
+  | Omit<import("./composer-sync").DocumentSend, "operation">
   | Omit<ComposerEdit, "operation">
   | { readonly do: "attach"; readonly target: ComposerTarget; readonly epoch: number; readonly attachment: Attachment }
   | { readonly do: "detach"; readonly target: ComposerTarget; readonly epoch: number; readonly attachment: NoticeId }

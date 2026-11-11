@@ -24045,6 +24045,19 @@
         "number": 1,
         "document": "document-a",
         "update": "AAA="
+      },
+      {
+        "kind": "mutate",
+        "number": 4,
+        "mutation": {
+          "operation": "files-a",
+          "do": "files_on",
+          "target": {
+            "kind": "draft"
+          },
+          "epoch": 0,
+          "files_on": null
+        }
       }
     ],
     "frames": [
@@ -24074,6 +24087,46 @@
             "update": "AAA="
           }
         ]
+      },
+      {
+        "kind": "state",
+        "version": 1,
+        "state": {
+          "revision": 7,
+          "draft": {
+            "id": "document-a",
+            "revision": 3,
+            "epoch": 0,
+            "attachments": [],
+            "uploads": [],
+            "files_on": null
+          },
+          "queue": [],
+          "commands": [],
+          "unobserved": [],
+          "held": null,
+          "awaiting_turn": null
+        },
+        "documents": [],
+        "vectors": [
+          {
+            "document": "document-a",
+            "vector": "AA=="
+          }
+        ],
+        "mutations": true
+      },
+      {
+        "kind": "result",
+        "number": 4,
+        "revision": 9,
+        "operation": {
+          "operation": "send-a",
+          "delivery": "queued-cd34",
+          "accepted": true,
+          "landed": null,
+          "failure": null
+        }
       },
       {
         "kind": "update",
@@ -24119,6 +24172,15 @@
         "do": "send_document",
         "document": "document-a",
         "snapshot": "AAA=",
+        "attachments": []
+      },
+      {
+        "operation": "send-native",
+        "do": "send_document",
+        "document": "document-a",
+        "epoch": 0,
+        "snapshot": "AAA=",
+        "take": "AAA=",
         "attachments": []
       }
     ]

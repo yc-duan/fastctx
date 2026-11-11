@@ -9,6 +9,7 @@ pub(super) fn capture(
     state: &mut Stored,
     from: &MachineName,
     change: &Change,
+    captured: Option<capture::Prepared>,
 ) -> Result<Option<Flight>, Failure> {
     let document = match change {
         Change::Send { epoch } => {
@@ -27,12 +28,15 @@ pub(super) fn capture(
             super::keeping::took(state);
             state.draft.take()?
         }
-        Change::SendDocument { document, snapshot, attachments } => {
+        Change::SendDocument { document, epoch, attachments, .. } => {
+            if epoch.is_some_and(|epoch| state.draft.epoch != epoch) {
+                return Err(failure("this draft was already sent"));
+            }
             if state.draft.id != *document {
                 return Err(failure("the shared document identity changed; synchronize it before sending"));
             }
             super::keeping::took(state);
-            state.draft.take_snapshot(&snapshot.0, attachments)?
+            state.draft.take_snapshot(captured.expect("prepared captured send"), attachments)?
         }
         _ => unreachable!("capture only sends draft text"),
     };

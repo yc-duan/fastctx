@@ -97,7 +97,18 @@ pub(crate) async fn files_on(
     let cell = node.composers.cell(id);
     let mut cell = cell.lock().await;
     load(node, id, &mut cell).await?;
-    Ok(cell.as_mut().expect("loaded").document(&scope.target, scope.epoch)?.files_on.clone())
+    let state = cell.as_ref().expect("loaded");
+    let kept = receipts::upload(node, id, state, &scope.operation).await?;
+    let state = cell.as_mut().expect("loaded");
+    let document = if let Some(kept) = kept {
+        if kept.scope != *scope {
+            return Err(failure("the upload scope changed"));
+        }
+        surviving(state, scope, &kept.attachment.id)?
+    } else {
+        state.document(&scope.target, scope.epoch)?
+    };
+    Ok(document.files_on.clone())
 }
 
 pub async fn begin(
@@ -192,6 +203,28 @@ pub async fn complete(
     applied.map(|()| Updated { composer, landed: None, delivery: None })
 }
 
+/// A native seal advances the draft epoch while retaining unselected uploads.
+/// Matching the original operation and globally unique attachment prevents a
+/// detached or replaced upload from attaching to another draft.
+fn surviving<'a>(
+    state: &'a mut Stored,
+    scope: &UploadScope,
+    attachment: &fastctx_types::NoticeId,
+) -> Result<&'a mut document::Document, Failure> {
+    let epoch = match &scope.target {
+        Target::Draft
+            if state.draft.uploads.iter().any(|upload| {
+                upload.id == *attachment
+                    && upload.operation.as_deref().is_none_or(|operation| operation == scope.operation)
+            }) =>
+        {
+            state.draft.epoch
+        }
+        _ => scope.epoch,
+    };
+    state.document(&scope.target, epoch)
+}
+
 fn attach(
     state: &mut Stored,
     scope: &UploadScope,
@@ -199,7 +232,7 @@ fn attach(
     record: UploadRecord,
 ) -> Result<(), Failure> {
     state.uploads.insert(scope.operation.clone(), UploadRecord { attachment: attachment.clone(), ..record });
-    let applied = match state.document(&scope.target, scope.epoch) {
+    let applied = match surviving(state, scope, &attachment.id) {
         Ok(document) if document.uploads.iter().any(|upload| upload.id == attachment.id) => {
             document.uploads.retain(|upload| upload.id != attachment.id);
             document.attachments.push(attachment.clone());
@@ -281,7 +314,7 @@ fn mark(
     why: Option<&str>,
     was: &str,
 ) -> bool {
-    let Ok(document) = state.document(&scope.target, scope.epoch) else {
+    let Ok(document) = surviving(state, scope, attachment) else {
         return false;
     };
     let Some(upload) = document.uploads.iter_mut().find(|upload| &upload.id == attachment) else {

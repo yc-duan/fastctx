@@ -5,6 +5,9 @@ import type { ComposerAttachmentAdded, ComposerMutation, ComposerPiece, Composer
 
 /** One transport for desktop and mobile; the resident's node owns every draft and release. */
 export interface ComposerTransport {
+  watchDocuments?: (known: readonly import("./composer-sync").DocumentVector[], piece: (piece: import("./composer-sync").NativePiece) => void) => Promise<import("./composer-sync").NativeWatching | null>;
+  documentInput?: (id: number, input: import("./composer-sync").DocumentInput) => Promise<void>;
+  syncText?: (input: import("./composer-sync").DocumentTextInput) => Promise<ComposerUpdated>;
   read(): Promise<ComposerUpdated>;
   update(mutation: ComposerMutation): Promise<ComposerUpdated>;
   watch(onPiece: (piece: ComposerPiece) => void): Promise<ComposerWatching>;
@@ -16,6 +19,9 @@ export interface ComposerTransport {
 export function composing(who: Address): ComposerTransport {
   const address = { residentId: who.resident, machineName: who.machine };
   return {
+    watchDocuments: (known, piece) => observe("composer_watch_documents", { ...address, subscription: { version: 1, known } }, piece),
+    documentInput: (id, input) => invoke("composer_document_input", { id, input }),
+    syncText: (input) => invoke("composer_sync_text", { ...address, input }),
     read: () => invoke("composer_read", address),
     update: (mutation) => invoke("composer_update", { ...address, mutation }),
     watch: (onPiece) => observe<ComposerPiece, ComposerWatching>("composer_watch", address, onPiece),

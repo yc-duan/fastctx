@@ -11,6 +11,8 @@ mod book;
 mod collab;
 mod collaboration;
 mod composer;
+mod composer_documents;
+mod composer_legacy_input;
 mod connection;
 #[cfg(desktop)]
 mod data;
@@ -116,6 +118,7 @@ struct Shell {
     /// What each watched conversation holds for its page.
     transcripts: Arc<transcript::Transcripts>,
     deliveries: watch_delivery::Deliveries,
+    composer_inputs: composer_documents::Inputs,
     next: AtomicU64,
     page: AtomicU64,
     line_requests: line_reading::Requests,
@@ -139,6 +142,7 @@ impl Shell {
         }
         self.transcripts.close_all();
         self.deliveries.close_all();
+        self.composer_inputs.clear();
     }
 
     fn follow(
@@ -371,6 +375,7 @@ fn unwatch(shell: tauri::State<'_, Shell>, id: u64) {
     }
     shell.transcripts.close(id);
     shell.deliveries.close(id);
+    shell.composer_inputs.close(id);
 }
 
 /// The user's words to a resident, with the files uploaded for them; those
@@ -1273,6 +1278,9 @@ pub fn run() {
             goals::goal_watch,
             composer::composer_read,
             composer::composer_watch,
+            composer_documents::composer_watch_documents,
+            composer_documents::composer_document_input,
+            composer_legacy_input::composer_sync_text,
             composer::composer_update,
             composer::composer_send,
             composer::composer_attach_path,
