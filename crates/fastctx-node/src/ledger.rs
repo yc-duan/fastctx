@@ -501,6 +501,26 @@ pub fn entries_after(world: &WorldDir, town: &TownName, after: u64) -> io::Resul
     Ok(entries)
 }
 
+/// The entries of `town` after the one numbered `after`, in order, with the
+/// number of the last entry this machine has: what a reader that keeps
+/// what earlier entries said goes on from, and how it notices a ledger
+/// shorter than the one it read.
+pub fn entries_since(world: &WorldDir, town: &TownName, after: u64) -> io::Result<(u64, Vec<(u64, Entry)>)> {
+    if let Some(entries) = carry_source::entries(world, town)? {
+        let last = entries.last().map_or(0, |(seq, _)| *seq);
+        return Ok((last, entries.into_iter().filter(|(seq, _)| *seq > after).collect()));
+    }
+    let numbered = numbered(&world.town(town).signed())?;
+    let last = numbered.last().map_or(0, |(seq, _)| *seq);
+    let mut entries = Vec::new();
+    for (seq, path) in numbered {
+        if seq > after {
+            entries.push((seq, read_entry(world, &path)?.0));
+        }
+    }
+    Ok((last, entries))
+}
+
 /// The last entry taken or refused.
 fn cursor(directory: &TownDir, refused: &BTreeMap<u64, String>) -> io::Result<u64> {
     let taken = numbered(&directory.signed())?.last().map(|(seq, _)| *seq).unwrap_or(0);

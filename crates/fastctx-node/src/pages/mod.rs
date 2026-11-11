@@ -75,10 +75,12 @@ async fn answer(
             refresh(node, &town).await?;
             let stored = stored(node, &town, &page)?;
             check_base(&page, Some(base), stored.current().map(|v| v.version))?;
-            let current = stored.view(&town, &page, None, None).map_err(Failure::new)?;
+            // What withdraws a page keeps its title and description; the
+            // page itself is not read for that.
+            let current = stored.current().cloned().ok_or_else(|| Failure::new(read::missing(&town, &page, None)))?;
             let draft = PageDraft {
-                title: current.publication.title,
-                description: current.publication.description,
+                title: current.title,
+                description: current.description,
                 acts: Vec::new(),
                 html: String::new(),
             };
@@ -90,7 +92,7 @@ async fn answer(
             refresh(node, &town).await?;
             let stored = stored(node, &town, &page)?;
             check_base(&page, Some(base), stored.current().map(|v| v.version))?;
-            let source = stored.view(&town, &page, Some(version), None).map_err(Failure::new)?;
+            let source = stored.view(&node.world, &town, &page, Some(version), None).map_err(Failure::new)?;
             let withdrawn = source.publication.withdrawn;
             let draft = PageDraft {
                 title: source.publication.title,
@@ -106,7 +108,9 @@ async fn answer(
             let identity = identity::resolve(node, caller, opened_on, &town, account.as_ref())?;
             Ok(Reply::Page {
                 view: Box::new(
-                    stored(node, &town, &page)?.view(&town, &page, version, Some(&identity)).map_err(Failure::new)?,
+                    stored(node, &town, &page)?
+                        .view(&node.world, &town, &page, version, Some(&identity))
+                        .map_err(Failure::new)?,
                 ),
             })
         }
@@ -114,7 +118,9 @@ async fn answer(
             let town = caller.town_or(node, town)?;
             read_ready(node, &town).await?;
             let stored = stored(node, &town, &page)?;
-            stored.view(&town, &page, None, None).map_err(Failure::new)?;
+            if stored.versions.is_empty() {
+                return Err(Failure::new(read::missing(&town, &page, None)));
+            }
             Ok(Reply::PageHistory { town, page, versions: stored.versions.into_values().map(|(v, _)| v).collect() })
         }
         PageCall::List { town } => {
@@ -179,7 +185,7 @@ async fn answer(
 
 pub(super) fn stored(node: &Node, town: &TownName, page: &PageName) -> Result<read::Page, Failure> {
     require_town(node, town)?;
-    Ok(read::all(&node.world, town).map_err(io_failure)?.remove(page).unwrap_or_default())
+    read::page(&node.world, town, page).map_err(io_failure)
 }
 
 fn require_town(node: &Node, town: &TownName) -> Result<(), Failure> {
