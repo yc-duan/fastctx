@@ -132,6 +132,8 @@ function conversation(sessionId, previous) {
     plain: false,
     // Looks in a row that each found more for an idle session (`looked`).
     settling: 0,
+    // When the last turn ended (`completeTurn`), by the clock.
+    turnEndedAt: 0,
     handled: new Set(),
     failing: new Set(),
     held: [],
@@ -488,9 +490,11 @@ async function replaced($, context, deliveries) {
 }
 
 // How long an idle session waits for more of what is being handed over
-// before its turn starts, and how many times over at most.
+// before its turn starts, and how many times over at most; and for how long
+// after a turn's end what comes may be a queue the node releases at that end.
 const SETTLE_MS = 150
 const SETTLES = 5
+const RELEASE_MS = 2000
 
 // What the next turn reads of the last one the user stopped. Claude Code
 // ends a turn a plugin stops as one ended to deliver a following message,
@@ -772,8 +776,10 @@ async function looked($, context) {
   if (context.busy) return
   // What comes together goes in together. The node hands over each message
   // as a file of its own, a queue released at a turn's end one after
-  // another: an idle session's turn starts once a look finds no more.
-  if (read.length > 0 && context.settling < SETTLES) {
+  // another: an idle session's turn starts once a look finds no more. Words
+  // that come to a session idle for longer than that came on their own, and
+  // their turn starts at once.
+  if (read.length > 0 && context.settling < SETTLES && Date.now() - context.turnEndedAt < RELEASE_MS) {
     context.settling += 1
     context.again = true
     await new Promise((resolve) => { $.clock.after(SETTLE_MS, resolve) })
@@ -971,6 +977,7 @@ async function startTurn($, context, e, next) {
 }
 
 async function completeTurn($, context, e, next) {
+  context.turnEndedAt = Date.now()
   // The turn's end is told whatever else fails here: what goes with it is
   // told again later, and an end never told leaves the turn running in the
   // World, with what waits for it held behind it.
