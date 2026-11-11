@@ -368,12 +368,28 @@ pub fn was_applied(directory: &Path, name: &str) -> io::Result<bool> {
 /// changed to the disk first; the marker itself does not wait for the disk,
 /// as a marker a lost power takes only has the report applied again, which
 /// its records know (`applied`).
-pub fn acknowledge(directory: &Path, name: &str) -> io::Result<()> {
+///
+/// `filed`: whether the mod may have written this report to its files too
+/// (it came from them, or the session wrote files lately); otherwise there
+/// is nothing of it there to take away, and nothing is looked for.
+pub fn acknowledge(directory: &Path, name: &str, filed: bool) -> io::Result<()> {
     let applied = directory.join("applied");
-    ensure_private_dir(&applied)?;
-    match publish_new_unsynced(&applied.join(name), b"", Permissions::Private) {
+    let marker = applied.join(name);
+    // The directory is made the first time it is missing, not asked after
+    // for every report.
+    let marked = match fastctx_platform::mark_new(&marker) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            ensure_private_dir(&applied)?;
+            fastctx_platform::mark_new(&marker)
+        }
+        marked => marked,
+    };
+    match marked {
         Err(error) if error.kind() != io::ErrorKind::AlreadyExists => return Err(error),
         _ => {}
+    }
+    if !filed {
+        return Ok(());
     }
     super::accounting::clean(directory, name.as_ref())?;
     let path = directory.join("events").join(name);
@@ -424,7 +440,7 @@ pub fn harvest(directory: &Path) -> io::Result<(Vec<Report>, Vec<String>)> {
     let mut reported = Vec::new();
     for name in &names {
         if applied::has(directory, name)? {
-            acknowledge(directory, name)?;
+            acknowledge(directory, name, true)?;
             continue;
         }
         let path = events.join(name);

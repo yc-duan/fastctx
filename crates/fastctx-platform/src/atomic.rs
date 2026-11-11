@@ -66,6 +66,17 @@ pub fn publish_new(path: &Path, bytes: &[u8], permissions: Permissions) -> io::R
         .map_err(|failure| failure.error)
 }
 
+/// Creates an empty, private marker at `path`, failing with `AlreadyExists`
+/// if something is there already, without waiting for the disk. Nothing is
+/// in it, so it is made in place in one step: no partial content can show.
+pub fn mark_new(path: &Path) -> io::Result<()> {
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    options.open(path).map(drop)
+}
+
 /// `publish_new` without waiting for the disk, as `publish_unsynced` says.
 #[track_caller]
 pub fn publish_new_unsynced(path: &Path, bytes: &[u8], permissions: Permissions) -> io::Result<()> {

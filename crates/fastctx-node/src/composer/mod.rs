@@ -34,7 +34,7 @@ pub(crate) mod uploads;
 mod watching;
 mod withdrawing;
 
-pub use commands::{command_failed, forget_command, next_command, place_command};
+pub use commands::{forget_command, next_command, place_command};
 use fastctx_types::access::Written;
 pub use storage::prepare_recovery;
 pub(crate) use storage::restore_before_delivery;
@@ -239,7 +239,7 @@ fn accepting<'a>(
             let lined = state.lined.iter().any(|lined| lined.operation.as_deref() == Some(mutation.operation.as_str()));
             // A device from before landings came pushed asks again for words
             // still in line: it is answered as the first time, once they land.
-            if lined && !bounded && receipt.landed.is_none() && receipt.delivery.is_none() {
+            if (lined || pending.is_some()) && !bounded && receipt.landed.is_none() {
                 drop(cell);
                 drop(_reading);
                 return legacy_lined::answer(node, id, &mutation.operation).await.map(|answer| (answer, false));

@@ -323,12 +323,27 @@ fn login_of(node: &Node, id: &ResidentId, about: &About) -> Option<PathBuf> {
     }
 }
 
-/// Claude Code's default login: the one the user's environment names.
+/// Claude Code's default login: the one the user's environment names. Read
+/// at most every `DEFAULT_READ_EVERY`: each turn's events ask for it, and
+/// the user's environment is read from several files.
 pub(crate) fn claude_default() -> Option<PathBuf> {
-    let env = crate::claude::environment().ok()?;
-    let home = fastctx_platform::user_home().ok()?;
-    Some(crate::homes::claude_default(&env, &home))
+    static READ: std::sync::Mutex<Option<(std::time::Instant, Option<PathBuf>)>> = std::sync::Mutex::new(None);
+    if let Some((at, default)) = READ.lock().expect("never poisoned").as_ref()
+        && at.elapsed() < DEFAULT_READ_EVERY
+    {
+        return default.clone();
+    }
+    let default = (|| {
+        let env = crate::claude::environment().ok()?;
+        let home = fastctx_platform::user_home().ok()?;
+        Some(crate::homes::claude_default(&env, &home))
+    })();
+    *READ.lock().expect("never poisoned") = Some((std::time::Instant::now(), default.clone()));
+    default
 }
+
+/// How long the default Claude login, once read, is taken as it was.
+const DEFAULT_READ_EVERY: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// The limits of `agent`'s login `dir` as they were last read, which its
 /// ledger keeps past the sessions that read them and their conversations

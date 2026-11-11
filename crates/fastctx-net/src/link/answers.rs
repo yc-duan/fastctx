@@ -44,12 +44,16 @@ impl Answers {
     pub(crate) fn open(&self, inner: &Arc<Inner>, on: CallOn, id: u64) -> Answer {
         let serial = self.serial.fetch_add(1, Ordering::Relaxed);
         let key = (on, id);
+        // The register and the stops ahead of their calls are taken in this
+        // one order, calls first, by `open` and `stop` alike: a stop either
+        // finds the call registered or leaves its mark before it is.
+        let mut calls = self.calls.lock().expect("never poisoned");
         let early = {
             let mut early = self.early.lock().expect("never poisoned");
             early.iter().position(|(stopped, _)| *stopped == key).and_then(|at| early.remove(at)).map(|(_, why)| why)
         };
         let (stop, receiver) = watch::channel(early);
-        self.calls.lock().expect("never poisoned").insert(key.clone(), Entry { serial, stop });
+        calls.insert(key.clone(), Entry { serial, stop });
         Answer { inner: Arc::downgrade(inner), key, serial, stop: receiver }
     }
 
@@ -57,7 +61,8 @@ impl Answers {
     /// it opens if it has not been registered yet.
     pub(crate) fn stop(&self, on: &CallOn, id: u64, why: &str) {
         let key = (on.clone(), id);
-        if let Some(entry) = self.calls.lock().expect("never poisoned").get(&key) {
+        let calls = self.calls.lock().expect("never poisoned");
+        if let Some(entry) = calls.get(&key) {
             stop(entry, why);
             return;
         }

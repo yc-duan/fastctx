@@ -46,6 +46,10 @@ pub struct Channel {
     /// it, and its mod reads `channel.json` again when a request is refused.
     key: [u8; 32],
     wakes: Mutex<HashMap<String, Arc<Wake>>>,
+    /// How many wakes were made: each new one counts from past every count
+    /// an earlier one gave, so a mod that saw one let go is never told
+    /// "nothing new" by its successor.
+    wakes_made: AtomicU64,
     /// The sessions told where the channel is since the node started.
     told: Mutex<HashSet<String>>,
     queues: Mutex<HashMap<String, Arc<Queue>>>,
@@ -106,7 +110,10 @@ impl Channel {
             .lock()
             .expect("never poisoned")
             .entry(session.to_string())
-            .or_insert_with(|| Arc::new(Wake { count: AtomicU64::new(0), changed: tokio::sync::Notify::new() }))
+            .or_insert_with(|| {
+                let made = self.wakes_made.fetch_add(1, Ordering::AcqRel);
+                Arc::new(Wake { count: AtomicU64::new(made << 32), changed: tokio::sync::Notify::new() })
+            })
             .clone()
     }
 
@@ -115,7 +122,7 @@ impl Channel {
     async fn wait(&self, session: &str, seen: u64) -> u64 {
         let wake = self.wake_of(session);
         let deadline = tokio::time::Instant::now() + WAIT;
-        loop {
+        let count = loop {
             let changed = wake.changed.notified();
             tokio::pin!(changed);
             changed.as_mut().enable();
@@ -124,8 +131,23 @@ impl Channel {
                 return count;
             }
             if tokio::time::timeout_at(deadline, changed).await.is_err() {
-                return wake.count.load(Ordering::Acquire);
+                break wake.count.load(Ordering::Acquire);
             }
+        };
+        self.forget_wake(session, wake);
+        count
+    }
+
+    /// A session's wake, its last wait over, goes once its queue went:
+    /// nobody waits on it and nothing is handed for it.
+    fn forget_wake(&self, session: &str, wake: Arc<Wake>) {
+        if self.queues.lock().expect("never poisoned").contains_key(session) {
+            return;
+        }
+        let mut wakes = self.wakes.lock().expect("never poisoned");
+        // The map's and this one's.
+        if wakes.get(session).is_some_and(|held| Arc::ptr_eq(held, &wake) && Arc::strong_count(held) == 2) {
+            wakes.remove(session);
         }
     }
 }
@@ -138,7 +160,14 @@ pub(super) fn start(node: &Arc<Node>) -> io::Result<()> {
     let mut key = [0u8; 32];
     getrandom::fill(&mut key).map_err(io::Error::other)?;
     let channel =
-        Arc::new(Channel { port, key, wakes: Mutex::default(), told: Mutex::default(), queues: Mutex::default() });
+        Arc::new(Channel {
+            port,
+            key,
+            wakes: Mutex::default(),
+            wakes_made: AtomicU64::new(0),
+            told: Mutex::default(),
+            queues: Mutex::default(),
+        });
     if node.claude.channel.set(channel).is_err() {
         return Ok(());
     }
@@ -399,20 +428,31 @@ async fn apply_in_order(
             }
         };
         let (through, whole) = dealt(&batch, &applied, written);
-        let mut state = queue.state.lock().expect("never poisoned");
-        state.queued = state.queued.saturating_sub(count);
-        state.bytes = state.bytes.saturating_sub(taken);
-        if through.is_some() {
-            state.through = through;
+        {
+            let mut state = queue.state.lock().expect("never poisoned");
+            state.queued = state.queued.saturating_sub(count);
+            state.bytes = state.bytes.saturating_sub(taken);
+            if through.is_some() {
+                state.through = through;
+            }
+            state.refused |= !whole;
         }
         if !whole {
-            state.refused = true;
-            drop(state);
             node.log.line(format_args!("{session}'s reports go to its files from now: one could not be kept"));
             // What waits behind the one not kept is the mod's to write now.
             receiver.close();
             while receiver.try_recv().is_ok() {}
             wake(&node, &session);
+            // The refusal stands while its mod turns to files; then it goes.
+            tokio::time::sleep(IDLE).await;
+            if let Some(channel) = node.claude.channel.get() {
+                let mut queues = channel.queues.lock().expect("never poisoned");
+                if queues.get(&session).is_some_and(|held| Arc::ptr_eq(held, &queue)) {
+                    queues.remove(&session);
+                }
+                drop(queues);
+                channel.told.lock().expect("never poisoned").remove(&session);
+            }
             return;
         }
     }
@@ -430,6 +470,9 @@ fn retire(node: &Node, session: &str, queue: &Arc<Queue>) -> bool {
     state.retired = true;
     queues.remove(session);
     drop((state, queues));
+    // Told again, should it hand anything again: a `channel.json` written
+    // anew, as it is.
+    channel.told.lock().expect("never poisoned").remove(session);
     // A wake nobody holds: a mod that waits again gets a new one, and at
     // worst looks once more than it needed.
     let mut wakes = channel.wakes.lock().expect("never poisoned");

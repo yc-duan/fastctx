@@ -92,10 +92,14 @@ impl Forwarder {
     /// Hands on what waits, as far as there is room.
     pub fn flush(&mut self) -> Result<(), Lagged> {
         while let Some((number, first)) = self.waiting.pop_first() {
-            match self.sender.try_send_measured(Ok(first.piece), first.size, first.key.clone()) {
+            let Waiting { piece, size, key, _memory: memory } = first;
+            // Handed on, its bytes are the queue's to count: what it took of
+            // the budget here goes first, so they are never counted twice.
+            drop(memory);
+            match self.sender.try_send_measured(Ok(piece), size, key.clone()) {
                 Ok(()) => {
-                    self.bytes -= first.size;
-                    if let Some(key) = &first.key
+                    self.bytes -= size;
+                    if let Some(key) = &key
                         && self.keys.get(key) == Some(&number)
                     {
                         self.keys.remove(key);
@@ -104,8 +108,11 @@ impl Forwarder {
                 Err(TrySendError::Closed(_)) => return Err(Lagged),
                 Err(TrySendError::Full(piece)) => {
                     let piece = piece.expect("only pieces are pushed");
-                    self.waiting
-                        .insert(number, Waiting { piece, size: first.size, key: first.key, _memory: first._memory });
+                    let Some(memory) = watch_queue::reserve(size) else {
+                        self.sender.lag();
+                        return Err(Lagged);
+                    };
+                    self.waiting.insert(number, Waiting { piece, size, key, _memory: vec![memory] });
                     return Ok(());
                 }
             }

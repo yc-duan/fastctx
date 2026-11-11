@@ -102,7 +102,13 @@ async fn settled(
     // a node stopped between the two finds the row still running, and holds
     // them as it holds the words after a command whose outcome is unknown.
     let failed = result.as_ref().err().filter(|_| ran).map(|error| error.message.as_str());
-    crate::composer::forget_command(node, id, &row.id, failed).await?;
+    // A Codex compaction only started: its place stays among the words, and
+    // the words after it wait, until its turn tells how it ended
+    // (`after_compaction`).
+    let later = matches!(result, Ok(done) if compacts_later(node, id, &row.control, done));
+    if !later {
+        crate::composer::forget_command(node, id, &row.id, failed).await?;
+    }
     settle(node, id, row.clone(), result).await?;
     crate::lifecycle::retry::clear(node, id, &control_key(row)?).await.map_err(failure)?;
     node.watchers.changed.tell(id);
@@ -293,16 +299,16 @@ fn after_compaction(node: Arc<Node>, id: ResidentId, mut row: PendingControl) {
             }
             tokio::time::sleep(Duration::from_millis(500)).await;
         }
+        // Its place goes now: compacted, the words after it go on; not
+        // compacted, or not known to be, they wait for the user, as after a
+        // failed turn. They are held before the control is let go.
+        let why = (row.state != ControlState::Completed)
+            .then(|| row.error.clone().unwrap_or_else(|| "the compaction did not finish".into()));
+        if let Err(error) = crate::composer::forget_command(&node, &id, &row.id, why.as_deref()).await {
+            node.log.line(format_args!("holding {id}'s queue after its compaction: {}", error.message));
+        }
         if let Err(error) = finish(&node, &id, &row).await {
             node.log.line(format_args!("telling {id} how its compaction ended: {}", error.message));
-        }
-        // Not compacted, or not known to be: the words after it wait for
-        // the user, as after a failed turn.
-        if row.state != ControlState::Completed {
-            let why = row.error.as_deref().unwrap_or("the compaction did not finish");
-            if let Err(error) = crate::composer::command_failed(&node, &id, why).await {
-                node.log.line(format_args!("holding {id}'s queue after its compaction: {}", error.message));
-            }
         }
         schedule(&node, &id);
     });

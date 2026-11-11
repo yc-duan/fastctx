@@ -106,7 +106,7 @@ mod windows_user;
 pub mod worker;
 
 pub use atomic::{
-    Permissions, PublishFailure, Staged, publish, publish_changed, publish_checked, publish_new, publish_new_unsynced,
+    Permissions, PublishFailure, Staged, mark_new, publish, publish_changed, publish_checked, publish_new, publish_new_unsynced,
     publish_unsynced,
 };
 #[cfg(any(target_os = "linux", target_os = "macos", windows))]

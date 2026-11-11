@@ -52,28 +52,6 @@ pub async fn forget_command(
     Ok(())
 }
 
-/// A command among the words that ended only after its place was given up
-/// (a Codex compaction, which runs as a turn of its own) did not get done:
-/// the words still waiting wait for the user.
-pub async fn command_failed(node: &Arc<Node>, id: &ResidentId, why: &str) -> Result<(), Failure> {
-    let Some(cell) = storage::existing(node, id).await? else {
-        return Ok(());
-    };
-    let mut cell = cell.lock().await;
-    load(node, id, &mut cell).await?;
-    let mut next = cell.take().expect("loaded");
-    // Its place is gone, and every word that went after it with it: words
-    // sent from the input after a stop that still wait in line wait for the
-    // user too, as behind a command that failed in its place.
-    let all: Vec<NoticeId> = next.queue.iter().map(|entry| entry.id.clone()).collect();
-    unline_straight(&mut next, &all);
-    hold_words(&mut next, why);
-    publish(node, id, &mut cell, next).await?;
-    drop(cell);
-    schedule(node, id);
-    Ok(())
-}
-
 /// Words sent from the input after a stop that waited behind a command wait
 /// for the user once it failed, as the words queued behind it do; words the
 /// user asked to go at once from the queue still go.

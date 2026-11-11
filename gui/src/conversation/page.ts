@@ -278,6 +278,8 @@ export class ConversationPage {
    *  with a way to stop it again. */
   private stopOverdue = false;
   private stopWatch = 0;
+  /** Stops asked from here, the latest last: an answer speaks only for it. */
+  private stopsAsked = 0;
   /** Words of the shared queue on their way into the turn, by queue item,
    *  as the conversation shows them meanwhile. */
   private readonly onTheirWay = new Map<string, string>();
@@ -1353,12 +1355,15 @@ export class ConversationPage {
     const target = this.options.conversation.runningTurn();
     const asked = this.options.stop(target);
     if (!asked) return;
+    // Only the answer to the latest stop speaks: one to an earlier stop,
+    // coming late, leaves a stop asked since standing.
+    const mine = ++this.stopsAsked;
     this.options.conversation.halt();
     this.watchStop();
     this.update();
     asked.then(
       (stopped) => {
-        if (stopped) return;
+        if (stopped || mine !== this.stopsAsked) return;
         this.calledOff();
         // The turn asked to stop had ended already: a turn begun since goes
         // on, and is not called off with it.
@@ -1368,6 +1373,7 @@ export class ConversationPage {
         this.update();
       },
       (error: unknown) => {
+        if (mine !== this.stopsAsked) return;
         this.calledOff();
         this.options.conversation.unhalt();
         const why = error instanceof Error ? error.message : String(error);

@@ -229,17 +229,23 @@ pub fn start(node: &Arc<Node>) -> std::io::Result<()> {
         match event {
             Ok(event) if !crate::file_events::changes(&event) => {}
             Ok(event) if !event.need_rescan() => {
+                let removed = matches!(event.kind, notify::EventKind::Remove(_));
                 for path in event.paths {
                     // The session's directory: the first name under the root.
                     if let Ok(rest) = path.strip_prefix(&seen)
                         && let Some(first) = rest.components().next()
                     {
-                        let _ = changed.send(root.join(first));
+                        let mut within = rest.iter();
+                        within.next();
+                        if !own_write(within.next(), removed) {
+                            let _ = changed.send(root.join(first));
+                        }
                     } else if let Ok(rest) = path.strip_prefix(&homes) {
                         let mut parts = rest.iter();
                         if parts.next().is_some()
                             && parts.next().is_some_and(|name| name == "claude")
                             && let Some(session) = parts.next()
+                            && !own_write(parts.next(), removed)
                         {
                             let _ = changed.send(root.join(session));
                         }
@@ -323,6 +329,17 @@ fn unwatched(node: &Node) -> Vec<String> {
 /// at again: twice as long each time, from `AGAIN_FIRST` to `AGAIN_LAST`.
 const AGAIN_FIRST: std::time::Duration = std::time::Duration::from_secs(5);
 const AGAIN_LAST: std::time::Duration = std::time::Duration::from_secs(300);
+
+/// Whether a change in a session's directory, under its name `within`, is
+/// the node's own and leaves nothing new to look at: the markers of what it
+/// applied, the channel and policy it wrote, and what it took away of the
+/// mod's files once applied. Each such write would otherwise set off a look,
+/// whose writes set off the next.
+fn own_write(within: Option<&std::ffi::OsStr>, removed: bool) -> bool {
+    let Some(name) = within.and_then(|name| name.to_str()) else { return false };
+    matches!(name, "applied" | "applied.json" | "channel.json" | "policy.json")
+        || (removed && matches!(name, "events" | "accounting"))
+}
 
 /// Looks at one session's directory soon, beside the others but never twice
 /// at once: a change while it is looked at has it looked at again after,
@@ -544,13 +561,15 @@ fn session_directories(node: &Node, sessions: &Path) -> Vec<PathBuf> {
 /// handed over on the loopback channel (`channel`); the caller holds the
 /// session's `reading` lock. What they changed reaches the disk once,
 /// before they are let go of and their markers written. The names applied,
-/// a prefix of the reports, and whether all went in.
+/// a prefix of the reports, and whether all went in. `filed`: whether the
+/// mod may have written them to its files too (`exchange::acknowledge`).
 async fn apply(
     node: &Arc<Node>,
     resident: &ResidentId,
     session: &str,
     directory: &Path,
     reported: Vec<exchange::Report>,
+    filed: bool,
 ) -> (Vec<String>, bool) {
     let (mut acknowledged, mut floor) = (0_u32, None::<String>);
     let mut applied_reports = Vec::new();
@@ -672,7 +691,7 @@ async fn apply(
         let acknowledging = fastctx_platform::task::spawn_blocking(move || -> std::io::Result<()> {
             crate::records::settle(&conversation)?;
             for name in &acknowledging_names {
-                exchange::acknowledge(&session_directory, name)?;
+                exchange::acknowledge(&session_directory, name, filed)?;
             }
             Ok(())
         })
@@ -734,16 +753,18 @@ pub(crate) async fn receive(
     let harvested = {
         let directory = directory.clone();
         fastctx_platform::task::spawn_blocking(move || {
-            if exchange::written(&directory)? { exchange::harvest(&directory) } else { Ok((Vec::new(), Vec::new())) }
+            let written = exchange::written(&directory)?;
+            let harvested = if written { exchange::harvest(&directory)? } else { (Vec::new(), Vec::new()) };
+            Ok::<_, std::io::Error>((written, harvested))
         })
         .await
         .map_err(std::io::Error::other)?
     };
-    let (filed, problems) = harvested?;
+    let (written, (filed, problems)) = harvested?;
     for problem in problems {
         node.log.line(problem);
     }
-    if !filed.is_empty() && !apply(node, &resident, session, &directory, filed).await.1 {
+    if !filed.is_empty() && !apply(node, &resident, session, &directory, filed, true).await.1 {
         return Err(std::io::Error::other("what the session wrote before could not all be applied"));
     }
     let at = Timestamp::now();
@@ -767,7 +788,9 @@ pub(crate) async fn receive(
             }
         }
     }
-    let mut applied = apply(node, &resident, session, &directory, reported).await.0;
+    // A report handed over has a copy in the files only where the mod wrote
+    // some lately (a stop cut a hand-over short).
+    let mut applied = apply(node, &resident, session, &directory, reported, written).await.0;
     applied.extend(already);
     Ok(applied)
 }
@@ -871,7 +894,7 @@ async fn look(node: &Arc<Node>, directory: &Path) -> bool {
         node.log.line(problem);
     }
     channel::tell(node, directory, &session, false);
-    if !apply(node, &resident, &session, directory, reported).await.1 {
+    if !apply(node, &resident, &session, directory, reported, true).await.1 {
         return false;
     }
     // Each receipt is settled once in this run, and again only while what it
