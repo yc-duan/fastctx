@@ -17,6 +17,7 @@ use fastctx_types::run::{RunReply, RunRequest, RunState};
 use fastctx_types::{Address, JobId, MachineName, ResidentId, TownName};
 
 use crate::Node;
+mod flights;
 pub(crate) mod records;
 use fastctx_platform::task;
 
@@ -125,7 +126,9 @@ fn left_running(node: &Node, resident: &ResidentId, kept: &Elsewhere) -> std::io
     records::put(&node.world.conversation(resident), records::RUNNING, running_key(kept), kept)
 }
 
-/// An authenticated completion removes its matching remote-running record.
+/// An authenticated completion removes its matching remote-running record,
+/// and keeps the call that started the job, if its answer is still on its
+/// way, from keeping one after this (`flights`).
 pub(crate) fn ended_elsewhere(
     node: &Node,
     resident: &ResidentId,
@@ -133,7 +136,8 @@ pub(crate) fn ended_elsewhere(
     job: &JobId,
     computer: &fastctx_types::NoticeId,
 ) -> std::io::Result<()> {
-    end_running(&node.world.conversation(resident), machine, job, computer)
+    let directory = node.world.conversation(resident);
+    flights::ended(&directory, computer, job, || end_running(&directory, machine, job, computer))
 }
 
 fn end_running(
@@ -251,6 +255,9 @@ pub(crate) async fn run(
         Err(_) => town,
     };
     let (script, started_at) = (request.script.clone(), jiff::Timestamp::now());
+    // From before the call goes: the letter that says its job ended may be
+    // here before its answer is.
+    let flight = flights::begin(&directory);
     let dispatch = crate::speech::new_id("run");
     let call = RemoteCall::Run {
         resident: resident.clone(),
@@ -366,18 +373,14 @@ pub(crate) async fn run(
                 return Err(Failure::new("the job computer's identity changed while its answer was in flight"));
             }
             let command = records::summarize(&crate::jobs::first_line(&script));
-            left_running(
-                node,
-                &resident,
-                &Elsewhere {
-                    machine: to.clone(),
-                    job: reply.job.clone(),
-                    command,
-                    started_at,
-                    computer: Some(source.id.clone()),
-                },
-            )
-            .map_err(|error| {
+            let kept = Elsewhere {
+                machine: to.clone(),
+                job: reply.job.clone(),
+                command,
+                started_at,
+                computer: Some(source.id.clone()),
+            };
+            flight.left_running(&source.id, &reply.job, || left_running(node, &resident, &kept)).map_err(|error| {
                 Failure::new(format!(
                     "{} is running on {}, but saving its pending completion failed: {error}",
                     reply.job, reply.machine
