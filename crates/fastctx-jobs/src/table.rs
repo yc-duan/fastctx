@@ -100,7 +100,16 @@ pub fn withdraw(db: &Connection, kind: &str, unit: &str) -> Result<Vec<String>> 
 }
 
 /// Drops a unit's jobs, in the transaction that ends the unit. One running
-/// then finishes into nothing.
+/// then finishes into nothing. Where a dropped job was to settle an
+/// operation, the operation is settled with it, so that whoever asked is
+/// told the work is not to be, and is not left asking after it.
 pub fn forget(db: &Connection, unit: &str) -> Result<usize> {
-    Ok(db.prepare_cached("DELETE FROM jobs WHERE unit = ?1")?.execute([unit])?)
+    let dropped: Vec<(String, String, i64)> = db
+        .prepare_cached("DELETE FROM jobs WHERE unit = ?1 RETURNING kind, key, state")?
+        .query_map([unit], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
+        .collect::<fastctx_storage::rusqlite::Result<_>>()?;
+    for (kind, key, state) in &dropped {
+        crate::operations::dropped(db, kind, key, *state == RUNNING)?;
+    }
+    Ok(dropped.len())
 }

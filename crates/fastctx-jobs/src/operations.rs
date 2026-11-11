@@ -100,6 +100,29 @@ pub fn settle(db: &Connection, operation: &Operation, standing: &Standing, kept:
     receipts::put(db, &key(operation), &value, kept, settled, None, now())
 }
 
+/// How long an operation stands as settled here once its job was dropped.
+const DROPPED_FOR: Duration = Duration::from_secs(24 * 60 * 60);
+
+/// Settles the operation a job of `kind` under `id` was to settle, when
+/// there is one that still stands as accepted: the job was dropped with
+/// what it was for (`crate::forget`). `begun` says whether its work was
+/// under way, which then ends into nothing, done or not.
+pub(crate) fn dropped(db: &Connection, kind: &str, id: &str, begun: bool) -> Result<()> {
+    let key = receipts::Key::new(format!("operation/{kind}"), String::new(), id.to_string());
+    if !receipts::get(db, &key)?.is_some_and(|value| read(&value) == Standing::Accepted) {
+        return Ok(());
+    }
+    let failure = if begun {
+        fastctx_types::ipc::Failure::new(
+            "what this was asked for is gone; the work had begun, and whether it took effect is not known",
+        )
+    } else {
+        fastctx_types::ipc::Failure::not_run("what this was asked for is gone; the work was not begun")
+    };
+    let why = serde_json::to_string(&failure).unwrap_or(failure.message);
+    receipts::put(db, &key, &[&[FAILED][..], why.as_bytes()].concat(), DROPPED_FOR, true, None, now())
+}
+
 impl Jobs {
     /// Tells those who wait for an operation that it has settled.
     pub fn told(&self, operation: &Operation) {

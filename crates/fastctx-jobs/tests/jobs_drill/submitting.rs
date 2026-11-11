@@ -223,6 +223,23 @@ pub(crate) async fn drill(jobs: &Arc<Jobs>) -> Outcome_<()> {
     if came.as_deref().ok() != Some("did for the successor") || done("for the successor") != 1 {
         return Err(format!("work left for the successor: {}", told(came)).into());
     }
+
+    // What a unit's work was for ends before the work began: its job is
+    // dropped with the unit, and whoever asks after it is told it was not
+    // done, where it would otherwise stand as accepted with nothing to do it.
+    lab.serving.store(false, Ordering::Release);
+    expect("a call for a unit that ends", told(ask(&lab, &SLOW, "s6", "for what ends", Some("n7")).await), "accepted")?;
+    let dropped = lab
+        .jobs
+        .database()
+        .write(1024, |db| fastctx_jobs::forget(db, "s6"))
+        .await
+        .map_err(|error| error.to_string())?;
+    lab.serving.store(true, Ordering::Release);
+    let ended = ask(&lab, &SLOW, "s6", "for what ends", Some("n7")).await;
+    if dropped != 1 || !ended.as_ref().is_err_and(|failure| failure.not_run) || done("for what ends") != 0 {
+        return Err(format!("{dropped} dropped with their unit; asked after: {}", told(ended)).into());
+    }
     println!(
         "submitting: answered when soon done, accepted when not, done once under a name, held back as it should be"
     );
