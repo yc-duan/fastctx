@@ -192,7 +192,8 @@ test('a stored row takes the block its step streamed while the turn is not known
     .filter(([path]) => path.includes('/events/') && path.endsWith('.json'))
     .flatMap(([, body]) => {
       const report = JSON.parse(body)
-      return report.kind === 'batch' ? report.events.map((entry: { happened: unknown }) => entry.happened)
+      return report.kind === 'batch'
+        ? report.events.filter((entry: { kind: string }) => entry.kind === 'session').map((entry: { happened: unknown }) => entry.happened)
         : report.kind === 'session' ? [report.happened] : []
     }) as { event: string; turn: string; item?: { id: string; draft?: string; text?: string } }[]
   const renamed = told.filter((happened) => happened.event === 'finished' && happened.item?.draft !== undefined)
