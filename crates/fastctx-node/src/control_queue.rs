@@ -319,7 +319,7 @@ pub(crate) fn between_turns(control: &Control) -> bool {
 /// being harmless mid-turn. What the model panel chooses, an answer to the
 /// host, and what only reads are no slash commands.
 pub(crate) fn slash(control: &Control) -> bool {
-    matches!(control, Control::Compact | Control::Rename { .. } | Control::Fork { .. })
+    matches!(control, Control::Compact | Control::Rename { .. } | Control::Fork { .. } | Control::Goal { .. })
         || matches!(control, Control::Command { name, args, path }
             if !(path.is_none() && name == "model" && args.trim().is_empty()))
 }

@@ -17,7 +17,10 @@ export type Control =
   | { do: "agents" }
   | { do: "agent_messages"; agent_id: string }
   /** Withdraws a control still waiting for the turn under way to end. */
-  | { do: "cancel_control"; id: string };
+  | { do: "cancel_control"; id: string }
+  /** `/goal`, queued among the words as every slash command is; sent only
+   *  to a node whose offers say `control_goal`. */
+  | { do: "goal"; objective: string };
 
 export type ControlKind = Control["do"];
 
@@ -116,6 +119,8 @@ export interface Offers {
   /** The node tells each control in its conversation as it begins and ends:
    *  the conversation shows them, not the line beside the input. */
   controls_told?: boolean;
+  /** The node takes `/goal` as a control, in its order among the words. */
+  control_goal?: boolean;
   /** Those it holds, waiting or being done. */
   pending_controls?: PendingControl[];
   controls: ControlKind[];

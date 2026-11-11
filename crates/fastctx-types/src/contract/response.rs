@@ -353,7 +353,7 @@ fn control(request: &crate::session::control::Control) -> Response {
         | Control::Fork { .. }
         | Control::Rewind { .. } => Response::Submit,
         // A setting the user changes answers as it is changed.
-        Control::Model { .. } | Control::Rename { .. } => Response::Answer,
+        Control::Model { .. } | Control::Rename { .. } | Control::Goal { .. } => Response::Answer,
         Control::CancelControl { .. } | Control::Agents | Control::AgentMessages { .. } => Response::Answer,
     }
 }

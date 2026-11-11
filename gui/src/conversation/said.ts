@@ -45,6 +45,9 @@ export function shownOf(name: string, control: Control, said: string | null, wor
     case "agent_messages":
     case "cancel_control":
       return null;
+    // The goal shows where goals are shown: its bar and panel.
+    case "goal":
+      return { kind: "note", text: "" };
     case "command":
       if (control.path) return { kind: "note", text: words.skill(name) };
       if (name === "review") return { kind: "note", text: words.review };

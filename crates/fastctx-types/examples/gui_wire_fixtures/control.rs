@@ -31,6 +31,7 @@ pub fn fixtures() -> Fixtures {
                 request: json!({"server":"123:2026-10-04T12:00:00Z","id":0}),
                 answer: json!({"decision":"accept"}),
             },
+            Control::Goal { objective: "把这一版做完".into() },
         ],
         controlled: vec![
             Controlled::Done { said: None },
@@ -62,6 +63,7 @@ pub fn fixtures() -> Fixtures {
                 control_queue: true,
                 controls_told: true,
                 control_reply_envelope: false,
+                control_goal: true,
                 checkpoints: None,
                 history_limits: None,
                 automatic_model: None,

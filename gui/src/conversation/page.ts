@@ -2397,7 +2397,9 @@ export class ConversationPage {
       this.stop();
       return true;
     }
-    if (command.control === "goal") {
+    // A node that takes `/goal` does it in its order among the words, as
+    // every slash command; one from before is given the goal at once.
+    if (command.control === "goal" && !this.offered?.control_goal) {
       this.side?.setGoal(args);
       return true;
     }
@@ -2420,7 +2422,9 @@ export class ConversationPage {
     }
     const what: Control =
       given ??
-      (command.control === "compact"
+      (command.control === "goal"
+        ? { do: "goal", objective: args }
+        : command.control === "compact"
         ? { do: "compact" }
         : command.control === "model"
           ? { do: "model", model: args, effort: null }

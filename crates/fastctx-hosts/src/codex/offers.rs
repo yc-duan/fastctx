@@ -244,6 +244,7 @@ impl CodexHost {
             control_queue: false,
             controls_told: false,
             control_reply_envelope: false,
+            control_goal: false,
             checkpoints: None,
             history_limits: None,
             automatic_model: None,
