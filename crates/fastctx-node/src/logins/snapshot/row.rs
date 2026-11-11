@@ -43,6 +43,7 @@ pub(super) async fn one(
     .await
     .unwrap_or_else(|error| Fact::failed(error.message));
     let (reading, dir, saved) = (node.clone(), dir_owned.clone(), known.clone());
+    let mut program_failure = None;
     let launcher = match read(node, deadline, "finding the login's program", move || {
         Ok(logins::program::now(&reading, agent, &dir, saved.as_ref()))
     })
@@ -51,6 +52,7 @@ pub(super) async fn one(
         Ok(launcher) => launcher,
         Err(error) => {
             failure(node, "program", &error);
+            program_failure = Some(error.message);
             None
         }
     };
@@ -117,6 +119,13 @@ pub(super) async fn one(
             false,
         )
     });
+    let program_unreadable = program_failure.is_some();
+    let drift = program_failure
+        .map(|reason| fastctx_types::logins::Drift::Changed {
+            location: dir_owned.display().to_string(),
+            reason: format!("reading the login's program failed: {reason}"),
+        })
+        .or(drift);
     Ok(Login {
         dir: dir_owned.clone(),
         default: found == Found::Default,
@@ -136,7 +145,7 @@ pub(super) async fn one(
         models,
         model_edits,
         change: None,
-        drift: if integration == Integration::In { drift } else { None },
+        drift: if integration == Integration::In || program_unreadable { drift } else { None },
         workbench: integration == Integration::In && workbench,
     })
 }

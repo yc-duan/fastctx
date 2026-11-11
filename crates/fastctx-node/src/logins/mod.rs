@@ -15,6 +15,7 @@ pub(crate) mod limits;
 pub(crate) mod models;
 mod others;
 mod program;
+mod read_limits;
 pub(crate) mod refresh;
 pub(crate) mod remote;
 pub(crate) mod scan;
@@ -134,6 +135,11 @@ pub(crate) fn identities(node: &Node, agent: &AgentName) -> Result<Vec<(PathBuf,
 /// The record of this machine's logins, without waiting for identification.
 pub(crate) async fn here(node: &Arc<Node>) -> Result<MachineLogins, Failure> {
     snapshot::read(node)
+}
+
+/// The same projection in the shape older clients read.
+pub(crate) fn agents(node: &Node) -> Result<fastctx_types::agents::AgentsReply, Failure> {
+    snapshot::agents(node)
 }
 
 /// Each login of `agent` the World knows here, with how it knows of it:

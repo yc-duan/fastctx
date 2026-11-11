@@ -1,7 +1,4 @@
-//! The agents of each machine in the shape interfaces and nodes before the
-//! logins record read (`AgentsReply`): built from what the node keeps of its
-//! logins (`logins`), with no program started for the asking but to ask
-//! again a login whose sign-in changed.
+//! The persisted login projection in the shape older interfaces read.
 
 use fastctx_types::access::Written;
 use std::ffi::OsString;
@@ -21,26 +18,24 @@ use crate::Node;
 /// The agents on this machine, one for each login of each, listed and
 /// candidates, as the node keeps them.
 pub async fn here(node: &Arc<Node>) -> Result<AgentsReply, Failure> {
-    let logins = crate::logins::here(node).await?;
-    // Whether each login's program is there is looked at on the disk.
-    Ok(fastctx_platform::task::blocking(move || reply(logins)).await)
+    crate::logins::agents(node)
 }
 
 /// The record in the shape of an older reply: a login a scan has not asked
 /// is said to be unknown, never taken for logged out.
-pub(crate) fn reply(logins: MachineLogins) -> AgentsReply {
+pub(crate) fn reply(logins: MachineLogins, program: impl Fn(&Login) -> Fact<Option<AgentProgram>>) -> AgentsReply {
     let checked_at = logins.scan.as_ref().map(|scan| scan.started_at).unwrap_or_else(jiff::Timestamp::now);
     let mut agents = Vec::new();
     for agent in crate::logins::AGENTS {
         let side = logins.of(agent).expect("an agent that keeps logins");
         for login in side.listed.iter().chain(&side.candidates) {
-            agents.push(facts(agent, login));
+            agents.push(facts(agent, login, program(login)));
         }
     }
     AgentsReply { machine: logins.machine, checked_at, elapsed_ms: 0, agents, by_login: logins.by_login }
 }
 
-fn facts(agent: &str, login: &Login) -> AgentFacts {
+pub(crate) fn identity_facts(login: &Login) -> (Fact<LoginStatus>, Fact<AgentAccount>) {
     let unasked = || "not asked yet: scan this machine on the agents page".to_string();
     let who = login.identity.as_ref().map(|identified| identified.who.clone());
     let (login_status, account) = match &who {
@@ -59,12 +54,12 @@ fn facts(agent: &str, login: &Login) -> AgentFacts {
         Some(Fact::Failed { reason }) => (Fact::failed(reason.clone()), Fact::failed(reason.clone())),
         None => (Fact::unavailable(unasked()), Fact::unavailable(unasked())),
     };
-    // The program the login starts now, which no asking is needed for.
-    let program = Fact::known(login.launcher.as_ref().map(|launcher| AgentProgram {
-        path: launcher.path.clone(),
-        source: if launcher.desktop_app { ProgramSource::DesktopApp } else { ProgramSource::Path },
-        exists: fastctx_platform::disk::is_file(&launcher.path),
-    }));
+
+    (login_status, account)
+}
+
+fn facts(agent: &str, login: &Login, program: Fact<Option<AgentProgram>>) -> AgentFacts {
+    let (login_status, account) = identity_facts(login);
     let version = match login.launcher.as_ref().and_then(|launcher| launcher.version.clone()) {
         Some(version) => Fact::known(version),
         None => Fact::unavailable("its version is not known"),

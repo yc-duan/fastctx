@@ -1,5 +1,5 @@
 //! The derived login list, published atomically and read independently of refreshes.
-use super::build;
+use super::{build, legacy};
 use crate::logins::kept;
 use crate::{Node, passes};
 use fastctx_hosts::inventory::walk;
@@ -26,6 +26,7 @@ const PASS: passes::Pass =
 struct Held {
     loaded: bool,
     value: Option<Arc<MachineLogins>>,
+    agents: Option<Arc<fastctx_types::agents::AgentsReply>>,
     body: Vec<u8>,
     scan: Option<Option<Scan>>,
     identities: BTreeMap<(String, String), Identified>,
@@ -60,6 +61,8 @@ impl Default for Listing {
 struct Saved {
     version: u32,
     logins: MachineLogins,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    agents: Option<fastctx_types::agents::AgentsReply>,
 }
 fn path(node: &Node) -> std::path::PathBuf {
     node.world.path().join("agent-logins.json")
@@ -112,14 +115,28 @@ fn load(node: &Node, held: &mut Held) -> Result<(), Failure> {
         return Err(Failure::new("the saved login list uses an unknown format"));
     }
     validate(&saved.logins)?;
-    held.body = serde_json::to_vec(&saved.logins).map_err(|error| Failure::new(error.to_string()))?;
+    if saved.agents.as_ref().is_some_and(|reply| reply.agents.len() > ROWS) {
+        return Err(Failure::new("the saved older login reply exceeds its row budget"));
+    }
+    held.body = serde_json::to_vec(&saved).map_err(|error| Failure::new(error.to_string()))?;
+    held.agents = saved.agents.map(Arc::new);
     held.value = Some(Arc::new(saved.logins));
     Ok(())
 }
 
 /// Reads one bounded private file on first use; warm reads do no file IO.
 pub(crate) fn read(node: &Node) -> Result<MachineLogins, Failure> {
-    let (value, scan, identities, folders, changes) = {
+    current(node).map(|(value, _)| value)
+}
+
+pub(crate) fn agents(node: &Node) -> Result<fastctx_types::agents::AgentsReply, Failure> {
+    let (value, agents) = current(node)?;
+    Ok(legacy::overlay(&value, agents.as_deref()))
+}
+
+type Current = (MachineLogins, Option<Arc<fastctx_types::agents::AgentsReply>>);
+fn current(node: &Node) -> Result<Current, Failure> {
+    let (value, scan, identities, folders, changes, agents) = {
         let mut held = node.logins.listing.held.lock().expect("never poisoned");
         if let Err(error) = load(node, &mut held) {
             held.failed = Some(error.message);
@@ -133,6 +150,7 @@ pub(crate) fn read(node: &Node) -> Result<MachineLogins, Failure> {
             held.identities.clone(),
             held.folders.clone(),
             held.changes.clone(),
+            held.agents.clone(),
         )
     };
     let mut value = (*value).clone();
@@ -173,7 +191,7 @@ pub(crate) fn read(node: &Node) -> Result<MachineLogins, Failure> {
             .collect();
     }
     crate::logins::search_progress::overlay(node, &mut value);
-    Ok(value)
+    Ok((value, agents))
 }
 
 pub(crate) fn register(node: &Arc<Node>) {
@@ -271,7 +289,8 @@ pub(crate) async fn part<T: Send + 'static>(
         if checking.load(Ordering::Acquire) {
             return Err(Failure::not_run("the login read expired before it began"));
         }
-        work()
+        fastctx_platform::read_budget::within(crate::logins::read_limits::PROJECTION, work)
+            .map_err(|error| Failure::new(error.to_string()))?
     });
     match tokio::time::timeout(within, task).await {
         Ok(result) => result.map_err(|error| Failure::new(error.to_string()))?,
@@ -291,16 +310,17 @@ async fn restore(node: &Arc<Node>) {
         // This is a local holder: no reader's lock covers the disk operation.
         let mut restored = Held::default();
         load(&reading, &mut restored)?;
-        Ok((restored.value, restored.body))
+        Ok((restored.value, restored.agents, restored.body))
     })
     .await;
     match restored {
-        Ok((value, body)) => {
+        Ok((value, agents, body)) => {
             let mut held = node.logins.listing.held.lock().expect("never poisoned");
             if held.value.is_none() {
                 held.loaded = true;
                 held.failed = None;
                 held.value = value;
+                held.agents = agents;
                 held.body = body;
             }
         }
@@ -311,15 +331,16 @@ async fn restore(node: &Arc<Node>) {
 pub(crate) async fn refresh(node: &Arc<Node>) -> passes::Left {
     let making = node.logins.listing.making.clone().lock_owned().await;
     restore(node).await;
-    let (full, quota, prior, cursor, keys) = {
+    let (full, quota, prior, cursor, keys, prior_agents) = {
         let mut held = node.logins.listing.held.lock().expect("never poisoned");
         let quota = std::mem::take(&mut held.quota);
         // A request arriving during a cycle also needs the already-read head
         // refreshed, but must not keep resetting the tail's progress.
         let full = if held.cursor != 0 { held.full } else { std::mem::take(&mut held.full) };
-        (full, quota, held.value.clone(), held.cursor, held.keys.clone())
+        (full, quota, held.value.clone(), held.cursor, held.keys.clone(), held.agents.clone())
     };
-    let built = if let Some(prior) = prior.as_ref().filter(|_| !full && cursor == 0 && !quota.is_empty()) {
+    let refresh_programs = full || cursor != 0 || quota.is_empty() || prior.is_none();
+    let built = if let Some(prior) = prior.as_ref().filter(|_| !refresh_programs) {
         build::quotas(node, (**prior).clone(), quota).await.map(|value| build::Built {
             value,
             next: cursor,
@@ -334,10 +355,15 @@ pub(crate) async fn refresh(node: &Arc<Node>) -> passes::Left {
     };
     match built {
         Ok(build::Built { value, next, more, keys }) => {
+            let agents = if refresh_programs {
+                legacy::project(node, &value).await
+            } else {
+                legacy::overlay(&value, prior_agents.as_deref())
+            };
             let saving = node.clone();
             match fastctx_platform::task::spawn_blocking(move || {
                 let _making = making;
-                save(&saving, value)
+                save(&saving, value, agents)
             })
             .await
             {
@@ -369,30 +395,31 @@ pub(crate) async fn refresh(node: &Arc<Node>) -> passes::Left {
         }
     }
 }
-fn save(node: &Node, mut value: MachineLogins) -> Result<(), Failure> {
+fn save(node: &Node, mut value: MachineLogins, agents: fastctx_types::agents::AgentsReply) -> Result<(), Failure> {
     validate(&value)?;
     for side in [&mut value.codex, &mut value.claude].into_iter().chain(value.others.values_mut()) {
         for login in side.listed.iter_mut().chain(&mut side.candidates) {
             login.change = None;
         }
     }
-    let body = serde_json::to_vec(&value).map_err(|error| Failure::new(error.to_string()))?;
+    let body = serde_json::to_vec(&Saved { version: 1, logins: value.clone(), agents: Some(agents.clone()) })
+        .map_err(|error| Failure::new(error.to_string()))?;
     let same = node.logins.listing.held.lock().expect("never poisoned").body == body;
     if same {
         return Ok(());
     }
-    let bytes = serde_json::to_vec(&Saved { version: 1, logins: value.clone() })
-        .map_err(|error| Failure::new(error.to_string()))?;
+    let bytes = &body;
     if bytes.len() > BYTES as usize {
         return Err(Failure::new("the derived login list exceeds 16 MiB"));
     }
-    publish(&path(node), &bytes, Permissions::Private).map_err(|error| Failure::new(error.to_string()))?;
+    publish(&path(node), bytes, Permissions::Private).map_err(|error| Failure::new(error.to_string()))?;
     {
         let mut held = node.logins.listing.held.lock().expect("never poisoned");
         held.loaded = true;
         held.failed = None;
         held.body = body;
         held.value = Some(Arc::new(value));
+        held.agents = Some(Arc::new(agents));
     }
     node.topics.changed(fastctx_types::topics::LOGINS);
     Ok(())

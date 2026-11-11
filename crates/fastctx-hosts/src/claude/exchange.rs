@@ -97,7 +97,7 @@ pub fn transcript(directory: &Path) -> io::Result<Option<PathBuf>> {
     struct Place {
         path: PathBuf,
     }
-    match std::fs::read(directory.join("transcript.json")) {
+    match fastctx_platform::disk::read(directory.join("transcript.json")) {
         Ok(bytes) if bytes.is_empty() => Ok(None),
         Ok(bytes) => serde_json::from_slice::<Place>(&bytes)
             .map(|place| Some(place.path))

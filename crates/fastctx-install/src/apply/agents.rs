@@ -171,7 +171,7 @@ pub fn agent_integrations(places: &Places) -> Result<Vec<(String, PathBuf)>, Err
         if !(name.starts_with("applied-agent-") && name.ends_with(".json")) {
             continue;
         }
-        let Ok(bytes) = std::fs::read(entry.path()) else { continue };
+        let Ok(bytes) = fastctx_platform::disk::read(entry.path()) else { continue };
         if let Ok(record) = serde_json::from_slice::<Record>(&bytes)
             && agents::find(&record.agent).is_some()
             && record.receipt.holds()

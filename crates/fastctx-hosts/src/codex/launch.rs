@@ -50,7 +50,7 @@ pub fn codex_home(home: &Path, env: &[(OsString, OsString)]) -> PathBuf {
 
 pub(crate) fn read_config(codex_home: &Path) -> Result<toml::Table, String> {
     let path = codex_home.join("config.toml");
-    let text = match std::fs::read_to_string(&path) {
+    let text = match fastctx_platform::disk::read_to_string(&path) {
         Ok(text) => text,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(toml::Table::new()),
         Err(error) => return Err(format!("reading {}: {error}", path.display())),

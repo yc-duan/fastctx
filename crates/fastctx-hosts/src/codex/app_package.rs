@@ -89,11 +89,28 @@ fn registered(name: &str) -> Option<Vec<PathBuf>> {
         return None;
     }
     let query = format!("Get-AppxPackage -Name '{name}' | ForEach-Object {{ $_.InstallLocation }}");
-    let output = std::process::Command::new("powershell.exe")
-        .args(["-NoProfile", "-NonInteractive", "-Command", &query])
-        .creation_flags(CREATE_NO_WINDOW)
-        .output()
-        .ok()?;
+    let mut command = std::process::Command::new("powershell.exe");
+    command.args(["-NoProfile", "-NonInteractive", "-Command", &query]).creation_flags(CREATE_NO_WINDOW);
+    let output = if fastctx_platform::read_budget::active() {
+        use std::process::{Output, Stdio};
+        let mut child = command.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().ok()?;
+        let Some(mut pipe) = child.stdout.take() else {
+            let _ = child.kill();
+            let _ = child.wait();
+            return None;
+        };
+        let stdout = match fastctx_platform::read_budget::from_reader(&mut pipe, Path::new("PowerShell package list")) {
+            Ok(stdout) => stdout,
+            Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        };
+        Output { status: child.wait().ok()?, stdout, stderr: Vec::new() }
+    } else {
+        command.output().ok()?
+    };
     output.status.success().then(|| {
         String::from_utf8_lossy(&output.stdout)
             .lines()

@@ -18,12 +18,12 @@ fn in_place<R>(work: impl FnOnce() -> R) -> R {
 
 #[track_caller]
 pub fn read(path: impl AsRef<Path>) -> io::Result<Vec<u8>> {
-    in_place(|| fs::read(path)).inspect(|bytes| crate::cost::read(bytes.len()))
+    in_place(|| crate::read_budget::read(path.as_ref()))
 }
 
 #[track_caller]
 pub fn read_to_string(path: impl AsRef<Path>) -> io::Result<String> {
-    in_place(|| fs::read_to_string(path)).inspect(|text| crate::cost::read(text.len()))
+    in_place(|| crate::read_budget::read_to_string(path.as_ref()))
 }
 
 #[track_caller]

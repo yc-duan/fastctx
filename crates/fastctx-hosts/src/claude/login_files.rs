@@ -93,7 +93,7 @@ fn signed(method: &str) -> Identity {
 
 /// A JSON file's value; null where it is not there or not JSON.
 fn read(path: &Path) -> Value {
-    std::fs::read(path).ok().and_then(|bytes| serde_json::from_slice(&bytes).ok()).unwrap_or(Value::Null)
+    fastctx_platform::disk::read(path).ok().and_then(|bytes| serde_json::from_slice(&bytes).ok()).unwrap_or(Value::Null)
 }
 
 /// The user's home as Claude Code finds it.

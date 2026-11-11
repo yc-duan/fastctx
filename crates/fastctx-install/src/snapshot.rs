@@ -1,5 +1,5 @@
 use std::fs::{self, File};
-use std::io::{self, Read};
+use std::io;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::time::SystemTime;
@@ -85,8 +85,7 @@ pub(crate) fn read_state(path: &Path) -> Result<Option<State>, Problem> {
     let identity = disk::identity(&file)?;
     let modified = file.metadata()?.modified()?;
     let attributes = Attributes::read(&file, path)?;
-    let mut bytes = Vec::new();
-    file.read_to_end(&mut bytes)?;
+    let bytes = fastctx_platform::read_budget::from_reader(&mut file, path)?;
     // The two metadata observations detect writes during the read. The second
     // handle also detects a path replacement while the first handle was open.
     let current = disk::open(path)?;

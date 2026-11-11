@@ -60,7 +60,7 @@ fn quote(value: &str) -> String {
 fn identity(home: &std::path::Path) -> Option<fastctx_types::logins::Identity> {
     use fastctx_types::logins::Identity;
     // Without the file nothing is known: AUGMENT_SESSION_AUTH may hold it.
-    let bytes = std::fs::read(home.join("session.json")).ok()?;
+    let bytes = fastctx_platform::disk::read(home.join("session.json")).ok()?;
     let session: Value = serde_json::from_slice(&bytes).ok()?;
     let present = ["accessToken", "tenantURL"]
         .into_iter()

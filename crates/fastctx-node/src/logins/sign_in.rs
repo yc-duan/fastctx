@@ -67,6 +67,12 @@ const CLAUDE_SIGN_IN_ENV: [&str; 7] = [
 /// token among other settings is the same sign-in. None where the files
 /// hold no credential that can be read.
 pub(super) fn credential(context: &Context, agent: &str, dir: &Path) -> Option<String> {
+    fastctx_platform::read_budget::within(super::read_limits::DIGEST, || credential_in(context, agent, dir))
+        .ok()
+        .flatten()
+}
+
+fn credential_in(context: &Context, agent: &str, dir: &Path) -> Option<String> {
     let mut digest = Sha256::new();
     let mut any = false;
     for (index, file) in files(context, agent, dir).iter().enumerate() {

@@ -67,6 +67,7 @@ pub mod protected_directory;
 pub mod readings;
 #[cfg(windows)]
 pub mod registry;
+pub mod read_budget;
 pub mod roles;
 pub mod rolling_log;
 pub mod rooted_path;

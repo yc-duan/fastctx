@@ -53,7 +53,8 @@ fn entry(server: &Server<'_>) -> Value {
 /// earlier version: that is not known from here.
 fn identity(data: &Path) -> Option<fastctx_types::logins::Identity> {
     use fastctx_types::logins::Identity;
-    let accounts: Value = serde_json::from_slice(&std::fs::read(data.join("accounts.json")).ok()?).ok()?;
+    let accounts: Value =
+        serde_json::from_slice(&fastctx_platform::disk::read(data.join("accounts.json")).ok()?).ok()?;
     let active = accounts.pointer("/active")?.get(SERVICE)?.as_str()?;
     let account = accounts.get("accounts")?.as_array()?.iter().find(|account| {
         account.get("serverURL").and_then(Value::as_str) == Some(SERVICE)
