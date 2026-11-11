@@ -137,7 +137,7 @@ pub(crate) async fn change(
     };
     let synchronous = Failure::not_run("this account deletion must answer on its asking connection");
     let mut refusal = None;
-    let make = || async {
+    let make = async || {
         let change = asked.work.change();
         // Existing names are resolved before make: a same-name requery must
         // reach its receipt even if ownership changed while the job waited.
