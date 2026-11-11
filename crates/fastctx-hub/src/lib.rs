@@ -1027,6 +1027,8 @@ async fn serving(
     // again beside the hub, which serves meanwhile.
     manage::submission::register(&hub);
     forget::submission::register(&hub);
+    direct::submission::register(&hub);
+    updates::submission::register(&hub);
     owned_records::submission::register(&hub);
     owned_records::record_deletions::register(&hub);
     submitted::upkeep(&hub);

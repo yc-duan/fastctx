@@ -762,12 +762,20 @@ fn handle(
                 lines(hub, name, generation, paths);
             }
         }
-        Up::Ask { id, question: Question::Manage { account, change: Change::Direct { machine, at } }, .. } => {
+        Up::Ask { id, question: Question::Manage { account, change: Change::Direct { machine, at } }, submission } => {
+            let named = match submission.map(|submission| crate::submitted::named(name, &submission)).transpose() {
+                Ok(named) => named,
+                Err(why) => {
+                    reply(Down::Told { id, answer: Err(why) });
+                    return Ok(());
+                }
+            };
             let (hub, out) = (hub.clone(), out.clone());
             let held = crate::moving::Moving::hold(&hub);
             fastctx_platform::task::spawn(async move {
                 let _held = held;
-                let answer = crate::direct::change(hub, origin, account, machine, at).await;
+                let _reservation = reservation;
+                let answer = crate::direct::submission::change(&hub, origin, account, machine, at, named.as_ref()).await;
                 let _ = out.send(Out::Frame(Down::Told { id, answer }));
             });
         }
@@ -785,6 +793,25 @@ fn handle(
         Up::PackageDone { id } => crate::updates::done(hub, name, generation, id),
         Up::Ask { id, question: Question::Package { version, target, progress }, .. } => {
             crate::updates::ask(hub, name, generation, id, version, target, progress, out.clone());
+        }
+        Up::Ask { id, question: Question::NetworkUpdates { account, request }, submission }
+            if crate::updates::submission::handles(&request) =>
+        {
+            let named = match submission.map(|submission| crate::submitted::named(name, &submission)).transpose() {
+                Ok(named) => named,
+                Err(why) => {
+                    reply(Down::Told { id, answer: Err(why) });
+                    return Ok(());
+                }
+            };
+            let held = crate::moving::Moving::hold(hub);
+            let (hub, out) = (hub.clone(), out.clone());
+            fastctx_platform::task::spawn(async move {
+                let _held = held;
+                let _reservation = reservation;
+                let answer = crate::updates::submission::request(&hub, origin, account, request, named.as_ref()).await;
+                let _ = out.send(Out::Frame(Down::Told { id, answer }));
+            });
         }
         Up::Ask { id, question: Question::NetworkUpdates { account, request }, .. } => {
             let held = crate::moving::Moving::hold(hub);
@@ -1037,11 +1064,39 @@ fn handle(
             };
             let (hub, out) = (hub.clone(), out.clone());
             let held = crate::moving::Moving::hold(&hub);
-            fastctx_platform::task::spawn(async move {
+            let (recorded, recording) = tokio::sync::oneshot::channel();
+            let mut doing = Box::pin(async move {
                 let _held = held;
                 let _reservation = reservation;
-                let answer = crate::manage::submission::change(&hub, origin, account, change, named.as_ref()).await;
+                let (answer, ended) =
+                    crate::manage::submission::change(&hub, origin, account, change, named.as_ref(), move || {
+                        let _ = recorded.send(());
+                    })
+                    .await;
                 let _ = out.send(Out::Frame(Down::Told { id, answer }));
+                if let Some(ended) = ended {
+                    hub.blocking(move |hub| {
+                        crate::manage::end(&hub, ended);
+                        crate::updates::prefetch(&hub);
+                        crate::updates::tell(&hub, None);
+                        crate::updates::prune(&hub);
+                    })
+                    .await;
+                }
+            });
+            // 2026-11-11: Until acceptance, dispatch stays serial so a new
+            // self-removal queues its answer before a Ping can reject its identity.
+            tokio::runtime::Handle::current().block_on(async move {
+                tokio::select! {
+                    began = recording => {
+                        if began.is_ok() {
+                            fastctx_platform::task::spawn(doing);
+                        } else {
+                            doing.await;
+                        }
+                    }
+                    () = &mut doing => {}
+                }
             });
         }
         Up::Ask { id, question: Question::Manage { account, change }, .. } => {

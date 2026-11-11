@@ -20,6 +20,7 @@ mod repair_batch;
 mod rollout;
 pub(crate) use rollout::watch as watch_rollouts;
 mod view;
+pub(crate) mod submission;
 pub(crate) use view::request as view_request;
 mod attempt;
 mod cleanup;

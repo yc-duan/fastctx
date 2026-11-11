@@ -10,6 +10,8 @@
 //! says which layer kept the hub out. An address only machines on the same
 //! network reach, the hub cannot check from elsewhere, and says so.
 
+pub(crate) mod submission;
+
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;

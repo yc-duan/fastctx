@@ -37,6 +37,18 @@ pub(crate) fn change(
     account: &AccountName,
     change: Change,
 ) -> (Result<Told, String>, Vec<(MachineName, Refusal)>) {
+    change_checked(hub, asker, account, change, |_, _| Ok(()))
+}
+
+/// Checks a submission's execution condition under the catalog writer,
+/// before assistance expiration or any other mutation.
+pub(super) fn change_checked(
+    hub: &Hub,
+    asker: &crate::origin::Origin,
+    account: &AccountName,
+    change: Change,
+    check: impl FnOnce(&Store, &Change) -> Result<(), String>,
+) -> (Result<Told, String>, Vec<(MachineName, Refusal)>) {
     let mut ended = Vec::new();
     let configuration = crate::manage_edit::configuration(&change);
     let renaming = matches!(change, Change::Rename { .. });
@@ -46,7 +58,7 @@ pub(crate) fn change(
         _ => None,
     };
     let deleting_account = matches!(change, Change::DeleteAccount { .. });
-    let (told, reconcile) = match made(hub, asker, account, change, &mut ended, renaming) {
+    let (told, reconcile) = match made(hub, asker, account, change, &mut ended, renaming, check) {
         Ok(told) => told,
         Err(reason) => return (Err(reason), Vec::new()),
     };
@@ -93,10 +105,12 @@ fn made(
     change: Change,
     ended: &mut Vec<(MachineName, Refusal)>,
     renaming: bool,
+    check: impl FnOnce(&Store, &Change) -> Result<(), String>,
 ) -> Result<(Told, bool), String> {
     {
         let mut store = hub.edit_store();
         asker.check(&store.book.directory)?;
+        check(&store, &change)?;
         // An assistance past its deadline is ended first, as the hub's own
         // doing, so no change is made over it: letting that login assist
         // again is a new assistance, which the account uses again before

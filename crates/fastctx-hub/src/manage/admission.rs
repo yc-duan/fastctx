@@ -22,6 +22,29 @@ pub(super) fn check(
     let need_super =
         || if super_ { Ok(()) } else { Err(format!("the account {account} is not the hub's super administrator")) };
     match change {
+        Change::DeleteAccount { name } => {
+            need_super()?;
+            let found = directory.account(name).ok_or_else(|| format!("there is no account {name}"))?;
+            if found.level == Level::Super {
+                return Err(format!(
+                    "{name} is the hub's super administrator and cannot be deleted; hand that to another account first"
+                ));
+            }
+        }
+        Change::RenameGroup { owner, from, to } => {
+            if owner != account && (!super_ || directory.is_visitor(owner)) {
+                return Err(format!("the machines of {owner} are not the account {account}'s to group"));
+            }
+            to.as_deref().map(fastctx_types::accounts::group_name).transpose()?;
+            if !store
+                .indexed()
+                .owned(owner)
+                .iter()
+                .any(|&at| directory.members[at].group.as_deref() == Some(from.as_str()))
+            {
+                return Err(format!("{owner} has no group {from}"));
+            }
+        }
         Change::DeleteProject { town } => {
             let project = directory
                 .projects

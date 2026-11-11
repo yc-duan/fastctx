@@ -1427,9 +1427,21 @@ fn submits(question: &Question) -> bool {
     };
     match question {
         Question::Manage {
-            change: crate::wire::Change::DeleteProject { .. } | crate::wire::Change::SetRole { .. },
+            change:
+                crate::wire::Change::DeleteAccount { .. }
+                | crate::wire::Change::DeleteProject { .. }
+                | crate::wire::Change::RenameGroup { .. }
+                | crate::wire::Change::SetRole { .. }
+                | crate::wire::Change::Direct { .. },
             ..
-        } | Question::Forget { .. } => true,
+        } | Question::Forget { .. }
+        | Question::NetworkUpdates {
+            request:
+                fastctx_types::update::ViewCall::Schedule { .. }
+                | fastctx_types::update::ViewCall::Repair { .. }
+                | fastctx_types::update::ViewCall::CancelRepair { .. },
+            ..
+        } => true,
         Question::OwnedRecords { request: owned_records::Request::Delete { .. }, .. } => true,
         Question::OwnedRecords { request: owned_records::Request::Record { request, .. }, .. }
         | Question::AccountRecords { request, .. } => versioned(request),
