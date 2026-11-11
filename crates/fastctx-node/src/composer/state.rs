@@ -327,8 +327,12 @@ impl Stored {
         }
     }
 
+    /// Reserves a queued message for handing to the host. A release of the
+    /// queue (`automatic`) starts with a message for an idle session
+    /// (`idle_only`); the messages behind it follow while it waits for its
+    /// turn, to be read with it.
     pub fn reserve(&mut self, id: &NoticeId, automatic: bool, idle_only: bool) -> Result<Flight, Failure> {
-        if self.sending.is_some() || (automatic && !self.pending.is_empty()) {
+        if self.sending.is_some() || (automatic && idle_only && !self.pending.is_empty()) {
             return Err(Failure::new("another composer message is being delivered"));
         }
         let entry = self.entry(id)?;
@@ -345,7 +349,10 @@ impl Stored {
         let flight =
             Flight { entry: id.clone(), delivery, automatic, idle_only, files_on: draft.files_on, operation: None };
         self.sending = Some(flight.clone());
-        if automatic {
+        // The turn's end that released this message releases the messages
+        // right behind it too: the opportunity stands until the last of them.
+        let follows = self.queue.iter().skip_while(|entry| &entry.id != id).nth(1).is_some_and(|entry| !entry.command);
+        if automatic && !follows {
             self.opportunity = None;
         }
         Ok(flight)

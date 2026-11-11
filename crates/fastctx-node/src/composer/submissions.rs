@@ -1,4 +1,5 @@
-//! One composer input per host submission and per natural completion.
+//! The queue's words go to the host at a turn's natural completion, all
+//! that stand before the next command, one host submission each.
 
 use super::*;
 
@@ -273,17 +274,20 @@ async fn release(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {
     let now = node.residents.now(id).ok_or_else(|| failure("unknown resident"))?;
     if state.opportunity.is_none()
         || state.held.is_some()
-        || state.awaiting_turn.is_some()
         || state.sending.is_some()
-        || !state.pending.is_empty()
-        || now.activity == Activity::Busy
-        || now.waiting_for_user
-        || state.queue.first().is_none_or(|e| !e.editors.is_empty() || !e.document.uploads.is_empty())
+        || state.queue.first().is_none_or(|e| e.command || !e.editors.is_empty() || !e.document.uploads.is_empty())
     {
+        return Ok(());
+    }
+    // The first of the queue's words goes only into an idle session, and
+    // starts its turn. The ones behind it follow while it is on its way or
+    // its turn runs: the host reads them together, in that turn.
+    let first = state.awaiting_turn.is_none() && state.pending.is_empty();
+    if first && (now.activity == Activity::Busy || now.waiting_for_user) {
         return Ok(());
     }
     let mut next = cell.take().expect("loaded");
     let entry = next.queue[0].id.clone();
-    let flight = next.reserve(&entry, true, true)?;
+    let flight = next.reserve(&entry, true, first)?;
     storage::publish_then(node, id, &mut cell, next, after_commit(node, id, flight, None)).await
 }
