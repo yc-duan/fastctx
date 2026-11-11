@@ -4,6 +4,8 @@ use fastctx_storage::{Result, rusqlite::Connection};
 pub(super) const MACHINE_TABLES: &[&str] = &[
     "storage_versions",
     "storage_salvaged",
+    // The journal of this database's format upgrades.
+    "sync_format_upgrades",
     // Jobs use unit ownership and are discarded locally, never exported as records.
     "jobs",
     "claude_copies",
