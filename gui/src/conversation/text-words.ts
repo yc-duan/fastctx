@@ -1,3 +1,5 @@
+import { MAX_DOCUMENT_CHARACTERS } from "./composer/limit";
+
 export interface TextWords {
   file: string;
   attached: string;
@@ -18,7 +20,7 @@ export const zhText: TextWords = {
   file: "粘贴的文本.txt",
   attached: "文字太长，已转成文本附件",
   copied: "文字太长，未能添加附件；全文已复制到剪贴板",
-  limit: "输入框已写满，请将更多文字作为文件添加",
+  limit: `输入框已写满（最多 ${MAX_DOCUMENT_CHARACTERS.toLocaleString("en-US")} 字），请将更多文字作为文件添加`,
   saving: "文字太长，正在转成文本附件…",
   rescue: "未能添加附件或自动复制，请复制并保留这份全文",
   copy: "复制全文并继续",
@@ -34,7 +36,7 @@ export const enText: TextWords = {
   file: "Pasted text.txt",
   attached: "The text was too long and is now a text attachment",
   copied: "The text was too long to attach; the full text was copied to the clipboard",
-  limit: "This input is full; add more text as a file",
+  limit: `This input holds at most ${MAX_DOCUMENT_CHARACTERS.toLocaleString("en-US")} characters; add more text as a file`,
   saving: "The text is too long; creating a text attachment…",
   rescue: "Could not attach or copy the text; copy and keep the full text below",
   copy: "Copy full text and continue",

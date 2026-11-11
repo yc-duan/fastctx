@@ -5,7 +5,12 @@ import type { ComposerDraft, ComposerSnapshot, ComposerTarget, ComposerMutation,
 import type { DocumentFrame, DocumentInput, DocumentTextInput, DocumentMutationInput, DocumentOperation, DocumentVector, SharedComposer, SharedDocument } from "../../world/composer-sync";
 import type { ComposerJournal } from "./document";
 import { ComposerReplica } from "./replica";
-import { unanswered } from "../../world/again";
+import { ANSWER_WITHIN, unanswered } from "../../world/again";
+import { ALREADY_SENT, SEND_WITHDRAWN, Withdrawn } from "./send-outcome";
+import { encode, decode } from "./bytes";
+export { encode, decode } from "./bytes";
+import { compactPending, pendingIsFull, WAITING_FOR_SYNC } from "./pending";
+import { JournalFailure, JournalWrites } from "./journal-writes";
 
 interface Hold { token: string; through: number; epoch: number; operation?: string }
 export interface NativeJournal {
@@ -16,8 +21,9 @@ export interface NativeJournal {
   checkpoint: string;
   confirmed?: string;
   mutations?: readonly DocumentMutationInput[];
-  /** The operations of `mutations` handed to the node at least once: what
-   *  became of them is the node's to say. */
+  sent?: readonly number[];
+  transmitted?: readonly string[];
+  /** Imported from an earlier journal; new writes use transmitted. */
   handed?: readonly string[];
   next: number;
   outbox: DocumentTextInput[];
@@ -36,22 +42,17 @@ interface Record {
   holds: Hold[];
   error: unknown;
   retryable?: boolean;
+  storageBlocked?: boolean;
   sent: number | null;
   retry: ReturnType<typeof setTimeout> | undefined;
 }
-export const encode = (bytes: Uint8Array): string => {
-  let value = "";
-  for (let at = 0; at < bytes.length; at += 8192) value += String.fromCharCode(...bytes.subarray(at, at + 8192));
-  return btoa(value);
-};
-export const decode = (value: string): Uint8Array => Uint8Array.from(atob(value), (character) => character.charCodeAt(0));
 
 interface PendingMutation {
   input: DocumentMutationInput;
   sent: boolean;
-  /** It has gone over the connection at least once, in this page or one before it. */
-  handed: boolean;
+  everTransmitted: boolean;
   cancelled: boolean;
+  storageBlocked?: boolean;
   result?: { revision: number; operation: DocumentOperation };
   removing?: Promise<void>;
   waiters: { resolve: (result: ComposerUpdated) => void; reject: (error: unknown) => void }[];
@@ -64,14 +65,21 @@ export class NativeComposer {
   private readonly listeners = new Set<() => void>();
   private disposed = false;
   private receiving = false;
-  private storageError: unknown = null;
+  private readonly persistence = new JournalWrites(() => !this.disposed, () => this.changed());
   private ready = false;
   private textReady = false;
+  private mutationsSupported = false;
+  legacyMutate?: (mutation: ComposerMutation) => Promise<ComposerUpdated>;
+  get supportsMutations(): boolean { return this.mutationsSupported; }
   private writing = false;
   private generation = 0;
   private timer: ReturnType<typeof setTimeout> | undefined;
-  persist: (document: string) => Promise<void> = async () => {};
-  forget: (document: string) => Promise<void> = async () => {};
+  set persist(write: (document: string) => Promise<void>) { this.persistence.save = write; }
+  get persist(): (document: string) => Promise<void> { return (id) => this.persistence.persist(id); }
+  set forget(write: (document: string) => Promise<void>) { this.persistence.delete = write; }
+  get forget(): (document: string) => Promise<void> { return (id) => this.persistence.forget(id); }
+  storageSucceeded(id: string): void { this.persistence.succeeded(id); }
+  storageFailed(id: string, error: unknown): void { this.persistence.failed(id, error); }
   private retained = new Set<string>();
   private readonly pruning = new Set<string>();
   transmit: (input: DocumentInput) => Promise<void> = async () => { throw new Error("the document stream is disconnected"); };
@@ -81,8 +89,7 @@ export class NativeComposer {
       const source = journal.native;
       this.record(source.document, source);
       this.next = Math.max(this.next, source.next);
-      // One kept without saying whether it was handed over may have been.
-      for (const input of source.mutations ?? []) this.mutations.set(input.mutation.operation, { input, sent: false, handed: source.handed ? source.handed.includes(input.mutation.operation) : true, cancelled: false, waiters: [] });
+      for (const input of source.mutations ?? []) this.mutations.set(input.mutation.operation, { input, sent: false, everTransmitted: (source.transmitted ?? source.handed)?.includes(input.mutation.operation) ?? true, cancelled: false, waiters: [] });
     }
   }
   private record(document: string, saved?: NativeJournal): Record {
@@ -98,8 +105,9 @@ export class NativeComposer {
     }
     const outbox = [...(saved?.outbox ?? [])];
     const record: Record = { replica, confirmed, checkpoint: saved?.checkpoint ?? encode(replica.snapshot()), confirmedCheckpoint: saved?.confirmed ?? saved?.checkpoint ?? encode(Y.encodeStateAsUpdate(confirmed)),
-      updates, everSent: new Set(outbox.map((input) => input.number)), next: Math.max(saved?.next ?? 0, Date.now() * 1000), outbox, holds: [...(saved?.holds ?? [])], error: null, sent: null, retry: undefined };
+      updates, everSent: new Set(saved?.sent ?? outbox.map((input) => input.number)), next: Math.max(saved?.next ?? 0, Date.now() * 1000), outbox, holds: [...(saved?.holds ?? [])], error: null, sent: null, retry: undefined };
     this.records.set(document, record);
+    this.compact(record);
     replica.subscribe(({ update, local }) => {
       if (local) this.enqueue(document, update);
       this.changed();
@@ -127,10 +135,14 @@ export class NativeComposer {
   assertEditable(document: string): void {
     const record = this.record(document);
     if (this.disposed) throw new Error("the shared document is disposed");
-    if (record.outbox.length >= 256 || record.outbox.reduce((bytes, input) => bytes + input.update.length, 0) > 8 * 1024 * 1024 - Math.ceil(1024 * 1024 / 3) * 4) {
-      record.error = new Error("this input is waiting to synchronize; reconnect before adding more text");
-      this.changed(); throw record.error;
-    }
+    if (pendingIsFull(record.outbox)) throw new Error(WAITING_FOR_SYNC);
+  }
+  private compact(record: Record): void {
+    const compacted = compactPending(record.outbox, record.everSent, record.holds.map((hold) => hold.through));
+    const kept = new Set(compacted.map((input) => input.number));
+    for (const input of record.outbox) if (!kept.has(input.number)) record.updates.delete(input.number);
+    for (const input of compacted) record.updates.set(input.number, { input, pending: true });
+    record.outbox = compacted;
   }
   private remote(document: string, update: string): void {
     const record = this.record(document);
@@ -151,10 +163,21 @@ export class NativeComposer {
       record.checkpoint = encode(record.replica.snapshot());
       record.confirmedCheckpoint = encode(Y.encodeStateAsUpdate(record.confirmed));
       for (const [number, row] of record.updates) if (!row.pending) record.updates.delete(number);
-      void this.persist(document).catch((error: unknown) => { this.storageError = error; this.changed(); });
+      void this.persist(document).catch(() => {});
     }, 1000);
   }
   get pending(): boolean { return !!this.mutations.size || [...this.records.values()].some((record) => !!record.outbox.length || !!record.holds.length); }
+  initializeLegacy(snapshot: ComposerSnapshot, saved: readonly ComposerJournal[]): void {
+    if (this.state) return;
+    const retained = saved.filter((journal) => journal.native);
+    const describe = (draft: ComposerDraft, id: string): SharedDocument => ({ id, revision: 0, epoch: draft.epoch,
+      attachments: draft.attachments, uploads: draft.uploads, files_on: draft.files_on });
+    const draft = retained.find((journal) => journal.target.kind === "draft")?.native?.document;
+    if (!draft) throw new Error("the retained native draft is absent");
+    const queued = (entry: ComposerSnapshot["queue"][number]) => ({ ...entry, document: describe(entry.draft,
+      retained.find((journal) => journal.target.kind === "queued" && journal.target.id === entry.id)?.native?.document ?? `legacy:${entry.id}`) });
+    this.state = { ...snapshot, commands: snapshot.commands ?? [], draft: describe(snapshot.draft, draft), queue: snapshot.queue.map(queued), unobserved: snapshot.unobserved.map(queued) };
+  }
   async drainForLegacy(sync: (input: DocumentTextInput) => Promise<ComposerUpdated>): Promise<void> {
     if (this.mutations.size || [...this.records.values()].some((record) => record.holds.length)) {
       throw new Error("the pending captured send requires a newer node; its local text is kept");
@@ -185,7 +208,7 @@ export class NativeComposer {
         if (this.retained.has(id) || record.outbox.length || record.holds.length) { await this.persist(id); return; }
         if (record.checkpointTimer) clearTimeout(record.checkpointTimer);
         record.replica.dispose(); record.confirmed.destroy(); this.records.delete(id);
-      }).catch((error: unknown) => { this.storageError = error; this.changed(); }).finally(() => this.pruning.delete(id));
+      }).catch((error: unknown) => { this.persistence.failed(id, error); }).finally(() => this.pruning.delete(id));
     }
   }
   known(): DocumentVector[] { return [...this.records].map(([document, record]) => ({ document, vector: encode(record.replica.vector()) })); }
@@ -194,8 +217,8 @@ export class NativeComposer {
     this.textReady = text;
     if (this.ready) { this.pump(); return; }
     this.ready = true;
-    for (const record of this.records.values()) { record.sent = null; record.error = null; }
-    for (const pending of this.mutations.values()) pending.sent = false;
+    for (const record of this.records.values()) { record.sent = null; record.error = null; record.storageBlocked = false; this.compact(record); }
+    for (const pending of this.mutations.values()) { pending.sent = false; pending.storageBlocked = false; }
     this.changed(); this.pump();
   }
   disconnect(): void {
@@ -203,7 +226,8 @@ export class NativeComposer {
     if (this.timer) clearTimeout(this.timer);
     this.timer = undefined;
     for (const record of this.records.values()) { record.sent = null; if (record.retry) clearTimeout(record.retry); record.retry = undefined; }
-    for (const pending of this.mutations.values()) pending.sent = false;
+    for (const pending of this.mutations.values()) { pending.sent = false; pending.storageBlocked = false; }
+    this.changed();
   }
   receive(frame: DocumentFrame): void {
     if (this.disposed) return;
@@ -211,6 +235,10 @@ export class NativeComposer {
     try {
     if (frame.kind === "state") {
       if (frame.version !== 1) throw new Error("this document synchronization version is not supported");
+      const supported = frame.mutations === true;
+      if (supported !== this.mutationsSupported) for (const pending of this.mutations.values()) pending.sent = false;
+      this.mutationsSupported = supported;
+      if (supported) for (const record of this.records.values()) if (record.error instanceof Error && record.error.message === "this pending captured send requires a newer node; its text is kept") record.error = null;
       this.state = frame.state;
       for (const document of [frame.state.draft, ...frame.state.queue.map((entry) => entry.document)]) {
         const record = this.record(document.id);
@@ -282,7 +310,7 @@ export class NativeComposer {
     const pending = this.mutations.get(operation.operation);
     if (!pending) return;
     if (pending.cancelled) return;
-    if (operation.failure) { void this.rejectMutation(pending, new Error(operation.failure)); return; }
+    if (operation.failure) { void this.rejectMutation(pending, operation.failure === SEND_WITHDRAWN ? new Withdrawn() : new Error(operation.failure)); return; }
     this.mutations.delete(operation.operation);
     for (const waiter of pending.waiters) waiter.resolve({ composer: this.snapshot(), landed: operation.landed, ...(operation.delivery ? { delivery: operation.delivery } : {}) });
   }
@@ -296,12 +324,11 @@ export class NativeComposer {
     while (!this.disposed) {
       try {
         await this.persist(this.state.draft.id);
-        this.storageError = null;
         this.mutations.delete(pending.input.mutation.operation);
         for (const waiter of pending.waiters.splice(0)) waiter.reject(error);
         this.changed(); return;
       } catch (failure) {
-        this.storageError = failure; this.changed();
+        this.persistence.failed(this.state.draft.id, failure);
         // Until cancellation is durable, keep the capture sealed and visibly
         // blocked. Returning a definite refusal sooner could revive it on reopen.
         await new Promise((resolve) => setTimeout(resolve, 1000));
@@ -314,7 +341,7 @@ export class NativeComposer {
     if (through === undefined) return Promise.reject(new Error("the captured input is no longer held"));
     return new Promise((resolve, reject) => {
       const check = () => {
-        const error = this.disposed ? new Error("the shared document is disposed") : record.error ?? this.storageError;
+        const error = this.disposed ? new Error("the shared document is disposed") : record.error ?? this.persistence.error(document);
         if (error || !record.outbox.some((input) => input.number <= through)) {
           this.listeners.delete(check);
           if (error) reject(error); else resolve();
@@ -336,37 +363,54 @@ export class NativeComposer {
   release(document: string, token: string): void {
     const record = this.record(document);
     record.holds = record.holds.filter((hold) => hold.token !== token);
-    this.pump();
+    this.compact(record); this.pump();
   }
-  /** Whether `operation` waits here and was handed to the node: one that
-   *  never left can be taken back without asking. */
-  handed(operation: string): boolean { return this.mutations.get(operation)?.handed ?? false; }
-  async withdraw(operation: string): Promise<void> {
-    const pending = this.mutations.get(operation);
-    if (!pending) return;
-    pending.cancelled = true;
-    this.changed();
-    // Complete withdrawal only after reopening the page can no longer replay it.
-    // Already-transmitted work can still commit under its original receipt.
-    try { await this.persist(this.state.draft.id); }
-    catch (error) { void this.rejectMutation(pending, new Error("the send was withdrawn")); throw error; }
-    this.mutations.delete(operation);
-    for (const waiter of pending.waiters.splice(0)) waiter.reject(new Error("the send was withdrawn"));
-    this.changed();
+  mayHaveTransmitted(operation: string, started = false): boolean {
+    return this.mutations.get(operation)?.everTransmitted ?? started;
   }
-  mutate(mutation: ComposerMutation): Promise<ComposerUpdated> {
+  async withdraw(operation: string, started = false): Promise<"withdrawn" | "sent"> {
+    const original = this.mutations.get(operation);
+    if (original?.everTransmitted || !original && started) {
+      if (!this.ready || !this.supportsMutations) throw new Error("the node cannot confirm withdrawal; this send remains unknown");
+      const existing = [...this.mutations.values()].find((pending) => pending.input.mutation.do === "withdraw" && pending.input.mutation.send === operation);
+      const mutation: ComposerMutation = existing?.input.mutation ?? { operation: crypto.randomUUID(), do: "withdraw", send: operation };
+      const controller = new AbortController();
+      const disconnected = () => { if (!this.ready || this.disposed) controller.abort(); };
+      this.listeners.add(disconnected);
+      const timer = setTimeout(() => controller.abort(), ANSWER_WITHIN);
+      try { await this.mutate(mutation, controller.signal); }
+      catch (error) { if (error instanceof Error && error.message === ALREADY_SENT) return "sent"; throw error; }
+      finally { clearTimeout(timer); this.listeners.delete(disconnected); }
+    }
+    if (original) await this.rejectMutation(original, new Withdrawn());
+    for (const record of this.records.values()) {
+      record.holds = record.holds.filter((hold) => hold.operation !== operation); this.compact(record);
+    }
+    this.changed(); this.pump();
+    return "withdrawn";
+  }
+  mutate(mutation: ComposerMutation, signal?: AbortSignal): Promise<ComposerUpdated> {
     let pending = this.mutations.get(mutation.operation);
     if (!pending) {
       const record = this.record(this.state.draft.id);
       record.next = this.next = Math.max(this.next, record.next) + 1;
       if (this.mutations.size >= 128) return Promise.reject(new Error("this input has too many operations waiting to synchronize"));
-      pending = { input: { kind: "mutate", number: this.next, mutation }, sent: false, handed: false, cancelled: false, waiters: [] };
+      pending = { input: { kind: "mutate", number: this.next, mutation }, sent: false, everTransmitted: false, cancelled: false, waiters: [] };
       this.mutations.set(mutation.operation, pending);
     } else if (JSON.stringify(pending.input.mutation) !== JSON.stringify(mutation)) return Promise.reject(new Error("a composer operation was reused for different content"));
     pending.sent = false;
-    const result = new Promise<ComposerUpdated>((resolve, reject) => { pending!.waiters.push({ resolve, reject }); });
+    let abort = () => {};
+    const result = new Promise<ComposerUpdated>((resolve, reject) => {
+      const waiter = { resolve, reject }; pending!.waiters.push(waiter);
+      abort = () => {
+        const at = pending!.waiters.indexOf(waiter); if (at !== -1) pending!.waiters.splice(at, 1);
+        reject(Object.assign(new Error("the withdrawal could not be confirmed; the send remains unknown"), { again: true }));
+      };
+      signal?.addEventListener("abort", abort, { once: true });
+      if (signal?.aborted) abort();
+    });
     this.changed(); this.pump();
-    return result;
+    return result.finally(() => signal?.removeEventListener("abort", abort));
   }
   document(target: ComposerTarget): string {
     const document = target.kind === "draft" ? this.state.draft : this.state.queue.find((entry) => entry.id === target.id)?.document;
@@ -385,16 +429,15 @@ export class NativeComposer {
     this.changed();
   }
   retry(): void {
-    for (const record of this.records.values()) { record.error = null; record.sent = null; }
-    for (const pending of this.mutations.values()) pending.sent = false;
+    for (const record of this.records.values()) { record.error = null; record.sent = null; record.storageBlocked = false; this.compact(record); }
+    for (const pending of this.mutations.values()) { pending.sent = false; pending.storageBlocked = false; }
     this.pump();
   }
   replica(document: string): ComposerReplica { return this.record(document).replica; }
-  status(document: string): { pending: number; error: unknown } { const record = this.record(document); return { pending: record.outbox.length, error: this.storageError ?? record.error }; }
+  status(document: string): { pending: number; error: unknown } { const record = this.record(document); return { pending: record.outbox.length, error: this.persistence.error(document) ?? record.error ?? (pendingIsFull(record.outbox) ? new Error(WAITING_FOR_SYNC) : null) }; }
   journal(document: string): NativeJournal {
     const record = this.record(document);
-    return { document, checkpoint: record.checkpoint, confirmed: record.confirmedCheckpoint, updates: [...record.updates.values()], next: record.next, outbox: [...record.outbox], holds: record.holds.filter((hold) => hold.operation && this.mutations.has(hold.operation)), ...(document === this.state.draft.id ? { mutations: [...this.mutations.values()].filter((pending) => !pending.cancelled).map((pending) => pending.input),
-        handed: [...this.mutations.values()].filter((pending) => !pending.cancelled && pending.handed).map((pending) => pending.input.mutation.operation) } : {}) };
+    return { document, checkpoint: record.checkpoint, confirmed: record.confirmedCheckpoint, updates: [...record.updates.values()], sent: [...record.everSent], next: record.next, outbox: [...record.outbox], holds: record.holds.filter((hold) => hold.operation && this.mutations.has(hold.operation)), ...(document === this.state.draft.id ? { mutations: [...this.mutations.values()].filter((pending) => !pending.cancelled).map((pending) => pending.input), transmitted: [...this.mutations.values()].filter((pending) => pending.everTransmitted).map((pending) => pending.input.mutation.operation) } : {}) };
   }
   snapshot(text = true): ComposerSnapshot {
     const draft = (metadata: SharedDocument): ComposerDraft => {
@@ -411,52 +454,82 @@ export class NativeComposer {
       try { listener(); } catch (error) { console.error("a shared composer observer failed", error); }
     }
   }
+  private withdrawing(pending: PendingMutation): boolean {
+    return pending.input.mutation.do !== "withdraw" && [...this.mutations.values()].some((other) => !other.cancelled
+      && other.input.mutation.do === "withdraw" && other.input.mutation.send === pending.input.mutation.operation);
+  }
   private pump(): void {
     if (this.disposed || !this.ready || this.writing) return;
     this.writing = true;
     const generation = this.generation;
+    let writingDocument = this.state.draft.id;
     void (async () => {
       for (const [document, record] of this.records) {
+        writingDocument = document;
         if (!this.textReady) continue;
         const input = record.outbox[0];
-        if (!input || record.sent !== null || record.error || record.holds.some((hold) => input.number > hold.through)) continue;
+        if (!input || record.sent !== null || record.error || record.storageBlocked || record.holds.some((hold) => input.number > hold.through)) continue;
         try {
           // Persist the exact update, its number, and the independent replica
           // before anything can cross the IPC connection.
           record.everSent.add(input.number);
           await this.persist(document);
-          this.storageError = null;
           if (!this.ready || generation !== this.generation) return;
           record.sent = input.number;
           await this.transmit(input);
-        } catch (error) { record.sent = null; record.error = error; record.retryable = true; this.changed(); }
+        } catch (error) {
+          record.sent = null; record.retryable = true;
+          if (error instanceof JournalFailure) record.storageBlocked = true; else record.error = error;
+          this.changed();
+        }
       }
       for (const pending of this.mutations.values()) {
-        if (pending.sent || pending.cancelled) continue;
+        writingDocument = this.state.draft.id;
+        if (pending.sent || pending.cancelled || pending.storageBlocked || this.withdrawing(pending)) continue;
+        if (!this.supportsMutations && (pending.input.mutation.do === "send_document" || pending.input.mutation.do === "withdraw" || !this.legacyMutate)) {
+          pending.sent = true;
+          this.record(this.state.draft.id).error = new Error("this pending captured send requires a newer node; its text is kept");
+          this.changed(); continue;
+        }
         try {
-          // That it is handed over is kept before it is: taking it back
-          // from then on is asked of the node.
-          pending.handed = true;
+          pending.everTransmitted = true;
           await this.persist(this.state.draft.id);
           if (!this.ready || generation !== this.generation) return;
           pending.sent = true;
-          await this.transmit(pending.input);
+          if (this.supportsMutations) await this.transmit(pending.input);
+          else {
+            const updated = await this.legacyMutate!(pending.input.mutation);
+            if (this.disposed || pending.cancelled) continue;
+            pending.result = { revision: updated.composer.revision, operation: {
+              operation: pending.input.mutation.operation, accepted: false, landed: updated.landed, delivery: updated.delivery ?? null, failure: null,
+            } };
+            if (pending.result.revision <= this.state.revision) this.settle(pending.result.operation);
+          }
         } catch (error) {
-          pending.sent = true;
-          if (unanswered(error)) for (const waiter of pending.waiters.splice(0)) waiter.reject(error);
+          pending.sent = !(error instanceof JournalFailure);
+          if (error instanceof JournalFailure) pending.storageBlocked = true;
+          else if (unanswered(error)) for (const waiter of pending.waiters.splice(0)) waiter.reject(error);
           else await this.rejectMutation(pending, error);
         }
       }
     })().finally(() => {
       this.writing = false;
-      if (this.ready && this.textReady && [...this.records.values()].some((record) => record.outbox.length && record.sent === null && !record.error && !record.holds.some((hold) => record.outbox[0].number > hold.through)) || this.ready && [...this.mutations.values()].some((pending) => !pending.sent && !pending.cancelled)) queueMicrotask(() => this.pump());
+      if (this.ready && this.textReady && [...this.records.values()].some((record) => record.outbox.length && record.sent === null && !record.error && !record.storageBlocked && !record.holds.some((hold) => record.outbox[0].number > hold.through)) || this.ready && [...this.mutations.values()].some((pending) => !pending.sent && !pending.cancelled && !pending.storageBlocked && !this.withdrawing(pending))) queueMicrotask(() => this.pump());
       if (this.ready && !this.timer && ([...this.mutations.values()].some((pending) => !pending.cancelled) || [...this.records.values()].some((record) => record.outbox.length && (!record.error || record.retryable)))) this.timer = setTimeout(() => {
         this.timer = undefined;
-        for (const record of this.records.values()) { record.sent = null; if (record.retryable) record.error = null; }
-        for (const pending of this.mutations.values()) pending.sent = false;
+        for (const record of this.records.values()) { record.sent = null; record.storageBlocked = false; if (record.retryable) record.error = null; }
+        for (const pending of this.mutations.values()) { pending.sent = false; pending.storageBlocked = false; }
         this.pump();
       }, 30_000);
-    }).catch((error: unknown) => { this.storageError = error; this.changed(); });
+    }).catch((error: unknown) => { this.persistence.failed(writingDocument, error); });
+  }
+  retainedJournals(): ReadonlyMap<string, ComposerJournal> {
+    const snapshot = this.snapshot(false);
+    const targets = new Map<string, ComposerTarget>([[this.state.draft.id, { kind: "draft" }],
+      ...[...this.state.queue, ...this.state.unobserved].map((entry) => [entry.document.id, { kind: "queued", id: entry.id }] as [string, ComposerTarget])]);
+    return new Map([...this.records.keys()].map((id) => [`native:replica:${id}`, {
+      snapshot, target: targets.get(id) ?? { kind: "queued", id }, pending: [], contexts: [], history: [], retired: [], native: this.journal(id),
+    }]));
   }
   async flushRetained(): Promise<void> {
     for (const record of this.records.values()) if (record.checkpointTimer) { clearTimeout(record.checkpointTimer); delete record.checkpointTimer; }

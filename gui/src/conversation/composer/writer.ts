@@ -1,5 +1,6 @@
 import type { Address } from "../../world/wire";
 import { composerRecoveries } from "./journal";
+import { finishClosing } from "./recovery-cache";
 
 /** Whether the recovery key `key` is a writer's of the conversation `who`. */
 function writes(key: string, who: Address): boolean {
@@ -17,6 +18,7 @@ function writes(key: string, who: Address): boolean {
  * again, first takes up an outbox of this conversation that no live page
  * holds: what a closed one had not sent yet is sent, not left unread. */
 export async function composerWriter(who: Address, requested?: string): Promise<{ key: string; release: () => Promise<void> }> {
+  await finishClosing(who);
   const storageKey = JSON.stringify(["world-composer-writer", who.machine, who.resident]);
   const claim = (key: string): Promise<(() => Promise<void>) | null> => new Promise((resolve, reject) => {
     const finished = navigator.locks.request(`world-composer:${key}`, { ifAvailable: true }, async (lock) => {

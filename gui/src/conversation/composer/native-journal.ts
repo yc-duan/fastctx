@@ -1,8 +1,8 @@
 import type { ComposerJournal } from "./document";
 import type { NativeJournal } from "./native";
 
-/** Native tails share the existing database but have a private key namespace.
- * Older outbox readers cannot mistake a binary update row for a draft journal. */
+/** Checkpoints, metadata and update tails are committed in one IndexedDB transaction.
+ * The caller supplies the isolated native database. */
 export class NativeJournalStorage {
   private readonly bases = new Map<string, { checkpoint: string; confirmed: string | undefined }>();
   private readonly rows = new Map<string, Map<number, string>>();
@@ -53,7 +53,7 @@ export class NativeJournalStorage {
     const previous = this.bases.get(key);
     const rows = this.rows.get(key) ?? new Map<number, string>();
     const next = new Map<number, string>();
-    const metadata = journal && native ? { ...journal, native: { document: native.document, next: native.next, holds: native.holds, editing: native.editing, mutations: native.mutations, handed: native.handed } } : null;
+    const metadata = journal && native ? { ...journal, native: { document: native.document, next: native.next, holds: native.holds, editing: native.editing, mutations: native.mutations, sent: native.sent, transmitted: native.transmitted } } : null;
     const encodedMetadata = JSON.stringify(metadata);
     await new Promise<void>((resolve, reject) => {
       const transaction = this.db.transaction("edits", "readwrite");
@@ -68,7 +68,10 @@ export class NativeJournalStorage {
           store.put({ ...journal, native: { ...native, updates: [], outbox: [] } }, this.prefix + key);
         }
         if (this.metadata.get(key) !== encodedMetadata) store.put(metadata, this.tail(key) + "metadata");
-        for (const update of native.updates ?? []) {
+        // Pre-tail journals carry exact pending inputs only in outbox. Import
+        // them as rows before replacing the old header with a checkpoint.
+        const updates = native.updates?.length ? native.updates : native.outbox.map((input) => ({ input, pending: true }));
+        for (const update of updates) {
           const value = JSON.stringify(update);
           next.set(update.input.number, value);
           if (rows.get(update.input.number) !== value) store.put(update, this.tail(key) + "update:" + update.input.number);

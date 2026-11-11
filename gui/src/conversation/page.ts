@@ -1052,9 +1052,14 @@ export class ConversationPage {
     this.unbindShared?.();
     this.fileLinks?.release();
     this.pictures?.release();
-    const removed = Promise.all([this.nodeTray?.close(), this.nodeQueue?.leave()]);
-    this.tray?.close();
-    void removed.then(() => this.session?.close());
+    try {
+      void Promise.allSettled([this.nodeTray?.close(), this.nodeQueue?.leave()]);
+      this.tray?.close();
+    } finally {
+      // Closing the session releases uploads which wait for reconnection; those
+      // uploads therefore cannot be a prerequisite for closing the session.
+      void this.session?.close().catch((error: unknown) => console.error("saving the departing composer failed", error));
+    }
   }
 
   private left = false;
@@ -1103,7 +1108,7 @@ export class ConversationPage {
     } catch {
       // Nothing was kept here.
     }
-    this.unbindShared = bindComposer(this.input, session.draft);
+    this.unbindShared = bindComposer(this.input, session.draft, undefined, this.textNote, (this.options.words.english ? enText : zhText).limit);
     if (typed.trim() && !this.input.value.trim()) this.setWords(typed, caret);
     // A chip kept here went with its draft if that was sent meanwhile.
     if (this.picked) {
@@ -1286,14 +1291,29 @@ export class ConversationPage {
     // into the input (`Fold.settles`).
     const sending = session.send((why) => {
       if (!key) {
-        waiting?.late(sending.withdraw);
+        waiting?.late(withdraw);
         return;
       }
       conversation.sent(key, { state: "unknown", why });
       this.update();
     });
+    const withdraw = () => {
+      void sending.withdraw().then((result) => {
+        if (result.kind === "sent") {
+          if (key) {
+            conversation.settles(key, null);
+            conversation.sent(key, { state: "landed", how: "handed", machine: this.options.someone.machine });
+          }
+          waiting?.done();
+        } else if (result.kind === "unavailable") {
+          if (key) conversation.sent(key, { state: "unknown", why: result.why });
+          this.say(result.why, result.why, true);
+        }
+        this.update();
+      });
+    };
     const sent = sending.sent;
-    if (key) conversation.settles(key, { again: sending.again, remove: sending.withdraw });
+    if (key) conversation.settles(key, { again: sending.again, remove: withdraw });
     this.update();
     if (waiting) void sent.then(waiting.done, waiting.done);
     if (key) {

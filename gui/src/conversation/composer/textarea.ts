@@ -4,6 +4,7 @@ import type { InputHint, Selection } from "./characters";
 import type { ComposerState, ComposerView } from "./document";
 import { ComposerDocument } from "./document";
 import { changes, completedInput } from "./input";
+import { MAX_DOCUMENT_CHARACTERS } from "./limit";
 
 interface BrowserView {
   readonly characters: readonly Character[];
@@ -19,6 +20,7 @@ export function bindComposer(
   document: ComposerDocument,
   onState: (state: ComposerState) => void = () => {},
   sharedNotice?: HTMLElement,
+  fullNotice = `This input holds at most ${MAX_DOCUMENT_CHARACTERS.toLocaleString("en-US")} characters; add more text as a file`,
 ): () => void {
   let shown = document.view.characters;
   let epoch = document.view.state.epoch;
@@ -33,6 +35,7 @@ export function bindComposer(
   const originalReadOnly = textarea.readOnly;
   const notice = sharedNotice ?? textarea.ownerDocument.createElement("p");
   let noticeError = "";
+  let editError: unknown = null;
   if (!sharedNotice) {
     notice.className = "composer-text-note"; notice.setAttribute("role", "status"); notice.hidden = true;
     textarea.after(notice);
@@ -54,10 +57,14 @@ export function bindComposer(
   const render = (next: ComposerView): void => {
     if (detached) return;
     view = next;
-    const error = next.state.error instanceof Error ? next.state.error.message : next.state.error ? String(next.state.error) : "";
-    if (error) { notice.textContent = error; notice.hidden = false; }
-    else if (!sharedNotice || notice.textContent === noticeError) { notice.textContent = ""; notice.hidden = true; }
-    noticeError = error;
+    const failure = next.state.error ?? editError;
+    const error = failure instanceof Error ? failure.message : failure ? String(failure) : "";
+    const message = error || (next.characters.length >= MAX_DOCUMENT_CHARACTERS ? fullNotice : "");
+    if (error || message && (!sharedNotice || notice.hidden || notice.textContent === noticeError)) {
+      notice.textContent = message; notice.hidden = false; noticeError = message;
+    } else if (!message && (!sharedNotice || notice.textContent === noticeError)) {
+      notice.textContent = ""; notice.hidden = true; noticeError = "";
+    }
     try { onState(next.state); } catch (error) { console.error("a composer input observer failed", error); }
     if (composition || before || detached) return;
     const value = textareaText(next.characters);
@@ -65,6 +72,7 @@ export function bindComposer(
       || shown.some((character, index) => key(character.id) !== key(next.characters[index].id))));
     const range = (): Selection => mapSelection(shown, next.characters, documentSelection(shown), next.renamed);
     applying = true;
+    try {
     if (textarea.value !== value) {
       const top = textarea.scrollTop;
       const left = textarea.scrollLeft;
@@ -80,7 +88,7 @@ export function bindComposer(
     shown = next.characters;
     epoch = next.state.epoch;
     textarea.readOnly = originalReadOnly || !next.state.targetAvailable || next.state.sending || next.state.closing || next.state.recovering;
-    applying = false;
+    } finally { applying = false; }
   };
 
   const commit = (base: BrowserView, useHint: boolean): void => {
@@ -113,6 +121,19 @@ export function bindComposer(
     }
   };
 
+  const finishInput = (apply: () => void): void => {
+    try { apply(); editError = null; }
+    catch (error) { editError = error; }
+    finally {
+      before = undefined;
+      composition = undefined;
+      if (beforeTimer !== undefined) clearTimeout(beforeTimer);
+      beforeTimer = undefined;
+      document.setComposing(false);
+      render(document.view);
+    }
+  };
+
   const finishComposition = (): void => {
     if (!composition) return;
     if (ending !== undefined) clearTimeout(ending);
@@ -122,10 +143,7 @@ export function bindComposer(
     // Clear composition first so that teardown cannot commit the same text twice.
     composition = undefined;
     before = base;
-    commit(base, committedComposition);
-    before = undefined;
-    document.setComposing(false);
-    render(document.view);
+    finishInput(() => commit(base, committedComposition));
   };
 
   const compositionStart = (): void => {
@@ -172,10 +190,7 @@ export function bindComposer(
       document.setComposing(true);
       return;
     }
-    commit(base, useHint);
-    before = undefined;
-    document.setComposing(false);
-    render(document.view);
+    finishInput(() => commit(base, useHint));
   };
 
   textarea.addEventListener("beforeinput", beforeInput);
@@ -187,16 +202,19 @@ export function bindComposer(
     if (detached) return;
     detached = true;
     unsubscribe();
-    finishComposition();
-    before = undefined;
-    document.setComposing(false);
-    if (beforeTimer !== undefined) clearTimeout(beforeTimer);
-    textarea.removeEventListener("beforeinput", beforeInput);
-    textarea.removeEventListener("input", input);
-    textarea.removeEventListener("compositionstart", compositionStart);
-    textarea.removeEventListener("compositionend", compositionEnd);
-    textarea.readOnly = originalReadOnly;
-    if (!sharedNotice) notice.remove();
-    else if (noticeError && notice.textContent === noticeError) { notice.textContent = ""; notice.hidden = true; }
+    try { finishComposition(); }
+    finally {
+      before = composition = undefined;
+      document.setComposing(false);
+      if (beforeTimer !== undefined) clearTimeout(beforeTimer);
+      if (ending !== undefined) clearTimeout(ending);
+      textarea.removeEventListener("beforeinput", beforeInput);
+      textarea.removeEventListener("input", input);
+      textarea.removeEventListener("compositionstart", compositionStart);
+      textarea.removeEventListener("compositionend", compositionEnd);
+      textarea.readOnly = originalReadOnly;
+      if (!sharedNotice) notice.remove();
+      else if (noticeError && notice.textContent === noticeError) { notice.textContent = ""; notice.hidden = true; }
+    }
   };
 }

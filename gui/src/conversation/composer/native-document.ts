@@ -66,6 +66,10 @@ export class NativeComposerDocument extends ComposerDocument {
     if (!anchor) return Promise.reject(new Error("the send no longer has its captured document"));
     return this.native.flushThrough(this.document, anchor.token);
   }
+  bindSend(seal: Seal, operation: string): void {
+    const anchor = this.anchors.find((anchor) => anchor.seal === seal);
+    if (anchor) this.native.bind(this.document, anchor.token, operation);
+  }
   captured(seal: Seal, epoch: number, operation: string): Omit<DocumentSend, "operation"> {
     const captured = this.captures.get(seal);
     if (!captured) throw new Error("the send no longer has its captured document");

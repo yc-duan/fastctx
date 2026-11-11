@@ -1,74 +1,56 @@
 import type { ComposerJournal } from "./document";
 import { NativeJournalStorage } from "./native-journal";
+import { DOCUMENT_JOURNAL_DATABASE, LEGACY_JOURNAL_DATABASE, journalRecoveryKeys, openJournalDatabase, readJournalDatabase, writeLegacyJournal } from "./journal-database";
 
-/** The local outbox holds only unacknowledged edits. Shared drafts and queues live on the node. */
 export interface ComposerJournalStore {
   read(): Promise<ReadonlyMap<string, ComposerJournal>>;
   write(key: string, journal: ComposerJournal | null): Promise<void>;
   close?(): void;
 }
 
-function database(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open("world-composer-outbox", 1);
-    request.onupgradeneeded = () => { request.result.createObjectStore("edits"); };
-    request.onsuccess = () => { resolve(request.result); };
-    request.onerror = () => { reject(request.error); };
-    request.onblocked = () => { reject(new Error("the composer outbox database is blocked")); };
-  });
-}
-
-/** A recovery key identifies one writer's outbox. Do not share it between live pages. */
+/** Native replicas live in a different database: a released GUI's fallback
+ * reader must never mistake them for a legacy draft or queued editor. */
 export async function composerJournalStore(recoveryKey: string): Promise<ComposerJournalStore> {
-  const db = await database();
+  const legacy = await openJournalDatabase(LEGACY_JOURNAL_DATABASE);
+  let documents: IDBDatabase;
+  try { documents = await openJournalDatabase(DOCUMENT_JOURNAL_DATABASE); }
+  catch (error) { legacy.close(); throw error; }
   const prefix = `${recoveryKey}\u0000`;
-  const range = IDBKeyRange.bound(prefix, `${prefix}\uffff`);
-  const native = new NativeJournalStorage(db, prefix);
+  const native = new NativeJournalStorage(documents, prefix);
   const nativeKeys = new Set<string>();
   return {
-    read: () => new Promise((resolve, reject) => {
-      const transaction = db.transaction("edits", "readonly");
-      const request = transaction.objectStore("edits").openCursor(range);
-      const entries = new Map<string, ComposerJournal>();
-      request.onsuccess = () => {
-        const cursor = request.result;
-        if (!cursor) return;
-        const key = String(cursor.key).slice(prefix.length);
-        entries.set(key, cursor.value as ComposerJournal);
-        if ((cursor.value as ComposerJournal).native) nativeKeys.add(key);
-        cursor.continue();
-      };
-      transaction.oncomplete = () => { native.hydrate(entries).then(resolve, reject); };
-      transaction.onabort = () => { reject(transaction.error ?? new Error("the composer outbox read was aborted")); };
-    }),
-    close: () => db.close(),
+    read: async () => {
+      const old = await readJournalDatabase(legacy, prefix);
+      const current = new Map(await native.hydrate(await readJournalDatabase(documents, prefix)));
+      const oldNative = new NativeJournalStorage(legacy, prefix);
+      const previous = await oldNative.hydrate(new Map([...old].filter(([, journal]) => !!journal.native)));
+      for (const [key, journal] of previous) {
+        const stored = current.get(key);
+        if (stored && JSON.stringify(stored.native) !== JSON.stringify(journal.native)) throw new Error("two retained native journals need reconciliation; both copies were kept");
+        if (!stored) { await native.write(key, journal); current.set(key, journal); }
+        // Copy first. An old GUI cannot erase the only copy while this import's
+        // legacy cleanup is interrupted or fails.
+        await oldNative.write(key, null); old.delete(key);
+      }
+      for (const [key, journal] of current) if (journal.native) nativeKeys.add(key);
+      return new Map([...old, ...current]);
+    },
     write: (key, journal) => {
-      if (journal?.native?.updates || nativeKeys.has(key)) {
+      if (journal?.native || nativeKeys.has(key) || key.startsWith("native:")) {
         nativeKeys.add(key);
         return native.write(key, journal);
       }
-      return new Promise((resolve, reject) => {
-      const transaction = db.transaction("edits", "readwrite");
-      const store = transaction.objectStore("edits");
-      if (journal) store.put(journal, prefix + key);
-      else store.delete(prefix + key);
-      transaction.oncomplete = () => { resolve(); };
-      transaction.onabort = () => { reject(transaction.error ?? new Error("the composer outbox write was aborted")); };
-      });
+      return writeLegacyJournal(legacy, prefix + key, journal);
     },
+    close: () => { legacy.close(); documents.close(); },
   };
 }
 
-/** Lists retained writer outboxes, including those from closed tabs. The caller
- * may reopen one with its recoveryKey after its previous writer has closed. */
 export async function composerRecoveries(): Promise<string[]> {
-  const db = await database();
+  const legacy = await openJournalDatabase(LEGACY_JOURNAL_DATABASE);
+  let documents: IDBDatabase | undefined;
   try {
-    return await new Promise((resolve, reject) => {
-      const transaction = db.transaction("edits", "readonly");
-      const request = transaction.objectStore("edits").getAllKeys();
-      transaction.oncomplete = () => { resolve([...new Set(request.result.filter((key) => !String(key).startsWith("\u0001")).map((key) => String(key).split("\u0000")[0]))]); };
-      transaction.onabort = () => { reject(transaction.error ?? new Error("the composer outbox read was aborted")); };
-    });
-  } finally { db.close(); }
+    documents = await openJournalDatabase(DOCUMENT_JOURNAL_DATABASE);
+    return [...new Set((await Promise.all([journalRecoveryKeys(legacy), journalRecoveryKeys(documents)])).flat())];
+  } finally { legacy.close(); documents?.close(); }
 }
