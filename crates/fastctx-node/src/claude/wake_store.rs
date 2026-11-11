@@ -17,6 +17,10 @@ CREATE INDEX IF NOT EXISTS claude_copies_short ON claude_copies(short);
 
 #[derive(Clone, Serialize, Deserialize)]
 pub(super) struct Intent {
+    /// When it was claimed, in seconds of the epoch; none in one kept before
+    /// this was.
+    #[serde(default)]
+    pub at: i64,
     pub token: String,
     pub revision: i64,
     pub session: String,
@@ -64,6 +68,35 @@ pub(super) fn claim(node: &Node, id: &ResidentId, intent: Intent, expected: Opti
                 )?;
             }
             Ok(claimed)
+        })
+        .map_err(failure)
+}
+
+/// Whether a wake is in flight here, or one was begun since `since`, in
+/// seconds of the epoch: the session Claude Code starts in place of waking
+/// one appears while its wake is, or shortly after.
+pub(super) fn lately(node: &Node, since: i64) -> Result<bool, Failure> {
+    node.database
+        .read_now(move |db| {
+            Ok(db.query_row(
+                "SELECT EXISTS(SELECT 1 FROM claude_wakes WHERE json_extract(body,'$.settled')=0 OR json_extract(body,'$.at')>=?1)",
+                [since],
+                |row| row.get(0),
+            )?)
+        })
+        .map_err(failure)
+}
+
+/// Has the launch of `id` looked at again: what reconciles it may have been
+/// set aside, and nothing else gives an unsettled launch its way out.
+pub(super) fn watch(node: &Node, id: &ResidentId) -> Result<(), Failure> {
+    let id = id.to_string();
+    node.database
+        .write_now_at(Priority::Interactive, id.len(), move |db| {
+            fastctx_jobs::submit(
+                db,
+                &fastctx_jobs::Job { kind: super::wake_once::KIND, key: id.clone(), unit: id, payload: Vec::new() },
+            )
         })
         .map_err(failure)
 }

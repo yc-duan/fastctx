@@ -64,14 +64,16 @@ pub(crate) async fn directory(
             (started_here(&id) && crate::homes::same_dir(cwd, node.world.conversation(&id).path())).then_some(id)
         }),
     };
-    // A copied background history cannot establish ownership. World launches
-    // name their conversation through settings or their recorded launch ID.
+    // The copy Claude Code starts in place of waking a session is a
+    // background session that names no conversation, and neither its history
+    // nor its place establishes whose it is. The World's own launches name
+    // their conversation through settings or their recorded launch ID.
     if known.is_none() {
         let assigned = node.residents.resident_of_thread(&session).is_some()
             || session.get(..8).is_some_and(|short| node.residents.resident_of_thread(short).is_some());
-        if background != Some(false) && !assigned {
+        if background != Some(false) && !assigned && node.claude.copies.unwanted(node, &session)? {
             return Err(fastctx_types::ipc::Failure::new(
-                "an unnamed background session cannot claim a resident through its copied history",
+                "a background session that names no conversation came as a wake was in flight; it is taken for the copy Claude Code starts in place of waking a session",
             ));
         }
         if node.claude.copies.is_copy(node, &session)? {
@@ -205,9 +207,12 @@ pub(super) fn resident(
     }
     let assigned = node.residents.resident_of_thread(&registration.session).is_some()
         || registration.session.get(..8).is_some_and(|short| node.residents.resident_of_thread(short).is_some());
-    if !arrival.own && !assigned {
+    if !arrival.own
+        && !assigned
+        && node.claude.copies.unwanted(node, &registration.session).map_err(|error| io::Error::other(error.message))?
+    {
         return Err(io::Error::other(
-            "an unnamed background session cannot claim a resident through its copied history",
+            "it names no conversation and came as a wake was in flight; it is taken for the copy Claude Code starts in place of waking a session",
         ));
     }
     let root = exchange::sessions(node.world.path());

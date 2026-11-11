@@ -12,6 +12,44 @@ pub(super) const KIND: &str = "claude/reconcile-wake";
 // continuous minute of unchanged terminal evidence after that deadline.
 const QUIET: Duration = Duration::from_secs(180);
 const AGAIN: Duration = Duration::from_secs(3);
+/// How long a launch is waited for, whatever the records say of it. A
+/// supervisor that never says the session ended, a session that stays as it
+/// was, records that cannot be read: none of them is settled by the quiet
+/// interval, and none may leave a conversation that never wakes again. Past
+/// this the next words launch anew, as they did after the older limit.
+const GIVEN_UP: Duration = Duration::from_secs(600);
+
+fn age(intent: &Intent) -> i64 {
+    jiff::Timestamp::now().as_second().saturating_sub(intent.at)
+}
+
+/// How long until a launch is looked at again: often while its activation is
+/// due, seldom after, and never further apart than the quiet interval takes
+/// its observations to be.
+fn pace(intent: &Intent) -> Duration {
+    Duration::from_secs(match age(intent) {
+        ..30 => 3,
+        30..120 => 10,
+        _ => 30,
+    })
+}
+
+/// Settles a launch waited for past `GIVEN_UP` that no caller here is still
+/// making; whether it did.
+fn give_up(node: &Node, id: &ResidentId, intent: &Intent) -> Result<bool, Failure> {
+    if age(intent) < GIVEN_UP.as_secs() as i64 || hold(node, id).is_some() {
+        return Ok(false);
+    }
+    if !wake_store::settle_seen(node, id, intent)? {
+        return Ok(false);
+    }
+    node.log.line(format_args!(
+        "Claude wake {id} {} given up after {} minutes with neither an activation nor a settled record of its end; the next words wake it anew",
+        intent.token,
+        GIVEN_UP.as_secs() / 60
+    ));
+    Ok(true)
+}
 
 pub(super) struct Observation {
     pub running: bool,
@@ -103,6 +141,8 @@ pub(super) async fn begin(
     if let Some(intent) = prior
         && !reconcile(node, id, intent, &seen)?
     {
+        wake_store::watch(node, id)?;
+        node.durable_jobs.stir(KIND);
         return Ok(Admission::Waiting);
     }
     if seen.running {
@@ -112,6 +152,7 @@ pub(super) async fn begin(
         return Ok(Admission::Waiting);
     }
     let intent = Intent {
+        at: jiff::Timestamp::now().as_second(),
         token: crate::speech::new_id("wake").to_string(),
         revision: 0,
         session: session.to_string(),
@@ -137,7 +178,7 @@ pub(super) async fn begin(
 /// A fresh live activation settles a launch. A stale stopped row can settle a
 /// lost receipt only after uninterrupted, unchanged terminal observations.
 fn reconcile(node: &Node, id: &ResidentId, mut intent: Intent, seen: &Observation) -> Result<bool, Failure> {
-    if intent.settled {
+    if intent.settled || give_up(node, id, &intent)? {
         return Ok(true);
     }
     let before = activation(&intent.before)?;
@@ -228,9 +269,12 @@ pub(crate) fn register(node: &Arc<Node>) {
             let Some(node) = node else { return Outcome::Failed("the node is stopping".into()) };
             let Ok(id) = taken.key.parse::<ResidentId>() else { return Outcome::Done };
             node.ready_for(&id).await;
+            let mut after = AGAIN;
             let result = async {
                 let Some(intent) = wake_store::get(&node, &id)? else { return Ok(true) };
-                if intent.settled {
+                after = pace(&intent);
+                // The limit holds though the session cannot be observed.
+                if intent.settled || give_up(&node, &id, &intent)? {
                     return Ok(true);
                 }
                 let Some((about, _)) = node.residents.about(&id) else { return Ok(true) };
@@ -244,7 +288,7 @@ pub(crate) fn register(node: &Arc<Node>) {
                     crate::lifecycle::retry::kick(&node, &id);
                     Outcome::Done
                 }
-                Ok(false) => Outcome::Again { after: AGAIN },
+                Ok(false) => Outcome::Again { after },
                 Err(error) => {
                     if let Ok(Some(mut intent)) = wake_store::get(&node, &id) {
                         if intent.problem.as_deref() != Some(&error.message) {
@@ -257,7 +301,7 @@ pub(crate) fn register(node: &Arc<Node>) {
                         intent.quiet_since = None;
                         let _ = wake_store::put(&node, &id, intent);
                     }
-                    Outcome::Again { after: AGAIN }
+                    Outcome::Again { after }
                 }
             }
         })

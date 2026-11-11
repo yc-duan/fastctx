@@ -15,6 +15,12 @@ use std::{
 };
 
 const KIND: &str = "claude/discard-copy";
+/// How long a copy Claude Code never lists is looked for before its cleanup
+/// is done with: it stays excluded, and nothing is left to stop.
+const NEVER_LISTED: i64 = 600;
+/// How long after a wake began a background session that names no
+/// conversation is taken for the copy started in its place.
+const AFTER_A_WAKE: i64 = 600;
 
 #[derive(Default)]
 pub(crate) struct Copies {
@@ -32,6 +38,44 @@ impl Copies {
             })
             .map_err(failure)
     }
+
+    /// Whether the background session `session`, which names no conversation
+    /// and is no conversation's, is to be kept out: it came while a wake was
+    /// in flight here or shortly after one, when Claude Code starts a copy in
+    /// place of the session it was asked to wake. It is excluded for good,
+    /// so that it is kept out when it asks again later, and is not stopped:
+    /// it may be a session its user started then. A session that comes at
+    /// any other time is the user's own, and becomes a conversation as before.
+    pub(crate) fn unwanted(&self, node: &Node, session: &str) -> Result<bool, Failure> {
+        let now = jiff::Timestamp::now().as_second();
+        if !super::wake_store::lately(node, now - AFTER_A_WAKE)? {
+            return Ok(false);
+        }
+        let short = session.get(..8).unwrap_or(session).to_string();
+        let copy = Copy {
+            at: now,
+            home: None,
+            short: short.clone(),
+            removed: true,
+            seen: false,
+            problem: Some("it named no conversation and came as a wake was in flight; it was not stopped".into()),
+        };
+        let identity = serde_json::to_string(&(None::<&Path>, &short)).map_err(failure)?;
+        let body = crate::records::encode(&copy).map_err(failure)?;
+        node.database
+            .write_now_at(Priority::Interactive, body.len(), move |db| {
+                db.execute(
+                    "INSERT INTO claude_copies(identity,short,body) VALUES(?1,?2,?3) ON CONFLICT(identity) DO NOTHING",
+                    (&identity, &short, body),
+                )?;
+                Ok(())
+            })
+            .map_err(failure)?;
+        node.log.line(format_args!(
+            "kept out the Claude background session {session}: it names no conversation and came as a wake was in flight, as the copy Claude Code starts in place of waking a session does"
+        ));
+        Ok(true)
+    }
 }
 
 pub(crate) fn of(session: &str, printed: &str) -> Option<String> {
@@ -40,6 +84,9 @@ pub(crate) fn of(session: &str, printed: &str) -> Option<String> {
 
 #[derive(Clone, Serialize, Deserialize)]
 struct Copy {
+    /// When it was excluded, in seconds of the epoch.
+    #[serde(default)]
+    at: i64,
     home: Option<PathBuf>,
     short: String,
     removed: bool,
@@ -54,6 +101,7 @@ fn failure(error: impl std::fmt::Display) -> Failure {
 /// The permanent exclusion and cleanup job commit together before any stop or rm.
 pub(crate) async fn discard(node: &Arc<Node>, home: Option<&Path>, short: &str) -> Result<(), Failure> {
     let copy = Copy {
+        at: jiff::Timestamp::now().as_second(),
         home: home.map(Path::to_path_buf),
         short: short.to_string(),
         removed: false,
@@ -101,6 +149,12 @@ async fn clean(node: &Arc<Node>, key: &str) -> Result<(), Failure> {
         let record = rows.iter().find(|row| row["kind"] == "background" && row["id"] == copy.short);
         if record.is_none() {
             return if copy.seen {
+                Ok(())
+            } else if jiff::Timestamp::now().as_second().saturating_sub(copy.at) >= NEVER_LISTED {
+                node.log.line(format_args!(
+                    "Claude Code never listed the excluded copy {}; it stays excluded and there is nothing to stop",
+                    copy.short
+                ));
                 Ok(())
             } else {
                 Err(Failure::new(format!(
@@ -167,9 +221,16 @@ pub(super) fn register(node: &Arc<Node>) {
             match copy {
                 Ok(None) => Outcome::Done,
                 Ok(Some(copy)) if copy.removed => Outcome::Done,
-                Ok(Some(_)) => match clean(&node, &taken.key).await {
+                Ok(Some(copy)) => match clean(&node, &taken.key).await {
                     Ok(()) => Outcome::Done,
-                    Err(_) => Outcome::Again { after: Duration::from_secs(10) },
+                    // Often while it is being started, seldom once it stays.
+                    Err(_) => Outcome::Again {
+                        after: Duration::from_secs(match jiff::Timestamp::now().as_second().saturating_sub(copy.at) {
+                            ..120 => 10,
+                            120..3600 => 60,
+                            _ => 600,
+                        }),
+                    },
                 },
                 Err(error) => {
                     node.log.line(format_args!("reading Claude copy cleanup: {error}"));
