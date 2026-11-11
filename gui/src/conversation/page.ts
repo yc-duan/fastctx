@@ -73,6 +73,9 @@ const HELD_MOST = 6000;
 const KEEP_SCREENS = 3;
 const LATEST_MOST = 2400;
 const LATEST_KEPT = 800;
+/** How long a turn asked to stop shows ended before its host has ended it
+ *  (`ConversationPage.stop`). */
+const STOP_OVERDUE_MS = 2000;
 
 /** The mark of an agent named "Claude" or "Codex". */
 const markOf = (agent: string) => (/claude/i.test(agent) ? "claude" : "codex");
@@ -269,8 +272,11 @@ export class ConversationPage {
   private roomFor: string | null = null;
   /** Until when words the user just sent are to be put at the top. */
   private placeUntil = 0;
-  /** A stop was asked for and the turn has not ended yet. */
-  private stopping = false;
+  /** A stop was asked for, its turn has not ended, and its host has not
+   *  ended it within `STOP_OVERDUE_MS`: only then is the turn said to go on,
+   *  with a way to stop it again. */
+  private stopOverdue = false;
+  private stopWatch = 0;
   /** Words of the shared queue on their way into the turn, by queue item,
    *  as the conversation shows them meanwhile. */
   private readonly onTheirWay = new Map<string, string>();
@@ -1141,6 +1147,7 @@ export class ConversationPage {
   leave(): void {
     phoneWide.removeEventListener("change", this.placeDial);
     clearTimeout(this.offersAgain);
+    clearTimeout(this.stopWatch);
     cancelAnimationFrame(this.frame);
     this.view.destroy();
     this.badge?.dispose();
@@ -1319,31 +1326,54 @@ export class ConversationPage {
     this.update();
   }
 
-  /** Asks the agent to stop: what runs shows stopped at once, and the
-   *  button says it is stopping until the turn ends. A World that says no
-   *  turn runs is believed: what still looked under way here had ended. A
-   *  stop that did not get there shows it going on again, and says why. */
+  /** Asks the agent to stop: the turn ends here at once, whatever its host
+   *  takes to end it (`gui-conversation-working-indicator-and-stop`): what
+   *  it writes no longer grows, the button sends again and nothing says it
+   *  is stopping. Only a host that has not ended it two seconds later has
+   *  the turn said to go on, with the button to stop it again. A World that
+   *  says no turn runs is believed: what still looked under way here had
+   *  ended. A stop that did not get there shows it going on again, and says
+   *  why. */
   private stop(): void {
     const asked = this.options.stop();
     if (!asked) return;
-    this.stopping = true;
     this.options.conversation.halt();
+    this.stopOverdue = false;
+    clearTimeout(this.stopWatch);
+    this.stopWatch = window.setTimeout(() => {
+      if (!this.options.conversation.halting()) return;
+      this.stopOverdue = true;
+      this.update();
+    }, STOP_OVERDUE_MS);
     this.update();
     asked.then(
       (stopped) => {
         if (stopped) return;
-        this.stopping = false;
+        this.calledOff();
         this.options.conversation.noTurnRuns();
         this.update();
       },
       (error: unknown) => {
-        this.stopping = false;
+        this.calledOff();
         this.options.conversation.unhalt();
         const why = error instanceof Error ? error.message : String(error);
         this.say(this.options.words.turnNotStopped(why), why, true);
         this.update();
       },
     );
+  }
+
+  /** A stop asked for is over, its turn ended or never stopped. */
+  private calledOff(): void {
+    clearTimeout(this.stopWatch);
+    this.stopOverdue = false;
+  }
+
+  /** Whether the page shows a turn under way: one asked to stop shows
+   *  ended, unless its host has not ended it in time (`stop`). */
+  private underWay(): boolean {
+    const { conversation } = this.options;
+    return conversation.busy() && (!conversation.halting() || this.stopOverdue);
   }
 
   /** Puts words into the input as if typed, so the shared input has them. */
@@ -1526,7 +1556,7 @@ export class ConversationPage {
     }
     const attached = !session && this.tray?.count ? { ...this.tray.take(), filesOn } : { refs: [], shown: [], filesOn: null };
     if (!text && !attached.refs.length && !(session && this.nodeTray?.count)) {
-      if (this.options.conversation.busy()) this.stop();
+      if (this.underWay()) this.stop();
       return;
     }
     // What the last command did is behind the conversation now.
@@ -2775,8 +2805,9 @@ export class ConversationPage {
     this.nameHint();
     // Archived or deleted, it is not said to work or wait.
     const waiting = !this.gone && this.away === null && conversation.waiting();
-    // Working for the whole of a turn, not only while something shows.
-    const working = !this.gone && this.away === null && !waiting && conversation.busy();
+    // Working for the whole of a turn, not only while something shows; a
+    // turn asked to stop has ended here (`stop`).
+    const working = !this.gone && this.away === null && !waiting && this.underWay();
     // Current presence takes precedence over an earlier transport error.
     const now =
       (this.away !== null ? null : this.gone) ??
@@ -2795,8 +2826,8 @@ export class ConversationPage {
         : waiting
           ? words.waitingForYou
           : working
-            ? conversation.halting()
-              ? words.stopping
+            ? this.stopOverdue
+              ? words.notStoppedYet
               : words.working
             : words.idle);
     // A screen reader hears the conversation change state, once each time:
@@ -2860,19 +2891,18 @@ export class ConversationPage {
   private drawAction(): void {
     const { words, conversation } = this.options;
     const typed = this.input.value.trim() !== "" || !!this.picked || ((this.session ? this.nodeTray?.count : this.tray?.count) ?? 0) > 0;
-    const busy = conversation.busy();
-    if (!busy) this.stopping = false;
+    const busy = this.underWay();
+    if (!conversation.halting()) this.calledOff();
     const stop = !typed && busy;
     this.action.innerHTML = glyph(stop ? "stop" : "send", 18);
     const waits = this.released !== null || (this.session ? this.queues() : busy);
     // Files still on their way hold the words back; the button says why on
     // hover, which a disabled one would not.
     const held = !stop && typed && this.uploading();
-    const label = stop ? (this.stopping ? words.stopping : words.stop) : held ? this.options.attach!.words.wait : typed && waits ? words.queue.queue : words.send;
+    const label = stop ? (this.stopOverdue ? words.stopAgain : words.stop) : held ? this.options.attach!.words.wait : typed && waits ? words.queue.queue : words.send;
     this.action.setAttribute("aria-label", label);
     this.action.title = label;
     this.action.classList.toggle("stop", stop);
-    this.action.classList.toggle("stopping", stop && this.stopping);
     this.action.disabled = !typed && !stop;
     if (held) this.action.setAttribute("aria-disabled", "true");
     else this.action.removeAttribute("aria-disabled");

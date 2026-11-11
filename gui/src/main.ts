@@ -1886,7 +1886,8 @@ function specimenTalk(address: Address): DeskTalk {
       );
       page.update();
     },
-    // A specimen's agent never stops: the button shows it stopping.
+    // A specimen's agent never stops: two seconds after the stop, the
+    // button offers to stop it again.
     stop: () => new Promise<boolean>(() => {}),
     stopJob: async () => {},
     jobOutput: async (job) => specimenOutput(job.command),

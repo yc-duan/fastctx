@@ -177,8 +177,11 @@ export interface Words {
   sendPlaceholder(agent: string): string;
   send: string;
   stop: string;
-  /** The stop button while the turn it stops has not ended. */
-  stopping: string;
+  /** The stop button for a turn whose host has not ended it in time. */
+  stopAgain: string;
+  /** How a conversation stands while a turn asked to stop has not ended in
+   *  time: until then it shows ended. */
+  notStoppedYet: string;
   /** A stop that could not be asked for. */
   turnNotStopped(why: string): string;
   uncertain(why: string): string;
@@ -554,7 +557,8 @@ export const zh: Words = {
   sendPlaceholder: (agent) => `发消息给 ${agent}…`,
   send: "发送",
   stop: "停止",
-  stopping: "正在停",
+  stopAgain: "再停一次",
+  notStoppedYet: "这一轮还没停下",
   turnNotStopped: () => "没能停下",
   uncertain: () => "送达状态未知",
   sending: "发送中",
@@ -939,7 +943,8 @@ export const en: Words = {
   sendPlaceholder: (agent) => `Message ${agent}…`,
   send: "Send",
   stop: "Stop",
-  stopping: "Stopping",
+  stopAgain: "Stop again",
+  notStoppedYet: "Not stopped yet",
   turnNotStopped: () => "Couldn't stop",
   uncertain: () => "Delivery unknown",
   sending: "Sending",
