@@ -117,6 +117,7 @@ async fn apply(node: &Arc<Node>, resident: &ResidentId, turn: &str, inputs: &[No
                     .await
                     .map_err(failure)?
                     .map_err(failure)?;
+                crate::claude::channel::wake(node, session);
             }
             _ => return Err(Failure::new("the consuming host has no stop entrance")),
         }

@@ -1565,6 +1565,7 @@ version = "1.0.1-beta.17"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
+ "bytes",
  "fastctx-agent",
  "fastctx-client",
  "fastctx-content",
@@ -1586,6 +1587,9 @@ dependencies = [
  "fastctx-update",
  "fastctx-watch",
  "getrandom 0.3.4",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
  "image",
  "jiff",
  "notify",

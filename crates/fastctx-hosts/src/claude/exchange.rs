@@ -442,6 +442,26 @@ pub fn harvest(directory: &Path) -> io::Result<(Vec<Report>, Vec<String>)> {
     Ok((reported, problems))
 }
 
+/// A report its mod handed over on the loopback channel (the node's
+/// `claude::channel`) rather than as a file, read as `harvest` reads a file
+/// of it: under the same name, once every report it names as written before
+/// it has been applied; `WouldBlock` until then.
+/// `earlier` says which names came before it in the same handing over.
+pub fn received(
+    directory: &Path,
+    name: &str,
+    value: Value,
+    at: Timestamp,
+    earlier: &dyn Fn(&str) -> bool,
+) -> io::Result<Report> {
+    if !applied::ordered(name) {
+        return Err(io::Error::other(format!("{name} is not a report's name")));
+    }
+    let floor = dependencies(directory, &value, earlier)?;
+    let event = serde_json::from_value::<ModEvent>(value).map_err(io::Error::other)?;
+    Ok(Report { name: name.to_string(), events: translate(event, at), floor })
+}
+
 /// The writer is known dead: a complete JSON report no longer needs its
 /// final marker to distinguish it from an in-progress write.
 pub fn recover_reports(directory: &Path) -> io::Result<Vec<String>> {
@@ -485,20 +505,27 @@ fn read_report(path: &Path) -> io::Result<(Vec<u8>, Option<String>)> {
         }
         value = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
     }
+    let session = path.parent().and_then(Path::parent).expect("an event is inside a session");
+    let floor = dependencies(session, &value, &|_| false)?;
+    Ok((bytes, floor))
+}
+
+/// The floor a report declares, once every report it names as written
+/// before it has been applied in the session `directory`, or is `earlier`
+/// in the same handing over; `WouldBlock` until then.
+fn dependencies(directory: &Path, value: &Value, earlier: &dyn Fn(&str) -> bool) -> io::Result<Option<String>> {
     if let Some(pending) = value.get("pending").and_then(Value::as_array) {
-        let session = path.parent().and_then(Path::parent).expect("an event is inside a session");
         for name in pending {
             let name = name.as_str().ok_or_else(|| io::Error::other("invalid report dependency"))?;
             if Path::new(name).file_name().is_none_or(|file| file != name) {
                 return Err(io::Error::other("invalid report dependency path"));
             }
-            if !applied::has(session, name)? {
+            if !earlier(name) && !applied::has(directory, name)? {
                 return Err(io::ErrorKind::WouldBlock.into());
             }
         }
     }
-    let floor = value.get("floor").and_then(Value::as_str).filter(|name| applied::ordered(name)).map(str::to_string);
-    Ok((bytes, floor))
+    Ok(value.get("floor").and_then(Value::as_str).filter(|name| applied::ordered(name)).map(str::to_string))
 }
 
 fn translate(event: ModEvent, recorded_at: Timestamp) -> Vec<Reported> {

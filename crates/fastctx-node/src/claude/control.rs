@@ -475,6 +475,7 @@ pub(super) async fn invoke(node: &Arc<Node>, resident: &ResidentId, control: Val
         node.claude.bridge.calls.lock().expect("never poisoned").remove(&key);
         return Err(failure(error));
     }
+    super::channel::wake(node, &host.session);
     let within = if control_outcome::compacts(&control) {
         crate::control_queue::COMPACTING
     } else {

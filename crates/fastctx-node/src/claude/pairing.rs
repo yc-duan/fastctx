@@ -157,6 +157,7 @@ pub(crate) async fn directory(
         node.residents.active(&id).map_err(|failure| io::Error::other(failure.message))?;
         crate::context::refresh_local_now(node, &id)?;
         crate::context::hand_to_session(node, &id, &source)?;
+        super::channel::tell(node, &source, &registration.session, true);
         if registration.process.is_some() {
             fastctx_platform::publish(
                 &source.join("session.json"),

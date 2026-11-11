@@ -72,6 +72,7 @@ async function removed($, fresh = false) {
 }
 
 __FASTCTX_CONTROLS__
+__FASTCTX_CHANNEL__
 __FASTCTX_COMMANDS__
 __FASTCTX_NATIVE_GOAL__
 __FASTCTX_ASSISTED__
@@ -254,12 +255,18 @@ function event($, context, kind, fields) {
 
 async function writePending($, context, name) {
   const report = context.unwritten.get(name)
+  if (report.goalStop) await $.fs.write(context.dir + '/goal-stop.json', JSON.stringify({ report: name + '.json' }))
+  // Handed to the node on the channel, it is applied as it would be read
+  // from its file, and the node keeps the batch's watermark below.
+  if (await channelReport($, context, name, report)) {
+    context.unwritten.delete(name)
+    return
+  }
   // A batch's filename predates its last fragment. Keep the allocator's
   // watermark even after acknowledgment deletes the batch, so reload in the
   // same millisecond (or a clock rollback) cannot reuse fragment timestamps.
-  if (report.sequence !== undefined) await $.fs.write(context.dir + '/applied/' + report.sequence + '.sequence', '')
+  if (report.sequence !== undefined && report.sequence !== null) await $.fs.write(context.dir + '/applied/' + report.sequence + '.sequence', '')
   const path = context.dir + '/events/' + name
-  if (report.goalStop) await $.fs.write(context.dir + '/goal-stop.json', JSON.stringify({ report: name + '.json' }))
   await writeReport($, path, report.body)
   await $.fs.write(path + '.done', '')
   context.unwritten.delete(name)
@@ -916,6 +923,9 @@ async function startSession($, context) {
   // skipped: a closed session's answers are what it should see on return.
   // After that, the session's control helper says when there is more.
   controlWake(id, () => look($, context).catch((error) => worldFailure($, 'look', error)))
+  // The node's loopback channel, where it says it listens: reports go there
+  // and it says at once when there is something to look at.
+  await channelOpen($, context)
   $.clock.after(0, () => look($, context).catch((error) => worldFailure($, 'look', error)))
   // Background observations retain this conversation even after /clear.
   context.observe = (happened) => {

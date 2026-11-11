@@ -204,6 +204,91 @@ test('a stored row takes the block its step streamed while the turn is not known
   expect(told.filter((happened) => happened.event === 'began' && happened.item?.id.startsWith('["row-'))).toEqual([])
 })
 
+// Reports go to the node on its loopback channel where it says it listens
+// (`channel.js`), none of them to a file; once the channel is not reached,
+// this session's reports go to files, and stay there so none overtakes one
+// still in a file.
+test('hands reports to the node on its channel, and to files once it is not reached', async ($, on) => {
+  const clock = mock.clock(on)
+  mock.env(on, {})
+  fixtureUi(on)
+  on('mcp.connect', () => ({ value: { isConnected: true, server: serverName } }))
+  on('session.usage', () => ({ value: usage(true) }))
+  on('config.list', () => ({ value: [] }))
+  on('session.messages', () => ({ value: [] }))
+  const files = new Map<string, string>()
+  on('session.id', () => ({ value: 'channelled' }))
+  on('session.cwd', () => ({ value: '/fixture' }))
+  on('settings.read', heldByWorld)
+  on('session.model', () => ({ value: 'fixture' }))
+  on('session.surfaces', () => ({ value: ['terminal'] }))
+  on('session.version', () => ({ value: { version: '2.1.322' } }))
+  on('process.run', (_, e) => {
+    if (e.argv[1] === 'claude-session-directory') {
+      const directory = e.argv[2] + '/claude/' + e.argv[3]
+      files.set(directory + '/channel.json', JSON.stringify({ version: 1, port: 4321, token: 'fixture-token' }))
+      return { value: { exitCode: 0, stdout: JSON.stringify(directory), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+    }
+    return { value: { exitCode: 0, stdout: JSON.stringify({ pid: 123, token: 'fixture-lifetime' }), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+  })
+  on('process.spawn', guard)
+  on('fs.write', (_, e) => {
+    files.set(e.path.replaceAll('\\', '/'), e.text)
+    return { value: undefined }
+  })
+  on('fs.read', (_, e) => {
+    if (!files.has(e.path.replaceAll('\\', '/'))) return { deny: 'fixture: file unavailable' }
+    return { value: files.get(e.path.replaceAll('\\', '/'))! }
+  })
+  on('fs.list', (_, e) => ({ value: [...files.keys()]
+    .filter((path) => path.startsWith(e.path.replaceAll('\\', '/') + '/') && !path.slice(e.path.replaceAll('\\', '/').length + 1).includes('/'))
+    .map((path) => ({ name: path.slice(e.path.replaceAll('\\', '/').length + 1), kind: 'file', size: files.get(path)!.length, mtimeMs: 0, isLink: false })) }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('turn.start', (_, e) => ({ turnId: e.turnId }))
+  on('turn.step', async function* (_, e) {
+    yield { kind: 'text', index: 0, text: 'said ' + e.index }
+    return { turnId: e.turnId, index: e.index, answer: 'said', toolUses: [], stopReason: 'end_turn', usage: null }
+  })
+  const handed: { name: string; report: { kind: string } }[] = []
+  const asked: string[] = []
+  let reached = true
+  on('http.fetch', (_, e) => {
+    asked.push(e.url)
+    expect(e.url.startsWith('http://127.0.0.1:4321/v1/claude/channelled/')).toBe(true)
+    expect(e.init?.headers?.authorization).toBe('Bearer fixture-token')
+    if (!reached) return { deny: 'fixture: the node is not reached' }
+    if (e.url.endsWith('/reports')) {
+      expect(e.init?.method).toBe('POST')
+      const { reports } = JSON.parse(e.init?.body as string) as { reports: { name: string; report: { kind: string } }[] }
+      handed.push(...reports)
+      return { value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ applied: reports.map((report) => report.name) }) } }
+    }
+    if (e.url.endsWith('/subagents')) return { value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ configuration: null }) } }
+    // A wait the node holds: nothing new while the test runs.
+    return new Promise(() => {})
+  })
+  const filed = () => [...files.keys()].filter((path) => path.includes('/events/') && path.endsWith('.json'))
+
+  await $.session.start({ cwd: '/fixture', surface: 'terminal', isInteractive: true })
+  await $.turn.start({ turnId: 'reached', text: 'work' })
+  for await (const _ of $.turn.step({ turnId: 'reached', index: 0, model: 'fixture', messageCount: 1 })) { /* drained */ }
+  await clock.settle()
+  expect(handed.some((report) => report.report.kind === 'turn_start')).toBe(true)
+  expect(handed.some((report) => report.report.kind === 'batch')).toBe(true)
+  expect(filed()).toEqual([])
+  expect(asked.some((url) => url.includes('/wake?seen='))).toBe(true)
+
+  reached = false
+  for await (const _ of $.turn.step({ turnId: 'reached', index: 1, model: 'fixture', messageCount: 2 })) { /* drained */ }
+  await clock.settle()
+  const after = filed().length
+  expect(after > 0).toBe(true)
+  reached = true
+  for await (const _ of $.turn.step({ turnId: 'reached', index: 2, model: 'fixture', messageCount: 3 })) { /* drained */ }
+  await clock.settle()
+  expect(filed().length > after).toBe(true)
+})
+
 // The official engine checks the ownership mapping, that foreign calls are
 // left alone, and that a World call goes through only once its proof is written.
 test('proves only World calls, before they run, and distinguishes clear from resume', async ($, on) => {

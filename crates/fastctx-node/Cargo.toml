@@ -25,6 +25,7 @@ timeline-drill = []
 tempfile = "3"
 anyhow.workspace = true
 base64 = "0.22"
+bytes = "1"
 fastctx-hands = { path = "../fastctx-hands" }
 fastctx-client = { path = "../fastctx-client" }
 fastctx-content = { path = "../fastctx-content" }
@@ -46,6 +47,9 @@ fastctx-watch = { path = "../fastctx-watch" }
 fastctx-uninstall = { path = "../fastctx-uninstall" }
 fastctx-update = { path = "../fastctx-update" }
 getrandom = { version = "0.3", features = ["std"] }
+http-body-util = "0.1"
+hyper = { version = "1", features = ["http1", "server"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 jiff.workspace = true
 notify = "8"
@@ -53,7 +57,7 @@ quick-xml = "0.42"
 serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }
 sha2 = "0.10"
-tokio = { workspace = true, features = ["fs", "io-util", "macros", "rt-multi-thread", "sync", "time", "signal"] }
+tokio = { workspace = true, features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "sync", "time", "signal"] }
 
 [lints]
 workspace = true
