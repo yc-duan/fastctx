@@ -1623,6 +1623,9 @@ export class ConversationView {
       case "ended": {
         const said = words.turn(entry.end.how, entry.end.reason);
         if (!said) return "";
+        // A turn the user cut short is said as quietly as a notice, not as
+        // a warning; one cut short by a failure still says why, as one.
+        if (entry.end.how === "interrupted" && !entry.end.reason) return `<div class="turn-interrupted">${escape(said)}</div>`;
         return `<div class="note ${entry.end.how === "failed" ? "wrong" : "caution"}">${escape(said)}</div>`;
       }
       case "health":

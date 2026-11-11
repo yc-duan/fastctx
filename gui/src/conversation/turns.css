@@ -358,6 +358,16 @@
   color: var(--text-3);
 }
 
+/* A turn cut short, said in the notices' quiet voice. */
+.turn-interrupted {
+  font-family: var(--font-reading);
+  font-style: italic;
+  font-size: var(--size-text);
+  color: var(--text-3);
+  /* Room for the italic's last stroke, which leans past its box. */
+  padding-right: 0.15em;
+}
+
 .notice-line {
   display: flex;
   max-width: 100%;

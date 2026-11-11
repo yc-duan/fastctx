@@ -540,7 +540,7 @@ export const zh: Words = {
   stepsEarlier: (steps) => `更早的 ${steps} 步`,
   turn: (how, reason) => {
     if (how === "completed") return null;
-    const said = how === "failed" ? "本轮失败" : how === "interrupted" ? "本轮已停止" : `本轮结束：${how}`;
+    const said = how === "failed" ? "本轮失败" : how === "interrupted" ? "已中断" : `本轮结束：${how}`;
     return reason ? `${said}：${reason}` : said;
   },
   wentOnAs: (job) => `转入后台 ${job}`,
@@ -926,7 +926,7 @@ export const en: Words = {
   stepsEarlier: (steps) => (steps === 1 ? "1 earlier step" : `${steps} earlier steps`),
   turn: (how, reason) => {
     if (how === "completed") return null;
-    const said = how === "failed" ? "Turn failed" : how === "interrupted" ? "Turn stopped" : `Turn ended: ${how}`;
+    const said = how === "failed" ? "Turn failed" : how === "interrupted" ? "Interrupted" : `Turn ended: ${how}`;
     return reason ? `${said}: ${reason}` : said;
   },
   wentOnAs: (job) => `went on as ${job}`,
