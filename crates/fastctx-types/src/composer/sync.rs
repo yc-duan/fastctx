@@ -144,3 +144,17 @@ pub enum Frame {
         failure: Failure,
     },
 }
+
+/// A frame's transport class, kept exhaustive: a frame added to the
+/// subscription says here which class it is. Those it came with are older
+/// than the classes.
+impl Frame {
+    pub fn purpose(&self) -> Option<crate::sync::transfer::Purpose> {
+        use crate::sync::transfer::Purpose;
+        match self {
+            // What came of a change asked over the subscription.
+            Self::Result { .. } => Some(Purpose::ExecutionControl),
+            Self::State { .. } | Self::Update { .. } | Self::Saved { .. } | Self::Refused { .. } => None,
+        }
+    }
+}

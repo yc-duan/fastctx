@@ -493,5 +493,12 @@
     "purpose": "Observation",
     "capability": "timeline_reads",
     "mapping": "crates/fastctx-types/src/remote.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/composer/sync.rs::Frame",
+    "variant": "Result",
+    "purpose": "ExecutionControl",
+    "capability": "composer_documents",
+    "mapping": "crates/fastctx-types/src/composer/sync.rs"
   }
 ]
