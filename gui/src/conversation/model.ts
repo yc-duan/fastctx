@@ -479,7 +479,8 @@ export class Fold {
     this.sequences.clear();
     this.stale = false;
     this.halted = null;
-    this.machineHalted.clear();
+    // What the machine said was asked to stop stands through a reading
+    // again: it goes when the turn ends or no turn runs.
     this.running.clear();
     this.began.clear();
     this.thoughtTokens.clear();
@@ -507,6 +508,7 @@ export class Fold {
     // A stop asked of what still runs, or of words still on their way,
     // stands through a reading again.
     if (halted && (this.running.size > 0 || halted.size === 0)) this.halt();
+    for (const turn of this.machineHalted) if (this.running.has(turn)) this.haltTurn(turn);
     for (const ask of waiting) {
       if (ask.kind === "ask" && !this.entries.some((entry) => entry.kind === "ask" && askKey(entry.id) === askKey(ask.id))) this.add(ask);
     }

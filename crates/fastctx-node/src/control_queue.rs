@@ -306,22 +306,24 @@ fn after_compaction(node: Arc<Node>, id: ResidentId, mut row: PendingControl) {
             .then(|| row.error.clone().unwrap_or_else(|| "the compaction did not finish".into()));
         // The control is let go only once its words are held or released:
         // were it let go first, a restart would find nothing to hold them by.
-        // Not done, it stays for the next start to settle (`recover`).
-        let mut forgotten = false;
-        for attempt in 0..3 {
+        // A restart before it is done settles it then (`recover`).
+        // Tried until it is done: a write that fails now is tried again,
+        // a minute apart at most, so a disk that comes back lets the queue go
+        // on without a restart.
+        let mut wait = Duration::from_secs(1);
+        loop {
             match crate::composer::forget_command(&node, &id, &row.id, why.as_deref()).await {
-                Ok(()) => {
-                    forgotten = true;
-                    break;
-                }
+                Ok(()) => break,
                 Err(error) => {
-                    node.log.line(format_args!("holding {id}'s queue after its compaction: {}", error.message));
-                    tokio::time::sleep(Duration::from_secs(1 << attempt)).await;
+                    node.log.line(format_args!(
+                        "holding {id}'s queue after its compaction: {}; trying again in {} s",
+                        error.message,
+                        wait.as_secs()
+                    ));
+                    tokio::time::sleep(wait).await;
+                    wait = (wait * 2).min(Duration::from_secs(60));
                 }
             }
-        }
-        if !forgotten {
-            return;
         }
         if let Err(error) = finish(&node, &id, &row).await {
             node.log.line(format_args!("telling {id} how its compaction ended: {}", error.message));

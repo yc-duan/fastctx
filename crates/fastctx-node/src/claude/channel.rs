@@ -123,9 +123,22 @@ impl Channel {
     /// Answers once the session has been left something since `seen`, or
     /// after `WAIT` with nothing new: how many times it has been.
     async fn wait(&self, session: &str, seen: u64) -> u64 {
-        let wake = self.wake_of(session);
+        // However this wait ends (answered, timed out, or its request
+        // dropped), the wake goes with it when nothing else holds it.
+        struct Waiting<'a> {
+            channel: &'a Channel,
+            session: &'a str,
+            wake: Arc<Wake>,
+        }
+        impl Drop for Waiting<'_> {
+            fn drop(&mut self) {
+                self.channel.forget_wake(self.session, &self.wake);
+            }
+        }
+        let waiting = Waiting { channel: self, session, wake: self.wake_of(session) };
+        let wake = &waiting.wake;
         let deadline = tokio::time::Instant::now() + WAIT;
-        let count = loop {
+        loop {
             let changed = wake.changed.notified();
             tokio::pin!(changed);
             changed.as_mut().enable();
@@ -136,22 +149,18 @@ impl Channel {
             if tokio::time::timeout_at(deadline, changed).await.is_err() {
                 break wake.count.load(Ordering::Acquire);
             }
-        };
-        // The last wait of a session whose queue went, early or not, takes
-        // its wake with it.
-        self.forget_wake(session, wake);
-        count
+        }
     }
 
     /// A session's wake, its last wait over, goes once its queue went:
     /// nobody waits on it and nothing is handed for it.
-    fn forget_wake(&self, session: &str, wake: Arc<Wake>) {
+    fn forget_wake(&self, session: &str, wake: &Arc<Wake>) {
         if self.queues.lock().expect("never poisoned").contains_key(session) {
             return;
         }
         let mut wakes = self.wakes.lock().expect("never poisoned");
         // The map's and this one's.
-        if wakes.get(session).is_some_and(|held| Arc::ptr_eq(held, &wake) && Arc::strong_count(held) == 2) {
+        if wakes.get(session).is_some_and(|held| Arc::ptr_eq(held, wake) && Arc::strong_count(held) == 2) {
             wakes.remove(session);
         }
     }

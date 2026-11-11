@@ -914,9 +914,10 @@ async fn look(node: &Arc<Node>, directory: &Path) -> bool {
         if !more {
             break;
         }
-        if taken >= HARVESTS {
-            // Looked at again shortly, beside the other sessions.
-            settled = false;
+        if taken + 1 >= HARVESTS {
+            // More is ready: looked at again at once, after the other
+            // sessions waiting for a look have had theirs.
+            look_soon(node, directory.to_path_buf());
             break;
         }
     }
