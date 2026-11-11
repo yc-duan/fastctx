@@ -49,6 +49,7 @@ export class UpdateLine {
     // How this computer's service stands beside the interface, asked again
     // while the page is open: a change to the new program ends by itself.
     const ask = (): void => {
+      if (document.hidden) return;
       void renewing?.state().then(
         (status) => {
           const node = status.node?.build ?? null;

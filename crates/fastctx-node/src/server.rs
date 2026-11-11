@@ -372,7 +372,7 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
             }
             // An interface follows the World for as long as it is open: as
             // it is first, then after each change (`world-network.md`, 近况).
-            let _open = crate::updates::Open::new();
+            let _open = crate::updates::Open::new(node);
             // The World is worked out once for every interface watching it
             // (`crate::shown::Shown`); each is told what it does not hold
             // yet: what changed, when it reads that, else the whole.

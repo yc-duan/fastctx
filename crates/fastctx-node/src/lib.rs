@@ -337,7 +337,7 @@ pub(crate) struct Node {
     views: tokio::sync::watch::Sender<u64>,
     /// The pieces of this node's state a reader waits on rather than asks
     /// for again (`topics`).
-    topics: topics::Topics,
+    topics: Arc<topics::Topics>,
     /// Moves whenever what an interface shows of the World may have changed,
     /// beyond the residents and jobs here (`shown`).
     shown: tokio::sync::watch::Sender<u64>,
@@ -448,6 +448,9 @@ impl Node {
     pub(crate) fn views_changed(&self) {
         self.contexts.reading.changed(self);
         self.views.send_modify(|changes| *changes = changes.wrapping_add(1));
+        self.topics.changed_prefix(fastctx_types::topics::MAP_PREFIX);
+        self.topics.changed(fastctx_types::topics::SENTINELS);
+        self.topics.changed(fastctx_types::topics::UPDATE);
         self.shown_changed();
     }
 
@@ -890,7 +893,7 @@ pub async fn run_prepared(
                 links: RwLock::new(std::collections::BTreeMap::new()),
                 ways: tokio::sync::watch::channel(0).0,
                 views: tokio::sync::watch::channel(0).0,
-                topics: topics::Topics::new(),
+                topics: Arc::new(topics::Topics::new()),
                 shown: tokio::sync::watch::channel(0).0,
                 world_shown: Default::default(),
                 memory_changes: tokio::sync::watch::channel(0).0,
@@ -950,7 +953,7 @@ pub async fn run_prepared(
         for problem in problems {
             node.log.line(format_args!("could not keep a project of the network's third version: {problem}"));
         }
-        for problem in ledger::finish(&node.world).context("reading the towns' ledgers")? {
+        for problem in ledger::finish(&node).context("reading the towns' ledgers")? {
             node.log.line(format_args!("could not finish a ledger entry: {problem}"));
         }
         town::guard::start(&node).context("watching the towns' ledgers")?;
@@ -969,6 +972,7 @@ pub async fn run_prepared(
     let preparing = node.clone();
     fastctx_platform::task::spawn_blocking(move || {
         let node = preparing;
+        updates::observe(&node);
         claude::start(&node).context("writing the World's Claude Code plugin")?;
         composer::prepare_recovery(&node);
         if node.database.fault().is_none() {

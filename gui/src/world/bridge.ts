@@ -1,9 +1,9 @@
-import type { UsageCallsQuery, UsageCallsPage } from "./usage-calls";
 // The way to the World from inside the shell: each function is one of the
 // shell's commands (`src-tauri/src/lib.rs`), which is one call of the
 // core's client. Outside the shell there is no World to reach, and
 // `inShell` says so.
 
+import type { UsageCallsQuery, UsageCallsPage } from "./usage-calls";
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { closeDelivery, observe, retryDeliveries } from "./delivery";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -289,6 +289,16 @@ export function stop(who: Address): Promise<boolean> {
 /** A project's overview: its map, and who is in its town now. */
 export function project(town: string): Promise<{ map: MapView; who: WorldWho }> {
   return invoke("project", { town });
+}
+
+/** The map alone; live residents and jobs come through WatchWorld. */
+export function projectMap(town: string): Promise<MapView> {
+  return invoke("project_map", { town });
+}
+
+/** Read once on entry, then only after a resident moves into or out of town. */
+export function projectFormer(town: string): Promise<WorldWho> {
+  return invoke("project_who", { town });
 }
 
 /** A text file on a machine, or a piece of it, read for the user; `held`

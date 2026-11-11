@@ -130,6 +130,11 @@ export abstract class PageElement extends HTMLElement {
    *  again after `every` while it is on the page. */
   protected ask(): void {
     clearTimeout(this.timer);
+    const every = duration(this.getAttribute("every"));
+    if (document.hidden && every !== null) {
+      if (this.isConnected) this.timer = window.setTimeout(() => this.ask(), every);
+      return;
+    }
     const binding = this.binding();
     this.bound = JSON.stringify(binding);
     const asked = ++this.asking;

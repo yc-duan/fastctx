@@ -15,6 +15,7 @@
 // page of usage (`./usage/login-page`). The machine last shown is kept on
 // this device; coming from a machine's page shows that one.
 
+import { followState, LOGINS, type Following } from "../world/topics";
 import { Popover } from "../conversation/popover";
 import { escape } from "../conversation/prose";
 import { glyph } from "../conversation/glyphs";
@@ -139,7 +140,7 @@ export class AgentLoginsPage implements Page {
   private readonly changing = new Set<string>();
   /** The machine whose record was asked for since it was shown. */
   private fetched: string | null = null;
-  private following = 0;
+  private following: Following | null = null;
   /** What the last thing done on a machine, row or folder left to say. */
   private notes = new Map<string, { text: string; detail: string }>();
   /** Machines a folder is being chosen on. */
@@ -231,7 +232,7 @@ export class AgentLoginsPage implements Page {
     this.readRevision += 1;
     this.reading = null;
     this.stop();
-    clearTimeout(this.following);
+    this.following?.();
     this.machines?.element.remove();
     this.menu.close();
   }
@@ -247,7 +248,8 @@ export class AgentLoginsPage implements Page {
       this.record = keptRecord(machine.name);
       if (this.record) this.draw();
     }
-    void this.read();
+    this.following?.();
+    this.following = followState(machine.here ? LOGINS : null, () => this.read(true, true), () => this.running() ? FOLLOW_MS : false);
   }
 
   /** The machines of the menu, and the one shown among them. */
@@ -272,7 +274,7 @@ export class AgentLoginsPage implements Page {
 
   /** Reads what the machine shown recorded; while a scan or a change runs
    *  there, reads again until it ends. Then its logins' usage. */
-  private async read(force = false): Promise<void> {
+  private async read(force = false, retry = false): Promise<void> {
     const machine = this.current(this.options.store.world.peek()).machine;
     if (this.left || !machine || (!force && this.reading === machine.name)) return;
     const name = machine.name;
@@ -280,6 +282,7 @@ export class AgentLoginsPage implements Page {
     const revision = ++this.readRevision;
     const asked = readerNow();
     const current = () => !this.left && this.readRevision === revision && readerNow() === asked;
+    let failure: unknown = null;
     try {
       const world = await this.calls.read(name);
       const heard = world.machines.find((one) => (one.kind === "answered" ? one.logins.machine : one.machine) === name) ?? world.machines[0];
@@ -293,20 +296,23 @@ export class AgentLoginsPage implements Page {
         this.problem = { machine: name, detail: heard.kind === "no_answer" ? heard.reason : "", offline: heard.kind === "offline" };
       }
     } catch (error) {
+      failure = error;
       if (current()) this.problem = { machine: name, detail: detailOf(error), offline: false };
     } finally {
       if (this.readRevision === revision) this.reading = null;
     }
     if (!current() || this.current(this.options.store.world.peek()).machine?.name !== name) return;
     this.draw();
-    clearTimeout(this.following);
-    if (this.running()) this.following = window.setTimeout(() => void this.read(), FOLLOW_MS);
+    this.following?.refresh();
+
     void this.readUsage();
+    if (failure && retry) throw failure;
   }
 
   /** Reads the usage of the logins listed under the tab shown, those not
    *  read for a while; each row fills in as its own comes. */
   private async readUsage(): Promise<void> {
+    if (document.hidden) return;
     const record = this.record;
     if (!record) return;
     const agent = this.agent;
@@ -906,6 +912,7 @@ export class AgentLoginsPage implements Page {
       this.record = record;
       this.problem = null;
       this.draw();
+      this.following?.refresh();
     }
   }
 

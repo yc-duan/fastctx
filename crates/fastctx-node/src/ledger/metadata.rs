@@ -72,6 +72,7 @@ pub(crate) async fn refresh(node: &Arc<Node>, link: &Arc<Link>, wanted: Option<&
         let (node, world) = (node.clone(), node.world.clone());
         fastctx_platform::task::spawn_blocking(move || {
             INDICES.lock().expect("never poisoned").insert(world.town(&town).path().to_path_buf(), index);
+            node.topics.changed(&format!("{}{town}", fastctx_types::topics::MAP_PREFIX));
             crate::town::instructions::refresh(&node, &town);
             crate::context::invalidations::project(&node, &town);
             node.memory_changed();

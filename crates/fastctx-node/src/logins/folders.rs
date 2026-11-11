@@ -54,6 +54,7 @@ pub(super) async fn change(node: &Arc<Node>, dir: PathBuf, change: FolderChange)
         FolderChange::Stop => {
             if let Some(searching) = node.logins.searches.get(&walk::key(&dir)) {
                 searching.stop.store(true, Ordering::Relaxed);
+                node.topics.changed(fastctx_types::topics::LOGINS);
             }
             super::submitted::withdraw_folder(node, &dir, "the folder's search was stopped before it began").await?;
             super::here(node).await
@@ -103,6 +104,7 @@ async fn forget(node: &Arc<Node>, dir: PathBuf) -> Result<MachineLogins, Failure
     if let Some(searching) = node.logins.searches.0.lock().expect("never poisoned").remove(&walk::key(&dir)) {
         searching.stop.store(true, Ordering::Relaxed);
     }
+    node.topics.changed(fastctx_types::topics::LOGINS);
     super::submitted::withdraw_folder(node, &dir, "the folder was forgotten before its search began").await?;
     {
         let (node, dir) = (node.clone(), dir.clone());
@@ -131,6 +133,7 @@ pub(super) fn stop_all(node: &Node) {
     for searching in node.logins.searches.0.lock().expect("never poisoned").values() {
         searching.stop.store(true, Ordering::Relaxed);
     }
+    node.topics.changed(fastctx_types::topics::LOGINS);
 }
 
 /// The agents `dir` is a login of: named and kept like the agent's own, or
@@ -181,6 +184,7 @@ fn search(node: &Arc<Node>, dir: PathBuf) {
     });
     if let Err(error) = spawned {
         node.logins.searches.0.lock().expect("never poisoned").remove(&key);
+        node.topics.changed(fastctx_types::topics::LOGINS);
         node.log.line(format_args!("starting a search for agents' logins: {error}"));
     }
 }
@@ -218,18 +222,28 @@ fn run(node: &Arc<Node>, dir: &Path, key: &str, searching: &Arc<Searching>) -> R
         let mounted = fastctx_platform::disks::mount_points()
             .map_err(|error| format!("listing where filesystems are mounted: {error}"))?;
         skip.extend(mounted.iter().filter(|point| !crate::homes::same_dir(point, dir)).map(|point| walk::key(point)));
-        walk::walk(dir, &skip, &searching.stop, &searching.counters, &mut |one| {
-            if let Ok(path) = one.dir.strip_prefix(dir)
-                && !path.as_os_str().is_empty()
-                && let Ok(agent) = AgentName::try_from(one.agent.to_string())
-            {
-                searching.found.lock().expect("never poisoned").push(FoundIn {
-                    agent,
-                    path: path.to_path_buf(),
-                    traces: one.traces,
-                });
-            }
-        });
+
+        walk::walk_with_progress(
+            dir,
+            &skip,
+            &searching.stop,
+            &searching.counters,
+            &mut |one| {
+                if let Ok(path) = one.dir.strip_prefix(dir)
+                    && !path.as_os_str().is_empty()
+                    && let Ok(agent) = AgentName::try_from(one.agent.to_string())
+                {
+                    searching.found.lock().expect("never poisoned").push(FoundIn {
+                        agent,
+                        path: path.to_path_buf(),
+                        traces: one.traces,
+                    });
+                    node.topics.changed(fastctx_types::topics::LOGINS);
+                }
+            },
+            &mut || node.topics.changed(fastctx_types::topics::LOGINS),
+        );
+        node.topics.changed(fastctx_types::topics::LOGINS);
         Ok::<_, String>(())
     })();
     let at = Timestamp::now();

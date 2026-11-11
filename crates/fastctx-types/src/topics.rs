@@ -16,7 +16,28 @@ pub const TOPIC_BYTES: usize = 128;
 /// (`Call::AgentLogins`, `Call::Agents`).
 pub const LOGINS: &str = "logins";
 
+/// Local sentinel registrations, summaries and wake records (`Call::Sentinel`).
+pub const SENTINELS: &str = "sentinels";
+/// This machine's update state (`Call::Update(State)`, local `MachineUpdates`).
+pub const UPDATE: &str = "update";
+/// This machine's activity book (`Call::Book`).
+pub const BOOK: &str = "book";
+/// Project maps (`Call::Project(ProjectCall::Map)`), followed by the town's name.
+pub const MAP_PREFIX: &str = "map/";
+
+/// Names understood by this version. A trailing slash names a family whose
+/// suffix identifies the state, rather than one fixed piece of state.
+pub const NAMES: &[&str] = &[LOGINS, SENTINELS, UPDATE, BOOK, MAP_PREFIX];
+
+/// Whether this version knows the named state. Known topics start at revision
+/// 1; revision 0 means only that the node does not know this name.
+pub fn known(topic: &str) -> bool {
+    NAMES.contains(&topic)
+        || topic.strip_prefix(MAP_PREFIX).is_some_and(|town| crate::TownName::try_from(town).is_ok())
+}
+
 /// A topic and the times it had changed, in one run of the node.
+/// Revision 0 means the node does not know this name; known names start at 1.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TopicAt {
     pub topic: String,

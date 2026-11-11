@@ -53,7 +53,7 @@ fn proof(context: &Context, key: &str) -> io::Result<bool> {
 }
 fn mark(context: &Context, key: &str, path: &std::path::Path, damage: bool) -> io::Result<()> {
     let (key, path) = (key.to_string(), path.to_string_lossy().into_owned());
-    context.target.write_now_at(scheduler::priority(), key.len() + path.len(), move |db| {
+    context.target.write_now_then_at(scheduler::priority(), key.len() + path.len(), move |db| {
         if !damage {
             let went: Option<String> = db.query_row("SELECT went FROM book_deeds WHERE deed=?1", [&key], |row| row.get(0)).optional()?;
             for machine in went.as_deref().unwrap_or_default().split_whitespace() { db.execute("INSERT OR IGNORE INTO book_visits(deed,machine) VALUES(?1,?2)", (&key, machine))?; }
@@ -62,7 +62,7 @@ fn mark(context: &Context, key: &str, path: &std::path::Path, damage: bool) -> i
         db.execute("INSERT OR REPLACE INTO book_migration_proofs(identity,archive) VALUES(?1,?2)", (&key, path))?;
         db.execute("INSERT OR IGNORE INTO book_imports(kind,identity) VALUES('deed',?1)", [key])?;
         Ok(())
-    }).map_err(io::Error::other)
+    }, super::changes::committed(&context.topics)).map_err(io::Error::other)
 }
 fn cleanup_deed(context: &Context, key: &str) -> io::Result<()> {
     loop {
@@ -251,10 +251,15 @@ pub(super) fn import_all(context: &Context) -> io::Result<()> {
     }
     context
         .target
-        .write_now_at(scheduler::priority(), 32, |db| {
-            db.execute("INSERT OR IGNORE INTO book_imports(kind,identity) VALUES('all','')", [])?;
-            Ok(())
-        })
+        .write_now_then_at(
+            scheduler::priority(),
+            32,
+            |db| {
+                db.execute("INSERT OR IGNORE INTO book_imports(kind,identity) VALUES('all','')", [])?;
+                Ok(())
+            },
+            super::changes::committed(&context.topics),
+        )
         .map_err(io::Error::other)
 }
 pub(crate) fn start(node: &Arc<crate::Node>) {

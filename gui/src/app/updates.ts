@@ -5,6 +5,7 @@
 // automatic updates on, bringing it here at once and installing it once
 // nothing here is under way.
 
+import { followState, UPDATE, type Following } from "../world/topics";
 import { signal, type Signal } from "./signals";
 import { compareVersions, majorOf, type FailureReason, type Manifest, type UpdateSeam, type UpdateSettings, type UpdateStage, type UpdateState } from "../world/updates";
 import type { RepairReport } from "../world/repair";
@@ -56,6 +57,7 @@ export class Updates {
   readonly state: Signal<UpdateState | null> = signal<UpdateState | null>(null);
   readonly offered: Signal<Offered | null> = signal<Offered | null>(null, (a, b) => JSON.stringify(a) === JSON.stringify(b));
   readonly repairing: Signal<Repairing | null> = signal<Repairing | null>(null, (a, b) => JSON.stringify(a) === JSON.stringify(b));
+  private readonly following: Following;
   private installing = false;
   private permission = false;
   /** What failed here, of which release: bringing it, or installing it. */
@@ -72,7 +74,7 @@ export class Updates {
     /** Whether nothing here is under way: no agent in a turn, nobody typing. */
     private readonly idle: () => boolean,
   ) {
-    this.ask();
+    this.following = followState(UPDATE, () => this.ask(), () => this.state.peek()?.fetching || (this.repairing.peek() && !this.repairing.peek()?.report?.finished) ? 1_000 : this.offered.peek()?.stage.kind === "waiting" ? 5_000 : 60_000);
   }
 
   /** This application's version, once the shell said it. */
@@ -166,18 +168,16 @@ export class Updates {
     );
   }
 
-  private ask(): void {
-    if (this.timer) clearTimeout(this.timer);
-    this.timer = null;
-    this.seam.state().then(
-      (state) => this.take(state),
-      () => this.later(60_000),
-    );
+  private ask(): Promise<void> {
+    return this.seam.state().then((state) => this.take(state));
   }
 
   private later(after: number): void {
     if (this.timer) clearTimeout(this.timer);
-    this.timer = setTimeout(() => this.ask(), after);
+    this.timer = setTimeout(() => {
+      if (!document.hidden) this.refresh();
+      this.later(after);
+    }, after);
   }
 
   private take(state: UpdateState): void {
@@ -188,6 +188,7 @@ export class Updates {
     const following = this.repairing.peek();
     const repairing = following !== null && !following.error && following.report?.finished == null;
     this.later(state.fetching || repairing ? 1_000 : this.offered.peek()?.stage.kind === "waiting" ? 5_000 : 60_000);
+    this.following.refresh();
   }
 
   /** What is offered now, and what automatic updates do with it: taken by

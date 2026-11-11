@@ -33,7 +33,12 @@ pub(crate) fn run(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
         db.execute("INSERT INTO book_hour(at,runs,failed,busy,files) VALUES(2,'bad',0,100,1)", [])?;
         Ok(())
     })?;
-    let context = Context { source: source.clone(), target: target.clone(), world: world.path().to_path_buf() };
+    let context = Context {
+        source: source.clone(),
+        target: target.clone(),
+        world: world.path().to_path_buf(),
+        topics: std::sync::Arc::new(crate::topics::Topics::new()),
+    };
     crate::record_migration::scheduler::request(world.path(), "@book", "book-all", move || {
         migrate::import_all(&context)
     })?;
@@ -93,7 +98,7 @@ fn sealed(book: &Database) -> Result<(), Box<dyn std::error::Error>> {
         db.execute("INSERT INTO book_sealed(resident,place) VALUES('codex-5ea1ed00',?1)", [&desk])?;
         Ok(())
     })?;
-    super::sealing::purge(book)?;
+    super::sealing::purge(book, &std::sync::Arc::new(crate::topics::Topics::new()))?;
     let left = |owner: &'static str, session: &'static str| {
         book.read_now(move |db| {
             let mut counts = Vec::new();
@@ -141,7 +146,7 @@ fn account_sealed(book: &Database) -> Result<(), Box<dyn std::error::Error>> {
         db.execute("INSERT INTO book_sealed_accounts(account,before) VALUES(?1,1000)", [account])?;
         Ok(())
     })?;
-    super::sealing::purge(book)?;
+    super::sealing::purge(book, &std::sync::Arc::new(crate::topics::Topics::new()))?;
     let row = |began: i64| super::Row {
         deed: format!("codex-0a0a0a0a on desk j-0003 {began}"),
         job: "j-0003".into(),

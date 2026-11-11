@@ -145,6 +145,8 @@ pub(crate) fn set(node: &Node, agent: &str, dir: &Path, open: bool) -> std::io::
     if open {
         state.dirs.push((agent.to_owned(), dir.to_path_buf()));
     }
+    drop(state);
+    node.topics.changed(fastctx_types::topics::LOGINS);
     Ok(())
 }
 
@@ -277,6 +279,8 @@ pub(super) fn seed(node: &Node, context: &Context) {
                 }
             }
             state.seeded = true;
+            drop(state);
+            node.topics.changed(fastctx_types::topics::LOGINS);
         }
         Err(error) => node.log.line(format_args!("keeping where the workbench is open: {error}")),
     }

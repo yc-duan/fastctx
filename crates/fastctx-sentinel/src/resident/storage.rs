@@ -88,12 +88,14 @@ impl Host {
         self.root.join(scope_key(scope))
     }
     pub(super) fn store(&self, registration: &Registration) -> Store {
+        let runtime = self.runtime.clone();
         Store::new(
             self.assignment(&registration.scope, &registration.definition.id)
                 .parent()
                 .expect("assignment directory")
                 .join(registration.definition.generation.to_string()),
         )
+        .observing(Arc::new(move || runtime.changed()))
     }
     /// Local assignments are discovery hints only. Every effect rereads the account record.
     pub fn known(&self) -> Result<Vec<Registration>, String> {

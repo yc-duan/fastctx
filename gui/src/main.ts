@@ -4,6 +4,9 @@
 // `?s=home|claude|codex|project|journal|machines|settings|new`,
 // `?theme=…`, `?lang=en` and `?live` pick what to look at.
 
+import { projectWho, mergeFormer } from "./project/who";
+import { localHome } from "./sentinel/local";
+import { configureTopics, followState, mapTopic } from "./world/topics";
 import { followSwitches } from "./app/segment-slide";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import type { Attachment, FilePlace, UploadTarget } from "./world/attachments";
@@ -312,7 +315,8 @@ import {
   open as openAgent,
   openOutside,
   since,
-  project as readProject,
+  projectMap,
+  projectFormer,
   stop,
   stopJob,
   talk,
@@ -420,6 +424,7 @@ if (specimen) {
 }
 const store = createStore(import.meta.env.DEV ? () => ({ world: specimen!.world, now: specimen!.now }) : undefined);
 const live = !import.meta.env.DEV || store.live;
+configureTopics(live);
 keepLoginsFor(() => store.world.peek()?.accounts);
 // `?slowlogins=<ms>`: a machine's logins come from a node that takes that
 // long to answer.
@@ -1614,6 +1619,7 @@ function sentinelPage(at: Extract<Place, { kind: "sentinel" }>): Page {
       here: (live ? store.world.peek()?.here : specimen!.world.here) ?? "",
       head,
       sentinel: { id, home, generation },
+      local: () => live && localHome(store.whole.peek(), home),
       known: knownSentinels.get(id) ?? null,
       read: (held) =>
         live
@@ -2251,16 +2257,18 @@ function liveTalk(address: Address): DeskTalk {
   // One question at a time: a reading still on its way is the one that
   // answers.
   let sentinelReading: Promise<void> | null = null;
+  let sentinelFailed = false;
   const readSentinels = (): Promise<void> =>
     (sentinelReading ??= (accountFeatures.talk(store.whole.peek(), address).sentinels
       ? sentinelList(address, (() => { const account = featureAccount(store.whole.peek(), address); return account ? { hub: account.hubName, account: account.account } : undefined; })())
       : Promise.resolve([]))
       .then(
         (listed) => {
+          sentinelFailed = false;
           if (!left) sentinelRows.set(listed.filter((one) => one.definition.kind !== "goal").map((one) => sentinelRow(remembered(one))));
         },
         // A home that cannot be asked now keeps the rows last seen.
-        () => {},
+        () => { sentinelFailed = true; },
       )
       .finally(() => {
         sentinelReading = null;
@@ -2278,8 +2286,7 @@ function liveTalk(address: Address): DeskTalk {
   });
   // The sentinels' homes are asked, not followed: as the page opens, every
   // half minute while it is open, and after one is withdrawn.
-  const sentinelTimer = features.sentinels ? window.setInterval(() => void readSentinels(), 30_000) : 0;
-  if (features.sentinels) void readSentinels();
+  const stopSentinels = features.sentinels ? followState(null, async () => { await readSentinels(); if (sentinelFailed) throw new Error("the sentinel list did not answer"); }, 30_000) : () => {};
   // The conversation as the World's watch reads it (`conversation/source.ts`):
   // the page holds its latest part and reads the rest as the reader comes to
   // it; what is new is shown at once. When the host replaced or removed
@@ -2402,7 +2409,7 @@ function liveTalk(address: Address): DeskTalk {
       left = true;
       named();
       running();
-      clearInterval(sentinelTimer);
+      stopSentinels();
       page.leave();
       search.close();
       reading.close();
@@ -2551,7 +2558,6 @@ function projectPage(town: string): Page {
     page.update(map, { machine: specimen!.world.here, scope: { kind: "town", town, record: null }, machines: specimen!.world.who.machines.map((machine) => machine.kind === "answered" ? { ...machine, reply: { ...machine.reply, residents: machine.reply.residents.filter((r) => r.town === town) } } : machine) }, specimen!.now);
     return { element: page.element, title: map.record.name };
   }
-  let timer = 0;
   let left = false;
   // Each conversation's plan, read again when the conversation first shows
   // or its state moves (its plan is written as it works), and the senses
@@ -2574,7 +2580,6 @@ function projectPage(town: string): Page {
     );
     if (!left) page.showPlans(new Map(plans));
   };
-  let sensesTimer = 0;
   const readSenses = async () => {
     if (left) return;
     if (document.visibilityState === "visible") {
@@ -2585,29 +2590,64 @@ function projectPage(town: string): Page {
         return project && (project.owner === login.account || project.granted.includes(login.account)) && accountFeatures.get(login).sentinels;
       });
       const listed = await Promise.all(accounts.map((login) => sentinelListAll({ hub: login.hubName, account: login.account }).catch(() => null)));
-      if (!left && listed.every((list) => list !== null)) page.showSenses(listed.flatMap((list) => list ?? []).map(remembered));
-    }
-    if (!left) sensesTimer = window.setTimeout(readSenses, 30_000);
-  };
-  void readSenses();
-  // Asked again every two seconds while in view, as the World is.
-  const refresh = async () => {
-    if (left) return;
-    if (document.visibilityState === "visible") {
-      try {
-        const { map, who } = await readProject(town);
-        if (!left) {
-          shell.retitle(map.record.name);
-          page.update(map, who, new Date());
-          void readPlans(who);
-        }
-      } catch (error) {
-        if (!left) page.unreachable(String(error));
+      if (listed.some((list) => list === null)) throw new Error("the sentinel list did not answer");
+      if (!left && listed.every((list) => list !== null)) {
+        const all = listed.flatMap((list) => list ?? []);
+        page.showSenses(all.map(remembered));
       }
     }
-    if (!left) timer = window.setTimeout(refresh, 2000);
+
   };
-  void refresh();
+  const stopSenses = followState(null, readSenses, 30_000);
+  let map: import("./world/world").MapView | null = null;
+  let former: WorldWho | null = null;
+  const showProject = () => {
+    const world = store.world.peek();
+    if (left || document.hidden || !map || !world) return;
+    const who = projectWho(world.who, town, map.record, former);
+    shell.retitle(map.record.name);
+    page.update(map, who, new Date());
+    void readPlans(who);
+  };
+  const refresh = async () => {
+    try {
+      map = await projectMap(town);
+      showProject();
+    } catch (error) {
+      if (!left) page.unreachable(String(error));
+      throw error;
+    }
+  };
+  const stopMap = followState(mapTopic(town), refresh, 2_000);
+  const towns = new Map<string, string | null>();
+  let readingFormer: Promise<void> | null = null;
+  let formerWanted = true;
+  const readFormer = () => {
+    if (left || document.hidden || !formerWanted || readingFormer) return;
+    formerWanted = false;
+    readingFormer = projectFormer(town).then((who) => {
+      if (!left) { former = mergeFormer(former, who); showProject(); }
+    }).catch(() => {}).finally(() => {
+      readingFormer = null;
+      if (formerWanted) readFormer();
+    });
+  };
+  const stopWorld = effect(() => {
+    const world = store.world.get();
+    for (const machine of world?.who.machines ?? []) {
+      if (machine.kind !== "answered") continue;
+      for (const resident of machine.reply.residents) {
+        const key = talkKey({ resident: resident.about.id, machine: resident.about.machine });
+        const before = towns.get(key);
+        if (towns.has(key) && before !== resident.town && (before === town || resident.town === town)) formerWanted = true;
+        towns.set(key, resident.town);
+      }
+    }
+    showProject();
+    readFormer();
+  });
+  const visible = () => { if (!document.hidden) readFormer(); };
+  document.addEventListener("visibilitychange", visible);
   return {
     element: page.element,
     title: store.world.peek()?.towns.find((t) => t.town === town)?.record.name ?? town,
@@ -2615,8 +2655,10 @@ function projectPage(town: string): Page {
       left = true;
       historyLeft = true;
       if (historyWatch !== null) void unwatch(historyWatch);
-      clearTimeout(timer);
-      clearTimeout(sensesTimer);
+      stopMap();
+      stopWorld();
+      document.removeEventListener("visibilitychange", visible);
+      stopSenses();
     },
   };
 }

@@ -16,6 +16,7 @@ pub(super) fn save(node: &Node, attempt: &Attempt) {
     if let Err(error) = super::keep(node, "attempt.json", attempt) {
         node.log.line(format_args!("keeping the update attempt: {error}"));
     }
+    node.topics.changed(fastctx_types::topics::UPDATE);
 }
 
 /// The first wait after a failure only for want of the line to the hub: the

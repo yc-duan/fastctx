@@ -29,18 +29,22 @@ pub(super) fn busy() -> bool {
 }
 
 /// An interface open on this machine, while it is.
-pub(crate) struct Open;
+pub(crate) struct Open(Arc<crate::topics::Topics>);
 
 impl Open {
-    pub(crate) fn new() -> Self {
-        OPEN.fetch_add(1, Ordering::Relaxed);
-        Self
+    pub(crate) fn new(node: &Node) -> Self {
+        if OPEN.fetch_add(1, Ordering::Relaxed) == 0 {
+            node.topics.changed(fastctx_types::topics::UPDATE);
+        }
+        Self(node.topics.clone())
     }
 }
 
 impl Drop for Open {
     fn drop(&mut self) {
-        OPEN.fetch_sub(1, Ordering::Relaxed);
+        if OPEN.fetch_sub(1, Ordering::Relaxed) == 1 {
+            self.0.changed(fastctx_types::topics::UPDATE);
+        }
     }
 }
 
@@ -96,6 +100,7 @@ pub(super) fn ask(node: &Arc<Node>, manifest: Manifest, asker: Asker, app: &str)
         held.chosen = Some(manifest.clone());
         held.activity = None;
     }
+    node.topics.changed(fastctx_types::topics::UPDATE);
     super::report(node);
     let Some(installing) = installing else { return Ok(()) };
     let node = node.clone();
@@ -129,6 +134,7 @@ pub(super) fn took(node: &Node, version: &str) {
         held.take = None;
         held.origin = None;
         drop(held);
+        node.topics.changed(fastctx_types::topics::UPDATE);
         let _ = fastctx_platform::disk::remove_file(dir(node).join("take.json"));
     }
 }
@@ -153,8 +159,10 @@ async fn install(node: &Arc<Node>, manifest: &Manifest, target: &str) -> Result<
             total: None,
         });
     }
+    node.topics.changed(fastctx_types::topics::UPDATE);
     let brought = super::bring(node, manifest, target).await;
     node.updates.held.lock().expect("never poisoned").fetching = None;
+    node.topics.changed(fastctx_types::topics::UPDATE);
     let installer = brought?;
     let origin = node.updates.held.lock().expect("never poisoned").origin.clone();
     if !signed_in(node, manifest, origin.as_ref()).await? {
@@ -166,9 +174,11 @@ async fn install(node: &Arc<Node>, manifest: &Manifest, target: &str) -> Result<
     }
     node.updates.held.lock().expect("never poisoned").activity =
         Some(fastctx_types::update::Stage::Installing { version: manifest.version.clone() });
+    node.topics.changed(fastctx_types::topics::UPDATE);
     super::report(node);
     let installed = run_installer(&installer, &node.root, manifest, target).await;
     node.updates.held.lock().expect("never poisoned").activity = None;
+    node.topics.changed(fastctx_types::topics::UPDATE);
     installed?;
     let inspecting = program.clone();
     let build = fastctx_platform::task::spawn_blocking(move || fastctx_install::program::inspect(&inspecting))
@@ -201,6 +211,7 @@ async fn install(node: &Arc<Node>, manifest: &Manifest, target: &str) -> Result<
         keep(node, "app.json", &file).map_err(|e| Problem::new(FailureReason::Disk, e.to_string()))?;
         held.app = Some(app);
     }
+    node.topics.changed(fastctx_types::topics::UPDATE);
     if plan.phase != fastctx_types::renewal::Phase::Complete {
         let root = node.root.clone();
         fastctx_platform::task::spawn_blocking(move || fastctx_install::renewal::request(&root, true))
@@ -242,6 +253,7 @@ async fn signed_in(
             if signed_in || open() || super::schedule::withdrawn(node, &manifest.version, origin) {
                 if waiting {
                     node.updates.held.lock().expect("never poisoned").activity = None;
+                    node.topics.changed(fastctx_types::topics::UPDATE);
                     super::report(node);
                 }
                 return Ok(signed_in && !open());
@@ -250,6 +262,7 @@ async fn signed_in(
                 waiting = true;
                 node.updates.held.lock().expect("never poisoned").activity =
                     Some(fastctx_types::update::Stage::WaitingSignIn { version: manifest.version.clone() });
+                node.topics.changed(fastctx_types::topics::UPDATE);
                 super::retry::give_back(node, &manifest.version);
                 super::report(node);
             }

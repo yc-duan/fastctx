@@ -12,6 +12,7 @@
 // same card, saying what is put back and what the user changed since that
 // stays.
 
+import { followState, LOGINS } from "../world/topics";
 import { Sketch } from "../pen/sketch";
 import { counts, parse } from "../conversation/diff";
 import { diffPaint, memoryDiff } from "../conversation/diff-lines";
@@ -320,18 +321,13 @@ export class AgentChangeSheet {
     this.sheet.busy = true;
     this.draw();
     let following = true;
-    const follow = async () => {
-      while (following) {
-        const change = await this.seams.progress(target).catch(() => null);
-        if (!following) return;
-        if (change && this.state.at === "running") {
-          this.state.steps = change.steps;
-          this.drawSteps();
-        }
-        await new Promise((resolve) => setTimeout(resolve, FOLLOW_MS));
+    const stopFollowing = followState(target.here ? LOGINS : null, async () => {
+      const change = await this.seams.progress(target);
+      if (following && change && this.state.at === "running") {
+        this.state.steps = change.steps;
+        this.drawSteps();
       }
-    };
-    void follow();
+    }, FOLLOW_MS);
     try {
       const change = await this.seams.change(target, raise, told?.fingerprint);
       this.state = { at: "ended", planned, change, problem: change.end?.end === "failed" ? change.end.reason : null, told };
@@ -342,6 +338,7 @@ export class AgentChangeSheet {
       this.state = { at: "ended", planned, change: null, problem: detailOf(error), told };
     } finally {
       following = false;
+      stopFollowing();
       this.sheet.busy = false;
       this.seams.ended();
     }

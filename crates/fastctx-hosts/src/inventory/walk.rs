@@ -61,6 +61,18 @@ pub fn key(path: &Path) -> String {
 /// done or `stop` is set; each directory that looks like a login goes to
 /// `found` as it is met.
 pub fn walk(root: &Path, skip: &HashSet<String>, stop: &AtomicBool, counters: &Counters, found: &mut dyn FnMut(Found)) {
+    walk_with_progress(root, skip, stop, counters, found, &mut || {});
+}
+
+/// As `walk`, notifying after each change to the visible counters.
+pub fn walk_with_progress(
+    root: &Path,
+    skip: &HashSet<String>,
+    stop: &AtomicBool,
+    counters: &Counters,
+    found: &mut dyn FnMut(Found),
+    progress: &mut dyn FnMut(),
+) {
     // The filesystem the walk stays on, where a filesystem can be mounted
     // inside another's directory.
     #[cfg(windows)]
@@ -72,6 +84,7 @@ pub fn walk(root: &Path, skip: &HashSet<String>, stop: &AtomicBool, counters: &C
             Ok(metadata) => metadata.dev(),
             Err(_) => {
                 counters.unreadable.fetch_add(1, Ordering::Relaxed);
+                progress();
                 counters.done.store(true, Ordering::Release);
                 return;
             }
@@ -88,6 +101,7 @@ pub fn walk(root: &Path, skip: &HashSet<String>, stop: &AtomicBool, counters: &C
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
             Err(_) => {
                 counters.unreadable.fetch_add(1, Ordering::Relaxed);
+                progress();
                 continue;
             }
         };
@@ -96,11 +110,13 @@ pub fn walk(root: &Path, skip: &HashSet<String>, stop: &AtomicBool, counters: &C
         for entry in read {
             let Ok(entry) = entry else {
                 counters.unreadable.fetch_add(1, Ordering::Relaxed);
+                progress();
                 continue;
             };
             let name = entry.file_name();
             let Ok(kind) = entry.file_type() else {
                 counters.unreadable.fetch_add(1, Ordering::Relaxed);
+                progress();
                 continue;
             };
             let directory = kind.is_dir();
@@ -110,6 +126,7 @@ pub fn walk(root: &Path, skip: &HashSet<String>, stop: &AtomicBool, counters: &C
             }
         }
         counters.directories.fetch_add(1, Ordering::Relaxed);
+        progress();
         for (agent, _) in AGENTS {
             if let Some(traces) = traces::elsewhere(agent, &entries) {
                 found(Found { agent, dir: dir.clone(), traces });

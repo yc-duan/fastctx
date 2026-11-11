@@ -5,7 +5,7 @@
 //! The counts live for one run of the node. A reader that kept counts of an
 //! earlier run is told every topic it asked for, and reads them all again.
 
-use fastctx_types::topics::{TopicAt, TopicsAsk, TopicsTold};
+use fastctx_types::topics::{MAP_PREFIX, NAMES, TopicAt, TopicsAsk, TopicsTold};
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -15,7 +15,7 @@ pub(crate) const WAITS: Duration = Duration::from_secs(25);
 
 pub(crate) struct Topics {
     run: String,
-    revisions: Mutex<HashMap<&'static str, u64>>,
+    revisions: Mutex<HashMap<String, u64>>,
     moved: tokio::sync::watch::Sender<u64>,
 }
 
@@ -25,16 +25,30 @@ impl Topics {
             std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |since| since.as_nanos());
         Self {
             run: format!("{started:x}-{:x}", std::process::id()),
-            revisions: Mutex::new(HashMap::new()),
+            revisions: Mutex::new(NAMES.iter().map(|name| ((*name).to_owned(), 1)).collect()),
             moved: tokio::sync::watch::channel(0).0,
         }
     }
 
     /// Says that what `topic` names changed. Called after the change is
     /// where a reader finds it.
-    pub(crate) fn changed(&self, topic: &'static str) {
-        *self.revisions.lock().expect("never poisoned").entry(topic).or_default() += 1;
+    pub(crate) fn changed(&self, topic: &str) {
+        if !fastctx_types::topics::known(topic) {
+            return;
+        }
+        *self.revisions.lock().expect("never poisoned").entry(topic.to_owned()).or_insert(1) += 1;
         self.moved.send_modify(|moves| *moves = moves.wrapping_add(1));
+    }
+
+    /// Invalidates a family's topics without walking the towns or readers.
+    pub(crate) fn changed_prefix(&self, prefix: &str) {
+        self.changed(prefix);
+    }
+
+    /// Notifies after a bounded write attempt ends, including partial writes
+    /// followed by an error. Dropping the caller does not drop a blocking writer.
+    pub(crate) fn writing(self: &std::sync::Arc<Self>, topic: String) -> Writing {
+        Writing { topics: self.clone(), topic }
     }
 
     /// Where the topics of `known` stand: all of them, or only those past
@@ -44,7 +58,18 @@ impl Topics {
         known
             .iter()
             .filter_map(|known| {
-                let revision = revisions.get(known.topic.as_str()).copied().unwrap_or(0);
+                let revision = if fastctx_types::topics::known(&known.topic) {
+                    let local = revisions.get(&known.topic).copied().unwrap_or(1);
+                    // Directory changes affect every map, including a map no
+                    // reader has asked for yet. Keep that epoch separately.
+                    if known.topic != MAP_PREFIX && known.topic.starts_with(MAP_PREFIX) {
+                        local + revisions.get(MAP_PREFIX).copied().unwrap_or(1) - 1
+                    } else {
+                        local
+                    }
+                } else {
+                    0
+                };
                 (all || revision > known.revision).then(|| TopicAt { topic: known.topic.clone(), revision })
             })
             .collect()
@@ -71,6 +96,17 @@ impl Topics {
     }
 }
 
+pub(crate) struct Writing {
+    topics: std::sync::Arc<Topics>,
+    topic: String,
+}
+
+impl Drop for Writing {
+    fn drop(&mut self) {
+        self.topics.changed(&self.topic);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -87,8 +123,8 @@ mod tests {
             topics.changed("logins");
             // A reader that was told no run is told every topic it asks for.
             let first =
-                topics.told(&TopicsAsk { run: None, known: vec![at("logins", 0), at("other", 0)] }, WAITS).await;
-            assert_eq!(first.changed, [at("logins", 1), at("other", 0)]);
+                topics.told(&TopicsAsk { run: None, known: vec![at("logins", 0), at("book", 0), at("other", 0)] }, WAITS).await;
+            assert_eq!(first.changed, [at("logins", 2), at("book", 1), at("other", 0)]);
             let known = TopicsAsk { run: Some(first.run.clone()), known: first.changed };
             // Nothing changed: it waits, and is answered with none.
             let none = topics.told(&known, Duration::from_millis(30)).await;
@@ -96,12 +132,12 @@ mod tests {
             // A change while it waits answers it with the topic that moved.
             let (waiting, _) = tokio::join!(topics.told(&known, WAITS), async {
                 tokio::time::sleep(Duration::from_millis(10)).await;
-                topics.changed("other");
+                topics.changed("book");
             });
-            assert_eq!(waiting.changed, [at("other", 1)]);
+            assert_eq!(waiting.changed, [at("book", 2)]);
             // Counts of another run compare with nothing here.
             let stale = TopicsAsk { run: Some("an-earlier-run".into()), known: vec![at("logins", 9)] };
-            assert_eq!(topics.told(&stale, WAITS).await.changed, [at("logins", 1)]);
+            assert_eq!(topics.told(&stale, WAITS).await.changed, [at("logins", 2)]);
         });
     }
 }

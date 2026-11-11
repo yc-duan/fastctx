@@ -63,5 +63,6 @@ pub(super) fn reconcile(node: &Arc<Node>) {
     }
     held.activity = None;
     drop(held);
+    node.topics.changed(fastctx_types::topics::UPDATE);
     super::report(node);
 }

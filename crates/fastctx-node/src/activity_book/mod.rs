@@ -4,6 +4,7 @@
 //! deletion. Its independent database keeps maintenance off the state writer.
 
 mod incremental;
+mod changes;
 mod legacy;
 mod migrate;
 #[cfg(feature = "storage-drill")]
@@ -361,5 +362,5 @@ pub(crate) fn purge(node: &Node) -> std::io::Result<()> {
     if node.book_database.fault().is_some() || !migrate::ready(&node.book_database)? {
         return Ok(());
     }
-    sealing::purge(&node.book_database)
+    sealing::purge(&node.book_database, &node.topics)
 }

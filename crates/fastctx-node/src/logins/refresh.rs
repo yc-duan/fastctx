@@ -33,6 +33,7 @@ pub(crate) async fn all(node: &Arc<Node>) {
     match fastctx_platform::task::spawn_blocking(move || every(&refreshing)).await {
         Ok(Some((waiting, again))) => {
             *node.logins.drift.lock().expect("never poisoned") = waiting;
+            node.topics.changed(fastctx_types::topics::LOGINS);
             if again {
                 later(Arc::downgrade(node));
             }
@@ -212,4 +213,5 @@ pub(crate) fn settled(node: &Node, agent: &AgentName, dir: &Path) {
         .lock()
         .expect("never poisoned")
         .retain(|(owner, path, _)| !(owner == agent && crate::homes::same_dir(path, dir)));
+    node.topics.changed(fastctx_types::topics::LOGINS);
 }

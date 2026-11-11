@@ -71,19 +71,23 @@ pub(super) fn look(node: &Arc<Node>, record: &JobRecord) {
         let size = noted.iter().map(|(path, ..)| path.len() + 48).sum();
         let result = node
             .book_database
-            .write(size, move |connection| {
-                if super::frozen(connection, &deed)? || !super::kept(connection, &deed)? {
-                    return Ok(());
-                }
-                for (path, how, added, removed) in &noted {
-                    connection.execute(
-                        "INSERT OR IGNORE INTO book_touches (deed, path, how, added, removed, seen)
+            .write_then(
+                size,
+                move |connection| {
+                    if super::frozen(connection, &deed)? || !super::kept(connection, &deed)? {
+                        return Ok(());
+                    }
+                    for (path, how, added, removed) in &noted {
+                        connection.execute(
+                            "INSERT OR IGNORE INTO book_touches (deed, path, how, added, removed, seen)
                          VALUES (?1, ?2, ?3, ?4, ?5, 1)",
-                        params![deed, path, how, added, removed],
-                    )?;
-                }
-                Ok(())
-            })
+                            params![deed, path, how, added, removed],
+                        )?;
+                    }
+                    Ok(())
+                },
+                super::changes::committed(&node.topics),
+            )
             .await;
         if let Err(error) = result {
             node.log.line(format_args!("noting files a script changed: {error}"));

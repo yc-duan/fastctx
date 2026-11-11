@@ -179,8 +179,13 @@ async fn set_town_right(
     let (world, name) = (node.world.clone(), town.clone());
     let mut expected = kept.remove(town).unwrap_or_default();
     let whole = paths.is_none();
+    let changed = node.topics.clone();
     let checked = fastctx_platform::task::spawn_blocking(move || {
+        let topic = format!("{}{name}", fastctx_types::topics::MAP_PREFIX);
         let found = set_right(&world, &name, &mut expected, paths.as_ref());
+        if found.as_ref().map_or(true, |(tampered, _)| !tampered.is_empty()) {
+            changed.changed(&topic);
+        }
         (expected, found)
     })
     .await;

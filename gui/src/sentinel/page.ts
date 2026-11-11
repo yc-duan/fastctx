@@ -23,6 +23,8 @@ export interface SentinelPageOptions {
   talkWords: Words;
   english: boolean;
   here: MachineName;
+  /** Every account that may return this record resolves its home locally. */
+  local?(): boolean;
   head(title: string, actions?: string): string;
   sentinel: { id: string; home: string; generation: number };
   /** How it stood when last listed, drawn until its record is read. */
@@ -81,6 +83,7 @@ export class SentinelPage implements Page {
       english: options.english,
       here: options.here,
       home: options.sentinel.home,
+      local: () => options.local?.() ?? false,
       read: options.read,
       changed: (record) => {
         this.record = record;

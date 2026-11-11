@@ -38,6 +38,8 @@ mod startup;
 mod transcript;
 mod updates;
 mod world_watch;
+mod topics;
+mod projects;
 
 #[cfg(desktop)]
 mod founding;
@@ -1241,6 +1243,9 @@ pub fn run() {
             logins::set_agent_reset_in_place,
             logins::agent_usage,
             logins::agent_calls,
+            topics::world_topics,
+            projects::project_map,
+            projects::project_who,
             world_watch::world_now,
             world_watch::world_watch,
             since,

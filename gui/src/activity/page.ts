@@ -6,6 +6,7 @@
 // the year's hours each minute. A deed pressed rises as a small card with
 // its command whole, where it ran, how it ended and what it changed.
 
+import { BOOK, followState } from "../world/topics";
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import { parts } from "../app/usage/draw";
@@ -91,20 +92,20 @@ export class ActivityPage implements Page {
   private readonly body: HTMLElement;
   private readonly card: HTMLElement;
   private readonly switcher: HTMLElement;
-  private timers: number[] = [];
+  private readonly subscriptions: (() => void)[] = [];
+  private readonly answers = new Map<string, Map<string, BookAnswer | null>>();
+  private readonly localFailures = new Set<string>();
   private readonly resize: ResizeObserver;
   private width = 0;
   private height = 0;
   private stopWatch: () => void;
-  private reading = 0;
-  /** The span a reading is under way for. */
-  private spanRead: Span | null = null;
-  /** Another reading was wanted while one was under way. */
-  private again = false;
+  /** Local and remote books advance independently; each group has one read. */
+  private readonly spanReading = new Set<string>();
+  private readonly spanAgain = new Set<string>();
   /** The year is read one reading at a time: a slow machine is not asked
    *  over again while it answers. */
-  private yearReading = false;
-  private nextRead = 0;
+  private readonly yearReading = new Set<string>();
+  private clock = 0;
   private left = false;
   private bringing = new Set<string>();
 
@@ -142,16 +143,19 @@ export class ActivityPage implements Page {
       options.workbench.get();
       this.draw();
     });
-    void this.readYear();
-    void this.readSpan();
-    this.timers.push(window.setInterval(() => void this.readYear(), YEAR_MS));
+    this.clock = window.setInterval(() => { if (!document.hidden) this.draw(); }, NOW_MS);
+    this.subscriptions.push(
+      followState(BOOK, async () => { await this.readYear("local"); if (this.localFailures.has("hours")) throw new Error("the local book did not answer"); }, YEAR_MS),
+      followState(BOOK, async () => { await this.readSpan("local"); if (this.localFailures.has("deeds")) throw new Error("the local book did not answer"); }, NOW_MS),
+      followState(null, () => this.readYear("remote"), YEAR_MS),
+      followState(null, () => this.readSpan("remote"), NOW_MS),
+    );
   }
 
   leave(): void {
     this.left = true;
-    window.clearTimeout(this.nextRead);
-    for (const timer of this.timers) window.clearInterval(timer);
-    this.timers = [];
+    for (const stop of this.subscriptions) stop();
+    clearInterval(this.clock);
     this.resize.disconnect();
     this.stopWatch();
   }
@@ -174,17 +178,27 @@ export class ActivityPage implements Page {
   }
 
   /** Every machine's answer to `query`, the ones that did not answer named. */
-  private async askAll(query: BookQuery): Promise<{ answers: BookAnswer[]; away: string[] }> {
-    const machines = this.options.machines();
+  private async askAll(query: BookQuery, only?: "local" | "remote"): Promise<{ answers: BookAnswer[]; away: string[] }> {
+    const all = this.options.machines();
+    const machines = all.filter((machine) => !only || (machine.written === null) === (only === "local"));
     const asked = await Promise.allSettled(
       machines.map((machine) => (machine.online || machine.written === null ? this.options.read(machine.written, query) : Promise.reject(new Error("offline")))),
     );
-    const answers: BookAnswer[] = [];
-    const away: string[] = [];
-    asked.forEach((result, index) => {
-      if (result.status === "fulfilled") answers.push(result.value);
-      else away.push(machines[index]!.name);
-    });
+    if (only === "local") {
+      if (asked.some((result) => result.status === "rejected")) this.localFailures.add(query.ask);
+      else this.localFailures.delete(query.ask);
+    }
+    // Keep the other machines' answers when only the local book changed.
+    const key = `${query.ask}:${query.ask === "deeds" ? query.from : dayOf(Date.parse(query.from))}`;
+    let kept = this.answers.get(key);
+    if (!kept) {
+      kept = new Map(); this.answers.set(key, kept);
+      if (this.answers.size > 16) this.answers.delete(this.answers.keys().next().value!);
+    }
+    for (const name of kept.keys()) if (!all.some((machine) => machine.name === name)) kept.delete(name);
+    asked.forEach((result, index) => kept!.set(machines[index]!.name, result.status === "fulfilled" ? result.value : null));
+    const answers = [...kept.values()].filter((answer): answer is BookAnswer => answer !== null);
+    const away = [...kept.entries()].filter(([, answer]) => answer === null).map(([name]) => name);
     return { answers, away };
   }
 
@@ -192,43 +206,47 @@ export class ActivityPage implements Page {
    *  drawn. One reading at a time: a machine slower than that still has its
    *  answer drawn. One wanted meanwhile follows when it ends; only a reading
    *  of a span no longer chosen is let go. */
-  private async readSpan(): Promise<void> {
-    if (this.spanRead === this.span) {
-      this.again = true;
+  private async readSpan(only?: "local" | "remote"): Promise<void> {
+    if (!only) {
+      await Promise.all([this.readSpan("local"), this.readSpan("remote")]);
       return;
     }
-    window.clearTimeout(this.nextRead);
-    const reading = ++this.reading;
-    const span = (this.spanRead = this.span);
-    const now = this.now();
-    const days = Math.max(SPAN_DAYS[span], 2);
-    const from = dayOf(now) - (days - 1) * DAY_MS;
-    const { answers, away } = await this.askAll({ ask: "deeds", from: iso(from), to: iso(now + 60_000), limit: LIMIT });
-    if (reading !== this.reading || this.left) return;
-    this.spanRead = null;
-    const deeds: Placed[] = [];
-    let more = false;
-    for (const answer of answers) {
-      if (answer.kind !== "deeds") continue;
-      more ||= answer.more;
-      for (const deed of answer.deeds) deeds.push({ ...deed, machine: answer.machine });
-    }
-    this.gathered = { ...this.gathered, deeds, away, more };
-    this.draw();
-    if (this.again) {
-      this.again = false;
-      void this.readSpan();
+    const group = only;
+    if (this.spanReading.has(group)) {
+      this.spanAgain.add(group);
       return;
     }
-    this.nextRead = window.setTimeout(() => void this.readSpan(), NOW_MS);
+    this.spanReading.add(group);
+    const span = this.span;
+    try {
+      const now = this.now();
+      const days = Math.max(SPAN_DAYS[span], 2);
+      const from = dayOf(now) - (days - 1) * DAY_MS;
+      const { answers, away } = await this.askAll({ ask: "deeds", from: iso(from), to: iso(now + 60_000), limit: LIMIT }, only);
+      if (this.left) return;
+      if (span !== this.span) { this.spanAgain.add(group); return; }
+      const deeds: Placed[] = [];
+      let more = false;
+      for (const answer of answers) {
+        if (answer.kind !== "deeds") continue;
+        more ||= answer.more;
+        for (const deed of answer.deeds) deeds.push({ ...deed, machine: answer.machine });
+      }
+      this.gathered = { ...this.gathered, deeds, away, more };
+      this.draw();
+    } finally {
+      this.spanReading.delete(group);
+      if (this.spanAgain.delete(group) && !this.left) void this.readSpan(only);
+    }
   }
 
-  private async readYear(): Promise<void> {
-    if (this.yearReading) return;
-    this.yearReading = true;
+  private async readYear(only?: "local" | "remote"): Promise<void> {
+    const group = only ?? "all";
+    if (this.yearReading.has(group)) return;
+    this.yearReading.add(group);
     const now = this.now();
-    const { answers } = await this.askAll({ ask: "hours", from: iso(now - 366 * DAY_MS), to: iso(now + 60_000) }).finally(() => {
-      this.yearReading = false;
+    const { answers } = await this.askAll({ ask: "hours", from: iso(now - 366 * DAY_MS), to: iso(now + 60_000) }, only).finally(() => {
+      this.yearReading.delete(group);
     });
     const hours: Counted[] = [];
     for (const answer of answers) if (answer.kind === "hours") for (const hour of answer.hours) hours.push({ ...hour, machine: answer.machine });
@@ -279,7 +297,7 @@ export class ActivityPage implements Page {
   }
 
   private draw(): void {
-    if (!this.width) return;
+    if (!this.width || document.hidden) return;
     const scroll = this.body.querySelector<HTMLElement>(".ay-scroll")?.scrollTop ?? 0;
     this.body.dataset.view = this.view;
     let html: string;

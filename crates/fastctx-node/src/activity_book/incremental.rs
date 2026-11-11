@@ -123,10 +123,15 @@ fn read(node: &Node, path: &Path, record: &JobRecord) -> io::Result<()> {
     }
     let row = super::row(node, record, &[], &[]);
     node.book_database
-        .write_now_at(Priority::Background, row.script.len() + 512, move |db| {
-            db.execute("DELETE FROM book_complete WHERE deed=?1", [&row.deed])?;
-            super::keep(db, &row)
-        })
+        .write_now_then_at(
+            Priority::Background,
+            row.script.len() + 512,
+            move |db| {
+                db.execute("DELETE FROM book_complete WHERE deed=?1", [&row.deed])?;
+                super::keep(db, &row)
+            },
+            super::changes::committed(&node.topics),
+        )
         .map_err(io::Error::other)?;
     let mut position = node.book_database.read_now(|db| cursor(db, &key)).map_err(io::Error::other)?;
     if !position.initialized || !position.sql_writes {
@@ -165,7 +170,7 @@ fn read(node: &Node, path: &Path, record: &JobRecord) -> io::Result<()> {
             let bytes = serde_json::to_vec(&(&writes, &steps))?.len();
             let (key, machine) = (key.clone(), node.machine());
             let final_cursor = (index + 1 == count).then(|| position.clone());
-            node.book_database.write_now_at(Priority::Background,bytes,move |db| {
+            node.book_database.write_now_then_at(Priority::Background,bytes,move |db| {
                 if super::frozen(db,&key)? || !super::kept(db,&key)? {return Ok(());}
                 let mut current=cursor(db,&key)?;
                 for step in &steps {contribute(db,&key,&machine,step,&mut current)?;}
@@ -183,7 +188,7 @@ fn read(node: &Node, path: &Path, record: &JobRecord) -> io::Result<()> {
                 db.execute("INSERT INTO book_cursors(deed,body) VALUES(?1,?2) ON CONFLICT(deed) DO UPDATE SET body=excluded.body",params![key,crate::records::encode(&current)?])?;
                 db.execute("UPDATE book_deeds SET looked=max(looked,?2),copied=max(copied,?3) WHERE deed=?1",params![key,current.looked,current.copied])?;
                 Ok(())
-            }).map_err(io::Error::other)?;
+            }, super::changes::committed(&node.topics)).map_err(io::Error::other)?;
         }
     }
 }

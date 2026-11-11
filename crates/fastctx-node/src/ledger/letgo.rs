@@ -87,6 +87,7 @@ pub async fn let_go(node: &Arc<Node>, link: &Arc<Link>) {
         }
         if !used {
             super::metadata::forget(&node.world, &town);
+            node.topics.changed(&format!("{}{town}", fastctx_types::topics::MAP_PREFIX));
         }
         let removed = if used || stuck { remove_copy(node, &town).await } else { remove(node, &town).await };
         match removed {
@@ -138,7 +139,10 @@ fn holds_copy(node: &Node, town: &TownName) -> bool {
 pub(super) async fn remove_copy(node: &Arc<Node>, town: &TownName) -> io::Result<()> {
     let _syncing = node.syncing.lock().await;
     let directory = node.world.town(town);
+    let changed = node.topics.clone();
+    let topic = format!("{}{town}", fastctx_types::topics::MAP_PREFIX);
     fastctx_platform::task::spawn_blocking(move || {
+        let _map_changed = changed.writing(topic);
         super::remove(&directory.signed())?;
         for folder in COPY {
             super::remove(&directory.path().join(folder))?;
@@ -156,7 +160,10 @@ pub(super) async fn remove_copy(node: &Arc<Node>, town: &TownName) -> io::Result
 pub(super) async fn remove(node: &Arc<Node>, town: &TownName) -> io::Result<()> {
     let _syncing = node.syncing.lock().await;
     let directory = node.world.town(town);
+    let changed = node.topics.clone();
+    let topic = format!("{}{town}", fastctx_types::topics::MAP_PREFIX);
     fastctx_platform::task::spawn_blocking(move || {
+        let _map_changed = changed.writing(topic);
         // The signed entries go first: without them the folder is no
         // project any more, and the guard puts nothing back.
         super::remove(&directory.signed())?;

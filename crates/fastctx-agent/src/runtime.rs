@@ -55,6 +55,8 @@ impl ToolOutput {
 /// before the first request; calls to any other name never reach the application.
 pub trait Application: Send {
     fn tools(&self) -> Vec<Tool>;
+    /// Called after a run snapshot is published and can be read.
+    fn checkpointed(&self) {}
     /// Tools with side effects must be idempotent for the supplied call ID.
     fn call<'a>(&'a mut self, call: &'a ToolCall) -> FutureResult<'a, ToolOutput>;
     fn finish(&mut self, text: &str) -> Result<Decision, String>;
@@ -91,6 +93,7 @@ pub async fn run(
     let deadline = start + limits.duration;
     let mut run = Run { messages: vec![Message::User { text: input }], ..Run::default() };
     state::save(path, &run)?;
+    app.checkpointed();
     let result = tokio::time::timeout_at(deadline, drive(model, app, system, limits, path, &mut run)).await;
     match result {
         Ok(Ok(value)) => run.result = Some(value),
@@ -100,6 +103,7 @@ pub async fn run(
     run.elapsed_ms = start.elapsed().as_millis().min(u64::MAX as u128) as u64;
     run.ended = true;
     state::save(path, &run)?;
+    app.checkpointed();
     Ok(run)
 }
 async fn drive(
@@ -141,6 +145,7 @@ async fn drive(
         run.unreported_requests += 1;
         run.reserved_tokens += reservation;
         state::save(path, run)?;
+        app.checkpointed();
         let response = match tokio::time::timeout(limits.request_timeout, model.complete(&request)).await {
             Ok(Ok(response)) => response,
             result => {
@@ -153,6 +158,7 @@ async fn drive(
                     run.unreported_requests -= 1;
                 }
                 state::save(path, run)?;
+                app.checkpointed();
                 if run.usage.total() > limits.tokens {
                     return Err("model exceeded the token allowance".into());
                 }
@@ -177,6 +183,7 @@ async fn drive(
         let calls = calls.clone();
         run.messages.push(response.message);
         state::save(path, run)?;
+        app.checkpointed();
         if response.stop == Stop::Tools {
             if calls.is_empty() {
                 return Err("model stopped for tools without a call".into());
@@ -190,6 +197,7 @@ async fn drive(
                 run.tool_calls += 1;
                 run.pending_tool = Some(call.clone());
                 state::save(path, run)?;
+                app.checkpointed();
                 let output = if !tools.iter().any(|t| t.name == call.name) {
                     Err(crate::words::UNKNOWN_TOOL.into())
                 } else if conclusion.is_some() {
@@ -210,6 +218,7 @@ async fn drive(
                 let mut snapshot = run.clone();
                 snapshot.messages.push(Message::Results { results: results.clone() });
                 state::save(path, &snapshot)?;
+                app.checkpointed();
             }
             run.messages.push(Message::Results { results });
             if let Some(value) = conclusion {

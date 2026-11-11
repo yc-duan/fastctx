@@ -30,6 +30,8 @@ pub struct Capabilities {
 /// Model clients are constructed on the home, never transported to another node.
 pub trait Runtime: Send + Sync {
     fn now(&self) -> i64;
+    /// A locally published sentinel snapshot is ready for readers.
+    fn changed(&self) {}
     fn assigned<'a>(&'a self, registration: &'a Registration) -> FutureResult<'a, bool>;
     fn online<'a>(&'a self, registration: &'a Registration, machine: &'a MachineName) -> FutureResult<'a, bool>;
     fn capabilities<'a>(

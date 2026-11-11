@@ -2,6 +2,7 @@
 // specimen. Its colleagues are the residents the World lists as asked by
 // it; its plan and goal come from the conversation's own records.
 
+import { followState } from "../world/topics";
 import { effect } from "../app/signals";
 import { bareName, jobsOf, residentsOf } from "../app/store";
 import { agentName, titleOf } from "../world/names";
@@ -282,28 +283,29 @@ export function liveSide(options: LiveSide): SideSeams {
             .then((page) => {
               if (!alive) return;
               show((shown = planShownOf(page, options.words, Date.now())));
-              if (naming()) void ask();
+              stopAsking.refresh();
+              if (naming()) void ask().catch(() => {});
             })
             .catch((error) => console.error("the plan could not be read", error));
         };
         let reading = false;
-        const ask = () => {
+        const ask = async () => {
           if (reading) return;
           reading = true;
-          void sentinelList(options.address, at() ?? undefined)
+          await sentinelList(options.address, at() ?? undefined)
             .then(
               (listed) => {
                 const changed = JSON.stringify(listed.map((one) => [one.definition.id, one.phase])) !== JSON.stringify(sentinels.map((one) => [one.definition.id, one.phase]));
                 sentinels = listed;
                 if (alive && changed && shown && /\bs-[0-9a-z]{6,16}\b/.test(shown.source ?? "")) show(shown);
               },
-              () => {},
+              (error: unknown) => { throw error; },
             )
             .finally(() => {
               reading = false;
             });
         };
-        const asking = window.setInterval(() => naming() && void ask(), 30_000);
+        const stopAsking = followState(null, () => naming() ? ask() : undefined, () => naming() ? 30_000 : false);
         refresh();
         watchPlan(
           owner,
@@ -319,7 +321,7 @@ export function liveSide(options: LiveSide): SideSeams {
           .catch((error) => console.error("the plan could not be watched", error));
         return () => {
           alive = false;
-          clearInterval(asking);
+          stopAsking();
           if (watching != null) void unwatch(watching);
         };
       },

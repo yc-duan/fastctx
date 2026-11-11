@@ -8,6 +8,7 @@
 // the switch of each login's workbench, is a step further in, from the
 // card.
 
+import { followState, LOGINS, type Following } from "../world/topics";
 import { Popover } from "../conversation/popover";
 import { escape } from "../conversation/prose";
 import { agentGlyph, glyph } from "../conversation/glyphs";
@@ -89,7 +90,8 @@ export class AgentsOverview implements Page {
   private problem: { machine: string; detail: string; offline: boolean } | null = null;
   private reading: string | null = null;
   private fetched: string | null = null;
-  private following = 0;
+  private readRevision = 0;
+  private following: Following | null = null;
   private drawn = "";
   private pickDrawn = "";
   private machines: { element: HTMLElement; popover: Popover } | null = null;
@@ -137,8 +139,9 @@ export class AgentsOverview implements Page {
   }
 
   leave(): void {
+    this.readRevision++;
     this.stop();
-    clearTimeout(this.following);
+    this.following?.();
     this.machines?.element.remove();
   }
 
@@ -178,21 +181,25 @@ export class AgentsOverview implements Page {
       this.record = keptRecord(machine.name);
       if (this.record) this.draw();
     }
-    void this.read();
+    this.following?.();
+    this.following = followState(machine.here ? LOGINS : null, () => this.read(true, true), () => this.running() ? FOLLOW_MS : false);
   }
 
   /** Reads what the machine shown recorded; while a scan or a change runs
    *  there, reads again until it ends. */
-  private async read(): Promise<void> {
+  private async read(retry = false, force = false): Promise<void> {
     const machine = this.current(this.options.store.world.peek()).machine;
-    if (!machine || this.reading === machine.name) return;
+    if (!machine || (!force && this.reading === machine.name)) return;
     const name = machine.name;
     this.reading = name;
     const asked = readerNow();
+    const revision = ++this.readRevision;
+    const current = () => this.readRevision === revision && readerNow() === asked;
+    let failure: unknown = null;
     try {
       const world = await this.options.read(machine.written);
       const heard = world.machines.find((one) => (one.kind === "answered" ? one.logins.machine : one.machine) === name) ?? world.machines[0];
-      if (this.reading !== name) return;
+      if (!current()) return;
       if (heard?.kind === "answered") {
         this.record = heard.logins;
         keepRecord(heard.logins, asked);
@@ -202,14 +209,16 @@ export class AgentsOverview implements Page {
         this.problem = { machine: name, detail: heard.kind === "no_answer" ? heard.reason : "", offline: heard.kind === "offline" };
       }
     } catch (error) {
-      if (this.reading === name) this.problem = { machine: name, detail: detailOf(error), offline: false };
+      failure = error;
+      if (current()) this.problem = { machine: name, detail: detailOf(error), offline: false };
     } finally {
-      if (this.reading === name) this.reading = null;
+      if (current()) this.reading = null;
     }
-    if (this.current(this.options.store.world.peek()).machine?.name !== name) return;
+    if (!current() || this.current(this.options.store.world.peek()).machine?.name !== name) return;
     this.draw();
-    clearTimeout(this.following);
-    if (this.running()) this.following = window.setTimeout(() => void this.read(), FOLLOW_MS);
+    this.following?.refresh();
+
+    if (failure && retry) throw failure;
   }
 
   private running(): boolean {

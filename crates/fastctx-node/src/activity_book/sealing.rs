@@ -235,7 +235,7 @@ fn owner(deed: &str) -> Option<(ResidentId, MachineName)> {
 
 /// Lets go of the rows of the conversations sealed here, a few deeds at a
 /// time; the seals stay.
-pub(crate) fn purge(database: &Database) -> io::Result<()> {
+pub(crate) fn purge(database: &Database, topics: &std::sync::Arc<crate::topics::Topics>) -> io::Result<()> {
     loop {
         let seals: Vec<(String, String)> = database
             .read_background_now(|db| {
@@ -246,11 +246,11 @@ pub(crate) fn purge(database: &Database) -> io::Result<()> {
             })
             .map_err(io::Error::other)?;
         if seals.is_empty() {
-            return accounts(database);
+            return accounts(database, topics);
         }
         for (resident, place) in seals {
-            while deeds(database, &resident, &place)? {}
-            while hours(database, &resident, &place)? {}
+            while deeds(database, &resident, &place, topics)? {}
+            while hours(database, &resident, &place, topics)? {}
             database
                 .write_now_at(Priority::Background, 128, move |db| {
                     db.execute("UPDATE book_sealed SET purged=1 WHERE resident=?1 AND place=?2", (resident, place))?;
@@ -263,7 +263,7 @@ pub(crate) fn purge(database: &Database) -> io::Result<()> {
 
 /// Lets go of what was done for the sealed accounts before they went, a few
 /// deeds and hours at a time; the seals stay.
-fn accounts(database: &Database) -> io::Result<()> {
+fn accounts(database: &Database, topics: &std::sync::Arc<crate::topics::Topics>) -> io::Result<()> {
     loop {
         let seals: Vec<(String, i64)> = database
             .read_background_now(|db| {
@@ -292,27 +292,37 @@ fn accounts(database: &Database) -> io::Result<()> {
                 }
                 let bytes = deeds.iter().map(String::len).sum::<usize>() * BY_DEED.len();
                 database
-                    .write_now_at(Priority::Background, bytes, move |db| {
-                        for deed in &deeds {
-                            for table in BY_DEED {
-                                db.execute(&format!("DELETE FROM {table} WHERE deed=?1"), [deed])?;
+                    .write_now_then_at(
+                        Priority::Background,
+                        bytes,
+                        move |db| {
+                            for deed in &deeds {
+                                for table in BY_DEED {
+                                    db.execute(&format!("DELETE FROM {table} WHERE deed=?1"), [deed])?;
+                                }
                             }
-                        }
-                        Ok(())
-                    })
+                            Ok(())
+                        },
+                        super::changes::committed(topics),
+                    )
                     .map_err(io::Error::other)?;
             }
             loop {
                 let wanted = account.clone();
                 let went = database
-                    .write_now_at(Priority::Background, 256, move |db| {
-                        Ok(db.execute(
-                            "DELETE FROM book_hour WHERE (at, session, agent, held, account) IN
+                    .write_now_then_at(
+                        Priority::Background,
+                        256,
+                        move |db| {
+                            Ok(db.execute(
+                                "DELETE FROM book_hour WHERE (at, session, agent, held, account) IN
                                 (SELECT at, session, agent, held, account FROM book_hour
                                  WHERE account=?1 AND at<?2 LIMIT ?3)",
-                            (wanted, before, BATCH as i64),
-                        )?)
-                    })
+                                (wanted, before, BATCH as i64),
+                            )?)
+                        },
+                        super::changes::committed(topics),
+                    )
                     .map_err(io::Error::other)?;
                 if went == 0 {
                     break;
@@ -333,7 +343,12 @@ fn accounts(database: &Database) -> io::Result<()> {
 
 /// Removes up to `BATCH` deeds of the sealed conversation, with what hangs on
 /// them; says whether any went.
-fn deeds(database: &Database, resident: &str, place: &str) -> io::Result<bool> {
+fn deeds(
+    database: &Database,
+    resident: &str,
+    place: &str,
+    topics: &std::sync::Arc<crate::topics::Topics>,
+) -> io::Result<bool> {
     // A deed's key begins with its owner's address: `<id> on <machine>`.
     let (low, high) = (format!("{resident} on "), format!("{resident} on!"));
     let wanted = place.to_string();
@@ -370,21 +385,31 @@ fn deeds(database: &Database, resident: &str, place: &str) -> io::Result<bool> {
     }
     let bytes = found.iter().map(String::len).sum::<usize>() * BY_DEED.len();
     database
-        .write_now_at(Priority::Background, bytes, move |db| {
-            for deed in &found {
-                for table in BY_DEED {
-                    db.execute(&format!("DELETE FROM {table} WHERE deed=?1"), [deed])?;
+        .write_now_then_at(
+            Priority::Background,
+            bytes,
+            move |db| {
+                for deed in &found {
+                    for table in BY_DEED {
+                        db.execute(&format!("DELETE FROM {table} WHERE deed=?1"), [deed])?;
+                    }
                 }
-            }
-            Ok(())
-        })
+                Ok(())
+            },
+            super::changes::committed(topics),
+        )
         .map_err(io::Error::other)?;
     Ok(true)
 }
 
 /// Removes up to `BATCH` of the sealed conversation's counts by the hour;
 /// says whether any went.
-fn hours(database: &Database, resident: &str, place: &str) -> io::Result<bool> {
+fn hours(
+    database: &Database,
+    resident: &str,
+    place: &str,
+    topics: &std::sync::Arc<crate::topics::Topics>,
+) -> io::Result<bool> {
     // A session is `<id>@<machine>`; `A` follows `@`.
     let (low, high) = (format!("{resident}@"), format!("{resident}A"));
     let wanted = place.to_string();
@@ -406,13 +431,18 @@ fn hours(database: &Database, resident: &str, place: &str) -> io::Result<bool> {
     let mut removed = false;
     for session in sessions {
         let went = database
-            .write_now_at(Priority::Background, 256, move |db| {
-                Ok(db.execute(
-                    "DELETE FROM book_hour WHERE (at, session, agent, held, account) IN
+            .write_now_then_at(
+                Priority::Background,
+                256,
+                move |db| {
+                    Ok(db.execute(
+                        "DELETE FROM book_hour WHERE (at, session, agent, held, account) IN
                         (SELECT at, session, agent, held, account FROM book_hour WHERE session=?1 LIMIT ?2)",
-                    (session, BATCH as i64),
-                )?)
-            })
+                        (session, BATCH as i64),
+                    )?)
+                },
+                super::changes::committed(topics),
+            )
             .map_err(io::Error::other)?;
         removed |= went > 0;
     }

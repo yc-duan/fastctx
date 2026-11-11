@@ -89,7 +89,9 @@ pub async fn open(
             "the project {town} was assigned to another ledger while it was being opened"
         )));
     }
-    names::set_place(&node.world, town, &place).map_err(|error| Failure::new(format!("recording {town}: {error}")))
+    names::set_place(&node.world, town, &place).map_err(|error| Failure::new(format!("recording {town}: {error}")))?;
+    node.topics.changed(&format!("{}{town}", fastctx_types::topics::MAP_PREFIX));
+    Ok(())
 }
 
 /// Writes an entry into `town`'s ledger: `files`, at paths relative to the
@@ -163,6 +165,7 @@ async fn write_for(
             }
             let writer = node.clone();
             fastctx_platform::task::spawn_blocking(move || {
+                let _map_changed = writer.topics.writing(format!("{}{}", fastctx_types::topics::MAP_PREFIX, town));
                 alone::write(&writer.alone_ledgers, &world, &here, &town, &place, files, machines)
             })
             .await
@@ -253,8 +256,12 @@ fn sync_name(node: &Node, link: &Link, id: &TownId) -> Result<Option<TownName>, 
             .map_err(|error| format!("reading {}: {error}", project.name))?
         {
             Some(kept) => kept,
-            None => names::claim(&node.world, &project.name, &place)
-                .map_err(|error| format!("recording {}: {error}", project.name))?,
+            None => {
+                let kept = names::claim(&node.world, &project.name, &place)
+                    .map_err(|error| format!("recording {}: {error}", project.name))?;
+                node.topics.changed(&format!("{}{}", fastctx_types::topics::MAP_PREFIX, project.name));
+                kept
+            }
         };
         if kept != place {
             return Err(format!(
@@ -317,8 +324,11 @@ pub(crate) async fn take(
                         return Err(format!("the hub gave entry {seq} of {name} after {after}"));
                     }
                     match (taken.entry, taken.refused) {
-                        (Some(entry), None) => apply(&keeping.world, &name, seq, &entry, &taken.signed)
-                            .map_err(|error| format!("keeping entry {seq} of {name}: {error}"))?,
+                        (Some(entry), None) => {
+                            let _map_changed = keeping.topics.writing(format!("{}{}", fastctx_types::topics::MAP_PREFIX, name));
+                            apply(&keeping.world, &name, seq, &entry, &taken.signed)
+                                .map_err(|error| format!("keeping entry {seq} of {name}: {error}"))?;
+                        }
                         (_, reason) => {
                             let reason = reason.unwrap_or_else(|| "it cannot be read".to_string());
                             keeping.log.line(format_args!("refused from the ledger: entry {seq} of {name}: {reason}"));
@@ -428,9 +438,11 @@ fn write_files(directory: &TownDir, entry: &Entry) -> io::Result<()> {
 
 /// Finishes the files of entries a node that stopped had kept but not yet
 /// written, and says which entries could not be read.
-pub fn finish(world: &WorldDir) -> io::Result<Vec<String>> {
+pub(crate) fn finish(node: &Node) -> io::Result<Vec<String>> {
+    let world = &node.world;
     let mut problems = Vec::new();
     for town in carry::towns(world)? {
+        let _map_changed = node.topics.writing(format!("{}{}", fastctx_types::topics::MAP_PREFIX, town));
         if let Err(error) = carry::recover(world, &town, false) {
             problems.push(format!("finishing the import of {town}: {error}"));
             continue;

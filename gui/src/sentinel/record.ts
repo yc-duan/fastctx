@@ -4,6 +4,7 @@
 // seconds while it is awake, every half minute while it sleeps; a record that
 // has not changed comes back as a word, not as itself.
 
+import { followState, SENTINELS } from "../world/topics";
 import type { MachineName, SessionEvent } from "../world/events";
 import type { SentinelRecord } from "../world/sentinels";
 import type { Words } from "../words";
@@ -17,6 +18,7 @@ export interface RecordContext {
   here: MachineName;
   /** The machine it lives on. */
   home: MachineName;
+  local?(): boolean;
   read(held: string | null): Promise<SentinelRecord>;
   /** The record read anew, after it changed: what the page draws of it. */
   changed(record: SentinelRecord): void;
@@ -38,7 +40,7 @@ export class RecordColumn {
   private version: string | null = null;
   private awake = false;
   private following = true;
-  private timer = 0;
+  private readonly stopReading: () => void;
   private frame = 0;
   private closed = false;
 
@@ -63,7 +65,7 @@ export class RecordColumn {
       ...(context.lines ? { lines: context.lines } : {}),
     });
     scroller.addEventListener("scroll", this.scrolled, { passive: true });
-    void this.read();
+    this.stopReading = followState(() => context.local?.() ? SENTINELS : null, () => this.read(), () => this.awake ? AWAKE : ASLEEP);
   }
 
   /** Whether anything of it was drawn. */
@@ -100,7 +102,7 @@ export class RecordColumn {
 
   destroy(): void {
     this.closed = true;
-    clearTimeout(this.timer);
+    this.stopReading();
     cancelAnimationFrame(this.frame);
     this.scroller.removeEventListener("scroll", this.scrolled);
     this.view.destroy();
@@ -134,8 +136,9 @@ export class RecordColumn {
     } catch (error) {
       if (this.closed) return;
       this.context.failed(error);
+      throw error;
     }
-    this.timer = window.setTimeout(() => void this.read(), this.awake ? AWAKE : ASLEEP);
+
   }
 
   private scrolled = (): void => {

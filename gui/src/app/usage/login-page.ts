@@ -157,6 +157,7 @@ export class LoginUsagePage implements Page {
     const { options } = this;
     clearTimeout(this.again);
     if (!options.workbench.peek()) return;
+    if (document.hidden) { this.again = window.setTimeout(() => void this.read(), AGAIN_MS); return; }
     this.asked = true;
     const asked = readerNow();
     const record = options.read(options.machine).then((world) => {

@@ -84,11 +84,23 @@ impl State {
 }
 pub struct Store {
     directory: PathBuf,
+    changed: Option<std::sync::Arc<dyn Fn() + Send + Sync>>,
 }
 impl Store {
     /// The caller supplies a private directory and serializes this sentinel's writes.
     pub fn new(directory: PathBuf) -> Self {
-        Self { directory }
+        Self { directory, changed: None }
+    }
+    /// Notifies a host after any published snapshot, including a run in progress.
+    pub fn observing(mut self, changed: std::sync::Arc<dyn Fn() + Send + Sync>) -> Self {
+        self.changed = Some(changed);
+        self
+    }
+    /// A run snapshot was published by the agent runtime.
+    pub(crate) fn changed(&self) {
+        if let Some(changed) = &self.changed {
+            changed();
+        }
     }
     pub fn directory(&self) -> &Path {
         &self.directory
@@ -170,11 +182,16 @@ impl Store {
         Ok(current)
     }
     pub fn checkpoint(&self, state: &State) -> Result<(), String> {
-        save(&self.directory.join("state.json"), state)
+        save(&self.directory.join("state.json"), state)?;
+        self.changed();
+        Ok(())
     }
     pub fn commit(&self, state: &State) -> Result<(), String> {
         save(&self.directory.join("history").join(format!("{:020}.json", state.sequence)), state)?;
-        save(&self.directory.join("state.json"), state)
+        self.changed();
+        save(&self.directory.join("state.json"), state)?;
+        self.changed();
+        Ok(())
     }
     pub fn run_path(&self, sequence: u64) -> PathBuf {
         self.directory.join("runs").join(format!("{sequence:020}.json"))
@@ -200,7 +217,9 @@ impl Store {
         kept.input = kept.input.saturating_add(usage.input);
         kept.output = kept.output.saturating_add(usage.output);
         kept.elapsed_ms = kept.elapsed_ms.saturating_add(elapsed_ms);
-        save(&path, &days)
+        save(&path, &days)?;
+        self.changed();
+        Ok(())
     }
     /// The days counted since `since` (milliseconds since the epoch), the
     /// one it falls in among them.

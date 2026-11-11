@@ -34,6 +34,7 @@ pub(crate) async fn scan(node: &Arc<Node>, stop: bool) -> Result<MachineLogins, 
     if node.logins.scanning.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire).is_err() {
         return super::here(node).await;
     }
+    node.topics.changed(fastctx_types::topics::LOGINS);
     let scanning = node.clone();
     let scanned = fastctx_platform::task::spawn(async move {
         let node = scanning;
