@@ -216,17 +216,26 @@ where
     };
     let operation = operation(kind, &id);
     let known = match caller {
-        Some(_) => {
-            let asked = operation.clone();
-            service.jobs().database().read(move |db| crate::standing(db, &asked)).await.map_err(unrecorded)?
-        }
+        Some(_) => standing_of(service, &operation).await.map_err(unrecorded)?,
         // A name just made is no operation yet.
         None => None,
     };
-    let known = match known {
-        Some(known) => Some(known),
-        None => {
-            let (unit, recording) = make().await?;
+    let made = match known {
+        Some(known) => Err(known),
+        None => match make().await {
+            Ok(made) => Ok(made),
+            // A call under the same name may have been recorded while this
+            // one was being made: then that is the operation, whatever
+            // became of making this one.
+            Err(failure) => match caller {
+                Some(_) => Err(standing_of(service, &operation).await.ok().flatten().ok_or(failure)?),
+                None => return Err(failure),
+            },
+        },
+    };
+    let known = match made {
+        Err(known) => Some(known),
+        Ok((unit, recording)) => {
             let payload = serde_json::to_vec(&recording)
                 .map_err(|error| Failure::not_run(format!("recording {kind}: {error}")))?;
             let payload = if payload.len() > INLINE_BYTES { keep(service, kind, payload).await? } else { payload };
@@ -347,6 +356,15 @@ pub async fn withdraw<S: Service>(service: &S, family: &Family, unit: &str, why:
         service.jobs().told(&operation(kind, key));
     }
     Ok(keys.len())
+}
+
+/// How an operation stands; none when nothing was recorded under its name.
+async fn standing_of<S: Service>(
+    service: &S,
+    operation: &Operation,
+) -> Result<Option<Standing>, fastctx_storage::Error> {
+    let asked = operation.clone();
+    service.jobs().database().read(move |db| crate::standing(db, &asked)).await
 }
 
 /// Settles an operation and tells those who wait for it.
