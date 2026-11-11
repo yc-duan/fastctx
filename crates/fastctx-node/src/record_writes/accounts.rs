@@ -251,7 +251,13 @@ pub(super) async fn local(node: &Arc<Node>, peer: &fastctx_types::ipc::Peer, cal
         Ok((unit, resolved))
     })
     .await?;
-    ready(node, &target).await?;
+    // The work is recorded, and may be done: a view that does not come now
+    // leaves only whether this caller may read what came of it unjudged.
+    ready(node, &target).await.map_err(|_| {
+        Failure::new(
+            "the change was submitted; what came of it cannot be shown until the hub's current account view is here",
+        )
+    })?;
     let link = authorize(node, &asked, &target)?;
     if let Resolved::Account(target) = &target
         && let Call::AccountRecords { request, .. } = &*asked.call
