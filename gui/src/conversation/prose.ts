@@ -101,6 +101,11 @@ export function render(text: string): string {
  *  it, and its HTML. */
 export interface ProseBlock {
   source: string;
+  /** The line of the text it begins on, where Markdown says. */
+  line: number | null;
+  /** Whether what follows it can still become part of it: a list or a
+   *  quote takes in an item or a line that comes after a blank one. */
+  container: boolean;
   html(): string;
 }
 
@@ -123,6 +128,8 @@ export function proseBlocks(text: string, writing: boolean): ProseBlock[] {
     const source = map ? lines.slice(map[0], map[1]).join("\n") : slice.map((token) => token.content).join("");
     blocks.push({
       source,
+      line: map ? map[0] : null,
+      container: ["bullet_list_open", "ordered_list_open", "blockquote_open"].includes(slice[0]!.type),
       html: () => {
         guessing = !writing;
         growing = writing;
