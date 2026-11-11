@@ -75,9 +75,21 @@ fn servers(
     off: &BTreeSet<String>,
     codex: bool,
 ) -> serde_json::Map<String, Value> {
-    let profile = get(node, acting);
+    servers_of(node, id, acting, &get(node, acting), off, codex)
+}
+
+/// The MCP servers `profile` gives a session of `id`, the profile read
+/// once by whoever asks for many sessions of its account.
+fn servers_of(
+    node: &Node,
+    id: &ResidentId,
+    acting: &Acting,
+    profile: &Profile,
+    off: &BTreeSet<String>,
+    codex: bool,
+) -> serde_json::Map<String, Value> {
     let mut servers = serde_json::Map::new();
-    for (name, entry) in profile.servers {
+    for (name, entry) in profile.servers.clone() {
         if off.contains(&name) {
             continue;
         }
@@ -240,16 +252,34 @@ async fn refresh(
             Some(ids) => ids.iter().filter_map(|id| reading.residents.on_record(id)).collect(),
         };
         let mut inputs = crate::context::dependencies::Scan::default();
+        // The views change whenever any machine of the network comes or
+        // goes, and this runs for every conversation each time. A profile
+        // is read once for all the conversations of its account, and a
+        // conversation whose session the World does not configure, removed
+        // or not started by it, is told apart before anything is computed
+        // for it: its signature is never looked at.
+        let mut profiles: Vec<(Acting, Profile)> = Vec::new();
         residents
             .into_iter()
             .map(|resident| {
+                if resident.removed.is_some() || !resident.about.world_started {
+                    return (resident, 0);
+                }
+                let known = match profiles.iter().position(|(acting, _)| *acting == resident.about.acting) {
+                    Some(known) => known,
+                    None => {
+                        profiles.push((resident.about.acting.clone(), get(&reading, &resident.about.acting)));
+                        profiles.len() - 1
+                    }
+                };
+                let profile = &profiles[known].1;
                 let context = inputs.inputs(&reading, &resident.about, resident.town.as_ref());
                 let signature = crate::context::dependencies::hash(&(
                     context,
                     &resident.about,
                     &resident.town,
-                    get(&reading, &resident.about.acting),
-                    servers(&reading, &resident.id, &resident.about.acting, &resident.about.mcp_off, false),
+                    profile,
+                    servers_of(&reading, &resident.id, &resident.about.acting, profile, &resident.about.mcp_off, false),
                     crate::assists::own_accounts(&reading, &resident.about.acting),
                 ));
                 (resident, signature)
