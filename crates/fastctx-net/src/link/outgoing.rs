@@ -45,20 +45,37 @@ pub(crate) struct Frame {
 }
 
 /// The writer's end: the first way first, then the way for what a person
-/// waits on, then the rest in the order queued.
+/// waits on, then the rest in the order queued. The rest is never starved:
+/// after `SOON_RUN` frames of the soon way in a row, one queued frame goes.
 pub(crate) struct Writing {
     queued: queue::Receiver<Frame>,
     first: mpsc::UnboundedReceiver<Frame>,
     soon: queue::Receiver<Frame>,
+    soon_run: usize,
 }
+
+/// How many frames the soon way takes in a row while queued ones wait.
+pub(crate) const SOON_RUN: usize = 16;
 
 impl Writing {
     pub async fn recv(&mut self) -> Option<Frame> {
+        if self.soon_run >= SOON_RUN
+            && let Some(frame) = self.queued.try_recv()
+        {
+            self.soon_run = 0;
+            return Some(frame);
+        }
         tokio::select! {
             biased;
             Some(frame) = self.first.recv() => Some(frame),
-            Some(frame) = self.soon.recv() => Some(frame),
-            frame = self.queued.recv() => frame,
+            Some(frame) = self.soon.recv() => {
+                self.soon_run += 1;
+                Some(frame)
+            }
+            frame = self.queued.recv() => {
+                self.soon_run = 0;
+                frame
+            }
         }
     }
 }
@@ -68,7 +85,7 @@ impl Outgoing {
         let (queued, receiving) = queue::bounded(QUEUED, QUEUED_BYTES, "link.outgoing");
         let (first, first_receiving) = mpsc::unbounded_channel();
         let (soon, soon_receiving) = queue::bounded(SOON, SOON_BYTES, "link.outgoing.soon");
-        (Self { queued, first, soon }, Writing { queued: receiving, first: first_receiving, soon: soon_receiving })
+        (Self { queued, first, soon }, Writing { queued: receiving, first: first_receiving, soon: soon_receiving, soon_run: 0 })
     }
 
     /// Sends what a person waits on ahead of letters and large answers; when

@@ -24,6 +24,8 @@ struct Waiting {
     piece: Watched,
     size: usize,
     key: Option<String>,
+    /// Its bytes, taken of the budget all observation queues share.
+    _memory: Vec<fastctx_platform::event_queue::Reservation>,
 }
 
 /// One watcher's pieces on their way: straight into its queue while it keeps
@@ -102,7 +104,8 @@ impl Forwarder {
                 Err(TrySendError::Closed(_)) => return Err(Lagged),
                 Err(TrySendError::Full(piece)) => {
                     let piece = piece.expect("only pieces are pushed");
-                    self.waiting.insert(number, Waiting { piece, size: first.size, key: first.key });
+                    self.waiting
+                        .insert(number, Waiting { piece, size: first.size, key: first.key, _memory: first._memory });
                     return Ok(());
                 }
             }
@@ -114,7 +117,14 @@ impl Forwarder {
     }
 
     fn keep(&mut self, piece: Watched, size: usize, key: Option<String>) -> Result<(), Lagged> {
-        let (piece, size) = self.merged(piece, size);
+        // What waits here counts against the budget all observation queues
+        // share; past it the watch lags, as a full queue would.
+        let Some(memory) = watch_queue::reserve(size) else {
+            self.sender.lag();
+            return Err(Lagged);
+        };
+        let (piece, size, mut memories) = self.merged(piece, size);
+        memories.push(memory);
         if let Some(key) = &key
             && let Some(previous) = self.keys.remove(key)
             && let Some(old) = self.waiting.remove(&previous)
@@ -134,7 +144,7 @@ impl Forwarder {
             About::Itself => {}
         }
         self.bytes += size;
-        self.waiting.insert(number, Waiting { piece, size, key });
+        self.waiting.insert(number, Waiting { piece, size, key, _memory: memories });
         if self.waiting.len() > 1 && (self.bytes > WAITING_BYTES || self.waiting.len() > WAITING_PIECES) {
             self.sender.lag();
             return Err(Lagged);
@@ -146,11 +156,11 @@ impl Forwarder {
     /// nothing after that every piece must stay behind, joins that piece: it
     /// leaves its place and goes at the end, carrying the newer mark, so the
     /// marks a watcher sees still only rise. The piece as it goes on, merged
-    /// or as it came, and its size.
-    fn merged(&mut self, piece: Watched, size: usize) -> (Watched, usize) {
-        let Watched::Live { event, mark, likeness } = piece else { return (piece, size) };
+    /// or as it came, its size, and what it took of the budget so far.
+    fn merged(&mut self, piece: Watched, size: usize) -> (Watched, usize, Vec<fastctx_platform::event_queue::Reservation>) {
+        let Watched::Live { event, mark, likeness } = piece else { return (piece, size, Vec::new()) };
         let Happened::Grew { turn, item, part, text, revision } = event.happened else {
-            return (Watched::Live { event, mark, likeness }, size);
+            return (Watched::Live { event, mark, likeness }, size, Vec::new());
         };
         let earlier = self
             .items
@@ -170,10 +180,11 @@ impl Forwarder {
                 at,
                 happened: Happened::Grew { turn, item, part, text, revision },
             };
-            return (Watched::Live { event, mark, likeness }, size);
+            return (Watched::Live { event, mark, likeness }, size, Vec::new());
         };
         let old = self.waiting.remove(&number).expect("checked above");
         self.bytes -= old.size;
+        let memories = old._memory;
         let Watched::Live { event: before, .. } = old.piece else { unreachable!("checked above") };
         let Happened::Grew { text: mut joined, .. } = before.happened else { unreachable!("checked above") };
         joined.push_str(&text);
@@ -184,7 +195,7 @@ impl Forwarder {
         let likeness = likeness.and_then(|_| {
             serde_json::to_vec(&event).ok().map(|encoded| Box::new(crate::timeline::likeness(&event, &encoded)))
         });
-        (Watched::Live { event, mark, likeness }, old.size + size)
+        (Watched::Live { event, mark, likeness }, old.size + size, memories)
     }
 }
 

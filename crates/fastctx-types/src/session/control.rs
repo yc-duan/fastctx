@@ -195,6 +195,11 @@ pub struct Offers {
     /// Controls accepted for later execution, including one currently executing.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pending_controls: Vec<PendingControl>,
+    /// Pending controls of kinds an interface from before them cannot read
+    /// (a goal): kept apart from `pending_controls`, so the rest of these
+    /// offers still read there. A newer interface shows both.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pending_newer: Vec<PendingControl>,
     /// Exact turn boundaries observed by hosts that need a message checkpoint.
     /// None means this host uses its own turn addressing rather than checkpoints.
     #[serde(default, skip_serializing_if = "Option::is_none")]

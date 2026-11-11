@@ -164,6 +164,11 @@ pub(crate) async fn prepare(node: &Arc<Node>, id: &ResidentId, row: &PendingCont
 }
 
 async fn ready(node: &Arc<Node>, id: &ResidentId, row: &PendingControl) -> Result<(), Failure> {
+    // A goal is the World's, kept here: setting it needs no host, asleep or
+    // not there, and wakes none.
+    if matches!(row.control, fastctx_types::session::control::Control::Goal { .. }) {
+        return storage::running(node, id, &row.id).await;
+    }
     let key = control_key(row)?;
     if crate::lifecycle::retry::progress(node, id, &key)
         .await
@@ -610,10 +615,12 @@ pub(crate) async fn recover(node: &Arc<Node>, id: &ResidentId) {
                 row.state=ControlState::Uncertain;
                 let why = "the node stopped while this control was entering the host; its outcome is unknown and it was not repeated";
                 row.error=Some(why.into());
-                finish(node,id,&row).await?;
                 // Not known to have been done: the words after it wait for
-                // the user, as after one that failed.
+                // the user, as after one that failed. They are held before
+                // the control is let go, so stopping between the two leaves
+                // the control to recover again, never words let through.
                 crate::composer::forget_command(node, id, &row.id, Some(why)).await?;
+                finish(node,id,&row).await?;
             } else if row.state!=ControlState::Waiting {finish(node,id,&row).await?;}
         }
         Ok(())

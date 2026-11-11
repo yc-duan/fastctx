@@ -71,7 +71,14 @@ struct QueueState {
     refused: bool,
     queued: usize,
     bytes: usize,
+    /// Let go after a long while with nothing handed (`IDLE`): a report
+    /// that finds it takes the session's next queue instead.
+    retired: bool,
 }
+
+/// How long a session's queue, and the task applying it, wait with nothing
+/// handed before they go; the next report starts them again.
+const IDLE: std::time::Duration = std::time::Duration::from_secs(10 * 60);
 
 struct Batch {
     reports: Vec<HandedReport>,
@@ -264,9 +271,14 @@ async fn route(node: &Arc<Node>, request: Request<Incoming>) -> Result<Value, Re
             if let Some(name) = names.iter().find(|name| !name.strip_suffix(".json").is_some_and(watermark)) {
                 return Err((StatusCode::BAD_REQUEST, format!("{name} is not a report's name")));
             }
-            let queue = queue(node, channel, session);
+            let mut queue = queue(node, channel, session);
             let through = {
                 let mut state = queue.state.lock().expect("never poisoned");
+                if state.retired {
+                    drop(state);
+                    queue = self::queue(node, channel, session);
+                    state = queue.state.lock().expect("never poisoned");
+                }
                 if state.refused {
                     return Err((StatusCode::SERVICE_UNAVAILABLE, "the session's reports go to its files".to_string()));
                 }
@@ -323,7 +335,19 @@ async fn apply_in_order(
     mut receiver: tokio::sync::mpsc::UnboundedReceiver<Batch>,
 ) {
     let directory = fastctx_hosts::claude::exchange::sessions(node.world.path()).join(&session);
-    while let Some(first) = receiver.recv().await {
+    loop {
+        let first = match tokio::time::timeout(IDLE, receiver.recv()).await {
+            Ok(Some(first)) => first,
+            Ok(None) => return,
+            // Nothing handed for a long while: the queue and its task go,
+            // unless something came meanwhile.
+            Err(_) => {
+                if retire(&node, &session, &queue) {
+                    return;
+                }
+                continue;
+            }
+        };
         let mut taken = first.bytes;
         let mut batch = first.reports;
         while let Ok(more) = receiver.try_recv() {
@@ -392,6 +416,27 @@ async fn apply_in_order(
             return;
         }
     }
+}
+
+/// Lets a session's idle queue go, with its wake when nobody waits on it.
+/// Says whether it went: not when a report is queued or the queue refused.
+fn retire(node: &Node, session: &str, queue: &Arc<Queue>) -> bool {
+    let Some(channel) = node.claude.channel.get() else { return false };
+    let mut queues = channel.queues.lock().expect("never poisoned");
+    let mut state = queue.state.lock().expect("never poisoned");
+    if state.queued > 0 || state.refused || !queues.get(session).is_some_and(|held| Arc::ptr_eq(held, queue)) {
+        return false;
+    }
+    state.retired = true;
+    queues.remove(session);
+    drop((state, queues));
+    // A wake nobody holds: a mod that waits again gets a new one, and at
+    // worst looks once more than it needed.
+    let mut wakes = channel.wakes.lock().expect("never poisoned");
+    if wakes.get(session).is_some_and(|wake| Arc::strong_count(wake) == 1) {
+        wakes.remove(session);
+    }
+    true
 }
 
 /// How far a batch was dealt with, in order: the last report applied or

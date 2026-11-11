@@ -308,14 +308,33 @@ async fn keep_stop(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {
     publish(node, id, &mut cell, next).await
 }
 
-/// A node started again takes the stop its composer's state kept.
-pub(super) fn restore_stop(node: &Node, id: &ResidentId, state: &Stored) {
-    let Some(kept) = &state.stopped else { return };
-    let stop = match kept {
-        StopMark::Turn(turn) => Stop::Turn(turn.clone()),
-        StopMark::Coming => Stop::Coming(std::time::Instant::now()),
+/// A node started again takes the stop its composer's state kept. A stop the
+/// node acknowledged but exited before keeping with the input is read from
+/// the running turn's own stop record, which is kept before the host is
+/// asked (`talk::stop_turn_as`). A wait for words on their way is given its
+/// end again.
+pub(super) fn restore_stop(node: &Arc<Node>, id: &ResidentId, state: &Stored) {
+    let stop = match &state.stopped {
+        Some(StopMark::Turn(turn)) => Some(Stop::Turn(turn.clone())),
+        Some(StopMark::Coming) => Some(Stop::Coming(std::time::Instant::now())),
+        None => node.residents.now(id).and_then(|now| now.turn).filter(|turn| {
+            matches!(
+                crate::turn_evidence::stopping::source(node, id, turn),
+                Ok(Some(fastctx_types::turn_evidence::StopSource::User))
+            )
+        })
+        .map(Stop::Turn),
     };
+    let Some(stop) = stop else { return };
+    let coming = matches!(stop, Stop::Coming(_));
     node.composers.stopping.lock().expect("composer stops").entry(id.clone()).or_insert(stop);
+    if coming {
+        let (node, id) = (node.clone(), id.clone());
+        fastctx_platform::task::spawn(async move {
+            tokio::time::sleep(COMING_WAITS).await;
+            schedule(&node, &id);
+        });
+    }
 }
 
 /// Whether the turn running now is one the user asked to stop, or one words

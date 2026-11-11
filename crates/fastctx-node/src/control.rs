@@ -215,7 +215,12 @@ pub async fn offers_here(node: &Arc<Node>, resident: &ResidentId) -> Result<Offe
     if let Some((about, _)) = node.residents.about(resident) {
         offers.skills = crate::skills::listed(node, &about.acting).await;
     }
-    offers.pending_controls = crate::control_queue::pending(node, resident).await?;
+    let (newer, pending): (Vec<_>, Vec<_>) = crate::control_queue::pending(node, resident)
+        .await?
+        .into_iter()
+        .partition(|pending| matches!(pending.control, fastctx_types::session::control::Control::Goal { .. }));
+    offers.pending_controls = pending;
+    offers.pending_newer = newer;
     offers.control_queue = true;
     offers.controls_told = true;
     offers.control_reply_envelope = true;

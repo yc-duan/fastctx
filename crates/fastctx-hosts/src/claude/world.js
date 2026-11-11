@@ -645,6 +645,8 @@ async function look($, context) {
       context.unsettled = false
       await settle($, context)
       await transcript($, context, null)
+      // Reports the node took and a failed handing over kept here go again.
+      if (channelUnsettled(context)) channelSettle($, context)
       const written = context.writing.then(async () => {
         for (const name of context.failedReports) {
           await writePending($, context, name)
@@ -664,7 +666,7 @@ async function look($, context) {
   } finally {
     context.looking = false
   }
-  if (context.unsettled || context.failedReports.size > 0 || context.owed.length > 0 || context.transcriptTold !== context.transcriptPath) retry($, context)
+  if (context.unsettled || context.failedReports.size > 0 || context.owed.length > 0 || context.transcriptTold !== context.transcriptPath || channelUnsettled(context)) retry($, context)
 }
 
 // Stops the running turn when the node asks for it. Only the turn that is

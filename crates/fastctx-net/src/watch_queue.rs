@@ -78,3 +78,10 @@ pub fn size(value: &impl Serialize) -> usize {
 pub fn queued_bytes() -> usize {
     MEMORY.used()
 }
+
+/// Takes `bytes` of the budget every observation queue shares, for pieces a
+/// watcher's forwarder keeps while its queue is full; none when the budget
+/// would pass its limit.
+pub fn reserve(bytes: usize) -> Option<event_queue::Reservation> {
+    MEMORY.reserve(bytes)
+}

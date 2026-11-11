@@ -62,8 +62,16 @@ pub async fn command_failed(node: &Arc<Node>, id: &ResidentId, why: &str) -> Res
     let mut cell = cell.lock().await;
     load(node, id, &mut cell).await?;
     let mut next = cell.take().expect("loaded");
+    // Its place is gone, and every word that went after it with it: words
+    // sent from the input after a stop that still wait in line wait for the
+    // user too, as behind a command that failed in its place.
+    let all: Vec<NoticeId> = next.queue.iter().map(|entry| entry.id.clone()).collect();
+    unline_straight(&mut next, &all);
     hold_words(&mut next, why);
-    publish(node, id, &mut cell, next).await
+    publish(node, id, &mut cell, next).await?;
+    drop(cell);
+    schedule(node, id);
+    Ok(())
 }
 
 /// Words sent from the input after a stop that waited behind a command wait

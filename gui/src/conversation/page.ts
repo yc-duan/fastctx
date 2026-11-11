@@ -953,6 +953,11 @@ export class ConversationPage {
    *  reader comes to it, and nothing of it makes an entrance. */
   update(how: { read?: boolean } = {}): void {
     if (how.read) this.read = true;
+    // A stop asked on another device shows here as where it was asked: its
+    // two seconds start when it is told, and end with it.
+    const halting = this.options.conversation.halting();
+    if (halting && this.stopWatch === 0 && !this.stopOverdue) this.watchStop();
+    else if (!halting && (this.stopWatch !== 0 || this.stopOverdue)) this.calledOff();
     // The commands it offers changed (a plugin loaded, a description came).
     if (this.options.conversation.takeOffersChanged()) void this.askOffers();
     if (this.options.conversation.takeControlsChanged()) this.syncControls();
@@ -1345,22 +1350,21 @@ export class ConversationPage {
    *  ended. A stop that did not get there shows it going on again, and says
    *  why. */
   private stop(): void {
-    const asked = this.options.stop(this.options.conversation.runningTurn());
+    const target = this.options.conversation.runningTurn();
+    const asked = this.options.stop(target);
     if (!asked) return;
     this.options.conversation.halt();
-    this.stopOverdue = false;
-    clearTimeout(this.stopWatch);
-    this.stopWatch = window.setTimeout(() => {
-      if (!this.options.conversation.halting()) return;
-      this.stopOverdue = true;
-      this.update();
-    }, STOP_OVERDUE_MS);
+    this.watchStop();
     this.update();
     asked.then(
       (stopped) => {
         if (stopped) return;
         this.calledOff();
-        this.options.conversation.noTurnRuns();
+        // The turn asked to stop had ended already: a turn begun since goes
+        // on, and is not called off with it.
+        const now = this.options.conversation.runningTurn();
+        if (now === null || now === target) this.options.conversation.noTurnRuns();
+        else this.options.conversation.unhalt();
         this.update();
       },
       (error: unknown) => {
@@ -1376,7 +1380,20 @@ export class ConversationPage {
   /** A stop asked for is over, its turn ended or never stopped. */
   private calledOff(): void {
     clearTimeout(this.stopWatch);
+    this.stopWatch = 0;
     this.stopOverdue = false;
+  }
+
+  /** Starts the two seconds a stop has before its turn is said to go on,
+   *  whether it was asked here or on another device (`update`). */
+  private watchStop(): void {
+    this.stopOverdue = false;
+    clearTimeout(this.stopWatch);
+    this.stopWatch = window.setTimeout(() => {
+      if (!this.options.conversation.halting()) return;
+      this.stopOverdue = true;
+      this.update();
+    }, STOP_OVERDUE_MS);
   }
 
   /** Whether the page shows a turn under way: one asked to stop shows
@@ -2088,7 +2105,7 @@ export class ConversationPage {
     try {
       const offered = await controls.offers();
       this.offered = offered;
-      this.syncControls(offered.pending_controls ?? []);
+      this.syncControls([...(offered.pending_controls ?? []), ...(offered.pending_newer ?? [])]);
       // Its host is still being started: what came is what the node knows
       // without it, and the rest is asked for again, soon and then less often.
       this.offersFailed = 0;

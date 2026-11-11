@@ -163,6 +163,12 @@ impl Mailbox {
         if state.closed {
             return self.channel.send(Push::Closed { id: self.id }).map_err(|error| error.to_string());
         }
+        // The page holds the gap it asks past: its acknowledgement was lost
+        // on the way, and this is it.
+        if state.gap.is_some_and(|gap| gap <= through) {
+            drop(state);
+            return self.acknowledge(through).map(|_| ());
+        }
         for batch in state.unacknowledged.iter().filter(|batch| batch.number > through) {
             if self.channel.send(Push::pieces(self.id, batch.number, &batch.pieces)).is_err() {
                 break;

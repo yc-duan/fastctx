@@ -4,7 +4,7 @@
 //! call is registered as it arrives, before its task starts, so a stop that
 //! comes right behind it is never missed.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 
@@ -18,7 +18,13 @@ use super::{CallOn, Inner};
 pub(crate) struct Answers {
     calls: Mutex<HashMap<(CallOn, u64), Entry>>,
     serial: AtomicU64,
+    /// Stops that came before their call was registered (it waited behind
+    /// frames the node was still taking in): the call is stopped as it opens.
+    early: Mutex<VecDeque<((CallOn, u64), String)>>,
 }
+
+/// How many stops ahead of their calls are kept.
+const EARLY: usize = 1024;
 
 struct Entry {
     serial: u64,
@@ -37,17 +43,29 @@ impl Answers {
     /// Registers the call `id` that came on `on`.
     pub(crate) fn open(&self, inner: &Arc<Inner>, on: CallOn, id: u64) -> Answer {
         let serial = self.serial.fetch_add(1, Ordering::Relaxed);
-        let (stop, receiver) = watch::channel(None);
         let key = (on, id);
+        let early = {
+            let mut early = self.early.lock().expect("never poisoned");
+            early.iter().position(|(stopped, _)| *stopped == key).and_then(|at| early.remove(at)).map(|(_, why)| why)
+        };
+        let (stop, receiver) = watch::channel(early);
         self.calls.lock().expect("never poisoned").insert(key.clone(), Entry { serial, stop });
         Answer { inner: Arc::downgrade(inner), key, serial, stop: receiver }
     }
 
-    /// Stops the call `id` that came on `on`, if it is still answered.
+    /// Stops the call `id` that came on `on`: now if it is answered, or as
+    /// it opens if it has not been registered yet.
     pub(crate) fn stop(&self, on: &CallOn, id: u64, why: &str) {
-        if let Some(entry) = self.calls.lock().expect("never poisoned").get(&(on.clone(), id)) {
+        let key = (on.clone(), id);
+        if let Some(entry) = self.calls.lock().expect("never poisoned").get(&key) {
             stop(entry, why);
+            return;
         }
+        let mut early = self.early.lock().expect("never poisoned");
+        if early.len() >= EARLY {
+            early.pop_front();
+        }
+        early.push_back((key, why.to_string()));
     }
 
     /// Stops every call that came on `on`, which ended.

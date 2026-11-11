@@ -237,6 +237,13 @@ fn accepting<'a>(
                 .chain(&state.pending)
                 .find(|flight| flight.operation.as_deref() == Some(mutation.operation.as_str()));
             let lined = state.lined.iter().any(|lined| lined.operation.as_deref() == Some(mutation.operation.as_str()));
+            // A device from before landings came pushed asks again for words
+            // still in line: it is answered as the first time, once they land.
+            if lined && !bounded && receipt.landed.is_none() && receipt.delivery.is_none() {
+                drop(cell);
+                drop(_reading);
+                return legacy_lined::answer(node, id, &mutation.operation).await.map(|answer| (answer, false));
+            }
             return Ok((
                 answer::Answer::state(
                     state,

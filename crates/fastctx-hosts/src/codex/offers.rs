@@ -241,6 +241,7 @@ impl CodexHost {
         Ok(Offers {
             gathering: false,
             pending_controls: Vec::new(),
+            pending_newer: Vec::new(),
             control_queue: false,
             controls_told: false,
             control_reply_envelope: false,

@@ -89,7 +89,7 @@ impl PeerConn {
             ms: Mutex::new(None),
             closed,
         };
-        (Arc::new(conn), Writing { frames, soons, firsts })
+        (Arc::new(conn), Writing { frames, soons, firsts, soon_run: 0 })
     }
 
     /// Sends what a person waits on ahead of what is queued; when that way
@@ -183,15 +183,29 @@ pub(crate) struct Writing {
     frames: crate::queue::Receiver<Queued>,
     soons: crate::queue::Receiver<Queued>,
     firsts: mpsc::UnboundedReceiver<Queued>,
+    /// Frames the soon way took in a row: past `SOON_RUN`, a queued one goes.
+    soon_run: usize,
 }
 
 impl Writing {
     async fn recv(&mut self) -> Option<Queued> {
+        if self.soon_run >= crate::link::outgoing::SOON_RUN
+            && let Some(frame) = self.frames.try_recv()
+        {
+            self.soon_run = 0;
+            return Some(frame);
+        }
         tokio::select! {
             biased;
             Some(frame) = self.firsts.recv() => Some(frame),
-            Some(frame) = self.soons.recv() => Some(frame),
-            frame = self.frames.recv() => frame,
+            Some(frame) = self.soons.recv() => {
+                self.soon_run += 1;
+                Some(frame)
+            }
+            frame = self.frames.recv() => {
+                self.soon_run = 0;
+                frame
+            }
         }
     }
 }

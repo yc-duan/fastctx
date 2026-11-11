@@ -13,7 +13,8 @@ struct Memory {
     used: AtomicUsize,
     limit: usize,
 }
-struct Reservation {
+/// Bytes taken of a budget until this drops.
+pub struct Reservation {
     budget: Budget,
     bytes: usize,
 }
@@ -29,7 +30,8 @@ impl Budget {
     pub fn used(&self) -> usize {
         self.0.used.load(Ordering::Acquire)
     }
-    fn reserve(&self, bytes: usize) -> Option<Reservation> {
+    /// Takes `bytes` of the budget, or none when that would pass its limit.
+    pub fn reserve(&self, bytes: usize) -> Option<Reservation> {
         self.0
             .used
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |used| {

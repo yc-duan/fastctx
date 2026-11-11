@@ -46,7 +46,13 @@ export async function observe<T, R extends Opened | null>(
     if (id === null) return;
     const send = () => {
       acking = null;
-      if (id !== null) invoke("watch_delivery_ack", { id, through }).catch((error) => console.error("an observation acknowledgement failed", error));
+      if (id === null || closed) return;
+      // One lost on the way is sent again a while later: until the shell
+      // hears it, it holds what follows a gap.
+      invoke("watch_delivery_ack", { id, through }).catch((error) => {
+        console.error("an observation acknowledgement failed", error);
+        if (!closed && acking === null) acking = setTimeout(send, 500);
+      });
     };
     if (now) {
       if (acking !== null) clearTimeout(acking);

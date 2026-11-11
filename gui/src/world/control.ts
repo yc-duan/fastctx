@@ -123,6 +123,9 @@ export interface Offers {
   control_goal?: boolean;
   /** Those it holds, waiting or being done. */
   pending_controls?: PendingControl[];
+  /** Pending controls of kinds an older interface cannot read (a goal),
+   *  told apart from `pending_controls`; shown with them. */
+  pending_newer?: PendingControl[];
   controls: ControlKind[];
   commands: CommandOffer[];
   /** The skills of the account it works for, kept in Fastctx: words

@@ -340,6 +340,10 @@ export function presentation(reserve, currentTurn) {
           await emit(reports, { event: 'finished', turn: turn ?? '', item: other })
         }
       }
+      // What the step's ledger learned from this row (blocks claimed, how
+      // far its positions went) outlives a reload of the plugin: a row that
+      // arrives after it claims the next block, not this one again.
+      if (stepOf !== undefined) await checkpoint(reports).catch(() => {})
       // Prose already streamed is not reported again as it is stored: the
       // record of what was stored is Claude Code's own session file, which
       // the World reads for a session's history.

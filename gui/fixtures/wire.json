@@ -22340,6 +22340,17 @@
             "state": "waiting"
           }
         ],
+        "pending_newer": [
+          {
+            "id": "control-2",
+            "control": {
+              "do": "goal",
+              "objective": "把这一版做完"
+            },
+            "at": "2026-10-21T00:00:01Z",
+            "state": "waiting"
+          }
+        ],
         "controls": [
           "command",
           "compact",

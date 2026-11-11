@@ -166,6 +166,9 @@ struct State {
     overflowed: Option<String>,
     /// How many frames of the first lane went in a row.
     in_a_row: usize,
+    /// How many whole frames went in a row while parts of a large answer
+    /// waited: past `PROMPT_RUN`, a part goes, so it is never starved.
+    prompt_run: usize,
     /// Whether letters go before notices next.
     letters_next: bool,
 }
@@ -394,7 +397,28 @@ impl Outq {
     }
 }
 
+/// How many whole frames of the first lane go in a row before a waiting part
+/// of a large answer.
+const PROMPT_RUN: usize = 16;
+
 impl State {
+    /// The first lane's next frame: whole ones first, a part after every
+    /// `PROMPT_RUN` of them.
+    fn first_lane(&mut self) -> Option<(Out, usize)> {
+        if self.prompt_run >= PROMPT_RUN
+            && let Some(part) = self.urgent.pop_front()
+        {
+            self.prompt_run = 0;
+            return Some(part);
+        }
+        if let Some(whole) = self.prompt.pop_front() {
+            self.prompt_run += 1;
+            return Some(whole);
+        }
+        self.prompt_run = 0;
+        self.urgent.pop_front()
+    }
+
     fn overflow(&mut self, why: String) -> Result<(), ()> {
         self.overflowed = Some(why);
         Err(())
@@ -455,7 +479,7 @@ impl State {
         }
         let others = !self.letters.is_empty() || !self.notices.is_empty() || self.spilled.is_some();
         if (self.in_a_row < BURST || !others)
-            && let Some((out, bytes)) = self.prompt.pop_front().or_else(|| self.urgent.pop_front())
+            && let Some((out, bytes)) = self.first_lane()
         {
             self.urgent_bytes -= bytes;
             self.charged.0 -= bytes;

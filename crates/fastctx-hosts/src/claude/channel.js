@@ -144,7 +144,11 @@ function channelSettle($, context) {
         channelConfirmed(context, told.applied)
         return
       } catch (error) {
-        if (/abort/i.test(String(error))) return
+        // Given up on the way: tried again at the next look.
+        if (/abort/i.test(String(error))) {
+          retry($, context)
+          return
+        }
         channelToFiles($, context, String(error))
       }
     }
@@ -154,6 +158,16 @@ function channelSettle($, context) {
     $.ui.log('World channel: keeping what the node took for later: ' + String(error), { to: 'debug' })
     retry($, context)
   })
+}
+
+// Whether reports kept for the node still wait to be handed again: taken
+// on a channel that is gone, or kept while the session reports through
+// files. Each look settles them (`channelSettle`) until none do.
+function channelUnsettled(context) {
+  const held = context.unconfirmed ?? []
+  if (held.length === 0) return false
+  if (!context.channelReports) return true
+  return held.some((report) => report.channel !== context.channel)
 }
 
 // The account's subagents for this session, as `fastctx claude-subagents`
