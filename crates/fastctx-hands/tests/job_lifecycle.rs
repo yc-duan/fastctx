@@ -268,6 +268,7 @@ async fn node(mut listener: Listener, world: WorldDir, machine: MachineName, not
                     timeline_reads: false,
                     watch_live: false,
                     topics: false,
+                    remote_topics: false,
                     scratch_locations: false,
                     collaboration_watch: false,
                     timer_pages: true,

@@ -65,7 +65,9 @@ export class RecordColumn {
       ...(context.lines ? { lines: context.lines } : {}),
     });
     scroller.addEventListener("scroll", this.scrolled, { passive: true });
-    this.stopReading = followState(() => context.local?.() ? SENTINELS : null, () => this.read(), () => this.awake ? AWAKE : ASLEEP);
+    // Another machine's sentinels are waited on through this one's node.
+    const elsewhere = context.local?.() ? null : context.home ?? null;
+    this.stopReading = followState(() => context.local?.() || elsewhere ? SENTINELS : null, () => this.read(), () => this.awake ? AWAKE : ASLEEP, elsewhere);
   }
 
   /** Whether anything of it was drawn. */

@@ -640,6 +640,7 @@ pub fn facts(node: &Node) -> MachineFacts {
         collaboration_tree: true,
         collaboration_watch: true,
         timeline_reads: true,
+        topics: true,
         watch_live: true,
         shell: shell(),
         form: Some(form()),
@@ -1319,6 +1320,10 @@ impl fastctx_net::link::Node for Handler {
                     RemoteCall::MemoryRoom { bytes } => {
                         crate::memory_room::answer(&node, bytes).map(|bytes| RemoteReply::MemoryRoom { bytes })
                     }
+                    RemoteCall::Topics { request } => match request.validate() {
+                        Ok(()) => Ok(RemoteReply::Topics(node.topics.told(&request, crate::topics::WAITS).await)),
+                        Err(reason) => Err(Failure::not_run(reason)),
+                    },
                     RemoteCall::Interfaces => {
                         crate::hub_arrival::interfaces().map(|addresses| RemoteReply::Interfaces { addresses })
                     }

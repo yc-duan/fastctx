@@ -74,6 +74,7 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
         timeline_reads: true,
         watch_live: true,
         topics: true,
+        remote_topics: true,
         scratch_locations: true,
         collaboration_watch: true,
         timer_pages: true,
@@ -1723,6 +1724,11 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             users_voice(node, peer)?;
             request.validate().map_err(Failure::not_run)?;
             Ok(Reply::Topics(node.topics.told(&request, crate::topics::WAITS).await))
+        }
+        Call::RemoteTopics { machine, request } => {
+            users_voice(node, peer)?;
+            let acting = crate::around::acting_of(node, &caller::of(node, peer)?);
+            crate::remote_topics::wait(node, &acting, machine, request).await.map(Reply::RemoteTopics)
         }
         Call::WatchMemory { .. } => Err(Failure::new("a memory watch is answered as it changes")),
         Call::Memory(_) => Err(Failure::not_run("project memory was replaced by history; update the app")),

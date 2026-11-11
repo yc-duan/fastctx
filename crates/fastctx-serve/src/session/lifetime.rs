@@ -41,6 +41,7 @@ async fn cancelling_a_call_during_its_probe_keeps_the_original_arrival() {
                     timeline_reads: false,
                     watch_live: false,
                     topics: false,
+                    remote_topics: false,
                     scratch_locations: false,
                     collaboration_watch: false,
                     timer_pages: true,

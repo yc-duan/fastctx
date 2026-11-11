@@ -239,6 +239,7 @@ impl RemoteCall {
             Self::McpServe { .. } => Contract { cancellable: true, ..Contract::STREAM },
             Self::Collaboration { .. } => Contract { cancellable: true, ..Contract::ASKS_AGENT },
             Self::Timeline { .. }
+            | Self::Topics { .. }
             | Self::MemoryFolders { .. }
             | Self::Scratch { .. }
             | Self::AttachmentPlaces { .. }
@@ -438,7 +439,7 @@ impl Call {
                 }
             }
             Self::WatchHistory { .. } => Leaving::Stop,
-            Self::Timeline { .. } | Self::Topics { .. } => Leaving::Stop,
+            Self::Timeline { .. } | Self::Topics { .. } | Self::RemoteTopics { .. } => Leaving::Stop,
             Self::PrepareCopies { .. } => Leaving::Finish,
             Self::Memory(crate::memory::MemoryCall::List { .. } | crate::memory::MemoryCall::Read { .. }) => {
                 Leaving::Stop

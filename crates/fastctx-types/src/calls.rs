@@ -101,6 +101,12 @@ pub enum Call {
     Topics {
         request: crate::topics::TopicsAsk,
     },
+    /// Waits on topics of another machine, for a page here that shows its
+    /// state (`RemoteCall::Topics`); none when that machine does not tell.
+    RemoteTopics {
+        machine: crate::access::Written,
+        request: crate::topics::TopicsAsk,
+    },
     WatchHistory {
         scope: crate::history::Scope,
     },
@@ -1033,6 +1039,8 @@ pub enum Reply {
     History(crate::history::HistoryReply),
     Timeline(crate::timeline_pages::TimelineTold),
     Topics(crate::topics::TopicsTold),
+    /// Another machine's topics, or none when it does not tell them.
+    RemoteTopics(Option<crate::topics::TopicsTold>),
     Memory(crate::memory::MemoryReply),
     MemorySettings(crate::memory::Settings),
     Layer(crate::layers::Chosen),
@@ -1558,7 +1566,7 @@ impl Call {
             | Self::WorldNow { .. }
             | Self::Write { .. } => None,
             Self::Timeline { .. } => Some(Purpose::AssetSync),
-            Self::Topics { .. } => Some(Purpose::Observation),
+            Self::Topics { .. } | Self::RemoteTopics { .. } => Some(Purpose::Observation),
         }
     }
 }
@@ -1667,7 +1675,7 @@ impl Reply {
             | Self::WorldNow { .. }
             | Self::Written { .. } => None,
             Self::Timeline(_) => Some(Purpose::AssetSync),
-            Self::Topics(_) => Some(Purpose::Observation),
+            Self::Topics(_) | Self::RemoteTopics(_) => Some(Purpose::Observation),
         }
     }
 }

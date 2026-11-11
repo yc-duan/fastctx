@@ -52,6 +52,7 @@ impl RemoteCall {
             | Self::SetAgentTitle { .. }
             | Self::Since { .. }
             | Self::Stats { .. }
+            | Self::Topics { .. }
             | Self::Stop { .. }
             | Self::Thumbnail { .. }
             | Self::WaitingJobs { .. }
@@ -284,7 +285,7 @@ impl Call {
             }
             Self::Timeline { request, .. } => timeline(request),
             // It waits for a change, as a timeline's `Moved` does.
-            Self::Topics { .. } => Response::Stream,
+            Self::Topics { .. } | Self::RemoteTopics { .. } => Response::Stream,
             Self::Data(request) => {
                 use crate::data::DataCall;
                 match request {

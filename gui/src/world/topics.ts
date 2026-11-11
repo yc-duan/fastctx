@@ -29,10 +29,12 @@ interface Reader {
   notBefore: number;
 }
 
+let topicsEnabled = true;
+
 // Longer than the node's 25-second wait, including connection/setup time.
 const WAIT_MS = 35_000;
 
-function asking(run: string | null, known: At[], signal: AbortSignal): Promise<Told | null> {
+function asking(run: string | null, known: At[], signal: AbortSignal, machine: string | null): Promise<Told | null> {
   return new Promise((resolve, reject) => {
     let done = false;
     let cancelled = false;
@@ -54,7 +56,7 @@ function asking(run: string | null, known: At[], signal: AbortSignal): Promise<T
     };
     const answer = new Channel<Answer>();
     answer.onmessage = (reply) => { if (!cancelled) finish(reply); };
-    const opened = invoke<number>("world_topics", { request: { run, known }, answer });
+    const opened = invoke<number>("world_topics", { request: { run, known }, answer, machine });
     timer = window.setTimeout(() => {
       cancelled = true;
       void opened.then(unwatch).catch(() => {});
@@ -69,18 +71,22 @@ function asking(run: string | null, known: At[], signal: AbortSignal): Promise<T
 /** Unsubscribes; refresh re-evaluates a conditional timer after a manual read. */
 export interface Following { (): void; refresh(): void }
 
-/** Unknown names and readers with no topic keep their visible timed reads. */
-export function followState(topic: string | null | (() => string | null), read: Read, every: Every): Following {
-  return topics.follow(topic, read, every);
+/** Unknown names and readers with no topic keep their visible timed reads.
+ *  With `machine`, the topic is that machine's, waited on through this
+ *  computer's node; a machine that does not tell its topics is read on the
+ *  timer. */
+export function followState(topic: string | null | (() => string | null), read: Read, every: Every, machine: string | null = null): Following {
+  return topicsOf(machine).follow(topic, read, every);
 }
 
 /** Specimen pages use their own seams and must never open a node connection. */
 export function configureTopics(enabled: boolean): void {
-  topics.enable(enabled);
+  topicsEnabled = enabled;
+  for (const each of [local, ...remote.values()]) each.enable(enabled);
 }
 
 class Topics {
-  private enabled = true;
+  private enabled = topicsEnabled;
   private readonly readers = new Set<Reader>();
   private readonly revisions = new Map<string, number>();
   private run: string | null = null;
@@ -94,7 +100,8 @@ class Topics {
   private working = false;
   private timer = 0;
 
-  constructor() {
+  /** `machine`: another machine whose topics these are; none for this one. */
+  constructor(private readonly machine: string | null = null) {
     document.addEventListener("visibilitychange", () => {
       this.waiting?.abort();
       if (!document.hidden) {
@@ -218,7 +225,7 @@ class Topics {
       const controller = new AbortController();
       this.waiting = controller;
       try {
-        const told = await asking(snapshot ? null : this.run, known, controller.signal);
+        const told = await asking(snapshot ? null : this.run, known, controller.signal, this.machine);
         this.backoff.reset();
         this.retryAt = 0;
         if (told === null) {
@@ -253,4 +260,17 @@ class Topics {
   }
 }
 
-const topics = new Topics();
+const local = new Topics();
+/** Each other machine's topics, waited on apart: a slow machine holds up
+ *  neither this one's nor another's. */
+const remote = new Map<string, Topics>();
+
+function topicsOf(machine: string | null): Topics {
+  if (machine === null) return local;
+  let found = remote.get(machine);
+  if (!found) {
+    found = new Topics(machine);
+    remote.set(machine, found);
+  }
+  return found;
+}

@@ -179,6 +179,7 @@ mod submitted;
 mod talk;
 pub mod thumbnail;
 mod job_index;
+mod remote_topics;
 mod thumbnail_cache;
 mod thumbnail_room;
 mod timeline;
