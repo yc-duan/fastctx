@@ -266,6 +266,7 @@ async fn node(mut listener: Listener, world: WorldDir, machine: MachineName, not
                     conversation_plans: false,
                     timeline_reads: false,
                     watch_live: false,
+                    topics: false,
                     scratch_locations: false,
                     collaboration_watch: false,
                     machine: machine.clone(),
