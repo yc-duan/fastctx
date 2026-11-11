@@ -68,10 +68,21 @@ fn quoted(name: &str) -> String {
     format!("\"{}\"", name.replace('"', "\"\""))
 }
 
+/// What a projection was last rebuilt with, as a number its version row
+/// keeps: FNV-1a of the statement's text.
+fn fingerprint(sql: &str) -> i64 {
+    let hash =
+        sql.bytes().fold(0xcbf2_9ce4_8422_2325u64, |hash, byte| (hash ^ u64::from(byte)).wrapping_mul(0x100_0000_01b3));
+    i64::from_ne_bytes(hash.to_ne_bytes())
+}
+
 /// Checks one registered projection inside the owner's schema transaction.
-/// A missing object, changed definition or mismatched version rebuilds the
-/// projection from its authoritative rows. Runtime and asset schemas retain
-/// their separate, forward-only version rules. Returns whether it rebuilt.
+/// A missing object, a changed definition, a changed rebuild statement or a
+/// mismatched version rebuilds the projection from its authoritative rows:
+/// rows derived by an older rule never stay beside ones derived by the new.
+/// `retired` names what earlier versions of the projection left, tables
+/// included; it is dropped. Runtime and asset schemas retain their separate,
+/// forward-only version rules. Returns whether it rebuilt.
 pub fn ensure(
     db: &Connection,
     name: &str,
@@ -89,7 +100,7 @@ pub fn ensure(
     super::REGISTRY.projection(table.kind).map_err(Error::new)?;
     if objects.iter().filter(|object| matches!(object.kind, ObjectKind::Table)).count() != 1
         || objects.iter().any(|object| matches!(object.kind, ObjectKind::Table) && object.name != name)
-        || retired.iter().any(|(kind, _)| matches!(kind, ObjectKind::Table))
+        || retired.iter().any(|(_, retired)| *retired == name)
     {
         return Err(Error::new("derived schema does not declare its registered table"));
     }
@@ -98,7 +109,21 @@ pub fn ensure(
         "SELECT version FROM storage_versions WHERE component=?1", [&component],
         |row| Ok(matches!(row.get_ref(0)?, fastctx_storage::rusqlite::types::ValueRef::Integer(value) if value == i64::from(table.version))),
     ).optional()?;
-    let mut current = version == Some(true);
+    let rebuilt_with = format!("{component}.rebuild");
+    let same_rebuild: Option<bool> = db
+        .query_row("SELECT version FROM storage_versions WHERE component=?1", [&rebuilt_with], |row| {
+            Ok(matches!(row.get_ref(0)?, fastctx_storage::rusqlite::types::ValueRef::Integer(value) if value == fingerprint(rebuild)))
+        })
+        .optional()?;
+    let mut current = version == Some(true) && same_rebuild == Some(true);
+    for (kind, retired) in retired {
+        let left: bool = db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE name=?1 AND (type=?2 OR (?2='table' AND type='view')))",
+            (retired, kind.word()),
+            |row| row.get(0),
+        )?;
+        current &= !left;
+    }
     for object in objects {
         let sql: Option<String> = db
             .query_row(
@@ -129,5 +154,75 @@ pub fn ensure(
     }
     db.execute_batch(rebuild)?;
     db.execute("INSERT INTO storage_versions(component,version) VALUES(?1,?2) ON CONFLICT(component) DO UPDATE SET version=excluded.version",(&component,table.version))?;
+    db.execute(
+        "INSERT INTO storage_versions(component,version) VALUES(?1,?2) ON CONFLICT(component) DO UPDATE SET version=excluded.version",
+        (&rebuilt_with, fingerprint(rebuild)),
+    )?;
     Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const NAME: &str = "conversation_timer_headers";
+    const OBJECTS: &[Object] = &[Object {
+        kind: ObjectKind::Table,
+        name: NAME,
+        sql: "CREATE TABLE IF NOT EXISTS conversation_timer_headers (value INTEGER NOT NULL);",
+    }];
+
+    fn opened() -> Connection {
+        let db = Connection::open_in_memory().unwrap();
+        db.execute_batch(
+            "CREATE TABLE storage_versions (component TEXT PRIMARY KEY, version INTEGER NOT NULL) WITHOUT ROWID;
+             CREATE TABLE source (value INTEGER NOT NULL); INSERT INTO source VALUES (1),(2);",
+        )
+        .unwrap();
+        db
+    }
+
+    fn ensured(db: &Connection, retired: &[(ObjectKind, &str)], rebuild: &str) -> bool {
+        db.execute_batch("BEGIN").unwrap();
+        let rebuilt = ensure(db, NAME, OBJECTS, retired, rebuild).unwrap();
+        db.execute_batch("COMMIT").unwrap();
+        rebuilt
+    }
+
+    fn sum(db: &Connection) -> i64 {
+        db.query_row("SELECT coalesce(sum(value),0) FROM conversation_timer_headers", [], |row| row.get(0)).unwrap()
+    }
+
+    #[test]
+    fn a_changed_rebuild_statement_rebuilds_what_the_old_one_derived() {
+        let db = opened();
+        let plain = "INSERT INTO conversation_timer_headers SELECT value FROM source;";
+        assert!(ensured(&db, &[], plain));
+        assert_eq!(sum(&db), 3);
+        assert!(!ensured(&db, &[], plain), "nothing changed: the rows stand as they are");
+        let doubled = "INSERT INTO conversation_timer_headers SELECT value*2 FROM source;";
+        assert!(ensured(&db, &[], doubled));
+        assert_eq!(sum(&db), 6, "no row derived by the old statement is left beside the new");
+        assert!(!ensured(&db, &[], doubled));
+    }
+
+    #[test]
+    fn what_an_earlier_version_left_is_dropped() {
+        let db = opened();
+        let plain = "INSERT INTO conversation_timer_headers SELECT value FROM source;";
+        assert!(ensured(&db, &[], plain));
+        db.execute_batch("CREATE TABLE earlier_headers (value INTEGER); CREATE INDEX earlier_index ON source(value);")
+            .unwrap();
+        let retired = [(ObjectKind::Table, "earlier_headers"), (ObjectKind::Index, "earlier_index")];
+        assert!(ensured(&db, &retired, plain));
+        let left: i64 = db
+            .query_row(
+                "SELECT count(*) FROM sqlite_schema WHERE name IN ('earlier_headers','earlier_index')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(left, 0);
+        assert!(!ensured(&db, &retired, plain));
+    }
 }

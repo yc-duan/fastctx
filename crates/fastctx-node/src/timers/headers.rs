@@ -1,6 +1,8 @@
 //! Small derived headers keep timer reads independent of legacy payload size.
 //! Triggers update them with the authoritative row. Expression indexes on the
-//! large payload would make DELETE reparse that payload (2026-11-11).
+//! large payload would make DELETE reparse that payload (2026-11-11). A row
+//! whose payload is not JSON has a header with nothing read from it: it is
+//! listed as one that cannot be read, and never fails a write or a rebuild.
 
 use super::store::Store;
 use crate::records;
@@ -25,23 +27,37 @@ const OBJECTS: &[Object] = &[
     Object { kind: ObjectKind::Index, name: "conversation_timer_headers_visible", sql: "CREATE INDEX IF NOT EXISTS conversation_timer_headers_visible ON conversation_timer_headers(conversation,position,delivery,identity_bytes,body_bytes,identity_preview) WHERE route IS NOT 'sentinel';" },
     Object { kind: ObjectKind::Index, name: "conversation_timer_headers_owner", sql: "CREATE INDEX IF NOT EXISTS conversation_timer_headers_owner ON conversation_timer_headers(owner,conversation,position,delivery,identity_bytes,body_bytes,identity_preview) WHERE route IS NOT 'sentinel';" },
     Object { kind: ObjectKind::Trigger, name: "conversation_timer_header_insert", sql: "CREATE TRIGGER IF NOT EXISTS conversation_timer_header_insert AFTER INSERT ON conversation_records WHEN NEW.family='timers' BEGIN
-    INSERT OR REPLACE INTO conversation_timer_headers(conversation,position,id,owner,route,resident,delivery,identity_bytes,body_bytes,identity_preview) VALUES(NEW.conversation,NEW.position,CASE WHEN length(CAST(NEW.identity AS BLOB))<=4096 THEN NEW.identity END,CASE WHEN length(CAST(json_extract(NEW.body,'$.owner') AS BLOB))<=65536 THEN json_extract(NEW.body,'$.owner') END,substr(json_extract(NEW.body,'$.action.kind'),1,32),CASE WHEN length(CAST(json_extract(NEW.body,'$.action.resident') AS BLOB))<=65536 THEN json_extract(NEW.body,'$.action.resident') END,json_extract(NEW.body,'$.delivery'),length(CAST(NEW.identity AS BLOB)),length(NEW.body),substr(NEW.identity,1,128));
+    INSERT OR REPLACE INTO conversation_timer_headers(conversation,position,id,owner,route,resident,delivery,identity_bytes,body_bytes,identity_preview) SELECT NEW.conversation,NEW.position,CASE WHEN length(CAST(NEW.identity AS BLOB))<=4096 THEN NEW.identity END,CASE WHEN length(CAST(json_extract(body,'$.owner') AS BLOB))<=65536 THEN json_extract(body,'$.owner') END,substr(json_extract(body,'$.action.kind'),1,32),CASE WHEN length(CAST(json_extract(body,'$.action.resident') AS BLOB))<=65536 THEN json_extract(body,'$.action.resident') END,json_extract(body,'$.delivery'),length(CAST(NEW.identity AS BLOB)),length(NEW.body),substr(NEW.identity,1,128) FROM (SELECT CASE WHEN json_valid(CAST(NEW.body AS TEXT)) THEN NEW.body END AS body);
 END;" },
     Object { kind: ObjectKind::Trigger, name: "conversation_timer_header_update", sql: "CREATE TRIGGER IF NOT EXISTS conversation_timer_header_update AFTER UPDATE OF body,identity,family,conversation,position ON conversation_records WHEN OLD.family='timers' OR NEW.family='timers' BEGIN
     DELETE FROM conversation_timer_headers WHERE conversation=OLD.conversation AND position=OLD.position;
-    INSERT OR REPLACE INTO conversation_timer_headers(conversation,position,id,owner,route,resident,delivery,identity_bytes,body_bytes,identity_preview) SELECT NEW.conversation,NEW.position,CASE WHEN length(CAST(NEW.identity AS BLOB))<=4096 THEN NEW.identity END,CASE WHEN length(CAST(json_extract(NEW.body,'$.owner') AS BLOB))<=65536 THEN json_extract(NEW.body,'$.owner') END,substr(json_extract(NEW.body,'$.action.kind'),1,32),CASE WHEN length(CAST(json_extract(NEW.body,'$.action.resident') AS BLOB))<=65536 THEN json_extract(NEW.body,'$.action.resident') END,json_extract(NEW.body,'$.delivery'),length(CAST(NEW.identity AS BLOB)),length(NEW.body),substr(NEW.identity,1,128) WHERE NEW.family='timers';
+    INSERT OR REPLACE INTO conversation_timer_headers(conversation,position,id,owner,route,resident,delivery,identity_bytes,body_bytes,identity_preview) SELECT NEW.conversation,NEW.position,CASE WHEN length(CAST(NEW.identity AS BLOB))<=4096 THEN NEW.identity END,CASE WHEN length(CAST(json_extract(body,'$.owner') AS BLOB))<=65536 THEN json_extract(body,'$.owner') END,substr(json_extract(body,'$.action.kind'),1,32),CASE WHEN length(CAST(json_extract(body,'$.action.resident') AS BLOB))<=65536 THEN json_extract(body,'$.action.resident') END,json_extract(body,'$.delivery'),length(CAST(NEW.identity AS BLOB)),length(NEW.body),substr(NEW.identity,1,128) FROM (SELECT CASE WHEN json_valid(CAST(NEW.body AS TEXT)) THEN NEW.body END AS body) WHERE NEW.family='timers';
 END;" },
     Object { kind: ObjectKind::Trigger, name: "conversation_timer_header_delete", sql: "CREATE TRIGGER IF NOT EXISTS conversation_timer_header_delete AFTER DELETE ON conversation_records WHEN OLD.family='timers' BEGIN
     DELETE FROM conversation_timer_headers WHERE conversation=OLD.conversation AND position=OLD.position;
 END;" },
 ];
 
-const REBUILD: &str = "INSERT OR REPLACE INTO conversation_timer_headers(conversation,position,id,owner,route,resident,delivery,identity_bytes,body_bytes,identity_preview) SELECT conversation,position,CASE WHEN length(CAST(identity AS BLOB))<=4096 THEN identity END,CASE WHEN length(CAST(json_extract(body,'$.owner') AS BLOB))<=65536 THEN json_extract(body,'$.owner') END,substr(json_extract(body,'$.action.kind'),1,32),CASE WHEN length(CAST(json_extract(body,'$.action.resident') AS BLOB))<=65536 THEN json_extract(body,'$.action.resident') END,json_extract(body,'$.delivery'),length(CAST(identity AS BLOB)),length(body),substr(identity,1,128) FROM conversation_records WHERE family='timers';";
+const REBUILD: &str = "INSERT OR REPLACE INTO conversation_timer_headers(conversation,position,id,owner,route,resident,delivery,identity_bytes,body_bytes,identity_preview) SELECT conversation,position,CASE WHEN length(CAST(identity AS BLOB))<=4096 THEN identity END,CASE WHEN length(CAST(json_extract(body,'$.owner') AS BLOB))<=65536 THEN json_extract(body,'$.owner') END,substr(json_extract(body,'$.action.kind'),1,32),CASE WHEN length(CAST(json_extract(body,'$.action.resident') AS BLOB))<=65536 THEN json_extract(body,'$.action.resident') END,json_extract(body,'$.delivery'),length(CAST(identity AS BLOB)),body_bytes,substr(identity,1,128) FROM (SELECT conversation,position,identity,length(body) AS body_bytes,CASE WHEN json_valid(CAST(body AS TEXT)) THEN body END AS body FROM conversation_records WHERE family='timers');";
 
 pub(crate) fn ensure(db: &fastctx_storage::rusqlite::Connection) -> Result<()> {
     db.execute_batch("DROP INDEX IF EXISTS conversation_timers_visible; DROP INDEX IF EXISTS conversation_timers_visible_owner; DROP INDEX IF EXISTS conversation_timers_delivery; DROP INDEX IF EXISTS conversation_timers_header; DROP INDEX IF EXISTS conversation_timers_page; DROP INDEX IF EXISTS conversation_timers_owner_page;")?;
     fastctx_sync::registry::derived::ensure(db, "conversation_timer_headers", OBJECTS, &[], REBUILD)?;
     Ok(())
+}
+
+/// The delivery handle of the timer `id`, from its header alone.
+pub(super) fn delivery(rows: &records::Rows<'_>, id: &str) -> Result<Option<String>> {
+    use fastctx_storage::rusqlite::OptionalExtension;
+    let delivery = rows
+        .connection()
+        .query_row(
+            "SELECT h.delivery FROM conversation_records r INDEXED BY conversation_timer_id JOIN conversation_timer_headers h ON h.conversation=r.conversation AND h.position=r.position WHERE r.family='timers' AND r.identity=?1 AND NOT EXISTS(SELECT 1 FROM node_conversation_transfers t WHERE t.name=r.conversation AND t.rejected=0)",
+            [id],
+            |row| row.get::<_, Option<String>>(0),
+        )
+        .optional()?;
+    Ok(delivery.flatten())
 }
 
 pub(super) enum Routing {
@@ -180,5 +196,65 @@ impl Store {
             store.changed.notify_one();
             Ok(result)
         }).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fastctx_storage::rusqlite::Connection;
+
+    fn opened() -> Connection {
+        let db = Connection::open_in_memory().unwrap();
+        db.execute_batch(
+            "CREATE TABLE storage_versions (component TEXT PRIMARY KEY, version INTEGER NOT NULL) WITHOUT ROWID;",
+        )
+        .unwrap();
+        db.execute_batch(crate::records::SCHEMA).unwrap();
+        db.execute_batch("BEGIN").unwrap();
+        ensure(&db).unwrap();
+        db.execute_batch("COMMIT").unwrap();
+        db
+    }
+
+    fn put(db: &Connection, position: i64, identity: &str, body: &[u8]) {
+        db.execute(
+            "INSERT INTO conversation_records(position,conversation,family,identity,body,modified) VALUES(?1,'@node','timers',?2,?3,'')",
+            (position, identity, body),
+        )
+        .unwrap();
+    }
+
+    fn header(db: &Connection, position: i64) -> (Option<String>, Option<String>, i64) {
+        db.query_row(
+            "SELECT route,delivery,body_bytes FROM conversation_timer_headers WHERE conversation='@node' AND position=?1",
+            [position],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn a_payload_that_is_not_json_fails_neither_a_write_nor_a_rebuild() {
+        let db = opened();
+        let whole = br#"{"owner":{"kind":"node"},"action":{"kind":"goal"},"delivery":"timer-1"}"#;
+        put(&db, 1, "whole", whole);
+        put(&db, 2, "broken", br#"{"owner":"#);
+        assert_eq!(header(&db, 1), (Some("goal".into()), Some("timer-1".into()), whole.len() as i64));
+        assert_eq!(header(&db, 2), (None, None, 9));
+        // A change of the broken row, and its removal, keep its header in step.
+        db.execute("UPDATE conversation_records SET body=?1 WHERE identity='broken'", [whole.as_slice()]).unwrap();
+        assert_eq!(header(&db, 2).0.as_deref(), Some("goal"));
+        db.execute("UPDATE conversation_records SET body=x'7b' WHERE identity='broken'", []).unwrap();
+        assert_eq!(header(&db, 2), (None, None, 1));
+        // Rebuilt from the rows as they are, the broken one among them.
+        db.execute_batch("BEGIN; DELETE FROM storage_versions; DROP TABLE conversation_timer_headers;").unwrap();
+        ensure(&db).unwrap();
+        db.execute_batch("COMMIT").unwrap();
+        assert_eq!(header(&db, 1).1.as_deref(), Some("timer-1"));
+        assert_eq!(header(&db, 2), (None, None, 1));
+        db.execute("DELETE FROM conversation_records WHERE identity='broken'", []).unwrap();
+        let left: i64 = db.query_row("SELECT count(*) FROM conversation_timer_headers", [], |row| row.get(0)).unwrap();
+        assert_eq!(left, 1);
     }
 }

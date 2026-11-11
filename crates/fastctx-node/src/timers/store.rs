@@ -118,7 +118,7 @@ impl Store {
     }
     pub async fn get(self: &Arc<Self>, id: &str) -> io::Result<Option<Timer>> {
         let id = id.to_string();
-        self.work(move |store| records::read(&store.directory, |rows| get_timer(rows, &id))).await
+        self.work(move |store| records::read(&store.directory, |rows| get_timer_bounded(rows, &id))).await
     }
     pub(super) async fn page(
         self: &Arc<Self>,
@@ -265,7 +265,10 @@ impl Store {
         let (id, delivery, timer_id) = (timer.id.clone(), timer.delivery.clone(), timer.id.clone());
         self.work(move |store| {
             let removed = records::write_at(&store.directory, Priority::Interactive, 128, move |rows| {
-                if get_timer(rows, &id)?.is_none_or(|row| row.delivery != delivery) {
+                // Its header says whether it is still this firing's: a row
+                // an older node left with a very large payload completes
+                // without that payload being read.
+                if super::headers::delivery(rows, &id)?.is_none_or(|current| current != delivery.as_str()) {
                     return Ok(false);
                 }
                 delete_timer(rows, &id)
@@ -311,7 +314,22 @@ fn scope(owner: &Owner) -> &str {
         _ => "@node",
     }
 }
+/// The whole timer, whatever its size: what fires it and reschedules it
+/// reads the row the worker already chose, also one an older node left with
+/// a payload past every bound of today's.
 fn get_timer(rows: &records::Rows<'_>, id: &str) -> Result<Option<Timer>> {
+    use fastctx_storage::rusqlite::OptionalExtension;
+    let bytes: Option<Vec<u8>> = rows
+        .connection()
+        .query_row("SELECT body FROM conversation_records r WHERE family='timers' AND identity=?1 AND NOT EXISTS(SELECT 1 FROM node_conversation_transfers t WHERE t.name=r.conversation AND t.rejected=0)", [id], |row| {
+            row.get(0)
+        })
+        .optional()?;
+    bytes.map(|bytes| records::decode(&bytes)).transpose()
+}
+/// A timer read for someone who asked: a payload past the bound is refused
+/// rather than loaded for them.
+fn get_timer_bounded(rows: &records::Rows<'_>, id: &str) -> Result<Option<Timer>> {
     use fastctx_storage::rusqlite::OptionalExtension;
     let bytes: Option<Option<Vec<u8>>> = rows
         .connection()

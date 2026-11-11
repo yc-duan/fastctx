@@ -32,6 +32,7 @@ pub(super) fn make(db: &Connection) -> Result<Box<dyn Guard>> {
         .prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'")?
         .query_map([], |row| row.get::<_, String>(0))?
         .collect::<std::result::Result<Vec<_>, _>>()?;
+    let mut unknown = 0i64;
     for table in tables {
         let registered = crate::store::schema::TABLES.contains(&table.as_str())
             || crate::registry::runtime::TABLES.iter().any(|entry| entry.name == table)
@@ -43,9 +44,19 @@ pub(super) fn make(db: &Connection) -> Result<Box<dyn Guard>> {
                 ) && entry.selector == table
             });
         if !registered {
-            return Err(Error::new(format!("unregistered persistent table: {table}")));
+            // In a build for development a table no registry names is one
+            // someone forgot to register, and is refused. In the field it is
+            // a table a newer kernel left before a return to this one: not
+            // this kernel's to read or write, and no reason to refuse the
+            // whole database, or no version that adds a table could ever be
+            // gone back from.
+            if cfg!(debug_assertions) {
+                return Err(Error::new(format!("unregistered persistent table: {table}")));
+            }
+            unknown += 1;
         }
     }
+    fastctx_platform::readings::gauge("sync.storage.unregistered_tables").set(unknown);
     let held = super::totals(db)?;
     super::publish_totals(held);
     Ok(Box::new(PreservationGuard {

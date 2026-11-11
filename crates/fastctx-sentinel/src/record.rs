@@ -73,8 +73,11 @@ pub fn read_page(directory: &Path, held: Option<&str>, standing: &str, before: O
         };
         let events = wake(sequence, &run);
         let size = serde_json::to_vec(&events).map_err(|error| error.to_string())?.len();
+        // One wake too large to tell is left out, as an unreadable run is;
+        // the record says it is not whole.
         if size > REPLY_BYTES {
-            return Err(format!("sentinel wake {sequence} exceeds the {REPLY_BYTES} byte record limit"));
+            whole = false;
+            continue;
         }
         if bytes + size > REPLY_BYTES {
             next_before = Some(sequence.saturating_add(1));

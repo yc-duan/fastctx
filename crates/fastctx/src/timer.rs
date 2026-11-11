@@ -65,7 +65,21 @@ pub fn run(args: TimerArgs) -> anyhow::Result<()> {
             after,
         },
     };
+    let paged = matches!(&timer, TimerCall::List { paged: true, .. });
     match crate::ask::call(Call::Timer { timer })?.0 {
+        // A page is not the whole list: where it continues and the rows too
+        // large to show are part of what it prints, so a script reading its
+        // output alone cannot take a page for all of them.
+        Reply::Timers { timers, next, oversized } if paged => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "timers": timers,
+                    "oversized": oversized,
+                    "next": next,
+                }))?
+            );
+        }
         Reply::Timers { timers, next, oversized } => {
             println!("{}", serde_json::to_string_pretty(&timers)?);
             for row in oversized {
