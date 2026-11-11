@@ -107,6 +107,8 @@ pub(crate) fn unfetched(hub: &Hub, name: &MachineName, id: u64, why: String) {
 pub(super) struct Obtaining {
     waiters: Vec<Waiter>,
     expired: bool,
+    /// Whether its turn came: until it does, other packages are coming in.
+    started: bool,
     id: u64,
 }
 
@@ -145,8 +147,11 @@ pub(super) async fn obtain(
             }
             None => {
                 let id = hub.next();
-                updates.obtaining.insert(held.clone(), Obtaining { waiters: vec![waiting], expired: false, id });
+                updates
+                    .obtaining
+                    .insert(held.clone(), Obtaining { waiters: vec![waiting], expired: false, started: false, id });
                 fastctx_platform::task::spawn(own(hub.clone(), held.clone(), id));
+                fastctx_platform::task::spawn(unstarted(hub.clone(), held.clone(), id));
             }
         }
     }
@@ -158,6 +163,11 @@ async fn own(hub: Arc<Hub>, held: Held, id: u64) {
     // One package comes in at a time; its time counts from its turn.
     let coming = hub.updates.lock().expect("never poisoned").coming.clone();
     let _turn = coming.lock_owned().await;
+    // One given up while it waited for its turn is not brought in.
+    match hub.updates.lock().expect("never poisoned").obtaining.get_mut(&held) {
+        Some(owner) if owner.id == id => owner.started = true,
+        _ => return,
+    }
     // The timer remains runnable even while the owner enters synchronous
     // publication I/O. Its identity cannot expire a subsequent owner.
     let timer = fastctx_platform::task::spawn(expire(hub.clone(), held.clone(), id));
@@ -169,6 +179,31 @@ async fn own(hub: Arc<Hub>, held: Held, id: u64) {
     let owner = hub.updates.lock().expect("never poisoned").obtaining.remove(&held);
     for waiter in owner.into_iter().flat_map(|owner| owner.waiters) {
         let _ = waiter.answer.send(brought.clone());
+    }
+}
+
+/// Gives up a package whose turn has not come within three times what one
+/// is given to come in: those waiting for it are told so, and one asked for
+/// later waits its own turn. Before, a package coming in that never ended,
+/// as one whose transfer would not stop, held every other package's
+/// requests waiting for good.
+async fn unstarted(hub: Arc<Hub>, held: Held, id: u64) {
+    tokio::time::sleep(3 * (BUDGET + 2 * SETTLE)).await;
+    let waiters = {
+        let mut updates = hub.updates.lock().expect("never poisoned");
+        match updates.obtaining.get(&held) {
+            Some(owner) if owner.id == id && !owner.started => {
+                updates.obtaining.remove(&held).map(|owner| owner.waiters).unwrap_or_default()
+            }
+            _ => return,
+        }
+    };
+    let reason = format!(
+        "other packages were coming in for {} minutes and this one's turn did not come; try again later",
+        3 * (BUDGET + 2 * SETTLE).as_secs() / 60
+    );
+    for waiter in waiters {
+        let _ = waiter.answer.send(Err(reason.clone()));
     }
 }
 
@@ -569,7 +604,7 @@ async fn settle_owned(hub: Arc<Hub>, cache: fastctx_update::Cache, held: Held, s
 /// it in place, if no other did, within what is left of the budget; one
 /// that does not end in time can no longer put its package in place, and
 /// deletes what it left itself; one putting it in place then finishes.
-async fn settle(hub: &Hub, cache: &fastctx_update::Cache, held: &Held, try_: Going, deadline: Instant) {
+async fn settle(hub: &Arc<Hub>, cache: &fastctx_update::Cache, held: &Held, try_: Going, deadline: Instant) {
     stop(hub, &try_);
     let Going { source, attempt, .. } = try_;
     let settle = match attempt.keeping() {
@@ -598,7 +633,7 @@ async fn settle(hub: &Hub, cache: &fastctx_update::Cache, held: &Held, try_: Goi
     if attempt.is_over()
         && let Ok(left) = attempt_path(cache, held, attempt.id).await
     {
-        super::cleanup::temporary(hub, &left).await;
+        super::cleanup::temporary(hub, left).await;
     }
 }
 

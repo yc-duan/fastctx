@@ -26,6 +26,33 @@ mod transport;
 use crate::outq::Outq;
 use crate::{Hub, Out, Session, Socket, refuse, storage_failure};
 
+/// How many questions one member may have the hub working on at once. A
+/// question read is handed to work of its own and the room its frame took
+/// is free again, so without this a member could have the hub start work
+/// without end; a machine in its right mind has a few dozen at most. The
+/// questions whose work keeps its own bounds are not counted for as long as
+/// it lasts: packages (a few waiters each, one coming in at a time) and the
+/// project ledger's reads (their own readers and pending limits).
+const ASKING_EACH: usize = 1024;
+
+/// How many questions every member together may have the hub working on at
+/// once, by the hub's memory, from 16,384 to 262,144.
+fn asking_all() -> &'static Arc<tokio::sync::Semaphore> {
+    static ALL: std::sync::OnceLock<Arc<tokio::sync::Semaphore>> = std::sync::OnceLock::new();
+    ALL.get_or_init(|| {
+        let physical = fastctx_platform::memory::physical().unwrap_or(1 << 30);
+        Arc::new(tokio::sync::Semaphore::new((physical / (64 << 10)).clamp(16_384, 262_144) as usize))
+    })
+}
+
+/// What a question holds while the hub works on it: the room its parts
+/// took, where it came in parts, and its places among what its member and
+/// every member have the hub working on. Each goes when the work does.
+pub(crate) struct Asking {
+    _parts: Option<fastctx_net::reassembly::Reservation>,
+    _places: Option<(tokio::sync::OwnedSemaphorePermit, tokio::sync::OwnedSemaphorePermit)>,
+}
+
 /// What a member says of itself when its session opens.
 pub(crate) struct Said {
     pub asset_sync: Option<Box<fastctx_net::sync_transport::Advertisement>>,
@@ -299,6 +326,7 @@ pub(crate) async fn session(
 
     // Whether the writer still has a refusal to deliver before closing.
     let mut uploads = crate::question_parts::Uploads::default();
+    let asking = Arc::new(tokio::sync::Semaphore::new(ASKING_EACH));
     let mut upload_clock = tokio::time::interval(HEARTBEAT);
     let mut heard = crate::strain::Heard::default();
     let (ended, refusing) = loop {
@@ -365,7 +393,9 @@ pub(crate) async fn session(
                 };
                 uploads = returned;
                 match complete {
-                    Ok(Some(complete)) => (Up::Ask { id, question: complete.question, submission: None }, Some(complete.reservation)),
+                    Ok(Some(complete)) => {
+                        (Up::Ask { id, question: complete.question, submission: None }, Some(complete.reservation))
+                    }
                     Ok(None) => continue,
                     Err(why) => {
                         let _ = out.send(Out::Frame(Down::Told { id, answer: Err(why) }));
@@ -378,6 +408,31 @@ pub(crate) async fn session(
                 continue;
             }
             frame => (frame, None),
+        };
+        let reservation = match &frame {
+            Up::Ask { id, .. } => {
+                let places = asking
+                    .clone()
+                    .try_acquire_owned()
+                    .map_err(|_| {
+                        format!("{ASKING_EACH} questions of this machine are being worked on; ask again once some are answered")
+                    })
+                    .and_then(|member| {
+                        asking_all()
+                            .clone()
+                            .try_acquire_owned()
+                            .map(|all| (member, all))
+                            .map_err(|_| "the hub is working on as many questions as it takes; ask again shortly".to_string())
+                    });
+                match places {
+                    Ok(places) => Asking { _parts: reservation, _places: Some(places) },
+                    Err(why) => {
+                        let _ = out.send(Out::Frame(Down::Told { id: *id, answer: Err(why) }));
+                        continue;
+                    }
+                }
+            }
+            _ => Asking { _parts: reservation, _places: None },
         };
         let (handling, member_name, queue) = (hub.clone(), name.clone(), out.clone());
         let handled = fastctx_platform::task::spawn_blocking(move || {
@@ -741,7 +796,7 @@ fn handle(
     generation: u64,
     out: &Outq,
     frame: Up,
-    reservation: Option<fastctx_net::reassembly::Reservation>,
+    reservation: Asking,
 ) -> Result<(), Refusal> {
     if !hub.sessions().get(name).is_some_and(|session| session.generation == generation && session.key == key)
         || hub.store().indexed().by_key(&key).is_none_or(|member| member.name.as_str() != name.as_str())
@@ -791,7 +846,7 @@ fn handle(
             let (hub, out) = (hub.clone(), out.clone());
             let held = crate::moving::Moving::hold(&hub);
             fastctx_platform::task::spawn(async move {
-                let _held = held;
+                let (_held, _reservation) = (held, reservation);
                 let answer = crate::direct::change(hub, origin, account, machine, at).await;
                 let _ = out.send(Out::Frame(Down::Told { id, answer }));
             });
@@ -834,7 +889,7 @@ fn handle(
             let held = crate::moving::Moving::hold(hub);
             let (hub, out) = (hub.clone(), out.clone());
             fastctx_platform::task::spawn(async move {
-                let _held = held;
+                let (_held, _reservation) = (held, reservation);
                 let answer = crate::updates::view_request(&hub, &origin, &account, request).await;
                 let _ = out.send(Out::Frame(Down::Told { id, answer }));
             });
@@ -843,7 +898,7 @@ fn handle(
             let held = crate::moving::Moving::hold(hub);
             let (hub, out) = (hub.clone(), out.clone());
             fastctx_platform::task::spawn(async move {
-                let _held = held;
+                let (_held, _reservation) = (held, reservation);
                 let answer = crate::updates::prepare_update(&hub, &machine, &version).await.map(|()| Told::Done);
                 let _ = out.send(Out::Frame(Down::Told { id, answer }));
             });
@@ -854,7 +909,7 @@ fn handle(
                 question @ (Question::HistoryCatalog { .. }
                 | Question::HistoryRead { .. }
                 | Question::HistorySubmitted { .. }),
-                ..
+            ..
         } => {
             let (hub, out) = (hub.clone(), out.clone());
             fastctx_platform::task::spawn(async move {
@@ -1035,7 +1090,7 @@ fn handle(
             let (hub, from, out) = (hub.clone(), name.clone(), out.clone());
             let held = crate::moving::Moving::hold(&hub);
             fastctx_platform::task::spawn(async move {
-                let _held = held;
+                let (_held, _reservation) = (held, reservation);
                 let answer = crate::plan_copies::ask(&hub, from, key, account, opened, request).await;
                 let _ = out.send(Out::Frame(Down::Told { id, answer }));
             });
@@ -1131,6 +1186,7 @@ fn handle(
             let out = out.clone();
             let hub = hub.clone();
             fastctx_platform::task::spawn(async move {
+                let _reservation = reservation;
                 let read = releases.clone();
                 let answer =
                     match fastctx_platform::task::spawn_blocking(move || read.ready(&version, allow_partial)).await {

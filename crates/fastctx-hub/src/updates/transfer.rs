@@ -315,7 +315,7 @@ async fn take(hub: &Arc<Hub>, mut socket: Socket, held: &Held, attempt: &Arc<Att
             Ok(()) => Err("the hub gave this request up and asked another machine".to_string()),
             Err(why) => Err(why),
         };
-        super::cleanup::temporary(hub, &incoming).await;
+        super::cleanup::temporary(hub, incoming.clone()).await;
         kept
     };
     let kept = completing.await;

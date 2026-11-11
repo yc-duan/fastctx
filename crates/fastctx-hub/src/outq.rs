@@ -48,6 +48,61 @@ const NOTICES: usize = 16384;
 /// wait.
 const BURST: usize = 32;
 
+/// What the first lanes of every member together may hold: an eighth of the
+/// machine's memory, from 128 MiB to 2 GiB. Each member's lane is bound on
+/// its own (`URGENT_BYTES`); ten thousand members each near that bound would
+/// hold hundreds of gigabytes (`specs/world-foundation.md`, 宪法第三条). A
+/// member whose answer finds no room is let go, as one that took too little
+/// of its own lane is, and connects again.
+struct Pool {
+    used: std::sync::atomic::AtomicUsize,
+    bytes: usize,
+    /// How much of it was used, told in the hub's health.
+    noted: &'static fastctx_platform::health::Bound,
+}
+
+fn pool() -> &'static Pool {
+    static POOL: std::sync::OnceLock<Pool> = std::sync::OnceLock::new();
+    POOL.get_or_init(|| {
+        let physical = fastctx_platform::memory::physical().unwrap_or(1 << 30);
+        Pool {
+            used: std::sync::atomic::AtomicUsize::new(0),
+            bytes: usize::try_from((physical / 8).clamp(128 << 20, 2 << 30)).unwrap_or(usize::MAX),
+            noted: fastctx_platform::health::bound("hub.output"),
+        }
+    })
+}
+
+impl Pool {
+    /// Takes `bytes` of it; whether there was room.
+    fn take(&self, bytes: usize) -> bool {
+        use std::sync::atomic::Ordering;
+        let taken = self
+            .used
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |used| {
+                used.checked_add(bytes).filter(|after| *after <= self.bytes)
+            })
+            .is_ok();
+        self.noted.note(self.used.load(Ordering::Relaxed), self.bytes);
+        taken
+    }
+
+    fn give(&self, bytes: usize) {
+        self.used.fetch_sub(bytes, std::sync::atomic::Ordering::AcqRel);
+    }
+}
+
+/// The part of the pool a member's first lane holds, given back when the
+/// lane lets its frames go, however it does.
+#[derive(Default)]
+struct Charge(usize);
+
+impl Drop for Charge {
+    fn drop(&mut self) {
+        pool().give(self.0);
+    }
+}
+
 /// What a member's writer is to do next.
 pub(crate) enum Next {
     /// Write these, in order.
@@ -90,6 +145,8 @@ struct State {
     welcome: Option<Down>,
     urgent: VecDeque<(Out, usize)>,
     urgent_bytes: usize,
+    /// `urgent_bytes`, as taken of every member's pool.
+    charged: Charge,
     letters: VecDeque<Down>,
     notices: VecDeque<(Notice, Pending)>,
     /// The afoot notice taken last, drained a frame at a time before the next.
@@ -343,6 +400,14 @@ impl State {
             );
             return self.overflow(why);
         }
+        if !pool().take(bytes) {
+            let why = format!(
+                "what waits for every member takes as much as the hub keeps for them, {} bytes; letting it go",
+                pool().bytes
+            );
+            return self.overflow(why);
+        }
+        self.charged.0 += bytes;
         self.urgent_bytes += bytes;
         self.urgent.push_back((out, bytes));
         Ok(())
@@ -384,6 +449,8 @@ impl State {
             && let Some((out, bytes)) = self.urgent.pop_front()
         {
             self.urgent_bytes -= bytes;
+            self.charged.0 -= bytes;
+            pool().give(bytes);
             self.in_a_row += 1;
             return Some(match out {
                 Out::Frame(frame) => Next::Frames(vec![frame]),
