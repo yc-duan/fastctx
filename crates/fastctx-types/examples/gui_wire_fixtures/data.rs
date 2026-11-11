@@ -14,6 +14,10 @@ pub fn fixtures() -> Vec<DataReply> {
             output_days: 30,
             output_retention: policy.map(str::to_owned),
             claude_logins: vec![],
+            unread: policy.is_some().then(|| fastctx_types::data::Unread {
+                entries: 3,
+                first: Some("/world/world/node.sqlite3-wal: being used by another process".into()),
+            }),
         }))
     };
     vec![

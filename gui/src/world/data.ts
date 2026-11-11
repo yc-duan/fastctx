@@ -27,6 +27,9 @@ export interface Space {
   output_days: number;
   output_retention?: string;
   claude_logins?: ClaudeKeeping[];
+  /** Entries that could not be read and are not counted, and the first of
+   *  them with why. */
+  unread?: { entries: number; first?: string };
 }
 
 export interface Kinds {

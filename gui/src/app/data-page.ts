@@ -26,6 +26,8 @@ export interface DataWords {
   /** The way on to the archived conversations. */
   archived: string;
   total(size: string): string;
+  /** Under the total: entries that could not be read and are not counted. */
+  unread(entries: number): string;
   kinds: { conversations: string; command_output: string; cache: string; program: string; other: string };
   conversations: string;
   groups: Record<Group, string>;
@@ -61,6 +63,7 @@ export const zhData: DataWords = {
   archived: "已归档的对话",
   title: "本机数据",
   total: (size) => `Fastctx 在这台电脑上占 ${size}`,
+  unread: (entries) => `另有 ${entries} 项读不到，没算在内`,
   kinds: { conversations: "对话", command_output: "命令输出", cache: "缓存", program: "程序", other: "其他" },
   conversations: "对话",
   groups: { listed: "在列", removed: "已归档", elsewhere: "别处的" },
@@ -106,6 +109,7 @@ export const enData: DataWords = {
   archived: "Archived conversations",
   title: "Data on this computer",
   total: (size) => `Fastctx uses ${size} on this computer`,
+  unread: (entries) => `${entries} more ${entries === 1 ? "entry" : "entries"} could not be read and ${entries === 1 ? "is" : "are"} not counted`,
   kinds: { conversations: "Conversations", command_output: "Command output", cache: "Cache", program: "Program", other: "Other" },
   conversations: "Conversations",
   groups: { listed: "Listed", removed: "Archived", elsewhere: "From elsewhere" },
@@ -248,6 +252,7 @@ export class DataPage implements Page {
       .join("");
     return `<section class="data-top">
       <p class="data-total" title="${escape(space.root)}">${escape(words.total(size(totalOf(space))))}</p>
+      ${space.unread ? `<p class="feature-note" title="${escape(space.unread.first ?? "")}">${escape(words.unread(space.unread.entries))}</p>` : ""}
       <svg class="data-bar" viewBox="0 0 ${width} 32" preserveAspectRatio="none" aria-hidden="true"><g filter="url(#pen-marker-lite)">${strokes}</g></svg>
       <ul class="data-legend">${legend}</ul>
     </section>`;
