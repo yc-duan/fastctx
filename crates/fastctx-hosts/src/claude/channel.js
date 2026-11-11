@@ -15,6 +15,8 @@ async function channelOpen($, context) {
   const told = await channelTold($, context)
   context.channel = told
   context.channelReports = told !== null
+  // What the node took and has not said it applied, in the order it went.
+  context.unconfirmed = []
   if (told !== null) void channelWait($, context)
 }
 
@@ -38,8 +40,11 @@ function channelAsk($, channel, what, init = {}) {
   })
 }
 
-// Hands one report to the node: whether it took it. A report it did not
-// take, or a channel not reached, turns this session's reports to files.
+// Hands one report to the node: whether it took it. It takes it at once
+// and applies it in turn, so nothing here waits for that; it is kept here
+// until the node says it applied it. A report it did not take, or a channel
+// not reached, turns this session's reports to files, those it took and
+// has not applied first (`channelSpill`).
 async function channelReport($, context, name, report) {
   const channel = context.channel
   if (!context.channelReports || channel === null) return false
@@ -48,14 +53,37 @@ async function channelReport($, context, name, report) {
       + JSON.stringify(report.sequence ?? null) + ',"report":' + report.body + '}]}'
     const answer = await channelAsk($, channel, 'reports', { method: 'POST', body })
     if (!answer.ok) throw new Error('the node answered ' + answer.status + ': ' + answer.text)
-    if (JSON.parse(answer.text).applied.includes(name + '.json')) return true
-    throw new Error('the node did not take ' + name)
+    const told = JSON.parse(answer.text)
+    if (!told.received.includes(name + '.json')) throw new Error('the node did not take ' + name)
+    context.unconfirmed.push({ name, report })
+    channelConfirmed(context, told.applied)
+    return true
   } catch (error) {
     if (context.channelReports) {
       context.channelReports = false
       $.ui.log('World channel: this session reports through files from now: ' + String(error), { to: 'debug' })
     }
     return false
+  }
+}
+
+// The node applied every report up to `applied`: they are let go of.
+function channelConfirmed(context, applied) {
+  if (typeof applied !== 'string') return
+  const through = applied.replace(/\.json$/, '')
+  context.unconfirmed = context.unconfirmed.filter((held) => held.name > through)
+}
+
+// What the node took and has not said it applied goes to files, in order,
+// before anything after it: the node may have gone with it. One it did apply
+// is passed over there by its marker.
+async function channelSpill($, context) {
+  const held = context.unconfirmed ?? []
+  context.unconfirmed = []
+  for (const { name, report } of held) {
+    if (report.sequence !== undefined && report.sequence !== null) await $.fs.write(context.dir + '/applied/' + report.sequence + '.sequence', '')
+    await writeReport($, context.dir + '/events/' + name, report.body)
+    await $.fs.write(context.dir + '/events/' + name + '.done', '')
   }
 }
 

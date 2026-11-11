@@ -228,6 +228,9 @@ function floor(context, own) {
       const first = reports === undefined ? undefined : reports.keys().next().value
       if (first !== undefined && first < lowest) lowest = first
     }
+    // Taken by the node and not applied yet: not on disk either.
+    const held = writer.unconfirmed?.[0]?.name
+    if (held !== undefined && held < lowest) lowest = held
   }
   return lowest + '.json'
 }
@@ -262,6 +265,7 @@ async function writePending($, context, name) {
     context.unwritten.delete(name)
     return
   }
+  await channelSpill($, context)
   // A batch's filename predates its last fragment. Keep the allocator's
   // watermark even after acknowledgment deletes the batch, so reload in the
   // same millisecond (or a clock rollback) cannot reuse fragment timestamps.

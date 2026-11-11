@@ -262,7 +262,10 @@ test('hands reports to the node on its channel, and to files once it is not reac
       expect(e.init?.method).toBe('POST')
       const { reports } = JSON.parse(e.init?.body as string) as { reports: { name: string; report: { kind: string } }[] }
       handed.push(...reports)
-      return { value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ applied: reports.map((report) => report.name) }) } }
+      // Taken at once and applied in turn: each answer says how far the
+      // node applied, here up to the report before.
+      const applied = handed.length > 1 ? handed[handed.length - 2].name : null
+      return { value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ received: reports.map((report) => report.name), applied }) } }
     }
     if (e.url.endsWith('/subagents')) return { value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ configuration: null }) } }
     // A wait the node holds: nothing new while the test runs.
@@ -284,6 +287,10 @@ test('hands reports to the node on its channel, and to files once it is not reac
   await clock.settle()
   const after = filed().length
   expect(after > 0).toBe(true)
+  // The last report the node took and never said it applied went to a file
+  // too, before the first one written there.
+  const last = handed[handed.length - 1].name
+  expect(filed().some((path) => path.endsWith('/events/' + last))).toBe(true)
   reached = true
   for await (const _ of $.turn.step({ turnId: 'reached', index: 2, model: 'fixture', messageCount: 3 })) { /* drained */ }
   await clock.settle()
