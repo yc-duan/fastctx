@@ -460,7 +460,6 @@ pub(crate) struct Refreshed {
 /// to the hub it is on, which data connections take first.
 #[derive(Clone)]
 pub(crate) struct Connection {
-    asset_sync: Option<Arc<crate::sync_transport::Advertisement>>,
     generation: u64,
     closed: watch::Receiver<Option<String>>,
     up: outgoing::Outgoing,
@@ -1453,6 +1452,3 @@ fn submits(question: &Question) -> bool {
 /// how long: as a call between machines is.
 const ASKS_AGAIN: std::time::Duration = std::time::Duration::from_secs(1);
 const ASKS_FOR: std::time::Duration = std::time::Duration::from_secs(60 * 60);
-
-mod asset;
-pub use asset::AssetUpstream;

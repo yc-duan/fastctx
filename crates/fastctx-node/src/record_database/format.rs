@@ -4,10 +4,7 @@ use fastctx_storage::{
     format_upgrade::{self, BackupBasis, Begin, Event, Options, Phase, Service},
     rusqlite::Connection,
 };
-use fastctx_sync::store::{
-    format_upgrade::{SqliteUpgradeJournal, prepare_format_upgrade},
-    schema,
-};
+use fastctx_sync::format_upgrade::{SqliteUpgradeJournal, prepare_format_upgrade};
 use fastctx_types::layout::WorldDir;
 use std::{path::Path, sync::Arc};
 
@@ -28,14 +25,11 @@ pub(super) fn observe(world: &WorldDir, path: &Path) -> Result<Observation> {
     Ok(Observation { basis, previous, at })
 }
 pub(super) fn guard(db: &Connection) -> Result<Box<dyn fastctx_storage::Guard>> {
-    Ok(Box::new(fastctx_storage::guard::CompositeGuard::new(vec![
-        crate::asset_preservation::guard(db)?,
-        fastctx_sync::store::boundary::guard(db)?,
-    ])))
+    crate::asset_preservation::guard(db)
 }
 
 pub(super) fn initialize(db: &Connection, observed: &Observation) -> Result<()> {
-    schema::initialize(db)?;
+    fastctx_sync::format_upgrade::install(db)?;
     prepare_format_upgrade(
         db,
         Begin {

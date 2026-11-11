@@ -185,7 +185,6 @@ struct Opened {
     taken: u64,
     hub_letters: u64,
     afoot_pending: bool,
-    asset_sync: Option<Arc<crate::sync_transport::Advertisement>>,
 }
 
 /// How long each way after the first waits before it is dialed too, in its
@@ -337,7 +336,6 @@ async fn greet(inner: &Arc<Inner>, upstream: &Upstream, dialed: dial::Dialed) ->
             parts: true,
             call_details: true,
             view_deltas: true,
-            asset_sync: Some(Box::new(crate::sync_transport::Advertisement::local(None))),
         },
     };
     match tokio::time::timeout(SILENCE, dial::send(&mut socket, &hello)).await {
@@ -354,7 +352,7 @@ async fn greet(inner: &Arc<Inner>, upstream: &Upstream, dialed: dial::Dialed) ->
         }
     };
     match welcome {
-        Down::Welcome { hub, hub_name, name, taken, letters, afoot_pending, asset_sync, .. } => {
+        Down::Welcome { hub, hub_name, name, taken, letters, afoot_pending, .. } => {
             if hub != membership.id {
                 return Err(Ended::Retry(format!("the hub is {hub}, not {}", membership.id)));
             }
@@ -385,7 +383,6 @@ async fn greet(inner: &Arc<Inner>, upstream: &Upstream, dialed: dial::Dialed) ->
                 taken,
                 hub_letters: letters,
                 afoot_pending: afoot_pending.unwrap_or(false),
-                asset_sync: asset_sync.map(Arc::from),
             })
         }
         Down::Refused { reason } => Err(refused(inner, reason)),
@@ -400,7 +397,7 @@ async fn connected(
     tried: &[Upstream],
     opened: Opened,
 ) -> Ended {
-    let Opened { socket, address, route, taken, hub_letters, afoot_pending, asset_sync } = opened;
+    let Opened { socket, address, route, taken, hub_letters, afoot_pending } = opened;
     let upstream = tried.last().expect("a session is opened by a way").clone();
 
     // The hub holds this machine's letters through `taken`; and it numbers
@@ -448,7 +445,6 @@ async fn connected(
     let (up, mut outgoing): (Outgoing, Writing) = Outgoing::channel();
     let (closed, closing) = tokio::sync::watch::channel(None);
     *inner.connection.lock().expect("never poisoned") = Some(Connection {
-        asset_sync,
         generation,
         closed: closing,
         up: up.clone(),

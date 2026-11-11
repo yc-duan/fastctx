@@ -1,12 +1,9 @@
 //! Every durable kind declares its ownership, mutation and lifetime contract.
 
 pub mod derived;
-pub mod handlers;
 mod kinds;
 pub mod legacy;
 pub mod runtime;
-pub mod source_families;
-pub mod text;
 pub static REGISTRY: Registry = Registry::new(kinds::KINDS);
 pub use fastctx_types::sync::catalog::DataClass;
 use std::marker::PhantomData;

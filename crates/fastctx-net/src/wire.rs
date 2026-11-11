@@ -38,7 +38,6 @@ pub fn accepts(protocol: u32) -> bool {
 }
 
 pub const CONTROL_PATH: &str = "/fastctx/world/4";
-pub const ASSET_SYNC_PATH: &str = "/fastctx/world/4/assets";
 pub const DATA_PATH: &str = "/fastctx/world/4/data";
 
 /// The largest frame on a control connection. Heartbeats, calls and
@@ -277,8 +276,6 @@ pub enum Intent {
         /// place of being told to ask for the whole view again.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         view_deltas: bool,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        asset_sync: Option<Box<crate::sync_transport::Advertisement>>,
     },
     /// A password login to `account`: the first OPAQUE message. The hub
     /// answers `Down::LoginResponse`; the device finishes with
@@ -304,10 +301,6 @@ pub enum Intent {
     Register { account: AccountName, request: Bytes },
     /// One end of the data connection `stream`.
     Data { key: PublicKey, proof: Signature, stream: u64, end: End },
-    /// Separate asset data channel. Sent only after asset-transfer/v1 selection
-    /// and session binding on an authenticated control connection. The session
-    /// identifier is not a credential; legacy Data tickets cannot authorize it.
-    AssetSyncData { session: fastctx_types::sync::session::SessionId, key: PublicKey, proof: Signature },
     /// A package the hub holds, from the byte `from` on: the hub says the
     /// whole package's size, `{"size":…}`, then sends the bytes, and the
     /// member says it has them all. Sent only to a hub whose view says it
@@ -325,26 +318,6 @@ pub enum Intent {
     /// `proof` is the move's key's signature of the TLS exporter
     /// (`crate::moving`).
     Handover { id: String, role: crate::moving::HandoverRole, proof: Signature },
-}
-
-impl Intent {
-    /// Asset routing is separate from legacy Hands data pairing.
-    pub fn asset_sync_purpose(&self) -> Option<fastctx_types::sync::transfer::Purpose> {
-        use fastctx_types::sync::transfer::Purpose;
-        match self {
-            Self::AssetSyncData { .. } => Some(Purpose::AssetSync),
-            Self::Session { .. }
-            | Self::Login { .. }
-            | Self::Token { .. }
-            | Self::Peek { .. }
-            | Self::Register { .. }
-            | Self::Data { .. }
-            | Self::Package { .. }
-            | Self::Deliver { .. }
-            | Self::Probe
-            | Self::Handover { .. } => None,
-        }
-    }
 }
 
 /// A computer or phone logging in: the name it asks for, its key, and
@@ -420,8 +393,6 @@ pub enum Down {
         /// This hub separately acknowledges completion of its initial status snapshot.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         afoot_pending: Option<bool>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        asset_sync: Option<Box<crate::sync_transport::Advertisement>>,
     },
     /// The hub's half of a password login.
     LoginResponse {
@@ -718,12 +689,6 @@ pub enum CallStatus {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum Question {
-    OpenSyncSession {
-        request: fastctx_types::sync::session::SessionOpen,
-    },
-    CloseSyncSession {
-        request: fastctx_types::sync::session::SessionClose,
-    },
     RecordWatching {
         account: AccountName,
         record_kind: String,
@@ -1190,9 +1155,6 @@ pub enum Change {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum Told {
-    SyncSessionReady {
-        ready: fastctx_types::sync::session::SessionReady,
-    },
     SkillFiles {
         reply: fastctx_types::skill_files::Reply,
     },
@@ -1291,9 +1253,7 @@ pub fn encode(frame: &impl Serialize) -> Vec<u8> {
 
 impl Question {
     pub fn question_purpose(&self) -> Option<fastctx_types::sync::transfer::Purpose> {
-        use fastctx_types::sync::transfer::Purpose;
         match self {
-            Self::OpenSyncSession { .. } | Self::CloseSyncSession { .. } => Some(Purpose::AssetSync),
             Self::AccountRecords { .. }
             | Self::Directory { .. }
             | Self::Forget { .. }
@@ -1333,7 +1293,6 @@ impl Told {
     pub fn told_purpose(&self) -> Option<fastctx_types::sync::transfer::Purpose> {
         use fastctx_types::sync::transfer::Purpose;
         match self {
-            Self::SyncSessionReady { .. } => Some(Purpose::AssetSync),
             Self::Accepted => Some(Purpose::ExecutionControl),
             Self::AccountRecords { .. }
             | Self::CollabWritten { .. }

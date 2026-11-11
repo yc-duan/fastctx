@@ -56,17 +56,16 @@ impl Shelf {
             }
         }
         let observed = super::format::prepare(dir)?;
-        let database =
-            Database::open_guarded(&dir.join(FILE), SCHEMA, fastctx_sync::store::boundary::guard, |connection| {
-                fastctx_storage::versions::apply(
-                    connection,
-                    "hub.jobs",
-                    &[fastctx_storage::versions::Migration { version: 1, sql: fastctx_jobs::SCHEMA }],
-                )?;
-                super::migrate::import(connection, dir)?;
-                super::format::initialize(connection, &observed)
-            })
-            .map_err(other)?;
+        let database = Database::open_initialized(&dir.join(FILE), SCHEMA, |connection| {
+            fastctx_storage::versions::apply(
+                connection,
+                "hub.jobs",
+                &[fastctx_storage::versions::Migration { version: 1, sql: fastctx_jobs::SCHEMA }],
+            )?;
+            super::migrate::import(connection, dir)?;
+            super::format::initialize(connection, &observed)
+        })
+        .map_err(other)?;
 
         if let Some(report) = database.salvaged() {
             eprintln!("the hub's database was damaged and set aside; what could be read was salvaged:\n{report}");

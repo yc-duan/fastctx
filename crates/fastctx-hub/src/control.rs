@@ -55,7 +55,6 @@ pub(crate) struct Asking {
 
 /// What a member says of itself when its session opens.
 pub(crate) struct Said {
-    pub asset_sync: Option<Box<fastctx_net::sync_transport::Advertisement>>,
     pub replicated_records: bool,
     pub call_details: bool,
     /// The machine that forwards its connection here, if any.
@@ -212,9 +211,8 @@ pub(crate) async fn session(
     key: PublicKey,
     proof: Signature,
     letters: Letters,
-    mut said: Said,
+    said: Said,
 ) {
-    said.asset_sync = said.asset_sync.as_ref().and_then(|peer| peer.normalized_peer().ok()).map(Box::new);
     let through = said.through.clone();
     let dialed = said.dialed;
     let name = match hub.member(&key, &proof, &binding) {
@@ -631,16 +629,8 @@ async fn open(
             taken: counted_through(entry),
             letters: entry.out_epoch,
             afoot_pending: Some(said.afoot),
-            asset_sync: said.asset_sync.as_ref().and_then(|remote| {
-                hub.foundation
-                    .as_ref()
-                    .and_then(|f| f.advertisement())
-                    .filter(|local| local.negotiate(remote).is_ok())
-                    .map(Box::new)
-            }),
         });
         let session = Session {
-            asset_sync: said.asset_sync.map(Arc::from),
             replicated_records: said.replicated_records,
             key,
             account_records: said.account_records,
@@ -671,9 +661,6 @@ async fn open(
         let replaced = hub.sessions().insert(name.clone(), session);
         drop(store);
         if let Some(old) = replaced {
-            if let Some(foundation) = &hub.foundation {
-                foundation.asset_sessions().close_control(old.key, old.generation);
-            }
             let _ = old.out.send(Out::End(Refusal::Replaced));
             fail_calls_of(&hub, name, old.generation);
         }
@@ -706,11 +693,8 @@ pub(crate) fn close(hub: &Hub, name: &MachineName, generation: u64) {
             None
         }
     };
-    if let Some(key) = removed {
+    if removed.is_some() {
         hub.forget_view(name, generation);
-        if let Some(foundation) = &hub.foundation {
-            foundation.asset_sessions().close_control(key, generation);
-        }
     }
     if let Some(member) = hub.store().letters.member(name) {
         member.later(crate::post::Command::Close { generation });
@@ -1754,13 +1738,6 @@ fn ask(
 ) -> Result<Told, String> {
     let origin = crate::origin::Origin { name: name.clone(), key: public };
     match question {
-        Question::OpenSyncSession { request } => crate::asset_sync::open(hub, name, public, generation, request),
-        Question::CloseSyncSession { request } => {
-            if let Some(foundation) = &hub.foundation {
-                foundation.asset_sessions().close(public, generation, &request.session);
-            }
-            Ok(Told::Done)
-        }
         Question::HistorySubmitted { .. } => Err("history reads are dispatched asynchronously".into()),
         Question::RecordWatching { account, record_kind, watch, following } => {
             crate::account_records::begin(

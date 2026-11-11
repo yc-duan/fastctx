@@ -89,13 +89,18 @@ def check(registry):
         for table in re.findall(r"CREATE\s+(?:TABLE|TEMP\s+TABLE)\s+(?:IF\s+NOT\s+EXISTS\s+)?([a-z_][a-z0-9_]*)", path.read_text(encoding="utf-8"), re.I):
             if table not in tables and "temp." + table not in tables:
                 raise ValueError(f"unregistered production table {table}: {path.relative_to(ROOT)}")
-    schema = ROOT / "crates/fastctx-sync/src/store"
+    # The registry crate's own tables: the transitional carrier and the
+    # format-upgrade journal, which is registered as a runtime table.
+    sources = ROOT / "crates/fastctx-sync/src"
     connection = sqlite3.connect(":memory:")
-    connection.executescript((schema / "schema.sql").read_text() + (schema / "legacy_pins.sql").read_text())
+    connection.executescript((sources / "migration/legacy_pins.sql").read_text()
+                             + (sources / "format_upgrade/schema.sql").read_text())
     actual = {r[0] for r in connection.execute("SELECT name FROM sqlite_schema WHERE type='table'")}
-    declared = set(re.findall(r'"(sync_[a-z_]+)"', (schema / "schema_tables.rs").read_text()))
+    declared = {"sync_legacy_pins", "sync_format_upgrades"}
     if actual != declared:
-        raise ValueError(f"shadow schema differs from its closed set: {actual ^ declared}")
+        raise ValueError(f"the registry crate's tables differ from their closed set: {actual ^ declared}")
+    if "sync_format_upgrades" not in tables:
+        raise ValueError("the format-upgrade journal is not a registered runtime table")
     carriers = rows(registry / "transitional.tsv")
     approved = {("sync_legacy_pins", "Asset", "migration.legacy-pins",
                  "crates/fastctx-sync/src/migration.rs", "Migration",
@@ -104,7 +109,7 @@ def check(registry):
         raise ValueError("unregistered transitional carrier")
     if {row[0] for row in carriers} != actual & {row[0] for row in approved}:
         raise ValueError("a transitional carrier must leave the inventory with its table")
-    print(f"sync inventory: {len(entries)} entries; {service_counts['runtime']} current runtime tables; {service_counts['derived']} derived tables; {len(actual)} shadow tables; baseline evidence verified")
+    print(f"sync inventory: {len(entries)} entries; {service_counts['runtime']} current runtime tables; {service_counts['derived']} derived tables; {len(actual)} registry tables; baseline evidence verified")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

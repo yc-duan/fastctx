@@ -60,7 +60,6 @@ pub(super) fn open(dir: &Path) -> anyhow::Result<Arc<Hub>> {
         account_records,
         troubles,
         workbench: Mutex::new("hub workbench", Rank::HUB_WORKBENCH, HashMap::new()),
-        foundation: None,
     });
     let _ = hub.this.set(Arc::downgrade(&hub));
     let members = hub.store().book.directory.members.clone();
@@ -68,7 +67,6 @@ pub(super) fn open(dir: &Path) -> anyhow::Result<Arc<Hub>> {
         hub.sessions().insert(
             member.name.clone(),
             crate::Session {
-                asset_sync: None,
                 replicated_records: false,
                 key: member.key,
                 account_records: false,

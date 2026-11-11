@@ -1,25 +1,8 @@
-//! Registered data and durable synchronization boundaries.
+//! The registry of persistent data and the transitional preservation carrier.
 //!
-//! The contracts are independent of a node, a hub and a mobile application.
-//! Storage implementations own their databases; consumers receive typed handles.
+//! Every persistent table a node or hub keeps is named here by kind, so that
+//! architecture checks and storage guards can refuse unregistered state.
 
-pub mod admission;
-pub mod authority;
-pub mod blocks;
-pub mod catalog;
-pub mod conversation;
-pub mod cursor;
-pub mod exposure;
-pub mod identity;
-pub mod manifest;
-pub mod metrics;
+pub mod format_upgrade;
 pub mod migration;
-pub mod proof;
 pub mod registry;
-pub mod replicate;
-pub mod scheduler;
-pub mod scope;
-pub mod store;
-pub mod timeline;
-pub mod transfer;
-pub mod transport_flow;

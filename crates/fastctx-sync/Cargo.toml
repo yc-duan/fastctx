@@ -1,6 +1,6 @@
 [package]
 name = "fastctx-sync"
-description = "Typed account assets, durable replication and registered storage boundaries"
+description = "The registry of persistent data, its storage guard and the transitional preservation carrier"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,23 +9,11 @@ repository.workspace = true
 publish = false
 
 [dependencies]
-base64 = "0.22"
 fastctx-types = { path = "../fastctx-types" }
 fastctx-storage = { path = "../fastctx-storage" }
 fastctx-platform = { path = "../fastctx-platform" }
 sha2 = "0.10"
-zstd = { version = "0.14", default-features = false }
-serde.workspace = true
 serde_json.workspace = true
-tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
-
-[dev-dependencies]
-tokio = { workspace = true, features = ["rt-multi-thread", "time"] }
-
-[[test]]
-name = "sync_drill"
-path = "tests/sync_drill.rs"
-harness = false
 
 [lints]
 workspace = true

@@ -106,21 +106,8 @@ pub enum Intent {
     },
     /// The connecting machine's end of the data connection `stream`.
     Data { key: PublicKey, proof: Signature, stream: u64, end: End },
-    /// Same asset transport contract as the hub, gated by negotiated capability.
-    /// Direct service cannot accept authority mutations or acknowledge the hub's copy.
-    AssetSyncData { session: fastctx_types::sync::session::SessionId, key: PublicKey, proof: Signature },
     /// The hub checking it reaches this machine here.
     Probe,
-}
-
-impl Intent {
-    pub fn asset_sync_purpose(&self) -> Option<fastctx_types::sync::transfer::Purpose> {
-        use fastctx_types::sync::transfer::Purpose;
-        match self {
-            Self::AssetSyncData { .. } => Some(Purpose::AssetSync),
-            Self::Link { .. } | Self::Data { .. } | Self::Probe => None,
-        }
-    }
 }
 
 /// Encodes a frame for the wire.

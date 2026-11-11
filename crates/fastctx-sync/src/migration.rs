@@ -43,7 +43,7 @@ pub fn is_summary(change: &fastctx_storage::guard::Change<'_>) -> Result<bool> {
     Ok(true)
 }
 
-pub const SCHEMA: &str = include_str!("store/legacy_pins.sql");
+pub const SCHEMA: &str = include_str!("migration/legacy_pins.sql");
 
 /// Installs the transitional carrier under its independent migration marker.
 pub(crate) fn initialize_carrier(db: &Connection) -> Result<()> {

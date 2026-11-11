@@ -52,9 +52,6 @@ pub mod record_ownership;
 pub mod route;
 pub mod sign;
 pub mod submission;
-pub mod sync_access;
-pub mod sync_proof;
-pub mod sync_transport;
 mod threads;
 pub mod tls;
 pub mod token;
@@ -69,5 +66,3 @@ pub mod watch_stream;
 pub mod web;
 pub mod window;
 pub mod wire;
-
-pub mod asset_transport;

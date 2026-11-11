@@ -48,7 +48,6 @@ mod control_letters;
 mod control_long;
 mod control_posts;
 mod control_queue;
-pub mod conversation_ingest;
 mod copy;
 mod cut_history;
 mod data;
@@ -72,7 +71,6 @@ mod firewall;
 mod focus;
 mod forget;
 mod forks;
-mod foundation;
 mod gate_waits;
 mod gates;
 mod gather;
@@ -230,13 +228,9 @@ pub(crate) struct Node {
     durable_jobs: Arc<fastctx_jobs::Jobs>,
     submission_kinds: submission_fallback::Started,
     workers: workers::Pools,
-    /// The unified data foundation's engines on `database`, when it opened
-    /// (`foundation`).
-    foundation: Option<foundation::Foundation>,
     /// The content database: what this machine holds of conversations and
     /// other streams as items, read a page at a time (`timeline`).
     content: Option<fastctx_content::Content>,
-    ingestion: std::sync::OnceLock<Arc<conversation_ingest::watcher::Service>>,
     book_database: fastctx_storage::Database,
     record_migration: record_migration::Service,
     /// This program's own copy under the World, which everything the node
@@ -787,16 +781,6 @@ pub async fn run_prepared(
             if database.fault().is_none() {
                 record_database::start_upgrade(&database, log.clone()).context("pinning the World upgrade snapshot")?;
             }
-            let foundation = match database.fault() {
-                Some(_) => None,
-                None => match foundation::Foundation::open(&world, &database, log.clone()) {
-                    Ok(foundation) => Some(foundation),
-                    Err(error) => {
-                        log.line(format_args!("the data foundation is unavailable: {error:#}"));
-                        None
-                    }
-                },
-            };
             let content = match fastctx_content::Content::open(world.path()) {
                 Ok(content) => Some(content),
                 Err(error) => {
@@ -829,9 +813,7 @@ pub async fn run_prepared(
                 submission_kinds: submission_fallback::Started::default(),
                 workers: Default::default(),
                 database,
-                foundation,
                 content,
-                ingestion: Default::default(),
                 book_database,
                 record_migration,
                 fastctx,
@@ -1060,17 +1042,6 @@ pub async fn run_prepared(
         .await
         {
             log.line(format_args!("starting recovered work: {error}"));
-        }
-    });
-    // The foundation's tasks start with bulk migration, after the upgrade's
-    // backup has released the database.
-    let founding = node.clone();
-    fastctx_platform::task::spawn(async move {
-        if founding.record_migration.wait_started().await.is_err() {
-            return;
-        }
-        if let Some(foundation) = founding.foundation.as_ref() {
-            foundation.run(founding.log.clone()).await;
         }
     });
     let jobs_node = node.clone();

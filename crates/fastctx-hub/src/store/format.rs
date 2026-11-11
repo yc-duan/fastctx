@@ -5,10 +5,7 @@ use fastctx_storage::{
     format_upgrade::{self, BackupBasis, Begin, Event, Options, Phase, Service},
     rusqlite::{Connection, OpenFlags},
 };
-use fastctx_sync::store::{
-    format_upgrade::{SqliteUpgradeJournal, prepare_format_upgrade},
-    schema,
-};
+use fastctx_sync::format_upgrade::{SqliteUpgradeJournal, prepare_format_upgrade};
 use std::{io, path::Path, sync::Arc};
 
 pub(super) const CURRENT: u64 = 3;
@@ -51,7 +48,7 @@ pub(super) fn prepare(dir: &Path) -> io::Result<Observation> {
 
 /// Runs inside the same short transaction as the hub format publication.
 pub(super) fn initialize(db: &Connection, observed: &Observation) -> Result<()> {
-    schema::initialize(db)?;
+    fastctx_sync::format_upgrade::install(db)?;
     prepare_format_upgrade(
         db,
         Begin {

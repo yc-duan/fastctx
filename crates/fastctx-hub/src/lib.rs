@@ -36,8 +36,6 @@ mod direct;
 pub mod dissolve;
 mod expiry;
 mod forget;
-mod foundation;
-pub use foundation::Installation as FoundationInstallation;
 mod health;
 mod history_author;
 mod history_limits;
@@ -318,9 +316,6 @@ pub(crate) struct Hub {
     /// Whether one of each machine's logins has the workbench open, as it
     /// last told (`workbench`).
     workbench: Mutex<HashMap<MachineName, bool>>,
-    /// The unified data foundation's engines on this hub (`foundation`), absent
-    /// when they could not open; the hub then serves without them.
-    foundation: Option<Arc<foundation::Foundation>>,
 }
 
 /// The view a session that reads what changes in its view was last given
@@ -339,7 +334,6 @@ const VIEW_CHANGE_AT_MOST: usize = 192 * 1024;
 
 /// A member's open control connection.
 pub(crate) struct Session {
-    asset_sync: Option<Arc<fastctx_net::sync_transport::Advertisement>>,
     replicated_records: bool,
     key: PublicKey,
     account_records: bool,
@@ -758,18 +752,7 @@ pub(crate) async fn bind(kept: Option<Kept>, listen: SocketAddr) -> anyhow::Resu
 /// `threads` builds, its threads in their roles (`specs/world-engine.md`,
 /// 线程的三种角色): the command and every drill that serves a hub in its own
 /// process run it so.
-pub fn run(dir: &Path, leave: Leave, threads: tokio::runtime::Builder) -> anyhow::Result<()> {
-    run_with_foundation(dir, leave, threads, FoundationInstallation::default())
-}
-
-/// Runs with policies installed by the trusted process composition. Requests
-/// cannot install or replace policies through this entry point.
-pub fn run_with_foundation(
-    dir: &Path,
-    leave: Leave,
-    mut threads: tokio::runtime::Builder,
-    installation: FoundationInstallation,
-) -> anyhow::Result<()> {
+pub fn run(dir: &Path, leave: Leave, mut threads: tokio::runtime::Builder) -> anyhow::Result<()> {
     let runtime = threads
         .thread_name("fastctx-hub-work")
         // A runtime's threads may block until they first wake to run tasks,
@@ -780,15 +763,12 @@ pub fn run_with_foundation(
         .build()?;
     // This thread runs the hub's tasks as the runtime's own threads do.
     fastctx_platform::roles::set(fastctx_platform::roles::Role::Work);
-    runtime.block_on(serve_installed(dir, leave, installation))
+    runtime.block_on(serve(dir, leave))
 }
 
 /// Runs the hub kept in `dir` until the process is stopped: serving, or
 /// standing by for a move here, or forwarding after a move away.
 pub async fn serve(dir: &Path, leave: Leave) -> anyhow::Result<()> {
-    serve_installed(dir, leave, FoundationInstallation::default()).await
-}
-async fn serve_installed(dir: &Path, leave: Leave, installation: FoundationInstallation) -> anyhow::Result<()> {
     let place = dir.join("hub.log");
     let log = Arc::new(fastctx_platform::task::spawn_blocking(move || log::Log::open(&place)).await??);
     // What went wrong, written down while it lasts, and how long tasks wait
@@ -807,7 +787,7 @@ async fn serve_installed(dir: &Path, leave: Leave, installation: FoundationInsta
         let next = match mode {
             moving::Mode::Serving => {
                 let watched = (work.clone(), network.watched());
-                serving(dir, kept.take(), log.clone(), network.handle(), watched, installation.clone()).await?
+                serving(dir, kept.take(), log.clone(), network.handle(), watched).await?
             }
             moving::Mode::Standby(arriving) => {
                 moving::standby::run(dir, kept.take(), arriving, log.clone(), &leave).await?
@@ -840,7 +820,6 @@ struct Opened {
     updates: updates::Updates,
     account_records: account_records::Records,
     ledgers: ledger::Ledgers,
-    foundation: Option<foundation::Foundation>,
     secrets: HubSecrets,
     tls: releases::http::Tls,
     pin: CertPin,
@@ -854,14 +833,10 @@ struct Opened {
 
 /// Opens the hub kept in `dir` for serving: its files and databases read,
 /// written and set up, as only a blocking thread may.
-fn open(dir: &Path, log: Arc<log::Log>, installation: FoundationInstallation) -> anyhow::Result<Opened> {
+fn open(dir: &Path, log: Arc<log::Log>) -> anyhow::Result<Opened> {
     let mut store = Store::open_logged(dir, Some(log.clone()))?;
     let durable_jobs = fastctx_jobs::Jobs::new(store.shelf.0.clone());
     let workers = workers::Pools::new(std::env::current_exe()?);
-    let foundation =
-        foundation::Foundation::open(dir, store.shelf.0.clone(), store.hub.id.clone(), log.clone(), installation)
-            .inspect_err(|error| log.line(format_args!("the data foundation did not open: {error:#}")))
-            .ok();
     // An assistance whose deadline passed while the hub was stopped is
     // ended before any member is heard.
     assists::end_due(&mut store, Timestamp::now())?;
@@ -902,7 +877,6 @@ fn open(dir: &Path, log: Arc<log::Log>, installation: FoundationInstallation) ->
         updates,
         account_records,
         ledgers,
-        foundation,
         secrets,
         tls,
         pin: certificate.pin(),
@@ -920,12 +894,11 @@ async fn serving(
     network: tokio::runtime::Handle,
     // How far the work runtime and the network runtime ran (`watchdog`).
     watched: (fastctx_platform::task::Watched, fastctx_platform::task::Watched),
-    installation: FoundationInstallation,
 ) -> anyhow::Result<Next> {
     let opened = {
         let dir = dir.to_path_buf();
         let opening_log = log.clone();
-        fastctx_platform::task::spawn_blocking(move || open(&dir, opening_log, installation)).await??
+        fastctx_platform::task::spawn_blocking(move || open(&dir, opening_log)).await??
     };
     let Opened {
         durable_jobs,
@@ -937,7 +910,6 @@ async fn serving(
         updates,
         account_records,
         ledgers,
-        foundation,
         secrets,
         tls,
         pin,
@@ -988,19 +960,8 @@ async fn serving(
         account_records,
         troubles,
         workbench: Mutex::new("hub workbench", Rank::HUB_WORKBENCH, HashMap::new()),
-        foundation: foundation.map(Arc::new),
     });
     let _ = hub.this.set(Arc::downgrade(&hub));
-    // The authority run begins before any member is heard, so nothing is
-    // signed under an epoch the hub has not persisted.
-    if let Some(foundation) = hub.foundation.clone() {
-        match foundation.begin().await {
-            Ok(()) => {
-                fastctx_platform::task::spawn(async move { foundation.run().await });
-            }
-            Err(error) => hub.log.line(format_args!("the data foundation did not start: {error}")),
-        }
-    }
     hub.post.attach(Arc::downgrade(&hub));
     let _watchdog = watchdog::Watchdog::start(&hub, watched.0, watched.1)?;
     if let Err(error) = hub.blocking(|hub| hub_machine::settle(&hub)).await {
@@ -1143,7 +1104,6 @@ pub(crate) async fn connected(
     binding: [u8; 32],
     hello: Up,
     peer: SocketAddr,
-    asset_frames: Option<fastctx_sync::admission::BytePermit>,
 ) {
     let Up::Hello { protocol, version, intent } = hello else {
         hub.log.line(format_args!("{peer}: refused a connection on {path} whose first frame was not a hello"));
@@ -1157,7 +1117,7 @@ pub(crate) async fn connected(
     }
     let stopped = hub.clone();
     tokio::select! {
-        () = intended(hub, socket, path, binding, intent, peer, asset_frames) => {}
+        () = intended(hub, socket, path, binding, intent, peer) => {}
         // The hub moved away: what is still open here ends.
         () = stopped.moving.stopped() => {}
     }
@@ -1170,7 +1130,6 @@ async fn intended(
     binding: [u8; 32],
     intent: Intent,
     peer: SocketAddr,
-    asset_frames: Option<fastctx_sync::admission::BytePermit>,
 ) {
     // A dissolved network lets nobody in again: a device asking to is told
     // so, a member's own session by its removal (`Hub::member`).
@@ -1203,12 +1162,6 @@ async fn intended(
         None => None,
     };
     match (path.as_str(), intent) {
-        (_, Intent::AssetSyncData { session, key, proof }) if path.starts_with(wire::ASSET_SYNC_PATH) => {
-            if let Some(frames) = asset_frames {
-                asset_sync::connected(hub, socket, path, binding, session, (key, proof), frames).await;
-            }
-        }
-
         (
             wire::CONTROL_PATH,
             Intent::Session {
@@ -1246,7 +1199,6 @@ async fn intended(
                 parts,
                 call_details,
                 view_deltas,
-                asset_sync,
             },
         ) => {
             let said = control::Said {
@@ -1281,7 +1233,6 @@ async fn intended(
                 parts,
                 call_details,
                 view_deltas,
-                asset_sync,
             };
             control::session(hub, socket, peer, binding, key, proof, letters, said).await;
         }
@@ -1371,5 +1322,3 @@ fn presence_of(session: &Session) -> views::Presence {
         strain: session.strain,
     }
 }
-
-mod asset_sync;
