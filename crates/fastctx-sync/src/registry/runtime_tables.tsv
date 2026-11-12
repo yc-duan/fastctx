@@ -3,3 +3,16 @@ jobs	runtime.jobs	crates/fastctx-jobs/src/table.rs
 claude_wakes	runtime.host	crates/fastctx-node/src/claude/wake_store.rs
 claude_copies	runtime.host	crates/fastctx-node/src/claude/wake_store.rs
 sync_format_upgrades	runtime.migration	crates/fastctx-sync/src/format_upgrade.rs
+asset_scopes	runtime.assets	crates/fastctx-hub/src/assets/scopes.rs
+hub_chain	runtime.assets	crates/fastctx-hub/src/assets/chain.rs
+hub_checkpoints	runtime.assets	crates/fastctx-hub/src/assets/chain.rs
+asset_machines	runtime.assets	crates/fastctx-hub/src/assets/chain.rs
+hub_gap_facts	runtime.assets	crates/fastctx-hub/src/assets/chain.rs
+hub_epoch_facts	runtime.assets	crates/fastctx-hub/src/assets/chain.rs
+recovery_heads	runtime.assets	crates/fastctx-hub/src/assets/chain.rs
+recovery_receipts	runtime.assets	crates/fastctx-hub/src/assets/chain.rs
+closed_heads	runtime.assets	crates/fastctx-hub/src/assets/chain.rs
+closed_receipts	runtime.assets	crates/fastctx-hub/src/assets/chain.rs
+asset_bodies	runtime.assets	crates/fastctx-hub/src/assets/bodies.rs
+asset_unread	runtime.assets	crates/fastctx-hub/src/assets/bodies.rs
+asset_deleting	runtime.assets	crates/fastctx-hub/src/assets/bodies.rs

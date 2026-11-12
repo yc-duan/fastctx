@@ -756,6 +756,23 @@ pub(super) const KINDS: &[Registration] = &[
         GenericTombstone
     ),
     kind!(
+        "runtime.assets",
+        Runtime,
+        Local,
+        Local,
+        LocalOwner,
+        UntilResolved,
+        LocalOnly,
+        "fastctx-hub::assets",
+        Foundation,
+        Bytes,
+        false,
+        false,
+        false,
+        Confirmed,
+        GenericTombstone
+    ),
+    kind!(
         "runtime.diagnostics",
         Runtime,
         Local,

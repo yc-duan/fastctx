@@ -25,6 +25,7 @@ CALLERS = {
     },
     "delete_unreferenced": {
         "crates/fastctx-platform/src/durable_file.rs",
+        "crates/fastctx-content/src/v2/collect.rs",
     },
     "enter_migration": {
         "crates/fastctx-node/src/conversation_store/transfer/triggers.rs",
