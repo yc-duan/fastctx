@@ -82,13 +82,31 @@ def check(registry):
                 if file != owner or anchor not in (ROOT / file).read_text(encoding="utf-8"):
                     raise ValueError(f"missing derived rebuilder: {record}")
             tables.add(table)
+    # The asset libraries' tables are registered with the file that creates
+    # them: the same name may be a table of both library versions.
+    asset_tables = set()
+    for record in rows(registry / "asset_tables.tsv"):
+        if len(record) != 2 or any(not value for value in record):
+            raise ValueError("asset table registration has incomplete fields")
+        table, owner = record
+        if (table, owner) in asset_tables or not owner.startswith("crates/fastctx-content/src/") or not (ROOT / owner).is_file():
+            raise ValueError(f"invalid asset table: {record}")
+        asset_tables.add((table, owner))
+    created = set()
     for path in (ROOT / "crates").rglob("*.rs"):
         name = path.as_posix()
-        if "/src/" not in name or "/fastctx-sync/" in name or "/fastctx-content/" in name or any(x in path.name for x in ("test", "drill")):
+        if "/src/" not in name or "/fastctx-sync/" in name or any(x in path.name for x in ("test", "drill")):
             continue
+        owner = path.relative_to(ROOT).as_posix()
         for table in re.findall(r"CREATE\s+(?:TABLE|TEMP\s+TABLE)\s+(?:IF\s+NOT\s+EXISTS\s+)?([a-z_][a-z0-9_]*)", path.read_text(encoding="utf-8"), re.I):
-            if table not in tables and "temp." + table not in tables:
-                raise ValueError(f"unregistered production table {table}: {path.relative_to(ROOT)}")
+            if "/fastctx-content/" in name:
+                if (table, owner) not in asset_tables:
+                    raise ValueError(f"unregistered asset table {table}: {owner}")
+                created.add((table, owner))
+            elif table not in tables and "temp." + table not in tables:
+                raise ValueError(f"unregistered production table {table}: {owner}")
+    if asset_tables - created:
+        raise ValueError(f"registered asset tables no longer created: {sorted(asset_tables - created)}")
     # The registry crate's own tables: the transitional carrier and the
     # format-upgrade journal, which is registered as a runtime table.
     sources = ROOT / "crates/fastctx-sync/src"
@@ -109,7 +127,7 @@ def check(registry):
         raise ValueError("unregistered transitional carrier")
     if {row[0] for row in carriers} != actual & {row[0] for row in approved}:
         raise ValueError("a transitional carrier must leave the inventory with its table")
-    print(f"sync inventory: {len(entries)} entries; {service_counts['runtime']} current runtime tables; {service_counts['derived']} derived tables; {len(actual)} registry tables; baseline evidence verified")
+    print(f"sync inventory: {len(entries)} entries; {service_counts['runtime']} current runtime tables; {service_counts['derived']} derived tables; {len(asset_tables)} asset tables; {len(actual)} registry tables; baseline evidence verified")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

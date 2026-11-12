@@ -46,6 +46,37 @@ CALLERS = {
 }
 
 
+# The asset libraries' files are named only in the modules that define them,
+# and opened only by registered callers (sync-v2-impl-design 11); the content
+# crate itself, its tests included, owns them.
+ASSET_FILE_NAMES = {
+    '"content.sqlite3"': "crates/fastctx-content/src/lib.rs",
+    '"objects.sqlite3"': "crates/fastctx-content/src/objects.rs",
+    '"assets.sqlite3"': "crates/fastctx-content/src/v2/mod.rs",
+    '"asset-bytes.sqlite3"': "crates/fastctx-content/src/v2/mod.rs",
+    '"asset-objects"': "crates/fastctx-content/src/v2/mod.rs",
+}
+ASSET_OPENERS = {
+    "crates/fastctx-node/src/lib.rs",
+    "crates/fastctx-node/src/assets.rs",
+    "crates/fastctx-hub/src/assets/owners.rs",
+}
+ASSET_OPENING = re.compile(
+    r"\b(?:Content|Objects|Library)\s*::\s*open(?:_hub)?\b|\b(?:OBJECTS_DIRECTORY|OBJECTS_FILE|BYTES_FILE)\b"
+    r"|\bfastctx_content\s*::\s*(?:v2\s*::\s*)?FILE\b"
+)
+
+
+def check_assets(path, source):
+    for literal, owner in ASSET_FILE_NAMES.items():
+        if literal in source and path != owner and not path.startswith("crates/fastctx-content/"):
+            raise ValueError(f"an asset library file named outside its module: {path}")
+    if path.startswith("crates/fastctx-content/") or "fastctx_content" not in source:
+        return
+    if ASSET_OPENING.search(wire.code(source)) and path not in ASSET_OPENERS:
+        raise ValueError(f"unregistered asset library opener: {path}")
+
+
 def check_source(path, source):
     tokens = set(re.findall(r"\b[A-Za-z_]\w*\b", wire.code(source)))
     for symbol, owners in CALLERS.items():
@@ -64,9 +95,11 @@ def check():
             if "target" in path.parts:
                 continue
             source = path.read_text(encoding="utf-8")
+            relative = path.relative_to(ROOT).as_posix()
             if any(symbol in source for symbol in CALLERS) or "migration" in source:
-                check_source(path.relative_to(ROOT).as_posix(), source)
-    print("sync entry points: migration preservation and transaction control have only registered callers")
+                check_source(relative, source)
+            check_assets(relative, source)
+    print("sync entry points: migration preservation, transaction control and asset library opening have only registered callers")
 
 
 if __name__ == "__main__":
