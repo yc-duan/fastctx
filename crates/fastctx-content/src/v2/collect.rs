@@ -44,6 +44,9 @@ pub struct Started {
     /// Objects published as present whose files are not there: preparing
     /// again, and wanted.
     pub lost: usize,
+    /// Transfers whose record was cut back to their part file, or forgotten
+    /// with it.
+    pub transfers: usize,
 }
 
 impl Library {
@@ -126,6 +129,7 @@ impl Library {
             self.delete_life(&hash, life, size as u64)?;
             started.tombstones += 1;
         }
+        started.transfers = self.settle_transfers()?;
         started.lost = self.check_published()?;
         started.orphans = self.remove_orphans()?;
         started.incoming = self.remove_incoming()?;

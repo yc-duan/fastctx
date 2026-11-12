@@ -9,9 +9,11 @@
 mod collect;
 mod objects;
 mod schema;
+mod transfers;
 
 pub use collect::{Collected, Started};
-pub use objects::{CHUNK_BYTES, Lease, LEASE, ROW_BYTES};
+pub use objects::{CHUNK_BYTES, LEASE, Lease, READ_BYTES, ROW_BYTES};
+pub use transfers::Transfer;
 
 use crate::Result;
 use fastctx_storage::Database;
