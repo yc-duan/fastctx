@@ -67,6 +67,8 @@ CREATE TABLE IF NOT EXISTS items (
     item BLOB NOT NULL,
     revision INTEGER NOT NULL,
     state INTEGER NOT NULL CHECK (state IN (0, 1, 2)),
+    kind INTEGER NOT NULL,
+    schema INTEGER NOT NULL,
     body BLOB,
     objects BLOB,
     holding INTEGER NOT NULL,

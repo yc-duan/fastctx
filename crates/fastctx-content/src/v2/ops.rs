@@ -1,0 +1,114 @@
+//! Operations of a true source (§3): each write a sender makes carries an
+//! operation number and a digest of what it asked, committed in the same
+//! transaction as the records it lands as. A row means the write is durable;
+//! no row means it never arrived, and the sender sends it again under the
+//! same number. The same number with the same digest is the same write,
+//! answered as done; with another digest it is refused.
+//!
+//! Words for a host also carry where their delivery stands: `kept`, then
+//! `delivering` — committed in full before they cross into the host, which
+//! no lost power may undo — then `delivered` once the host's own record
+//! shows them. Nothing is handed over again for want of seeing it.
+
+use super::Library;
+use crate::error::invalid;
+use crate::Result;
+use fastctx_storage::Priority;
+use fastctx_storage::rusqlite::{Connection, OptionalExtension, params};
+
+/// A write's operation: its number, the digest of the request and its kind.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Op {
+    pub id: String,
+    pub digest: [u8; 32],
+    pub kind: String,
+}
+
+/// Where words stand on their way into the host.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Delivery {
+    Kept,
+    Delivering,
+    Delivered,
+}
+
+impl Delivery {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Kept => "kept",
+            Self::Delivering => "delivering",
+            Self::Delivered => "delivered",
+        }
+    }
+}
+
+/// Whether `op` was committed already: `Some(true)` for the same request,
+/// an error for another under the same number, `None` when it is new.
+pub(super) fn seen(db: &Connection, op: &Op) -> fastctx_storage::Result<bool> {
+    let digest: Option<Vec<u8>> =
+        db.prepare_cached("SELECT digest FROM ops WHERE op = ?1")?.query_row([&op.id], |row| row.get(0)).optional()?;
+    match digest {
+        Some(digest) if digest == op.digest => Ok(true),
+        Some(_) => Err(invalid("that operation number was used for another request")),
+        None => Ok(false),
+    }
+}
+
+/// Records `op` as landed at `record`, words starting as kept.
+pub(super) fn landed(db: &Connection, op: &Op, record: &[u8], words: bool) -> fastctx_storage::Result<()> {
+    db.prepare_cached("INSERT INTO ops (op, digest, kind, record, state, delivery) VALUES (?1, ?2, ?3, ?4, 'durable', ?5)")?
+        .execute(params![op.id, &op.digest[..], op.kind, record, words.then_some("kept")])?;
+    Ok(())
+}
+
+impl Library {
+    /// Which of `ops` are durable here.
+    pub fn durability(&self, ops: Vec<String>) -> Result<Vec<(String, bool)>> {
+        Ok(self.database().read_now(move |db| {
+            let mut statement = db.prepare_cached("SELECT 1 FROM ops WHERE op = ?1")?;
+            ops.into_iter()
+                .map(|op| {
+                    let durable = statement.query_row([&op], |_| Ok(())).optional()?.is_some();
+                    Ok((op, durable))
+                })
+                .collect()
+        })?)
+    }
+
+    /// Moves words along their delivery: `Delivering` waits for the disk
+    /// before it returns, as it must before they cross into the host.
+    pub fn deliver(&self, op: &str, delivery: Delivery) -> Result<()> {
+        let op = op.to_string();
+        let write = move |db: &Connection| -> fastctx_storage::Result<()> {
+            let changed = db
+                .prepare_cached("UPDATE ops SET delivery = ?2 WHERE op = ?1 AND delivery IS NOT NULL")?
+                .execute(params![op, delivery.name()])?;
+            if changed == 0 {
+                return Err(invalid("no words of that operation are kept"));
+            }
+            Ok(())
+        };
+        match delivery {
+            Delivery::Delivering => self.database().write_now_at(Priority::Interactive, 128, write)?,
+            _ => self.database().write_relaxed_now_at(Priority::Normal, 128, write)?,
+        }
+        Ok(())
+    }
+
+    /// Where the words of `op` stand, if it carried words.
+    pub fn delivery(&self, op: &str) -> Result<Option<Delivery>> {
+        let op = op.to_string();
+        Ok(self.database().read_now(move |db| {
+            let state: Option<Option<String>> = db
+                .prepare_cached("SELECT delivery FROM ops WHERE op = ?1")?
+                .query_row([&op], |row| row.get(0))
+                .optional()?;
+            Ok(match state.flatten().as_deref() {
+                Some("kept") => Some(Delivery::Kept),
+                Some("delivering") => Some(Delivery::Delivering),
+                Some("delivered") => Some(Delivery::Delivered),
+                _ => None,
+            })
+        })?)
+    }
+}

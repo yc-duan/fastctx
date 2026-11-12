@@ -70,9 +70,21 @@ pub(super) fn apply(db: &Connection, at: Applying, revision: u64, record: &KindR
         State::Gone => (GONE, None, None),
     };
     db.prepare_cached(
-        "INSERT INTO items (stream, place, item, revision, state, body, objects, holding) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        "INSERT INTO items (stream, place, item, revision, state, kind, schema, body, objects, holding)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
     )?
-    .execute(params![at.stream, record.record.order, record_item, revision as i64, state, body, objects, at.holding])?;
+    .execute(params![
+        at.stream,
+        record.record.order,
+        record_item,
+        revision as i64,
+        state,
+        record.kind,
+        record.schema,
+        body,
+        objects,
+        at.holding
+    ])?;
     Ok(true)
 }
 

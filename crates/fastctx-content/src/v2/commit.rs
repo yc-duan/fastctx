@@ -28,6 +28,9 @@ pub struct Commit {
     pub leases: Vec<Lease>,
     /// A true source's write waits for the disk; a projection's does not.
     pub durable: bool,
+    /// The operation a true source's write carries (§3), and whether its
+    /// records are words for a host.
+    pub op: Option<(super::ops::Op, bool)>,
 }
 
 /// Where a commit left its stream.
@@ -37,6 +40,8 @@ pub struct Committed {
     pub count: u64,
     pub frames: usize,
     pub head: [u8; 32],
+    /// The operation was committed before: nothing was written again.
+    pub duplicate: bool,
 }
 
 /// The stream's id, epoch, next sequence and chain value, made at need.
@@ -85,6 +90,11 @@ impl Library {
                 }
             }
             let (stream, epoch, next, mut head) = stream_of(db, scope, &commit.stream)?;
+            if let Some((op, _)) = &commit.op
+                && super::ops::seen(db, op)?
+            {
+                return Ok(Committed { first: next, count: 0, frames: 0, head, duplicate: true });
+            }
             let at = Applying { scope, stream, holding };
             let mut first = next;
             for frame in &sealed {
@@ -143,7 +153,13 @@ impl Library {
             .execute(params![stream, holding, first as i64 - 1, &head[..]])?;
             floors_passed(db, stream, first - 1)?;
             release_in(db, &commit.leases)?;
-            Ok(Committed { first: next, count: first - next, frames: sealed.len(), head })
+            if let Some((op, words)) = &commit.op {
+                let mut record = commit.stream.as_bytes().to_vec();
+                record.push(0);
+                record.extend_from_slice(&commit.records[0].record.item);
+                super::ops::landed(db, op, &record, *words)?;
+            }
+            Ok(Committed { first: next, count: first - next, frames: sealed.len(), head, duplicate: false })
         };
         Ok(if durable {
             self.database().write_now_at(Priority::Normal, bytes, write)?
