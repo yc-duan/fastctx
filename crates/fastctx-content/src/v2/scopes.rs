@@ -128,15 +128,28 @@ impl Library {
                     db.prepare_cached("SELECT holding FROM scopes WHERE id = ?1")?.query_row([scope], |row| row.get(0))?;
                 purged.rows += super::rejected::end_resubmits(db, scope, holding)?;
                 let mut done = 0usize;
+                // What only a hub's parked or refused frames held waits a
+                // grace from here (I2).
+                for table in ["parked_objects", "refused_objects"] {
+                    db.prepare_cached(&format!(
+                        "UPDATE objects SET unreferenced = ?4 WHERE state = 1 AND hash IN (SELECT hash FROM {table}
+                         WHERE stream IN (SELECT id FROM streams WHERE scope = ?1) AND holding = ?2
+                         ORDER BY stream, epoch, first, holding, hash LIMIT ?3)"
+                    ))?
+                    .execute(params![scope, holding, PURGE_PASS, now()])?;
+                }
                 for (table, key) in [
                     ("frame_objects", "stream, epoch, first, holding, hash"),
                     ("frames", "stream, epoch, first, holding"),
                     ("cursors", "stream, holding"),
+                    ("parked_objects", "stream, epoch, first, holding, hash"),
+                    ("refused_objects", "stream, epoch, first, holding, hash"),
+                    ("parked", "stream, epoch, first, holding"),
                 ] {
                     done += db
                         .prepare_cached(&format!(
                             "DELETE FROM {table} WHERE ({key}) IN (SELECT {key} FROM {table}
-                             WHERE stream IN (SELECT id FROM streams WHERE scope = ?1) AND holding = ?2 LIMIT ?3)"
+                             WHERE stream IN (SELECT id FROM streams WHERE scope = ?1) AND holding = ?2 ORDER BY {key} LIMIT ?3)"
                         ))?
                         .execute(params![scope, holding, PURGE_PASS])?;
                 }

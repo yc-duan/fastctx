@@ -61,16 +61,40 @@ CREATE TABLE IF NOT EXISTS frame_objects (
     PRIMARY KEY (stream, epoch, first, holding, hash)
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS frame_objects_by_hash ON frame_objects (hash);
--- A hub keeps the objects of frames it stored but has not applied: they
--- hold the bytes (I2) and give no reading (P01). Empty on devices.
+-- A hub keeps frames it stored but has not applied, in the holding period
+-- it took them in, and their objects: they hold the bytes (I2) and give no
+-- reading (P01). A refused frame's objects stay held, unreadable, while the
+-- period lasts, for its producer's records sent again (§6.4). Empty on
+-- devices.
+CREATE TABLE IF NOT EXISTS parked (
+    stream INTEGER NOT NULL,
+    epoch INTEGER NOT NULL,
+    first INTEGER NOT NULL,
+    holding INTEGER NOT NULL,
+    header BLOB NOT NULL,
+    signature BLOB NOT NULL,
+    body BLOB NOT NULL,
+    sequence INTEGER NOT NULL,
+    PRIMARY KEY (stream, epoch, first, holding)
+) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS parked_objects (
     stream INTEGER NOT NULL,
     epoch INTEGER NOT NULL,
     first INTEGER NOT NULL,
+    holding INTEGER NOT NULL,
     hash BLOB NOT NULL,
-    PRIMARY KEY (stream, epoch, first, hash)
+    PRIMARY KEY (stream, epoch, first, holding, hash)
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS parked_objects_by_hash ON parked_objects (hash);
+CREATE TABLE IF NOT EXISTS refused_objects (
+    stream INTEGER NOT NULL,
+    epoch INTEGER NOT NULL,
+    first INTEGER NOT NULL,
+    holding INTEGER NOT NULL,
+    hash BLOB NOT NULL,
+    PRIMARY KEY (stream, epoch, first, holding, hash)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS refused_objects_by_hash ON refused_objects (hash);
 CREATE TABLE IF NOT EXISTS items (
     stream INTEGER NOT NULL,
     place BLOB NOT NULL,
@@ -274,16 +298,6 @@ CREATE TABLE IF NOT EXISTS change_log (
     first INTEGER NOT NULL,
     prefix BLOB NOT NULL,
     PRIMARY KEY (scope, change)
-) WITHOUT ROWID;
-CREATE TABLE IF NOT EXISTS parked (
-    stream INTEGER NOT NULL,
-    epoch INTEGER NOT NULL,
-    first INTEGER NOT NULL,
-    header BLOB NOT NULL,
-    signature BLOB NOT NULL,
-    body BLOB NOT NULL,
-    sequence INTEGER NOT NULL,
-    PRIMARY KEY (stream, epoch, first)
 ) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS parked_history (
     scope INTEGER NOT NULL,

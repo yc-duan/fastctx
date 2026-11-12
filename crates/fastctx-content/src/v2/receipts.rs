@@ -45,6 +45,26 @@ impl Said {
     }
 }
 
+/// Where a report of unwitnessed receipts goes on from: a long backlog is
+/// read a page at a time.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Mark {
+    stream: i64,
+    epoch: i64,
+    first: i64,
+    digest: Vec<u8>,
+    kind: String,
+    standing: Vec<u8>,
+}
+
+/// A page of unwitnessed receipts, each with its scope, and where the next
+/// page starts if there may be one.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Report {
+    pub receipts: Vec<(String, Receipt)>,
+    pub next: Option<Mark>,
+}
+
 /// One receipt, as kept and as reported.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Receipt {
@@ -150,43 +170,61 @@ impl Library {
         })?)
     }
 
-    /// Every unwitnessed applied and parked receipt here, for the hub to
-    /// check when a session opens (§17): few, as each checkpoint the hub
-    /// confirms takes those it covers off.
-    pub fn unwitnessed(&self) -> Result<Vec<(String, Receipt)>> {
-        Ok(self.database().read_now(|db| {
+    /// The unwitnessed applied and parked receipts here after `after`, up
+    /// to `limit`, for the hub to check when a session opens (§17). Every
+    /// one is reported; they are few, as each checkpoint the hub confirms
+    /// takes those it covers off, but a long backlog is read a page at a
+    /// time.
+    pub fn unwitnessed(&self, after: Option<&Mark>, limit: usize) -> Result<Report> {
+        let after = after.cloned();
+        Ok(self.database().read_now(move |db| {
             let mut statement = db.prepare_cached(
-                "SELECT c.key, s.name, r.epoch, r.first, r.digest, r.kind, r.change, r.parked, r.standing, r.signature
+                "SELECT c.key, s.name, r.stream, r.epoch, r.first, r.digest, r.kind, r.standing, r.change, r.parked, r.signature
                  FROM hub_receipts r JOIN streams s ON s.id = r.stream JOIN scopes c ON c.id = s.scope
                  WHERE r.checkpointed = 0 AND r.kind IN ('applied', 'parked')
-                 ORDER BY c.key, r.kind, COALESCE(r.change, r.parked)",
+                   AND (?1 IS NULL OR (r.stream, r.epoch, r.first, r.digest, r.kind, r.standing) > (?1, ?2, ?3, ?4, ?5, ?6))
+                 ORDER BY r.stream, r.epoch, r.first, r.digest, r.kind, r.standing LIMIT ?7",
             )?;
-            let rows = statement.query_map([], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, i64>(2)?,
-                    row.get::<_, i64>(3)?,
-                    row.get::<_, Vec<u8>>(4)?,
-                    row.get::<_, String>(5)?,
-                    row.get::<_, Option<i64>>(6)?,
-                    row.get::<_, Option<i64>>(7)?,
-                    row.get::<_, Vec<u8>>(8)?,
-                    row.get::<_, Vec<u8>>(9)?,
-                ))
-            })?;
-            let mut reported = Vec::new();
+            let at = after.as_ref();
+            let rows = statement.query_map(
+                params![
+                    at.map(|mark| mark.stream),
+                    at.map(|mark| mark.epoch),
+                    at.map(|mark| mark.first),
+                    at.map(|mark| mark.digest.clone()),
+                    at.map(|mark| mark.kind.clone()),
+                    at.map(|mark| mark.standing.clone()),
+                    limit as i64
+                ],
+                |row| {
+                    Ok((
+                        (row.get::<_, String>(0)?, row.get::<_, String>(1)?),
+                        Mark {
+                            stream: row.get(2)?,
+                            epoch: row.get(3)?,
+                            first: row.get(4)?,
+                            digest: row.get(5)?,
+                            kind: row.get(6)?,
+                            standing: row.get(7)?,
+                        },
+                        (row.get::<_, Option<i64>>(8)?, row.get::<_, Option<i64>>(9)?, row.get::<_, Vec<u8>>(10)?),
+                    ))
+                },
+            )?;
+            let (mut reported, mut last) = (Vec::new(), None);
             for row in rows {
-                let (scope, stream, epoch, first, digest, kind, change, parked, standing, signature) = row?;
-                let standing: [u8; 32] = standing.try_into().map_err(|_| invalid("a malformed receipt"))?;
-                let said = match kind.as_str() {
+                let ((scope, stream), mark, (change, parked, signature)) = row?;
+                let standing: [u8; 32] = mark.standing.clone().try_into().map_err(|_| invalid("a malformed receipt"))?;
+                let said = match mark.kind.as_str() {
                     "applied" => Said::Applied { change: change.unwrap_or_default() as u64, prefix: standing },
                     _ => Said::Parked { sequence: parked.unwrap_or_default() as u64, accumulated: standing },
                 };
-                let digest = digest.try_into().map_err(|_| invalid("a malformed receipt digest"))?;
-                reported.push((scope, Receipt { stream, epoch: epoch as u64, first: first as u64, digest, said, signature }));
+                let digest = mark.digest.clone().try_into().map_err(|_| invalid("a malformed receipt digest"))?;
+                reported.push((scope, Receipt { stream, epoch: mark.epoch as u64, first: mark.first as u64, digest, said, signature }));
+                last = Some(mark);
             }
-            Ok(reported)
+            let next = if reported.len() == limit { last } else { None };
+            Ok(Report { receipts: reported, next })
         })?)
     }
 }

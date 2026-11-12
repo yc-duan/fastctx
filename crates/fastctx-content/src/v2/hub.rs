@@ -35,6 +35,11 @@ use fastctx_storage::Priority;
 use fastctx_storage::rusqlite::{Connection, OptionalExtension, params};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
+
+/// Parked frames applied in one transaction: a long tail behind a handover
+/// goes in several, other writes between them.
+const DRAIN_AT_ONCE: usize = 16;
 
 /// Judges whether a record may change what it changes, against the item as
 /// the applied prefix has it (§11): the same rules its producer judged by.
@@ -280,8 +285,8 @@ fn known(
         return Ok(Some(Received::Applied { change, prefix, signature, drained: Drained::default() }));
     }
     let parked: Option<(Vec<u8>, i64)> = db
-        .prepare_cached("SELECT header, sequence FROM parked WHERE stream = ?1 AND epoch = ?2 AND first = ?3")?
-        .query_row(params![stream, epoch, first], |row| Ok((row.get(0)?, row.get(1)?)))
+        .prepare_cached("SELECT header, sequence FROM parked WHERE stream = ?1 AND epoch = ?2 AND first = ?3 AND holding = ?4")?
+        .query_row(params![stream, epoch, first, holding], |row| Ok((row.get(0)?, row.get(1)?)))
         .optional()?;
     if let Some((kept, sequence)) = parked {
         if kept != bytes {
@@ -388,16 +393,30 @@ fn apply_frame(
 }
 
 /// Refuses a frame and every later frame of its epoch, parked or still to
-/// come; the hub's signature on the refusal.
-fn refuse(db: &Connection, stream: i64, header: &Header, why: &str, signer: &dyn HubSigner) -> fastctx_storage::Result<Vec<u8>> {
+/// come; the hub's signature on the refusal. The objects of the parked ones
+/// stay held, unreadable, while the period lasts (§6.4).
+fn refuse(
+    db: &Connection,
+    stream: i64,
+    holding: i64,
+    header: &Header,
+    why: &str,
+    signer: &dyn HubSigner,
+) -> fastctx_storage::Result<Vec<u8>> {
     let signature = signer.sign(&statement("rejected", header, &[why.as_bytes(), &header.first.to_le_bytes()]));
     db.prepare_cached(
         "INSERT OR REPLACE INTO refused_frames (stream, epoch, first, digest, why, signature) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
     )?
     .execute(params![stream, header.epoch as i64, header.first as i64, &header.digest[..], why, &signature])?;
+    let at = params![stream, header.epoch as i64, header.first as i64, holding];
+    db.prepare_cached(
+        "INSERT OR IGNORE INTO refused_objects (stream, epoch, first, holding, hash)
+         SELECT stream, epoch, first, holding, hash FROM parked_objects WHERE stream = ?1 AND epoch = ?2 AND first >= ?3 AND holding = ?4",
+    )?
+    .execute(at)?;
     for table in ["parked_objects", "parked"] {
-        db.prepare_cached(&format!("DELETE FROM {table} WHERE stream = ?1 AND epoch = ?2 AND first > ?3"))?
-            .execute(params![stream, header.epoch as i64, header.first as i64])?;
+        db.prepare_cached(&format!("DELETE FROM {table} WHERE stream = ?1 AND epoch = ?2 AND first >= ?3 AND holding = ?4"))?
+            .execute(at)?;
     }
     Ok(signature)
 }
@@ -410,8 +429,8 @@ impl Library {
         frame: RawFrame,
         verifier: &dyn Verifier,
         taking: &Taking<'_>,
-        authorizer: std::sync::Arc<dyn Authorizer>,
-        signer: std::sync::Arc<dyn HubSigner>,
+        authorizer: Arc<dyn Authorizer>,
+        signer: Arc<dyn HubSigner>,
     ) -> Result<Received> {
         let header = Header::decode(&frame.header).map_err(Error::Invalid)?;
         if header.scope != scope {
@@ -456,8 +475,10 @@ impl Library {
             return Ok(Received::Prove(unproven));
         }
         let (scope, period) = (scope.to_string(), taking.period);
+        let (key, stream) = (scope.clone(), header.stream.clone());
+        let (authorizing, signing) = (authorizer.clone(), signer.clone());
         let bytes = frame.body.len() + frame.header.len() + 1024 + records.len() * 64;
-        Ok(self.database().write_now_at(Priority::Normal, bytes, move |db| {
+        let (mut received, more) = self.database().write_now_at(Priority::Normal, bytes, move |db| {
             let Some((scope_id, state, Some(holding_id))) = held(db, &scope)? else {
                 return Err(invalid("the scope is not held here"));
             };
@@ -474,7 +495,7 @@ impl Library {
             }
             let mut at = prefix(db, scope_id, holding_id, &header.stream)?;
             if let Some(given) = known(db, scope_id, holding_id, &header, &frame.header, signer.as_ref())? {
-                return Ok(given);
+                return Ok((given, false));
             }
             if header.epoch > at.epoch {
                 // A successor's frame before its predecessor's tail: kept,
@@ -494,32 +515,35 @@ impl Library {
                 hasher.update(header.digest);
                 let accumulated: [u8; 32] = hasher.finalize().into();
                 db.prepare_cached(
-                    "INSERT INTO parked (stream, epoch, first, header, signature, body, sequence) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                    "INSERT INTO parked (stream, epoch, first, holding, header, signature, body, sequence)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                 )?
                 .execute(params![
                     at.stream,
                     header.epoch as i64,
                     header.first as i64,
+                    holding_id,
                     frame.header,
                     frame.signature,
                     frame.body,
                     sequence as i64
                 ])?;
-                let mut referring =
-                    db.prepare_cached("INSERT OR IGNORE INTO parked_objects (stream, epoch, first, hash) VALUES (?1, ?2, ?3, ?4)")?;
+                let mut referring = db.prepare_cached(
+                    "INSERT OR IGNORE INTO parked_objects (stream, epoch, first, holding, hash) VALUES (?1, ?2, ?3, ?4, ?5)",
+                )?;
                 for object in &objects {
-                    referring.execute(params![at.stream, header.epoch as i64, header.first as i64, &object.hash[..]])?;
+                    referring.execute(params![at.stream, header.epoch as i64, header.first as i64, holding_id, &object.hash[..]])?;
                 }
                 db.prepare_cached("INSERT INTO parked_history (scope, sequence, accumulated) VALUES (?1, ?2, ?3)")?
                     .execute(params![scope_id, sequence as i64, &accumulated[..]])?;
                 let signature = signer.sign(&statement("parked", &header, &[&sequence.to_le_bytes(), &accumulated]));
-                return Ok(Received::Parked { sequence, accumulated, signature });
+                return Ok((Received::Parked { sequence, accumulated, signature }, false));
             }
             if header.epoch < at.epoch {
                 return Err(invalid("a predecessor's frame is taken only up to its cutoff (§8)"));
             }
             if header.first > at.next {
-                return Ok(Received::Gap { from: at.next, to: header.first - 1 });
+                return Ok((Received::Gap { from: at.next, to: header.first - 1 }, false));
             }
             if header.first < at.next || header.previous != at.head {
                 return Err(invalid("the frame does not follow the applied prefix"));
@@ -527,16 +551,51 @@ impl Library {
             let arriving = Arriving { frame: &frame, header: &header, records: &records };
             match apply_frame(db, scope_id, holding_id, &mut at, arriving, authorizer.as_ref())? {
                 Err(why) => {
-                    let signature = refuse(db, at.stream, &header, &why, signer.as_ref())?;
-                    Ok(Received::Rejected { why, from: header.first, signature })
+                    let signature = refuse(db, at.stream, holding_id, &header, &why, signer.as_ref())?;
+                    Ok((Received::Rejected { why, from: header.first, signature }, false))
                 }
                 Ok((change, prefix)) => {
                     let signature = signer.sign(&statement("applied", &header, &[&change.to_le_bytes(), &prefix]));
-                    let drained = drain(db, scope_id, holding_id, &mut at, authorizer.as_ref(), signer.as_ref())?;
-                    Ok(Received::Applied { change, prefix, signature, drained })
+                    let mut drained = Drained::default();
+                    let more = drain(db, scope_id, holding_id, &mut at, authorizer.as_ref(), signer.as_ref(), &mut drained)?;
+                    Ok((Received::Applied { change, prefix, signature, drained }, more))
                 }
             }
-        })?)
+        })?;
+        if more && let Received::Applied { drained, .. } = &mut received {
+            self.drain_on(&key, &stream, &authorizing, &signing, drained)?;
+        }
+        Ok(received)
+    }
+
+    /// Goes on applying the parked frames of `stream` that follow, a few
+    /// to a transaction.
+    fn drain_on(
+        &self,
+        scope: &str,
+        stream: &str,
+        authorizer: &Arc<dyn Authorizer>,
+        signer: &Arc<dyn HubSigner>,
+        drained: &mut Drained,
+    ) -> Result<()> {
+        loop {
+            let (scope, stream) = (scope.to_string(), stream.to_string());
+            let (authorizer, signer) = (authorizer.clone(), signer.clone());
+            let (batch, more) = self.database().write_now_at(Priority::Normal, 1 << 20, move |db| {
+                let mut batch = Drained::default();
+                let Some((scope_id, _, Some(holding))) = held(db, &scope)? else { return Ok((batch, false)) };
+                let mut at = prefix(db, scope_id, holding, &stream)?;
+                let more = drain(db, scope_id, holding, &mut at, authorizer.as_ref(), signer.as_ref(), &mut batch)?;
+                Ok((batch, more))
+            })?;
+            drained.applied.extend(batch.applied);
+            if batch.refused.is_some() {
+                drained.refused = batch.refused;
+            }
+            if !more {
+                return Ok(());
+            }
+        }
     }
 
     /// The hub's word on a frame of `scope` it has one on already, from the
@@ -570,27 +629,35 @@ impl Library {
         scope: &str,
         stream: &str,
         epoch: u64,
-        authorizer: std::sync::Arc<dyn Authorizer>,
-        signer: std::sync::Arc<dyn HubSigner>,
+        authorizer: Arc<dyn Authorizer>,
+        signer: Arc<dyn HubSigner>,
     ) -> Result<Drained> {
-        let (scope, stream) = (scope.to_string(), stream.to_string());
-        Ok(self.database().write_now_at(Priority::Normal, 4096, move |db| {
-            let Some((scope_id, _, Some(holding_id))) = held(db, &scope)? else {
+        let (key, name) = (scope.to_string(), stream.to_string());
+        let (authorizing, signing) = (authorizer.clone(), signer.clone());
+        let (mut drained, more) = self.database().write_now_at(Priority::Normal, 1 << 20, move |db| {
+            let mut drained = Drained::default();
+            let Some((scope_id, _, Some(holding_id))) = held(db, &key)? else {
                 return Err(invalid("the scope is not held here"));
             };
-            let mut at = prefix(db, scope_id, holding_id, &stream)?;
+            let mut at = prefix(db, scope_id, holding_id, &name)?;
             if epoch <= at.epoch {
-                return Ok(Drained::default());
+                return Ok((drained, false));
             }
             db.prepare_cached("UPDATE streams SET epoch = ?2 WHERE id = ?1")?.execute(params![at.stream, epoch as i64])?;
             at.epoch = epoch;
-            drain(db, scope_id, holding_id, &mut at, authorizer.as_ref(), signer.as_ref())
-        })?)
+            let more = drain(db, scope_id, holding_id, &mut at, authorizer.as_ref(), signer.as_ref(), &mut drained)?;
+            Ok((drained, more))
+        })?;
+        if more {
+            self.drain_on(scope, stream, &authorizing, &signing, &mut drained)?;
+        }
+        Ok(drained)
     }
 }
 
-/// Applies, in order, the parked frames of the current epoch that follow
-/// the applied prefix; a refused one ends its epoch's run.
+/// Applies, in order, up to `DRAIN_AT_ONCE` of the parked frames of the
+/// current epoch that follow the applied prefix; a refused one ends its
+/// epoch's run. Whether more may follow.
 fn drain(
     db: &Connection,
     scope: i64,
@@ -598,35 +665,42 @@ fn drain(
     at: &mut Prefix,
     authorizer: &dyn Authorizer,
     signer: &dyn HubSigner,
-) -> fastctx_storage::Result<Drained> {
-    let mut drained = Drained::default();
-    loop {
+    drained: &mut Drained,
+) -> fastctx_storage::Result<bool> {
+    for _ in 0..DRAIN_AT_ONCE {
         let next: Option<(Vec<u8>, Vec<u8>, Vec<u8>)> = db
-            .prepare_cached("SELECT header, signature, body FROM parked WHERE stream = ?1 AND epoch = ?2 AND first = ?3")?
-            .query_row(params![at.stream, at.epoch as i64, at.next as i64], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .prepare_cached("SELECT header, signature, body FROM parked WHERE stream = ?1 AND epoch = ?2 AND first = ?3 AND holding = ?4")?
+            .query_row(params![at.stream, at.epoch as i64, at.next as i64, holding], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            })
             .optional()?;
-        let Some((header_bytes, signature, body)) = next else { return Ok(drained) };
+        let Some((header_bytes, signature, body)) = next else { return Ok(false) };
         let header = Header::decode(&header_bytes).map_err(invalid)?;
         let records = open(&header, &body).map_err(invalid)?;
         let frame = RawFrame { header: header_bytes, signature, body, objects: Vec::new() };
-        for table in ["parked_objects", "parked"] {
-            db.prepare_cached(&format!("DELETE FROM {table} WHERE stream = ?1 AND epoch = ?2 AND first = ?3"))?
-                .execute(params![at.stream, header.epoch as i64, header.first as i64])?;
-        }
+        let (stream, epoch, first) = (at.stream, header.epoch as i64, header.first as i64);
+        let place = params![stream, epoch, first, holding];
+        db.prepare_cached("DELETE FROM parked WHERE stream = ?1 AND epoch = ?2 AND first = ?3 AND holding = ?4")?.execute(place)?;
         if header.previous != at.head {
             let why = "it does not follow the applied prefix".to_string();
-            let signature = refuse(db, at.stream, &header, &why, signer)?;
+            let signature = refuse(db, at.stream, holding, &header, &why, signer)?;
             drained.refused = Some(Refused { header: frame.header, why, signature });
-            return Ok(drained);
+            return Ok(false);
         }
         let arriving = Arriving { frame: &frame, header: &header, records: &records };
         match apply_frame(db, scope, holding, at, arriving, authorizer)? {
-            Ok(_) => drained.applied.push(header.first),
+            Ok(_) => {
+                // Its objects are held by the applied frame now.
+                db.prepare_cached("DELETE FROM parked_objects WHERE stream = ?1 AND epoch = ?2 AND first = ?3 AND holding = ?4")?
+                    .execute(place)?;
+                drained.applied.push(header.first);
+            }
             Err(why) => {
-                let signature = refuse(db, at.stream, &header, &why, signer)?;
+                let signature = refuse(db, at.stream, holding, &header, &why, signer)?;
                 drained.refused = Some(Refused { header: frame.header, why, signature });
-                return Ok(drained);
+                return Ok(false);
             }
         }
     }
+    Ok(true)
 }

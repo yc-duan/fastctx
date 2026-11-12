@@ -29,7 +29,7 @@ pub use frame::{FORMAT, Header, KindRecord, Signer, open};
 pub use hub::{Authorizer, Drained, HubSigner, Received, Refused, Taking};
 pub use ops::{Delivery, Op};
 pub use reads::{Entry, PAGE};
-pub use receipts::{Receipt, Said};
+pub use receipts::{Mark, Receipt, Report, Said};
 pub use rejected::Resubmit;
 pub use window::Pruned;
 pub use scopes::Purged;
