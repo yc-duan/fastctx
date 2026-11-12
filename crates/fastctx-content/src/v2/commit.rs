@@ -63,6 +63,17 @@ impl Library {
     /// Commits `commit` as the stream's ordering device, signing each frame
     /// with `signer`.
     pub fn commit(&self, commit: Commit, signer: Arc<dyn Signer>) -> Result<Committed> {
+        self.commit_then(commit, signer, |_| Ok(()))
+    }
+
+    /// Commits as `commit` does, with `then` done in the same transaction
+    /// once the records are in.
+    pub(super) fn commit_then(
+        &self,
+        commit: Commit,
+        signer: Arc<dyn Signer>,
+        then: impl FnOnce(&Connection) -> fastctx_storage::Result<()> + Send + 'static,
+    ) -> Result<Committed> {
         for record in &commit.records {
             record.record.check().map_err(Error::Invalid)?;
         }
@@ -153,6 +164,7 @@ impl Library {
             .execute(params![stream, holding, first as i64 - 1, &head[..]])?;
             floors_passed(db, stream, first - 1)?;
             release_in(db, &commit.leases)?;
+            then(db)?;
             if let Some((op, words)) = &commit.op {
                 let mut record = commit.stream.as_bytes().to_vec();
                 record.push(0);
