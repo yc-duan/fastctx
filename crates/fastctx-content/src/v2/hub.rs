@@ -230,7 +230,12 @@ pub(super) fn before(db: &Connection, stream: i64, holding: i64, item: &[u8]) ->
         (Some(indexed), Some(hidden)) => Some(if hidden.revision > indexed.revision { hidden } else { indexed }),
         (indexed, hidden) => indexed.or(hidden),
     };
-    let Some(Seen { revision, place, state, kind, schema, body, objects }) = latest else { return Ok(None) };
+    let Some(latest) = latest else { return Ok(None) };
+    entry(item, latest)
+}
+
+fn entry(item: &[u8], seen: Seen) -> fastctx_storage::Result<Option<Entry>> {
+    let Seen { revision, place, state, kind, schema, body, objects } = seen;
     if state != IS {
         return Ok(None);
     }
@@ -243,6 +248,38 @@ pub(super) fn before(db: &Connection, stream: i64, holding: i64, item: &[u8]) ->
         body: body.unwrap_or_default(),
         objects: unpack(&objects.unwrap_or_default()).map_err(invalid)?,
     }))
+}
+
+/// The item as `before` has it, where the latest revision this period's
+/// index or prefix state holds of it is earlier than `revision` (or there
+/// is none); `None` where it is not.
+pub(super) fn before_below(
+    db: &Connection,
+    stream: i64,
+    holding: i64,
+    item: &[u8],
+    revision: u64,
+) -> fastctx_storage::Result<Option<Option<Entry>>> {
+    let indexed = seen(db, "items", stream, holding, item)?;
+    let hidden = seen(db, "prefix_items", stream, holding, item)?;
+    let latest = match (indexed, hidden) {
+        (Some(indexed), Some(hidden)) => Some(if hidden.revision > indexed.revision { hidden } else { indexed }),
+        (indexed, hidden) => indexed.or(hidden),
+    };
+    match latest {
+        None => Ok(Some(None)),
+        Some(latest) if (latest.revision as u64) < revision => Ok(Some(entry(item, latest)?)),
+        Some(_) => Ok(None),
+    }
+}
+
+/// The state an earlier period's prefix gave the item, where it is earlier
+/// than `revision`.
+pub(super) fn hidden_before(db: &Connection, stream: i64, holding: i64, item: &[u8], revision: u64) -> fastctx_storage::Result<Option<Entry>> {
+    match seen(db, "prefix_items", stream, holding, item)? {
+        Some(hidden) if (hidden.revision as u64) < revision => entry(item, hidden),
+        _ => Ok(None),
+    }
 }
 
 /// A record the index will not take because a later revision of an earlier
@@ -466,7 +503,7 @@ fn apply_frame(
         if !authorizer.knows(record.kind, record.schema) {
             // Kept in its frame, out of the index, until this hub knows its
             // kind (§2.3).
-            super::pending::keep(db, at.stream, record.kind, record.schema, header.epoch, header.first)?;
+            super::pending::keep(db, at.stream, record.kind, record.schema, header.epoch, header.first, &head)?;
             continue;
         }
         hidden_by_floor(db, applying, header.first + offset as u64, record)?;

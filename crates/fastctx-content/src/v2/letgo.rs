@@ -88,6 +88,18 @@ impl Library {
         })?)
     }
 
+    /// The streams of `scope` withheld here in its holding period now.
+    pub fn withheld_streams(&self, scope: &str) -> Result<std::collections::BTreeSet<String>> {
+        let scope = scope.to_string();
+        Ok(self.database().read_now(move |db| {
+            let Some((scope_id, _, Some(holding))) = held(db, &scope)? else { return Ok(Default::default()) };
+            let mut statement =
+                db.prepare_cached("SELECT s.name FROM withheld w JOIN streams s ON s.id = w.stream WHERE s.scope = ?1 AND w.holding = ?2")?;
+            let rows = statement.query_map(params![scope_id, holding], |row| row.get(0))?;
+            Ok(rows.collect::<std::result::Result<_, _>>()?)
+        })?)
+    }
+
     /// The hub gives `streams` of `scope` to this device to hold in the
     /// holding period `holding`: any of them withheld in that period is
     /// committed to again. A period ended meanwhile lifts nothing of the

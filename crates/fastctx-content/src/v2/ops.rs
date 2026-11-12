@@ -102,8 +102,10 @@ pub(super) fn refused_in(db: &Connection, op: &str, seq: i64, record: &[u8], why
     Ok(())
 }
 
-/// What begins kept records that carry their places in the order.
-const KEPT: &[u8] = b"K2";
+/// What begins kept records that carry their places in the order. Read as
+/// the length an older kept record begins with, it is past any record's
+/// (U06): no older kept record begins so.
+const KEPT: &[u8] = b"K2\xff\xff";
 
 /// The kept records of an operation with their places in the order; those
 /// kept before places were, in the order they were kept.

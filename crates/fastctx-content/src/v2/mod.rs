@@ -17,6 +17,7 @@ mod handover;
 mod heads;
 mod hub;
 mod items;
+mod judged;
 mod kind;
 mod letgo;
 mod objects;
@@ -140,6 +141,12 @@ impl Library {
     pub(super) fn knowing(&self) -> impl Fn(u16, u16) -> bool + Send + 'static {
         let kinds = self.0.kinds.read().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
         move |kind, schema| kinds.as_ref().is_none_or(|kinds| kinds.knows(kind, schema))
+    }
+
+    /// The kinds this library knows, when it was told: what judges a
+    /// record of them.
+    pub(super) fn judging(&self) -> Option<Arc<dyn Authorizer>> {
+        self.0.kinds.read().unwrap_or_else(std::sync::PoisonError::into_inner).clone()
     }
 
     /// Whether a clone of this library is held anywhere but by this one.

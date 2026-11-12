@@ -3,7 +3,8 @@
 //! (a hub taking it, a replica importing it, an index rebuilt), until the
 //! library knows them and judges them again (`reconsider`).
 
-use super::frame::{Header, open};
+use super::frame::{Header, KindRecord, open};
+use super::judged::Fate;
 use super::items::{Applying, apply};
 use super::{Authorizer, Library};
 use crate::Result;
@@ -16,27 +17,30 @@ use std::sync::Arc;
 const FRAMES_AT_ONCE: i64 = 64;
 
 /// Keeps the records of `kind` at `schema` in the frame of `stream` at
-/// (`epoch`, `first`) out of the index.
-pub(super) fn keep(db: &Connection, stream: i64, kind: u16, schema: u16, epoch: u64, first: u64) -> fastctx_storage::Result<()> {
-    db.prepare_cached("INSERT OR IGNORE INTO pending_schema (stream, kind, schema, epoch, first) VALUES (?1, ?2, ?3, ?4, ?5)")?
-        .execute(params![stream, kind, schema, epoch as i64, first as i64])?;
+/// (`epoch`, `first`) whose head is `head` out of the index.
+pub(super) fn keep(db: &Connection, stream: i64, kind: u16, schema: u16, epoch: u64, first: u64, head: &[u8; 32]) -> fastctx_storage::Result<()> {
+    db.prepare_cached("INSERT OR IGNORE INTO pending_schema (stream, kind, schema, epoch, first, head) VALUES (?1, ?2, ?3, ?4, ?5, ?6)")?
+        .execute(params![stream, kind, schema, epoch as i64, first as i64, &head[..]])?;
     Ok(())
 }
 
 /// The kinds and schemas kept out of the index in the frame of `stream` at
-/// (`epoch`, `first`).
-pub(super) fn kept(db: &Connection, stream: i64, epoch: u64, first: u64) -> fastctx_storage::Result<Vec<(u16, u16)>> {
-    let mut statement = db.prepare_cached("SELECT kind, schema FROM pending_schema WHERE stream = ?1 AND epoch = ?2 AND first = ?3")?;
-    let rows = statement.query_map(params![stream, epoch as i64, first as i64], |row| Ok((row.get(0)?, row.get(1)?)))?;
+/// (`epoch`, `first`) whose head is `head`.
+pub(super) fn kept(db: &Connection, stream: i64, epoch: u64, first: u64, head: &[u8; 32]) -> fastctx_storage::Result<Vec<(u16, u16)>> {
+    let mut statement =
+        db.prepare_cached("SELECT kind, schema FROM pending_schema WHERE stream = ?1 AND epoch = ?2 AND first = ?3 AND head = ?4")?;
+    let rows = statement.query_map(params![stream, epoch as i64, first as i64, &head[..]], |row| Ok((row.get(0)?, row.get(1)?)))?;
     Ok(rows.collect::<std::result::Result<_, _>>()?)
 }
 
-/// The records of the frame of `stream` at (`epoch`, `first`) judged and
-/// refused once their kind was known, by their place in it: they stay out
-/// of the index for good, however it is built again (T03).
-pub(super) fn refused(db: &Connection, stream: i64, epoch: u64, first: u64) -> fastctx_storage::Result<Vec<u64>> {
-    let mut statement = db.prepare_cached("SELECT offset FROM refused_records WHERE stream = ?1 AND epoch = ?2 AND first = ?3")?;
-    let rows = statement.query_map(params![stream, epoch as i64, first as i64], |row| row.get::<_, i64>(0))?;
+/// The records of the frame of `stream` at (`epoch`, `first`) whose head is
+/// `head` judged and refused, by their place in it: they stay out of the
+/// index for good, however it is built again (T03). Another frame put in
+/// that place is not refused by it (U04).
+pub(super) fn refused(db: &Connection, stream: i64, epoch: u64, first: u64, head: &[u8; 32]) -> fastctx_storage::Result<Vec<u64>> {
+    let mut statement =
+        db.prepare_cached("SELECT offset FROM refused_records WHERE stream = ?1 AND epoch = ?2 AND first = ?3 AND head = ?4")?;
+    let rows = statement.query_map(params![stream, epoch as i64, first as i64, &head[..]], |row| row.get::<_, i64>(0))?;
     Ok(rows.map(|row| row.map(|offset| offset as u64)).collect::<std::result::Result<_, _>>()?)
 }
 
@@ -44,33 +48,34 @@ impl Library {
     /// Judges again the records kept out of the index for a kind or schema
     /// `kinds` knows now, a few frames at a time, each frame's in its own
     /// order (T02): each goes into the index as its frame would have put
-    /// it, after `kinds` judges it against its item as it stands — one
-    /// refused stays out for good (`refused`). A frame no longer in its
-    /// scope's current holding period takes its records with it. How many
-    /// went in. Call on a thread that may block.
+    /// it, after `kinds` judges it against its item as the frame's earlier
+    /// records and the frames before it left it (U03) — one refused stays
+    /// out for good (`refused`). Unjudged (`judge` false), they go in as
+    /// they are. A frame no longer in its scope's current holding period, or
+    /// put in its place since, takes its records with it. How many went in.
+    /// Call on a thread that may block.
     pub fn reconsider(&self, kinds: Arc<dyn Authorizer>, judge: bool) -> Result<usize> {
-        let (mut applied, mut after) = (0usize, (-1i64, -1i64, -1i64));
+        let (mut applied, mut after) = (0usize, (-1i64, -1i64, -1i64, Vec::new()));
         loop {
             let kinds = kinds.clone();
-            let from = after;
+            let from = after.clone();
             let (page, last) = self.database().write_now_at(Priority::Background, 1 << 16, move |db| {
-                let frames: Vec<(i64, i64, i64)> = {
+                let frames: Vec<(i64, i64, i64, Vec<u8>)> = {
                     let mut statement = db.prepare_cached(
-                        "SELECT DISTINCT stream, epoch, first FROM pending_schema
-                         WHERE (stream, epoch, first) > (?1, ?2, ?3) ORDER BY stream, epoch, first LIMIT ?4",
+                        "SELECT DISTINCT stream, epoch, first, head FROM pending_schema
+                         WHERE (stream, epoch, first, head) > (?1, ?2, ?3, ?4) ORDER BY stream, epoch, first, head LIMIT ?5",
                     )?;
-                    let rows = statement.query_map(params![from.0, from.1, from.2, FRAMES_AT_ONCE], |row| {
-                        Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+                    let rows = statement.query_map(params![from.0, from.1, from.2, from.3, FRAMES_AT_ONCE], |row| {
+                        Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
                     })?;
                     rows.collect::<std::result::Result<_, _>>()?
                 };
-                let last = frames.last().copied();
+                let last = frames.last().cloned();
                 let mut done = 0usize;
-                for (stream, epoch, first) in frames {
-                    let known: Vec<(u16, u16)> = kept(db, stream, epoch as u64, first as u64)?
-                        .into_iter()
-                        .filter(|(kind, schema)| kinds.knows(*kind, *schema))
-                        .collect();
+                for (stream, epoch, first, head) in frames {
+                    let head: [u8; 32] = head.try_into().map_err(|_| invalid("a malformed frame head"))?;
+                    let pending = kept(db, stream, epoch as u64, first as u64, &head)?;
+                    let known: Vec<(u16, u16)> = pending.iter().copied().filter(|(kind, schema)| kinds.knows(*kind, *schema)).collect();
                     if known.is_empty() {
                         continue;
                     }
@@ -88,34 +93,39 @@ impl Library {
                     };
                     if let (Some((scope, holding)), Some((header, body))) = (place, frame) {
                         let header = Header::decode(&header).map_err(invalid)?;
-                        let at = Applying { scope, stream, holding };
-                        // The frame's records in its own order, those of a
-                        // kind still unknown passed over.
-                        for (offset, record) in open(&header, &body).map_err(invalid)?.iter().enumerate() {
-                            if !known.contains(&(record.kind, record.schema)) {
-                                continue;
-                            }
-                            let revision = header.first + offset as u64;
-                            if judge {
-                                let before = super::hub::before(db, stream, holding, &record.record.item)?;
-                                if kinds.authorize(&header, record, before.as_ref()).is_err() {
-                                    db.prepare_cached(
-                                        "INSERT OR IGNORE INTO refused_records (stream, epoch, first, offset) VALUES (?1, ?2, ?3, ?4)",
-                                    )?
-                                    .execute(params![stream, epoch, first, offset as i64])?;
-                                    continue;
+                        if header.chain() == head {
+                            let at = Applying { scope, stream, holding };
+                            let records = open(&header, &body).map_err(invalid)?;
+                            let refused = refused(db, stream, epoch as u64, first as u64, &head)?;
+                            let fate = |offset: usize, record: &KindRecord| {
+                                let kind = (record.kind, record.schema);
+                                if refused.contains(&(offset as u64)) || (pending.contains(&kind) && !known.contains(&kind)) {
+                                    Fate::Out
+                                } else if known.contains(&kind) {
+                                    Fate::Judge
+                                } else {
+                                    Fate::Stood
                                 }
-                                super::hub::hidden_by_floor(db, at, revision, record)?;
-                            }
-                            apply(db, at, revision, record)?;
-                            done += 1;
+                            };
+                            done += if judge {
+                                super::judged::frame(db, at, &header, &records, kinds.as_ref(), fate)?
+                            } else {
+                                let mut went = 0;
+                                for (offset, record) in records.iter().enumerate() {
+                                    if matches!(fate(offset, record), Fate::Judge) {
+                                        apply(db, at, header.first + offset as u64, record)?;
+                                        went += 1;
+                                    }
+                                }
+                                went
+                            };
                         }
                     }
                     let mut forget = db.prepare_cached(
-                        "DELETE FROM pending_schema WHERE stream = ?1 AND kind = ?2 AND schema = ?3 AND epoch = ?4 AND first = ?5",
+                        "DELETE FROM pending_schema WHERE stream = ?1 AND kind = ?2 AND schema = ?3 AND epoch = ?4 AND first = ?5 AND head = ?6",
                     )?;
                     for (kind, schema) in &known {
-                        forget.execute(params![stream, kind, schema, epoch, first])?;
+                        forget.execute(params![stream, kind, schema, epoch, first, &head[..]])?;
                     }
                 }
                 Ok((done, last))

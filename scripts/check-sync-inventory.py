@@ -11,6 +11,20 @@ INVENTORIES = ("legacy.tsv", "legacy_families.tsv", "legacy_files.tsv", "legacy_
 
 FROZEN = {'legacy_baseline.tsv': 'd07f1dd37e4348ac574fb3357a399cc7fce76b0cf3246e3f0b9b36988ce58614', 'baseline_sources.tsv': '184c389ae42648ae53922007aee830769a12c6c2e752648c98367a89a130704c'}
 
+
+def exempt(relative):
+    """Drills and tests, by the parts of their path, not by any name that
+    holds the letters (U09: latest.sql is no test)."""
+    parts = relative.split("/")
+    stem = parts[-1].rsplit(".", 1)[0]
+    return (
+        "tests" in parts[:-1]
+        or any("drill" in part for part in parts)
+        or stem in ("test", "tests")
+        or stem.endswith(("_test", "_tests"))
+        or stem.startswith("test_")
+    )
+
 def rows(path):
     return [line.split("\t") for line in path.read_text(encoding="utf-8").splitlines()
             if line and not line.startswith("#")]
@@ -104,7 +118,7 @@ def check(registry):
     )
     for path in sorted((ROOT / "crates").rglob("*.rs")) + sorted((ROOT / "crates").rglob("*.sql")):
         name = path.as_posix()
-        if "/src/" not in name or "/fastctx-sync/" in name or any(x in path.name for x in ("test", "drill")):
+        if "/src/" not in name or "/fastctx-sync/" in name or exempt(path.relative_to(ROOT).as_posix()):
             continue
         owner = path.relative_to(ROOT).as_posix()
         for groups in creating.findall(path.read_text(encoding="utf-8")):

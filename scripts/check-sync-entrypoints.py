@@ -91,8 +91,8 @@ def check_assets(path, source):
         raise ValueError(f"an asset library file name made of pieces: {path}")
     if ASSET_LIKE.search(source) and path not in ASSET_LIKE_KNOWN and "test" not in path and "drill" not in path:
         raise ValueError(f"a file named like an asset library's outside it: {path}")
-    if "fastctx_content" not in source:
-        return
+    # Every file, whether it names the library's crate or not: a module that
+    # only imports another's re-export opens it all the same (U08).
     code = wire.code(source)
     if LIBRARY_ALIAS.search(code):
         raise ValueError(f"the asset library under another name: {path}")

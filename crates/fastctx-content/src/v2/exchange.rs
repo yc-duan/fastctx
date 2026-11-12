@@ -136,6 +136,7 @@ impl Library {
         let scope = scope.to_string();
         let bytes = frame.body.len() + frame.header.len() + 256 + records.len() * 64;
         let knows = self.knowing();
+        let judging = self.judging();
         let write = move |db: &Connection| -> fastctx_storage::Result<Imported> {
             let Some((scope_id, state, Some(holding))) = held(db, &scope)? else {
                 return Err(invalid("the scope is not held here"));
@@ -236,14 +237,31 @@ impl Library {
                 referring.execute(params![stream, header.epoch as i64, header.first as i64, holding, &hash[..]])?;
             }
             let at = Applying { scope: scope_id, stream, holding };
-            for (offset, record) in records.iter().enumerate() {
-                // A kind or schema this device does not know stays in its
-                // frame, out of the index, as its hub keeps it (§2.3).
+            // What was judged of another frame once in this place is not of
+            // this one (U04).
+            let head = header.chain();
+            super::judged::forget_replaced(db, stream, header.epoch, header.first, &head)?;
+            // A kind or schema this device does not know stays in its frame,
+            // out of the index, as its hub keeps it (§2.3).
+            for record in &records {
                 if !knows(record.kind, record.schema) {
-                    super::pending::keep(db, stream, record.kind, record.schema, header.epoch, header.first)?;
-                    continue;
+                    super::pending::keep(db, stream, record.kind, record.schema, header.epoch, header.first, &head)?;
                 }
-                apply(db, at, header.first + offset as u64, record)?;
+            }
+            match &judging {
+                // One it knows is judged as the hub judged it, where its
+                // frame stands (U02): one the hub let in only once it knew
+                // the kind, and refused then, stays out here too.
+                Some(kinds) => {
+                    super::judged::frame(db, at, &header, &records, kinds.as_ref(), |_, record| {
+                        if knows(record.kind, record.schema) { super::judged::Fate::Judge } else { super::judged::Fate::Out }
+                    })?;
+                }
+                None => {
+                    for (offset, record) in records.iter().enumerate() {
+                        apply(db, at, header.first + offset as u64, record)?;
+                    }
+                }
             }
             let end = header.first + u64::from(header.count);
             db.prepare_cached(

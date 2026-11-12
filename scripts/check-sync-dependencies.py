@@ -45,6 +45,22 @@ RAW_OPENING = re.compile(
 )
 
 
+def masked(source):
+    """The source with its comments and literals blanked out, so a comment
+    between the words hides nothing (U07)."""
+    global WIRE
+    if WIRE is None:
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("sync_wire", ROOT / "scripts/check-sync-wire.py")
+        WIRE = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(WIRE)
+    return WIRE.code(source)
+
+
+WIRE = None
+
+
 def exempt(relative):
     """Drills and tests, by the parts of their path, not by any name that
     holds the letters (T07: latest.rs is no test)."""
@@ -65,7 +81,7 @@ def check_raw_openers():
         package = relative.split("/")[1]
         if package in RUSQLITE_USERS or "target" in path.parts or exempt(relative):
             continue
-        if RAW_OPENING.search(path.read_text(encoding="utf-8")) and relative not in RAW_OPENERS:
+        if RAW_OPENING.search(masked(path.read_text(encoding="utf-8"))) and relative not in RAW_OPENERS:
             raise ValueError(f"unregistered raw SQLite connection: {relative}")
 
 

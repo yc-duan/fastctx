@@ -764,8 +764,11 @@ async fn pull(
         blocking(library, move |library| library.streams(&scope_text)).await?.into_iter().collect();
     // A stream this machine may hold no more goes from here (§2.3); of its
     // own, what the hub has not taken is kept first, to commit again, never
-    // dropped with the rest.
-    for stream in withheld.into_iter().filter(|stream| local.get(stream).is_some_and(|at| *at > 0)) {
+    // dropped with the rest. One not begun here, or empty, is withheld all
+    // the same (U05): a first write on its way finds it so.
+    let scope_text = scope.to_string();
+    let already = blocking(library, move |library| library.withheld_streams(&scope_text)).await?;
+    for stream in withheld.into_iter().filter(|stream| local.get(stream).is_some_and(|at| *at > 0) || !already.contains(stream)) {
         let (scope_text, device) = (scope.to_string(), assets.device());
         blocking(library, move |library| library.withhold(&scope_text, &stream, &device)).await?;
     }

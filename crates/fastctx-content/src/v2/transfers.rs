@@ -185,14 +185,14 @@ impl Library {
             }
             if length.is_none() {
                 self.database().write_now_at(Priority::Normal, 64, move |db| {
-                    db.prepare_cached("DELETE FROM transfers WHERE id = ?1")?.execute([id])?;
+                    db.prepare_cached("DELETE FROM transfers WHERE id = ?1 AND part = ?2")?.execute(params![id, part])?;
                     Ok(())
                 })?;
                 cut += 1;
             } else if changed {
                 let ranges = encode(&durable);
                 self.database().write_now_at(Priority::Normal, 64 + ranges.len(), move |db| {
-                    db.prepare_cached("UPDATE transfers SET ranges = ?2 WHERE id = ?1")?.execute(params![id, ranges])?;
+                    db.prepare_cached("UPDATE transfers SET ranges = ?2 WHERE id = ?1 AND part = ?3")?.execute(params![id, ranges, part])?;
                     Ok(())
                 })?;
                 cut += 1;
@@ -206,8 +206,7 @@ impl Transfer {
     /// The transfer is still recorded: a clearing (`clear_unrooted`) drops
     /// every transfer with its part, and one cleared away writes no more.
     fn still(&self) -> Result<()> {
-        let id = self.id;
-        let part = self.part.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
+        let (id, part) = (self.id, self.part_name());
         let recorded = self.library.database().read_now(move |db| {
             Ok(db
                 .prepare_cached("SELECT 1 FROM transfers WHERE id = ?1 AND part = ?2")?
@@ -216,6 +215,13 @@ impl Transfer {
                 .is_some())
         })?;
         if recorded { Ok(()) } else { Err(Error::Invalid("the transfer was cleared away".into())) }
+    }
+
+    /// Its part file's name: with its row number, what the transfer is
+    /// known by. A row number another transfer took after this one went is
+    /// not this one's (U01): every change of its row asks for both.
+    fn part_name(&self) -> String {
+        self.part.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default()
     }
 
     /// The chunk numbers still to be received.
@@ -266,9 +272,9 @@ impl Transfer {
             self.durable[index as usize] = true;
         }
         self.since = Instant::now();
-        let (id, ranges) = (self.id, encode(&self.durable));
+        let (id, part, ranges) = (self.id, self.part_name(), encode(&self.durable));
         self.library.database().write_relaxed_now_at(Priority::Normal, 64 + ranges.len(), move |db| {
-            db.prepare_cached("UPDATE transfers SET ranges = ?2 WHERE id = ?1")?.execute(params![id, ranges])?;
+            db.prepare_cached("UPDATE transfers SET ranges = ?2 WHERE id = ?1 AND part = ?3")?.execute(params![id, ranges, part])?;
             Ok(())
         })?;
         Ok(())
@@ -299,17 +305,17 @@ impl Transfer {
         if read_total != self.object.size || <[u8; 32]>::from(hasher.finalize()) != self.object.hash {
             // Its chunks matched a manifest that was wrong: the transfer
             // goes, and the next one starts afresh from a source.
-            let (library, id) = (self.library.clone(), self.id);
+            let (library, id, part) = (self.library.clone(), self.id, self.part_name());
             drop(self.file);
             let _ = std::fs::remove_file(&self.part);
             library.database().write_now_at(Priority::Normal, 64, move |db| {
-                db.prepare_cached("DELETE FROM transfers WHERE id = ?1")?.execute([id])?;
+                db.prepare_cached("DELETE FROM transfers WHERE id = ?1 AND part = ?2")?.execute(params![id, part])?;
                 Ok(())
             })?;
             return Err(Error::Invalid("the received object does not hash to what it was asked as".into()));
         }
         self.file.sync_all().map_err(io)?;
-        let (object, id) = (self.object, self.id);
+        let (object, id, part) = (self.object, self.id, self.part_name());
         let manifest: Vec<u8> = self.digests.iter().flatten().copied().collect();
         let leasing = holder.to_string();
         let placed = self.library.database().write_now_at(Priority::Normal, 256, move |db| {
@@ -339,7 +345,7 @@ impl Transfer {
                 drop(self.file);
                 let _ = std::fs::remove_file(&self.part);
                 library.database().write_now_at(Priority::Normal, 64, move |db| {
-                    db.prepare_cached("DELETE FROM transfers WHERE id = ?1")?.execute([id])?;
+                    db.prepare_cached("DELETE FROM transfers WHERE id = ?1 AND part = ?2")?.execute(params![id, part])?;
                     Ok(())
                 })?;
                 return Ok(lease);
@@ -363,7 +369,7 @@ impl Transfer {
             for (row, slice) in manifest.chunks(32 * super::objects::DIGESTS_PER_ROW as usize).enumerate() {
                 rows.execute(params![&object.hash[..], row as i64 * super::objects::DIGESTS_PER_ROW as i64, slice])?;
             }
-            db.prepare_cached("DELETE FROM transfers WHERE id = ?1")?.execute([id])?;
+            db.prepare_cached("DELETE FROM transfers WHERE id = ?1 AND part = ?2")?.execute(params![id, part])?;
             let expires = now() + ttl.as_millis() as i64;
             db.prepare_cached("INSERT INTO leases (hash, holder, expires) VALUES (?1, ?2, ?3)")?
                 .execute(params![&object.hash[..], holder, expires])?;

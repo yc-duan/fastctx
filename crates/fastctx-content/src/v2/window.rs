@@ -202,6 +202,8 @@ pub(super) fn truncate_in(
         db.prepare_cached(&format!("DELETE FROM {table} WHERE stream = ?1 AND holding = ?2 AND first > ?3"))?
             .execute(params![stream_id, holding, keep])?;
     }
+    // What was judged of the frames cut away goes with them (U04).
+    super::judged::forget_from(db, stream_id, keep + 1)?;
     match &head {
         Some(head) => {
             db.prepare_cached("UPDATE cursors SET sequence = ?3, head = ?4 WHERE stream = ?1 AND holding = ?2")?

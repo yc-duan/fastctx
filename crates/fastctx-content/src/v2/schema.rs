@@ -294,22 +294,27 @@ CREATE TABLE IF NOT EXISTS op_records (
     PRIMARY KEY (scope, stream, revision)
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS op_records_by_op ON op_records (op);
+-- Kinds of a frame kept out of the index, against the frame's head: a
+-- frame put in its place later is another one.
 CREATE TABLE IF NOT EXISTS pending_schema (
     stream INTEGER NOT NULL,
     kind INTEGER NOT NULL,
     schema INTEGER NOT NULL,
     epoch INTEGER NOT NULL,
     first INTEGER NOT NULL,
-    PRIMARY KEY (stream, kind, schema, epoch, first)
+    head BLOB NOT NULL,
+    PRIMARY KEY (stream, epoch, first, head, kind, schema)
 ) WITHOUT ROWID;
--- Records judged and refused once their kind was known (`reconsider`), by
--- their place in their frame: kept out of the index however it is built.
+-- Records judged and refused where their frame stands (`judged`), by their
+-- place in the frame whose head this is: kept out of the index however it
+-- is built.
 CREATE TABLE IF NOT EXISTS refused_records (
     stream INTEGER NOT NULL,
     epoch INTEGER NOT NULL,
     first INTEGER NOT NULL,
+    head BLOB NOT NULL,
     offset INTEGER NOT NULL,
-    PRIMARY KEY (stream, epoch, first, offset)
+    PRIMARY KEY (stream, epoch, first, head, offset)
 ) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS purges (
     scope INTEGER NOT NULL,
