@@ -99,8 +99,23 @@ fn held(assets: &Assets, directory: &Indexed<'_>, machine: &MachineName, key: &s
     Ok(scope)
 }
 
+/// An answer about the scope `key` made by the directory as it stood when
+/// the request began, judged again by the directory as it stands now: one
+/// the machine may no longer have is answered `Revoked` (design §6.3).
+pub(crate) fn recheck(assets: &Assets, directory: &Indexed<'_>, machine: &MachineName, key: &str, reply: Reply) -> Result<Reply, String> {
+    if matches!(reply, Reply::Revoked { .. } | Reply::Sealed { .. }) {
+        return Ok(reply);
+    }
+    let Some(scope) = scopes::scope(assets, key)? else { return Ok(reply) };
+    if !scopes::readable(directory, machine, &scope) || !scopes::sharers_read(directory, machine, &scope.descriptor) {
+        assets.gone(key, machine);
+        return Ok(Reply::Revoked { scope: key.to_string() });
+    }
+    Ok(reply)
+}
+
 /// The scope a request is of, if it is of one already described.
-fn scope_of(request: &Request) -> Option<&str> {
+pub(crate) fn scope_of(request: &Request) -> Option<&str> {
     match request {
         Request::Open { .. } | Request::Describe { .. } | Request::Cleared { .. } => None,
         Request::Answer { scope, .. }
@@ -158,8 +173,9 @@ pub(crate) fn ask(
             let library = scopes::library(assets, &kept)?;
             let period = library.holding(&scope).map_err(|error| error.to_string())?.ok_or("the scope is not held here")?;
             let proven: Vec<[u8; 32]> = proven.iter().map(|hash| array(hash, "a proven object's hash")).collect::<Result<_, _>>()?;
-            // Only what this machine sent every byte of lately (§6.5).
-            let proven = assets.objects.proven(machine, &proven);
+            // Only what this device sent every byte of lately, under its key
+            // (§6.5).
+            let proven = assets.objects.proven(key.as_bytes(), &proven);
             // An object the device may read in this scope needs no proof.
             let readable = |object: &ObjectRef| library.readable(&scope, &object.hash).unwrap_or(false);
             let taking = Taking { period, readable: &readable, proven: &proven };
@@ -185,13 +201,13 @@ pub(crate) fn ask(
             Ok(Reply::Received { received: received(word) })
         }
         Request::Cleared { .. } => Err("a machine's word that it cleared is taken with the directory".into()),
-        Request::Put { scope, object, manifest, prove } => {
+        Request::Put { scope, object, prove, .. } => {
             let kept = gated(assets, directory, machine, &scope)?;
-            super::objects::put(assets, machine, kept, &object, manifest, prove)
+            super::objects::put(assets, machine, key, kept, &object, prove)
         }
         Request::Get { scope, object, from } => {
             let kept = gated(assets, directory, machine, &scope)?;
-            super::objects::get(assets, machine, kept, &object, from)
+            super::objects::get(assets, directory, machine, key, kept, &object, from)
         }
         Request::Cursors { scope, holding, streams } => {
             let kept = gated(assets, directory, machine, &scope)?;
@@ -262,13 +278,22 @@ pub(crate) fn ask(
             // hears of it (design §6.1, §17).
             let epoch = fastctx_content::v2::EpochFact::decode(&signed.fact)?.epoch;
             assets.opened_epoch(&kept.owner, &scope, &stream, epoch, &signed.fact).map_err(|error| error.to_string())?;
-            Ok(Reply::Epoch { descriptor: wire::Fact { fact: signed.fact.into(), word: signed.signature.into() } })
+            // The word given is bound to the head the epoch went into.
+            let word = assets.signer().sign(&signed.fact);
+            Ok(Reply::Epoch { descriptor: wire::Fact { fact: signed.fact.into(), word: word.into() } })
         }
         Request::Succession { scope, stream } => {
             let kept = held(assets, directory, machine, &scope, &stream)?;
             let library = scopes::library(assets, &kept)?;
             let (epochs, gaps) = library.succession(&scope, &stream).map_err(|error| error.to_string())?;
-            let fact = |signed: fastctx_content::v2::Signed| wire::Fact { fact: signed.fact.into(), word: signed.signature.into() };
+            // Each in the hub's chain and outside its directory before it is
+            // handed out, and given with a word bound to that head.
+            assets.witness_facts(&kept.owner, &scope, &stream, &epochs, &gaps).map_err(|error| error.to_string())?;
+            let signer = assets.signer();
+            let fact = |signed: fastctx_content::v2::Signed| {
+                let word = signer.sign(&signed.fact);
+                wire::Fact { fact: signed.fact.into(), word: word.into() }
+            };
             Ok(Reply::Succession { epochs: epochs.into_iter().map(fact).collect(), gaps: gaps.into_iter().map(fact).collect() })
         }
     }
@@ -390,7 +415,7 @@ fn covering(assets: &Assets, scope: &Scope, head: &Head) -> Result<Option<wire::
         .read_now(move |c| {
             Ok(c.prepare_cached(
                 "SELECT seq, change, parked FROM hub_checkpoints WHERE owner = ?1 AND scope = ?2 AND change >= ?3 AND parked >= ?4
-                 AND seq <= ?5 ORDER BY seq LIMIT 1",
+                 AND seq <= ?5",
             )?
             .query_row(params![owner, key, change, parked, witnessed], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
             .optional()?)

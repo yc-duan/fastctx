@@ -153,9 +153,10 @@ CREATE INDEX IF NOT EXISTS items_floors ON items (stream, revision) WHERE state 
 CREATE TABLE IF NOT EXISTS object_refs (
     scope INTEGER NOT NULL,
     holding INTEGER NOT NULL,
+    stream INTEGER NOT NULL,
     hash BLOB NOT NULL,
     count INTEGER NOT NULL,
-    PRIMARY KEY (scope, holding, hash)
+    PRIMARY KEY (scope, holding, stream, hash)
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS object_refs_by_hash ON object_refs (hash);
 CREATE TABLE IF NOT EXISTS objects (

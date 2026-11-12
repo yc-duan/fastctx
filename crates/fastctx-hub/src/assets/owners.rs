@@ -137,13 +137,21 @@ impl Owners {
         Ok(Ok(opened))
     }
 
-    /// Closes the libraries left idle past `IDLE` that nobody holds.
+    /// Closes the libraries left idle past `IDLE` that nobody holds, and,
+    /// past the bound, the least recently used that nobody holds down to it.
     pub(crate) fn sweep(&self) {
         let now = Instant::now();
-        self.slots
-            .lock()
-            .expect("owner libraries")
-            .retain(|_, slot| !idle(slot) || now.duration_since(*slot.used.lock().expect("owner library use")) < IDLE);
+        let mut slots = self.slots.lock().expect("owner libraries");
+        slots.retain(|_, slot| !idle(slot) || now.duration_since(*slot.used.lock().expect("owner library use")) < IDLE);
+        while slots.len() > OPEN_AT_ONCE {
+            let oldest = slots
+                .iter()
+                .filter(|(_, slot)| idle(slot))
+                .min_by_key(|(_, slot)| *slot.used.lock().expect("owner library use"))
+                .map(|(owner, _)| owner.clone());
+            let Some(oldest) = oldest else { break };
+            slots.remove(&oldest);
+        }
     }
 }
 

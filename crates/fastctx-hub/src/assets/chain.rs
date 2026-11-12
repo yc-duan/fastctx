@@ -13,12 +13,18 @@ pub(crate) const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS hub_chain (
     seq INTEGER PRIMARY KEY, head BLOB NOT NULL, kind TEXT NOT NULL, digest BLOB NOT NULL, at INTEGER NOT NULL
 );
+-- Each scope's latest checkpoint: where it stood at which link of the chain.
 CREATE TABLE IF NOT EXISTS hub_checkpoints (
     owner TEXT NOT NULL, scope TEXT NOT NULL, seq INTEGER NOT NULL, change INTEGER NOT NULL, parked INTEGER NOT NULL,
     prefix BLOB NOT NULL, accumulated BLOB NOT NULL,
-    PRIMARY KEY (owner, scope, seq)
+    PRIMARY KEY (owner, scope)
 ) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS asset_machines (machine TEXT PRIMARY KEY) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS hub_gap_facts (
+    owner TEXT NOT NULL, scope TEXT NOT NULL, stream TEXT NOT NULL, epoch INTEGER NOT NULL, from_sequence INTEGER NOT NULL,
+    digest BLOB NOT NULL, seq INTEGER NOT NULL,
+    PRIMARY KEY (owner, scope, stream, epoch, from_sequence)
+) WITHOUT ROWID;
 -- A history put aside when the hub recovered (design §17): heads after
 -- `fork` up to `top` that are not the chain's are of it.
 CREATE TABLE IF NOT EXISTS closed_branches (

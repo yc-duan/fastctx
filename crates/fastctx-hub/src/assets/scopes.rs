@@ -46,15 +46,17 @@ fn identity(directory: &Indexed<'_>, key: &str) -> Option<String> {
     };
     match key.split_once(':')? {
         ("account", name) => opened(name),
+        // A machine is its key and its owner as opened: neither a newcomer
+        // taking its name nor an owner's account made again inherits it.
         ("machine", name) => {
             let name = MachineName::try_from(name.to_string()).ok()?;
             let member = directory.member(&name)?;
-            Some(fastctx_net::record_ownership::seal(member).unwrap_or_else(|| member.key.to_string()))
+            let home = member.home.as_ref().map(|home| format!("{home}@{}", opened(home.as_str()).unwrap_or_default()));
+            Some(format!("{}:{}", member.key, home.unwrap_or_default()))
         }
-        ("project", town) => {
-            let project = directory.all.projects.iter().find(|project| project.town.to_string() == town)?;
-            Some(format!("{}:{}", project.owner, opened(project.owner.as_str())?))
-        }
+        // A project is its town, whoever owns it now: a project handed over
+        // stays itself.
+        ("project", town) => directory.all.projects.iter().any(|project| project.town.to_string() == town).then(|| town.to_string()),
         _ => None,
     }
 }
@@ -160,9 +162,22 @@ pub(crate) fn scope(assets: &Assets, key: &str) -> Result<Option<Scope>, String>
                 .optional()?)
         })
         .map_err(|error| error.to_string())?;
-    let Some((owner, descriptor, word)) = found else { return Ok(None) };
+    let Some((owner, descriptor, mut word)) = found else { return Ok(None) };
     let owner = Owner::from_key(&owner).ok_or_else(|| format!("a scope of an unknown owner {owner}"))?;
     let read: Descriptor = serde_json::from_slice(&descriptor).map_err(|error| error.to_string())?;
+    if word.is_empty() {
+        // A stop came between its chain head and its word.
+        assets.catch_up().map_err(|error| error.to_string())?;
+        word = assets.signer().sign(&descriptor);
+        let (key, signed) = (read.scope.clone(), word.clone());
+        assets
+            .control
+            .write_now(256 + signed.len(), move |c| {
+                c.prepare_cached("UPDATE asset_scopes SET word = ?2 WHERE key = ?1")?.execute(params![key, signed])?;
+                Ok(())
+            })
+            .map_err(|error| error.to_string())?;
+    }
     Ok(Some(Scope { descriptor: read, fact: Fact { fact: Bytes(descriptor), word: Bytes(word) }, owner }))
 }
 
@@ -217,7 +232,7 @@ pub(crate) fn describe(
         return Err(format!("a scope of those readers has its key under {prefix}"));
     }
     if let Readers::Conversation { born_on: Some(born_on), .. } = &readers
-        && born_on != machine
+        && directory.canonical(born_on) != directory.canonical(machine)
     {
         return Err("a conversation born on a machine is described by that machine".into());
     }
@@ -227,6 +242,9 @@ pub(crate) fn describe(
             return Err(format!("none of this machine's accounts reads the scope {key}"));
         }
         if kept.descriptor.readers == readers && kept.descriptor.classes == classes {
+            // Answered again only once its chain head is outside the
+            // directory, as the first answer was to be.
+            assets.catch_up().map_err(|error| error.to_string())?;
             return Ok(kept.fact);
         }
         return Err(format!("the scope {key} is described otherwise"));
@@ -253,18 +271,28 @@ pub(crate) fn describe(
         seq: assets.witness.current().0,
     };
     let bytes = serde_json::to_vec(&descriptor).map_err(|error| error.to_string())?;
-    let word = assets.signer().sign(&bytes);
     let digest: [u8; 32] = Sha256::digest(&bytes).into();
-    let (key_text, owner_key, stored, signed) = (key.to_string(), owner.key(), bytes.clone(), word.clone());
+    let (key_text, owner_key, stored) = (key.to_string(), owner.key(), bytes.clone());
     let (seq, head) = assets
         .control
         .write_now(256 + bytes.len(), move |c| {
-            c.prepare_cached("INSERT INTO asset_scopes (key, owner, descriptor, word) VALUES (?1, ?2, ?3, ?4)")?
-                .execute(params![key_text, owner_key, stored, signed])?;
+            c.prepare_cached("INSERT INTO asset_scopes (key, owner, descriptor, word) VALUES (?1, ?2, ?3, x'')")?
+                .execute(params![key_text, owner_key, stored])?;
             chain::append(c, "scope", &digest)
         })
         .map_err(|error| error.to_string())?;
     assets.witness.advanced(seq, &head).map_err(|error| error.to_string())?;
+    // Signed now, bound to the head the descriptor went into: a device that
+    // saw it carries a head a hub put back to before it does not hold.
+    let word = assets.signer().sign(&bytes);
+    let (key_text, signed) = (key.to_string(), word.clone());
+    assets
+        .control
+        .write_now(256 + word.len(), move |c| {
+            c.prepare_cached("UPDATE asset_scopes SET word = ?2 WHERE key = ?1")?.execute(params![key_text, signed])?;
+            Ok(())
+        })
+        .map_err(|error| error.to_string())?;
     let kept = Scope { descriptor, fact: Fact { fact: Bytes(bytes), word: Bytes(word) }, owner };
     library(assets, &kept)?;
     Ok(kept.fact)

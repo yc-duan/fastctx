@@ -97,7 +97,7 @@ pub(super) fn rebuild(db: &Connection, at: Applying) -> fastctx_storage::Result<
                 && let Some(objects) = objects
             {
                 for object in crate::record::unpack(&objects).map_err(invalid)? {
-                    super::items::unrefer(db, at.scope, at.holding, &object.hash)?;
+                    super::items::unrefer(db, at.scope, at.holding, at.stream, &object.hash)?;
                 }
             }
             db.prepare_cached("DELETE FROM items WHERE stream = ?1 AND place = ?2 AND item = ?3")?

@@ -1066,12 +1066,23 @@ fn handle(
                                 .and_then(|()| crate::shares::cleared(&hub, &from, &origin.key, *revision, &proof.0));
                             return (answer, Vec::new());
                         }
+                        let scope = crate::assets::serve::scope_of(&request).map(str::to_string);
                         let store = hub.store();
                         let answer = origin
                             .check(&store.book.directory)
                             .and_then(|()| crate::assets::serve::ask(&hub.assets, &store.indexed(), &from, &origin.key, request));
-                        // Told only to machines that read the scope now.
-                        let pushes = hub.assets.take_pushes(&store.indexed());
+                        drop(store);
+                        // Judged again, and told only, by the directory as it
+                        // stands now, read after what is to be told was taken.
+                        let drained = hub.assets.drain_pushes();
+                        let now = hub.store();
+                        let answer = match (answer, scope) {
+                            (Ok(reply), Some(key)) => {
+                                crate::assets::serve::recheck(&hub.assets, &now.indexed(), &from, &key, reply)
+                            }
+                            (answer, _) => answer,
+                        };
+                        let pushes = hub.assets.take_pushes(drained, &now.indexed());
                         (answer, pushes)
                     })
                     .await;

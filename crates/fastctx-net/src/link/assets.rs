@@ -52,6 +52,16 @@ pub struct Outgoing {
 }
 
 impl Outgoing {
+    /// Sends a large object's chunk digests and hears which chunks the hub
+    /// wants, as ranges [start, end).
+    pub async fn manifest(&mut self, digests: &[[u8; 32]]) -> Result<Vec<(u64, u64)>, String> {
+        self.stream.say(&fastctx_types::assets::ManifestHead { count: digests.len() as u64 }).await?;
+        let flat: Vec<u8> = digests.iter().flatten().copied().collect();
+        self.stream.send(&flat).await?;
+        let wanted: fastctx_types::assets::Wanted = self.stream.hear().await?;
+        Ok(wanted.ranges)
+    }
+
     /// Sends chunk `index`.
     pub async fn chunk(&mut self, index: u64, bytes: &[u8]) -> Result<(), String> {
         self.stream.say(&ChunkHead { index, size: bytes.len() as u64 }).await?;
@@ -70,6 +80,23 @@ pub struct Incoming {
 }
 
 impl Incoming {
+    /// A large object's chunk digests, `count` of them, as the hub sends
+    /// them ahead of its chunks.
+    pub async fn manifest(&mut self, count: u64) -> Result<Vec<[u8; 32]>, String> {
+        let head: fastctx_types::assets::ManifestHead = self.stream.hear().await?;
+        if head.count != count {
+            return Err("the hub's digests are not one a chunk".into());
+        }
+        let mut flat = Vec::with_capacity((count * 32) as usize);
+        self.stream
+            .take(count * 32, |piece| {
+                flat.extend_from_slice(piece);
+                Ok(())
+            })
+            .await?;
+        Ok(flat.chunks_exact(32).map(|digest| digest.try_into().expect("32 bytes")).collect())
+    }
+
     /// The next chunk: its index and bytes.
     pub async fn chunk(&mut self) -> Result<(u64, Vec<u8>), String> {
         let head: ChunkHead = self.stream.hear().await?;

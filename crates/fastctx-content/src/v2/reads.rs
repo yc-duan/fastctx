@@ -122,6 +122,33 @@ impl Library {
         })?)
     }
 
+    /// The streams of `scope` through which `hash` may be read here: those
+    /// whose index or applied frames refer to it in the current period, and
+    /// those whose evidence refers to it with its holding shown (§2.3: a
+    /// device reads an object only through a stream it may hold).
+    pub fn streams_reading(&self, scope: &str, hash: &[u8; 32]) -> Result<Vec<String>> {
+        let (scope, hash) = (scope.to_string(), *hash);
+        Ok(self.database().read_now(move |db| {
+            let Some((scope, state, Some(holding))) = held(db, &scope)? else { return Ok(Vec::new()) };
+            if state != "live" {
+                return Ok(Vec::new());
+            }
+            let mut statement = db.prepare_cached(
+                "SELECT s.name FROM object_refs r JOIN streams s ON s.id = r.stream
+                 WHERE r.scope = ?1 AND r.holding = ?2 AND r.hash = ?3 AND r.count > 0
+                 UNION
+                 SELECT s.name FROM frame_objects f JOIN streams s ON s.id = f.stream
+                 WHERE s.scope = ?1 AND f.holding = ?2 AND f.hash = ?3
+                 UNION
+                 SELECT s.name FROM evidence e JOIN streams s ON s.id = e.stream
+                 JOIN object_holds h ON h.kind = 'evidence' AND h.holder = e.holder
+                 WHERE s.scope = ?1 AND e.holding = ?2 AND h.hash = ?3 AND h.proven = 1",
+            )?;
+            let rows = statement.query_map(params![scope, holding, &hash[..]], |row| row.get(0))?;
+            Ok(rows.collect::<std::result::Result<_, _>>()?)
+        })?)
+    }
+
     /// Whether `hash` may be read in `scope` here through the evidence
     /// gate (§6.4 item 5): a predecessor's tail kept as evidence refers to
     /// it, and the device that brought it showed it holds it (§8, Q05).

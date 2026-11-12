@@ -147,6 +147,7 @@ pub fn reopen(dir: &Path) -> anyhow::Result<usize> {
     let mut places = Vec::new();
     let mut forgotten_checkpoints = Vec::new();
     let mut forgotten_epochs = Vec::new();
+    let mut forgotten_gaps = Vec::new();
     for (key, scopes) in &by_owner {
         let Some(owner) = Owner::from_key(key) else { continue };
         let library = match assets.owners.library(&owner, |_| Ok(None))? {
@@ -171,6 +172,19 @@ pub fn reopen(dir: &Path) -> anyhow::Result<usize> {
             let digest = <[u8; 32]>::try_from(digest).unwrap_or([0; 32]);
             if !library.holds_epoch(&scope, &stream, epoch as u64, &digest).map_err(|error| anyhow::anyhow!("{error}"))? {
                 forgotten_epochs.push((key.clone(), scope, stream, epoch));
+            }
+        }
+        let owner_key = key.clone();
+        let gaps: Vec<(String, String, i64, i64, Vec<u8>)> = control.read_now(move |c| {
+            let mut statement =
+                c.prepare_cached("SELECT scope, stream, epoch, from_sequence, digest FROM hub_gap_facts WHERE owner = ?1")?;
+            let rows = statement.query_map([&owner_key], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)))?;
+            Ok(rows.collect::<std::result::Result<_, _>>()?)
+        })?;
+        for (scope, stream, epoch, from, digest) in gaps {
+            let digest = <[u8; 32]>::try_from(digest).unwrap_or([0; 32]);
+            if !library.holds_gap(&scope, &stream, epoch as u64, from as u64, &digest).map_err(|error| anyhow::anyhow!("{error}"))? {
+                forgotten_gaps.push((key.clone(), scope, stream, epoch, from));
             }
         }
     }
@@ -198,6 +212,12 @@ pub fn reopen(dir: &Path) -> anyhow::Result<usize> {
         for (owner, scope, stream, epoch) in &forgotten_epochs {
             c.prepare_cached("DELETE FROM hub_epoch_facts WHERE owner = ?1 AND scope = ?2 AND stream = ?3 AND epoch >= ?4")?
                 .execute(params![owner, scope, stream, epoch])?;
+        }
+        for (owner, scope, stream, epoch, from) in &forgotten_gaps {
+            c.prepare_cached(
+                "DELETE FROM hub_gap_facts WHERE owner = ?1 AND scope = ?2 AND stream = ?3 AND epoch = ?4 AND from_sequence = ?5",
+            )?
+            .execute(params![owner, scope, stream, epoch, from])?;
         }
         c.prepare_cached("DELETE FROM recovery_seen")?.execute([])?;
         chain::append(c, "branch-closed", &digest)

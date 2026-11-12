@@ -56,14 +56,14 @@ pub(super) fn apply(db: &Connection, at: Applying, revision: u64, record: &KindR
         if let Some(objects) = objects {
             let objects = unpack(&objects).map_err(crate::error::invalid)?;
             for object in objects {
-                unrefer(db, at.scope, holding, &object.hash)?;
+                unrefer(db, at.scope, holding, at.stream, &object.hash)?;
             }
         }
     }
     let (state, body, objects) = match &record.record.state {
         State::Is { body, objects } => {
             for object in objects {
-                refer(db, at.scope, at.holding, &object.hash)?;
+                refer(db, at.scope, at.holding, at.stream, &object.hash)?;
             }
             (IS, Some(body.as_slice()), Some(pack(objects)))
         }
@@ -88,21 +88,21 @@ pub(super) fn apply(db: &Connection, at: Applying, revision: u64, record: &KindR
     Ok(true)
 }
 
-fn refer(db: &Connection, scope: i64, holding: i64, hash: &[u8; 32]) -> fastctx_storage::Result<()> {
+fn refer(db: &Connection, scope: i64, holding: i64, stream: i64, hash: &[u8; 32]) -> fastctx_storage::Result<()> {
     db.prepare_cached(
-        "INSERT INTO object_refs (scope, holding, hash, count) VALUES (?1, ?2, ?3, 1)
-         ON CONFLICT (scope, holding, hash) DO UPDATE SET count = count + 1",
+        "INSERT INTO object_refs (scope, holding, stream, hash, count) VALUES (?1, ?2, ?3, ?4, 1)
+         ON CONFLICT (scope, holding, stream, hash) DO UPDATE SET count = count + 1",
     )?
-    .execute(params![scope, holding, &hash[..]])?;
+    .execute(params![scope, holding, stream, &hash[..]])?;
     Ok(())
 }
 
-pub(super) fn unrefer(db: &Connection, scope: i64, holding: i64, hash: &[u8; 32]) -> fastctx_storage::Result<()> {
-    db.prepare_cached("UPDATE object_refs SET count = count - 1 WHERE scope = ?1 AND holding = ?2 AND hash = ?3")?
-        .execute(params![scope, holding, &hash[..]])?;
+pub(super) fn unrefer(db: &Connection, scope: i64, holding: i64, stream: i64, hash: &[u8; 32]) -> fastctx_storage::Result<()> {
+    db.prepare_cached("UPDATE object_refs SET count = count - 1 WHERE scope = ?1 AND holding = ?2 AND stream = ?3 AND hash = ?4")?
+        .execute(params![scope, holding, stream, &hash[..]])?;
     let gone = db
-        .prepare_cached("DELETE FROM object_refs WHERE scope = ?1 AND holding = ?2 AND hash = ?3 AND count <= 0")?
-        .execute(params![scope, holding, &hash[..]])?;
+        .prepare_cached("DELETE FROM object_refs WHERE scope = ?1 AND holding = ?2 AND stream = ?3 AND hash = ?4 AND count <= 0")?
+        .execute(params![scope, holding, stream, &hash[..]])?;
     if gone > 0 {
         // Collection waits a grace after the last reference went (I2).
         db.prepare_cached("UPDATE objects SET unreferenced = ?2 WHERE hash = ?1 AND state = 1")?

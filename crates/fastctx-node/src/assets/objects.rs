@@ -42,22 +42,26 @@ pub(super) async fn put(library: &Library, link: &Arc<Link>, scope: &str, object
         if blocking(library, move |library| library.size(&hash)).await? != Some(object.size) {
             return Err(format!("a frame refers to the object {} this machine does not hold", hex(&hash)));
         }
-        let manifest = if object.size as usize > ROW_BYTES {
-            blocking(library, move |library| library.chunks(&hash)).await?.into_iter().map(Bytes::from).collect()
-        } else {
-            Vec::new()
-        };
+        let large = object.size as usize > ROW_BYTES;
         let request = Request::Put {
             scope: scope.to_string(),
             object: wire::ObjectRef { hash: hash.into(), size: object.size },
-            manifest,
+            manifest: Vec::new(),
             prove,
         };
         let Reply::Put { ticket, missing } = link.assets(request).await? else {
             return Err("the hub did not say what of the object it wants".into());
         };
-        if !missing.is_empty() {
+        if ticket != 0 {
             let mut outgoing = link.put_object(ticket).await?;
+            // A large object's digests go first on the data connection; the
+            // hub says which chunks it wants.
+            let missing: Vec<u64> = if large && !prove {
+                let digests = blocking(library, move |library| library.chunks(&hash)).await?;
+                outgoing.manifest(&digests).await?.into_iter().flat_map(|(start, end)| start..end).collect()
+            } else {
+                missing
+            };
             for index in missing {
                 if index >= chunks(object.size) {
                     return Err(format!("the hub asked for chunk {index} of an object of {} bytes", object.size));
@@ -135,25 +139,27 @@ async fn fetch_one(library: &Library, link: &Arc<Link>, scope: &str, object: Obj
     let mut transfer = blocking(library, move |library| library.under_way(object)).await?;
     let mut from = transfer.as_ref().and_then(|transfer| transfer.missing().first().copied()).unwrap_or(0);
     let request = Request::Get { scope: scope.to_string(), object: wire_object.clone(), from };
-    let Reply::Get { mut ticket, manifest } = link.assets(request).await? else {
+    let Reply::Get { ticket, .. } = link.assets(request).await? else {
         return Err("the hub did not give the object".into());
     };
-    let digests: Vec<[u8; 32]> = manifest.iter().map(|digest| digest.array().ok_or("a chunk digest is 32 bytes")).collect::<Result<_, _>>()?;
+    let mut incoming = link.get_object(ticket).await?;
+    let digests = incoming.manifest(chunks(object.size)).await?;
     let resumed = transfer.is_some();
     let started = blocking(library, move |library| library.receive(object, digests, Some("hub".into()))).await?;
-    let Some(started) = started else { return Ok(()) };
+    let Some(started) = started else { return incoming.done().await };
     if resumed && from > 0 && started.missing().first().copied().unwrap_or(0) < from {
-        // The hub's manifest is not the one the fetch began under: what came
+        // The hub's digests are not those the fetch began under: what came
         // counts for nothing, and the chunks come again from the first.
+        drop(incoming);
         from = 0;
         let request = Request::Get { scope: scope.to_string(), object: wire_object, from };
         let Reply::Get { ticket: again, .. } = link.assets(request).await? else {
             return Err("the hub did not give the object".into());
         };
-        ticket = again;
+        incoming = link.get_object(again).await?;
+        incoming.manifest(chunks(object.size)).await?;
     }
     transfer = Some(started);
-    let mut incoming = link.get_object(ticket).await?;
     for expected in from..chunks(object.size) {
         let (index, bytes) = incoming.chunk().await?;
         if index != expected {

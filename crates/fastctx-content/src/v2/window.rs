@@ -112,7 +112,7 @@ impl Library {
                         {
                             if let Some(objects) = objects {
                                 for object in unpack(&objects).map_err(invalid)? {
-                                    unrefer(db, at.scope, at.holding, &object.hash)?;
+                                    unrefer(db, at.scope, at.holding, at.stream, &object.hash)?;
                                 }
                             }
                             db.prepare_cached("DELETE FROM items WHERE stream = ?1 AND place = ?2 AND item = ?3")?

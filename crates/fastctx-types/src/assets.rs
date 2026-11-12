@@ -292,6 +292,19 @@ pub fn cleared_statement(machine: &str, revision: u64) -> Vec<u8> {
     statement
 }
 
+/// What precedes a large object's chunk digests on its data connection: as
+/// many as follow, 32 bytes each (§7.3).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ManifestHead {
+    pub count: u64,
+}
+
+/// The chunks the hub wants of an object put, as ranges [start, end).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Wanted {
+    pub ranges: Vec<(u64, u64)>,
+}
+
 /// What precedes each chunk's bytes on an object's data connection.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChunkHead {

@@ -58,6 +58,13 @@ fn incarnation(control: &Database) -> io::Result<Vec<u8>> {
 /// How often the owner libraries are checkpointed.
 pub(crate) const CHECKPOINT_EVERY: Duration = Duration::from_secs(1);
 
+/// The epochs and gaps of a stream already in the hub's chain, by their
+/// keys and digests.
+struct Witnessed {
+    epochs: BTreeSet<(i64, Vec<u8>)>,
+    gaps: BTreeSet<(i64, i64, Vec<u8>)>,
+}
+
 /// Scopes checkpointed in one round: a backlog goes in pieces, each within
 /// a commit's budget, the rest in the rounds after.
 const CHECKPOINT_AT_ONCE: usize = 4096;
@@ -75,6 +82,9 @@ pub(crate) struct Assets {
     sealed: Mutex<Option<String>>,
     /// The scopes of each owner library changed since the last checkpoint.
     changed: Mutex<BTreeMap<Owner, BTreeSet<String>>>,
+    /// The owner the last checkpoint stopped at: the next goes on after it,
+    /// so every owner comes round.
+    turn: Mutex<Option<Owner>>,
     /// The machines that read each scope lately: told when a stream of it
     /// moves (design §6.6).
     holders: Mutex<BTreeMap<String, BTreeSet<fastctx_types::MachineName>>>,
@@ -109,6 +119,7 @@ impl Assets {
             control,
             sealed: Mutex::new(None),
             changed: Mutex::new(BTreeMap::new()),
+            turn: Mutex::new(None),
             holders: Mutex::new(BTreeMap::new()),
             receipted: Mutex::new(BTreeMap::new()),
             pushes: Mutex::new(Vec::new()),
@@ -139,7 +150,7 @@ impl Assets {
     }
 
     /// The chain's latest head reaches the witness, if it had not.
-    fn catch_up(&self) -> io::Result<()> {
+    pub(crate) fn catch_up(&self) -> io::Result<()> {
         if let Some((seq, head)) = self.control.read_now(chain::latest).map_err(io::Error::other)? {
             self.witness.advanced(seq, &head)?;
         }
@@ -187,10 +198,8 @@ impl Assets {
         let key = owner.key();
         self.control
             .read_now(move |c| {
-                let mut statement = c.prepare_cached(
-                    "SELECT scope, change, parked, prefix, accumulated FROM hub_checkpoints h
-                     WHERE owner = ?1 AND seq = (SELECT MAX(seq) FROM hub_checkpoints l WHERE l.owner = h.owner AND l.scope = h.scope)",
-                )?;
+                let mut statement =
+                    c.prepare_cached("SELECT scope, change, parked, prefix, accumulated FROM hub_checkpoints WHERE owner = ?1")?;
                 let rows = statement.query_map([&key], |row| {
                     let digest = |bytes: Vec<u8>| <[u8; 32]>::try_from(bytes).unwrap_or([0; 32]);
                     Ok(Head {
@@ -237,6 +246,22 @@ impl Assets {
             let digest = <[u8; 32]>::try_from(digest).unwrap_or([0; 32]);
             if !library.holds_epoch(&scope, &stream, epoch as u64, &digest).map_err(|error| io::Error::other(error.to_string()))? {
                 return Ok(Some(format!("the library of {key} lacks an epoch the hub opened in {scope}")));
+            }
+        }
+        let owner_key = key.clone();
+        let gaps: Vec<(String, String, i64, i64, Vec<u8>)> = self
+            .control
+            .read_now(move |c| {
+                let mut statement =
+                    c.prepare_cached("SELECT scope, stream, epoch, from_sequence, digest FROM hub_gap_facts WHERE owner = ?1")?;
+                let rows = statement.query_map([&owner_key], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)))?;
+                Ok(rows.collect::<std::result::Result<_, _>>()?)
+            })
+            .map_err(io::Error::other)?;
+        for (scope, stream, epoch, from, digest) in gaps {
+            let digest = <[u8; 32]>::try_from(digest).unwrap_or([0; 32]);
+            if !library.holds_gap(&scope, &stream, epoch as u64, from as u64, &digest).map_err(|error| io::Error::other(error.to_string()))? {
+                return Ok(Some(format!("the library of {key} lacks a gap the hub signed in {scope}")));
             }
         }
         Ok(None)
@@ -320,6 +345,94 @@ impl Assets {
             .is_ok_and(|found| found.is_some())
     }
 
+    /// The epoch descriptors and gap facts of `stream` of `scope` in
+    /// `owner`'s library, about to be handed out: each not in the hub's
+    /// chain yet goes into it and the witness first (design §6.1, §17), so a
+    /// library put back to before one is found as it opens.
+    pub(crate) fn witness_facts(
+        &self,
+        owner: &Owner,
+        scope: &str,
+        stream: &str,
+        epochs: &[fastctx_content::v2::Signed],
+        gaps: &[fastctx_content::v2::Signed],
+    ) -> io::Result<()> {
+        let (owner_key, scope_key, stream_name) = (owner.key(), scope.to_string(), stream.to_string());
+        let known: Witnessed = self
+            .control
+            .read_now(move |c| {
+                let mut epochs = BTreeSet::new();
+                let mut statement =
+                    c.prepare_cached("SELECT epoch, digest FROM hub_epoch_facts WHERE owner = ?1 AND scope = ?2 AND stream = ?3")?;
+                for row in statement.query_map(fastctx_storage::rusqlite::params![owner_key, scope_key, stream_name], |row| {
+                    Ok((row.get(0)?, row.get(1)?))
+                })? {
+                    epochs.insert(row?);
+                }
+                let mut gaps = BTreeSet::new();
+                let mut statement = c.prepare_cached(
+                    "SELECT epoch, from_sequence, digest FROM hub_gap_facts WHERE owner = ?1 AND scope = ?2 AND stream = ?3",
+                )?;
+                for row in statement.query_map(fastctx_storage::rusqlite::params![owner_key, scope_key, stream_name], |row| {
+                    Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+                })? {
+                    gaps.insert(row?);
+                }
+                Ok(Witnessed { epochs, gaps })
+            })
+            .map_err(io::Error::other)?;
+        let mut new_epochs = Vec::new();
+        for signed in epochs {
+            let fact = fastctx_content::v2::EpochFact::decode(&signed.fact).map_err(io::Error::other)?;
+            let digest: [u8; 32] = Sha256::digest(&signed.fact).into();
+            if !known.epochs.contains(&(fact.epoch as i64, digest.to_vec())) {
+                new_epochs.push((fact.epoch as i64, digest));
+            }
+        }
+        let mut new_gaps = Vec::new();
+        for signed in gaps {
+            let fact = fastctx_content::v2::GapFact::decode(&signed.fact).map_err(io::Error::other)?;
+            let digest: [u8; 32] = Sha256::digest(&signed.fact).into();
+            if !known.gaps.contains(&(fact.epoch as i64, fact.from as i64, digest.to_vec())) {
+                new_gaps.push((fact.epoch as i64, fact.from as i64, digest));
+            }
+        }
+        if new_epochs.is_empty() && new_gaps.is_empty() {
+            return self.catch_up();
+        }
+        let mut hasher = Sha256::new();
+        hasher.update(b"fastctx-hub-facts/1");
+        for (_, digest) in &new_epochs {
+            hasher.update(digest);
+        }
+        for (_, _, digest) in &new_gaps {
+            hasher.update(digest);
+        }
+        let all: [u8; 32] = hasher.finalize().into();
+        let (owner_key, scope_key, stream_name) = (owner.key(), scope.to_string(), stream.to_string());
+        let (seq, head) = self
+            .control
+            .write_now(512 + 96 * (new_epochs.len() + new_gaps.len()), move |c| {
+                let (seq, head) = chain::append(c, "facts", &all)?;
+                for (epoch, digest) in &new_epochs {
+                    c.prepare_cached(
+                        "INSERT OR REPLACE INTO hub_epoch_facts (owner, scope, stream, epoch, digest, seq) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    )?
+                    .execute(fastctx_storage::rusqlite::params![owner_key, scope_key, stream_name, epoch, &digest[..], seq as i64])?;
+                }
+                for (epoch, from, digest) in &new_gaps {
+                    c.prepare_cached(
+                        "INSERT OR REPLACE INTO hub_gap_facts (owner, scope, stream, epoch, from_sequence, digest, seq)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                    )?
+                    .execute(fastctx_storage::rusqlite::params![owner_key, scope_key, stream_name, epoch, from, &digest[..], seq as i64])?;
+                }
+                Ok((seq, head))
+            })
+            .map_err(io::Error::other)?;
+        self.witness.advanced(seq, &head)
+    }
+
     /// An epoch the hub just opened in `scope` of `owner`'s library goes into
     /// its chain and the witness before the device hears of it (design
     /// §6.1): a library put back to before it is found as it opens.
@@ -393,12 +506,19 @@ impl Assets {
     /// What is to be told unasked now, to the machines that read its scope
     /// in `directory` as it stands (design §6.4): one that no longer does
     /// is told nothing more of the scope until it reads it again.
+    pub(crate) fn drain_pushes(&self) -> Vec<(fastctx_types::MachineName, fastctx_types::assets::Push)> {
+        std::mem::take(&mut *self.pushes.lock().expect("pushes"))
+    }
+
+    /// Of `pushes`, taken off before `directory` was read (so a revocation
+    /// before any of them is in it), those to the machines that read their
+    /// scopes.
     pub(crate) fn take_pushes(
         &self,
+        pushes: Vec<(fastctx_types::MachineName, fastctx_types::assets::Push)>,
         directory: &fastctx_net::directory_index::Indexed<'_>,
     ) -> Vec<(fastctx_types::MachineName, fastctx_types::assets::Push)> {
         use fastctx_types::assets::Push;
-        let pushes = std::mem::take(&mut *self.pushes.lock().expect("pushes"));
         let mut judged: BTreeMap<(String, fastctx_types::MachineName), bool> = BTreeMap::new();
         let mut revoked = Vec::new();
         let mut told: Vec<_> = pushes
@@ -453,19 +573,32 @@ impl Assets {
         self.catch_up()?;
         let batch = {
             let mut changed = self.changed.lock().expect("changed scopes");
+            let mut turn = self.turn.lock().expect("checkpoint turn");
+            // The owners after the one the last round stopped at first.
+            let order: Vec<Owner> = match turn.as_ref() {
+                Some(last) => changed
+                    .range((std::ops::Bound::Excluded(last.clone()), std::ops::Bound::Unbounded))
+                    .chain(changed.range(..=last.clone()))
+                    .map(|(owner, _)| owner.clone())
+                    .collect(),
+                None => changed.keys().cloned().collect(),
+            };
             let mut batch: BTreeMap<Owner, BTreeSet<String>> = BTreeMap::new();
             let mut taken = 0;
-            while taken < CHECKPOINT_AT_ONCE {
-                let Some(mut entry) = changed.first_entry() else { break };
-                let owner = entry.key().clone();
+            for owner in order {
+                if taken >= CHECKPOINT_AT_ONCE {
+                    break;
+                }
+                let Some(scopes) = changed.get_mut(&owner) else { continue };
                 while taken < CHECKPOINT_AT_ONCE {
-                    let Some(scope) = entry.get_mut().pop_first() else { break };
+                    let Some(scope) = scopes.pop_first() else { break };
                     batch.entry(owner.clone()).or_default().insert(scope);
                     taken += 1;
                 }
-                if entry.get().is_empty() {
-                    entry.remove();
+                if scopes.is_empty() {
+                    changed.remove(&owner);
                 }
+                *turn = Some(owner);
             }
             batch
         };
@@ -484,23 +617,35 @@ impl Assets {
 
     fn checkpoint_of(&self, batch: &BTreeMap<Owner, BTreeSet<String>>) -> io::Result<Option<(u64, [u8; 32])>> {
         let mut owners: Vec<(String, Vec<Head>)> = Vec::new();
+        let mut failed: Option<io::Error> = None;
         for (owner, scopes) in batch {
-            let library = self.library(owner)?;
-            let scopes: Vec<String> = scopes.iter().cloned().collect();
-            let heads = library.heads(&scopes).map_err(|error| io::Error::other(error.to_string()))?;
-            // A scope still where its latest checkpoint has it, or where
-            // nothing is, needs none.
-            let kept = self.checkpointed(owner)?;
-            let heads: Vec<Head> = heads
-                .into_iter()
-                .filter(|head| kept.get(&head.scope) != Some(head) && (head.change > 0 || head.parked > 0))
-                .collect();
-            if !heads.is_empty() {
-                owners.push((owner.key(), heads));
+            let heads = (|| {
+                let library = self.library(owner)?;
+                let wanted: Vec<String> = scopes.iter().cloned().collect();
+                let heads = library.heads(&wanted).map_err(|error| io::Error::other(error.to_string()))?;
+                // A scope still where its latest checkpoint has it, or where
+                // nothing is, needs none.
+                let kept = self.checkpointed(owner)?;
+                Ok::<_, io::Error>(
+                    heads
+                        .into_iter()
+                        .filter(|head| kept.get(&head.scope) != Some(head) && (head.change > 0 || head.parked > 0))
+                        .collect::<Vec<Head>>(),
+                )
+            })();
+            match heads {
+                Ok(heads) if heads.is_empty() => {}
+                Ok(heads) => owners.push((owner.key(), heads)),
+                // An owner that fails holds up none of the others: it goes
+                // to the next round alone.
+                Err(error) => {
+                    self.changed.lock().expect("changed scopes").entry(owner.clone()).or_default().extend(scopes.iter().cloned());
+                    failed.get_or_insert(error);
+                }
             }
         }
         if owners.is_empty() {
-            return Ok(None);
+            return failed.map_or(Ok(None), Err);
         }
         let mut hasher = Sha256::new();
         hasher.update(b"fastctx-hub-checkpoint/1");
@@ -522,7 +667,7 @@ impl Assets {
         let written = self.control.write_now(256 + rows.len() * 64, move |c| {
             let (seq, head) = chain::append(c, "checkpoint", &digest)?;
             let mut keeping = c.prepare_cached(
-                "INSERT INTO hub_checkpoints (owner, scope, seq, change, parked, prefix, accumulated) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                "INSERT OR REPLACE INTO hub_checkpoints (owner, scope, seq, change, parked, prefix, accumulated) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             )?;
             for (owner, head) in &rows {
                 keeping.execute(fastctx_storage::rusqlite::params![
@@ -580,8 +725,9 @@ pub(crate) async fn checkpoints(hub: Weak<crate::Hub>) {
         })
         .await;
         if let Some(hub) = assets_hub.upgrade() {
+            let drained = hub.assets.drain_pushes();
             let store = hub.store();
-            let pushes = hub.assets.take_pushes(&store.indexed());
+            let pushes = hub.assets.take_pushes(drained, &store.indexed());
             drop(store);
             for (machine, push) in pushes {
                 hub.tell(&machine, fastctx_net::wire::Down::Assets { push });

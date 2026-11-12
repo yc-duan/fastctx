@@ -56,6 +56,10 @@ fn absolute(name: &str) -> io::Result<Option<PathBuf>> {
     if !path.is_absolute() {
         return Err(io::Error::other(format!("{name} names {}, not an absolute directory", path.display())));
     }
+    // A step back up could lead anywhere once a missing part is made.
+    if path.components().any(|part| matches!(part, Component::ParentDir)) {
+        return Err(io::Error::other(format!("{name} names {} with a step back up in it", path.display())));
+    }
     Ok(Some(path))
 }
 

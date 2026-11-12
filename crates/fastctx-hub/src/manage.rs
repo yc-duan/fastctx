@@ -108,6 +108,16 @@ fn made(
     check: impl FnOnce(&Store, &Change) -> Result<(), String>,
 ) -> Result<(Told, bool), String> {
     {
+        // A hub put back keeps every asset sealed, and grants no access
+        // until it is reopened (design §17).
+        if hub.assets.sealed().is_some()
+            && matches!(
+                &change,
+                Change::Share { shared: true, .. } | Change::Assist { assisting: true, .. } | Change::ShareProject { shared: true, .. }
+            )
+        {
+            return Err("every asset is sealed until the hub is reopened: no access is granted meanwhile".into());
+        }
         let mut store = hub.edit_store();
         asker.check(&store.book.directory)?;
         check(&store, &change)?;
