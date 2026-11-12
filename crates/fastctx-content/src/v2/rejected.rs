@@ -171,8 +171,8 @@ impl Library {
                         // A record committed again keeps its place in the
                         // order; one written since is placed after all.
                         let kept: Option<i64> = db
-                            .prepare_cached("SELECT seq FROM resubmit_order WHERE stream = ?1 AND revision = ?2")?
-                            .query_row(params![stream_id, revision as i64], |row| row.get(0))
+                            .prepare_cached("SELECT seq FROM resubmit_order WHERE stream = ?1 AND holding = ?2 AND revision = ?3")?
+                            .query_row(params![stream_id, holding, revision as i64], |row| row.get(0))
                             .optional()?;
                         db.prepare_cached(
                             "INSERT INTO resubmits (stream, rejected, position, holding, epoch, seq, record, op) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
@@ -198,8 +198,8 @@ impl Library {
                 db.prepare_cached(&format!("DELETE FROM {table} WHERE stream = ?1 AND holding = ?2 AND first >= ?3"))?
                     .execute(params![stream_id, holding, first as i64])?;
             }
-            db.prepare_cached("DELETE FROM resubmit_order WHERE stream = ?1 AND revision >= ?2")?
-                .execute(params![stream_id, first as i64])?;
+            db.prepare_cached("DELETE FROM resubmit_order WHERE stream = ?1 AND holding = ?2 AND revision >= ?3")?
+                .execute(params![stream_id, holding, first as i64])?;
             db.prepare_cached("UPDATE streams SET rejected_at = ?2, rejected_epoch = epoch WHERE id = ?1")?
                 .execute(params![stream_id, first as i64])?;
             // The waiting records carry their operations; the places they
@@ -341,8 +341,8 @@ impl Library {
                         db.prepare_cached("INSERT OR REPLACE INTO op_records (scope, stream, revision, op) VALUES (?1, ?2, ?3, ?4)")?
                             .execute(params![scope_id, stream_name, (landed + index as u64) as i64, op])?;
                     }
-                    db.prepare_cached("INSERT OR REPLACE INTO resubmit_order (stream, revision, seq) VALUES (?1, ?2, ?3)")?
-                        .execute(params![stream_id, (landed + index as u64) as i64, resubmit.seq])?;
+                    db.prepare_cached("INSERT OR REPLACE INTO resubmit_order (stream, holding, revision, seq) VALUES (?1, ?2, ?3, ?4)")?
+                        .execute(params![stream_id, resubmit.holding, (landed + index as u64) as i64, resubmit.seq])?;
                 }
                 release_holds(db, stream_id)?;
                 Ok(())
@@ -456,7 +456,8 @@ pub(super) fn end_resubmits(db: &Connection, scope: i64, holding: i64) -> fastct
         release_holds(db, stream)?;
     }
     // The places records landed at again are the period's alone.
-    db.prepare_cached("DELETE FROM resubmit_order WHERE stream IN (SELECT id FROM streams WHERE scope = ?1)")?.execute([scope])?;
+    db.prepare_cached("DELETE FROM resubmit_order WHERE holding = ?2 AND stream IN (SELECT id FROM streams WHERE scope = ?1)")?
+        .execute(params![scope, holding])?;
     Ok(ended)
 }
 

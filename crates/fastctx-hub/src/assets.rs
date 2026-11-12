@@ -4,6 +4,7 @@
 //! and the seal it keeps over every asset when it finds, on opening, that
 //! it was put back from an older copy.
 
+pub(crate) mod bodies;
 pub(crate) mod chain;
 mod keys;
 pub mod recovery;
@@ -32,7 +33,7 @@ pub(crate) const BACKUP_MARKER: &str = "backup-marker";
 
 /// The asset side's tables in the hub's control database.
 pub(crate) fn schema() -> String {
-    format!("{}{}", chain::SCHEMA, scopes::SCHEMA)
+    format!("{}{}{}", chain::SCHEMA, scopes::SCHEMA, bodies::SCHEMA)
 }
 
 /// The hub's incarnation: made with its asset side and stamped on every
@@ -54,6 +55,12 @@ fn incarnation(control: &Database) -> io::Result<Vec<u8>> {
         })
         .map_err(io::Error::other)
 }
+
+/// How long no one may read any scope of an owner before its library goes:
+/// long enough that no passing state of the directory takes it.
+const UNREAD_FOR: Duration = Duration::from_secs(7 * 24 * 60 * 60);
+/// How often owners are looked at for whether anyone reads them.
+const SWEEP_EVERY: u32 = 600;
 
 /// How often the owner libraries are checkpointed.
 pub(crate) const CHECKPOINT_EVERY: Duration = Duration::from_secs(1);
@@ -96,6 +103,8 @@ pub(crate) struct Assets {
     /// The tickets for objects' data connections, and the proofs of
     /// holding that stand (design §6.5, §7.3).
     pub(crate) objects: objects::Objects,
+    /// What several accounts own together, and who they are (design §6.2).
+    pub(crate) bodies: Arc<bodies::Bodies>,
 }
 
 impl Assets {
@@ -116,7 +125,7 @@ impl Assets {
             keys,
             owners,
             witness,
-            control,
+            control: control.clone(),
             sealed: Mutex::new(None),
             changed: Mutex::new(BTreeMap::new()),
             turn: Mutex::new(None),
@@ -124,6 +133,7 @@ impl Assets {
             receipted: Mutex::new(BTreeMap::new()),
             pushes: Mutex::new(Vec::new()),
             objects: objects::Objects::default(),
+            bodies: Arc::new(bodies::Bodies::new(control.clone())),
         };
         if let Some(why) = assets.put_back(dir)? {
             assets.witness.freeze();
@@ -147,6 +157,108 @@ impl Assets {
         }
         drop(changed);
         Ok(assets)
+    }
+
+    /// Deletes the libraries none of whose scopes anyone has read for
+    /// `UNREAD_FOR` (design §6.2): their scopes and the hub's records of
+    /// them go in one commit, in the chain and the witness, then their
+    /// files. An owner read again before then is kept. How many went. Call
+    /// on a thread that may block.
+    pub(crate) fn sweep_owners(&self, directory: &fastctx_net::directory_index::Indexed<'_>) -> io::Result<usize> {
+        if self.sealed().is_some() || directory.all.accounts.is_empty() {
+            return Ok(0);
+        }
+        self.finish_deleting()?;
+        let scopes: Vec<(String, String)> = self
+            .control
+            .read_now(|c| {
+                let mut statement = c.prepare_cached("SELECT owner, key FROM asset_scopes")?;
+                let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+                Ok(rows.collect::<std::result::Result<_, _>>()?)
+            })
+            .map_err(io::Error::other)?;
+        let mut read: BTreeMap<String, bool> = BTreeMap::new();
+        for (owner, key) in scopes {
+            let anyone = match scopes::scope(self, &key).map_err(io::Error::other)? {
+                Some(scope) => scopes::anyone_reads(directory, &scope),
+                None => false,
+            };
+            *read.entry(owner).or_insert(false) |= anyone;
+        }
+        let now = jiff::Timestamp::now().as_millisecond();
+        let mut dropped = 0;
+        for (owner, anyone) in read {
+            if anyone {
+                let key = owner.clone();
+                self.control
+                    .write_now(128, move |c| {
+                        c.prepare_cached("DELETE FROM asset_unread WHERE owner = ?1")?.execute([&key])?;
+                        Ok(())
+                    })
+                    .map_err(io::Error::other)?;
+                continue;
+            }
+            let key = owner.clone();
+            let since: i64 = self
+                .control
+                .write_now(128, move |c| {
+                    c.prepare_cached("INSERT OR IGNORE INTO asset_unread (owner, since) VALUES (?1, ?2)")?
+                        .execute(fastctx_storage::rusqlite::params![key, now])?;
+                    Ok(c.prepare_cached("SELECT since FROM asset_unread WHERE owner = ?1")?.query_row([&key], |row| row.get(0))?)
+                })
+                .map_err(io::Error::other)?;
+            if now - since < UNREAD_FOR.as_millis() as i64 {
+                continue;
+            }
+            let Some(found) = Owner::from_key(&owner) else { continue };
+            let digest: [u8; 32] = Sha256::digest(owner.as_bytes()).into();
+            let (key, body) = (owner.clone(), match &found {
+                Owner::Body(id) => Some(id.clone()),
+                _ => None,
+            });
+            let (seq, head) = self
+                .control
+                .write_now(1024, move |c| {
+                    for table in ["asset_scopes", "hub_checkpoints", "hub_epoch_facts", "hub_gap_facts", "asset_unread"] {
+                        c.prepare_cached(&format!("DELETE FROM {table} WHERE owner = ?1"))?.execute([&key])?;
+                    }
+                    c.prepare_cached("INSERT OR IGNORE INTO asset_deleting (owner) VALUES (?1)")?.execute([&key])?;
+                    if let Some(body) = &body {
+                        c.prepare_cached("DELETE FROM asset_bodies WHERE id = ?1")?.execute([body])?;
+                    }
+                    chain::append(c, "owner-deleted", &digest)
+                })
+                .map_err(io::Error::other)?;
+            self.witness.advanced(seq, &head)?;
+            dropped += 1;
+        }
+        self.finish_deleting()?;
+        Ok(dropped)
+    }
+
+    /// Removes the files of the owners whose records went; one still open a
+    /// moment longer goes at a later sweep.
+    fn finish_deleting(&self) -> io::Result<()> {
+        let deleting: Vec<String> = self
+            .control
+            .read_now(|c| {
+                let mut statement = c.prepare_cached("SELECT owner FROM asset_deleting")?;
+                let rows = statement.query_map([], |row| row.get(0))?;
+                Ok(rows.collect::<std::result::Result<_, _>>()?)
+            })
+            .map_err(io::Error::other)?;
+        for key in deleting {
+            let Some(owner) = Owner::from_key(&key) else { continue };
+            if self.owners.delete(&owner).is_ok() {
+                self.control
+                    .write_now(128, move |c| {
+                        c.prepare_cached("DELETE FROM asset_deleting WHERE owner = ?1")?.execute([&key])?;
+                        Ok(())
+                    })
+                    .map_err(io::Error::other)?;
+            }
+        }
+        Ok(())
     }
 
     /// The chain's latest head reaches the witness, if it had not.
@@ -710,10 +822,26 @@ impl Assets {
     }
 }
 
-/// Checkpoints the owner libraries every second, and closes the idle ones.
+/// Checkpoints the owner libraries every second, and closes the idle ones;
+/// every ten minutes deletes the libraries no one has read for a week.
 pub(crate) async fn checkpoints(hub: Weak<crate::Hub>) {
+    let mut rounds = 0u32;
     loop {
         tokio::time::sleep(CHECKPOINT_EVERY).await;
+        rounds = rounds.wrapping_add(1);
+        if rounds.is_multiple_of(SWEEP_EVERY)
+            && let Some(running) = hub.upgrade()
+        {
+            let (assets, store, log) = (running.assets.clone(), running.store(), running.log.clone());
+            drop(running);
+            let swept = fastctx_platform::task::spawn_blocking(move || assets.sweep_owners(&store.indexed())).await;
+            match swept {
+                Ok(Ok(0)) => {}
+                Ok(Ok(dropped)) => log.line(format_args!("deleted {dropped} owner librar(ies) no one has read for a week")),
+                Ok(Err(error)) => log.line(format_args!("looking for libraries no one reads: {error}")),
+                Err(error) => log.line(format_args!("looking for libraries no one reads: {error}")),
+            }
+        }
         let assets_hub = hub.clone();
         let Some(hub) = hub.upgrade() else { return };
         let assets = hub.assets.clone();

@@ -330,9 +330,10 @@ CREATE TABLE IF NOT EXISTS resubmits (
 -- Where a record committed again landed, with its place in that order.
 CREATE TABLE IF NOT EXISTS resubmit_order (
     stream INTEGER NOT NULL,
+    holding INTEGER NOT NULL,
     revision INTEGER NOT NULL,
     seq INTEGER NOT NULL,
-    PRIMARY KEY (stream, revision)
+    PRIMARY KEY (stream, holding, revision)
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS resubmits_by_run ON resubmits (stream, rejected);
 CREATE TABLE IF NOT EXISTS object_holds (

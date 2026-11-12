@@ -137,6 +137,16 @@ impl Owners {
         Ok(Ok(opened))
     }
 
+    /// Deletes the library of `owner`, closed first. Call on a thread that
+    /// may block.
+    pub(crate) fn delete(&self, owner: &Owner) -> io::Result<()> {
+        self.slots.lock().expect("owner libraries").remove(owner);
+        match fastctx_platform::disk::remove_dir_all(self.root.join(owner.directory())) {
+            Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
+            _ => Ok(()),
+        }
+    }
+
     /// Closes the libraries left idle past `IDLE` that nobody holds, and,
     /// past the bound, the least recently used that nobody holds down to it.
     pub(crate) fn sweep(&self) {

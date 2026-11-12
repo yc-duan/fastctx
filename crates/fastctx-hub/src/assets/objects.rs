@@ -205,7 +205,7 @@ fn allowed(hub: &Hub, me: &MachineName, key: &PublicKey, scope: &Scope, object: 
         return Err(format!("{me} is no longer this machine"));
     }
     let fresh = scopes::scope(&hub.assets, &scope.descriptor.scope)?.ok_or("the scope is gone")?;
-    if !scopes::readable(&directory, me, &fresh) || !scopes::sharers_read(&directory, me, &fresh.descriptor) {
+    if !scopes::readable(&directory, me, &fresh) || !scopes::sharers_read(&directory, me, &fresh) {
         return Err(format!("{me} reads the scope no more"));
     }
     if let Some(object) = object {

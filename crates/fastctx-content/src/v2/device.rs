@@ -19,21 +19,21 @@ fn own(
     holding: i64,
     device: &[u8; 32],
 ) -> fastctx_storage::Result<Vec<(i64, String, i64)>> {
-    let streams: Vec<(i64, String, i64, i64)> = {
-        let mut statement = db.prepare_cached("SELECT id, name, next, epoch FROM streams WHERE scope = ?1 ORDER BY name")?;
-        let rows = statement.query_map([scope], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))?;
+    let streams: Vec<(i64, String, i64)> = {
+        let mut statement = db.prepare_cached("SELECT id, name, next FROM streams WHERE scope = ?1 ORDER BY name")?;
+        let rows = statement.query_map([scope], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
         rows.collect::<std::result::Result<_, _>>()?
     };
     let mut own = Vec::new();
-    for (stream, name, next, epoch) in streams {
-        // The device the stream's current epoch names orders it, frames of
-        // it here or not.
+    for (stream, name, next) in streams {
+        // The device the latest epoch known of the stream names orders it,
+        // frames of it here or not: a successor known takes it over at once.
         let described: Option<Vec<u8>> = db
             .prepare_cached(
-                "SELECT descriptor FROM epochs WHERE stream = ?1 AND epoch = ?2
-                 UNION ALL SELECT fact FROM known_epochs WHERE stream = ?1 AND epoch = ?2 LIMIT 1",
+                "SELECT descriptor FROM (SELECT epoch, descriptor FROM epochs WHERE stream = ?1
+                 UNION ALL SELECT epoch, fact AS descriptor FROM known_epochs WHERE stream = ?1) ORDER BY epoch DESC LIMIT 1",
             )?
-            .query_row(params![stream, epoch], |row| row.get(0))
+            .query_row(params![stream], |row| row.get(0))
             .optional()?;
         if let Some(fact) = described.and_then(|fact| super::facts::EpochFact::decode(&fact).ok()) {
             if fact.device == *device {
@@ -96,6 +96,10 @@ impl Library {
     pub fn replica_standing(&self, scope: &str, device: &[u8; 32]) -> Result<Vec<(String, u64, [u8; 32])>> {
         let (scope, device) = (scope.to_string(), *device);
         Ok(self.database().read_now(move |db| {
+            // One snapshot for which streams are this device's and where each
+            // stands: nothing committed between the two reads.
+            let snapshot = db.unchecked_transaction()?;
+            let db: &fastctx_storage::rusqlite::Connection = &snapshot;
             let Some((scope_id, _, Some(holding))) = held(db, &scope)? else { return Ok(Vec::new()) };
             let own: std::collections::BTreeSet<String> = own(db, scope_id, holding, &device)?.into_iter().map(|(_, name, _)| name).collect();
             let mut statement = db.prepare_cached(

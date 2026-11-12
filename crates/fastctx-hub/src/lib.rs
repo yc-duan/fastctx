@@ -856,6 +856,7 @@ fn open(dir: &Path, log: Arc<log::Log>) -> anyhow::Result<Opened> {
     let account_records = account_records::Records::open(dir, &store.book.directory)?;
     let assets = Arc::new(assets::Assets::open(dir, store.hub.id.as_str(), store.shelf.0.clone())?);
     store.witness = Some(assets.witness.clone());
+    store.bodies = Some(assets.bodies.clone());
     let mut ledgers = ledger::Ledgers::open(dir, &store.hub.id)?;
     let swept = ledgers.sweep(&store.book)?;
     let mut said: Vec<String> = swept

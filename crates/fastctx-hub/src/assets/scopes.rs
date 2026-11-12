@@ -28,6 +28,8 @@ pub(crate) struct Scope {
     pub descriptor: Descriptor,
     pub fact: Fact,
     pub owner: Owner,
+    /// Who the bodies' members are, for a scope a body owns.
+    pub bodies: Option<std::sync::Arc<super::bodies::Bodies>>,
 }
 
 /// The accounts behind a request from `machine`: those it is logged in as
@@ -72,6 +74,7 @@ fn identities(directory: &Indexed<'_>, readers: &Readers) -> Result<BTreeMap<Str
             .collect(),
         Readers::Project { town } => vec![format!("project:{town}")],
         Readers::Account { account } => vec![format!("account:{account}")],
+        Readers::Body { opener, .. } => vec![format!("account:{opener}")],
     };
     keys.into_iter()
         .map(|key| identity(directory, &key).map(|found| (key.clone(), found)).ok_or_else(|| format!("there is no {key}")))
@@ -86,8 +89,23 @@ fn same(directory: &Indexed<'_>, born: &BTreeMap<String, String>, key: &str) -> 
 /// Whether `account` reads a scope of `readers`, described when `born` held,
 /// in the directory now: an account, machine or project made again under a
 /// name the readers name stands for nothing of it.
-pub(crate) fn reads(directory: &Indexed<'_>, account: &AccountName, readers: &Readers, born: &BTreeMap<String, String>) -> bool {
+pub(crate) fn reads(
+    directory: &Indexed<'_>,
+    account: &AccountName,
+    readers: &Readers,
+    born: &BTreeMap<String, String>,
+    bodies: Option<&super::bodies::Bodies>,
+) -> bool {
     match readers {
+        // The body's members as they are, or as they were frozen, and its
+        // opener as it was.
+        Readers::Body { body, opener } => {
+            let Some(found) = directory.account(account).filter(|found| !found.locked) else { return false };
+            (account == opener && same(directory, born, &format!("account:{opener}")))
+                || bodies
+                    .and_then(|bodies| bodies.members(directory.all, body).ok())
+                    .is_some_and(|members| members.contains(&format!("{account}@{}", found.opened.as_millisecond())))
+        }
         Readers::Conversation { openers, born_on } => {
             let openers: Vec<AccountName> =
                 openers.iter().filter(|opener| same(directory, born, &format!("account:{opener}"))).cloned().collect();
@@ -105,10 +123,30 @@ pub(crate) fn reads(directory: &Indexed<'_>, account: &AccountName, readers: &Re
     }
 }
 
+/// Whether anyone at all may still read the scope: an account its readers
+/// name is still who it was, the machine it was born on still is, its
+/// project is still there, or its body still has members (design §6.2).
+pub(crate) fn anyone_reads(directory: &Indexed<'_>, scope: &Scope) -> bool {
+    let descriptor = &scope.descriptor;
+    let born = &descriptor.born;
+    match &descriptor.readers {
+        Readers::Account { account } => same(directory, born, &format!("account:{account}")),
+        Readers::Conversation { openers, born_on } => {
+            openers.iter().any(|opener| same(directory, born, &format!("account:{opener}")))
+                || born_on.as_ref().is_some_and(|machine| same(directory, born, &format!("machine:{machine}")))
+        }
+        Readers::Project { town } => same(directory, born, &format!("project:{town}")),
+        Readers::Body { body, opener } => {
+            same(directory, born, &format!("account:{opener}"))
+                || scope.bodies.as_ref().and_then(|bodies| bodies.members(directory.all, body).ok()).is_some_and(|members| !members.is_empty())
+        }
+    }
+}
+
 /// Whether a request from `machine` reads the scope.
 pub(crate) fn readable(directory: &Indexed<'_>, machine: &MachineName, scope: &Scope) -> bool {
     let descriptor = &scope.descriptor;
-    principal(directory, machine).iter().any(|account| reads(directory, account, &descriptor.readers, &descriptor.born))
+    principal(directory, machine).iter().any(|account| reads(directory, account, &descriptor.readers, &descriptor.born, scope.bodies.as_deref()))
 }
 
 /// Whether every account a machine is shared with whole, a share still
@@ -117,11 +155,13 @@ pub(crate) fn readable(directory: &Indexed<'_>, machine: &MachineName, scope: &S
 /// `sync-replica-holders`).
 /// Judged as the directory will be once the shares waiting are in force:
 /// what a holder reads through holding the machine counts already.
-pub(crate) fn sharers_read(directory: &Indexed<'_>, machine: &MachineName, descriptor: &Descriptor) -> bool {
+pub(crate) fn sharers_read(directory: &Indexed<'_>, machine: &MachineName, scope: &Scope) -> bool {
+    let descriptor = &scope.descriptor;
+    let bodies = scope.bodies.as_deref();
     let machine = directory.canonical(machine).clone();
     let shares: Vec<usize> = directory.shares_by_machine(&machine).to_vec();
     let all_read = |directory: &Indexed<'_>| {
-        shares.iter().all(|&at| reads(directory, &directory.all.shares[at].account, &descriptor.readers, &descriptor.born))
+        shares.iter().all(|&at| reads(directory, &directory.all.shares[at].account, &descriptor.readers, &descriptor.born, bodies))
     };
     if shares.iter().all(|&at| directory.all.shares[at].active()) {
         return all_read(directory);
@@ -140,13 +180,13 @@ pub(crate) fn sharers_read(directory: &Indexed<'_>, machine: &MachineName, descr
 pub(crate) fn holds(directory: &Indexed<'_>, machine: &MachineName, scope: &Scope, stream: &str) -> bool {
     let descriptor = &scope.descriptor;
     let Some(class) = descriptor.class(stream) else { return false };
-    if !sharers_read(directory, machine, descriptor) {
+    if !sharers_read(directory, machine, scope) {
         return false;
     }
     match class.holders {
         Holders::Readers => readable(directory, machine, scope),
         Holders::Logged => directory.member(machine).is_some_and(|member| {
-            member.logins.iter().any(|account| reads(directory, account, &descriptor.readers, &descriptor.born))
+            member.logins.iter().any(|account| reads(directory, account, &descriptor.readers, &descriptor.born, scope.bodies.as_deref()))
         }),
     }
 }
@@ -178,7 +218,8 @@ pub(crate) fn scope(assets: &Assets, key: &str) -> Result<Option<Scope>, String>
             })
             .map_err(|error| error.to_string())?;
     }
-    Ok(Some(Scope { descriptor: read, fact: Fact { fact: Bytes(descriptor), word: Bytes(word) }, owner }))
+    let bodies = matches!(read.readers, Readers::Body { .. }).then(|| assets.bodies.clone());
+    Ok(Some(Scope { descriptor: read, fact: Fact { fact: Bytes(descriptor), word: Bytes(word) }, owner, bodies }))
 }
 
 /// The owner library of `scope`, with the scope installed in it: a scope
@@ -197,6 +238,8 @@ pub(crate) fn library(assets: &Assets, scope: &Scope) -> Result<Library, String>
 /// now, since it was opened.
 fn owner_of(directory: &Indexed<'_>, readers: &Readers) -> Result<Owner, String> {
     let account = match readers {
+        // What a body owns is in the body's own library, no member's.
+        Readers::Body { body, .. } => return Ok(Owner::Body(body.clone())),
         Readers::Conversation { openers, .. } => openers.first().cloned().ok_or("a conversation has an opener")?,
         Readers::Project { town } => directory
             .all
@@ -256,7 +299,15 @@ pub(crate) fn describe(
     {
         return Err("a conversation's openers are accounts this machine acts for".into());
     }
-    if !principal.iter().any(|account| reads(directory, account, &readers, &born)) {
+    let bodies = matches!(readers, Readers::Body { .. }).then(|| assets.bodies.clone());
+    if let Readers::Body { body, .. } = &readers {
+        // A body's scope is described by its machine, as that body.
+        if super::bodies::body_of(directory.all, machine).as_deref() != Some(body.as_str()) {
+            return Err("a body's scope is described by the machine that is that body".into());
+        }
+        assets.bodies.known(directory.all, body, directory.canonical(machine)).map_err(|error| error.to_string())?;
+    }
+    if !principal.iter().any(|account| reads(directory, account, &readers, &born, bodies.as_deref())) {
         return Err("none of this machine's accounts reads that scope".into());
     }
     let owner = owner_of(directory, &readers)?;
@@ -293,7 +344,7 @@ pub(crate) fn describe(
             Ok(())
         })
         .map_err(|error| error.to_string())?;
-    let kept = Scope { descriptor, fact: Fact { fact: Bytes(bytes), word: Bytes(word) }, owner };
+    let kept = Scope { descriptor, fact: Fact { fact: Bytes(bytes), word: Bytes(word) }, owner, bodies };
     library(assets, &kept)?;
     Ok(kept.fact)
 }

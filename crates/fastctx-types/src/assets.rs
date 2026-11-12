@@ -100,6 +100,10 @@ pub enum Readers {
     Project { town: TownId },
     /// An account alone: its settings, its usage.
     Account { account: AccountName },
+    /// What several accounts own together (§6.2): the members of the body —
+    /// a machine shared whole, its owner and those it is shared with — and
+    /// the account that opened it.
+    Body { body: String, opener: AccountName },
 }
 
 /// Which devices may hold a class of a scope's streams (§2.3).
@@ -151,6 +155,7 @@ impl Readers {
             }
             Self::Project { town } => format!("p/{town}/"),
             Self::Account { account } => format!("a/{account}/"),
+            Self::Body { body, .. } => format!("b/{body}/"),
         }
     }
 }

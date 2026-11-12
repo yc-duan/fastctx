@@ -444,6 +444,8 @@ pub struct Store {
     /// before anyone is answered (design §17, item 2); none until the
     /// asset side is open.
     pub(crate) witness: Option<Arc<crate::assets::Witness>>,
+    /// The bodies' members, kept as the directory has them at each save.
+    pub(crate) bodies: Option<Arc<crate::assets::bodies::Bodies>>,
     pub(crate) published: Option<Arc<arc_swap::ArcSwap<Snapshot>>>,
     pub(crate) post: Option<Arc<crate::post::Post>>,
     previous: Option<Arc<Snapshot>>,
@@ -712,6 +714,7 @@ impl Store {
                 worked: Arc::new(Default::default()),
             },
             witness: None,
+            bodies: None,
             published: None,
             post: None,
             previous: None,
@@ -1035,6 +1038,9 @@ impl Store {
     /// The chain head a control fact just committed reaches the witness and
     /// the disk before the fact is published or anyone answered.
     fn witness_control(&self) -> io::Result<()> {
+        if let Some(bodies) = &self.bodies {
+            bodies.saw(&self.book.directory)?;
+        }
         let Some(witness) = &self.witness else { return Ok(()) };
         let latest = self.metadata.shelf.0.read_now(crate::assets::chain::latest).map_err(io::Error::other)?;
         match latest {

@@ -107,7 +107,7 @@ pub(crate) fn recheck(assets: &Assets, directory: &Indexed<'_>, machine: &Machin
         return Ok(reply);
     }
     let Some(scope) = scopes::scope(assets, key)? else { return Ok(reply) };
-    if !scopes::readable(directory, machine, &scope) || !scopes::sharers_read(directory, machine, &scope.descriptor) {
+    if !scopes::readable(directory, machine, &scope) || !scopes::sharers_read(directory, machine, &scope) {
         assets.gone(key, machine);
         return Ok(Reply::Revoked { scope: key.to_string() });
     }
@@ -150,7 +150,7 @@ pub(crate) fn ask(
     // of it: its device stops using what it holds (§4.5, §6.3).
     if let Some(key) = scope_of(&request)
         && let Some(scope) = scopes::scope(assets, key)?
-        && (!scopes::readable(directory, machine, &scope) || !scopes::sharers_read(directory, machine, &scope.descriptor))
+        && (!scopes::readable(directory, machine, &scope) || !scopes::sharers_read(directory, machine, &scope))
     {
         assets.gone(key, machine);
         return Ok(Reply::Revoked { scope: key.to_string() });
