@@ -8,6 +8,7 @@
 
 mod collect;
 mod commit;
+mod exchange;
 mod frame;
 mod items;
 mod objects;
@@ -17,6 +18,7 @@ mod transfers;
 
 pub use collect::{Collected, Started};
 pub use commit::{Commit, Committed};
+pub use exchange::{Holder, Imported, RawFrame, Verifier};
 pub use frame::{FORMAT, Header, KindRecord, Signer, open};
 pub use scopes::Purged;
 pub use objects::{CHUNK_BYTES, LEASE, Lease, READ_BYTES, ROW_BYTES};
