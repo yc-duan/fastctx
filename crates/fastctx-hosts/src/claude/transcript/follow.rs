@@ -52,8 +52,16 @@ pub struct Seam {
     pub titles: Titles,
     /// What could not be made out before it.
     pub problems: Vec<String>,
-    /// The agents started before it, for the ends told of them later.
+    /// The agents started before it, for the ends told of them later: what
+    /// an end needs, not what each was asked (CC19).
     pub agents: HashMap<String, HostAgentStart>,
+    /// The latest time of a row before it.
+    #[serde(default)]
+    pub latest: Option<Timestamp>,
+    /// The tool calls before it the user spoke past unanswered: an answer to
+    /// one that comes after it reads the record whole (CC08).
+    #[serde(default)]
+    pub abandoned: Vec<String>,
 }
 
 /// Why a record is read whole rather than from its seam.
@@ -103,11 +111,14 @@ pub struct Tail {
 /// projected, `earlier` the record ids sessions before it hold. The seam
 /// moves to the last start of the user's words past it that `accept` takes,
 /// given the time they were said, with no tool call before it waiting.
+/// `ended`: the session's process is gone, so a last row without its line's
+/// end will never have one.
 pub fn tail(
     path: &Path,
     seam: &Seam,
     earlier: &HashSet<String>,
     accept: &dyn Fn(Timestamp) -> bool,
+    ended: bool,
 ) -> io::Result<Result<Tail, Restart>> {
     let mut file = file_read::open(path)?;
     let metadata = file.metadata()?;
@@ -128,9 +139,14 @@ pub fn tail(
     scan(&mut BufReader::with_capacity(1 << 20, (&mut file).take(metadata.len() - seam.offset)), None, false, &mut scanned, Some(&mut first))?;
     let (_, end) = scanned.reached();
     if seam.offset > 0
-        && let Some(why) = unsupported(&scanned)
+        && let Some(why) = unsupported(&scanned, seam)
     {
         return Ok(Err(Restart::Unsupported(why)));
+    }
+    // A whole reading takes a last row that lacks only its line's end, once
+    // nothing will write the rest (CC17).
+    if ended && end < metadata.len() {
+        return Ok(Err(Restart::Unsupported("a last row without its line's end")));
     }
     let since = scanned.rows.iter().find_map(|row| at(&row.value));
     let moved = next_seam(&scanned, seam, accept);
@@ -144,9 +160,20 @@ pub fn tail(
         return Ok(Err(Restart::Unsteady));
     }
     let beside = subagents::beside(path);
-    let seam_at = moved.map(|(_, said)| said);
+    let seam_at = moved.as_ref().map(|(_, said, _, _)| *said);
     let next = match moved {
-        Some((to, _)) => Some(advanced(&mut file, seam, to, identity, earlier, &beside)?),
+        Some((to, _, latest, abandoned)) => {
+            let mut next = advanced(&mut file, seam, to, identity, earlier, &beside)?;
+            next.latest = latest;
+            next.abandoned = seam.abandoned.iter().cloned().chain(abandoned).collect();
+            // What the seam is placed by is what was read and is shown:
+            // read once more, the tail is still the bytes the first reading
+            // took (CC11).
+            if !reads_again(&mut file, seam.offset, end, first.digest())? {
+                return Ok(Err(Restart::Unsteady));
+            }
+            Some(next)
+        }
         None if seam.identity.is_none() => Some(Seam { identity: Some(identity), ..seam.clone() }),
         None => None,
     };
@@ -186,12 +213,21 @@ fn blocks(file: &mut File, seam: &Seam, to: u64) -> io::Result<Vec<u64>> {
 }
 
 /// Where the seam goes next: the start of the last row past it that starts
-/// the user's words, its time accepted, with every tool call before it
-/// answered.
-fn next_seam(scanned: &Scanned, seam: &Seam, accept: &dyn Fn(Timestamp) -> bool) -> Option<(u64, Timestamp)> {
+/// the user's words, its time accepted and later than every row before it
+/// (CC13: events at one moment are named by their order there, so none are
+/// split across it), with every tool call before it answered. With it, the
+/// latest time before it and the calls spoken past unanswered before it.
+#[allow(clippy::type_complexity)]
+fn next_seam(
+    scanned: &Scanned,
+    seam: &Seam,
+    accept: &dyn Fn(Timestamp) -> bool,
+) -> Option<(u64, Timestamp, Option<Timestamp>, Vec<String>)> {
     // Each call still waiting, with how many times the user spoke since.
     let mut waiting: HashMap<&str, usize> = HashMap::new();
     let (mut found, mut last_start) = (None, None::<u64>);
+    let mut latest = seam.latest;
+    let mut abandoned: Vec<String> = Vec::new();
     for row in &scanned.rows {
         // A row a later one of its UUID replaced stands out of file order:
         // no seam is placed by it.
@@ -203,18 +239,26 @@ fn next_seam(scanned: &Scanned, seam: &Seam, accept: &dyn Fn(Timestamp) -> bool)
             // interruption left unanswered: it holds no seam back. An answer
             // that still comes after the seam is set right by the
             // background check (§10, bounded eventual sameness).
-            waiting.retain(|_, spoken| {
+            waiting.retain(|id, spoken| {
                 *spoken += 1;
-                *spoken < ABANDONED_AFTER
+                let holds = *spoken < ABANDONED_AFTER;
+                if !holds {
+                    abandoned.push(id.to_string());
+                }
+                holds
             });
         }
+        let time = at(&row.value);
         if in_order
             && waiting.is_empty()
             && row.start > seam.offset
             && prompt
-            && let Some(said) = at(&row.value).filter(|said| accept(*said))
+            && let Some(said) = time.filter(|said| latest.is_none_or(|latest| *said > latest) && accept(*said))
         {
-            found = Some((row.start, said));
+            found = Some((row.start, said, latest, abandoned.clone()));
+        }
+        if let Some(time) = time {
+            latest = Some(latest.map_or(time, |latest| latest.max(time)));
         }
         for block in row.blocks().into_iter().flatten() {
             match (row.kind(), block.get("type").and_then(Value::as_str)) {
@@ -262,15 +306,31 @@ fn advanced(
         blocks,
         titles,
         problems: between.problems.clone(),
-        agents: between.agents().clone(),
+        agents: between
+            .agents()
+            .iter()
+            .map(|(id, start)| (id.clone(), HostAgentStart { prompt: None, ..start.clone() }))
+            .collect(),
+        latest: None,
+        abandoned: Vec::new(),
     })
 }
 
 /// What in a tail refers back past its seam in a way the tail cannot show
-/// alone: a compaction, whose summary names what it kept, and a row that
-/// takes back rows not in the tail.
-fn unsupported(scanned: &Scanned) -> Option<&'static str> {
+/// alone: a compaction, whose summary names what it kept, a row that takes
+/// back rows not in the tail, and the answer to a call before the seam the
+/// user had spoken past.
+fn unsupported(scanned: &Scanned, seam: &Seam) -> Option<&'static str> {
     for row in &scanned.rows {
+        if row.kind() == Some("user")
+            && !seam.abandoned.is_empty()
+            && row.blocks().into_iter().flatten().any(|block| {
+                block.get("type").and_then(Value::as_str) == Some("tool_result")
+                    && block.get("tool_use_id").and_then(Value::as_str).is_some_and(|id| seam.abandoned.iter().any(|known| known == id))
+            })
+        {
+            return Some("the answer to a call before the seam");
+        }
         if row.compaction() || row.replacement() || row.value["isCompactSummary"] == true {
             return Some("a compaction");
         }

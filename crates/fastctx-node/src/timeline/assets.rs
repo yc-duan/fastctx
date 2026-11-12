@@ -166,7 +166,14 @@ pub(super) fn write(
     let key_of = |identity: &Vec<u8>| had.get(identity).and_then(|entry| entry.order.as_slice().try_into().ok().map(u64::from_be_bytes));
     // The window's events take keys past every item before it; one of its
     // own below that is placed again.
-    let early: Vec<bool> = history.iter().map(|event| since.is_some_and(|since| event.at < since)).collect();
+    // An event from before the window keeps the place it has; one new to
+    // the timeline, though its time is earlier, takes its place in the
+    // window, never the very first (CC14).
+    let early: Vec<bool> = history
+        .iter()
+        .zip(&identities)
+        .map(|(event, identity)| since.is_some_and(|since| event.at < since) && had.contains_key(identity))
+        .collect();
     let window: Vec<usize> = (0..history.len()).filter(|index| !early[*index]).collect();
     let mut keyed: Vec<Option<u64>> = Vec::with_capacity(window.len() + 1);
     if let Some(floor) = floor {

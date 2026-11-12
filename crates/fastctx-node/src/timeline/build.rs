@@ -49,15 +49,20 @@ fn failure(error: impl std::fmt::Display) -> Failure {
 static BUILDS: super::serial::Serial = super::serial::Serial::new();
 
 pub(crate) async fn build(node: &Arc<Node>, resident: &ResidentId) -> Result<Built, Failure> {
-    let _building = BUILDS.hold(resident).await;
+    let building = BUILDS.hold(resident).await;
     let content = node.content()?.clone();
     let name = super::checkpoint(resident.as_str());
     // Taken before the history is read: what is read is at least as new.
     let version = crate::held_history::stamp(node, resident).await?.map(String::into_bytes);
     let current = match &version {
         Some(version) => {
-            let (reading, name) = (content.clone(), name.clone());
-            let built = fastctx_platform::task::blocking(move || reading.checkpoint(&name)).await.map_err(failure)?;
+            let (reading, name, held) = (content.clone(), name.clone(), building.clone());
+            let built = fastctx_platform::task::blocking(move || {
+                let _held = held;
+                reading.checkpoint(&name)
+            })
+            .await
+            .map_err(failure)?;
             built.as_ref() == Some(version)
         }
         None => false,
@@ -69,7 +74,12 @@ pub(crate) async fn build(node: &Arc<Node>, resident: &ResidentId) -> Result<Bui
     let stream = super::stream(resident);
     // A reading that missed a record is not the version's history.
     let checkpoint = (!unread).then(|| Checkpoint { name, state: version.clone().unwrap_or_default() });
-    let mut built = fastctx_platform::task::blocking(move || write(&content, &stream, &history, unread, checkpoint)).await?;
+    let held = building.clone();
+    let mut built = fastctx_platform::task::blocking(move || {
+        let _held = held;
+        write(&content, &stream, &history, unread, checkpoint)
+    })
+    .await?;
     built.unread = unread;
     Ok(built)
 }

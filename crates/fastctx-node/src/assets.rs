@@ -90,6 +90,9 @@ pub(crate) struct Assets {
     /// How far each hub's scopes this machine may hold were listed, and when
     /// they were last listed whole (`session::discover`).
     pub(crate) listed: Mutex<HashMap<HubId, Listed>>,
+    /// Counted up each time a listing is forgotten: a listing that began
+    /// before is not kept (CC07).
+    pub(crate) forgotten: std::sync::atomic::AtomicU64,
 }
 
 /// How far a hub's scopes this machine may hold were listed.
@@ -104,6 +107,14 @@ pub(crate) struct Listed {
 }
 
 impl Assets {
+    /// Forgets how far `hub`'s scopes were listed: the next pass lists all,
+    /// and a listing under way when it was forgotten is not kept (CC07).
+    pub(crate) fn forget_listing(&self, hub: &HubId) {
+        let mut listed = self.listed.lock().expect("listed");
+        self.forgotten.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        listed.remove(hub);
+    }
+
     /// Opens the asset side in `dir` for the machine whose key is `device`.
     /// Call on a thread that may block.
     pub(crate) fn open(dir: PathBuf, device: SecretKey) -> io::Result<Self> {
@@ -135,6 +146,7 @@ impl Assets {
             unreached: Mutex::new(HashMap::new()),
             cleared: Mutex::new(HashMap::new()),
             listed: Mutex::new(HashMap::new()),
+            forgotten: std::sync::atomic::AtomicU64::new(0),
         })
     }
 

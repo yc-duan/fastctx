@@ -21,6 +21,7 @@ use fastctx_types::ipc::Failure;
 use fastctx_types::session::SessionEvent;
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
@@ -62,6 +63,14 @@ const ACTIVE_FOR: Duration = Duration::from_secs(60);
 /// many times, this often (BB06).
 const SUBMIT_TRIES: u32 = 5;
 const SUBMIT_AGAIN: Duration = Duration::from_secs(5);
+/// After those, it is asked again this often until the database takes it
+/// (CC04): one asking at a time for each conversation.
+const SUBMIT_LATER: Duration = Duration::from_secs(60);
+static SUBMITTING_LATER: LazyLock<Mutex<std::collections::HashSet<ResidentId>>> = LazyLock::new(Mutex::default);
+/// A conversation fallen quiet is looked at again for this long, more often
+/// for the first part (CC03).
+const QUIET_SOON: Duration = Duration::from_secs(10 * 60);
+const QUIET_FOR: Duration = Duration::from_secs(60 * 60);
 static UNREAD: LazyLock<Mutex<HashMap<ResidentId, u32>>> = LazyLock::new(Mutex::default);
 
 /// Where a conversation's timeline in the asset library stands.
@@ -100,6 +109,40 @@ struct Following {
     /// stood.
     #[serde(default)]
     earlier: Vec<crate::claude::history::Stamp>,
+    /// Before when the history was settled when it was last read.
+    #[serde(default)]
+    settled_at: Option<Timestamp>,
+    /// The facts of the runs the conversation tells of, as they stood.
+    #[serde(default)]
+    runs: String,
+}
+
+/// The identities of the timeline's items placed past `floor`.
+fn past_floor(library: &fastctx_content::v2::Library, scope: &str, floor: u64) -> fastctx_content::Result<Vec<Vec<u8>>> {
+    use fastctx_content::v2::{Kind as _, Timeline};
+    let mut items = Vec::new();
+    // Past every identity at the floor's own place.
+    let mut after = Some((floor.to_be_bytes().to_vec(), vec![0xff; 33]));
+    loop {
+        let page = library.page(scope, Timeline::STREAM, after.clone(), fastctx_content::v2::PAGE)?;
+        let Some(last) = page.last() else { return Ok(items) };
+        after = Some((last.order.clone(), last.item.clone()));
+        items.extend(page.into_iter().map(|entry| entry.item));
+    }
+}
+
+/// The facts of the runs `directory` tells of, as they stand.
+async fn runs_of(directory: &fastctx_types::layout::ConversationDir) -> Result<String, Failure> {
+    let reading = directory.clone();
+    let stamped = fastctx_platform::task::spawn_blocking(move || {
+        let mut digest = Vec::new();
+        crate::run_facts::stamp(&reading, &mut |bytes: &[u8]| digest.extend_from_slice(bytes))?;
+        Ok::<_, std::io::Error>(digest)
+    })
+    .await
+    .map_err(|error| Failure::new(error.to_string()))?
+    .map_err(failure)?;
+    Ok(hex(&Sha256::digest(&stamped)))
 }
 
 /// A history read past where it was read through, as either host reads it.
@@ -113,7 +156,7 @@ struct Followed {
 
 /// Where the history is read through now, as its host reads it.
 enum Next {
-    Claude { session: String, seam: Seam, kept: Option<String>, kept_here: bool, earlier: Vec<crate::claude::history::Stamp> },
+    Claude { session: String, seam: Box<Seam>, kept: Option<String>, kept_here: bool, earlier: Vec<crate::claude::history::Stamp> },
     Codex(CodexSeam),
 }
 
@@ -152,22 +195,24 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-fn unhex(text: &str) -> Option<Vec<u8>> {
-    (0..text.len()).step_by(2).map(|at| text.get(at..at + 2).and_then(|pair| u8::from_str_radix(pair, 16).ok())).collect()
-}
 
 /// Brings `resident`'s timeline in the asset library to its history, where
 /// this machine keeps one.
 pub(super) async fn produce(node: &Arc<Node>, resident: &ResidentId, whole: bool) -> Result<Produced, Failure> {
-    let _producing = PRODUCING.hold(resident).await;
+    let producing = PRODUCING.hold(resident).await;
     let Some(kept) = node.assets.as_ref() else { return Ok(Produced::default()) };
     let Some((about, _)) = node.residents.about(resident) else { return Ok(Produced::default()) };
     let Some(placed) = assets::placed(node, &about)? else { return Ok(Produced::default()) };
     let library = kept.library.clone();
     let name = assets::checkpoint(resident);
     let state: Following = {
-        let (reading, name) = (library.clone(), name.clone());
-        let kept = fastctx_platform::task::blocking(move || reading.checkpoint(&name)).await.map_err(failure)?;
+        let (reading, name, held) = (library.clone(), name.clone(), producing.clone());
+        let kept = fastctx_platform::task::blocking(move || {
+            let _held = held;
+            reading.checkpoint(&name)
+        })
+        .await
+        .map_err(failure)?;
         kept.and_then(|bytes| serde_json::from_slice::<Following>(&bytes).ok()).filter(|state| state.form == FORM).unwrap_or_default()
     };
     let version = crate::held_history::version(node, resident).await?;
@@ -175,6 +220,7 @@ pub(super) async fn produce(node: &Arc<Node>, resident: &ResidentId, whole: bool
         return Ok(Produced::default());
     }
     let directory = node.world.conversation(resident);
+    let runs = runs_of(&directory).await?;
     let agent = about.host.agent.as_str();
     let hosted = about.world_managed() && crate::logins::workbench::reads_host(node, &about);
     let follows = hosted && (agent == "claude" || agent == "codex" && about.session.is_some());
@@ -191,16 +237,19 @@ pub(super) async fn produce(node: &Arc<Node>, resident: &ResidentId, whole: bool
         // place of another.
         let (mut numbered, mut latest, cut) = crate::talk::recorded_after(&directory, state.world_from.unwrap_or(0)).await?;
         // Only one not heard before: the window reads again what it read.
-        let replaced = agent == "codex"
-            && numbered.iter().any(|(sequence, event)| state.world_latest.is_none_or(|latest| *sequence > latest) && replaced_history(event));
+        let heard = |sequence: &u64| state.world_latest.is_none_or(|latest| *sequence > latest);
+        let replaced = agent == "codex" && numbered.iter().any(|(sequence, event)| heard(sequence) && replaced_history(event));
+        // A fact the World tells late, of a time before what is settled, is
+        // placed only by reading all again (CC15).
+        let late = numbered.iter().any(|(sequence, event)| heard(sequence) && state.settled_at.is_some_and(|settled| event.at < settled));
         let mut open = state.world_open.clone();
         let mut whole = whole;
-        if state.world_from.is_none() || cut || replaced {
+        if state.world_from.is_none() || cut || replaced || late {
             if state.world_from.is_some() {
                 (numbered, latest, _) = crate::talk::recorded_after(&directory, 0).await?;
             }
             open.clear();
-            whole |= replaced;
+            whole |= replaced || late;
         }
         let mut recorded = open.clone();
         recorded.extend(numbered.iter().map(|(_, event)| event.clone()));
@@ -214,7 +263,7 @@ pub(super) async fn produce(node: &Arc<Node>, resident: &ResidentId, whole: bool
                 settled: window.settled,
                 next: Next::Claude {
                     session: window.session,
-                    seam: window.seam,
+                    seam: Box::new(window.seam),
                     kept: window.kept,
                     kept_here: window.kept_here,
                     earlier: window.earlier,
@@ -244,20 +293,31 @@ pub(super) async fn produce(node: &Arc<Node>, resident: &ResidentId, whole: bool
             let recorded = if agent == "codex" { crate::codex::watch::recorded(recorded, &window.events) } else { recorded };
             let history = {
                 let (assembling, whose, folder, events, agent) = (node.clone(), resident.clone(), directory.clone(), window.events, agent.to_string());
-                fastctx_platform::task::blocking(move || crate::talk::assemble(&assembling, &whose, &folder, &agent, recorded, Some(events)))
-                    .await?
-            };
-            let before: Vec<(Vec<u8>, Timestamp)> =
-                state.window.iter().filter_map(|(identity, at, _)| unhex(identity).map(|identity| (identity, *at))).collect();
-            // A Codex window is read again from the turn it began with: all
-            // it wrote last is in it again, or gone. A Claude one from where
-            // its seam moved: what it wrote from before this one began is
-            // settled.
-            let before: Vec<(Vec<u8>, Timestamp)> = match &window.next {
-                Next::Codex(_) => before.into_iter().map(|(identity, at)| (identity, at.max(window.since))).collect(),
-                Next::Claude { .. } => before,
+                let held = producing.clone();
+                fastctx_platform::task::blocking(move || {
+                    let _held = held;
+                    crate::talk::assemble(&assembling, &whose, &folder, &agent, recorded, Some(events))
+                })
+                .await?
             };
             let floor = state.window.iter().filter(|(_, at, _)| *at < window.since).map(|(_, _, key)| *key).fold(state.floor, u64::max);
+            // What the window wrote before, as the library holds it: every
+            // item placed past the floor, whatever the checkpoint kept of it
+            // (CC12) — a write committed before a stop that kept no
+            // checkpoint is among them. Each is read again in this window,
+            // or gone.
+            let before: Vec<(Vec<u8>, Timestamp)> = if window.whole {
+                Vec::new()
+            } else {
+                let (reading, scope, held) = (library.clone(), placed.scope.clone(), producing.clone());
+                let since = window.since;
+                fastctx_platform::task::blocking(move || {
+                    let _held = held;
+                    past_floor(&reading, &scope, floor).map(|items| items.into_iter().map(|identity| (identity, since)).collect())
+                })
+                .await
+                .map_err(failure)?
+            };
             let (whole, since, settled) = (window.whole, window.since, window.settled);
             // A Codex thread's title and what it says of itself stay in the
             // window: every reading tells them again, at the time of the
@@ -267,8 +327,9 @@ pub(super) async fn produce(node: &Arc<Node>, resident: &ResidentId, whole: bool
                 history.iter().zip(identities).filter(|(event, _)| told_again(event)).map(|(_, identity)| identity).collect()
             };
             let wrote = {
-                let (writing, signer, whose, placed) = (library.clone(), signer.clone(), resident.clone(), placed);
+                let (writing, signer, whose, placed, held) = (library.clone(), signer.clone(), resident.clone(), placed, producing.clone());
                 fastctx_platform::task::blocking(move || {
+                    let _held = held;
                     let span = if whole { Span::Whole } else { Span::From { since, before: &before, floor } };
                     assets::write(&writing, signer, &whose, &placed, &history, span)
                 })
@@ -289,7 +350,7 @@ pub(super) async fn produce(node: &Arc<Node>, resident: &ResidentId, whole: bool
                         // Brought again until the record holds what was kept.
                         version: if unread { String::new() } else { version },
                         session: Some(session),
-                        seam,
+                        seam: *seam,
                         window: open,
                         floor: settled_floor,
                         kept: if kept_here { seen } else { state.kept },
@@ -299,6 +360,8 @@ pub(super) async fn produce(node: &Arc<Node>, resident: &ResidentId, whole: bool
                         codex: None,
                         world_latest: Some(latest),
                         earlier,
+                        settled_at: Some(settled),
+                        runs: runs.clone(),
                     };
                     (next, unread)
                 }
@@ -313,6 +376,8 @@ pub(super) async fn produce(node: &Arc<Node>, resident: &ResidentId, whole: bool
                         verified,
                         codex: Some(seam),
                         world_latest: Some(latest),
+                        settled_at: Some(settled),
+                        runs: runs.clone(),
                         ..Following::default()
                     };
                     (next, false)
@@ -326,19 +391,34 @@ pub(super) async fn produce(node: &Arc<Node>, resident: &ResidentId, whole: bool
                 return Ok(Produced { unread: true, ..Produced::default() });
             }
             let wrote = {
-                let (writing, signer, whose, history) = (library.clone(), signer.clone(), resident.clone(), read.history);
-                fastctx_platform::task::blocking(move || assets::write(&writing, signer, &whose, &placed, &history, Span::Whole)).await?
+                let (writing, signer, whose, history, held) = (library.clone(), signer.clone(), resident.clone(), read.history, producing.clone());
+                fastctx_platform::task::blocking(move || {
+                    let _held = held;
+                    assets::write(&writing, signer, &whose, &placed, &history, Span::Whole)
+                })
+                .await?
             };
             let floor = wrote.items.iter().map(|(_, _, key)| *key).max().unwrap_or(0);
-            (wrote, Following { form: FORM, version, floor, verified: Some(Timestamp::now()), ..Following::default() }, false)
+            (wrote, Following { form: FORM, version, floor, verified: Some(Timestamp::now()), runs: runs.clone(), ..Following::default() }, false)
         }
     };
-    // A long Claude prefix changed, or a Codex thread did, whose settled
-    // turns are checked whole within the hour (§10, §21).
-    let long_changed = next.seam.offset > LONG_PREFIX || next.codex.is_some() && wrote.written + wrote.gone > 0;
+    // A history read past a seam that changed is checked whole within the
+    // hour (§10, §21): a long Claude prefix is read past only in part, a
+    // Codex thread's settled turns are not read again, and what settled
+    // as it was read may be told otherwise after (CC08–CC17); so are the
+    // runs it tells of, whose facts go on after their item settled (CC15).
+    let followed = next.session.is_some() || next.codex.is_some();
+    let long_changed =
+        next.seam.offset > LONG_PREFIX || followed && wrote.written + wrote.gone > 0 || followed && runs != state.runs && !state.runs.is_empty();
     let verified = next.verified;
     let state = serde_json::to_vec(&next).map_err(failure)?;
-    fastctx_platform::task::blocking(move || library.keep_checkpoint(&name, state)).await.map_err(failure)?;
+    let held = producing.clone();
+    fastctx_platform::task::blocking(move || {
+        let _held = held;
+        library.keep_checkpoint(&name, state)
+    })
+    .await
+    .map_err(failure)?;
     if wrote.written + wrote.gone > 0 {
         crate::assets::wake(node, &hub);
     }
@@ -493,9 +573,29 @@ async fn run(node: &Arc<Node>, resident: &ResidentId) -> Outcome {
             if active(node, resident) {
                 return Outcome::Again { after: ACTIVE_AGAIN };
             }
+            // A host writes its record late, by no bound it tells, and says
+            // nothing when it does (CC03): looked at again, less and less
+            // often, for an hour after the conversation fell quiet; past
+            // that, its checks find what came later.
+            if let Some(after) = quiet_again(node, resident) {
+                return Outcome::Again { after };
+            }
             Outcome::Done
         }
         Err(failure) => Outcome::Failed(failure.message),
+    }
+}
+
+/// How soon a conversation fallen quiet is looked at again: every half
+/// minute for ten minutes, then every five, until an hour has gone by.
+fn quiet_again(node: &Node, resident: &ResidentId) -> Option<Duration> {
+    let quiet = node.residents.now(resident).map(|now| jiff::Timestamp::now().duration_since(now.since).unsigned_abs())?;
+    if quiet < QUIET_SOON {
+        Some(Duration::from_secs(30))
+    } else if quiet < QUIET_FOR {
+        Some(Duration::from_secs(300))
+    } else {
+        None
     }
 }
 
@@ -533,7 +633,20 @@ pub(super) fn wanted(node: &Arc<Node>, resident: &ResidentId) {
                     return;
                 }
                 Err(error) if tries == SUBMIT_TRIES => {
-                    log.line(format_args!("asking for {}'s asset timeline: {error}", job.key));
+                    log.line(format_args!("asking for {}'s asset timeline: {error}; asked again each minute", job.key));
+                    let Ok(resident) = job.unit.parse::<ResidentId>() else { return };
+                    if !SUBMITTING_LATER.lock().expect("submitting later").insert(resident.clone()) {
+                        return;
+                    }
+                    loop {
+                        tokio::time::sleep(SUBMIT_LATER).await;
+                        let asked = job.clone();
+                        if database.write_relaxed(bytes, move |db| fastctx_jobs::submit_after(db, &asked, Duration::ZERO)).await.is_ok() {
+                            jobs.stir(KIND);
+                            break;
+                        }
+                    }
+                    SUBMITTING_LATER.lock().expect("submitting later").remove(&resident);
                 }
                 Err(_) => tokio::time::sleep(SUBMIT_AGAIN).await,
             }

@@ -16,8 +16,13 @@ impl Serial {
     }
 
     /// Held while `resident`'s timeline is built: waits for the one before.
-    pub(super) async fn hold(&self, resident: &ResidentId) -> tokio::sync::OwnedMutexGuard<()> {
+    /// Each piece of blocking work of the build holds it too (`Held`), so a
+    /// build whose job gave up on it holds it until that work ends (CC02).
+    pub(super) async fn hold(&self, resident: &ResidentId) -> Held {
         let turn = self.0.lock().expect("timeline builds").entry(resident.clone()).or_default().clone();
-        turn.lock_owned().await
+        Arc::new(turn.lock_owned().await)
     }
 }
+
+/// A build held: cloned into each piece of its blocking work.
+pub(super) type Held = Arc<tokio::sync::OwnedMutexGuard<()>>;

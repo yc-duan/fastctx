@@ -97,7 +97,9 @@ pub(crate) async fn window(
         let (reading, whose) = (node.clone(), resident.clone());
         fastctx_platform::task::blocking(move || sessions(&reading, &whose)).await
     };
-    let Some(Session { id, began, kept, .. }) = sessions.pop().filter(|_| problems.is_empty()) else { return Ok(None) };
+    let Some(Session { id, began, kept, process }) = sessions.pop().filter(|_| problems.is_empty()) else { return Ok(None) };
+    // Its process gone, a last row without its line's end will never get one.
+    let ended = process.as_ref().is_some_and(|process| fastctx_platform::has_ended(process).unwrap_or(false));
     // The sessions before the last as their files stand: unchanged since the
     // seam, they stay as written; else all is read again.
     let earlier = {
@@ -141,7 +143,7 @@ pub(crate) async fn window(
         let copied = if from.identity.is_none() { copied.clone() } else { HashSet::new() };
         let read = fastctx_platform::task::blocking(move || {
             let accept = |at: Timestamp| turns.iter().all(|(start, end)| *start >= at || end.is_some_and(|end| end <= at));
-            follow::tail(&reading, &from, &copied, &accept)
+            follow::tail(&reading, &from, &copied, &accept, ended)
         })
         .await;
         match read {

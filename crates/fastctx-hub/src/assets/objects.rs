@@ -471,13 +471,38 @@ where
     }
 }
 
+/// Keeps what the device putting an object proved and staged, by time, as
+/// its bytes come: however long one chunk takes, nothing it proved ends
+/// while it is still sending (CC01).
+pub(super) struct Keeper<'a> {
+    objects: &'a Objects,
+    key: [u8; 32],
+    kept: Option<Instant>,
+}
+
+impl<'a> Keeper<'a> {
+    pub(super) fn new(objects: &'a Objects, key: [u8; 32]) -> Self {
+        Self { objects, key, kept: None }
+    }
+
+    pub(super) fn tick(&mut self) {
+        if self.kept.is_none_or(|kept| kept.elapsed() >= KEEP_EVERY) {
+            self.objects.keep_alive(&self.key);
+            self.kept = Some(Instant::now());
+        }
+    }
+}
+
 /// `length` bytes the member sends, in as many messages as it likes.
-async fn bytes<S>(stream: &mut S, pulse: &Pulse, length: u64) -> Result<Vec<u8>, String>
+async fn bytes<S>(stream: &mut S, pulse: &Pulse, length: u64, mut keeper: Option<&mut Keeper<'_>>) -> Result<Vec<u8>, String>
 where
     S: futures_util::Stream<Item = Result<WsMessage, tokio_tungstenite::tungstenite::Error>> + Unpin,
 {
     let mut bytes = Vec::with_capacity(length as usize);
     while (bytes.len() as u64) < length {
+        if let Some(keeper) = keeper.as_deref_mut() {
+            keeper.tick();
+        }
         match heard(stream, pulse).await? {
             // Refused before it is kept: no more is kept than was said (AC05).
             Some(WsMessage::Binary(piece)) if bytes.len() as u64 + piece.len() as u64 > length => {
@@ -503,6 +528,19 @@ where
     chunk_at_most(stream, pulse, CHUNK_BYTES).await
 }
 
+/// The next chunk, what its sender proved and staged kept as it comes.
+async fn chunk_kept<S>(stream: &mut S, pulse: &Pulse, keeper: &mut Keeper<'_>) -> Result<(u64, Vec<u8>), String>
+where
+    S: futures_util::Stream<Item = Result<WsMessage, tokio_tungstenite::tungstenite::Error>> + Unpin,
+{
+    keeper.tick();
+    let head: ChunkHead = serde_json::from_str(&word(stream, pulse).await?).map_err(|error| error.to_string())?;
+    if head.size > CHUNK_BYTES {
+        return Err(format!("a chunk here is at most {CHUNK_BYTES} bytes"));
+    }
+    Ok((head.index, bytes(stream, pulse, head.size, Some(keeper)).await?))
+}
+
 /// The next chunk the member sends, refused before its bytes come when it
 /// says it is longer than `most`.
 pub(super) async fn chunk_at_most<S>(stream: &mut S, pulse: &Pulse, most: u64) -> Result<(u64, Vec<u8>), String>
@@ -513,7 +551,7 @@ where
     if head.size > CHUNK_BYTES.min(most) {
         return Err(format!("a chunk here is at most {} bytes", CHUNK_BYTES.min(most)));
     }
-    Ok((head.index, bytes(stream, pulse, head.size).await?))
+    Ok((head.index, bytes(stream, pulse, head.size, None).await?))
 }
 
 /// A large object's chunk digests, as the member sends them.
@@ -525,7 +563,7 @@ where
     if head.count != count {
         return Err("a large object comes with one digest a chunk".into());
     }
-    let digests = bytes(stream, pulse, count * 32).await?;
+    let digests = bytes(stream, pulse, count * 32, None).await?;
     Ok(digests.chunks_exact(32).map(|digest| digest.try_into().expect("32 bytes")).collect())
 }
 
@@ -569,17 +607,14 @@ async fn take(hub: &Arc<Hub>, mut socket: Socket, me: &MachineName, key: &Public
             // Every byte, in order, hashed as it comes.
             let mut hasher = Sha256::new();
             let mut length = 0u64;
-            let mut kept: Option<Instant> = None;
+            // Kept by time, however few chunks the object has (BB02) and
+            // however slowly one comes (CC01).
+            let mut keeper = Keeper::new(&hub.assets.objects, *key.as_bytes());
             for expected in 0..chunks(object.size) {
                 if expected > 0 && expected.is_multiple_of(CHECK_EVERY) {
                     still(hub, me, key, &scope, None).await?;
                 }
-                // Kept by time, however few chunks the object has (BB02).
-                if kept.is_none_or(|kept| kept.elapsed() >= KEEP_EVERY) {
-                    hub.assets.objects.keep_alive(key.as_bytes());
-                    kept = Some(Instant::now());
-                }
-                let (index, bytes) = chunk(&mut stream, &pulse).await?;
+                let (index, bytes) = chunk_kept(&mut stream, &pulse, &mut keeper).await?;
                 if index != expected {
                     return Err("a proof's chunks come in order".into());
                 }
@@ -607,16 +642,12 @@ async fn take(hub: &Arc<Hub>, mut socket: Socket, me: &MachineName, key: &Public
         let mut hasher = (transfer.is_none() && whole).then(Sha256::new);
         let mut wanted: BTreeSet<u64> = missing.into_iter().collect();
         let (mut next, mut taken) = (0, 0u64);
-        let mut kept: Option<Instant> = None;
+        let mut keeper = Keeper::new(&hub.assets.objects, *key.as_bytes());
         while !wanted.is_empty() {
             if taken > 0 && taken.is_multiple_of(CHECK_EVERY) {
                 still(hub, me, key, &scope, None).await?;
             }
-            if kept.is_none_or(|kept| kept.elapsed() >= KEEP_EVERY) {
-                hub.assets.objects.keep_alive(key.as_bytes());
-                kept = Some(Instant::now());
-            }
-            let (index, bytes) = chunk(&mut stream, &pulse).await?;
+            let (index, bytes) = chunk_kept(&mut stream, &pulse, &mut keeper).await?;
             taken += 1;
             if !wanted.remove(&index) {
                 return Err(format!("chunk {index} was not asked for"));

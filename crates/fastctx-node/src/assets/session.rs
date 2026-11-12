@@ -70,7 +70,7 @@ pub(crate) fn pushed(node: &Arc<Node>, hub: &HubId, push: wire::Push) {
         wire::Push::Moved { .. } | wire::Push::Fact { .. } => wake(node, hub),
         wire::Push::Revoked { scope } => {
             let Some(assets) = node.assets.as_ref() else { return };
-            assets.listed.lock().expect("listed").remove(hub);
+            assets.forget_listing(hub);
             let (library, log, device) = (assets.library.clone(), node.log.clone(), assets.device());
             fastctx_platform::task::spawn(async move {
                 let key = scope.clone();
@@ -149,7 +149,7 @@ pub(super) async fn ask(assets: &Assets, link: &Arc<Link>, request: Request) -> 
         Reply::Revoked { scope } => {
             // What may be given back after it is found by listing all again:
             // its description is older than any listing goes on from (BB13).
-            assets.listed.lock().expect("listed").remove(&link.membership().id);
+            assets.forget_listing(&link.membership().id);
             let key = scope.clone();
             let device = assets.device();
             blocking(&assets.library, move |library| library.revoke_keeping(&key, &device)).await?;
@@ -490,6 +490,7 @@ const RELIST: Duration = Duration::from_secs(300);
 /// `RELIST`.
 async fn discover(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKey) -> Result<(), String> {
     let library = &assets.library;
+    let began = assets.forgotten.load(std::sync::atomic::Ordering::SeqCst);
     let known = assets.listed.lock().expect("listed").get(hub).cloned();
     // No basis kept — the last listing unsettled, or told none — lists all.
     let (mut after, mut whole, heard) = match known {
@@ -552,6 +553,11 @@ async fn discover(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKe
         }
     }
     let mut listed = assets.listed.lock().expect("listed");
+    // Forgotten while it went on — access revoked, the session ended — it
+    // is not kept: the next pass lists all (CC07).
+    if assets.forgotten.load(std::sync::atomic::Ordering::SeqCst) != began {
+        return Ok(());
+    }
     let at = whole.or_else(|| listed.get(hub).map(|listed| listed.whole)).unwrap_or_else(std::time::Instant::now);
     // Unsettled, no basis is kept: the next pass lists all.
     let basis = if unsettled { String::new() } else { basis.unwrap_or_default() };
