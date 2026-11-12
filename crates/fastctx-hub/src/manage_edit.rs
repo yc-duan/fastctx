@@ -51,9 +51,12 @@ pub(crate) fn rows(store: &Store, account: &AccountName, change: &Change) -> Boo
                 .collect(),
         ),
         Change::RevokeToken { .. } => BookEdit::Tokens,
-        Change::Settings { .. } | Change::Updates { .. } | Change::Rollout { .. } | Change::Intake { .. } => {
-            BookEdit::Audit
-        }
+        Change::Settings { .. }
+        | Change::AssetSeal { .. }
+        | Change::OpenAssets
+        | Change::Updates { .. }
+        | Change::Rollout { .. }
+        | Change::Intake { .. } => BookEdit::Audit,
         _ => BookEdit::Full,
     }
 }
@@ -76,6 +79,8 @@ pub(crate) fn configuration(change: &Change) -> bool {
             | Change::RenameGroup { .. }
             | Change::RevokeToken { .. }
             | Change::Settings { .. }
+            | Change::AssetSeal { .. }
+            | Change::OpenAssets
             | Change::Updates { .. }
             | Change::Rollout { .. }
             | Change::Intake { .. }

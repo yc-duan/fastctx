@@ -27,6 +27,9 @@ pub(crate) struct Window {
     /// The events past the seam, placed in the World's turns, with the
     /// session's title and the note of what could not be read.
     pub events: Vec<SessionEvent>,
+    /// Those two of them, as placed: told again at every reading, whatever
+    /// their time (EE01).
+    pub told: Vec<SessionEvent>,
     /// Read from its start: the window is the whole history.
     pub whole: bool,
     /// From when on events belong to the window: those before stay as they
@@ -201,9 +204,26 @@ pub(crate) async fn window(
     let since = if whole { Timestamp::MIN } else { tail.since.unwrap_or(Timestamp::MAX) };
     let settled = tail.seam_at.unwrap_or(since);
     let next = tail.seam.clone().unwrap_or(seam);
-    let follow::Tail { transcript, prefix_ids, .. } = tail;
-    let (events, _) = session_events(node, resident, &id, began, transcript.title.clone(), transcript.events, &transcript.problems);
+    let follow::Tail { transcript, mut prefix_ids, .. } = tail;
+    // Read from its start after earlier sessions, their record ids are kept
+    // with those before the seam: one of them the last session copies late,
+    // past the seam, reads all whole, as a whole reading leaves it out
+    // (EE04).
+    if whole && several {
+        prefix_ids.extend(copied.iter().cloned());
+    }
+    let title = transcript.title.clone();
+    let (events, problem) = session_events(node, resident, &id, began, title.clone(), transcript.events, &transcript.problems);
     before.extend(events);
     let events = place(before, recorded);
-    Ok(Some(Window { session: id, events, whole, since, seam: next, settled, kept, kept_here, earlier, prefix_ids }))
+    let told = events
+        .iter()
+        .filter(|event| match &event.happened {
+            Happened::Titled { title: told } => event.at == began && title.as_deref() == Some(told.as_str()),
+            Happened::Health { health, .. } => event.at == began && problem.as_deref() == Some(health.text.as_str()),
+            _ => false,
+        })
+        .cloned()
+        .collect();
+    Ok(Some(Window { session: id, events, told, whole, since, seam: next, settled, kept, kept_here, earlier, prefix_ids }))
 }

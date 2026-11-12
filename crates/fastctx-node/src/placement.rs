@@ -47,6 +47,26 @@ pub(crate) fn account(node: &Node, acting: &Acting, pinned: Option<HubAccount>) 
     };
     accounts.sort();
     accounts.dedup();
+    // On a computer several accounts are logged in on, a conversation no
+    // account was named for is its owner's: the account the computer is
+    // registered under, where that one is logged in here (the user,
+    // 2026-11-12).
+    if accounts.len() > 1 && matches!(acting, Acting::Here) {
+        let owners: Vec<HubAccount> = node
+            .links()
+            .iter()
+            .filter_map(|link| {
+                let view = link.view();
+                let me = view.me()?;
+                let home = me.home.as_ref().filter(|home| me.logins.contains(*home))?;
+                let owner = HubAccount { hub: link.membership().id, account: home.clone() };
+                accounts.contains(&owner).then_some(owner)
+            })
+            .collect();
+        if let [owner] = owners.as_slice() {
+            return Ok(Some(owner.clone()));
+        }
+    }
     Ok(match accounts.as_slice() {
         [account] => Some(account.clone()),
         _ => None,

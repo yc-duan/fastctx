@@ -34,6 +34,8 @@ pub(super) fn hub(dir: &Path) -> io::Result<HubFile> {
     let tx = c.transaction().map_err(io::Error::other)?;
     hub.self_registration =
         shelf::meta(&tx, "hub.self_registration").map_err(shelf::other)?.unwrap_or(hub.self_registration);
+    hub.asset_seal_at_start =
+        shelf::meta(&tx, "hub.asset_seal_at_start").map_err(shelf::other)?.unwrap_or(hub.asset_seal_at_start);
     hub.updates = shelf::meta(&tx, "hub.updates").map_err(shelf::other)?.unwrap_or(hub.updates);
     hub.dissolved = shelf::meta(&tx, "hub.dissolved").map_err(shelf::other)?.unwrap_or(hub.dissolved);
     hub.due = list(&tx, "due")?;

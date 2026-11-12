@@ -305,6 +305,15 @@ pub enum AccountChange {
     Dissolve {
         name: HubName,
     },
+    /// Whether the hub seals every asset each time it starts, until the
+    /// super administrator opens them (design §17 (b); off by default).
+    AssetSeal {
+        at_start: bool,
+    },
+    /// The super administrator opens the assets the hub sealed as it
+    /// started (`AssetSeal`). A seal for any other reason is ended only by
+    /// `fastctx hub reopen`, the hub stopped.
+    OpenAssets,
     ShareProject {
         town: TownName,
         with: AccountName,
@@ -436,6 +445,13 @@ pub struct HubAccounts {
     pub home: Option<AccountName>,
     /// Whether anyone who reaches the hub may open an account.
     pub self_registration: bool,
+    /// Whether the hub seals every asset each time it starts, until the
+    /// super administrator opens them.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub asset_seal_at_start: bool,
+    /// Why every asset is sealed now, if it is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assets_sealed: Option<String>,
     pub accounts: Vec<AccountSeen>,
     pub members: Vec<MemberSeen>,
     pub shares: Vec<ShareSeen>,

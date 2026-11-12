@@ -63,8 +63,9 @@ pub struct Seam {
     #[serde(default)]
     pub abandoned: Vec<String>,
     /// The agents the files beside the record told of that no call before
-    /// it started, as a whole reading found them: no reason to read whole
-    /// again (CC10).
+    /// it started, as a whole reading found them, each with the call its
+    /// file named then (`id@call`): no reason to read whole again (CC10) —
+    /// unless a file comes to name another call (EE02).
     #[serde(default)]
     pub unlinked: Vec<String>,
 }
@@ -196,13 +197,18 @@ pub fn tail(
         None if seam.identity.is_none() => Some(Seam { identity: Some(identity), ..seam.clone() }),
         None => None,
     };
-    let ids: Vec<String> = beside.ids().map(str::to_string).collect();
+    let told: Vec<(String, String)> = beside.calls().map(|(id, call)| (id.to_string(), call.to_string())).collect();
     let transcript = project(scanned, &[], earlier, beside, seam.agents.clone())?;
     // An agent the files beside tell of that no call started — before the
     // seam or past it — is one a call before the seam started, its
-    // telling come late: a whole reading links it (CC10).
-    let unlinked: Vec<String> =
-        ids.into_iter().filter(|id| !seam.agents.contains_key(id) && !transcript.agents().contains_key(id)).collect();
+    // telling come late: a whole reading links it (CC10). One whose file
+    // names another call than when a whole reading found it unlinked may
+    // link now (EE02).
+    let unlinked: Vec<String> = told
+        .into_iter()
+        .filter(|(id, _)| !seam.agents.contains_key(id) && !transcript.agents().contains_key(id))
+        .map(|(id, call)| format!("{id}@{call}"))
+        .collect();
     if seam.offset > 0 && unlinked.iter().any(|id| !seam.unlinked.contains(id)) {
         return Ok(Err(Restart::Unsupported("an agent before the seam told of late")));
     }
@@ -265,6 +271,12 @@ fn next_seam(
         // no seam is placed by it.
         let in_order = last_start.is_none_or(|last| row.start > last);
         last_start = Some(last_start.map_or(row.start, |last| last.max(row.start)));
+        // Nor one with a row after it in the record's order that stands
+        // before it in the file: the bytes before such a seam would not be
+        // the rows before it (EE03).
+        if found.as_ref().is_some_and(|(to, ..): &(u64, Timestamp, Option<Timestamp>, Vec<String>)| row.start < *to) {
+            found = None;
+        }
         let prompt = row.kind() == Some("user") && row.prompt();
         if prompt {
             // A call the user spoke past twice without its answer is one an

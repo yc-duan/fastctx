@@ -955,6 +955,9 @@ pub async fn run_prepared(
                 .line(format_args!("on the hub {} ({}) as {}", membership.hub_name, membership.id, membership.name));
             world::start(&node, membership).context("starting a link to a hub")?;
         }
+        // What a network this computer left, and stopped before it was
+        // cleared, had here goes now.
+        fastctx_platform::task::spawn(assets::leave::left_before(node.clone()));
         replicas::cleanup::start(&node);
         Ok::<_, anyhow::Error>(())
     })

@@ -12,6 +12,40 @@ INVENTORIES = ("legacy.tsv", "legacy_families.tsv", "legacy_files.tsv", "legacy_
 FROZEN = {'legacy_baseline.tsv': 'd07f1dd37e4348ac574fb3357a399cc7fce76b0cf3246e3f0b9b36988ce58614', 'baseline_sources.tsv': '184c389ae42648ae53922007aee830769a12c6c2e752648c98367a89a130704c'}
 
 
+def sql_without_comments(text: str) -> str:
+    """SQL text with its comments blanked, quoted strings and names kept
+    whole: a comment marker inside quotes starts no comment."""
+    out = []
+    i, n = 0, len(text)
+    while i < n:
+        c = text[i]
+        if c in "'\"`[":
+            close = "]" if c == "[" else c
+            j = i + 1
+            while j < n:
+                if text[j] == close:
+                    # A doubled quote is one quote inside the quoted text.
+                    if close != "]" and j + 1 < n and text[j + 1] == close:
+                        j += 2
+                        continue
+                    break
+                j += 1
+            out.append(text[i : j + 1])
+            i = j + 1
+        elif text.startswith("--", i):
+            j = text.find("\n", i)
+            i = n if j < 0 else j
+            out.append(" ")
+        elif text.startswith("/*", i):
+            j = text.find("*/", i + 2)
+            i = n if j < 0 else j + 2
+            out.append(" ")
+        else:
+            out.append(c)
+            i += 1
+    return "".join(out)
+
+
 def exempt(relative):
     """Drills and tests, by the parts of their path, not by any name that
     holds the letters (U09: latest.sql is no test)."""
@@ -124,9 +158,10 @@ def check(registry):
             continue
         owner = path.relative_to(ROOT).as_posix()
         text = path.read_text(encoding="utf-8")
-        # An example in an SQL comment creates nothing (W05).
+        # An example in an SQL comment creates nothing (W05); a comment
+        # marker inside a quoted string or name starts none (X05).
         if path.suffix == ".sql":
-            text = re.sub(r"/\*.*?\*/|--[^\n]*", " ", text, flags=re.S)
+            text = sql_without_comments(text)
         for groups in creating.findall(text):
             table = next(group for group in groups if group).lower()
             if "/fastctx-content/" in name:

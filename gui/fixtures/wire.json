@@ -1439,7 +1439,7 @@
     {
       "records": [
         {
-          "id": 44,
+          "id": 46,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1456,7 +1456,7 @@
           }
         },
         {
-          "id": 43,
+          "id": 45,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1476,7 +1476,7 @@
           }
         },
         {
-          "id": 42,
+          "id": 44,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1498,7 +1498,7 @@
           }
         },
         {
-          "id": 41,
+          "id": 43,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1524,7 +1524,7 @@
           }
         },
         {
-          "id": 40,
+          "id": 42,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1544,7 +1544,7 @@
           }
         },
         {
-          "id": 39,
+          "id": 41,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1564,7 +1564,7 @@
           }
         },
         {
-          "id": 38,
+          "id": 40,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1581,7 +1581,7 @@
           }
         },
         {
-          "id": 37,
+          "id": 39,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1606,7 +1606,7 @@
           }
         },
         {
-          "id": 36,
+          "id": 38,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1624,7 +1624,7 @@
           }
         },
         {
-          "id": 35,
+          "id": 37,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1644,7 +1644,7 @@
           }
         },
         {
-          "id": 34,
+          "id": 36,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1662,7 +1662,7 @@
           }
         },
         {
-          "id": 33,
+          "id": 35,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": null,
@@ -1680,7 +1680,7 @@
           }
         },
         {
-          "id": 32,
+          "id": 34,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1699,7 +1699,7 @@
           }
         },
         {
-          "id": 31,
+          "id": 33,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1719,7 +1719,7 @@
           }
         },
         {
-          "id": 30,
+          "id": 32,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1737,7 +1737,7 @@
           }
         },
         {
-          "id": 29,
+          "id": 31,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1754,7 +1754,7 @@
           }
         },
         {
-          "id": 28,
+          "id": 30,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1774,7 +1774,7 @@
           }
         },
         {
-          "id": 27,
+          "id": 29,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1792,7 +1792,7 @@
           }
         },
         {
-          "id": 26,
+          "id": 28,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1810,7 +1810,7 @@
           }
         },
         {
-          "id": 25,
+          "id": 27,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1828,7 +1828,7 @@
           }
         },
         {
-          "id": 24,
+          "id": 26,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1844,7 +1844,7 @@
           }
         },
         {
-          "id": 23,
+          "id": 25,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1864,7 +1864,7 @@
           }
         },
         {
-          "id": 22,
+          "id": 24,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1888,7 +1888,7 @@
           }
         },
         {
-          "id": 21,
+          "id": 23,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1907,7 +1907,7 @@
           }
         },
         {
-          "id": 20,
+          "id": 22,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1923,7 +1923,7 @@
           }
         },
         {
-          "id": 19,
+          "id": 21,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1941,7 +1941,7 @@
           }
         },
         {
-          "id": 18,
+          "id": 20,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1958,7 +1958,7 @@
           }
         },
         {
-          "id": 17,
+          "id": 19,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1975,7 +1975,7 @@
           }
         },
         {
-          "id": 16,
+          "id": 18,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1992,7 +1992,7 @@
           }
         },
         {
-          "id": 15,
+          "id": 17,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -2009,7 +2009,7 @@
           }
         },
         {
-          "id": 14,
+          "id": 16,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -2027,7 +2027,7 @@
           }
         },
         {
-          "id": 13,
+          "id": 15,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -2044,7 +2044,7 @@
           }
         },
         {
-          "id": 12,
+          "id": 14,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -2061,7 +2061,7 @@
           }
         },
         {
-          "id": 11,
+          "id": 13,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -2072,6 +2072,39 @@
           "action": {
             "change": "settings",
             "self_registration": true
+          },
+          "outcome": {
+            "kind": "done"
+          }
+        },
+        {
+          "id": 12,
+          "at": "2026-10-10T12:00:00Z",
+          "actor": {
+            "account": "ada",
+            "authenticated": true,
+            "member": "laptop",
+            "peer": null
+          },
+          "action": {
+            "change": "asset_seal",
+            "at_start": true
+          },
+          "outcome": {
+            "kind": "done"
+          }
+        },
+        {
+          "id": 11,
+          "at": "2026-10-10T12:00:00Z",
+          "actor": {
+            "account": "ada",
+            "authenticated": true,
+            "member": "laptop",
+            "peer": null
+          },
+          "action": {
+            "change": "open_assets"
           },
           "outcome": {
             "kind": "done"
@@ -4639,6 +4672,8 @@
             ],
             "home": "ada",
             "self_registration": true,
+            "asset_seal_at_start": true,
+            "assets_sealed": "the hub seals them each time it starts, until the super administrator opens them",
             "accounts": [
               {
                 "name": "ada",
@@ -5033,6 +5068,13 @@
       {
         "change": "settings",
         "self_registration": false
+      },
+      {
+        "change": "asset_seal",
+        "at_start": true
+      },
+      {
+        "change": "open_assets"
       },
       {
         "change": "share_project",

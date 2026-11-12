@@ -742,6 +742,18 @@ fn apply(
             store.save_hub().map_err(|error| format!("the hub could not keep its settings: {error}"))?;
             Ok(Told::Done)
         }
+        // Takes effect when the hub next starts (design §17 (b)).
+        Change::AssetSeal { at_start } => {
+            need_super()?;
+            store.hub.asset_seal_at_start = at_start;
+            store.save_hub().map_err(|error| format!("the hub could not keep its settings: {error}"))?;
+            Ok(Told::Done)
+        }
+        Change::OpenAssets => {
+            need_super()?;
+            hub.assets.open_start_seal()?;
+            Ok(Told::Done)
+        }
         Change::Updates { policy } => {
             need_super()?;
             if let Some(minimum) = &policy.minimum

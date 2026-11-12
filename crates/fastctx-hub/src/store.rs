@@ -70,6 +70,10 @@ pub struct HubFile {
     /// Whether anyone who reaches the hub may open an account.
     #[serde(default)]
     pub self_registration: bool,
+    /// Whether every asset is sealed each time the hub starts, until the
+    /// super administrator opens them (design §17 (b); off by default).
+    #[serde(default)]
+    pub asset_seal_at_start: bool,
     /// The network was dissolved: the hub lets nobody in again, and tells
     /// every machine that was on it, as it comes, that it is gone.
     #[serde(default, skip_serializing_if = "Option::is_none")]

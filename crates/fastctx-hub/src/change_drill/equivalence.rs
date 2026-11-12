@@ -137,6 +137,7 @@ fn make_fixture(dir: &Path, seed: u64) -> anyhow::Result<()> {
         public: Vec::new(),
         listen: "127.0.0.1:0".parse()?,
         self_registration: false,
+        asset_seal_at_start: false,
         dissolved: None,
         updates: Default::default(),
         due: Vec::new(),

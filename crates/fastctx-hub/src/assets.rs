@@ -34,6 +34,9 @@ use std::time::Duration;
 /// The mark a backup of the hub carries and a live hub's directory never
 /// does (design §17, item 1): a hub opened with it here was put back.
 pub(crate) const BACKUP_MARKER: &str = "backup-marker";
+/// Why the assets are sealed when the hub's setting seals them at each
+/// start (design §17 (b)).
+const SEALED_AT_START: &str = "the hub seals them each time it starts, until the super administrator opens them";
 
 /// The asset side's tables in the hub's control database.
 pub(crate) fn schema() -> String {
@@ -859,6 +862,31 @@ impl Assets {
     /// Why every asset is sealed, if it is.
     pub(crate) fn sealed(&self) -> Option<String> {
         self.sealed.lock().expect("seal").clone()
+    }
+
+    /// Seals every asset as the hub starts, its setting says so (design §17
+    /// (b)): nothing was found wrong, so the witness goes on as ever; only
+    /// no asset is given or taken until the super administrator opens them
+    /// (`open_start_seal`). A seal already there stays.
+    pub(crate) fn seal_at_start(&self) {
+        let mut sealed = self.sealed.lock().expect("seal");
+        if sealed.is_none() {
+            *sealed = Some(SEALED_AT_START.to_string());
+        }
+    }
+
+    /// Opens the assets sealed as the hub started; a seal for any other
+    /// reason stays until `fastctx hub reopen`.
+    pub(crate) fn open_start_seal(&self) -> Result<(), String> {
+        let mut sealed = self.sealed.lock().expect("seal");
+        match sealed.as_deref() {
+            None => Err("the hub's assets are not sealed".into()),
+            Some(SEALED_AT_START) => {
+                *sealed = None;
+                Ok(())
+            }
+            Some(why) => Err(format!("the hub's assets are sealed because {why}: stop the hub and run `fastctx hub reopen`")),
+        }
     }
 
     /// The hub's signer of what it says of assets.

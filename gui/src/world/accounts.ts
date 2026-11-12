@@ -337,6 +337,11 @@ export interface HubAccounts {
   logins: AccountName[];
   home: AccountName | null;
   self_registration: boolean;
+  /** The hub seals every asset each time it starts, until the super
+   *  administrator opens them. */
+  asset_seal_at_start?: boolean;
+  /** Why every asset is sealed now, if it is. */
+  assets_sealed?: string;
   accounts: AccountSeen[];
   members: MemberSeen[];
   shares: ShareSeen[];
@@ -427,6 +432,12 @@ export type AccountChange =
   /** The super administrator dissolves the network named `name`, typed as
    *  it is. */
   | { change: "dissolve"; name: HubName }
+  /** Whether the hub seals every asset each time it starts, until the
+   *  super administrator opens them. */
+  | { change: "asset_seal"; at_start: boolean }
+  /** The super administrator opens the assets the hub sealed as it
+   *  started. */
+  | { change: "open_assets" }
   | { change: "share_project"; town: TownName; with: AccountName; shared: boolean }
   | { change: "move_project"; town: TownName; to: AccountName }
   /** The owner deletes a project and its ledger, on a hub that says it

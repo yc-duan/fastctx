@@ -24,6 +24,7 @@ pub(super) struct Next {
 impl HubRows {
     pub(super) fn load(shelf: &Shelf, mut hub: HubFile) -> io::Result<(HubFile, Self)> {
         hub.self_registration = shelf.meta("hub.self_registration")?.unwrap_or(hub.self_registration);
+        hub.asset_seal_at_start = shelf.meta("hub.asset_seal_at_start")?.unwrap_or(hub.asset_seal_at_start);
         hub.updates = shelf.meta("hub.updates")?.unwrap_or(hub.updates);
         hub.dissolved = shelf.meta("hub.dissolved")?.unwrap_or(hub.dissolved);
         let (due_entries, due) = super::book_rows::list(shelf, "due")?;
@@ -90,6 +91,7 @@ impl HubRows {
 fn settings(hub: &HubFile) -> io::Result<BTreeMap<&'static str, Vec<u8>>> {
     Ok([
         ("hub.self_registration", super::rows::body(&hub.self_registration)?),
+        ("hub.asset_seal_at_start", super::rows::body(&hub.asset_seal_at_start)?),
         ("hub.updates", super::rows::body(&hub.updates)?),
         ("hub.dissolved", super::rows::body(&hub.dissolved)?),
     ]

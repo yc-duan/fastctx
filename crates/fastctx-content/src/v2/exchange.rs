@@ -253,7 +253,7 @@ impl Library {
                 // frame stands (U02): one the hub let in only once it knew
                 // the kind, and refused then, stays out here too.
                 Some(kinds) => {
-                    let mut history = super::judged::History::default();
+                    let mut history = super::judged::History::of(records.iter().map(|record| record.record.item.clone()));
                     super::judged::frame(db, at, &header, &records, kinds.as_ref(), &mut history, &mut super::judged::Blocked::Stored, |_, record| {
                         if knows(record.kind, record.schema) { super::judged::Fate::Judge } else { super::judged::Fate::Unknown }
                     })?;

@@ -131,6 +131,8 @@ fn hub() -> HubAccounts {
         logins: vec!["ada".parse().unwrap()],
         home: Some("ada".parse().unwrap()),
         self_registration: true,
+        asset_seal_at_start: true,
+        assets_sealed: Some("the hub seals them each time it starts, until the super administrator opens them".into()),
         accounts: vec![
             AccountSeen {
                 name: "ada".parse().unwrap(),
@@ -454,6 +456,8 @@ pub fn fixtures() -> Fixtures {
             AccountChange::Transfer { to: "bo".parse().unwrap() },
             AccountChange::DeleteAccount { name: "bo".parse().unwrap() },
             AccountChange::Settings { self_registration: false },
+            AccountChange::AssetSeal { at_start: true },
+            AccountChange::OpenAssets,
             AccountChange::ShareProject { town: "mark50".parse().unwrap(), with: "bo".parse().unwrap(), shared: true },
             AccountChange::MoveProject { town: "mark50".parse().unwrap(), to: "bo".parse().unwrap() },
             AccountChange::Seen { name: "pixel".parse().unwrap() },

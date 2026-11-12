@@ -553,6 +553,9 @@ async fn put_aside(node: &Arc<Node>, link: &Arc<Link>) -> Result<std::path::Path
     crate::mcp::store::leave(node, &hub).map_err(Failure::new)?;
     node.links.write().expect("never poisoned").remove(&hub);
     node.ways_changed();
+    // What the network had here goes with it (the user, 2026-11-12), before
+    // its records are put aside: a stop in between leaves again at start.
+    crate::assets::leave::leave(node, &hub).await;
     // Its view is gone, and every interface shows the World without it.
     node.views_changed();
     // The machines each session may use, and who may ask for colleagues,

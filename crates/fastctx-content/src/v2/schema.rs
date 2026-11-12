@@ -318,11 +318,14 @@ CREATE TABLE IF NOT EXISTS refused_records (
 ) WITHOUT ROWID;
 -- Items a record of which is kept out of the index — its kind unknown, or
 -- waiting behind such a one: a record of the item that comes after waits
--- too, so every holder judges an item's records in their order (V01).
+-- too, so every holder judges an item's records in their order (V01). Of
+-- the holding period whose frames keep that record: another period's does
+-- not hold this one's back (X01).
 CREATE TABLE IF NOT EXISTS pending_items (
     stream INTEGER NOT NULL,
+    holding INTEGER NOT NULL,
     item BLOB NOT NULL,
-    PRIMARY KEY (stream, item)
+    PRIMARY KEY (stream, holding, item)
 ) WITHOUT ROWID;
 -- Records of a kind known here kept out of the index behind an earlier one
 -- of their item still out, by their place in the frame whose head this is.

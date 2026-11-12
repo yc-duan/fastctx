@@ -1132,6 +1132,14 @@ pub enum Change {
     Dissolve {
         name: HubName,
     },
+    /// Whether the hub seals every asset each time it starts, until the
+    /// super administrator opens them (design §17 (b)).
+    AssetSeal {
+        at_start: bool,
+    },
+    /// The super administrator opens the assets the hub sealed as it
+    /// started.
+    OpenAssets,
     /// Opens a project in the account.
     OpenProject {
         town: TownId,

@@ -36,53 +36,72 @@ pub(super) enum Fate {
     Out,
 }
 
-/// Which items have a record before this frame still out of the index.
+/// Which items have a record before this frame, of its holding period,
+/// still out of the index — another period's never holds it back (X01).
 pub(super) enum Blocked<'a> {
     /// As the library keeps them (`pending_items`): a frame that comes.
     Stored,
-    /// As a judging pass over the frames in their order finds them.
-    Pass(&'a mut HashSet<(i64, Vec<u8>)>),
+    /// As a judging pass over the frames in their order finds them: by
+    /// stream, period and item.
+    Pass(&'a mut HashSet<(i64, i64, Vec<u8>)>),
 }
 
 impl Blocked<'_> {
-    fn holds(&self, db: &Connection, stream: i64, item: &[u8]) -> fastctx_storage::Result<bool> {
+    fn holds(&self, db: &Connection, at: Applying, item: &[u8]) -> fastctx_storage::Result<bool> {
         Ok(match self {
             Blocked::Stored => db
-                .prepare_cached("SELECT 1 FROM pending_items WHERE stream = ?1 AND item = ?2")?
-                .query_row(params![stream, item], |_| Ok(()))
+                .prepare_cached("SELECT 1 FROM pending_items WHERE stream = ?1 AND holding = ?2 AND item = ?3")?
+                .query_row(params![at.stream, at.holding, item], |_| Ok(()))
                 .optional()?
                 .is_some(),
-            Blocked::Pass(blocked) => blocked.contains(&(stream, item.to_vec())),
+            Blocked::Pass(blocked) => blocked.contains(&(at.stream, at.holding, item.to_vec())),
         })
     }
 
-    fn add(&mut self, db: &Connection, stream: i64, item: &[u8]) -> fastctx_storage::Result<()> {
+    fn add(&mut self, db: &Connection, at: Applying, item: &[u8]) -> fastctx_storage::Result<()> {
         match self {
             Blocked::Stored => {
-                db.prepare_cached("INSERT OR IGNORE INTO pending_items (stream, item) VALUES (?1, ?2)")?.execute(params![stream, item])?;
+                db.prepare_cached("INSERT OR IGNORE INTO pending_items (stream, holding, item) VALUES (?1, ?2, ?3)")?
+                    .execute(params![at.stream, at.holding, item])?;
             }
             Blocked::Pass(blocked) => {
-                blocked.insert((stream, item.to_vec()));
+                blocked.insert((at.stream, at.holding, item.to_vec()));
             }
         }
         Ok(())
     }
 }
 
-/// The places of each item's records in a stream's frames of this period,
-/// those kept out passed over: built once when first wanted, so a judging
-/// pass that looks back for many items reads the frames once (V02).
+/// The places of the records of the items a pass judges in one stream's
+/// frames of one period, those kept out passed over: built once when first
+/// wanted, so a pass that looks back for many items reads the frames once
+/// (V02). Only those items' places, and only one stream's at a time: what
+/// it holds grows with the records waiting, not the stream's history (X02).
 #[derive(Default)]
 pub(super) struct History {
-    streams: HashMap<i64, Places>,
+    /// Items judged besides those waiting in the frames: of a frame that
+    /// comes.
+    also: HashSet<Vec<u8>>,
+    kept: Option<((i64, i64), Places)>,
 }
 
 /// Each item's records by revision, with the frame and place of each.
 type Places = HashMap<Vec<u8>, Vec<(u64, u64, usize)>>;
 
 impl History {
+    /// For judging records of `items`, besides those waiting.
+    pub(super) fn of(items: impl IntoIterator<Item = Vec<u8>>) -> Self {
+        Self { also: items.into_iter().collect(), kept: None }
+    }
+
     fn places(&mut self, db: &Connection, stream: i64, holding: i64) -> fastctx_storage::Result<&mut Places> {
-        if let std::collections::hash_map::Entry::Vacant(vacant) = self.streams.entry(stream) {
+        if self.kept.as_ref().map(|(at, _)| *at) != Some((stream, holding)) {
+            // Another stream's goes before this one's is built.
+            self.kept = None;
+            let mut wanted = self.also.clone();
+            waiting_records(db, stream, holding, |record| {
+                wanted.insert(record.record.item.clone());
+            })?;
             let mut places: Places = HashMap::new();
             // A few frames at a time: only their places are kept, never the
             // stream's bodies all at once (W02).
@@ -103,26 +122,62 @@ impl History {
                     let header = Header::decode(&header).map_err(invalid)?;
                     let out = Out::of(db, stream, &header)?;
                     for (offset, record) in open(&header, &body).map_err(invalid)?.iter().enumerate() {
-                        if out.holds(offset, record) {
+                        if out.holds(offset, record) || !wanted.contains(&record.record.item) {
                             continue;
                         }
                         places.entry(record.record.item.clone()).or_default().push((header.first + offset as u64, header.first, offset));
                     }
                 }
             }
-            vacant.insert(places);
+            self.kept = Some(((stream, holding), places));
         }
-        Ok(self.streams.get_mut(&stream).expect("just built"))
+        Ok(&mut self.kept.as_mut().expect("just built").1)
     }
 
     /// A record let in now, for what is judged after it.
-    fn let_in(&mut self, stream: i64, item: &[u8], revision: u64, first: u64, offset: usize) {
-        if let Some(places) = self.streams.get_mut(&stream) {
+    fn let_in(&mut self, at: Applying, item: &[u8], revision: u64, first: u64, offset: usize) {
+        if let Some((kept, places)) = self.kept.as_mut()
+            && *kept == (at.stream, at.holding)
+        {
             let list = places.entry(item.to_vec()).or_default();
-            let at = list.partition_point(|(placed, _, _)| *placed < revision);
-            list.insert(at, (revision, first, offset));
+            let place = list.partition_point(|(placed, _, _)| *placed < revision);
+            list.insert(place, (revision, first, offset));
         }
     }
+}
+
+/// Visits each record out of the index, not refused — of a kind kept out
+/// or waiting behind one — in the frames of `stream` of the period
+/// `holding`.
+fn waiting_records(db: &Connection, stream: i64, holding: i64, mut visit: impl FnMut(&KindRecord)) -> fastctx_storage::Result<()> {
+    let frames: Vec<(i64, i64, Vec<u8>)> = {
+        let mut statement = db.prepare_cached(
+            "SELECT DISTINCT epoch, first, head FROM (
+                 SELECT epoch, first, head FROM pending_schema WHERE stream = ?1
+                 UNION SELECT epoch, first, head FROM deferred_records WHERE stream = ?1)",
+        )?;
+        let rows = statement.query_map([stream], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+        rows.collect::<std::result::Result<_, _>>()?
+    };
+    for (epoch, first, head) in frames {
+        let found: Option<(Vec<u8>, Vec<u8>)> = db
+            .prepare_cached("SELECT header, body FROM frames WHERE stream = ?1 AND epoch = ?2 AND first = ?3 AND holding = ?4")?
+            .query_row(params![stream, epoch, first, holding], |row| Ok((row.get(0)?, row.get(1)?)))
+            .optional()?;
+        let Some((header, body)) = found else { continue };
+        let header = Header::decode(&header).map_err(invalid)?;
+        if header.chain()[..] != head[..] {
+            continue;
+        }
+        let out = Out::of(db, stream, &header)?;
+        let refused = super::pending::refused(db, stream, header.epoch, header.first, &header.chain())?;
+        for (offset, record) in open(&header, &body).map_err(invalid)?.iter().enumerate() {
+            if out.holds(offset, record) && !refused.contains(&(offset as u64)) {
+                visit(record);
+            }
+        }
+    }
+    Ok(())
 }
 
 /// What of a frame is out of the index: its kinds not known when it came,
@@ -171,17 +226,17 @@ pub(super) fn frame(
             Fate::Out => {}
             Fate::Unknown => {
                 waiting.insert(item);
-                blocked.add(db, at.stream, item)?;
+                blocked.add(db, at, item)?;
             }
             Fate::Stood => {
                 earlier.insert(item, super::hub::after(record, revision));
             }
             Fate::Judge => {
                 // Behind an earlier record of its item still out, it waits.
-                if waiting.contains(item) || blocked.holds(db, at.stream, item)? {
+                if waiting.contains(item) || blocked.holds(db, at, item)? {
                     defer(db, at.stream, header, &head, offset)?;
                     waiting.insert(item);
-                    blocked.add(db, at.stream, item)?;
+                    blocked.add(db, at, item)?;
                     continue;
                 }
                 forget_deferred(db, at.stream, header, &head, offset)?;
@@ -195,7 +250,7 @@ pub(super) fn frame(
                 }
                 super::hub::hidden_by_floor(db, at, revision, record)?;
                 apply(db, at, revision, record)?;
-                history.let_in(at.stream, item, revision, header.first, offset);
+                history.let_in(at, item, revision, header.first, offset);
                 earlier.insert(item, super::hub::after(record, revision));
                 applied += 1;
             }
@@ -259,40 +314,25 @@ fn before_at(db: &Connection, stream: i64, holding: i64, item: &[u8], revision: 
 }
 
 /// The items of `stream` with a record still out of the index, found again
-/// from the frames that keep any (W01): once frames were cut away, put in
-/// another's place or purged, nothing waits behind a record no longer there.
+/// from the frames of its scope's current holding period that keep any
+/// (W01): once frames were cut away, put in another's place or purged,
+/// nothing waits behind a record no longer there, nor behind one of a
+/// period that ended (X01).
 pub(super) fn rebuild_waiting(db: &Connection, stream: i64) -> fastctx_storage::Result<()> {
     db.prepare_cached("DELETE FROM pending_items WHERE stream = ?1")?.execute([stream])?;
-    let frames: Vec<(i64, i64, Vec<u8>)> = {
-        let mut statement = db.prepare_cached(
-            "SELECT DISTINCT epoch, first, head FROM (
-                 SELECT epoch, first, head FROM pending_schema WHERE stream = ?1
-                 UNION SELECT epoch, first, head FROM deferred_records WHERE stream = ?1)",
-        )?;
-        let rows = statement.query_map([stream], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
-        rows.collect::<std::result::Result<_, _>>()?
-    };
-    let mut keep = db.prepare_cached("INSERT OR IGNORE INTO pending_items (stream, item) VALUES (?1, ?2)")?;
-    for (epoch, first, head) in frames {
-        let found: Vec<(Vec<u8>, Vec<u8>)> = {
-            let mut statement = db.prepare_cached("SELECT header, body FROM frames WHERE stream = ?1 AND epoch = ?2 AND first = ?3")?;
-            let rows = statement.query_map(params![stream, epoch, first], |row| Ok((row.get(0)?, row.get(1)?)))?;
-            rows.collect::<std::result::Result<_, _>>()?
-        };
-        for (header, body) in found {
-            let header = Header::decode(&header).map_err(invalid)?;
-            if header.chain()[..] != head[..] {
-                continue;
-            }
-            let out = Out::of(db, stream, &header)?;
-            let refused = super::pending::refused(db, stream, header.epoch, header.first, &header.chain())?;
-            for (offset, record) in open(&header, &body).map_err(invalid)?.iter().enumerate() {
-                if out.holds(offset, record) && !refused.contains(&(offset as u64)) {
-                    keep.execute(params![stream, &record.record.item])?;
-                }
-            }
-            break;
-        }
+    let holding: Option<i64> = db
+        .prepare_cached("SELECT c.holding FROM streams s JOIN scopes c ON c.id = s.scope WHERE s.id = ?1")?
+        .query_row([stream], |row| row.get::<_, Option<i64>>(0))
+        .optional()?
+        .flatten();
+    let Some(holding) = holding else { return Ok(()) };
+    let mut items: HashSet<Vec<u8>> = HashSet::new();
+    waiting_records(db, stream, holding, |record| {
+        items.insert(record.record.item.clone());
+    })?;
+    let mut keep = db.prepare_cached("INSERT OR IGNORE INTO pending_items (stream, holding, item) VALUES (?1, ?2, ?3)")?;
+    for item in items {
+        keep.execute(params![stream, holding, item])?;
     }
     Ok(())
 }

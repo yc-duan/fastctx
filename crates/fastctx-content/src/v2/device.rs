@@ -151,6 +151,19 @@ impl Library {
         })?)
     }
 
+    /// Whether this device holds `scope` under a hub's descriptor: one look
+    /// at that scope alone (AH03).
+    pub fn is_live(&self, scope: &str) -> Result<bool> {
+        let scope = scope.to_string();
+        Ok(self.database().read_now(move |db| {
+            Ok(db
+                .prepare_cached("SELECT 1 FROM scopes WHERE key = ?1 AND state = 'live' AND holding IS NOT NULL")?
+                .query_row([&scope], |_| Ok(()))
+                .optional()?
+                .is_some())
+        })?)
+    }
+
     /// Where each stream of `scope` this device does not order stands here,
     /// as `standing` gives it, read with which it orders in one look (§7.5).
     pub fn replica_standing(&self, scope: &str, device: &[u8; 32]) -> Result<Vec<(String, u64, [u8; 32])>> {

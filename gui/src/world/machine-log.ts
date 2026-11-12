@@ -47,6 +47,8 @@ export type MachineLogAction =
   | { change: "settings"; self_registration: boolean }
   | { change: "updates"; channel: "stable" | "beta"; minimum?: string; managed_auto?: boolean; intake?: number }
   | { change: "dissolve"; name: string }
+  | { change: "asset_seal"; at_start: boolean }
+  | { change: "open_assets" }
   | { change: "open_project"; town: string; name: string }
   | { change: "share_project"; town: string; name: string | null; with: AccountName; shared: boolean }
   | { change: "move_project"; town: string; name: string | null; to: AccountName }

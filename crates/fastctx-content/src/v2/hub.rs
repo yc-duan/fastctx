@@ -220,11 +220,12 @@ fn seen(db: &Connection, table: &str, stream: i64, holding: i64, item: &[u8]) ->
         .optional()?)
 }
 
-/// Whether `item` of `stream` has a record kept out of the index.
-fn pending_item(db: &Connection, stream: i64, item: &[u8]) -> fastctx_storage::Result<bool> {
+/// Whether `item` of `stream` has a record of the period `holding` kept out
+/// of the index.
+fn pending_item(db: &Connection, stream: i64, holding: i64, item: &[u8]) -> fastctx_storage::Result<bool> {
     Ok(db
-        .prepare_cached("SELECT 1 FROM pending_items WHERE stream = ?1 AND item = ?2")?
-        .query_row(params![stream, item], |_| Ok(()))
+        .prepare_cached("SELECT 1 FROM pending_items WHERE stream = ?1 AND holding = ?2 AND item = ?3")?
+        .query_row(params![stream, holding, item], |_| Ok(()))
         .optional()?
         .is_some())
 }
@@ -483,7 +484,7 @@ fn apply_frame(
             out.insert(item);
             continue;
         }
-        if out.contains(item) || pending_item(db, at.stream, item)? {
+        if out.contains(item) || pending_item(db, at.stream, holding, item)? {
             out.insert(item);
             waiting.insert(offset);
             continue;
@@ -529,8 +530,8 @@ fn apply_frame(
             } else {
                 super::pending::keep(db, at.stream, record.kind, record.schema, header.epoch, header.first, &head)?;
             }
-            db.prepare_cached("INSERT OR IGNORE INTO pending_items (stream, item) VALUES (?1, ?2)")?
-                .execute(params![at.stream, &record.record.item])?;
+            db.prepare_cached("INSERT OR IGNORE INTO pending_items (stream, holding, item) VALUES (?1, ?2, ?3)")?
+                .execute(params![at.stream, holding, &record.record.item])?;
             continue;
         }
         hidden_by_floor(db, applying, header.first + offset as u64, record)?;

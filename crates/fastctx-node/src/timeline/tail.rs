@@ -38,8 +38,10 @@ const APART: Duration = Duration::from_secs(1);
 /// at most this many times in a row.
 const UNREAD_AGAIN: Duration = Duration::from_secs(5);
 const UNREAD_TRIES: u32 = 20;
-/// The form of what is kept beside the timeline.
-const FORM: u32 = 2;
+/// The form of what is kept beside the timeline: one of an earlier form is
+/// read whole again — of form 2, a seam might be kept with no record ids
+/// before it (EE06).
+const FORM: u32 = 3;
 /// The checks of whole histories (§10): the kind of job, within how long
 /// of a change past a long prefix one runs, how often each history is
 /// checked at least, and the share of a core they take at most.
@@ -145,10 +147,17 @@ fn waited_for_scope(resident: &ResidentId) -> bool {
 /// What is kept beside the timeline, set back before a whole write (DD03):
 /// a stop after the write and before what it leaves is kept reads whole
 /// again, not past a floor below which it wrote.
-async fn reset(library: &fastctx_content::v2::Library, name: &str) -> Result<(), Failure> {
+/// Held by the build (EE05): a build given up on never writes it after a
+/// newer one.
+async fn reset(library: &fastctx_content::v2::Library, name: &str, held: super::serial::Held) -> Result<(), Failure> {
     let state = serde_json::to_vec(&Following { form: FORM, ..Following::default() }).map_err(failure)?;
     let (writing, name) = (library.clone(), name.to_string());
-    fastctx_platform::task::blocking(move || writing.keep_checkpoint(&name, state)).await.map_err(failure)
+    fastctx_platform::task::blocking(move || {
+        let _held = held;
+        writing.keep_checkpoint(&name, state)
+    })
+    .await
+    .map_err(failure)
 }
 
 /// The name the record ids before a Claude seam are kept under.
@@ -165,8 +174,14 @@ async fn prefix_ids(library: &fastctx_content::v2::Library, resident: &ResidentI
 }
 
 /// Keeps the record ids the seam moved past with those before: all there
-/// are, read whole.
-async fn keep_prefix_ids(library: &fastctx_content::v2::Library, resident: &ResidentId, whole: bool, moved: &[String]) -> Result<(), Failure> {
+/// are, read whole. Held by the build, as `reset` is (EE05).
+async fn keep_prefix_ids(
+    library: &fastctx_content::v2::Library,
+    resident: &ResidentId,
+    whole: bool,
+    moved: &[String],
+    held: super::serial::Held,
+) -> Result<(), Failure> {
     if !whole && moved.is_empty() {
         return Ok(());
     }
@@ -176,7 +191,12 @@ async fn keep_prefix_ids(library: &fastctx_content::v2::Library, resident: &Resi
     digests.dedup();
     let bytes: Vec<u8> = digests.iter().flat_map(|digest| digest.to_le_bytes()).collect();
     let (writing, name) = (library.clone(), prefix_name(resident));
-    fastctx_platform::task::blocking(move || writing.keep_checkpoint(&name, bytes)).await.map_err(failure)
+    fastctx_platform::task::blocking(move || {
+        let _held = held;
+        writing.keep_checkpoint(&name, bytes)
+    })
+    .await
+    .map_err(failure)
 }
 
 /// The identities of the timeline's items placed past `floor`.
@@ -210,6 +230,10 @@ async fn runs_of(directory: &fastctx_types::layout::ConversationDir) -> Result<S
 /// A history read past where it was read through, as either host reads it.
 struct Followed {
     events: Vec<SessionEvent>,
+    /// The events its host tells again at every reading, wherever their
+    /// time falls: a Codex thread's title and what it says of itself, a
+    /// Claude session's title and note of what could not be read.
+    told: Vec<SessionEvent>,
     whole: bool,
     since: Timestamp,
     settled: Timestamp,
@@ -295,10 +319,11 @@ pub(super) async fn produce(node: &Arc<Node>, resident: &ResidentId, whole: bool
     // hub's description of it is: the hub may have it already, ordered
     // there (AG10). Waited for a while; one the hub never had is begun here
     // after that.
-    let born_elsewhere = node.residents.birth_machine(resident).is_some_and(|born| born != node.machine());
+    // Born under a name this machine had is born here (AH04).
+    let born_elsewhere = node.residents.birth_machine(resident).is_some_and(|born| !node.is_me(&born));
     if born_elsewhere {
         let (asking, scope) = (library.clone(), placed.scope.clone());
-        let live = fastctx_platform::task::blocking(move || asking.live_scopes()).await.map_err(failure)?.iter().any(|(key, _, _)| *key == scope);
+        let live = fastctx_platform::task::blocking(move || asking.is_live(&scope)).await.map_err(failure)?;
         if !live && waited_for_scope(resident) {
             crate::assets::wake(node, &placed.hub);
             return Ok(Produced { handing: true, ..Produced::default() });
@@ -358,6 +383,7 @@ pub(super) async fn produce(node: &Arc<Node>, resident: &ResidentId, whole: bool
                 let prefix = if whole { Arc::new(crate::claude::history::PrefixIds::default()) } else { prefix_ids(&library, resident).await? };
                 crate::claude::history::window(node, resident, &recorded, from, prefix).await.map_err(Failure::new)?.map(|window| Followed {
                     events: window.events,
+                    told: window.told,
                     whole: window.whole,
                     since: window.since,
                     settled: window.settled,
@@ -373,6 +399,7 @@ pub(super) async fn produce(node: &Arc<Node>, resident: &ResidentId, whole: bool
             } else {
                 let from = state.codex.clone().filter(|_| !whole);
                 crate::codex::follow::window(node, resident, &about, &recorded, from).await.map_err(Failure::new)?.map(|window| Followed {
+                    told: window.events.iter().filter(|event| told_again(event)).cloned().collect(),
                     events: window.events,
                     whole: window.whole,
                     since: window.since,
@@ -407,8 +434,7 @@ pub(super) async fn produce(node: &Arc<Node>, resident: &ResidentId, whole: bool
             let recorded = if agent == "codex" { crate::codex::watch::recorded(recorded, &window.events) } else { recorded };
             // The host's own title and what it says of the thread, told again
             // at every reading (R3: not a title the World recorded).
-            let host_told: Vec<serde_json::Value> =
-                window.events.iter().filter(|event| told_again(event)).filter_map(|event| serde_json::to_value(event).ok()).collect();
+            let host_told: Vec<serde_json::Value> = window.told.iter().filter_map(|event| serde_json::to_value(event).ok()).collect();
             let history = {
                 let (assembling, whose, folder, events, agent) = (node.clone(), resident.clone(), directory.clone(), window.events, agent.to_string());
                 let held = producing.clone();
@@ -445,15 +471,16 @@ pub(super) async fn produce(node: &Arc<Node>, resident: &ResidentId, whole: bool
                 .map_err(failure)?
             };
             let (whole, since, settled) = (window.whole, window.since, window.settled);
-            // A Codex thread's title and what it says of itself stay in the
-            // window: every reading tells them again, at the time of the
-            // thread's last change, not where they stand.
+            // What the host tells again at every reading stays in the window,
+            // whatever its time (a Codex thread's last change, a Claude
+            // session's start): never settled below the floor, it goes when
+            // a reading no longer tells it (EE01).
             let unturned: std::collections::HashSet<Vec<u8>> = {
                 let identities = super::names::identities(&history);
                 history
                     .iter()
                     .zip(identities)
-                    .filter(|(event, _)| told_again(event) && serde_json::to_value(event).is_ok_and(|value| host_told.contains(&value)))
+                    .filter(|(event, _)| serde_json::to_value(event).is_ok_and(|value| host_told.contains(&value)))
                     .map(|(_, identity)| identity)
                     .collect()
             };
@@ -461,7 +488,7 @@ pub(super) async fn produce(node: &Arc<Node>, resident: &ResidentId, whole: bool
             // the end of its history: placed again where they stand (N1).
             let again: std::collections::HashSet<Vec<u8>> = if matches!(window.next, Next::Codex(_)) { unturned.clone() } else { Default::default() };
             if whole {
-                reset(&library, &name).await?;
+                reset(&library, &name, producing.clone()).await?;
             }
             let wrote = {
                 let (writing, signer, whose, placed, held) = (library.clone(), signer.clone(), resident.clone(), placed, producing.clone());
@@ -473,20 +500,19 @@ pub(super) async fn produce(node: &Arc<Node>, resident: &ResidentId, whole: bool
                 .await?
             };
             // From where the seam stands now, the items before it are settled.
-            let codex = matches!(window.next, Next::Codex(_));
             // Held in the window: what is from where the seam stands on, what
             // is told again at every reading, and an event new to the
             // timeline placed in the window though its time is earlier (DD04)
             // — written past the floor, it goes when the history drops it.
-            let held = |identity: &Vec<u8>, at: &Timestamp| *at >= settled || *at < since || codex && unturned.contains(identity);
+            let held = |identity: &Vec<u8>, at: &Timestamp| *at >= settled || *at < since || unturned.contains(identity);
             let base = if whole { 0 } else { floor };
             let settled_floor = wrote.items.iter().filter(|(identity, at, _)| !held(identity, at)).map(|(_, _, key)| *key).fold(base, u64::max);
             let open = wrote.items.iter().filter(|(identity, at, _)| held(identity, at)).map(|(identity, at, key)| (hex(identity), *at, *key)).collect();
-            let told: Vec<String> = if codex { unturned.iter().map(|identity| hex(identity)).collect() } else { Vec::new() };
+            let told: Vec<String> = unturned.iter().map(|identity| hex(identity)).collect();
             let verified = if window.whole { Some(Timestamp::now()) } else { state.verified };
             let (next, unread) = match window.next {
                 Next::Claude { session, seam, kept: seen, kept_here, earlier, prefix_ids: moved_past } => {
-                    keep_prefix_ids(&library, resident, whole, &moved_past).await?;
+                    keep_prefix_ids(&library, resident, whole, &moved_past, producing.clone()).await?;
                     let unread = seen.is_some() && !kept_here && seen != state.kept;
                     let next = Following {
                         form: FORM,
@@ -535,7 +561,7 @@ pub(super) async fn produce(node: &Arc<Node>, resident: &ResidentId, whole: bool
             if read.unread {
                 return Ok(Produced { unread: true, ..Produced::default() });
             }
-            reset(&library, &name).await?;
+            reset(&library, &name, producing.clone()).await?;
             let wrote = {
                 let (writing, signer, whose, history, held) = (library.clone(), signer.clone(), resident.clone(), read.history, producing.clone());
                 fastctx_platform::task::blocking(move || {
@@ -635,20 +661,26 @@ pub(super) fn register_check(node: &Arc<Node>) {
             if node.residents.about(&resident).is_none() {
                 return Outcome::Done;
             }
-            // Begun: a change from now on asks for another (R4).
-            CHECK_ASKED.lock().expect("checks asked").remove(&resident);
             // How long it waited since it was asked for: one late takes half
             // a core while it catches up (§10, R5).
             let asked = taken.payload.get(..16).and_then(|bytes| bytes.try_into().ok()).map(i128::from_le_bytes);
-            let late = asked
+            let waited = asked
                 .and_then(|asked| Timestamp::from_nanosecond(asked).ok())
-                .is_some_and(|asked| Timestamp::now().duration_since(asked).unsigned_abs() >= CHECK_LATE);
+                .map(|asked| Timestamp::now().duration_since(asked).unsigned_abs());
+            let late = waited.is_some_and(|waited| waited >= CHECK_LATE);
             // Resting from the last check: begun when the rest is over, the
-            // rest outside any job's time (DD09).
+            // rest outside any job's time (DD09) — but no later than when it
+            // would be late, so it is done within the hour it was asked for
+            // whatever rest another left (EE07).
             let resting = REST_UNTIL.lock().expect("checks' rest").and_then(|until| until.checked_duration_since(Instant::now()));
-            if let Some(rest) = resting {
-                return Outcome::Again { after: rest };
+            if let Some(rest) = resting.filter(|_| !late) {
+                let until_late = waited.map_or(CHECK_LATE, |waited| CHECK_LATE.saturating_sub(waited));
+                return Outcome::Again { after: rest.min(until_late).max(Duration::from_secs(1)) };
             }
+            // Begun: a change from now on asks for another (R4) — not
+            // before, so one asked while it rested keeps when it was asked
+            // (EE08).
+            CHECK_ASKED.lock().expect("checks asked").remove(&resident);
             let began = Instant::now();
             let checked = produce(&node, &resident, true).await;
             let took = began.elapsed();

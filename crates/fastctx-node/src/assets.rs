@@ -10,6 +10,7 @@
 //! (design §6.1).
 
 mod apart;
+pub(crate) mod leave;
 mod objects;
 mod session;
 pub(crate) mod takeover;

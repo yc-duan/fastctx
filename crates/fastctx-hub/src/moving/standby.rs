@@ -77,6 +77,7 @@ pub fn prepare(dir: &Path, id: &str, to: &MachineName, identity: &Identity) -> a
         public: identity.addresses.clone(),
         listen,
         self_registration: identity.self_registration,
+        asset_seal_at_start: false,
         dissolved: None,
         updates: Default::default(),
         due: Vec::new(),

@@ -196,6 +196,8 @@ pub(crate) fn view_for_in(
         troubles: hub.troubles.for_member(x, me),
         me: me.clone(),
         self_registration: store.hub.self_registration,
+        asset_seal_at_start: store.hub.asset_seal_at_start,
+        assets_sealed: hub.assets.sealed(),
         direct_links: true,
         // Its machines tell how their own work goes with each heartbeat
         // (`crate::strain`).

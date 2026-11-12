@@ -726,6 +726,13 @@ pub struct View {
     /// Whether accounts may be opened by anyone who reaches the hub.
     #[serde(default)]
     pub self_registration: bool,
+    /// Whether the hub seals every asset each time it starts, until the
+    /// super administrator opens them (design §17 (b)).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub asset_seal_at_start: bool,
+    /// Why every asset is sealed now, if it is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assets_sealed: Option<String>,
     /// Whether this hub takes direct connections between machines: their
     /// allowing, the outside check, and what members say of their lines.
     /// Older hubs omit it.
@@ -922,6 +929,8 @@ impl View {
             troubles: Vec::new(),
             me,
             self_registration: false,
+            asset_seal_at_start: false,
+            assets_sealed: None,
             direct_links: false,
             health: false,
             trial: Vec::new(),

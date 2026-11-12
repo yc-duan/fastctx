@@ -186,6 +186,7 @@ pub fn init(dir: &Path, new: New) -> anyhow::Result<CertPin> {
         public: new.public,
         listen: new.listen,
         self_registration: false,
+        asset_seal_at_start: false,
         dissolved: None,
         updates: Default::default(),
         due: Vec::new(),
@@ -855,6 +856,9 @@ fn open(dir: &Path, log: Arc<log::Log>) -> anyhow::Result<Opened> {
     let tls = releases::http::Tls::of(&certificate).map_err(anyhow::Error::msg)?;
     let account_records = account_records::Records::open(dir, &store.book.directory)?;
     let assets = Arc::new(assets::Assets::open(dir, store.hub.id.as_str(), store.shelf.0.clone())?);
+    if store.hub.asset_seal_at_start {
+        assets.seal_at_start();
+    }
     store.witness = Some(assets.witness.clone());
     store.bodies = Some(assets.bodies.clone());
     // Members a directory saved before they were kept with it are kept now.

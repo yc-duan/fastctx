@@ -720,6 +720,16 @@ export interface MachinesWords {
   dissolveTitle(hub: string): string;
   dissolveWhat(hub: string, away: number): string;
   dissolveGo: string;
+  /** Sealing every asset at each start of the server, and opening them:
+   *  the super administrator's, from beside the server (design §17 (b)). */
+  assetSeal: string;
+  assetSealTitle(sealing: boolean): string;
+  assetSealWhat(sealing: boolean): string;
+  assetSealGo(sealing: boolean): string;
+  openAssets: string;
+  openAssetsTitle: string;
+  openAssetsWhat(why: string): string;
+  openAssetsGo: string;
   /** Said once on each computer or phone that was on networks dissolved. */
   dissolvedTitle(hubs: string[]): string;
   dissolvedWhat(phone: boolean, many: boolean): string;
@@ -994,6 +1004,17 @@ export const zhMachines: MachinesWords = {
   dissolveWhat: (hub, away) =>
     `所有机器和手机都会离开 ${hub}，入网码作废，以后谁也进不来，不能撤回。${away ? `现在不在线的 ${away} 台，下次上线时离开。` : ""}各台电脑上的 Fastctx 和数据都留着。`,
   dissolveGo: "解散",
+  assetSeal: "每次启动先封住资产",
+  assetSealTitle: (sealing) => (sealing ? "每次启动先封住资产？" : "不再在启动时封住资产？"),
+  assetSealWhat: (sealing) =>
+    sealing
+      ? "中枢服务器每次启动后，所有机器都先读不到、也传不了同步的资产（对话时间线等），要你在这里确认才放开。用来防整机镜像恢复后、你核对之前就有人读到旧的授权下的资产；代价是每次重启都要你来点一下。下次启动生效。"
+      : "中枢服务器启动后照常放开资产，不再等你确认。下次启动生效。",
+  assetSealGo: (sealing) => (sealing ? "开启" : "关闭"),
+  openAssets: "放开资产",
+  openAssetsTitle: "放开中枢服务器的资产？",
+  openAssetsWhat: (why) => `资产现在封着：${why}。确认账号、共享与项目都对了再放开。`,
+  openAssetsGo: "放开",
   dissolvedTitle: (hubs) => `${hubs.join("、")} 已解散`,
   dissolvedWhat: (phone, many) => `管理员解散了${many ? "这些网络" : "这个网络"}，这台${phone ? "手机" : "电脑"}已离开。Fastctx 和这里的数据都还在。`,
   dissolvedSeen: "知道了",
@@ -1113,6 +1134,10 @@ export const zhMachines: MachinesWords = {
         return `${a.on} 上删除 ${a.conversation.resident}`;
       case "dissolve":
         return `解散网络 ${a.name}`;
+      case "asset_seal":
+        return a.at_start ? "中枢每次启动先封住资产" : "中枢启动时不再封住资产";
+      case "open_assets":
+        return "放开中枢启动时封住的资产";
       case "history":
         return a.on ? "开启笔记" : "关闭笔记";
       case "updates":
@@ -1341,6 +1366,17 @@ export const enMachines: MachinesWords = {
   dissolveWhat: (hub, away) =>
     `Every machine and phone leaves ${hub}, its codes stop working, and no one can join it again. This can't be undone.${away ? ` The ${away} offline now leave when they're next online.` : ""} Fastctx and its data stay on every computer.`,
   dissolveGo: "Dissolve",
+  assetSeal: "Seal assets at every start",
+  assetSealTitle: (sealing) => (sealing ? "Seal assets at every start?" : "Stop sealing assets at start?"),
+  assetSealWhat: (sealing) =>
+    sealing
+      ? "Each time the hub starts, no machine reads or syncs assets (conversation timelines and the like) until you open them here. It keeps anyone from reading assets under old grants after a whole-machine restore, before you have checked; the price is a click after every restart. Takes effect at the next start."
+      : "The hub opens assets as it starts, without waiting for you. Takes effect at the next start.",
+  assetSealGo: (sealing) => (sealing ? "Turn on" : "Turn off"),
+  openAssets: "Open assets",
+  openAssetsTitle: "Open the hub's assets?",
+  openAssetsWhat: (why) => `Assets are sealed: ${why}. Check accounts, shares and projects before you open them.`,
+  openAssetsGo: "Open",
   dissolvedTitle: (hubs) => `${hubs.join(", ")} ${hubs.length > 1 ? "were" : "was"} dissolved`,
   dissolvedWhat: (phone, many) => `${many ? "Their administrators dissolved them" : "Its administrator dissolved it"}, and this ${phone ? "phone" : "computer"} has left. Fastctx and your data here are untouched.`,
   dissolvedSeen: "OK",
@@ -1460,6 +1496,10 @@ export const enMachines: MachinesWords = {
         return `${a.conversation.resident} deleted on ${a.on}`;
       case "dissolve":
         return `Dissolved the network ${a.name}`;
+      case "asset_seal":
+        return a.at_start ? "The hub seals assets at every start" : "The hub no longer seals assets at start";
+      case "open_assets":
+        return "Opened the assets the hub sealed as it started";
       case "history":
         return a.on ? "Turned notes on" : "Turned notes off";
       case "updates":

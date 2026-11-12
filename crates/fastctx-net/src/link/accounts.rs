@@ -84,6 +84,8 @@ impl Link {
             AccountChange::Intake { rate } => Change::Intake { rate },
             AccountChange::UpdateDue { machine, version, batch } => Change::UpdateDue { machine, version, batch },
             AccountChange::Dissolve { name } => Change::Dissolve { name },
+            AccountChange::AssetSeal { at_start } => Change::AssetSeal { at_start },
+            AccountChange::OpenAssets => Change::OpenAssets,
             AccountChange::ShareProject { town, with, shared } => {
                 Change::ShareProject { town: town_id(&town)?, with, shared }
             }
@@ -265,6 +267,8 @@ impl Link {
                 .collect(),
             home: me.and_then(|me| me.home.clone()),
             self_registration: view.self_registration,
+            asset_seal_at_start: view.asset_seal_at_start,
+            assets_sealed: view.assets_sealed.clone(),
             accounts: view
                 .accounts
                 .iter()

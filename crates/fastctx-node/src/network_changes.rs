@@ -45,6 +45,8 @@ pub(crate) fn takes(change: &AccountChange) -> bool {
         | AccountChange::Transfer { .. }
         | AccountChange::DeleteAccount { .. }
         | AccountChange::Settings { .. }
+        | AccountChange::AssetSeal { .. }
+        | AccountChange::OpenAssets
         | AccountChange::Updates { .. }
         | AccountChange::Intake { .. }
         | AccountChange::UpdateDue { .. }
@@ -149,6 +151,7 @@ fn unit(view: &View, account: &AccountName, change: &AccountChange) -> Result<(S
             }
             AccountChange::Logout | AccountChange::AcceptRole { .. } => serde_json::json!(["account", account]),
             AccountChange::Settings { .. } => serde_json::json!(["registration"]),
+            AccountChange::AssetSeal { .. } | AccountChange::OpenAssets => serde_json::json!(["assets"]),
             AccountChange::Updates { .. } => serde_json::json!(["updates"]),
             AccountChange::Intake { .. } => serde_json::json!(["intake"]),
             AccountChange::Dissolve { .. } => serde_json::json!(["network"]),

@@ -292,7 +292,7 @@ impl History {
             Action::Logout => {
                 names.extend(actor.member.iter().cloned());
             }
-            Action::Settings { .. } | Action::Updates { .. } | Action::Dissolve { .. } => {
+            Action::Settings { .. } | Action::AssetSeal { .. } | Action::OpenAssets | Action::Updates { .. } | Action::Dissolve { .. } => {
                 accounts.extend(directory.accounts.iter().map(|account| account.name.clone()));
             }
             Action::History { .. }
@@ -600,6 +600,8 @@ pub(crate) fn action(change: &Change, book: &Book, policy: &fastctx_types::updat
             Action::UpdateDue { machine: machine.clone(), version: version.clone() }
         }
         Change::Dissolve { name } => Action::Dissolve { name: name.clone() },
+        Change::AssetSeal { at_start } => Action::AssetSeal { at_start: *at_start },
+        Change::OpenAssets => Action::OpenAssets,
         Change::OpenProject { town, name, .. } => Action::OpenProject { town: town.clone(), name: name.clone() },
         Change::ShareProject { town, with, shared } => {
             Action::ShareProject { town: town.clone(), name: project_name(town), with: with.clone(), shared: *shared }

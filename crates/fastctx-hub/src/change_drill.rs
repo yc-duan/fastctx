@@ -151,6 +151,7 @@ fn measure(root: &Path, machines: usize, iterations: usize) -> anyhow::Result<()
         public: Vec::new(),
         listen: "127.0.0.1:0".parse().expect("address"),
         self_registration: false,
+        asset_seal_at_start: false,
         dissolved: None,
         updates: Default::default(),
         due: Vec::new(),

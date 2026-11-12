@@ -209,6 +209,12 @@ pub enum Action {
     Dissolve {
         name: crate::HubName,
     },
+    /// The hub seals its assets each time it starts, or no longer.
+    AssetSeal {
+        at_start: bool,
+    },
+    /// The assets the hub sealed as it started were opened.
+    OpenAssets,
     OpenProject {
         town: crate::access::TownId,
         name: TownName,
@@ -366,6 +372,8 @@ impl Action {
             | Self::DeleteAccount { .. }
             | Self::Settings { .. }
             | Self::Dissolve { .. }
+            | Self::AssetSeal { .. }
+            | Self::OpenAssets
             | Self::OpenProject { .. }
             | Self::ShareProject { .. }
             | Self::MoveProject { .. }

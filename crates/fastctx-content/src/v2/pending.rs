@@ -59,8 +59,9 @@ impl Library {
     /// thread that may block.
     pub fn reconsider(&self, kinds: Arc<dyn Authorizer>, judge: bool) -> Result<usize> {
         let (mut applied, mut after) = (0usize, (-1i64, -1i64, -1i64, Vec::new()));
-        // The items with a record still out, as the pass finds them.
-        let mut blocked: HashSet<(i64, Vec<u8>)> = HashSet::new();
+        // The items with a record still out, by stream and period, as the
+        // pass finds them.
+        let mut blocked: HashSet<(i64, i64, Vec<u8>)> = HashSet::new();
         // One item history for the whole pass, not one a page (W03).
         let mut kept_history = super::judged::History::default();
         loop {
@@ -151,9 +152,9 @@ impl Library {
                 // what it found still out is what waits from now on.
                 if last.is_none() {
                     db.prepare_cached("DELETE FROM pending_items")?.execute([])?;
-                    let mut keep = db.prepare_cached("INSERT OR IGNORE INTO pending_items (stream, item) VALUES (?1, ?2)")?;
-                    for (stream, item) in &passing {
-                        keep.execute(params![stream, item])?;
+                    let mut keep = db.prepare_cached("INSERT OR IGNORE INTO pending_items (stream, holding, item) VALUES (?1, ?2, ?3)")?;
+                    for (stream, holding, item) in &passing {
+                        keep.execute(params![stream, holding, item])?;
                     }
                 }
                 Ok((done, last, passing, history))
