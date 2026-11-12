@@ -1353,6 +1353,7 @@ dependencies = [
 name = "fastctx-content"
 version = "1.0.1-beta.17"
 dependencies = [
+ "fastctx-platform",
  "fastctx-storage",
  "sha2 0.10.9",
  "tokio",

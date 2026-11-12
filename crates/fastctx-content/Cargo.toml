@@ -13,6 +13,7 @@ name = "content_drill"
 harness = false
 
 [dependencies]
+fastctx-platform = { path = "../fastctx-platform" }
 fastctx-storage = { path = "../fastctx-storage" }
 sha2 = "0.10"
 tokio = { workspace = true, features = ["sync", "time"] }

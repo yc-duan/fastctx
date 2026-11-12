@@ -17,6 +17,7 @@ mod read;
 mod reclaim;
 mod record;
 mod schema;
+pub mod v2;
 mod wake;
 
 pub use append::{Appended, BATCH_BYTES, Batch, CHECKPOINT_BYTES, Checkpoint};
