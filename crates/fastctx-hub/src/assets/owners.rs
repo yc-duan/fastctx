@@ -178,6 +178,13 @@ impl Owners {
             // move last, perhaps. It is made to last now (AF03).
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
                 fastctx_platform::durable_file::sync_directory(&self.root)?;
+                // And the folder it was moved out of (AG01).
+                if let Some(parent) = directory.parent().filter(|parent| *parent != self.root) {
+                    match fastctx_platform::durable_file::sync_directory(parent) {
+                        Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
+                        _ => {}
+                    }
+                }
                 Ok(None)
             }
             Err(error) => Err(error),

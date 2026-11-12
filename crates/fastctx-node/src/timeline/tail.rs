@@ -52,6 +52,10 @@ const VERIFY_SHARE: u32 = 10;
 /// later than this after is late (R5).
 const CHECK_SPREAD: Duration = Duration::from_secs(30 * 60);
 const CHECK_LATE: Duration = Duration::from_secs(40 * 60);
+/// How long a conversation come from elsewhere waits for the hub's
+/// description of its timeline before it is begun here (AG10).
+const SCOPE_WAIT: Duration = Duration::from_secs(120);
+static SCOPE_LOOKED: LazyLock<Mutex<HashMap<ResidentId, Instant>>> = LazyLock::new(Mutex::default);
 /// Until when checks rest after the last one (DD09).
 static REST_UNTIL: LazyLock<Mutex<Option<Instant>>> = LazyLock::new(Mutex::default);
 /// When each history's check was last asked for, in this run of the node.
@@ -128,6 +132,14 @@ struct Following {
     /// thread's title and what it says of itself), in hex.
     #[serde(default)]
     told: Vec<String>,
+}
+
+/// Whether a conversation come from elsewhere still waits for the hub's
+/// description of its timeline: for `SCOPE_WAIT` from the first time it was
+/// looked for, in this run of the node.
+fn waited_for_scope(resident: &ResidentId) -> bool {
+    let mut first = SCOPE_LOOKED.lock().expect("scopes looked for");
+    first.entry(resident.clone()).or_insert_with(Instant::now).elapsed() < SCOPE_WAIT
 }
 
 /// What is kept beside the timeline, set back before a whole write (DD03):
@@ -278,6 +290,19 @@ pub(super) async fn produce(node: &Arc<Node>, resident: &ResidentId, whole: bool
     if state.version == version && !whole {
         // Unchanged: when it was last checked still stands (DD10).
         return Ok(Produced { verified: state.verified, ..Produced::default() });
+    }
+    // Come from another machine, the timeline is not begun here before the
+    // hub's description of it is: the hub may have it already, ordered
+    // there (AG10). Waited for a while; one the hub never had is begun here
+    // after that.
+    let born_elsewhere = node.residents.birth_machine(resident).is_some_and(|born| born != node.machine());
+    if born_elsewhere {
+        let (asking, scope) = (library.clone(), placed.scope.clone());
+        let live = fastctx_platform::task::blocking(move || asking.live_scopes()).await.map_err(failure)?.iter().any(|(key, _, _)| *key == scope);
+        if !live && waited_for_scope(resident) {
+            crate::assets::wake(node, &placed.hub);
+            return Ok(Produced { handing: true, ..Produced::default() });
+        }
     }
     // Ordered by another device — the conversation came here from it — the
     // timeline goes on here once the hub hands its ordering over (§8).

@@ -287,6 +287,22 @@ impl Library {
         authorizer: Arc<dyn Authorizer>,
         signer: Arc<dyn HubSigner>,
     ) -> Result<(Signed, Drained)> {
+        self.handover_from(scope, stream, successor, cutoff, None, authorizer, signer)
+    }
+
+    /// `handover`, from the epoch `expected` alone: one asked for by what saw
+    /// that epoch as the stream's last is not made from a later one (AG05).
+    #[allow(clippy::too_many_arguments)]
+    pub fn handover_from(
+        &self,
+        scope: &str,
+        stream: &str,
+        successor: Successor,
+        cutoff: Cutoff,
+        expected: Option<u64>,
+        authorizer: Arc<dyn Authorizer>,
+        signer: Arc<dyn HubSigner>,
+    ) -> Result<(Signed, Drained)> {
         let (key, name) = (scope.to_string(), stream.to_string());
         let (authorizing, signing) = (authorizer.clone(), signer.clone());
         let ((signed, mut drained), more, holding) = self.database().write_now_at(Priority::Normal, 1 << 20, move |db| {
@@ -301,6 +317,9 @@ impl Library {
                 .prepare_cached("SELECT MAX(epoch) FROM hub_epochs WHERE stream = ?1")?
                 .query_row([at.stream], |row| row.get(0))?;
             let Some(last) = last else { return Err(invalid("the stream has no epoch to hand over")) };
+            if expected.is_some_and(|expected| expected != last as u64) {
+                return Err(invalid("the stream was handed over since its epoch was seen"));
+            }
             let last = epoch_of(db, at.stream, last as u64)?.ok_or_else(|| invalid("a malformed epoch"))?;
             if cutoff.next < last.start {
                 return Err(invalid("the cutoff falls before its epoch starts"));

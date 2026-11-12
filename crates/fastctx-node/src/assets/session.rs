@@ -593,6 +593,12 @@ async fn upload(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKey,
             if !renewed {
                 renew(assets, hub, link, key, scope, &stream, cut).await?;
             }
+            // Only into an epoch this machine orders: one another took over
+            // takes none of this one's writes (AG08).
+            let (scope_text, stream_text, device) = (scope.to_string(), stream.clone(), assets.device());
+            if blocking(library, move |library| library.orderer(&scope_text, &stream_text)).await?.is_some_and(|orderer| orderer != device) {
+                return Err("another device orders the stream now; what waits is not committed again".to_string());
+            }
             resubmit(assets, scope, &stream).await
         }
         .await;

@@ -341,8 +341,12 @@ pub(crate) fn ask(
                 assets.changed(kept.owner.clone(), &scope);
                 assets.receipted(&scope, machine);
             }
-            if matches!(word, Received::Applied { .. }) {
+            // Kept by the hub, applied or parked, a frame needs its proofs no
+            // more: asked again, it is answered as it was (AF04, AG02).
+            if matches!(word, Received::Applied { .. } | Received::Parked { .. }) {
                 assets.objects.forget_proofs(&device_key, &referred);
+            }
+            if matches!(word, Received::Applied { .. }) {
                 let stream = Header::decode(&frame_header).map_err(|error| error.to_string())?.stream;
                 let next = library
                     .streams(&scope)
@@ -448,8 +452,10 @@ pub(crate) fn ask(
             }
             let successor = Successor { device: *key.as_bytes(), key: *key.as_bytes(), kind: EpochKind::Source };
             let cutoff = Cutoff { next, head: array(&head, "a chain value")? };
+            // From the epoch it was judged the orderer of, none later (AG05).
+            let seen = last.map(|(epoch, _)| epoch);
             let (signed, _) = library
-                .handover(&scope, &stream, successor, cutoff, kinds(), assets.signer())
+                .handover_from(&scope, &stream, successor, cutoff, seen, kinds(), assets.signer())
                 .map_err(|error| error.to_string())?;
             assets.changed(kept.owner.clone(), &scope);
             // In the hub's chain and outside its directory before the device
@@ -481,7 +487,7 @@ pub(crate) fn ask(
             let successor = Successor { device, key: device, kind: EpochKind::Source };
             let cutoff = Cutoff { next, head: array(&head, "a chain value")? };
             let (signed, _) = library
-                .handover(&scope, &stream, successor, cutoff, kinds(), assets.signer())
+                .handover_from(&scope, &stream, successor, cutoff, last.map(|(epoch, _)| epoch), kinds(), assets.signer())
                 .map_err(|error| error.to_string())?;
             // What of the predecessor's tail will never come is skipped by
             // the hub's word, when there is any to skip.
