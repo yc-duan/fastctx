@@ -17,7 +17,7 @@ use super::items::{Applying, apply};
 use super::{Authorizer, Entry};
 use crate::error::invalid;
 use fastctx_storage::rusqlite::{Connection, OptionalExtension, params};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 /// Frames read at a time building an item history.
 const FRAMES_AT_ONCE: i64 = 64;
@@ -72,84 +72,146 @@ impl Blocked<'_> {
     }
 }
 
-/// The places of the records of the items a pass judges in one stream's
-/// frames of one period, those kept out passed over: built once when first
-/// wanted, so a pass that looks back for many items reads the frames once
-/// (V02). Only those items' places, and only one stream's at a time: what
-/// it holds grows with the records waiting, not the stream's history (X02).
+/// Where each record a pass judges stood in one stream's frames of one
+/// period: for each (item, revision) asked, the latest record of the item
+/// before that revision, those kept out passed over. Built once when first
+/// wanted, a few frames at a time in their order, so a pass that looks back
+/// for many records reads the frames once (V02); only the answers are kept,
+/// one for each record judged, never the item's history, and only one
+/// stream's at a time (X02, Y01). One asked that was not foreseen — its
+/// waiting mark gone before it was judged, say — builds them again with it
+/// (Y02).
 #[derive(Default)]
 pub(super) struct History {
-    /// Items judged besides those waiting in the frames: of a frame that
-    /// comes.
-    also: HashSet<Vec<u8>>,
-    kept: Option<((i64, i64), Places)>,
+    /// Records judged besides those waiting in the frames — of a frame that
+    /// comes — by item and revision.
+    also: HashMap<Vec<u8>, BTreeSet<u64>>,
+    kept: Option<Kept>,
 }
 
-/// Each item's records by revision, with the frame and place of each.
-type Places = HashMap<Vec<u8>, Vec<(u64, u64, usize)>>;
+/// The answers for one stream and period.
+struct Kept {
+    at: (i64, i64),
+    /// By item: each revision asked, in order, with the revision, frame and
+    /// place of the latest record before it.
+    answers: HashMap<Vec<u8>, Vec<(u64, Option<Place>)>>,
+}
+
+/// A record's revision, its frame's first revision and its place there.
+type Place = (u64, u64, usize);
+
+/// An item's revisions asked in order, the answers so far, and the latest
+/// record read so far.
+type Sweep = (Vec<u64>, Vec<Option<Place>>, Option<Place>);
 
 impl History {
-    /// For judging records of `items`, besides those waiting.
-    pub(super) fn of(items: impl IntoIterator<Item = Vec<u8>>) -> Self {
-        Self { also: items.into_iter().collect(), kept: None }
+    /// For judging the records `asked`, by item and revision, besides those
+    /// waiting.
+    pub(super) fn of(asked: impl IntoIterator<Item = (Vec<u8>, u64)>) -> Self {
+        let mut also: HashMap<Vec<u8>, BTreeSet<u64>> = HashMap::new();
+        for (item, revision) in asked {
+            also.entry(item).or_default().insert(revision);
+        }
+        Self { also, kept: None }
     }
 
-    fn places(&mut self, db: &Connection, stream: i64, holding: i64) -> fastctx_storage::Result<&mut Places> {
-        if self.kept.as_ref().map(|(at, _)| *at) != Some((stream, holding)) {
-            // Another stream's goes before this one's is built.
-            self.kept = None;
-            let mut wanted = self.also.clone();
-            waiting_records(db, stream, holding, |record| {
-                wanted.insert(record.record.item.clone());
-            })?;
-            let mut places: Places = HashMap::new();
-            // A few frames at a time: only their places are kept, never the
-            // stream's bodies all at once (W02).
-            let mut after = -1i64;
-            loop {
-                let frames: Vec<(i64, Vec<u8>, Vec<u8>)> = {
-                    let mut statement = db.prepare_cached(
-                        "SELECT first, header, body FROM frames WHERE stream = ?1 AND holding = ?2 AND first > ?3 ORDER BY first LIMIT ?4",
-                    )?;
-                    let rows = statement.query_map(params![stream, holding, after, FRAMES_AT_ONCE], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
-                    rows.collect::<std::result::Result<_, _>>()?
-                };
-                if frames.is_empty() {
-                    break;
-                }
-                for (first, header, body) in frames {
-                    after = first;
-                    let header = Header::decode(&header).map_err(invalid)?;
-                    let out = Out::of(db, stream, &header)?;
-                    for (offset, record) in open(&header, &body).map_err(invalid)?.iter().enumerate() {
-                        if out.holds(offset, record) || !wanted.contains(&record.record.item) {
-                            continue;
-                        }
-                        places.entry(record.record.item.clone()).or_default().push((header.first + offset as u64, header.first, offset));
-                    }
-                }
-            }
-            self.kept = Some(((stream, holding), places));
+    /// The latest record of `item` before `revision` in the frames of
+    /// `stream` of the period `holding`, those kept out passed over.
+    fn before(&mut self, db: &Connection, stream: i64, holding: i64, item: &[u8], revision: u64) -> fastctx_storage::Result<Option<Place>> {
+        let known = self.kept.as_ref().filter(|kept| kept.at == (stream, holding)).and_then(|kept| {
+            let answers = kept.answers.get(item)?;
+            let at = answers.binary_search_by_key(&revision, |(asked, _)| *asked).ok()?;
+            Some(answers[at].1)
+        });
+        if let Some(answer) = known {
+            return Ok(answer);
         }
-        Ok(&mut self.kept.as_mut().expect("just built").1)
+        // Built again with it, and with all asked before of this stream.
+        let mut asked: HashMap<Vec<u8>, BTreeSet<u64>> = self.also.clone();
+        if let Some(kept) = self.kept.take().filter(|kept| kept.at == (stream, holding)) {
+            for (item, answers) in kept.answers {
+                asked.entry(item).or_default().extend(answers.into_iter().map(|(revision, _)| revision));
+            }
+        }
+        asked.entry(item.to_vec()).or_default().insert(revision);
+        waiting_records(db, stream, holding, |record, revision| {
+            asked.entry(record.record.item.clone()).or_default().insert(revision);
+        })?;
+        let kept = build(db, stream, holding, asked)?;
+        let answer = kept
+            .answers
+            .get(item)
+            .and_then(|answers| answers.binary_search_by_key(&revision, |(asked, _)| *asked).ok().map(|at| answers[at].1))
+            .flatten();
+        self.kept = Some(kept);
+        Ok(answer)
     }
 
     /// A record let in now, for what is judged after it.
     fn let_in(&mut self, at: Applying, item: &[u8], revision: u64, first: u64, offset: usize) {
-        if let Some((kept, places)) = self.kept.as_mut()
-            && *kept == (at.stream, at.holding)
+        if let Some(kept) = self.kept.as_mut()
+            && kept.at == (at.stream, at.holding)
+            && let Some(answers) = kept.answers.get_mut(item)
         {
-            let list = places.entry(item.to_vec()).or_default();
-            let place = list.partition_point(|(placed, _, _)| *placed < revision);
-            list.insert(place, (revision, first, offset));
+            for (asked, latest) in answers.iter_mut() {
+                if *asked > revision && latest.is_none_or(|(placed, _, _)| placed < revision) {
+                    *latest = Some((revision, first, offset));
+                }
+            }
         }
     }
+}
+
+/// The answers for `asked` in the frames of `stream` of the period
+/// `holding`: read in their order, each record kept in answers the
+/// revisions of its item asked past it, until a later one does.
+fn build(db: &Connection, stream: i64, holding: i64, asked: HashMap<Vec<u8>, BTreeSet<u64>>) -> fastctx_storage::Result<Kept> {
+    let mut sweep: HashMap<Vec<u8>, Sweep> =
+        asked.into_iter().map(|(item, revisions)| (item, (revisions.into_iter().collect(), Vec::new(), None))).collect();
+    // A few frames at a time: never the stream's bodies all at once (W02).
+    let mut after = -1i64;
+    loop {
+        let frames: Vec<(i64, Vec<u8>, Vec<u8>)> = {
+            let mut statement = db.prepare_cached(
+                "SELECT first, header, body FROM frames WHERE stream = ?1 AND holding = ?2 AND first > ?3 ORDER BY first LIMIT ?4",
+            )?;
+            let rows = statement.query_map(params![stream, holding, after, FRAMES_AT_ONCE], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+            rows.collect::<std::result::Result<_, _>>()?
+        };
+        if frames.is_empty() {
+            break;
+        }
+        for (first, header, body) in frames {
+            after = first;
+            let header = Header::decode(&header).map_err(invalid)?;
+            let out = Out::of(db, stream, &header)?;
+            for (offset, record) in open(&header, &body).map_err(invalid)?.iter().enumerate() {
+                if out.holds(offset, record) {
+                    continue;
+                }
+                let Some((revisions, answered, latest)) = sweep.get_mut(&record.record.item) else { continue };
+                let placed = header.first + offset as u64;
+                while answered.len() < revisions.len() && revisions[answered.len()] <= placed {
+                    answered.push(*latest);
+                }
+                *latest = Some((placed, header.first, offset));
+            }
+        }
+    }
+    let answers = sweep
+        .into_iter()
+        .map(|(item, (revisions, mut answered, latest))| {
+            answered.resize(revisions.len(), latest);
+            (item, revisions.into_iter().zip(answered).collect())
+        })
+        .collect();
+    Ok(Kept { at: (stream, holding), answers })
 }
 
 /// Visits each record out of the index, not refused — of a kind kept out
 /// or waiting behind one — in the frames of `stream` of the period
 /// `holding`.
-fn waiting_records(db: &Connection, stream: i64, holding: i64, mut visit: impl FnMut(&KindRecord)) -> fastctx_storage::Result<()> {
+fn waiting_records(db: &Connection, stream: i64, holding: i64, mut visit: impl FnMut(&KindRecord, u64)) -> fastctx_storage::Result<()> {
     let frames: Vec<(i64, i64, Vec<u8>)> = {
         let mut statement = db.prepare_cached(
             "SELECT DISTINCT epoch, first, head FROM (
@@ -173,7 +235,7 @@ fn waiting_records(db: &Connection, stream: i64, holding: i64, mut visit: impl F
         let refused = super::pending::refused(db, stream, header.epoch, header.first, &header.chain())?;
         for (offset, record) in open(&header, &body).map_err(invalid)?.iter().enumerate() {
             if out.holds(offset, record) && !refused.contains(&(offset as u64)) {
-                visit(record);
+                visit(record, header.first + offset as u64);
             }
         }
     }
@@ -239,15 +301,19 @@ pub(super) fn frame(
                     blocked.add(db, at, item)?;
                     continue;
                 }
-                forget_deferred(db, at.stream, header, &head, offset)?;
+                // Its waiting mark goes once it is judged, not before: what
+                // it is judged against is found with it (Y02).
                 let prior = match earlier.get(item) {
                     Some(prior) => prior.clone(),
                     None => before_at(db, at.stream, at.holding, item, revision, history)?,
                 };
                 if kinds.authorize(header, record, prior.as_ref()).is_err() {
                     refuse(db, at.stream, header, &head, offset)?;
+                    // Refused, it leaves its item as it was for those after.
+                    earlier.insert(item, prior);
                     continue;
                 }
+                forget_deferred(db, at.stream, header, &head, offset)?;
                 super::hub::hidden_by_floor(db, at, revision, record)?;
                 apply(db, at, revision, record)?;
                 history.let_in(at, item, revision, header.first, offset);
@@ -296,11 +362,7 @@ fn before_at(db: &Connection, stream: i64, holding: i64, item: &[u8], revision: 
     if let Some(state) = super::hub::before_below(db, stream, holding, item, revision)? {
         return Ok(state);
     }
-    let found = history
-        .places(db, stream, holding)?
-        .get(item)
-        .and_then(|places| places.iter().rev().find(|(placed, _, _)| *placed < revision).copied());
-    if let Some((placed, first, offset)) = found {
+    if let Some((placed, first, offset)) = history.before(db, stream, holding, item, revision)? {
         let frame: (Vec<u8>, Vec<u8>) = db
             .prepare_cached("SELECT header, body FROM frames WHERE stream = ?1 AND holding = ?2 AND first = ?3")?
             .query_row(params![stream, holding, first as i64], |row| Ok((row.get(0)?, row.get(1)?)))?;
@@ -327,7 +389,7 @@ pub(super) fn rebuild_waiting(db: &Connection, stream: i64) -> fastctx_storage::
         .flatten();
     let Some(holding) = holding else { return Ok(()) };
     let mut items: HashSet<Vec<u8>> = HashSet::new();
-    waiting_records(db, stream, holding, |record| {
+    waiting_records(db, stream, holding, |record, _| {
         items.insert(record.record.item.clone());
     })?;
     let mut keep = db.prepare_cached("INSERT OR IGNORE INTO pending_items (stream, holding, item) VALUES (?1, ?2, ?3)")?;
