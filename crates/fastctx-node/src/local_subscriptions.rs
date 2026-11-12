@@ -64,22 +64,24 @@ pub(crate) fn observe(machine: MachineName, caller: &str, call: &Call) -> Option
 
 fn rows(open: &BTreeMap<u64, Entry>) -> Vec<CallWork> {
     let now = tokio::time::Instant::now();
-    open.iter()
-        .map(|(id, entry)| CallWork {
-            id: *id,
-            account: String::new(),
-            machine: entry.machine.to_string(),
-            conversation: None,
-            kind: entry.kind.clone(),
-            pool: "stream".into(),
-            class: Some(Class::Subscription),
-            phase: "local_subscription".into(),
-            seconds: now.saturating_duration_since(entry.at).as_secs(),
-            within: None,
-            overdue: false,
-            waiting: format!("watching for {}", entry.caller),
-        })
-        .collect()
+    open.iter().map(|(id, entry)| row(*id, entry, now)).collect()
+}
+
+fn row(id: u64, entry: &Entry, now: tokio::time::Instant) -> CallWork {
+    CallWork {
+        id,
+        account: String::new(),
+        machine: entry.machine.to_string(),
+        conversation: None,
+        kind: entry.kind.clone(),
+        pool: "stream".into(),
+        class: Some(Class::Subscription),
+        phase: "local_subscription".into(),
+        seconds: now.saturating_duration_since(entry.at).as_secs(),
+        within: None,
+        overdue: false,
+        waiting: format!("watching for {}", entry.caller),
+    }
 }
 
 pub(crate) fn snapshot() -> Vec<CallWork> {
@@ -88,4 +90,11 @@ pub(crate) fn snapshot() -> Vec<CallWork> {
 pub(crate) fn try_snapshot() -> Option<Vec<CallWork>> {
     let open = OPEN.try_lock().ok()?;
     Some(rows(&open))
+}
+
+pub(crate) fn snapshot_page(after: u64, limit: usize, deadline: std::time::Instant) -> (Vec<CallWork>, bool) {
+    use std::ops::Bound::{Excluded, Unbounded};
+    let Some(open) = fastctx_platform::doing::snapshot_lock(&OPEN, deadline) else { return (Vec::new(), true) };
+    let now = tokio::time::Instant::now();
+    (open.range((Excluded(after), Unbounded)).take(limit).map(|(id, entry)| row(*id, entry, now)).collect(), false)
 }

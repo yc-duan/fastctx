@@ -168,7 +168,13 @@ pub(crate) use in_flight::InFlight;
 /// gone wrong fills only its own share, and the others are forwarded as
 /// before (`world-concurrency.md`, 别的机器来的调用按来者公平地分).
 fn crowded(calls: &InFlight, pending: &Pending) -> Option<String> {
-    let (member_share, account_share) = in_flight::shares();
+    let (member_share, account_share, every_share) = in_flight::shares();
+    if calls.len() >= every_share {
+        return Some(format!(
+            "the hub has {} calls on their way already, the most it carries at once; one has to end first",
+            calls.len()
+        ));
+    }
     let member = calls.of_member(&pending.caller);
     if member >= member_share {
         return Some(format!(
@@ -1674,11 +1680,6 @@ fn call(
         return CallStatus::Refused { reason };
     }
     note_updates(hub, &message, &standing);
-    if let Some(resident) = details.resident.map(|resident| canonical_address(hub, resident))
-        && let Err(error) = hub.store().worked.note(&to, resident)
-    {
-        hub.log.line(format_args!("noting that {to} works for a resident: {error}"));
-    }
     if standing.project_entry.is_some() && hub.sessions().get(&to).is_some_and(|session| !session.project_entry) {
         return CallStatus::Refused {
             reason: format!(
@@ -1687,8 +1688,10 @@ fn call(
         };
     }
     let key = hub.next();
-    if let Some(ticket) = &message.stream {
-        crate::data::register(hub, ticket, &standing, name, generation);
+    if let Some(ticket) = &message.stream
+        && let Err(reason) = crate::data::register(hub, ticket, &standing, name, generation)
+    {
+        return CallStatus::Refused { reason };
     }
     let stream = message.stream.as_ref().map(|ticket| ticket.stream);
     let pending = Pending {
@@ -1730,6 +1733,12 @@ fn call(
         }
         calls.insert(key, pending);
     }
+    // Noted once the call is taken: a refused one worked for nobody.
+    if let Some(resident) = details.resident.map(|resident| canonical_address(hub, resident))
+        && let Err(error) = hub.store().worked.note(&to, resident)
+    {
+        hub.log.line(format_args!("noting that {to} works for a resident: {error}"));
+    }
     if target.send(Out::Frame(Down::Incoming { call: key, message })).is_err() {
         hub.calls.lock().expect("never poisoned").remove(&key);
         if let Some(stream) = stream {
@@ -1766,8 +1775,12 @@ fn answer(hub: &Hub, name: &MachineName, generation: u64, call: u64, message: En
         hub.tell(&pending.caller, Down::Status { id: pending.id, status: CallStatus::Lost });
         return;
     }
-    if let Some(ticket) = &message.stream {
-        crate::data::register(hub, ticket, &pending.standing, name, generation);
+    if let Some(ticket) = &message.stream
+        && let Err(reason) = crate::data::register(hub, ticket, &pending.standing, name, generation)
+    {
+        hub.log.line(format_args!("{name} answered call {call}, but its data connection was refused: {reason}"));
+        hub.tell(&pending.caller, Down::Status { id: pending.id, status: CallStatus::Lost });
+        return;
     }
     let stream = message.stream.as_ref().map(|ticket| ticket.stream);
     let queued = {

@@ -4,7 +4,6 @@
 use std::io;
 use std::path::Path;
 
-use fastctx_hands::run::record;
 use fastctx_types::access::{Acting, HubAccount};
 use fastctx_types::layout::WorldDir;
 use fastctx_types::residents::{Activity, Moved};
@@ -27,6 +26,11 @@ pub fn who(
         if town.is_some_and(|town| resident.town.as_ref() != Some(town)) {
             continue;
         }
+        // Without `all`, only those busy here are listed: told from what is
+        // already in hand, before anything of theirs is read from disk.
+        if !all && (!resident.here || resident.now.as_ref().is_some_and(|now| now.activity != Activity::Busy)) {
+            continue;
+        }
         let last_action = last_action(world, &resident.id)?;
         // A conversation the World started is listed from its first words on;
         // a session the user opened elsewhere once it has done something here.
@@ -38,9 +42,7 @@ pub fn who(
             || read_dir(&world.conversation(&resident.id).jobs())?
                 .iter()
                 .any(|path| path.extension().is_some_and(|ext| ext == "json"));
-        if !participated
-            || (!all && (!resident.here || resident.now.as_ref().is_some_and(|now| now.activity != Activity::Busy)))
-        {
+        if !participated {
             continue;
         }
         residents.push(ResidentNow {
@@ -104,12 +106,8 @@ pub fn who(
             });
         }
     }
-    let mut jobs = Vec::new();
-    for parent in world.job_parents()? {
-        for directory in read_dir(&parent)? {
-            running_jobs(&directory.join("jobs"), &mut jobs)?;
-        }
-    }
+    let mut jobs: Vec<RunningJob> =
+        crate::job_index::running(world)?.into_iter().map(|(job, _)| running_job(job)).collect();
     if let Some(town) = town {
         jobs.retain(|job| job.town.as_ref() == Some(town));
     }
@@ -137,36 +135,24 @@ pub(crate) fn mark_others(node: &crate::Node, acting: &Acting, reply: &mut fastc
 }
 
 /// The jobs in one resident's `jobs` directory that have not ended.
-pub(crate) fn running_jobs(jobs: &Path, running: &mut Vec<RunningJob>) -> io::Result<()> {
-    for path in read_dir(jobs)? {
-        if path.extension().is_none_or(|extension| extension != "json") {
-            continue;
-        }
-        let job = match record::read(&path) {
-            Ok(job) => job,
-            // Let go of since it was listed, as an ended job's record is: it
-            // runs no more, and the others are still read.
-            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
-            Err(error) => return Err(error),
-        };
-        if job.end.is_none() {
-            let account = job.on.and_then(|on| on.account).or(job.account);
-            running.push(RunningJob {
-                source: None,
-                job: job.id,
-                town: job.town,
-                machine: job.machine,
-                owner: job.owner,
-                started_at: job.started_at,
-                pid: job.pid,
-                command: first_line(&job.script),
-                output: job.output,
-                stderr: job.stderr,
-                account,
-            });
-        }
+/// How a running job is listed (`crate::job_index::running`).
+pub(crate) fn running_job(job: fastctx_types::run::JobRecord) -> RunningJob {
+    let account = job.on.and_then(|on| on.account).or(job.account);
+    RunningJob {
+        source: None,
+        job: job.id,
+        town: job.town,
+        machine: job.machine,
+        owner: job.owner,
+        started_at: job.started_at,
+        pid: job.pid,
+        command: first_line(&job.script),
+        output: job.output,
+        stderr: job.stderr,
+        account,
+        exited: job.exit.as_ref().map(|exit| exit.status),
+        remaining: job.exit.as_ref().and(job.remaining),
     }
-    Ok(())
 }
 
 fn read_dir(path: &Path) -> io::Result<Vec<std::path::PathBuf>> {

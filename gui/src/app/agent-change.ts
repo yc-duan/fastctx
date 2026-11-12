@@ -321,13 +321,13 @@ export class AgentChangeSheet {
     this.sheet.busy = true;
     this.draw();
     let following = true;
-    const stopFollowing = followState(target.here ? LOGINS : null, async () => {
+    const stopFollowing = followState(LOGINS, async () => {
       const change = await this.seams.progress(target);
       if (following && change && this.state.at === "running") {
         this.state.steps = change.steps;
         this.drawSteps();
       }
-    }, FOLLOW_MS);
+    }, FOLLOW_MS, target.here ? null : target.machine);
     try {
       const change = await this.seams.change(target, raise, told?.fingerprint);
       this.state = { at: "ended", planned, change, problem: change.end?.end === "failed" ? change.end.reason : null, told };

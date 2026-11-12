@@ -1409,6 +1409,8 @@ async fn stop_coming(
 ) -> Result<Coming, Failure> {
     let directory = node.world.conversation(resident);
     let reading = directory.clone();
+    // The words on their way, oldest first, as many as a stop is kept on:
+    // a stop reads a bounded part of the inbox however much waits in it.
     let coming = fastctx_platform::task::spawn_blocking(move || {
         let mut coming = Vec::new();
         crate::inbox::pages(&reading, |page| {
@@ -1417,7 +1419,12 @@ async fn stop_coming(
                     .filter(|pending| pending.delivery.notice.along().is_none())
                     .map(|pending| pending.delivery.id),
             );
-            Ok(std::ops::ControlFlow::Continue(()))
+            Ok(if coming.len() >= COMING_MOST {
+                coming.truncate(COMING_MOST);
+                std::ops::ControlFlow::Break(())
+            } else {
+                std::ops::ControlFlow::Continue(())
+            })
         })?;
         Ok::<_, std::io::Error>(coming)
     })
@@ -1429,8 +1436,10 @@ async fn stop_coming(
     }
     let Some(turn) = node.residents.now(resident).and_then(|now| now.turn) else { return Ok(Coming::Nothing) };
     let looking = turn.clone();
+    // A turn takes the oldest words on their way: whether it took any of
+    // them shows among the first.
     let took = fastctx_platform::task::spawn_blocking(move || -> std::io::Result<bool> {
-        for id in &coming {
+        for id in coming.iter().take(TOOK_LOOKS) {
             if crate::delivery::input_turn(&directory, id)?.as_deref() == Some(looking.as_str()) {
                 return Ok(true);
             }
@@ -1442,6 +1451,12 @@ async fn stop_coming(
     .map_err(|error| Failure::new(format!("reading which words the turn took: {error}")))?;
     Ok(if took { Coming::Turn(turn) } else { Coming::Nothing })
 }
+
+/// The most words on their way a stop asked while no turn ran is kept on.
+const COMING_MOST: usize = 4096;
+/// How many of the oldest words on their way are looked at for the turn
+/// that took them.
+const TOOK_LOOKS: usize = 64;
 
 /// A goal the user stopped a turn of waits for them: paused, once the stop
 /// is on its way. Its failure leaves the stop standing and is noted.

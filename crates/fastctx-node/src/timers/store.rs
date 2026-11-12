@@ -21,6 +21,9 @@ use std::{
 use tokio::sync::Notify;
 
 const FAMILY: &str = "timers";
+/// The most timers one owner's list gives: a sentinel or a conversation
+/// keeps a few, and one that kept more is shown the first of them.
+const OWNED: usize = 4096;
 use super::claims::Claims;
 
 pub struct Store {
@@ -130,15 +133,20 @@ impl Store {
         self.work(move |store| records::read(&store.directory, |rows| super::page::read(rows, owner.as_ref(), &after)))
             .await
     }
-    pub async fn list(self: &Arc<Self>, owner: Option<&Owner>) -> io::Result<Vec<Timer>> {
-        let owner = owner.cloned();
-        self.work(move |store| store.list_now(owner.as_ref())).await
+    /// One owner's timers, by its own index, at most `OWNED` of them; the
+    /// whole table is read a page at a time (`page`).
+    pub async fn list(self: &Arc<Self>, owner: &Owner) -> io::Result<Vec<Timer>> {
+        let owner = owner.clone();
+        self.work(move |store| store.list_now(&owner)).await
     }
-    fn list_now(&self, owner: Option<&Owner>) -> io::Result<Vec<Timer>> {
-        let category = owner.map(serde_json::to_string).transpose()?;
+    fn list_now(&self, owner: &Owner) -> io::Result<Vec<Timer>> {
+        let category = serde_json::to_string(owner)?;
         records::read(&self.directory, |rows| {
-            let mut query=rows.connection().prepare_cached("SELECT body FROM conversation_records r WHERE family='timers' AND NOT EXISTS(SELECT 1 FROM node_conversation_transfers t WHERE t.name=r.conversation AND t.rejected=0) AND (?1 IS NULL OR category=?1) ORDER BY identity")?;
-            query.query_map([category], |row| row.get::<_, Vec<u8>>(0))?.map(|row| records::decode(&row?)).collect()
+            let mut query=rows.connection().prepare_cached("SELECT body FROM conversation_records r WHERE family='timers' AND category=?1 AND NOT EXISTS(SELECT 1 FROM node_conversation_transfers t WHERE t.name=r.conversation AND t.rejected=0) ORDER BY identity LIMIT ?2")?;
+            query
+                .query_map(fastctx_storage::rusqlite::params![category, OWNED as i64], |row| row.get::<_, Vec<u8>>(0))?
+                .map(|row| records::decode(&row?))
+                .collect()
         })
     }
     fn candidate(&self) -> io::Result<Option<(Timestamp, Timer)>> {

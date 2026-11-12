@@ -30,7 +30,10 @@ pub enum Call {
         session: String,
     },
     /// Local operational diagnostics. Never relayed through another machine.
-    DoctorCalls,
+    DoctorCalls {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        after: Option<u64>,
+    },
     /// The node's measures of itself, its health and the scenes it left.
     /// Never relayed through another machine.
     DoctorReadings,
@@ -96,6 +99,12 @@ pub enum Call {
     /// Waits until a piece of this machine's state a reader reads from has
     /// changed (`crate::topics`), in place of reading it again on a timer.
     Topics {
+        request: crate::topics::TopicsAsk,
+    },
+    /// Waits on topics of another machine, for a page here that shows its
+    /// state (`RemoteCall::Topics`); none when that machine does not tell.
+    RemoteTopics {
+        machine: crate::access::Written,
         request: crate::topics::TopicsAsk,
     },
     WatchHistory {
@@ -445,6 +454,8 @@ pub enum Call {
     Folders {
         machine: Option<Written>,
         path: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cursor: Option<String>,
     },
     /// What a machine, or this computer, keeps free in memory for its
     /// agents; sets it first when `bytes` is given (`crate::stats::MEMORY_ROOMS`).
@@ -1002,6 +1013,10 @@ pub enum Reply {
     },
     DoctorCalls {
         calls: Vec<crate::stats::CallWork>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        partial: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        next: Option<u64>,
     },
     DoctorReadings {
         readings: Box<crate::readings::Readings>,
@@ -1024,6 +1039,8 @@ pub enum Reply {
     History(crate::history::HistoryReply),
     Timeline(crate::timeline_pages::TimelineTold),
     Topics(crate::topics::TopicsTold),
+    /// Another machine's topics, or none when it does not tell them.
+    RemoteTopics(Option<crate::topics::TopicsTold>),
     Memory(crate::memory::MemoryReply),
     MemorySettings(crate::memory::Settings),
     Layer(crate::layers::Chosen),
@@ -1549,7 +1566,7 @@ impl Call {
             | Self::WorldNow { .. }
             | Self::Write { .. } => None,
             Self::Timeline { .. } => Some(Purpose::AssetSync),
-            Self::Topics { .. } => Some(Purpose::Observation),
+            Self::Topics { .. } | Self::RemoteTopics { .. } => Some(Purpose::Observation),
         }
     }
 }
@@ -1658,7 +1675,7 @@ impl Reply {
             | Self::WorldNow { .. }
             | Self::Written { .. } => None,
             Self::Timeline(_) => Some(Purpose::AssetSync),
-            Self::Topics(_) => Some(Purpose::Observation),
+            Self::Topics(_) | Self::RemoteTopics(_) => Some(Purpose::Observation),
         }
     }
 }

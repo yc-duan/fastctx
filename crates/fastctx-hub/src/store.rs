@@ -541,7 +541,7 @@ impl Store {
 
     fn refresh_edit(&mut self, edit: &BookEdit) {
         match edit {
-            BookEdit::Full => self.refresh(),
+            BookEdit::Full | BookEdit::Relations(_) => self.refresh(),
             BookEdit::Tokens => self.metadata.tokens = Self::token_index(&self.book),
             BookEdit::Audit | BookEdit::Account(_) | BookEdit::Groups(_) => {}
         }
@@ -1279,8 +1279,8 @@ pub(crate) fn write_letter(path: &Path, message: &Envelope) -> io::Result<u64> {
     Ok(bytes.len() as u64)
 }
 
-/// The numbers of the letter files in `directory`, and their sizes.
-pub(crate) fn letter_numbers(directory: &Path) -> io::Result<Vec<(u64, u64)>> {
+/// The numbers of the letter files in `directory`, from their names alone.
+pub(crate) fn letter_numbers(directory: &Path) -> io::Result<Vec<u64>> {
     let entries = match fastctx_platform::disk::read_dir(directory) {
         Ok(entries) => entries,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -1291,10 +1291,38 @@ pub(crate) fn letter_numbers(directory: &Path) -> io::Result<Vec<(u64, u64)>> {
         let entry = entry?;
         // Temporary files of an interrupted write start with a dot.
         if let Some(seq) = entry.file_name().to_str().and_then(|name| name.parse::<u64>().ok()) {
-            found.push((seq, entry.metadata()?.len()));
+            found.push(seq);
         }
     }
     Ok(found)
+}
+
+/// The lowest number among the letter files in `directory` and how many
+/// there are, from their names alone.
+pub(crate) fn letter_span(directory: &Path) -> io::Result<(Option<u64>, usize)> {
+    let entries = match fastctx_platform::disk::read_dir(directory) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok((None, 0)),
+        Err(error) => return Err(error),
+    };
+    let (mut lowest, mut count) = (None::<u64>, 0);
+    for entry in entries {
+        if let Some(seq) = entry?.file_name().to_str().and_then(|name| name.parse::<u64>().ok()) {
+            lowest = Some(lowest.map_or(seq, |lowest| lowest.min(seq)));
+            count += 1;
+        }
+    }
+    Ok((lowest, count))
+}
+
+/// The size of the letter numbered `seq` in `directory`; none when it is
+/// not there.
+pub(crate) fn letter_size(directory: &Path, seq: u64) -> io::Result<Option<u64>> {
+    match fastctx_platform::disk::metadata(directory.join(format!("{seq:020}"))) {
+        Ok(metadata) => Ok(Some(metadata.len())),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
 }
 
 /// The letter numbered `seq` in `directory`; none when it is not there.

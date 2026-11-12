@@ -32,6 +32,7 @@ pub mod features;
 pub mod file_identity;
 pub mod file_read;
 pub mod file_search;
+pub mod file_limits;
 pub mod files;
 pub mod focus;
 pub mod goals;

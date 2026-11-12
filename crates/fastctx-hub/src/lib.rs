@@ -24,6 +24,7 @@
 //! old place, forwards to the new one, as its files say.
 
 mod account_records;
+mod admission;
 mod assets;
 pub use assets::recovery;
 mod afoot;
@@ -324,6 +325,9 @@ pub(crate) struct Hub {
     workbench: Mutex<HashMap<MachineName, bool>>,
 }
 
+/// Full views built at once when many sessions are told of a change.
+const VIEWS_AT_ONCE: usize = 256;
+
 /// The view a session that reads what changes in its view was last given
 /// (`fastctx_net::view_delta`), numbered among those it was given.
 #[derive(Clone)]
@@ -518,6 +522,16 @@ impl Hub {
     /// a whole view, or whose change is too large for a frame, is told to
     /// ask for it.
     fn push_views(&self, sessions: Vec<(MachineName, PublicKey, u64, outq::Outq)>) {
+        // A bounded number of full views at a time, each batch read at once:
+        // every session's view at one moment was the hub's peak of memory
+        // at ten thousand members.
+        let mut sessions = sessions.into_iter().peekable();
+        while sessions.peek().is_some() {
+            self.push_view_batch(sessions.by_ref().take(VIEWS_AT_ONCE).collect());
+        }
+    }
+
+    fn push_view_batch(&self, sessions: Vec<(MachineName, PublicKey, u64, outq::Outq)>) {
         let trials: Vec<_> = sessions.iter().map(|(name, _, _, _)| self.trial_of(name)).collect();
         let (views, read): (Vec<Result<View, String>>, (u64, u64)) = {
             let store = self.store();
@@ -662,6 +676,18 @@ impl Hub {
         self.machine_log_changed.notify_one();
         self.assists_changed.notify_one();
         self.directory_changed.notify_one();
+    }
+
+    /// A relation changed (`manage_edit::relation`): every member is told to
+    /// look again and what lost the standing it was allowed under ends; the
+    /// passes that follow only accounts and machines are not run.
+    fn relations_changed(&self) {
+        afoot::directory_changed(self);
+        self.machine_log_changed.notify_one();
+        self.assists_changed.notify_one();
+        self.directory_changed.notify_one();
+        control::cut_calls(self);
+        data::cut_streams(self);
     }
 
     /// The directory changed, or who is online did: every member is told to
@@ -1040,13 +1066,16 @@ async fn serving(
     let expiring_assists = assists::expire(&hub);
     let stopping = shutdown_signal();
     tokio::pin!(expiring_log, expiring_assists, stopping);
+    let admission = admission::Admission::new();
     let switched = loop {
         tokio::select! {
             accepted = network::accept(&hub.network, &kept.listener) => match accepted {
                 Ok((tcp, peer)) => {
-                    fastctx_net::dial::configure(&tcp);
-                    let host = releases::http::Host::Hub(hub.clone());
-                    fastctx_platform::task::spawn(releases::http::serve(host, tls.clone(), tcp, peer));
+                    if let Some(held) = admission.admit(&hub.log, peer) {
+                        fastctx_net::dial::configure(&tcp);
+                        let host = releases::http::Host::Hub(hub.clone());
+                        fastctx_platform::task::spawn(releases::http::serve(host, tls.clone(), tcp, peer, held));
+                    }
                 }
                 // Out of descriptors, for one: the next accept may succeed.
                 Err(error) => {

@@ -23,6 +23,27 @@ impl World {
         }
     }
 
+    /// Waits on topics of `machine`, another machine, for a page that shows
+    /// its state. None when this node or that machine does not tell them:
+    /// the page reads on a timer.
+    pub async fn remote_topics_when_supported(
+        &self,
+        machine: fastctx_types::access::Written,
+        request: TopicsAsk,
+    ) -> Result<Option<TopicsTold>, Error> {
+        if self.device().is_some() {
+            return Ok(None);
+        }
+        let mut client = self.connect().await?;
+        if !client.remote_topics {
+            return Ok(None);
+        }
+        match client.call(Call::RemoteTopics { machine, request }).await? {
+            Reply::RemoteTopics(told) => Ok(told),
+            other => Err(Error::Unexpected(format!("{other:?}"))),
+        }
+    }
+
     /// Asks where topics stand, or waits until one is past where the reader
     /// read it. A node that tells no topics refuses, and the reader reads
     /// on a timer as before.

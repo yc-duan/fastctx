@@ -20,7 +20,8 @@ const COMMAND: usize = 120;
 /// The account's jobs here, the latest started first.
 pub(super) fn list(node: &Node, scope: &HubAccount) -> Result<Inspected, Failure> {
     let since = jiff::Timestamp::now() - LISTED_FOR;
-    let mut jobs: Vec<JobRecord> = records(node)?
+    let mut jobs: Vec<JobRecord> = crate::job_index::recent(&node.world, since)
+        .map_err(|error| Failure::new(format!("reading the jobs here: {error}")))?
         .into_iter()
         .map(|(record, _)| record)
         .filter(|record| of(node, record, scope) && record.end.as_ref().is_none_or(|end| end.at >= since))
@@ -139,27 +140,6 @@ fn state(record: &JobRecord) -> String {
             }
         }
     }
-}
-
-/// Every job record here, with where it is kept.
-fn records(node: &Node) -> Result<Vec<(JobRecord, PathBuf)>, Failure> {
-    let failed = |error: std::io::Error| Failure::new(format!("reading the jobs here: {error}"));
-    let mut found = Vec::new();
-    for parent in node.world.job_parents().map_err(failed)? {
-        for owner in entries(&parent).map_err(failed)? {
-            for path in entries(&owner.join("jobs")).map_err(failed)? {
-                if path.extension().is_none_or(|extension| extension != "json") {
-                    continue;
-                }
-                match fastctx_hands::run::record::read(&path) {
-                    Ok(record) => found.push((record, path)),
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                    Err(error) => return Err(failed(error)),
-                }
-            }
-        }
-    }
-    Ok(found)
 }
 
 /// What a directory holds; nothing when it is not there.

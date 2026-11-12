@@ -270,12 +270,16 @@ pub enum RemoteCall {
     /// The folders in a folder there, for the user to choose one.
     Folders {
         path: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cursor: Option<String>,
     },
     /// What each of these folders there holds, one level deep, read within
     /// `within_ms`, for a conversation pointed at them.
     Outline {
         folders: Vec<String>,
         within_ms: u64,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        cursors: Vec<Option<String>>,
     },
     /// The user's word on Claude Code's bypass-permissions consent there.
     ClaudeConsent {
@@ -579,6 +583,12 @@ pub enum RemoteCall {
     /// that may work on it (`crate::stats`). With `after`, its lines bring
     /// only the round trips and changes since then: a page that asks every
     /// few seconds keeps what it was told.
+    /// Waits until a piece of that machine's state a page reads from has
+    /// changed (`crate::topics`), as `Call::Topics` does here. Only for an
+    /// account that may look at it; the answer names only revisions.
+    Topics {
+        request: crate::topics::TopicsAsk,
+    },
     Stats {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         after: Option<jiff::Timestamp>,
@@ -756,6 +766,7 @@ impl RemoteCall {
             | RemoteCall::Facts
             | RemoteCall::AttachmentReferences { .. }
             | RemoteCall::Interfaces
+            | RemoteCall::Topics { .. }
             | RemoteCall::Relay { .. } => Purpose::Look,
         }
     }
@@ -888,6 +899,7 @@ pub enum RemoteReply {
         used: Vec<bool>,
     },
     Stats(Box<crate::stats::MachineStats>),
+    Topics(crate::topics::TopicsTold),
     Inspected(crate::inspect::Inspected),
     MemoryRoom {
         bytes: u64,
@@ -991,6 +1003,7 @@ impl RemoteCall {
             | Self::SetAgentTitle { .. }
             | Self::Since { .. }
             | Self::Stats { .. }
+            | Self::Topics { .. }
             | Self::Stop { .. }
             | Self::StopJob { .. }
             | Self::StopOn { .. }
@@ -1072,6 +1085,7 @@ impl RemoteReply {
             | Self::Set { .. }
             | Self::Since { .. }
             | Self::Stats { .. }
+            | Self::Topics { .. }
             | Self::Stopped { .. }
             | Self::Thumbnail { .. }
             | Self::Update { .. }

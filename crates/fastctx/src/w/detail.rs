@@ -16,7 +16,12 @@ pub(super) fn detail(looked: &LookedUp, now: Timestamp) -> String {
         }
     }
     if !looked.unasked.is_empty() {
-        text.push_str(&format!("not answered: {}\n", looked.unasked.join(", ")));
+        // A network of a hundred machines mostly off is said in a line, not
+        // listed machine by machine.
+        let named: Vec<&str> = looked.unasked.iter().take(UNASKED_NAMED).map(String::as_str).collect();
+        let more = looked.unasked.len() - named.len();
+        let said = if more > 0 { format!("{} and {more} more", named.join(", ")) } else { named.join(", ") };
+        text.push_str(&format!("not answered ({}): {said}\n", looked.unasked.len()));
     }
     for job in &looked.jobs {
         text.push_str(&format!(
@@ -35,6 +40,9 @@ pub(super) fn detail(looked: &LookedUp, now: Timestamp) -> String {
     }
     text
 }
+
+/// How many machines that did not answer a lookup are named.
+const UNASKED_NAMED: usize = 6;
 
 /// A path on any machine, written as the World writes paths, `C:/…` on
 /// Windows; World directories hold no other backslashes.

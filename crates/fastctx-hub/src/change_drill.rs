@@ -5,6 +5,7 @@ mod equivalence;
 mod exercise;
 mod forwarding;
 mod local_hub;
+mod relations;
 mod verify;
 
 use std::path::{Path, PathBuf};

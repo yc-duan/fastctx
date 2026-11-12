@@ -126,6 +126,10 @@ pub struct MachineFacts {
     /// Answers bounded timeline queries (`RemoteCall::Timeline`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub timeline_reads: bool,
+    /// Tells when a piece of its state changed (`RemoteCall::Topics`), so a
+    /// page that shows it waits instead of asking again on a timer.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub topics: bool,
     /// Supports Watch.live_only with a post-registration Resumed barrier.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub watch_live: bool,

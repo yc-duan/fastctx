@@ -125,10 +125,6 @@ machine_lock!(
     Syncing: Mutex = SYNCING, "syncing"
 );
 machine_lock!(
-    /// Decoding a picture into a thumbnail.
-    Decoding: Mutex = DECODING, "decoding"
-);
-machine_lock!(
     /// Reading an attached picture's record.
     Pictures: Mutex = PICTURES, "pictures"
 );

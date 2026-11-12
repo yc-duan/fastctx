@@ -254,6 +254,8 @@ fn who(towns: &[TownSummary]) -> Vec<WorldWho> {
                                     hub: "w-0123456789abcdef".parse().unwrap(),
                                     account: "bob".parse().unwrap(),
                                 }),
+                                exited: None,
+                                remaining: None,
                             })
                             .collect(),
                     },
@@ -341,6 +343,7 @@ fn nodes() -> Vec<NodesReply> {
         collaboration_tree: false,
         collaboration_watch: false,
         timeline_reads: false,
+        topics: false,
         watch_live: false,
         completion_receipts: false,
         control_letters: lifetime,

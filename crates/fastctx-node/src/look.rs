@@ -110,12 +110,8 @@ pub(crate) fn read_here(
         });
         let answers = messages.into_iter().filter(|line| matches!(line.what, MessageKind::Ended { .. })).collect();
         let owner = Address { machine: record.about.machine.clone(), resident: record.id.clone() };
-        let mut jobs = Vec::new();
-        for parent in world.job_parents()? {
-            for directory in entries(&parent)? {
-                crate::who::running_jobs(&directory.join("jobs"), &mut jobs)?;
-            }
-        }
+        let mut jobs: Vec<_> =
+            crate::job_index::running(world)?.into_iter().map(|(job, _)| crate::who::running_job(job)).collect();
         jobs.retain(|job| job.owner == owner);
         jobs.sort_by_key(|job| job.started_at);
         Ok(Some(Looked::Resident(Box::new(ResidentDetail {
@@ -149,12 +145,8 @@ pub(crate) fn jobs_for(world: &WorldDir, id: &str) -> io::Result<Vec<fastctx_typ
     if JobId::try_from(id).is_ok() || ResidentId::try_from(id).is_err() {
         return Ok(Vec::new());
     }
-    let mut jobs = Vec::new();
-    for parent in world.job_parents()? {
-        for directory in entries(&parent)? {
-            crate::who::running_jobs(&directory.join("jobs"), &mut jobs)?;
-        }
-    }
+    let mut jobs: Vec<_> =
+        crate::job_index::running(world)?.into_iter().map(|(job, _)| crate::who::running_job(job)).collect();
     jobs.retain(|job| job.owner.resident().is_some_and(|owner| owner.resident.as_str() == id));
     Ok(jobs)
 }

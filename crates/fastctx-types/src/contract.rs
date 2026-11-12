@@ -239,6 +239,7 @@ impl RemoteCall {
             Self::McpServe { .. } => Contract { cancellable: true, ..Contract::STREAM },
             Self::Collaboration { .. } => Contract { cancellable: true, ..Contract::ASKS_AGENT },
             Self::Timeline { .. }
+            | Self::Topics { .. }
             | Self::MemoryFolders { .. }
             | Self::Scratch { .. }
             | Self::AttachmentPlaces { .. }
@@ -348,6 +349,12 @@ impl RemoteCall {
             Self::Stats { .. } => 32 * 1024,
             Self::Book { .. } | Self::WaitingJobs { .. } | Self::Who { .. } | Self::Since { .. } => 4 * 1024,
             Self::Look { .. } => LOOK_REQUEST_BYTES,
+            Self::FindFiles { request } => file_search_bytes(request),
+            Self::Folders { .. } | Self::Thumbnail { .. } | Self::CopyReceive { .. } => 32 * 1024,
+            Self::Outline { .. } => 1024 * 1024,
+            Self::AttachmentThumbnail { .. } => 64 * 1024,
+            Self::Lines { request } => lines_bytes(request),
+            Self::Interfaces => 1024,
             _ => contract.max_request_bytes,
         };
         Contract { response: self.response(), max_request_bytes, ..contract }
@@ -413,7 +420,7 @@ impl Call {
                     Leaving::Stop
                 }
             }
-            Self::DoctorCalls | Self::DoctorReadings | Self::PlanRead { .. } | Self::Skill { .. } => Leaving::Stop,
+            Self::DoctorCalls { .. } | Self::DoctorReadings | Self::PlanRead { .. } | Self::Skill { .. } => Leaving::Stop,
             Self::Plan { .. } | Self::PlanWrite { .. } => Leaving::Finish,
             Self::AccountRecords {
                 request: crate::account_records::Request::Read { .. } | crate::account_records::Request::List { .. },
@@ -432,7 +439,7 @@ impl Call {
                 }
             }
             Self::WatchHistory { .. } => Leaving::Stop,
-            Self::Timeline { .. } | Self::Topics { .. } => Leaving::Stop,
+            Self::Timeline { .. } | Self::Topics { .. } | Self::RemoteTopics { .. } => Leaving::Stop,
             Self::PrepareCopies { .. } => Leaving::Finish,
             Self::Memory(crate::memory::MemoryCall::List { .. } | crate::memory::MemoryCall::Read { .. }) => {
                 Leaving::Stop
@@ -603,12 +610,36 @@ impl Call {
             Self::Sentinel { .. } => 4096,
             Self::SentinelSettings { change: None, .. } => 4096,
             // The local list and diagnostic calls.
-            Self::DoctorCalls | Self::DoctorReadings | Self::Nodes | Self::Data(crate::data::DataCall::List) => 1024,
+            Self::DoctorCalls { .. } | Self::DoctorReadings | Self::Nodes | Self::Data(crate::data::DataCall::List) => 1024,
             Self::Who { .. } | Self::Since { .. } | Self::Book { .. } => 4 * 1024,
             Self::Machines { .. } | Self::Stats { .. } => 32 * 1024,
             Self::Look { .. } => LOOK_REQUEST_BYTES,
             Self::WorldNow { .. } | Self::WatchWorld { .. } => 32 * 1024 * 1024,
+            // File requests, which also come in over local IPC.
+            Self::FindFiles { request, .. } => file_search_bytes(request),
+            Self::Folders { .. } | Self::Thumbnail { .. } => 32 * 1024,
+            Self::AttachmentThumbnail { .. } => 64 * 1024,
+            Self::Lines { request, .. } => lines_bytes(request),
+            Self::Saw { .. } => 2 * 1024 * 1024,
             _ => REQUEST_BYTES,
         }
+    }
+}
+
+/// A file search's request: a query's text is short, but escaped JSON can
+/// take several bytes for each of its characters.
+fn file_search_bytes(request: &FileSearchRequest) -> usize {
+    match request {
+        FileSearchRequest::Start { .. } | FileSearchRequest::Open { .. } => 1024 * 1024,
+        FileSearchRequest::Query { .. } => 32 * 1024,
+        FileSearchRequest::Close { .. } => 2 * 1024,
+    }
+}
+
+fn lines_bytes(request: &Lines) -> usize {
+    match request {
+        Lines::Open { .. } => 64 * 1024,
+        Lines::Find { .. } => 32 * 1024,
+        Lines::Read { .. } | Lines::Changed { .. } | Lines::Close { .. } => 2 * 1024,
     }
 }

@@ -195,6 +195,7 @@ impl Jobs {
                 input.as_deref(),
                 |path| registering.job_files.hold(path),
                 |path| {
+                    crate::job_index::started(&registering.world, path);
                     if owner.resident().is_some() && (on.is_some() || answer_receipts) {
                         let debt: &[u8] = if on.is_none() && answer_receipts { b"answer" } else { b"" };
                         crate::job_metadata::put_raw(&path.with_extension("owed"), debt)

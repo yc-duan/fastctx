@@ -22,6 +22,15 @@ pub fn output_policy() -> String {
     format!("terminal-v1:{pages:?}")
 }
 
+/// How one stretch of a search ended (`Index::find_within`).
+#[derive(Debug, PartialEq, Eq)]
+pub enum Searched {
+    /// The search is over: what it found, or that nothing matched.
+    Done(Option<Match>),
+    /// It read its share without finding: it goes on from this line.
+    From(u64),
+}
+
 /// Why an output's index did not grow (`Index::grow`).
 #[derive(Debug)]
 pub enum NotGrown {
@@ -345,6 +354,30 @@ impl Index {
         direction: Direction,
         cancelled: &AtomicBool,
     ) -> Result<Option<Match>, String> {
+        let mut at = position.clone();
+        loop {
+            match self.find_within(query, &at, position, direction, cancelled, u64::MAX)? {
+                Searched::Done(found) => return Ok(found),
+                Searched::From(line) => at = Position { line, offset: None },
+            }
+        }
+    }
+
+    /// Searches from `at` for what `find` would find from `asked`, reading
+    /// lines until about `bytes` of them are read: what it found, or that
+    /// none was found yet and the search goes on from that line. A match
+    /// never spans lines, so stretches cut at lines find what one search
+    /// would.
+    pub fn find_within(
+        &mut self,
+        query: &str,
+        at: &Position,
+        asked: &Position,
+        direction: Direction,
+        cancelled: &AtomicBool,
+        bytes: u64,
+    ) -> Result<Searched, String> {
+        let position = asked;
         if query.is_empty() {
             return Err("the literal query must not be empty".into());
         }
@@ -364,15 +397,21 @@ impl Index {
             prefix[i] = n;
         }
         let length = query.encode_utf16().count() as u64;
-        let mut line = position.line.min(self.length);
+        let mut line = at.line.min(self.length);
         if direction == Direction::Backward && line == self.length {
             if line == 0 {
-                return Ok(None);
+                return Ok(Searched::Done(None));
             }
             line -= 1;
         }
+        let mut read = 0u64;
         while line < self.length {
             check(cancelled)?;
+            if read >= bytes {
+                return Ok(Searched::From(line));
+            }
+            let row = self.row(line)?;
+            read += row.end - row.start;
             let text = self.text(line, cancelled)?;
             let mut matched = 0;
             let mut utf16 = 0;
@@ -399,7 +438,7 @@ impl Index {
                         if eligible {
                             found = Some(Match { line, offset, length });
                             if direction == Direction::Forward {
-                                return Ok(found);
+                                return Ok(Searched::Done(found));
                             }
                         }
                         matched = prefix[matched - 1];
@@ -407,7 +446,7 @@ impl Index {
                 }
             }
             if found.is_some() {
-                return Ok(found);
+                return Ok(Searched::Done(found));
             }
             match direction {
                 Direction::Forward => line += 1,
@@ -415,7 +454,7 @@ impl Index {
                 _ => break,
             }
         }
-        Ok(None)
+        Ok(Searched::Done(None))
     }
 
     fn text(&mut self, number: u64, cancelled: &AtomicBool) -> Result<Bytes, String> {

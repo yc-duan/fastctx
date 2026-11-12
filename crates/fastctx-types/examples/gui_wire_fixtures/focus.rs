@@ -15,6 +15,8 @@ pub struct Fixtures {
 pub fn fixtures() -> Fixtures {
     let machine: fastctx_types::MachineName = "desktop".parse().unwrap();
     let starts = Folders {
+        next_cursor: None,
+        truncated: false,
         machine: machine.clone(),
         path: None,
         parent: None,
@@ -25,6 +27,8 @@ pub fn fixtures() -> Fixtures {
         ],
     };
     let inside = Folders {
+        next_cursor: None,
+        truncated: false,
         machine: machine.clone(),
         path: Some("C:/work".into()),
         parent: Some("C:/".into()),
@@ -36,20 +40,30 @@ pub fn fixtures() -> Fixtures {
     };
     Fixtures {
         calls: vec![
-            Call::Folders { machine: None, path: None },
-            Call::Folders { machine: Some(machine.clone().into()), path: Some("C:/work".into()) },
+            Call::Folders { cursor: None, machine: None, path: None },
+            Call::Folders { cursor: None, machine: Some(machine.clone().into()), path: Some("C:/work".into()) },
         ],
         replies: vec![Reply::Folders(starts.clone()), Reply::Folders(inside.clone())],
         remote_calls: vec![
-            RemoteCall::Folders { path: Some("/home/ada".into()) },
-            RemoteCall::Outline { folders: vec!["/home/ada/app".into()], within_ms: 4000 },
+            RemoteCall::Folders { cursor: None, path: Some("/home/ada".into()) },
+            RemoteCall::Outline { cursors: Vec::new(), folders: vec!["/home/ada/app".into()], within_ms: 4000 },
         ],
         remote_results: vec![
             Ok(RemoteReply::Folders(inside)),
             Ok(RemoteReply::Outlined {
                 outlines: vec![
-                    Outlined { path: "/home/ada/app".into(), outline: Ok("/home/ada/app\n  folders: src (3)".into()) },
-                    Outlined { path: "/srv/data".into(), outline: Err("permission denied".into()) },
+                    Outlined {
+                        next_cursor: None,
+                        truncated: false,
+                        path: "/home/ada/app".into(),
+                        outline: Ok("/home/ada/app\n  folders: src (3)".into()),
+                    },
+                    Outlined {
+                        next_cursor: None,
+                        truncated: false,
+                        path: "/srv/data".into(),
+                        outline: Err("permission denied".into()),
+                    },
                 ],
             }),
             Err(Failure::new("/srv/data: permission denied")),

@@ -14,6 +14,9 @@ pub fn physical() -> io::Result<u64> {
     Ok(status.ullTotalPhys)
 }
 
+/// The memory this process may use: the machine's, or less where the
+/// control group it runs in (a container, a systemd unit's `MemoryMax`) caps
+/// it lower. What is sized from this then fits under that cap.
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub fn physical() -> io::Result<u64> {
     let pages = unsafe { libc::sysconf(libc::_SC_PHYS_PAGES) };
@@ -21,7 +24,51 @@ pub fn physical() -> io::Result<u64> {
     if pages < 0 || page < 0 {
         return Err(io::Error::last_os_error());
     }
-    (pages as u64).checked_mul(page as u64).ok_or_else(|| io::Error::other("physical memory overflow"))
+    let machine = (pages as u64).checked_mul(page as u64).ok_or_else(|| io::Error::other("physical memory overflow"))?;
+    #[cfg(target_os = "linux")]
+    if let Some(cap) = group_cap(&std::fs::read_to_string("/proc/self/cgroup").unwrap_or_default(), |path| {
+        std::fs::read_to_string(path).ok()
+    }) {
+        return Ok(machine.min(cap));
+    }
+    Ok(machine)
+}
+
+/// The tightest memory cap of the control group in `membership` (as
+/// `/proc/self/cgroup` lists it) and of each group above it: version 2's
+/// `memory.max`, else version 1's `memory.limit_in_bytes`; `None` when none
+/// caps it. `read` reads a file of the control-group file system.
+#[cfg(target_os = "linux")]
+fn group_cap(membership: &str, read: impl Fn(&std::path::Path) -> Option<String>) -> Option<u64> {
+    use std::path::Path;
+    let mut cap: Option<u64> = None;
+    let mut tighten = |value: Option<String>| {
+        if let Some(bytes) = value.and_then(|text| text.trim().parse::<u64>().ok()) {
+            cap = Some(cap.map_or(bytes, |cap| cap.min(bytes)));
+        }
+    };
+    for line in membership.lines() {
+        let mut fields = line.splitn(3, ':');
+        let (Some(_), Some(controllers), Some(path)) = (fields.next(), fields.next(), fields.next()) else { continue };
+        let (root, file) = match controllers {
+            "" => (Path::new("/sys/fs/cgroup").to_path_buf(), "memory.max"),
+            list if list.split(',').any(|controller| controller == "memory") => {
+                (Path::new("/sys/fs/cgroup/memory").to_path_buf(), "memory.limit_in_bytes")
+            }
+            _ => continue,
+        };
+        let mut group = Path::new(path.trim_start_matches('/'));
+        loop {
+            // "max" (version 2) does not parse and caps nothing; version 1
+            // says no cap with a value past any machine, left to `min`.
+            tighten(read(&root.join(group).join(file)));
+            match group.parent() {
+                Some(parent) if group != Path::new("") => group = parent,
+                _ => break,
+            }
+        }
+    }
+    cap
 }
 
 #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
@@ -165,4 +212,25 @@ pub fn limit(_: u64) -> io::Result<Limit> {
 #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 pub fn limit(_: u64) -> io::Result<Limit> {
     Err(io::Error::new(io::ErrorKind::Unsupported, "isolated image decoding is not implemented on this platform"))
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::group_cap;
+    use std::path::Path;
+
+    #[test]
+    fn a_group_and_its_parents_cap_memory() {
+        let files = |path: &Path| match path.to_str()? {
+            "/sys/fs/cgroup/system.slice/hub.service/memory.max" => Some("2147483648\n".into()),
+            "/sys/fs/cgroup/system.slice/memory.max" => Some("max\n".into()),
+            "/sys/fs/cgroup/memory.max" => None,
+            "/sys/fs/cgroup/memory/docker/abc/memory.limit_in_bytes" => Some("1073741824\n".into()),
+            "/sys/fs/cgroup/memory/docker/memory.limit_in_bytes" => Some("9223372036854771712\n".into()),
+            _ => None,
+        };
+        assert_eq!(group_cap("0::/system.slice/hub.service\n", files), Some(2 << 30));
+        assert_eq!(group_cap("0::/user.slice\n", files), None);
+        assert_eq!(group_cap("4:memory:/docker/abc\n3:cpu,cpuacct:/docker/abc\n", files), Some(1 << 30));
+    }
 }

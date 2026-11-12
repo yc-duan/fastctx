@@ -121,6 +121,10 @@ pub enum Welcome {
         /// Tells when a topic of its state changed (`Call::Topics`).
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         topics: bool,
+        /// Waits on another machine's topics for a page here
+        /// (`Call::RemoteTopics`).
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        remote_topics: bool,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         scratch_locations: bool,
         /// Follows a conversation's collaboration on a watch

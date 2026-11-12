@@ -37,6 +37,9 @@ const READY_WITHIN: Duration = Duration::from_secs(3);
 /// them all and only while one watches; none until it is worked out anew.
 pub(crate) struct Shown {
     told: tokio::sync::watch::Sender<Option<Arc<WorldNow>>>,
+    /// Whether what was told is the World as it is: nothing changed since it
+    /// was worked out. A caller asking for it once is answered with it then.
+    fresh: AtomicBool,
     started: AtomicBool,
     /// Rung when an interface starts watching.
     watched: tokio::sync::Notify,
@@ -46,6 +49,7 @@ impl Default for Shown {
     fn default() -> Self {
         Self {
             told: tokio::sync::watch::channel(None).0,
+            fresh: AtomicBool::new(false),
             started: AtomicBool::new(false),
             watched: tokio::sync::Notify::new(),
         }
@@ -93,6 +97,7 @@ async fn publish(node: Arc<Node>) {
             if told.receiver_count() == 0 {
                 told.send_replace(None);
             }
+            node.world_shown.fresh.store(false, Ordering::Release);
             stale = true;
             continue;
         }
@@ -121,6 +126,7 @@ async fn publish(node: Arc<Node>) {
                             *current = Some(Arc::new(world));
                             true
                         });
+                        node.world_shown.fresh.store(true, Ordering::Release);
                     }
                     Err(failure) => {
                         if failing.as_deref() != Some(failure.message.as_str()) {
@@ -151,11 +157,26 @@ async fn publish(node: Arc<Node>) {
                 stale = true;
             }
         }
+        // Something changed since it was told: it is worked out anew first.
+        if stale {
+            node.world_shown.fresh.store(false, Ordering::Release);
+        }
     }
 }
 
 pub(crate) async fn now(node: &Arc<Node>) -> Result<WorldNow, Failure> {
     now_known(node, &[]).await
+}
+
+/// The World as the interfaces watching it were last told, while nothing
+/// has changed since: one asking for it once takes that, worked out once
+/// for all, rather than reading every resident again.
+pub(crate) fn current(node: &Node) -> Option<Arc<WorldNow>> {
+    let shown = &node.world_shown;
+    if shown.told.receiver_count() == 0 || !shown.fresh.load(Ordering::Acquire) {
+        return None;
+    }
+    shown.told.borrow().clone()
 }
 
 pub(crate) async fn now_known(node: &Arc<Node>, known: &[String]) -> Result<WorldNow, Failure> {

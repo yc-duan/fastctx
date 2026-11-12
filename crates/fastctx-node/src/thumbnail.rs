@@ -12,8 +12,6 @@ use fastctx_types::ipc::Failure;
 use fastctx_types::remote::{RemoteCall, RemoteReply};
 use fastctx_types::thumbnail::{Thumbnail, ThumbnailRequest};
 
-static DECODING: std::sync::LazyLock<crate::ranked::Decoding> = std::sync::LazyLock::new(Default::default);
-
 /// How long one picture may take to decode.
 const DECODER: std::time::Duration = std::time::Duration::from_secs(60);
 
@@ -110,7 +108,6 @@ async fn here(
     mut request: ThumbnailRequest,
     attachment: Option<fastctx_types::attachments::AttachmentSource>,
 ) -> Result<Thumbnail, Failure> {
-    let _guard = DECODING.lock().await;
     let program = node.fastctx.clone();
     let node = node.clone();
     let cancelled = Cancel(Arc::new(AtomicBool::new(false)));
@@ -140,14 +137,6 @@ async fn here(
         }
         let (width, height) = dimensions(&mut file, &cancel)?;
         let budget = allowance(width, height, request.max, before.size)?;
-        // OS, resident host, node and decoder each receive one quarter of RAM.
-        // Requests decode one at a time, including callers on other machines.
-        let available = fastctx_platform::memory::physical().map_err(|error| error.to_string())? / 4;
-        if budget > available {
-            return Err(format!(
-                "image decoding requires a {budget}-byte allowance; this machine can give {available}"
-            ));
-        }
         Ok::<_, String>((path, before, budget))
     })
     .await
@@ -164,6 +153,15 @@ async fn here(
     } else {
         None
     };
+    let kept = match &content {
+        Some(content) => Some(crate::thumbnail_cache::of_content(content, max)),
+        None => crate::thumbnail_cache::of_file(&path, &before, max),
+    };
+    if let Some(thumbnail) = kept.as_deref().and_then(crate::thumbnail_cache::get) {
+        return Ok(thumbnail);
+    }
+    // Only the decoding itself waits for room (`crate::thumbnail_room`).
+    let _room = crate::thumbnail_room::take(budget).await?;
     let args =
         ["thumbnail-worker".into(), path.as_os_str().to_owned(), max.to_string().into(), budget.to_string().into()];
     let borrowed: Vec<_> = args.iter().map(|arg| arg.as_os_str()).collect();
@@ -212,6 +210,9 @@ async fn here(
     let mut thumbnail: Thumbnail =
         serde_json::from_slice(&output).map_err(|error| Failure::new(format!("invalid thumbnail result: {error}")))?;
     thumbnail.content = content;
+    if let Some(key) = kept {
+        crate::thumbnail_cache::put(key, &thumbnail);
+    }
     Ok(thumbnail)
 }
 

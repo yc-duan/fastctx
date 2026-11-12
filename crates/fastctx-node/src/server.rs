@@ -74,6 +74,7 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
         timeline_reads: true,
         watch_live: true,
         topics: true,
+        remote_topics: true,
         scratch_locations: true,
         collaboration_watch: true,
         timer_pages: true,
@@ -1506,14 +1507,17 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             let acting = crate::around::acting_of(node, &caller::of(node, peer)?);
             crate::file_search::call(node, &acting, machine, request).await.map(Reply::FilesFound)
         }
-        Call::Folders { machine, path } => {
+        Call::Folders { machine, path, cursor } => {
             users_voice(node, peer)?;
             let acting = crate::around::acting_of(node, &caller::of(node, peer)?);
-            crate::focus::folders(node, &acting, machine, path).await.map(Reply::Folders)
+            crate::focus::folders(node, &acting, machine, path, cursor).await.map(Reply::Folders)
         }
-        Call::DoctorCalls => {
+        Call::DoctorCalls { after } => {
             users_voice(node, peer)?;
-            Ok(Reply::DoctorCalls { calls: crate::intake::snapshot() })
+            let snapshot = fastctx_platform::task::spawn_blocking(move || crate::intake::snapshot_bounded(after))
+                .await
+                .map_err(|error| Failure::new(error.to_string()))?;
+            Ok(Reply::DoctorCalls { calls: snapshot.calls, partial: snapshot.partial, next: snapshot.next })
         }
         Call::DoctorReadings => {
             users_voice(node, peer)?;
@@ -1720,6 +1724,11 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             users_voice(node, peer)?;
             request.validate().map_err(Failure::not_run)?;
             Ok(Reply::Topics(node.topics.told(&request, crate::topics::WAITS).await))
+        }
+        Call::RemoteTopics { machine, request } => {
+            users_voice(node, peer)?;
+            let acting = crate::around::acting_of(node, &caller::of(node, peer)?);
+            crate::remote_topics::wait(node, &acting, machine, request).await.map(Reply::RemoteTopics)
         }
         Call::WatchMemory { .. } => Err(Failure::new("a memory watch is answered as it changes")),
         Call::Memory(_) => Err(Failure::not_run("project memory was replaced by history; update the app")),
@@ -2040,6 +2049,13 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
         Call::WatchWorld { .. } => Err(Failure::new("a World watch is answered as it goes, not at once")),
         Call::WorldNow { known } => {
             users_voice(node, peer)?;
+            // As the interfaces watching it were told it, while nothing has
+            // changed since; otherwise worked out now.
+            if known.is_empty()
+                && let Some(world) = crate::shown::current(node)
+            {
+                return Ok(Reply::WorldNow(Box::new((*world).clone())));
+            }
             crate::shown::now_known(node, &known).await.map(|world| Reply::WorldNow(Box::new(world)))
         }
         Call::Reopened { .. } => Err(Failure::new("a way opening is waited for on a connection of its own")),

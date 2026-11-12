@@ -2,7 +2,7 @@
 //! conversation with its parts. Sizes are the bytes of the files and of the
 //! directory entries themselves, links not followed: what `du -sb` counts.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -58,28 +58,35 @@ pub(super) fn measure(node: &Node) -> io::Result<Space> {
     let mut kinds = Kinds::default();
     let root = &node.root;
     let canonical_root = fastctx_platform::disk::canonicalize(root)?;
-    let mut owned = Vec::new();
+    // The directories a conversation owns: a file is its when one of the
+    // file's ancestors is among them, looked up rather than searched.
+    let mut owned = HashSet::new();
     for one in measured.values() {
         for path in &one.places {
-            owned.push(path.clone());
+            owned.insert(path.clone());
         }
         for path in &one.host_files {
-            if fastctx_platform::disk::canonicalize(path)?.starts_with(&canonical_root) {
-                owned.push(path.clone());
-            } else {
-                kinds.host_records += tally(path)?.bytes;
+            match fastctx_platform::disk::canonicalize(path) {
+                Ok(canonical) if canonical.starts_with(&canonical_root) => {
+                    owned.insert(path.clone());
+                }
+                Ok(_) => kinds.host_records += tally(path)?.bytes,
+                // Gone or refused since it was listed: nothing of it is
+                // counted.
+                Err(_) => {}
             }
         }
     }
+    let owner = |path: &Path| path.ancestors().find(|ancestor| owned.contains(*ancestor)).map(Path::to_path_buf);
     let programs =
         [root.join("bin"), root.join("renewal"), world.path().join("bin"), world.path().join("claude-plugins")];
     let cache = root.join("cache");
     let viewed = cache.join("viewed");
     let mut root_bytes = 0;
-    fastctx_platform::disk_usage::visit(root, |path, _, bytes| {
+    let unread = fastctx_platform::disk_usage::visit(root, |path, _, bytes| {
         root_bytes += bytes;
-        if let Some(directory) = owned.iter().find(|directory| path.starts_with(directory)) {
-            if output_part(path.strip_prefix(directory).expect("prefix")) {
+        if let Some(directory) = owner(path) {
+            if output_part(path.strip_prefix(&directory).expect("prefix")) {
                 kinds.command_output += bytes;
             } else {
                 kinds.conversations += bytes;
@@ -120,6 +127,8 @@ pub(super) fn measure(node: &Node) -> io::Result<Space> {
         output_days: 30,
         output_retention: Some("unlimited".into()),
         claude_logins: claude_logins(&measured)?,
+        unread: (unread.entries > 0)
+            .then_some(fastctx_types::data::Unread { entries: unread.entries, first: unread.first }),
     })
 }
 

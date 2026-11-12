@@ -65,6 +65,19 @@ pub struct Space {
     /// How long each Claude Code login here keeps its own session records.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub claude_logins: Vec<ClaudeKeeping>,
+    /// Entries under the root that could not be read and are not counted
+    /// (a file another program holds, a directory refused), and the first
+    /// of them with why.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unread: Option<Unread>,
+}
+
+/// What measuring skipped (`Space::unread`).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Unread {
+    pub entries: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first: Option<String>,
 }
 
 /// What the World keeps here, by kind, in bytes. All but `host_records` is in

@@ -1,5 +1,8 @@
 //! Call snapshots contain identities and timing, never request contents.
 
+mod limited;
+pub(crate) use limited::snapshot_bounded;
+
 use super::*;
 use fastctx_types::stats::CallWork;
 
@@ -16,46 +19,44 @@ fn rows(state: &State, waiting: &HashMap<tokio::task::Id, String>) -> Vec<CallWo
 }
 
 fn rows_at(state: &State, waiting: &HashMap<tokio::task::Id, String>, now: tokio::time::Instant) -> Vec<CallWork> {
-    let mut rows: Vec<_> = state
-        .calls
-        .iter()
-        .map(|(id, entry)| {
-            let seconds = now.saturating_duration_since(entry.request.received).as_secs();
-            CallWork {
-                id: *id,
-                account: entry.request.account.to_string(),
-                machine: entry.request.machine.to_string(),
-                conversation: entry.request.conversation.clone(),
-                kind: entry.request.kind.clone(),
-                class: Some(entry.request.class),
-                pool: format!("{:?}", entry.request.pool).to_lowercase(),
-                phase: match entry.phase {
-                    Phase::Queued => "queued",
-                    Phase::Running => "running",
-                    Phase::Settling => "settling",
-                    Phase::Staying => "staying",
-                }
-                .into(),
-                seconds,
-                within: entry.request.within.map(|d| d.as_secs()),
-                overdue: entry
-                    .request
-                    .within
-                    .is_some_and(|within| now.saturating_duration_since(entry.request.received) > within),
-                waiting: entry.task.and_then(|task| waiting.get(&task).cloned()).unwrap_or_else(|| {
-                    match entry.phase {
-                        Phase::Queued => "waiting for admission",
-                        Phase::Running => "answering",
-                        Phase::Settling => "finishing after the caller left",
-                        Phase::Staying => "staying for work it submitted",
-                    }
-                    .into()
-                }),
-            }
-        })
-        .collect();
+    let mut rows: Vec<_> = state.calls.iter().map(|(id, entry)| row(*id, entry, waiting, now)).collect();
     rows.sort_by_key(|row| row.id);
     rows
+}
+
+fn row(id: u64, entry: &Entry, waiting: &HashMap<tokio::task::Id, String>, now: tokio::time::Instant) -> CallWork {
+    let seconds = now.saturating_duration_since(entry.request.received).as_secs();
+    CallWork {
+        id,
+        account: entry.request.account.to_string(),
+        machine: entry.request.machine.to_string(),
+        conversation: entry.request.conversation.clone(),
+        kind: entry.request.kind.clone(),
+        class: Some(entry.request.class),
+        pool: format!("{:?}", entry.request.pool).to_lowercase(),
+        phase: match entry.phase {
+            Phase::Queued => "queued",
+            Phase::Running => "running",
+            Phase::Settling => "settling",
+            Phase::Staying => "staying",
+        }
+        .into(),
+        seconds,
+        within: entry.request.within.map(|d| d.as_secs()),
+        overdue: entry
+            .request
+            .within
+            .is_some_and(|within| now.saturating_duration_since(entry.request.received) > within),
+        waiting: entry.task.and_then(|task| waiting.get(&task).cloned()).unwrap_or_else(|| {
+            match entry.phase {
+                Phase::Queued => "waiting for admission",
+                Phase::Running => "answering",
+                Phase::Settling => "finishing after the caller left",
+                Phase::Staying => "staying for work it submitted",
+            }
+            .into()
+        }),
+    }
 }
 
 fn try_snapshot() -> Option<Vec<CallWork>> {

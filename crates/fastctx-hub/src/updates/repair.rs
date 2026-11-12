@@ -9,6 +9,11 @@ use fastctx_types::update::{
 use fastctx_types::{AccountName, MachineName};
 use std::sync::Arc;
 
+/// The most machines one request arranges repairs for: past them each is
+/// answered as not arranged, to ask again, so one request does not hold the
+/// hub's writer for a whole network of machines.
+const MACHINES_AT_ONCE: usize = 4096;
+
 pub(super) async fn request(
     hub: &Arc<Hub>,
     asker: &crate::origin::Origin,
@@ -50,8 +55,17 @@ pub(super) async fn request(
     }
     let mut manifests = std::collections::BTreeMap::new();
     let mut pending = Vec::new();
-    let mut results = Vec::with_capacity(machines.len());
-    for machine in machines {
+    let mut results = Vec::with_capacity(machines.len().min(MACHINES_AT_ONCE));
+    for (at, machine) in machines.into_iter().enumerate() {
+        if at >= MACHINES_AT_ONCE {
+            results.push(Scheduled {
+                machine,
+                done: false,
+                reason: Some(ActionReason::Other),
+                why: Some(format!("one request arranges {MACHINES_AT_ONCE} machines at most; ask again for this one")),
+            });
+            continue;
+        }
         let result = async {
             let row = rows.get(&machine).copied().ok_or("this account cannot manage that machine")?;
             if !cancel && !row.actions.repair.as_ref().is_some_and(|permission| permission.allowed) {

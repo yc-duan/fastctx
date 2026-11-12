@@ -22,6 +22,8 @@ pub(crate) fn seed(hub: &Hub) {
                 output: "probe.log".into(),
                 stderr: None,
                 account: None,
+                exited: None,
+                remaining: None,
             },
             accounts: member.logins.iter().cloned().collect(),
         };

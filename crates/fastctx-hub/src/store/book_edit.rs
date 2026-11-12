@@ -13,6 +13,9 @@ pub(crate) enum BookEdit {
     Groups(Vec<usize>),
     /// Token rows may be inserted, removed or reordered.
     Tokens,
+    /// A relation changed: only these lists may have, each diffed whole;
+    /// the derived index is rebuilt as for `Full`.
+    Relations(&'static [&'static str]),
 }
 
 impl BookEdit {
@@ -22,6 +25,7 @@ impl BookEdit {
             Self::Account(at) if kind == "accounts" => (true, Some(std::slice::from_ref(at))),
             Self::Groups(positions) if kind == "members" => (true, Some(positions)),
             Self::Tokens if kind == "tokens" => (true, None),
+            Self::Relations(kinds) if kinds.contains(&kind) => (true, None),
             _ => (false, None),
         }
     }

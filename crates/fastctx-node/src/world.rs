@@ -644,6 +644,7 @@ pub fn facts(node: &Node) -> MachineFacts {
         collaboration_tree: true,
         collaboration_watch: true,
         timeline_reads: true,
+        topics: true,
         watch_live: true,
         shell: shell(),
         form: Some(form()),
@@ -1040,12 +1041,12 @@ impl fastctx_net::link::Node for Handler {
                     | RemoteCall::AgentCalls { .. }) => {
                         crate::logins::remote::answer(&node, &link.view(), &asker, call).await
                     }
-                    RemoteCall::Folders { path } => {
-                        crate::focus::folders_here(node.machine(), path).await.map(RemoteReply::Folders)
+                    RemoteCall::Folders { path, cursor } => {
+                        crate::focus::folders_here(node.machine(), path, cursor).await.map(RemoteReply::Folders)
                     }
-                    RemoteCall::Outline { folders, within_ms } => {
+                    RemoteCall::Outline { folders, within_ms, cursors } => {
                         let within = std::time::Duration::from_millis(within_ms);
-                        Ok(RemoteReply::Outlined { outlines: crate::focus::outline_here(folders, within).await })
+                        Ok(RemoteReply::Outlined { outlines: crate::focus::outline_page(folders, within, cursors).await? })
                     }
                     RemoteCall::FindFiles { request } => {
                         if let fastctx_types::file_search::FileSearchRequest::Open { scope } = request {
@@ -1323,6 +1324,10 @@ impl fastctx_net::link::Node for Handler {
                     RemoteCall::MemoryRoom { bytes } => {
                         crate::memory_room::answer(&node, bytes).map(|bytes| RemoteReply::MemoryRoom { bytes })
                     }
+                    RemoteCall::Topics { request } => match request.validate() {
+                        Ok(()) => Ok(RemoteReply::Topics(node.topics.told(&request, crate::topics::WAITS).await)),
+                        Err(reason) => Err(Failure::not_run(reason)),
+                    },
                     RemoteCall::Interfaces => {
                         crate::hub_arrival::interfaces().map(|addresses| RemoteReply::Interfaces { addresses })
                     }

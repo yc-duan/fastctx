@@ -47,7 +47,8 @@ async fn collect(node: &Arc<Node>, maintenance: bool) {
         let retained = if maintenance {
             let obligations = crate::obligations::collect(&collecting);
             let retained = collect_scratch(&collecting);
-            obligations.and(retained)
+            let guests = collect_guest_scratch(&collecting);
+            obligations.and(retained).and(guests)
         } else {
             Ok(())
         };
@@ -240,6 +241,92 @@ fn collect_scratch(node: &Arc<Node>) -> io::Result<()> {
         }
     }
     Ok(())
+}
+
+/// How long a guest room's scratch stays after the last command its guest
+/// ran here, with none still running. A guest room is where a conversation
+/// of another machine, a colleague most often, worked here; its scratch is
+/// temporary (`sync-data-classes`: scratch is not synced), and a colleague's
+/// work is handed over long before this.
+const GUEST_SCRATCH_KEPT: jiff::SignedDuration = jiff::SignedDuration::from_hours(14 * 24);
+
+/// Empties the scratch of guest rooms whose guest has run nothing here for
+/// `GUEST_SCRATCH_KEPT`. The room's records stay; the data page still lists
+/// it and deletes it whole when asked (`crate::data`).
+fn collect_guest_scratch(node: &Arc<Node>) -> io::Result<()> {
+    let now = jiff::Timestamp::now();
+    for directory in entries(&node.world.conversations())? {
+        let Some(name) = directory.file_name().and_then(|name| name.to_str()) else { continue };
+        if !matches!(
+            fastctx_types::layout::Kind::of(name),
+            Some(fastctx_types::layout::Kind::Guest(_) | fastctx_types::layout::Kind::Visiting { .. })
+        ) {
+            continue;
+        }
+        match empty_guest_scratch(node, &directory, now) {
+            Ok(false) => {}
+            Ok(true) => node.log.line(format_args!(
+                "emptied the scratch of guest room {name}: its guest ran nothing here for {} days",
+                GUEST_SCRATCH_KEPT.as_hours() / 24
+            )),
+            Err(error) => node.log.line(format_args!("emptying the scratch of guest room {name}: {error}")),
+        }
+    }
+    Ok(())
+}
+
+/// Where an emptied scratch waits to be deleted, inside its room: moved
+/// there at once, so a command the guest starts meanwhile gets a new one.
+const EMPTIED: &str = "scratch.emptied";
+
+fn empty_guest_scratch(node: &Arc<Node>, directory: &Path, now: jiff::Timestamp) -> io::Result<bool> {
+    let emptied = directory.join(EMPTIED);
+    if fs::exists(&emptied)? {
+        // Left by a pass that stopped before deleting it.
+        delete_owned(&emptied)?;
+    }
+    let scratch = directory.join("scratch");
+    if !fs::is_dir(&scratch) || fastctx_platform::owned_directory::is_link(&fs::symlink_metadata(&scratch)?) {
+        return Ok(false);
+    }
+    {
+        // Claimed whole, no command of the room starts until it is moved
+        // (`crate::jobs` holds its jobs and output directories to start
+        // one), and none may be running or still be held.
+        let Ok(_claimed) = node.job_files.collect(vec![directory.to_path_buf()]) else { return Ok(false) };
+        if crate::job_index::running(&node.world)?.iter().any(|(_, path)| path.starts_with(directory))
+            || now.duration_since(last_guest_activity(directory, now)?) < GUEST_SCRATCH_KEPT
+        {
+            return Ok(false);
+        }
+        fs::rename(&scratch, &emptied)?;
+    }
+    delete_owned(&emptied)?;
+    Ok(true)
+}
+
+fn delete_owned(path: &Path) -> io::Result<()> {
+    if fastctx_platform::owned_directory::is_link(&fs::symlink_metadata(path)?) {
+        return fs::remove_file(path);
+    }
+    fastctx_platform::owned_directory::delete(path)
+}
+
+/// The last thing a guest did in its room: the room changed, or a command
+/// it ran started or ended. A record that cannot be read counts as now.
+fn last_guest_activity(directory: &Path, now: jiff::Timestamp) -> io::Result<jiff::Timestamp> {
+    let mut last = jiff::Timestamp::try_from(fs::metadata(directory)?.modified()?).map_err(io::Error::other)?;
+    for path in entries(&directory.join("jobs"))? {
+        if path.extension().is_none_or(|extension| extension != "json") {
+            continue;
+        }
+        match record::read(&path) {
+            Ok(job) => last = last.max(job.end.as_ref().map_or(job.started_at, |end| end.at.max(job.started_at))),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(_) => return Ok(now),
+        }
+    }
+    Ok(last)
 }
 
 /// Temporary paths remain usable for as long as their conversation does.

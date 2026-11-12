@@ -22,15 +22,17 @@ pub(crate) struct InFlight {
     asked: HashMap<(MachineName, u64, u64), u64>,
 }
 
-/// The most calls one member, and one account across its machines, may
-/// have on their way through the hub at once. Each holds a few hundred
-/// bytes here, so these follow the hub's memory and only stop a member gone
-/// wrong; the others are forwarded as before.
-pub(super) fn shares() -> (usize, usize) {
-    static SHARES: LazyLock<(usize, usize)> = LazyLock::new(|| {
-        let member =
-            (fastctx_platform::memory::physical().unwrap_or(1 << 30) / (128 << 10)).clamp(4096, 65_536) as usize;
-        (member, member * 4)
+/// The most calls one member, one account across its machines, and every
+/// member together may have on their way through the hub at once. Each
+/// holds a few hundred bytes here, so these follow the hub's memory: the
+/// first two only stop a member gone wrong, the last keeps many members
+/// together from taking more than about an eighth of the memory.
+pub(super) fn shares() -> (usize, usize, usize) {
+    static SHARES: LazyLock<(usize, usize, usize)> = LazyLock::new(|| {
+        let physical = fastctx_platform::memory::physical().unwrap_or(1 << 30);
+        let member = (physical / (128 << 10)).clamp(4096, 65_536) as usize;
+        let every = (physical / (4 << 10)).clamp(32_768, 1 << 20) as usize;
+        (member, member * 4, every.max(member * 4))
     });
     *SHARES
 }
@@ -80,6 +82,10 @@ impl InFlight {
         if self.asked.get(&asked) == Some(&key) {
             self.asked.remove(&asked);
         }
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.calls.len()
     }
 
     pub(crate) fn get(&self, key: &u64) -> Option<&Pending> {
