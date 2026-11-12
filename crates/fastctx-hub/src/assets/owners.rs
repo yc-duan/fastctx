@@ -1,9 +1,10 @@
 //! The hub's owner libraries (design §6.2): one per account, one per body
 //! that several accounts own together, and one for the hub itself, each a
 //! directory under `assets/`. At most 64 are open at once, the least
-//! recently used closed first; one left idle ten minutes is closed. A
-//! library is opened under its own slot, so a slow opening holds up no
-//! other library.
+//! recently used that nobody holds closed first; one left idle ten minutes
+//! is closed. A library is opened under its own slot, so a slow opening
+//! holds up no other library, and is checked against the hub's record of
+//! it as it opens.
 
 use fastctx_content::v2::Library;
 use std::collections::HashMap;
@@ -20,7 +21,9 @@ pub(crate) const IDLE: Duration = Duration::from_secs(600);
 /// Whose library.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) enum Owner {
-    Account(String),
+    /// An account by its name and when it was opened: one deleted and made
+    /// again under the same name owns another library.
+    Account(String, i64),
     Body(String),
     Hub,
 }
@@ -38,7 +41,7 @@ impl Owner {
     /// How the witness and the checkpoints name it.
     pub(crate) fn key(&self) -> String {
         match self {
-            Self::Account(name) => format!("account:{name}"),
+            Self::Account(name, opened) => format!("account:{name}:{opened}"),
             Self::Body(id) => format!("body:{id}"),
             Self::Hub => "hub".into(),
         }
@@ -46,7 +49,10 @@ impl Owner {
 
     pub(crate) fn from_key(key: &str) -> Option<Self> {
         match key.split_once(':') {
-            Some(("account", name)) => Some(Self::Account(name.into())),
+            Some(("account", rest)) => {
+                let (name, opened) = rest.rsplit_once(':')?;
+                Some(Self::Account(name.into(), opened.parse().ok()?))
+            }
             Some(("body", id)) => Some(Self::Body(id.into())),
             None if key == "hub" => Some(Self::Hub),
             _ => None,
@@ -55,7 +61,7 @@ impl Owner {
 
     fn directory(&self) -> PathBuf {
         match self {
-            Self::Account(name) => PathBuf::from("account").join(directory_name(name)),
+            Self::Account(name, opened) => PathBuf::from("account").join(directory_name(&format!("{name}.{opened}"))),
             Self::Body(id) => PathBuf::from("body").join(directory_name(id)),
             Self::Hub => PathBuf::from("hub"),
         }
@@ -83,49 +89,24 @@ impl Owners {
         Self { root, incarnation, slots: Mutex::new(HashMap::new()) }
     }
 
-    /// Why one of the libraries here is not this hub's, if one is: it bears
-    /// another hub's incarnation. Call on a thread that may block.
-    pub(crate) fn foreign(&self) -> io::Result<Option<String>> {
-        for kind in ["account", "body", "hub"] {
-            let base = self.root.join(kind);
-            let directories: Vec<PathBuf> = if kind == "hub" {
-                vec![base]
-            } else {
-                match fastctx_platform::disk::read_dir(&base) {
-                    Ok(entries) => entries.filter_map(|entry| entry.ok().map(|entry| entry.path())).collect(),
-                    Err(error) if error.kind() == io::ErrorKind::NotFound => Vec::new(),
-                    Err(error) => return Err(error),
-                }
-            };
-            for directory in directories {
-                if !fastctx_platform::disk::exists(directory.join(fastctx_content::v2::FILE))? {
-                    continue;
-                }
-                let (library, _) = Library::open_hub(&directory).map_err(|error| io::Error::other(error.to_string()))?;
-                let stamped = library.stamped(STAMP).map_err(|error| io::Error::other(error.to_string()))?;
-                if stamped.is_some_and(|stamped| stamped != self.incarnation) {
-                    return Ok(Some(format!("the library in {} is another hub's", directory.display())));
-                }
-            }
-        }
-        Ok(None)
-    }
-
-    /// Whether `owner` has a library here.
-    pub(crate) fn exists(&self, owner: &Owner) -> io::Result<bool> {
-        fastctx_platform::disk::exists(self.root.join(owner.directory()).join(fastctx_content::v2::FILE))
-    }
-
-    /// The library of `owner`, opened or made at need. Call on a thread
-    /// that may block.
-    pub(crate) fn library(&self, owner: &Owner) -> io::Result<Library> {
+    /// The library of `owner`, opened or made at need, or why it may not be
+    /// served: it bears another hub's incarnation, or `check` finds it older
+    /// than the hub's record of it. A library is checked once, as it opens.
+    /// Call on a thread that may block.
+    pub(crate) fn library(
+        &self,
+        owner: &Owner,
+        check: impl FnOnce(&Library) -> io::Result<Option<String>>,
+    ) -> io::Result<Result<Library, String>> {
         let slot = {
             let mut slots = self.slots.lock().expect("owner libraries");
             if !slots.contains_key(owner) && slots.len() >= OPEN_AT_ONCE {
-                // The least recently used goes; whoever still holds its
-                // library keeps it until they let go.
+                // The least recently used that nobody holds goes: one still
+                // held, or still opening, stays, lest the same directory be
+                // opened twice. Past the bound for a while when all are held.
                 let oldest = slots
                     .iter()
+                    .filter(|(_, slot)| idle(slot))
                     .min_by_key(|(_, slot)| *slot.used.lock().expect("owner library use"))
                     .map(|(owner, _)| owner.clone());
                 if let Some(oldest) = oldest {
@@ -140,25 +121,39 @@ impl Owners {
         *slot.used.lock().expect("owner library use") = Instant::now();
         let mut library = slot.library.lock().expect("owner library");
         if let Some(library) = library.as_ref() {
-            return Ok(library.clone());
+            return Ok(Ok(library.clone()));
         }
         let directory = self.root.join(owner.directory());
         fastctx_platform::ensure_private_dir(&directory)?;
         let (opened, _) = Library::open_hub(&directory).map_err(|error| io::Error::other(error.to_string()))?;
         let stamped = opened.stamp(STAMP, self.incarnation.clone()).map_err(|error| io::Error::other(error.to_string()))?;
         if stamped != self.incarnation {
-            return Err(io::Error::other(format!("the library of {} is another hub's", owner.key())));
+            return Ok(Err(format!("the library of {} is another hub's", owner.key())));
+        }
+        if let Some(why) = check(&opened)? {
+            return Ok(Err(why));
         }
         *library = Some(opened.clone());
-        Ok(opened)
+        Ok(Ok(opened))
     }
 
-    /// Closes the libraries left idle past `IDLE`.
+    /// Closes the libraries left idle past `IDLE` that nobody holds.
     pub(crate) fn sweep(&self) {
         let now = Instant::now();
         self.slots
             .lock()
             .expect("owner libraries")
-            .retain(|_, slot| now.duration_since(*slot.used.lock().expect("owner library use")) < IDLE);
+            .retain(|_, slot| !idle(slot) || now.duration_since(*slot.used.lock().expect("owner library use")) < IDLE);
+    }
+}
+
+/// Whether nobody holds this slot's library, is opening it, or is about to.
+fn idle(slot: &Arc<Slot>) -> bool {
+    if Arc::strong_count(slot) > 1 {
+        return false;
+    }
+    match slot.library.try_lock() {
+        Ok(library) => library.as_ref().is_none_or(|library| !library.shared()),
+        Err(_) => false,
     }
 }

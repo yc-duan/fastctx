@@ -77,10 +77,12 @@ impl Library {
     }
 
     /// Opens an owner library of a hub (§6.2): the same library with the
-    /// hub's own tables besides, each database caching 2 MiB of pages, as
-    /// up to 64 are open at once (R27).
+    /// hub's own tables besides, caching at most 2 MiB of pages across its
+    /// two databases' writers and readers, as up to 64 are open at once
+    /// (R27).
     pub fn open_hub(directory: &Path) -> Result<(Self, Started)> {
-        let shape = fastctx_storage::Shape { cache_bytes: Some(2 << 20), ..Default::default() };
+        let shape =
+            fastctx_storage::Shape { cache_bytes: Some(512 << 10), reader_cache_bytes: Some(32 << 10), ..Default::default() };
         Self::open_shaped(directory, format!("{}{}", schema::SCHEMA, schema::HUB_SCHEMA), shape)
     }
 
@@ -98,5 +100,10 @@ impl Library {
 
     pub(crate) fn database(&self) -> &Database {
         &self.0.database
+    }
+
+    /// Whether a clone of this library is held anywhere but by this one.
+    pub fn shared(&self) -> bool {
+        Arc::strong_count(&self.0) > 1
     }
 }

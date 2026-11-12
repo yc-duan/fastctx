@@ -125,11 +125,34 @@ pub struct StreamClass {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Descriptor {
     pub scope: String,
+    /// The hub that described it: a scope of one hub is no other's.
+    pub hub: String,
     pub owner: String,
     pub readers: Readers,
+    /// Who each account, machine and project the readers name was when the
+    /// scope was described (`account:NAME`, `machine:NAME`,
+    /// `project:TOWN`): one deleted and made again under the same name reads
+    /// nothing of it.
+    pub born: std::collections::BTreeMap<String, String>,
     pub classes: Vec<StreamClass>,
     pub revision: u64,
     pub seq: u64,
+}
+
+impl Readers {
+    /// Where the keys of scopes of these readers fall: whoever may begin
+    /// such a scope names it under this, so knowing another's key takes
+    /// nothing from it (§2.1).
+    pub fn key_prefix(&self) -> String {
+        match self {
+            Self::Conversation { born_on: Some(machine), .. } => format!("c/{machine}/"),
+            Self::Conversation { openers, born_on: None } => {
+                format!("c/-/{}/", openers.first().map(|opener| opener.as_str()).unwrap_or_default())
+            }
+            Self::Project { town } => format!("p/{town}/"),
+            Self::Account { account } => format!("a/{account}/"),
+        }
+    }
 }
 
 impl Descriptor {

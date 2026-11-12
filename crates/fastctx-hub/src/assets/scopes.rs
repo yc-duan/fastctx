@@ -13,7 +13,7 @@ use fastctx_storage::rusqlite::{OptionalExtension, params};
 use fastctx_types::assets::{Bytes, Descriptor, Fact, Holders, Readers, StreamClass};
 use fastctx_types::{AccountName, MachineName};
 use sha2::{Digest, Sha256};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// The scopes, in the hub's control database.
 pub(crate) const SCHEMA: &str = "
@@ -36,33 +36,89 @@ pub(crate) fn principal(directory: &Indexed<'_>, machine: &MachineName) -> BTree
     directory.acts_for(machine)
 }
 
-/// Whether `account` reads a scope of `readers` in the directory now.
-pub(crate) fn reads(directory: &Indexed<'_>, account: &AccountName, readers: &Readers) -> bool {
+/// Who the account, machine or project `key` names is now
+/// (`account:NAME`, `machine:NAME`, `project:TOWN`), as a descriptor's
+/// `born` keeps it.
+fn identity(directory: &Indexed<'_>, key: &str) -> Option<String> {
+    let opened = |name: &str| {
+        let name = AccountName::try_from(name.to_string()).ok()?;
+        directory.account(&name).map(|account| account.opened.as_millisecond().to_string())
+    };
+    match key.split_once(':')? {
+        ("account", name) => opened(name),
+        ("machine", name) => {
+            let name = MachineName::try_from(name.to_string()).ok()?;
+            let member = directory.member(&name)?;
+            Some(fastctx_net::record_ownership::seal(member).unwrap_or_else(|| member.key.to_string()))
+        }
+        ("project", town) => {
+            let project = directory.all.projects.iter().find(|project| project.town.to_string() == town)?;
+            Some(format!("{}:{}", project.owner, opened(project.owner.as_str())?))
+        }
+        _ => None,
+    }
+}
+
+/// Who each account, machine and project `readers` names is now: kept in
+/// the descriptor the hub signs.
+fn identities(directory: &Indexed<'_>, readers: &Readers) -> Result<BTreeMap<String, String>, String> {
+    let keys: Vec<String> = match readers {
+        Readers::Conversation { openers, born_on } => openers
+            .iter()
+            .map(|opener| format!("account:{opener}"))
+            .chain(born_on.iter().map(|machine| format!("machine:{machine}")))
+            .collect(),
+        Readers::Project { town } => vec![format!("project:{town}")],
+        Readers::Account { account } => vec![format!("account:{account}")],
+    };
+    keys.into_iter()
+        .map(|key| identity(directory, &key).map(|found| (key.clone(), found)).ok_or_else(|| format!("there is no {key}")))
+        .collect()
+}
+
+/// Whether `key` is now who it was when the scope was described.
+fn same(directory: &Indexed<'_>, born: &BTreeMap<String, String>, key: &str) -> bool {
+    born.get(key).is_some_and(|was| identity(directory, key).as_ref() == Some(was))
+}
+
+/// Whether `account` reads a scope of `readers`, described when `born` held,
+/// in the directory now: an account, machine or project made again under a
+/// name the readers name stands for nothing of it.
+pub(crate) fn reads(directory: &Indexed<'_>, account: &AccountName, readers: &Readers, born: &BTreeMap<String, String>) -> bool {
     match readers {
         Readers::Conversation { openers, born_on } => {
-            fastctx_net::record_ownership::allows(directory, account, openers, born_on.as_ref())
+            let openers: Vec<AccountName> =
+                openers.iter().filter(|opener| same(directory, born, &format!("account:{opener}"))).cloned().collect();
+            let born_on = born_on.as_ref().filter(|machine| same(directory, born, &format!("machine:{machine}")));
+            fastctx_net::record_ownership::allows(directory, account, &openers, born_on)
         }
-        Readers::Project { town } => directory.authorize(account, Action::Project(town)).is_ok(),
+        Readers::Project { town } => {
+            same(directory, born, &format!("project:{town}")) && directory.authorize(account, Action::Project(town)).is_ok()
+        }
         Readers::Account { account: only } => {
-            only == account && directory.account(account).is_some_and(|found| !found.locked)
+            only == account
+                && same(directory, born, &format!("account:{only}"))
+                && directory.account(account).is_some_and(|found| !found.locked)
         }
     }
 }
 
 /// Whether a request from `machine` reads the scope.
 pub(crate) fn readable(directory: &Indexed<'_>, machine: &MachineName, scope: &Scope) -> bool {
-    principal(directory, machine).iter().any(|account| reads(directory, account, &scope.descriptor.readers))
+    let descriptor = &scope.descriptor;
+    principal(directory, machine).iter().any(|account| reads(directory, account, &descriptor.readers, &descriptor.born))
 }
 
 /// Whether `machine` may hold `stream` of the scope (design §2.3): the
 /// stream's class names who holds it.
 pub(crate) fn holds(directory: &Indexed<'_>, machine: &MachineName, scope: &Scope, stream: &str) -> bool {
-    let Some(class) = scope.descriptor.class(stream) else { return false };
+    let descriptor = &scope.descriptor;
+    let Some(class) = descriptor.class(stream) else { return false };
     match class.holders {
         Holders::Readers => readable(directory, machine, scope),
-        Holders::Logged => directory
-            .member(machine)
-            .is_some_and(|member| member.logins.iter().any(|account| reads(directory, account, &scope.descriptor.readers))),
+        Holders::Logged => directory.member(machine).is_some_and(|member| {
+            member.logins.iter().any(|account| reads(directory, account, &descriptor.readers, &descriptor.born))
+        }),
     }
 }
 
@@ -86,7 +142,7 @@ pub(crate) fn scope(assets: &Assets, key: &str) -> Result<Option<Scope>, String>
 /// The owner library of `scope`, with the scope installed in it: a scope
 /// described just before a stop is installed at its first use.
 pub(crate) fn library(assets: &Assets, scope: &Scope) -> Result<Library, String> {
-    let library = assets.owners.library(&scope.owner).map_err(|error| error.to_string())?;
+    let library = assets.library(&scope.owner).map_err(|error| error.to_string())?;
     let key = &scope.descriptor.scope;
     if library.holding(key).map_err(|error| error.to_string())?.is_none() {
         library.install(key, scope.fact.fact.0.clone(), scope.descriptor.seq as i64).map_err(|error| error.to_string())?;
@@ -95,21 +151,22 @@ pub(crate) fn library(assets: &Assets, scope: &Scope) -> Result<Library, String>
 }
 
 /// Who owns a scope of `readers` (design §6.2): a conversation its first
-/// opener, a project its owner, an account itself.
+/// opener, a project its owner, an account itself; an account as it is
+/// now, since it was opened.
 fn owner_of(directory: &Indexed<'_>, readers: &Readers) -> Result<Owner, String> {
-    match readers {
-        Readers::Conversation { openers, .. } => {
-            openers.first().map(|account| Owner::Account(account.to_string())).ok_or("a conversation has an opener".into())
-        }
+    let account = match readers {
+        Readers::Conversation { openers, .. } => openers.first().cloned().ok_or("a conversation has an opener")?,
         Readers::Project { town } => directory
             .all
             .projects
             .iter()
             .find(|project| &project.town == town)
-            .map(|project| Owner::Account(project.owner.to_string()))
-            .ok_or_else(|| format!("there is no project {town}")),
-        Readers::Account { account } => Ok(Owner::Account(account.to_string())),
-    }
+            .map(|project| project.owner.clone())
+            .ok_or_else(|| format!("there is no project {town}"))?,
+        Readers::Account { account } => account.clone(),
+    };
+    let opened = directory.account(&account).ok_or_else(|| format!("there is no account {account}"))?.opened;
+    Ok(Owner::Account(account.to_string(), opened.as_millisecond()))
 }
 
 /// Describes the scope `key` that a device of `machine` begins (design
@@ -125,29 +182,45 @@ pub(crate) fn describe(
     readers: Readers,
     classes: Vec<StreamClass>,
 ) -> Result<Fact, String> {
-    if key.is_empty() || key.len() > 128 {
-        return Err("a scope's key is 1 to 128 bytes".into());
+    if key.len() > 128 {
+        return Err("a scope's key is at most 128 bytes".into());
+    }
+    let prefix = readers.key_prefix();
+    if !key.starts_with(&prefix) || key.len() == prefix.len() {
+        return Err(format!("a scope of those readers has its key under {prefix}"));
+    }
+    if let Readers::Conversation { born_on: Some(born_on), .. } = &readers
+        && born_on != machine
+    {
+        return Err("a conversation born on a machine is described by that machine".into());
     }
     if let Some(kept) = scope(assets, key)? {
+        // Read through the gate like any other answer.
+        if !readable(directory, machine, &kept) {
+            return Err(format!("none of this machine's accounts reads the scope {key}"));
+        }
         if kept.descriptor.readers == readers && kept.descriptor.classes == classes {
             return Ok(kept.fact);
         }
         return Err(format!("the scope {key} is described otherwise"));
     }
     let principal = principal(directory, machine);
+    let born = identities(directory, &readers)?;
     if let Readers::Conversation { openers, .. } = &readers
         && !openers.iter().all(|opener| principal.contains(opener))
     {
         return Err("a conversation's openers are accounts this machine acts for".into());
     }
-    if !principal.iter().any(|account| reads(directory, account, &readers)) {
+    if !principal.iter().any(|account| reads(directory, account, &readers, &born)) {
         return Err("none of this machine's accounts reads that scope".into());
     }
     let owner = owner_of(directory, &readers)?;
     let descriptor = Descriptor {
         scope: key.to_string(),
+        hub: assets.id.clone(),
         owner: owner.key(),
         readers,
+        born,
         classes,
         revision: 1,
         seq: assets.witness.current().0,
@@ -164,7 +237,7 @@ pub(crate) fn describe(
             chain::append(c, "scope", &digest)
         })
         .map_err(|error| error.to_string())?;
-    assets.witness.advanced(seq, &head, Vec::new()).map_err(|error| error.to_string())?;
+    assets.witness.advanced(seq, &head).map_err(|error| error.to_string())?;
     let kept = Scope { descriptor, fact: Fact { fact: Bytes(bytes), word: Bytes(word) }, owner };
     library(assets, &kept)?;
     Ok(kept.fact)

@@ -43,8 +43,10 @@ const DRAIN_AT_ONCE: usize = 16;
 
 /// Judges whether a record may change what it changes, against the item as
 /// the applied prefix has it (§11): the same rules its producer judged by.
+/// The frame's header names who acts: its scope, stream, epoch and the
+/// device that ordered it, whichever call brought the frame to its turn.
 pub trait Authorizer: Send + Sync {
-    fn authorize(&self, record: &KindRecord, before: Option<&Entry>) -> std::result::Result<(), String>;
+    fn authorize(&self, frame: &Header, record: &KindRecord, before: Option<&Entry>) -> std::result::Result<(), String>;
 }
 
 /// Signs the hub's word on a frame with its service key (§6.1); the signer
@@ -236,15 +238,16 @@ fn before(db: &Connection, stream: i64, holding: i64, item: &[u8]) -> fastctx_st
     }))
 }
 
-/// A record a revision floor of an earlier period hides from the index is
-/// kept as the state this period's prefix gives its item, for what is
-/// judged against it later.
+/// A record the index will not take because a later revision of an earlier
+/// period stands there — its floor, or its row not yet purged — is kept as
+/// the state this period's prefix gives its item, for what is judged
+/// against it later.
 fn hidden_by_floor(db: &Connection, at: Applying, revision: u64, record: &KindRecord) -> fastctx_storage::Result<()> {
-    let floor: Option<i64> = db
-        .prepare_cached("SELECT revision FROM items WHERE stream = ?1 AND item = ?2 AND state = ?3")?
-        .query_row(params![at.stream, record.record.item, super::items::FLOOR], |row| row.get(0))
+    let earlier: Option<i64> = db
+        .prepare_cached("SELECT revision FROM items WHERE stream = ?1 AND item = ?2 AND (holding != ?3 OR state = ?4)")?
+        .query_row(params![at.stream, record.record.item, at.holding, super::items::FLOOR], |row| row.get(0))
         .optional()?;
-    if floor.is_none_or(|floor| floor <= revision as i64) {
+    if earlier.is_none_or(|earlier| earlier <= revision as i64) {
         return Ok(());
     }
     let (state, body, objects) = match &record.record.state {
@@ -422,7 +425,7 @@ fn apply_frame(
             Some(prior) => prior,
             None => before(db, at.stream, holding, item)?,
         };
-        if let Err(why) = authorizer.authorize(record, prior.as_ref()) {
+        if let Err(why) = authorizer.authorize(header, record, prior.as_ref()) {
             return Ok(Err(why));
         }
         earlier.insert(item, after(record, header.first + offset as u64));

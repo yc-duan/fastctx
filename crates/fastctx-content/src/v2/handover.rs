@@ -170,9 +170,9 @@ pub(super) fn evidence(db: &Connection, at: &Prefix, header: &Header) -> fastctx
     if header.epoch < at.epoch {
         return Ok(Some("it came after its stream moved on to a later epoch"));
     }
-    if header.epoch == at.epoch
-        && let Some(next) = successor_of(db, at.stream, at.epoch)?
-    {
+    // The frame's own epoch, current or later, may have been cut already:
+    // a frame that came after its cutoff was signed answers to it too.
+    if let Some(next) = successor_of(db, at.stream, header.epoch)? {
         let end = header.first + u64::from(header.count);
         if end > next.start {
             return Ok(Some("it goes past where a handover cut its epoch"));
@@ -184,9 +184,11 @@ pub(super) fn evidence(db: &Connection, at: &Prefix, header: &Header) -> fastctx
     Ok(None)
 }
 
-fn holder(stream: i64, header: &Header) -> String {
+/// What holds evidence's objects: the frame in its holding period, so a
+/// later period that keeps the same frame keeps it under its own.
+fn holder(stream: i64, holding: i64, header: &Header) -> String {
     let digest: String = header.digest.iter().map(|byte| format!("{byte:02x}")).collect();
-    format!("{stream}:{}:{}:{digest}", header.epoch, header.first)
+    format!("{stream}:{holding}:{}:{}:{digest}", header.epoch, header.first)
 }
 
 /// Keeps a frame as evidence with its objects held; those in `shown` the
@@ -203,7 +205,7 @@ pub(super) fn keep_evidence(
     shown: &BTreeSet<[u8; 32]>,
 ) -> fastctx_storage::Result<()> {
     let (stream, holding) = at;
-    let key = holder(stream, header);
+    let key = holder(stream, holding, header);
     db.prepare_cached(
         "INSERT OR IGNORE INTO evidence (stream, epoch, first, digest, holding, holder, header, signature, body, why, at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
@@ -326,22 +328,25 @@ impl Library {
                 signature
             ])?;
             // The predecessor's parked frames past the cut are evidence now;
-            // their objects were shown when they were parked.
-            let parked: Vec<(Vec<u8>, Vec<u8>, Vec<u8>)> = {
-                let mut statement = db.prepare_cached(
-                    "SELECT header, signature, body FROM parked WHERE stream = ?1 AND epoch = ?2 AND holding = ?3 ORDER BY first",
-                )?;
-                let rows = statement.query_map(params![at.stream, last.epoch as i64, holding], |row| {
-                    Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-                })?;
+            // their objects were shown when they were parked. Their headers
+            // are read first, and only those cut brought in whole, one by one.
+            let parked: Vec<Vec<u8>> = {
+                let mut statement =
+                    db.prepare_cached("SELECT header FROM parked WHERE stream = ?1 AND epoch = ?2 AND holding = ?3 ORDER BY first")?;
+                let rows = statement.query_map(params![at.stream, last.epoch as i64, holding], |row| row.get(0))?;
                 rows.collect::<std::result::Result<_, _>>()?
             };
-            for (header_bytes, frame_signature, body) in parked {
+            for header_bytes in parked {
                 let header = Header::decode(&header_bytes).map_err(invalid)?;
                 let end = header.first + u64::from(header.count);
                 if end < cutoff.next || (end == cutoff.next && header.chain() == cutoff.head) {
                     continue;
                 }
+                let (frame_signature, body): (Vec<u8>, Vec<u8>) = db
+                    .prepare_cached("SELECT signature, body FROM parked WHERE stream = ?1 AND epoch = ?2 AND first = ?3 AND holding = ?4")?
+                    .query_row(params![at.stream, header.epoch as i64, header.first as i64, holding], |row| {
+                        Ok((row.get(0)?, row.get(1)?))
+                    })?;
                 let why = if end > cutoff.next {
                     "it goes past where a handover cut its epoch"
                 } else {

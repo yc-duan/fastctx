@@ -36,6 +36,8 @@ const OBJECT_ROUNDS: usize = 3;
 /// What a device proposes a scope it begins be described as.
 #[derive(serde::Serialize, serde::Deserialize)]
 pub(crate) struct Proposal {
+    /// The hub it is to be described by: one hub's scope goes to no other.
+    pub(crate) hub: String,
     pub(crate) readers: Readers,
     pub(crate) classes: Vec<StreamClass>,
 }
@@ -147,17 +149,32 @@ async fn pass(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>) -> Result<(), Str
     let library = &assets.library;
     let session = assets.session();
     let key = open(assets, hub, link, session).await?;
-    describe(assets, hub, link, &key).await?;
-    let scopes = blocking(library, |library| library.live_scopes()).await?;
-    for (scope, _, holding) in &scopes {
-        upload(assets, hub, link, &key, session, scope).await?;
-        pull(assets, hub, link, &key, scope, *holding).await?;
-        cursors(library, link, scope, *holding).await?;
+    let mut failed = describe(assets, hub, link, &key).await.err();
+    // This hub's scopes alone: another hub's go to no other.
+    let scopes: Vec<(String, i64)> = blocking(library, |library| library.live_scopes())
+        .await?
+        .into_iter()
+        .filter(|(_, descriptor, _)| {
+            serde_json::from_slice::<wire::Descriptor>(descriptor).is_ok_and(|descriptor| descriptor.hub == hub.as_str())
+        })
+        .map(|(scope, _, holding)| (scope, holding))
+        .collect();
+    // A scope that fails holds up none after it; the pass reports the first.
+    for (scope, holding) in &scopes {
+        let done = async {
+            upload(assets, hub, link, &key, session, scope).await?;
+            pull(assets, hub, link, &key, scope, *holding).await?;
+            cursors(assets, link, scope, *holding).await
+        }
+        .await;
+        if let Err(why) = done {
+            failed.get_or_insert(format!("{scope}: {why}"));
+        }
     }
     for failed in super::objects::fetch(assets, link).await {
         node.log.line(format_args!("assets with {hub}: {failed}; asked again later"));
     }
-    Ok(())
+    failed.map_or(Ok(()), Err)
 }
 
 /// Opens a session: what this machine saw of the hub's history goes first.
@@ -218,7 +235,10 @@ async fn describe(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKe
     let library = &assets.library;
     for (scope, proposal) in blocking(library, |library| library.provisionals()).await? {
         let Some(proposal) = proposal else { continue };
-        let Proposal { readers, classes } = serde_json::from_slice(&proposal).map_err(|error| error.to_string())?;
+        let Proposal { hub: meant, readers, classes } = serde_json::from_slice(&proposal).map_err(|error| error.to_string())?;
+        if meant != hub.as_str() {
+            continue;
+        }
         let Reply::Described { descriptor } = link.assets(Request::Describe { scope: scope.clone(), readers, classes }).await? else {
             return Err("the hub did not describe the scope".into());
         };
@@ -226,6 +246,9 @@ async fn describe(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKe
             return Err(format!("the descriptor of {scope} is not the hub's"));
         }
         let read: wire::Descriptor = serde_json::from_slice(&descriptor.fact.0).map_err(|error| error.to_string())?;
+        if read.scope != scope || read.hub != hub.as_str() {
+            return Err(format!("the hub described another scope than {scope}"));
+        }
         blocking(library, move |library| library.install(&scope, descriptor.fact.0, read.seq as i64)).await?;
     }
     Ok(())
@@ -235,6 +258,15 @@ async fn describe(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKe
 /// has.
 async fn upload(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKey, session: u64, scope: &str) -> Result<(), String> {
     let library = &assets.library;
+    // What a refusal took out goes again first, the hub asked for a new
+    // epoch where none was opened yet (a pass cut short after the refusal).
+    let scope_text = scope.to_string();
+    for (stream, cut, renewed) in blocking(library, move |library| library.waiting(&scope_text)).await? {
+        if !renewed {
+            renew(assets, hub, link, key, scope, &stream, cut).await?;
+        }
+        resubmit(assets, scope, &stream).await?;
+    }
     let device = assets.device();
     let key_text = scope.to_string();
     for (stream, from) in blocking(library, move |library| library.uploads(&key_text, &device)).await? {
@@ -330,11 +362,30 @@ async fn keep(assets: &Assets, hub: &HubId, key: &PublicKey, session: u64, scope
 
 /// The hub refused the frame of `stream` at `cut`: the stream goes back
 /// before it, the hub opens a new epoch for this machine there, and what
-/// the refusal took out is committed again in it.
+/// the refusal took out is committed again in it. A pass cut short
+/// anywhere here takes it up again (`Library::waiting`).
 async fn refused(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKey, scope: &str, stream: &str, cut: u64) -> Result<(), String> {
-    let library = &assets.library;
     let (scope_text, stream_text) = (scope.to_string(), stream.to_string());
-    blocking(library, move |library| library.rejected(&scope_text, &stream_text, cut)).await?;
+    blocking(&assets.library, move |library| library.rejected(&scope_text, &stream_text, cut)).await?;
+    renew(assets, hub, link, key, scope, stream, cut).await?;
+    resubmit(assets, scope, stream).await
+}
+
+/// The hub opens a new epoch of `stream` for this machine at `cut`, where
+/// the stream was cut back to: what was committed into it since goes with
+/// what the refusal took out.
+async fn renew(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKey, scope: &str, stream: &str, cut: u64) -> Result<(), String> {
+    let library = &assets.library;
+    let scope_text = scope.to_string();
+    let next = blocking(library, move |library| library.streams(&scope_text))
+        .await?
+        .into_iter()
+        .find(|(name, _)| name == stream)
+        .map_or(0, |(_, next)| next);
+    if next > cut {
+        let (scope_text, stream_text) = (scope.to_string(), stream.to_string());
+        blocking(library, move |library| library.rejected(&scope_text, &stream_text, cut)).await?;
+    }
     // The chain value the new epoch follows: where the stream stands now.
     let (scope_text, stream_text) = (scope.to_string(), stream.to_string());
     let standing = blocking(library, move |library| library.standing(&scope_text)).await?;
@@ -350,11 +401,18 @@ async fn refused(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKey
         return Err("the new epoch's descriptor is not the hub's".into());
     }
     let fact = EpochFact::decode(&descriptor.fact.0)?;
+    if fact.scope != scope || fact.stream != stream || fact.start != cut {
+        return Err("the hub opened another epoch than the one asked for".into());
+    }
     let (scope_text, stream_text) = (scope.to_string(), stream.to_string());
-    blocking(library, move |library| library.new_epoch(&scope_text, &stream_text, fact.epoch, descriptor.fact.0)).await?;
+    blocking(library, move |library| library.new_epoch(&scope_text, &stream_text, fact.epoch, descriptor.fact.0)).await
+}
+
+/// Commits what waits of `stream` again, in its current epoch.
+async fn resubmit(assets: &Assets, scope: &str, stream: &str) -> Result<(), String> {
     loop {
         let (scope_text, stream_text, signer) = (scope.to_string(), stream.to_string(), assets.signer());
-        let committed = blocking(library, move |library| library.resubmit(&scope_text, &stream_text, 64, signer)).await?;
+        let committed = blocking(&assets.library, move |library| library.resubmit(&scope_text, &stream_text, 64, signer)).await?;
         if committed == 0 {
             return Ok(());
         }
@@ -426,11 +484,21 @@ async fn pull(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKey, s
     Ok(())
 }
 
-/// Where each stream of `scope` stands, checked with the hub; one that
-/// differs is cut back to the last place they share (design §7.5).
-async fn cursors(library: &Library, link: &Arc<Link>, scope: &str, holding: i64) -> Result<(), String> {
+/// Where each stream of `scope` stands, checked with the hub; a replica's
+/// that differs is cut back to the last place they share (design §7.5).
+/// This machine's own streams are where the hub follows it: uploads and
+/// refusals settle those, never a cut.
+async fn cursors(assets: &Assets, link: &Arc<Link>, scope: &str, holding: i64) -> Result<(), String> {
+    let library = &assets.library;
+    let (scope_text, device) = (scope.to_string(), assets.device());
+    let own: std::collections::BTreeSet<String> =
+        blocking(library, move |library| library.own_streams(&scope_text, &device)).await?.into_iter().collect();
     let scope_text = scope.to_string();
-    let standing = blocking(library, move |library| library.standing(&scope_text)).await?;
+    let standing: Vec<(String, u64, [u8; 32])> = blocking(library, move |library| library.standing(&scope_text))
+        .await?
+        .into_iter()
+        .filter(|(stream, _, _)| !own.contains(stream))
+        .collect();
     if standing.is_empty() {
         return Ok(());
     }

@@ -1,21 +1,22 @@
 //! The hub's chain head kept outside its directory (design §17, item 2): a
 //! small file in the service account's state, in no backup of the hub,
-//! holding the latest (`hub_seq`, `hub_head`) and, for each owner library,
-//! the heads its latest checkpoint wrote. A control fact reaches it, and
-//! the disk, after its commit and before anyone is answered or told; a
+//! holding the latest (`hub_seq`, `hub_head`). A control fact reaches it,
+//! and the disk, after its commit and before anyone is answered or told; a
 //! checkpoint after its commit, at most a second late. An ordinary crash
 //! leaves it older than the hub's databases, never newer, so a file newer
 //! than them on opening means the hub's directory was put back.
 //!
+//! The owner libraries' heads are not kept here: each checkpoint is in the
+//! chain, so the hub's database, once its chain holds this head, is what
+//! an owner library is checked against when it opens.
+//!
 //! It only moves forward. Once the hub finds it was put back, the file is
 //! left as it is, the evidence of the history that was lost.
 
-use fastctx_content::v2::Head;
 use fastctx_platform::Permissions;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -24,19 +25,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 pub(crate) struct Kept {
     pub seq: u64,
     pub head: String,
-    /// For each owner library by its key, the heads its latest checkpoint
-    /// wrote.
-    pub owners: BTreeMap<String, Vec<KeptHead>>,
-}
-
-/// One scope's head as kept.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct KeptHead {
-    pub scope: String,
-    pub change: u64,
-    pub prefix: String,
-    pub parked: u64,
-    pub accumulated: String,
 }
 
 pub(crate) fn hex(bytes: &[u8]) -> String {
@@ -54,28 +42,6 @@ pub(crate) fn unhex(text: &str) -> Option<[u8; 32]> {
     Some(bytes)
 }
 
-impl KeptHead {
-    fn of(head: &Head) -> Self {
-        Self {
-            scope: head.scope.clone(),
-            change: head.change,
-            prefix: hex(&head.prefix),
-            parked: head.parked,
-            accumulated: hex(&head.accumulated),
-        }
-    }
-
-    pub(crate) fn head(&self) -> Option<Head> {
-        Some(Head {
-            scope: self.scope.clone(),
-            change: self.change,
-            prefix: unhex(&self.prefix)?,
-            parked: self.parked,
-            accumulated: unhex(&self.accumulated)?,
-        })
-    }
-}
-
 /// The file and what it holds now.
 pub(crate) struct Witness {
     path: PathBuf,
@@ -83,31 +49,98 @@ pub(crate) struct Witness {
     frozen: AtomicBool,
 }
 
+/// An absolute directory named by the variable `name`, if it names one.
+fn absolute(name: &str) -> io::Result<Option<PathBuf>> {
+    let Some(set) = std::env::var_os(name) else { return Ok(None) };
+    let path = PathBuf::from(set);
+    if !path.is_absolute() {
+        return Err(io::Error::other(format!("{name} names {}, not an absolute directory", path.display())));
+    }
+    Ok(Some(path))
+}
+
 /// Where the file of the hub `id` kept in `dir` lives: `FASTCTX_HUB_WITNESS_DIR`
 /// when set; beside a hub kept in the system's temporary directory (a
-/// drill's); otherwise the service account's state directory.
-fn location(dir: &Path, id: &str) -> PathBuf {
-    let base = if let Some(set) = std::env::var_os("FASTCTX_HUB_WITNESS_DIR") {
-        PathBuf::from(set)
+/// drill's); otherwise the service account's state directory. Never inside
+/// the hub's directory, where a copy of it would come back with the hub.
+fn location(dir: &Path, id: &str) -> io::Result<PathBuf> {
+    let base = if let Some(set) = absolute("FASTCTX_HUB_WITNESS_DIR")? {
+        set
     } else if dir.starts_with(std::env::temp_dir()) {
         dir.parent().unwrap_or(dir).join("hub-witness")
     } else if cfg!(windows) {
-        std::env::var_os("LOCALAPPDATA").map(PathBuf::from).unwrap_or_else(|| dir.to_path_buf()).join("fastctx").join("hub-witness")
-    } else {
-        std::env::var_os("XDG_STATE_HOME")
-            .map(PathBuf::from)
-            .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local").join("state")))
-            .unwrap_or_else(|| dir.to_path_buf())
+        let state = match absolute("LOCALAPPDATA")? {
+            Some(state) => Some(state),
+            None => absolute("ProgramData")?,
+        };
+        state
+            .ok_or_else(|| io::Error::other("neither LOCALAPPDATA nor ProgramData names where the hub keeps its witness"))?
             .join("fastctx")
             .join("hub-witness")
+    } else {
+        let state = match absolute("XDG_STATE_HOME")? {
+            Some(state) => Some(state),
+            None => absolute("HOME")?.map(|home| home.join(".local").join("state")),
+        };
+        state.unwrap_or_else(|| PathBuf::from("/var/lib")).join("fastctx").join("hub-witness")
     };
-    base.join(format!("{id}.json"))
+    let path = base.join(format!("{id}.json"));
+    if inside(&path, dir)? {
+        return Err(io::Error::other(format!(
+            "the hub's witness would be kept in its own directory, as {}: set FASTCTX_HUB_WITNESS_DIR to a directory outside {}",
+            path.display(),
+            dir.display()
+        )));
+    }
+    Ok(path)
+}
+
+/// `path` as the system resolves it: the longest part of it that exists,
+/// resolved, with the rest after it.
+fn resolved(path: &Path) -> io::Result<PathBuf> {
+    let mut rest = Vec::new();
+    let mut at = path.to_path_buf();
+    loop {
+        match fastctx_platform::disk::canonicalize(&at) {
+            Ok(found) => {
+                let mut whole = found;
+                for part in rest.iter().rev() {
+                    whole.push(part);
+                }
+                return Ok(whole);
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                let Some(name) = at.file_name().map(|name| name.to_os_string()) else { return Ok(path.to_path_buf()) };
+                rest.push(name);
+                if !at.pop() {
+                    return Ok(path.to_path_buf());
+                }
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+/// Whether `path` lies within the directory `dir`.
+fn inside(path: &Path, dir: &Path) -> io::Result<bool> {
+    let (path, dir) = (resolved(path)?, resolved(dir)?);
+    let parts = |path: &Path| -> Vec<String> {
+        path.components()
+            .filter(|part| !matches!(part, Component::CurDir))
+            .map(|part| {
+                let text = part.as_os_str().to_string_lossy().into_owned();
+                if cfg!(windows) { text.to_lowercase() } else { text }
+            })
+            .collect()
+    };
+    let (path, dir) = (parts(&path), parts(&dir));
+    Ok(path.len() > dir.len() && path[..dir.len()] == dir[..])
 }
 
 impl Witness {
     /// The witness of the hub `id` kept in `dir`, as last written.
     pub(crate) fn open(dir: &Path, id: &str) -> io::Result<Self> {
-        let path = location(dir, id);
+        let path = location(dir, id)?;
         let kept = match fastctx_platform::disk::read(&path) {
             Ok(bytes) => serde_json::from_slice(&bytes)
                 .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("{}: {error}", path.display())))?,
@@ -136,25 +169,17 @@ impl Witness {
         self.frozen.store(true, Ordering::SeqCst);
     }
 
-    /// The chain reached (`seq`, `head`), and these owner libraries were
-    /// checkpointed at these heads: written and on the disk before it
+    /// The chain reached (`seq`, `head`): written and on the disk before it
     /// returns. An older head than the file's is left out.
-    pub(crate) fn advanced(&self, seq: u64, head: &[u8; 32], owners: Vec<(String, Vec<Head>)>) -> io::Result<()> {
+    pub(crate) fn advanced(&self, seq: u64, head: &[u8; 32]) -> io::Result<()> {
         if self.frozen.load(Ordering::SeqCst) {
             return Ok(());
         }
         let mut kept = self.kept.lock().expect("witness");
-        if seq <= kept.seq && owners.is_empty() {
+        if seq <= kept.seq {
             return Ok(());
         }
-        let mut next = kept.clone();
-        if seq > next.seq {
-            next.seq = seq;
-            next.head = hex(head);
-        }
-        for (owner, heads) in owners {
-            next.owners.insert(owner, heads.iter().map(KeptHead::of).collect());
-        }
+        let next = Kept { seq, head: hex(head) };
         if let Some(parent) = self.path.parent() {
             fastctx_platform::ensure_private_dir(parent)?;
         }

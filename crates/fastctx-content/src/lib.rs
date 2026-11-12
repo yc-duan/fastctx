@@ -92,6 +92,7 @@ impl Content {
             page_bytes: Some(PAGE_BYTES),
             cache_bytes: Some(CACHE_BYTES),
             checkpoint_pages: Some(CHECKPOINT_PAGES),
+            ..Default::default()
         };
         let database = Database::open_shaped(&directory.join(FILE), schema::SCHEMA, shape)?;
         let objects = Objects::open(directory)?;

@@ -57,7 +57,14 @@ fn incarnation(control: &Database) -> io::Result<Vec<u8>> {
 /// How often the owner libraries are checkpointed.
 pub(crate) const CHECKPOINT_EVERY: Duration = Duration::from_secs(1);
 
+/// Scopes checkpointed in one round: a backlog goes in pieces, each within
+/// a commit's budget, the rest in the rounds after.
+const CHECKPOINT_AT_ONCE: usize = 4096;
+
 pub(crate) struct Assets {
+    /// The hub's id, which each descriptor names (design §2.1): a scope of
+    /// one hub is no other's.
+    pub(crate) id: String,
     keys: Arc<keys::Keys>,
     pub(crate) owners: owners::Owners,
     pub(crate) witness: Arc<Witness>,
@@ -83,13 +90,18 @@ pub(crate) struct Assets {
 impl Assets {
     /// Opens the asset side of the hub `id` kept in `dir`, whose control
     /// database is `control`, and checks it was not put back (design §17,
-    /// items 1 and 2). Call on a thread that may block.
+    /// items 1 and 2). What the database committed and a crash kept from
+    /// the witness reaches it now, before anything is published or
+    /// answered; every scope is looked at again by the checkpoints, so what
+    /// changed before a stop is not left out. Call on a thread that may
+    /// block.
     pub(crate) fn open(dir: &Path, id: &str, control: Database) -> io::Result<Self> {
         let keys = Arc::new(keys::Keys::open(&dir.join("keys"))?);
         let witness = Arc::new(Witness::open(dir, id)?);
         let incarnation = incarnation(&control)?;
         let owners = owners::Owners::new(dir.join("assets"), incarnation);
         let assets = Self {
+            id: id.to_string(),
             keys,
             owners,
             witness,
@@ -104,85 +116,149 @@ impl Assets {
         if let Some(why) = assets.put_back(dir)? {
             assets.witness.freeze();
             *assets.sealed.lock().expect("seal") = Some(why);
+            return Ok(assets);
         }
+        assets.catch_up()?;
+        let all: Vec<(String, String)> = assets
+            .control
+            .read_now(|c| {
+                let mut statement = c.prepare_cached("SELECT owner, key FROM asset_scopes")?;
+                let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+                Ok(rows.collect::<std::result::Result<_, _>>()?)
+            })
+            .map_err(io::Error::other)?;
+        let mut changed = assets.changed.lock().expect("changed scopes");
+        for (owner, scope) in all {
+            if let Some(owner) = Owner::from_key(&owner) {
+                changed.entry(owner).or_default().insert(scope);
+            }
+        }
+        drop(changed);
         Ok(assets)
     }
 
-    /// Why the hub was put back, if it was: its backup's mark is here; the
-    /// witness outside its directory holds a chain head its database does
-    /// not; an owner library no longer holds the heads its latest
-    /// checkpoint wrote, outside the directory or in the hub's own database
-    /// (a backup copied in part); or a library is another hub's.
+    /// The chain's latest head reaches the witness, if it had not.
+    fn catch_up(&self) -> io::Result<()> {
+        if let Some((seq, head)) = self.control.read_now(chain::latest).map_err(io::Error::other)? {
+            self.witness.advanced(seq, &head)?;
+        }
+        Ok(())
+    }
+
+    /// Why the hub was put back, if it was: its backup's mark is here, or
+    /// the witness outside its directory holds a chain head its database
+    /// does not. Each owner library is checked as it opens (`library`).
     fn put_back(&self, dir: &Path) -> io::Result<Option<String>> {
         if fastctx_platform::disk::exists(dir.join(BACKUP_MARKER))? {
             return Ok(Some("the hub was opened from a backup".into()));
         }
         let kept = self.witness.kept();
-        if kept.seq > 0 {
-            let seq = kept.seq;
-            let head = self.control.read_now(move |c| chain::head_at(c, seq)).map_err(io::Error::other)?;
-            if head.map(|head| witness::hex(&head)) != Some(kept.head.clone()) {
-                return Ok(Some(format!(
-                    "the hub's directory is older than what it last wrote outside it ({})",
-                    self.witness.path().display()
-                )));
+        if kept.seq == 0 {
+            return Ok(None);
+        }
+        let seq = kept.seq;
+        let head = self.control.read_now(move |c| chain::head_at(c, seq)).map_err(io::Error::other)?;
+        if head.map(|head| witness::hex(&head)) != Some(kept.head) {
+            return Ok(Some(format!(
+                "the hub's directory is older than what it last wrote outside it ({})",
+                self.witness.path().display()
+            )));
+        }
+        Ok(None)
+    }
+
+    /// The library of `owner`, checked as it opens against the hub's own
+    /// record of it (design §17, item 3): a library older than its latest
+    /// checkpoint or than an epoch the hub opened in it, or another hub's,
+    /// seals every asset.
+    pub(crate) fn library(&self, owner: &Owner) -> io::Result<fastctx_content::v2::Library> {
+        match self.owners.library(owner, |library| self.behind(owner, library))? {
+            Ok(library) => Ok(library),
+            Err(why) => {
+                self.seal(&why);
+                Err(io::Error::other(why))
             }
         }
-        for (key, heads) in &kept.owners {
-            let Some(owner) = Owner::from_key(key) else { continue };
-            if !self.owners.exists(&owner)? {
-                return Ok(Some(format!("the library of {key} is gone")));
-            }
-            let library = self.owners.library(&owner)?;
-            for kept in heads {
-                let held = match kept.head() {
-                    Some(head) => library.holds(&head).map_err(|error| io::Error::other(error.to_string()))?,
-                    None => false,
-                };
-                if !held {
-                    return Ok(Some(format!("the library of {key} is older than its last checkpoint")));
-                }
-            }
-        }
-        if let Some(why) = self.owners.foreign()? {
-            return Ok(Some(why));
-        }
-        // The heads each library's latest checkpoint wrote in the hub's own
-        // database: a library older than its database is a copy in part.
-        let latest: Vec<(String, Head)> = self
-            .control
-            .read_now(|c| {
+    }
+
+    /// The latest head each scope of `owner` was checkpointed at.
+    fn checkpointed(&self, owner: &Owner) -> io::Result<BTreeMap<String, Head>> {
+        let key = owner.key();
+        self.control
+            .read_now(move |c| {
                 let mut statement = c.prepare_cached(
-                    "SELECT owner, scope, change, parked, prefix, accumulated FROM hub_checkpoints h
-                     WHERE seq = (SELECT MAX(seq) FROM hub_checkpoints l WHERE l.owner = h.owner AND l.scope = h.scope)",
+                    "SELECT scope, change, parked, prefix, accumulated FROM hub_checkpoints h
+                     WHERE owner = ?1 AND seq = (SELECT MAX(seq) FROM hub_checkpoints l WHERE l.owner = h.owner AND l.scope = h.scope)",
                 )?;
-                let rows = statement.query_map([], |row| {
+                let rows = statement.query_map([&key], |row| {
                     let digest = |bytes: Vec<u8>| <[u8; 32]>::try_from(bytes).unwrap_or([0; 32]);
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        Head {
-                            scope: row.get(1)?,
-                            change: row.get::<_, i64>(2)? as u64,
-                            parked: row.get::<_, i64>(3)? as u64,
-                            prefix: digest(row.get(4)?),
-                            accumulated: digest(row.get(5)?),
-                        },
-                    ))
+                    Ok(Head {
+                        scope: row.get(0)?,
+                        change: row.get::<_, i64>(1)? as u64,
+                        parked: row.get::<_, i64>(2)? as u64,
+                        prefix: digest(row.get(3)?),
+                        accumulated: digest(row.get(4)?),
+                    })
                 })?;
-                Ok(rows.collect::<std::result::Result<_, _>>()?)
+                let mut heads = BTreeMap::new();
+                for head in rows {
+                    let head = head?;
+                    heads.insert(head.scope.clone(), head);
+                }
+                Ok(heads)
             })
-            .map_err(io::Error::other)?;
-        for (key, head) in &latest {
-            let Some(owner) = Owner::from_key(key) else { continue };
-            if !self.owners.exists(&owner)? {
-                return Ok(Some(format!("the library of {key} is gone")));
-            }
-            let library = self.owners.library(&owner)?;
+            .map_err(io::Error::other)
+    }
+
+    /// Why `owner`'s library may not be served, if it may not: it is older
+    /// than a checkpoint the hub's database holds of it, or lacks an epoch
+    /// the hub opened in it.
+    fn behind(&self, owner: &Owner, library: &fastctx_content::v2::Library) -> io::Result<Option<String>> {
+        let key = owner.key();
+        for head in self.checkpointed(owner)?.values() {
             if !library.holds(head).map_err(|error| io::Error::other(error.to_string()))? {
                 return Ok(Some(format!("the library of {key} is older than the hub's own record of it")));
             }
         }
+        let owner_key = key.clone();
+        let epochs: Vec<(String, String, i64, Vec<u8>)> = self
+            .control
+            .read_now(move |c| {
+                let mut statement = c.prepare_cached(
+                    "SELECT scope, stream, epoch, digest FROM hub_epoch_facts f WHERE owner = ?1 AND epoch =
+                     (SELECT MAX(epoch) FROM hub_epoch_facts g WHERE g.owner = f.owner AND g.scope = f.scope AND g.stream = f.stream)",
+                )?;
+                let rows = statement.query_map([&owner_key], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))?;
+                Ok(rows.collect::<std::result::Result<_, _>>()?)
+            })
+            .map_err(io::Error::other)?;
+        for (scope, stream, epoch, digest) in epochs {
+            let digest = <[u8; 32]>::try_from(digest).unwrap_or([0; 32]);
+            if !library.holds_epoch(&scope, &stream, epoch as u64, &digest).map_err(|error| io::Error::other(error.to_string()))? {
+                return Ok(Some(format!("the library of {key} lacks an epoch the hub opened in {scope}")));
+            }
+        }
         Ok(None)
+    }
+
+    /// An epoch the hub just opened in `scope` of `owner`'s library goes into
+    /// its chain and the witness before the device hears of it (design
+    /// §6.1): a library put back to before it is found as it opens.
+    pub(crate) fn opened_epoch(&self, owner: &Owner, scope: &str, stream: &str, epoch: u64, fact: &[u8]) -> io::Result<()> {
+        let digest: [u8; 32] = Sha256::digest(fact).into();
+        let (owner, scope, stream) = (owner.key(), scope.to_string(), stream.to_string());
+        let (seq, head) = self
+            .control
+            .write_now(512, move |c| {
+                let (seq, head) = chain::append(c, "epoch", &digest)?;
+                c.prepare_cached(
+                    "INSERT OR REPLACE INTO hub_epoch_facts (owner, scope, stream, epoch, digest, seq) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                )?
+                .execute(fastctx_storage::rusqlite::params![owner, scope, stream, epoch as i64, &digest[..], seq as i64])?;
+                Ok((seq, head))
+            })
+            .map_err(io::Error::other)?;
+        self.witness.advanced(seq, &head)
     }
 
     /// Seals every asset from now on (design §17): the hub found it was put
@@ -235,10 +311,35 @@ impl Assets {
         }
     }
 
-    /// What is to be told unasked now; a machine that is not there to be
-    /// told is told no more of the scope until it reads it again.
-    pub(crate) fn take_pushes(&self) -> Vec<(fastctx_types::MachineName, fastctx_types::assets::Push)> {
-        std::mem::take(&mut *self.pushes.lock().expect("pushes"))
+    /// What is to be told unasked now, to the machines that read its scope
+    /// in `directory` as it stands (design §6.4): one that no longer does
+    /// is told nothing more of the scope until it reads it again.
+    pub(crate) fn take_pushes(
+        &self,
+        directory: &fastctx_net::directory_index::Indexed<'_>,
+    ) -> Vec<(fastctx_types::MachineName, fastctx_types::assets::Push)> {
+        use fastctx_types::assets::Push;
+        let pushes = std::mem::take(&mut *self.pushes.lock().expect("pushes"));
+        let mut judged: BTreeMap<(String, fastctx_types::MachineName), bool> = BTreeMap::new();
+        pushes
+            .into_iter()
+            .filter(|(machine, push)| {
+                let key = match push {
+                    Push::Moved { scope, .. } | Push::Fact { scope, .. } => scope.clone(),
+                    Push::Checkpointed { checkpoint } => checkpoint.scope.clone(),
+                };
+                let reads = *judged.entry((key.clone(), machine.clone())).or_insert_with(|| {
+                    matches!(scopes::scope(self, &key), Ok(Some(scope)) if scopes::readable(directory, machine, &scope))
+                });
+                if !reads {
+                    self.gone(&key, machine);
+                    if let Some(machines) = self.receipted.lock().expect("receipted").get_mut(&key) {
+                        machines.remove(machine);
+                    }
+                }
+                reads
+            })
+            .collect()
     }
 
     /// `machine` is gone: it is told nothing of `scope` until it reads it
@@ -250,23 +351,66 @@ impl Assets {
     }
 
     /// One checkpoint of the scopes that changed since the last (design
-    /// §6.1): their heads go into the chain in one commit, then into the
-    /// witness; the chain's number and head then, if anything changed.
+    /// §6.1), at most `CHECKPOINT_AT_ONCE` of them: their heads go into the
+    /// chain in one commit, then into the witness; the chain's number and
+    /// head then, if anything changed. What fails goes to the next round.
     /// Call on a thread that may block.
     pub(crate) fn checkpoint(&self) -> io::Result<Option<(u64, [u8; 32])>> {
         if self.sealed().is_some() {
             return Ok(None);
         }
-        let changed = std::mem::take(&mut *self.changed.lock().expect("changed scopes"));
-        if changed.is_empty() {
+        // A witness write that failed after its commit is made good first.
+        self.catch_up()?;
+        let batch = {
+            let mut changed = self.changed.lock().expect("changed scopes");
+            let mut batch: BTreeMap<Owner, BTreeSet<String>> = BTreeMap::new();
+            let mut taken = 0;
+            while taken < CHECKPOINT_AT_ONCE {
+                let Some(mut entry) = changed.first_entry() else { break };
+                let owner = entry.key().clone();
+                while taken < CHECKPOINT_AT_ONCE {
+                    let Some(scope) = entry.get_mut().pop_first() else { break };
+                    batch.entry(owner.clone()).or_default().insert(scope);
+                    taken += 1;
+                }
+                if entry.get().is_empty() {
+                    entry.remove();
+                }
+            }
+            batch
+        };
+        if batch.is_empty() {
             return Ok(None);
         }
+        let done = self.checkpoint_of(&batch);
+        if done.is_err() {
+            let mut again = self.changed.lock().expect("changed scopes");
+            for (owner, scopes) in batch {
+                again.entry(owner).or_default().extend(scopes);
+            }
+        }
+        done
+    }
+
+    fn checkpoint_of(&self, batch: &BTreeMap<Owner, BTreeSet<String>>) -> io::Result<Option<(u64, [u8; 32])>> {
         let mut owners: Vec<(String, Vec<Head>)> = Vec::new();
-        for (owner, scopes) in &changed {
-            let library = self.owners.library(owner)?;
+        for (owner, scopes) in batch {
+            let library = self.library(owner)?;
             let scopes: Vec<String> = scopes.iter().cloned().collect();
             let heads = library.heads(&scopes).map_err(|error| io::Error::other(error.to_string()))?;
-            owners.push((owner.key(), heads));
+            // A scope still where its latest checkpoint has it, or where
+            // nothing is, needs none.
+            let kept = self.checkpointed(owner)?;
+            let heads: Vec<Head> = heads
+                .into_iter()
+                .filter(|head| kept.get(&head.scope) != Some(head) && (head.change > 0 || head.parked > 0))
+                .collect();
+            if !heads.is_empty() {
+                owners.push((owner.key(), heads));
+            }
+        }
+        if owners.is_empty() {
+            return Ok(None);
         }
         let mut hasher = Sha256::new();
         hasher.update(b"fastctx-hub-checkpoint/1");
@@ -303,18 +447,8 @@ impl Assets {
             }
             Ok((seq, head))
         });
-        let (seq, head) = match written {
-            Ok(written) => written,
-            Err(error) => {
-                // What changed is taken again by the next checkpoint.
-                let mut again = self.changed.lock().expect("changed scopes");
-                for (owner, scopes) in changed {
-                    again.entry(owner).or_default().extend(scopes);
-                }
-                return Err(io::Error::other(error));
-            }
-        };
-        self.witness.advanced(seq, &head, owners.clone())?;
+        let (seq, head) = written.map_err(io::Error::other)?;
+        self.witness.advanced(seq, &head)?;
         // Who was given a receipt of a scope it covers hears so.
         let mut receipted = self.receipted.lock().expect("receipted");
         let mut pushes = self.pushes.lock().expect("pushes");
@@ -356,7 +490,10 @@ pub(crate) async fn checkpoints(hub: Weak<crate::Hub>) {
         })
         .await;
         if let Some(hub) = assets_hub.upgrade() {
-            for (machine, push) in hub.assets.take_pushes() {
+            let store = hub.store();
+            let pushes = hub.assets.take_pushes(&store.indexed());
+            drop(store);
+            for (machine, push) in pushes {
                 hub.tell(&machine, fastctx_net::wire::Down::Assets { push });
             }
         }

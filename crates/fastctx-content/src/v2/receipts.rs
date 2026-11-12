@@ -105,7 +105,7 @@ impl Library {
     pub fn receipt(&self, scope: &str, receipt: Receipt, session: u64) -> Result<()> {
         let scope = scope.to_string();
         Ok(self.database().write_relaxed_now_at(Priority::Normal, 256 + receipt.signature.len(), move |db| {
-            let Some((scope_id, _, _)) = held(db, &scope)? else { return Err(invalid("the scope is not held here")) };
+            let Some((scope_id, _, holding)) = held(db, &scope)? else { return Err(invalid("the scope is not held here")) };
             let stream: i64 = db
                 .prepare_cached("SELECT id FROM streams WHERE scope = ?1 AND name = ?2")?
                 .query_row(params![scope_id, receipt.stream], |row| row.get(0))
@@ -127,13 +127,29 @@ impl Library {
                 parked,
                 receipt.signature
             ])?;
-            heard(db, (stream, &receipt, kind, &standing), session)?;
-            if kind != "rejected" {
+            // A receipt a checkpoint already covered waits for none: no
+            // session needs to stand behind it again.
+            let covered: bool = db
+                .prepare_cached(
+                    "SELECT checkpointed FROM hub_receipts WHERE stream = ?1 AND epoch = ?2 AND first = ?3 AND digest = ?4
+                     AND kind = ?5 AND standing = ?6",
+                )?
+                .query_row(params![stream, receipt.epoch as i64, receipt.first as i64, &receipt.digest[..], kind, &standing], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .optional()?
+                .is_some_and(|checkpointed| checkpointed == 1);
+            if !covered {
+                heard(db, (stream, &receipt, kind, &standing), session)?;
+            }
+            if let (true, Some(holding)) = (kind != "rejected", holding) {
                 // Where uploading goes on from: past the frame, if the stream
-                // still holds that very frame.
+                // still holds that very frame in this holding period.
                 let held: Option<(i64, Vec<u8>)> = db
-                    .prepare_cached("SELECT count, header FROM frames WHERE stream = ?1 AND epoch = ?2 AND first = ?3")?
-                    .query_row(params![stream, receipt.epoch as i64, receipt.first as i64], |row| Ok((row.get(0)?, row.get(1)?)))
+                    .prepare_cached("SELECT count, header FROM frames WHERE stream = ?1 AND holding = ?2 AND epoch = ?3 AND first = ?4")?
+                    .query_row(params![stream, holding, receipt.epoch as i64, receipt.first as i64], |row| {
+                        Ok((row.get(0)?, row.get(1)?))
+                    })
                     .optional()?;
                 let same = held.as_ref().is_some_and(|(_, header)| {
                     super::frame::Header::decode(header).is_ok_and(|header| header.digest == receipt.digest)

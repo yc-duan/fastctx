@@ -107,8 +107,12 @@ impl Assets {
             Some(pinned) if pinned.key.array() == Some(offered) => Ok(PublicKey::from_bytes(offered)),
             Some(_) => Err(format!("the hub {hub} offers another service key than the one this machine pinned")),
             None => {
-                hubs.insert(hub.as_str().to_string(), Pinned { key: offered.into(), seen: None });
-                self.save(&hubs).map_err(|error| error.to_string())?;
+                // Pinned once it is on the disk: a key kept only in memory
+                // would be met as new again after a restart.
+                let mut next = hubs.clone();
+                next.insert(hub.as_str().to_string(), Pinned { key: offered.into(), seen: None });
+                self.save(&next).map_err(|error| error.to_string())?;
+                *hubs = next;
                 Ok(PublicKey::from_bytes(offered))
             }
         }
@@ -121,19 +125,23 @@ impl Assets {
 
     /// The hub's word on `statement`, if it is the pinned key's: the chain
     /// head it carried is kept when it is the latest seen (design §17,
-    /// item 4).
+    /// item 4). A word whose head could not be kept on the disk counts for
+    /// nothing: what it says may let go of evidence the head stands for.
     pub(crate) fn heard(&self, hub: &HubId, key: &PublicKey, statement: &[u8], word: &[u8]) -> bool {
         let Some((seq, head)) = heard_word(key, statement, word) else { return false };
         let mut hubs = self.hubs.lock().expect("hubs");
-        if let Some(pinned) = hubs.get_mut(hub.as_str())
-            && pinned.seen.as_ref().is_none_or(|seen| seen.seq < seq)
-        {
-            pinned.seen = Some(Seen { seq, head: head.into(), statement: statement.to_vec().into(), word: word.to_vec().into() });
-            if let Err(error) = self.save(&hubs) {
-                // The head is kept in memory; the file catches up at the next.
-                let _ = error;
-            }
+        let Some(pinned) = hubs.get(hub.as_str()) else { return false };
+        if pinned.seen.as_ref().is_some_and(|seen| seen.seq >= seq) {
+            return true;
         }
+        let mut next = hubs.clone();
+        if let Some(pinned) = next.get_mut(hub.as_str()) {
+            pinned.seen = Some(Seen { seq, head: head.into(), statement: statement.to_vec().into(), word: word.to_vec().into() });
+        }
+        if self.save(&next).is_err() {
+            return false;
+        }
+        *hubs = next;
         true
     }
 }

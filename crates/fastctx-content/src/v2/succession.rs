@@ -81,11 +81,66 @@ pub(super) fn may_import(db: &Connection, stream: i64, header: &Header) -> fastc
         .optional()?;
     if let Some(successor) = successor {
         let successor = EpochFact::decode(&successor).map_err(invalid)?;
-        if header.first + u64::from(header.count) > successor.start {
+        let end = header.first + u64::from(header.count);
+        if end > successor.start {
             return Err(invalid("the frame goes past where a handover cut its epoch"));
+        }
+        if end == successor.start && header.chain() != successor.follows {
+            return Err(invalid("the frame does not end where a handover cut its epoch"));
         }
     }
     Ok(Ok(()))
+}
+
+/// The chain value this holder has at the end `end` of `stream` in
+/// `holding`: where a frame of it ends, or where a gap the hub signed ends
+/// that follows what it holds.
+pub(super) fn held_end(db: &Connection, stream: i64, holding: i64, end: u64) -> fastctx_storage::Result<Option<[u8; 32]>> {
+    // The gaps ending at `end` and back before it, to a frame or the start.
+    let mut gaps = Vec::new();
+    let mut at = end;
+    let mut value = loop {
+        if let Some(head) = held_frame(db, stream, holding, at)? {
+            break head;
+        }
+        let Some(gap) = gap_ending(db, stream, at)? else { return Ok(None) };
+        let from = gap.from;
+        gaps.push(gap);
+        if from == 0 {
+            break [0; 32];
+        }
+        if gaps.len() > 1024 {
+            return Ok(None);
+        }
+        at = from - 1;
+    };
+    for gap in gaps.iter().rev() {
+        if gap.start != value {
+            return Ok(None);
+        }
+        value = gap.follows;
+    }
+    Ok(Some(value))
+}
+
+fn held_frame(db: &Connection, stream: i64, holding: i64, end: u64) -> fastctx_storage::Result<Option<[u8; 32]>> {
+    let head: Option<Vec<u8>> = db
+        .prepare_cached("SELECT head FROM frames WHERE stream = ?1 AND holding = ?2 AND first + count - 1 = ?3")?
+        .query_row(params![stream, holding, end as i64], |row| row.get(0))
+        .optional()?;
+    head.map(|head| head.try_into().map_err(|_| invalid("a malformed chain value"))).transpose()
+}
+
+fn gap_ending(db: &Connection, stream: i64, end: u64) -> fastctx_storage::Result<Option<GapFact>> {
+    let mut statement = db.prepare_cached("SELECT fact FROM known_gaps WHERE stream = ?1 AND from_sequence <= ?2")?;
+    let facts = statement.query_map(params![stream, end as i64], |row| row.get::<_, Vec<u8>>(0))?;
+    for fact in facts {
+        let gap = GapFact::decode(&fact?).map_err(invalid)?;
+        if gap.to == end {
+            return Ok(Some(gap));
+        }
+    }
+    Ok(None)
 }
 
 /// Moves the cursor at `next` with chain value `head` past each gap fact
@@ -274,12 +329,8 @@ impl Library {
             else {
                 return Ok(None);
             };
-            let mut statement =
-                db.prepare_cached("SELECT head FROM frames WHERE stream = ?1 AND holding = ?2 AND first + count - 1 = ?3")?;
             for (end, head) in ends {
-                let mine: Option<Vec<u8>> =
-                    statement.query_row(params![stream_id, holding, end as i64], |row| row.get(0)).optional()?;
-                if mine.as_deref() == Some(&head[..]) {
+                if held_end(db, stream_id, holding, end)? == Some(head) {
                     return Ok(Some(end));
                 }
             }

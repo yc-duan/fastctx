@@ -57,6 +57,9 @@ pub struct Shape {
     pub page_bytes: Option<u32>,
     /// The pages the writer keeps in memory, in bytes.
     pub cache_bytes: Option<u32>,
+    /// The pages each reader keeps in memory, in bytes: with the writer's,
+    /// what the database holds at most.
+    pub reader_cache_bytes: Option<u32>,
     /// The pages of log after which a commit folds the log into the database.
     pub checkpoint_pages: Option<u32>,
 }
@@ -260,6 +263,9 @@ impl Database {
             )?;
             reader.busy_timeout(ADMISSION)?;
             reader.set_prepared_statement_cache_capacity(64);
+            if let Some(cache) = shape.reader_cache_bytes {
+                reader.pragma_update(None, "cache_size", -i64::from((cache / 1024).max(1)))?;
+            }
             authorization::install(&mut reader, tables.clone(), false, policy.clone())?;
             readers.push(reader);
         }

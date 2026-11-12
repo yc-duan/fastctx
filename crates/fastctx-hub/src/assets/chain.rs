@@ -7,7 +7,8 @@
 use fastctx_storage::rusqlite::{Connection, OptionalExtension, params};
 use sha2::{Digest, Sha256};
 
-/// The chain and the checkpoints, in the hub's control database.
+/// The chain, the checkpoints, and the epochs the hub opened as control
+/// facts, in the hub's control database.
 pub(crate) const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS hub_chain (
     seq INTEGER PRIMARY KEY, head BLOB NOT NULL, kind TEXT NOT NULL, digest BLOB NOT NULL, at INTEGER NOT NULL
@@ -16,6 +17,11 @@ CREATE TABLE IF NOT EXISTS hub_checkpoints (
     owner TEXT NOT NULL, scope TEXT NOT NULL, seq INTEGER NOT NULL, change INTEGER NOT NULL, parked INTEGER NOT NULL,
     prefix BLOB NOT NULL, accumulated BLOB NOT NULL,
     PRIMARY KEY (owner, scope, seq)
+) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS hub_epoch_facts (
+    owner TEXT NOT NULL, scope TEXT NOT NULL, stream TEXT NOT NULL, epoch INTEGER NOT NULL, digest BLOB NOT NULL,
+    seq INTEGER NOT NULL,
+    PRIMARY KEY (owner, scope, stream, epoch)
 ) WITHOUT ROWID;
 ";
 
@@ -48,8 +54,12 @@ pub(crate) fn latest(c: &Connection) -> fastctx_storage::Result<Option<(u64, [u8
     found.map(|(seq, head)| Ok((seq as u64, digest_of(head)?))).transpose()
 }
 
-/// The head at `seq`, if the chain has it.
+/// The head at `seq`, if the chain has it: before its first fact, the
+/// chain's start, which every hub has.
 pub(crate) fn head_at(c: &Connection, seq: u64) -> fastctx_storage::Result<Option<[u8; 32]>> {
+    if seq == 0 {
+        return Ok(Some([0; 32]));
+    }
     let found: Option<Vec<u8>> = c
         .prepare_cached("SELECT head FROM hub_chain WHERE seq = ?1")?
         .query_row([seq as i64], |row| row.get(0))

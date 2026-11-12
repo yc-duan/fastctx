@@ -160,13 +160,13 @@ impl Library {
                 .query_row(params![scope_id, stream], |row| row.get(0))
                 .optional()?
                 .ok_or_else(|| invalid("no such stream"))?;
+            // Where a frame ends, or a gap the hub signed that follows it.
             let head: Option<Vec<u8>> = match through {
                 None => None,
                 Some(through) => Some(
-                    db.prepare_cached("SELECT head FROM frames WHERE stream = ?1 AND holding = ?2 AND first + count - 1 = ?3")?
-                        .query_row(params![stream_id, holding, through as i64], |row| row.get(0))
-                        .optional()?
-                        .ok_or_else(|| invalid("no frame ends at that sequence"))?,
+                    super::succession::held_end(db, stream_id, holding, through)?
+                        .ok_or_else(|| invalid("nothing held ends at that sequence"))?
+                        .to_vec(),
                 ),
             };
             let keep = through.map_or(-1, |through| through as i64);

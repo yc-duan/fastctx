@@ -9,6 +9,7 @@ use super::scopes::held;
 use crate::error::invalid;
 use crate::Result;
 use fastctx_storage::rusqlite::{Connection, OptionalExtension, params};
+use sha2::Digest as _;
 
 /// Where a scope stands; zero, with zero digests, before anything.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -81,6 +82,22 @@ impl Library {
                 }
             }
             Ok(true)
+        })?)
+    }
+
+    /// Whether this library holds the hub's epoch `epoch` of `stream` of
+    /// `scope` as signed, its descriptor hashing to `digest`.
+    pub fn holds_epoch(&self, scope: &str, stream: &str, epoch: u64, digest: &[u8; 32]) -> Result<bool> {
+        let (scope, stream, digest) = (scope.to_string(), stream.to_string(), *digest);
+        Ok(self.database().read_now(move |db| {
+            let fact: Option<Vec<u8>> = db
+                .prepare_cached(
+                    "SELECT e.fact FROM hub_epochs e JOIN streams s ON s.id = e.stream JOIN scopes c ON c.id = s.scope
+                     WHERE c.key = ?1 AND s.name = ?2 AND e.epoch = ?3",
+                )?
+                .query_row(params![scope, stream, epoch as i64], |row| row.get(0))
+                .optional()?;
+            Ok(fact.is_some_and(|fact| <[u8; 32]>::from(sha2::Sha256::digest(&fact)) == digest))
         })?)
     }
 }

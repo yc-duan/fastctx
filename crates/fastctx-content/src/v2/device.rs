@@ -11,6 +11,33 @@ use crate::Result;
 use fastctx_storage::Priority;
 use fastctx_storage::rusqlite::{OptionalExtension, params};
 
+/// The streams of a scope whose last frame in `holding` is `device`'s, with
+/// where each reaches next.
+fn own(
+    db: &fastctx_storage::rusqlite::Connection,
+    scope: i64,
+    holding: i64,
+    device: &[u8; 32],
+) -> fastctx_storage::Result<Vec<(i64, String, i64)>> {
+    let streams: Vec<(i64, String, i64)> = {
+        let mut statement = db.prepare_cached("SELECT id, name, next FROM streams WHERE scope = ?1 ORDER BY name")?;
+        let rows = statement.query_map([scope], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+        rows.collect::<std::result::Result<_, _>>()?
+    };
+    let mut own = Vec::new();
+    for (stream, name, next) in streams {
+        let last: Option<Vec<u8>> = db
+            .prepare_cached("SELECT header FROM frames WHERE stream = ?1 AND holding = ?2 ORDER BY first DESC LIMIT 1")?
+            .query_row(params![stream, holding], |row| row.get(0))
+            .optional()?;
+        let Some(last) = last else { continue };
+        if Header::decode(&last).map_err(invalid)?.device == *device {
+            own.push((stream, name, next));
+        }
+    }
+    Ok(own)
+}
+
 impl Library {
     /// A scope this device begins before any hub described it (§2.1, R26),
     /// with what it proposes the hub describe it as: readable here, never
@@ -50,8 +77,18 @@ impl Library {
     }
 
     /// The streams of `scope` this device orders now — its last frame is
-    /// `device`'s — with the sequence uploading goes on from, for those not
-    /// all uploaded.
+    /// `device`'s: its own, where the hub follows it, never the other way
+    /// (§7.5).
+    pub fn own_streams(&self, scope: &str, device: &[u8; 32]) -> Result<Vec<String>> {
+        let (scope, device) = (scope.to_string(), *device);
+        Ok(self.database().read_now(move |db| {
+            let Some((scope_id, _, Some(holding))) = held(db, &scope)? else { return Ok(Vec::new()) };
+            Ok(own(db, scope_id, holding, &device)?.into_iter().map(|(_, name, _)| name).collect())
+        })?)
+    }
+
+    /// The streams of `scope` this device orders now, with the sequence
+    /// uploading goes on from, for those not all uploaded.
     pub fn uploads(&self, scope: &str, device: &[u8; 32]) -> Result<Vec<(String, u64)>> {
         let (scope, device) = (scope.to_string(), *device);
         Ok(self.database().read_now(move |db| {
@@ -59,21 +96,8 @@ impl Library {
             if state != "live" {
                 return Ok(Vec::new());
             }
-            let streams: Vec<(i64, String, i64)> = {
-                let mut statement = db.prepare_cached("SELECT id, name, next FROM streams WHERE scope = ?1 ORDER BY name")?;
-                let rows = statement.query_map([scope_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
-                rows.collect::<std::result::Result<_, _>>()?
-            };
             let mut uploads = Vec::new();
-            for (stream, name, next) in streams {
-                let last: Option<Vec<u8>> = db
-                    .prepare_cached("SELECT header FROM frames WHERE stream = ?1 AND holding = ?2 ORDER BY first DESC LIMIT 1")?
-                    .query_row(params![stream, holding], |row| row.get(0))
-                    .optional()?;
-                let Some(last) = last else { continue };
-                if Header::decode(&last).map_err(invalid)?.device != device {
-                    continue;
-                }
+            for (stream, name, next) in own(db, scope_id, holding, &device)? {
                 let uploaded: i64 = db
                     .prepare_cached("SELECT uploaded FROM outbox WHERE stream = ?1")?
                     .query_row([stream], |row| row.get(0))

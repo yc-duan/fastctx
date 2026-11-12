@@ -1038,7 +1038,7 @@ impl Store {
         let Some(witness) = &self.witness else { return Ok(()) };
         let latest = self.metadata.shelf.0.read_now(crate::assets::chain::latest).map_err(io::Error::other)?;
         match latest {
-            Some((seq, head)) => witness.advanced(seq, &head, Vec::new()),
+            Some((seq, head)) => witness.advanced(seq, &head),
             None => Ok(()),
         }
     }

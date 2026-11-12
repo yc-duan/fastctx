@@ -247,7 +247,10 @@ impl Library {
             )?
             .execute(params![stream, header.epoch as i64, end as i64, &head[..]])?;
             floors_passed(db, stream, end - 1)?;
-            Ok(Imported::Applied { next: end, head })
+            // A gap the hub signed that starts where this frame ends is
+            // skipped now, not when some later frame comes (§8).
+            let (next, head) = super::succession::skip_gaps(db, stream, holding, (end, head))?;
+            Ok(Imported::Applied { next, head })
         };
         // What comes from elsewhere can be had again: it does not wait for
         // the disk (§3).

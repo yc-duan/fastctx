@@ -157,7 +157,7 @@ impl Library {
                     ("parked_objects", "stream, epoch, first, holding, hash"),
                     ("refused_objects", "stream, epoch, first, holding, hash"),
                     ("parked", "stream, epoch, first, holding"),
-                    ("evidence", "stream, epoch, first, digest"),
+                    ("evidence", "stream, epoch, first, digest, holding"),
                     ("prefix_items", "stream, item, holding"),
                 ] {
                     done += db

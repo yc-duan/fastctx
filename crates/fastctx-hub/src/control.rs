@@ -1056,16 +1056,20 @@ fn handle(
             let held = crate::moving::Moving::hold(&hub);
             fastctx_platform::task::spawn(async move {
                 let (_held, _reservation) = (held, reservation);
-                let answer = hub
+                let (answer, pushes) = hub
                     .blocking(move |hub| {
                         let store = hub.store();
-                        origin.check(&store.book.directory)?;
-                        crate::assets::serve::ask(&hub.assets, &store.indexed(), &from, &origin.key, request)
+                        let answer = origin
+                            .check(&store.book.directory)
+                            .and_then(|()| crate::assets::serve::ask(&hub.assets, &store.indexed(), &from, &origin.key, request));
+                        // Told only to machines that read the scope now.
+                        let pushes = hub.assets.take_pushes(&store.indexed());
+                        (answer, pushes)
                     })
-                    .await
-                    .map(|reply| Told::Assets { reply });
+                    .await;
+                let answer = answer.map(|reply| Told::Assets { reply });
                 let _ = out.send(Out::Frame(Down::Told { id, answer }));
-                for (machine, push) in hub.assets.take_pushes() {
+                for (machine, push) in pushes {
                     hub.tell(&machine, Down::Assets { push });
                 }
             });

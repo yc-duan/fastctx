@@ -129,7 +129,7 @@ CREATE TABLE IF NOT EXISTS evidence (
     body BLOB NOT NULL,
     why TEXT NOT NULL,
     at INTEGER NOT NULL,
-    PRIMARY KEY (stream, epoch, first, digest)
+    PRIMARY KEY (stream, epoch, first, digest, holding)
 ) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS items (
     stream INTEGER NOT NULL,
@@ -309,14 +309,17 @@ CREATE TABLE IF NOT EXISTS conflicts (
     at INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS resubmits (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
     stream INTEGER NOT NULL,
     rejected INTEGER NOT NULL,
     position INTEGER NOT NULL,
     holding INTEGER NOT NULL,
+    -- The epoch the stream was in when the hub rejected the run.
+    epoch INTEGER NOT NULL,
     record BLOB NOT NULL,
-    op TEXT,
-    PRIMARY KEY (stream, rejected, position)
-) WITHOUT ROWID;
+    op TEXT
+);
+CREATE INDEX IF NOT EXISTS resubmits_by_run ON resubmits (stream, rejected);
 CREATE TABLE IF NOT EXISTS object_holds (
     kind TEXT NOT NULL CHECK (kind IN ('resubmit', 'refused', 'evidence')),
     holder TEXT NOT NULL,

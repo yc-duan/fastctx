@@ -40,7 +40,7 @@ impl Verifier for DeviceKeys {
 struct Readers;
 
 impl Authorizer for Readers {
-    fn authorize(&self, _: &KindRecord, _: Option<&Entry>) -> Result<(), String> {
+    fn authorize(&self, _: &Header, _: &KindRecord, _: Option<&Entry>) -> Result<(), String> {
         Ok(())
     }
 }
@@ -228,6 +228,10 @@ pub(crate) fn ask(
                 .handover(&scope, &stream, successor, cutoff, Arc::new(Readers), assets.signer())
                 .map_err(|error| error.to_string())?;
             assets.changed(kept.owner.clone(), &scope);
+            // In the hub's chain and outside its directory before the device
+            // hears of it (design §6.1, §17).
+            let epoch = fastctx_content::v2::EpochFact::decode(&signed.fact)?.epoch;
+            assets.opened_epoch(&kept.owner, &scope, &stream, epoch, &signed.fact).map_err(|error| error.to_string())?;
             Ok(Reply::Epoch { descriptor: wire::Fact { fact: signed.fact.into(), word: signed.signature.into() } })
         }
         Request::Succession { scope, stream } => {
@@ -306,17 +310,19 @@ fn open(
     Ok(Reply::Ready { key: public.as_bytes().to_vec().into(), clock: jiff::Timestamp::now().as_millisecond(), seq, head: head.into(), checkpointed })
 }
 
-/// The hub's word that a checkpoint covers `head` of `scope`, if one does.
+/// The hub's word that a checkpoint covers `head` of `scope`, if one does:
+/// only one the witness outside its directory holds already (design §17).
 fn covering(assets: &Assets, scope: &Scope, head: &Head) -> Result<Option<wire::Checkpoint>, String> {
     let (owner, key, change, parked) = (scope.owner.key(), head.scope.clone(), head.change as i64, head.parked as i64);
+    let witnessed = assets.witness.current().0 as i64;
     let found: Option<(i64, i64, i64)> = assets
         .control
         .read_now(move |c| {
             Ok(c.prepare_cached(
                 "SELECT seq, change, parked FROM hub_checkpoints WHERE owner = ?1 AND scope = ?2 AND change >= ?3 AND parked >= ?4
-                 ORDER BY seq LIMIT 1",
+                 AND seq <= ?5 ORDER BY seq LIMIT 1",
             )?
-            .query_row(params![owner, key, change, parked], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .query_row(params![owner, key, change, parked, witnessed], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
             .optional()?)
         })
         .map_err(|error| error.to_string())?;

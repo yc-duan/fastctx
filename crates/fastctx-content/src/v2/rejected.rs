@@ -25,6 +25,9 @@ use std::sync::Arc;
 /// One record waiting to be committed again.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Resubmit {
+    /// Which waiting record this is: never another's, even where a later
+    /// rejection waits at the same place.
+    pub id: i64,
     pub rejected: u64,
     pub position: u64,
     /// The holding period it was rejected in: it is committed again only in
@@ -140,6 +143,7 @@ impl Library {
                 return Ok(0);
             };
             let key = holder(stream_id, first);
+            let epoch: i64 = db.prepare_cached("SELECT epoch FROM streams WHERE id = ?1")?.query_row([stream_id], |row| row.get(0))?;
             let mut position = 0u64;
             // A few frames at a time: the run after a rejected frame can be
             // long when its producer was away.
@@ -162,9 +166,9 @@ impl Library {
                     for (offset, record) in open(&header, &body).map_err(invalid)?.into_iter().enumerate() {
                         let op = super::ops::op_at(db, scope_id, &stream, header.first + offset as u64)?;
                         db.prepare_cached(
-                            "INSERT INTO resubmits (stream, rejected, position, holding, record, op) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                            "INSERT INTO resubmits (stream, rejected, position, holding, epoch, record, op) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
                         )?
-                        .execute(params![stream_id, first as i64, position as i64, holding, encode(&record), op])?;
+                        .execute(params![stream_id, first as i64, position as i64, holding, epoch, encode(&record), op])?;
                         if let State::Is { objects, .. } = &record.record.state {
                             for object in objects {
                                 db.prepare_cached(
@@ -201,28 +205,51 @@ impl Library {
         })?)
     }
 
+    /// The streams of `scope` with records waiting to be committed again in
+    /// the current period: each with where its latest rejected run was cut,
+    /// and whether the stream has moved to a new epoch since — until it has,
+    /// the hub is to open one before they go again.
+    pub fn waiting(&self, scope: &str) -> Result<Vec<(String, u64, bool)>> {
+        let scope = scope.to_string();
+        Ok(self.database().read_now(move |db| {
+            let Some((scope_id, _, Some(holding))) = held(db, &scope)? else { return Ok(Vec::new()) };
+            let mut statement = db.prepare_cached(
+                "SELECT s.name, r.rejected, s.epoch > r.epoch FROM resubmits r JOIN streams s ON s.id = r.stream
+                 WHERE s.scope = ?1 AND r.holding = ?2
+                 AND r.id = (SELECT MAX(id) FROM resubmits q WHERE q.stream = r.stream AND q.holding = r.holding)
+                 ORDER BY s.name",
+            )?;
+            let rows = statement.query_map(params![scope_id, holding], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)? as u64, row.get::<_, bool>(2)?))
+            })?;
+            Ok(rows.collect::<std::result::Result<_, _>>()?)
+        })?)
+    }
+
     /// Up to `limit` of the records of `stream` waiting to be committed
     /// again, in order.
     pub fn resubmits(&self, scope: &str, stream: &str, limit: usize) -> Result<Vec<Resubmit>> {
         let (scope, stream) = (scope.to_string(), stream.to_string());
         Ok(self.database().read_now(move |db| {
             let mut statement = db.prepare_cached(
-                "SELECT r.rejected, r.position, r.holding, r.record, r.op FROM resubmits r JOIN streams s ON s.id = r.stream
-                 JOIN scopes c ON c.id = s.scope WHERE c.key = ?1 AND s.name = ?2 ORDER BY r.rejected, r.position LIMIT ?3",
+                "SELECT r.id, r.rejected, r.position, r.holding, r.record, r.op FROM resubmits r JOIN streams s ON s.id = r.stream
+                 JOIN scopes c ON c.id = s.scope WHERE c.key = ?1 AND s.name = ?2 ORDER BY r.id LIMIT ?3",
             )?;
             let rows = statement.query_map(params![scope, stream, limit as i64], |row| {
                 Ok((
                     row.get::<_, i64>(0)?,
                     row.get::<_, i64>(1)?,
                     row.get::<_, i64>(2)?,
-                    row.get::<_, Vec<u8>>(3)?,
-                    row.get::<_, Option<String>>(4)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, Vec<u8>>(4)?,
+                    row.get::<_, Option<String>>(5)?,
                 ))
             })?;
             let mut resubmits = Vec::new();
             for row in rows {
-                let (rejected, position, holding, record, op) = row?;
+                let (id, rejected, position, holding, record, op) = row?;
                 resubmits.push(Resubmit {
+                    id,
                     rejected: rejected as u64,
                     position: position as u64,
                     holding,
@@ -288,8 +315,8 @@ impl Library {
                 // nothing of this commit stands.
                 for (index, resubmit) in resubmitted.iter().enumerate() {
                     let taken = db
-                        .prepare_cached("DELETE FROM resubmits WHERE stream = ?1 AND rejected = ?2 AND position = ?3")?
-                        .execute(params![stream_id, resubmit.rejected as i64, resubmit.position as i64])?;
+                        .prepare_cached("DELETE FROM resubmits WHERE id = ?1 AND stream = ?2")?
+                        .execute(params![resubmit.id, stream_id])?;
                     if taken != 1 {
                         return Err(invalid("a record waiting to be committed again was committed or refused meanwhile"));
                     }
@@ -308,15 +335,15 @@ impl Library {
     /// Gives up on a waiting record no longer writable: a true source's
     /// write keeps its objects held under its operation, for the user to
     /// drop or send again; a projection's goes, its source still there.
-    pub fn refuse(&self, scope: &str, stream: &str, rejected: u64, position: u64, why: &str) -> Result<()> {
+    pub fn refuse(&self, scope: &str, stream: &str, id: i64, why: &str) -> Result<()> {
         let (scope, stream, why) = (scope.to_string(), stream.to_string(), why.to_string());
         Ok(self.database().write_now_at(Priority::Normal, 1024, move |db| {
             let found: Option<(i64, Vec<u8>, Option<String>)> = db
                 .prepare_cached(
                     "SELECT r.stream, r.record, r.op FROM resubmits r JOIN streams s ON s.id = r.stream JOIN scopes c ON c.id = s.scope
-                     WHERE c.key = ?1 AND s.name = ?2 AND r.rejected = ?3 AND r.position = ?4",
+                     WHERE c.key = ?1 AND s.name = ?2 AND r.id = ?3",
                 )?
-                .query_row(params![scope, stream, rejected as i64, position as i64], |row| {
+                .query_row(params![scope, stream, id], |row| {
                     Ok((row.get(0)?, row.get(1)?, row.get(2)?))
                 })
                 .optional()?;
@@ -334,8 +361,7 @@ impl Library {
                     }
                 }
             }
-            db.prepare_cached("DELETE FROM resubmits WHERE stream = ?1 AND rejected = ?2 AND position = ?3")?
-                .execute(params![stream_id, rejected as i64, position as i64])?;
+            db.prepare_cached("DELETE FROM resubmits WHERE id = ?1")?.execute([id])?;
             release_holds(db, stream_id)?;
             Ok(())
         })?)
@@ -365,9 +391,8 @@ impl Library {
 
 /// A record waiting to be committed again, as kept.
 struct Waiting {
+    id: i64,
     stream: i64,
-    rejected: i64,
-    position: i64,
     raw: Vec<u8>,
     op: Option<String>,
 }
@@ -380,18 +405,18 @@ pub(super) fn end_resubmits(db: &Connection, scope: i64, holding: i64) -> fastct
     loop {
         let waiting: Vec<Waiting> = {
             let mut statement = db.prepare_cached(
-                "SELECT stream, rejected, position, record, op FROM resubmits
+                "SELECT id, stream, record, op FROM resubmits
                  WHERE holding = ?2 AND stream IN (SELECT id FROM streams WHERE scope = ?1) LIMIT ?3",
             )?;
             let rows = statement.query_map(params![scope, holding, ROWS_AT_ONCE], |row| {
-                Ok(Waiting { stream: row.get(0)?, rejected: row.get(1)?, position: row.get(2)?, raw: row.get(3)?, op: row.get(4)? })
+                Ok(Waiting { id: row.get(0)?, stream: row.get(1)?, raw: row.get(2)?, op: row.get(3)? })
             })?;
             rows.collect::<std::result::Result<_, _>>()?
         };
         if waiting.is_empty() {
             break;
         }
-        for Waiting { stream, rejected, position, raw, op } in waiting {
+        for Waiting { id, stream, raw, op } in waiting {
             if let Some(op) = &op {
                 super::ops::refused_in(db, op, &raw, "access to the scope ended before it could be written again")?;
                 if let State::Is { objects, .. } = &decode(&raw).map_err(invalid)?.record.state {
@@ -403,8 +428,7 @@ pub(super) fn end_resubmits(db: &Connection, scope: i64, holding: i64) -> fastct
                     }
                 }
             }
-            db.prepare_cached("DELETE FROM resubmits WHERE stream = ?1 AND rejected = ?2 AND position = ?3")?
-                .execute(params![stream, rejected, position])?;
+            db.prepare_cached("DELETE FROM resubmits WHERE id = ?1")?.execute([id])?;
             streams.insert(stream);
             ended += 1;
         }
