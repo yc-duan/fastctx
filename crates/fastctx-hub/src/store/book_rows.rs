@@ -103,9 +103,6 @@ impl BookRows {
         };
         Ok((book, state))
     }
-    pub(super) fn save(&mut self, shelf: &Shelf, book: &mut Book, edit: &BookEdit) -> io::Result<BookEdit> {
-        self.save_with(shelf, book, Changes::default(), edit)
-    }
 
     pub(super) fn save_with(
         &mut self,

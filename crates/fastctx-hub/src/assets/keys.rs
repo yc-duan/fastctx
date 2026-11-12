@@ -74,7 +74,12 @@ impl Keys {
         match fastctx_platform::disk::read_dir(dir.join(RETIRED)) {
             Ok(entries) => {
                 for entry in entries {
-                    retired.push(SecretKey::load(&entry?.path())?.public());
+                    // Only the keys: what a write cut short left beside them
+                    // is not one.
+                    let path = entry?.path();
+                    if path.extension().is_some_and(|extension| extension == "key") {
+                        retired.push(SecretKey::load(&path)?.public());
+                    }
                 }
             }
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
@@ -106,11 +111,53 @@ impl Keys {
     }
 
     /// The chain head a word of the hub's on `statement` carries, under any
-    /// key of its keyring.
+    /// key of its keyring, the next one prepared among them.
     pub(crate) fn heard(&self, statement: &[u8], word: &[u8]) -> Option<(u64, [u8; 32])> {
         std::iter::once(self.current.public())
             .chain(self.retired.iter().copied())
+            .chain(self.next)
             .find_map(|key| heard_word(&key, statement, word))
+    }
+
+    /// Whether `key` is the next key a rotation prepared, not yet in use.
+    pub(crate) fn is_next(&self, key: &[u8; 32]) -> bool {
+        self.next.is_some_and(|next| next.as_bytes() == key) && self.current.public().as_bytes() != key
+    }
+
+    /// Whether the rotations in `lineage`, each signed by the key it leaves,
+    /// lead from a key of this keyring to `key`.
+    pub(crate) fn descends(&self, key: &[u8; 32], lineage: &[(Vec<u8>, Vec<u8>, Vec<u8>)]) -> bool {
+        let mut reached: Vec<[u8; 32]> = std::iter::once(self.current.public())
+            .chain(self.retired.iter().copied())
+            .chain(self.next)
+            .map(|key| *key.as_bytes())
+            .collect();
+        for _ in 0..lineage.len() {
+            let mut grew = false;
+            for (old, new, word) in lineage {
+                let (Ok(old), Ok(new), Ok(word)) =
+                    (<[u8; 32]>::try_from(old.as_slice()), <[u8; 32]>::try_from(new.as_slice()), <[u8; 64]>::try_from(word.as_slice()))
+                else {
+                    continue;
+                };
+                if reached.contains(&old)
+                    && !reached.contains(&new)
+                    && PublicKey::from_bytes(old)
+                        .verify(Domain::SyncHubKeyRotation, &rotation_statement(&old, &new), &fastctx_net::sign::Signature::from_bytes(word))
+                        .is_ok()
+                {
+                    reached.push(new);
+                    grew = true;
+                }
+            }
+            if reached.contains(key) {
+                return true;
+            }
+            if !grew {
+                break;
+            }
+        }
+        reached.contains(key)
     }
 }
 
@@ -160,6 +207,10 @@ pub(crate) fn finish(dir: &Path) -> io::Result<(PublicKey, PublicKey)> {
 /// SQLite database is copied as it is committed (`VACUUM INTO`), whatever
 /// its log holds, and its log is not copied.
 pub(crate) fn copy_tree(from: &Path, to: &Path) -> io::Result<()> {
+    // A step back up could lead anywhere once a missing part is made.
+    if to.components().any(|part| matches!(part, std::path::Component::ParentDir)) {
+        return Err(io::Error::other(format!("{} steps back up; name the place without ..", to.display())));
+    }
     if fastctx_platform::disk::exists(to)? && fastctx_platform::disk::read_dir(to)?.next().is_some() {
         return Err(io::Error::other(format!("{} holds something already", to.display())));
     }
@@ -167,7 +218,9 @@ pub(crate) fn copy_tree(from: &Path, to: &Path) -> io::Result<()> {
         return Err(io::Error::other(format!("{} lies within {}", to.display(), from.display())));
     }
     fastctx_platform::ensure_private_dir(to)?;
-    let mut made = vec![to.to_path_buf()];
+    // The place made for the copy is on the disk as well as what is in it.
+    let mut made: Vec<PathBuf> = to.parent().filter(|parent| !parent.as_os_str().is_empty()).map(Path::to_path_buf).into_iter().collect();
+    made.push(to.to_path_buf());
     let mut pending: Vec<(PathBuf, PathBuf)> = vec![(from.to_path_buf(), to.to_path_buf())];
     while let Some((source, target)) = pending.pop() {
         for entry in fastctx_platform::disk::read_dir(&source)? {
@@ -201,7 +254,7 @@ pub(crate) fn copy_tree(from: &Path, to: &Path) -> io::Result<()> {
         }
     }
     for directory in made {
-        sync_directory(&directory);
+        sync_directory(&directory)?;
     }
     Ok(())
 }
@@ -218,14 +271,14 @@ fn private(path: &Path) -> io::Result<()> {
     Ok(())
 }
 
-/// Puts a directory's entries on the disk, where the system can.
-fn sync_directory(path: &Path) {
+/// Puts a directory's entries on the disk, where the system can: an error
+/// where it can and did not.
+pub(crate) fn sync_directory(path: &Path) -> io::Result<()> {
     #[cfg(unix)]
-    if let Ok(directory) = fastctx_platform::disk::open(path) {
-        let _ = directory.sync_all();
-    }
+    fastctx_platform::disk::open(path)?.sync_all()?;
     #[cfg(not(unix))]
     let _ = path;
+    Ok(())
 }
 
 /// Signs as the hub, bound to the chain head the witness holds.

@@ -857,6 +857,8 @@ fn open(dir: &Path, log: Arc<log::Log>) -> anyhow::Result<Opened> {
     let assets = Arc::new(assets::Assets::open(dir, store.hub.id.as_str(), store.shelf.0.clone())?);
     store.witness = Some(assets.witness.clone());
     store.bodies = Some(assets.bodies.clone());
+    // Members a directory saved before they were kept with it are kept now.
+    assets.bodies.settle(&store.book.directory)?;
     let mut ledgers = ledger::Ledgers::open(dir, &store.hub.id)?;
     let swept = ledgers.sweep(&store.book)?;
     let mut said: Vec<String> = swept
@@ -978,6 +980,7 @@ async fn serving(
     });
     let _ = hub.this.set(Arc::downgrade(&hub));
     hub.post.attach(Arc::downgrade(&hub));
+    hub.assets.bodies.serve(&hub);
     let _watchdog = watchdog::Watchdog::start(&hub, watched.0, watched.1)?;
     if let Err(error) = hub.blocking(|hub| hub_machine::settle(&hub)).await {
         hub.log.line(format_args!("revoking shares of the hub machine: {error}"));

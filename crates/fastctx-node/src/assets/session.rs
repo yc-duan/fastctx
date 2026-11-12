@@ -197,14 +197,18 @@ async fn pass(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>) -> Result<(), Str
         let uploaded = upload(assets, hub, link, &key, session, scope).await;
         let pulled = match &uploaded {
             Err(why) if why.starts_with(REVOKED) => Err(why.clone()),
-            _ => pull(assets, hub, link, &key, scope, *holding).await,
+            _ => pull(assets, hub, link, &key, session, scope, *holding).await,
         };
+        // Where each stream stands is checked whatever a stream's frames
+        // met: a frame that does not chain to what is here is what checking
+        // finds the shared place for.
         let checked = match &pulled {
             Err(why) if why.starts_with(REVOKED) => Err(why.clone()),
             Err(_) => Ok(()),
-            Ok(ahead) => cursors(assets, link, scope, *holding, ahead).await,
+            Ok((ahead, _)) => cursors(assets, link, scope, *holding, ahead).await,
         };
-        for done in [uploaded, pulled.map(|_| ()), checked] {
+        let pulled = pulled.and_then(|(_, failed)| failed.map_or(Ok(()), Err));
+        for done in [uploaded, pulled, checked] {
             if let Err(why) = done
                 && !why.starts_with(REVOKED)
             {
@@ -250,9 +254,11 @@ async fn cleared(node: &Arc<Node>, assets: &Assets, hub: &HubId, link: &Arc<Link
         // The records' pruning has not begun yet: said at a later pass.
         return Ok(());
     }
-    // On another network too, this machine holds what that network's
-    // accounts may see: whole access through this one waits.
-    if assets.drivers.lock().expect("drivers").len() > 1 {
+    // On another network too, or holding what one gave it, this machine
+    // holds what that network's accounts may see: whole access through this
+    // one waits.
+    if let Some(why) = elsewhere(assets, hub).await? {
+        node.log.line(format_args!("whole access to this machine through {hub} waits: {why}"));
         return Ok(());
     }
     crate::replicas::publication::prune(node).await?;
@@ -268,11 +274,16 @@ async fn cleared(node: &Arc<Node>, assets: &Assets, hub: &HubId, link: &Arc<Link
     if blocking(library, |library| library.purging()).await? {
         return Ok(());
     }
-    for _ in 0..100_000 {
-        let collected = blocking(library, |library| library.collect_now()).await?;
-        if collected == fastctx_content::v2::Collected::default() {
-            break;
-        }
+    // Every object nothing that stays refers to goes, whatever kept it
+    // back: half-made transfers, a deletion that failed, the grace. One a
+    // live lease alone keeps goes at a later pass.
+    if !blocking(library, |library| library.clear_unrooted()).await? {
+        return Ok(());
+    }
+    // Said only if, after all that, still nothing of another network's is
+    // here and no other network came meanwhile.
+    if elsewhere(assets, hub).await?.is_some() || waiting_revision(link) != Some(revision) {
+        return Ok(());
     }
     let proof = assets.sign_cleared(me.as_str(), revision);
     let Reply::Cleared { activated } = link.assets(Request::Cleared { revision, proof: proof.into() }).await? else {
@@ -283,6 +294,35 @@ async fn cleared(node: &Arc<Node>, assets: &Assets, hub: &HubId, link: &Arc<Link
         node.log.line(format_args!("cleared for {activated} share(s) of this machine; they are in force now"));
     }
     Ok(())
+}
+
+/// What of another hub's this machine has, if anything: a driver for it, a
+/// scope it described still held here, or one this machine began for it.
+async fn elsewhere(assets: &Assets, hub: &HubId) -> Result<Option<String>, String> {
+    if assets.drivers.lock().expect("drivers").keys().any(|other| other != hub) {
+        return Ok(Some("this machine is on another network as well".into()));
+    }
+    let library = &assets.library;
+    for (scope, descriptor) in blocking(library, |library| library.described_scopes()).await? {
+        let theirs = serde_json::from_slice::<wire::Descriptor>(&descriptor).map_or(true, |descriptor| descriptor.hub != hub.as_str());
+        let held = {
+            let scope = scope.clone();
+            blocking(library, move |library| library.holding(&scope)).await?.is_some()
+        };
+        if theirs && held {
+            return Ok(Some(format!("it holds {scope}, another network's")));
+        }
+    }
+    for (scope, proposal) in blocking(library, |library| library.provisionals()).await? {
+        let theirs = proposal
+            .as_deref()
+            .and_then(|proposal| serde_json::from_slice::<Proposal>(proposal).ok())
+            .is_none_or(|proposal| proposal.hub != hub.as_str());
+        if theirs {
+            return Ok(Some(format!("it began {scope} for another network")));
+        }
+    }
+    Ok(None)
 }
 
 /// The scopes `hub` described here.
@@ -339,7 +379,8 @@ async fn open(assets: &Assets, hub: &HubId, link: &Arc<Link>, session: u64) -> R
             })
         })
         .collect();
-    let request = Request::Open { version: VERSION, seen: assets.seen(hub), reported: wired, pinned: assets.pinned(hub) };
+    let request =
+        Request::Open { version: VERSION, seen: assets.seen(hub), reported: wired, pinned: assets.pinned(hub), lineage: assets.lineage(hub) };
     let (offered, checkpointed, rotations, closed) = match link.assets(request).await? {
         Reply::Ready { key, checkpointed, rotations, closed, .. } => (key, checkpointed, rotations, closed),
         Reply::Sealed { why } => return Err(format!("the hub keeps every asset sealed: {why}")),
@@ -582,14 +623,18 @@ async fn resubmit(assets: &Assets, scope: &str, stream: &str) -> Result<(), Stri
 
 /// The frames of the streams of `scope` this machine holds, past what it
 /// has, under the hub's signed epochs and gap facts.
+/// Takes the frames of the streams of `scope` this machine holds past what
+/// it has: the streams the hub lags on, and the first stream's failure, if
+/// any (one fails holding up no other).
 async fn pull(
     assets: &Assets,
     hub: &HubId,
     link: &Arc<Link>,
     key: &PublicKey,
+    session: u64,
     scope: &str,
     holding: i64,
-) -> Result<std::collections::BTreeSet<String>, String> {
+) -> Result<(std::collections::BTreeSet<String>, Option<String>), String> {
     let library = &assets.library;
     let Reply::Streams { streams, withheld } = ask(assets, link, Request::Streams { scope: scope.to_string() }).await? else {
         return Err("the hub did not list the scope's streams".into());
@@ -597,8 +642,19 @@ async fn pull(
     let scope_text = scope.to_string();
     let local: std::collections::BTreeMap<String, u64> =
         blocking(library, move |library| library.streams(&scope_text)).await?.into_iter().collect();
-    // A stream this machine may hold no more goes from here (§2.3).
+    // A stream this machine may hold no more goes from here (§2.3); of its
+    // own, what the hub has not taken is kept first, to commit again, never
+    // dropped with the rest.
+    let (scope_text, device) = (scope.to_string(), assets.device());
+    let unsent: std::collections::BTreeMap<String, u64> =
+        blocking(library, move |library| library.uploads(&scope_text, &device)).await?.into_iter().collect();
     for stream in withheld.into_iter().filter(|stream| local.get(stream).is_some_and(|at| *at > 0)) {
+        if let Some(&from) = unsent.get(&stream)
+            && local.get(&stream).is_some_and(|at| *at > from)
+        {
+            let (scope_text, stream_text) = (scope.to_string(), stream.clone());
+            blocking(library, move |library| library.rejected(&scope_text, &stream_text, from)).await?;
+        }
         let scope_text = scope.to_string();
         blocking(library, move |library| library.truncate(&scope_text, &stream, None)).await?;
     }
@@ -623,7 +679,7 @@ async fn pull(
             // A replica's frames the hub lost, all of the stream or its
             // tail, given again; a stream that fails holds up no other.
             ahead.insert(stream.clone());
-            if let Err(why) = resupply(assets, link, scope, stream, hub_at.unwrap_or(0)).await
+            if let Err(why) = resupply(assets, hub, link, key, session, scope, stream, hub_at.unwrap_or(0)).await
                 && why.starts_with(REVOKED)
             {
                 return Err(why);
@@ -694,13 +750,23 @@ async fn pull(
             failed.get_or_insert(format!("{stream}: {why}"));
         }
     }
-    failed.map_or(Ok(ahead), Err)
+    Ok((ahead, failed))
 }
 
 /// Gives the hub again the frames of the replica `stream` of `scope` from
 /// `from`, as they came from it before it recovered (design §17): each is
 /// its producer's, signed, and the hub takes what still follows.
-async fn resupply(assets: &Assets, link: &Arc<Link>, scope: &str, stream: &str, mut from: u64) -> Result<(), String> {
+#[allow(clippy::too_many_arguments)]
+async fn resupply(
+    assets: &Assets,
+    hub: &HubId,
+    link: &Arc<Link>,
+    key: &PublicKey,
+    session: u64,
+    scope: &str,
+    stream: &str,
+    mut from: u64,
+) -> Result<(), String> {
     let library = &assets.library;
     loop {
         let (scope_text, stream_text) = (scope.to_string(), stream.to_string());
@@ -728,8 +794,27 @@ async fn resupply(assets: &Assets, link: &Arc<Link>, scope: &str, stream: &str, 
                 }
                 proven.extend(super::objects::put(library, link, scope, objects, prove).await?);
             };
+            // The hub's word on what it took back is kept like any: what the
+            // device brings if the hub is put back again (design §17).
+            let receipt = |said: Said, word: Bytes| Receipt {
+                stream: stream.to_string(),
+                epoch: header.epoch,
+                first: header.first,
+                digest: header.digest,
+                said,
+                signature: word.0,
+            };
             match received {
-                wire::Received::Applied { .. } | wire::Received::Parked { .. } => from = header.first + u64::from(header.count),
+                wire::Received::Applied { change, prefix, word, .. } => {
+                    let said = Said::Applied { change, prefix: array(&prefix, "a receipt's prefix")? };
+                    keep(assets, hub, key, session, scope, receipt(said, word)).await?;
+                    from = header.first + u64::from(header.count);
+                }
+                wire::Received::Parked { sequence, accumulated, word } => {
+                    let said = Said::Parked { sequence, accumulated: array(&accumulated, "a receipt's accumulator")? };
+                    keep(assets, hub, key, session, scope, receipt(said, word)).await?;
+                    from = header.first + u64::from(header.count);
+                }
                 wire::Received::Gap { from: wanted, .. } if wanted > from => {
                     from = wanted;
                     break;

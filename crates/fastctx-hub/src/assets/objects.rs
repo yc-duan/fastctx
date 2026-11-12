@@ -49,6 +49,10 @@ pub(super) const RECEIPT_WITHIN: Duration = Duration::from_secs(120);
 const CHECK_EVERY: u64 = 16;
 /// Proofs kept before the lapsed ones are let go.
 const PROOFS_KEPT: usize = 4096;
+/// Ranges of chunks one put asks for at most: the rest are asked for at the
+/// next, so a transfer left full of holes never asks in one message more
+/// than a connection carries.
+const RANGES_AT_ONCE: usize = 16_384;
 
 /// What a ticket lets its data connection do.
 #[derive(Clone)]
@@ -391,16 +395,20 @@ async fn take(hub: &Arc<Hub>, mut socket: Socket, me: &MachineName, key: &Public
     let Put { scope, object, missing, prove } = put;
     // A large object's digests come first; the hub says which chunks it
     // wants, a transfer under way taken up where its chunks stopped.
-    let (missing, transfer) = match missing {
-        Some(missing) => (missing, None),
+    let (missing, transfer, partly) = match missing {
+        Some(missing) => (missing, None, false),
         None => {
             let digests = manifest(&mut socket, &pulse, chunks(object.size)).await?;
             let (receiving, source) = (library.clone(), me.to_string());
             let transfer = blocking(move || receiving.receive(object, digests, Some(source))).await?;
             let missing = transfer.as_ref().map_or_else(Vec::new, fastctx_content::v2::Transfer::missing);
-            let wanted = serde_json::to_string(&Wanted { ranges: ranges(&missing) }).expect("ranges serialize");
+            let mut asked = ranges(&missing);
+            let partly = asked.len() > RANGES_AT_ONCE;
+            asked.truncate(RANGES_AT_ONCE);
+            let missing: Vec<u64> = asked.iter().flat_map(|&(start, end)| start..end).collect();
+            let wanted = serde_json::to_string(&Wanted { ranges: asked }).expect("ranges serialize");
             write(&mut socket, &pulse, WsMessage::Text(wanted.into())).await?;
-            (missing, transfer)
+            (missing, transfer, partly)
         }
     };
     let (sink, mut stream) = socket.split();
@@ -473,8 +481,13 @@ async fn take(hub: &Arc<Hub>, mut socket: Socket, me: &MachineName, key: &Public
         {
             return Err("the bytes sent do not hash to the object".into());
         }
-        if let Some(transfer) = transfer {
-            blocking(move || transfer.finish(&holder, LEASE)).await?;
+        if let Some(mut transfer) = transfer {
+            if partly {
+                // What came is kept; the rest is asked for at the next put.
+                blocking(move || transfer.settle()).await?;
+            } else {
+                blocking(move || transfer.finish(&holder, LEASE)).await?;
+            }
         }
         Ok(())
     }

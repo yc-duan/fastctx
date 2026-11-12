@@ -95,14 +95,16 @@ pub(super) async fn fetch(assets: &Assets, hub: &fastctx_types::access::HubId, l
         unreached.retain(|_, at| at.elapsed() < ASK_AGAIN);
         unreached.keys().filter(|(of, _)| of == hub).map(|(_, hash)| *hash).collect()
     };
-    let limit = FETCHED_AT_ONCE + waiting.len();
+    // Those asked of the hub lately and not given are passed over before
+    // any are counted: they never fill the place of those not yet asked.
     let scopes: Vec<String> = mine.iter().cloned().collect();
-    let wanted = match blocking(library, move |library| library.wanted_of(&scopes, limit)).await {
+    let skipped: Vec<[u8; 32]> = waiting.iter().copied().collect();
+    let wanted = match blocking(library, move |library| library.wanted_of(&scopes, FETCHED_AT_ONCE, &skipped)).await {
         Ok(wanted) => wanted.into_iter().map(|(scope, object)| (Some(scope), object)).collect::<Vec<_>>(),
         Err(why) => return vec![format!("listing the objects wanted: {why}")],
     };
     let mut failed = Vec::new();
-    for (scope, object) in wanted.into_iter().filter(|(_, object)| !waiting.contains(&object.hash)).take(FETCHED_AT_ONCE) {
+    for (scope, object) in wanted {
         // Only a scope names where an object is read, and only its hub is
         // asked.
         let Some(scope) = scope.filter(|scope| mine.contains(scope)) else { continue };
@@ -137,7 +139,8 @@ async fn fetch_one(library: &Library, link: &Arc<Link>, scope: &str, object: Obj
         if lease.object != object {
             return Err("the bytes given do not hash to the object".into());
         }
-        return Ok(());
+        // The records that want it hold it now: no lease keeps it beyond them.
+        return blocking(library, move |library| library.release(lease)).await;
     }
     // Takes up a fetch broken off, from the first chunk not here.
     let mut transfer = blocking(library, move |library| library.under_way(object)).await?;
@@ -181,9 +184,10 @@ async fn fetch_one(library: &Library, link: &Arc<Link>, scope: &str, object: Obj
     // read through again here, however long that takes.
     incoming.done().await?;
     let finishing = transfer.take().expect("a transfer");
-    fastctx_platform::task::spawn_blocking(move || finishing.finish(&holder, LEASE))
+    let lease = fastctx_platform::task::spawn_blocking(move || finishing.finish(&holder, LEASE))
         .await
         .map_err(|error| error.to_string())?
         .map_err(|error| error.to_string())?;
-    Ok(())
+    // The records that want it hold it now: no lease keeps it beyond them.
+    blocking(library, move |library| library.release(lease)).await
 }

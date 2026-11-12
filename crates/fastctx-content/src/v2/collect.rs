@@ -62,6 +62,54 @@ impl Library {
         self.collect_before(now() + 1)
     }
 
+    /// Clears, for a new holder of this machine (§6.3), every object nothing
+    /// that stays here refers to or holds: transfers under way go with their
+    /// parts, a tombstone a deletion that failed left goes again, and what
+    /// nothing roots goes without the grace, however much of it. Whether
+    /// nothing is left that a live lease alone keeps: such an object goes at
+    /// a later pass, once the lease has run out.
+    pub fn clear_unrooted(&self) -> Result<bool> {
+        let parts: Vec<(i64, String)> = self.database().read_now(|db| {
+            let mut statement = db.prepare_cached("SELECT id, part FROM transfers")?;
+            let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+            Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+        })?;
+        let incoming = self.0.objects.join(INCOMING);
+        for (id, part) in parts {
+            match std::fs::remove_file(incoming.join(&part)) {
+                Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(io(error)),
+                _ => {}
+            }
+            self.database().write_now_at(Priority::Background, 64, move |db| {
+                db.prepare_cached("DELETE FROM transfers WHERE id = ?1")?.execute([id])?;
+                Ok(())
+            })?;
+        }
+        let tombstones: Vec<(Vec<u8>, i64, i64)> = self.database().read_now(|db| {
+            let mut statement = db.prepare_cached("SELECT hash, life, size FROM objects WHERE state = ?1")?;
+            let rows = statement.query_map([TOMBSTONE], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+            Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+        })?;
+        for (hash, life, size) in tombstones {
+            let hash: [u8; 32] = hash.try_into().map_err(|_| crate::Error::Invalid("a malformed object hash".into()))?;
+            self.delete_life(&hash, life, size as u64)?;
+        }
+        while self.collect_now()?.objects > 0 {}
+        let left: i64 = self.database().read_now(|db| {
+            Ok(db
+                .prepare_cached(
+                    "SELECT COUNT(*) FROM objects o WHERE o.state IN (1, 2)
+                       AND NOT EXISTS (SELECT 1 FROM frame_objects f WHERE f.hash = o.hash)
+                       AND NOT EXISTS (SELECT 1 FROM parked_objects p WHERE p.hash = o.hash)
+                       AND NOT EXISTS (SELECT 1 FROM refused_objects x WHERE x.hash = o.hash)
+                       AND NOT EXISTS (SELECT 1 FROM object_refs r WHERE r.hash = o.hash AND r.count > 0)
+                       AND NOT EXISTS (SELECT 1 FROM object_holds h WHERE h.hash = o.hash)",
+                )?
+                .query_row([], |row| row.get(0))?)
+        })?;
+        Ok(left == 0)
+    }
+
     fn collect_before(&self, cutoff: i64) -> Result<Collected> {
         let (doomed, leases) = self.database().write_now_at(Priority::Background, 1024, move |db| {
             let leases = db.prepare_cached("DELETE FROM leases WHERE expires < ?1")?.execute([now()])?;

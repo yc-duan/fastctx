@@ -20,6 +20,7 @@ pub(crate) const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS asset_scopes (
     key TEXT PRIMARY KEY, owner TEXT NOT NULL, descriptor BLOB NOT NULL, word BLOB NOT NULL
 ) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS asset_scopes_by_owner ON asset_scopes (owner);
 ";
 
 /// A scope as the hub keeps it: its descriptor, as signed and as read.
@@ -125,11 +126,12 @@ pub(crate) fn reads(
 
 /// Whether anyone at all may still read the scope: an account its readers
 /// name is still who it was, the machine it was born on still is, its
-/// project is still there, or its body still has members (design §6.2).
-pub(crate) fn anyone_reads(directory: &Indexed<'_>, scope: &Scope) -> bool {
+/// project is still there, or its body still has members (design §6.2). An
+/// error where that cannot be known: never taken for no one.
+pub(crate) fn anyone_reads(directory: &Indexed<'_>, scope: &Scope) -> std::io::Result<bool> {
     let descriptor = &scope.descriptor;
     let born = &descriptor.born;
-    match &descriptor.readers {
+    Ok(match &descriptor.readers {
         Readers::Account { account } => same(directory, born, &format!("account:{account}")),
         Readers::Conversation { openers, born_on } => {
             openers.iter().any(|opener| same(directory, born, &format!("account:{opener}")))
@@ -137,10 +139,13 @@ pub(crate) fn anyone_reads(directory: &Indexed<'_>, scope: &Scope) -> bool {
         }
         Readers::Project { town } => same(directory, born, &format!("project:{town}")),
         Readers::Body { body, opener } => {
-            same(directory, born, &format!("account:{opener}"))
-                || scope.bodies.as_ref().and_then(|bodies| bodies.members(directory.all, body).ok()).is_some_and(|members| !members.is_empty())
+            if same(directory, born, &format!("account:{opener}")) {
+                return Ok(true);
+            }
+            let bodies = scope.bodies.as_ref().ok_or_else(|| std::io::Error::other("a body's scope without its bodies"))?;
+            !bodies.members(directory.all, body)?.is_empty()
         }
-    }
+    })
 }
 
 /// Whether a request from `machine` reads the scope.
@@ -233,21 +238,35 @@ pub(crate) fn library(assets: &Assets, scope: &Scope) -> Result<Library, String>
     Ok(library)
 }
 
+/// The machine shared whole a project was opened on, if it was: the project
+/// is that machine's body's, read by the project's own readers.
+fn project_body(directory: &Indexed<'_>, town: &fastctx_types::access::TownId) -> Option<(String, MachineName)> {
+    let project = directory.all.projects.iter().find(|project| &project.town == town)?;
+    let machine = directory.canonical(project.shared_on.as_ref()?).clone();
+    Some((super::bodies::body_of(directory.all, &machine)?, machine))
+}
+
 /// Who owns a scope of `readers` (design §6.2): a conversation its first
-/// opener, a project its owner, an account itself; an account as it is
-/// now, since it was opened.
+/// opener, a project its owner — or, opened on a machine shared whole, that
+/// machine's body — an account itself; an account as it is now, since it
+/// was opened.
 fn owner_of(directory: &Indexed<'_>, readers: &Readers) -> Result<Owner, String> {
     let account = match readers {
         // What a body owns is in the body's own library, no member's.
         Readers::Body { body, .. } => return Ok(Owner::Body(body.clone())),
         Readers::Conversation { openers, .. } => openers.first().cloned().ok_or("a conversation has an opener")?,
-        Readers::Project { town } => directory
-            .all
-            .projects
-            .iter()
-            .find(|project| &project.town == town)
-            .map(|project| project.owner.clone())
-            .ok_or_else(|| format!("there is no project {town}"))?,
+        Readers::Project { town } => {
+            if let Some((body, _)) = project_body(directory, town) {
+                return Ok(Owner::Body(body));
+            }
+            directory
+                .all
+                .projects
+                .iter()
+                .find(|project| &project.town == town)
+                .map(|project| project.owner.clone())
+                .ok_or_else(|| format!("there is no project {town}"))?
+        }
         Readers::Account { account } => account.clone(),
     };
     let opened = directory.account(&account).ok_or_else(|| format!("there is no account {account}"))?.opened;
@@ -300,10 +319,14 @@ pub(crate) fn describe(
         return Err("a conversation's openers are accounts this machine acts for".into());
     }
     let bodies = matches!(readers, Readers::Body { .. }).then(|| assets.bodies.clone());
-    if let Readers::Body { body, .. } = &readers {
-        // A body's scope is described by its machine, as that body.
+    if let Readers::Body { body, opener } = &readers {
+        // A body's scope is described by its machine, as that body, and
+        // opened by an account it acts for.
         if super::bodies::body_of(directory.all, machine).as_deref() != Some(body.as_str()) {
             return Err("a body's scope is described by the machine that is that body".into());
+        }
+        if !principal.contains(opener) {
+            return Err("a body's opener is an account this machine acts for".into());
         }
         assets.bodies.known(directory.all, body, directory.canonical(machine)).map_err(|error| error.to_string())?;
     }
@@ -311,6 +334,13 @@ pub(crate) fn describe(
         return Err("none of this machine's accounts reads that scope".into());
     }
     let owner = owner_of(directory, &readers)?;
+    // A project kept in a body's library: the body's members are kept from
+    // now, as for the body's own scopes.
+    if let Readers::Project { town } = &readers
+        && let Some((body, machine)) = project_body(directory, town)
+    {
+        assets.bodies.known(directory.all, &body, &machine).map_err(|error| error.to_string())?;
+    }
     let descriptor = Descriptor {
         scope: key.to_string(),
         hub: assets.id.clone(),
@@ -327,11 +357,20 @@ pub(crate) fn describe(
     let (seq, head) = assets
         .control
         .write_now(256 + bytes.len(), move |c| {
-            c.prepare_cached("INSERT INTO asset_scopes (key, owner, descriptor, word) VALUES (?1, ?2, ?3, x'')")?
+            // Never into a library being deleted (design §6.2).
+            let added = c
+                .prepare_cached(
+                    "INSERT INTO asset_scopes (key, owner, descriptor, word)
+                     SELECT ?1, ?2, ?3, x'' WHERE NOT EXISTS (SELECT 1 FROM asset_deleting WHERE owner = ?2)",
+                )?
                 .execute(params![key_text, owner_key, stored])?;
-            chain::append(c, "scope", &digest)
+            if added == 0 {
+                return Ok(None);
+            }
+            chain::append(c, "scope", &digest).map(Some)
         })
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| error.to_string())?
+        .ok_or("the library the scope belongs in is being deleted; describe it again later")?;
     assets.witness.advanced(seq, &head).map_err(|error| error.to_string())?;
     // Signed now, bound to the head the descriptor went into: a device that
     // saw it carries a head a hub put back to before it does not hold.

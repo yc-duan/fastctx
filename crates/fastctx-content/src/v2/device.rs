@@ -92,10 +92,13 @@ impl Library {
 
     /// Up to `limit` objects this machine wants and does not hold that a
     /// record or frame of one of `scopes` refers to in its current holding
-    /// period, first the most wanted. Which scope a wanted object was first
-    /// met in does not matter: every scope that refers to it now lists it.
-    pub fn wanted_of(&self, scopes: &[String], limit: usize) -> Result<Vec<(String, crate::record::ObjectRef)>> {
+    /// period, first the most wanted, those in `skipped` passed over before
+    /// any are counted. Which scope a wanted object was first met in does
+    /// not matter: every scope that refers to it now lists it.
+    pub fn wanted_of(&self, scopes: &[String], limit: usize, skipped: &[[u8; 32]]) -> Result<Vec<(String, crate::record::ObjectRef)>> {
         let scopes = scopes.to_vec();
+        let skipped: std::collections::HashSet<[u8; 32]> = skipped.iter().copied().collect();
+        let enough = limit + skipped.len();
         Ok(self.database().read_now(move |db| {
             // From each scope's own wanted rows (`wanted_in`), each still
             // referred to in its current period: the work follows what the
@@ -114,7 +117,7 @@ impl Library {
             )?;
             let mut candidates: Vec<(i64, [u8; 32], u64, String)> = Vec::new();
             for scope in scopes {
-                let rows = statement.query_map(params![scope, limit as i64], |row| {
+                let rows = statement.query_map(params![scope, enough as i64], |row| {
                     Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?))
                 })?;
                 for row in rows {
@@ -127,7 +130,7 @@ impl Library {
             let mut seen = std::collections::HashSet::new();
             Ok(candidates
                 .into_iter()
-                .filter(|candidate| seen.insert(candidate.1))
+                .filter(|candidate| !skipped.contains(&candidate.1) && seen.insert(candidate.1))
                 .take(limit)
                 .map(|(_, hash, size, scope)| (scope, crate::record::ObjectRef { hash, size }))
                 .collect())

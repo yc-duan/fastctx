@@ -15,7 +15,7 @@ pub(crate) mod objects;
 mod owners;
 mod scopes;
 pub(crate) mod serve;
-mod witness;
+pub(crate) mod witness;
 
 pub(crate) use owners::Owner;
 pub(crate) use witness::Witness;
@@ -166,84 +166,135 @@ impl Assets {
     }
 
     /// Deletes the libraries none of whose scopes anyone has read for
-    /// `UNREAD_FOR` (design §6.2): their scopes and the hub's records of
-    /// them go in one commit, in the chain and the witness, then their
-    /// files. An owner read again before then is kept. How many went. Call
-    /// on a thread that may block.
+    /// `UNREAD_FOR` (design §6.2). An owner read again before then is kept;
+    /// one whose readers cannot be known is judged again later, never taken
+    /// for no one's. Its deletion begins in one commit, in the chain and the
+    /// witness, only while it holds exactly the scopes judged; from then no
+    /// scope is described into it nor its library opened, and its records
+    /// then its files go a batch at a time (`finish_deleting`). How many
+    /// began. Call on a thread that may block.
     pub(crate) fn sweep_owners(&self, directory: &fastctx_net::directory_index::Indexed<'_>) -> io::Result<usize> {
         if self.sealed().is_some() || directory.all.accounts.is_empty() {
             return Ok(0);
         }
         self.finish_deleting()?;
-        let scopes: Vec<(String, String)> = self
-            .control
-            .read_now(|c| {
-                let mut statement = c.prepare_cached("SELECT owner, key FROM asset_scopes")?;
-                let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
-                Ok(rows.collect::<std::result::Result<_, _>>()?)
-            })
-            .map_err(io::Error::other)?;
-        let mut read: BTreeMap<String, bool> = BTreeMap::new();
-        for (owner, key) in scopes {
-            let anyone = match scopes::scope(self, &key).map_err(io::Error::other)? {
-                Some(scope) => scopes::anyone_reads(directory, &scope),
-                None => false,
-            };
-            *read.entry(owner).or_insert(false) |= anyone;
-        }
         let now = jiff::Timestamp::now().as_millisecond();
-        let mut dropped = 0;
-        for (owner, anyone) in read {
-            if anyone {
-                let key = owner.clone();
-                self.control
-                    .write_now(128, move |c| {
-                        c.prepare_cached("DELETE FROM asset_unread WHERE owner = ?1")?.execute([&key])?;
-                        Ok(())
-                    })
-                    .map_err(io::Error::other)?;
-                continue;
-            }
-            let key = owner.clone();
-            let since: i64 = self
+        let (mut dropped, mut after) = (0, String::new());
+        loop {
+            let from = after.clone();
+            let owners: Vec<String> = self
                 .control
-                .write_now(128, move |c| {
-                    c.prepare_cached("INSERT OR IGNORE INTO asset_unread (owner, since) VALUES (?1, ?2)")?
-                        .execute(fastctx_storage::rusqlite::params![key, now])?;
-                    Ok(c.prepare_cached("SELECT since FROM asset_unread WHERE owner = ?1")?.query_row([&key], |row| row.get(0))?)
+                .read_now(move |c| {
+                    let mut statement = c.prepare_cached(
+                        "SELECT DISTINCT owner FROM asset_scopes WHERE owner > ?1
+                         AND owner NOT IN (SELECT owner FROM asset_deleting) ORDER BY owner LIMIT 256",
+                    )?;
+                    let rows = statement.query_map([&from], |row| row.get(0))?;
+                    Ok(rows.collect::<std::result::Result<_, _>>()?)
                 })
                 .map_err(io::Error::other)?;
-            if now - since < UNREAD_FOR.as_millis() as i64 {
-                continue;
+            let Some(last) = owners.last() else { break };
+            after = last.clone();
+            for owner in owners {
+                if self.sweep_owner(directory, &owner, now)? {
+                    dropped += 1;
+                }
             }
-            let Some(found) = Owner::from_key(&owner) else { continue };
-            let digest: [u8; 32] = Sha256::digest(owner.as_bytes()).into();
-            let (key, body) = (owner.clone(), match &found {
-                Owner::Body(id) => Some(id.clone()),
-                _ => None,
-            });
-            let (seq, head) = self
-                .control
-                .write_now(1024, move |c| {
-                    for table in ["asset_scopes", "hub_checkpoints", "hub_epoch_facts", "hub_gap_facts", "asset_unread"] {
-                        c.prepare_cached(&format!("DELETE FROM {table} WHERE owner = ?1"))?.execute([&key])?;
-                    }
-                    c.prepare_cached("INSERT OR IGNORE INTO asset_deleting (owner) VALUES (?1)")?.execute([&key])?;
-                    if let Some(body) = &body {
-                        c.prepare_cached("DELETE FROM asset_bodies WHERE id = ?1")?.execute([body])?;
-                    }
-                    chain::append(c, "owner-deleted", &digest)
-                })
-                .map_err(io::Error::other)?;
-            self.witness.advanced(seq, &head)?;
-            dropped += 1;
         }
         self.finish_deleting()?;
         Ok(dropped)
     }
 
-    /// Removes the files of the owners whose records went; one still open a
-    /// moment longer goes at a later sweep.
+    /// Judges `owner` and, unread long enough, begins its deletion; whether
+    /// it began.
+    fn sweep_owner(&self, directory: &fastctx_net::directory_index::Indexed<'_>, owner: &str, now: i64) -> io::Result<bool> {
+        let key = owner.to_string();
+        let keys: Vec<String> = self
+            .control
+            .read_now(move |c| {
+                let mut statement = c.prepare_cached("SELECT key FROM asset_scopes WHERE owner = ?1 ORDER BY key")?;
+                let rows = statement.query_map([&key], |row| row.get(0))?;
+                Ok(rows.collect::<std::result::Result<_, _>>()?)
+            })
+            .map_err(io::Error::other)?;
+        let mut anyone = false;
+        for key in &keys {
+            let read = match scopes::scope(self, key) {
+                Ok(Some(scope)) => scopes::anyone_reads(directory, &scope),
+                Ok(None) => Ok(false),
+                Err(why) => Err(io::Error::other(why)),
+            };
+            match read {
+                Ok(false) => {}
+                Ok(true) => {
+                    anyone = true;
+                    break;
+                }
+                // Not known now: judged again at a later sweep.
+                Err(_) => return Ok(false),
+            }
+        }
+        let key = owner.to_string();
+        if anyone {
+            self.control
+                .write_now(128, move |c| {
+                    c.prepare_cached("DELETE FROM asset_unread WHERE owner = ?1")?.execute([&key])?;
+                    Ok(())
+                })
+                .map_err(io::Error::other)?;
+            return Ok(false);
+        }
+        let since: i64 = self
+            .control
+            .write_now(128, move |c| {
+                c.prepare_cached("INSERT OR IGNORE INTO asset_unread (owner, since) VALUES (?1, ?2)")?
+                    .execute(fastctx_storage::rusqlite::params![key, now])?;
+                Ok(c.prepare_cached("SELECT since FROM asset_unread WHERE owner = ?1")?.query_row([&key], |row| row.get(0))?)
+            })
+            .map_err(io::Error::other)?;
+        if now - since < UNREAD_FOR.as_millis() as i64 {
+            return Ok(false);
+        }
+        let Some(found) = Owner::from_key(owner) else { return Ok(false) };
+        let digest: [u8; 32] = Sha256::digest(owner.as_bytes()).into();
+        let (key, body) = (owner.to_string(), match &found {
+            Owner::Body(id) => Some(id.clone()),
+            _ => None,
+        });
+        let begun = self
+            .control
+            .write_now(1024, move |c| {
+                // A scope described into it since it was judged keeps it.
+                let mut statement = c.prepare_cached("SELECT key FROM asset_scopes WHERE owner = ?1 ORDER BY key")?;
+                let still: Vec<String> = statement.query_map([&key], |row| row.get(0))?.collect::<std::result::Result<_, _>>()?;
+                if still != keys {
+                    return Ok(None);
+                }
+                c.prepare_cached("INSERT OR IGNORE INTO asset_deleting (owner) VALUES (?1)")?.execute([&key])?;
+                c.prepare_cached("DELETE FROM asset_unread WHERE owner = ?1")?.execute([&key])?;
+                if let Some(body) = &body {
+                    c.prepare_cached("DELETE FROM asset_bodies WHERE id = ?1")?.execute([body])?;
+                }
+                chain::append(c, "owner-deleted", &digest).map(Some)
+            })
+            .map_err(io::Error::other)?;
+        let Some((seq, head)) = begun else { return Ok(false) };
+        self.witness.advanced(seq, &head)?;
+        Ok(true)
+    }
+
+    /// Whether the library of `owner` is being deleted.
+    fn deleting(&self, owner: &Owner) -> io::Result<bool> {
+        let key = owner.key();
+        self.control
+            .read_now(move |c| Ok(c.prepare_cached("SELECT 1 FROM asset_deleting WHERE owner = ?1")?.query_row([&key], |_| Ok(())).optional()?))
+            .map(|found| found.is_some())
+            .map_err(io::Error::other)
+    }
+
+    /// Removes what remains of the owners being deleted: their records a
+    /// batch at a time, then their files once nobody holds their library; one
+    /// still open goes at a later sweep.
     fn finish_deleting(&self) -> io::Result<()> {
         let deleting: Vec<String> = self
             .control
@@ -255,6 +306,28 @@ impl Assets {
             .map_err(io::Error::other)?;
         for key in deleting {
             let Some(owner) = Owner::from_key(&key) else { continue };
+            loop {
+                let batch = key.clone();
+                let removed = self
+                    .control
+                    .write_now(1024, move |c| {
+                        let mut removed = c
+                            .prepare_cached("DELETE FROM asset_scopes WHERE key IN (SELECT key FROM asset_scopes WHERE owner = ?1 LIMIT 4096)")?
+                            .execute([&batch])?;
+                        for table in ["hub_checkpoints", "hub_epoch_facts", "hub_gap_facts"] {
+                            removed += c
+                                .prepare_cached(&format!(
+                                    "DELETE FROM {table} WHERE owner = ?1 AND scope IN (SELECT DISTINCT scope FROM {table} WHERE owner = ?1 LIMIT 1024)"
+                                ))?
+                                .execute([&batch])?;
+                        }
+                        Ok(removed)
+                    })
+                    .map_err(io::Error::other)?;
+                if removed == 0 {
+                    break;
+                }
+            }
             if self.owners.delete(&owner).is_ok() {
                 self.control
                     .write_now(128, move |c| {
@@ -302,6 +375,10 @@ impl Assets {
     /// checkpoint or than an epoch the hub opened in it, or another hub's,
     /// seals every asset.
     pub(crate) fn library(&self, owner: &Owner) -> io::Result<fastctx_content::v2::Library> {
+        // A library being deleted is opened by no one (design §6.2).
+        if self.deleting(owner)? {
+            return Err(io::Error::other(format!("the library of {} is being deleted", owner.key())));
+        }
         match self.owners.library(owner, |library| self.behind(owner, library))? {
             Ok(library) => Ok(library),
             Err(why) => {
@@ -623,8 +700,10 @@ impl Assets {
     /// Seals every asset from now on (design §17): the hub found it was put
     /// back. The witness is left as the evidence of the lost history.
     pub(crate) fn seal(&self, why: &str) {
-        self.witness.freeze();
+        // The witness is frozen under the seal: a grant that holds it while
+        // it commits is witnessed before anything seals.
         let mut sealed = self.sealed.lock().expect("seal");
+        self.witness.freeze();
         if sealed.is_none() {
             *sealed = Some(why.to_string());
         }

@@ -123,7 +123,21 @@ pub(crate) fn recheck(
         assets.gone(key, machine);
         return Ok(Reply::Revoked { scope: key.to_string() });
     }
-    Ok(reply)
+    // An answer about several streams, each judged again.
+    Ok(match reply {
+        Reply::Streams { streams, mut withheld } => {
+            let (held, gone): (Vec<_>, Vec<_>) = streams.into_iter().partition(|at| scopes::holds(directory, machine, &scope, &at.stream));
+            withheld.extend(gone.into_iter().map(|at| at.stream));
+            Reply::Streams { streams: held, withheld }
+        }
+        Reply::Standing { streams } => {
+            if let Some(gone) = streams.iter().find(|standing| !scopes::holds(directory, machine, &scope, &standing.stream)) {
+                return Err(format!("this machine does not hold {} of the scope {key}", gone.stream));
+            }
+            Reply::Standing { streams }
+        }
+        reply => reply,
+    })
 }
 
 /// The stream a request is of, if it is of one.
@@ -206,7 +220,7 @@ pub(crate) fn ask(
         return Ok(Reply::Revoked { scope: key.to_string() });
     }
     match request {
-        Request::Open { version, seen, reported, pinned } => open(assets, directory, machine, key, version, seen, reported, pinned),
+        Request::Open { version, seen, reported, pinned, lineage } => open(assets, directory, machine, key, version, seen, reported, pinned, lineage),
         Request::Describe { scope, readers, classes } => {
             Ok(Reply::Described { descriptor: scopes::describe(assets, directory, machine, &scope, readers, classes)? })
         }
@@ -417,6 +431,7 @@ fn open(
     seen: Option<wire::Seen>,
     reported: Vec<wire::Reported>,
     pinned: Option<Bytes>,
+    lineage: Vec<wire::Rotation>,
 ) -> Result<Reply, String> {
     if version != wire::VERSION {
         return Err(format!("asset sync {version} is not this hub's {}", wire::VERSION));
@@ -424,18 +439,26 @@ fn open(
     assets.speaks(key).map_err(|error| error.to_string())?;
     if let Some(pinned) = &pinned {
         let pinned = array(pinned, "a pinned key")?;
-        // Only a key the hub's own word was once given under counts: a
-        // machine's say-so alone is no evidence of a lost key.
-        let shown = seen.as_ref().is_some_and(|seen| {
-            fastctx_net::sign::heard_word(&PublicKey::from_bytes(pinned), &seen.statement.0, &seen.word.0).is_some()
-        });
-        if !assets.keys().holds(&pinned) && !shown {
-            return Err("this machine pinned a service key this hub's word was never given under".into());
-        }
-        if !assets.keys().holds(&pinned) {
+        let keys = assets.keys();
+        if !keys.holds(&pinned) {
+            // Only a key the keyring's own signed rotations lead to counts: a
+            // key a machine made, signing for itself, shows nothing.
+            let lineage: Vec<_> = lineage.iter().map(|rotation| (rotation.old.0.clone(), rotation.new.0.clone(), rotation.word.0.clone())).collect();
+            if !keys.descends(&pinned, &lineage) {
+                return Err("this machine pinned a service key no rotation of this hub's keyring leads to".into());
+            }
             let why = format!(
                 "{machine} pinned a service key of the hub's ({}) its keyring lacks: the keyring was put back to before a rotation; \
                  bring back a keyring export that holds it",
+                super::witness::hex(&pinned[..8])
+            );
+            assets.seal(&why);
+            return Ok(Reply::Sealed { why });
+        }
+        if keys.is_next(&pinned) {
+            let why = format!(
+                "{machine} pinned the keyring's next service key ({}): the rotation was put in use after this keyring was exported; \
+                 put it in use with `fastctx hub rotate-key`, then reopen",
                 super::witness::hex(&pinned[..8])
             );
             assets.seal(&why);

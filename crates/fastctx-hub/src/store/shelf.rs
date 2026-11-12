@@ -166,6 +166,7 @@ fn apply(c: &Connection, changes: &Changes) -> fastctx_storage::Result<()> {
     if let Some(before) = changes.expired {
         super::log_store::expire(c, before)?;
     }
+    crate::assets::bodies::apply(c, &changes.bodies)?;
     if changes.control {
         // A control fact takes its place in the hub's chain in the
         // transaction that writes it (design §6.1).

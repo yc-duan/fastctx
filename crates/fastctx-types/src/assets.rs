@@ -249,6 +249,11 @@ pub enum Request {
         /// keyring lacks it was put back to before a rotation (§17).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pinned: Option<Bytes>,
+        /// The hub's signed rotations that lead to the pinned key, as this
+        /// machine was given them: what shows a key the keyring lacks is
+        /// the hub's own successor, not one a machine made.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        lineage: Vec<Rotation>,
     },
     /// The hub's word on a frame, from its signed header, if it has one
     /// (§6.5, step 1).

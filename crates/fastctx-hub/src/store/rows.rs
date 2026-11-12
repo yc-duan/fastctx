@@ -36,6 +36,8 @@ pub(crate) struct Changes {
     /// Whether these are control facts — the directory readers are judged
     /// by — which take their place in the hub's chain (design §6.1).
     pub(crate) control: bool,
+    /// Bodies' members as the directory saved here has them (design §6.2).
+    pub(crate) bodies: Vec<(String, String)>,
 }
 
 pub(crate) struct Put {
@@ -56,6 +58,7 @@ impl Changes {
             && !self.log_cleared
             && self.log_after.is_none()
             && self.expired.is_none()
+            && self.bodies.is_empty()
     }
 
     /// About how many bytes it writes.
@@ -65,6 +68,7 @@ impl Changes {
             + self.deleted.iter().map(|(_, key)| key.len() + 16).sum::<usize>()
             + self.meta.iter().map(|(_, value)| value.len() + 16).sum::<usize>()
             + self.log.iter().map(crate::machine_log::Row::bytes).sum::<usize>()
+            + self.bodies.iter().map(|(id, members)| id.len() + members.len() + 16).sum::<usize>()
     }
 
     pub(crate) fn meta(&mut self, name: &'static str, value: Vec<u8>) {

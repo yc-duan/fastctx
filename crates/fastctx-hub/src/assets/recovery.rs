@@ -36,7 +36,10 @@ pub fn backup(dir: &Path, to: &Path) -> anyhow::Result<Marker> {
     let seq = store.shelf.0.read_now(chain::latest)?.map_or(0, |(seq, _)| seq);
     keys::copy_tree(dir, to)?;
     let marker = Marker { made: jiff::Timestamp::now().as_millisecond(), hub: store.hub.id.to_string(), seq };
-    fastctx_platform::disk::write(to.join(BACKUP_MARKER), serde_json::to_vec_pretty(&marker)?)?;
+    // On the disk, with its place in the copy, before the backup is done: a
+    // hub started from the copy opens sealed.
+    fastctx_platform::publish(&to.join(BACKUP_MARKER), &serde_json::to_vec_pretty(&marker)?, fastctx_platform::Permissions::Private)?;
+    keys::sync_directory(to)?;
     Ok(marker)
 }
 

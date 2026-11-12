@@ -189,6 +189,11 @@ pub struct Share {
     /// though the machine already holds as if it were in force.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending: Option<u64>,
+    /// The hub's digest of what decides what the machine may hold, as the
+    /// directory was when the share came to wait at its revision: the
+    /// revision moves on only when that changes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub basis: Option<String>,
 }
 
 impl Share {

@@ -425,13 +425,14 @@ fn apply(
                     .is_some_and(|member| member.is_machine() && !member.managed && hub.assets.spoken(&member.key));
                 let pending = match &before {
                     Some(before) => before.pending,
-                    None if keeps_files => Some(crate::shares::next_revision(directory, &machine)),
+                    None if keeps_files => Some(crate::shares::UNSET),
                     None => None,
                 };
-                if let (None, Some(revision)) = (&before, pending) {
-                    crate::shares::wait_again(directory, &machine, revision);
+                if let (None, Some(_)) = (&before, pending) {
+                    crate::shares::wait_anew(directory, &machine);
                 }
-                directory.shares.push(Arc::new(Share { machine, account: to, jobs: jobs.filter(|_| shared), pending }));
+                let basis = before.as_ref().and_then(|before| before.basis.clone());
+                directory.shares.push(Arc::new(Share { machine, account: to, jobs: jobs.filter(|_| shared), pending, basis }));
             }
             Ok(Told::Done)
         }

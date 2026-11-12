@@ -5,8 +5,9 @@
 //! may not see, and clears what it has — while the share gives nothing: no
 //! work on the machine, nothing read through it. The machine says, under its
 //! key, that it cleared at that revision; the share is in force from then,
-//! if the revision is still the machine's. A holder added meanwhile moves the
-//! revision on, and the machine clears again.
+//! if the revision is still the machine's. A holder added meanwhile, or any
+//! change to what decides what the machine may hold, moves the revision on,
+//! and the machine clears again; nothing else does.
 
 use crate::Hub;
 use fastctx_net::directory::Directory;
@@ -14,31 +15,99 @@ use fastctx_net::sign::{Domain, PublicKey, Signature};
 use fastctx_types::MachineName;
 use fastctx_types::assets::Reply;
 use fastctx_types::machine_log::{Action, Actor, Outcome};
+use sha2::{Digest, Sha256};
 use std::sync::Arc;
 
-/// A holding revision of `machine` past every one its shares wait at.
-pub(crate) fn next_revision(directory: &Directory, machine: &MachineName) -> u64 {
-    let waiting = directory.shares.iter().filter(|share| share.machine == *machine).filter_map(|share| share.pending).max();
-    let now = jiff::Timestamp::now().as_microsecond().max(0) as u64;
-    waiting.map_or(now, |waiting| now.max(waiting + 1))
+/// A share about to wait, at the revision the save that writes it gives.
+pub(crate) const UNSET: u64 = 0;
+
+/// What decides what any machine may hold (design §6.3): who each machine
+/// is and acts for, the accounts, the shares in force or waiting, assistance,
+/// acting and the projects — not whether a machine is there, nor any
+/// revision itself. A save that changes none of it moves no revision on.
+pub(crate) fn basis(directory: &Directory) -> String {
+    let mut hasher = Sha256::new();
+    let mut field = |text: &str| {
+        hasher.update((text.len() as u64).to_le_bytes());
+        hasher.update(text.as_bytes());
+    };
+    for member in &directory.members {
+        field("member");
+        field(member.name.as_str());
+        for was in &member.was {
+            field(was.as_str());
+        }
+        field(&crate::assets::witness::hex(member.key.as_bytes()));
+        field(&format!("{:?}", member.kind));
+        for login in &member.logins {
+            field(login.as_str());
+        }
+        field(member.home.as_ref().map_or("", |home| home.as_str()));
+        field(if member.managed { "managed" } else { "" });
+    }
+    for account in &directory.accounts {
+        field("account");
+        field(account.name.as_str());
+        field(&format!("{:?}", account.level));
+        field(if account.locked { "locked" } else { "" });
+        field(&account.opened.as_millisecond().to_string());
+    }
+    for share in &directory.shares {
+        field("share");
+        field(share.machine.as_str());
+        field(share.account.as_str());
+        field(if share.active() { "in force" } else { "waiting" });
+    }
+    for assist in &directory.assists {
+        field("assist");
+        field(&serde_json::to_string(&**assist).unwrap_or_default());
+    }
+    for acting in &directory.acting {
+        field("acting");
+        field(&serde_json::to_string(&**acting).unwrap_or_default());
+    }
+    for project in &directory.projects {
+        field("project");
+        field(&serde_json::to_string(&**project).unwrap_or_default());
+    }
+    crate::assets::witness::hex(&hasher.finalize()[..16])
 }
 
-/// Every share of `machine` still waiting waits at `revision` now.
-pub(crate) fn wait_again(directory: &mut Directory, machine: &MachineName, revision: u64) {
+/// The revision a save that takes the chain's number `seq` gives: past
+/// every revision an earlier save gave, whatever the clock says.
+fn revision_at(seq: u64) -> u64 {
+    (seq << 20) | (jiff::Timestamp::now().as_microsecond().max(0) as u64 & 0xF_FFFF)
+}
+
+/// Every share of `machine` waiting, and one about to, waits anew: at the
+/// revision of the save that writes it, and its machine clears again.
+pub(crate) fn wait_anew(directory: &mut Directory, machine: &MachineName) {
     for share in directory.shares.iter_mut().filter(|share| share.machine == *machine && share.pending.is_some()) {
-        Arc::make_mut(share).pending = Some(revision);
+        Arc::make_mut(share).pending = Some(UNSET);
     }
 }
 
-/// Any change to the directory may change what a machine may hold: every
-/// share still waiting waits at a new revision, and its machine clears
-/// again (design §6.3, N04). Whether any moved.
-pub(crate) fn renew(directory: &mut Directory) -> bool {
-    let machines: Vec<MachineName> =
-        directory.shares.iter().filter(|share| share.pending.is_some()).map(|share| share.machine.clone()).collect();
-    for machine in &machines {
-        let revision = next_revision(directory, machine);
-        wait_again(directory, machine, revision);
+/// The save about to take the chain's number `seq`: every share waiting at
+/// no revision yet, or at one whose basis the directory no longer has,
+/// waits at a revision of this save, and its machine clears again (design
+/// §6.3, N04); a save that changes nothing that decides what a machine may
+/// hold moves nothing on. Whether any moved.
+pub(crate) fn renew(directory: &mut Directory, seq: u64) -> bool {
+    if !directory.shares.iter().any(|share| share.pending.is_some()) {
+        return false;
+    }
+    let basis = basis(directory);
+    let machines: std::collections::BTreeSet<MachineName> = directory
+        .shares
+        .iter()
+        .filter(|share| share.pending.is_some() && (share.pending == Some(UNSET) || share.basis.as_deref() != Some(basis.as_str())))
+        .map(|share| share.machine.clone())
+        .collect();
+    let revision = revision_at(seq);
+    for share in directory.shares.iter_mut().filter(|share| share.pending.is_some() && machines.contains(&share.machine)) {
+        let share = Arc::make_mut(share);
+        share.pending = Some(revision);
+        share.basis = Some(basis.clone());
     }
     !machines.is_empty()
 }

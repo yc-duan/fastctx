@@ -1031,11 +1031,10 @@ impl Store {
     }
 
     pub fn save_book(&mut self) -> io::Result<()> {
-        if !self.keep_revisions && crate::shares::renew(&mut self.book.directory) {
-            self.book_edit = BookEdit::Full;
-        }
+        self.renew_shares()?;
         let edit = std::mem::take(&mut self.book_edit);
-        let edit = self.book_rows.save(&self.metadata.shelf, &mut self.metadata.book, &edit)?;
+        let changes = rows::Changes { bodies: self.body_changes(&edit)?, ..rows::Changes::default() };
+        let edit = self.book_rows.save_with(&self.metadata.shelf, &mut self.metadata.book, changes, &edit)?;
         self.metadata.book_saves += 1;
         self.witness_control()?;
         self.publish_edit(true, false, false, &edit);
@@ -1045,9 +1044,6 @@ impl Store {
     /// The chain head a control fact just committed reaches the witness and
     /// the disk before the fact is published or anyone answered.
     fn witness_control(&self) -> io::Result<()> {
-        if let Some(bodies) = &self.bodies {
-            bodies.saw(&self.book.directory)?;
-        }
         let Some(witness) = &self.witness else { return Ok(()) };
         let latest = self.metadata.shelf.0.read_now(crate::assets::chain::latest).map_err(io::Error::other)?;
         match latest {
@@ -1058,11 +1054,32 @@ impl Store {
 
     /// Commits settings and their audit records together, including a batch
     /// of arrangements. Neither durable baseline advances on failure.
-    pub(crate) fn save_hub_and_book(&mut self) -> io::Result<()> {
-        if !self.keep_revisions && crate::shares::renew(&mut self.book.directory) {
+    /// Bodies' members as the directory about to be saved has them, where an
+    /// edit of its accounts or machines may have changed them (design §6.2).
+    fn body_changes(&self, edit: &BookEdit) -> io::Result<Vec<(String, String)>> {
+        match &self.bodies {
+            Some(bodies) if edit.is_full() || edit.list("accounts").0 || edit.list("members").0 => bodies.changes(&self.book.directory),
+            _ => Ok(Vec::new()),
+        }
+    }
+
+    /// New shares waiting, and those whose basis this directory no longer
+    /// has, wait at a revision of this save (design §6.3).
+    fn renew_shares(&mut self) -> io::Result<()> {
+        if self.keep_revisions {
+            return Ok(());
+        }
+        // This save takes the chain's next number.
+        let seq = self.metadata.shelf.0.read_now(crate::assets::chain::latest).map_err(io::Error::other)?.map_or(0, |(seq, _)| seq) + 1;
+        if crate::shares::renew(&mut self.book.directory, seq) {
             self.book_edit = BookEdit::Full;
         }
-        let mut changes = rows::Changes::default();
+        Ok(())
+    }
+
+    pub(crate) fn save_hub_and_book(&mut self) -> io::Result<()> {
+        self.renew_shares()?;
+        let mut changes = rows::Changes { bodies: self.body_changes(&self.book_edit)?, ..rows::Changes::default() };
         let next = self.hub_rows.stage(&self.metadata.hub, &mut changes)?;
         let edit = std::mem::take(&mut self.book_edit);
         let edit = match self.book_rows.save_with(&self.metadata.shelf, &mut self.metadata.book, changes, &edit) {

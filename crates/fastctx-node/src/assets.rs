@@ -36,6 +36,22 @@ struct Pinned {
     /// The latest chain head the hub's word carried, with that word.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     seen: Option<Seen>,
+    /// The hub's signed rotations as it gave them, which lead to the key
+    /// pinned: what shows a hub put back to before a rotation that the key
+    /// is its own successor (design §6.1).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    lineage: Vec<fastctx_types::assets::Rotation>,
+}
+
+/// `lineage` with each of `rotations` it lacks; whether it grew.
+fn grow(lineage: &mut Vec<fastctx_types::assets::Rotation>, rotations: &[fastctx_types::assets::Rotation]) -> bool {
+    let before = lineage.len();
+    for rotation in rotations {
+        if !lineage.contains(rotation) {
+            lineage.push(rotation.clone());
+        }
+    }
+    lineage.len() != before
 }
 
 pub(crate) struct Assets {
@@ -109,24 +125,39 @@ impl Assets {
         fastctx_platform::publish(&self.path, &bytes, Permissions::Private)
     }
 
-    /// The hub's service key as pinned, pinning `offered` the first time.
-    /// An error where the hub offers another key than the one pinned.
-    pub(crate) fn pin(&self, hub: &HubId, offered: &Bytes) -> Result<PublicKey, String> {
+    /// The hub's service key as pinned, pinning `offered` the first time,
+    /// with the rotations the hub gave as its lineage. An error where the hub
+    /// offers another key than the one pinned.
+    pub(crate) fn pin(&self, hub: &HubId, offered: &Bytes, rotations: &[fastctx_types::assets::Rotation]) -> Result<PublicKey, String> {
         let offered: [u8; 32] = offered.array().ok_or("a service key is 32 bytes")?;
         let mut hubs = self.hubs.lock().expect("hubs");
         match hubs.get(hub.as_str()) {
-            Some(pinned) if pinned.key.array() == Some(offered) => Ok(PublicKey::from_bytes(offered)),
+            Some(pinned) if pinned.key.array() == Some(offered) => {
+                let mut next = hubs.clone();
+                if let Some(pinned) = next.get_mut(hub.as_str())
+                    && grow(&mut pinned.lineage, rotations)
+                {
+                    self.save(&next).map_err(|error| error.to_string())?;
+                    *hubs = next;
+                }
+                Ok(PublicKey::from_bytes(offered))
+            }
             Some(_) => Err(format!("the hub {hub} offers another service key than the one this machine pinned")),
             None => {
                 // Pinned once it is on the disk: a key kept only in memory
                 // would be met as new again after a restart.
                 let mut next = hubs.clone();
-                next.insert(hub.as_str().to_string(), Pinned { key: offered.into(), seen: None });
+                next.insert(hub.as_str().to_string(), Pinned { key: offered.into(), seen: None, lineage: rotations.to_vec() });
                 self.save(&next).map_err(|error| error.to_string())?;
                 *hubs = next;
                 Ok(PublicKey::from_bytes(offered))
             }
         }
+    }
+
+    /// The rotations that lead to the key pinned for `hub`, as it gave them.
+    pub(crate) fn lineage(&self, hub: &HubId) -> Vec<fastctx_types::assets::Rotation> {
+        self.hubs.lock().expect("hubs").get(hub.as_str()).map(|pinned| pinned.lineage.clone()).unwrap_or_default()
     }
 
     /// The service key pinned for `hub`, if one is.
@@ -140,9 +171,9 @@ impl Assets {
     pub(crate) fn pin_following(&self, hub: &HubId, offered: &Bytes, rotations: &[fastctx_types::assets::Rotation]) -> Result<PublicKey, String> {
         let offered_key: [u8; 32] = offered.array().ok_or("a service key is 32 bytes")?;
         let pinned = self.hubs.lock().expect("hubs").get(hub.as_str()).and_then(|pinned| pinned.key.array());
-        let Some(mut at) = pinned else { return self.pin(hub, offered) };
+        let Some(mut at) = pinned else { return self.pin(hub, offered, rotations) };
         if at == offered_key {
-            return Ok(PublicKey::from_bytes(at));
+            return self.pin(hub, offered, rotations);
         }
         for _ in 0..=rotations.len() {
             let Some(next) = rotations.iter().find_map(|rotation| {
@@ -157,6 +188,7 @@ impl Assets {
                 let mut next_hubs = hubs.clone();
                 if let Some(pinned) = next_hubs.get_mut(hub.as_str()) {
                     pinned.key = offered_key.into();
+                    grow(&mut pinned.lineage, rotations);
                 }
                 self.save(&next_hubs).map_err(|error| error.to_string())?;
                 *hubs = next_hubs;

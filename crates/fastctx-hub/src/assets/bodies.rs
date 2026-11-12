@@ -16,6 +16,7 @@ use fastctx_types::MachineName;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 use std::io;
+use std::sync::{Arc, OnceLock, Weak};
 
 /// The bodies, in the hub's control database.
 pub(crate) const SCHEMA: &str = "
@@ -61,15 +62,45 @@ fn live(directory: &Directory, machine: &MachineName) -> BTreeSet<String> {
 
 pub(crate) struct Bodies {
     control: Database,
+    /// The hub, under whose directory writer a body's first members are
+    /// taken: no save comes between reading them and keeping them (each save
+    /// keeps them up to date in its own transaction after).
+    hub: OnceLock<Weak<crate::Hub>>,
 }
 
 impl Bodies {
     pub(crate) fn new(control: Database) -> Self {
-        Self { control }
+        Self { control, hub: OnceLock::new() }
     }
 
-    /// `body` of `machine` owns scopes from now: its members are kept.
+    /// The hub whose directory writer a body's first members are read under.
+    pub(crate) fn serve(&self, hub: &Arc<crate::Hub>) {
+        let _ = self.hub.set(Arc::downgrade(hub));
+    }
+
+    /// `body` of `machine` owns scopes from now: its members are kept, as
+    /// the directory has them under its writer; without a hub (the drills),
+    /// as `directory` has them.
     pub(crate) fn known(&self, directory: &Directory, body: &str, machine: &MachineName) -> io::Result<()> {
+        let id = body.to_string();
+        let kept = self
+            .control
+            .read_now(move |c| Ok(c.prepare_cached("SELECT 1 FROM asset_bodies WHERE id = ?1")?.query_row([&id], |_| Ok(())).optional()?))
+            .map_err(io::Error::other)?;
+        if kept.is_some() {
+            return Ok(());
+        }
+        match self.hub.get().and_then(Weak::upgrade) {
+            Some(hub) => {
+                let editing = hub.edit_store();
+                let machine = editing.book.directory.canonical(machine).clone();
+                self.keep(&editing.book.directory, body, &machine)
+            }
+            None => self.keep(directory, body, machine),
+        }
+    }
+
+    fn keep(&self, directory: &Directory, body: &str, machine: &MachineName) -> io::Result<()> {
         let members = serde_json::to_string(&live(directory, machine)).map_err(io::Error::other)?;
         let (body, machine) = (body.to_string(), machine.to_string());
         self.control
@@ -81,9 +112,11 @@ impl Bodies {
             .map_err(io::Error::other)
     }
 
-    /// The directory was saved: each body whose machine is in it, as the same
-    /// body, has its members as they are now; the others keep theirs.
-    pub(crate) fn saw(&self, directory: &Directory) -> io::Result<()> {
+    /// The members to keep of each body whose machine `directory` has, as
+    /// that body, where they differ from those kept: written in the
+    /// transaction that saves `directory`, so a stop never leaves a saved
+    /// directory with members it did not keep (§6.2).
+    pub(crate) fn changes(&self, directory: &Directory) -> io::Result<Vec<(String, String)>> {
         let bodies: Vec<(String, String, String)> = self
             .control
             .read_now(|c| {
@@ -92,6 +125,7 @@ impl Bodies {
                 Ok(rows.collect::<std::result::Result<_, _>>()?)
             })
             .map_err(io::Error::other)?;
+        let mut changes = Vec::new();
         for (id, machine, kept) in bodies {
             let Ok(name) = MachineName::try_from(machine) else { continue };
             if body_of(directory, &name).as_deref() != Some(id.as_str()) {
@@ -99,16 +133,22 @@ impl Bodies {
             }
             let now = serde_json::to_string(&live(directory, &name)).map_err(io::Error::other)?;
             if now != kept {
-                self.control
-                    .write_now(256 + now.len(), move |c| {
-                        c.prepare_cached("UPDATE asset_bodies SET members = ?2, revision = revision + 1 WHERE id = ?1")?
-                            .execute(params![id, now])?;
-                        Ok(())
-                    })
-                    .map_err(io::Error::other)?;
+                changes.push((id, now));
             }
         }
-        Ok(())
+        Ok(changes)
+    }
+
+    /// Keeps `changes` (`changes`) on their own: as the hub opens, for a
+    /// directory saved before members were kept with it.
+    pub(crate) fn settle(&self, directory: &Directory) -> io::Result<()> {
+        let changes = self.changes(directory)?;
+        if changes.is_empty() {
+            return Ok(());
+        }
+        self.control
+            .write_now(256 * changes.len(), move |c| apply(c, &changes))
+            .map_err(io::Error::other)
     }
 
     /// The members of `body` now: as the directory has them while its
@@ -134,4 +174,12 @@ impl Bodies {
         let alive: BTreeSet<String> = directory.accounts.iter().map(|account| format!("{}@{}", account.name, account.opened.as_millisecond())).collect();
         Ok(frozen.intersection(&alive).cloned().collect())
     }
+}
+
+/// Writes bodies' members, in the transaction `c` is in.
+pub(crate) fn apply(c: &fastctx_storage::rusqlite::Connection, changes: &[(String, String)]) -> fastctx_storage::Result<()> {
+    for (id, members) in changes {
+        c.prepare_cached("UPDATE asset_bodies SET members = ?2, revision = revision + 1 WHERE id = ?1")?.execute(params![id, members])?;
+    }
+    Ok(())
 }
