@@ -33,7 +33,7 @@ pub(super) fn held(db: &Connection, key: &str) -> fastctx_storage::Result<Option
         .optional()?)
 }
 
-fn open_holding(db: &Connection, scope: i64, acl_revision: i64) -> fastctx_storage::Result<i64> {
+pub(super) fn open_holding(db: &Connection, scope: i64, acl_revision: i64) -> fastctx_storage::Result<i64> {
     let holding: i64 = db
         .prepare_cached("SELECT COALESCE(MAX(holding), 0) + 1 FROM holdings WHERE scope = ?1")?
         .query_row([scope], |row| row.get(0))?;
@@ -80,27 +80,7 @@ impl Library {
     pub fn install(&self, key: &str, description: Vec<u8>, acl_revision: i64) -> Result<i64> {
         let key = key.to_string();
         Ok(self.database().write_now_at(Priority::Normal, 256 + description.len(), move |db| {
-            match held(db, &key)? {
-                Some((id, state, Some(holding))) if state == "provisional" || state == "live" => {
-                    db.prepare_cached("UPDATE scopes SET state = 'live', description = ?2 WHERE id = ?1")?
-                        .execute(params![id, description])?;
-                    Ok(holding)
-                }
-                Some((id, _, _)) => {
-                    let holding = open_holding(db, id, acl_revision)?;
-                    db.prepare_cached("UPDATE scopes SET state = 'live', description = ?2, holding = ?3 WHERE id = ?1")?
-                        .execute(params![id, description, holding])?;
-                    Ok(holding)
-                }
-                None => {
-                    db.prepare_cached("INSERT INTO scopes (key, description, state, holding) VALUES (?1, ?2, 'live', NULL)")?
-                        .execute(params![key, description])?;
-                    let id = db.last_insert_rowid();
-                    let holding = open_holding(db, id, acl_revision)?;
-                    db.prepare_cached("UPDATE scopes SET holding = ?2 WHERE id = ?1")?.execute(params![id, holding])?;
-                    Ok(holding)
-                }
-            }
+            install_in(db, &key, "", description, acl_revision)
         })?)
     }
 
@@ -219,6 +199,32 @@ impl Library {
             }
             Ok(purged)
         })?)
+    }
+}
+
+/// `Library::install` in the transaction `db` is in, the scope written as
+/// `hub`'s network's; `hub` empty where the library is a hub's own.
+pub(super) fn install_in(db: &Connection, key: &str, hub: &str, description: Vec<u8>, acl_revision: i64) -> fastctx_storage::Result<i64> {
+    match held(db, key)? {
+        Some((id, state, Some(holding))) if state == "provisional" || state == "live" => {
+            db.prepare_cached("UPDATE scopes SET state = 'live', description = ?2, hub = ?3, described = 1 WHERE id = ?1")?
+                .execute(params![id, description, hub])?;
+            Ok(holding)
+        }
+        Some((id, _, _)) => {
+            let holding = open_holding(db, id, acl_revision)?;
+            db.prepare_cached("UPDATE scopes SET state = 'live', description = ?2, holding = ?3, hub = ?4, described = 1 WHERE id = ?1")?
+                .execute(params![id, description, holding, hub])?;
+            Ok(holding)
+        }
+        None => {
+            db.prepare_cached("INSERT INTO scopes (key, description, state, holding, hub, described) VALUES (?1, ?2, 'live', NULL, ?3, 1)")?
+                .execute(params![key, description, hub])?;
+            let id = db.last_insert_rowid();
+            let holding = open_holding(db, id, acl_revision)?;
+            db.prepare_cached("UPDATE scopes SET holding = ?2 WHERE id = ?1")?.execute(params![id, holding])?;
+            Ok(holding)
+        }
     }
 }
 

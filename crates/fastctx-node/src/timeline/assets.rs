@@ -15,7 +15,7 @@
 use super::{order, preview};
 use crate::Node;
 use crate::assets::Proposal;
-use fastctx_content::v2::{EVENT, Entry, Kind as _, LEASE, Library, OVERSIZED, PAGE, Timeline, Write, Writer};
+use fastctx_content::v2::{EVENT, Entry, Kind as _, LEASE, Library, Network, OVERSIZED, PAGE, Timeline, Write, Writer};
 use fastctx_content::RECORD_BYTES;
 use fastctx_types::access::HubId;
 use fastctx_types::assets::{Holders, Readers, StreamClass};
@@ -66,11 +66,12 @@ fn failure(error: impl std::fmt::Display) -> Failure {
 }
 
 /// Where a conversation's timeline goes: its scope, and the hub it is
-/// described by.
+/// described by, under the term this machine is on that hub's network.
 pub(super) struct Placed {
     pub(super) scope: String,
     pub(super) hub: HubId,
     pub(super) proposal: Proposal,
+    pub(super) network: Network,
 }
 
 /// The name a conversation's producer keeps where it stands under.
@@ -79,9 +80,11 @@ pub(super) fn checkpoint(resident: &ResidentId) -> String {
 }
 
 /// Where the conversation's timeline goes, if it keeps its records with one
-/// account: a conversation several accounts share alike has none yet.
+/// account on a network this machine's assets are on: a conversation
+/// several accounts share alike has none yet.
 pub(super) fn placed(node: &Node, about: &About) -> Result<Option<Placed>, Failure> {
     let Some(account) = crate::placement::account(node, &about.acting, None)? else { return Ok(None) };
+    let Some(network) = crate::assets::membership::network(node, &account.hub) else { return Ok(None) };
     // The machine it was born on stays its place however it moves: a moved
     // conversation's timeline goes on there once its ordering is handed
     // over (design §8, plan 3-4), never in a scope of its own here (BB08).
@@ -89,7 +92,7 @@ pub(super) fn placed(node: &Node, about: &About) -> Result<Option<Placed>, Failu
     let readers = Readers::Conversation { openers: vec![account.account.clone()], born_on };
     let scope = format!("{}{}", readers.key_prefix(account.hub.as_str()), about.id);
     let classes = vec![StreamClass { prefix: String::new(), holders: Holders::Readers }];
-    Ok(Some(Placed { scope, hub: account.hub.clone(), proposal: Proposal { hub: account.hub.to_string(), readers, classes } }))
+    Ok(Some(Placed { scope, hub: account.hub.clone(), proposal: Proposal { hub: account.hub.to_string(), readers, classes }, network }))
 }
 
 /// What the timeline here holds now, item by item.
@@ -123,6 +126,9 @@ pub(super) struct Wrote {
 pub(super) enum Span<'a> {
     Whole,
     From { since: jiff::Timestamp, before: &'a [(Vec<u8>, jiff::Timestamp)], floor: u64 },
+    /// The whole timeline as far as it could be read, a source of it
+    /// unreadable now: what was read is written, nothing is taken away.
+    Kept,
 }
 
 /// Brings the conversation's timeline in the asset library to `history` over
@@ -141,17 +147,19 @@ pub(super) fn write(
     again: &HashSet<Vec<u8>>,
 ) -> Result<Wrote, Failure> {
     let _writing = Writing::take(resident);
+    // Begun under the term the machine was on the network when it was
+    // placed: after leaving it, nothing is begun again.
     if library.holding(&placed.scope).map_err(failure)?.is_none() {
         let proposal = serde_json::to_vec(&placed.proposal).map_err(failure)?;
-        library.propose(&placed.scope, proposal).map_err(failure)?;
+        library.propose_on(&placed.network, &placed.scope, proposal).map_err(failure)?;
     }
     let identities = super::names::identities(history);
     let (since, floor) = match &span {
-        Span::Whole => (None, None),
+        Span::Whole | Span::Kept => (None, None),
         Span::From { since, floor, .. } => (Some(*since), Some(*floor)),
     };
     let had: HashMap<Vec<u8>, Entry> = match &span {
-        Span::Whole => held(library, &placed.scope)?,
+        Span::Whole | Span::Kept => held(library, &placed.scope)?,
         Span::From { before, .. } => {
             let mut had = HashMap::new();
             for identity in identities.iter().chain(before.iter().map(|(identity, _)| identity)) {
@@ -194,6 +202,7 @@ pub(super) fn write(
     let present: HashSet<&Vec<u8>> = identities.iter().collect();
     let gone_items: Vec<(&Vec<u8>, &Entry)> = match &span {
         Span::Whole => had.iter().filter(|(identity, _)| !present.contains(identity)).collect(),
+        Span::Kept => Vec::new(),
         Span::From { since, before, .. } => before
             .iter()
             .filter(|(identity, at)| at >= since && !present.contains(identity))

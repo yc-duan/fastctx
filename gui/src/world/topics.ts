@@ -251,6 +251,10 @@ class Topics {
             for (const reader of this.readers) { reader.fresh = true; reader.due = 0; }
           }
           this.retryAt = Date.now() + this.backoff.failed();
+          // A state is read for the first time whether or not its changes
+          // can be waited on: a machine away or a wait that failed shows
+          // what reading it says, not a page still reading.
+          for (const reader of readers) if (reader.fresh && !reader.reading && reader.due <= Date.now()) this.read(reader);
         }
         return;
       } finally {

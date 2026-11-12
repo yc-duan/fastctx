@@ -954,14 +954,25 @@ pub async fn run_prepared(
             node.log.line(format_args!("could not finish a ledger entry: {problem}"));
         }
         town::guard::start(&node).context("watching the towns' ledgers")?;
+        // The asset library is on the networks whose memberships stand and
+        // off every other before any link writes for one: what a network
+        // this computer left, and stopped before it was let go, goes now.
+        let standing: Vec<_> = memberships
+            .iter()
+            .map(|membership| membership.id.clone())
+            .filter(|hub| world::standing(&node.world, hub))
+            .collect();
+        // One that fails is set right later: a network's driver joins it,
+        // the upkeep leaves what no membership stands for.
+        if let Err(why) = assets::membership::settle(&node, &standing) {
+            node.log.line(format_args!("settling which networks the asset library is on: {why}"));
+        }
         for membership in memberships {
             node.log
                 .line(format_args!("on the hub {} ({}) as {}", membership.hub_name, membership.id, membership.name));
             world::start(&node, membership).context("starting a link to a hub")?;
         }
-        // What a network this computer left, and stopped before it was
-        // cleared, had here goes now.
-        fastctx_platform::task::spawn(assets::leave::left_before(node.clone()));
+        assets::upkeep::start(&node);
         replicas::cleanup::start(&node);
         Ok::<_, anyhow::Error>(())
     })

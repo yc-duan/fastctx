@@ -5,7 +5,7 @@ use super::shelf;
 use crate::machine_log::{Kept, RETENTION, notification};
 use fastctx_storage::{
     Database, Error,
-    rusqlite::{Connection, OptionalExtension, params, params_from_iter, types::Value},
+    rusqlite::{Connection, OptionalExtension, params},
 };
 use fastctx_types::{
     AccountName,
@@ -224,18 +224,26 @@ pub(crate) fn notices(
         return Ok(Vec::new());
     }
     database.read_now(|c| {
-        let placeholders = vec!["?";accounts.len()].join(",");
-        // The newest first, so a long history does not ride on every view.
-        let sql = format!("SELECT DISTINCT l.id,l.record FROM machine_log_notified n JOIN machine_log l ON l.id=n.id WHERE n.reader IN ({placeholders}) AND (l.at,l.nano)>(?,?) ORDER BY l.id DESC LIMIT ?");
+        // The newest of each reader's, read back along its own index and no
+        // further than the most a view carries: a long history costs nothing
+        // here. Their newest together, then the records still kept.
+        let most = crate::machine_log::NOTICES;
+        let mut newest = c.prepare_cached("SELECT id FROM machine_log_notified WHERE reader = ?1 ORDER BY id DESC LIMIT ?2")?;
+        let mut ids = std::collections::BTreeSet::new();
+        for (name, opened) in accounts {
+            let found = newest.query_map(params![account(name, *opened), most as i64], |row| row.get::<_, i64>(0))?;
+            for id in found {
+                ids.insert(id?);
+            }
+        }
         let cutoff = now.checked_sub(RETENTION).map_err(|e|Error::new(e.to_string()))?;
-        let mut values: Vec<Value> = accounts.iter().map(|(name,opened)|Value::Text(account(name,*opened))).collect();
-        values.extend([Value::Integer(cutoff.as_second()),Value::Integer(i64::from(cutoff.subsec_nanosecond()))]);
-        values.push(Value::Integer(crate::machine_log::NOTICES as i64));
-        let mut stmt = c.prepare_cached(&sql)?;
-        let mut cursor = stmt.query(params_from_iter(values))?;
+        let mut still = c.prepare_cached("SELECT record FROM machine_log WHERE id = ?1 AND (at, nano) > (?2, ?3)")?;
         let mut rows = Vec::new();
-        while let Some(row) = cursor.next()? {
-            rows.push(row.get::<_,Vec<u8>>(1)?);
+        for id in ids.into_iter().rev().take(most) {
+            let record = still
+                .query_row(params![id, cutoff.as_second(), i64::from(cutoff.subsec_nanosecond())], |row| row.get::<_, Vec<u8>>(0))
+                .optional()?;
+            rows.extend(record);
         }
         let mut notices = Vec::new();
         for bytes in rows.iter().rev() {

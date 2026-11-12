@@ -145,6 +145,20 @@ pub fn key(world: &WorldDir) -> io::Result<SecretKey> {
     crate::ledger::own_key(world)
 }
 
+/// Held while a membership begins or ends here — its record on the disk,
+/// its link, and the networks the asset library is on change together —
+/// so one beginning and one ending never interleave.
+pub(crate) fn memberships() -> &'static tokio::sync::Mutex<()> {
+    static MEMBERSHIPS: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    &MEMBERSHIPS
+}
+
+/// Whether the membership of `hub` kept here stands: its hub has not ended
+/// this machine's place on it.
+pub(crate) fn standing(world: &WorldDir, hub: &HubId) -> bool {
+    !fastctx_platform::disk::is_there(net_dir(world, hub).ended())
+}
+
 /// Starts the link of a membership.
 pub fn start(node: &Arc<Node>, membership: Membership) -> io::Result<Arc<Link>> {
     let key = key(&node.world)?;
@@ -286,17 +300,21 @@ async fn logged_in(node: &Arc<Node>, joined: Joined) -> Result<Reply, Failure> {
         node.set_names(names);
     }
     // A link the hub stopped, as when it removed this computer, is not asked
-    // again: the new membership starts one in its place.
+    // again: the new membership starts one in its place. One begins while
+    // no other begins or ends.
+    let one = memberships().lock().await;
     match node.link_of(&hub).filter(|link| !matches!(link.status(), Status::Stopped { .. })) {
         // Logged in again where the hub is reached now, as after a move this
         // computer did not follow: the link connects there from now on.
         Some(link) if !addresses.is_empty() && link.hub_addresses() != addresses => {
+            drop(one);
             link.reach_hub_at(addresses);
             if let Err(error) = link.refresh().await {
                 node.log.line(format_args!("logged in again; the link connects to the hub anew: {error}"));
             }
         }
         Some(link) => {
+            drop(one);
             link.refresh().await.map_err(|error| Failure::new(format!("logged in, but asking the hub: {error}")))?;
         }
         None => {
@@ -313,7 +331,14 @@ async fn logged_in(node: &Arc<Node>, joined: Joined) -> Result<Reply, Failure> {
             net.prepare()
                 .and_then(|()| fastctx_net::link::state::write(&net.membership(), &membership))
                 .map_err(|error| Failure::new(format!("logged in, but recording the membership failed: {error}")))?;
+            // The asset library is on the network before anything is
+            // written for it; a join that fails is tried again by the
+            // network's asset driver.
+            if let Err(why) = crate::assets::membership::joined(node, &hub).await {
+                node.log.line(format_args!("joining {hub}'s assets here: {why}; tried again"));
+            }
             start(node, membership).map_err(|error| Failure::new(format!("starting the link to the hub: {error}")))?;
+            drop(one);
             crate::ledger::joined(node, &hub);
             crate::history::import::schedule(node);
             let (carrying, at) = (node.clone(), hub.clone());
@@ -542,6 +567,14 @@ pub fn seen_dissolved(node: &Node) -> Result<(), Failure> {
 /// aside; where they are put.
 async fn put_aside(node: &Arc<Node>, link: &Arc<Link>) -> Result<std::path::PathBuf, Failure> {
     let hub = link.membership().id.clone();
+    let _one = memberships().lock().await;
+    // A membership begun since, by a login after this one ended, is the
+    // computer's now: only this link goes.
+    if !node.link_of(&hub).is_some_and(|current| Arc::ptr_eq(&current, link)) {
+        link.stop();
+        node.log.line(format_args!("left {hub} as it was; a membership begun since stands"));
+        return Ok(net_dir(&node.world, &hub).path().to_path_buf());
+    }
     // Leaving its last network, the computer keeps the model collaboration
     // that named it as its own (`own_collab`).
     if node.links().iter().all(|other| other.membership().id == hub) {
@@ -555,7 +588,7 @@ async fn put_aside(node: &Arc<Node>, link: &Arc<Link>) -> Result<std::path::Path
     node.ways_changed();
     // What the network had here goes with it (the user, 2026-11-12), before
     // its records are put aside: a stop in between leaves again at start.
-    crate::assets::leave::leave(node, &hub).await;
+    crate::assets::membership::left(node, &hub).await;
     // Its view is gone, and every interface shows the World without it.
     node.views_changed();
     // The machines each session may use, and who may ask for colleagues,
@@ -1595,9 +1628,20 @@ impl fastctx_net::link::Node for Handler {
             });
             return;
         }
-        let Some(then) = then else { return };
-        let Some(membership) = node.link_of(&hub).map(|link| link.dir().to_path_buf()) else { return };
-        fastctx_platform::task::spawn(async move { crate::removed::uninstall(&node, &membership, then).await });
+        // Removed from the network: what it had here goes as on leaving it
+        // (the user, 2026-11-12); the membership stays until a new login
+        // takes this place again.
+        fastctx_platform::task::spawn(async move {
+            {
+                let _one = memberships().lock().await;
+                if !node.link_of(&hub).is_some_and(|link| link.membership_active()) {
+                    crate::assets::membership::left(&node, &hub).await;
+                }
+            }
+            let Some(then) = then else { return };
+            let Some(membership) = node.link_of(&hub).map(|link| link.dir().to_path_buf()) else { return };
+            crate::removed::uninstall(&node, &membership, then).await
+        });
     }
 
     /// Connected again: a hub that calls this computer otherwise than the

@@ -776,6 +776,32 @@ pub(crate) fn cut_calls(hub: &Hub) {
     }
 }
 
+/// The questions that read or write an account's records, its projects'
+/// ledgers and histories outside the asset service.
+fn of_records(question: &Question) -> bool {
+    matches!(
+        question,
+        Question::AccountRecords { .. }
+            | Question::OwnedRecords { .. }
+            | Question::PlanCopies { .. }
+            | Question::SkillFiles { .. }
+            | Question::RecordWatching { .. }
+            | Question::RecordFollowing { .. }
+            | Question::HistoryCatalog { .. }
+            | Question::HistoryRead { .. }
+            | Question::HistorySubmitted { .. }
+            | Question::HistoryWrite { .. }
+            | Question::MemoryRead { .. }
+            | Question::MemoryWrite { .. }
+            | Question::ProjectIndex { .. }
+            | Question::LedgerRead { .. }
+            | Question::LedgerWrite { .. }
+            | Question::LedgerProjection { .. }
+            | Question::LedgerTowns
+            | Question::LedgerCatalog
+    )
+}
+
 /// Does what the member's frame asks; `took`, how many bytes of this
 /// connection the hub took from it, goes back with its heartbeat.
 #[allow(clippy::too_many_arguments)]
@@ -797,6 +823,16 @@ fn handle(
     let reply = |frame: Down| {
         let _ = out.send(Out::Frame(frame));
     };
+    // While the hub's assets are sealed, no account's records are read or
+    // written by any way, the requests from before the asset service among
+    // them (design §17; the user, 2026-11-12).
+    if let Up::Ask { id, question, .. } = &frame
+        && of_records(question)
+        && let Some(why) = hub.assets.sealed()
+    {
+        reply(Down::Told { id: *id, answer: Err(format!("the hub's assets are sealed: {why}")) });
+        return Ok(());
+    }
     match frame {
         Up::Ping { paths, held, .. } => {
             crate::assists::heard(hub);

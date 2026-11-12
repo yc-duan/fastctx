@@ -152,8 +152,12 @@ pub(crate) async fn window(
     let mut seam = from.filter(|(session, _)| *session == id).map(|(_, seam)| seam).unwrap_or_default();
     // Read from its start, the last session shows what it copied from the
     // earlier ones only there (`continuing`): by their records' ids, read
-    // with them, whole.
+    // with them, whole. A seam still at its start reads it from there: as
+    // a first reading does, with the earlier sessions.
     let several = !sessions.is_empty();
+    if several && seam.offset == 0 {
+        seam = Seam::default();
+    }
     let (mut before, mut copied) = (Vec::new(), HashSet::new());
     if seam.identity.is_none() && several {
         let Some(read) = super::earlier(node, resident, sessions).await else { return Ok(None) };
@@ -193,9 +197,9 @@ pub(crate) async fn window(
             // only a whole reading takes, say: read whole as ever (DD02).
             Ok(Err(Restart::Unsupported(_))) => return Ok(None),
             Ok(Err(why)) => return Err(format!("{}: {why}", path.display())),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                return Err(format!("{} is gone; Claude Code removes old sessions itself", path.display()));
-            }
+            // Gone — Claude Code removes old sessions itself — it is read
+            // whole as ever: what the World saw of it, and that it is gone.
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(error) => return Err(format!("{}: {error}", path.display())),
         }
     };

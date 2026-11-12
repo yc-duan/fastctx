@@ -136,11 +136,14 @@ impl Library {
     /// user (§3, §4.5).
     pub fn revoke_keeping(&self, scope: &str, device: &[u8; 32]) -> Result<()> {
         let (scope, device) = (scope.to_string(), *device);
-        Ok(self.database().write_now_at(Priority::Control, 1 << 20, move |db| {
-            if let Some((scope_id, _, Some(holding))) = held(db, &scope)? {
-                keep_unsent(db, scope_id, holding, &device, None)?;
-            }
-            super::scopes::revoke_in(db, &scope)
-        })?)
+        Ok(self.database().write_now_at(Priority::Control, 1 << 20, move |db| revoke_keeping_in(db, &scope, &device))?)
     }
+}
+
+/// `Library::revoke_keeping` in the transaction `db` is in.
+pub(super) fn revoke_keeping_in(db: &Connection, scope: &str, device: &[u8; 32]) -> fastctx_storage::Result<()> {
+    if let Some((scope_id, _, Some(holding))) = held(db, scope)? {
+        keep_unsent(db, scope_id, holding, device, None)?;
+    }
+    super::scopes::revoke_in(db, scope)
 }

@@ -183,6 +183,42 @@ fn receipt_head(receipt: &wire::Reported) -> Result<(Vec<u8>, Head, Vec<u8>), St
     })
 }
 
+/// What `machine` brings that shows the hub was put back, as an ordinary
+/// `open` would find it: a chain head the hub's word carried that its chain
+/// does not hold, or the hub's receipt of what its libraries no longer
+/// hold, neither of a history the hub set aside as it recovered. Why, if so.
+fn put_back(
+    assets: &Assets,
+    directory: &Indexed<'_>,
+    machine: &MachineName,
+    seen: Option<&wire::Seen>,
+    reported: &[wire::Reported],
+) -> Result<Option<String>, String> {
+    if let Some((seq, head)) = seen.and_then(|seen| heard_seen(assets, seen)) {
+        let kept = assets.control.read_now(move |c| chain::head_at(c, seq)).map_err(|error| error.to_string())?;
+        if kept != Some(head) && !assets.closed_head(seq, &head).map_err(|error| error.to_string())? {
+            return Ok(Some(format!("{machine} saw the hub's history at {seq} that the hub does not hold")));
+        }
+    }
+    for receipt in reported {
+        let Some(scope) = scopes::scope(assets, &receipt.scope)? else { continue };
+        if !scopes::readable(directory, machine, &scope) {
+            continue;
+        }
+        let Ok((statement, wanted, word)) = receipt_head(receipt) else { continue };
+        if assets.keys().heard(&statement, &word).is_none() {
+            continue;
+        }
+        let library = scopes::library(assets, &scope)?;
+        if !library.holds(&wanted).map_err(|error| error.to_string())?
+            && !assets.closed_receipt(&wanted).map_err(|error| error.to_string())?
+        {
+            return Ok(Some(format!("{machine} holds the hub's receipt of {} that the hub's history no longer holds", receipt.scope)));
+        }
+    }
+    Ok(None)
+}
+
 /// The scope a request is of, if it is of one already described.
 pub(crate) fn scope_of(request: &Request) -> Option<&str> {
     match request {
@@ -215,9 +251,18 @@ pub(crate) fn ask(
         // What a machine brings while sealed, as far as the hub's word stands
         // behind it, is kept for the recovery.
         if let Request::Open { seen, reported, .. } = &request {
-            let seen = seen.as_ref().and_then(|seen| heard_seen(assets, seen));
+            let heard = seen.as_ref().and_then(|seen| heard_seen(assets, seen));
             let receipts = reported.iter().filter_map(|receipt| receipt_head(receipt).ok()).filter(|(statement, _, word)| assets.keys().heard(statement, word).is_some()).map(|(_, head, _)| head).collect();
-            assets.brought(machine, seen, receipts);
+            assets.brought(machine, heard, receipts);
+            // Sealed only as it started, the hub that is shown it was put
+            // back seals for its recovery instead: the super administrator
+            // can no longer open it as an ordinary start.
+            if assets.sealed_at_start()
+                && let Some(found) = put_back(assets, directory, machine, seen.as_ref(), reported)?
+            {
+                assets.seal(&found);
+                return Ok(Reply::Sealed { why: found });
+            }
         }
         return Ok(Reply::Sealed { why });
     }

@@ -116,9 +116,9 @@ export const zhManage: ManageWords = {
   removeMany: (count) => `移除这 ${count} 台？`,
   othersLose: (count) => (count === 1 ? "移出之后，它的主人和所有能用它的人都不再有这台" : "移出之后，它们的主人和所有能用它们的人都不再有这些机器"),
   ways: {
-    uninstall: { title: "移出并卸载，保留数据", what: "那台上的 Fastctx 卸掉，世界的记录、登录与身份留着，重新装上还能接着用" },
+    uninstall: { title: "移出并卸载，保留数据", what: "那台上的 Fastctx 卸掉，世界的记录、登录与身份留着，重新装上还能接着用；这个网络同步过去的资料清掉" },
     everything: { title: "移出并彻底移除", what: "把 Fastctx 写在那台上的一切清掉" },
-    leave: { title: "只移出网络", what: "那台上的 Fastctx 留着，只是连不上这个网络" },
+    leave: { title: "只移出网络", what: "那台上的 Fastctx 留着，只是连不上这个网络；这个网络同步过去的资料清掉" },
   },
   notMember: "成员的机器由成员自己卸载，这里只能移出网络",
   noneUninstall: "这几台都不能从这里卸载，只能移出网络",
@@ -180,9 +180,9 @@ export const enManage: ManageWords = {
   removeMany: (count) => `Remove these ${count}?`,
   othersLose: (count) => (count === 1 ? "Once it is off, its owner and everyone who uses it no longer have it" : "Once they are off, their owners and everyone who uses them no longer have them"),
   ways: {
-    uninstall: { title: "Remove and uninstall, keeping its data", what: "Fastctx goes from it; its World's records, logins and identity stay, to carry on once installed again" },
+    uninstall: { title: "Remove and uninstall, keeping its data", what: "Fastctx goes from it; its World's records, logins and identity stay, to carry on once installed again; what this network synced to it is cleared" },
     everything: { title: "Remove and erase", what: "Everything Fastctx wrote there goes" },
-    leave: { title: "Only take it off the network", what: "Fastctx stays on it, and no longer reaches this network" },
+    leave: { title: "Only take it off the network", what: "Fastctx stays on it, no longer reaches this network, and what this network synced to it is cleared" },
   },
   notMember: "A member's machine is the member's to uninstall; here it is only taken off",
   noneUninstall: "None of these can be uninstalled from here; they are only taken off",

@@ -75,6 +75,21 @@ pub(crate) fn register(node: &Arc<crate::Node>) {
             let Some(node) = node else { return Outcome::Failed("the node is stopping".into()) };
             let Ok(content) = node.content().cloned() else { return Outcome::Done };
             let conversation = taken.key;
+            // Where the asset library's producer stood for it goes as well;
+            // what the conversation's scope holds goes with its deletion as
+            // an asset.
+            if let Some(assets) = node.assets.as_ref() {
+                let (library, of) = (assets.library.clone(), conversation.clone());
+                let dropped = fastctx_platform::task::spawn_blocking(move || {
+                    crate::timeline::asset_checkpoints(&of).iter().try_for_each(|name| library.drop_checkpoint(name))
+                })
+                .await;
+                match dropped {
+                    Ok(Ok(())) => {}
+                    Ok(Err(error)) => return Outcome::Failed(error.to_string()),
+                    Err(error) => return Outcome::Failed(error.to_string()),
+                }
+            }
             match fastctx_platform::task::spawn_blocking(move || forget(&content, &conversation)).await {
                 Ok(Ok(true)) => Outcome::Again { after: LOOKS_AGAIN },
                 Ok(Ok(false)) => Outcome::Done,

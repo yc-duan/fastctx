@@ -16,7 +16,45 @@ pub fn list(machine: MachineName, path: Option<&str>) -> Result<Folders, Failure
     list_page(machine, path, None)
 }
 
+/// Folders one listing from the first gives at most, and pages of a
+/// folder's entries it looks through for them.
+const FOLDERS_MOST: usize = 4096;
+const PAGES_MOST: usize = 256;
+
+/// The folders in `path` from `cursor` on, one page of its entries; asked
+/// from the first, as every interface asks, all of them, up to
+/// `FOLDERS_MOST` and `PAGES_MOST` pages looked through: a folder whose
+/// first page is all files still shows the folders after them.
 pub fn list_page(machine: MachineName, path: Option<&str>, cursor: Option<&str>) -> Result<Folders, Failure> {
+    if cursor.is_some() {
+        return one_page(machine, path, cursor);
+    }
+    let mut whole = one_page(machine.clone(), path, None)?;
+    let mut pages = 1;
+    while let Some(next) = whole.next_cursor.clone()
+        && whole.folders.len() < FOLDERS_MOST
+        && pages < PAGES_MOST
+    {
+        // A folder changed as it is read keeps what was read so far, said so.
+        let Ok(page) = one_page(machine.clone(), path, Some(&next)) else { break };
+        whole.folders.extend(page.folders);
+        whole.next_cursor = page.next_cursor;
+        whole.truncated = page.truncated;
+        pages += 1;
+    }
+    whole.folders.sort_by(by_name);
+    if whole.folders.len() > FOLDERS_MOST {
+        whole.folders.truncate(FOLDERS_MOST);
+        whole.truncated = true;
+    }
+    Ok(whole)
+}
+
+fn by_name(a: &Folder, b: &Folder) -> std::cmp::Ordering {
+    a.name.to_lowercase().cmp(&b.name.to_lowercase()).then_with(|| a.name.cmp(&b.name))
+}
+
+fn one_page(machine: MachineName, path: Option<&str>, cursor: Option<&str>) -> Result<Folders, Failure> {
     if let Some(path) = path {
         fastctx_types::file_limits::text(path, fastctx_types::file_limits::PATH_BYTES, "path")
             .map_err(Failure::not_run)?;
@@ -62,7 +100,7 @@ pub fn list_page(machine: MachineName, path: Option<&str>, cursor: Option<&str>)
         let hidden = name.starts_with('.') || hidden(&entry);
         folders.push(Folder { path: written(&entry.path()), name, hidden });
     }
-    folders.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()).then_with(|| a.name.cmp(&b.name)));
+    folders.sort_by(by_name);
     crate::directory_page::unchanged(folder, &page.identity).map_err(unread)?;
     let parent = folder.parent().map(written);
     Ok(Folders {

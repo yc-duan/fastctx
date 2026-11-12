@@ -290,6 +290,14 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
+/// The bytes `hex` wrote, if `text` is such.
+fn unhex(text: &str) -> Option<Vec<u8>> {
+    if !text.len().is_multiple_of(2) {
+        return None;
+    }
+    (0..text.len()).step_by(2).map(|at| u8::from_str_radix(text.get(at..at + 2)?, 16).ok()).collect()
+}
+
 
 /// Brings `resident`'s timeline in the asset library to its history, where
 /// this machine keeps one.
@@ -456,16 +464,25 @@ pub(super) async fn produce(node: &Arc<Node>, resident: &ResidentId, whole: bool
             // What the window wrote before, as the library holds it: every
             // item placed past the floor, whatever the checkpoint kept of it
             // (CC12) — a write committed before a stop that kept no
-            // checkpoint is among them. Each is read again in this window,
-            // or gone.
+            // checkpoint is among them — and what the host told at the last
+            // reading, wherever a whole writing placed it, below the floor
+            // too. Each is read again in this window, or gone.
             let before: Vec<(Vec<u8>, Timestamp)> = if window.whole {
                 Vec::new()
             } else {
                 let (reading, scope, held) = (library.clone(), placed.scope.clone(), producing.clone());
                 let since = window.since;
+                let told: Vec<Vec<u8>> = state.told.iter().filter_map(|identity| unhex(identity)).collect();
                 fastctx_platform::task::blocking(move || {
                     let _held = held;
-                    past_floor(&reading, &scope, floor).map(|items| items.into_iter().map(|identity| (identity, since)).collect())
+                    past_floor(&reading, &scope, floor).map(|mut items| {
+                        for identity in told {
+                            if !items.contains(&identity) {
+                                items.push(identity);
+                            }
+                        }
+                        items.into_iter().map(|identity| (identity, since)).collect()
+                    })
                 })
                 .await
                 .map_err(failure)?
@@ -558,20 +575,31 @@ pub(super) async fn produce(node: &Arc<Node>, resident: &ResidentId, whole: bool
         }
         None => {
             let read = crate::talk::history_quietly(node, resident).await?;
-            if read.unread {
-                return Ok(Produced { unread: true, ..Produced::default() });
-            }
+            // A source unreadable now, gone for good or not yet whole, holds
+            // up none of the rest: what was read is written, with the note
+            // of what could not be, and nothing is taken away until a
+            // reading of every source has it gone; it is read again later.
+            let unread = read.unread;
             reset(&library, &name, producing.clone()).await?;
             let wrote = {
                 let (writing, signer, whose, history, held) = (library.clone(), signer.clone(), resident.clone(), read.history, producing.clone());
                 fastctx_platform::task::blocking(move || {
                     let _held = held;
-                    assets::write(&writing, signer, &whose, &placed, &history, Span::Whole, &Default::default())
+                    let span = if unread { Span::Kept } else { Span::Whole };
+                    assets::write(&writing, signer, &whose, &placed, &history, span, &Default::default())
                 })
                 .await?
             };
             let floor = wrote.items.iter().map(|(_, _, key)| *key).max().unwrap_or(0);
-            (wrote, Following { form: FORM, version, floor, verified: Some(Timestamp::now()), runs: runs.clone(), ..Following::default() }, false)
+            let following = Following {
+                form: FORM,
+                version: if unread { String::new() } else { version },
+                floor,
+                verified: if unread { state.verified } else { Some(Timestamp::now()) },
+                runs: runs.clone(),
+                ..Following::default()
+            };
+            (wrote, following, unread)
         }
     };
     // A history read past a seam that changed is checked whole within the

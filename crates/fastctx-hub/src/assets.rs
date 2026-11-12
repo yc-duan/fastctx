@@ -848,9 +848,18 @@ impl Assets {
             pause = (pause * 2).min(BARRIER_PAUSE_MOST);
         }
         self.witness.freeze();
-        if sealed.is_none() {
+        // Found put back, the hub is sealed for its recovery: a seal it put
+        // on only as it started gives way, so the super administrator no
+        // longer opens it, `fastctx hub reopen` does.
+        if sealed.as_deref().is_none_or(|was| was == SEALED_AT_START) {
             *sealed = Some(why.to_string());
         }
+    }
+
+    /// Whether the assets are sealed only as the hub started (design §17
+    /// (b)), not for a recovery.
+    pub(crate) fn sealed_at_start(&self) -> bool {
+        self.sealed.lock().expect("seal").as_deref() == Some(SEALED_AT_START)
     }
 
     /// The seal, held: nothing seals the hub while a grant that checked it
@@ -867,7 +876,7 @@ impl Assets {
     /// Seals every asset as the hub starts, its setting says so (design §17
     /// (b)): nothing was found wrong, so the witness goes on as ever; only
     /// no asset is given or taken until the super administrator opens them
-    /// (`open_start_seal`). A seal already there stays.
+    /// (`Change::OpenAssets`, with `openable`). A seal already there stays.
     pub(crate) fn seal_at_start(&self) {
         let mut sealed = self.sealed.lock().expect("seal");
         if sealed.is_none() {
@@ -875,16 +884,13 @@ impl Assets {
         }
     }
 
-    /// Opens the assets sealed as the hub started; a seal for any other
+    /// Whether `sealed`, the seal as held, is one the super administrator
+    /// may open: the one the hub put on as it started. A seal for any other
     /// reason stays until `fastctx hub reopen`.
-    pub(crate) fn open_start_seal(&self) -> Result<(), String> {
-        let mut sealed = self.sealed.lock().expect("seal");
+    pub(crate) fn openable(sealed: &Option<String>) -> Result<(), String> {
         match sealed.as_deref() {
             None => Err("the hub's assets are not sealed".into()),
-            Some(SEALED_AT_START) => {
-                *sealed = None;
-                Ok(())
-            }
+            Some(SEALED_AT_START) => Ok(()),
             Some(why) => Err(format!("the hub's assets are sealed because {why}: stop the hub and run `fastctx hub reopen`")),
         }
     }

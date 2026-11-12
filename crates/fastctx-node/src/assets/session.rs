@@ -15,7 +15,7 @@
 
 use super::{Assets, Pinning};
 use crate::Node;
-use fastctx_content::v2::{EpochFact, Header, Holder, Imported, Library, RawFrame, Receipt, Said};
+use fastctx_content::v2::{EpochFact, Header, Holder, Imported, Library, Network, RawFrame, Receipt, Said};
 use fastctx_net::link::Link;
 use fastctx_net::sign::PublicKey;
 use fastctx_types::access::HubId;
@@ -80,9 +80,12 @@ pub(crate) fn pushed(node: &Arc<Node>, hub: &HubId, push: wire::Push) {
                 }
                 // Forgotten again once the holding ended: a listing begun
                 // while it still stood skipped a scope it may hold again
-                // (DD01).
-                if let Some(assets) = weak.upgrade().as_ref().and_then(|node| node.assets.as_ref()) {
-                    assets.forget_listing(&hub);
+                // (DD01). What the period held is purged in the upkeep.
+                if let Some(node) = weak.upgrade() {
+                    if let Some(assets) = node.assets.as_ref() {
+                        assets.forget_listing(&hub);
+                    }
+                    super::upkeep::wake(&node);
                 }
             });
         }
@@ -113,14 +116,23 @@ async fn run(node: std::sync::Weak<Node>, hub: HubId, wake: Arc<tokio::sync::Not
     let mut previous: Option<String> = None;
     loop {
         let Some(node) = node.upgrade() else { return };
-        let Some(link) = node.link_of(&hub) else {
-            if let Some(assets) = node.assets.as_ref() {
-                assets.drivers.lock().expect("drivers").remove(&hub);
-            }
-            return;
+        // A network left, or a place the hub ended, ends the driver; one
+        // joined again starts it anew.
+        let network = match node.link_of(&hub) {
+            Some(link) => super::membership::of_link(&node, &hub, &link).await.map(|network| network.map(|network| (link, network))),
+            None => Ok(None),
         };
-        let speaks = link.view().asset_sync == VERSION;
-        let failed = if speaks { pass(&node, &hub, &link).await.err() } else { None };
+        let failed = match network {
+            Ok(None) => {
+                if let Some(assets) = node.assets.as_ref() {
+                    assets.drivers.lock().expect("drivers").remove(&hub);
+                }
+                return;
+            }
+            Ok(Some((link, network))) if link.view().asset_sync == VERSION => pass(&node, &hub, &link, &network).await.err(),
+            Ok(Some(_)) => None,
+            Err(why) => Some(format!("joining the network's assets here: {why}")),
+        };
         let wait = match &failed {
             Some(error) => {
                 if previous.as_ref() != Some(error) {
@@ -184,8 +196,9 @@ fn array(bytes: &Bytes, what: &str) -> Result<[u8; 32], String> {
     bytes.array().ok_or_else(|| format!("{what} is 32 bytes"))
 }
 
-/// One pass with the hub.
-async fn pass(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>) -> Result<(), String> {
+/// One pass with the hub, on its network under `network`'s term: a scope
+/// installed after the machine left it is not.
+async fn pass(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>, network: &Network) -> Result<(), String> {
     let assets = node.assets.as_ref().ok_or("the asset library is unavailable")?;
     let library = &assets.library;
     let session = assets.session();
@@ -194,12 +207,12 @@ async fn pass(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>) -> Result<(), Str
     // cleared at it.
     let waited = waiting_revision(link);
     let key = open(assets, hub, link, session).await?;
-    let mut failed = describe(assets, hub, link, &key).await.err();
+    let mut failed = describe(assets, hub, link, &key, network).await.err();
     // Shared whole on another network, this machine takes nothing of this
     // one: what it begins goes up, nothing comes down to its disk.
     let isolated = shared_elsewhere(node, hub);
     if isolated.is_none()
-        && let Err(why) = discover(assets, hub, link, &key).await
+        && let Err(why) = discover(assets, hub, link, &key, network).await
     {
         failed.get_or_insert(format!("listing what this machine may hold: {why}"));
     }
@@ -472,7 +485,7 @@ async fn open(assets: &Assets, hub: &HubId, link: &Arc<Link>, session: u64) -> R
 }
 
 /// The scopes this machine began before any hub described them, described.
-async fn describe(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKey) -> Result<(), String> {
+async fn describe(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKey, network: &Network) -> Result<(), String> {
     let library = &assets.library;
     for (scope, proposal) in blocking(library, |library| library.provisionals()).await? {
         let Some(proposal) = proposal else { continue };
@@ -490,7 +503,8 @@ async fn describe(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKe
         if read.scope != scope || read.hub != hub.as_str() {
             return Err(format!("the hub described another scope than {scope}"));
         }
-        blocking(library, move |library| library.install(&scope, descriptor.fact.0, read.seq as i64)).await?;
+        let network = network.clone();
+        blocking(library, move |library| library.install_on(&network, &scope, descriptor.fact.0, read.seq as i64)).await?;
     }
     Ok(())
 }
@@ -503,7 +517,7 @@ const RELIST: Duration = Duration::from_secs(300);
 /// hold yet (design §6.6), its descriptor the hub's word: those described
 /// since the last listing, or all of them when the driver begins and every
 /// `RELIST`.
-async fn discover(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKey) -> Result<(), String> {
+async fn discover(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKey, network: &Network) -> Result<(), String> {
     let library = &assets.library;
     let began = assets.forgotten.load(std::sync::atomic::Ordering::SeqCst);
     let known = assets.listed.lock().expect("listed").get(hub).cloned();
@@ -553,8 +567,8 @@ async fn discover(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKe
             }
             let scope = held.scope.clone();
             if blocking(library, move |library| library.holding(&scope)).await?.is_none() {
-                let fact = held.descriptor.fact.0;
-                blocking(library, move |library| library.install(&held.scope, fact, read.seq as i64)).await?;
+                let (fact, network) = (held.descriptor.fact.0, network.clone());
+                blocking(library, move |library| library.install_on(&network, &held.scope, fact, read.seq as i64)).await?;
             }
         }
         // Where the next listing goes on from: the last scope looked at,

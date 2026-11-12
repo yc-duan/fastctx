@@ -113,7 +113,10 @@ fn made(
     {
         // A hub put back keeps every asset sealed, and grants no access
         // until it is reopened (design §17); the seal is held while a grant
-        // commits, so none slips in as the hub seals.
+        // commits, so none slips in as the hub seals. Opening the seal the
+        // hub put on as it started holds it the same way, taken before the
+        // directory as every holder takes it, and lets it go only once the
+        // opening is written in the hub's log.
         let grants = matches!(
             &change,
             Change::Share { shared: true, .. }
@@ -121,8 +124,9 @@ fn made(
                 | Change::ShareProject { shared: true, .. }
                 | Change::MoveProject { .. }
         );
-        let seal = grants.then(|| hub.assets.seal_held());
-        if seal.as_ref().is_some_and(|seal| seal.is_some()) {
+        let opening = matches!(&change, Change::OpenAssets);
+        let mut seal = (grants || opening).then(|| hub.assets.seal_held());
+        if grants && seal.as_ref().is_some_and(|seal| seal.is_some()) {
             return Err("every asset is sealed until the hub is reopened: no access is granted meanwhile".into());
         }
         let mut store = hub.edit_store();
@@ -135,11 +139,19 @@ fn made(
         let expired = crate::assists::end_due(&mut store, Timestamp::now())
             .map_err(|error| format!("the hub could not end an assistance past its deadline: {error}"))?;
         let reconcile = expired || !store.acting_clean || store.moves.iter().any(crate::moving::Incoming::forwarding);
+        let held = seal.as_deref().cloned();
         let result = commit(&mut store, asker, account, change, |store, super_, change| {
-            apply(hub, store, asker, account, super_, change, ended)
+            let told = apply(hub, store, asker, account, super_, change, ended)?;
+            if opening {
+                crate::assets::Assets::openable(held.as_ref().unwrap_or(&None))?;
+            }
+            Ok(told)
         });
         match result {
             Ok(told) => {
+                if opening && let Some(seal) = seal.as_mut() {
+                    **seal = None;
+                }
                 // Names and letters move only after their directory commit.
                 if renaming {
                     match store.settle_names() {
@@ -752,9 +764,9 @@ fn apply(
             store.save_hub().map_err(|error| format!("the hub could not keep its settings: {error}"))?;
             Ok(Told::Done)
         }
+        // Opened by `made`, which holds the seal, once this is written.
         Change::OpenAssets => {
             need_super()?;
-            hub.assets.open_start_seal()?;
             Ok(Told::Done)
         }
         Change::Updates { policy } => {

@@ -14,8 +14,13 @@ CREATE TABLE IF NOT EXISTS scopes (
     key TEXT NOT NULL UNIQUE,
     description BLOB,
     state TEXT NOT NULL CHECK (state IN ('provisional', 'live', 'disabled', 'purging')),
-    holding INTEGER
+    holding INTEGER,
+    -- The hub whose network the scope belongs to, on a device (empty in a
+    -- hub's own libraries), and whether a hub's descriptor ever installed it.
+    hub TEXT NOT NULL DEFAULT '',
+    described INTEGER NOT NULL DEFAULT 0 CHECK (described IN (0, 1))
 );
+CREATE INDEX IF NOT EXISTS scopes_of_hub ON scopes (hub) WHERE holding IS NOT NULL;
 CREATE TABLE IF NOT EXISTS holdings (
     scope INTEGER NOT NULL,
     holding INTEGER NOT NULL,
@@ -23,6 +28,13 @@ CREATE TABLE IF NOT EXISTS holdings (
     ended INTEGER,
     acl_revision INTEGER NOT NULL,
     PRIMARY KEY (scope, holding)
+) WITHOUT ROWID;
+-- The networks a device holds scopes of: whether it is on each, and the
+-- term it is on it under (networks.rs).
+CREATE TABLE IF NOT EXISTS networks (
+    hub TEXT PRIMARY KEY,
+    term INTEGER NOT NULL,
+    joined INTEGER NOT NULL CHECK (joined IN (0, 1))
 ) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS streams (
     id INTEGER PRIMARY KEY,

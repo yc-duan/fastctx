@@ -67,6 +67,12 @@ pub(crate) fn checkpoint(conversation: &str) -> String {
     format!("timeline/{conversation}")
 }
 
+/// What the asset library keeps beside a conversation's timeline as its
+/// producer: where it stood, and the record ids before its seam.
+pub(crate) fn asset_checkpoints(conversation: &str) -> [String; 2] {
+    [format!("timeline/{conversation}"), format!("timeline-ids/{conversation}")]
+}
+
 /// The facts of a run `resident` tells of changed: its asset timeline is
 /// brought to them, whatever else moves it (DD06).
 pub(crate) fn runs_changed(node: &crate::Node, resident: &ResidentId) {

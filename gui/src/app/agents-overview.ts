@@ -110,6 +110,7 @@ export class AgentsOverview implements Page {
     this.sheet = new AgentChangeSheet(options.changeWords, {
       preview: (target) => options.preview(this.written(target.machine), target.agent, target.dir, target.into, !!target.takeBack, target.workbench),
       change: (target, raise, expected) => options.change(this.written(target.machine), target.agent, target.dir, target.into, raise, !!target.takeBack, expected, target.workbench),
+      written: (target) => this.written(target.machine),
       progress: async (target) => {
         const record = await options.read(this.written(target.machine));
         const machine = record.machines.find((one) => one.kind === "answered" && one.logins.machine === target.machine);
@@ -184,7 +185,7 @@ export class AgentsOverview implements Page {
     this.following?.();
     // Another machine's logins are waited on through this one's node; a
     // machine that does not tell them is read on the timer.
-    this.following = followState(LOGINS, () => this.read(true, true), () => this.running() ? FOLLOW_MS : false, machine.here ? null : machine.name);
+    this.following = followState(LOGINS, () => this.read(true, true), () => this.running() ? FOLLOW_MS : false, machine.here ? null : machine.written);
   }
 
   /** Reads what the machine shown recorded; while a scan or a change runs

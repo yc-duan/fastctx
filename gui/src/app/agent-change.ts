@@ -207,6 +207,9 @@ export interface AgentChangeSeams {
   ended(): void;
   /** The workbench was opened or closed in the login. */
   benched?(open: boolean): void;
+  /** How the login's machine is reached, as `progress` reads it: written
+   *  in full where several networks have a machine of that name. */
+  written?(target: AgentChangeTarget): string;
 }
 
 interface Asking {
@@ -327,7 +330,7 @@ export class AgentChangeSheet {
         this.state.steps = change.steps;
         this.drawSteps();
       }
-    }, FOLLOW_MS, target.here ? null : target.machine);
+    }, FOLLOW_MS, target.here ? null : (this.seams.written?.(target) ?? target.machine));
     try {
       const change = await this.seams.change(target, raise, told?.fingerprint);
       this.state = { at: "ended", planned, change, problem: change.end?.end === "failed" ? change.end.reason : null, told };

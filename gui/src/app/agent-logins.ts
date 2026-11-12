@@ -251,7 +251,7 @@ export class AgentLoginsPage implements Page {
     this.following?.();
     // Another machine's logins are waited on through this one's node; a
     // machine that does not tell them is read on the timer.
-    this.following = followState(LOGINS, () => this.read(true, true), () => this.running() ? FOLLOW_MS : false, machine.here ? null : machine.name);
+    this.following = followState(LOGINS, () => this.read(true, true), () => this.running() ? FOLLOW_MS : false, machine.here ? null : machine.written);
   }
 
   /** The machines of the menu, and the one shown among them. */

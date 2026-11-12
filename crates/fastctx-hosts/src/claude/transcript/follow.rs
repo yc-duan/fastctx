@@ -68,6 +68,12 @@ pub struct Seam {
     /// unless a file comes to name another call (EE02).
     #[serde(default)]
     pub unlinked: Vec<String>,
+    /// Every agent the files beside the record told of at the reading that
+    /// placed it, linked or not, each with the call its file named then
+    /// (`id@call`): an agent linked before it whose file comes to name
+    /// another call is linked again by a whole reading.
+    #[serde(default)]
+    pub told: Vec<String>,
 }
 
 /// Why a record is read whole rather than from its seam.
@@ -198,6 +204,12 @@ pub fn tail(
         None => None,
     };
     let told: Vec<(String, String)> = beside.calls().map(|(id, call)| (id.to_string(), call.to_string())).collect();
+    let pairs: Vec<String> = told.iter().map(|(id, call)| format!("{id}@{call}")).collect();
+    if seam.offset > 0
+        && told.iter().zip(&pairs).any(|((id, _), pair)| seam.agents.contains_key(id) && !seam.told.contains(pair))
+    {
+        return Ok(Err(Restart::Unsupported("an agent before the seam told of another call")));
+    }
     let transcript = project(scanned, &[], earlier, beside, seam.agents.clone())?;
     // An agent the files beside tell of that no call started — before the
     // seam or past it — is one a call before the seam started, its
@@ -214,6 +226,7 @@ pub fn tail(
     }
     let next = next.map(|mut next| {
         next.unlinked = if seam.offset == 0 { unlinked } else { seam.unlinked.clone() };
+        next.told = pairs;
         next
     });
     Ok(Ok(Tail { transcript, seam: next, end, since, seam_at, prefix_ids }))
@@ -358,6 +371,7 @@ fn advanced(
         latest: None,
         abandoned: Vec::new(),
         unlinked: Vec::new(),
+        told: Vec::new(),
     })
 }
 

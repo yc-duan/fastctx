@@ -183,12 +183,12 @@ export const zhMe: MeWords = {
   leaveTitle: (network) => `离开 ${network}？`,
   leaveWhat: (network, registered) =>
     registered
-      ? `这台电脑将退出 ${network} 里的账号，不再是这个网络里的一台机器，共享与协助随之结束。电脑上的数据不受影响，要回来重新加入就是。`
-      : `这台电脑将退出 ${network} 里的账号。`,
+      ? `这台电脑将退出 ${network} 里的账号，不再是这个网络里的一台机器，共享与协助随之结束，这个网络同步到这里的资料会清掉。要回来重新加入就是，资料会再同步回来。`
+      : `这台电脑将退出 ${network} 里的账号，这个网络同步到这里的资料会清掉。`,
   leaveGo: "离开",
   logout: "退出登录",
   logoutTitle: (network) => `退出 ${network}？`,
-  logoutWhat: (network) => `这台设备将退出 ${network} 里的账号。`,
+  logoutWhat: (network) => `这台设备将退出 ${network} 里的账号，这个网络同步到这里的资料会清掉。`,
   logoutGo: "退出",
   none: "未加入网络",
   logIn: "加入",
@@ -271,12 +271,12 @@ export const enMe: MeWords = {
   leaveTitle: (network) => `Leave ${network}?`,
   leaveWhat: (network, registered) =>
     registered
-      ? `This computer will sign out of its accounts in ${network} and stop being a machine there; its shares and assistance end. Data on it is untouched, and you can join again any time.`
-      : `This computer will sign out of its accounts in ${network}.`,
+      ? `This computer will sign out of its accounts in ${network} and stop being a machine there; its shares and assistance end, and what this network synced here is cleared. You can join again any time, and it syncs back.`
+      : `This computer will sign out of its accounts in ${network}, and what this network synced here is cleared.`,
   leaveGo: "Leave",
   logout: "Sign out",
   logoutTitle: (network) => `Sign out of ${network}?`,
-  logoutWhat: (network) => `This device will sign out of its accounts in ${network}.`,
+  logoutWhat: (network) => `This device will sign out of its accounts in ${network}, and what this network synced here is cleared.`,
   logoutGo: "Sign out",
   none: "Not in a network",
   logIn: "Join",

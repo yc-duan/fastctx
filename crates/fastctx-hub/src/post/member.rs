@@ -58,7 +58,15 @@ pub(super) struct State {
     dirty_metadata: bool,
     dirty_count: bool,
     to: Option<Sending>,
+    /// The last pump stopped at `LOOKED_AT_ONCE` with room still to send:
+    /// it goes on between this mailbox's commands.
+    unfinished: bool,
 }
+
+/// Letter numbers one pump looks at most, letters or not: a long run of
+/// numbers whose letters went before they were sent is passed a part at a
+/// time, with what the mailbox is asked in between.
+const LOOKED_AT_ONCE: u64 = 4096;
 
 impl State {
     #[allow(clippy::too_many_arguments)]
@@ -92,6 +100,7 @@ impl State {
             dirty_metadata: false,
             dirty_count: false,
             to: None,
+            unfinished: false,
         }
     }
 
@@ -210,16 +219,18 @@ impl State {
     }
 
     async fn pump(&mut self) -> Result<()> {
+        self.unfinished = false;
         let Some(to) = &self.to else { return Ok(()) };
         if !to.viewed || !to.window.room() {
             return Ok(());
         }
         self.load().await?;
         let to = self.to.as_ref().expect("session");
-        let (from, end) = ((to.window.sent() + 1).max(self.held.first), self.persisted_next);
-        if from >= end {
+        let (from, next) = ((to.window.sent() + 1).max(self.held.first), self.persisted_next);
+        if from >= next {
             return Ok(());
         }
+        let end = next.min(from.saturating_add(LOOKED_AT_ONCE));
         // The letters that fit, as they go, each sized and read off the
         // lines' way; a number with no letter goes as not there.
         let mut fitting = to.window.clone();
@@ -258,6 +269,7 @@ impl State {
         }
         self.backlog.held.store(self.held.count, Ordering::Relaxed);
         self.backlog.on_way.store(to.window.on_way(), Ordering::Relaxed);
+        self.unfinished = end < next && to.window.room();
         Ok(())
     }
 
@@ -521,7 +533,12 @@ impl State {
 pub(super) async fn run(mut state: State, mut commands: mpsc::Receiver<super::Queued>) {
     while let Some(super::Queued { command, _active, _pending }) = commands.recv().await {
         let retiring = matches!(&command, Command::Retire { .. });
-        if let Err(error) = state.perform(command).await {
+        let mut done = state.perform(command).await;
+        // A pump cut short at its look goes on while nothing else is asked.
+        while done.is_ok() && !retiring && state.unfinished && commands.is_empty() {
+            done = state.pump().await;
+        }
+        if let Err(error) = done {
             if let Some(hub) = state.hub.get().and_then(Weak::upgrade) {
                 hub.log.line(format_args!("mail for {}: {error}", state.name));
             }

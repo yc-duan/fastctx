@@ -10,10 +10,11 @@
 //! (design §6.1).
 
 mod apart;
-pub(crate) mod leave;
+pub(crate) mod membership;
 mod objects;
 mod session;
 pub(crate) mod takeover;
+pub(crate) mod upkeep;
 
 pub(crate) use session::{Proposal, pushed, shared_elsewhere, wake};
 
@@ -97,6 +98,11 @@ pub(crate) struct Assets {
     pub(crate) forgotten: std::sync::atomic::AtomicU64,
     /// Streams to be ordered here from now on, by scope (`takeover`).
     pub(crate) takeovers: Mutex<std::collections::BTreeSet<(String, String)>>,
+    /// The networks this machine is on, each under its term, as the library
+    /// has them (`membership`).
+    pub(crate) networks: Mutex<HashMap<HubId, fastctx_content::v2::Network>>,
+    /// What brings the upkeep round (`upkeep`).
+    pub(crate) upkeep: Arc<Notify>,
 }
 
 /// How far a hub's scopes this machine may hold were listed.
@@ -152,6 +158,8 @@ impl Assets {
             listed: Mutex::new(HashMap::new()),
             forgotten: std::sync::atomic::AtomicU64::new(0),
             takeovers: Mutex::new(std::collections::BTreeSet::new()),
+            networks: Mutex::new(HashMap::new()),
+            upkeep: Arc::new(Notify::new()),
         })
     }
 
