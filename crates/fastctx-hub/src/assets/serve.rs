@@ -8,7 +8,7 @@
 use super::scopes::{self, Scope};
 use super::{Assets, chain};
 use fastctx_content::v2::{
-    Authorizer, Cutoff, Entry, EpochKind, FrameKey, Head, Header, KindRecord, RawFrame, Received, Standing, Successor, Taking,
+    Cutoff, EpochKind, FrameKey, Head, Header, RawFrame, Received, Standing, Successor, Taking,
     Verifier, applied_statement, parked_statement,
 };
 use fastctx_content::ObjectRef;
@@ -35,14 +35,13 @@ impl Verifier for DeviceKeys {
     }
 }
 
-/// The kinds' own rules come with the kinds (design §11, 3-4); until then a
-/// record of a scope its writer reads is let through.
-struct Readers;
-
-impl Authorizer for Readers {
-    fn authorize(&self, _: &Header, _: &KindRecord, _: Option<&Entry>) -> Result<(), String> {
-        Ok(())
-    }
+/// The kinds the hub takes records of, each judged by its own rule (design
+/// §11); a record of a kind not registered is refused.
+pub(crate) fn kinds() -> Arc<fastctx_content::v2::Kinds> {
+    let kinds = fastctx_content::v2::Kinds::new();
+    #[cfg(test)]
+    let kinds = kinds.register::<super::drill_kinds::Plain>();
+    Arc::new(kinds)
 }
 
 fn array(bytes: &Bytes, what: &str) -> Result<[u8; 32], String> {
@@ -237,7 +236,7 @@ pub(crate) fn ask(
             let frame_header = frame.header.0.clone();
             let raw = RawFrame { header: frame.header.0, signature: frame.signature.0, body: frame.body.0, objects: Vec::new() };
             let word = library
-                .take(&scope, raw, &DeviceKeys, &taking, Arc::new(Readers), assets.signer())
+                .take(&scope, raw, &DeviceKeys, &taking, kinds(), assets.signer())
                 .map_err(|error| error.to_string())?;
             if matches!(word, Received::Applied { .. } | Received::Parked { .. } | Received::Rejected { .. }) {
                 assets.changed(kept.owner.clone(), &scope);
@@ -326,7 +325,7 @@ pub(crate) fn ask(
             let successor = Successor { device: *key.as_bytes(), key: *key.as_bytes(), kind: EpochKind::Source };
             let cutoff = Cutoff { next, head: array(&head, "a chain value")? };
             let (signed, _) = library
-                .handover(&scope, &stream, successor, cutoff, Arc::new(Readers), assets.signer())
+                .handover(&scope, &stream, successor, cutoff, kinds(), assets.signer())
                 .map_err(|error| error.to_string())?;
             assets.changed(kept.owner.clone(), &scope);
             // In the hub's chain and outside its directory before the device

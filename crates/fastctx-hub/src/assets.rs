@@ -6,6 +6,8 @@
 
 pub(crate) mod bodies;
 pub(crate) mod chain;
+#[cfg(test)]
+pub(crate) mod drill_kinds;
 mod keys;
 pub mod recovery;
 pub(crate) mod objects;
