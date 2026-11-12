@@ -91,27 +91,36 @@ impl Library {
     }
 
     /// Up to `limit` objects this machine wants and does not hold that a
-    /// record of one of `scopes` refers to, first the most wanted.
+    /// record or frame of one of `scopes` refers to in its current holding
+    /// period, first the most wanted. Which scope a wanted object was first
+    /// met in does not matter: every scope that refers to it now lists it.
     pub fn wanted_of(&self, scopes: &[String], limit: usize) -> Result<Vec<(String, crate::record::ObjectRef)>> {
         let scopes = scopes.to_vec();
         Ok(self.database().read_now(move |db| {
             let mut statement = db.prepare_cached(
-                "SELECT w.hash, w.size FROM wanted w
-                 WHERE w.hint = ?1 AND NOT EXISTS (SELECT 1 FROM objects o WHERE o.hash = w.hash AND o.state = 1)
+                "SELECT w.hash, w.size FROM wanted w, scopes s
+                 WHERE s.key = ?1 AND s.holding IS NOT NULL
+                   AND (EXISTS (SELECT 1 FROM object_refs r
+                                WHERE r.hash = w.hash AND r.scope = s.id AND r.holding = s.holding AND r.count > 0)
+                        OR EXISTS (SELECT 1 FROM frame_objects f JOIN streams t ON t.id = f.stream
+                                   WHERE f.hash = w.hash AND t.scope = s.id AND f.holding = s.holding))
+                   AND NOT EXISTS (SELECT 1 FROM objects o WHERE o.hash = w.hash AND o.state = 1)
                  ORDER BY w.priority DESC, w.hash LIMIT ?2",
             )?;
-            let mut wanted = Vec::new();
+            let (mut wanted, mut seen) = (Vec::new(), std::collections::HashSet::new());
             for scope in scopes {
                 if wanted.len() >= limit {
                     break;
                 }
-                let rows = statement.query_map(params![scope, (limit - wanted.len()) as i64], |row| {
+                let rows = statement.query_map(params![scope, limit as i64], |row| {
                     Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, i64>(1)?))
                 })?;
                 for row in rows {
                     let (hash, size) = row?;
                     let hash: [u8; 32] = hash.try_into().map_err(|_| invalid("a malformed hash"))?;
-                    wanted.push((scope.clone(), crate::record::ObjectRef { hash, size: size as u64 }));
+                    if wanted.len() < limit && seen.insert(hash) {
+                        wanted.push((scope.clone(), crate::record::ObjectRef { hash, size: size as u64 }));
+                    }
                 }
             }
             Ok(wanted)

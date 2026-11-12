@@ -273,9 +273,16 @@ impl Transfer {
         self.file.sync_all().map_err(io)?;
         let (object, id) = (self.object, self.id);
         let manifest: Vec<u8> = self.digests.iter().flatten().copied().collect();
-        let life = self.library.database().write_now_at(Priority::Normal, 256, move |db| {
-            if present(db, &object.hash)?.is_some() {
-                return Ok(None);
+        let leasing = holder.to_string();
+        let placed = self.library.database().write_now_at(Priority::Normal, 256, move |db| {
+            // A copy placed meanwhile is leased in the same transaction that
+            // saw it, so no collection comes between seeing it and holding it.
+            match present(db, &object.hash)? {
+                Some((_, size)) if size == object.size => {
+                    return Ok(Err(super::objects::lease_in(db, object, &leasing, ttl)?));
+                }
+                Some(_) => return Err(invalid("an object of that hash is here with another length")),
+                None => {}
             }
             let life: i64 = db
                 .prepare_cached("SELECT COALESCE(MAX(life), 0) + 1 FROM objects WHERE hash = ?1")?
@@ -284,19 +291,23 @@ impl Transfer {
                 "INSERT INTO objects (hash, life, size, state, placed, unreferenced, chunk) VALUES (?1, ?2, ?3, 0, ?4, NULL, ?5)",
             )?
             .execute(params![&object.hash[..], life, object.size as i64, now(), CHUNK_BYTES as i64])?;
-            Ok(Some(life))
+            Ok(Ok(life))
         })?;
         let library = self.library.clone();
         let holder = holder.to_string();
-        let Some(life) = life else {
-            // Someone else placed it meanwhile: this copy goes.
-            drop(self.file);
-            let _ = std::fs::remove_file(&self.part);
-            library.database().write_now_at(Priority::Normal, 64, move |db| {
-                db.prepare_cached("DELETE FROM transfers WHERE id = ?1")?.execute([id])?;
-                Ok(())
-            })?;
-            return library.lease(object, &holder, ttl)?.ok_or_else(|| Error::Invalid("the object went meanwhile".into()));
+        let life = match placed {
+            Ok(life) => life,
+            Err(lease) => {
+                // Someone else placed it meanwhile, and it is leased: this
+                // copy goes.
+                drop(self.file);
+                let _ = std::fs::remove_file(&self.part);
+                library.database().write_now_at(Priority::Normal, 64, move |db| {
+                    db.prepare_cached("DELETE FROM transfers WHERE id = ?1")?.execute([id])?;
+                    Ok(())
+                })?;
+                return Ok(lease);
+            }
         };
         drop(self.file);
         let place = library.object_file(&object.hash, life);

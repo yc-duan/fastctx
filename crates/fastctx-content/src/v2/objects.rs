@@ -69,7 +69,7 @@ pub(super) fn present(db: &Connection, hash: &[u8; 32]) -> fastctx_storage::Resu
         .optional()?)
 }
 
-fn lease_in(db: &Connection, object: ObjectRef, holder: &str, ttl: Duration) -> fastctx_storage::Result<Lease> {
+pub(super) fn lease_in(db: &Connection, object: ObjectRef, holder: &str, ttl: Duration) -> fastctx_storage::Result<Lease> {
     let expires = now() + ttl.as_millis() as i64;
     db.prepare_cached("INSERT INTO leases (hash, holder, expires) VALUES (?1, ?2, ?3)")?
         .execute(params![&object.hash[..], holder, expires])?;

@@ -228,7 +228,10 @@ pub(super) fn keep_evidence(
          ON CONFLICT (kind, holder, hash) DO UPDATE SET proven = MAX(proven, excluded.proven)",
     )?;
     for object in objects {
-        holding_object.execute(params![key, &object.hash[..], i64::from(shown.contains(&object.hash))])?;
+        // Proven only when its bytes are still here in this transaction: an
+        // object collected after it was shown is held, not proven (§4.3 I3).
+        let proven = shown.contains(&object.hash) && super::objects::present(db, &object.hash)?.is_some();
+        holding_object.execute(params![key, &object.hash[..], i64::from(proven)])?;
     }
     Ok(())
 }
