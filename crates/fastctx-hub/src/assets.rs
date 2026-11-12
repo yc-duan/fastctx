@@ -72,8 +72,8 @@ const UNREAD_FOR: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 /// How often owners are looked at for whether anyone reads them.
 const SWEEP_EVERY: u32 = 600;
 
-/// Times sealing waits on the control writer for what it began before.
-const BARRIER_TRIES: usize = 4;
+/// The longest pause between two waits of sealing on the control writer.
+const BARRIER_PAUSE_MOST: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// A cleanup that saw the hub sealed as it ends goes back whole (AE02).
 fn unsealed(sealing: &std::sync::atomic::AtomicBool) -> fastctx_storage::Result<()> {
@@ -835,12 +835,14 @@ impl Assets {
         self.sealing.store(true, std::sync::atomic::Ordering::SeqCst);
         // What the control writer began before it saw the seal ends before
         // the witness freezes (AE02): a write queued behind it is answered
-        // only once it committed or went back. Every cleanup looks at the
-        // seal again as it ends, for a barrier that could not wait it out.
-        for _ in 0..BARRIER_TRIES {
-            if self.control.write_now(16, |_| Ok(())).is_ok() {
-                break;
-            }
+        // only once it committed or went back. One that did not answer says
+        // nothing of what is under way, so it is asked again until one does
+        // (AF01); every cleanup also looks at the seal again as it ends.
+        let mut pause = std::time::Duration::from_secs(1);
+        while let Err(error) = self.control.write_now(16, |_| Ok(())) {
+            eprintln!("sealing the hub's assets waits for its control database: {error}");
+            std::thread::sleep(pause);
+            pause = (pause * 2).min(BARRIER_PAUSE_MOST);
         }
         self.witness.freeze();
         if sealed.is_none() {

@@ -118,6 +118,20 @@ impl Objects {
 
     /// Whether the device whose key is `key` proved lately it holds the
     /// object of `hash`.
+    /// The proofs of `hashes` the device whose key is `key` gave go: a frame
+    /// of them is applied, and they are read through it now (AF04).
+    pub(crate) fn forget_proofs(&self, key: &[u8; 32], hashes: &[[u8; 32]]) {
+        let mut proofs = self.proofs.lock().expect("proofs");
+        if let Some(proven) = proofs.get_mut(key) {
+            for hash in hashes {
+                proven.remove(hash);
+            }
+            if proven.is_empty() {
+                proofs.remove(key);
+            }
+        }
+    }
+
     pub(crate) fn proven(&self, key: &[u8; 32], hash: &[u8; 32]) -> bool {
         let proofs = self.proofs.lock().expect("proofs");
         proofs.get(key).and_then(|proven| proven.get(hash)).is_some_and(|until| Instant::now() < *until)
@@ -167,21 +181,39 @@ impl Objects {
 
 /// Every device's proofs at their bound together: those that ended go; if
 /// that is not enough, the devices with the most are cut down to one
-/// number, each losing those of its own that end soonest, until three
-/// quarters of the bound are left (AE05): the next walk is a quarter of the
-/// bound away, and a device with few keeps them.
+/// number — never below what one frame refers to, so each kept can still
+/// prove a whole frame (AF04) — each losing those of its own that end
+/// soonest; and if even that is too many, the devices with the fewest lose
+/// all theirs, those nearest a whole frame kept. Until three quarters of the
+/// bound are left (AE05): the next walk is a quarter of the bound away.
 fn thin(proofs: &mut HashMap<[u8; 32], Proven>, now: Instant) {
     for proven in proofs.values_mut() {
         proven.retain(|_, until| now < *until);
     }
     proofs.retain(|_, proven| !proven.is_empty());
     let target = PROOFS_KEPT / 4 * 3;
+    let floor = fastctx_content::FRAME_OBJECTS;
     let kept_under = |most: usize| proofs.values().map(|proven| proven.len().min(most)).sum::<usize>();
     if kept_under(usize::MAX) <= target {
         return;
     }
-    // The most each device keeps: the largest number that leaves the target.
-    let (mut low, mut high) = (0, proofs.values().map(HashMap::len).max().unwrap_or(0));
+    // Floored at a frame's worth, the devices with the fewest go whole.
+    if kept_under(floor) > target {
+        let mut by_count: Vec<([u8; 32], usize)> = proofs.iter().map(|(key, proven)| (*key, proven.len())).collect();
+        by_count.sort_unstable_by_key(|(_, count)| *count);
+        let mut total = kept_under(floor);
+        for (key, count) in by_count {
+            if total <= target {
+                break;
+            }
+            total -= count.min(floor);
+            proofs.remove(&key);
+        }
+    }
+    let kept_under = |most: usize| proofs.values().map(|proven| proven.len().min(most)).sum::<usize>();
+    // The most each device keeps: the largest number, a frame's worth at
+    // least, that leaves the target.
+    let (mut low, mut high) = (floor, proofs.values().map(HashMap::len).max().unwrap_or(0).max(floor));
     while low < high {
         let middle = (low + high).div_ceil(2);
         if kept_under(middle) <= target { low = middle } else { high = middle - 1 }

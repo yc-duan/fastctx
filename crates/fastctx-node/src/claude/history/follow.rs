@@ -1,8 +1,9 @@
 //! A Claude resident's record followed for its timeline (sync-v2-impl-design
 //! §10): read past where it was read through, what lies there projected and
 //! placed in the World's turns, and the seam moved to where every turn the
-//! World saw begin before it had ended. A resident of several sessions, or
-//! one whose turns the World cut back, is read whole as ever.
+//! World saw begin before it had ended. Of a resident of several sessions,
+//! the last is followed while the earlier ones stay as they were; one whose
+//! turns the World cut back is read whole as ever.
 
 use super::{Session, place, session_events, sessions};
 use crate::Node;
@@ -40,6 +41,30 @@ pub(crate) struct Window {
     /// the seam in the file.
     pub kept: Option<String>,
     pub kept_here: bool,
+    /// The sessions before the one followed, as their files stood: a
+    /// window is read past the seam only while they stand so.
+    pub earlier: Vec<Stamp>,
+}
+
+/// A session's record file as it stood: the session, its length, and when
+/// it last changed.
+pub(crate) type Stamp = (String, u64, i128);
+
+/// The stamps of `sessions`' record files, none where one cannot be told.
+fn stamps(node: &Node, sessions: &[Session]) -> Option<Vec<Stamp>> {
+    sessions
+        .iter()
+        .map(|session| {
+            let directory = exchange::sessions(node.world.path()).join(&session.id);
+            if !crate::claude::rewind::cuts(&directory).ok()?.is_empty() {
+                return None;
+            }
+            let path = exchange::transcript(&directory).ok()??;
+            let metadata = fastctx_platform::disk::metadata(&path).ok()?;
+            let modified = metadata.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?.as_nanos() as i128;
+            Some((session.id.clone(), metadata.len(), modified))
+        })
+        .collect()
 }
 
 /// The turns of `recorded`: when each began, and ended if it did.
@@ -66,16 +91,25 @@ pub(crate) async fn window(
     node: &Arc<Node>,
     resident: &ResidentId,
     recorded: &[SessionEvent],
-    from: Option<(String, Seam)>,
+    from: Option<(String, Seam, Vec<Stamp>)>,
 ) -> Result<Option<Window>, String> {
     let (mut sessions, problems) = {
         let (reading, whose) = (node.clone(), resident.clone());
         fastctx_platform::task::blocking(move || sessions(&reading, &whose)).await
     };
-    if !problems.is_empty() || sessions.len() != 1 {
-        return Ok(None);
-    }
-    let Session { id, began, kept, .. } = sessions.remove(0);
+    let Some(Session { id, began, kept, .. }) = sessions.pop().filter(|_| problems.is_empty()) else { return Ok(None) };
+    // The sessions before the last as their files stand: unchanged since the
+    // seam, they stay as written; else all is read again.
+    let earlier = {
+        let (reading, before) = (node.clone(), std::mem::take(&mut sessions));
+        let (stamped, before) = fastctx_platform::task::blocking(move || (stamps(&reading, &before), before)).await;
+        sessions = before;
+        match stamped {
+            Some(stamped) => stamped,
+            None => return Ok(None),
+        }
+    };
+    let from = from.filter(|(_, _, stood)| *stood == earlier).map(|(session, seam, _)| (session, seam));
     let directory = exchange::sessions(node.world.path()).join(&id);
     let (cuts, path) = fastctx_platform::task::blocking(move || {
         let cuts = crate::claude::rewind::cuts(&directory).map_err(|error| error.to_string())?;
@@ -89,15 +123,25 @@ pub(crate) async fn window(
         return Ok(None);
     }
     let mut seam = from.filter(|(session, _)| *session == id).map(|(_, seam)| seam).unwrap_or_default();
+    // Read from its start, the last session shows what it copied from the
+    // earlier ones only there (`continuing`): by their records' ids, read
+    // with them, whole.
+    let several = !sessions.is_empty();
+    let (mut before, mut copied) = (Vec::new(), HashSet::new());
+    if seam.identity.is_none() && several {
+        let Some(read) = super::earlier(node, resident, sessions).await else { return Ok(None) };
+        (before, copied) = read;
+    }
     // A seam goes only where every turn the World saw begin before it ended
     // by then: before it, each event's turn is settled (`place`).
     let turns = Arc::new(turns(recorded));
     let mut unsteady = 0;
     let tail = loop {
         let (reading, from, turns) = (path.clone(), seam.clone(), turns.clone());
+        let copied = if from.identity.is_none() { copied.clone() } else { HashSet::new() };
         let read = fastctx_platform::task::blocking(move || {
             let accept = |at: Timestamp| turns.iter().all(|(start, end)| *start >= at || end.is_some_and(|end| end <= at));
-            follow::tail(&reading, &from, &HashSet::new(), &accept)
+            follow::tail(&reading, &from, &copied, &accept)
         })
         .await;
         match read {
@@ -106,8 +150,12 @@ pub(crate) async fn window(
                 unsteady += 1;
                 tokio::time::sleep(Duration::from_millis(100) * unsteady).await;
             }
+            // Read from its start, the earlier sessions are read with it.
             Ok(Err(why)) if seam.identity.is_some() => {
                 node.log.line(format_args!("{resident}'s record is read from its start: {why}"));
+                if several {
+                    return Ok(None);
+                }
                 seam = Seam::default();
             }
             Ok(Err(why)) => return Err(format!("{}: {why}", path.display())),
@@ -124,6 +172,7 @@ pub(crate) async fn window(
     let next = tail.seam.clone().unwrap_or(seam);
     let follow::Tail { transcript, .. } = tail;
     let (events, _) = session_events(node, resident, &id, began, transcript.title.clone(), transcript.events, &transcript.problems);
-    let events = place(events, recorded);
-    Ok(Some(Window { session: id, events, whole, since, seam: next, settled, kept, kept_here }))
+    before.extend(events);
+    let events = place(before, recorded);
+    Ok(Some(Window { session: id, events, whole, since, seam: next, settled, kept, kept_here, earlier }))
 }

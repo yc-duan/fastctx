@@ -174,7 +174,12 @@ impl Owners {
         // power lost after that brings the library back where it was.
         match fastctx_platform::durable_file::rename_durably(&directory, &aside) {
             Ok(()) => Ok(Some(aside)),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+            // Gone already: moved by a try that stopped before it made the
+            // move last, perhaps. It is made to last now (AF03).
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                fastctx_platform::durable_file::sync_directory(&self.root)?;
+                Ok(None)
+            }
             Err(error) => Err(error),
         }
     }

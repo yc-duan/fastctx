@@ -491,8 +491,9 @@ const RELIST: Duration = Duration::from_secs(300);
 async fn discover(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKey) -> Result<(), String> {
     let library = &assets.library;
     let known = assets.listed.lock().expect("listed").get(hub).cloned();
+    // No basis kept — the last listing unsettled, or told none — lists all.
     let (mut after, mut whole, heard) = match known {
-        Some(listed) if listed.whole.elapsed() < RELIST => (listed.through, None, Some(listed.basis)),
+        Some(listed) if listed.whole.elapsed() < RELIST && !listed.basis.is_empty() => (listed.through, None, Some(listed.basis)),
         _ => (None, Some(std::time::Instant::now()), None),
     };
     // What the listing went by. Changed before it began, all is listed
@@ -507,6 +508,11 @@ async fn discover(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKe
         else {
             return Err("the hub did not list what this machine may hold".into());
         };
+        // A page told no basis was judged by a directory other than the one
+        // it was made by (AF05).
+        if said.is_empty() {
+            unsettled = true;
+        }
         match &basis {
             Some(basis) if *basis != said => unsettled = true,
             Some(_) => {}

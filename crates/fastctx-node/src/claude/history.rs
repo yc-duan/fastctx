@@ -8,7 +8,7 @@ use std::collections::HashSet;
 
 mod follow;
 mod placement;
-pub(crate) use follow::{turns, window};
+pub(crate) use follow::{Stamp, turns, window};
 pub(super) use placement::place;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -91,6 +91,25 @@ pub(crate) async fn hosted(node: &Arc<Node>, resident: &ResidentId, recorded: &[
         unsettled,
         unavailable,
     }
+}
+
+/// The events of `sessions` (the resident's, before its last), read whole as
+/// `hosted` reads them, and the ids of their records; none where one could
+/// not be read whole, so that all is read as ever.
+async fn earlier(node: &Arc<Node>, resident: &ResidentId, sessions: Vec<Session>) -> Option<(Vec<SessionEvent>, HashSet<String>)> {
+    let root = exchange::sessions(node.world.path());
+    let (mut events, mut ids) = (Vec::new(), HashSet::new());
+    for Session { id, began, process, kept } in sessions {
+        let prior = fastctx_platform::roles::in_place("copying Claude record identities", || ids.clone());
+        let (read, whole) = read_whole(node, &id, root.join(&id), kept, process, prior).await.ok()?;
+        if !whole {
+            return None;
+        }
+        ids.extend(read.uuids.iter().cloned());
+        let (shown, _) = session_events(node, resident, &id, began, read.title, read.events, &read.problems);
+        events.extend(shown);
+    }
+    Some((events, ids))
 }
 
 /// What one session's record shows in the history: its title, which belongs

@@ -96,6 +96,10 @@ struct Following {
     /// The World's record's latest sequence when it was last read.
     #[serde(default)]
     world_latest: Option<u64>,
+    /// A Claude resident's sessions before the one followed, as their files
+    /// stood.
+    #[serde(default)]
+    earlier: Vec<crate::claude::history::Stamp>,
 }
 
 /// A history read past where it was read through, as either host reads it.
@@ -109,7 +113,7 @@ struct Followed {
 
 /// Where the history is read through now, as its host reads it.
 enum Next {
-    Claude { session: String, seam: Seam, kept: Option<String>, kept_here: bool },
+    Claude { session: String, seam: Seam, kept: Option<String>, kept_here: bool, earlier: Vec<crate::claude::history::Stamp> },
     Codex(CodexSeam),
 }
 
@@ -202,13 +206,19 @@ pub(super) async fn produce(node: &Arc<Node>, resident: &ResidentId, whole: bool
         recorded.extend(numbered.iter().map(|(_, event)| event.clone()));
         let followed = if agent == "claude" {
             // A check reads the record from its start.
-            let from = state.session.clone().filter(|_| !whole).map(|session| (session, state.seam.clone()));
+            let from = state.session.clone().filter(|_| !whole).map(|session| (session, state.seam.clone(), state.earlier.clone()));
             crate::claude::history::window(node, resident, &recorded, from).await.map_err(Failure::new)?.map(|window| Followed {
                 events: window.events,
                 whole: window.whole,
                 since: window.since,
                 settled: window.settled,
-                next: Next::Claude { session: window.session, seam: window.seam, kept: window.kept, kept_here: window.kept_here },
+                next: Next::Claude {
+                    session: window.session,
+                    seam: window.seam,
+                    kept: window.kept,
+                    kept_here: window.kept_here,
+                    earlier: window.earlier,
+                },
             })
         } else {
             let from = state.codex.clone().filter(|_| !whole);
@@ -272,7 +282,7 @@ pub(super) async fn produce(node: &Arc<Node>, resident: &ResidentId, whole: bool
             let open = wrote.items.iter().filter(|(identity, at, _)| held(identity, at)).map(|(identity, at, key)| (hex(identity), *at, *key)).collect();
             let verified = if window.whole { Some(Timestamp::now()) } else { state.verified };
             let (next, unread) = match window.next {
-                Next::Claude { session, seam, kept: seen, kept_here } => {
+                Next::Claude { session, seam, kept: seen, kept_here, earlier } => {
                     let unread = seen.is_some() && !kept_here && seen != state.kept;
                     let next = Following {
                         form: FORM,
@@ -288,6 +298,7 @@ pub(super) async fn produce(node: &Arc<Node>, resident: &ResidentId, whole: bool
                         verified,
                         codex: None,
                         world_latest: Some(latest),
+                        earlier,
                     };
                     (next, unread)
                 }

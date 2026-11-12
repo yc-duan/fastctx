@@ -65,14 +65,16 @@ pub(crate) fn list(
 /// An answer of what `machine` may hold, made by the directory as it stood
 /// when the request began, judged again by the directory as it stands now
 /// (AD05): a scope it may no longer hold is left out. The basis stays the
-/// one the listing went by (AE03): a machine that heard another one lists
-/// all again, which leaving scopes out cannot do for it. Sealed, nothing is
-/// given.
-pub(crate) fn recheck(assets: &Assets, directory: &Indexed<'_>, machine: &MachineName, reply: Reply) -> Result<Reply, String> {
+/// one the listing went by (AE03); judged again by another directory than
+/// that, it is none (AF05): what the listing passed by may be this
+/// machine's now, though what decides holding come back to how it was, and
+/// a machine told no basis lists all again. Sealed, nothing is given.
+pub(crate) fn recheck(assets: &Assets, directory: &Indexed<'_>, now: &str, machine: &MachineName, reply: Reply) -> Result<Reply, String> {
     if let Some(why) = assets.sealed() {
         return Ok(Reply::Sealed { why });
     }
     let Reply::Holdings { scopes, next, through, basis } = reply else { return Ok(reply) };
+    let basis = if basis == now { basis } else { String::new() };
     let mut kept = Vec::with_capacity(scopes.len());
     for held in scopes {
         let holds = match scopes::scope(assets, &held.scope)? {

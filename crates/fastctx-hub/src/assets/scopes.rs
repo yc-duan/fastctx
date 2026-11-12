@@ -179,8 +179,18 @@ pub(crate) fn anyone_reads(directory: &Indexed<'_>, scope: &Scope) -> std::io::R
 
 /// Whether a request from `machine` reads the scope.
 pub(crate) fn readable(directory: &Indexed<'_>, machine: &MachineName, scope: &Scope) -> bool {
+    readable_known(directory, machine, scope).unwrap_or(false)
+}
+
+/// As `readable`, an error where it cannot be told now.
+fn readable_known(directory: &Indexed<'_>, machine: &MachineName, scope: &Scope) -> std::io::Result<bool> {
     let descriptor = &scope.descriptor;
-    principal(directory, machine).iter().any(|account| reads(directory, account, &descriptor.readers, &descriptor.born, scope.bodies.as_deref()))
+    for account in principal(directory, machine) {
+        if reads_known(directory, &account, &descriptor.readers, &descriptor.born, scope.bodies.as_deref())? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// Whether every account a machine is shared with whole, a share still
@@ -190,12 +200,22 @@ pub(crate) fn readable(directory: &Indexed<'_>, machine: &MachineName, scope: &S
 /// Judged as the directory will be once the shares waiting are in force:
 /// what a holder reads through holding the machine counts already.
 pub(crate) fn sharers_read(directory: &Indexed<'_>, machine: &MachineName, scope: &Scope) -> bool {
+    sharers_read_known(directory, machine, scope).unwrap_or(false)
+}
+
+/// As `sharers_read`, an error where it cannot be told now.
+fn sharers_read_known(directory: &Indexed<'_>, machine: &MachineName, scope: &Scope) -> std::io::Result<bool> {
     let descriptor = &scope.descriptor;
     let bodies = scope.bodies.as_deref();
     let machine = directory.canonical(machine).clone();
     let shares: Vec<usize> = directory.shares_by_machine(&machine).to_vec();
-    let all_read = |directory: &Indexed<'_>| {
-        shares.iter().all(|&at| reads(directory, &directory.all.shares[at].account, &descriptor.readers, &descriptor.born, bodies))
+    let all_read = |directory: &Indexed<'_>| -> std::io::Result<bool> {
+        for &at in &shares {
+            if !reads_known(directory, &directory.all.shares[at].account, &descriptor.readers, &descriptor.born, bodies)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     };
     if shares.iter().all(|&at| directory.all.shares[at].active()) {
         return all_read(directory);
@@ -208,30 +228,31 @@ pub(crate) fn sharers_read(directory: &Indexed<'_>, machine: &MachineName, scope
     all_read(&Indexed::new(&would, &index))
 }
 
-/// As `may_hold`, an error where who reads the scope cannot be told now
-/// (AE04): a body whose members cannot be read is not taken for no one.
+/// Whether `machine` may hold any stream of the scope (design §2.3, §6.6),
+/// an error where who reads it cannot be told now (AE04): every reading of a body's members it makes, not the first only,
+/// is never taken for no one (AF02).
 pub(crate) fn may_hold_known(directory: &Indexed<'_>, machine: &MachineName, scope: &Scope) -> std::io::Result<bool> {
-    if let Readers::Body { body, .. } = &scope.descriptor.readers
-        && let Some(bodies) = scope.bodies.as_deref()
-    {
-        bodies.members(directory.all, body)?;
-    }
-    Ok(may_hold(directory, machine, scope))
-}
-
-/// Whether `machine` may hold any stream of the scope (design §2.3, §6.6).
-pub(crate) fn may_hold(directory: &Indexed<'_>, machine: &MachineName, scope: &Scope) -> bool {
-    if !readable(directory, machine, scope) || !sharers_read(directory, machine, scope) {
-        return false;
+    if !readable_known(directory, machine, scope)? || !sharers_read_known(directory, machine, scope)? {
+        return Ok(false);
     }
     let descriptor = &scope.descriptor;
-    descriptor.classes.iter().any(|class| match class.holders {
-        Holders::Readers => true,
-        Holders::Logged => directory.member(machine).is_some_and(|member| {
-            member.logins.iter().any(|account| reads(directory, account, &descriptor.readers, &descriptor.born, scope.bodies.as_deref()))
-        }),
-    })
+    for class in &descriptor.classes {
+        match class.holders {
+            Holders::Readers => return Ok(true),
+            Holders::Logged => {
+                if let Some(member) = directory.member(machine) {
+                    for account in &member.logins {
+                        if reads_known(directory, account, &descriptor.readers, &descriptor.born, scope.bodies.as_deref())? {
+                            return Ok(true);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(false)
 }
+
 
 /// Whether `machine` may hold `stream` of the scope (design §2.3): the
 /// stream's class names who holds it, and a machine shared whole holds only

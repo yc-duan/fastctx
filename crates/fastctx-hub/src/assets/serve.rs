@@ -100,8 +100,8 @@ fn held(assets: &Assets, directory: &Indexed<'_>, machine: &MachineName, key: &s
 
 /// An answer of what `machine` may hold, judged again by the directory as
 /// it stands now (`holdings::recheck`).
-pub(crate) fn recheck_holdings(assets: &Assets, directory: &Indexed<'_>, machine: &MachineName, reply: Reply) -> Result<Reply, String> {
-    super::holdings::recheck(assets, directory, machine, reply)
+pub(crate) fn recheck_holdings(assets: &Assets, directory: &Indexed<'_>, now: &str, machine: &MachineName, reply: Reply) -> Result<Reply, String> {
+    super::holdings::recheck(assets, directory, now, machine, reply)
 }
 
 /// An answer about the scope `key` made by the directory as it stood when
@@ -307,6 +307,21 @@ pub(crate) fn ask(
             };
             let taking = Taking { period, readable: &readable, proven: &proven };
             let frame_header = frame.header.0.clone();
+            // What it refers to: once applied, read through it, no longer
+            // proved (AF04).
+            let referred: Vec<[u8; 32]> = Header::decode(&frame_header)
+                .ok()
+                .and_then(|header| fastctx_content::v2::open(&header, &body).ok())
+                .map(|records| {
+                    records
+                        .iter()
+                        .flat_map(|record| match &record.record.state {
+                            fastctx_content::State::Is { objects, .. } => objects.iter().map(|object| object.hash).collect(),
+                            fastctx_content::State::Gone => Vec::new(),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
             let raw = RawFrame { header: frame.header.0, signature: frame.signature.0, body, objects: Vec::new() };
             let word = library
                 .take(&scope, raw, &DeviceKeys, &taking, kinds(), assets.signer())
@@ -323,6 +338,7 @@ pub(crate) fn ask(
                 assets.receipted(&scope, machine);
             }
             if matches!(word, Received::Applied { .. }) {
+                assets.objects.forget_proofs(&device_key, &referred);
                 let stream = Header::decode(&frame_header).map_err(|error| error.to_string())?.stream;
                 let next = library
                     .streams(&scope)

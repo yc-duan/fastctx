@@ -78,6 +78,20 @@ pub fn rename_durably(from: &Path, to: &Path) -> io::Result<()> {
     })
 }
 
+/// Makes the entries of `directory` last a loss of power: what was moved
+/// into or out of it (Unix; best effort on Windows, as `rename_durably`).
+pub fn sync_directory(directory: &Path) -> io::Result<()> {
+    crate::roles::in_place("sync a directory", || sync_itself(directory))
+}
+#[cfg(unix)]
+fn sync_itself(directory: &Path) -> io::Result<()> {
+    fs::File::open(directory)?.sync_all()
+}
+#[cfg(windows)]
+fn sync_itself(_: &Path) -> io::Result<()> {
+    Ok(())
+}
+
 /// Deletes an unreferenced generation after its readers have drained. Windows
 /// first durably truncates it: a delayed namespace deletion must not restore
 /// readable private content after an exposure-cleanup receipt.
