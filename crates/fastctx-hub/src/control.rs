@@ -1065,6 +1065,9 @@ fn handle(
                     .await
                     .map(|reply| Told::Assets { reply });
                 let _ = out.send(Out::Frame(Down::Told { id, answer }));
+                for (machine, push) in hub.assets.take_pushes() {
+                    hub.tell(&machine, Down::Assets { push });
+                }
             });
         }
         Up::Ask { id, question: Question::PlanCopies { account, request }, .. } => {

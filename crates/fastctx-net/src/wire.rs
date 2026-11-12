@@ -488,6 +488,11 @@ pub enum Down {
     LedgerChanged {
         town: TownId,
     },
+    /// The second version's asset sync tells this machine something
+    /// unasked (`fastctx_types::assets::Push`).
+    Assets {
+        push: fastctx_types::assets::Push,
+    },
     AccountRecordChanged {
         changed: fastctx_types::account_records::Changed,
     },
@@ -1295,6 +1300,48 @@ impl Question {
             | Self::RecordWatching { .. }
             | Self::SkillFiles { .. }
             | Self::Worked { .. } => None,
+        }
+    }
+}
+
+impl Down {
+    pub fn down_purpose(&self) -> Option<fastctx_types::sync::transfer::Purpose> {
+        use fastctx_types::sync::transfer::Purpose;
+        match self {
+            Self::Assets { .. } => Some(Purpose::AssetSync),
+            Self::AccountRecordChanged { .. }
+            | Self::Ack { .. }
+            | Self::Afoot { .. }
+            | Self::Answered { .. }
+            | Self::Cancelled { .. }
+            | Self::Deliver { .. }
+            | Self::DirectoryChanged { .. }
+            | Self::Fetch { .. }
+            | Self::FetchCancelled { .. }
+            | Self::Forget { .. }
+            | Self::ForgetAccount { .. }
+            | Self::HistoryChanged { .. }
+            | Self::Incoming { .. }
+            | Self::LedgerChanged { .. }
+            | Self::LoggedIn { .. }
+            | Self::LoginResponse { .. }
+            | Self::PackageProgress { .. }
+            | Self::Paired { .. }
+            | Self::Part { .. }
+            | Self::Pong { .. }
+            | Self::Presence { .. }
+            | Self::Ready { .. }
+            | Self::Refused { .. }
+            | Self::RegisterResponse { .. }
+            | Self::Registered { .. }
+            | Self::ReplicasChanged { .. }
+            | Self::Status { .. }
+            | Self::TokenInfo { .. }
+            | Self::Told { .. }
+            | Self::VersionPart { .. }
+            | Self::Versions { .. }
+            | Self::View { .. }
+            | Self::Welcome { .. } => None,
         }
     }
 }

@@ -57,6 +57,33 @@ pub(crate) fn wake(node: &Arc<Node>, hub: &HubId) {
     }
 }
 
+/// The hub told this machine something unasked: a stream moved, or a fact
+/// came, and its driver comes round; a checkpoint covering receipts of the
+/// open session takes them off, under the pinned key.
+pub(crate) fn pushed(node: &Arc<Node>, hub: &HubId, push: wire::Push) {
+    match push {
+        wire::Push::Moved { .. } | wire::Push::Fact { .. } => wake(node, hub),
+        wire::Push::Checkpointed { checkpoint } => {
+            let Some(assets) = node.assets.as_ref() else { return };
+            let Some((session, key)) = assets.current.lock().expect("sessions").get(hub).copied() else { return };
+            let Some(head) = checkpoint.head.array() else { return };
+            let statement = checkpoint_statement(&checkpoint.scope, checkpoint.change, checkpoint.parked, checkpoint.seq, &head);
+            if !assets.heard(hub, &key, &statement, &checkpoint.word.0) {
+                return;
+            }
+            let (library, log) = (assets.library.clone(), node.log.clone());
+            fastctx_platform::task::spawn(async move {
+                let scope = checkpoint.scope.clone();
+                if let Err(error) =
+                    blocking(&library, move |library| library.checkpointed(&checkpoint.scope, checkpoint.change, checkpoint.parked, session)).await
+                {
+                    log.line(format_args!("taking in a checkpoint of {scope}: {error}"));
+                }
+            });
+        }
+    }
+}
+
 async fn run(node: std::sync::Weak<Node>, hub: HubId, wake: Arc<tokio::sync::Notify>) {
     let _doing = fastctx_platform::doing::doing(format!("synchronizing assets with {hub}"));
     let mut again = crate::again::Again::default();
@@ -168,6 +195,7 @@ async fn open(assets: &Assets, hub: &HubId, link: &Arc<Link>, session: u64) -> R
     };
     let key = assets.pin(hub, &offered)?;
     blocking(library, move |library| library.vouched(session, reported)).await?;
+    assets.current.lock().expect("sessions").insert(hub.clone(), (session, key));
     for checkpoint in checkpointed {
         let head = array(&checkpoint.head, "a checkpoint's head")?;
         let statement = checkpoint_statement(&checkpoint.scope, checkpoint.change, checkpoint.parked, checkpoint.seq, &head);

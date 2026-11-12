@@ -177,6 +177,8 @@ enum Notice {
     Forget(u64),
     Fetch(u64),
     PackageProgress(u64),
+    /// A stream moved, or a checkpoint covers a scope: the latest stands.
+    Assets(String),
 }
 
 enum Pending {
@@ -527,6 +529,13 @@ fn notice(frame: &Down) -> Option<Notice> {
         Down::Fetch { fetch } => Notice::Fetch(fetch.id),
         Down::FetchCancelled { id } => Notice::Fetch(*id),
         Down::PackageProgress { id, .. } => Notice::PackageProgress(*id),
+        Down::Assets { push } => match push {
+            fastctx_types::assets::Push::Moved { scope, stream, .. } => Notice::Assets(format!("moved\0{scope}\0{stream}")),
+            fastctx_types::assets::Push::Checkpointed { checkpoint } => {
+                Notice::Assets(format!("checkpointed\0{}", checkpoint.scope))
+            }
+            fastctx_types::assets::Push::Fact { .. } => return None,
+        },
         _ => return None,
     })
 }

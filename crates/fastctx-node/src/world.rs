@@ -1594,6 +1594,12 @@ impl fastctx_net::link::Node for Handler {
 
     /// Connected again: a hub that calls this computer otherwise than the
     /// others, as one away when another renamed it, is asked to follow.
+    fn assets_pushed(&self, push: fastctx_types::assets::Push) {
+        if let Some(node) = self.node.upgrade() {
+            crate::assets::pushed(&node, &self.hub, push);
+        }
+    }
+
     fn connected(&self) {
         let Some(node) = self.node.upgrade() else { return };
         node.views_changed();

@@ -174,6 +174,8 @@ pub trait Node: Send + Sync + 'static {
     fn history_changed(&self, town: TownId, _name: String, _version: u64) {
         self.ledger_changed(Some(town));
     }
+    /// The hub's asset sync told this machine something unasked.
+    fn assets_pushed(&self, _push: fastctx_types::assets::Push) {}
     fn replicas_changed(&self) {
         self.ledger_changed(None);
     }

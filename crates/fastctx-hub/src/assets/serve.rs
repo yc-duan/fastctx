@@ -77,12 +77,15 @@ fn received(received: Received) -> wire::Received {
     }
 }
 
-/// The scope `key`, through the read gate.
+/// The scope `key`, through the read gate; the machine is told from now
+/// on when a stream of it moves.
 fn gated(assets: &Assets, directory: &Indexed<'_>, machine: &MachineName, key: &str) -> Result<Scope, String> {
     let scope = scopes::scope(assets, key)?.ok_or_else(|| format!("there is no scope {key}"))?;
     if !scopes::readable(directory, machine, &scope) {
+        assets.gone(key, machine);
         return Err(format!("none of this machine's accounts reads the scope {key}"));
     }
+    assets.holds(key, machine);
     Ok(scope)
 }
 
@@ -129,12 +132,24 @@ pub(crate) fn ask(
             // An object the device may read in this scope needs no proof.
             let readable = |object: &ObjectRef| library.readable(&scope, &object.hash).unwrap_or(false);
             let taking = Taking { period, readable: &readable, proven: &proven };
+            let frame_header = frame.header.0.clone();
             let raw = RawFrame { header: frame.header.0, signature: frame.signature.0, body: frame.body.0, objects: Vec::new() };
             let word = library
                 .take(&scope, raw, &DeviceKeys, &taking, Arc::new(Readers), assets.signer())
                 .map_err(|error| error.to_string())?;
             if matches!(word, Received::Applied { .. } | Received::Parked { .. } | Received::Rejected { .. }) {
                 assets.changed(kept.owner.clone(), &scope);
+                assets.receipted(&scope, machine);
+            }
+            if matches!(word, Received::Applied { .. }) {
+                let stream = Header::decode(&frame_header).map_err(|error| error.to_string())?.stream;
+                let next = library
+                    .streams(&scope)
+                    .map_err(|error| error.to_string())?
+                    .into_iter()
+                    .find(|(name, _)| name == &stream)
+                    .map_or(0, |(_, next)| next);
+                assets.moved(&scope, &stream, next, machine);
             }
             Ok(Reply::Received { received: received(word) })
         }

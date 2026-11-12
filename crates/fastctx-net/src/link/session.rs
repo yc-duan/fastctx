@@ -871,6 +871,7 @@ async fn handle_frame(
             inner.node.replicas_changed();
         }
         Down::LedgerChanged { town } => inner.node.ledger_changed(Some(town)),
+        Down::Assets { push } => inner.node.assets_pushed(push),
         Down::AccountRecordChanged { changed } => {
             inner.history_catalogs.record(&changed);
             inner.node.account_record_changed(&changed);

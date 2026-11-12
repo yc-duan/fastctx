@@ -11,7 +11,7 @@
 
 mod session;
 
-pub(crate) use session::wake;
+pub(crate) use session::{pushed, wake};
 
 use fastctx_content::v2::{HubVerifier, Library, Signer};
 use fastctx_net::sign::{Domain, PublicKey, SecretKey, heard_word};
@@ -46,6 +46,9 @@ pub(crate) struct Assets {
     sessions: AtomicU64,
     /// Each hub's driver, by the wake that brings it round again.
     pub(crate) drivers: Mutex<HashMap<HubId, Arc<Notify>>>,
+    /// Each hub's open session and the service key it is under: what a
+    /// checkpoint the hub tells of unasked is taken in.
+    pub(crate) current: Mutex<HashMap<HubId, (u64, PublicKey)>>,
 }
 
 impl Assets {
@@ -69,6 +72,7 @@ impl Assets {
             hubs: Mutex::new(hubs),
             sessions: AtomicU64::new(start),
             drivers: Mutex::new(HashMap::new()),
+            current: Mutex::new(HashMap::new()),
         })
     }
 

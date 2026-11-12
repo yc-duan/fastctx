@@ -45,6 +45,14 @@ pub(crate) struct Assets {
     sealed: Mutex<Option<String>>,
     /// The scopes of each owner library changed since the last checkpoint.
     changed: Mutex<BTreeMap<Owner, BTreeSet<String>>>,
+    /// The machines that read each scope lately: told when a stream of it
+    /// moves (design §6.6).
+    holders: Mutex<BTreeMap<String, BTreeSet<fastctx_types::MachineName>>>,
+    /// The machines given a receipt of each scope since the last
+    /// checkpoint: told when a checkpoint covers it (design §17).
+    receipted: Mutex<BTreeMap<String, BTreeSet<fastctx_types::MachineName>>>,
+    /// What is to be told unasked, by whom answers a request.
+    pushes: Mutex<Vec<(fastctx_types::MachineName, fastctx_types::assets::Push)>>,
 }
 
 impl Assets {
@@ -55,8 +63,17 @@ impl Assets {
         let keys = Arc::new(keys::Keys::open(&dir.join("keys"))?);
         let witness = Arc::new(Witness::open(dir, id)?);
         let owners = owners::Owners::new(dir.join("assets"));
-        let assets =
-            Self { keys, owners, witness, control, sealed: Mutex::new(None), changed: Mutex::new(BTreeMap::new()) };
+        let assets = Self {
+            keys,
+            owners,
+            witness,
+            control,
+            sealed: Mutex::new(None),
+            changed: Mutex::new(BTreeMap::new()),
+            holders: Mutex::new(BTreeMap::new()),
+            receipted: Mutex::new(BTreeMap::new()),
+            pushes: Mutex::new(Vec::new()),
+        };
         if let Some(why) = assets.put_back(dir)? {
             assets.witness.freeze();
             *assets.sealed.lock().expect("seal") = Some(why);
@@ -131,6 +148,41 @@ impl Assets {
         self.changed.lock().expect("changed scopes").entry(owner).or_default().insert(scope.to_string());
     }
 
+    /// `machine` reads `scope`: it is told when a stream of it moves.
+    pub(crate) fn holds(&self, scope: &str, machine: &fastctx_types::MachineName) {
+        self.holders.lock().expect("holders").entry(scope.to_string()).or_default().insert(machine.clone());
+    }
+
+    /// `machine` was given a receipt of `scope`: it is told when a
+    /// checkpoint covers it.
+    pub(crate) fn receipted(&self, scope: &str, machine: &fastctx_types::MachineName) {
+        self.receipted.lock().expect("receipted").entry(scope.to_string()).or_default().insert(machine.clone());
+    }
+
+    /// `stream` of `scope` moved to `next`: each machine that reads the
+    /// scope but `by` is to be told.
+    pub(crate) fn moved(&self, scope: &str, stream: &str, next: u64, by: &fastctx_types::MachineName) {
+        let told: Vec<_> = self.holders.lock().expect("holders").get(scope).into_iter().flatten().filter(|machine| *machine != by).cloned().collect();
+        let mut pushes = self.pushes.lock().expect("pushes");
+        for machine in told {
+            pushes.push((machine, fastctx_types::assets::Push::Moved { scope: scope.into(), stream: stream.into(), next }));
+        }
+    }
+
+    /// What is to be told unasked now; a machine that is not there to be
+    /// told is told no more of the scope until it reads it again.
+    pub(crate) fn take_pushes(&self) -> Vec<(fastctx_types::MachineName, fastctx_types::assets::Push)> {
+        std::mem::take(&mut *self.pushes.lock().expect("pushes"))
+    }
+
+    /// `machine` is gone: it is told nothing of `scope` until it reads it
+    /// again.
+    pub(crate) fn gone(&self, scope: &str, machine: &fastctx_types::MachineName) {
+        if let Some(machines) = self.holders.lock().expect("holders").get_mut(scope) {
+            machines.remove(machine);
+        }
+    }
+
     /// One checkpoint of the scopes that changed since the last (design
     /// §6.1): their heads go into the chain in one commit, then into the
     /// witness; the chain's number and head then, if anything changed.
@@ -190,7 +242,29 @@ impl Assets {
                 return Err(io::Error::other(error));
             }
         };
-        self.witness.advanced(seq, &head, owners)?;
+        self.witness.advanced(seq, &head, owners.clone())?;
+        // Who was given a receipt of a scope it covers hears so.
+        let mut receipted = self.receipted.lock().expect("receipted");
+        let mut pushes = self.pushes.lock().expect("pushes");
+        let signer = self.signer();
+        for (_, heads) in &owners {
+            for covered in heads {
+                let Some(machines) = receipted.remove(&covered.scope) else { continue };
+                let statement =
+                    fastctx_types::assets::checkpoint_statement(&covered.scope, covered.change, covered.parked, seq, &head);
+                let checkpoint = fastctx_types::assets::Checkpoint {
+                    scope: covered.scope.clone(),
+                    change: covered.change,
+                    parked: covered.parked,
+                    seq,
+                    head: head.into(),
+                    word: signer.sign(&statement).into(),
+                };
+                for machine in machines {
+                    pushes.push((machine, fastctx_types::assets::Push::Checkpointed { checkpoint: checkpoint.clone() }));
+                }
+            }
+        }
         Ok(Some((seq, head)))
     }
 }
@@ -199,6 +273,7 @@ impl Assets {
 pub(crate) async fn checkpoints(hub: Weak<crate::Hub>) {
     loop {
         tokio::time::sleep(CHECKPOINT_EVERY).await;
+        let assets_hub = hub.clone();
         let Some(hub) = hub.upgrade() else { return };
         let assets = hub.assets.clone();
         let log = hub.log.clone();
@@ -208,6 +283,11 @@ pub(crate) async fn checkpoints(hub: Weak<crate::Hub>) {
             assets.checkpoint()
         })
         .await;
+        if let Some(hub) = assets_hub.upgrade() {
+            for (machine, push) in hub.assets.take_pushes() {
+                hub.tell(&machine, fastctx_net::wire::Down::Assets { push });
+            }
+        }
         match done {
             Ok(Ok(_)) => {}
             Ok(Err(error)) => log.line(format_args!("checkpointing the owner libraries: {error}")),
