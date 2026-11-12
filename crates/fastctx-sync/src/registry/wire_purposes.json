@@ -586,5 +586,12 @@
     "purpose": "AssetSync",
     "capability": "asset_sync",
     "mapping": "crates/fastctx-types/src/assets.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/assets.rs::Request",
+    "variant": "Holdings",
+    "purpose": "AssetSync",
+    "capability": "asset_sync",
+    "mapping": "crates/fastctx-types/src/assets.rs"
   }
 ]

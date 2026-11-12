@@ -273,6 +273,12 @@ pub enum Request {
     /// control connection: a data connection under the ticket the hub
     /// answers sends it, in chunks, before the frame is taken (§7.1).
     Stage { scope: String, size: u64 },
+    /// The scopes this machine may hold, a page at a time in the order they
+    /// were described, from after `after` (§6.6).
+    Holdings {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        after: Option<HoldingsAt>,
+    },
     /// Where the device's streams of a scope stand in its holding period
     /// `holding` (§6.6, §7.4).
     Cursors { scope: String, holding: i64, streams: Vec<Cursor> },
@@ -311,6 +317,21 @@ pub enum Request {
     /// see, at its holding revision `revision` (§6.3), under its key
     /// (`cleared_statement`).
     Cleared { revision: u64, proof: Bytes },
+}
+
+/// Where a listing of what a machine may hold goes on from: the place, in
+/// the order scopes were described, of the last one looked at.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HoldingsAt {
+    pub seq: u64,
+    pub scope: String,
+}
+
+/// A scope a machine may hold, with the hub's word on its descriptor.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Held {
+    pub scope: String,
+    pub descriptor: Fact,
 }
 
 /// The old service key's word that the new one follows it (§6.1),
@@ -368,6 +389,7 @@ impl Request {
             | Self::Answer { .. }
             | Self::Take { .. }
             | Self::Stage { .. }
+            | Self::Holdings { .. }
             | Self::Cursors { .. }
             | Self::Frames { .. }
             | Self::Succession { .. }
@@ -504,6 +526,13 @@ pub enum Reply {
     },
     /// The ticket a staged frame body is sent under.
     Staged { ticket: u64 },
+    /// Scopes this machine may hold; `next` where the listing goes on from,
+    /// none at its end.
+    Holdings {
+        scopes: Vec<Held>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        next: Option<HoldingsAt>,
+    },
     Succession { epochs: Vec<Fact>, gaps: Vec<Fact> },
     /// A scope's descriptor, as JSON, and the hub's word on it.
     Described { descriptor: Fact },

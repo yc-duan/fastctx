@@ -185,6 +185,11 @@ async fn pass(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>) -> Result<(), Str
     // Shared whole on another network, this machine takes nothing of this
     // one: what it begins goes up, nothing comes down to its disk.
     let isolated = shared_elsewhere(node, hub);
+    if isolated.is_none()
+        && let Err(why) = discover(assets, hub, link, &key).await
+    {
+        failed.get_or_insert(format!("listing what this machine may hold: {why}"));
+    }
     // This hub's scopes alone: another hub's go to no other.
     let scopes: Vec<(String, i64)> = blocking(library, |library| library.live_scopes())
         .await?
@@ -463,6 +468,55 @@ async fn describe(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKe
         }
         blocking(library, move |library| library.install(&scope, descriptor.fact.0, read.seq as i64)).await?;
     }
+    Ok(())
+}
+
+/// How often the scopes a hub lists for this machine are listed whole: a
+/// change of the directory may let it hold one described long before.
+const RELIST: Duration = Duration::from_secs(300);
+
+/// Installs each scope the hub says this machine may hold that it does not
+/// hold yet (design §6.6), its descriptor the hub's word: those described
+/// since the last listing, or all of them when the driver begins and every
+/// `RELIST`.
+async fn discover(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKey) -> Result<(), String> {
+    let library = &assets.library;
+    let (through, whole) = match assets.listed.lock().expect("listed").get(hub) {
+        Some((through, at)) if at.elapsed() < RELIST => (Some(*through), None),
+        _ => (None, Some(std::time::Instant::now())),
+    };
+    let mut after = through.map(|seq| wire::HoldingsAt { seq, scope: String::new() });
+    let mut highest = through.unwrap_or(0);
+    loop {
+        let Reply::Holdings { scopes, next } = ask(assets, link, Request::Holdings { after: after.clone() }).await? else {
+            return Err("the hub did not list what this machine may hold".into());
+        };
+        for held in scopes {
+            if !assets.heard(hub, key, &held.descriptor.fact.0, &held.descriptor.word.0) {
+                return Err(format!("the descriptor of {} is not the hub's", held.scope));
+            }
+            let read: wire::Descriptor = serde_json::from_slice(&held.descriptor.fact.0).map_err(|error| error.to_string())?;
+            if read.scope != held.scope || read.hub != hub.as_str() {
+                return Err(format!("the hub listed another scope than {}", held.scope));
+            }
+            highest = highest.max(read.seq);
+            let scope = held.scope.clone();
+            if blocking(library, move |library| library.holding(&scope)).await?.is_none() {
+                let fact = held.descriptor.fact.0;
+                blocking(library, move |library| library.install(&held.scope, fact, read.seq as i64)).await?;
+            }
+        }
+        match next {
+            Some(next) => {
+                highest = highest.max(next.seq);
+                after = Some(next);
+            }
+            None => break,
+        }
+    }
+    let mut listed = assets.listed.lock().expect("listed");
+    let at = whole.or_else(|| listed.get(hub).map(|(_, at)| *at)).unwrap_or_else(std::time::Instant::now);
+    listed.insert(hub.clone(), (highest, at));
     Ok(())
 }
 

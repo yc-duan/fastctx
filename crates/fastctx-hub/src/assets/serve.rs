@@ -177,7 +177,7 @@ fn receipt_head(receipt: &wire::Reported) -> Result<(Vec<u8>, Head, Vec<u8>), St
 /// The scope a request is of, if it is of one already described.
 pub(crate) fn scope_of(request: &Request) -> Option<&str> {
     match request {
-        Request::Open { .. } | Request::Describe { .. } | Request::Cleared { .. } => None,
+        Request::Open { .. } | Request::Describe { .. } | Request::Cleared { .. } | Request::Holdings { .. } => None,
         Request::Answer { scope, .. }
         | Request::Take { scope, .. }
         | Request::Stage { scope, .. }
@@ -232,6 +232,7 @@ pub(crate) fn ask(
                 .map_err(|error| error.to_string())?;
             Ok(Reply::Word { received: word.map(received) })
         }
+        Request::Holdings { after } => super::holdings::list(assets, directory, machine, after),
         Request::Stage { scope, size } => {
             let kept = gated(assets, directory, machine, &scope)?;
             super::objects::stage(assets, machine, key, kept, size)

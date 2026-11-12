@@ -18,9 +18,13 @@ use std::collections::{BTreeMap, BTreeSet};
 /// The scopes, in the hub's control database.
 pub(crate) const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS asset_scopes (
-    key TEXT PRIMARY KEY, owner TEXT NOT NULL, descriptor BLOB NOT NULL, word BLOB NOT NULL
+    key TEXT PRIMARY KEY, owner TEXT NOT NULL, descriptor BLOB NOT NULL, word BLOB NOT NULL,
+    -- The chain's number when it was described: the order machines list
+    -- what they may hold in (§6.6).
+    seq INTEGER NOT NULL DEFAULT 0
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS asset_scopes_by_owner ON asset_scopes (owner);
+CREATE INDEX IF NOT EXISTS asset_scopes_by_seq ON asset_scopes (seq, key);
 ";
 
 /// A scope as the hub keeps it: its descriptor, as signed and as read.
@@ -177,6 +181,20 @@ pub(crate) fn sharers_read(directory: &Indexed<'_>, machine: &MachineName, scope
     }
     let index = fastctx_net::directory_index::Index::new(&would);
     all_read(&Indexed::new(&would, &index))
+}
+
+/// Whether `machine` may hold any stream of the scope (design §2.3, §6.6).
+pub(crate) fn may_hold(directory: &Indexed<'_>, machine: &MachineName, scope: &Scope) -> bool {
+    if !readable(directory, machine, scope) || !sharers_read(directory, machine, scope) {
+        return false;
+    }
+    let descriptor = &scope.descriptor;
+    descriptor.classes.iter().any(|class| match class.holders {
+        Holders::Readers => true,
+        Holders::Logged => directory.member(machine).is_some_and(|member| {
+            member.logins.iter().any(|account| reads(directory, account, &descriptor.readers, &descriptor.born, scope.bodies.as_deref()))
+        }),
+    })
 }
 
 /// Whether `machine` may hold `stream` of the scope (design §2.3): the
@@ -353,17 +371,17 @@ pub(crate) fn describe(
     };
     let bytes = serde_json::to_vec(&descriptor).map_err(|error| error.to_string())?;
     let digest: [u8; 32] = Sha256::digest(&bytes).into();
-    let (key_text, owner_key, stored) = (key.to_string(), owner.key(), bytes.clone());
+    let (key_text, owner_key, stored, described_at) = (key.to_string(), owner.key(), bytes.clone(), descriptor.seq);
     let (seq, head) = assets
         .control
         .write_now(256 + bytes.len(), move |c| {
             // Never into a library being deleted (design §6.2).
             let added = c
                 .prepare_cached(
-                    "INSERT INTO asset_scopes (key, owner, descriptor, word)
-                     SELECT ?1, ?2, ?3, x'' WHERE NOT EXISTS (SELECT 1 FROM asset_deleting WHERE owner = ?2)",
+                    "INSERT INTO asset_scopes (key, owner, descriptor, word, seq)
+                     SELECT ?1, ?2, ?3, x'', ?4 WHERE NOT EXISTS (SELECT 1 FROM asset_deleting WHERE owner = ?2)",
                 )?
-                .execute(params![key_text, owner_key, stored])?;
+                .execute(params![key_text, owner_key, stored, described_at as i64])?;
             if added == 0 {
                 return Ok(None);
             }

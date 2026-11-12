@@ -86,6 +86,9 @@ pub(crate) struct Assets {
     pub(crate) unreached: Mutex<Unreached>,
     /// The holding revision this machine last told each hub it cleared at.
     pub(crate) cleared: Mutex<HashMap<HubId, (u64, Vec<String>)>>,
+    /// How far each hub's scopes this machine may hold were listed, and when
+    /// they were last listed whole (`session::discover`).
+    pub(crate) listed: Mutex<HashMap<HubId, (u64, std::time::Instant)>>,
 }
 
 impl Assets {
@@ -112,6 +115,7 @@ impl Assets {
             current: Mutex::new(HashMap::new()),
             unreached: Mutex::new(HashMap::new()),
             cleared: Mutex::new(HashMap::new()),
+            listed: Mutex::new(HashMap::new()),
         })
     }
 
