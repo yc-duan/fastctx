@@ -342,8 +342,11 @@ export function presentation(reserve, currentTurn) {
       }
       // What the step's ledger learned from this row (blocks claimed, how
       // far its positions went) outlives a reload of the plugin: a row that
-      // arrives after it claims the next block, not this one again.
-      if (stepOf !== undefined) await checkpoint(reports).catch(() => {})
+      // arrives after it claims the next block, not this one again. It goes
+      // in its turn among the session's writes and is not waited for: a row
+      // stored while its step still streams would otherwise wait for the
+      // stream's batch to be handed over.
+      if (stepOf !== undefined) checkpoint(reports).catch(() => {})
       // Prose already streamed is not reported again as it is stored: the
       // record of what was stored is Claude Code's own session file, which
       // the World reads for a session's history.
