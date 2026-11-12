@@ -1,9 +1,10 @@
 //! A conversation's timeline in the asset library, brought to its history as
-//! the history grows (sync-v2-impl-design §10). A Claude resident's record
-//! is read past where it was read through (`claude::history::window`) and
-//! only that window is written: its new and changed items as revisions, its
-//! items gone as tombstones, what came before left as written. Any other
-//! history, and one that cannot be followed, is read and written whole.
+//! the history grows (sync-v2-impl-design §10). A Claude resident's record,
+//! or a Codex resident's thread, is read past where it was read through
+//! (`claude::history::window`, `codex::follow::window`) and only that window
+//! is written: its new and changed items as revisions, its items gone as
+//! tombstones, what came before left as written. Any other history, and one
+//! that cannot be followed, is read and written whole.
 //!
 //! Where it stands is kept beside the timeline (`Following`), so a node that
 //! stops takes up where it was. It runs as its own job, soon after the
@@ -13,6 +14,7 @@
 use super::assets::{self, Span};
 use crate::Node;
 use fastctx_hosts::claude::transcript::follow::Seam;
+use fastctx_hosts::codex::follow::Seam as CodexSeam;
 use fastctx_jobs::{Job, Kind, Outcome, Taken};
 use fastctx_types::ResidentId;
 use fastctx_types::ipc::Failure;
@@ -88,6 +90,40 @@ struct Following {
     world_open: Vec<SessionEvent>,
     /// When the whole history was last read and compared (`verify`).
     verified: Option<Timestamp>,
+    /// Where a Codex thread is read through.
+    #[serde(default)]
+    codex: Option<CodexSeam>,
+    /// The World's record's latest sequence when it was last read.
+    #[serde(default)]
+    world_latest: Option<u64>,
+}
+
+/// A history read past where it was read through, as either host reads it.
+struct Followed {
+    events: Vec<SessionEvent>,
+    whole: bool,
+    since: Timestamp,
+    settled: Timestamp,
+    next: Next,
+}
+
+/// Where the history is read through now, as its host reads it.
+enum Next {
+    Claude { session: String, seam: Seam, kept: Option<String>, kept_here: bool },
+    Codex(CodexSeam),
+}
+
+/// Whether `event` is one a Codex reading tells again each time: the
+/// thread's title, or what it says of itself.
+fn told_again(event: &SessionEvent) -> bool {
+    use fastctx_types::session::{Happened, SessionChange};
+    matches!(event.happened, Happened::Titled { .. } | Happened::Changed { turn: None, change: SessionChange::Metadata { .. } })
+}
+
+/// Whether `event` says Codex put a history in place of the one it had.
+fn replaced_history(event: &SessionEvent) -> bool {
+    use fastctx_types::session::{Happened, SessionChange};
+    matches!(event.happened, Happened::Changed { change: SessionChange::HistoryChanged, .. })
 }
 
 /// What bringing a timeline did.
@@ -135,26 +171,56 @@ pub(super) async fn produce(node: &Arc<Node>, resident: &ResidentId, whole: bool
         return Ok(Produced::default());
     }
     let directory = node.world.conversation(resident);
-    let follows = about.host.agent.as_str() == "claude" && about.world_managed() && crate::logins::workbench::reads_host(node, &about);
+    let agent = about.host.agent.as_str();
+    let hosted = about.world_managed() && crate::logins::workbench::reads_host(node, &about);
+    let follows = hosted && (agent == "claude" || agent == "codex" && about.session.is_some());
     let window = if follows {
+        // What Codex said so far is in the World's record before it is read.
+        if agent == "codex"
+            && let Some(thread) = &about.session
+        {
+            let codex = node.codex.of(node, &about)?;
+            codex.flush_events(thread).await.map_err(Failure::new)?;
+        }
         // The World's record past where it was read; read whole the first
-        // time, or when a cut took turns back.
+        // time, or when a cut took turns back, or Codex put its history in
+        // place of another.
         let (mut numbered, mut latest, cut) = crate::talk::recorded_after(&directory, state.world_from.unwrap_or(0)).await?;
+        // Only one not heard before: the window reads again what it read.
+        let replaced = agent == "codex"
+            && numbered.iter().any(|(sequence, event)| state.world_latest.is_none_or(|latest| *sequence > latest) && replaced_history(event));
         let mut open = state.world_open.clone();
-        if state.world_from.is_none() || cut {
+        let mut whole = whole;
+        if state.world_from.is_none() || cut || replaced {
             if state.world_from.is_some() {
                 (numbered, latest, _) = crate::talk::recorded_after(&directory, 0).await?;
             }
             open.clear();
+            whole |= replaced;
         }
         let mut recorded = open.clone();
         recorded.extend(numbered.iter().map(|(_, event)| event.clone()));
-        // A check reads the record from its start.
-        let from = state.session.clone().filter(|_| !whole).map(|session| (session, state.seam.clone()));
-        crate::claude::history::window(node, resident, &recorded, from)
-            .await
-            .map_err(Failure::new)?
-            .map(|window| (window, recorded, numbered, open, latest))
+        let followed = if agent == "claude" {
+            // A check reads the record from its start.
+            let from = state.session.clone().filter(|_| !whole).map(|session| (session, state.seam.clone()));
+            crate::claude::history::window(node, resident, &recorded, from).await.map_err(Failure::new)?.map(|window| Followed {
+                events: window.events,
+                whole: window.whole,
+                since: window.since,
+                settled: window.settled,
+                next: Next::Claude { session: window.session, seam: window.seam, kept: window.kept, kept_here: window.kept_here },
+            })
+        } else {
+            let from = state.codex.clone().filter(|_| !whole);
+            crate::codex::follow::window(node, resident, &about, &recorded, from).await.map_err(Failure::new)?.map(|window| Followed {
+                events: window.events,
+                whole: window.whole,
+                since: window.since,
+                settled: window.settled,
+                next: Next::Codex(window.seam),
+            })
+        };
+        followed.map(|followed| (followed, recorded, numbered, open, latest))
     } else {
         None
     };
@@ -164,16 +230,32 @@ pub(super) async fn produce(node: &Arc<Node>, resident: &ResidentId, whole: bool
             let (world_from, world_open) = world_after(&numbered, open, latest, window.settled, state.world_from);
             let recorded: Vec<_> =
                 if window.whole { recorded } else { recorded.into_iter().filter(|event| event.at >= window.since).collect() };
+            // Codex: reverted turns and requests stay out, as a reading has it.
+            let recorded = if agent == "codex" { crate::codex::watch::recorded(recorded, &window.events) } else { recorded };
             let history = {
-                let (assembling, whose, folder, events) = (node.clone(), resident.clone(), directory.clone(), window.events);
-                fastctx_platform::task::blocking(move || crate::talk::assemble(&assembling, &whose, &folder, "claude", recorded, Some(events)))
+                let (assembling, whose, folder, events, agent) = (node.clone(), resident.clone(), directory.clone(), window.events, agent.to_string());
+                fastctx_platform::task::blocking(move || crate::talk::assemble(&assembling, &whose, &folder, &agent, recorded, Some(events)))
                     .await?
             };
             let before: Vec<(Vec<u8>, Timestamp)> =
                 state.window.iter().filter_map(|(identity, at, _)| unhex(identity).map(|identity| (identity, *at))).collect();
-            // What the last window wrote from before this one began is settled.
+            // A Codex window is read again from the turn it began with: all
+            // it wrote last is in it again, or gone. A Claude one from where
+            // its seam moved: what it wrote from before this one began is
+            // settled.
+            let before: Vec<(Vec<u8>, Timestamp)> = match &window.next {
+                Next::Codex(_) => before.into_iter().map(|(identity, at)| (identity, at.max(window.since))).collect(),
+                Next::Claude { .. } => before,
+            };
             let floor = state.window.iter().filter(|(_, at, _)| *at < window.since).map(|(_, _, key)| *key).fold(state.floor, u64::max);
             let (whole, since, settled) = (window.whole, window.since, window.settled);
+            // A Codex thread's title and what it says of itself stay in the
+            // window: every reading tells them again, at the time of the
+            // thread's last change, not where they stand.
+            let unturned: std::collections::HashSet<Vec<u8>> = {
+                let identities = super::names::identities(&history);
+                history.iter().zip(identities).filter(|(event, _)| told_again(event)).map(|(_, identity)| identity).collect()
+            };
             let wrote = {
                 let (writing, signer, whose, placed) = (library.clone(), signer.clone(), resident.clone(), placed);
                 fastctx_platform::task::blocking(move || {
@@ -183,22 +265,47 @@ pub(super) async fn produce(node: &Arc<Node>, resident: &ResidentId, whole: bool
                 .await?
             };
             // From where the seam stands now, the items before it are settled.
+            let codex = matches!(window.next, Next::Codex(_));
+            let held = |identity: &Vec<u8>, at: &Timestamp| *at >= settled || codex && unturned.contains(identity);
             let base = if whole { 0 } else { floor };
-            let settled_floor = wrote.items.iter().filter(|(_, at, _)| *at < settled).map(|(_, _, key)| *key).fold(base, u64::max);
-            let open = wrote.items.iter().filter(|(_, at, _)| *at >= settled).map(|(identity, at, key)| (hex(identity), *at, *key)).collect();
-            let unread = window.kept.is_some() && !window.kept_here && window.kept != state.kept;
-            let next = Following {
-                form: FORM,
-                // Brought again until the record holds what was kept.
-                version: if unread { String::new() } else { version },
-                session: Some(window.session),
-                seam: window.seam,
-                window: open,
-                floor: settled_floor,
-                kept: if window.kept_here { window.kept } else { state.kept },
-                world_from: Some(world_from),
-                world_open,
-                verified: if window.whole { Some(Timestamp::now()) } else { state.verified },
+            let settled_floor = wrote.items.iter().filter(|(identity, at, _)| !held(identity, at)).map(|(_, _, key)| *key).fold(base, u64::max);
+            let open = wrote.items.iter().filter(|(identity, at, _)| held(identity, at)).map(|(identity, at, key)| (hex(identity), *at, *key)).collect();
+            let verified = if window.whole { Some(Timestamp::now()) } else { state.verified };
+            let (next, unread) = match window.next {
+                Next::Claude { session, seam, kept: seen, kept_here } => {
+                    let unread = seen.is_some() && !kept_here && seen != state.kept;
+                    let next = Following {
+                        form: FORM,
+                        // Brought again until the record holds what was kept.
+                        version: if unread { String::new() } else { version },
+                        session: Some(session),
+                        seam,
+                        window: open,
+                        floor: settled_floor,
+                        kept: if kept_here { seen } else { state.kept },
+                        world_from: Some(world_from),
+                        world_open,
+                        verified,
+                        codex: None,
+                        world_latest: Some(latest),
+                    };
+                    (next, unread)
+                }
+                Next::Codex(seam) => {
+                    let next = Following {
+                        form: FORM,
+                        version,
+                        window: open,
+                        floor: settled_floor,
+                        world_from: Some(world_from),
+                        world_open,
+                        verified,
+                        codex: Some(seam),
+                        world_latest: Some(latest),
+                        ..Following::default()
+                    };
+                    (next, false)
+                }
             };
             (wrote, next, unread)
         }
@@ -215,7 +322,9 @@ pub(super) async fn produce(node: &Arc<Node>, resident: &ResidentId, whole: bool
             (wrote, Following { form: FORM, version, floor, verified: Some(Timestamp::now()), ..Following::default() }, false)
         }
     };
-    let long_changed = next.seam.offset > LONG_PREFIX;
+    // A long Claude prefix changed, or a Codex thread did, whose settled
+    // turns are checked whole within the hour (§10, §21).
+    let long_changed = next.seam.offset > LONG_PREFIX || next.codex.is_some() && wrote.written + wrote.gone > 0;
     let verified = next.verified;
     let state = serde_json::to_vec(&next).map_err(failure)?;
     fastctx_platform::task::blocking(move || library.keep_checkpoint(&name, state)).await.map_err(failure)?;

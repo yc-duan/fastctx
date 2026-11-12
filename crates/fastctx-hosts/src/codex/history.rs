@@ -4,6 +4,7 @@
 use std::collections::HashMap;
 
 use fastctx_types::session::{Happened, SessionEvent, TurnEnd, What};
+use jiff::Timestamp;
 use serde_json::{Value, json};
 
 use super::{
@@ -43,10 +44,6 @@ pub(super) async fn read(
         let entries = pages(server, "thread/items/list", json!({"threadId": thread, "sortDirection": "asc"}))
             .await
             .map_err(|e| e.to_string())?;
-        let times: HashMap<(&str, &str), &Value> = entries
-            .iter()
-            .filter_map(|entry| Some(((entry["turnId"].as_str()?, entry["item"]["id"].as_str()?), entry)))
-            .collect();
         let (mut timeline, active_voice) =
             match pages_with_voice(server, "thread/timeline/list", json!({"threadId": thread})).await {
                 Ok(timeline) => timeline,
@@ -58,84 +55,9 @@ pub(super) async fn read(
             };
         // Timeline pages run newest to oldest, with each page ordered forward.
         timeline.sort_by_key(|entry| entry["position"].as_u64());
-        let mut events: Vec<SessionEvent> = active_voice
-            .into_iter()
-            .map(|session| SessionEvent {
-                at: seconds(metadata.get("createdAt")),
-                happened: Happened::Changed {
-                    turn: None,
-                    change: fastctx_types::session::SessionChange::Voice {
-                        event: "active_session".into(),
-                        data: json!({"realtimeSessionId": session}),
-                    },
-                },
-            })
-            .collect();
-        let mut messages: HashMap<String, String> = HashMap::new();
-        let mut submissions = super::user_images::Submissions::default();
-        let mut at = seconds(metadata.get("createdAt"));
-        for entry in timeline {
-            let turn = entry.get("turnId").and_then(Value::as_str).unwrap_or_default();
-            match entry.get("type").and_then(Value::as_str) {
-                Some("turnStarted") => {
-                    at = seconds(entry.get("startedAt"));
-                    events.push(SessionEvent { at, happened: Happened::TurnStarted { turn: turn.into() } });
-                }
-                Some("item") => {
-                    let item = &entry["item"];
-                    if let Some(timing) = item.get("id").and_then(Value::as_str).and_then(|id| times.get(&(turn, id)))
-                        && timing["completedAtMs"].is_i64()
-                    {
-                        at = millis(timing.get("completedAtMs"));
-                    }
-                    let ordinal = submissions.observe(turn, item);
-                    let facts = items::agent_facts(item);
-                    if let Some(mut happened) = completed(turn, item, &mut messages) {
-                        if let Happened::Heard { message: Some(message), .. } = &mut happened {
-                            super::user_images::decorate(message, owner, turn, ordinal, false);
-                        }
-                        if let Happened::Finished { item, .. } = &mut happened
-                            && let Some(timing) = times.get(&(turn, item.id.as_str()))
-                        {
-                            item.started_at =
-                                timing["startedAtMs"].as_i64().and_then(|n| jiff::Timestamp::from_millisecond(n).ok());
-                            if let Some(end) =
-                                timing["completedAtMs"].as_i64().and_then(|n| jiff::Timestamp::from_millisecond(n).ok())
-                            {
-                                item.thought_until(end);
-                            }
-                        }
-                        events.push(SessionEvent { at, happened });
-                    }
-                    events.extend(facts.into_iter().map(|change| SessionEvent {
-                        at,
-                        happened: Happened::Changed { turn: Some(turn.into()), change },
-                    }));
-                }
-                Some("realtime") => events.push(SessionEvent {
-                    at,
-                    happened: Happened::Realtime { item: entry["item"].clone(), complete: true },
-                }),
-                Some("turnCompleted") if running != Some(turn) => {
-                    at = seconds(entry.get("completedAt"));
-                    events.push(SessionEvent {
-                        at,
-                        happened: Happened::TurnEnded {
-                            turn: turn.into(),
-                            end: TurnEnd {
-                                facts: None,
-                                error: entry.get("error").filter(|e| !e.is_null()).cloned(),
-                                how: turn_how(entry.get("status").and_then(Value::as_str)),
-                                reason: entry.pointer("/error/message").and_then(Value::as_str).map(str::to_string),
-                                duration_ms: entry.get("durationMs").and_then(Value::as_u64),
-                                last_message: messages.remove(turn),
-                            },
-                        },
-                    });
-                }
-                _ => {}
-            }
-        }
+        let mut events: Vec<SessionEvent> =
+            active_voice.into_iter().map(|session| voice(seconds(metadata.get("createdAt")), session)).collect();
+        events.extend(project_timeline(&timeline, &entries, running, owner, seconds(metadata.get("createdAt"))).events);
         events
     } else {
         match server.ask("thread/read", json!({"threadId": thread, "includeTurns": true})).await {
@@ -156,7 +78,128 @@ pub(super) async fn read(
     Ok(events)
 }
 
-fn title(metadata: &Value) -> Vec<SessionEvent> {
+/// A voice session the timeline says was open where it begins.
+pub(super) fn voice(at: Timestamp, session: String) -> SessionEvent {
+    SessionEvent {
+        at,
+        happened: Happened::Changed {
+            turn: None,
+            change: fastctx_types::session::SessionChange::Voice {
+                event: "active_session".into(),
+                data: json!({"realtimeSessionId": session}),
+            },
+        },
+    }
+}
+
+/// One turn of a projected timeline: where it begins in the thread's
+/// timeline (when the timeline says), when it began, the latest time of its
+/// events and of what follows it before the next turn, and whether it ended.
+pub(super) struct TurnSpan {
+    pub id: String,
+    pub position: Option<u64>,
+    pub start: Timestamp,
+    pub last: Timestamp,
+    pub ended: bool,
+}
+
+/// Session events projected from timeline entries and the turns they make.
+pub(super) struct Projected {
+    pub events: Vec<SessionEvent>,
+    pub turns: Vec<TurnSpan>,
+}
+
+/// The session events of `timeline` (entries in order), timed by the item
+/// entries `entries`, beginning at `at`. A turn still running is not ended.
+pub(super) fn project_timeline(
+    timeline: &[Value],
+    entries: &[Value],
+    running: Option<&str>,
+    owner: Option<&fastctx_types::Address>,
+    mut at: Timestamp,
+) -> Projected {
+    let times: HashMap<(&str, &str), &Value> = entries
+        .iter()
+        .filter_map(|entry| Some(((entry["turnId"].as_str()?, entry["item"]["id"].as_str()?), entry)))
+        .collect();
+    let mut events = Vec::new();
+    let mut turns: Vec<TurnSpan> = Vec::new();
+    let mut messages: HashMap<String, String> = HashMap::new();
+    let mut submissions = super::user_images::Submissions::default();
+    for entry in timeline {
+        let turn = entry.get("turnId").and_then(Value::as_str).unwrap_or_default();
+        let before = events.len();
+        match entry.get("type").and_then(Value::as_str) {
+            Some("turnStarted") => {
+                at = seconds(entry.get("startedAt"));
+                events.push(SessionEvent { at, happened: Happened::TurnStarted { turn: turn.into() } });
+                turns.push(TurnSpan { id: turn.into(), position: entry["position"].as_u64(), start: at, last: at, ended: false });
+            }
+            Some("item") => {
+                let item = &entry["item"];
+                if let Some(timing) = item.get("id").and_then(Value::as_str).and_then(|id| times.get(&(turn, id)))
+                    && timing["completedAtMs"].is_i64()
+                {
+                    at = millis(timing.get("completedAtMs"));
+                }
+                let ordinal = submissions.observe(turn, item);
+                let facts = items::agent_facts(item);
+                if let Some(mut happened) = completed(turn, item, &mut messages) {
+                    if let Happened::Heard { message: Some(message), .. } = &mut happened {
+                        super::user_images::decorate(message, owner, turn, ordinal, false);
+                    }
+                    if let Happened::Finished { item, .. } = &mut happened
+                        && let Some(timing) = times.get(&(turn, item.id.as_str()))
+                    {
+                        item.started_at = timing["startedAtMs"].as_i64().and_then(|n| jiff::Timestamp::from_millisecond(n).ok());
+                        if let Some(end) = timing["completedAtMs"].as_i64().and_then(|n| jiff::Timestamp::from_millisecond(n).ok()) {
+                            item.thought_until(end);
+                        }
+                    }
+                    events.push(SessionEvent { at, happened });
+                }
+                events.extend(facts.into_iter().map(|change| SessionEvent {
+                    at,
+                    happened: Happened::Changed { turn: Some(turn.into()), change },
+                }));
+            }
+            Some("realtime") => events.push(SessionEvent {
+                at,
+                happened: Happened::Realtime { item: entry["item"].clone(), complete: true },
+            }),
+            Some("turnCompleted") if running != Some(turn) => {
+                at = seconds(entry.get("completedAt"));
+                events.push(SessionEvent {
+                    at,
+                    happened: Happened::TurnEnded {
+                        turn: turn.into(),
+                        end: TurnEnd {
+                            facts: None,
+                            error: entry.get("error").filter(|e| !e.is_null()).cloned(),
+                            how: turn_how(entry.get("status").and_then(Value::as_str)),
+                            reason: entry.pointer("/error/message").and_then(Value::as_str).map(str::to_string),
+                            duration_ms: entry.get("durationMs").and_then(Value::as_u64),
+                            last_message: messages.remove(turn),
+                        },
+                    },
+                });
+                if let Some(span) = turns.iter_mut().rev().find(|span| span.id == turn) {
+                    span.ended = true;
+                }
+            }
+            _ => {}
+        }
+        // What follows a turn's start, up to the next, is of its span.
+        if let Some(span) = turns.last_mut() {
+            for event in &events[before..] {
+                span.last = span.last.max(event.at);
+            }
+        }
+    }
+    Projected { events, turns }
+}
+
+pub(super) fn title(metadata: &Value) -> Vec<SessionEvent> {
     let mut events = vec![SessionEvent {
         at: seconds(metadata.get("updatedAt")),
         happened: Happened::Changed {
@@ -170,7 +213,7 @@ fn title(metadata: &Value) -> Vec<SessionEvent> {
     events
 }
 
-fn ordinary_timeline(turns: &[Value], entries: &[Value]) -> Vec<Value> {
+pub(super) fn ordinary_timeline(turns: &[Value], entries: &[Value]) -> Vec<Value> {
     let mut timeline = Vec::new();
     for turn in turns {
         timeline.push(json!({"type":"turnStarted","turnId":turn["id"],"startedAt":turn["startedAt"]}));
@@ -197,7 +240,7 @@ pub(super) async fn pages(server: &AppServer, method: &str, params: Value) -> Re
     pages_with_voice(server, method, params).await.map(|(entries, _)| entries)
 }
 
-async fn pages_with_voice(
+pub(super) async fn pages_with_voice(
     server: &AppServer,
     method: &str,
     mut params: Value,

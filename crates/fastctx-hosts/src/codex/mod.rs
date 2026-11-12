@@ -29,6 +29,7 @@ mod contract;
 pub mod control_error;
 mod control_start;
 mod controls;
+pub mod follow;
 mod history;
 pub mod identify;
 mod image_position;
@@ -801,6 +802,47 @@ impl CodexHost {
                 history::read(&server, thread, running.as_deref(), Some(owner)).await
             }
             read => read,
+        }
+    }
+
+    /// The thread read past `seam` (`follow`): none where it is not
+    /// followed — a new thread with nothing to read yet, one whose history
+    /// is not kept in pages — so it is read whole as ever. A seam whose turn
+    /// moved, or a settled turn found changed, reads it from its start;
+    /// why, with it. `accept` says whether every turn the World saw begin
+    /// before a time had ended by then.
+    pub async fn follow(
+        self: &Arc<Self>,
+        thread: &str,
+        owner: &fastctx_types::Address,
+        seam: &follow::Seam,
+        accept: &(dyn Fn(Timestamp) -> bool + Send + Sync),
+    ) -> Result<Option<(follow::Tail, Option<String>)>, String> {
+        let server = self.server().await?;
+        if self.lock().threads.get(thread).is_some_and(|t| t.created_here && !t.completed_item) {
+            return Ok(None);
+        }
+        let running = self.running_turn(thread);
+        let mut seam = seam.clone();
+        let mut restarted = None;
+        loop {
+            let read = match follow::tail(&server, thread, running.as_deref(), Some(owner), &seam, accept).await {
+                // One a Codex of another version wrote reads once it is loaded.
+                Err(error) if error == not_loaded(thread) => {
+                    self.ensure_loaded(&server, thread).await?;
+                    follow::tail(&server, thread, running.as_deref(), Some(owner), &seam, accept).await?
+                }
+                read => read?,
+            };
+            match read {
+                Ok(tail) => return Ok(Some((tail, restarted))),
+                Err(follow::Restart::Legacy) => return Ok(None),
+                Err(why) if seam.turn.is_some() => {
+                    restarted = Some(why.to_string());
+                    seam = follow::Seam::default();
+                }
+                Err(why) => return Err(why.to_string()),
+            }
         }
     }
 

@@ -43,7 +43,7 @@ pub(crate) struct Window {
 }
 
 /// The turns of `recorded`: when each began, and ended if it did.
-fn turns(recorded: &[SessionEvent]) -> Vec<(Timestamp, Option<Timestamp>)> {
+pub(crate) fn turns(recorded: &[SessionEvent]) -> Vec<(Timestamp, Option<Timestamp>)> {
     let mut ends: HashMap<&str, Timestamp> = HashMap::new();
     for event in recorded {
         if let Happened::TurnEnded { turn, .. } = &event.happened {
