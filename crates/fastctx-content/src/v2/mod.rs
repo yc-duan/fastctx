@@ -26,7 +26,7 @@ pub use collect::{Collected, Started};
 pub use commit::{Commit, Committed};
 pub use exchange::{Holder, Imported, RawFrame, Verifier};
 pub use frame::{FORMAT, Header, KindRecord, Signer, open};
-pub use hub::{Authorizer, HubSigner, Received, Taking};
+pub use hub::{Authorizer, Drained, HubSigner, Received, Refused, Taking};
 pub use ops::{Delivery, Op};
 pub use reads::{Entry, PAGE};
 pub use receipts::{Receipt, Said};

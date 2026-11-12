@@ -84,13 +84,17 @@ impl Library {
                         break 'walk;
                     }
                     if own {
-                        let witnessed: Option<i64> = db
+                        // Its application is witnessed, and no word on it
+                        // from any history waits to be.
+                        let witnessed: bool = db
                             .prepare_cached(
-                                "SELECT checkpointed FROM hub_receipts WHERE stream = ?1 AND epoch = ?2 AND first = ?3 AND kind = 'applied'",
+                                "SELECT EXISTS (SELECT 1 FROM hub_receipts WHERE stream = ?1 AND epoch = ?2 AND first = ?3
+                                                AND kind = 'applied' AND checkpointed = 1)
+                                 AND NOT EXISTS (SELECT 1 FROM hub_receipts WHERE stream = ?1 AND epoch = ?2 AND first = ?3
+                                                 AND kind IN ('applied', 'parked') AND checkpointed = 0)",
                             )?
-                            .query_row(params![stream_id, epoch, first], |row| row.get(0))
-                            .optional()?;
-                        if witnessed != Some(1) {
+                            .query_row(params![stream_id, epoch, first], |row| row.get(0))?;
+                        if !witnessed {
                             break 'walk;
                         }
                     }

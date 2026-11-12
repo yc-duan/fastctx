@@ -141,12 +141,13 @@ CREATE TABLE IF NOT EXISTS hub_receipts (
     first INTEGER NOT NULL,
     digest BLOB NOT NULL,
     kind TEXT NOT NULL CHECK (kind IN ('parked', 'applied', 'rejected')),
+    standing BLOB NOT NULL,
     change INTEGER,
     parked INTEGER,
-    accumulated BLOB,
     signature BLOB NOT NULL,
+    heard_in INTEGER NOT NULL,
     checkpointed INTEGER NOT NULL DEFAULT 0,
-    PRIMARY KEY (stream, epoch, first, digest, kind)
+    PRIMARY KEY (stream, epoch, first, digest, kind, standing)
 ) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS cursors (
     stream INTEGER NOT NULL,

@@ -170,6 +170,10 @@ impl Library {
             .execute(params![stream, holding, first as i64 - 1, &head[..]])?;
             floors_passed(db, stream, first - 1)?;
             release_in(db, &commit.leases)?;
+            // An operation that stood at these places before a truncation
+            // stands there no more: only this commit's own land here.
+            db.prepare_cached("DELETE FROM op_records WHERE scope = ?1 AND stream = ?2 AND revision >= ?3 AND revision < ?4")?
+                .execute(params![scope, commit.stream, next as i64, first as i64])?;
             then(db, next)?;
             if let Some((op, words)) = &commit.op {
                 super::ops::landed(db, op, scope, &commit.stream, next, first - next, *words)?;
