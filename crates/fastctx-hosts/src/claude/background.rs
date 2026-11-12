@@ -41,7 +41,9 @@ pub struct Start<'a> {
     pub model: Option<&'a str>,
     pub reasoning_effort: Option<&'a str>,
     /// The login assists another account: only the explicitly supplied World
-    /// plugin, MCP configuration and session settings are loaded.
+    /// plugin, MCP configuration and session settings are loaded, and the
+    /// local settings of the place it starts in, which the World keeps to
+    /// the login's word on running without approvals alone.
     pub assisting: bool,
 }
 
@@ -100,7 +102,7 @@ fn settings_args(start: &Start) -> Vec<OsString> {
         start.instructions.into(),
     ];
     if start.assisting {
-        args.extend(["--no-chrome".into(), "--strict-mcp-config".into(), "--setting-sources=".into()]);
+        args.extend(["--no-chrome".into(), "--strict-mcp-config".into(), "--setting-sources=local".into()]);
     }
     if let Some(model) = start.model {
         args.extend(["--model".into(), model.into()]);

@@ -51,6 +51,11 @@ pub(super) async fn start(
         let cwd = super::resume_dir(&node, &source);
         let assisting = crate::assists::host::starting(&node, &resident, &about.acting)
             .map_err(|failure| unstarted(failure.message))?;
+        // An assisting one goes on where it was opened; its login's place
+        // says the login's word on running without approvals as it stands.
+        if assisting {
+            super::assisting_dir(&node, &env).map_err(|failure| unstarted(failure.message))?;
+        }
         let options = crate::session_options::read(&node, &resident).map_err(|failure| unstarted(failure.message))?;
         // Its settings name the conversation, as a new conversation's do.
         let mcp =

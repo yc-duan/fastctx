@@ -93,9 +93,10 @@ pub async fn fork(
     let directory = node.world.conversation(&id);
     crate::focus::open(node, &directory, &source.acting, &source.focus).await?;
     super::fork_ready::begin(node, &id)?;
-    let cwd = crate::colleagues::standing(node, town.as_ref())?;
     crate::profile::session::ready(node, &source.acting).await?;
     let assisting = crate::assists::host::starting(node, &id, &source.acting)?;
+    // Where its parent of the same login started, where Claude Code finds it.
+    let cwd = super::start_dir(node, town.as_ref(), assisting, &env)?;
     let at = Timestamp::now();
     let about = About {
         forked_from: Some(Address { machine: node.machine(), resident: resident.clone() }),

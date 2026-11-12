@@ -21,6 +21,7 @@ pub(crate) mod calls;
 mod catalog;
 pub(crate) mod channel;
 pub(crate) mod claim_cleanup;
+mod assisting_place;
 mod continuing;
 pub(crate) mod control;
 pub(crate) mod control_outcome;
@@ -1995,6 +1996,28 @@ fn reword(node: &Node, resident: &ResidentId) -> std::io::Result<()> {
     if kept == words { Ok(()) } else { fastctx_platform::disk::write(&path, words) }
 }
 
+/// Where a new session starts: its town's standing place, or, assisting
+/// another account, its login's own place for that (`assisting_place`).
+pub(super) fn start_dir(
+    node: &Node,
+    town: Option<&fastctx_types::TownName>,
+    assisting: bool,
+    env: &[(OsString, OsString)],
+) -> Result<PathBuf, Failure> {
+    if !assisting {
+        return crate::colleagues::standing(node, town);
+    }
+    assisting_dir(node, env)
+}
+
+/// The login's place for sessions assisting another account, its word on
+/// running without approvals brought in line first.
+pub(super) fn assisting_dir(node: &Node, env: &[(OsString, OsString)]) -> Result<PathBuf, Failure> {
+    let user_home = fastctx_platform::user_home().map_err(|error| Failure::new(error.to_string()))?;
+    assisting_place::place(node.world.path(), env, &user_home)
+        .map_err(|error| Failure::new(format!("preparing the place an assisting session starts in: {error}")))
+}
+
 /// Where a session is resumed from: the directory it was opened in, as its
 /// registration says, so its own tools go on working there; the World's
 /// directory where it was opened in the user's home, which Claude Code
@@ -2231,7 +2254,7 @@ fn prepare_launch_now(node: &Arc<Node>, id: &ResidentId) -> Result<Prepared, Fai
     let options = crate::session_options::read(node, id)?;
     let directory = node.world.conversation(id);
     let mcp = crate::profile::session::claude(node, id, true)?;
-    let cwd = crate::colleagues::standing(node, town.as_ref())?;
+    let cwd = start_dir(node, town.as_ref(), assisting, &env)?;
     let first = crate::inbox::first(&directory, |pending| pending.state == PendingState::Waking)
         .map_err(|error| Failure::new(format!("reading {id}'s first words: {error}")))?
         .ok_or_else(|| Failure::new(format!("{id}'s first words are no longer kept")))?;
