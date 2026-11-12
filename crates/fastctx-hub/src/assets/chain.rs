@@ -25,21 +25,23 @@ CREATE TABLE IF NOT EXISTS hub_gap_facts (
     digest BLOB NOT NULL, seq INTEGER NOT NULL,
     PRIMARY KEY (owner, scope, stream, epoch, from_sequence)
 ) WITHOUT ROWID;
--- A history put aside when the hub recovered (design §17): heads after
--- `fork` up to `top` that are not the chain's are of it.
-CREATE TABLE IF NOT EXISTS closed_branches (
-    id INTEGER PRIMARY KEY, fork INTEGER NOT NULL, top INTEGER NOT NULL, head BLOB NOT NULL, at INTEGER NOT NULL
-);
--- Where each scope stood when a branch was put aside: a receipt past it the
--- library does not hold is of that branch.
-CREATE TABLE IF NOT EXISTS closed_scopes (
-    branch INTEGER NOT NULL, scope TEXT NOT NULL, change INTEGER NOT NULL, parked INTEGER NOT NULL,
-    PRIMARY KEY (branch, scope)
+-- What machines brought, under the hub's word, while every asset was
+-- sealed (design §17): the heads they saw and the receipts they held. When
+-- the hub reopens, exactly these, and the head outside its directory, are
+-- the history it set aside; nothing else is taken for it.
+CREATE TABLE IF NOT EXISTS recovery_heads (
+    seq INTEGER NOT NULL, head BLOB NOT NULL, machine TEXT NOT NULL, at INTEGER NOT NULL,
+    PRIMARY KEY (seq, head)
 ) WITHOUT ROWID;
--- What machines brought while every asset was sealed, for the report.
-CREATE TABLE IF NOT EXISTS recovery_seen (
-    machine TEXT NOT NULL, seq INTEGER NOT NULL, receipts INTEGER NOT NULL, at INTEGER NOT NULL,
-    PRIMARY KEY (machine)
+CREATE TABLE IF NOT EXISTS recovery_receipts (
+    scope TEXT NOT NULL, change INTEGER NOT NULL, prefix BLOB NOT NULL, parked INTEGER NOT NULL, accumulated BLOB NOT NULL,
+    machine TEXT NOT NULL, at INTEGER NOT NULL,
+    PRIMARY KEY (scope, change, prefix, parked, accumulated)
+) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS closed_heads (seq INTEGER NOT NULL, head BLOB NOT NULL, PRIMARY KEY (seq, head)) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS closed_receipts (
+    scope TEXT NOT NULL, change INTEGER NOT NULL, prefix BLOB NOT NULL, parked INTEGER NOT NULL, accumulated BLOB NOT NULL,
+    PRIMARY KEY (scope, change, prefix, parked, accumulated)
 ) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS hub_epoch_facts (
     owner TEXT NOT NULL, scope TEXT NOT NULL, stream TEXT NOT NULL, epoch INTEGER NOT NULL, digest BLOB NOT NULL,

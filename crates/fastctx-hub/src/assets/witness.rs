@@ -126,7 +126,7 @@ fn resolved(path: &Path) -> io::Result<PathBuf> {
 }
 
 /// Whether `path` lies within the directory `dir`.
-fn inside(path: &Path, dir: &Path) -> io::Result<bool> {
+pub(crate) fn inside(path: &Path, dir: &Path) -> io::Result<bool> {
     let (path, dir) = (resolved(path)?, resolved(dir)?);
     let parts = |path: &Path| -> Vec<String> {
         path.components()

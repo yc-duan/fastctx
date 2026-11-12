@@ -934,6 +934,11 @@ pub fn hub(command: HubCommand) -> anyhow::Result<()> {
         }
         HubCommand::RotateKey { export, dir: chosen } => {
             let dir = dir(chosen);
+            if fastctx_hub::recovery::rotation_unfinished(&dir)? {
+                let (old, new) = fastctx_hub::recovery::rotate_finish(&dir)?;
+                println!("the rotation cut short is finished: {new} is in use, {old} retired");
+                return Ok(());
+            }
             let next = fastctx_hub::recovery::rotate_prepare(&dir, &export)?;
             println!("the next service key {next} is made; the keyring with it is exported to {}", export.display());
             if !crate::world::confirm("Keep that export somewhere safe, then type yes to put the next key in use: ")? {
@@ -954,8 +959,8 @@ pub fn hub(command: HubCommand) -> anyhow::Result<()> {
             if !crate::world::confirm("Reopen the hub's assets as they are now? Type yes to set the history above aside: ")? {
                 anyhow::bail!("the hub stays sealed");
             }
-            let kept = fastctx_hub::recovery::reopen(&dir)?;
-            println!("the hub's assets are open again, {kept} scopes as they are now; start the hub");
+            let forgotten = fastctx_hub::recovery::reopen(&dir)?;
+            println!("the hub's assets are open again, the libraries taken as they are ({forgotten} records of them set aside); start the hub");
         }
         HubCommand::Show { dir: chosen } => {
             let (hub, pin) = fastctx_hub::describe(&dir(chosen))?;

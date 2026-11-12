@@ -102,16 +102,63 @@ fn held(assets: &Assets, directory: &Indexed<'_>, machine: &MachineName, key: &s
 /// An answer about the scope `key` made by the directory as it stood when
 /// the request began, judged again by the directory as it stands now: one
 /// the machine may no longer have is answered `Revoked` (design §6.3).
-pub(crate) fn recheck(assets: &Assets, directory: &Indexed<'_>, machine: &MachineName, key: &str, reply: Reply) -> Result<Reply, String> {
+pub(crate) fn recheck(
+    assets: &Assets,
+    directory: &Indexed<'_>,
+    machine: &MachineName,
+    key: &str,
+    stream: Option<&str>,
+    reply: Reply,
+) -> Result<Reply, String> {
     if matches!(reply, Reply::Revoked { .. } | Reply::Sealed { .. }) {
         return Ok(reply);
     }
+    if let Some(why) = assets.sealed() {
+        return Ok(Reply::Sealed { why });
+    }
     let Some(scope) = scopes::scope(assets, key)? else { return Ok(reply) };
-    if !scopes::readable(directory, machine, &scope) || !scopes::sharers_read(directory, machine, &scope) {
+    if !scopes::readable(directory, machine, &scope)
+        || !scopes::sharers_read(directory, machine, &scope)
+        || stream.is_some_and(|stream| !scopes::holds(directory, machine, &scope, stream))
+    {
         assets.gone(key, machine);
         return Ok(Reply::Revoked { scope: key.to_string() });
     }
     Ok(reply)
+}
+
+/// The stream a request is of, if it is of one.
+pub(crate) fn stream_of(request: &Request) -> Option<&str> {
+    match request {
+        Request::Frames { stream, .. } | Request::Succession { stream, .. } | Request::Epoch { stream, .. } => Some(stream),
+        _ => None,
+    }
+}
+
+/// The chain head `seen` carries, if the hub's word under its keyring
+/// stands behind it.
+fn heard_seen(assets: &Assets, seen: &wire::Seen) -> Option<(u64, [u8; 32])> {
+    let head = seen.head.array()?;
+    (assets.keys().heard(&seen.statement.0, &seen.word.0) == Some((seen.seq, head))).then_some((seen.seq, head))
+}
+
+/// What a reported receipt says the hub signed, the head it names, and the
+/// hub's word on it.
+fn receipt_head(receipt: &wire::Reported) -> Result<(Vec<u8>, Head, Vec<u8>), String> {
+    let digest = array(&receipt.digest, "a receipt's digest")?;
+    let frame = FrameKey { scope: &receipt.scope, stream: &receipt.stream, epoch: receipt.epoch, first: receipt.first, digest: &digest };
+    Ok(match &receipt.said {
+        wire::Said::Applied { change, prefix } => {
+            let prefix = array(prefix, "a receipt's prefix")?;
+            let head = Head { scope: receipt.scope.clone(), change: *change, prefix, parked: 0, accumulated: [0; 32] };
+            (applied_statement(&frame, *change, &prefix), head, receipt.word.0.clone())
+        }
+        wire::Said::Parked { sequence, accumulated } => {
+            let accumulated = array(accumulated, "a receipt's accumulator")?;
+            let head = Head { scope: receipt.scope.clone(), change: 0, prefix: [0; 32], parked: *sequence, accumulated };
+            (parked_statement(&frame, *sequence, &accumulated), head, receipt.word.0.clone())
+        }
+    })
 }
 
 /// The scope a request is of, if it is of one already described.
@@ -140,9 +187,12 @@ pub(crate) fn ask(
     request: Request,
 ) -> Result<Reply, String> {
     if let Some(why) = assets.sealed() {
-        // What a machine brings while sealed goes into the recovery's report.
+        // What a machine brings while sealed, as far as the hub's word stands
+        // behind it, is kept for the recovery.
         if let Request::Open { seen, reported, .. } = &request {
-            assets.brought(machine, seen.as_ref().map_or(0, |seen| seen.seq), reported.len());
+            let seen = seen.as_ref().and_then(|seen| heard_seen(assets, seen));
+            let receipts = reported.iter().filter_map(|receipt| receipt_head(receipt).ok()).filter(|(statement, _, word)| assets.keys().heard(statement, word).is_some()).map(|(_, head, _)| head).collect();
+            assets.brought(machine, seen, receipts);
         }
         return Ok(Reply::Sealed { why });
     }
@@ -319,6 +369,14 @@ fn open(
     assets.speaks(machine).map_err(|error| error.to_string())?;
     if let Some(pinned) = &pinned {
         let pinned = array(pinned, "a pinned key")?;
+        // Only a key the hub's own word was once given under counts: a
+        // machine's say-so alone is no evidence of a lost key.
+        let shown = seen.as_ref().is_some_and(|seen| {
+            fastctx_net::sign::heard_word(&PublicKey::from_bytes(pinned), &seen.statement.0, &seen.word.0).is_some()
+        });
+        if !assets.keys().holds(&pinned) && !shown {
+            return Err("this machine pinned a service key this hub's word was never given under".into());
+        }
         if !assets.keys().holds(&pinned) {
             let why = format!(
                 "{machine} pinned a service key of the hub's ({}) its keyring lacks: the keyring was put back to before a rotation; \
@@ -341,7 +399,7 @@ fn open(
         if assets.keys().heard(&seen.statement.0, &seen.word.0) == Some((seen.seq, seen_head)) {
             let kept = assets.control.read_now(move |c| chain::head_at(c, seen.seq)).map_err(|error| error.to_string())?;
             if kept != Some(seen_head) {
-                if assets.closed_head(seen.seq).map_err(|error| error.to_string())? {
+                if assets.closed_head(seen.seq, &seen_head).map_err(|error| error.to_string())? {
                     closed = true;
                 } else {
                     let why = format!("{machine} saw the hub's history at {} that the hub does not hold", seen.seq);
@@ -357,21 +415,8 @@ fn open(
         if !scopes::readable(directory, machine, &scope) {
             continue;
         }
-        let digest = array(&receipt.digest, "a receipt's digest")?;
-        let frame = FrameKey { scope: &receipt.scope, stream: &receipt.stream, epoch: receipt.epoch, first: receipt.first, digest: &digest };
-        let (statement, wanted) = match &receipt.said {
-            wire::Said::Applied { change, prefix } => {
-                let prefix = array(prefix, "a receipt's prefix")?;
-                let head = Head { scope: receipt.scope.clone(), change: *change, prefix, parked: 0, accumulated: [0; 32] };
-                (applied_statement(&frame, *change, &prefix), head)
-            }
-            wire::Said::Parked { sequence, accumulated } => {
-                let accumulated = array(accumulated, "a receipt's accumulator")?;
-                let head = Head { scope: receipt.scope.clone(), change: 0, prefix: [0; 32], parked: *sequence, accumulated };
-                (parked_statement(&frame, *sequence, &accumulated), head)
-            }
-        };
-        if assets.keys().heard(&statement, &receipt.word.0).is_none() {
+        let (statement, wanted, word) = receipt_head(&receipt)?;
+        if assets.keys().heard(&statement, &word).is_none() {
             continue;
         }
         let library = scopes::library(assets, &scope)?;

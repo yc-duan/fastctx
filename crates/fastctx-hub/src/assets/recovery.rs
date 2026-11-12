@@ -48,18 +48,46 @@ pub fn rotate_prepare(dir: &Path, export: &Path) -> anyhow::Result<String> {
     Ok(witness::hex(next.as_bytes()))
 }
 
+/// Whether a rotation of the stopped hub in `dir` was put in use and not
+/// yet written into its chain: `rotate_finish` takes it up.
+pub fn rotation_unfinished(dir: &Path) -> anyhow::Result<bool> {
+    Ok(fastctx_platform::disk::exists(dir.join("keys").join(FINISHING))?)
+}
+
+/// Where a rotation being put in use says which keys it is between, until
+/// it is in the hub's chain and the witness.
+const FINISHING: &str = "finishing";
+
 /// Puts the next key a rotation made in use: the rotation goes into the
-/// hub's chain and the witness. The old key and the new, as hex.
+/// hub's chain and the witness. A rotation cut short is taken up where it
+/// stopped. The old key and the new, as hex.
 pub fn rotate_finish(dir: &Path) -> anyhow::Result<(String, String)> {
     let store = Store::open(dir)?;
-    let (old, new) = keys::finish(&dir.join("keys"))?;
+    let keyring = dir.join("keys");
+    let marker = keyring.join(FINISHING);
+    let (old, new) = if fastctx_platform::disk::exists(&marker)? {
+        let text = String::from_utf8(fastctx_platform::disk::read(&marker)?)?;
+        let (old, new) = text.split_once(' ').ok_or_else(|| anyhow::anyhow!("{} is not two keys", marker.display()))?;
+        (old.to_string(), new.trim().to_string())
+    } else {
+        let next = fastctx_net::sign::SecretKey::load(&keyring.join("next.key"))
+            .map_err(|_| anyhow::anyhow!("no rotation is prepared: run it with --export first"))?;
+        let current = fastctx_net::sign::SecretKey::load(&keyring.join("current.key"))?;
+        let pair = (witness::hex(current.public().as_bytes()), witness::hex(next.public().as_bytes()));
+        fastctx_platform::publish(&marker, format!("{} {}", pair.0, pair.1).as_bytes(), fastctx_platform::Permissions::Private)?;
+        pair
+    };
+    if fastctx_platform::disk::exists(keyring.join("next.key"))? {
+        keys::finish(&keyring)?;
+    }
     let mut hasher = Sha256::new();
     hasher.update(old.as_bytes());
     hasher.update(new.as_bytes());
     let digest: [u8; 32] = hasher.finalize().into();
     let (seq, head) = store.shelf.0.write_now(128, move |c| chain::append(c, "key-rotation", &digest))?;
     witness::Witness::open(dir, store.hub.id.as_str())?.advanced(seq, &head)?;
-    Ok((witness::hex(old.as_bytes()), witness::hex(new.as_bytes())))
+    fastctx_platform::disk::remove_file(&marker)?;
+    Ok((old, new))
 }
 
 /// What the stopped hub in `dir` is to report before it reopens: why its
@@ -91,15 +119,31 @@ pub fn report(dir: &Path) -> anyhow::Result<Option<Vec<String>>> {
     let (seq, _) = store.shelf.0.read_now(chain::latest)?.unwrap_or((0, [0; 32]));
     let kept = assets.witness.kept();
     lines.push(format!("the hub's history reaches {seq}; outside its directory it last reached {}", kept.seq));
-    let brought: Vec<(String, i64, i64, i64)> = store.shelf.0.read_now(|c| {
-        let mut statement = c.prepare_cached("SELECT machine, seq, receipts, at FROM recovery_seen ORDER BY machine")?;
-        let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))?;
+    let brought: Vec<(String, i64, i64)> = store.shelf.0.read_now(|c| {
+        let mut statement = c.prepare_cached(
+            "SELECT machine, MAX(seq), COUNT(*) FROM recovery_heads GROUP BY machine
+             UNION ALL SELECT machine, -1, COUNT(*) FROM recovery_receipts GROUP BY machine ORDER BY 1",
+        )?;
+        let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
         Ok(rows.collect::<std::result::Result<_, _>>()?)
     })?;
-    for (machine, seen, receipts, at) in brought {
-        let at = jiff::Timestamp::from_millisecond(at).map(|at| at.to_string()).unwrap_or_default();
-        lines.push(format!("{machine} came at {at}, having seen the history at {seen}, with {receipts} receipt(s) not yet checkpointed"));
+    for (machine, seq, count) in brought {
+        if seq >= 0 {
+            lines.push(format!("{machine} came having seen the hub's history at {seq}, past what the hub holds"));
+        } else {
+            lines.push(format!("{machine} came with {count} receipt(s) of the hub's that the hub no longer holds"));
+        }
     }
+    lines.push(
+        "what is set aside: exactly the heads and receipts above, and the head outside the hub's directory; a device that saw \
+         another part of the set-aside history and has not come yet seals the hub again when it does"
+            .into(),
+    );
+    lines.push(
+        "not known here: access granted or taken away after the backup. Check the accounts, shares and projects before \
+         reopening: a share or a project withdrawn after the backup is in force again until it is withdrawn again"
+            .into(),
+    );
     Ok(Some(lines))
 }
 
@@ -121,9 +165,10 @@ fn owners_behind(assets: &Assets) -> anyhow::Result<Vec<(Owner, String)>> {
 }
 
 /// Reopens the stopped hub in `dir`, whose administrator saw the report and
-/// confirmed: the history it was put back from is a closed branch, each
-/// owner library is taken as it is, and the witness holds the chain as it
-/// is now. How many scopes' places were kept.
+/// confirmed: what devices showed of the history it was put back from is
+/// set aside, each owner library is taken as it is, and the witness holds
+/// the chain as it is now. How many of the hub's records of the libraries
+/// went.
 pub fn reopen(dir: &Path) -> anyhow::Result<usize> {
     let store = Store::open(dir)?;
     let control = store.shelf.0.clone();
@@ -131,10 +176,6 @@ pub fn reopen(dir: &Path) -> anyhow::Result<usize> {
     let (fork, _) = control.read_now(chain::latest)?.unwrap_or((0, [0; 32]));
     let kept = assets.witness.kept();
     let old_head = witness::unhex(&kept.head).unwrap_or([0; 32]);
-    let brought: Option<i64> = control.read_now(|c| Ok(c.query_row("SELECT MAX(seq) FROM recovery_seen", [], |row| row.get(0))?))?;
-    let top = kept.seq.max(brought.unwrap_or(0).max(0) as u64).max(fork);
-    // Where each scope stands now, and the hub's records of it no library
-    // here holds any more.
     let scopes: Vec<(String, String)> = control.read_now(|c| {
         let mut statement = c.prepare_cached("SELECT owner, key FROM asset_scopes")?;
         let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
@@ -144,7 +185,6 @@ pub fn reopen(dir: &Path) -> anyhow::Result<usize> {
     for (owner, scope) in scopes {
         by_owner.entry(owner).or_default().push(scope);
     }
-    let mut places = Vec::new();
     let mut forgotten_checkpoints = Vec::new();
     let mut forgotten_epochs = Vec::new();
     let mut forgotten_gaps = Vec::new();
@@ -154,9 +194,7 @@ pub fn reopen(dir: &Path) -> anyhow::Result<usize> {
             Ok(library) => library,
             Err(why) => anyhow::bail!("{why}: take it out of {} before the hub reopens", dir.join("assets").display()),
         };
-        for head in library.heads(scopes).map_err(|error| anyhow::anyhow!("{error}"))? {
-            places.push((head.scope.clone(), head.change, head.parked));
-        }
+        let _ = scopes;
         for head in assets.checkpointed(&owner)?.values() {
             if !library.holds(head).map_err(|error| anyhow::anyhow!("{error}"))? {
                 forgotten_checkpoints.push((key.clone(), head.scope.clone()));
@@ -188,38 +226,62 @@ pub fn reopen(dir: &Path) -> anyhow::Result<usize> {
             }
         }
     }
-    let kept_places = places.len();
+    let forgotten = forgotten_checkpoints.len() + forgotten_epochs.len() + forgotten_gaps.len();
+    // A checkpoint or an epoch the libraries no longer hold is of the
+    // history set aside: the libraries are taken as they are, a few
+    // thousand records to a commit.
+    for batch in forgotten_checkpoints.chunks(4096) {
+        let batch = batch.to_vec();
+        control.write_now(256 + batch.len() * 128, move |c| {
+            for (owner, scope) in &batch {
+                c.prepare_cached("DELETE FROM hub_checkpoints WHERE owner = ?1 AND scope = ?2")?.execute(params![owner, scope])?;
+            }
+            Ok(())
+        })?;
+    }
+    for batch in forgotten_epochs.chunks(4096) {
+        let batch = batch.to_vec();
+        control.write_now(256 + batch.len() * 160, move |c| {
+            for (owner, scope, stream, epoch) in &batch {
+                c.prepare_cached("DELETE FROM hub_epoch_facts WHERE owner = ?1 AND scope = ?2 AND stream = ?3 AND epoch >= ?4")?
+                    .execute(params![owner, scope, stream, epoch])?;
+            }
+            Ok(())
+        })?;
+    }
+    for batch in forgotten_gaps.chunks(4096) {
+        let batch = batch.to_vec();
+        control.write_now(256 + batch.len() * 160, move |c| {
+            for (owner, scope, stream, epoch, from) in &batch {
+                c.prepare_cached(
+                    "DELETE FROM hub_gap_facts WHERE owner = ?1 AND scope = ?2 AND stream = ?3 AND epoch = ?4 AND from_sequence = ?5",
+                )?
+                .execute(params![owner, scope, stream, epoch, from])?;
+            }
+            Ok(())
+        })?;
+    }
+    // Exactly what was shown under the hub's word, and the head outside
+    // its directory, is the history set aside.
     let mut hasher = Sha256::new();
-    hasher.update(b"fastctx-hub-branch-closed/1");
+    hasher.update(b"fastctx-hub-branch-closed/2");
     hasher.update(fork.to_le_bytes());
-    hasher.update(top.to_le_bytes());
+    hasher.update(kept.seq.to_le_bytes());
     hasher.update(old_head);
     let digest: [u8; 32] = hasher.finalize().into();
-    let at = jiff::Timestamp::now().as_millisecond();
-    let (seq, head) = control.write_now(4096 + places.len() * 96, move |c| {
-        c.prepare_cached("INSERT INTO closed_branches (fork, top, head, at) VALUES (?1, ?2, ?3, ?4)")?
-            .execute(params![fork as i64, top as i64, &old_head[..], at])?;
-        let branch = c.last_insert_rowid();
-        let mut place = c.prepare_cached("INSERT INTO closed_scopes (branch, scope, change, parked) VALUES (?1, ?2, ?3, ?4)")?;
-        for (scope, change, parked) in &places {
-            place.execute(params![branch, scope, *change as i64, *parked as i64])?;
+    let old_seq = kept.seq;
+    let (seq, head) = control.write_now(4096, move |c| {
+        if old_seq > 0 {
+            c.prepare_cached("INSERT OR IGNORE INTO closed_heads (seq, head) VALUES (?1, ?2)")?.execute(params![old_seq as i64, &old_head[..]])?;
         }
-        // A checkpoint or an epoch the libraries no longer hold is of the
-        // closed branch: the libraries are taken as they are.
-        for (owner, scope) in &forgotten_checkpoints {
-            c.prepare_cached("DELETE FROM hub_checkpoints WHERE owner = ?1 AND scope = ?2")?.execute(params![owner, scope])?;
-        }
-        for (owner, scope, stream, epoch) in &forgotten_epochs {
-            c.prepare_cached("DELETE FROM hub_epoch_facts WHERE owner = ?1 AND scope = ?2 AND stream = ?3 AND epoch >= ?4")?
-                .execute(params![owner, scope, stream, epoch])?;
-        }
-        for (owner, scope, stream, epoch, from) in &forgotten_gaps {
-            c.prepare_cached(
-                "DELETE FROM hub_gap_facts WHERE owner = ?1 AND scope = ?2 AND stream = ?3 AND epoch = ?4 AND from_sequence = ?5",
-            )?
-            .execute(params![owner, scope, stream, epoch, from])?;
-        }
-        c.prepare_cached("DELETE FROM recovery_seen")?.execute([])?;
+        c.prepare_cached("INSERT OR IGNORE INTO closed_heads (seq, head) SELECT seq, head FROM recovery_heads")?.execute([])?;
+        c.prepare_cached(
+            "INSERT OR IGNORE INTO closed_receipts (scope, change, prefix, parked, accumulated)
+             SELECT scope, change, prefix, parked, accumulated FROM recovery_receipts",
+        )?
+        .execute([])?;
+        c.prepare_cached("DELETE FROM recovery_heads")?.execute([])?;
+        c.prepare_cached("DELETE FROM recovery_receipts")?.execute([])?;
         chain::append(c, "branch-closed", &digest)
     })?;
     assets.witness.reset(seq, &head)?;
@@ -228,5 +290,5 @@ pub fn reopen(dir: &Path) -> anyhow::Result<usize> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => return Err(error.into()),
     }
-    Ok(kept_places)
+    Ok(forgotten)
 }

@@ -1067,6 +1067,7 @@ fn handle(
                             return (answer, Vec::new());
                         }
                         let scope = crate::assets::serve::scope_of(&request).map(str::to_string);
+                        let stream = crate::assets::serve::stream_of(&request).map(str::to_string);
                         let store = hub.store();
                         let answer = origin
                             .check(&store.book.directory)
@@ -1078,7 +1079,7 @@ fn handle(
                         let now = hub.store();
                         let answer = match (answer, scope) {
                             (Ok(reply), Some(key)) => {
-                                crate::assets::serve::recheck(&hub.assets, &now.indexed(), &from, &key, reply)
+                                crate::assets::serve::recheck(&hub.assets, &now.indexed(), &from, &key, stream.as_deref(), reply)
                             }
                             (answer, _) => answer,
                         };

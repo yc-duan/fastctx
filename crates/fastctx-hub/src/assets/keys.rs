@@ -48,6 +48,9 @@ pub(crate) fn rotation_statement(old: &[u8; 32], new: &[u8; 32]) -> Vec<u8> {
 pub(crate) struct Keys {
     current: SecretKey,
     retired: Vec<PublicKey>,
+    /// The next key a rotation made and did not put in use yet: a device
+    /// may have pinned it from an export (§17).
+    next: Option<PublicKey>,
     rotations: Vec<Rotation>,
 }
 
@@ -82,7 +85,9 @@ impl Keys {
             Err(error) if error.kind() == io::ErrorKind::NotFound => Vec::new(),
             Err(error) => return Err(error),
         };
-        Ok(Self { current, retired, rotations })
+        let next_path = dir.join(NEXT);
+        let next = if fastctx_platform::disk::exists(&next_path)? { Some(SecretKey::load(&next_path)?.public()) } else { None };
+        Ok(Self { current, retired, next, rotations })
     }
 
     pub(crate) fn public(&self) -> PublicKey {
@@ -91,7 +96,9 @@ impl Keys {
 
     /// Whether `key` is in the keyring, in use or retired.
     pub(crate) fn holds(&self, key: &[u8; 32]) -> bool {
-        self.current.public().as_bytes() == key || self.retired.iter().any(|retired| retired.as_bytes() == key)
+        self.current.public().as_bytes() == key
+            || self.retired.iter().any(|retired| retired.as_bytes() == key)
+            || self.next.is_some_and(|next| next.as_bytes() == key)
     }
 
     pub(crate) fn rotations(&self) -> &[Rotation] {
@@ -139,32 +146,86 @@ pub(crate) fn finish(dir: &Path) -> io::Result<(PublicKey, PublicKey)> {
     let next = SecretKey::load(&next_path)?;
     let retired = dir.join(RETIRED);
     fastctx_platform::ensure_private_dir(&retired)?;
-    fastctx_platform::disk::copy(dir.join(CURRENT), retired.join(format!("{}.key", hex(current.public().as_bytes()))))?;
+    // Whole or not at all: a retired copy cut short would keep the keyring
+    // from opening.
+    let bytes = fastctx_platform::disk::read(dir.join(CURRENT))?;
+    fastctx_platform::publish(&retired.join(format!("{}.key", hex(current.public().as_bytes()))), &bytes, fastctx_platform::Permissions::Private)?;
     fastctx_platform::disk::rename(&next_path, dir.join(CURRENT))?;
     Ok((current.public(), next.public()))
 }
 
-/// Copies the directory `from` to `to`, which must not hold anything yet.
+/// Copies the directory `from` to `to`, which must not hold anything yet
+/// nor lie within `from`: every directory made private, every file readable
+/// by the hub's account alone and on the disk before this returns. A
+/// SQLite database is copied as it is committed (`VACUUM INTO`), whatever
+/// its log holds, and its log is not copied.
 pub(crate) fn copy_tree(from: &Path, to: &Path) -> io::Result<()> {
     if fastctx_platform::disk::exists(to)? && fastctx_platform::disk::read_dir(to)?.next().is_some() {
         return Err(io::Error::other(format!("{} holds something already", to.display())));
     }
-    fastctx_platform::disk::create_dir_all(to)?;
+    if super::witness::inside(to, from)? {
+        return Err(io::Error::other(format!("{} lies within {}", to.display(), from.display())));
+    }
+    fastctx_platform::ensure_private_dir(to)?;
+    let mut made = vec![to.to_path_buf()];
     let mut pending: Vec<(PathBuf, PathBuf)> = vec![(from.to_path_buf(), to.to_path_buf())];
     while let Some((source, target)) = pending.pop() {
         for entry in fastctx_platform::disk::read_dir(&source)? {
             let entry = entry?;
             let kind = entry.file_type()?;
-            let place = target.join(entry.file_name());
+            let name = entry.file_name();
+            let place = target.join(&name);
+            let text = name.to_string_lossy();
             if kind.is_dir() {
-                fastctx_platform::disk::create_dir_all(&place)?;
+                fastctx_platform::ensure_private_dir(&place)?;
+                made.push(place.clone());
                 pending.push((entry.path(), place));
             } else if kind.is_file() {
-                fastctx_platform::disk::copy(entry.path(), &place)?;
+                if text.ends_with("-wal") || text.ends_with("-shm") || text.ends_with("-journal") {
+                    continue;
+                }
+                if text.ends_with(".sqlite3") {
+                    let source = fastctx_storage::rusqlite::Connection::open_with_flags(
+                        entry.path(),
+                        fastctx_storage::rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+                    )
+                    .map_err(io::Error::other)?;
+                    source.execute("VACUUM INTO ?1", [place.to_string_lossy().as_ref()]).map_err(io::Error::other)?;
+                } else {
+                    fastctx_platform::disk::copy(entry.path(), &place)?;
+                }
+                private(&place)?;
+                // Flushed through a handle that may write, as the system asks.
+                fastctx_platform::disk::open_with(std::fs::OpenOptions::new().write(true), &place)?.sync_all()?;
             }
         }
     }
+    for directory in made {
+        sync_directory(&directory);
+    }
     Ok(())
+}
+
+/// Makes a copied file readable by the hub's account alone.
+fn private(path: &Path) -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+    }
+    #[cfg(not(unix))]
+    let _ = path;
+    Ok(())
+}
+
+/// Puts a directory's entries on the disk, where the system can.
+fn sync_directory(path: &Path) {
+    #[cfg(unix)]
+    if let Ok(directory) = fastctx_platform::disk::open(path) {
+        let _ = directory.sync_all();
+    }
+    #[cfg(not(unix))]
+    let _ = path;
 }
 
 /// Signs as the hub, bound to the chain head the witness holds.

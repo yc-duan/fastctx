@@ -109,13 +109,17 @@ fn made(
 ) -> Result<(Told, bool), String> {
     {
         // A hub put back keeps every asset sealed, and grants no access
-        // until it is reopened (design §17).
-        if hub.assets.sealed().is_some()
-            && matches!(
-                &change,
-                Change::Share { shared: true, .. } | Change::Assist { assisting: true, .. } | Change::ShareProject { shared: true, .. }
-            )
-        {
+        // until it is reopened (design §17); the seal is held while a grant
+        // commits, so none slips in as the hub seals.
+        let grants = matches!(
+            &change,
+            Change::Share { shared: true, .. }
+                | Change::Assist { assisting: true, .. }
+                | Change::ShareProject { shared: true, .. }
+                | Change::MoveProject { .. }
+        );
+        let seal = grants.then(|| hub.assets.seal_held());
+        if seal.as_ref().is_some_and(|seal| seal.is_some()) {
             return Err("every asset is sealed until the hub is reopened: no access is granted meanwhile".into());
         }
         let mut store = hub.edit_store();

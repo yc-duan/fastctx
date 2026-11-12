@@ -92,6 +92,8 @@ pub(crate) struct Assets {
     /// The owner the last checkpoint stopped at: the next goes on after it,
     /// so every owner comes round.
     turn: Mutex<Option<Owner>>,
+    /// Within each owner, the scope the last round stopped at.
+    scope_turns: Mutex<BTreeMap<Owner, String>>,
     /// The machines that read each scope lately: told when a stream of it
     /// moves (design §6.6).
     holders: Mutex<BTreeMap<String, BTreeSet<fastctx_types::MachineName>>>,
@@ -129,6 +131,7 @@ impl Assets {
             sealed: Mutex::new(None),
             changed: Mutex::new(BTreeMap::new()),
             turn: Mutex::new(None),
+            scope_turns: Mutex::new(BTreeMap::new()),
             holders: Mutex::new(BTreeMap::new()),
             receipted: Mutex::new(BTreeMap::new()),
             pushes: Mutex::new(Vec::new()),
@@ -305,6 +308,36 @@ impl Assets {
         }
     }
 
+    /// The latest head each of `scopes` of `owner` was checkpointed at.
+    fn checkpointed_of(&self, owner: &Owner, scopes: &[String]) -> io::Result<BTreeMap<String, Head>> {
+        let (key, scopes) = (owner.key(), scopes.to_vec());
+        self.control
+            .read_now(move |c| {
+                let mut statement =
+                    c.prepare_cached("SELECT change, parked, prefix, accumulated FROM hub_checkpoints WHERE owner = ?1 AND scope = ?2")?;
+                let mut heads = BTreeMap::new();
+                for scope in scopes {
+                    let found = statement
+                        .query_row(fastctx_storage::rusqlite::params![key, scope], |row| {
+                            let digest = |bytes: Vec<u8>| <[u8; 32]>::try_from(bytes).unwrap_or([0; 32]);
+                            Ok(Head {
+                                scope: scope.clone(),
+                                change: row.get::<_, i64>(0)? as u64,
+                                parked: row.get::<_, i64>(1)? as u64,
+                                prefix: digest(row.get(2)?),
+                                accumulated: digest(row.get(3)?),
+                            })
+                        })
+                        .optional()?;
+                    if let Some(head) = found {
+                        heads.insert(scope, head);
+                    }
+                }
+                Ok(heads)
+            })
+            .map_err(io::Error::other)
+    }
+
     /// The latest head each scope of `owner` was checkpointed at.
     pub(crate) fn checkpointed(&self, owner: &Owner) -> io::Result<BTreeMap<String, Head>> {
         let key = owner.key();
@@ -383,46 +416,64 @@ impl Assets {
         &self.keys
     }
 
-    /// Whether a chain head at `seq` that is not the chain's is of a history
-    /// put aside when the hub recovered (design §17).
-    pub(crate) fn closed_head(&self, seq: u64) -> io::Result<bool> {
+    /// Whether the chain head (`seq`, `head`) is of a history the hub set
+    /// aside when it recovered (design §17): exactly one it was shown then.
+    pub(crate) fn closed_head(&self, seq: u64, head: &[u8; 32]) -> io::Result<bool> {
+        let head = *head;
         self.control
             .read_now(move |c| {
-                Ok(c.prepare_cached("SELECT 1 FROM closed_branches WHERE fork < ?1 AND top >= ?1 LIMIT 1")?
-                    .query_row([seq as i64], |_| Ok(()))
+                Ok(c.prepare_cached("SELECT 1 FROM closed_heads WHERE seq = ?1 AND head = ?2")?
+                    .query_row(fastctx_storage::rusqlite::params![seq as i64, &head[..]], |_| Ok(()))
                     .optional()?
                     .is_some())
             })
             .map_err(io::Error::other)
     }
 
-    /// Whether a receipt naming `head`, which the library does not hold, is of
-    /// a history put aside when the hub recovered: past where its scope stood
-    /// then.
+    /// Whether a receipt naming `head` is of a history the hub set aside
+    /// when it recovered: exactly one it was shown then.
     pub(crate) fn closed_receipt(&self, head: &Head) -> io::Result<bool> {
-        let (scope, change, parked) = (head.scope.clone(), head.change as i64, head.parked as i64);
+        let head = head.clone();
         self.control
             .read_now(move |c| {
                 Ok(c.prepare_cached(
-                    "SELECT 1 FROM closed_scopes WHERE scope = ?1 AND ((?2 > 0 AND ?2 > change) OR (?3 > 0 AND ?3 > parked)) LIMIT 1",
+                    "SELECT 1 FROM closed_receipts WHERE scope = ?1 AND change = ?2 AND prefix = ?3 AND parked = ?4 AND accumulated = ?5",
                 )?
-                .query_row(fastctx_storage::rusqlite::params![scope, change, parked], |_| Ok(()))
+                .query_row(
+                    fastctx_storage::rusqlite::params![head.scope, head.change as i64, &head.prefix[..], head.parked as i64, &head.accumulated[..]],
+                    |_| Ok(()),
+                )
                 .optional()?
                 .is_some())
             })
             .map_err(io::Error::other)
     }
 
-    /// What `machine` brought while every asset was sealed: kept for the
-    /// recovery's report (design §17).
-    pub(crate) fn brought(&self, machine: &fastctx_types::MachineName, seq: u64, receipts: usize) {
+    /// What `machine` brought while every asset was sealed, as far as the
+    /// hub's word stands behind it: the head it saw and the receipts it
+    /// held, kept for the recovery (design §17).
+    pub(crate) fn brought(&self, machine: &fastctx_types::MachineName, seen: Option<(u64, [u8; 32])>, receipts: Vec<Head>) {
         let (name, at) = (machine.to_string(), jiff::Timestamp::now().as_millisecond());
-        let _ = self.control.write_now(256, move |c| {
-            c.prepare_cached(
-                "INSERT INTO recovery_seen (machine, seq, receipts, at) VALUES (?1, ?2, ?3, ?4)
-                 ON CONFLICT (machine) DO UPDATE SET seq = MAX(seq, excluded.seq), receipts = MAX(receipts, excluded.receipts), at = excluded.at",
-            )?
-            .execute(fastctx_storage::rusqlite::params![name, seq as i64, receipts as i64, at])?;
+        let _ = self.control.write_now(256 + receipts.len() * 128, move |c| {
+            if let Some((seq, head)) = seen {
+                c.prepare_cached("INSERT OR IGNORE INTO recovery_heads (seq, head, machine, at) VALUES (?1, ?2, ?3, ?4)")?
+                    .execute(fastctx_storage::rusqlite::params![seq as i64, &head[..], name, at])?;
+            }
+            for head in &receipts {
+                c.prepare_cached(
+                    "INSERT OR IGNORE INTO recovery_receipts (scope, change, prefix, parked, accumulated, machine, at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                )?
+                .execute(fastctx_storage::rusqlite::params![
+                    head.scope,
+                    head.change as i64,
+                    &head.prefix[..],
+                    head.parked as i64,
+                    &head.accumulated[..],
+                    name,
+                    at
+                ])?;
+            }
             Ok(())
         });
     }
@@ -575,6 +626,12 @@ impl Assets {
         }
     }
 
+    /// The seal, held: nothing seals the hub while a grant that checked it
+    /// commits (design §17).
+    pub(crate) fn seal_held(&self) -> std::sync::MutexGuard<'_, Option<String>> {
+        self.sealed.lock().expect("seal")
+    }
+
     /// Why every asset is sealed, if it is.
     pub(crate) fn sealed(&self) -> Option<String> {
         self.sealed.lock().expect("seal").clone()
@@ -697,13 +754,26 @@ impl Assets {
             };
             let mut batch: BTreeMap<Owner, BTreeSet<String>> = BTreeMap::new();
             let mut taken = 0;
+            let mut scope_turns = self.scope_turns.lock().expect("scope turns");
             for owner in order {
                 if taken >= CHECKPOINT_AT_ONCE {
                     break;
                 }
                 let Some(scopes) = changed.get_mut(&owner) else { continue };
-                while taken < CHECKPOINT_AT_ONCE {
-                    let Some(scope) = scopes.pop_first() else { break };
+                // Within the owner too, the scopes after the one the last
+                // round stopped at first.
+                let after: Vec<String> = match scope_turns.get(&owner) {
+                    Some(last) => scopes
+                        .range::<String, _>((std::ops::Bound::Excluded(last.clone()), std::ops::Bound::Unbounded))
+                        .chain(scopes.range::<String, _>(..=last.clone()))
+                        .take(CHECKPOINT_AT_ONCE - taken)
+                        .cloned()
+                        .collect(),
+                    None => scopes.iter().take(CHECKPOINT_AT_ONCE - taken).cloned().collect(),
+                };
+                for scope in after {
+                    scopes.remove(&scope);
+                    scope_turns.insert(owner.clone(), scope.clone());
                     batch.entry(owner.clone()).or_default().insert(scope);
                     taken += 1;
                 }
@@ -737,7 +807,7 @@ impl Assets {
                 let heads = library.heads(&wanted).map_err(|error| io::Error::other(error.to_string()))?;
                 // A scope still where its latest checkpoint has it, or where
                 // nothing is, needs none.
-                let kept = self.checkpointed(owner)?;
+                let kept = self.checkpointed_of(owner, &wanted)?;
                 Ok::<_, io::Error>(
                     heads
                         .into_iter()
