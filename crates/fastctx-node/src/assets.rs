@@ -107,6 +107,13 @@ pub(crate) struct Assets {
     pub(crate) looked: Mutex<HashMap<HubId, std::time::Instant>>,
     /// The scopes committed to here whose upload has not gone through yet.
     pub(crate) uploads: Mutex<std::collections::BTreeSet<String>>,
+    /// The scopes a pass did not go through whole — an upload, a pull, a
+    /// check or a giving back failed — looked at by themselves again until
+    /// one does (HH03, HH06).
+    pub(crate) relook: Mutex<std::collections::BTreeSet<String>>,
+    /// The hubs whose scopes' writes not yet uploaded were looked for on
+    /// the disk since the node started (HH03).
+    pub(crate) seeded: Mutex<std::collections::BTreeSet<HubId>>,
 }
 
 /// How far a hub's scopes this machine may hold were listed.
@@ -166,6 +173,8 @@ impl Assets {
             upkeep: Arc::new(Notify::new()),
             looked: Mutex::new(HashMap::new()),
             uploads: Mutex::new(std::collections::BTreeSet::new()),
+            relook: Mutex::new(std::collections::BTreeSet::new()),
+            seeded: Mutex::new(std::collections::BTreeSet::new()),
         })
     }
 

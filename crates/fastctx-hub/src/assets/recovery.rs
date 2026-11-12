@@ -315,6 +315,8 @@ fn reopen_in(dir: &Path, store: &Store, assets: &Assets) -> anyhow::Result<usize
         .execute([])?;
         c.prepare_cached("DELETE FROM recovery_heads")?.execute([])?;
         c.prepare_cached("DELETE FROM recovery_receipts")?.execute([])?;
+        // Reopened: the seal for this recovery is done with.
+        c.prepare_cached("DELETE FROM asset_seal")?.execute([])?;
         chain::append(c, "branch-closed", &digest)
     })?;
     assets.witness.reset(seq, &head)?;

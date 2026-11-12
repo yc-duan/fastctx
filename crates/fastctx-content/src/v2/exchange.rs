@@ -60,7 +60,7 @@ pub enum Holder {
     Replica,
 }
 
-fn stream_id(db: &Connection, scope: i64, name: &str) -> fastctx_storage::Result<i64> {
+pub(super) fn stream_id(db: &Connection, scope: i64, name: &str) -> fastctx_storage::Result<i64> {
     let found: Option<i64> = db
         .prepare_cached("SELECT id FROM streams WHERE scope = ?1 AND name = ?2")?
         .query_row(params![scope, name], |row| row.get(0))
@@ -236,7 +236,7 @@ impl Library {
             for hash in &hashes {
                 referring.execute(params![stream, header.epoch as i64, header.first as i64, holding, &hash[..]])?;
             }
-            let at = Applying { scope: scope_id, stream, holding };
+            let at = Applying { scope: scope_id, stream, holding, shadow: false };
             // What was judged of another frame once in this place is not of
             // this one (U04).
             let head = header.chain();

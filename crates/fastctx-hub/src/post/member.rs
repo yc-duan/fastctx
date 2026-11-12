@@ -196,7 +196,10 @@ impl State {
     /// `LOOKED_AT_ONCE` numbers at once: what is left goes on between this
     /// mailbox's commands.
     async fn erase_through(&mut self, through: u64) -> Result<()> {
-        self.erase_to = None;
+        // A deletion still under way goes on to where it was to go: a lower
+        // number, as an older `taken` a reconnection brings, never calls it
+        // off (R2).
+        let through = through.max(self.erase_to.take().unwrap_or(0));
         let last = through.min(self.record().next.saturating_sub(1));
         let first = self.held.first;
         if self.held.count == 0 || first > last {
@@ -237,7 +240,10 @@ impl State {
         }
         self.load().await?;
         let to = self.to.as_ref().expect("session");
-        let (from, next) = ((to.window.sent() + 1).max(self.held.first), self.persisted_next);
+        // Nothing a deletion under way is to take is sent: it was settled
+        // as never delivered (R2).
+        let erasing = self.erase_to.map_or(0, |to| to + 1);
+        let (from, next) = ((to.window.sent() + 1).max(self.held.first).max(erasing), self.persisted_next);
         if from >= next {
             return Ok(());
         }

@@ -107,7 +107,7 @@ impl Library {
                         let header = Header::decode(&header).map_err(invalid)?;
                         if header.chain() == head {
                             gone = false;
-                            let at = Applying { scope, stream, holding };
+                            let at = Applying { scope, stream, holding, shadow: false };
                             let records = open(&header, &body).map_err(invalid)?;
                             let refused = refused(db, stream, epoch as u64, first as u64, &head)?;
                             let fate = |offset: usize, record: &KindRecord| {

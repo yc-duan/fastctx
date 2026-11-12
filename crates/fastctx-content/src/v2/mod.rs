@@ -6,6 +6,7 @@
 //! It stands beside the first version's content database until each kind of
 //! asset moves over (§15), in files of its own.
 
+mod backfill;
 mod changes;
 mod checkpoints;
 mod collect;
@@ -31,6 +32,7 @@ mod receipts;
 mod rejected;
 mod schema;
 mod scopes;
+mod snapshot;
 mod stamps;
 mod succession;
 mod timeline;
@@ -53,6 +55,8 @@ pub use receipts::{Mark, Receipt, Report, Said};
 pub use rejected::Resubmit;
 pub use window::Pruned;
 pub use changes::{Changed, Changes};
+pub use backfill::{Backfill, Filled, MERGED_AT_ONCE};
+pub use snapshot::{Installed, Older, WINDOW_BYTES, WINDOW_ITEMS, Window};
 pub use networks::Network;
 pub use scopes::Purged;
 pub use succession::{ENDS_AT_ONCE, HubVerifier, Standing};

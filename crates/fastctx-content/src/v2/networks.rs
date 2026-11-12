@@ -147,15 +147,29 @@ impl Library {
         })?)
     }
 
-    /// The description `scope` is held here under, if it is held.
-    pub fn held_description(&self, scope: &str) -> Result<Option<Vec<u8>>> {
+    /// The description `scope` is held here under, and what the hub last
+    /// said this device may hold of it, if it is held.
+    pub fn held_listing(&self, scope: &str) -> Result<Option<(Vec<u8>, Option<String>)>> {
         let scope = scope.to_string();
         Ok(self.database().read_now(move |db| {
             Ok(db
-                .prepare_cached("SELECT description FROM scopes WHERE key = ?1 AND holding IS NOT NULL")?
-                .query_row([&scope], |row| row.get::<_, Option<Vec<u8>>>(0))
-                .optional()?
-                .map(Option::unwrap_or_default))
+                .prepare_cached("SELECT description, allowed FROM scopes WHERE key = ?1 AND holding IS NOT NULL")?
+                .query_row([&scope], |row| Ok((row.get::<_, Option<Vec<u8>>>(0)?.unwrap_or_default(), row.get(1)?)))
+                .optional()?)
+        })?)
+    }
+
+    /// What the hub says this device may hold of the held `scope` now: once
+    /// it is otherwise than it was, the scope is pulled whole again (HH04).
+    pub fn allow(&self, scope: &str, allowed: &str) -> Result<()> {
+        let (scope, allowed) = (scope.to_string(), allowed.to_string());
+        Ok(self.database().write_now_at(Priority::Normal, 256 + allowed.len(), move |db| {
+            db.prepare_cached(
+                "UPDATE scopes SET allowed = ?2, pulled = CASE WHEN allowed IS ?2 THEN pulled ELSE NULL END
+                 WHERE key = ?1 AND holding IS NOT NULL",
+            )?
+            .execute(params![scope, allowed])?;
+            Ok(())
         })?)
     }
 

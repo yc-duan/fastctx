@@ -306,16 +306,19 @@ async fn logged_in(node: &Arc<Node>, joined: Joined) -> Result<Reply, Failure> {
     match node.link_of(&hub).filter(|link| !matches!(link.status(), Status::Stopped { .. })) {
         // Logged in again where the hub is reached now, as after a move this
         // computer did not follow: the link connects there from now on.
+        // Refreshed while no logout of this computer goes on: one that
+        // began before sees this login among those left (HH01).
         Some(link) if !addresses.is_empty() && link.hub_addresses() != addresses => {
-            drop(one);
             link.reach_hub_at(addresses);
             if let Err(error) = link.refresh().await {
                 node.log.line(format_args!("logged in again; the link connects to the hub anew: {error}"));
             }
+            drop(one);
         }
         Some(link) => {
+            let refreshed = link.refresh().await;
             drop(one);
-            link.refresh().await.map_err(|error| Failure::new(format!("logged in, but asking the hub: {error}")))?;
+            refreshed.map_err(|error| Failure::new(format!("logged in, but asking the hub: {error}")))?;
         }
         None => {
             let membership = Membership {
@@ -334,6 +337,9 @@ async fn logged_in(node: &Arc<Node>, joined: Joined) -> Result<Reply, Failure> {
             // link inactive until it connects (GG04). The hub admitted this
             // login.
             let stale = [net.path().join(LEAVING), net.ended()];
+            // Marked new before it is written: a stop or a failure before
+            // its network is joined anew still joins it anew (AK02).
+            let mark = net.path().join(crate::assets::membership::JOINING);
             net.prepare()
                 .and_then(|()| {
                     stale.iter().try_for_each(|path| match fastctx_platform::disk::remove_file(path) {
@@ -341,6 +347,7 @@ async fn logged_in(node: &Arc<Node>, joined: Joined) -> Result<Reply, Failure> {
                         _ => Ok(()),
                     })
                 })
+                .and_then(|()| fastctx_platform::publish(&mark, b"", fastctx_platform::Permissions::Private))
                 .and_then(|()| fastctx_net::link::state::write(&net.membership(), &membership))
                 .map_err(|error| Failure::new(format!("logged in, but recording the membership failed: {error}")))?;
             // The asset library is on the network before anything is
@@ -516,6 +523,10 @@ async fn log_out(node: &Arc<Node>, link: &Arc<Link>, account: &AccountName) -> R
     if link.view().me().is_some_and(|me| me.managed) {
         crate::managed::stays(node)?;
     }
+    // One logout or login of this computer at a time, the logout through to
+    // its end: whether this is the last login stays so while it goes on
+    // (HH01).
+    let _one = memberships().lock().await;
     let last = link.view().me().is_none_or(|me| me.logins.iter().all(|login| login == account));
     // Leaving for good is written down before the hub is told: a computer
     // stopped in between finishes leaving when it starts (`load`). Only
@@ -523,7 +534,6 @@ async fn log_out(node: &Arc<Node>, link: &Arc<Link>, account: &AccountName) -> R
     // is not this logout's to leave (AJ03).
     if last {
         let hub = link.membership().id.clone();
-        let _one = memberships().lock().await;
         if node.link_of(&hub).is_some_and(|current| Arc::ptr_eq(&current, link)) {
             let (leaving, account) = (hub_dir(&node.world, &hub).join(LEAVING), account.clone());
             fastctx_platform::task::blocking(move || {
@@ -543,14 +553,13 @@ async fn log_out(node: &Arc<Node>, link: &Arc<Link>, account: &AccountName) -> R
     // the same: there it stays a machine away until it is removed.
     if answer.is_err() && matches!(link.status(), Status::Online { .. }) {
         let hub = link.membership().id.clone();
-        let _one = memberships().lock().await;
         if node.link_of(&hub).is_some_and(|current| Arc::ptr_eq(&current, link)) {
             let leaving = hub_dir(&node.world, &hub).join(LEAVING);
             let _ = fastctx_platform::task::blocking(move || fastctx_platform::disk::remove_file(leaving)).await;
         }
         answer.map_err(Failure::new)?;
     }
-    let aside = put_aside(node, link).await?;
+    let aside = put_aside_in(node, link).await?;
     node.log.line(format_args!("logged out of the hub {}; its records are in {}", link.hub_name(), aside.display()));
     Ok(())
 }
@@ -589,8 +598,13 @@ pub fn seen_dissolved(node: &Node) -> Result<(), Failure> {
 /// Stops the link of a network this computer leaves and puts its records
 /// aside; where they are put.
 async fn put_aside(node: &Arc<Node>, link: &Arc<Link>) -> Result<std::path::PathBuf, Failure> {
-    let hub = link.membership().id.clone();
     let _one = memberships().lock().await;
+    put_aside_in(node, link).await
+}
+
+/// `put_aside`, `world::memberships` held.
+async fn put_aside_in(node: &Arc<Node>, link: &Arc<Link>) -> Result<std::path::PathBuf, Failure> {
+    let hub = link.membership().id.clone();
     // A membership begun since, by a login after this one ended, is the
     // computer's now: only this link goes.
     if !node.link_of(&hub).is_some_and(|current| Arc::ptr_eq(&current, link)) {

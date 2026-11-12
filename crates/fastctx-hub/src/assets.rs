@@ -190,6 +190,17 @@ impl Assets {
             *assets.sealed.lock().expect("seal") = Some(why);
             return Ok(assets);
         }
+        // Found put back before a stop, it stays sealed for its recovery
+        // until it is reopened (AK01).
+        let kept: Option<String> = assets
+            .control
+            .read_now(|c| Ok(c.prepare_cached("SELECT why FROM asset_seal WHERE id = 1")?.query_row([], |row| row.get(0)).optional()?))
+            .map_err(io::Error::other)?;
+        if let Some(why) = kept {
+            assets.witness.freeze();
+            *assets.sealed.lock().expect("seal") = Some(why);
+            return Ok(assets);
+        }
         assets.catch_up()?;
         let all: Vec<(String, String)> = assets
             .control
@@ -840,13 +851,24 @@ impl Assets {
         // it commits is witnessed before anything seals.
         let mut sealed = self.sealed.lock().expect("seal");
         self.sealing.store(true, std::sync::atomic::Ordering::SeqCst);
+        // Sealed for its recovery from now on, kept so across a restart
+        // (AK01): a seal for a recovery already there stays as it is.
+        let replaces = sealed.as_deref().is_none_or(|was| was == SEALED_AT_START);
+        let (kept, at) = (why.to_string(), jiff::Timestamp::now().as_millisecond());
         // What the control writer began before it saw the seal ends before
         // the witness freezes (AE02): a write queued behind it is answered
         // only once it committed or went back. One that did not answer says
         // nothing of what is under way, so it is asked again until one does
         // (AF01); every cleanup also looks at the seal again as it ends.
         let mut pause = std::time::Duration::from_secs(1);
-        while let Err(error) = self.control.write_now(16, |_| Ok(())) {
+        let keep = move |c: &fastctx_storage::rusqlite::Connection| {
+            if replaces {
+                c.prepare_cached("INSERT OR REPLACE INTO asset_seal (id, why, at) VALUES (1, ?1, ?2)")?
+                    .execute(fastctx_storage::rusqlite::params![kept, at])?;
+            }
+            Ok(())
+        };
+        while let Err(error) = self.control.write_now(512, keep.clone()) {
             eprintln!("sealing the hub's assets waits for its control database: {error}");
             std::thread::sleep(pause);
             pause = (pause * 2).min(BARRIER_PAUSE_MOST);
@@ -855,7 +877,7 @@ impl Assets {
         // Found put back, the hub is sealed for its recovery: a seal it put
         // on only as it started gives way, so the super administrator no
         // longer opens it, `fastctx hub reopen` does.
-        if sealed.as_deref().is_none_or(|was| was == SEALED_AT_START) {
+        if replaces {
             *sealed = Some(why.to_string());
         }
     }

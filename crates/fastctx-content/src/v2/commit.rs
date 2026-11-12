@@ -145,7 +145,7 @@ impl Library {
                     earlier.insert(item.clone(), super::hub::after(record, next + offset as u64));
                 }
             }
-            let at = Applying { scope, stream, holding };
+            let at = Applying { scope, stream, holding, shadow: false };
             let mut first = next;
             for frame in &sealed {
                 let header = Header {

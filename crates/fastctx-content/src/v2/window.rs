@@ -52,7 +52,7 @@ impl Library {
                 .query_row(params![scope_id, stream], |row| row.get(0))
                 .optional()?
                 .ok_or_else(|| invalid("no such stream"))?;
-            let at = Applying { scope: scope_id, stream: stream_id, holding };
+            let at = Applying { scope: scope_id, stream: stream_id, holding, shadow: false };
             let mut pruned = Pruned::default();
             let mut floor: Option<(i64, Vec<u8>)> = None;
             // A few frames at a time, from the first: what is kept may be
@@ -223,6 +223,6 @@ pub(super) fn truncate_in(
     // a place cut away is one the hub does not have (AA01).
     db.prepare_cached("UPDATE outbox SET uploaded = MIN(uploaded, ?2) WHERE stream = ?1")?
         .execute(params![stream_id, keep + 1])?;
-    super::rejected::rebuild(db, Applying { scope: scope_id, stream: stream_id, holding })?;
+    super::rejected::rebuild(db, Applying { scope: scope_id, stream: stream_id, holding, shadow: false })?;
     tidy_wanted(db, scope_id, holding)
 }

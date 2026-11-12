@@ -9,7 +9,7 @@
 
 /// The layout of the tables this build makes (`layout.rs`): changed with
 /// every change to them until the layout is settled (plan 3-3).
-pub(crate) const LAYOUT: &str = "2026-11-12.1";
+pub(crate) const LAYOUT: &str = "2026-11-12.3";
 
 /// Made before anything else as the library opens (`layout.rs`): where its
 /// layout is stamped. Nothing is written when it is there already.
@@ -30,7 +30,10 @@ CREATE TABLE IF NOT EXISTS scopes (
     -- The holding period every stream of the scope was last pulled whole
     -- in, on a device: until it is the current one, the scope is asked
     -- after by itself, not by the change numbers alone (design §28.1).
-    pulled INTEGER
+    pulled INTEGER,
+    -- What the hub last said this device may hold of the scope, on a
+    -- device: changed, the scope is pulled whole again (HH04).
+    allowed TEXT
 );
 CREATE INDEX IF NOT EXISTS scopes_of_hub ON scopes (hub) WHERE holding IS NOT NULL;
 CREATE TABLE IF NOT EXISTS holdings (
@@ -293,6 +296,35 @@ CREATE TABLE IF NOT EXISTS retention (
     floor INTEGER NOT NULL,
     head BLOB
 );
+-- What a stream's window left to fill in below it, on a device (design
+-- §28.2): from where the index was whole, to the window's head, reached so
+-- far, each as (the sequence next, its chain value). Its frames' records go
+-- into `shadow_items` until all are in, then into the index in batches.
+CREATE TABLE IF NOT EXISTS backfills (
+    stream INTEGER NOT NULL,
+    holding INTEGER NOT NULL,
+    generation TEXT NOT NULL,
+    from_next INTEGER NOT NULL,
+    from_head BLOB NOT NULL,
+    to_next INTEGER NOT NULL,
+    to_head BLOB NOT NULL,
+    reached_next INTEGER NOT NULL,
+    reached_head BLOB NOT NULL,
+    PRIMARY KEY (stream, holding)
+) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS shadow_items (
+    stream INTEGER NOT NULL,
+    holding INTEGER NOT NULL,
+    item BLOB NOT NULL,
+    place BLOB NOT NULL,
+    revision INTEGER NOT NULL,
+    state INTEGER NOT NULL,
+    kind INTEGER NOT NULL,
+    schema INTEGER NOT NULL,
+    body BLOB,
+    objects BLOB,
+    PRIMARY KEY (stream, holding, item)
+) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS coverage (
     scope INTEGER NOT NULL,
     low BLOB NOT NULL,

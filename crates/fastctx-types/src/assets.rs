@@ -288,6 +288,19 @@ pub enum Request {
     Frames { scope: String, stream: String, from: u64, limit: u32 },
     /// A stream's signed epochs and gap facts (§8).
     Succession { scope: String, stream: String },
+    /// A stream's newest items as they stand at its head, with the hub's
+    /// word on them (§9, §28.2).
+    Window { scope: String, stream: String },
+    /// Up to `limit` items of a stream below `before` (order key and
+    /// identity; from the top when none), newest first, as they stand now
+    /// (§9).
+    Older {
+        scope: String,
+        stream: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        before: Option<(Bytes, Bytes)>,
+        limit: u32,
+    },
     /// Describes a scope this device begins (§2.1): the hub signs its
     /// descriptor, or answers the one it has.
     Describe { scope: String, readers: Readers, classes: Vec<StreamClass> },
@@ -353,6 +366,10 @@ pub struct HoldingsAt {
 pub struct Held {
     pub scope: String,
     pub descriptor: Fact,
+    /// The prefixes of its stream classes this machine may hold now: what
+    /// it may hold of a scope can change with no new descriptor (HH04).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub holds: Vec<String>,
 }
 
 /// The old service key's word that the new one follows it (§6.1),
@@ -409,6 +426,21 @@ pub struct ChangedStream {
     pub at: i64,
 }
 
+/// An item as a hub's index has it: identity, order key, the revision that
+/// made it so, its kind and schema, its body and the objects it refers to
+/// (hash and size).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Entry {
+    pub item: Bytes,
+    pub order: Bytes,
+    pub revision: u64,
+    pub kind: u16,
+    pub schema: u16,
+    pub body: Bytes,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub objects: Vec<(Bytes, u64)>,
+}
+
 /// Where a stream stands on the hub: the sequence its applied prefix
 /// reaches next.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -430,6 +462,8 @@ impl Request {
             | Self::Cursors { .. }
             | Self::Frames { .. }
             | Self::Succession { .. }
+            | Self::Window { .. }
+            | Self::Older { .. }
             | Self::Describe { .. }
             | Self::Streams { .. }
             | Self::Changes { .. }
@@ -596,6 +630,25 @@ pub enum Reply {
     /// first; the latest change and when it was; where the next page goes on
     /// below, stepping past what this device may not hold as well.
     Changes { generation: String, streams: Vec<ChangedStream>, top: u64, top_at: i64, through: u64, more: bool },
+    /// A stream's window (§28.2): at its head, the sequence its next frame
+    /// takes, its chain value, the bytes of its frames and the change it was
+    /// last indexed again at, in the owner library's generation; its newest
+    /// items from `low` up (none: every item); and the hub's word on all of
+    /// it.
+    Window {
+        generation: String,
+        next: u64,
+        head: Bytes,
+        bytes: u64,
+        remade: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        low: Option<(Bytes, Bytes)>,
+        entries: Vec<Entry>,
+        word: Bytes,
+    },
+    /// Items below a key as they stood when asked, with the sequence the
+    /// stream's next frame took then, and whether more are below.
+    Older { through: u64, entries: Vec<Entry>, more: bool },
     /// The new epoch's descriptor and the hub's word on it.
     Epoch { descriptor: Fact },
     /// The chunks the hub lacks of an object put, sent under `ticket`; none

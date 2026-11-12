@@ -20,13 +20,39 @@ pub(crate) fn network(node: &Node, hub: &HubId) -> Option<Network> {
     node.assets.as_ref()?.networks.lock().expect("networks").get(hub).cloned()
 }
 
+/// The file beside a membership that says it is new: its network is joined
+/// under a new term, however a stop or a failure came between (AK02).
+pub(crate) const JOINING: &str = "joining";
+
+fn joining(node: &Node, hub: &HubId) -> std::path::PathBuf {
+    crate::world::hub_dir(&node.world, hub).join(JOINING)
+}
+
 /// This machine is on `hub`'s network from now on, what an earlier term
-/// left held revoked first; `anew`, as a login admits it again, under a new
-/// term whatever the library had (AJ04). Call holding `world::memberships`.
+/// left held revoked first; `anew`, as a login admits it again, or while
+/// the membership is marked new, under a new term whatever the library had
+/// (AJ04, AK02). Call holding `world::memberships`.
 pub(crate) async fn joined(node: &Arc<Node>, hub: &HubId, anew: bool) -> Result<Option<Network>, String> {
     let Some(assets) = node.assets.as_ref() else { return Ok(None) };
+    let mark = joining(node, hub);
+    let anew = anew || fastctx_platform::disk::is_there(&mark);
     let (theirs, device) = (hub.as_str().to_string(), assets.device());
-    let network = blocking(&assets.library, move |library| library.join(&theirs, &device, anew)).await?;
+    let network = match blocking(&assets.library, move |library| library.join(&theirs, &device, anew)).await {
+        Ok(network) => network,
+        Err(why) => {
+            // Not joined: no earlier term stands in for it here meanwhile.
+            assets.networks.lock().expect("networks").remove(hub);
+            return Err(why);
+        }
+    };
+    if anew {
+        match fastctx_platform::task::blocking(move || fastctx_platform::disk::remove_file(mark)).await {
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+                node.log.line(format_args!("joined {hub} anew; its mark stays and the next joining is anew again: {error}"));
+            }
+            _ => {}
+        }
+    }
     assets.networks.lock().expect("networks").insert(hub.clone(), network.clone());
     if anew {
         // A new term is looked at whole from the first, and the timelines
@@ -89,7 +115,13 @@ pub(crate) fn settle(node: &Node, kept: &[HubId]) -> Result<(), String> {
         }
     }
     for hub in kept {
-        let network = library.join(hub.as_str(), &device, false).map_err(|error| error.to_string())?;
+        // A membership marked new joins under a new term (AK02).
+        let mark = joining(node, hub);
+        let anew = fastctx_platform::disk::is_there(&mark);
+        let network = library.join(hub.as_str(), &device, anew).map_err(|error| error.to_string())?;
+        if anew && let Err(error) = fastctx_platform::disk::remove_file(&mark) {
+            node.log.line(format_args!("joined {hub} anew; its mark stays: {error}"));
+        }
         assets.networks.lock().expect("networks").insert(hub.clone(), network);
     }
     Ok(())

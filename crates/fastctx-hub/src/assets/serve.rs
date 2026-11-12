@@ -293,6 +293,8 @@ pub(crate) fn scope_of(request: &Request) -> Option<&str> {
         | Request::Epoch { scope, .. }
         | Request::Takeover { scope, .. }
         | Request::Succession { scope, .. }
+        | Request::Window { scope, .. }
+        | Request::Older { scope, .. }
         | Request::Put { scope, .. }
         | Request::Get { scope, .. } => Some(scope),
     }
@@ -639,6 +641,36 @@ pub(crate) fn ask(
             assets.opened_epoch(&kept.owner, &scope, &stream, epoch, &signed.fact).map_err(|error| error.to_string())?;
             Ok(Reply::Epoch { descriptor: word_of(&signed) })
         }
+        Request::Window { scope, stream } => {
+            let kept = held(assets, directory, machine, &scope, &stream)?;
+            let library = scopes::library(assets, &kept)?;
+            let window = library
+                .window(&scope, &stream, fastctx_content::v2::WINDOW_ITEMS, fastctx_content::v2::WINDOW_BYTES)
+                .map_err(|error| error.to_string())?
+                .ok_or_else(|| format!("{stream} of {scope} is not on the hub"))?;
+            // The hub's word on the whole of it, as of its head.
+            let word = assets.signer().sign(&window.statement());
+            Ok(Reply::Window {
+                generation: window.generation,
+                next: window.next,
+                head: window.head.to_vec().into(),
+                bytes: window.bytes,
+                remade: window.remade,
+                low: window.low.map(|(place, item)| (place.into(), item.into())),
+                entries: window.entries.into_iter().map(wire_entry).collect(),
+                word: word.into(),
+            })
+        }
+        Request::Older { scope, stream, before, limit } => {
+            let kept = held(assets, directory, machine, &scope, &stream)?;
+            let library = scopes::library(assets, &kept)?;
+            let before = before.map(|(place, item)| (place.0, item.0));
+            let older = library
+                .older(&scope, &stream, before, limit as usize)
+                .map_err(|error| error.to_string())?
+                .ok_or_else(|| format!("{stream} of {scope} is not on the hub"))?;
+            Ok(Reply::Older { through: older.through, entries: older.entries.into_iter().map(wire_entry).collect(), more: older.more })
+        }
         Request::Succession { scope, stream } => {
             let kept = held(assets, directory, machine, &scope, &stream)?;
             let library = scopes::library(assets, &kept)?;
@@ -653,6 +685,19 @@ pub(crate) fn ask(
             };
             Ok(Reply::Succession { epochs: epochs.into_iter().map(fact).collect(), gaps: gaps.into_iter().map(fact).collect() })
         }
+    }
+}
+
+/// An item of a hub's index as it goes on the wire.
+fn wire_entry(entry: fastctx_content::v2::Entry) -> wire::Entry {
+    wire::Entry {
+        item: entry.item.into(),
+        order: entry.order.into(),
+        revision: entry.revision,
+        kind: entry.kind,
+        schema: entry.schema,
+        body: entry.body.into(),
+        objects: entry.objects.into_iter().map(|object| (object.hash.to_vec().into(), object.size)).collect(),
     }
 }
 

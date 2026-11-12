@@ -38,6 +38,12 @@ CREATE TABLE IF NOT EXISTS recovery_receipts (
     machine TEXT NOT NULL, at INTEGER NOT NULL,
     PRIMARY KEY (scope, change, prefix, parked, accumulated)
 ) WITHOUT ROWID;
+-- Why every asset is sealed for a recovery, once the hub found it was put
+-- back: kept, so a plain restart seals it again; gone only as the hub is
+-- reopened (design §17).
+CREATE TABLE IF NOT EXISTS asset_seal (
+    id INTEGER PRIMARY KEY CHECK (id = 1), why TEXT NOT NULL, at INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS closed_heads (seq INTEGER NOT NULL, head BLOB NOT NULL, PRIMARY KEY (seq, head)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS closed_receipts (
     scope TEXT NOT NULL, change INTEGER NOT NULL, prefix BLOB NOT NULL, parked INTEGER NOT NULL, accumulated BLOB NOT NULL,

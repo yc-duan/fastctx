@@ -50,7 +50,14 @@ pub(crate) fn list(
             }
             if scopes::may_hold_known(directory, machine, &scope).map_err(|error| format!("who may hold {key} cannot be told now: {error}"))? {
                 assets.holds(&key, machine);
-                scopes.push(Held { scope: key, descriptor: scope.fact.clone() });
+                let holds = scope
+                    .descriptor
+                    .classes
+                    .iter()
+                    .filter(|class| scopes::holds(directory, machine, &scope, &class.prefix))
+                    .map(|class| class.prefix.clone())
+                    .collect();
+                scopes.push(Held { scope: key, descriptor: scope.fact.clone(), holds });
             }
         }
         through = Some(at);
