@@ -166,6 +166,7 @@ pub fn start(node: &Arc<Node>, membership: Membership) -> io::Result<Arc<Link>> 
     // seen in them.
     node.ways_changed();
     crate::updates::report(node);
+    crate::assets::wake(node, &hub);
     if dissolved {
         let node = node.clone();
         fastctx_platform::task::spawn(async move {
@@ -1601,6 +1602,7 @@ impl fastctx_net::link::Node for Handler {
         node.skill_index.invalidate(&self.hub, None);
         crate::placement::copies::refresh(&node, &self.hub);
         crate::skills::copies::refresh(&node, &self.hub);
+        crate::assets::wake(&node, &self.hub);
         let Some(link) = node.link_of(&self.hub) else { return };
         // A previous cleanup may have failed after consuming this same view.
         crate::directory_changes::cleanup(&node, &link);

@@ -21,6 +21,7 @@ pub mod admission;
 mod afoot;
 mod answering;
 mod answers;
+mod assets;
 mod calls;
 mod changes;
 mod clock;

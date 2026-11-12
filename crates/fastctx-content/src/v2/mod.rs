@@ -8,6 +8,7 @@
 
 mod collect;
 mod commit;
+mod device;
 mod exchange;
 mod facts;
 mod frame;

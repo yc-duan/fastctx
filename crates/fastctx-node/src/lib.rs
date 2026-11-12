@@ -18,6 +18,7 @@ mod admitted;
 mod adoption;
 mod afoot;
 mod again;
+mod assets;
 mod agent_activity;
 mod agents;
 mod around;
@@ -231,6 +232,8 @@ pub(crate) struct Node {
     /// The content database: what this machine holds of conversations and
     /// other streams as items, read a page at a time (`timeline`).
     content: Option<fastctx_content::Content>,
+    /// The second version's asset library and sync (`assets`).
+    assets: Option<assets::Assets>,
     book_database: fastctx_storage::Database,
     record_migration: record_migration::Service,
     /// This program's own copy under the World, which everything the node
@@ -781,6 +784,13 @@ pub async fn run_prepared(
             if database.fault().is_none() {
                 record_database::start_upgrade(&database, log.clone()).context("pinning the World upgrade snapshot")?;
             }
+            let assets = match world::key(&world).and_then(|key| assets::Assets::open(world.assets(), key)) {
+                Ok(assets) => Some(assets),
+                Err(error) => {
+                    log.line(format_args!("the asset library is unavailable: {error}"));
+                    None
+                }
+            };
             let content = match fastctx_content::Content::open(world.path()) {
                 Ok(content) => Some(content),
                 Err(error) => {
@@ -814,6 +824,7 @@ pub async fn run_prepared(
                 workers: Default::default(),
                 database,
                 content,
+                assets,
                 book_database,
                 record_migration,
                 fastctx,

@@ -467,3 +467,25 @@ impl Library {
         })?)
     }
 }
+
+impl Library {
+    /// The last epoch the hub signed of `stream` of `scope`: its number and
+    /// its device's key.
+    pub fn last_epoch(&self, scope: &str, stream: &str) -> Result<Option<(u64, [u8; 32])>> {
+        let (scope, stream) = (scope.to_string(), stream.to_string());
+        Ok(self.database().read_now(move |db| {
+            let Some((scope_id, _, _)) = held(db, &scope)? else { return Ok(None) };
+            let Some(stream_id) = db
+                .prepare_cached("SELECT id FROM streams WHERE scope = ?1 AND name = ?2")?
+                .query_row(params![scope_id, stream], |row| row.get::<_, i64>(0))
+                .optional()?
+            else {
+                return Ok(None);
+            };
+            let last: Option<i64> =
+                db.prepare_cached("SELECT MAX(epoch) FROM hub_epochs WHERE stream = ?1")?.query_row([stream_id], |row| row.get(0))?;
+            let Some(last) = last else { return Ok(None) };
+            Ok(epoch_of(db, stream_id, last as u64)?.map(|epoch| (epoch.epoch, epoch.key)))
+        })?)
+    }
+}

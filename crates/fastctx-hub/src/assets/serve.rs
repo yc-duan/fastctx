@@ -8,8 +8,8 @@
 use super::scopes::{self, Scope};
 use super::{Assets, chain};
 use fastctx_content::v2::{
-    Authorizer, Entry, FrameKey, Head, Header, KindRecord, RawFrame, Received, Standing, Taking, Verifier, applied_statement,
-    parked_statement,
+    Authorizer, Cutoff, Entry, EpochKind, FrameKey, Head, Header, KindRecord, RawFrame, Received, Standing, Successor, Taking,
+    Verifier, applied_statement, parked_statement,
 };
 use fastctx_content::ObjectRef;
 use fastctx_net::directory_index::Indexed;
@@ -176,6 +176,35 @@ pub(crate) fn ask(
             }
             Ok(Reply::Frames { frames })
         }
+        Request::Streams { scope } => {
+            let kept = gated(assets, directory, machine, &scope)?;
+            let library = scopes::library(assets, &kept)?;
+            let streams = library
+                .streams(&scope)
+                .map_err(|error| error.to_string())?
+                .into_iter()
+                .filter(|(stream, _)| scopes::holds(directory, machine, &kept, stream))
+                .map(|(stream, next)| wire::StreamAt { stream, next })
+                .collect();
+            Ok(Reply::Streams { streams })
+        }
+        Request::Epoch { scope, stream, next, head } => {
+            let kept = held(assets, directory, machine, &scope, &stream)?;
+            let library = scopes::library(assets, &kept)?;
+            // Only the device that orders the stream now opens its next epoch
+            // itself; another takes it over by a handover the hub decides.
+            let last = library.last_epoch(&scope, &stream).map_err(|error| error.to_string())?;
+            if last.is_none_or(|(_, device)| &device != key.as_bytes()) {
+                return Err("only the device that orders the stream opens its next epoch".into());
+            }
+            let successor = Successor { device: *key.as_bytes(), key: *key.as_bytes(), kind: EpochKind::Source };
+            let cutoff = Cutoff { next, head: array(&head, "a chain value")? };
+            let (signed, _) = library
+                .handover(&scope, &stream, successor, cutoff, Arc::new(Readers), assets.signer())
+                .map_err(|error| error.to_string())?;
+            assets.changed(kept.owner.clone(), &scope);
+            Ok(Reply::Epoch { descriptor: wire::Fact { fact: signed.fact.into(), word: signed.signature.into() } })
+        }
         Request::Succession { scope, stream } => {
             let kept = held(assets, directory, machine, &scope, &stream)?;
             let library = scopes::library(assets, &kept)?;
@@ -271,7 +300,7 @@ fn covering(assets: &Assets, scope: &Scope, head: &Head) -> Result<Option<wire::
     let Some(chain_head) = assets.control.read_now(move |c| chain::head_at(c, at)).map_err(|error| error.to_string())? else {
         return Ok(None);
     };
-    let statement = checkpoint_statement(&head.scope, change as u64, parked as u64, at, &chain_head);
+    let statement = wire::checkpoint_statement(&head.scope, change as u64, parked as u64, at, &chain_head);
     Ok(Some(wire::Checkpoint {
         scope: head.scope.clone(),
         change: change as u64,
@@ -280,16 +309,4 @@ fn covering(assets: &Assets, scope: &Scope, head: &Head) -> Result<Option<wire::
         head: chain_head.into(),
         word: assets.signer().sign(&statement).into(),
     }))
-}
-
-/// What a checkpoint's word says, as signed.
-pub(crate) fn checkpoint_statement(scope: &str, change: u64, parked: u64, seq: u64, head: &[u8; 32]) -> Vec<u8> {
-    let mut bytes = b"fastctx-checkpointed/1".to_vec();
-    bytes.extend_from_slice(&(scope.len() as u32).to_le_bytes());
-    bytes.extend_from_slice(scope.as_bytes());
-    bytes.extend_from_slice(&change.to_le_bytes());
-    bytes.extend_from_slice(&parked.to_le_bytes());
-    bytes.extend_from_slice(&seq.to_le_bytes());
-    bytes.extend_from_slice(head);
-    bytes
 }

@@ -1,0 +1,158 @@
+//! The second version's asset sync on this machine (design §6.5, §6.6, §7,
+//! §17): its asset library under `world/assets/`, what it keeps of each
+//! hub's asset sync — the service key it pinned when it first met the hub on
+//! an authenticated link, and the latest chain head the hub's word carried —
+//! and one driver per hub (`session`).
+//!
+//! Frames this machine orders are signed with its device key, under the
+//! domain frames are signed in. Facts and receipts count only under the
+//! pinned key: a hub whose key changed is not trusted without a rotation
+//! (design §6.1).
+
+mod session;
+
+pub(crate) use session::wake;
+
+use fastctx_content::v2::{HubVerifier, Library, Signer};
+use fastctx_net::sign::{Domain, PublicKey, SecretKey, heard_word};
+use fastctx_platform::Permissions;
+use fastctx_types::access::HubId;
+use fastctx_types::assets::{Bytes, Seen};
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, HashMap};
+use std::io;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use tokio::sync::Notify;
+
+/// What this machine keeps of one hub's asset sync.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+struct Pinned {
+    /// The hub's service key, as first met.
+    key: Bytes,
+    /// The latest chain head the hub's word carried, with that word.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    seen: Option<Seen>,
+}
+
+pub(crate) struct Assets {
+    pub(crate) library: Library,
+    device: Arc<SecretKey>,
+    path: PathBuf,
+    hubs: Mutex<BTreeMap<String, Pinned>>,
+    /// Session numbers: unique among this library's sessions, across
+    /// restarts too (they start from the clock).
+    sessions: AtomicU64,
+    /// Each hub's driver, by the wake that brings it round again.
+    pub(crate) drivers: Mutex<HashMap<HubId, Arc<Notify>>>,
+}
+
+impl Assets {
+    /// Opens the asset side in `dir` for the machine whose key is `device`.
+    /// Call on a thread that may block.
+    pub(crate) fn open(dir: PathBuf, device: SecretKey) -> io::Result<Self> {
+        fastctx_platform::ensure_private_dir(&dir)?;
+        let (library, _) = Library::open(&dir).map_err(|error| io::Error::other(error.to_string()))?;
+        let path = dir.join("hubs.json");
+        let hubs = match fastctx_platform::disk::read(&path) {
+            Ok(bytes) => serde_json::from_slice(&bytes)
+                .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("{}: {error}", path.display())))?,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => BTreeMap::new(),
+            Err(error) => return Err(error),
+        };
+        let start = (jiff::Timestamp::now().as_millisecond().max(0) as u64) << 12;
+        Ok(Self {
+            library,
+            device: Arc::new(device),
+            path,
+            hubs: Mutex::new(hubs),
+            sessions: AtomicU64::new(start),
+            drivers: Mutex::new(HashMap::new()),
+        })
+    }
+
+    pub(crate) fn session(&self) -> u64 {
+        self.sessions.fetch_add(1, Ordering::SeqCst)
+    }
+
+    pub(crate) fn signer(&self) -> Arc<dyn Signer> {
+        Arc::new(Device(self.device.clone()))
+    }
+
+    pub(crate) fn device(&self) -> [u8; 32] {
+        *self.device.public().as_bytes()
+    }
+
+    fn save(&self, hubs: &BTreeMap<String, Pinned>) -> io::Result<()> {
+        let bytes = serde_json::to_vec_pretty(hubs).map_err(io::Error::other)?;
+        fastctx_platform::publish(&self.path, &bytes, Permissions::Private)
+    }
+
+    /// The hub's service key as pinned, pinning `offered` the first time.
+    /// An error where the hub offers another key than the one pinned.
+    pub(crate) fn pin(&self, hub: &HubId, offered: &Bytes) -> Result<PublicKey, String> {
+        let offered: [u8; 32] = offered.array().ok_or("a service key is 32 bytes")?;
+        let mut hubs = self.hubs.lock().expect("hubs");
+        match hubs.get(hub.as_str()) {
+            Some(pinned) if pinned.key.array() == Some(offered) => Ok(PublicKey::from_bytes(offered)),
+            Some(_) => Err(format!("the hub {hub} offers another service key than the one this machine pinned")),
+            None => {
+                hubs.insert(hub.as_str().to_string(), Pinned { key: offered.into(), seen: None });
+                self.save(&hubs).map_err(|error| error.to_string())?;
+                Ok(PublicKey::from_bytes(offered))
+            }
+        }
+    }
+
+    /// The latest chain head the hub's word carried here.
+    pub(crate) fn seen(&self, hub: &HubId) -> Option<Seen> {
+        self.hubs.lock().expect("hubs").get(hub.as_str()).and_then(|pinned| pinned.seen.clone())
+    }
+
+    /// The hub's word on `statement`, if it is the pinned key's: the chain
+    /// head it carried is kept when it is the latest seen (design §17,
+    /// item 4).
+    pub(crate) fn heard(&self, hub: &HubId, key: &PublicKey, statement: &[u8], word: &[u8]) -> bool {
+        let Some((seq, head)) = heard_word(key, statement, word) else { return false };
+        let mut hubs = self.hubs.lock().expect("hubs");
+        if let Some(pinned) = hubs.get_mut(hub.as_str())
+            && pinned.seen.as_ref().is_none_or(|seen| seen.seq < seq)
+        {
+            pinned.seen = Some(Seen { seq, head: head.into(), statement: statement.to_vec().into(), word: word.to_vec().into() });
+            if let Err(error) = self.save(&hubs) {
+                // The head is kept in memory; the file catches up at the next.
+                let _ = error;
+            }
+        }
+        true
+    }
+}
+
+/// This machine as the device that orders its streams.
+struct Device(Arc<SecretKey>);
+
+impl Signer for Device {
+    fn device(&self) -> [u8; 32] {
+        *self.0.public().as_bytes()
+    }
+    fn key(&self) -> [u8; 32] {
+        *self.0.public().as_bytes()
+    }
+    fn sign(&self, header: &[u8]) -> Vec<u8> {
+        self.0.sign(Domain::SyncSourceBatch, header).to_bytes().to_vec()
+    }
+}
+
+/// Facts under a hub's pinned key, the chain head they carry kept.
+pub(crate) struct Pinning<'a> {
+    pub(crate) assets: &'a Assets,
+    pub(crate) hub: &'a HubId,
+    pub(crate) key: PublicKey,
+}
+
+impl HubVerifier for Pinning<'_> {
+    fn verify(&self, fact: &[u8], signature: &[u8]) -> bool {
+        self.assets.heard(self.hub, &self.key, fact, signature)
+    }
+}

@@ -164,6 +164,12 @@ impl WorldDir {
         self.root.join("retention.json")
     }
 
+    /// The second version's asset library (`fastctx_content::v2`) and what
+    /// this machine keeps of each hub's asset sync.
+    pub fn assets(&self) -> PathBuf {
+        self.root.join("assets")
+    }
+
     /// Pictures read out of a host's record, unpacked while they are read:
     /// nothing in it outlives the node that read it.
     pub fn image_reading(&self) -> PathBuf {

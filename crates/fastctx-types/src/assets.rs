@@ -214,6 +214,21 @@ pub enum Request {
     /// Describes a scope this device begins (§2.1): the hub signs its
     /// descriptor, or answers the one it has.
     Describe { scope: String, readers: Readers, classes: Vec<StreamClass> },
+    /// The streams of a scope this device holds, each with the sequence the
+    /// hub's applied prefix reaches next (§6.6).
+    Streams { scope: String },
+    /// A new epoch of a stream this device orders, after the hub refused
+    /// one of its frames: what remains is committed again from `next`,
+    /// chained from `head` (§6.5).
+    Epoch { scope: String, stream: String, next: u64, head: Bytes },
+}
+
+/// Where a stream stands on the hub: the sequence its applied prefix
+/// reaches next.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StreamAt {
+    pub stream: String,
+    pub next: u64,
 }
 
 impl Request {
@@ -227,7 +242,9 @@ impl Request {
             | Self::Cursors { .. }
             | Self::Frames { .. }
             | Self::Succession { .. }
-            | Self::Describe { .. } => Purpose::AssetSync,
+            | Self::Describe { .. }
+            | Self::Streams { .. }
+            | Self::Epoch { .. } => Purpose::AssetSync,
         }
     }
 }
@@ -291,6 +308,21 @@ pub struct Checkpoint {
     pub word: Bytes,
 }
 
+/// What a checkpoint's word says, as the hub signs it (§17): that a
+/// checkpoint at chain number `seq` with head `head`, written outside the
+/// hub's directory, covers `scope`'s changes up to `change` and its parked
+/// frames up to `parked`.
+pub fn checkpoint_statement(scope: &str, change: u64, parked: u64, seq: u64, head: &[u8; 32]) -> Vec<u8> {
+    let mut bytes = b"fastctx-checkpointed/1".to_vec();
+    bytes.extend_from_slice(&(scope.len() as u32).to_le_bytes());
+    bytes.extend_from_slice(scope.as_bytes());
+    bytes.extend_from_slice(&change.to_le_bytes());
+    bytes.extend_from_slice(&parked.to_le_bytes());
+    bytes.extend_from_slice(&seq.to_le_bytes());
+    bytes.extend_from_slice(head);
+    bytes
+}
+
 /// What the hub answers.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "reply", rename_all = "snake_case")]
@@ -320,6 +352,9 @@ pub enum Reply {
     Succession { epochs: Vec<Fact>, gaps: Vec<Fact> },
     /// A scope's descriptor, as JSON, and the hub's word on it.
     Described { descriptor: Fact },
+    Streams { streams: Vec<StreamAt> },
+    /// The new epoch's descriptor and the hub's word on it.
+    Epoch { descriptor: Fact },
 }
 
 /// What the hub tells a device unasked.
