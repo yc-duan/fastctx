@@ -10,6 +10,7 @@ mod collect;
 mod commit;
 mod exchange;
 mod frame;
+mod hub;
 mod items;
 mod objects;
 mod ops;
@@ -25,6 +26,7 @@ pub use collect::{Collected, Started};
 pub use commit::{Commit, Committed};
 pub use exchange::{Holder, Imported, RawFrame, Verifier};
 pub use frame::{FORMAT, Header, KindRecord, Signer, open};
+pub use hub::{Authorizer, Holding, HubSigner, Received};
 pub use ops::{Delivery, Op};
 pub use reads::{Entry, PAGE};
 pub use receipts::{Receipt, Said};
@@ -61,7 +63,17 @@ impl Library {
     /// settles what a stop left half done before any object is read or put
     /// (`collect::startup`). Call on a thread that may block.
     pub fn open(directory: &Path) -> Result<(Self, Started)> {
-        let database = Database::open(&directory.join(FILE), schema::SCHEMA)?;
+        Self::open_with(directory, schema::SCHEMA.to_string())
+    }
+
+    /// Opens an owner library of a hub (§6.2): the same library with the
+    /// hub's own tables besides.
+    pub fn open_hub(directory: &Path) -> Result<(Self, Started)> {
+        Self::open_with(directory, format!("{}{}", schema::SCHEMA, schema::HUB_SCHEMA))
+    }
+
+    fn open_with(directory: &Path, schema: String) -> Result<(Self, Started)> {
+        let database = Database::open(&directory.join(FILE), &schema)?;
         let bytes = Database::open(&directory.join(BYTES_FILE), schema::BYTES_SCHEMA)?;
         let library = Self(Arc::new(Inner { database, bytes, objects: directory.join(OBJECTS_DIRECTORY) }));
         let started = library.startup()?;

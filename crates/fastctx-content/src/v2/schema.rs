@@ -61,6 +61,16 @@ CREATE TABLE IF NOT EXISTS frame_objects (
     PRIMARY KEY (stream, epoch, first, holding, hash)
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS frame_objects_by_hash ON frame_objects (hash);
+-- A hub keeps the objects of frames it stored but has not applied: they
+-- hold the bytes (I2) and give no reading (P01). Empty on devices.
+CREATE TABLE IF NOT EXISTS parked_objects (
+    stream INTEGER NOT NULL,
+    epoch INTEGER NOT NULL,
+    first INTEGER NOT NULL,
+    hash BLOB NOT NULL,
+    PRIMARY KEY (stream, epoch, first, hash)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS parked_objects_by_hash ON parked_objects (hash);
 CREATE TABLE IF NOT EXISTS items (
     stream INTEGER NOT NULL,
     place BLOB NOT NULL,
@@ -235,5 +245,59 @@ CREATE TABLE IF NOT EXISTS object_bytes (
     life INTEGER NOT NULL,
     bytes BLOB NOT NULL,
     PRIMARY KEY (hash, life)
+) WITHOUT ROWID;
+";
+
+/// What a hub's owner library keeps besides (§6.2, §6.5, §17): the change
+/// log that orders the applied frames of each scope, the frames kept but
+/// not yet applied with each scope's parked sequence and accumulator (whose
+/// every value is kept for good, so a parked receipt can always be
+/// checked), the frames refused, and where each device stands.
+pub(crate) const HUB_SCHEMA: &str = "
+CREATE TABLE IF NOT EXISTS change_log (
+    scope INTEGER NOT NULL,
+    change INTEGER NOT NULL,
+    stream INTEGER NOT NULL,
+    epoch INTEGER NOT NULL,
+    first INTEGER NOT NULL,
+    prefix BLOB NOT NULL,
+    PRIMARY KEY (scope, change)
+) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS parked (
+    stream INTEGER NOT NULL,
+    epoch INTEGER NOT NULL,
+    first INTEGER NOT NULL,
+    header BLOB NOT NULL,
+    signature BLOB NOT NULL,
+    body BLOB NOT NULL,
+    sequence INTEGER NOT NULL,
+    PRIMARY KEY (stream, epoch, first)
+) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS parked_history (
+    scope INTEGER NOT NULL,
+    sequence INTEGER NOT NULL,
+    accumulated BLOB NOT NULL,
+    PRIMARY KEY (scope, sequence)
+) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS refused_frames (
+    stream INTEGER NOT NULL,
+    epoch INTEGER NOT NULL,
+    first INTEGER NOT NULL,
+    digest BLOB NOT NULL,
+    why TEXT NOT NULL,
+    signature BLOB NOT NULL,
+    PRIMARY KEY (stream, epoch, first)
+) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS device_cursors (
+    device BLOB NOT NULL,
+    stream INTEGER NOT NULL,
+    holding INTEGER NOT NULL,
+    sequence INTEGER NOT NULL,
+    PRIMARY KEY (device, stream, holding)
+) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS intents (
+    id TEXT PRIMARY KEY,
+    body BLOB NOT NULL,
+    done BLOB NOT NULL
 ) WITHOUT ROWID;
 ";

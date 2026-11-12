@@ -60,6 +60,7 @@ impl Library {
                 "SELECT o.hash, o.life, o.size FROM objects o
                  WHERE o.state = 1 AND o.placed < ?1 AND (o.unreferenced IS NULL OR o.unreferenced < ?1)
                    AND NOT EXISTS (SELECT 1 FROM frame_objects f WHERE f.hash = o.hash)
+                   AND NOT EXISTS (SELECT 1 FROM parked_objects p WHERE p.hash = o.hash)
                    AND NOT EXISTS (SELECT 1 FROM object_refs r WHERE r.hash = o.hash AND r.count > 0)
                    AND NOT EXISTS (SELECT 1 FROM object_holds h WHERE h.hash = o.hash)
                    AND NOT EXISTS (SELECT 1 FROM leases l WHERE l.hash = o.hash AND l.expires >= ?2)
