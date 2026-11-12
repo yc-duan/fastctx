@@ -132,6 +132,7 @@ CREATE TABLE IF NOT EXISTS transfers (
     chunk INTEGER NOT NULL,
     part TEXT NOT NULL,
     ranges BLOB NOT NULL,
+    manifest BLOB NOT NULL,
     source TEXT
 );
 CREATE TABLE IF NOT EXISTS hub_receipts (
@@ -145,7 +146,7 @@ CREATE TABLE IF NOT EXISTS hub_receipts (
     accumulated BLOB,
     signature BLOB NOT NULL,
     checkpointed INTEGER NOT NULL DEFAULT 0,
-    PRIMARY KEY (stream, epoch, first, digest)
+    PRIMARY KEY (stream, epoch, first, digest, kind)
 ) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS cursors (
     stream INTEGER NOT NULL,
@@ -174,10 +175,19 @@ CREATE TABLE IF NOT EXISTS ops (
     op TEXT PRIMARY KEY,
     digest BLOB NOT NULL,
     kind TEXT NOT NULL,
-    record BLOB,
-    state TEXT NOT NULL,
-    delivery TEXT
+    state TEXT NOT NULL CHECK (state IN ('durable', 'refused', 'dropped')),
+    delivery TEXT,
+    kept BLOB,
+    why TEXT
 ) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS op_records (
+    scope INTEGER NOT NULL,
+    stream TEXT NOT NULL,
+    revision INTEGER NOT NULL,
+    op TEXT NOT NULL,
+    PRIMARY KEY (scope, stream, revision)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS op_records_by_op ON op_records (op);
 CREATE TABLE IF NOT EXISTS pending_schema (
     stream INTEGER NOT NULL,
     kind INTEGER NOT NULL,
@@ -216,6 +226,7 @@ CREATE TABLE IF NOT EXISTS resubmits (
     stream INTEGER NOT NULL,
     rejected INTEGER NOT NULL,
     position INTEGER NOT NULL,
+    holding INTEGER NOT NULL,
     record BLOB NOT NULL,
     op TEXT,
     PRIMARY KEY (stream, rejected, position)

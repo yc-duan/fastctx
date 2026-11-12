@@ -53,67 +53,77 @@ impl Library {
                 .optional()?
                 .ok_or_else(|| invalid("no such stream"))?;
             let at = Applying { scope: scope_id, stream: stream_id, holding };
-            let frames: Vec<Kept> = {
-                let mut statement = db.prepare_cached(
-                    "SELECT epoch, first, count, head, header, body FROM frames WHERE stream = ?1 AND holding = ?2 ORDER BY first",
-                )?;
-                let rows = statement.query_map(params![stream_id, holding], |row| {
-                    Ok(Kept {
-                        epoch: row.get(0)?,
-                        first: row.get(1)?,
-                        count: row.get(2)?,
-                        head: row.get(3)?,
-                        header: row.get(4)?,
-                        body: row.get(5)?,
-                    })
-                })?;
-                rows.collect::<std::result::Result<_, _>>()?
-            };
             let mut pruned = Pruned::default();
             let mut floor: Option<(i64, Vec<u8>)> = None;
-            for Kept { epoch, first, count, head, header, body } in frames {
-                if (first + count - 1) as u64 > through {
+            // A few frames at a time, from the first: what is kept may be
+            // a long history, and only its start goes.
+            let mut after = -1i64;
+            'walk: loop {
+                let frames: Vec<Kept> = {
+                    let mut statement = db.prepare_cached(
+                        "SELECT epoch, first, count, head, header, body FROM frames
+                         WHERE stream = ?1 AND holding = ?2 AND first > ?3 ORDER BY first LIMIT ?4",
+                    )?;
+                    let rows = statement.query_map(params![stream_id, holding, after, super::rejected::FRAMES_AT_ONCE], |row| {
+                        Ok(Kept {
+                            epoch: row.get(0)?,
+                            first: row.get(1)?,
+                            count: row.get(2)?,
+                            head: row.get(3)?,
+                            header: row.get(4)?,
+                            body: row.get(5)?,
+                        })
+                    })?;
+                    rows.collect::<std::result::Result<_, _>>()?
+                };
+                if frames.is_empty() {
                     break;
                 }
-                if own {
-                    let witnessed: Option<i64> = db
-                        .prepare_cached(
-                            "SELECT checkpointed FROM hub_receipts WHERE stream = ?1 AND epoch = ?2 AND first = ?3 AND kind = 'applied'",
-                        )?
-                        .query_row(params![stream_id, epoch, first], |row| row.get(0))
-                        .optional()?;
-                    if witnessed != Some(1) {
-                        break;
+                for Kept { epoch, first, count, head, header, body } in frames {
+                    if (first + count - 1) as u64 > through {
+                        break 'walk;
                     }
-                }
-                let header = Header::decode(&header).map_err(invalid)?;
-                for record in open(&header, &body).map_err(invalid)? {
-                    let row: Option<(Vec<u8>, Option<Vec<u8>>, i64)> = db
-                        .prepare_cached("SELECT place, objects, revision FROM items WHERE stream = ?1 AND item = ?2 AND holding = ?3")?
-                        .query_row(params![stream_id, record.record.item, holding], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
-                        .optional()?;
-                    // Only an item whose latest revision is in this frame
-                    // leaves the index with it.
-                    if let Some((place, objects, revision)) = row
-                        && revision >= first
-                        && revision < first + count
-                    {
-                        if let Some(objects) = objects {
-                            for object in unpack(&objects).map_err(invalid)? {
-                                unrefer(db, at.scope, at.holding, &object.hash)?;
-                            }
+                    if own {
+                        let witnessed: Option<i64> = db
+                            .prepare_cached(
+                                "SELECT checkpointed FROM hub_receipts WHERE stream = ?1 AND epoch = ?2 AND first = ?3 AND kind = 'applied'",
+                            )?
+                            .query_row(params![stream_id, epoch, first], |row| row.get(0))
+                            .optional()?;
+                        if witnessed != Some(1) {
+                            break 'walk;
                         }
-                        db.prepare_cached("DELETE FROM items WHERE stream = ?1 AND place = ?2 AND item = ?3")?
-                            .execute(params![stream_id, place, record.record.item])?;
-                        pruned.items += 1;
                     }
+                    let header = Header::decode(&header).map_err(invalid)?;
+                    for record in open(&header, &body).map_err(invalid)? {
+                        let row: Option<(Vec<u8>, Option<Vec<u8>>, i64)> = db
+                            .prepare_cached("SELECT place, objects, revision FROM items WHERE stream = ?1 AND item = ?2 AND holding = ?3")?
+                            .query_row(params![stream_id, record.record.item, holding], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+                            .optional()?;
+                        // Only an item whose latest revision is in this frame
+                        // leaves the index with it.
+                        if let Some((place, objects, revision)) = row
+                            && revision >= first
+                            && revision < first + count
+                        {
+                            if let Some(objects) = objects {
+                                for object in unpack(&objects).map_err(invalid)? {
+                                    unrefer(db, at.scope, at.holding, &object.hash)?;
+                                }
+                            }
+                            db.prepare_cached("DELETE FROM items WHERE stream = ?1 AND place = ?2 AND item = ?3")?
+                                .execute(params![stream_id, place, record.record.item])?;
+                            pruned.items += 1;
+                        }
+                    }
+                    for table in ["frame_objects", "frames"] {
+                        db.prepare_cached(&format!("DELETE FROM {table} WHERE stream = ?1 AND epoch = ?2 AND first = ?3 AND holding = ?4"))?
+                            .execute(params![stream_id, epoch, first, holding])?;
+                    }
+                    pruned.frames += 1;
+                    floor = Some((first + count, head));
+                    after = first;
                 }
-                for table in ["frame_objects", "frames"] {
-                    db.prepare_cached(&format!("DELETE FROM {table} WHERE stream = ?1 AND epoch = ?2 AND first = ?3 AND holding = ?4"))?
-                        .execute(params![stream_id, epoch, first, holding])?;
-                }
-                pruned.frames += 1;
-                floor = Some((first + count, head));
             }
             if let Some((sequence, head)) = floor {
                 db.prepare_cached(
@@ -134,9 +144,10 @@ impl Library {
     }
 
     /// Cuts a replica's `stream` back to sequence `through`, the last one
-    /// that agrees with the hub, and rebuilds its index rows from the frames
-    /// left; the hub's frames after it come again (§7.5).
-    pub fn truncate(&self, scope: &str, stream: &str, through: u64) -> Result<()> {
+    /// that agrees with the hub — `None` when even its first frame differs —
+    /// and rebuilds its index rows from the frames left; the hub's frames
+    /// after it come again (§7.5).
+    pub fn truncate(&self, scope: &str, stream: &str, through: Option<u64>) -> Result<()> {
         let (scope, stream) = (scope.to_string(), stream.to_string());
         Ok(self.database().write_now_at(Priority::Normal, 4096, move |db| {
             let Some((scope_id, _, Some(holding))) = held(db, &scope)? else { return Err(invalid("the scope is not held here")) };
@@ -145,19 +156,33 @@ impl Library {
                 .query_row(params![scope_id, stream], |row| row.get(0))
                 .optional()?
                 .ok_or_else(|| invalid("no such stream"))?;
-            let head: Option<Vec<u8>> = db
-                .prepare_cached("SELECT head FROM frames WHERE stream = ?1 AND holding = ?2 AND first + count - 1 = ?3")?
-                .query_row(params![stream_id, holding, through as i64], |row| row.get(0))
-                .optional()?;
-            let Some(head) = head else { return Err(invalid("no frame ends at that sequence")) };
+            let head: Option<Vec<u8>> = match through {
+                None => None,
+                Some(through) => Some(
+                    db.prepare_cached("SELECT head FROM frames WHERE stream = ?1 AND holding = ?2 AND first + count - 1 = ?3")?
+                        .query_row(params![stream_id, holding, through as i64], |row| row.get(0))
+                        .optional()?
+                        .ok_or_else(|| invalid("no frame ends at that sequence"))?,
+                ),
+            };
+            let keep = through.map_or(-1, |through| through as i64);
             for table in ["frame_objects", "frames"] {
                 db.prepare_cached(&format!("DELETE FROM {table} WHERE stream = ?1 AND holding = ?2 AND first > ?3"))?
-                    .execute(params![stream_id, holding, through as i64])?;
+                    .execute(params![stream_id, holding, keep])?;
             }
-            db.prepare_cached("UPDATE cursors SET sequence = ?3, head = ?4 WHERE stream = ?1 AND holding = ?2")?
-                .execute(params![stream_id, holding, through as i64, head])?;
+            match &head {
+                Some(head) => {
+                    db.prepare_cached("UPDATE cursors SET sequence = ?3, head = ?4 WHERE stream = ?1 AND holding = ?2")?
+                        .execute(params![stream_id, holding, keep, head])?;
+                }
+                // Back to the empty start: the period has no frame of it.
+                None => {
+                    db.prepare_cached("DELETE FROM cursors WHERE stream = ?1 AND holding = ?2")?
+                        .execute(params![stream_id, holding])?;
+                }
+            }
             db.prepare_cached("UPDATE streams SET next = ?2, head = ?3 WHERE id = ?1")?
-                .execute(params![stream_id, through as i64 + 1, head])?;
+                .execute(params![stream_id, keep + 1, head])?;
             super::rejected::rebuild(db, Applying { scope: scope_id, stream: stream_id, holding })
         })?)
     }

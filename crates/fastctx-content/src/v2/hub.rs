@@ -44,9 +44,12 @@ pub trait HubSigner: Send + Sync {
     fn sign(&self, statement: &[u8]) -> Vec<u8>;
 }
 
-/// How the source's hold on the objects stands: those it may read through
-/// the gate, and those it proved.
-pub struct Holding<'a> {
+/// How a frame is taken: in which of the hub's holding periods of its scope
+/// (one that ended meanwhile writes nothing, §4.5), and how its source's
+/// hold on the objects stands: those it may read through the gate, and
+/// those it proved.
+pub struct Taking<'a> {
+    pub period: i64,
     pub readable: &'a (dyn Fn(&ObjectRef) -> bool + Sync),
     pub proven: &'a [[u8; 32]],
 }
@@ -266,7 +269,7 @@ impl Library {
         scope: &str,
         frame: RawFrame,
         verifier: &dyn Verifier,
-        holding: &Holding<'_>,
+        taking: &Taking<'_>,
         authorizer: std::sync::Arc<dyn Authorizer>,
         signer: std::sync::Arc<dyn HubSigner>,
     ) -> Result<Received> {
@@ -286,7 +289,7 @@ impl Library {
         for object in &objects {
             match self.size(&object.hash)? {
                 Some(size) if size == object.size => {
-                    if !(holding.readable)(object) && !holding.proven.contains(&object.hash) {
+                    if !(taking.readable)(object) && !taking.proven.contains(&object.hash) {
                         unproven.push(*object);
                     }
                 }
@@ -300,7 +303,7 @@ impl Library {
         if !unproven.is_empty() {
             return Ok(Received::Prove(unproven));
         }
-        let scope = scope.to_string();
+        let (scope, period) = (scope.to_string(), taking.period);
         let bytes = frame.body.len() + frame.header.len() + 1024 + records.len() * 64;
         Ok(self.database().write_now_at(Priority::Normal, bytes, move |db| {
             let Some((scope_id, state, Some(holding_id))) = held(db, &scope)? else {
@@ -308,6 +311,9 @@ impl Library {
             };
             if state != "live" {
                 return Err(invalid("the scope is not live"));
+            }
+            if holding_id != period {
+                return Err(invalid("the holding period the frame was taken in has ended"));
             }
             for object in &objects {
                 if present(db, &object.hash)?.is_none() {

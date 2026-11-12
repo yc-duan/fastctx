@@ -31,6 +31,9 @@ pub struct Commit {
     /// The operation a true source's write carries (§3), and whether its
     /// records are words for a host.
     pub op: Option<(super::ops::Op, bool)>,
+    /// The holding period the records were made in (`Library::holding`): a
+    /// commit whose period ended meanwhile writes nothing (§4.5).
+    pub holding: i64,
 }
 
 /// Where a commit left its stream.
@@ -63,7 +66,7 @@ impl Library {
     /// Commits `commit` as the stream's ordering device, signing each frame
     /// with `signer`.
     pub fn commit(&self, commit: Commit, signer: Arc<dyn Signer>) -> Result<Committed> {
-        self.commit_then(commit, signer, |_| Ok(()))
+        self.commit_then(commit, signer, |_, _| Ok(()))
     }
 
     /// Commits as `commit` does, with `then` done in the same transaction
@@ -72,7 +75,7 @@ impl Library {
         &self,
         commit: Commit,
         signer: Arc<dyn Signer>,
-        then: impl FnOnce(&Connection) -> fastctx_storage::Result<()> + Send + 'static,
+        then: impl FnOnce(&Connection, u64) -> fastctx_storage::Result<()> + Send + 'static,
     ) -> Result<Committed> {
         for record in &commit.records {
             record.record.check().map_err(Error::Invalid)?;
@@ -89,6 +92,9 @@ impl Library {
             };
             if state != "live" && state != "provisional" {
                 return Err(invalid("the scope is not held here"));
+            }
+            if holding != commit.holding {
+                return Err(invalid("the holding period the records were made in has ended"));
             }
             for record in &commit.records {
                 if let State::Is { objects, .. } = &record.record.state {
@@ -164,12 +170,9 @@ impl Library {
             .execute(params![stream, holding, first as i64 - 1, &head[..]])?;
             floors_passed(db, stream, first - 1)?;
             release_in(db, &commit.leases)?;
-            then(db)?;
+            then(db, next)?;
             if let Some((op, words)) = &commit.op {
-                let mut record = commit.stream.as_bytes().to_vec();
-                record.push(0);
-                record.extend_from_slice(&commit.records[0].record.item);
-                super::ops::landed(db, op, &record, *words)?;
+                super::ops::landed(db, op, scope, &commit.stream, next, first - next, *words)?;
             }
             Ok(Committed { first: next, count: first - next, frames: sealed.len(), head, duplicate: false })
         };

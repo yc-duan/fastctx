@@ -43,6 +43,13 @@ fn open_holding(db: &Connection, scope: i64, acl_revision: i64) -> fastctx_stora
 }
 
 impl Library {
+    /// The current holding period of `scope` here, if it is held: what a
+    /// write made now carries (`Commit::holding`).
+    pub fn holding(&self, scope: &str) -> Result<Option<i64>> {
+        let scope = scope.to_string();
+        Ok(self.database().read_now(move |db| Ok(held(db, &scope)?.and_then(|(_, _, holding)| holding)))?)
+    }
+
     /// A scope this machine has before any hub described it (§2.1, R26):
     /// readable here, never uploaded or supplied until it is installed.
     pub fn provisional(&self, key: &str) -> Result<i64> {
@@ -119,6 +126,7 @@ impl Library {
             for (scope, holding) in purges {
                 let current: Option<i64> =
                     db.prepare_cached("SELECT holding FROM scopes WHERE id = ?1")?.query_row([scope], |row| row.get(0))?;
+                purged.rows += super::rejected::end_resubmits(db, scope, holding)?;
                 let mut done = 0usize;
                 for (table, key) in [
                     ("frame_objects", "stream, epoch, first, holding, hash"),

@@ -91,27 +91,36 @@ impl Library {
             if present(db, &object.hash)?.is_some() {
                 return Ok(None);
             }
-            let known: Option<(i64, String, Vec<u8>)> = db
-                .prepare_cached("SELECT id, part, ranges FROM transfers WHERE hash = ?1 AND size = ?2")?
-                .query_row(params![&object.hash[..], object.size as i64], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            let known: Option<(i64, String, Vec<u8>, Vec<u8>)> = db
+                .prepare_cached("SELECT id, part, ranges, manifest FROM transfers WHERE hash = ?1 AND size = ?2")?
+                .query_row(params![&object.hash[..], object.size as i64], |row| {
+                    Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+                })
                 .optional()?;
-            if let Some(known) = known {
-                return Ok(Some(known));
+            let mut stale = None;
+            match known {
+                Some((id, part, ranges, known)) if known == manifest => return Ok(Some((id, part, ranges, None))),
+                // Another manifest: what was received under the old one
+                // counts for nothing.
+                Some((id, part, _, _)) => {
+                    db.prepare_cached("DELETE FROM transfers WHERE id = ?1")?.execute([id])?;
+                    stale = Some(part);
+                }
+                None => {}
             }
             db.prepare_cached(
-                "INSERT INTO transfers (hash, size, chunk, part, ranges, source) VALUES (?1, ?2, ?3, '', x'', ?4)",
+                "INSERT INTO transfers (hash, size, chunk, part, ranges, manifest, source) VALUES (?1, ?2, ?3, '', x'', ?4, ?5)",
             )?
-            .execute(params![&object.hash[..], object.size as i64, CHUNK_BYTES as i64, source])?;
+            .execute(params![&object.hash[..], object.size as i64, CHUNK_BYTES as i64, manifest, source])?;
             let id = db.last_insert_rowid();
             let part = format!("transfer-{id}.part");
             db.prepare_cached("UPDATE transfers SET part = ?2 WHERE id = ?1")?.execute(params![id, part])?;
-            let mut rows = db.prepare_cached("INSERT OR IGNORE INTO object_chunks (hash, first, digests) VALUES (?1, ?2, ?3)")?;
-            for (row, slice) in manifest.chunks(32 * super::objects::DIGESTS_PER_ROW as usize).enumerate() {
-                rows.execute(params![&object.hash[..], row as i64 * super::objects::DIGESTS_PER_ROW as i64, slice])?;
-            }
-            Ok(Some((id, part, Vec::new())))
+            Ok(Some((id, part, Vec::new(), stale)))
         })?;
-        let Some((id, part, ranges)) = found else { return Ok(None) };
+        let Some((id, part, ranges, stale)) = found else { return Ok(None) };
+        if let Some(stale) = stale {
+            let _ = std::fs::remove_file(directory.join(stale));
+        }
         let path = directory.join(&part);
         let file = std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(false).open(&path).map_err(io)?;
         let chunks = chunk_count(object.size);
@@ -236,10 +245,20 @@ impl Transfer {
             read_total += read as u64;
         }
         if read_total != self.object.size || <[u8; 32]>::from(hasher.finalize()) != self.object.hash {
+            // Its chunks matched a manifest that was wrong: the transfer
+            // goes, and the next one starts afresh from a source.
+            let (library, id) = (self.library.clone(), self.id);
+            drop(self.file);
+            let _ = std::fs::remove_file(&self.part);
+            library.database().write_now_at(Priority::Normal, 64, move |db| {
+                db.prepare_cached("DELETE FROM transfers WHERE id = ?1")?.execute([id])?;
+                Ok(())
+            })?;
             return Err(Error::Invalid("the received object does not hash to what it was asked as".into()));
         }
         self.file.sync_all().map_err(io)?;
         let (object, id) = (self.object, self.id);
+        let manifest: Vec<u8> = self.digests.iter().flatten().copied().collect();
         let life = self.library.database().write_now_at(Priority::Normal, 256, move |db| {
             if present(db, &object.hash)?.is_some() {
                 return Ok(None);
@@ -270,7 +289,7 @@ impl Transfer {
         fastctx_platform::durable_file::prepare_directory(place.parent().expect("an object's bucket")).map_err(io)?;
         std::fs::rename(&self.part, &place).map_err(io)?;
         sync_parent(&place).map_err(io)?;
-        Ok(library.database().write_now_at(Priority::Normal, 256, move |db| {
+        Ok(library.database().write_now_at(Priority::Normal, 256 + manifest.len(), move |db| {
             let changed = db
                 .prepare_cached("UPDATE objects SET state = 1, placed = ?3 WHERE hash = ?1 AND life = ?2 AND state = 0")?
                 .execute(params![&object.hash[..], life, now()])?;
@@ -279,6 +298,10 @@ impl Transfer {
             }
             db.prepare_cached("INSERT OR REPLACE INTO published (hash, life, at) VALUES (?1, ?2, ?3)")?
                 .execute(params![&object.hash[..], life, now()])?;
+            let mut rows = db.prepare_cached("INSERT OR REPLACE INTO object_chunks (hash, first, digests) VALUES (?1, ?2, ?3)")?;
+            for (row, slice) in manifest.chunks(32 * super::objects::DIGESTS_PER_ROW as usize).enumerate() {
+                rows.execute(params![&object.hash[..], row as i64 * super::objects::DIGESTS_PER_ROW as i64, slice])?;
+            }
             db.prepare_cached("DELETE FROM transfers WHERE id = ?1")?.execute([id])?;
             let expires = now() + ttl.as_millis() as i64;
             db.prepare_cached("INSERT INTO leases (hash, holder, expires) VALUES (?1, ?2, ?3)")?

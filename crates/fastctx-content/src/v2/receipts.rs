@@ -2,10 +2,13 @@
 //!
 //! A frame is stored as `parked` (kept, not yet applied, with the scope's
 //! parked sequence and accumulator), `applied` (with its change number) or
-//! `rejected`. A receipt stays unwitnessed until the hub says a checkpoint
-//! written outside its directory covers it; until then the device reports
-//! its latest unwitnessed receipt of each scope when it opens a session, and
-//! keeps the frames it covers (§4.6, Q06, Q07).
+//! `rejected`; each word is kept with its own signature, so a parked
+//! receipt stays a witness after the frame is applied. A receipt stays
+//! unwitnessed until the hub says a checkpoint written outside its
+//! directory covers it; until then the device reports it when it opens a
+//! session — every one, not only the latest: one from a history the hub
+//! has lost may have a smaller number than one from the history it has —
+//! and keeps the frames it covers (§4.6, §17).
 
 use super::Library;
 use super::scopes::held;
@@ -34,8 +37,8 @@ pub struct Receipt {
 }
 
 impl Library {
-    /// Keeps a receipt of `scope`; a later word on the same frame replaces
-    /// an earlier one (parked, then applied or rejected).
+    /// Keeps a receipt of `scope`. A parked or applied frame counts as
+    /// uploaded: the hub keeps its bytes.
     pub fn receipt(&self, scope: &str, receipt: Receipt) -> Result<()> {
         let scope = scope.to_string();
         Ok(self.database().write_relaxed_now_at(Priority::Normal, 256 + receipt.signature.len(), move |db| {
@@ -53,13 +56,11 @@ impl Library {
             db.prepare_cached(
                 "INSERT INTO hub_receipts (stream, epoch, first, digest, kind, change, parked, accumulated, signature, checkpointed)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0)
-                 ON CONFLICT (stream, epoch, first, digest) DO UPDATE SET
-                    kind = excluded.kind,
-                    change = COALESCE(excluded.change, hub_receipts.change),
-                    parked = COALESCE(hub_receipts.parked, excluded.parked),
-                    accumulated = COALESCE(hub_receipts.accumulated, excluded.accumulated),
-                    signature = excluded.signature,
-                    checkpointed = CASE WHEN hub_receipts.kind = excluded.kind THEN hub_receipts.checkpointed ELSE 0 END",
+                 ON CONFLICT (stream, epoch, first, digest, kind) DO UPDATE SET
+                    change = excluded.change,
+                    parked = excluded.parked,
+                    accumulated = excluded.accumulated,
+                    signature = excluded.signature",
             )?
             .execute(params![
                 stream,
@@ -72,12 +73,18 @@ impl Library {
                 accumulated,
                 receipt.signature
             ])?;
-            if kind == "applied" {
+            if kind != "rejected" {
+                let count: i64 = db
+                    .prepare_cached("SELECT count FROM frames WHERE stream = ?1 AND epoch = ?2 AND first = ?3 LIMIT 1")?
+                    .query_row(params![stream, receipt.epoch as i64, receipt.first as i64], |row| row.get(0))
+                    .optional()?
+                    .unwrap_or(1);
+                // Where uploading goes on from: past the frame.
                 db.prepare_cached(
                     "INSERT INTO outbox (stream, uploaded) VALUES (?1, ?2)
                      ON CONFLICT (stream) DO UPDATE SET uploaded = MAX(uploaded, excluded.uploaded)",
                 )?
-                .execute(params![stream, receipt.first as i64])?;
+                .execute(params![stream, receipt.first as i64 + count])?;
             }
             Ok(())
         })?)
@@ -99,18 +106,16 @@ impl Library {
         })?)
     }
 
-    /// The latest unwitnessed applied and parked receipt of each scope here,
-    /// for the hub to check when a session opens (§17).
+    /// Every unwitnessed applied and parked receipt here, for the hub to
+    /// check when a session opens (§17): few, as each checkpoint the hub
+    /// confirms takes those it covers off.
     pub fn unwitnessed(&self) -> Result<Vec<(String, Receipt)>> {
         Ok(self.database().read_now(|db| {
             let mut statement = db.prepare_cached(
                 "SELECT c.key, s.name, r.epoch, r.first, r.digest, r.kind, r.change, r.parked, r.accumulated, r.signature
                  FROM hub_receipts r JOIN streams s ON s.id = r.stream JOIN scopes c ON c.id = s.scope
                  WHERE r.checkpointed = 0 AND r.kind IN ('applied', 'parked')
-                   AND NOT EXISTS (
-                     SELECT 1 FROM hub_receipts later JOIN streams ls ON ls.id = later.stream
-                     WHERE ls.scope = s.scope AND later.checkpointed = 0 AND later.kind = r.kind
-                       AND ((r.kind = 'applied' AND later.change > r.change) OR (r.kind = 'parked' AND later.parked > r.parked)))",
+                 ORDER BY c.key, r.kind, COALESCE(r.change, r.parked)",
             )?;
             let rows = statement.query_map([], |row| {
                 Ok((

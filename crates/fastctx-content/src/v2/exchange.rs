@@ -106,8 +106,18 @@ impl Library {
         })?)
     }
 
-    /// Imports one frame of `scope` as `holder`.
-    pub fn import(&self, scope: &str, frame: RawFrame, verifier: &dyn Verifier, holder: Holder) -> Result<Imported> {
+    /// Imports one frame of `scope` as `holder`, into the holding period
+    /// `holding` it was asked for in: once that period ended, nothing is
+    /// written (§4.5).
+    pub fn import(
+        &self,
+        scope: &str,
+        frame: RawFrame,
+        verifier: &dyn Verifier,
+        holder: Holder,
+        holding: i64,
+    ) -> Result<Imported> {
+        let expected = holding;
         let header = Header::decode(&frame.header).map_err(Error::Invalid)?;
         if header.scope != scope {
             return Err(Error::Invalid("the frame is of another scope".into()));
@@ -127,6 +137,9 @@ impl Library {
             };
             if state != "live" {
                 return Err(invalid("a scope takes frames from elsewhere once it is installed"));
+            }
+            if holding != expected {
+                return Err(invalid("the holding period the frame was asked for in has ended"));
             }
             let stream = stream_id(db, scope_id, &header.stream)?;
             let known: Option<Vec<u8>> = db

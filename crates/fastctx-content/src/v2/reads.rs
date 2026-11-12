@@ -45,9 +45,11 @@ fn entry(row: &fastctx_storage::rusqlite::Row<'_>) -> fastctx_storage::rusqlite:
 }
 
 impl Library {
-    /// Up to `limit` live items of `stream` after the order key `after`, in
-    /// order, from the current holding period.
-    pub fn page(&self, scope: &str, stream: &str, after: Option<Vec<u8>>, limit: usize) -> Result<Vec<Entry>> {
+    /// Up to `limit` live items of `stream` in order, from the current
+    /// holding period: from the first, or after the entry `after` (its order
+    /// key and identity, as the last page ended). Order keys may be empty
+    /// and may repeat; the identity breaks ties.
+    pub fn page(&self, scope: &str, stream: &str, after: Option<(Vec<u8>, Vec<u8>)>, limit: usize) -> Result<Vec<Entry>> {
         let (scope, stream) = (scope.to_string(), stream.to_string());
         let limit = limit.min(PAGE) as i64;
         Ok(self.database().read_now(move |db| {
@@ -55,10 +57,13 @@ impl Library {
             let mut statement = db.prepare_cached(
                 "SELECT i.item, i.place, i.revision, i.kind, i.schema, i.body, i.objects FROM items i
                  JOIN streams s ON s.id = i.stream
-                 WHERE s.scope = ?1 AND s.name = ?2 AND i.holding = ?3 AND i.state = ?4 AND i.place > ?5
-                 ORDER BY i.place, i.item LIMIT ?6",
+                 WHERE s.scope = ?1 AND s.name = ?2 AND i.holding = ?3 AND i.state = ?4
+                   AND (?5 = 0 OR (i.place, i.item) > (?6, ?7))
+                 ORDER BY i.place, i.item LIMIT ?8",
             )?;
-            let rows = statement.query_map(params![scope, stream, holding, IS, after.unwrap_or_default(), limit], entry)?;
+            let started = after.is_some();
+            let (place, item) = after.unwrap_or_default();
+            let rows = statement.query_map(params![scope, stream, holding, IS, started, place, item, limit], entry)?;
             let mut entries = Vec::new();
             for row in rows {
                 let (mut entry, objects) = row?;

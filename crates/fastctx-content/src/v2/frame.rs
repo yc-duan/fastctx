@@ -8,7 +8,7 @@
 //! the records. The chain value takes in scope, stream and epoch, so a frame
 //! cannot be passed off as another stream's or another epoch's.
 
-use crate::record::{FRAME_BYTES, FRAME_RECORDS, RECORD_BYTES, Record};
+use crate::record::{FRAME_BYTES, FRAME_RECORDS, Record};
 use sha2::{Digest, Sha256};
 
 /// The header's format.
@@ -186,14 +186,22 @@ fn close(raw: &[u8], records: std::ops::Range<usize>) -> Result<Sealed, String> 
 /// The records of a frame's body, checked against the header's count and
 /// digest.
 pub fn open(header: &Header, body: &[u8]) -> Result<Vec<KindRecord>, String> {
-    let raw = zstd::bulk::decompress(body, FRAME_BYTES + RECORD_BYTES + 4 * FRAME_RECORDS)
-        .map_err(|error| format!("a frame does not decompress: {error}"))?;
+    // The bounds a frame is made within (§2.2) are checked before anything
+    // is sized by what it says.
+    if header.count == 0 || header.count as usize > FRAME_RECORDS {
+        return Err(format!("a frame holds 1 to {FRAME_RECORDS} records"));
+    }
+    let raw = zstd::bulk::decompress(body, FRAME_BYTES)
+        .map_err(|error| format!("a frame does not decompress within {FRAME_BYTES} bytes: {error}"))?;
     if <[u8; 32]>::from(Sha256::digest(&raw)) != header.digest {
         return Err("a frame's records do not match its header's digest".into());
     }
     let mut rest = raw.as_slice();
-    let mut records = Vec::with_capacity(header.count as usize);
+    let mut records = Vec::new();
     while !rest.is_empty() {
+        if records.len() == header.count as usize {
+            return Err(format!("a frame said {} records and holds more", header.count));
+        }
         records.push(KindRecord::decode(&mut rest)?);
     }
     if records.len() != header.count as usize {

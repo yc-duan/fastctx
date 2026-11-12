@@ -54,10 +54,43 @@ pub(super) fn seen(db: &Connection, op: &Op) -> fastctx_storage::Result<bool> {
     }
 }
 
-/// Records `op` as landed at `record`, words starting as kept.
-pub(super) fn landed(db: &Connection, op: &Op, record: &[u8], words: bool) -> fastctx_storage::Result<()> {
-    db.prepare_cached("INSERT INTO ops (op, digest, kind, record, state, delivery) VALUES (?1, ?2, ?3, ?4, 'durable', ?5)")?
-        .execute(params![op.id, &op.digest[..], op.kind, record, words.then_some("kept")])?;
+/// Records `op` as landed as the records `first` to `first + count - 1` of
+/// `stream` in `scope`, words starting as kept.
+pub(super) fn landed(
+    db: &Connection,
+    op: &Op,
+    scope: i64,
+    stream: &str,
+    first: u64,
+    count: u64,
+    words: bool,
+) -> fastctx_storage::Result<()> {
+    db.prepare_cached("INSERT INTO ops (op, digest, kind, state, delivery, kept, why) VALUES (?1, ?2, ?3, 'durable', ?4, NULL, NULL)")?
+        .execute(params![op.id, &op.digest[..], op.kind, words.then_some("kept")])?;
+    let mut mapping = db.prepare_cached("INSERT OR REPLACE INTO op_records (scope, stream, revision, op) VALUES (?1, ?2, ?3, ?4)")?;
+    for revision in first..first + count {
+        mapping.execute(params![scope, stream, revision as i64, op.id])?;
+    }
+    Ok(())
+}
+
+/// The operation whose record stands at `revision` of `stream` in `scope`.
+pub(super) fn op_at(db: &Connection, scope: i64, stream: &str, revision: u64) -> fastctx_storage::Result<Option<String>> {
+    Ok(db
+        .prepare_cached("SELECT op FROM op_records WHERE scope = ?1 AND stream = ?2 AND revision = ?3")?
+        .query_row(params![scope, stream, revision as i64], |row| row.get(0))
+        .optional()?)
+}
+
+/// A refused record of a true source's write is kept in its operation, with
+/// why, for the user to see, drop or send again (§6.5).
+pub(super) fn refused_in(db: &Connection, op: &str, record: &[u8], why: &str) -> fastctx_storage::Result<()> {
+    let kept: Option<Vec<u8>> =
+        db.prepare_cached("SELECT kept FROM ops WHERE op = ?1")?.query_row([op], |row| row.get(0)).optional()?.flatten();
+    let mut kept = kept.unwrap_or_default();
+    kept.extend_from_slice(&(record.len() as u32).to_le_bytes());
+    kept.extend_from_slice(record);
+    db.prepare_cached("UPDATE ops SET state = 'refused', kept = ?2, why = ?3 WHERE op = ?1")?.execute(params![op, kept, why])?;
     Ok(())
 }
 
@@ -93,6 +126,30 @@ impl Library {
             _ => self.database().write_relaxed_now_at(Priority::Normal, 128, write)?,
         }
         Ok(())
+    }
+
+    /// What of `op` could not be written, and why: its records as the user
+    /// wrote them, kept until the user drops it or sends it again.
+    pub fn refused(&self, op: &str) -> Result<Option<(Vec<super::frame::KindRecord>, String)>> {
+        let op = op.to_string();
+        Ok(self.database().read_now(move |db| {
+            let found: Option<(Option<Vec<u8>>, Option<String>)> = db
+                .prepare_cached("SELECT kept, why FROM ops WHERE op = ?1 AND state = 'refused'")?
+                .query_row([&op], |row| Ok((row.get(0)?, row.get(1)?)))
+                .optional()?;
+            let Some((kept, why)) = found else { return Ok(None) };
+            let mut records = Vec::new();
+            let mut rest = kept.unwrap_or_default();
+            let mut cursor = rest.as_slice();
+            while cursor.len() >= 4 {
+                let length = u32::from_le_bytes(cursor[..4].try_into().expect("four bytes")) as usize;
+                let record = cursor.get(4..4 + length).ok_or_else(|| invalid("a kept record is cut short"))?;
+                records.push(super::rejected::decode(record).map_err(invalid)?);
+                cursor = &cursor[4 + length..];
+            }
+            rest.clear();
+            Ok(Some((records, why.unwrap_or_default())))
+        })?)
     }
 
     /// Where the words of `op` stand, if it carried words.

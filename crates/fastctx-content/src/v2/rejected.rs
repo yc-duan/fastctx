@@ -27,6 +27,9 @@ use std::sync::Arc;
 pub struct Resubmit {
     pub rejected: u64,
     pub position: u64,
+    /// The holding period it was rejected in: it is committed again only in
+    /// that period.
+    pub holding: i64,
     pub record: KindRecord,
     pub op: Option<String>,
 }
@@ -39,7 +42,7 @@ fn encode(record: &KindRecord) -> Vec<u8> {
     raw
 }
 
-fn decode(raw: &[u8]) -> std::result::Result<KindRecord, String> {
+pub(super) fn decode(raw: &[u8]) -> std::result::Result<KindRecord, String> {
     if raw.len() < 4 {
         return Err("a kept record is cut short".into());
     }
@@ -50,6 +53,9 @@ fn decode(raw: &[u8]) -> std::result::Result<KindRecord, String> {
         record: crate::Record::decode(&mut rest)?,
     })
 }
+
+/// Frames read at once when a stream is walked.
+pub(super) const FRAMES_AT_ONCE: i64 = 16;
 
 fn holder(stream: i64, rejected: u64) -> String {
     format!("{stream}:{rejected}")
@@ -69,19 +75,28 @@ pub(super) fn rebuild(db: &Connection, at: Applying) -> fastctx_storage::Result<
         }
     }
     db.prepare_cached("DELETE FROM items WHERE stream = ?1 AND holding = ?2")?.execute(params![at.stream, at.holding])?;
-    let frames: Vec<(Vec<u8>, Vec<u8>)> = {
-        let mut statement =
-            db.prepare_cached("SELECT header, body FROM frames WHERE stream = ?1 AND holding = ?2 ORDER BY first")?;
-        let rows = statement.query_map(params![at.stream, at.holding], |row| Ok((row.get(0)?, row.get(1)?)))?;
-        rows.collect::<std::result::Result<_, _>>()?
-    };
-    for (header, body) in frames {
-        let header = Header::decode(&header).map_err(invalid)?;
-        for (offset, record) in open(&header, &body).map_err(invalid)?.iter().enumerate() {
-            apply(db, at, header.first + offset as u64, record)?;
+    // A few frames at a time: a stream's whole history is not held at once.
+    let mut after = -1i64;
+    loop {
+        let frames: Vec<(i64, Vec<u8>, Vec<u8>)> = {
+            let mut statement = db.prepare_cached(
+                "SELECT first, header, body FROM frames WHERE stream = ?1 AND holding = ?2 AND first > ?3 ORDER BY first LIMIT ?4",
+            )?;
+            let rows = statement
+                .query_map(params![at.stream, at.holding, after, FRAMES_AT_ONCE], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+            rows.collect::<std::result::Result<_, _>>()?
+        };
+        if frames.is_empty() {
+            return Ok(());
+        }
+        for (first, header, body) in frames {
+            let header = Header::decode(&header).map_err(invalid)?;
+            for (offset, record) in open(&header, &body).map_err(invalid)?.iter().enumerate() {
+                apply(db, at, header.first + offset as u64, record)?;
+            }
+            after = first;
         }
     }
-    Ok(())
 }
 
 impl Library {
@@ -100,40 +115,43 @@ impl Library {
             else {
                 return Ok(0);
             };
-            let frames: Vec<(i64, i64, Vec<u8>, Vec<u8>)> = {
-                let mut statement = db.prepare_cached(
-                    "SELECT epoch, first, header, body FROM frames WHERE stream = ?1 AND holding = ?2 AND first >= ?3 ORDER BY first",
-                )?;
-                let rows = statement.query_map(params![stream_id, holding, first as i64], |row| {
-                    Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
-                })?;
-                rows.collect::<std::result::Result<_, _>>()?
-            };
             let key = holder(stream_id, first);
             let mut position = 0u64;
-            for (_, _, header, body) in &frames {
-                let header = Header::decode(header).map_err(invalid)?;
-                for record in open(&header, body).map_err(invalid)? {
-                    let mut place = stream.as_bytes().to_vec();
-                    place.push(0);
-                    place.extend_from_slice(&record.record.item);
-                    let op: Option<String> = db
-                        .prepare_cached("SELECT op FROM ops WHERE record = ?1")?
-                        .query_row([&place], |row| row.get(0))
-                        .optional()?;
-                    db.prepare_cached(
-                        "INSERT INTO resubmits (stream, rejected, position, record, op) VALUES (?1, ?2, ?3, ?4, ?5)",
-                    )?
-                    .execute(params![stream_id, first as i64, position as i64, encode(&record), op])?;
-                    if let State::Is { objects, .. } = &record.record.state {
-                        for object in objects {
-                            db.prepare_cached(
-                                "INSERT OR IGNORE INTO object_holds (kind, holder, hash, proven) VALUES ('resubmit', ?1, ?2, 0)",
-                            )?
-                            .execute(params![key, &object.hash[..]])?;
+            // A few frames at a time: the run after a rejected frame can be
+            // long when its producer was away.
+            let mut after = first as i64 - 1;
+            loop {
+                let frames: Vec<(i64, Vec<u8>, Vec<u8>)> = {
+                    let mut statement = db.prepare_cached(
+                        "SELECT first, header, body FROM frames WHERE stream = ?1 AND holding = ?2 AND first > ?3 ORDER BY first LIMIT ?4",
+                    )?;
+                    let rows = statement.query_map(params![stream_id, holding, after, FRAMES_AT_ONCE], |row| {
+                        Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+                    })?;
+                    rows.collect::<std::result::Result<_, _>>()?
+                };
+                if frames.is_empty() {
+                    break;
+                }
+                for (start, header, body) in frames {
+                    let header = Header::decode(&header).map_err(invalid)?;
+                    for (offset, record) in open(&header, &body).map_err(invalid)?.into_iter().enumerate() {
+                        let op = super::ops::op_at(db, scope_id, &stream, header.first + offset as u64)?;
+                        db.prepare_cached(
+                            "INSERT INTO resubmits (stream, rejected, position, holding, record, op) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                        )?
+                        .execute(params![stream_id, first as i64, position as i64, holding, encode(&record), op])?;
+                        if let State::Is { objects, .. } = &record.record.state {
+                            for object in objects {
+                                db.prepare_cached(
+                                    "INSERT OR IGNORE INTO object_holds (kind, holder, hash, proven) VALUES ('resubmit', ?1, ?2, 0)",
+                                )?
+                                .execute(params![key, &object.hash[..]])?;
+                            }
                         }
+                        position += 1;
                     }
-                    position += 1;
+                    after = start;
                 }
             }
             for table in ["frame_objects", "frames"] {
@@ -160,18 +178,25 @@ impl Library {
         let (scope, stream) = (scope.to_string(), stream.to_string());
         Ok(self.database().read_now(move |db| {
             let mut statement = db.prepare_cached(
-                "SELECT r.rejected, r.position, r.record, r.op FROM resubmits r JOIN streams s ON s.id = r.stream
+                "SELECT r.rejected, r.position, r.holding, r.record, r.op FROM resubmits r JOIN streams s ON s.id = r.stream
                  JOIN scopes c ON c.id = s.scope WHERE c.key = ?1 AND s.name = ?2 ORDER BY r.rejected, r.position",
             )?;
             let rows = statement.query_map(params![scope, stream], |row| {
-                Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, Vec<u8>>(2)?, row.get::<_, Option<String>>(3)?))
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, Vec<u8>>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                ))
             })?;
             let mut resubmits = Vec::new();
             for row in rows {
-                let (rejected, position, record, op) = row?;
+                let (rejected, position, holding, record, op) = row?;
                 resubmits.push(Resubmit {
                     rejected: rejected as u64,
                     position: position as u64,
+                    holding,
                     record: decode(&record).map_err(invalid)?,
                     op,
                 });
@@ -206,30 +231,44 @@ impl Library {
     /// Records no longer writable are left for `refuse`.
     pub fn resubmit(&self, scope: &str, stream: &str, take: usize, signer: Arc<dyn Signer>) -> Result<usize> {
         let waiting = self.resubmits(scope, stream)?;
-        let batch: Vec<Resubmit> = waiting.into_iter().take(take).collect();
-        if batch.is_empty() {
-            return Ok(0);
-        }
+        let Some(holding) = waiting.first().map(|first| first.holding) else { return Ok(0) };
+        let batch: Vec<Resubmit> = waiting.into_iter().take(take).take_while(|resubmit| resubmit.holding == holding).collect();
         let count = batch.len();
         let records: Vec<KindRecord> = batch.iter().map(|resubmit| resubmit.record.clone()).collect();
         let (scope_key, stream_name) = (scope.to_string(), stream.to_string());
         let resubmitted = batch.clone();
         self.commit_then(
-            super::Commit { scope: scope.into(), stream: stream.into(), records, leases: Vec::new(), durable: true, op: None },
+            super::Commit {
+                scope: scope.into(),
+                stream: stream.into(),
+                records,
+                leases: Vec::new(),
+                durable: true,
+                op: None,
+                holding,
+            },
             signer,
-            move |db| {
-                let stream_id: i64 = db
-                    .prepare_cached("SELECT s.id FROM streams s JOIN scopes c ON c.id = s.scope WHERE c.key = ?1 AND s.name = ?2")?
-                    .query_row(params![scope_key, stream_name], |row| row.get(0))?;
-                for resubmit in &resubmitted {
+            move |db, landed| {
+                let (scope_id, stream_id): (i64, i64) = db
+                    .prepare_cached(
+                        "SELECT c.id, s.id FROM streams s JOIN scopes c ON c.id = s.scope WHERE c.key = ?1 AND s.name = ?2",
+                    )?
+                    .query_row(params![scope_key, stream_name], |row| Ok((row.get(0)?, row.get(1)?)))?;
+                // Each operation now points at where its records landed: the
+                // old places go first, as a new one may be an old one's.
+                let mut moved = Vec::new();
+                for (index, resubmit) in resubmitted.iter().enumerate() {
                     db.prepare_cached("DELETE FROM resubmits WHERE stream = ?1 AND rejected = ?2 AND position = ?3")?
                         .execute(params![stream_id, resubmit.rejected as i64, resubmit.position as i64])?;
                     if let Some(op) = &resubmit.op {
-                        let mut place = stream_name.as_bytes().to_vec();
-                        place.push(0);
-                        place.extend_from_slice(&resubmit.record.record.item);
-                        db.prepare_cached("UPDATE ops SET record = ?2 WHERE op = ?1")?.execute(params![op, place])?;
+                        db.prepare_cached("DELETE FROM op_records WHERE scope = ?1 AND stream = ?2 AND revision = ?3")?
+                            .execute(params![scope_id, stream_name, (resubmit.rejected + resubmit.position) as i64])?;
+                        moved.push((op.clone(), landed + index as u64));
                     }
+                }
+                for (op, revision) in moved {
+                    db.prepare_cached("INSERT OR REPLACE INTO op_records (scope, stream, revision, op) VALUES (?1, ?2, ?3, ?4)")?
+                        .execute(params![scope_id, stream_name, revision as i64, op])?;
                 }
                 release_holds(db, stream_id)?;
                 Ok(())
@@ -241,22 +280,32 @@ impl Library {
     /// Gives up on a waiting record no longer writable: a true source's
     /// write keeps its objects held under its operation, for the user to
     /// drop or send again; a projection's goes, its source still there.
-    pub fn refuse(&self, scope: &str, stream: &str, rejected: u64, position: u64) -> Result<()> {
-        let (scope, stream) = (scope.to_string(), stream.to_string());
+    pub fn refuse(&self, scope: &str, stream: &str, rejected: u64, position: u64, why: &str) -> Result<()> {
+        let (scope, stream, why) = (scope.to_string(), stream.to_string(), why.to_string());
         Ok(self.database().write_now_at(Priority::Normal, 1024, move |db| {
-            let found: Option<(i64, Vec<u8>, Option<String>)> = db
+            let found: Option<(i64, i64, Vec<u8>, Option<String>)> = db
                 .prepare_cached(
-                    "SELECT r.stream, r.record, r.op FROM resubmits r JOIN streams s ON s.id = r.stream JOIN scopes c ON c.id = s.scope
+                    "SELECT c.id, r.stream, r.record, r.op FROM resubmits r JOIN streams s ON s.id = r.stream JOIN scopes c ON c.id = s.scope
                      WHERE c.key = ?1 AND s.name = ?2 AND r.rejected = ?3 AND r.position = ?4",
                 )?
-                .query_row(params![scope, stream, rejected as i64, position as i64], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+                .query_row(params![scope, stream, rejected as i64, position as i64], |row| {
+                    Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+                })
                 .optional()?;
-            let Some((stream_id, record, op)) = found else { return Ok(()) };
-            let record = decode(&record).map_err(invalid)?;
-            if let (Some(op), State::Is { objects, .. }) = (&op, &record.record.state) {
-                for object in objects {
-                    db.prepare_cached("INSERT OR IGNORE INTO object_holds (kind, holder, hash, proven) VALUES ('refused', ?1, ?2, 0)")?
+            let Some((scope_id, stream_id, raw, op)) = found else { return Ok(()) };
+            let record = decode(&raw).map_err(invalid)?;
+            if let Some(op) = &op {
+                // The write as the user made it stays in its operation.
+                super::ops::refused_in(db, op, &raw, &why)?;
+                db.prepare_cached("DELETE FROM op_records WHERE scope = ?1 AND stream = ?2 AND revision = ?3")?
+                    .execute(params![scope_id, stream, (rejected + position) as i64])?;
+                if let State::Is { objects, .. } = &record.record.state {
+                    for object in objects {
+                        db.prepare_cached(
+                            "INSERT OR IGNORE INTO object_holds (kind, holder, hash, proven) VALUES ('refused', ?1, ?2, 0)",
+                        )?
                         .execute(params![op, &object.hash[..]])?;
+                    }
                 }
             }
             db.prepare_cached("DELETE FROM resubmits WHERE stream = ?1 AND rejected = ?2 AND position = ?3")?
@@ -277,6 +326,8 @@ impl Library {
                 rows.collect::<std::result::Result<_, _>>()?
             };
             db.prepare_cached("DELETE FROM object_holds WHERE kind = 'refused' AND holder = ?1")?.execute([&op])?;
+            db.prepare_cached("UPDATE ops SET state = 'dropped', kept = NULL WHERE op = ?1 AND state = 'refused'")?
+                .execute([&op])?;
             for hash in hashes {
                 db.prepare_cached("UPDATE objects SET unreferenced = ?2 WHERE hash = ?1 AND state = 1")?
                     .execute(params![hash, super::objects::now()])?;
@@ -284,6 +335,50 @@ impl Library {
             Ok(())
         })?)
     }
+}
+
+/// A record waiting to be committed again, as kept.
+struct Waiting {
+    stream: i64,
+    rejected: i64,
+    position: i64,
+    raw: Vec<u8>,
+    op: Option<String>,
+}
+
+/// When a holding period ends with records of its own still waiting to be
+/// committed again, they cannot be: a true source's write becomes a refused
+/// one, kept in its operation for the user; a projection's goes. How many.
+pub(super) fn end_resubmits(db: &Connection, scope: i64, holding: i64) -> fastctx_storage::Result<usize> {
+    let waiting: Vec<Waiting> = {
+        let mut statement = db.prepare_cached(
+            "SELECT stream, rejected, position, record, op FROM resubmits
+             WHERE holding = ?2 AND stream IN (SELECT id FROM streams WHERE scope = ?1)",
+        )?;
+        let rows = statement.query_map(params![scope, holding], |row| {
+            Ok(Waiting { stream: row.get(0)?, rejected: row.get(1)?, position: row.get(2)?, raw: row.get(3)?, op: row.get(4)? })
+        })?;
+        rows.collect::<std::result::Result<_, _>>()?
+    };
+    let mut streams = std::collections::BTreeSet::new();
+    for Waiting { stream, rejected, position, raw, op } in &waiting {
+        if let Some(op) = op {
+            super::ops::refused_in(db, op, raw, "access to the scope ended before it could be written again")?;
+            if let State::Is { objects, .. } = &decode(raw).map_err(invalid)?.record.state {
+                for object in objects {
+                    db.prepare_cached("INSERT OR IGNORE INTO object_holds (kind, holder, hash, proven) VALUES ('refused', ?1, ?2, 0)")?
+                        .execute(params![op, &object.hash[..]])?;
+                }
+            }
+        }
+        db.prepare_cached("DELETE FROM resubmits WHERE stream = ?1 AND rejected = ?2 AND position = ?3")?
+            .execute(params![stream, rejected, position])?;
+        streams.insert(*stream);
+    }
+    for stream in streams {
+        release_holds(db, stream)?;
+    }
+    Ok(waiting.len())
 }
 
 /// Lets go of a stream's resubmission holds whose rejected run has no record
