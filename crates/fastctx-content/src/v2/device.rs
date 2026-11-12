@@ -26,31 +26,33 @@ pub(super) fn own(
     };
     let mut own = Vec::new();
     for (stream, name, next) in streams {
-        // The device the latest epoch known of the stream names orders it,
-        // frames of it here or not: a successor known takes it over at once.
-        let described: Option<Vec<u8>> = db
-            .prepare_cached(
-                "SELECT descriptor FROM (SELECT epoch, descriptor FROM epochs WHERE stream = ?1
-                 UNION ALL SELECT epoch, fact AS descriptor FROM known_epochs WHERE stream = ?1) ORDER BY epoch DESC LIMIT 1",
-            )?
-            .query_row(params![stream], |row| row.get(0))
-            .optional()?;
-        if let Some(fact) = described.and_then(|fact| super::facts::EpochFact::decode(&fact).ok()) {
-            if fact.device == *device {
-                own.push((stream, name, next));
-            }
-            continue;
-        }
-        let last: Option<Vec<u8>> = db
-            .prepare_cached("SELECT header FROM frames WHERE stream = ?1 AND holding = ?2 ORDER BY first DESC LIMIT 1")?
-            .query_row(params![stream, holding], |row| row.get(0))
-            .optional()?;
-        let Some(last) = last else { continue };
-        if Header::decode(&last).map_err(invalid)?.device == *device {
+        if orderer(db, stream, holding)?.is_some_and(|orderer| orderer == *device) {
             own.push((stream, name, next));
         }
     }
     Ok(own)
+}
+
+/// The device that orders `stream` as this library knows: the one the
+/// latest epoch known of it names, frames of it here or not (a successor
+/// known takes it over at once); else the one whose frame is its last; none
+/// for a stream with neither.
+fn orderer(db: &fastctx_storage::rusqlite::Connection, stream: i64, holding: i64) -> fastctx_storage::Result<Option<[u8; 32]>> {
+    let described: Option<Vec<u8>> = db
+        .prepare_cached(
+            "SELECT descriptor FROM (SELECT epoch, descriptor FROM epochs WHERE stream = ?1
+             UNION ALL SELECT epoch, fact AS descriptor FROM known_epochs WHERE stream = ?1) ORDER BY epoch DESC LIMIT 1",
+        )?
+        .query_row(params![stream], |row| row.get(0))
+        .optional()?;
+    if let Some(fact) = described.and_then(|fact| super::facts::EpochFact::decode(&fact).ok()) {
+        return Ok(Some(fact.device));
+    }
+    let last: Option<Vec<u8>> = db
+        .prepare_cached("SELECT header FROM frames WHERE stream = ?1 AND holding = ?2 ORDER BY first DESC LIMIT 1")?
+        .query_row(params![stream, holding], |row| row.get(0))
+        .optional()?;
+    last.map(|last| Header::decode(&last).map(|header| header.device).map_err(invalid)).transpose()
 }
 
 impl Library {
@@ -188,6 +190,23 @@ impl Library {
         Ok(self.database().read_now(move |db| {
             let Some((scope_id, _, Some(holding))) = held(db, &scope)? else { return Ok(Vec::new()) };
             Ok(own(db, scope_id, holding, &device)?.into_iter().map(|(_, name, _)| name).collect())
+        })?)
+    }
+
+    /// The device that orders `stream` of `scope` as this library knows
+    /// (`orderer`); none for a stream not begun here.
+    pub fn orderer(&self, scope: &str, stream: &str) -> Result<Option<[u8; 32]>> {
+        let (scope, stream) = (scope.to_string(), stream.to_string());
+        Ok(self.database().read_now(move |db| {
+            let Some((scope_id, _, Some(holding))) = held(db, &scope)? else { return Ok(None) };
+            let id: Option<i64> = db
+                .prepare_cached("SELECT id FROM streams WHERE scope = ?1 AND name = ?2")?
+                .query_row(params![scope_id, stream], |row| row.get(0))
+                .optional()?;
+            match id {
+                Some(id) => orderer(db, id, holding),
+                None => Ok(None),
+            }
         })?)
     }
 

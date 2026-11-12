@@ -233,6 +233,12 @@ async fn pass(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>) -> Result<(), Str
             Err(_) => Ok(()),
             Ok((ahead, _)) => cursors(assets, link, scope, *holding, ahead).await,
         };
+        // Holding what the hub has of them, the streams to be ordered here
+        // are taken over (design §8).
+        let checked = match (&pulled, checked) {
+            (Ok((_, None)), Ok(())) => super::takeover::run(assets, hub, link, &key, scope).await,
+            (_, checked) => checked,
+        };
         let pulled = pulled.and_then(|(_, failed)| failed.map_or(Ok(()), Err));
         for done in [uploaded, pulled, checked] {
             if let Err(why) = done
@@ -1009,7 +1015,7 @@ async fn cursors(
 }
 
 /// Facts already checked under the pinned key on the way in.
-struct Trusted;
+pub(super) struct Trusted;
 
 impl fastctx_content::v2::HubVerifier for Trusted {
     fn verify(&self, _: &[u8], _: &[u8]) -> bool {

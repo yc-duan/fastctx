@@ -12,6 +12,7 @@
 mod apart;
 mod objects;
 mod session;
+pub(crate) mod takeover;
 
 pub(crate) use session::{Proposal, pushed, shared_elsewhere, wake};
 
@@ -93,6 +94,8 @@ pub(crate) struct Assets {
     /// Counted up each time a listing is forgotten: a listing that began
     /// before is not kept (CC07).
     pub(crate) forgotten: std::sync::atomic::AtomicU64,
+    /// Streams to be ordered here from now on, by scope (`takeover`).
+    pub(crate) takeovers: Mutex<std::collections::BTreeSet<(String, String)>>,
 }
 
 /// How far a hub's scopes this machine may hold were listed.
@@ -147,6 +150,7 @@ impl Assets {
             cleared: Mutex::new(HashMap::new()),
             listed: Mutex::new(HashMap::new()),
             forgotten: std::sync::atomic::AtomicU64::new(0),
+            takeovers: Mutex::new(std::collections::BTreeSet::new()),
         })
     }
 

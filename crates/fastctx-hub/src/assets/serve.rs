@@ -149,7 +149,10 @@ pub(crate) fn recheck(
 /// The stream a request is of, if it is of one.
 pub(crate) fn stream_of(request: &Request) -> Option<&str> {
     match request {
-        Request::Frames { stream, .. } | Request::Succession { stream, .. } | Request::Epoch { stream, .. } => Some(stream),
+        Request::Frames { stream, .. }
+        | Request::Succession { stream, .. }
+        | Request::Epoch { stream, .. }
+        | Request::Takeover { stream, .. } => Some(stream),
         _ => None,
     }
 }
@@ -191,6 +194,7 @@ pub(crate) fn scope_of(request: &Request) -> Option<&str> {
         | Request::Frames { scope, .. }
         | Request::Streams { scope }
         | Request::Epoch { scope, .. }
+        | Request::Takeover { scope, .. }
         | Request::Succession { scope, .. }
         | Request::Put { scope, .. }
         | Request::Get { scope, .. } => Some(scope),
@@ -455,6 +459,42 @@ pub(crate) fn ask(
             // The word given is bound to the head the epoch went into.
             let word = assets.signer().sign(&signed.fact);
             Ok(Reply::Epoch { descriptor: wire::Fact { fact: signed.fact.into(), word: word.into() } })
+        }
+        Request::Takeover { scope, stream, next, head, gap } => {
+            let kept = held(assets, directory, machine, &scope, &stream)?;
+            let library = scopes::library(assets, &kept)?;
+            let device = *key.as_bytes();
+            let signer = assets.signer();
+            let word_of = |signed: &fastctx_content::v2::Signed| wire::Fact { fact: signed.fact.clone().into(), word: signer.sign(&signed.fact).into() };
+            // Ordering it already: the epoch it orders in is the answer.
+            let last = library.last_epoch(&scope, &stream).map_err(|error| error.to_string())?;
+            if last.is_some_and(|(_, orderer)| orderer == device) {
+                let (epochs, _) = library.succession(&scope, &stream).map_err(|error| error.to_string())?;
+                let current = epochs.into_iter().last().ok_or("the stream's epochs are not here")?;
+                assets.witness_facts(&kept.owner, &scope, &stream, std::slice::from_ref(&current), &[]).map_err(|error| error.to_string())?;
+                return Ok(Reply::Epoch { descriptor: word_of(&current) });
+            }
+            // Any device that may hold the stream takes its ordering over
+            // (design §8): where a conversation lives is the machine's own
+            // to say, and the device it leaves orders it no further than the
+            // cut. Never inside what the hub applied.
+            let successor = Successor { device, key: device, kind: EpochKind::Source };
+            let cutoff = Cutoff { next, head: array(&head, "a chain value")? };
+            let (signed, _) = library
+                .handover(&scope, &stream, successor, cutoff, kinds(), assets.signer())
+                .map_err(|error| error.to_string())?;
+            // What of the predecessor's tail will never come is skipped by
+            // the hub's word, when there is any to skip.
+            if let Some(why) = gap {
+                let reached = library.streams(&scope).map_err(|error| error.to_string())?.into_iter().find(|(name, _)| *name == stream).map_or(0, |(_, next)| next);
+                if reached < next {
+                    library.gap(&scope, &stream, &why, kinds(), assets.signer()).map_err(|error| error.to_string())?;
+                }
+            }
+            assets.changed(kept.owner.clone(), &scope);
+            let epoch = fastctx_content::v2::EpochFact::decode(&signed.fact)?.epoch;
+            assets.opened_epoch(&kept.owner, &scope, &stream, epoch, &signed.fact).map_err(|error| error.to_string())?;
+            Ok(Reply::Epoch { descriptor: word_of(&signed) })
         }
         Request::Succession { scope, stream } => {
             let kept = held(assets, directory, machine, &scope, &stream)?;

@@ -316,6 +316,24 @@ CREATE TABLE IF NOT EXISTS refused_records (
     offset INTEGER NOT NULL,
     PRIMARY KEY (stream, epoch, first, head, offset)
 ) WITHOUT ROWID;
+-- Items a record of which is kept out of the index — its kind unknown, or
+-- waiting behind such a one: a record of the item that comes after waits
+-- too, so every holder judges an item's records in their order (V01).
+CREATE TABLE IF NOT EXISTS pending_items (
+    stream INTEGER NOT NULL,
+    item BLOB NOT NULL,
+    PRIMARY KEY (stream, item)
+) WITHOUT ROWID;
+-- Records of a kind known here kept out of the index behind an earlier one
+-- of their item still out, by their place in the frame whose head this is.
+CREATE TABLE IF NOT EXISTS deferred_records (
+    stream INTEGER NOT NULL,
+    epoch INTEGER NOT NULL,
+    first INTEGER NOT NULL,
+    head BLOB NOT NULL,
+    offset INTEGER NOT NULL,
+    PRIMARY KEY (stream, epoch, first, head, offset)
+) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS purges (
     scope INTEGER NOT NULL,
     holding INTEGER NOT NULL,

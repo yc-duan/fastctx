@@ -189,8 +189,10 @@ pub(super) fn project_timeline(
             }
             _ => {}
         }
-        // What follows a turn's start, up to the next, is of its span.
-        if let Some(span) = turns.last_mut() {
+        // An entry is of its own turn's span, a late item of an earlier turn
+        // too (C1); one of no turn, of the turn it follows.
+        let own = entry.get("turnId").and_then(Value::as_str).and_then(|turn| turns.iter().rposition(|span| span.id == turn));
+        if let Some(span) = own.or(turns.len().checked_sub(1)).map(|at| &mut turns[at]) {
             for event in &events[before..] {
                 span.last = span.last.max(event.at);
             }

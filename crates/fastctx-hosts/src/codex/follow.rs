@@ -23,6 +23,9 @@ use std::collections::BTreeMap;
 
 /// Entries asked for at a time, reading back from the newest.
 const PAGE: u32 = 128;
+/// How many times a thread that changed while it was read is read again
+/// before what was read is taken: the next reading sets it right.
+const STEADY_TRIES: u32 = 4;
 
 /// Where a thread was read through.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -80,6 +83,40 @@ pub struct Tail {
 /// `accept` says whether every turn the World saw begin before a time had
 /// ended by then.
 pub(super) async fn tail(
+    server: &AppServer,
+    thread: &str,
+    running: Option<&str>,
+    owner: Option<&fastctx_types::Address>,
+    seam: &Seam,
+    accept: &(dyn Fn(Timestamp) -> bool + Send + Sync),
+) -> Result<Result<Tail, Restart>, String> {
+    // Read again until two readings of what the thread is like now agree
+    // around the reading of its entries (C3): the RPCs share no snapshot.
+    let mut tries = 0;
+    loop {
+        let before = shape(server, thread).await?;
+        let read = once(server, thread, running, owner, seam, accept).await?;
+        if shape(server, thread).await? == before || tries >= STEADY_TRIES {
+            return Ok(read);
+        }
+        tries += 1;
+    }
+}
+
+/// What tells whether a thread changed between two moments: when Codex last
+/// changed it, and where its timeline ends.
+async fn shape(server: &AppServer, thread: &str) -> Result<(Value, Option<u64>), String> {
+    let answer = server.request("thread/read", json!({"threadId": thread, "includeTurns": false})).await?;
+    let updated = answer["thread"]["updatedAt"].clone();
+    let end = match server.ask("thread/timeline/list", json!({"threadId": thread, "limit": 1})).await {
+        Ok(page) => page["data"].as_array().and_then(|data| data.iter().filter_map(|entry| entry["position"].as_u64()).max()),
+        Err(_) => None,
+    };
+    Ok((updated, end))
+}
+
+/// One reading past `seam`, as `tail` describes.
+async fn once(
     server: &AppServer,
     thread: &str,
     running: Option<&str>,
@@ -188,7 +225,13 @@ async fn window_entries(server: &AppServer, thread: &str, turn: &str, position: 
     }
     timeline.retain(|entry| entry["position"].as_u64().is_some_and(|at| at >= begins));
     timeline.sort_by_key(|entry| entry["position"].as_u64());
-    let items = window_items(server, thread, &turns_of(&timeline)).await?;
+    // The items of each turn the window names, an earlier turn's late item
+    // among them, listed by turn: the thread's items are not kept a turn
+    // at a time in their order (C1).
+    let mut items = Vec::new();
+    for turn in turns_of(&timeline) {
+        items.extend(turn_items(server, thread, &turn).await?);
+    }
     Ok(Some(Some(Read { timeline, items, voice: None })))
 }
 
@@ -229,33 +272,16 @@ async fn ordinary_window(server: &AppServer, thread: &str, turn: &str) -> Result
     Ok(Some(Some(Read { timeline, items, voice: None })))
 }
 
-/// The turns `timeline` begins, in order.
+/// The turns `timeline`'s entries are of, each once, in order of first
+/// mention.
 fn turns_of(timeline: &[Value]) -> Vec<String> {
-    timeline.iter().filter(|entry| entry["type"] == "turnStarted").filter_map(|entry| entry["turnId"].as_str().map(str::to_string)).collect()
-}
-
-/// The item entries of `turns` (the thread's last), in order: the thread's
-/// items read back from the newest until one of an earlier turn.
-async fn window_items(server: &AppServer, thread: &str, turns: &[String]) -> Result<Vec<Value>, String> {
-    let window: std::collections::HashSet<&str> = turns.iter().map(String::as_str).collect();
-    let mut items = Vec::new();
-    let mut params = json!({"threadId": thread, "sortDirection": "desc", "limit": PAGE});
-    'pages: loop {
-        let page = server.ask("thread/items/list", params.clone()).await.map_err(|error| error.to_string())?;
-        let data = page.get("data").and_then(Value::as_array).ok_or("thread/items/list answered without data")?;
-        for entry in data {
-            if !entry["turnId"].as_str().is_some_and(|turn| window.contains(turn)) {
-                break 'pages;
-            }
-            items.push(entry.clone());
-        }
-        match page.get("nextCursor").and_then(Value::as_str) {
-            Some(cursor) => params["cursor"] = json!(cursor),
-            None => break,
+    let mut turns: Vec<String> = Vec::new();
+    for turn in timeline.iter().filter_map(|entry| entry["turnId"].as_str()) {
+        if !turns.iter().any(|known| known == turn) {
+            turns.push(turn.to_string());
         }
     }
-    items.reverse();
-    Ok(items)
+    turns
 }
 
 /// Every item entry of `turn`, in order.

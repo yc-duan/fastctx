@@ -48,6 +48,10 @@ const LONG_PREFIX: u64 = 32 << 20;
 const LONG_WITHIN: Duration = Duration::from_secs(60 * 60);
 const VERIFY_EVERY: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 const VERIFY_SHARE: u32 = 10;
+/// Checks are begun within this long of being asked for, and one begun
+/// later than this after is late (R5).
+const CHECK_SPREAD: Duration = Duration::from_secs(30 * 60);
+const CHECK_LATE: Duration = Duration::from_secs(40 * 60);
 /// When each history's check was last asked for, in this run of the node.
 static CHECK_ASKED: LazyLock<Mutex<HashMap<ResidentId, Instant>>> = LazyLock::new(Mutex::default);
 
@@ -67,6 +71,9 @@ const SUBMIT_AGAIN: Duration = Duration::from_secs(5);
 /// (CC04): one asking at a time for each conversation.
 const SUBMIT_LATER: Duration = Duration::from_secs(60);
 static SUBMITTING_LATER: LazyLock<Mutex<std::collections::HashSet<ResidentId>>> = LazyLock::new(Mutex::default);
+/// A timeline another device orders is tried again this often while its
+/// ordering is handed over.
+const HANDING_AGAIN: Duration = Duration::from_secs(3);
 /// A conversation fallen quiet is looked at again for this long, more often
 /// for the first part (CC03).
 const QUIET_SOON: Duration = Duration::from_secs(10 * 60);
@@ -115,6 +122,10 @@ struct Following {
     /// The facts of the runs the conversation tells of, as they stood.
     #[serde(default)]
     runs: String,
+    /// The items of the window told again at every reading (a Codex
+    /// thread's title and what it says of itself), in hex.
+    #[serde(default)]
+    told: Vec<String>,
 }
 
 /// The identities of the timeline's items placed past `floor`.
@@ -185,6 +196,8 @@ pub(super) struct Produced {
     pub(super) long_changed: bool,
     /// When the whole history was last read and compared.
     pub(super) verified: Option<Timestamp>,
+    /// Another device orders the timeline: written once it is handed over.
+    pub(super) handing: bool,
 }
 
 fn failure(error: impl std::fmt::Display) -> Failure {
@@ -219,6 +232,16 @@ pub(super) async fn produce(node: &Arc<Node>, resident: &ResidentId, whole: bool
     if state.version == version && !whole {
         return Ok(Produced::default());
     }
+    // Ordered by another device — the conversation came here from it — the
+    // timeline goes on here once the hub hands its ordering over (§8).
+    let orderer = {
+        let (asking, scope) = (library.clone(), placed.scope.clone());
+        fastctx_platform::task::blocking(move || asking.orderer(&scope, <fastctx_content::v2::Timeline as fastctx_content::v2::Kind>::STREAM)).await.map_err(failure)?
+    };
+    if orderer.is_some_and(|orderer| orderer != kept.device()) {
+        crate::assets::takeover::want(node, &placed.hub, &placed.scope, <fastctx_content::v2::Timeline as fastctx_content::v2::Kind>::STREAM);
+        return Ok(Produced { handing: true, ..Produced::default() });
+    }
     let directory = node.world.conversation(resident);
     let runs = runs_of(&directory).await?;
     let agent = about.host.agent.as_str();
@@ -243,43 +266,60 @@ pub(super) async fn produce(node: &Arc<Node>, resident: &ResidentId, whole: bool
         // placed only by reading all again (CC15).
         let late = numbered.iter().any(|(sequence, event)| heard(sequence) && state.settled_at.is_some_and(|settled| event.at < settled));
         let mut open = state.world_open.clone();
-        let mut whole = whole;
-        if state.world_from.is_none() || cut || replaced || late {
+        let mut whole = whole || replaced || late;
+        // A reading of the whole history reads the World's record whole too
+        // (R1): what the World alone tells of turns before where it was read
+        // through would otherwise be written gone.
+        let mut from_start = state.world_from.is_none() || cut || whole;
+        if from_start {
             if state.world_from.is_some() {
                 (numbered, latest, _) = crate::talk::recorded_after(&directory, 0).await?;
             }
             open.clear();
-            whole |= replaced || late;
         }
-        let mut recorded = open.clone();
-        recorded.extend(numbered.iter().map(|(_, event)| event.clone()));
-        let followed = if agent == "claude" {
-            // A check reads the record from its start.
-            let from = state.session.clone().filter(|_| !whole).map(|session| (session, state.seam.clone(), state.earlier.clone()));
-            crate::claude::history::window(node, resident, &recorded, from).await.map_err(Failure::new)?.map(|window| Followed {
-                events: window.events,
-                whole: window.whole,
-                since: window.since,
-                settled: window.settled,
-                next: Next::Claude {
-                    session: window.session,
-                    seam: Box::new(window.seam),
-                    kept: window.kept,
-                    kept_here: window.kept_here,
-                    earlier: window.earlier,
-                },
-            })
-        } else {
-            let from = state.codex.clone().filter(|_| !whole);
-            crate::codex::follow::window(node, resident, &about, &recorded, from).await.map_err(Failure::new)?.map(|window| Followed {
-                events: window.events,
-                whole: window.whole,
-                since: window.since,
-                settled: window.settled,
-                next: Next::Codex(window.seam),
-            })
+        let followed = loop {
+            let mut recorded = open.clone();
+            recorded.extend(numbered.iter().map(|(_, event)| event.clone()));
+            let followed = if agent == "claude" {
+                // A check reads the record from its start.
+                let from = state.session.clone().filter(|_| !whole).map(|session| (session, state.seam.clone(), state.earlier.clone()));
+                crate::claude::history::window(node, resident, &recorded, from).await.map_err(Failure::new)?.map(|window| Followed {
+                    events: window.events,
+                    whole: window.whole,
+                    since: window.since,
+                    settled: window.settled,
+                    next: Next::Claude {
+                        session: window.session,
+                        seam: Box::new(window.seam),
+                        kept: window.kept,
+                        kept_here: window.kept_here,
+                        earlier: window.earlier,
+                    },
+                })
+            } else {
+                let from = state.codex.clone().filter(|_| !whole);
+                crate::codex::follow::window(node, resident, &about, &recorded, from).await.map_err(Failure::new)?.map(|window| Followed {
+                    events: window.events,
+                    whole: window.whole,
+                    since: window.since,
+                    settled: window.settled,
+                    next: Next::Codex(window.seam),
+                })
+            };
+            // The host read whole of its own accord (a seam gone, a settled
+            // turn changed) while the World's record was read only past
+            // where it was: read again, both whole (R1).
+            match followed {
+                Some(followed) if followed.whole && !from_start => {
+                    (numbered, latest, _) = crate::talk::recorded_after(&directory, 0).await?;
+                    open.clear();
+                    from_start = true;
+                    whole = true;
+                }
+                followed => break followed.map(|followed| (followed, recorded)),
+            }
         };
-        followed.map(|followed| (followed, recorded, numbered, open, latest))
+        followed.map(|(followed, recorded)| (followed, recorded, numbered, open, latest))
     } else {
         None
     };
@@ -291,6 +331,10 @@ pub(super) async fn produce(node: &Arc<Node>, resident: &ResidentId, whole: bool
                 if window.whole { recorded } else { recorded.into_iter().filter(|event| event.at >= window.since).collect() };
             // Codex: reverted turns and requests stay out, as a reading has it.
             let recorded = if agent == "codex" { crate::codex::watch::recorded(recorded, &window.events) } else { recorded };
+            // The host's own title and what it says of the thread, told again
+            // at every reading (R3: not a title the World recorded).
+            let host_told: Vec<serde_json::Value> =
+                window.events.iter().filter(|event| told_again(event)).filter_map(|event| serde_json::to_value(event).ok()).collect();
             let history = {
                 let (assembling, whose, folder, events, agent) = (node.clone(), resident.clone(), directory.clone(), window.events, agent.to_string());
                 let held = producing.clone();
@@ -300,7 +344,15 @@ pub(super) async fn produce(node: &Arc<Node>, resident: &ResidentId, whole: bool
                 })
                 .await?
             };
-            let floor = state.window.iter().filter(|(_, at, _)| *at < window.since).map(|(_, _, key)| *key).fold(state.floor, u64::max);
+            // What the last window wrote from before this one began is settled
+            // — not what is told again at every reading, whatever its time
+            // (R2): its place stays where it is, below the window or in it.
+            let floor = state
+                .window
+                .iter()
+                .filter(|(identity, at, _)| *at < window.since && !state.told.contains(identity))
+                .map(|(_, _, key)| *key)
+                .fold(state.floor, u64::max);
             // What the window wrote before, as the library holds it: every
             // item placed past the floor, whatever the checkpoint kept of it
             // (CC12) — a write committed before a stop that kept no
@@ -324,7 +376,12 @@ pub(super) async fn produce(node: &Arc<Node>, resident: &ResidentId, whole: bool
             // thread's last change, not where they stand.
             let unturned: std::collections::HashSet<Vec<u8>> = {
                 let identities = super::names::identities(&history);
-                history.iter().zip(identities).filter(|(event, _)| told_again(event)).map(|(_, identity)| identity).collect()
+                history
+                    .iter()
+                    .zip(identities)
+                    .filter(|(event, _)| told_again(event) && serde_json::to_value(event).is_ok_and(|value| host_told.contains(&value)))
+                    .map(|(_, identity)| identity)
+                    .collect()
             };
             let wrote = {
                 let (writing, signer, whose, placed, held) = (library.clone(), signer.clone(), resident.clone(), placed, producing.clone());
@@ -341,6 +398,7 @@ pub(super) async fn produce(node: &Arc<Node>, resident: &ResidentId, whole: bool
             let base = if whole { 0 } else { floor };
             let settled_floor = wrote.items.iter().filter(|(identity, at, _)| !held(identity, at)).map(|(_, _, key)| *key).fold(base, u64::max);
             let open = wrote.items.iter().filter(|(identity, at, _)| held(identity, at)).map(|(identity, at, key)| (hex(identity), *at, *key)).collect();
+            let told: Vec<String> = if codex { unturned.iter().map(|identity| hex(identity)).collect() } else { Vec::new() };
             let verified = if window.whole { Some(Timestamp::now()) } else { state.verified };
             let (next, unread) = match window.next {
                 Next::Claude { session, seam, kept: seen, kept_here, earlier } => {
@@ -352,6 +410,7 @@ pub(super) async fn produce(node: &Arc<Node>, resident: &ResidentId, whole: bool
                         session: Some(session),
                         seam: *seam,
                         window: open,
+                        told,
                         floor: settled_floor,
                         kept: if kept_here { seen } else { state.kept },
                         world_from: Some(world_from),
@@ -370,6 +429,7 @@ pub(super) async fn produce(node: &Arc<Node>, resident: &ResidentId, whole: bool
                         form: FORM,
                         version,
                         window: open,
+                        told,
                         floor: settled_floor,
                         world_from: Some(world_from),
                         world_open,
@@ -422,7 +482,7 @@ pub(super) async fn produce(node: &Arc<Node>, resident: &ResidentId, whole: bool
     if wrote.written + wrote.gone > 0 {
         crate::assets::wake(node, &hub);
     }
-    Ok(Produced { written: wrote.written, gone: wrote.gone, unread, long_changed, verified })
+    Ok(Produced { written: wrote.written, gone: wrote.gone, unread, long_changed, verified, handing: false })
 }
 
 /// Where the World's record is read through once the events before
@@ -489,6 +549,14 @@ pub(super) fn register_check(node: &Arc<Node>) {
             if node.residents.about(&resident).is_none() {
                 return Outcome::Done;
             }
+            // Begun: a change from now on asks for another (R4).
+            CHECK_ASKED.lock().expect("checks asked").remove(&resident);
+            // How long it waited since it was asked for: one late takes half
+            // a core while it catches up (§10, R5).
+            let asked = taken.payload.get(..16).and_then(|bytes| bytes.try_into().ok()).map(i128::from_le_bytes);
+            let late = asked
+                .and_then(|asked| Timestamp::from_nanosecond(asked).ok())
+                .is_some_and(|asked| Timestamp::now().duration_since(asked).unsigned_abs() >= CHECK_LATE);
             let began = Instant::now();
             let checked = produce(&node, &resident, true).await;
             let took = began.elapsed();
@@ -500,7 +568,11 @@ pub(super) fn register_check(node: &Arc<Node>) {
                             checked.written, checked.gone
                         ));
                     }
-                    tokio::time::sleep(took * (VERIFY_SHARE - 1)).await;
+                    let rest = if late { took } else { took * (VERIFY_SHARE - 1) };
+                    if late {
+                        node.log.line(format_args!("{resident}'s check began late: checks are behind and take half a core"));
+                    }
+                    tokio::time::sleep(rest).await;
                     Outcome::Done
                 }
                 Err(failure) => Outcome::Failed(failure.message),
@@ -510,9 +582,10 @@ pub(super) fn register_check(node: &Arc<Node>) {
     jobs.register(Kind { name: VERIFY, at_once: 1, within: WITHIN, tries: TRIES }, Arc::new(run));
 }
 
-/// Asks for `resident`'s history to be checked whole, at a moment of the
-/// next hour; asked at most once an hour in this run of the node.
-fn check_wanted(node: &Arc<Node>, resident: &ResidentId) {
+/// Asks for `resident`'s history to be checked whole, begun within the
+/// first half of the next hour so it is done within it (R5); asked once
+/// while one waits (a check begun frees the asking, R4).
+pub(super) fn check_wanted(node: &Arc<Node>, resident: &ResidentId) {
     {
         let mut asked = CHECK_ASKED.lock().expect("checks asked");
         if asked.get(resident).is_some_and(|at| at.elapsed() < LONG_WITHIN) {
@@ -520,10 +593,15 @@ fn check_wanted(node: &Arc<Node>, resident: &ResidentId) {
         }
         asked.insert(resident.clone(), Instant::now());
     }
-    // Spread over the hour, so checks asked together do not run together.
-    let spread = (Timestamp::now().as_nanosecond().unsigned_abs() % LONG_WITHIN.as_nanos()) as u64;
+    // Spread over that half hour, by the conversation, so checks asked
+    // together do not run together.
+    let spread = {
+        let digest = Sha256::digest(resident.as_str().as_bytes());
+        u64::from_le_bytes(digest[..8].try_into().expect("eight bytes")) % CHECK_SPREAD.as_nanos() as u64
+    };
     let pause = Duration::from_nanos(spread);
-    let job = Job { kind: VERIFY, key: resident.to_string(), unit: resident.to_string(), payload: Vec::new() };
+    let asked = Timestamp::now().as_nanosecond().to_le_bytes().to_vec();
+    let job = Job { kind: VERIFY, key: resident.to_string(), unit: resident.to_string(), payload: asked };
     let (database, jobs, log) = (node.database.clone(), node.durable_jobs.clone(), node.log.clone());
     fastctx_platform::task::spawn(async move {
         let bytes = job.key.len() * 2 + 64;
@@ -533,6 +611,21 @@ fn check_wanted(node: &Arc<Node>, resident: &ResidentId) {
             Err(error) => log.line(format_args!("asking for {key}'s history to be checked: {error}")),
         }
     });
+}
+
+/// Asks for a check of each history here not checked for a week (§10, R4).
+pub(super) async fn check_stale(node: &Arc<Node>) {
+    let Some(kept) = node.assets.as_ref() else { return };
+    let here: Vec<ResidentId> =
+        node.residents.everyone().filter(|record| record.here && record.removed.is_none()).map(|record| record.id).collect();
+    for resident in here {
+        let (reading, name) = (kept.library.clone(), assets::checkpoint(&resident));
+        let state = fastctx_platform::task::blocking(move || reading.checkpoint(&name)).await.ok().flatten();
+        let verified = state.and_then(|bytes| serde_json::from_slice::<Following>(&bytes).ok()).and_then(|state| state.verified);
+        if verified.is_none_or(|at| Timestamp::now().duration_since(at).unsigned_abs() >= VERIFY_EVERY) {
+            check_wanted(node, &resident);
+        }
+    }
 }
 
 async fn run(node: &Arc<Node>, resident: &ResidentId) -> Outcome {
@@ -548,6 +641,7 @@ async fn run(node: &Arc<Node>, resident: &ResidentId) -> Outcome {
     let produced = produce(node, resident, false).await;
     BROUGHT.lock().expect("brought timelines").insert(resident.clone(), Instant::now());
     match produced {
+        Ok(produced) if produced.handing => Outcome::Again { after: HANDING_AGAIN },
         Ok(produced) => {
             if produced.written + produced.gone > 0 || cfg!(feature = "timeline-drill") {
                 node.log.line(format_args!("{resident}'s asset timeline: {} written, {} gone", produced.written, produced.gone));

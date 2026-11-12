@@ -109,10 +109,11 @@ def check(registry):
     created = set()
     # A table however its name is quoted, in Rust and in the SQL it loads:
     # a quoted name whole, whatever it holds (S13).
-    # Between the words, any SQL comment as well as space (T09).
+    # Between the words, any SQL comment as well as space (T09); a virtual
+    # table as well, whose shadow tables go with it (V03).
     gap = r"(?:\s|/\*.*?\*/|--[^\n]*\n)+"
     creating = re.compile(
-        rf"CREATE{gap}(?:(?:TEMP|TEMPORARY){gap})?TABLE{gap}(?:IF{gap}NOT{gap}EXISTS{gap})?"
+        rf"CREATE{gap}(?:(?:TEMP|TEMPORARY){gap})?(?:VIRTUAL{gap})?TABLE{gap}(?:IF{gap}NOT{gap}EXISTS{gap})?"
         r"(?:\\?\"((?:[^\"\\]|\\[^\"])+)\\?\"|`([^`]+)`|\[([^\]]+)\]|([A-Za-z_][A-Za-z0-9_]*))",
         re.I | re.S,
     )

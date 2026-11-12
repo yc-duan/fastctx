@@ -39,6 +39,8 @@ coverage	crates/fastctx-content/src/v2/schema.rs
 outbox	crates/fastctx-content/src/v2/schema.rs
 withheld	crates/fastctx-content/src/v2/schema.rs
 refused_records	crates/fastctx-content/src/v2/schema.rs
+pending_items	crates/fastctx-content/src/v2/schema.rs
+deferred_records	crates/fastctx-content/src/v2/schema.rs
 ops	crates/fastctx-content/src/v2/schema.rs
 op_records	crates/fastctx-content/src/v2/schema.rs
 pending_schema	crates/fastctx-content/src/v2/schema.rs

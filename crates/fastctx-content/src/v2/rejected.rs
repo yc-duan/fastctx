@@ -124,7 +124,9 @@ pub(super) fn rebuild(db: &Connection, at: Applying) -> fastctx_storage::Result<
             // does what was refused once it was known (T03).
             let head = header.chain();
             let kept = super::pending::kept(db, at.stream, header.epoch, header.first, &head)?;
-            let refused = super::pending::refused(db, at.stream, header.epoch, header.first, &head)?;
+            let mut refused = super::pending::refused(db, at.stream, header.epoch, header.first, &head)?;
+            // So does what waits behind an earlier record of its item (V01).
+            refused.extend(super::judged::deferred(db, at.stream, header.epoch, header.first, &head)?);
             for (offset, record) in open(&header, &body).map_err(invalid)?.iter().enumerate() {
                 if kept.contains(&(record.kind, record.schema)) || refused.contains(&(offset as u64)) {
                     continue;

@@ -11,6 +11,7 @@ use crate::Result;
 use crate::error::invalid;
 use fastctx_storage::Priority;
 use fastctx_storage::rusqlite::{Connection, OptionalExtension, params};
+use std::collections::HashSet;
 use std::sync::Arc;
 
 /// Frames whose pending records are judged again in one transaction.
@@ -45,24 +46,31 @@ pub(super) fn refused(db: &Connection, stream: i64, epoch: u64, first: u64, head
 }
 
 impl Library {
-    /// Judges again the records kept out of the index for a kind or schema
-    /// `kinds` knows now, a few frames at a time, each frame's in its own
-    /// order (T02): each goes into the index as its frame would have put
+    /// Judges again the records kept out of the index — of a kind or
+    /// schema `kinds` knows now, or waiting behind one of their item (V01)
+    /// — a few frames at a time, in the streams' order, each frame's in its
+    /// own order (T02): each goes into the index as its frame would have put
     /// it, after `kinds` judges it against its item as the frame's earlier
     /// records and the frames before it left it (U03) — one refused stays
-    /// out for good (`refused`). Unjudged (`judge` false), they go in as
-    /// they are. A frame no longer in its scope's current holding period, or
-    /// put in its place since, takes its records with it. How many went in.
-    /// Call on a thread that may block.
+    /// out for good (`refused`); one whose item still has an earlier record
+    /// out waits on. Unjudged (`judge` false), they go in as they are. A
+    /// frame no longer in its scope's current holding period, or put in its
+    /// place since, takes its records with it. How many went in. Call on a
+    /// thread that may block.
     pub fn reconsider(&self, kinds: Arc<dyn Authorizer>, judge: bool) -> Result<usize> {
         let (mut applied, mut after) = (0usize, (-1i64, -1i64, -1i64, Vec::new()));
+        // The items with a record still out, as the pass finds them.
+        let mut blocked: HashSet<(i64, Vec<u8>)> = HashSet::new();
         loop {
             let kinds = kinds.clone();
             let from = after.clone();
-            let (page, last) = self.database().write_now_at(Priority::Background, 1 << 16, move |db| {
+            let mut passing = std::mem::take(&mut blocked);
+            let (page, last, passing) = self.database().write_now_at(Priority::Background, 1 << 16, move |db| {
                 let frames: Vec<(i64, i64, i64, Vec<u8>)> = {
                     let mut statement = db.prepare_cached(
-                        "SELECT DISTINCT stream, epoch, first, head FROM pending_schema
+                        "SELECT DISTINCT stream, epoch, first, head FROM (
+                             SELECT stream, epoch, first, head FROM pending_schema
+                             UNION SELECT stream, epoch, first, head FROM deferred_records)
                          WHERE (stream, epoch, first, head) > (?1, ?2, ?3, ?4) ORDER BY stream, epoch, first, head LIMIT ?5",
                     )?;
                     let rows = statement.query_map(params![from.0, from.1, from.2, from.3, FRAMES_AT_ONCE], |row| {
@@ -72,13 +80,12 @@ impl Library {
                 };
                 let last = frames.last().cloned();
                 let mut done = 0usize;
+                let mut history = super::judged::History::default();
                 for (stream, epoch, first, head) in frames {
                     let head: [u8; 32] = head.try_into().map_err(|_| invalid("a malformed frame head"))?;
                     let pending = kept(db, stream, epoch as u64, first as u64, &head)?;
                     let known: Vec<(u16, u16)> = pending.iter().copied().filter(|(kind, schema)| kinds.knows(*kind, *schema)).collect();
-                    if known.is_empty() {
-                        continue;
-                    }
+                    let waiting = super::judged::deferred(db, stream, epoch as u64, first as u64, &head)?;
                     let place: Option<(i64, i64)> = db
                         .prepare_cached("SELECT s.scope, c.holding FROM streams s JOIN scopes c ON c.id = s.scope WHERE s.id = ?1")?
                         .query_row([stream], |row| Ok((row.get(0)?, row.get::<_, Option<i64>>(1)?)))
@@ -91,24 +98,29 @@ impl Library {
                             .optional()?,
                         None => None,
                     };
+                    let mut gone = true;
                     if let (Some((scope, holding)), Some((header, body))) = (place, frame) {
                         let header = Header::decode(&header).map_err(invalid)?;
                         if header.chain() == head {
+                            gone = false;
                             let at = Applying { scope, stream, holding };
                             let records = open(&header, &body).map_err(invalid)?;
                             let refused = refused(db, stream, epoch as u64, first as u64, &head)?;
                             let fate = |offset: usize, record: &KindRecord| {
                                 let kind = (record.kind, record.schema);
-                                if refused.contains(&(offset as u64)) || (pending.contains(&kind) && !known.contains(&kind)) {
+                                if refused.contains(&(offset as u64)) {
                                     Fate::Out
-                                } else if known.contains(&kind) {
+                                } else if pending.contains(&kind) && !known.contains(&kind) {
+                                    Fate::Unknown
+                                } else if known.contains(&kind) || waiting.contains(&(offset as u64)) {
                                     Fate::Judge
                                 } else {
                                     Fate::Stood
                                 }
                             };
                             done += if judge {
-                                super::judged::frame(db, at, &header, &records, kinds.as_ref(), fate)?
+                                let mut pass = super::judged::Blocked::Pass(&mut passing);
+                                super::judged::frame(db, at, &header, &records, kinds.as_ref(), &mut history, &mut pass, fate)?
                             } else {
                                 let mut went = 0;
                                 for (offset, record) in records.iter().enumerate() {
@@ -117,6 +129,8 @@ impl Library {
                                         went += 1;
                                     }
                                 }
+                                db.prepare_cached("DELETE FROM deferred_records WHERE stream = ?1 AND epoch = ?2 AND first = ?3 AND head = ?4")?
+                                    .execute(params![stream, epoch, first, &head[..]])?;
                                 went
                             };
                         }
@@ -127,9 +141,22 @@ impl Library {
                     for (kind, schema) in &known {
                         forget.execute(params![stream, kind, schema, epoch, first, &head[..]])?;
                     }
+                    if gone {
+                        super::judged::forget_from_frame(db, stream, epoch, first, &head)?;
+                    }
                 }
-                Ok((done, last))
+                // The pass has gone through every frame with a record out:
+                // what it found still out is what waits from now on.
+                if last.is_none() {
+                    db.prepare_cached("DELETE FROM pending_items")?.execute([])?;
+                    let mut keep = db.prepare_cached("INSERT OR IGNORE INTO pending_items (stream, item) VALUES (?1, ?2)")?;
+                    for (stream, item) in &passing {
+                        keep.execute(params![stream, item])?;
+                    }
+                }
+                Ok((done, last, passing))
             })?;
+            blocked = passing;
             applied += page;
             match last {
                 Some(last) => after = last,

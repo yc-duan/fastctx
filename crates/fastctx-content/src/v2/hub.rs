@@ -220,6 +220,15 @@ fn seen(db: &Connection, table: &str, stream: i64, holding: i64, item: &[u8]) ->
         .optional()?)
 }
 
+/// Whether `item` of `stream` has a record kept out of the index.
+fn pending_item(db: &Connection, stream: i64, item: &[u8]) -> fastctx_storage::Result<bool> {
+    Ok(db
+        .prepare_cached("SELECT 1 FROM pending_items WHERE stream = ?1 AND item = ?2")?
+        .query_row(params![stream, item], |_| Ok(()))
+        .optional()?
+        .is_some())
+}
+
 /// The item as the applied prefix of this period has it: its row in the
 /// index, or, where a revision floor of an earlier period still hides it,
 /// the state the prefix gave it (`prefix_items`), whichever is later.
@@ -461,13 +470,24 @@ fn apply_frame(
 ) -> fastctx_storage::Result<std::result::Result<(u64, [u8; 32]), String>> {
     let Arriving { frame, header, records } = arriving;
     // A record is judged against its item as the records before it in the
-    // frame leave it: they come in order, each a revision of its own.
+    // frame leave it: they come in order, each a revision of its own. One
+    // whose item has an earlier record out of the index — of a kind not
+    // known here, in this frame or before it — is not judged: it waits for
+    // that one (V01).
     let mut earlier: BTreeMap<&[u8], Option<Entry>> = BTreeMap::new();
+    let mut out: std::collections::HashSet<&[u8]> = std::collections::HashSet::new();
+    let mut waiting: std::collections::HashSet<usize> = std::collections::HashSet::new();
     for (offset, record) in records.iter().enumerate() {
+        let item = record.record.item.as_slice();
         if !authorizer.knows(record.kind, record.schema) {
+            out.insert(item);
             continue;
         }
-        let item = record.record.item.as_slice();
+        if out.contains(item) || pending_item(db, at.stream, item)? {
+            out.insert(item);
+            waiting.insert(offset);
+            continue;
+        }
         let prior = match earlier.remove(item) {
             Some(prior) => prior,
             None => before(db, at.stream, holding, item)?,
@@ -500,10 +520,17 @@ fn apply_frame(
     }
     let applying = Applying { scope, stream: at.stream, holding };
     for (offset, record) in records.iter().enumerate() {
-        if !authorizer.knows(record.kind, record.schema) {
+        if !authorizer.knows(record.kind, record.schema) || waiting.contains(&offset) {
             // Kept in its frame, out of the index, until this hub knows its
-            // kind (§2.3).
-            super::pending::keep(db, at.stream, record.kind, record.schema, header.epoch, header.first, &head)?;
+            // kind (§2.3), or the earlier record of its item it waits for.
+            if waiting.contains(&offset) {
+                db.prepare_cached("INSERT OR IGNORE INTO deferred_records (stream, epoch, first, head, offset) VALUES (?1, ?2, ?3, ?4, ?5)")?
+                    .execute(params![at.stream, header.epoch as i64, header.first as i64, &head[..], offset as i64])?;
+            } else {
+                super::pending::keep(db, at.stream, record.kind, record.schema, header.epoch, header.first, &head)?;
+            }
+            db.prepare_cached("INSERT OR IGNORE INTO pending_items (stream, item) VALUES (?1, ?2)")?
+                .execute(params![at.stream, &record.record.item])?;
             continue;
         }
         hidden_by_floor(db, applying, header.first + offset as u64, record)?;

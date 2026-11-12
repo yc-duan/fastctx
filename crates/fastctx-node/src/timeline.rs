@@ -124,18 +124,33 @@ fn rescan(node: &std::sync::Weak<crate::Node>) {
                 (record.id, active)
             })
             .collect();
-        for (resident, active) in here {
+        for (resident, active) in &here {
             // The content timeline is read whole: only the conversations of
             // late. The asset timeline of each, whose version tells at once
             // whether anything is to do (BB06).
-            if active {
-                wanted(&node, &resident);
+            if *active {
+                wanted(&node, resident);
             } else {
-                tail::wanted(&node, &resident);
+                tail::wanted(&node, resident);
             }
+            // Each history is checked whole once each time the node starts
+            // (§10, R4).
+            tail::check_wanted(&node, resident);
+        }
+        drop(here);
+        // And each one not checked for a week, every day after.
+        let weak = std::sync::Arc::downgrade(&node);
+        drop(node);
+        loop {
+            tokio::time::sleep(STALE_SWEEP).await;
+            let Some(node) = weak.upgrade() else { return };
+            tail::check_stale(&node).await;
         }
     });
 }
+
+/// How often the histories not checked for a week are looked for.
+const STALE_SWEEP: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
 
 async fn run(node: &Arc<crate::Node>, resident: &ResidentId) -> Outcome {
     if node.residents.about(resident).is_none() {

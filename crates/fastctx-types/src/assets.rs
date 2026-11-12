@@ -298,6 +298,13 @@ pub enum Request {
     /// one of its frames: what remains is committed again from `next`,
     /// chained from `head` (§6.5).
     Epoch { scope: String, stream: String, next: u64, head: Bytes },
+    /// This device takes over ordering `stream`, which another ordered
+    /// (design §8): a conversation came to live here, say. The hub hands it
+    /// over at `next`, chained from `head` — the furthest of the stream this
+    /// device holds, the hub's applied prefix or past it — and answers the
+    /// new epoch's descriptor. With `gap`, why what lies between the hub's
+    /// prefix and `next` will never come: the hub signs it skipped.
+    Takeover { scope: String, stream: String, next: u64, head: Bytes, gap: Option<String> },
     /// Puts an object of `scope` to the hub (§7.3), its chunks' digests
     /// given (none for one of a single chunk): the hub answers which chunks
     /// it lacks and the ticket a data connection sends them under. With
@@ -398,6 +405,7 @@ impl Request {
             | Self::Describe { .. }
             | Self::Streams { .. }
             | Self::Epoch { .. }
+            | Self::Takeover { .. }
             | Self::Put { .. }
             | Self::Get { .. }
             | Self::Cleared { .. } => Purpose::AssetSync,
