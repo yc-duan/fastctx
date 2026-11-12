@@ -30,6 +30,7 @@ DISPATCHERS = {
     "crates/fastctx-net/src/wire.rs::Question": ("asset_sync.transport", "question_purpose"),
     "crates/fastctx-net/src/wire.rs::Told": (("asset_sync.transport", "named_asks"), "told_purpose"),
     "crates/fastctx-net/src/wire.rs::Down": ("asset_sync.transport", "down_purpose"),
+    "crates/fastctx-net/src/wire.rs::Intent": ("asset_sync.transport", "intent_purpose"),
     "crates/fastctx-types/src/calls.rs::Call": ("node_ipc", "purpose"),
     "crates/fastctx-types/src/calls.rs::Reply": ("node_ipc", "answer_purpose"),
     "crates/fastctx-types/src/remote.rs::RemoteCall": ("timeline_reads", "transfer_purpose"),

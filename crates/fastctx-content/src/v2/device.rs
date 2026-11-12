@@ -101,4 +101,35 @@ impl Library {
             Ok(rows.collect::<std::result::Result<_, _>>()?)
         })?)
     }
+
+    /// Up to `limit` objects this machine wants and does not hold, each with
+    /// the scope a record that refers to it came in, first the most wanted.
+    pub fn wanted(&self, limit: usize) -> Result<Vec<(Option<String>, crate::record::ObjectRef)>> {
+        Ok(self.database().read_now(move |db| {
+            let mut statement = db.prepare_cached(
+                "SELECT w.hash, w.size, w.hint FROM wanted w
+                 WHERE NOT EXISTS (SELECT 1 FROM objects o WHERE o.hash = w.hash AND o.state = 1)
+                 ORDER BY w.priority DESC, w.hash LIMIT ?1",
+            )?;
+            let rows = statement.query_map([limit as i64], |row| {
+                Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, i64>(1)?, row.get::<_, Option<String>>(2)?))
+            })?;
+            let mut wanted = Vec::new();
+            for row in rows {
+                let (hash, size, scope) = row?;
+                let hash: [u8; 32] = hash.try_into().map_err(|_| invalid("a malformed hash"))?;
+                wanted.push((scope, crate::record::ObjectRef { hash, size: size as u64 }));
+            }
+            Ok(wanted)
+        })?)
+    }
+
+    /// `hash` is wanted no more: it is here, or nothing gives it.
+    pub fn unwant(&self, hash: &[u8; 32]) -> Result<()> {
+        let hash = *hash;
+        Ok(self.database().write_relaxed_now_at(Priority::Background, 64, move |db| {
+            db.prepare_cached("DELETE FROM wanted WHERE hash = ?1")?.execute([&hash[..]])?;
+            Ok(())
+        })?)
+    }
 }

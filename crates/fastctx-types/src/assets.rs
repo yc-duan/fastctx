@@ -19,6 +19,9 @@ pub const VERSION: u32 = 1;
 /// The most a frame carried on the control connection holds (§7.1).
 pub const INLINE_FRAME_BYTES: usize = 64 * 1024;
 
+/// The bytes of each chunk an object travels in but its last (§7.3).
+pub const CHUNK_BYTES: u64 = 1024 * 1024;
+
 /// Bytes, as base64 in JSON.
 #[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Bytes(pub Vec<u8>);
@@ -221,6 +224,30 @@ pub enum Request {
     /// one of its frames: what remains is committed again from `next`,
     /// chained from `head` (§6.5).
     Epoch { scope: String, stream: String, next: u64, head: Bytes },
+    /// Puts an object of `scope` to the hub (§7.3), its chunks' digests
+    /// given (none for one of a single chunk): the hub answers which chunks
+    /// it lacks and the ticket a data connection sends them under. With
+    /// `prove`, every byte is sent though the hub holds it: the device
+    /// proves it holds the object (§6.5).
+    Put {
+        scope: String,
+        object: ObjectRef,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        manifest: Vec<Bytes>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        prove: bool,
+    },
+    /// Takes an object of `scope` from the hub, from the chunk `from`: the
+    /// hub answers its chunks' digests and the ticket a data connection
+    /// brings them under.
+    Get { scope: String, object: ObjectRef, from: u64 },
+}
+
+/// What precedes each chunk's bytes on an object's data connection.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChunkHead {
+    pub index: u64,
+    pub size: u64,
 }
 
 /// Where a stream stands on the hub: the sequence its applied prefix
@@ -244,7 +271,9 @@ impl Request {
             | Self::Succession { .. }
             | Self::Describe { .. }
             | Self::Streams { .. }
-            | Self::Epoch { .. } => Purpose::AssetSync,
+            | Self::Epoch { .. }
+            | Self::Put { .. }
+            | Self::Get { .. } => Purpose::AssetSync,
         }
     }
 }
@@ -355,6 +384,20 @@ pub enum Reply {
     Streams { streams: Vec<StreamAt> },
     /// The new epoch's descriptor and the hub's word on it.
     Epoch { descriptor: Fact },
+    /// The chunks the hub lacks of an object put, sent under `ticket`; none
+    /// when it holds the object whole and nothing is to be proven.
+    Put {
+        ticket: u64,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        missing: Vec<u64>,
+    },
+    /// An object's chunks' digests, brought under `ticket` from the chunk
+    /// asked for.
+    Get {
+        ticket: u64,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        manifest: Vec<Bytes>,
+    },
 }
 
 /// What the hub tells a device unasked.

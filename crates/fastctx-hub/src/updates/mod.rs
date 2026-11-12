@@ -29,8 +29,8 @@ use attempt::{Attempt, Race};
 mod discovery;
 mod inventory;
 mod obtain;
-mod receipt_writer;
-mod transfer;
+pub(crate) mod receipt_writer;
+pub(crate) mod transfer;
 
 use std::collections::HashMap;
 use std::path::Path;

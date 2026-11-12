@@ -9,6 +9,7 @@
 //! pinned key: a hub whose key changed is not trusted without a rotation
 //! (design §6.1).
 
+mod objects;
 mod session;
 
 pub(crate) use session::{pushed, wake};
@@ -49,6 +50,9 @@ pub(crate) struct Assets {
     /// Each hub's open session and the service key it is under: what a
     /// checkpoint the hub tells of unasked is taken in.
     pub(crate) current: Mutex<HashMap<HubId, (u64, PublicKey)>>,
+    /// Objects wanted that no hub gave lately, and when it last did not:
+    /// asked again only after a while, so others are not held up.
+    pub(crate) unreached: Mutex<HashMap<[u8; 32], std::time::Instant>>,
 }
 
 impl Assets {
@@ -73,6 +77,7 @@ impl Assets {
             sessions: AtomicU64::new(start),
             drivers: Mutex::new(HashMap::new()),
             current: Mutex::new(HashMap::new()),
+            unreached: Mutex::new(HashMap::new()),
         })
     }
 

@@ -28,7 +28,7 @@ const DONE: &str = "\"done\"";
 /// Writes `message`, for as long as its bytes keep going out: a member
 /// that takes nothing of what it is sent for a silence is gone as much as
 /// one that says nothing.
-async fn put<S>(sink: &mut S, pulse: &fastctx_net::pulse::Pulse, message: WsMessage) -> Result<(), String>
+pub(crate) async fn put<S>(sink: &mut S, pulse: &fastctx_net::pulse::Pulse, message: WsMessage) -> Result<(), String>
 where
     S: futures_util::Sink<WsMessage, Error = tokio_tungstenite::tungstenite::Error> + Unpin,
 {
@@ -40,7 +40,7 @@ where
 
 /// The next message from the member, or why none comes: nothing of one
 /// came for a silence.
-async fn heard<S>(stream: &mut S, pulse: &fastctx_net::pulse::Pulse) -> Result<Option<WsMessage>, String>
+pub(crate) async fn heard<S>(stream: &mut S, pulse: &fastctx_net::pulse::Pulse) -> Result<Option<WsMessage>, String>
 where
     S: futures_util::Stream<Item = Result<WsMessage, tokio_tungstenite::tungstenite::Error>> + Unpin,
 {

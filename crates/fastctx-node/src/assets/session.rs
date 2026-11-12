@@ -29,6 +29,9 @@ const AGAIN: Duration = Duration::from_secs(5);
 const FRAMES_AT_ONCE: usize = 16;
 /// Receipts reported in one page.
 const REPORTED_AT_ONCE: usize = 256;
+/// How many times a frame's objects go before the hub must take it: put,
+/// then proved where the put was not all of it.
+const OBJECT_ROUNDS: usize = 3;
 
 /// What a device proposes a scope it begins be described as.
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -123,7 +126,7 @@ async fn run(node: std::sync::Weak<Node>, hub: HubId, wake: Arc<tokio::sync::Not
 }
 
 /// Runs `work` on the library off the async threads.
-async fn blocking<T: Send + 'static>(
+pub(super) async fn blocking<T: Send + 'static>(
     library: &Library,
     work: impl FnOnce(&Library) -> fastctx_content::Result<T> + Send + 'static,
 ) -> Result<T, String> {
@@ -150,6 +153,9 @@ async fn pass(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>) -> Result<(), Str
         upload(assets, hub, link, &key, session, scope).await?;
         pull(assets, hub, link, &key, scope, *holding).await?;
         cursors(library, link, scope, *holding).await?;
+    }
+    for failed in super::objects::fetch(assets, link).await {
+        node.log.line(format_args!("assets with {hub}: {failed}; asked again later"));
     }
     Ok(())
 }
@@ -241,13 +247,26 @@ async fn upload(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKey,
             }
             for frame in frames {
                 let header = Header::decode(&frame.header).map_err(|error| error.to_string())?;
-                let request = Request::Take {
-                    scope: scope.to_string(),
-                    frame: wire::Frame { header: frame.header.into(), signature: frame.signature.into(), body: frame.body.into() },
-                    proven: Vec::new(),
-                };
-                let Reply::Received { received } = link.assets(request).await? else {
-                    return Err("the hub did not take the frame".into());
+                let frame = wire::Frame { header: frame.header.into(), signature: frame.signature.into(), body: frame.body.into() };
+                // Objects the hub has not, or wants proved, go first; then
+                // the frame again, naming what this machine proved.
+                let mut proven: Vec<Bytes> = Vec::new();
+                let mut rounds = 0;
+                let received = loop {
+                    let request = Request::Take { scope: scope.to_string(), frame: frame.clone(), proven: proven.clone() };
+                    let Reply::Received { received } = link.assets(request).await? else {
+                        return Err("the hub did not take the frame".into());
+                    };
+                    let (objects, prove) = match &received {
+                        wire::Received::Missing { objects } => (objects, false),
+                        wire::Received::Prove { objects } => (objects, true),
+                        _ => break received,
+                    };
+                    rounds += 1;
+                    if rounds > OBJECT_ROUNDS {
+                        return Err(format!("{stream} of {scope}: the hub still wants objects after they went"));
+                    }
+                    proven.extend(super::objects::put(library, link, scope, objects, prove).await?);
                 };
                 let receipt = |said: Said, word: Bytes| Receipt {
                     stream: stream.clone(),
@@ -276,7 +295,7 @@ async fn upload(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKey,
                         continue;
                     }
                     wire::Received::Missing { .. } | wire::Received::Prove { .. } => {
-                        return Err(format!("{stream} of {scope} refers to objects the hub wants first; objects travel by the data channel, not yet here"));
+                        return Err(format!("{stream} of {scope}: the hub still wants objects after they went"));
                     }
                 }
                 from = header.first + u64::from(header.count);

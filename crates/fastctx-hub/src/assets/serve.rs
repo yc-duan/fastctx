@@ -129,6 +129,8 @@ pub(crate) fn ask(
             let library = scopes::library(assets, &kept)?;
             let period = library.holding(&scope).map_err(|error| error.to_string())?.ok_or("the scope is not held here")?;
             let proven: Vec<[u8; 32]> = proven.iter().map(|hash| array(hash, "a proven object's hash")).collect::<Result<_, _>>()?;
+            // Only what this machine sent every byte of lately (§6.5).
+            let proven = assets.objects.proven(machine, &proven);
             // An object the device may read in this scope needs no proof.
             let readable = |object: &ObjectRef| library.readable(&scope, &object.hash).unwrap_or(false);
             let taking = Taking { period, readable: &readable, proven: &proven };
@@ -152,6 +154,14 @@ pub(crate) fn ask(
                 assets.moved(&scope, &stream, next, machine);
             }
             Ok(Reply::Received { received: received(word) })
+        }
+        Request::Put { scope, object, manifest, prove } => {
+            let kept = gated(assets, directory, machine, &scope)?;
+            super::objects::put(assets, machine, kept, &object, manifest, prove)
+        }
+        Request::Get { scope, object, from } => {
+            let kept = gated(assets, directory, machine, &scope)?;
+            super::objects::get(assets, machine, kept, &object, from)
         }
         Request::Cursors { scope, holding, streams } => {
             let kept = gated(assets, directory, machine, &scope)?;

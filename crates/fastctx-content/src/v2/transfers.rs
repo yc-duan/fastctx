@@ -137,6 +137,20 @@ impl Library {
         }))
     }
 
+    /// The transfer of `object` already under way, taken up under the
+    /// manifest it began with; `None` when none is, or the object is here.
+    pub fn under_way(&self, object: ObjectRef) -> Result<Option<Transfer>> {
+        let manifest: Option<Vec<u8>> = self.database().read_now(move |db| {
+            Ok(db
+                .prepare_cached("SELECT manifest FROM transfers WHERE hash = ?1 AND size = ?2")?
+                .query_row(params![&object.hash[..], object.size as i64], |row| row.get(0))
+                .optional()?)
+        })?;
+        let Some(manifest) = manifest else { return Ok(None) };
+        let digests = manifest.chunks_exact(32).map(|digest| digest.try_into().expect("32 bytes")).collect();
+        self.receive(object, digests, None)
+    }
+
     /// Cuts every transfer's recorded ranges back to what its part file
     /// holds, and forgets transfers whose part file is gone.
     pub(super) fn settle_transfers(&self) -> Result<usize> {

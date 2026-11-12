@@ -85,6 +85,7 @@ use crate::message::LetterId;
 use crate::sign::{Domain, PublicKey, SecretKey, Signed};
 use crate::wire::{CallStatus, Change, Question, Told};
 pub use afoot::Elsewhere;
+pub use assets::{Incoming, Outgoing};
 pub use direct::DataWay;
 pub use ledger::{Page, PageItem};
 use state::{Counter, LettersFile};

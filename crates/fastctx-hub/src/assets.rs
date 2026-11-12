@@ -6,6 +6,7 @@
 
 pub(crate) mod chain;
 mod keys;
+pub(crate) mod objects;
 mod owners;
 mod scopes;
 pub(crate) mod serve;
@@ -74,6 +75,9 @@ pub(crate) struct Assets {
     receipted: Mutex<BTreeMap<String, BTreeSet<fastctx_types::MachineName>>>,
     /// What is to be told unasked, by whom answers a request.
     pushes: Mutex<Vec<(fastctx_types::MachineName, fastctx_types::assets::Push)>>,
+    /// The tickets for objects' data connections, and the proofs of
+    /// holding that stand (design §6.5, §7.3).
+    pub(crate) objects: objects::Objects,
 }
 
 impl Assets {
@@ -95,6 +99,7 @@ impl Assets {
             holders: Mutex::new(BTreeMap::new()),
             receipted: Mutex::new(BTreeMap::new()),
             pushes: Mutex::new(Vec::new()),
+            objects: objects::Objects::default(),
         };
         if let Some(why) = assets.put_back(dir)? {
             assets.witness.freeze();

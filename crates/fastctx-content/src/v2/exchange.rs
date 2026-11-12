@@ -200,10 +200,11 @@ impl Library {
                             (Some(_), _) => return Err(invalid("an object of that hash is here with another length")),
                             (None, Holder::Hub) => return Err(invalid("a record refers to an object that is not here")),
                             (None, Holder::Replica) => {
+                                // The scope it is read through, for whoever fetches it.
                                 db.prepare_cached(
-                                    "INSERT OR IGNORE INTO wanted (hash, size, role, priority, hint) VALUES (?1, ?2, 'record', 1, NULL)",
+                                    "INSERT OR IGNORE INTO wanted (hash, size, role, priority, hint) VALUES (?1, ?2, 'record', 1, ?3)",
                                 )?
-                                .execute(params![&object.hash[..], object.size as i64])?;
+                                .execute(params![&object.hash[..], object.size as i64, scope])?;
                             }
                         }
                     }

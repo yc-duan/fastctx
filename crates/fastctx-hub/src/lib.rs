@@ -1274,6 +1274,9 @@ async fn intended(
         (wire::DATA_PATH, Intent::Deliver { key, proof, id }) => {
             updates::deliver(hub, socket, binding, key, proof, id).await;
         }
+        (wire::DATA_PATH, Intent::Asset { key, proof, ticket }) => {
+            assets::objects::serve(hub, socket, binding, key, proof, ticket).await;
+        }
         (wire::CONTROL_PATH, Intent::Handover { id, role, proof }) => {
             moving::follow::old_connected(hub, socket, binding, id, role, proof).await;
         }

@@ -310,6 +310,11 @@ pub enum Intent {
     /// says its size, `{"size":…}`, then sends the bytes, and the hub says
     /// `"done"` once it has checked them, or why it did not take them.
     Deliver { key: PublicKey, proof: Signature, id: u64 },
+    /// An object of the second version's asset sync, put or taken under the
+    /// hub's `ticket` (`fastctx_types::assets::Request::Put`/`Get`): each
+    /// chunk is a `ChunkHead` then its bytes, and the hub says `"done"` once
+    /// it has taken an object put whole, or why it did not.
+    Asset { key: PublicKey, proof: Signature, ticket: u64 },
     /// Whether the hub takes sessions now, through this address: answered
     /// `Down::Ready`, and closed. A machine on a later address of its list
     /// asks the earlier ones.
@@ -1300,6 +1305,25 @@ impl Question {
             | Self::RecordWatching { .. }
             | Self::SkillFiles { .. }
             | Self::Worked { .. } => None,
+        }
+    }
+}
+
+impl Intent {
+    pub fn intent_purpose(&self) -> Option<fastctx_types::sync::transfer::Purpose> {
+        use fastctx_types::sync::transfer::Purpose;
+        match self {
+            Self::Asset { .. } => Some(Purpose::AssetSync),
+            Self::Data { .. }
+            | Self::Deliver { .. }
+            | Self::Handover { .. }
+            | Self::Login { .. }
+            | Self::Package { .. }
+            | Self::Peek { .. }
+            | Self::Probe
+            | Self::Register { .. }
+            | Self::Session { .. }
+            | Self::Token { .. } => None,
         }
     }
 }
