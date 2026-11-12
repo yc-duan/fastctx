@@ -23,6 +23,7 @@ mod receipts;
 mod rejected;
 mod schema;
 mod scopes;
+mod stamps;
 mod succession;
 mod transfers;
 mod window;

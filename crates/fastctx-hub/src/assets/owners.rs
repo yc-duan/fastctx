@@ -70,12 +70,45 @@ struct Slot {
 
 pub(crate) struct Owners {
     root: PathBuf,
+    /// The hub's incarnation, stamped on every library it makes.
+    incarnation: Vec<u8>,
     slots: Mutex<HashMap<Owner, Arc<Slot>>>,
 }
 
+/// What a library keeps its hub's incarnation under.
+const STAMP: &str = "hub";
+
 impl Owners {
-    pub(crate) fn new(root: PathBuf) -> Self {
-        Self { root, slots: Mutex::new(HashMap::new()) }
+    pub(crate) fn new(root: PathBuf, incarnation: Vec<u8>) -> Self {
+        Self { root, incarnation, slots: Mutex::new(HashMap::new()) }
+    }
+
+    /// Why one of the libraries here is not this hub's, if one is: it bears
+    /// another hub's incarnation. Call on a thread that may block.
+    pub(crate) fn foreign(&self) -> io::Result<Option<String>> {
+        for kind in ["account", "body", "hub"] {
+            let base = self.root.join(kind);
+            let directories: Vec<PathBuf> = if kind == "hub" {
+                vec![base]
+            } else {
+                match fastctx_platform::disk::read_dir(&base) {
+                    Ok(entries) => entries.filter_map(|entry| entry.ok().map(|entry| entry.path())).collect(),
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => Vec::new(),
+                    Err(error) => return Err(error),
+                }
+            };
+            for directory in directories {
+                if !fastctx_platform::disk::exists(directory.join(fastctx_content::v2::FILE))? {
+                    continue;
+                }
+                let (library, _) = Library::open_hub(&directory).map_err(|error| io::Error::other(error.to_string()))?;
+                let stamped = library.stamped(STAMP).map_err(|error| io::Error::other(error.to_string()))?;
+                if stamped.is_some_and(|stamped| stamped != self.incarnation) {
+                    return Ok(Some(format!("the library in {} is another hub's", directory.display())));
+                }
+            }
+        }
+        Ok(None)
     }
 
     /// Whether `owner` has a library here.
@@ -112,6 +145,10 @@ impl Owners {
         let directory = self.root.join(owner.directory());
         fastctx_platform::ensure_private_dir(&directory)?;
         let (opened, _) = Library::open_hub(&directory).map_err(|error| io::Error::other(error.to_string()))?;
+        let stamped = opened.stamp(STAMP, self.incarnation.clone()).map_err(|error| io::Error::other(error.to_string()))?;
+        if stamped != self.incarnation {
+            return Err(io::Error::other(format!("the library of {} is another hub's", owner.key())));
+        }
         *library = Some(opened.clone());
         Ok(opened)
     }

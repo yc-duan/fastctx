@@ -16,6 +16,7 @@ pub(crate) use witness::Witness;
 
 use fastctx_content::v2::{Head, HubSigner};
 use fastctx_storage::Database;
+use fastctx_storage::rusqlite::OptionalExtension;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
@@ -30,6 +31,26 @@ pub(crate) const BACKUP_MARKER: &str = "backup-marker";
 /// The asset side's tables in the hub's control database.
 pub(crate) fn schema() -> String {
     format!("{}{}", chain::SCHEMA, scopes::SCHEMA)
+}
+
+/// The hub's incarnation: made with its asset side and stamped on every
+/// owner library it makes (design §17, item 3).
+fn incarnation(control: &Database) -> io::Result<Vec<u8>> {
+    control
+        .write_now(128, |c| {
+            let kept: Option<Vec<u8>> = c
+                .prepare_cached("SELECT value FROM hub_meta WHERE name = 'assets.incarnation'")?
+                .query_row([], |row| row.get(0))
+                .optional()?;
+            if let Some(kept) = kept {
+                return Ok(kept);
+            }
+            let made = fastctx_net::ids::new_hub_id().map_err(|error| fastctx_storage::Error::new(error.to_string()))?;
+            let made = made.as_str().as_bytes().to_vec();
+            c.prepare_cached("INSERT INTO hub_meta (name, value) VALUES ('assets.incarnation', ?1)")?.execute([&made])?;
+            Ok(made)
+        })
+        .map_err(io::Error::other)
 }
 
 /// How often the owner libraries are checkpointed.
@@ -62,7 +83,8 @@ impl Assets {
     pub(crate) fn open(dir: &Path, id: &str, control: Database) -> io::Result<Self> {
         let keys = Arc::new(keys::Keys::open(&dir.join("keys"))?);
         let witness = Arc::new(Witness::open(dir, id)?);
-        let owners = owners::Owners::new(dir.join("assets"));
+        let incarnation = incarnation(&control)?;
+        let owners = owners::Owners::new(dir.join("assets"), incarnation);
         let assets = Self {
             keys,
             owners,
@@ -83,8 +105,9 @@ impl Assets {
 
     /// Why the hub was put back, if it was: its backup's mark is here; the
     /// witness outside its directory holds a chain head its database does
-    /// not; or an owner library no longer holds the heads its latest
-    /// checkpoint wrote.
+    /// not; an owner library no longer holds the heads its latest
+    /// checkpoint wrote, outside the directory or in the hub's own database
+    /// (a backup copied in part); or a library is another hub's.
     fn put_back(&self, dir: &Path) -> io::Result<Option<String>> {
         if fastctx_platform::disk::exists(dir.join(BACKUP_MARKER))? {
             return Ok(Some("the hub was opened from a backup".into()));
@@ -114,6 +137,44 @@ impl Assets {
                 if !held {
                     return Ok(Some(format!("the library of {key} is older than its last checkpoint")));
                 }
+            }
+        }
+        if let Some(why) = self.owners.foreign()? {
+            return Ok(Some(why));
+        }
+        // The heads each library's latest checkpoint wrote in the hub's own
+        // database: a library older than its database is a copy in part.
+        let latest: Vec<(String, Head)> = self
+            .control
+            .read_now(|c| {
+                let mut statement = c.prepare_cached(
+                    "SELECT owner, scope, change, parked, prefix, accumulated FROM hub_checkpoints h
+                     WHERE seq = (SELECT MAX(seq) FROM hub_checkpoints l WHERE l.owner = h.owner AND l.scope = h.scope)",
+                )?;
+                let rows = statement.query_map([], |row| {
+                    let digest = |bytes: Vec<u8>| <[u8; 32]>::try_from(bytes).unwrap_or([0; 32]);
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        Head {
+                            scope: row.get(1)?,
+                            change: row.get::<_, i64>(2)? as u64,
+                            parked: row.get::<_, i64>(3)? as u64,
+                            prefix: digest(row.get(4)?),
+                            accumulated: digest(row.get(5)?),
+                        },
+                    ))
+                })?;
+                Ok(rows.collect::<std::result::Result<_, _>>()?)
+            })
+            .map_err(io::Error::other)?;
+        for (key, head) in &latest {
+            let Some(owner) = Owner::from_key(key) else { continue };
+            if !self.owners.exists(&owner)? {
+                return Ok(Some(format!("the library of {key} is gone")));
+            }
+            let library = self.owners.library(&owner)?;
+            if !library.holds(head).map_err(|error| io::Error::other(error.to_string()))? {
+                return Ok(Some(format!("the library of {key} is older than the hub's own record of it")));
             }
         }
         Ok(None)
@@ -217,17 +278,23 @@ impl Assets {
             }
         }
         let digest: [u8; 32] = hasher.finalize().into();
-        let rows: Vec<(String, String, u64, u64)> = owners
-            .iter()
-            .flat_map(|(owner, heads)| heads.iter().map(|head| (owner.clone(), head.scope.clone(), head.change, head.parked)))
-            .collect();
+        let rows: Vec<(String, Head)> =
+            owners.iter().flat_map(|(owner, heads)| heads.iter().map(|head| (owner.clone(), head.clone()))).collect();
         let written = self.control.write_now(256 + rows.len() * 64, move |c| {
             let (seq, head) = chain::append(c, "checkpoint", &digest)?;
             let mut keeping = c.prepare_cached(
-                "INSERT INTO hub_checkpoints (owner, scope, seq, change, parked) VALUES (?1, ?2, ?3, ?4, ?5)",
+                "INSERT INTO hub_checkpoints (owner, scope, seq, change, parked, prefix, accumulated) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             )?;
-            for (owner, scope, change, parked) in &rows {
-                keeping.execute(fastctx_storage::rusqlite::params![owner, scope, seq as i64, *change as i64, *parked as i64])?;
+            for (owner, head) in &rows {
+                keeping.execute(fastctx_storage::rusqlite::params![
+                    owner,
+                    head.scope,
+                    seq as i64,
+                    head.change as i64,
+                    head.parked as i64,
+                    &head.prefix[..],
+                    &head.accumulated[..]
+                ])?;
             }
             Ok((seq, head))
         });

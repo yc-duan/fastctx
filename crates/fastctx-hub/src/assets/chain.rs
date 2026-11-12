@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS hub_chain (
 );
 CREATE TABLE IF NOT EXISTS hub_checkpoints (
     owner TEXT NOT NULL, scope TEXT NOT NULL, seq INTEGER NOT NULL, change INTEGER NOT NULL, parked INTEGER NOT NULL,
+    prefix BLOB NOT NULL, accumulated BLOB NOT NULL,
     PRIMARY KEY (owner, scope, seq)
 ) WITHOUT ROWID;
 ";

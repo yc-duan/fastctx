@@ -8,6 +8,7 @@
 //! its own, which no earlier collector can touch (§4.3 I5).
 
 pub(crate) const SCHEMA: &str = "
+CREATE TABLE IF NOT EXISTS stamps (name TEXT PRIMARY KEY, value BLOB NOT NULL) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS scopes (
     id INTEGER PRIMARY KEY,
     key TEXT NOT NULL UNIQUE,
