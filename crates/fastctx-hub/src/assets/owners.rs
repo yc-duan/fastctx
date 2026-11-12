@@ -13,6 +13,9 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+/// What a deleted library's directory is moved aside under, before it goes.
+const DISCARDED: &str = "discarded-";
+
 /// Libraries open at once.
 pub(crate) const OPEN_AT_ONCE: usize = 64;
 /// How long an idle library stays open.
@@ -148,9 +151,12 @@ impl Owners {
         Ok(Ok(opened))
     }
 
-    /// Deletes the library of `owner`, closed first; an error while anyone
-    /// holds it, opens it or is about to. Call on a thread that may block.
-    pub(crate) fn delete(&self, owner: &Owner) -> io::Result<()> {
+    /// Takes the library of `owner` away, closed first: its directory moved
+    /// aside under a name no library has, where `discard` removes it, so
+    /// what is quick happens now and the slow part later (AD13). An error
+    /// while anyone holds it, opens it or is about to. Call on a thread
+    /// that may block.
+    pub(crate) fn delete(&self, owner: &Owner) -> io::Result<Option<PathBuf>> {
         {
             // Fenced first, under the lock every opening takes: none opens
             // it from now until `deleted`.
@@ -161,10 +167,34 @@ impl Owners {
             }
             slots.remove(owner);
         }
-        match fastctx_platform::disk::remove_dir_all(self.root.join(owner.directory())) {
-            Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
-            _ => Ok(()),
+        let directory = self.root.join(owner.directory());
+        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |since| since.as_nanos());
+        let aside = self.root.join(format!("{DISCARDED}{nanos:x}"));
+        match fastctx_platform::disk::rename(&directory, &aside) {
+            Ok(()) => Ok(Some(aside)),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error),
         }
+    }
+
+    /// Removes what deleted libraries left moved aside, those a stop left
+    /// among them.
+    pub(crate) fn discard(&self) -> io::Result<()> {
+        let entries = match fastctx_platform::disk::read_dir(&self.root) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(error),
+        };
+        for entry in entries {
+            let entry = entry?;
+            if entry.file_name().to_string_lossy().starts_with(DISCARDED) {
+                match fastctx_platform::disk::remove_dir_all(entry.path()) {
+                    Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
+                    _ => {}
+                }
+            }
+        }
+        Ok(())
     }
 
     /// The deletion of `owner`'s library is done: a library made for it from

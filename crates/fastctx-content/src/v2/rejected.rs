@@ -120,10 +120,12 @@ pub(super) fn rebuild(db: &Connection, at: Applying) -> fastctx_storage::Result<
         }
         for (first, header, body) in frames {
             let header = Header::decode(&header).map_err(invalid)?;
-            // What the frame kept out of the index stays out (§2.3).
+            // What the frame kept out of the index stays out (§2.3), and so
+            // does what was refused once it was known (T03).
             let kept = super::pending::kept(db, at.stream, header.epoch, header.first)?;
+            let refused = super::pending::refused(db, at.stream, header.epoch, header.first)?;
             for (offset, record) in open(&header, &body).map_err(invalid)?.iter().enumerate() {
-                if kept.contains(&(record.kind, record.schema)) {
+                if kept.contains(&(record.kind, record.schema)) || refused.contains(&(offset as u64)) {
                     continue;
                 }
                 apply(db, at, header.first + offset as u64, record)?;
@@ -301,20 +303,20 @@ impl Library {
     pub fn refuse(&self, scope: &str, stream: &str, id: i64, why: &str) -> Result<()> {
         let (scope, stream, why) = (scope.to_string(), stream.to_string(), why.to_string());
         Ok(self.database().write_now_at(Priority::Normal, 1024, move |db| {
-            let found: Option<(i64, Vec<u8>, Option<String>)> = db
+            let found: Option<(i64, Vec<u8>, Option<String>, i64)> = db
                 .prepare_cached(
-                    "SELECT r.stream, r.record, r.op FROM resubmits r JOIN streams s ON s.id = r.stream JOIN scopes c ON c.id = s.scope
+                    "SELECT r.stream, r.record, r.op, r.seq FROM resubmits r JOIN streams s ON s.id = r.stream JOIN scopes c ON c.id = s.scope
                      WHERE c.key = ?1 AND s.name = ?2 AND r.id = ?3",
                 )?
                 .query_row(params![scope, stream, id], |row| {
-                    Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+                    Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
                 })
                 .optional()?;
-            let Some((stream_id, raw, op)) = found else { return Ok(()) };
+            let Some((stream_id, raw, op, seq)) = found else { return Ok(()) };
             let record = decode(&raw).map_err(invalid)?;
             if let Some(op) = &op {
                 // The write as the user made it stays in its operation.
-                super::ops::refused_in(db, op, &raw, &why)?;
+                super::ops::refused_in(db, op, seq, &raw, &why)?;
                 if let State::Is { objects, .. } = &record.record.state {
                     for object in objects {
                         db.prepare_cached(
@@ -358,6 +360,7 @@ struct Waiting {
     stream: i64,
     raw: Vec<u8>,
     op: Option<String>,
+    seq: i64,
 }
 
 /// When a holding period ends with records of its own still waiting to be
@@ -368,20 +371,20 @@ pub(super) fn end_resubmits(db: &Connection, scope: i64, holding: i64) -> fastct
     loop {
         let waiting: Vec<Waiting> = {
             let mut statement = db.prepare_cached(
-                "SELECT id, stream, record, op FROM resubmits
+                "SELECT id, stream, record, op, seq FROM resubmits
                  WHERE holding = ?2 AND stream IN (SELECT id FROM streams WHERE scope = ?1) ORDER BY stream, seq, id LIMIT ?3",
             )?;
             let rows = statement.query_map(params![scope, holding, ROWS_AT_ONCE], |row| {
-                Ok(Waiting { id: row.get(0)?, stream: row.get(1)?, raw: row.get(2)?, op: row.get(3)? })
+                Ok(Waiting { id: row.get(0)?, stream: row.get(1)?, raw: row.get(2)?, op: row.get(3)?, seq: row.get(4)? })
             })?;
             rows.collect::<std::result::Result<_, _>>()?
         };
         if waiting.is_empty() {
             break;
         }
-        for Waiting { id, stream, raw, op } in waiting {
+        for Waiting { id, stream, raw, op, seq } in waiting {
             if let Some(op) = &op {
-                super::ops::refused_in(db, op, &raw, "access to the scope ended before it could be written again")?;
+                super::ops::refused_in(db, op, seq, &raw, "access to the scope ended before it could be written again")?;
                 if let State::Is { objects, .. } = &decode(&raw).map_err(invalid)?.record.state {
                     for object in objects {
                         db.prepare_cached(

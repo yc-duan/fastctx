@@ -49,18 +49,19 @@ struct Pinned {
 const LINEAGE_KEPT: usize = 256;
 const LINEAGE_SENT: usize = 64;
 
-/// `lineage` with each of `rotations` it lacks, the latest `LINEAGE_KEPT`
-/// kept; whether it changed.
+/// `lineage` with `rotations`, which the hub gives oldest first, in the
+/// order of the chain: those it holds that the hub no longer gives are the
+/// older, before the hub's (BB03); the latest `LINEAGE_KEPT` kept. Whether
+/// it changed.
 fn grow(lineage: &mut Vec<fastctx_types::assets::Rotation>, rotations: &[fastctx_types::assets::Rotation]) -> bool {
     let before = lineage.clone();
-    for rotation in rotations {
-        if !lineage.contains(rotation) {
-            lineage.push(rotation.clone());
-        }
+    let mut grown: Vec<fastctx_types::assets::Rotation> =
+        lineage.iter().filter(|rotation| !rotations.contains(rotation)).cloned().collect();
+    grown.extend(rotations.iter().cloned());
+    if grown.len() > LINEAGE_KEPT {
+        grown.drain(..grown.len() - LINEAGE_KEPT);
     }
-    if lineage.len() > LINEAGE_KEPT {
-        lineage.drain(..lineage.len() - LINEAGE_KEPT);
-    }
+    *lineage = grown;
     *lineage != before
 }
 
@@ -94,8 +95,8 @@ pub(crate) struct Assets {
 /// How far a hub's scopes this machine may hold were listed.
 #[derive(Clone)]
 pub(crate) struct Listed {
-    /// The last description listed.
-    pub(crate) through: u64,
+    /// The last scope the listing looked at.
+    pub(crate) through: Option<fastctx_types::assets::HoldingsAt>,
     /// When they were last listed whole.
     pub(crate) whole: std::time::Instant,
     /// What decided what this machine may hold then, as the hub said.
@@ -114,7 +115,7 @@ impl Assets {
         let kinds: Arc<dyn fastctx_content::v2::Authorizer> =
             Arc::new(fastctx_content::v2::Kinds::new().register::<fastctx_content::v2::Timeline>());
         library.know(kinds.clone());
-        library.reconsider(kinds, false).map_err(|error| io::Error::other(error.to_string()))?;
+        library.reconsider(kinds, true).map_err(|error| io::Error::other(error.to_string()))?;
         let path = dir.join("hubs.json");
         let hubs = match fastctx_platform::disk::read(&path) {
             Ok(bytes) => serde_json::from_slice(&bytes)

@@ -119,6 +119,11 @@ impl Keys {
             .find_map(|key| heard_word(&key, statement, word))
     }
 
+    /// Whether `word` says `statement` under the key in use now.
+    pub(crate) fn heard_now(&self, statement: &[u8], word: &[u8]) -> bool {
+        heard_word(&self.current.public(), statement, word).is_some()
+    }
+
     /// Whether `key` is the next key a rotation prepared, not yet in use.
     pub(crate) fn is_next(&self, key: &[u8; 32]) -> bool {
         self.next.is_some_and(|next| next.as_bytes() == key) && self.current.public().as_bytes() != key

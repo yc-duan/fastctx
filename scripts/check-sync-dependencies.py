@@ -40,14 +40,30 @@ RAW_OPENERS = {
     "crates/fastctx-sync/src/registry/derived.rs",
 }
 # A raw connection opened, or SQLite's connection type under another name.
-RAW_OPENING = re.compile(r"\bConnection\s*::\s*open\w*\b|\bConnection\s+as\s+[A-Za-z_]\w*|\btype\s+\w+\s*=\s*[\w:]*\bConnection\b")
+RAW_OPENING = re.compile(
+    r"\bConnection\s*>?\s*::\s*open\w*\b|\bConnection\s+as\s+[A-Za-z_]\w*|\btype\s+\w+\s*=\s*[\w:]*\bConnection\b"
+)
+
+
+def exempt(relative):
+    """Drills and tests, by the parts of their path, not by any name that
+    holds the letters (T07: latest.rs is no test)."""
+    parts = relative.split("/")
+    stem = parts[-1].removesuffix(".rs")
+    return (
+        "tests" in parts[:-1]
+        or any("drill" in part for part in parts)
+        or stem in ("test", "tests")
+        or stem.endswith(("_test", "_tests"))
+        or stem.startswith("test_")
+    )
 
 
 def check_raw_openers():
     for path in sorted((ROOT / "crates").rglob("*.rs")):
         relative = path.relative_to(ROOT).as_posix()
         package = relative.split("/")[1]
-        if package in RUSQLITE_USERS or "target" in path.parts or any(part in relative for part in ("test", "drill")):
+        if package in RUSQLITE_USERS or "target" in path.parts or exempt(relative):
             continue
         if RAW_OPENING.search(path.read_text(encoding="utf-8")) and relative not in RAW_OPENERS:
             raise ValueError(f"unregistered raw SQLite connection: {relative}")

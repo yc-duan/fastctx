@@ -24,8 +24,18 @@ CREATE TABLE IF NOT EXISTS asset_scopes (
     seq INTEGER NOT NULL DEFAULT 0
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS asset_scopes_by_owner ON asset_scopes (owner);
-CREATE INDEX IF NOT EXISTS asset_scopes_by_seq ON asset_scopes (seq, key);
 ";
+
+/// Brings a control database from before scopes were numbered up to them
+/// (BB09): the column, then its index.
+pub(crate) fn migrate(c: &fastctx_storage::rusqlite::Connection) -> fastctx_storage::Result<()> {
+    let numbered = c.prepare("SELECT 1 FROM pragma_table_info('asset_scopes') WHERE name = 'seq'")?.exists([])?;
+    if !numbered {
+        c.execute_batch("ALTER TABLE asset_scopes ADD COLUMN seq INTEGER NOT NULL DEFAULT 0;")?;
+    }
+    c.execute_batch("CREATE INDEX IF NOT EXISTS asset_scopes_by_seq ON asset_scopes (seq, key);")?;
+    Ok(())
+}
 
 /// A scope as the hub keeps it: its descriptor, as signed and as read.
 #[derive(Clone)]
@@ -228,8 +238,10 @@ pub(crate) fn scope(assets: &Assets, key: &str) -> Result<Option<Scope>, String>
     let Some((owner, descriptor, mut word)) = found else { return Ok(None) };
     let owner = Owner::from_key(&owner).ok_or_else(|| format!("a scope of an unknown owner {owner}"))?;
     let read: Descriptor = serde_json::from_slice(&descriptor).map_err(|error| error.to_string())?;
-    if word.is_empty() {
-        // A stop came between its chain head and its word.
+    // A stop came between its chain head and its word; or the word is under
+    // a key the hub turned from since, which a device pinned to the key in
+    // use now does not take (BB10): said again under that key.
+    if word.is_empty() || !assets.keys().heard_now(&descriptor, &word) {
         assets.catch_up().map_err(|error| error.to_string())?;
         word = assets.signer().sign(&descriptor);
         let (key, signed) = (read.scope.clone(), word.clone());
@@ -307,7 +319,7 @@ pub(crate) fn describe(
     if key.len() > 128 {
         return Err("a scope's key is at most 128 bytes".into());
     }
-    let prefix = readers.key_prefix();
+    let prefix = readers.key_prefix(assets.id.as_str());
     if !key.starts_with(&prefix) || key.len() == prefix.len() {
         return Err(format!("a scope of those readers has its key under {prefix}"));
     }
@@ -371,7 +383,7 @@ pub(crate) fn describe(
     };
     let bytes = serde_json::to_vec(&descriptor).map_err(|error| error.to_string())?;
     let digest: [u8; 32] = Sha256::digest(&bytes).into();
-    let (key_text, owner_key, stored, described_at) = (key.to_string(), owner.key(), bytes.clone(), descriptor.seq);
+    let (key_text, owner_key, stored) = (key.to_string(), owner.key(), bytes.clone());
     let (seq, head) = assets
         .control
         .write_now(256 + bytes.len(), move |c| {
@@ -379,13 +391,18 @@ pub(crate) fn describe(
             let added = c
                 .prepare_cached(
                     "INSERT INTO asset_scopes (key, owner, descriptor, word, seq)
-                     SELECT ?1, ?2, ?3, x'', ?4 WHERE NOT EXISTS (SELECT 1 FROM asset_deleting WHERE owner = ?2)",
+                     SELECT ?1, ?2, ?3, x'', 0 WHERE NOT EXISTS (SELECT 1 FROM asset_deleting WHERE owner = ?2)",
                 )?
-                .execute(params![key_text, owner_key, stored, described_at as i64])?;
+                .execute(params![key_text, owner_key, stored])?;
             if added == 0 {
                 return Ok(None);
             }
-            chain::append(c, "scope", &digest).map(Some)
+            let (seq, head) = chain::append(c, "scope", &digest)?;
+            // Listed in the order the scopes were committed in, by the
+            // number this very commit took: one committed late is never
+            // behind a listing that went past it (AD03).
+            c.prepare_cached("UPDATE asset_scopes SET seq = ?2 WHERE key = ?1")?.execute(params![key_text, seq as i64])?;
+            Ok(Some((seq, head)))
         })
         .map_err(|error| error.to_string())?
         .ok_or("the library the scope belongs in is being deleted; describe it again later")?;

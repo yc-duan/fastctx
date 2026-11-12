@@ -73,6 +73,13 @@ fn decode(bytes: &[u8], chunks: usize) -> Vec<bool> {
     durable
 }
 
+/// A name no transfer part had before, in this run or any other.
+fn unique() -> String {
+    static COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |since| since.as_nanos());
+    format!("{nanos:x}-{:x}", COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+}
+
 fn chunk_count(size: u64) -> usize {
     size.div_ceil(CHUNK_BYTES) as usize
 }
@@ -114,7 +121,10 @@ impl Library {
             )?
             .execute(params![&object.hash[..], object.size as i64, CHUNK_BYTES as i64, manifest, source])?;
             let id = db.last_insert_rowid();
-            let part = format!("transfer-{id}.part");
+            // Named apart from any transfer before it, whose row number a
+            // clearing may have freed: a handle that outlived its transfer
+            // never takes another's part for its own (T01).
+            let part = format!("transfer-{id}-{}.part", unique());
             db.prepare_cached("UPDATE transfers SET part = ?2 WHERE id = ?1")?.execute(params![id, part])?;
             Ok(Some((id, part, Vec::new(), stale)))
         })?;
@@ -197,8 +207,13 @@ impl Transfer {
     /// every transfer with its part, and one cleared away writes no more.
     fn still(&self) -> Result<()> {
         let id = self.id;
+        let part = self.part.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
         let recorded = self.library.database().read_now(move |db| {
-            Ok(db.prepare_cached("SELECT 1 FROM transfers WHERE id = ?1")?.query_row([id], |_| Ok(())).optional()?.is_some())
+            Ok(db
+                .prepare_cached("SELECT 1 FROM transfers WHERE id = ?1 AND part = ?2")?
+                .query_row(params![id, part], |_| Ok(()))
+                .optional()?
+                .is_some())
         })?;
         if recorded { Ok(()) } else { Err(Error::Invalid("the transfer was cleared away".into())) }
     }

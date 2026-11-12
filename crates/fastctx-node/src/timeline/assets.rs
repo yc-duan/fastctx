@@ -82,19 +82,12 @@ pub(super) fn checkpoint(resident: &ResidentId) -> String {
 /// account: a conversation several accounts share alike has none yet.
 pub(super) fn placed(node: &Node, about: &About) -> Result<Option<Placed>, Failure> {
     let Some(account) = crate::placement::account(node, &about.acting, None)? else { return Ok(None) };
+    // The machine it was born on stays its place however it moves: a moved
+    // conversation's timeline goes on there once its ordering is handed
+    // over (design §8, plan 3-4), never in a scope of its own here (BB08).
     let born_on = crate::record_ownership::origin(node, about);
-    let mut readers = Readers::Conversation { openers: vec![account.account.clone()], born_on: born_on.clone() };
-    let mut scope = format!("{}{}", readers.key_prefix(), about.id);
-    // Moved here from the machine it was born on, its scope not here: it is
-    // described from here, where it lives now, as only the machine a scope
-    // is born on describes it (AA10).
-    if let (Some(born), Some(kept), Some(link)) = (&born_on, node.assets.as_ref(), node.link_of(&account.hub)) {
-        let here = link.name();
-        if *born != here && kept.library.holding(&scope).map_err(failure)?.is_none() {
-            readers = Readers::Conversation { openers: vec![account.account.clone()], born_on: Some(here) };
-            scope = format!("{}{}", readers.key_prefix(), about.id);
-        }
-    }
+    let readers = Readers::Conversation { openers: vec![account.account.clone()], born_on };
+    let scope = format!("{}{}", readers.key_prefix(account.hub.as_str()), about.id);
     let classes = vec![StreamClass { prefix: String::new(), holders: Holders::Readers }];
     Ok(Some(Placed { scope, hub: account.hub.clone(), proposal: Proposal { hub: account.hub.to_string(), readers, classes } }))
 }

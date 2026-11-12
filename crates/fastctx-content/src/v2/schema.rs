@@ -302,6 +302,15 @@ CREATE TABLE IF NOT EXISTS pending_schema (
     first INTEGER NOT NULL,
     PRIMARY KEY (stream, kind, schema, epoch, first)
 ) WITHOUT ROWID;
+-- Records judged and refused once their kind was known (`reconsider`), by
+-- their place in their frame: kept out of the index however it is built.
+CREATE TABLE IF NOT EXISTS refused_records (
+    stream INTEGER NOT NULL,
+    epoch INTEGER NOT NULL,
+    first INTEGER NOT NULL,
+    offset INTEGER NOT NULL,
+    PRIMARY KEY (stream, epoch, first, offset)
+) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS purges (
     scope INTEGER NOT NULL,
     holding INTEGER NOT NULL,

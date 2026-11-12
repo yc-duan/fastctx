@@ -48,7 +48,7 @@ pub struct Committed {
 }
 
 /// The stream's id, epoch, next sequence and chain value, made at need.
-fn stream_of(db: &Connection, scope: i64, name: &str) -> fastctx_storage::Result<(i64, u64, u64, [u8; 32])> {
+pub(super) fn stream_of(db: &Connection, scope: i64, name: &str) -> fastctx_storage::Result<(i64, u64, u64, [u8; 32])> {
     let found: Option<(i64, i64, i64, Option<Vec<u8>>)> = db
         .prepare_cached("SELECT id, epoch, next, head FROM streams WHERE scope = ?1 AND name = ?2")?
         .query_row(params![scope, name], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))

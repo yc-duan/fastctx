@@ -98,6 +98,12 @@ fn held(assets: &Assets, directory: &Indexed<'_>, machine: &MachineName, key: &s
     Ok(scope)
 }
 
+/// An answer of what `machine` may hold, judged again by the directory as
+/// it stands now (`holdings::recheck`).
+pub(crate) fn recheck_holdings(assets: &Assets, directory: &Indexed<'_>, basis: String, machine: &MachineName, reply: Reply) -> Result<Reply, String> {
+    super::holdings::recheck(assets, directory, basis, machine, reply)
+}
+
 /// An answer about the scope `key` made by the directory as it stood when
 /// the request began, judged again by the directory as it stands now: one
 /// the machine may no longer have is answered `Revoked` (design §6.3).
@@ -248,7 +254,7 @@ pub(crate) fn ask(
                     return Err("a frame staged apart comes without its body".into());
                 }
                 let body = match assets.objects.apart.body(staged, key.as_bytes()) {
-                    Ok(body) => body,
+                    Ok(taken) => taken,
                     // Settled already, its body let go: the same frame asked
                     // again hears what the hub said of it.
                     Err(why) => {
@@ -262,28 +268,29 @@ pub(crate) fn ask(
                         };
                     }
                 };
-                if body.len() as u64 != frame.apart {
-                    assets.objects.apart.untake(staged, key.as_bytes());
+                if body.0.len() as u64 != frame.apart {
+                    assets.objects.apart.untake(staged, key.as_bytes(), body.1);
                     return Err("the body staged under that ticket is not the frame's".into());
                 }
-                (*body).clone()
+                ((*body.0).clone(), body.1)
             } else if frame.too_large() || frame.apart != 0 {
                 return Err(format!("a frame body over {} bytes travels apart", wire::INLINE_FRAME_BYTES));
             } else {
-                frame.body.0
+                (frame.body.0, 0)
             };
+            let (body, take) = body;
             // However this take ends without a word on the frame, its staged
             // body waits for the frame asked again (`touch` and `release`
             // settle it otherwise first).
-            struct Untake<'a>(&'a super::apart::Apart, u64, [u8; 32]);
+            struct Untake<'a>(&'a super::apart::Apart, u64, [u8; 32], u64);
             impl Drop for Untake<'_> {
                 fn drop(&mut self) {
                     if self.1 != 0 {
-                        self.0.untake(self.1, &self.2);
+                        self.0.untake(self.1, &self.2, self.3);
                     }
                 }
             }
-            let _untake = Untake(&assets.objects.apart, staged, *key.as_bytes());
+            let _untake = Untake(&assets.objects.apart, staged, *key.as_bytes(), take);
             let library = scopes::library(assets, &kept)?;
             let period = library.holding(&scope).map_err(|error| error.to_string())?.ok_or("the scope is not held here")?;
             // Only what this device sent every byte of lately, under its key

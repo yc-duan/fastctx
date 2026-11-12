@@ -47,8 +47,15 @@ pub(super) const DONE: &str = "\"done\"";
 pub(super) const RECEIPT_WITHIN: Duration = Duration::from_secs(120);
 /// Chunks between two judgements of whether the machine may go on.
 const CHECK_EVERY: u64 = 16;
-/// Proofs kept before the lapsed ones are let go.
-const PROOFS_KEPT: usize = 4096;
+/// Proofs one device has standing at most, past what one frame may refer
+/// to (AD01), and every device's together.
+const DEVICE_PROOFS: usize = 16_384;
+const PROOFS_KEPT: usize = 1 << 18;
+/// How often a device putting an object keeps what it proved and staged.
+const KEEP_EVERY: Duration = Duration::from_secs(30);
+
+/// One device's proofs: each object's, until when it stands.
+type Proven = HashMap<[u8; 32], Instant>;
 /// Ranges of chunks one put asks for at most: the rest are asked for at the
 /// next, so a transfer left full of holes never asks in one message more
 /// than a connection carries.
@@ -89,15 +96,14 @@ impl Ticket {
     }
 }
 
-/// A proof of holding: the device's key and the object's hash.
-type Proof = ([u8; 32], [u8; 32]);
 
 /// The tickets handed out, and the proofs of holding that stand, each under
 /// the key of the device that gave it.
 #[derive(Default)]
 pub(crate) struct Objects {
     tickets: Mutex<HashMap<u64, Ticket>>,
-    proofs: Mutex<HashMap<Proof, Instant>>,
+    /// By the proving device's key, each object's proof until when it stands.
+    proofs: Mutex<HashMap<[u8; 32], Proven>>,
     pub(crate) apart: super::apart::Apart,
 }
 
@@ -113,17 +119,19 @@ impl Objects {
     /// Whether the device whose key is `key` proved lately it holds the
     /// object of `hash`.
     pub(crate) fn proven(&self, key: &[u8; 32], hash: &[u8; 32]) -> bool {
-        self.proofs.lock().expect("proofs").get(&(*key, *hash)).is_some_and(|until| Instant::now() < *until)
+        let proofs = self.proofs.lock().expect("proofs");
+        proofs.get(key).and_then(|proven| proven.get(hash)).is_some_and(|until| Instant::now() < *until)
     }
 
     /// While the device whose key is `key` puts an object, what it proved
     /// lately and the bodies it staged stay (AA05): a frame that waits for
-    /// several large objects is not held up by the first one's proof, or
-    /// its staged body, ending while the last one comes.
+    /// several objects is not held up by the first one's proof, or its
+    /// staged body, ending while the last one comes.
     pub(crate) fn keep_alive(&self, key: &[u8; 32]) {
-        let until = Instant::now() + proof_for(0);
-        for ((given, _), kept) in self.proofs.lock().expect("proofs").iter_mut() {
-            if given == key && *kept > Instant::now() && *kept < until {
+        let now = Instant::now();
+        let until = now + proof_for(0);
+        if let Some(proven) = self.proofs.lock().expect("proofs").get_mut(key) {
+            for kept in proven.values_mut().filter(|kept| **kept > now && **kept < until) {
                 *kept = until;
             }
         }
@@ -131,20 +139,32 @@ impl Objects {
     }
 
     fn proved(&self, key: &[u8; 32], object: &ObjectRef) {
+        let now = Instant::now();
         let mut proofs = self.proofs.lock().expect("proofs");
-        if proofs.len() >= PROOFS_KEPT {
-            let now = Instant::now();
-            proofs.retain(|_, until| now < *until);
+        if proofs.values().map(HashMap::len).sum::<usize>() >= PROOFS_KEPT {
+            for proven in proofs.values_mut() {
+                proven.retain(|_, until| now < *until);
+            }
+            proofs.retain(|_, proven| !proven.is_empty());
+        }
+        let proven = proofs.entry(*key).or_default();
+        if proven.len() >= DEVICE_PROOFS {
+            proven.retain(|_, until| now < *until);
             // Past the bound with every proof still good, the quarter that
-            // ends soonest goes: a device asked again proves again.
-            if proofs.len() >= PROOFS_KEPT {
-                let mut ends: Vec<Instant> = proofs.values().copied().collect();
-                ends.sort_unstable();
-                let cut = ends[ends.len() / 4];
-                proofs.retain(|_, until| *until > cut);
+            // ends soonest goes, a quarter by count however many end alike
+            // (AD08): a device asked again proves again.
+            if proven.len() >= DEVICE_PROOFS {
+                let mut ends: Vec<([u8; 32], Instant)> = proven.iter().map(|(hash, until)| (*hash, *until)).collect();
+                ends.sort_unstable_by_key(|(_, until)| *until);
+                for (hash, _) in ends.iter().take(ends.len() / 4) {
+                    proven.remove(hash);
+                }
             }
         }
-        proofs.insert((*key, object.hash), Instant::now() + proof_for(object.size));
+        proven.insert(object.hash, now + proof_for(object.size));
+        drop(proofs);
+        // The frame it is proved for waits on (AD09).
+        self.apart.keep_staged(key);
     }
 }
 
@@ -487,10 +507,15 @@ async fn take(hub: &Arc<Hub>, mut socket: Socket, me: &MachineName, key: &Public
             // Every byte, in order, hashed as it comes.
             let mut hasher = Sha256::new();
             let mut length = 0u64;
+            let mut kept: Option<Instant> = None;
             for expected in 0..chunks(object.size) {
                 if expected > 0 && expected.is_multiple_of(CHECK_EVERY) {
                     still(hub, me, key, &scope, None).await?;
+                }
+                // Kept by time, however few chunks the object has (BB02).
+                if kept.is_none_or(|kept| kept.elapsed() >= KEEP_EVERY) {
                     hub.assets.objects.keep_alive(key.as_bytes());
+                    kept = Some(Instant::now());
                 }
                 let (index, bytes) = chunk(&mut stream, &pulse).await?;
                 if index != expected {
@@ -520,10 +545,14 @@ async fn take(hub: &Arc<Hub>, mut socket: Socket, me: &MachineName, key: &Public
         let mut hasher = (transfer.is_none() && whole).then(Sha256::new);
         let mut wanted: BTreeSet<u64> = missing.into_iter().collect();
         let (mut next, mut taken) = (0, 0u64);
+        let mut kept: Option<Instant> = None;
         while !wanted.is_empty() {
             if taken > 0 && taken.is_multiple_of(CHECK_EVERY) {
                 still(hub, me, key, &scope, None).await?;
+            }
+            if kept.is_none_or(|kept| kept.elapsed() >= KEEP_EVERY) {
                 hub.assets.objects.keep_alive(key.as_bytes());
+                kept = Some(Instant::now());
             }
             let (index, bytes) = chunk(&mut stream, &pulse).await?;
             taken += 1;

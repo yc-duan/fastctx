@@ -17,6 +17,7 @@ mod names;
 mod order;
 mod preview;
 pub(crate) mod reads;
+mod serial;
 mod tail;
 
 use fastctx_content::StreamKey;
@@ -113,14 +114,24 @@ fn rescan(node: &std::sync::Weak<crate::Node>) {
         tokio::time::sleep(RESCAN_AFTER).await;
         let Some(node) = node.upgrade() else { return };
         let lately = jiff::Timestamp::now() - jiff::SignedDuration::from_secs(RESCAN_ACTIVE.as_secs() as i64);
-        let active: Vec<ResidentId> = node
+        let here: Vec<(ResidentId, bool)> = node
             .residents
             .everyone()
-            .filter(|record| record.here && record.removed.is_none() && record.now.as_ref().is_some_and(|now| now.since >= lately))
-            .map(|record| record.id)
+            .filter(|record| record.here && record.removed.is_none())
+            .map(|record| {
+                let active = record.now.as_ref().is_some_and(|now| now.since >= lately);
+                (record.id, active)
+            })
             .collect();
-        for resident in active {
-            wanted(&node, &resident);
+        for (resident, active) in here {
+            // The content timeline is read whole: only the conversations of
+            // late. The asset timeline of each, whose version tells at once
+            // whether anything is to do (BB06).
+            if active {
+                wanted(&node, &resident);
+            } else {
+                tail::wanted(&node, &resident);
+            }
         }
     });
 }

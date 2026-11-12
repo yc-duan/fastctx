@@ -45,7 +45,11 @@ fn failure(error: impl std::fmt::Display) -> Failure {
 /// reading, and brings its timeline to it. A history whose version it was
 /// last built from is not read at all. The timeline in the asset library is
 /// brought apart (`super::tail`).
+/// The content timeline's builds, one per conversation at a time.
+static BUILDS: super::serial::Serial = super::serial::Serial::new();
+
 pub(crate) async fn build(node: &Arc<Node>, resident: &ResidentId) -> Result<Built, Failure> {
+    let _building = BUILDS.hold(resident).await;
     let content = node.content()?.clone();
     let name = super::checkpoint(resident.as_str());
     // Taken before the history is read: what is read is at least as new.

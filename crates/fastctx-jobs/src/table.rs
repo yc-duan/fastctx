@@ -42,11 +42,16 @@ pub(crate) fn now() -> i64 {
 /// job already waiting keeps the later of its own due time and that, so
 /// asking again while it waits out a pause does not bring it on early.
 pub fn submit_after(db: &Connection, job: &Job, after: std::time::Duration) -> Result<()> {
+    // The waiting job's own due time, before submitting brings it to now.
+    let waiting: Option<i64> = db
+        .prepare_cached("SELECT due FROM jobs WHERE kind = ?1 AND key = ?2 AND state <> ?3")?
+        .query_row(params![job.kind, job.key, RUNNING], |row| row.get(0))
+        .optional()?;
     submit(db, job)?;
-    if !after.is_zero() {
-        db.prepare_cached("UPDATE jobs SET due = MAX(due, ?3) WHERE kind = ?1 AND key = ?2 AND state <> ?4")?
-            .execute(params![job.kind, job.key, now() + after.as_millis() as i64, RUNNING])?;
-    }
+    let soonest = now() + after.as_millis() as i64;
+    let due = waiting.map_or(soonest, |due| due.max(soonest));
+    db.prepare_cached("UPDATE jobs SET due = ?3 WHERE kind = ?1 AND key = ?2 AND state <> ?4")?
+        .execute(params![job.kind, job.key, due, RUNNING])?;
     Ok(())
 }
 

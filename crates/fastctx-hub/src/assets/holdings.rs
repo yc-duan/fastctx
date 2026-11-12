@@ -9,7 +9,7 @@ use super::scopes;
 use fastctx_net::directory_index::Indexed;
 use fastctx_storage::rusqlite::params;
 use fastctx_types::MachineName;
-use fastctx_types::assets::{Held, HoldingsAt, Reply};
+use fastctx_types::assets::{Held, HoldingsAt, Readers, Reply};
 
 /// Scopes one answer looks at, and gives, at most.
 const LOOKED_AT_ONCE: i64 = 1024;
@@ -37,18 +37,49 @@ pub(crate) fn list(
         })
         .map_err(|error| error.to_string())?;
     let looked = rows.len() as i64;
-    let (mut scopes, mut last) = (Vec::new(), None);
+    let (mut scopes, mut through) = (Vec::new(), None);
     for (key, seq) in rows {
-        last = Some(HoldingsAt { seq: seq.max(0) as u64, scope: key.clone() });
-        let Some(scope) = scopes::scope(assets, &key)? else { continue };
-        if scopes::may_hold(directory, machine, &scope) {
-            assets.holds(&key, machine);
-            scopes.push(Held { scope: key, descriptor: scope.fact.clone() });
-            if scopes.len() >= GIVEN_AT_ONCE {
-                break;
+        let at = HoldingsAt { seq: seq.max(0) as u64, scope: key.clone() };
+        if let Some(scope) = scopes::scope(assets, &key)? {
+            // Whether the machine may hold it cannot be told now: the whole
+            // listing is asked again, not passed by it (AD06).
+            if let (Readers::Body { body, .. }, Some(bodies)) = (&scope.descriptor.readers, &scope.bodies)
+                && let Err(error) = bodies.members(directory.all, body)
+            {
+                return Err(format!("who may hold {key} cannot be told now: {error}"));
+            }
+            if scopes::may_hold(directory, machine, &scope) {
+                assets.holds(&key, machine);
+                scopes.push(Held { scope: key, descriptor: scope.fact.clone() });
             }
         }
+        through = Some(at);
+        if scopes.len() >= GIVEN_AT_ONCE {
+            break;
+        }
     }
-    let next = if looked == LOOKED_AT_ONCE || scopes.len() >= GIVEN_AT_ONCE { last } else { None };
-    Ok(Reply::Holdings { scopes, next, basis })
+    let next = if looked == LOOKED_AT_ONCE || scopes.len() >= GIVEN_AT_ONCE { through.clone() } else { None };
+    Ok(Reply::Holdings { scopes, next, through, basis })
+}
+
+/// An answer of what `machine` may hold, made by the directory as it stood
+/// when the request began, judged again by the directory as it stands now
+/// (AD05): a scope it may no longer hold is left out, and the basis is the
+/// directory's now. Sealed, nothing is given.
+pub(crate) fn recheck(assets: &Assets, directory: &Indexed<'_>, basis: String, machine: &MachineName, reply: Reply) -> Result<Reply, String> {
+    if let Some(why) = assets.sealed() {
+        return Ok(Reply::Sealed { why });
+    }
+    let Reply::Holdings { scopes, next, through, .. } = reply else { return Ok(reply) };
+    let mut kept = Vec::with_capacity(scopes.len());
+    for held in scopes {
+        if let Some(scope) = scopes::scope(assets, &held.scope)?
+            && scopes::may_hold(directory, machine, &scope)
+        {
+            kept.push(held);
+        } else {
+            assets.gone(&held.scope, machine);
+        }
+    }
+    Ok(Reply::Holdings { scopes: kept, next, through, basis })
 }

@@ -84,14 +84,49 @@ pub(super) fn op_at(db: &Connection, scope: i64, stream: &str, revision: u64) ->
 
 /// A refused record of a true source's write is kept in its operation, with
 /// why, for the user to see, drop or send again (§6.5).
-pub(super) fn refused_in(db: &Connection, op: &str, record: &[u8], why: &str) -> fastctx_storage::Result<()> {
+pub(super) fn refused_in(db: &Connection, op: &str, seq: i64, record: &[u8], why: &str) -> fastctx_storage::Result<()> {
     let kept: Option<Vec<u8>> =
         db.prepare_cached("SELECT kept FROM ops WHERE op = ?1")?.query_row([op], |row| row.get(0)).optional()?.flatten();
-    let mut kept = kept.unwrap_or_default();
-    kept.extend_from_slice(&(record.len() as u32).to_le_bytes());
-    kept.extend_from_slice(record);
+    // Each record in its place in the order it was first written in, however
+    // many times it was refused apart (T06).
+    let mut pieces = pieces(&kept.unwrap_or_default()).map_err(invalid)?;
+    let at = pieces.partition_point(|(placed, _)| *placed <= seq);
+    pieces.insert(at, (seq, record.to_vec()));
+    let mut kept = KEPT.to_vec();
+    for (seq, record) in &pieces {
+        kept.extend_from_slice(&seq.to_le_bytes());
+        kept.extend_from_slice(&(record.len() as u32).to_le_bytes());
+        kept.extend_from_slice(record);
+    }
     db.prepare_cached("UPDATE ops SET state = 'refused', kept = ?2, why = ?3 WHERE op = ?1")?.execute(params![op, kept, why])?;
     Ok(())
+}
+
+/// What begins kept records that carry their places in the order.
+const KEPT: &[u8] = b"K2";
+
+/// The kept records of an operation with their places in the order; those
+/// kept before places were, in the order they were kept.
+fn pieces(kept: &[u8]) -> std::result::Result<Vec<(i64, Vec<u8>)>, String> {
+    let (placed, mut cursor) = match kept.strip_prefix(KEPT) {
+        Some(rest) => (true, rest),
+        None => (false, kept),
+    };
+    let mut pieces = Vec::new();
+    while !cursor.is_empty() {
+        let seq = if placed {
+            let seq = i64::from_le_bytes(cursor.get(..8).ok_or("a kept record's place is cut short")?.try_into().expect("eight bytes"));
+            cursor = &cursor[8..];
+            seq
+        } else {
+            pieces.len() as i64
+        };
+        let length = u32::from_le_bytes(cursor.get(..4).ok_or("a kept record is cut short")?.try_into().expect("four bytes")) as usize;
+        let record = cursor.get(4..4 + length).ok_or("a kept record is cut short")?;
+        pieces.push((seq, record.to_vec()));
+        cursor = &cursor[4 + length..];
+    }
+    Ok(pieces)
 }
 
 impl Library {
@@ -139,15 +174,9 @@ impl Library {
                 .optional()?;
             let Some((kept, why)) = found else { return Ok(None) };
             let mut records = Vec::new();
-            let mut rest = kept.unwrap_or_default();
-            let mut cursor = rest.as_slice();
-            while cursor.len() >= 4 {
-                let length = u32::from_le_bytes(cursor[..4].try_into().expect("four bytes")) as usize;
-                let record = cursor.get(4..4 + length).ok_or_else(|| invalid("a kept record is cut short"))?;
-                records.push(super::rejected::decode(record).map_err(invalid)?);
-                cursor = &cursor[4 + length..];
+            for (_, record) in pieces(&kept.unwrap_or_default()).map_err(invalid)? {
+                records.push(super::rejected::decode(&record).map_err(invalid)?);
             }
-            rest.clear();
             Ok(Some((records, why.unwrap_or_default())))
         })?)
     }

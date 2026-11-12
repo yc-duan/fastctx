@@ -70,6 +70,7 @@ pub(crate) fn pushed(node: &Arc<Node>, hub: &HubId, push: wire::Push) {
         wire::Push::Moved { .. } | wire::Push::Fact { .. } => wake(node, hub),
         wire::Push::Revoked { scope } => {
             let Some(assets) = node.assets.as_ref() else { return };
+            assets.listed.lock().expect("listed").remove(hub);
             let (library, log, device) = (assets.library.clone(), node.log.clone(), assets.device());
             fastctx_platform::task::spawn(async move {
                 let key = scope.clone();
@@ -146,6 +147,9 @@ const REVOKED: &str = "no longer read here: ";
 pub(super) async fn ask(assets: &Assets, link: &Arc<Link>, request: Request) -> Result<Reply, String> {
     match link.assets(request).await? {
         Reply::Revoked { scope } => {
+            // What may be given back after it is found by listing all again:
+            // its description is older than any listing goes on from (BB13).
+            assets.listed.lock().expect("listed").remove(&link.membership().id);
             let key = scope.clone();
             let device = assets.device();
             blocking(&assets.library, move |library| library.revoke_keeping(&key, &device)).await?;
@@ -476,6 +480,9 @@ async fn describe(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKe
     Ok(())
 }
 
+/// How many times one listing starts over for a basis that changed under it.
+const RESTARTS_MOST: u32 = 3;
+
 /// How often the scopes a hub lists for this machine are listed whole: a
 /// change of the directory may let it hold one described long before.
 const RELIST: Duration = Duration::from_secs(300);
@@ -487,27 +494,36 @@ const RELIST: Duration = Duration::from_secs(300);
 async fn discover(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKey) -> Result<(), String> {
     let library = &assets.library;
     let known = assets.listed.lock().expect("listed").get(hub).cloned();
-    let (through, mut whole, heard) = match known {
-        Some(listed) if listed.whole.elapsed() < RELIST => (Some(listed.through), None, Some(listed.basis)),
+    let (mut after, mut whole, heard) = match known {
+        Some(listed) if listed.whole.elapsed() < RELIST => (listed.through, None, Some(listed.basis)),
         _ => (None, Some(std::time::Instant::now()), None),
     };
-    let mut after = through.map(|seq| wire::HoldingsAt { seq, scope: String::new() });
-    let mut highest = through.unwrap_or(0);
-    let mut basis;
+    // What the listing went by: a basis that changes while it goes on takes
+    // it from the first again, a scope passed by before being perhaps this
+    // machine's now (T10, BB12). A few times at most, then it waits for the
+    // next pass.
+    let mut basis: Option<String> = None;
+    let mut restarts = 0;
     loop {
-        let Reply::Holdings { scopes, next, basis: said } = ask(assets, link, Request::Holdings { after: after.clone() }).await? else {
+        let Reply::Holdings { scopes, next, through, basis: said } = ask(assets, link, Request::Holdings { after: after.clone() }).await?
+        else {
             return Err("the hub did not list what this machine may hold".into());
         };
-        // What decides what this machine may hold changed since it last
-        // listed: a scope described long ago may be its now (granted again),
-        // so all are listed again from the first.
-        if whole.is_none() && heard.as_deref() != Some(said.as_str()) {
+        let changed = match &basis {
+            Some(basis) => *basis != said,
+            None => whole.is_none() && heard.as_deref() != Some(said.as_str()),
+        };
+        if changed {
+            restarts += 1;
+            if restarts > RESTARTS_MOST {
+                return Err("what this machine may hold kept changing while it was listed".into());
+            }
             whole = Some(std::time::Instant::now());
             after = None;
-            highest = 0;
+            basis = None;
             continue;
         }
-        basis = said;
+        basis = Some(said);
         for held in scopes {
             if !assets.heard(hub, key, &held.descriptor.fact.0, &held.descriptor.word.0) {
                 return Err(format!("the descriptor of {} is not the hub's", held.scope));
@@ -516,24 +532,25 @@ async fn discover(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKe
             if read.scope != held.scope || read.hub != hub.as_str() {
                 return Err(format!("the hub listed another scope than {}", held.scope));
             }
-            highest = highest.max(read.seq);
             let scope = held.scope.clone();
             if blocking(library, move |library| library.holding(&scope)).await?.is_none() {
                 let fact = held.descriptor.fact.0;
                 blocking(library, move |library| library.install(&held.scope, fact, read.seq as i64)).await?;
             }
         }
+        // Where the next listing goes on from: the last scope looked at,
+        // given or not (AD10).
+        if through.is_some() {
+            after = through;
+        }
         match next {
-            Some(next) => {
-                highest = highest.max(next.seq);
-                after = Some(next);
-            }
+            Some(next) => after = Some(next),
             None => break,
         }
     }
     let mut listed = assets.listed.lock().expect("listed");
     let at = whole.or_else(|| listed.get(hub).map(|listed| listed.whole)).unwrap_or_else(std::time::Instant::now);
-    listed.insert(hub.clone(), crate::assets::Listed { through: highest, whole: at, basis });
+    listed.insert(hub.clone(), crate::assets::Listed { through: after, whole: at, basis: basis.unwrap_or_default() });
     Ok(())
 }
 
@@ -753,11 +770,6 @@ async fn pull(
         let (scope_text, device) = (scope.to_string(), assets.device());
         blocking(library, move |library| library.withhold(&scope_text, &stream, &device)).await?;
     }
-    // What the hub gives this machine to hold is committed to again, if it
-    // was withheld before.
-    let given: Vec<String> = streams.iter().map(|at| at.stream.clone()).collect();
-    let scope_text = scope.to_string();
-    blocking(library, move |library| library.hold_again(&scope_text, given)).await?;
     // The streams the hub lags on: given back here, not checked against it.
     let mut ahead = std::collections::BTreeSet::new();
     // What the hub lacks that this machine has — the hub recovered to
@@ -852,6 +864,16 @@ async fn pull(
             failed.get_or_insert(format!("{stream}: {why}"));
         }
     }
+    // A stream the hub gives this machine to hold again, withheld before, is
+    // committed to again once it holds again what the hub has of it: a
+    // commit before would take a place the hub's own frame holds (BB01).
+    let scope_text = scope.to_string();
+    let now: std::collections::BTreeMap<String, u64> =
+        blocking(library, move |library| library.streams(&scope_text)).await?.into_iter().collect();
+    let caught_up: Vec<String> =
+        theirs.iter().filter(|(stream, next)| now.get(*stream).copied().unwrap_or(0) >= **next).map(|(stream, _)| stream.clone()).collect();
+    let scope_text = scope.to_string();
+    blocking(library, move |library| library.hold_again(&scope_text, holding, caught_up)).await?;
     Ok((ahead, failed))
 }
 

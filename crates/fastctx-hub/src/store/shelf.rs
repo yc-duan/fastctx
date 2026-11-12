@@ -64,6 +64,7 @@ impl Shelf {
                 &[fastctx_storage::versions::Migration { version: 1, sql: fastctx_jobs::SCHEMA }],
             )?;
             super::migrate::import(connection, dir)?;
+            crate::assets::migrate(connection)?;
             super::format::initialize(connection, &observed)
         })
         .map_err(other)?;

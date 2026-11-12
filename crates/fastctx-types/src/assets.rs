@@ -166,17 +166,19 @@ pub struct Descriptor {
 }
 
 impl Readers {
-    /// Where the keys of scopes of these readers fall: whoever may begin
-    /// such a scope names it under this, so knowing another's key takes
-    /// nothing from it (§2.1).
-    pub fn key_prefix(&self) -> String {
+    /// Where the keys of scopes of these readers fall on the hub `hub`:
+    /// whoever may begin such a scope names it under this, so knowing
+    /// another's key takes nothing from it (§2.1). An account's names the
+    /// hub too: two hubs' accounts of one name are two owners, whose scopes
+    /// a machine on both holds apart (BB11).
+    pub fn key_prefix(&self, hub: &str) -> String {
         match self {
             Self::Conversation { born_on: Some(machine), .. } => format!("c/{machine}/"),
             Self::Conversation { openers, born_on: None } => {
                 format!("c/-/{}/", openers.first().map(|opener| opener.as_str()).unwrap_or_default())
             }
             Self::Project { town } => format!("p/{town}/"),
-            Self::Account { account } => format!("a/{account}/"),
+            Self::Account { account } => format!("a/{hub}/{account}/"),
             Self::Body { body, .. } => format!("b/{body}/"),
         }
     }
@@ -532,6 +534,10 @@ pub enum Reply {
         scopes: Vec<Held>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         next: Option<HoldingsAt>,
+        /// The last scope this answer looked at, given or not: where the
+        /// next listing goes on from (AD10).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        through: Option<HoldingsAt>,
         /// What decides what any machine may hold, as a digest: when it is
         /// not what the machine last heard, a scope described long ago may be
         /// its to hold now, and it lists them all again.

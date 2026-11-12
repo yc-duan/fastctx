@@ -38,6 +38,17 @@ const UNREAD_TRIES: u32 = 20;
 const FORM: u32 = 2;
 
 static BROUGHT: LazyLock<Mutex<HashMap<ResidentId, Instant>>> = LazyLock::new(Mutex::default);
+/// The asset timeline's builds, one per conversation at a time.
+static PRODUCING: super::serial::Serial = super::serial::Serial::new();
+/// While a conversation is at work, or just was, it is looked at again
+/// this often: a host writes its record late, and says nothing when it does
+/// (BB04).
+const ACTIVE_AGAIN: Duration = Duration::from_secs(5);
+const ACTIVE_FOR: Duration = Duration::from_secs(60);
+/// A request to bring it that the database refused is asked again this
+/// many times, this often (BB06).
+const SUBMIT_TRIES: u32 = 5;
+const SUBMIT_AGAIN: Duration = Duration::from_secs(5);
 static UNREAD: LazyLock<Mutex<HashMap<ResidentId, u32>>> = LazyLock::new(Mutex::default);
 
 /// Where a conversation's timeline in the asset library stands.
@@ -83,6 +94,7 @@ fn unhex(text: &str) -> Option<Vec<u8>> {
 /// Brings `resident`'s timeline in the asset library to its history, where
 /// this machine keeps one.
 pub(super) async fn produce(node: &Arc<Node>, resident: &ResidentId) -> Result<Produced, Failure> {
+    let _producing = PRODUCING.hold(resident).await;
     let Some(kept) = node.assets.as_ref() else { return Ok(Produced::default()) };
     let Some((about, _)) = node.residents.about(resident) else { return Ok(Produced::default()) };
     let Some(placed) = assets::placed(node, &about)? else { return Ok(Produced::default()) };
@@ -212,10 +224,22 @@ async fn run(node: &Arc<Node>, resident: &ResidentId) -> Outcome {
             } else {
                 UNREAD.lock().expect("unread timelines").remove(resident);
             }
+            if active(node, resident) {
+                return Outcome::Again { after: ACTIVE_AGAIN };
+            }
             Outcome::Done
         }
         Err(failure) => Outcome::Failed(failure.message),
     }
+}
+
+/// Whether `resident` is at work, or was a moment ago.
+fn active(node: &Node, resident: &ResidentId) -> bool {
+    node.residents.now(resident).is_some_and(|now| {
+        now.turn.is_some()
+            || now.activity == fastctx_types::residents::Activity::Busy
+            || jiff::Timestamp::now().duration_since(now.since).unsigned_abs() < ACTIVE_FOR
+    })
 }
 
 /// Asks for `resident`'s timeline in the asset library to be brought to its
@@ -235,10 +259,18 @@ pub(super) fn wanted(node: &Arc<Node>, resident: &ResidentId) {
     let (database, jobs, log) = (node.database.clone(), node.durable_jobs.clone(), node.log.clone());
     fastctx_platform::task::spawn(async move {
         let bytes = job.key.len() * 2 + 64;
-        let key = job.key.clone();
-        match database.write_relaxed(bytes, move |db| fastctx_jobs::submit_after(db, &job, pause)).await {
-            Ok(()) => jobs.stir(KIND),
-            Err(error) => log.line(format_args!("asking for {key}'s asset timeline: {error}")),
+        for tries in 1..=SUBMIT_TRIES {
+            let asked = job.clone();
+            match database.write_relaxed(bytes, move |db| fastctx_jobs::submit_after(db, &asked, pause)).await {
+                Ok(()) => {
+                    jobs.stir(KIND);
+                    return;
+                }
+                Err(error) if tries == SUBMIT_TRIES => {
+                    log.line(format_args!("asking for {}'s asset timeline: {error}", job.key));
+                }
+                Err(_) => tokio::time::sleep(SUBMIT_AGAIN).await,
+            }
         }
     });
 }

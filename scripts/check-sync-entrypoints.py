@@ -62,7 +62,7 @@ ASSET_OPENERS = {
     "crates/fastctx-hub/src/assets/owners.rs",
 }
 ASSET_OPENING = re.compile(
-    r"\b(?:Content|Objects|Library)\s*::\s*open(?:_hub)?\b|\b(?:OBJECTS_DIRECTORY|OBJECTS_FILE|BYTES_FILE)\b"
+    r"\b(?:Content|Objects|Library)\s*>?\s*::\s*open(?:_hub)?\b|\b(?:OBJECTS_DIRECTORY|OBJECTS_FILE|BYTES_FILE)\b"
     r"|\bfastctx_content\s*::\s*(?:v2\s*::\s*)?FILE\b"
 )
 

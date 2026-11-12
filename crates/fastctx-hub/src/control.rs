@@ -1088,6 +1088,9 @@ fn handle(
                             (Ok(reply), Some(key)) => {
                                 crate::assets::serve::recheck(&hub.assets, &now.indexed(), &from, &key, stream.as_deref(), reply)
                             }
+                            (Ok(reply @ fastctx_types::assets::Reply::Holdings { .. }), None) => {
+                                crate::assets::serve::recheck_holdings(&hub.assets, &now.indexed(), now.basis().to_string(), &from, reply)
+                            }
                             (answer, _) => answer,
                         };
                         let pushes = hub.assets.take_pushes(drained, &now.indexed());

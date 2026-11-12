@@ -40,6 +40,12 @@ pub(crate) fn schema() -> String {
     format!("{}{}{}", chain::SCHEMA, scopes::SCHEMA, bodies::SCHEMA)
 }
 
+/// Brings the asset side's tables in the control database up to this
+/// release, after `schema` made what was missing.
+pub(crate) fn migrate(c: &fastctx_storage::rusqlite::Connection) -> fastctx_storage::Result<()> {
+    scopes::migrate(c)
+}
+
 /// The hub's incarnation: made with its asset side and stamped on every
 /// owner library it makes (design §17, item 3).
 fn incarnation(control: &Database) -> io::Result<Vec<u8>> {
@@ -106,6 +112,9 @@ pub(crate) struct Assets {
     /// Why every asset is sealed, when the hub found it was put back
     /// (design §17): nothing is read or taken until recovery ends.
     sealed: Mutex<Option<String>>,
+    /// Set as the hub seals, for work already handed to the database's
+    /// writer to see when it runs (AD02).
+    sealing: Arc<std::sync::atomic::AtomicBool>,
     /// The scopes of each owner library changed since the last checkpoint.
     changed: Mutex<BTreeMap<Owner, BTreeSet<String>>>,
     /// The owner the last checkpoint stopped at: the next goes on after it,
@@ -148,6 +157,7 @@ impl Assets {
             witness,
             control: control.clone(),
             sealed: Mutex::new(None),
+            sealing: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             changed: Mutex::new(BTreeMap::new()),
             turn: Mutex::new(None),
             scope_turns: Mutex::new(BTreeMap::new()),
@@ -308,9 +318,13 @@ impl Assets {
                 }
                 judged
             };
-            let key = owner.to_string();
+            let (key, sealing) = (owner.to_string(), self.sealing.clone());
             self.control
                 .write_now(1024, move |c| {
+                    // Sealed since it was handed over, nothing is begun (AD02).
+                    if sealing.load(std::sync::atomic::Ordering::SeqCst) {
+                        return Ok(None);
+                    }
                     // A scope described into it since it was judged keeps it.
                     let mut statement = c.prepare_cached("SELECT key FROM asset_scopes WHERE owner = ?1 ORDER BY key")?;
                     let mut rows = statement.query([&key])?;
@@ -376,10 +390,14 @@ impl Assets {
                 if seal.is_some() {
                     return Ok(());
                 }
-                let batch = key.clone();
+                let (batch, sealing) = (key.clone(), self.sealing.clone());
                 let removed = self
                     .control
                     .write_now(1024, move |c| {
+                        // Sealed since it was handed over, nothing goes (AD02).
+                        if sealing.load(std::sync::atomic::Ordering::SeqCst) {
+                            return Ok(0);
+                        }
                         let mut removed = c
                             .prepare_cached("DELETE FROM asset_scopes WHERE key IN (SELECT key FROM asset_scopes WHERE owner = ?1 LIMIT 4096)")?
                             .execute([&batch])?;
@@ -416,8 +434,11 @@ impl Assets {
                     .map_err(io::Error::other)?;
                 self.owners.deleted(&owner);
             }
+            drop(seal);
         }
-        Ok(())
+        // What was moved aside goes outside the seal: the deletions were
+        // decided under it.
+        self.owners.discard()
     }
 
     /// The chain's latest head reaches the witness, if it had not.
@@ -783,6 +804,7 @@ impl Assets {
         // The witness is frozen under the seal: a grant that holds it while
         // it commits is witnessed before anything seals.
         let mut sealed = self.sealed.lock().expect("seal");
+        self.sealing.store(true, std::sync::atomic::Ordering::SeqCst);
         self.witness.freeze();
         if sealed.is_none() {
             *sealed = Some(why.to_string());

@@ -78,13 +78,9 @@ impl Library {
         let (scope, stream, device) = (scope.to_string(), stream.to_string(), *device);
         Ok(self.database().write_now_at(Priority::Normal, 1 << 20, move |db| {
             let Some((scope_id, _, Some(holding))) = held(db, &scope)? else { return Err(invalid("the scope is not held here")) };
-            let Some(stream_id) = db
-                .prepare_cached("SELECT id FROM streams WHERE scope = ?1 AND name = ?2")?
-                .query_row(params![scope_id, stream], |row| row.get::<_, i64>(0))
-                .optional()?
-            else {
-                return Ok(());
-            };
+            // A stream not begun here yet is begun withheld: a commit on its
+            // way finds it so (T04).
+            let (stream_id, ..) = super::commit::stream_of(db, scope_id, &stream)?;
             keep_unsent(db, scope_id, holding, &device, Some(stream_id))?;
             super::window::truncate_in(db, scope_id, holding, stream_id, None)?;
             db.prepare_cached("INSERT OR IGNORE INTO withheld (stream, holding) VALUES (?1, ?2)")?.execute(params![stream_id, holding])?;
@@ -92,24 +88,31 @@ impl Library {
         })?)
     }
 
-    /// The hub gives `streams` of `scope` to this device to hold: any of them
-    /// withheld before is committed to again.
-    pub fn hold_again(&self, scope: &str, streams: Vec<String>) -> Result<()> {
+    /// The hub gives `streams` of `scope` to this device to hold in the
+    /// holding period `holding`: any of them withheld in that period is
+    /// committed to again. A period ended meanwhile lifts nothing of the
+    /// next one's (T05).
+    pub fn hold_again(&self, scope: &str, holding: i64, streams: Vec<String>) -> Result<()> {
         let scope = scope.to_string();
         let any: bool = self.database().read_now(|db| Ok(db.prepare_cached("SELECT 1 FROM withheld LIMIT 1")?.query_row([], |_| Ok(())).optional()?.is_some()))?;
         if !any {
             return Ok(());
         }
         Ok(self.database().write_now_at(Priority::Normal, 64 + streams.len() * 64, move |db| {
-            let Some((scope_id, _, holding)) = held(db, &scope)? else { return Ok(()) };
+            let Some((scope_id, _, current)) = held(db, &scope)? else { return Ok(()) };
             // What an ended period withheld goes with it.
             db.prepare_cached(
                 "DELETE FROM withheld WHERE stream IN (SELECT id FROM streams WHERE scope = ?1) AND (?2 IS NULL OR holding <> ?2)",
             )?
-            .execute(params![scope_id, holding])?;
-            let mut lift = db.prepare_cached("DELETE FROM withheld WHERE stream IN (SELECT id FROM streams WHERE scope = ?1 AND name = ?2)")?;
+            .execute(params![scope_id, current])?;
+            if current != Some(holding) {
+                return Ok(());
+            }
+            let mut lift = db.prepare_cached(
+                "DELETE FROM withheld WHERE holding = ?3 AND stream IN (SELECT id FROM streams WHERE scope = ?1 AND name = ?2)",
+            )?;
             for stream in &streams {
-                lift.execute(params![scope_id, stream])?;
+                lift.execute(params![scope_id, stream, holding])?;
             }
             Ok(())
         })?)

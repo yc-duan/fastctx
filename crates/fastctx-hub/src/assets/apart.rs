@@ -31,9 +31,10 @@ enum Body {
     /// clock, the connection's own pulse bounds it.
     Receiving,
     Staged(Arc<Vec<u8>>),
-    /// A staged body its frame is being taken with now: one take at a time,
-    /// so no more copies of it are made than the room counts for (AC04).
-    Taking(Arc<Vec<u8>>),
+    /// A staged body its frame is being taken with now, by the take its
+    /// number names: one take at a time, so no more copies of it are made
+    /// than the room counts for (AC04, AD07).
+    Taking(Arc<Vec<u8>>, u64),
     /// The bodies a reply of frames sends apart, in order, their data
     /// connection not here yet.
     Going(Vec<Vec<u8>>),
@@ -53,12 +54,14 @@ struct Waiting {
 #[derive(Default)]
 pub(crate) struct Apart {
     waiting: Mutex<HashMap<u64, Waiting>>,
+    /// The number the next take of a staged body is known by.
+    takes: std::sync::atomic::AtomicU64,
 }
 
 impl Apart {
     fn reserve(&self, ticket: u64, key: [u8; 32], bytes: usize, body: Body) -> Result<(), String> {
         let mut waiting = self.waiting.lock().expect("bodies apart");
-        waiting.retain(|_, kept| matches!(kept.body, Body::Receiving | Body::Sending | Body::Taking(_)) || kept.at.elapsed() < WAITS);
+        waiting.retain(|_, kept| matches!(kept.body, Body::Receiving | Body::Sending | Body::Taking(..)) || kept.at.elapsed() < WAITS);
         let total: usize = waiting.values().map(|kept| kept.bytes).sum();
         let device: usize = waiting.values().filter(|kept| kept.key == key).map(|kept| kept.bytes).sum();
         if total + bytes > ROOM || device + bytes > DEVICE_ROOM {
@@ -101,19 +104,21 @@ impl Apart {
     }
 
     /// The body the device whose key is `key` staged under `ticket`, for its
-    /// frame to be taken with now: kept for the frame asked again until
-    /// `release`, and given to one take at a time (`untake`, `touch`).
-    pub(crate) fn body(&self, ticket: u64, key: &[u8; 32]) -> Result<Arc<Vec<u8>>, String> {
+    /// frame to be taken with now, and the number this take is known by:
+    /// kept for the frame asked again until `release`, and given to one
+    /// take at a time (`untake`, `touch`).
+    pub(crate) fn body(&self, ticket: u64, key: &[u8; 32]) -> Result<(Arc<Vec<u8>>, u64), String> {
         let mut waiting = self.waiting.lock().expect("bodies apart");
         match waiting.get_mut(&ticket) {
-            Some(kept) if kept.key == *key && matches!(kept.body, Body::Taking(_)) => {
+            Some(kept) if kept.key == *key && matches!(kept.body, Body::Taking(..)) => {
                 Err("the frame staged under that ticket is being taken now: ask again".into())
             }
             Some(kept) if kept.key == *key && kept.at.elapsed() < WAITS => match &kept.body {
                 Body::Staged(body) => {
                     let body = body.clone();
-                    kept.body = Body::Taking(body.clone());
-                    Ok(body)
+                    let take = self.takes.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                    kept.body = Body::Taking(body.clone(), take);
+                    Ok((body, take))
                 }
                 _ => Err("no body is staged here under that ticket".into()),
             },
@@ -121,13 +126,15 @@ impl Apart {
         }
     }
 
-    /// The take of the frame staged under `ticket` ended without a word on
-    /// it: the body waits for the frame asked again.
-    pub(crate) fn untake(&self, ticket: u64, key: &[u8; 32]) {
+    /// The take numbered `take` of the frame staged under `ticket` ended
+    /// without a word on it: the body waits for the frame asked again. A
+    /// later take's hold on it is not let go (AD07).
+    pub(crate) fn untake(&self, ticket: u64, key: &[u8; 32], take: u64) {
         let mut waiting = self.waiting.lock().expect("bodies apart");
         if let Some(kept) = waiting.get_mut(&ticket)
             && kept.key == *key
-            && let Body::Taking(body) = &kept.body
+            && let Body::Taking(body, taking) = &kept.body
+            && *taking == take
         {
             kept.body = Body::Staged(body.clone());
         }
@@ -150,7 +157,7 @@ impl Apart {
         {
             match &kept.body {
                 Body::Staged(_) => kept.at = Instant::now(),
-                Body::Taking(body) => {
+                Body::Taking(body, _) => {
                     kept.body = Body::Staged(body.clone());
                     kept.at = Instant::now();
                 }
