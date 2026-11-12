@@ -187,6 +187,7 @@ pub(crate) fn view_for_in(
         call_details: true,
         machine_log: true,
         layers: true,
+        asset_sync: fastctx_types::assets::VERSION,
         hub: store.hub.id.clone(),
         hub_name: store.hub.name.clone(),
         hub_machine: crate::hub_machine::current(hub, store)

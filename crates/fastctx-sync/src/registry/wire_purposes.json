@@ -467,5 +467,68 @@
     "purpose": "ExecutionControl",
     "capability": "composer_documents",
     "mapping": "crates/fastctx-types/src/composer/sync.rs"
+  },
+  {
+    "type": "crates/fastctx-net/src/wire.rs::Question",
+    "variant": "Assets",
+    "purpose": "AssetSync",
+    "capability": "asset_sync.transport",
+    "mapping": "crates/fastctx-net/src/wire.rs"
+  },
+  {
+    "type": "crates/fastctx-net/src/wire.rs::Told",
+    "variant": "Assets",
+    "purpose": "AssetSync",
+    "capability": "asset_sync.transport",
+    "mapping": "crates/fastctx-net/src/wire.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/assets.rs::Request",
+    "variant": "Answer",
+    "purpose": "AssetSync",
+    "capability": "asset_sync",
+    "mapping": "crates/fastctx-types/src/assets.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/assets.rs::Request",
+    "variant": "Cursors",
+    "purpose": "AssetSync",
+    "capability": "asset_sync",
+    "mapping": "crates/fastctx-types/src/assets.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/assets.rs::Request",
+    "variant": "Describe",
+    "purpose": "AssetSync",
+    "capability": "asset_sync",
+    "mapping": "crates/fastctx-types/src/assets.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/assets.rs::Request",
+    "variant": "Frames",
+    "purpose": "AssetSync",
+    "capability": "asset_sync",
+    "mapping": "crates/fastctx-types/src/assets.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/assets.rs::Request",
+    "variant": "Open",
+    "purpose": "AssetSync",
+    "capability": "asset_sync",
+    "mapping": "crates/fastctx-types/src/assets.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/assets.rs::Request",
+    "variant": "Succession",
+    "purpose": "AssetSync",
+    "capability": "asset_sync",
+    "mapping": "crates/fastctx-types/src/assets.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/assets.rs::Request",
+    "variant": "Take",
+    "purpose": "AssetSync",
+    "capability": "asset_sync",
+    "mapping": "crates/fastctx-types/src/assets.rs"
   }
 ]

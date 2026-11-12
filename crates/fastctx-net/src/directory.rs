@@ -676,6 +676,10 @@ pub struct View {
     /// The hub keeps each account's layer (`Change::Layer`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub layers: bool,
+    /// The second version's asset sync this hub speaks
+    /// (`fastctx_types::assets::VERSION`); zero where it speaks none.
+    #[serde(default, skip_serializing_if = "is_none_u32")]
+    pub asset_sync: u32,
     pub hub: HubId,
     pub hub_name: HubName,
     /// Current hub host, only when visible to this member.
@@ -864,6 +868,10 @@ fn is_zero(count: &u64) -> bool {
     *count == 0
 }
 
+fn is_none_u32(version: &u32) -> bool {
+    *version == 0
+}
+
 impl View {
     /// An empty view, before the hub has given one.
     pub fn empty(hub: HubId, hub_name: HubName, me: MachineName) -> Self {
@@ -877,6 +885,7 @@ impl View {
             call_details: false,
             machine_log: false,
             layers: false,
+            asset_sync: 0,
             hub,
             hub_name,
             hub_machine: None,

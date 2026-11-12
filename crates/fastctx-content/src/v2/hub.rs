@@ -102,19 +102,44 @@ pub struct Refused {
 
 /// What a receipt says, as signed: its kind, the frame, and where it stands.
 fn statement(kind: &str, header: &Header, fields: &[&[u8]]) -> Vec<u8> {
+    let frame = FrameKey { scope: &header.scope, stream: &header.stream, epoch: header.epoch, first: header.first, digest: &header.digest };
+    stated(kind, &frame, fields)
+}
+
+/// A frame as a receipt names it.
+pub struct FrameKey<'a> {
+    pub scope: &'a str,
+    pub stream: &'a str,
+    pub epoch: u64,
+    pub first: u64,
+    pub digest: &'a [u8; 32],
+}
+
+fn stated(kind: &str, frame: &FrameKey<'_>, fields: &[&[u8]]) -> Vec<u8> {
     let mut bytes = Vec::new();
-    for part in [kind.as_bytes(), header.scope.as_bytes(), header.stream.as_bytes()] {
+    for part in [kind.as_bytes(), frame.scope.as_bytes(), frame.stream.as_bytes()] {
         bytes.extend_from_slice(&(part.len() as u32).to_le_bytes());
         bytes.extend_from_slice(part);
     }
-    bytes.extend_from_slice(&header.epoch.to_le_bytes());
-    bytes.extend_from_slice(&header.first.to_le_bytes());
-    bytes.extend_from_slice(&header.digest);
+    bytes.extend_from_slice(&frame.epoch.to_le_bytes());
+    bytes.extend_from_slice(&frame.first.to_le_bytes());
+    bytes.extend_from_slice(frame.digest);
     for field in fields {
         bytes.extend_from_slice(&(field.len() as u32).to_le_bytes());
         bytes.extend_from_slice(field);
     }
     bytes
+}
+
+/// What an applied receipt on `frame` says, as the hub signed it: for
+/// checking a receipt a device reports (§17).
+pub fn applied_statement(frame: &FrameKey<'_>, change: u64, prefix: &[u8; 32]) -> Vec<u8> {
+    stated("applied", frame, &[&change.to_le_bytes(), prefix])
+}
+
+/// What a parked receipt on `frame` says, as the hub signed it.
+pub fn parked_statement(frame: &FrameKey<'_>, sequence: u64, accumulated: &[u8; 32]) -> Vec<u8> {
+    stated("parked", frame, &[&sequence.to_le_bytes(), accumulated])
 }
 
 /// The hub's signed refusal of the frame `header`: why, and from which

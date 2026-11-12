@@ -8,6 +8,8 @@
 //! connection instead (§7.1). The hub's words are its service key's,
 //! bound to its chain head (`fastctx_net::sign::hub_word`).
 
+use crate::access::TownId;
+use crate::{AccountName, MachineName};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error};
 
@@ -74,6 +76,64 @@ pub struct ObjectRef {
 pub struct Fact {
     pub fact: Bytes,
     pub word: Bytes,
+}
+
+/// Who reads a scope (§2.1): a reference to facts of the directory, judged
+/// against the directory as it stands at each request, never a list of
+/// names copied into the scope.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "readers", rename_all = "snake_case")]
+pub enum Readers {
+    /// A hosted conversation: those who opened it and, unless it was born
+    /// assisted, those who hold the machine it was born on (its owner and
+    /// the accounts it is shared with whole).
+    Conversation {
+        openers: Vec<AccountName>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        born_on: Option<MachineName>,
+    },
+    /// A project's readers: its owner, the accounts it is shared with, and
+    /// those who hold the machine it was opened on.
+    Project { town: TownId },
+    /// An account alone: its settings, its usage.
+    Account { account: AccountName },
+}
+
+/// Which devices may hold a class of a scope's streams (§2.3).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Holders {
+    /// Any device acting for a reader, an assisting host among them.
+    Readers,
+    /// A device a reader is logged in on: not a host assisting one.
+    Logged,
+}
+
+/// A class of a scope's streams: those whose names start with `prefix`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StreamClass {
+    pub prefix: String,
+    pub holders: Holders,
+}
+
+/// A scope's descriptor (§2.1), as the hub signs it: its key, its owner
+/// library, who reads it, its stream classes, its revision, and the hub's
+/// chain number when it was written.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Descriptor {
+    pub scope: String,
+    pub owner: String,
+    pub readers: Readers,
+    pub classes: Vec<StreamClass>,
+    pub revision: u64,
+    pub seq: u64,
+}
+
+impl Descriptor {
+    /// The class `stream` falls in: the longest prefix that names it.
+    pub fn class(&self, stream: &str) -> Option<&StreamClass> {
+        self.classes.iter().filter(|class| stream.starts_with(&class.prefix)).max_by_key(|class| class.prefix.len())
+    }
 }
 
 /// The latest chain head a device saw, with the statement and the word
@@ -151,6 +211,25 @@ pub enum Request {
     Frames { scope: String, stream: String, from: u64, limit: u32 },
     /// A stream's signed epochs and gap facts (§8).
     Succession { scope: String, stream: String },
+    /// Describes a scope this device begins (§2.1): the hub signs its
+    /// descriptor, or answers the one it has.
+    Describe { scope: String, readers: Readers, classes: Vec<StreamClass> },
+}
+
+impl Request {
+    /// What every asset request is for on the wire.
+    pub fn purpose(&self) -> crate::sync::transfer::Purpose {
+        use crate::sync::transfer::Purpose;
+        match self {
+            Self::Open { .. }
+            | Self::Answer { .. }
+            | Self::Take { .. }
+            | Self::Cursors { .. }
+            | Self::Frames { .. }
+            | Self::Succession { .. }
+            | Self::Describe { .. } => Purpose::AssetSync,
+        }
+    }
 }
 
 /// A parked frame refused when its turn came.
@@ -239,6 +318,8 @@ pub enum Reply {
     Standing { streams: Vec<Standing> },
     Frames { frames: Vec<Frame> },
     Succession { epochs: Vec<Fact>, gaps: Vec<Fact> },
+    /// A scope's descriptor, as JSON, and the hub's word on it.
+    Described { descriptor: Fact },
 }
 
 /// What the hub tells a device unasked.

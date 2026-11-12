@@ -56,7 +56,7 @@ impl Shelf {
             }
         }
         let observed = super::format::prepare(dir)?;
-        let schema = format!("{SCHEMA}{}", crate::assets::chain::SCHEMA);
+        let schema = format!("{SCHEMA}{}", crate::assets::schema());
         let database = Database::open_initialized(&dir.join(FILE), &schema, |connection| {
             fastctx_storage::versions::apply(
                 connection,

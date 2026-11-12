@@ -1051,6 +1051,22 @@ fn handle(
                 let _ = out.send(Out::Frame(Down::Told { id, answer }));
             });
         }
+        Up::Ask { id, question: Question::Assets { request }, .. } => {
+            let (hub, from, out) = (hub.clone(), name.clone(), out.clone());
+            let held = crate::moving::Moving::hold(&hub);
+            fastctx_platform::task::spawn(async move {
+                let (_held, _reservation) = (held, reservation);
+                let answer = hub
+                    .blocking(move |hub| {
+                        let store = hub.store();
+                        origin.check(&store.book.directory)?;
+                        crate::assets::serve::ask(&hub.assets, &store.indexed(), &from, &origin.key, request)
+                    })
+                    .await
+                    .map(|reply| Told::Assets { reply });
+                let _ = out.send(Out::Frame(Down::Told { id, answer }));
+            });
+        }
         Up::Ask { id, question: Question::PlanCopies { account, request }, .. } => {
             let opened = request.validate().and_then(|()| {
                 crate::account_records::begin(
@@ -1769,6 +1785,7 @@ fn ask(
         | Question::AccountRecords { .. }
         | Question::PlanCopies { .. }
         | Question::SkillFiles { .. } => Err("account records are dispatched asynchronously".into()),
+        Question::Assets { .. } => Err("asset requests are dispatched asynchronously".into()),
         Question::NetworkUpdates { .. } => Err("update management is dispatched asynchronously".into()),
         Question::MachineLog { account, before } => {
             let store = hub.store();

@@ -689,6 +689,11 @@ pub enum CallStatus {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum Question {
+    /// The second version's asset sync (`fastctx_types::assets`), asked of
+    /// a hub whose view declares `asset_sync`.
+    Assets {
+        request: fastctx_types::assets::Request,
+    },
     RecordWatching {
         account: AccountName,
         record_kind: String,
@@ -1155,6 +1160,9 @@ pub enum Change {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum Told {
+    Assets {
+        reply: fastctx_types::assets::Reply,
+    },
     SkillFiles {
         reply: fastctx_types::skill_files::Reply,
     },
@@ -1253,7 +1261,9 @@ pub fn encode(frame: &impl Serialize) -> Vec<u8> {
 
 impl Question {
     pub fn question_purpose(&self) -> Option<fastctx_types::sync::transfer::Purpose> {
+        use fastctx_types::sync::transfer::Purpose;
         match self {
+            Self::Assets { .. } => Some(Purpose::AssetSync),
             Self::AccountRecords { .. }
             | Self::Directory { .. }
             | Self::Forget { .. }
@@ -1294,6 +1304,7 @@ impl Told {
         use fastctx_types::sync::transfer::Purpose;
         match self {
             Self::Accepted => Some(Purpose::ExecutionControl),
+            Self::Assets { .. } => Some(Purpose::AssetSync),
             Self::AccountRecords { .. }
             | Self::CollabWritten { .. }
             | Self::Directory { .. }

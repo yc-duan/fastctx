@@ -33,7 +33,7 @@ pub use frame::{FORMAT, Header, KindRecord, Signer, open};
 pub use facts::{EpochFact, EpochKind, GapFact};
 pub use handover::{Cutoff, Signed, Successor};
 pub use heads::Head;
-pub use hub::{Authorizer, Drained, HubSigner, Received, Refused, Taking};
+pub use hub::{Authorizer, Drained, FrameKey, HubSigner, Received, Refused, Taking, applied_statement, parked_statement};
 pub use ops::{Delivery, Op};
 pub use reads::{Entry, PAGE};
 pub use receipts::{Mark, Receipt, Report, Said};

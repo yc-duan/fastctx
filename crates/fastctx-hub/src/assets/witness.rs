@@ -126,7 +126,6 @@ impl Witness {
     }
 
     /// The chain head the file holds: what the hub's words are bound to.
-    #[allow(dead_code)] // read by the signer once the asset wire lands (3-1)
     pub(crate) fn current(&self) -> (u64, [u8; 32]) {
         let kept = self.kept.lock().expect("witness");
         (kept.seq, unhex(&kept.head).unwrap_or([0; 32]))

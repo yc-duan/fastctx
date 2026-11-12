@@ -7,6 +7,8 @@
 pub(crate) mod chain;
 mod keys;
 mod owners;
+mod scopes;
+pub(crate) mod serve;
 mod witness;
 
 pub(crate) use owners::Owner;
@@ -25,11 +27,15 @@ use std::time::Duration;
 /// does (design §17, item 1): a hub opened with it here was put back.
 pub(crate) const BACKUP_MARKER: &str = "backup-marker";
 
+/// The asset side's tables in the hub's control database.
+pub(crate) fn schema() -> String {
+    format!("{}{}", chain::SCHEMA, scopes::SCHEMA)
+}
+
 /// How often the owner libraries are checkpointed.
 pub(crate) const CHECKPOINT_EVERY: Duration = Duration::from_secs(1);
 
 pub(crate) struct Assets {
-    #[allow(dead_code)] // signs once the asset wire lands (3-1)
     keys: Arc<keys::Keys>,
     pub(crate) owners: owners::Owners,
     pub(crate) witness: Arc<Witness>,
@@ -96,24 +102,31 @@ impl Assets {
         Ok(None)
     }
 
+    /// Seals every asset from now on (design §17): the hub found it was put
+    /// back. The witness is left as the evidence of the lost history.
+    pub(crate) fn seal(&self, why: &str) {
+        self.witness.freeze();
+        let mut sealed = self.sealed.lock().expect("seal");
+        if sealed.is_none() {
+            *sealed = Some(why.to_string());
+        }
+    }
+
     /// Why every asset is sealed, if it is.
     pub(crate) fn sealed(&self) -> Option<String> {
         self.sealed.lock().expect("seal").clone()
     }
 
     /// The hub's signer of what it says of assets.
-    #[allow(dead_code)] // used once the asset wire lands (3-1)
     pub(crate) fn signer(&self) -> Arc<dyn HubSigner> {
         Arc::new(keys::Signer { keys: self.keys.clone(), witness: self.witness.clone() })
     }
 
-    #[allow(dead_code)] // used once the asset wire lands (3-1)
     pub(crate) fn public(&self) -> fastctx_net::sign::PublicKey {
         self.keys.public()
     }
 
     /// `scope` of `owner`'s library changed: the next checkpoint takes it.
-    #[allow(dead_code)] // used once the asset wire lands (3-1)
     pub(crate) fn changed(&self, owner: Owner, scope: &str) {
         self.changed.lock().expect("changed scopes").entry(owner).or_default().insert(scope.to_string());
     }

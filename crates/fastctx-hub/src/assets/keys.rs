@@ -12,7 +12,6 @@ use std::path::Path;
 use std::sync::Arc;
 
 /// The key in use.
-#[allow(dead_code)] // signs once the asset wire lands (3-1)
 pub(crate) struct Keys {
     current: SecretKey,
 }
@@ -35,14 +34,12 @@ impl Keys {
         Ok(Self { current })
     }
 
-    #[allow(dead_code)] // used once the asset wire lands (3-1)
     pub(crate) fn public(&self) -> PublicKey {
         self.current.public()
     }
 }
 
 /// Signs as the hub, bound to the chain head the witness holds.
-#[allow(dead_code)] // signs once the asset wire lands (3-1)
 pub(crate) struct Signer {
     pub(crate) keys: Arc<Keys>,
     pub(crate) witness: Arc<Witness>,
