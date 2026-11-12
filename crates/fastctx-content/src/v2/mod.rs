@@ -6,6 +6,7 @@
 //! It stands beside the first version's content database until each kind of
 //! asset moves over (§15), in files of its own.
 
+mod checkpoints;
 mod collect;
 mod commit;
 mod device;
@@ -26,6 +27,7 @@ mod schema;
 mod scopes;
 mod stamps;
 mod succession;
+mod timeline;
 mod transfers;
 mod window;
 
@@ -36,7 +38,8 @@ pub use frame::{FORMAT, Header, KindRecord, Signer, open};
 pub use facts::{EpochFact, EpochKind, GapFact};
 pub use handover::{Cutoff, Signed, Successor};
 pub use heads::Head;
-pub use kind::{Actor, Deletion, Holding, Kind, Kinds, Writer};
+pub use kind::{Actor, Deletion, Holding, Kind, Kinds, Write, Writer};
+pub use timeline::{EVENT, OVERSIZED, Timeline};
 pub use hub::{Authorizer, Drained, FrameKey, HubSigner, Received, Refused, Taking, applied_statement, parked_statement};
 pub use ops::{Delivery, Op};
 pub use reads::{Entry, PAGE};

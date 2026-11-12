@@ -38,7 +38,7 @@ impl Verifier for DeviceKeys {
 /// The kinds the hub takes records of, each judged by its own rule (design
 /// §11); a record of a kind not registered is refused.
 pub(crate) fn kinds() -> Arc<fastctx_content::v2::Kinds> {
-    let kinds = fastctx_content::v2::Kinds::new();
+    let kinds = fastctx_content::v2::Kinds::new().register::<fastctx_content::v2::Timeline>();
     #[cfg(test)]
     let kinds = kinds.register::<super::drill_kinds::Plain>();
     Arc::new(kinds)
@@ -558,4 +558,16 @@ fn covering(assets: &Assets, scope: &Scope, head: &Head) -> Result<Option<wire::
         head: chain_head.into(),
         word: assets.signer().sign(&statement).into(),
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use fastctx_content::v2::{Kind, Timeline};
+
+    /// A kind's number is its place in the registry, which only grows.
+    #[test]
+    fn kinds_are_numbered_as_registered() {
+        let place = |id: &str| fastctx_sync::registry::REGISTRY.entries().iter().position(|kind| kind.id == id);
+        assert_eq!(place("conversation.timeline"), Some(usize::from(Timeline::KIND)));
+    }
 }

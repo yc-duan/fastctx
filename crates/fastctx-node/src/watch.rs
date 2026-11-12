@@ -61,14 +61,38 @@ const KEPT_FOR: Duration = Duration::from_secs(120);
 pub struct Watchers {
     watching: Arc<[RwLock<Sessions>; SHARDS]>,
     pub(crate) changed: Arc<Changed>,
+    /// The conversations whose history grew since their timelines were last
+    /// asked for (`timeline::produce`).
+    pub(crate) produced: Arc<Produced>,
     /// The bytes of the events every conversation keeps.
     kept: Arc<AtomicUsize>,
+}
+
+/// Conversations whose history grew, for their timelines to be brought to it.
+#[derive(Default)]
+pub(crate) struct Produced {
+    ids: Mutex<HashSet<ResidentId>>,
+    pub(crate) notify: tokio::sync::Notify,
+}
+
+impl Produced {
+    fn grew(&self, id: &ResidentId) {
+        if self.ids.lock().expect("never poisoned").insert(id.clone()) {
+            self.notify.notify_one();
+        }
+    }
+
+    /// The conversations that grew since last taken.
+    pub(crate) fn take(&self) -> HashSet<ResidentId> {
+        std::mem::take(&mut *self.ids.lock().expect("never poisoned"))
+    }
 }
 impl Default for Watchers {
     fn default() -> Self {
         Self {
             watching: Arc::new(std::array::from_fn(|_| RwLock::default())),
             changed: Arc::default(),
+            produced: Arc::default(),
             kept: Arc::default(),
         }
     }
@@ -382,6 +406,14 @@ impl Watchers {
     }
 
     pub fn publish(&self, id: &ResidentId, event: &SessionEvent) {
+        if matches!(
+            event.happened,
+            fastctx_types::session::Happened::Finished { .. }
+                | fastctx_types::session::Happened::Heard { .. }
+                | fastctx_types::session::Happened::TurnEnded { .. }
+        ) {
+            self.produced.grew(id);
+        }
         let cell = self.session(id);
         let measured = watch_queue::event_size(event);
         let empty = {

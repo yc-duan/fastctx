@@ -15,6 +15,7 @@ harness = false
 [dependencies]
 fastctx-platform = { path = "../fastctx-platform" }
 fastctx-storage = { path = "../fastctx-storage" }
+serde_json = { workspace = true }
 sha2 = "0.10"
 tokio = { workspace = true, features = ["sync", "time"] }
 zstd = { version = "0.14", default-features = false }

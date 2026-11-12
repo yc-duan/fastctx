@@ -40,25 +40,67 @@ fn failure(error: impl std::fmt::Display) -> Failure {
 }
 
 /// Reads the conversation's history, without keeping its host awake for the
-/// reading, and brings its timeline to it. A history whose version is the
-/// one the timeline was last built from is not read at all.
+/// reading, and brings its timeline to it, and the timeline in the asset
+/// library where this machine keeps one (`super::assets`). A history whose
+/// version both were last built from is not read at all.
 pub(crate) async fn build(node: &Arc<Node>, resident: &ResidentId) -> Result<Built, Failure> {
     let content = node.content()?.clone();
     let name = super::checkpoint(resident.as_str());
     // Taken before the history is read: what is read is at least as new.
     let version = crate::held_history::stamp(node, resident).await?.map(String::into_bytes);
-    if let Some(version) = &version {
-        let (reading, name) = (content.clone(), name.clone());
-        let built = fastctx_platform::task::blocking(move || reading.checkpoint(&name)).await.map_err(failure)?;
-        if built.as_ref() == Some(version) {
-            return Ok(Built { events: 0, written: 0, gone: 0 });
+    let current = match &version {
+        Some(version) => {
+            let (reading, name) = (content.clone(), name.clone());
+            let built = fastctx_platform::task::blocking(move || reading.checkpoint(&name)).await.map_err(failure)?;
+            built.as_ref() == Some(version)
         }
+        None => false,
+    };
+    let assets = assets_due(node, resident, version.clone()).await?;
+    if current && assets.is_none() {
+        return Ok(Built { events: 0, written: 0, gone: 0 });
     }
     let crate::talk::HistoryRead { history, unread, .. } = crate::talk::history_quietly(node, resident).await?;
+    let history = Arc::new(history);
     let stream = super::stream(resident);
-    // A reading that missed a record is not the version's history.
-    let checkpoint = (!unread).then(|| Checkpoint { name, state: version.unwrap_or_default() });
-    fastctx_platform::task::blocking(move || write(&content, &stream, &history, unread, checkpoint)).await
+    let built = if current {
+        Built { events: history.len(), written: 0, gone: 0 }
+    } else {
+        // A reading that missed a record is not the version's history.
+        let checkpoint = (!unread).then(|| Checkpoint { name, state: version.clone().unwrap_or_default() });
+        let reading = history.clone();
+        fastctx_platform::task::blocking(move || write(&content, &stream, &reading, unread, checkpoint)).await?
+    };
+    // A reading that missed a record writes nothing there: what it holds
+    // stays until the history is read whole.
+    if let Some((placed, about)) = assets
+        && !unread
+        && let Some(kept) = node.assets.as_ref()
+    {
+        let (library, signer, hub, resident) = (kept.library.clone(), kept.signer(), placed.hub.clone(), about.id.clone());
+        let (written, gone) =
+            fastctx_platform::task::blocking(move || super::assets::write(&library, signer, &resident, &placed, &history, version)).await?;
+        if written + gone > 0 {
+            crate::assets::wake(node, &hub);
+        }
+    }
+    Ok(built)
+}
+
+/// Where the conversation's timeline goes in the asset library, when this
+/// machine keeps one, the conversation has a place for it, and it lags
+/// `version`.
+async fn assets_due(
+    node: &Arc<Node>,
+    resident: &ResidentId,
+    version: Option<Vec<u8>>,
+) -> Result<Option<(super::assets::Placed, fastctx_types::residents::About)>, Failure> {
+    let Some(kept) = node.assets.as_ref() else { return Ok(None) };
+    let Some((about, _)) = node.residents.about(resident) else { return Ok(None) };
+    let Some(placed) = super::assets::placed(node, &about)? else { return Ok(None) };
+    let (library, judged) = (kept.library.clone(), about.id.clone());
+    let behind = fastctx_platform::task::blocking(move || super::assets::behind(&library, &judged, version.as_deref())).await?;
+    Ok(behind.then_some((placed, about)))
 }
 
 fn write(

@@ -7,6 +7,7 @@
 //! keep it and writes what changed.
 
 pub(crate) mod api;
+mod assets;
 mod build;
 #[cfg(feature = "timeline-drill")]
 mod drill;
@@ -59,6 +60,7 @@ pub(crate) fn checkpoint(conversation: &str) -> String {
 pub(crate) fn register(node: &Arc<crate::Node>) {
     #[cfg(feature = "timeline-drill")]
     drill::start(node);
+    produce(&Arc::downgrade(node));
     let jobs = node.durable_jobs.clone();
     let node = Arc::downgrade(node);
     let run = move |taken: Taken| -> std::pin::Pin<Box<dyn Future<Output = Outcome> + Send>> {
@@ -72,6 +74,22 @@ pub(crate) fn register(node: &Arc<crate::Node>) {
         })
     };
     jobs.register(Kind { name: KIND, at_once: AT_ONCE, within: WITHIN, tries: TRIES }, Arc::new(run));
+}
+
+/// Brings the timelines of the conversations whose history grew to it, read
+/// or not: a block finished, words heard, a turn ended (design §10).
+fn produce(node: &std::sync::Weak<crate::Node>) {
+    let Some(watched) = node.upgrade().map(|node| node.watchers.produced.clone()) else { return };
+    let node = node.clone();
+    fastctx_platform::task::spawn(async move {
+        loop {
+            watched.notify.notified().await;
+            let Some(node) = node.upgrade() else { return };
+            for resident in watched.take() {
+                wanted(&node, &resident);
+            }
+        }
+    });
 }
 
 async fn run(node: &Arc<crate::Node>, resident: &ResidentId) -> Outcome {

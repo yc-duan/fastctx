@@ -92,6 +92,15 @@ impl Authorizer for Kinds {
     }
 }
 
+/// One item a `Writer` writes among several: `value` none deletes it.
+pub struct Write<K: Kind> {
+    pub item: Vec<u8>,
+    pub order: Vec<u8>,
+    pub value: Option<K::Value>,
+    /// In the kind's role order.
+    pub objects: Vec<ObjectRef>,
+}
+
 /// The only way a kind's records are written: into a stream of its class,
 /// each judged here as the hub will judge it.
 pub struct Writer<K: Kind> {
@@ -136,6 +145,27 @@ impl<K: Kind> Writer<K> {
             Commit { scope: self.scope.clone(), stream: self.stream.clone(), records: vec![record], leases, durable: true, op, holding },
             signer,
         )
+    }
+
+    /// Writes several items in one commit, each judged as `write` judges
+    /// one; `leases` on their objects let go with it. A producer's commit
+    /// waits for the disk only when `durable`.
+    pub fn write_all(&self, writes: Vec<Write<K>>, leases: Vec<Lease>, durable: bool, signer: Arc<dyn Signer>) -> Result<Committed> {
+        let device = signer.device();
+        let mut records = Vec::with_capacity(writes.len());
+        for write in writes {
+            let state = match &write.value {
+                Some(value) => State::Is { body: K::encode(value), objects: write.objects },
+                None => State::Gone,
+            };
+            let record = KindRecord { kind: K::KIND, schema: K::SCHEMA, record: Record { item: write.item.clone(), order: write.order, state } };
+            let before = self.library.item(&self.scope, &self.stream, &write.item)?;
+            let actor = Actor { device, scope: &self.scope, stream: &self.stream };
+            K::authorize(&actor, before.as_ref(), &record).map_err(Error::Invalid)?;
+            records.push(record);
+        }
+        let holding = self.library.holding(&self.scope)?.ok_or_else(|| Error::Invalid("the scope is not held here".into()))?;
+        self.library.commit(Commit { scope: self.scope.clone(), stream: self.stream.clone(), records, leases, durable, op: None, holding }, signer)
     }
 
     /// The item `item` as it stands here, decoded.

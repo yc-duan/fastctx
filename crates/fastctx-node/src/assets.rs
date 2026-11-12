@@ -13,7 +13,7 @@ mod apart;
 mod objects;
 mod session;
 
-pub(crate) use session::{pushed, wake};
+pub(crate) use session::{Proposal, pushed, wake};
 
 use fastctx_content::v2::{HubVerifier, Library, Signer};
 use fastctx_net::sign::{Domain, PublicKey, SecretKey, heard_word};
