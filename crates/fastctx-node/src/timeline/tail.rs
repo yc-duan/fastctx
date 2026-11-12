@@ -52,6 +52,8 @@ const VERIFY_SHARE: u32 = 10;
 /// later than this after is late (R5).
 const CHECK_SPREAD: Duration = Duration::from_secs(30 * 60);
 const CHECK_LATE: Duration = Duration::from_secs(40 * 60);
+/// Until when checks rest after the last one (DD09).
+static REST_UNTIL: LazyLock<Mutex<Option<Instant>>> = LazyLock::new(Mutex::default);
 /// When each history's check was last asked for, in this run of the node.
 static CHECK_ASKED: LazyLock<Mutex<HashMap<ResidentId, Instant>>> = LazyLock::new(Mutex::default);
 
@@ -126,6 +128,15 @@ struct Following {
     /// thread's title and what it says of itself), in hex.
     #[serde(default)]
     told: Vec<String>,
+}
+
+/// What is kept beside the timeline, set back before a whole write (DD03):
+/// a stop after the write and before what it leaves is kept reads whole
+/// again, not past a floor below which it wrote.
+async fn reset(library: &fastctx_content::v2::Library, name: &str) -> Result<(), Failure> {
+    let state = serde_json::to_vec(&Following { form: FORM, ..Following::default() }).map_err(failure)?;
+    let (writing, name) = (library.clone(), name.to_string());
+    fastctx_platform::task::blocking(move || writing.keep_checkpoint(&name, state)).await.map_err(failure)
 }
 
 /// The name the record ids before a Claude seam are kept under.
@@ -265,7 +276,8 @@ pub(super) async fn produce(node: &Arc<Node>, resident: &ResidentId, whole: bool
     };
     let version = crate::held_history::version(node, resident).await?;
     if state.version == version && !whole {
-        return Ok(Produced::default());
+        // Unchanged: when it was last checked still stands (DD10).
+        return Ok(Produced { verified: state.verified, ..Produced::default() });
     }
     // Ordered by another device — the conversation came here from it — the
     // timeline goes on here once the hub hands its ordering over (§8).
@@ -423,6 +435,9 @@ pub(super) async fn produce(node: &Arc<Node>, resident: &ResidentId, whole: bool
             // A Codex thread's own title and what it says of itself stand at
             // the end of its history: placed again where they stand (N1).
             let again: std::collections::HashSet<Vec<u8>> = if matches!(window.next, Next::Codex(_)) { unturned.clone() } else { Default::default() };
+            if whole {
+                reset(&library, &name).await?;
+            }
             let wrote = {
                 let (writing, signer, whose, placed, held) = (library.clone(), signer.clone(), resident.clone(), placed, producing.clone());
                 fastctx_platform::task::blocking(move || {
@@ -434,7 +449,11 @@ pub(super) async fn produce(node: &Arc<Node>, resident: &ResidentId, whole: bool
             };
             // From where the seam stands now, the items before it are settled.
             let codex = matches!(window.next, Next::Codex(_));
-            let held = |identity: &Vec<u8>, at: &Timestamp| *at >= settled || codex && unturned.contains(identity);
+            // Held in the window: what is from where the seam stands on, what
+            // is told again at every reading, and an event new to the
+            // timeline placed in the window though its time is earlier (DD04)
+            // — written past the floor, it goes when the history drops it.
+            let held = |identity: &Vec<u8>, at: &Timestamp| *at >= settled || *at < since || codex && unturned.contains(identity);
             let base = if whole { 0 } else { floor };
             let settled_floor = wrote.items.iter().filter(|(identity, at, _)| !held(identity, at)).map(|(_, _, key)| *key).fold(base, u64::max);
             let open = wrote.items.iter().filter(|(identity, at, _)| held(identity, at)).map(|(identity, at, key)| (hex(identity), *at, *key)).collect();
@@ -491,6 +510,7 @@ pub(super) async fn produce(node: &Arc<Node>, resident: &ResidentId, whole: bool
             if read.unread {
                 return Ok(Produced { unread: true, ..Produced::default() });
             }
+            reset(&library, &name).await?;
             let wrote = {
                 let (writing, signer, whose, history, held) = (library.clone(), signer.clone(), resident.clone(), read.history, producing.clone());
                 fastctx_platform::task::blocking(move || {
@@ -598,10 +618,18 @@ pub(super) fn register_check(node: &Arc<Node>) {
             let late = asked
                 .and_then(|asked| Timestamp::from_nanosecond(asked).ok())
                 .is_some_and(|asked| Timestamp::now().duration_since(asked).unsigned_abs() >= CHECK_LATE);
+            // Resting from the last check: begun when the rest is over, the
+            // rest outside any job's time (DD09).
+            let resting = REST_UNTIL.lock().expect("checks' rest").and_then(|until| until.checked_duration_since(Instant::now()));
+            if let Some(rest) = resting {
+                return Outcome::Again { after: rest };
+            }
             let began = Instant::now();
             let checked = produce(&node, &resident, true).await;
             let took = began.elapsed();
             match checked {
+                // Not all could be read: not checked, tried again (DD08).
+                Ok(checked) if checked.unread => Outcome::Again { after: UNREAD_AGAIN * 12 },
                 Ok(checked) => {
                     if checked.written + checked.gone > 0 {
                         node.log.line(format_args!(
@@ -613,7 +641,7 @@ pub(super) fn register_check(node: &Arc<Node>) {
                     if late {
                         node.log.line(format_args!("{resident}'s check began late: checks are behind and take half a core"));
                     }
-                    tokio::time::sleep(rest).await;
+                    *REST_UNTIL.lock().expect("checks' rest") = Instant::now().checked_add(rest);
                     Outcome::Done
                 }
                 Err(failure) => Outcome::Failed(failure.message),
@@ -756,7 +784,7 @@ fn active(node: &Node, resident: &ResidentId) -> bool {
 
 /// Asks for `resident`'s timeline in the asset library to be brought to its
 /// history; asked again while it waits or runs, it is one job.
-pub(super) fn wanted(node: &Arc<Node>, resident: &ResidentId) {
+pub(super) fn wanted(node: &Node, resident: &ResidentId) {
     if node.assets.is_none() {
         return;
     }

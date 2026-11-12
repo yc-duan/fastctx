@@ -218,6 +218,9 @@ pub(crate) fn receive(node: &Node, resident: &ResidentId, update: &JobFacts) -> 
             },
         );
     })?;
+    // The asset timeline brought to the run's facts: one that settled before
+    // they changed is checked whole (DD06, CC15).
+    crate::timeline::runs_changed(node, resident);
     Ok(())
 }
 

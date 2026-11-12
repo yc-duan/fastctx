@@ -67,6 +67,12 @@ pub(crate) fn checkpoint(conversation: &str) -> String {
     format!("timeline/{conversation}")
 }
 
+/// The facts of a run `resident` tells of changed: its asset timeline is
+/// brought to them, whatever else moves it (DD06).
+pub(crate) fn runs_changed(node: &crate::Node, resident: &ResidentId) {
+    tail::wanted(node, resident);
+}
+
 /// Names what builds timelines, before the node's jobs start.
 pub(crate) fn register(node: &Arc<crate::Node>) {
     #[cfg(feature = "timeline-drill")]

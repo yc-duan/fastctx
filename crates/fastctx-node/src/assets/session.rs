@@ -72,10 +72,17 @@ pub(crate) fn pushed(node: &Arc<Node>, hub: &HubId, push: wire::Push) {
             let Some(assets) = node.assets.as_ref() else { return };
             assets.forget_listing(hub);
             let (library, log, device) = (assets.library.clone(), node.log.clone(), assets.device());
+            let (weak, hub) = (Arc::downgrade(node), hub.clone());
             fastctx_platform::task::spawn(async move {
                 let key = scope.clone();
                 if let Err(error) = blocking(&library, move |library| library.revoke_keeping(&key, &device)).await {
                     log.line(format_args!("ending what this machine held of {scope}: {error}"));
+                }
+                // Forgotten again once the holding ended: a listing begun
+                // while it still stood skipped a scope it may hold again
+                // (DD01).
+                if let Some(assets) = weak.upgrade().as_ref().and_then(|node| node.assets.as_ref()) {
+                    assets.forget_listing(&hub);
                 }
             });
         }
@@ -153,6 +160,8 @@ pub(super) async fn ask(assets: &Assets, link: &Arc<Link>, request: Request) -> 
             let key = scope.clone();
             let device = assets.device();
             blocking(&assets.library, move |library| library.revoke_keeping(&key, &device)).await?;
+            // And again once the holding ended (DD01).
+            assets.forget_listing(&link.membership().id);
             Err(format!("{REVOKED}{scope}"))
         }
         reply => Ok(reply),

@@ -155,6 +155,10 @@ pub(crate) async fn window(
     if seam.identity.is_none() && several {
         let Some(read) = super::earlier(node, resident, sessions).await else { return Ok(None) };
         (before, copied) = read;
+        // The last session's seam goes only past every earlier session's
+        // events too: one at a moment of theirs would be named by an order
+        // the window does not see (DD05).
+        seam.latest = before.iter().map(|event| event.at).max();
     }
     // A seam goes only where every turn the World saw begin before it ended
     // by then: before it, each event's turn is settled (`place`).
@@ -182,6 +186,9 @@ pub(crate) async fn window(
                 }
                 seam = Seam::default();
             }
+            // Not to be read past a seam from its start either — a last row
+            // only a whole reading takes, say: read whole as ever (DD02).
+            Ok(Err(Restart::Unsupported(_))) => return Ok(None),
             Ok(Err(why)) => return Err(format!("{}: {why}", path.display())),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 return Err(format!("{} is gone; Claude Code removes old sessions itself", path.display()));
