@@ -74,7 +74,7 @@ pub(super) struct Placed {
 }
 
 /// The name a conversation's producer keeps where it stands under.
-fn checkpoint(resident: &ResidentId) -> String {
+pub(super) fn checkpoint(resident: &ResidentId) -> String {
     format!("timeline/{resident}")
 }
 
@@ -99,49 +99,6 @@ pub(super) fn placed(node: &Node, about: &About) -> Result<Option<Placed>, Failu
     Ok(Some(Placed { scope, hub: account.hub.clone(), proposal: Proposal { hub: account.hub.to_string(), readers, classes } }))
 }
 
-/// Whether the timeline in the asset library lags `version` of the history.
-pub(super) fn behind(library: &Library, resident: &ResidentId, version: Option<&[u8]>) -> Result<bool, Failure> {
-    let kept = library.checkpoint(&checkpoint(resident)).map_err(failure)?;
-    Ok(version.is_none() || kept.as_deref() != version)
-}
-
-/// What names each event of `history`, given each as it is encoded: what it
-/// says it is, else what it holds; events of one name told apart by their
-/// order among themselves.
-fn identities(history: &[SessionEvent], encoded: &[Vec<u8>]) -> Vec<Vec<u8>> {
-    let mut seen: HashMap<[u8; 32], u32> = HashMap::new();
-    history
-        .iter()
-        .zip(encoded)
-        .map(|(event, encoded)| {
-            let mut hasher = Sha256::new();
-            hasher.update(b"fastctx-timeline/1");
-            match super::identity::name(event) {
-                Some(name) => {
-                    hasher.update(b"named");
-                    hasher.update(name.as_bytes());
-                }
-                None => {
-                    hasher.update(b"content");
-                    hasher.update(Sha256::digest(encoded));
-                }
-            }
-            let named: [u8; 32] = hasher.finalize().into();
-            let before = seen.entry(named).or_insert(0);
-            let identity = if *before == 0 {
-                named
-            } else {
-                let mut again = Sha256::new();
-                again.update(named);
-                again.update(before.to_le_bytes());
-                again.finalize().into()
-            };
-            *before += 1;
-            identity.to_vec()
-        })
-        .collect()
-}
-
 /// What the timeline here holds now, item by item.
 fn held(library: &Library, scope: &str) -> Result<HashMap<Vec<u8>, Entry>, Failure> {
     let mut held = HashMap::new();
@@ -159,42 +116,97 @@ fn held(library: &Library, scope: &str) -> Result<HashMap<Vec<u8>, Entry>, Failu
     Ok(held)
 }
 
-/// Brings the conversation's timeline in the asset library to `history`, at
-/// `version`: the scope begun and proposed if it is not here yet. How many
-/// items were written and how many went. Call on a thread that may block.
+/// What a write of a timeline left: how many items it wrote and how many
+/// went, and the items of its window with their times and order keys.
+pub(super) struct Wrote {
+    pub(super) written: usize,
+    pub(super) gone: usize,
+    pub(super) items: Vec<(Vec<u8>, jiff::Timestamp, u64)>,
+}
+
+/// Where a timeline's window begins: the whole timeline, or the events from
+/// `since` on, the items written of them before being `before` (identity
+/// and time), every item before them ordered below `floor`.
+pub(super) enum Span<'a> {
+    Whole,
+    From { since: jiff::Timestamp, before: &'a [(Vec<u8>, jiff::Timestamp)], floor: u64 },
+}
+
+/// Brings the conversation's timeline in the asset library to `history` over
+/// `span`: the scope begun and proposed if it is not here yet; the window's
+/// new and changed items written, those of the window gone from it removed.
+/// An event of the history from before the window (the session's title,
+/// the note of what could not be read) keeps the place it has. Call on a
+/// thread that may block.
 pub(super) fn write(
     library: &Library,
     signer: Arc<dyn fastctx_content::v2::Signer>,
     resident: &ResidentId,
     placed: &Placed,
     history: &[SessionEvent],
-    version: Option<Vec<u8>>,
-) -> Result<(usize, usize), Failure> {
+    span: Span<'_>,
+) -> Result<Wrote, Failure> {
     let _writing = Writing::take(resident);
     if library.holding(&placed.scope).map_err(failure)?.is_none() {
         let proposal = serde_json::to_vec(&placed.proposal).map_err(failure)?;
         library.propose(&placed.scope, proposal).map_err(failure)?;
     }
-    let had = held(library, &placed.scope)?;
-    let encoded: Vec<Vec<u8>> = history.iter().map(serde_json::to_vec).collect::<Result<_, _>>().map_err(failure)?;
-    let identities = identities(history, &encoded);
-    let kept: Vec<Option<u64>> = identities
-        .iter()
-        .map(|identity| had.get(identity).and_then(|entry| entry.order.as_slice().try_into().ok().map(u64::from_be_bytes)))
-        .collect();
-    let keys = order::assign(&kept);
-    let now: HashSet<&Vec<u8>> = identities.iter().collect();
+    let identities = super::names::identities(history);
+    let (since, floor) = match &span {
+        Span::Whole => (None, None),
+        Span::From { since, floor, .. } => (Some(*since), Some(*floor)),
+    };
+    let had: HashMap<Vec<u8>, Entry> = match &span {
+        Span::Whole => held(library, &placed.scope)?,
+        Span::From { before, .. } => {
+            let mut had = HashMap::new();
+            for identity in identities.iter().chain(before.iter().map(|(identity, _)| identity)) {
+                if !had.contains_key(identity)
+                    && let Some(entry) = library.item(&placed.scope, Timeline::STREAM, identity).map_err(failure)?
+                {
+                    had.insert(identity.clone(), entry);
+                }
+            }
+            had
+        }
+    };
+    let key_of = |identity: &Vec<u8>| had.get(identity).and_then(|entry| entry.order.as_slice().try_into().ok().map(u64::from_be_bytes));
+    // The window's events take keys past every item before it; one of its
+    // own below that is placed again.
+    let early: Vec<bool> = history.iter().map(|event| since.is_some_and(|since| event.at < since)).collect();
+    let window: Vec<usize> = (0..history.len()).filter(|index| !early[*index]).collect();
+    let mut keyed: Vec<Option<u64>> = Vec::with_capacity(window.len() + 1);
+    if let Some(floor) = floor {
+        keyed.push(Some(floor));
+    }
+    keyed.extend(window.iter().map(|&index| key_of(&identities[index]).filter(|key| floor.is_none_or(|floor| *key > floor))));
+    let assigned = order::assign(&keyed);
+    let assigned = if floor.is_some() { &assigned[1..] } else { &assigned[..] };
+    let mut keys = vec![0u64; history.len()];
+    for (&index, key) in window.iter().zip(assigned) {
+        keys[index] = *key;
+    }
+    for index in (0..history.len()).filter(|index| early[*index]) {
+        keys[index] = key_of(&identities[index]).unwrap_or(0);
+    }
+    let present: HashSet<&Vec<u8>> = identities.iter().collect();
+    let gone_items: Vec<(&Vec<u8>, &Entry)> = match &span {
+        Span::Whole => had.iter().filter(|(identity, _)| !present.contains(identity)).collect(),
+        Span::From { since, before, .. } => before
+            .iter()
+            .filter(|(identity, at)| at >= since && !present.contains(identity))
+            .filter_map(|(identity, _)| had.get_key_value(identity))
+            .collect(),
+    };
     let writer = Writer::<Timeline>::new(library, &placed.scope, Timeline::STREAM).map_err(failure)?;
     let mut pending = Pending { writer: &writer, signer, writes: Vec::new(), leases: Vec::new(), bytes: 0 };
-    let mut gone = 0;
-    for (identity, entry) in &had {
-        if !now.contains(identity) {
-            pending.push(Write { item: identity.clone(), order: entry.order.clone(), value: None, objects: Vec::new() }, None, 0)?;
-            gone += 1;
-        }
+    let gone = gone_items.len();
+    for (identity, entry) in gone_items {
+        pending.push(Write { item: identity.clone(), order: entry.order.clone(), value: None, objects: Vec::new() }, None, 0)?;
     }
     let mut written = 0;
-    for (index, (event, encoded)) in history.iter().zip(encoded).enumerate() {
+    for (index, event) in history.iter().enumerate() {
+        let encoded = serde_json::to_vec(event).map_err(failure)?;
         let order = keys[index].to_be_bytes().to_vec();
         let (body, object) = body(event, &encoded)?;
         // Compared before anything is put: an unchanged large event writes
@@ -222,10 +234,8 @@ pub(super) fn write(
         written += 1;
     }
     pending.flush()?;
-    if let Some(version) = version {
-        library.keep_checkpoint(&checkpoint(resident), version).map_err(failure)?;
-    }
-    Ok((written, gone))
+    let items = window.iter().map(|&index| (identities[index].clone(), history[index].at, keys[index])).collect();
+    Ok(Wrote { written, gone, items })
 }
 
 /// An event as its record holds it: itself, or when it is too large for a

@@ -13,9 +13,11 @@ mod build;
 mod drill;
 mod identity;
 pub(crate) use identity::likeness;
+mod names;
 mod order;
 mod preview;
 pub(crate) mod reads;
+mod tail;
 
 use fastctx_content::StreamKey;
 use fastctx_jobs::{Job, Kind, Outcome, Taken};
@@ -70,6 +72,7 @@ pub(crate) fn register(node: &Arc<crate::Node>) {
     drill::start(node);
     produce(&Arc::downgrade(node));
     rescan(&Arc::downgrade(node));
+    tail::register(node);
     let jobs = node.durable_jobs.clone();
     let node = Arc::downgrade(node);
     let run = move |taken: Taken| -> std::pin::Pin<Box<dyn Future<Output = Outcome> + Send>> {
@@ -164,6 +167,8 @@ async fn run(node: &Arc<crate::Node>, resident: &ResidentId) -> Outcome {
 /// reader of it does, so a conversation no one reads is not read whole for
 /// nothing. Asked again while it waits or runs, it is one job.
 pub(crate) fn wanted(node: &Arc<crate::Node>, resident: &ResidentId) {
+    // The timeline in the asset library is brought along, apart (`tail`).
+    tail::wanted(node, resident);
     let job = Job { kind: KIND, key: resident.to_string(), unit: resident.to_string(), payload: Vec::new() };
     // Built a moment ago, it waits out the pause rather than being taken up
     // only to be put back again (AA12).

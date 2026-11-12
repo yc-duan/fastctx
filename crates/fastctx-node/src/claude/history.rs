@@ -6,7 +6,9 @@
 
 use std::collections::HashSet;
 
+mod follow;
 mod placement;
+pub(crate) use follow::window;
 pub(super) use placement::place;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -70,24 +72,9 @@ pub(crate) async fn hosted(node: &Arc<Node>, resident: &ResidentId, recorded: &[
                     // time, not kept.
                     unread |= !whole;
                     unsettled |= !whole;
-                    // The title belongs to the session, so it takes the session's
-                    // time: read again, the history reads the same.
-                    if let Some(title) = read.title {
-                        events.push(SessionEvent { at: began, happened: Happened::Titled { title } });
-                    }
-                    events.extend(read.events.into_iter().map(|mut event| {
-                        crate::user_images::claude(node, resident, &mut event);
-                        event
-                    }));
-                    if !read.problems.is_empty() {
-                        let text = format!(
-                            "{} part(s) of Claude Code's record of session {id} could not be read: {}",
-                            read.problems.len(),
-                            read.problems.join("; ")
-                        );
-                        events.push(note(began, text.clone()));
-                        unavailable.push(text);
-                    }
+                    let (shown, problem) = session_events(node, resident, &id, began, read.title, read.events, &read.problems);
+                    events.extend(shown);
+                    unavailable.extend(problem);
                 }
                 Err(why) => {
                     unread = true;
@@ -104,6 +91,36 @@ pub(crate) async fn hosted(node: &Arc<Node>, resident: &ResidentId, recorded: &[
         unsettled,
         unavailable,
     }
+}
+
+/// What one session's record shows in the history: its title, which belongs
+/// to the session and so takes the session's time, read again the same;
+/// its events, the user's images found; and a note of what could not be
+/// read, which is also given apart.
+fn session_events(
+    node: &Node,
+    resident: &ResidentId,
+    id: &str,
+    began: Timestamp,
+    title: Option<String>,
+    read: Vec<SessionEvent>,
+    problems: &[String],
+) -> (Vec<SessionEvent>, Option<String>) {
+    let mut events = Vec::with_capacity(read.len() + 2);
+    if let Some(title) = title {
+        events.push(SessionEvent { at: began, happened: Happened::Titled { title } });
+    }
+    events.extend(read.into_iter().map(|mut event| {
+        crate::user_images::claude(node, resident, &mut event);
+        event
+    }));
+    let problem = (!problems.is_empty()).then(|| {
+        format!("{} part(s) of Claude Code's record of session {id} could not be read: {}", problems.len(), problems.join("; "))
+    });
+    if let Some(text) = &problem {
+        events.push(note(began, text.clone()));
+    }
+    (events, problem)
 }
 
 /// What `hosted` would read, as cheaply as it can be told: the sessions the

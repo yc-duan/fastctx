@@ -16,6 +16,8 @@ use serde_json::{Value, json};
 
 use super::{content, subagents, tools};
 
+pub mod follow;
+
 /// What the host still stores, with unreadable records reported separately.
 #[derive(Debug)]
 pub struct Transcript {
@@ -68,6 +70,11 @@ pub fn says_nothing(message: &Value) -> bool {
 }
 
 impl Transcript {
+    /// The agents its Agent calls started, by their ids.
+    pub fn agents(&self) -> &HashMap<String, HostAgentStart> {
+        &self.agents
+    }
+
     /// Confirms the mod's public tail before assigning native row UUIDs to it.
     pub fn message_tail_matches(&self, tail: &[Value]) -> bool {
         tail.len() <= self.context_messages.len()
@@ -142,6 +149,8 @@ pub struct HistoryCut {
 
 struct Row {
     line: usize,
+    /// Where its line starts in the file.
+    start: u64,
     value: Value,
 }
 
@@ -221,74 +230,108 @@ pub fn read_agent(path: &Path, agent: &str) -> io::Result<Transcript> {
     read_rows(path, &[], Some(agent), &HashSet::new())
 }
 
-fn read_rows(
-    path: &Path,
-    cuts: &[HistoryCut],
+/// What a reading of a record holds so far: each row once — a duplicate
+/// UUID's in the place of the first — the queued messages' source UUIDs, the
+/// titles, what could not be made out, and how far it read.
+pub(crate) struct Scanned {
+    rows: Vec<Row>,
+    by_uuid: HashMap<String, usize>,
+    queued: HashSet<String>,
+    titles: super::titles::Titles,
+    problems: Vec<String>,
+    /// The last line counted, from the file's start.
+    number: usize,
+    /// The bytes taken, through the last line read whole.
+    consumed: u64,
+}
+
+impl Scanned {
+    /// A reading that takes up after `number` lines and `consumed` bytes, with
+    /// the titles set and the problems met before.
+    pub(crate) fn new(number: usize, consumed: u64, titles: super::titles::Titles, problems: Vec<String>) -> Self {
+        Self { rows: Vec::new(), by_uuid: HashMap::new(), queued: HashSet::new(), titles, problems, number, consumed }
+    }
+
+    fn problem(&mut self, row: &Row, reason: &str) {
+        self.problems.push(format!("line {}: {reason}", row.line));
+    }
+
+    /// The lines counted and the bytes taken so far.
+    pub(crate) fn reached(&self) -> (usize, u64) {
+        (self.number, self.consumed)
+    }
+
+    pub(crate) fn titles(&self) -> &super::titles::Titles {
+        &self.titles
+    }
+
+}
+
+/// Reads the rows `reader` gives into `scanned`. A last line without its
+/// newline is taken only when `whole`, a file read at once, and then only a
+/// complete value; otherwise it is left for a later reading.
+pub(crate) fn scan(
+    reader: &mut impl BufRead,
     agent: Option<&str>,
-    earlier: &HashSet<String>,
-) -> io::Result<Transcript> {
-    let file = File::open(path)?;
-    let before = file.metadata()?;
-    let mut reader = BufReader::new(file);
-    let mut rows: Vec<Row> = Vec::new();
-    let mut by_uuid = HashMap::new();
-    let mut queued = HashSet::new();
-    let mut transcript = Transcript {
-        title: None,
-        pending_cuts: false,
-        retained_tail: None,
-        tail_uuid: None,
-        context_uuids: Vec::new(),
-        context_parent: None,
-        context_tail: None,
-        context_times: Vec::new(),
-        context_messages: Vec::new(),
-        synthetic_tail: false,
-        events: Vec::new(),
-        problems: Vec::new(),
-        uuids: HashSet::new(),
-        beside: if agent.is_none() { subagents::beside(path) } else { subagents::Beside::default() },
-        agents: HashMap::new(),
-    };
-    let mut titles = super::titles::Titles::default();
+    whole: bool,
+    scanned: &mut Scanned,
+    mut taken: Option<&mut xxhash_rust::xxh3::Xxh3>,
+) -> io::Result<()> {
     let mut line = Vec::new();
-    let mut number = 0;
     loop {
         line.clear();
-        if reader.read_until(b'\n', &mut line)? == 0 {
+        let read = reader.read_until(b'\n', &mut line)?;
+        if read == 0 {
             break;
         }
-        number += 1;
+        if !whole && line.last() != Some(&b'\n') {
+            break;
+        }
+        scanned.number += 1;
+        let number = scanned.number;
         if line.iter().all(u8::is_ascii_whitespace) {
+            scanned.consumed += read as u64;
+            if let Some(taken) = taken.as_deref_mut() {
+                taken.update(&line);
+            }
             continue;
         }
         let value: Value = match serde_json::from_slice(&line) {
             Ok(value) => value,
             Err(error) if line.last() != Some(&b'\n') && error.is_eof() => break,
             Err(error) => {
-                transcript.problems.push(format!("line {number}: invalid JSON at column {}", error.column()));
+                scanned.problems.push(format!("line {number}: invalid JSON at column {}", error.column()));
+                scanned.consumed += read as u64;
+                if let Some(taken) = taken.as_deref_mut() {
+                    taken.update(&line);
+                }
                 continue;
             }
         };
-        let row = Row { line: number, value };
+        let start = scanned.consumed;
+        scanned.consumed += read as u64;
+        if let Some(taken) = taken.as_deref_mut() {
+            taken.update(&line);
+        }
+        let row = Row { line: number, start, value };
         if matches!(row.kind(), Some("custom-title" | "ai-title")) {
-            if let Err(error) = titles.row(&row.value) {
-                transcript.problem(&row, &error.to_string());
+            if let Err(error) = scanned.titles.row(&row.value) {
+                scanned.problem(&row, &error.to_string());
             }
             continue;
         }
         if !row.value.is_object() || row.kind().is_none() {
-            transcript.problem(&row, "expected an object with a string type");
+            scanned.problem(&row, "expected an object with a string type");
             continue;
         }
         if let Some(sidechain) = row.value.get("isSidechain")
             && !sidechain.is_boolean()
         {
-            transcript.problem(&row, "isSidechain is not a boolean");
+            scanned.problem(&row, "isSidechain is not a boolean");
             continue;
         }
         if row.value.get("agentId").is_some_and(|id| !id.is_null() && !id.is_string()) {
-            transcript.problem(&row, "agentId is not a string or null");
+            scanned.problem(&row, "agentId is not a string or null");
             continue;
         }
         let own = match agent {
@@ -327,21 +370,36 @@ fn read_rows(
             && let Some(source) = row.value.pointer("/attachment/source_uuid").and_then(Value::as_str)
             && !source.is_empty()
         {
-            queued.insert(source.to_string());
+            scanned.queued.insert(source.to_string());
         }
         if let Some(uuid) = row.value.get("uuid") {
             let Some(uuid) = uuid.as_str().filter(|uuid| !uuid.is_empty()) else {
-                transcript.problem(&row, "uuid is not a nonempty string");
+                scanned.problem(&row, "uuid is not a nonempty string");
                 continue;
             };
-            if let Some(&index) = by_uuid.get(uuid) {
-                rows[index] = row;
+            if let Some(&index) = scanned.by_uuid.get(uuid) {
+                scanned.rows[index] = row;
                 continue;
             }
-            by_uuid.insert(uuid.to_string(), rows.len());
+            let next = scanned.rows.len();
+            scanned.by_uuid.insert(uuid.to_string(), next);
         }
-        rows.push(row);
+        scanned.rows.push(row);
     }
+    Ok(())
+}
+
+fn read_rows(
+    path: &Path,
+    cuts: &[HistoryCut],
+    agent: Option<&str>,
+    earlier: &HashSet<String>,
+) -> io::Result<Transcript> {
+    let file = File::open(path)?;
+    let before = file.metadata()?;
+    let mut reader = BufReader::new(file);
+    let mut scanned = Scanned::new(0, 0, super::titles::Titles::default(), Vec::new());
+    scan(&mut reader, agent, true, &mut scanned, None)?;
     // Claude Code can truncate and rewrite in place (verified 2026-10-04).
     // Reject a mixed read instead of presenting it as a coherent transcript.
     let after = reader.get_ref().metadata()?;
@@ -353,6 +411,37 @@ fn read_rows(
     {
         return Err(io::Error::new(io::ErrorKind::Interrupted, "Claude transcript changed while it was being read"));
     }
+    let beside = if agent.is_none() { subagents::beside(path) } else { subagents::Beside::default() };
+    project(scanned, cuts, earlier, beside, HashMap::new())
+}
+
+/// What the rows `scanned` holds show, the agents named in `agents` started
+/// before them: their events, title, context and problems.
+pub(crate) fn project(
+    scanned: Scanned,
+    cuts: &[HistoryCut],
+    earlier: &HashSet<String>,
+    beside: subagents::Beside,
+    agents: HashMap<String, HostAgentStart>,
+) -> io::Result<Transcript> {
+    let Scanned { rows, by_uuid, queued, titles, problems, .. } = scanned;
+    let mut transcript = Transcript {
+        title: None,
+        pending_cuts: false,
+        retained_tail: None,
+        tail_uuid: None,
+        context_uuids: Vec::new(),
+        context_parent: None,
+        context_tail: None,
+        context_times: Vec::new(),
+        context_messages: Vec::new(),
+        synthetic_tail: false,
+        events: Vec::new(),
+        problems,
+        uuids: HashSet::new(),
+        beside,
+        agents,
+    };
     transcript.uuids = by_uuid.keys().cloned().chain(queued).collect();
     transcript.title = titles.title();
     transcript.tail_uuid = rows

@@ -465,37 +465,10 @@ async fn read_here(node: &Arc<Node>, resident: &ResidentId, hearing: Hearing) ->
         _ => (recorded(&directory).await?, None),
     };
     let (working, resident, agent) = (node.clone(), resident.clone(), about.host.agent.to_string());
-    let history = fastctx_platform::task::spawn_blocking(move || -> Result<_, Failure> {
-        let mut hosted = hosted;
-        if let Some(events) = &mut hosted {
-            let projection =
-                crate::context::input::Projection::open(&directory).map_err(crate::record_migration::failure)?;
-            for event in events {
-                projection.restore(event).map_err(crate::record_migration::failure)?;
-            }
-        }
-        let receipts = crate::attachments::delivered::of(&working, &resident);
-        let mut history = history(recorded, hosted, agent.as_str(), &receipts);
-        // A change of history tells a view already open to read again; the
-        // history read here is already what follows it. Kept in a view, an
-        // interface that reads it as news would read again on every event.
-        history.retain(|event| {
-            !matches!(
-                &event.happened,
-                fastctx_types::session::Happened::Changed {
-                    change: fastctx_types::session::SessionChange::HistoryChanged
-                        | fastctx_types::session::SessionChange::HistoryCut { .. },
-                    ..
-                }
-            )
-        });
-        for event in &mut history {
-            crate::run_facts::attach(&directory, event).map_err(crate::record_migration::failure)?;
-        }
-        Ok(history)
-    })
-    .await
-    .map_err(|error| Failure::new(error.to_string()))??;
+    let history =
+        fastctx_platform::task::spawn_blocking(move || assemble(&working, &resident, &directory, &agent, recorded, hosted))
+            .await
+            .map_err(|error| Failure::new(error.to_string()))??;
     let pending = match &about.session {
         Some(thread) if about.world_managed() && about.host.agent.as_str() == "codex" => {
             node.codex.of(node, &about)?.requests(thread)
@@ -503,6 +476,67 @@ async fn read_here(node: &Arc<Node>, resident: &ResidentId, hearing: Hearing) ->
         _ => Vec::new(),
     };
     Ok(HistoryRead { history, pending, events, unread, unsettled, unavailable, snapshots, at })
+}
+
+/// The history of `recorded`, what the World kept, and `hosted`, what its
+/// host keeps, as a reader is shown it: the host's items with the context
+/// they were given, the attachments delivered, each with the facts of the
+/// runs it tells of. Call on a thread that may block.
+pub(crate) fn assemble(
+    node: &Arc<Node>,
+    resident: &ResidentId,
+    directory: &ConversationDir,
+    agent: &str,
+    recorded: Vec<SessionEvent>,
+    mut hosted: Option<Vec<SessionEvent>>,
+) -> Result<Vec<SessionEvent>, Failure> {
+    if let Some(events) = &mut hosted {
+        let projection = crate::context::input::Projection::open(directory).map_err(crate::record_migration::failure)?;
+        for event in events {
+            projection.restore(event).map_err(crate::record_migration::failure)?;
+        }
+    }
+    let receipts = crate::attachments::delivered::of(node, resident);
+    let mut history = history(recorded, hosted, agent, &receipts);
+    // A change of history tells a view already open to read again; the
+    // history read here is already what follows it. Kept in a view, an
+    // interface that reads it as news would read again on every event.
+    history.retain(|event| {
+        !matches!(
+            &event.happened,
+            fastctx_types::session::Happened::Changed {
+                change: fastctx_types::session::SessionChange::HistoryChanged
+                    | fastctx_types::session::SessionChange::HistoryCut { .. },
+                ..
+            }
+        )
+    });
+    for event in &mut history {
+        crate::run_facts::attach(directory, event).map_err(crate::record_migration::failure)?;
+    }
+    Ok(history)
+}
+
+/// What the World kept of a Claude conversation, as `read_here` reads it:
+/// without the turns a cut took back.
+pub(crate) async fn recorded_claude(directory: &ConversationDir) -> Result<Vec<SessionEvent>, Failure> {
+    let reading = directory.clone();
+    let mut recorded = fastctx_platform::task::spawn_blocking(move || crate::delivery::history(&reading))
+        .await
+        .map_err(|error| Failure::new(error.to_string()))?
+        .map_err(crate::record_migration::failure)?;
+    let removed: std::collections::HashSet<_> = recorded
+        .iter()
+        .flat_map(|event| match &event.happened {
+            fastctx_types::session::Happened::Changed {
+                change: fastctx_types::session::SessionChange::HistoryCut { removed_turns },
+                ..
+            } => removed_turns.clone(),
+            _ => Vec::new(),
+        })
+        .collect();
+    recorded.retain(|event| turn_of(&event.happened).is_none_or(|turn| !removed.contains(turn)));
+    Ok(recorded)
 }
 
 /// A session's history: what the World kept of it, and what its host keeps

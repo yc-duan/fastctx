@@ -42,9 +42,9 @@ fn failure(error: impl std::fmt::Display) -> Failure {
 }
 
 /// Reads the conversation's history, without keeping its host awake for the
-/// reading, and brings its timeline to it, and the timeline in the asset
-/// library where this machine keeps one (`super::assets`). A history whose
-/// version both were last built from is not read at all.
+/// reading, and brings its timeline to it. A history whose version it was
+/// last built from is not read at all. The timeline in the asset library is
+/// brought apart (`super::tail`).
 pub(crate) async fn build(node: &Arc<Node>, resident: &ResidentId) -> Result<Built, Failure> {
     let content = node.content()?.clone();
     let name = super::checkpoint(resident.as_str());
@@ -58,52 +58,16 @@ pub(crate) async fn build(node: &Arc<Node>, resident: &ResidentId) -> Result<Bui
         }
         None => false,
     };
-    let assets = assets_due(node, resident, version.clone()).await?;
-    if current && assets.is_none() {
+    if current {
         return Ok(Built { events: 0, written: 0, gone: 0, unread: false });
     }
     let crate::talk::HistoryRead { history, unread, .. } = crate::talk::history_quietly(node, resident).await?;
-    let history = Arc::new(history);
     let stream = super::stream(resident);
-    let mut built = if current {
-        Built { events: history.len(), written: 0, gone: 0, unread: false }
-    } else {
-        // A reading that missed a record is not the version's history.
-        let checkpoint = (!unread).then(|| Checkpoint { name, state: version.clone().unwrap_or_default() });
-        let reading = history.clone();
-        fastctx_platform::task::blocking(move || write(&content, &stream, &reading, unread, checkpoint)).await?
-    };
-    // A reading that missed a record writes nothing there: what it holds
-    // stays until the history is read whole.
-    if let Some((placed, about)) = assets
-        && !unread
-        && let Some(kept) = node.assets.as_ref()
-    {
-        let (library, signer, hub, resident) = (kept.library.clone(), kept.signer(), placed.hub.clone(), about.id.clone());
-        let (written, gone) =
-            fastctx_platform::task::blocking(move || super::assets::write(&library, signer, &resident, &placed, &history, version)).await?;
-        if written + gone > 0 {
-            crate::assets::wake(node, &hub);
-        }
-    }
+    // A reading that missed a record is not the version's history.
+    let checkpoint = (!unread).then(|| Checkpoint { name, state: version.clone().unwrap_or_default() });
+    let mut built = fastctx_platform::task::blocking(move || write(&content, &stream, &history, unread, checkpoint)).await?;
     built.unread = unread;
     Ok(built)
-}
-
-/// Where the conversation's timeline goes in the asset library, when this
-/// machine keeps one, the conversation has a place for it, and it lags
-/// `version`.
-async fn assets_due(
-    node: &Arc<Node>,
-    resident: &ResidentId,
-    version: Option<Vec<u8>>,
-) -> Result<Option<(super::assets::Placed, fastctx_types::residents::About)>, Failure> {
-    let Some(kept) = node.assets.as_ref() else { return Ok(None) };
-    let Some((about, _)) = node.residents.about(resident) else { return Ok(None) };
-    let Some(placed) = super::assets::placed(node, &about)? else { return Ok(None) };
-    let (library, judged) = (kept.library.clone(), about.id.clone());
-    let behind = fastctx_platform::task::blocking(move || super::assets::behind(&library, &judged, version.as_deref())).await?;
-    Ok(behind.then_some((placed, about)))
 }
 
 fn write(

@@ -181,13 +181,22 @@ fn live(pending: Vec<SessionEvent>, owner: &Address) -> impl Iterator<Item = Wat
 /// versions read the same history. None while a turn runs, when its host
 /// adds to its record without saying so to any of these.
 pub(crate) async fn stamp(node: &Arc<Node>, resident: &ResidentId) -> Result<Option<String>, Failure> {
+    if node.residents.about(resident).is_none() {
+        return Err(Failure::new(format!("no resident {resident} lives on {}", node.machine())));
+    }
+    if node.residents.now(resident).is_none_or(|now| now.turn.is_some() || now.activity == Activity::Busy) {
+        return Ok(None);
+    }
+    version(node, resident).await.map(Some)
+}
+
+/// What the resident's history is read from, as one digest, whether or not a
+/// turn runs: equal digests read the same history.
+pub(crate) async fn version(node: &Arc<Node>, resident: &ResidentId) -> Result<String, Failure> {
     let (about, _) = node
         .residents
         .about(resident)
         .ok_or_else(|| Failure::new(format!("no resident {resident} lives on {}", node.machine())))?;
-    if node.residents.now(resident).is_none_or(|now| now.turn.is_some() || now.activity == Activity::Busy) {
-        return Ok(None);
-    }
     let mut digest = Sha256::new();
     let mut take = |bytes: &[u8]| {
         digest.update((bytes.len() as u64).to_le_bytes());
@@ -215,7 +224,7 @@ pub(crate) async fn stamp(node: &Arc<Node>, resident: &ResidentId) -> Result<Opt
     // record alone (`crate::talk`), and so is its version.
     if !crate::logins::workbench::reads_host(node, &about) {
         take(b"recorded alone");
-        return Ok(Some(digest.finalize().iter().map(|byte| format!("{byte:02x}")).collect()));
+        return Ok(digest.finalize().iter().map(|byte| format!("{byte:02x}")).collect());
     }
     match (about.host.agent.as_str(), &about.session) {
         ("codex", Some(thread)) => {
@@ -241,7 +250,7 @@ pub(crate) async fn stamp(node: &Arc<Node>, resident: &ResidentId) -> Result<Opt
         }
         _ => {}
     }
-    Ok(Some(digest.finalize().iter().map(|byte| format!("{byte:02x}")).collect()))
+    Ok(digest.finalize().iter().map(|byte| format!("{byte:02x}")).collect())
 }
 
 fn random() -> Result<[u8; 16], Failure> {
