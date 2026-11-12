@@ -284,7 +284,7 @@ impl Library {
     ) -> Result<(Signed, Drained)> {
         let (key, name) = (scope.to_string(), stream.to_string());
         let (authorizing, signing) = (authorizer.clone(), signer.clone());
-        let ((signed, mut drained), more) = self.database().write_now_at(Priority::Normal, 1 << 20, move |db| {
+        let ((signed, mut drained), more, holding) = self.database().write_now_at(Priority::Normal, 1 << 20, move |db| {
             let Some((scope_id, state, Some(holding))) = held(db, &key)? else {
                 return Err(invalid("the scope is not held here"));
             };
@@ -372,10 +372,10 @@ impl Library {
             advance(db, &mut at)?;
             let mut drained = Drained::default();
             let more = drain(db, scope_id, holding, &mut at, authorizer.as_ref(), signer.as_ref(), &mut drained)?;
-            Ok(((Signed { fact, signature }, drained), more))
+            Ok(((Signed { fact, signature }, drained), more, holding))
         })?;
         if more {
-            self.drain_on(scope, stream, &authorizing, &signing, &mut drained)?;
+            self.drain_on(scope, stream, holding, &authorizing, &signing, &mut drained)?;
         }
         Ok((signed, drained))
     }
@@ -393,7 +393,7 @@ impl Library {
     ) -> Result<(Signed, Drained)> {
         let (key, name, why) = (scope.to_string(), stream.to_string(), why.to_string());
         let (authorizing, signing) = (authorizer.clone(), signer.clone());
-        let ((signed, mut drained), more) = self.database().write_now_at(Priority::Normal, 1 << 20, move |db| {
+        let ((signed, mut drained), more, holding) = self.database().write_now_at(Priority::Normal, 1 << 20, move |db| {
             let Some((scope_id, state, Some(holding))) = held(db, &key)? else {
                 return Err(invalid("the scope is not held here"));
             };
@@ -436,10 +436,10 @@ impl Library {
             advance(db, &mut at)?;
             let mut drained = Drained::default();
             let more = drain(db, scope_id, holding, &mut at, authorizer.as_ref(), signer.as_ref(), &mut drained)?;
-            Ok(((Signed { fact, signature }, drained), more))
+            Ok(((Signed { fact, signature }, drained), more, holding))
         })?;
         if more {
-            self.drain_on(scope, stream, &authorizing, &signing, &mut drained)?;
+            self.drain_on(scope, stream, holding, &authorizing, &signing, &mut drained)?;
         }
         Ok((signed, drained))
     }

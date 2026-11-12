@@ -204,9 +204,34 @@ CREATE TABLE IF NOT EXISTS hub_receipts (
     change INTEGER,
     parked INTEGER,
     signature BLOB NOT NULL,
-    heard_in INTEGER NOT NULL,
     checkpointed INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (stream, epoch, first, digest, kind, standing)
+) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS hub_receipt_sessions (
+    stream INTEGER NOT NULL,
+    epoch INTEGER NOT NULL,
+    first INTEGER NOT NULL,
+    digest BLOB NOT NULL,
+    kind TEXT NOT NULL,
+    standing BLOB NOT NULL,
+    session INTEGER NOT NULL,
+    PRIMARY KEY (stream, epoch, first, digest, kind, standing, session)
+) WITHOUT ROWID;
+-- A hub that holds a scope again keeps, for its kinds' rules, the state the
+-- applied prefix of this period gives an item a revision floor still hides
+-- (§2.4, §11): what a record is judged against. Empty on devices.
+CREATE TABLE IF NOT EXISTS prefix_items (
+    stream INTEGER NOT NULL,
+    item BLOB NOT NULL,
+    holding INTEGER NOT NULL,
+    revision INTEGER NOT NULL,
+    place BLOB NOT NULL,
+    state INTEGER NOT NULL,
+    kind INTEGER NOT NULL,
+    schema INTEGER NOT NULL,
+    body BLOB,
+    objects BLOB,
+    PRIMARY KEY (stream, item, holding)
 ) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS cursors (
     stream INTEGER NOT NULL,

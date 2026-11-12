@@ -201,15 +201,16 @@ impl Library {
         })?)
     }
 
-    /// The records of `stream` waiting to be committed again, in order.
-    pub fn resubmits(&self, scope: &str, stream: &str) -> Result<Vec<Resubmit>> {
+    /// Up to `limit` of the records of `stream` waiting to be committed
+    /// again, in order.
+    pub fn resubmits(&self, scope: &str, stream: &str, limit: usize) -> Result<Vec<Resubmit>> {
         let (scope, stream) = (scope.to_string(), stream.to_string());
         Ok(self.database().read_now(move |db| {
             let mut statement = db.prepare_cached(
                 "SELECT r.rejected, r.position, r.holding, r.record, r.op FROM resubmits r JOIN streams s ON s.id = r.stream
-                 JOIN scopes c ON c.id = s.scope WHERE c.key = ?1 AND s.name = ?2 ORDER BY r.rejected, r.position",
+                 JOIN scopes c ON c.id = s.scope WHERE c.key = ?1 AND s.name = ?2 ORDER BY r.rejected, r.position LIMIT ?3",
             )?;
-            let rows = statement.query_map(params![scope, stream], |row| {
+            let rows = statement.query_map(params![scope, stream, limit as i64], |row| {
                 Ok((
                     row.get::<_, i64>(0)?,
                     row.get::<_, i64>(1)?,
@@ -258,9 +259,9 @@ impl Library {
     /// commit, and an operation points at where its write landed now.
     /// Records no longer writable are left for `refuse`.
     pub fn resubmit(&self, scope: &str, stream: &str, take: usize, signer: Arc<dyn Signer>) -> Result<usize> {
-        let waiting = self.resubmits(scope, stream)?;
+        let waiting = self.resubmits(scope, stream, take)?;
         let Some(holding) = waiting.first().map(|first| first.holding) else { return Ok(0) };
-        let batch: Vec<Resubmit> = waiting.into_iter().take(take).take_while(|resubmit| resubmit.holding == holding).collect();
+        let batch: Vec<Resubmit> = waiting.into_iter().take_while(|resubmit| resubmit.holding == holding).collect();
         let count = batch.len();
         let records: Vec<KindRecord> = batch.iter().map(|resubmit| resubmit.record.clone()).collect();
         let (scope_key, stream_name) = (scope.to_string(), stream.to_string());
@@ -282,10 +283,16 @@ impl Library {
                         "SELECT c.id, s.id FROM streams s JOIN scopes c ON c.id = s.scope WHERE c.key = ?1 AND s.name = ?2",
                     )?
                     .query_row(params![scope_key, stream_name], |row| Ok((row.get(0)?, row.get(1)?)))?;
-                // Each operation now points at where its records landed.
+                // Each operation now points at where its records landed. A
+                // record no longer waiting was committed or refused meanwhile:
+                // nothing of this commit stands.
                 for (index, resubmit) in resubmitted.iter().enumerate() {
-                    db.prepare_cached("DELETE FROM resubmits WHERE stream = ?1 AND rejected = ?2 AND position = ?3")?
+                    let taken = db
+                        .prepare_cached("DELETE FROM resubmits WHERE stream = ?1 AND rejected = ?2 AND position = ?3")?
                         .execute(params![stream_id, resubmit.rejected as i64, resubmit.position as i64])?;
+                    if taken != 1 {
+                        return Err(invalid("a record waiting to be committed again was committed or refused meanwhile"));
+                    }
                     if let Some(op) = &resubmit.op {
                         db.prepare_cached("INSERT OR REPLACE INTO op_records (scope, stream, revision, op) VALUES (?1, ?2, ?3, ?4)")?
                             .execute(params![scope_id, stream_name, (landed + index as u64) as i64, op])?;

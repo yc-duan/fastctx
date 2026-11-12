@@ -158,6 +158,7 @@ impl Library {
                     ("refused_objects", "stream, epoch, first, holding, hash"),
                     ("parked", "stream, epoch, first, holding"),
                     ("evidence", "stream, epoch, first, digest"),
+                    ("prefix_items", "stream, item, holding"),
                 ] {
                     done += db
                         .prepare_cached(&format!(

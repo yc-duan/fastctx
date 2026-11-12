@@ -79,13 +79,15 @@ pub enum Received {
     Prove(Vec<ObjectRef>),
 }
 
-/// What became of the frames parked behind an applied one: those applied
-/// after it (their first sequences), and the one refused, if any, for its
-/// producer to hear; the parked frames after that one are its producer's
-/// too, refused with it.
+/// What became of the frames parked behind an applied one: how many were
+/// applied after it, and the sequence the applied prefix reached with them
+/// (each one's word is had again by `answer`); and the one refused, if any,
+/// for its producer to hear — the parked frames after that one are its
+/// producer's too, refused with it.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Drained {
-    pub applied: Vec<u64>,
+    pub applied: u64,
+    pub through: Option<u64>,
     pub refused: Option<Refused>,
 }
 
@@ -153,35 +155,97 @@ fn lengths_agree(records: &[KindRecord]) -> Result<()> {
     Ok(())
 }
 
-/// The item as the applied prefix has it.
-fn before(db: &Connection, stream: i64, holding: i64, item: &[u8]) -> fastctx_storage::Result<Option<Entry>> {
-    let found = db
-        .prepare_cached(
-            "SELECT item, place, revision, kind, schema, body, objects FROM items
-             WHERE stream = ?1 AND item = ?2 AND holding = ?3 AND state = ?4",
-        )?
-        .query_row(params![stream, item, holding, IS], |row| {
-            Ok((
-                row.get::<_, Vec<u8>>(0)?,
-                row.get::<_, Vec<u8>>(1)?,
-                row.get::<_, i64>(2)?,
-                row.get::<_, u16>(3)?,
-                row.get::<_, u16>(4)?,
-                row.get::<_, Option<Vec<u8>>>(5)?,
-                row.get::<_, Option<Vec<u8>>>(6)?,
-            ))
+/// An item's row as read, from the index or from the prefix state a floor
+/// hides.
+struct Seen {
+    revision: i64,
+    place: Vec<u8>,
+    state: i64,
+    kind: u16,
+    schema: u16,
+    body: Option<Vec<u8>>,
+    objects: Option<Vec<u8>>,
+}
+
+fn seen(db: &Connection, table: &str, stream: i64, holding: i64, item: &[u8]) -> fastctx_storage::Result<Option<Seen>> {
+    Ok(db
+        .prepare_cached(&format!(
+            "SELECT revision, place, state, kind, schema, body, objects FROM {table} WHERE stream = ?1 AND item = ?2 AND holding = ?3"
+        ))?
+        .query_row(params![stream, item, holding], |row| {
+            Ok(Seen {
+                revision: row.get(0)?,
+                place: row.get(1)?,
+                state: row.get(2)?,
+                kind: row.get(3)?,
+                schema: row.get(4)?,
+                body: row.get(5)?,
+                objects: row.get(6)?,
+            })
         })
-        .optional()?;
-    let Some((item, order, revision, kind, schema, body, objects)) = found else { return Ok(None) };
+        .optional()?)
+}
+
+/// The item as the applied prefix of this period has it: its row in the
+/// index, or, where a revision floor of an earlier period still hides it,
+/// the state the prefix gave it (`prefix_items`), whichever is later.
+fn before(db: &Connection, stream: i64, holding: i64, item: &[u8]) -> fastctx_storage::Result<Option<Entry>> {
+    let indexed = seen(db, "items", stream, holding, item)?;
+    let hidden = seen(db, "prefix_items", stream, holding, item)?;
+    let latest = match (indexed, hidden) {
+        (Some(indexed), Some(hidden)) => Some(if hidden.revision > indexed.revision { hidden } else { indexed }),
+        (indexed, hidden) => indexed.or(hidden),
+    };
+    let Some(Seen { revision, place, state, kind, schema, body, objects }) = latest else { return Ok(None) };
+    if state != IS {
+        return Ok(None);
+    }
     Ok(Some(Entry {
-        item,
-        order,
+        item: item.to_vec(),
+        order: place,
         revision: revision as u64,
         kind,
         schema,
         body: body.unwrap_or_default(),
         objects: unpack(&objects.unwrap_or_default()).map_err(invalid)?,
     }))
+}
+
+/// A record a revision floor of an earlier period hides from the index is
+/// kept as the state this period's prefix gives its item, for what is
+/// judged against it later.
+fn hidden_by_floor(db: &Connection, at: Applying, revision: u64, record: &KindRecord) -> fastctx_storage::Result<()> {
+    let floor: Option<i64> = db
+        .prepare_cached("SELECT revision FROM items WHERE stream = ?1 AND item = ?2 AND state = ?3")?
+        .query_row(params![at.stream, record.record.item, super::items::FLOOR], |row| row.get(0))
+        .optional()?;
+    if floor.is_none_or(|floor| floor <= revision as i64) {
+        return Ok(());
+    }
+    let (state, body, objects) = match &record.record.state {
+        State::Is { body, objects } => (IS, Some(body.clone()), Some(crate::record::pack(objects))),
+        State::Gone => (super::items::GONE, None, None),
+    };
+    db.prepare_cached(
+        "INSERT INTO prefix_items (stream, item, holding, revision, place, state, kind, schema, body, objects)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+         ON CONFLICT (stream, item, holding) DO UPDATE SET revision = excluded.revision, place = excluded.place,
+            state = excluded.state, kind = excluded.kind, schema = excluded.schema, body = excluded.body, objects = excluded.objects
+         WHERE excluded.revision > prefix_items.revision",
+    )?
+    .execute(params![
+        at.stream,
+        record.record.item,
+        at.holding,
+        revision as i64,
+        record.record.order,
+        state,
+        record.kind,
+        record.schema,
+        body,
+        objects
+    ])?;
+    Ok(())
 }
 
 /// The item as `record`, at `revision`, leaves it.
@@ -361,6 +425,7 @@ fn apply_frame(
     }
     let applying = Applying { scope, stream: at.stream, holding };
     for (offset, record) in records.iter().enumerate() {
+        hidden_by_floor(db, applying, header.first + offset as u64, record)?;
         apply(db, applying, header.first + offset as u64, record)?;
     }
     let last: Option<(i64, Vec<u8>)> = db
@@ -453,10 +518,18 @@ impl Library {
         // for: a refused frame's are not wanted, nor a known one's again.
         // Nor are those of a frame kept only as evidence: it is kept with
         // what its device showed it holds (§8).
-        let (given, evidence) = self.database().read_now(|db| match held(db, scope)? {
+        // A parked frame that follows the applied prefix now (a drain cut
+        // short) goes on to be applied; its objects were shown when it was
+        // parked. Neither is asked for objects.
+        let (given, unasked) = self.database().read_now(|db| match held(db, scope)? {
             Some((scope_id, state, Some(holding))) if state == "live" && holding == taking.period => {
                 let at = standing(db, scope_id, holding, &header.stream)?;
                 super::handover::sequencer(db, at.as_ref().map(|at| at.stream), &header)?;
+                if let Some(at) = &at
+                    && follows_parked(db, at, holding, &header)?
+                {
+                    return Ok((None, true));
+                }
                 let given = known(db, scope_id, holding, &header, &frame.header, signer.as_ref())?;
                 let evidence = match &at {
                     Some(at) if given.is_none() => super::handover::evidence(db, at, &header)?.is_some(),
@@ -484,14 +557,15 @@ impl Library {
                 None => missing.push(*object),
             }
         }
-        if !evidence && !missing.is_empty() {
+        if !unasked && !missing.is_empty() {
             return Ok(Received::Missing(missing));
         }
-        if !evidence && !unproven.is_empty() {
+        if !unasked && !unproven.is_empty() {
             return Ok(Received::Prove(unproven));
         }
         let (scope, period) = (scope.to_string(), taking.period);
         let (key, stream) = (scope.clone(), header.stream.clone());
+        let holding = period;
         let (authorizing, signing) = (authorizer.clone(), signer.clone());
         let bytes = frame.body.len() + frame.header.len() + 1024 + records.len() * 64;
         let (mut received, more) = self.database().write_now_at(Priority::Normal, bytes, move |db| {
@@ -508,8 +582,17 @@ impl Library {
             if super::handover::sequencer(db, Some(at.stream), &header)? {
                 super::handover::first_epoch(db, at.stream, &header, signer.as_ref())?;
             }
-            if let Some(given) = known(db, scope_id, holding_id, &header, &frame.header, signer.as_ref())? {
-                return Ok((given, false));
+            // A parked frame sent again that follows the applied prefix now
+            // (a drain cut short) is applied, with what follows it.
+            let (mut resumed, mut more) = (Drained::default(), false);
+            if follows_parked(db, &at, holding_id, &header)? {
+                more = drain(db, scope_id, holding_id, &mut at, authorizer.as_ref(), signer.as_ref(), &mut resumed)?;
+            }
+            if let Some(mut given) = known(db, scope_id, holding_id, &header, &frame.header, signer.as_ref())? {
+                if let Received::Applied { drained, .. } = &mut given {
+                    *drained = resumed;
+                }
+                return Ok((given, more));
             }
             if let Some(why) = super::handover::evidence(db, &at, &header)? {
                 super::handover::keep_evidence(db, (at.stream, holding_id), &header, &frame, why, &objects, &shown)?;
@@ -583,17 +666,19 @@ impl Library {
             }
         })?;
         if more && let Received::Applied { drained, .. } = &mut received {
-            self.drain_on(&key, &stream, &authorizing, &signing, drained)?;
+            self.drain_on(&key, &stream, holding, &authorizing, &signing, drained)?;
         }
         Ok(received)
     }
 
     /// Goes on applying the parked frames of `stream` that follow, a few
-    /// to a transaction.
+    /// to a transaction, while the scope is held in the period `holding`
+    /// the drain began in; a later period's frames are its own drain's.
     pub(super) fn drain_on(
         &self,
         scope: &str,
         stream: &str,
+        holding: i64,
         authorizer: &Arc<dyn Authorizer>,
         signer: &Arc<dyn HubSigner>,
         drained: &mut Drained,
@@ -603,12 +688,18 @@ impl Library {
             let (authorizer, signer) = (authorizer.clone(), signer.clone());
             let (batch, more) = self.database().write_now_at(Priority::Normal, 1 << 20, move |db| {
                 let mut batch = Drained::default();
-                let Some((scope_id, _, Some(holding))) = held(db, &scope)? else { return Ok((batch, false)) };
+                let Some((scope_id, state, Some(now))) = held(db, &scope)? else { return Ok((batch, false)) };
+                if now != holding || state != "live" {
+                    return Ok((batch, false));
+                }
                 let mut at = prefix(db, scope_id, holding, &stream)?;
                 let more = drain(db, scope_id, holding, &mut at, authorizer.as_ref(), signer.as_ref(), &mut batch)?;
                 Ok((batch, more))
             })?;
-            drained.applied.extend(batch.applied);
+            drained.applied += batch.applied;
+            if batch.through.is_some() {
+                drained.through = batch.through;
+            }
             if batch.refused.is_some() {
                 drained.refused = batch.refused;
             }
@@ -616,6 +707,27 @@ impl Library {
                 return Ok(());
             }
         }
+    }
+
+    /// Applies the parked frames that follow each stream's applied prefix,
+    /// where a drain was cut short (§19): at a hub's opening, and from time
+    /// to time. How many streams it moved.
+    pub fn settle_parked(&self, authorizer: Arc<dyn Authorizer>, signer: Arc<dyn HubSigner>) -> Result<usize> {
+        let waiting: Vec<(String, String, i64)> = self.database().read_now(|db| {
+            let mut statement = db.prepare_cached(
+                "SELECT c.key, s.name, c.holding FROM streams s JOIN scopes c ON c.id = s.scope
+                 WHERE c.state = 'live' AND c.holding IS NOT NULL AND EXISTS (
+                    SELECT 1 FROM parked p WHERE p.stream = s.id AND p.holding = c.holding AND p.epoch = s.epoch
+                    AND p.first = COALESCE((SELECT sequence + 1 FROM cursors WHERE stream = s.id AND holding = c.holding), 0))",
+            )?;
+            let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+            Ok(rows.collect::<std::result::Result<_, _>>()?)
+        })?;
+        for (scope, stream, holding) in &waiting {
+            let mut drained = Drained::default();
+            self.drain_on(scope, stream, *holding, &authorizer, &signer, &mut drained)?;
+        }
+        Ok(waiting.len())
     }
 
     /// The hub's word on a frame of `scope` it has one on already, from the
@@ -681,7 +793,8 @@ pub(super) fn drain(
                 // Its objects are held by the applied frame now.
                 db.prepare_cached("DELETE FROM parked_objects WHERE stream = ?1 AND epoch = ?2 AND first = ?3 AND holding = ?4")?
                     .execute(place)?;
-                drained.applied.push(header.first);
+                drained.applied += 1;
+                drained.through = Some(at.next);
             }
             Err(why) => {
                 let signature = refuse(db, at.stream, holding, &header, &why, signer)?;
@@ -691,4 +804,17 @@ pub(super) fn drain(
         }
     }
     Ok(true)
+}
+
+/// Whether `header` is a frame parked here that follows the applied prefix
+/// of its stream now.
+fn follows_parked(db: &Connection, at: &Prefix, holding: i64, header: &Header) -> fastctx_storage::Result<bool> {
+    if header.epoch != at.epoch || header.first != at.next {
+        return Ok(false);
+    }
+    Ok(db
+        .prepare_cached("SELECT 1 FROM parked WHERE stream = ?1 AND epoch = ?2 AND first = ?3 AND holding = ?4")?
+        .query_row(params![at.stream, header.epoch as i64, header.first as i64, holding], |_| Ok(()))
+        .optional()?
+        .is_some())
 }

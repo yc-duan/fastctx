@@ -116,6 +116,10 @@ pub struct Cursor {
     pub head: Bytes,
 }
 
+fn is_zero(value: &u64) -> bool {
+    *value == 0
+}
+
 /// What a device asks the hub.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "ask", rename_all = "snake_case")]
@@ -161,12 +165,17 @@ pub struct Refused {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "received", rename_all = "snake_case")]
 pub enum Received {
+    /// Applied with its change number and the scope's prefix there; and
+    /// how many frames parked behind it were applied after it, up to the
+    /// sequence `through`, and the one of them refused, if any.
     Applied {
         change: u64,
         prefix: Bytes,
         word: Bytes,
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        drained: Vec<u64>,
+        #[serde(default, skip_serializing_if = "is_zero")]
+        applied: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        through: Option<u64>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         refused: Option<Refused>,
     },

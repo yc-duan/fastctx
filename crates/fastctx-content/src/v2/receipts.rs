@@ -15,7 +15,13 @@
 //! has — and keeps the frames it covers (§4.6, §17). A checkpoint's word
 //! takes off only the receipts the hub stands behind in the session it
 //! comes in: those it gave there, and those reported when it opened that
-//! the hub checked. One that came any other way waits to be reported.
+//! the hub checked; each session that heard or checked one is kept, so one
+//! does not undo another's. One that came any other way waits to be
+//! reported.
+//!
+//! A receipt moves the upload mark only for a frame the stream still holds
+//! as signed: a late word from an epoch cut back since is kept as a
+//! witness, never as the upload of what now stands in its place.
 
 use super::Library;
 use super::scopes::held;
@@ -76,6 +82,22 @@ pub struct Receipt {
     pub signature: Vec<u8>,
 }
 
+/// Notes that `session` stands behind the receipt: it heard it, or the hub
+/// checked it when the session opened.
+fn heard(
+    db: &fastctx_storage::rusqlite::Connection,
+    receipt: (i64, &Receipt, &str, &[u8]),
+    session: u64,
+) -> fastctx_storage::Result<()> {
+    let (stream, receipt, kind, standing) = receipt;
+    db.prepare_cached(
+        "INSERT OR IGNORE INTO hub_receipt_sessions (stream, epoch, first, digest, kind, standing, session)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+    )?
+    .execute(params![stream, receipt.epoch as i64, receipt.first as i64, &receipt.digest[..], kind, standing, session as i64])?;
+    Ok(())
+}
+
 impl Library {
     /// Keeps a receipt of `scope` heard in `session`, a number no other
     /// session of this library has. A parked or applied frame counts as
@@ -90,11 +112,9 @@ impl Library {
                 .optional()?
                 .ok_or_else(|| invalid("a receipt for a stream not here"))?;
             let (kind, change, parked, standing) = receipt.said.kept();
-            // The same word heard again stands behind it in this session.
             db.prepare_cached(
-                "INSERT INTO hub_receipts (stream, epoch, first, digest, kind, standing, change, parked, signature, heard_in, checkpointed)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 0)
-                 ON CONFLICT (stream, epoch, first, digest, kind, standing) DO UPDATE SET heard_in = excluded.heard_in",
+                "INSERT OR IGNORE INTO hub_receipts (stream, epoch, first, digest, kind, standing, change, parked, signature, checkpointed)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0)",
             )?
             .execute(params![
                 stream,
@@ -102,24 +122,29 @@ impl Library {
                 receipt.first as i64,
                 &receipt.digest[..],
                 kind,
-                standing,
+                &standing,
                 change,
                 parked,
-                receipt.signature,
-                session as i64
+                receipt.signature
             ])?;
+            heard(db, (stream, &receipt, kind, &standing), session)?;
             if kind != "rejected" {
-                let count: i64 = db
-                    .prepare_cached("SELECT count FROM frames WHERE stream = ?1 AND epoch = ?2 AND first = ?3 LIMIT 1")?
-                    .query_row(params![stream, receipt.epoch as i64, receipt.first as i64], |row| row.get(0))
-                    .optional()?
-                    .unwrap_or(1);
-                // Where uploading goes on from: past the frame.
-                db.prepare_cached(
-                    "INSERT INTO outbox (stream, uploaded) VALUES (?1, ?2)
-                     ON CONFLICT (stream) DO UPDATE SET uploaded = MAX(uploaded, excluded.uploaded)",
-                )?
-                .execute(params![stream, receipt.first as i64 + count])?;
+                // Where uploading goes on from: past the frame, if the stream
+                // still holds that very frame.
+                let held: Option<(i64, Vec<u8>)> = db
+                    .prepare_cached("SELECT count, header FROM frames WHERE stream = ?1 AND epoch = ?2 AND first = ?3")?
+                    .query_row(params![stream, receipt.epoch as i64, receipt.first as i64], |row| Ok((row.get(0)?, row.get(1)?)))
+                    .optional()?;
+                let same = held.as_ref().is_some_and(|(_, header)| {
+                    super::frame::Header::decode(header).is_ok_and(|header| header.digest == receipt.digest)
+                });
+                if let (true, Some((count, _))) = (same, held) {
+                    db.prepare_cached(
+                        "INSERT INTO outbox (stream, uploaded) VALUES (?1, ?2)
+                         ON CONFLICT (stream) DO UPDATE SET uploaded = MAX(uploaded, excluded.uploaded)",
+                    )?
+                    .execute(params![stream, receipt.first as i64 + count])?;
+                }
             }
             Ok(())
         })?)
@@ -132,22 +157,21 @@ impl Library {
             let mut vouched = 0;
             for (scope, receipt) in &receipts {
                 let (kind, _, _, standing) = receipt.said.kept();
-                vouched += db
+                let stream: Option<i64> = db
                     .prepare_cached(
-                        "UPDATE hub_receipts SET heard_in = ?1 WHERE checkpointed = 0 AND kind = ?2 AND standing = ?3
-                         AND epoch = ?4 AND first = ?5 AND digest = ?6 AND stream =
-                         (SELECT s.id FROM streams s JOIN scopes c ON c.id = s.scope WHERE c.key = ?7 AND s.name = ?8)",
+                        "SELECT r.stream FROM hub_receipts r JOIN streams s ON s.id = r.stream JOIN scopes c ON c.id = s.scope
+                         WHERE c.key = ?1 AND s.name = ?2 AND r.epoch = ?3 AND r.first = ?4 AND r.digest = ?5 AND r.kind = ?6
+                         AND r.standing = ?7 AND r.checkpointed = 0",
                     )?
-                    .execute(params![
-                        session as i64,
-                        kind,
-                        standing,
-                        receipt.epoch as i64,
-                        receipt.first as i64,
-                        &receipt.digest[..],
-                        scope,
-                        receipt.stream
-                    ])?;
+                    .query_row(
+                        params![scope, receipt.stream, receipt.epoch as i64, receipt.first as i64, &receipt.digest[..], kind, &standing],
+                        |row| row.get(0),
+                    )
+                    .optional()?;
+                if let Some(stream) = stream {
+                    heard(db, (stream, receipt, kind, &standing), session)?;
+                    vouched += 1;
+                }
             }
             Ok(vouched)
         })?)
@@ -160,13 +184,26 @@ impl Library {
         let scope = scope.to_string();
         Ok(self.database().write_relaxed_now_at(Priority::Normal, 128, move |db| {
             let Some((scope_id, _, _)) = held(db, &scope)? else { return Ok(0) };
-            Ok(db
+            let covered = db
                 .prepare_cached(
-                    "UPDATE hub_receipts SET checkpointed = 1 WHERE checkpointed = 0 AND heard_in = ?4
+                    "UPDATE hub_receipts AS r SET checkpointed = 1 WHERE checkpointed = 0
                      AND stream IN (SELECT id FROM streams WHERE scope = ?1)
-                     AND ((kind = 'applied' AND change <= ?2) OR (kind = 'parked' AND parked <= ?3))",
+                     AND ((kind = 'applied' AND change <= ?2) OR (kind = 'parked' AND parked <= ?3))
+                     AND EXISTS (SELECT 1 FROM hub_receipt_sessions h WHERE h.session = ?4 AND h.stream = r.stream
+                                 AND h.epoch = r.epoch AND h.first = r.first AND h.digest = r.digest AND h.kind = r.kind
+                                 AND h.standing = r.standing)",
                 )?
-                .execute(params![scope_id, change as i64, parked as i64, session as i64])?)
+                .execute(params![scope_id, change as i64, parked as i64, session as i64])?;
+            // The sessions of what no longer waits are forgotten.
+            db.prepare_cached(
+                "DELETE FROM hub_receipt_sessions WHERE EXISTS (SELECT 1 FROM hub_receipts r WHERE r.checkpointed = 1
+                 AND r.stream = hub_receipt_sessions.stream AND r.epoch = hub_receipt_sessions.epoch
+                 AND r.first = hub_receipt_sessions.first AND r.digest = hub_receipt_sessions.digest
+                 AND r.kind = hub_receipt_sessions.kind AND r.standing = hub_receipt_sessions.standing)
+                 AND stream IN (SELECT id FROM streams WHERE scope = ?1)",
+            )?
+            .execute([scope_id])?;
+            Ok(covered)
         })?)
     }
 
