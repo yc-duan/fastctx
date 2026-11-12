@@ -99,6 +99,22 @@ fn held(assets: &Assets, directory: &Indexed<'_>, machine: &MachineName, key: &s
     Ok(scope)
 }
 
+/// The scope a request is of, if it is of one already described.
+fn scope_of(request: &Request) -> Option<&str> {
+    match request {
+        Request::Open { .. } | Request::Describe { .. } => None,
+        Request::Answer { scope, .. }
+        | Request::Take { scope, .. }
+        | Request::Cursors { scope, .. }
+        | Request::Frames { scope, .. }
+        | Request::Streams { scope }
+        | Request::Epoch { scope, .. }
+        | Request::Succession { scope, .. }
+        | Request::Put { scope, .. }
+        | Request::Get { scope, .. } => Some(scope),
+    }
+}
+
 /// Answers `request` from `machine`, whose key is `key`, against the
 /// directory `directory`. Call on a thread that may block.
 pub(crate) fn ask(
@@ -110,6 +126,15 @@ pub(crate) fn ask(
 ) -> Result<Reply, String> {
     if let Some(why) = assets.sealed() {
         return Ok(Reply::Sealed { why });
+    }
+    // A scope this machine reads no more is answered so, whatever was asked
+    // of it: its device stops using what it holds (§4.5, §6.3).
+    if let Some(key) = scope_of(&request)
+        && let Some(scope) = scopes::scope(assets, key)?
+        && !scopes::readable(directory, machine, &scope)
+    {
+        assets.gone(key, machine);
+        return Ok(Reply::Revoked { scope: key.to_string() });
     }
     match request {
         Request::Open { version, seen, reported } => open(assets, directory, machine, version, seen, reported),

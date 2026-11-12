@@ -534,6 +534,7 @@ fn notice(frame: &Down) -> Option<Notice> {
             fastctx_types::assets::Push::Checkpointed { checkpoint } => {
                 Notice::Assets(format!("checkpointed\0{}", checkpoint.scope))
             }
+            fastctx_types::assets::Push::Revoked { scope } => Notice::Assets(format!("revoked\0{scope}")),
             fastctx_types::assets::Push::Fact { .. } => return None,
         },
         _ => return None,

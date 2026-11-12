@@ -321,13 +321,18 @@ impl Assets {
         use fastctx_types::assets::Push;
         let pushes = std::mem::take(&mut *self.pushes.lock().expect("pushes"));
         let mut judged: BTreeMap<(String, fastctx_types::MachineName), bool> = BTreeMap::new();
-        pushes
+        let mut revoked = Vec::new();
+        let mut told: Vec<_> = pushes
             .into_iter()
             .filter(|(machine, push)| {
                 let key = match push {
-                    Push::Moved { scope, .. } | Push::Fact { scope, .. } => scope.clone(),
+                    Push::Moved { scope, .. } | Push::Fact { scope, .. } | Push::Revoked { scope } => scope.clone(),
                     Push::Checkpointed { checkpoint } => checkpoint.scope.clone(),
                 };
+                if matches!(push, Push::Revoked { .. }) {
+                    return true;
+                }
+                let first = !judged.contains_key(&(key.clone(), machine.clone()));
                 let reads = *judged.entry((key.clone(), machine.clone())).or_insert_with(|| {
                     matches!(scopes::scope(self, &key), Ok(Some(scope)) if scopes::readable(directory, machine, &scope))
                 });
@@ -336,10 +341,16 @@ impl Assets {
                     if let Some(machines) = self.receipted.lock().expect("receipted").get_mut(&key) {
                         machines.remove(machine);
                     }
+                    // Told instead that it reads the scope no more, once.
+                    if first {
+                        revoked.push((machine.clone(), Push::Revoked { scope: key }));
+                    }
                 }
                 reads
             })
-            .collect()
+            .collect();
+        told.extend(revoked);
+        told
     }
 
     /// `machine` is gone: it is told nothing of `scope` until it reads it

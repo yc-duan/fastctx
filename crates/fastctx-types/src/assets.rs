@@ -393,6 +393,9 @@ pub enum Reply {
     /// The hub was put back and keeps every asset sealed until recovery
     /// ends (§17).
     Sealed { why: String },
+    /// This machine reads the scope no more, by the directory as it stands
+    /// (§4.5, §6.3): it stops using what it holds of it.
+    Revoked { scope: String },
     Refused { why: String },
     Received { received: Received },
     Word {
@@ -433,6 +436,8 @@ pub enum Push {
     Checkpointed { checkpoint: Checkpoint },
     /// A control fact of a scope: an epoch, a gap, a descriptor.
     Fact { scope: String, fact: Fact },
+    /// The device reads the scope no more (§4.5, §6.3).
+    Revoked { scope: String },
 }
 
 #[cfg(test)]

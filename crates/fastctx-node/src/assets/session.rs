@@ -68,6 +68,16 @@ pub(crate) fn wake(node: &Arc<Node>, hub: &HubId) {
 pub(crate) fn pushed(node: &Arc<Node>, hub: &HubId, push: wire::Push) {
     match push {
         wire::Push::Moved { .. } | wire::Push::Fact { .. } => wake(node, hub),
+        wire::Push::Revoked { scope } => {
+            let Some(assets) = node.assets.as_ref() else { return };
+            let (library, log) = (assets.library.clone(), node.log.clone());
+            fastctx_platform::task::spawn(async move {
+                let key = scope.clone();
+                if let Err(error) = blocking(&library, move |library| library.revoke(&key)).await {
+                    log.line(format_args!("ending what this machine held of {scope}: {error}"));
+                }
+            });
+        }
         wire::Push::Checkpointed { checkpoint } => {
             let Some(assets) = node.assets.as_ref() else { return };
             let Some((session, key)) = assets.current.lock().expect("sessions").get(hub).copied() else { return };
@@ -127,6 +137,23 @@ async fn run(node: std::sync::Weak<Node>, hub: HubId, wake: Arc<tokio::sync::Not
     }
 }
 
+/// What a scope's pass ends with when the hub says this machine reads the
+/// scope no more: not a failure.
+const REVOKED: &str = "no longer read here: ";
+
+/// Asks the hub `request` of a scope; where the hub says this machine reads
+/// the scope no more, its holding here ends (design §4.5, §6.3).
+async fn ask(assets: &Assets, link: &Arc<Link>, request: Request) -> Result<Reply, String> {
+    match link.assets(request).await? {
+        Reply::Revoked { scope } => {
+            let key = scope.clone();
+            blocking(&assets.library, move |library| library.revoke(&key)).await?;
+            Err(format!("{REVOKED}{scope}"))
+        }
+        reply => Ok(reply),
+    }
+}
+
 /// Runs `work` on the library off the async threads.
 pub(super) async fn blocking<T: Send + 'static>(
     library: &Library,
@@ -167,9 +194,15 @@ async fn pass(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>) -> Result<(), Str
             cursors(assets, link, scope, *holding).await
         }
         .await;
-        if let Err(why) = done {
+        if let Err(why) = done
+            && !why.starts_with(REVOKED)
+        {
             failed.get_or_insert(format!("{scope}: {why}"));
         }
+    }
+    // What ended holding periods left goes a pass at a time.
+    if let Err(why) = blocking(library, |library| library.purge()).await {
+        failed.get_or_insert(format!("purging what ended: {why}"));
     }
     for failed in super::objects::fetch(assets, link).await {
         node.log.line(format_args!("assets with {hub}: {failed}; asked again later"));
@@ -286,7 +319,7 @@ async fn upload(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKey,
                 let mut rounds = 0;
                 let received = loop {
                     let request = Request::Take { scope: scope.to_string(), frame: frame.clone(), proven: proven.clone() };
-                    let Reply::Received { received } = link.assets(request).await? else {
+                    let Reply::Received { received } = ask(assets, link, request).await? else {
                         return Err("the hub did not take the frame".into());
                     };
                     let (objects, prove) = match &received {
@@ -394,7 +427,7 @@ async fn renew(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKey, 
         .find(|(name, sequence, _)| name == &stream_text && sequence + 1 == cut)
         .map_or([0u8; 32], |(_, _, head)| head);
     let request = Request::Epoch { scope: scope.to_string(), stream: stream.to_string(), next: cut, head: head.into() };
-    let Reply::Epoch { descriptor } = link.assets(request).await? else {
+    let Reply::Epoch { descriptor } = ask(assets, link, request).await? else {
         return Err("the hub did not open a new epoch".into());
     };
     if !assets.heard(hub, key, &descriptor.fact.0, &descriptor.word.0) {
@@ -423,7 +456,7 @@ async fn resubmit(assets: &Assets, scope: &str, stream: &str) -> Result<(), Stri
 /// has, under the hub's signed epochs and gap facts.
 async fn pull(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKey, scope: &str, holding: i64) -> Result<(), String> {
     let library = &assets.library;
-    let Reply::Streams { streams } = link.assets(Request::Streams { scope: scope.to_string() }).await? else {
+    let Reply::Streams { streams } = ask(assets, link, Request::Streams { scope: scope.to_string() }).await? else {
         return Err("the hub did not list the scope's streams".into());
     };
     let scope_text = scope.to_string();
@@ -435,7 +468,7 @@ async fn pull(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKey, s
             continue;
         }
         let Reply::Succession { epochs, gaps } =
-            link.assets(Request::Succession { scope: scope.to_string(), stream: stream.clone() }).await?
+            ask(assets, link, Request::Succession { scope: scope.to_string(), stream: stream.clone() }).await?
         else {
             return Err("the hub did not give the stream's succession".into());
         };
@@ -460,7 +493,7 @@ async fn pull(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKey, s
         }
         while at < next {
             let request = Request::Frames { scope: scope.to_string(), stream: stream.clone(), from: at, limit: FRAMES_AT_ONCE as u32 };
-            let Reply::Frames { frames } = link.assets(request).await? else {
+            let Reply::Frames { frames } = ask(assets, link, request).await? else {
                 return Err("the hub did not give frames".into());
             };
             if frames.is_empty() {
@@ -506,7 +539,7 @@ async fn cursors(assets: &Assets, link: &Arc<Link>, scope: &str, holding: i64) -
         .into_iter()
         .map(|(stream, sequence, head)| wire::Cursor { stream, sequence, head: head.into() })
         .collect();
-    let Reply::Standing { streams } = link.assets(Request::Cursors { scope: scope.to_string(), holding, streams }).await? else {
+    let Reply::Standing { streams } = ask(assets, link, Request::Cursors { scope: scope.to_string(), holding, streams }).await? else {
         return Err("the hub did not check the cursors".into());
     };
     for standing in streams.into_iter().filter(|standing| !standing.agrees) {
