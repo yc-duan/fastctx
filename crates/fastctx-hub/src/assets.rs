@@ -480,8 +480,8 @@ impl Assets {
 
     /// `machine` opened an asset session: it speaks this asset sync, and so
     /// clears for a share that waits for it (design §6.3).
-    pub(crate) fn speaks(&self, machine: &fastctx_types::MachineName) -> io::Result<()> {
-        let name = machine.to_string();
+    pub(crate) fn speaks(&self, key: &fastctx_net::sign::PublicKey) -> io::Result<()> {
+        let name = witness::hex(key.as_bytes());
         let known = self
             .control
             .read_now({
@@ -500,9 +500,10 @@ impl Assets {
         Ok(())
     }
 
-    /// Whether `machine` ever opened an asset session here.
-    pub(crate) fn spoken(&self, machine: &fastctx_types::MachineName) -> bool {
-        let name = machine.to_string();
+    /// Whether the machine whose key is `key` ever opened an asset session
+    /// here: by its key, whatever it is called.
+    pub(crate) fn spoken(&self, key: &fastctx_net::sign::PublicKey) -> bool {
+        let name = witness::hex(key.as_bytes());
         self.control
             .read_now(move |c| Ok(c.prepare_cached("SELECT 1 FROM asset_machines WHERE machine = ?1")?.query_row([&name], |_| Ok(())).optional()?))
             .is_ok_and(|found| found.is_some())

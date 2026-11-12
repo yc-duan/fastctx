@@ -53,7 +53,16 @@ impl Library {
     /// Makes tombstones of up to `PASS` objects nothing holds, deletes their
     /// bytes and rows, and drops expired leases.
     pub fn collect(&self) -> Result<Collected> {
-        let cutoff = now() - GRACE.as_millis() as i64;
+        self.collect_before(now() - GRACE.as_millis() as i64)
+    }
+
+    /// Collects now what nothing refers to, holds or leases, without the
+    /// grace: a machine clearing what a new holder may not see (§6.3).
+    pub fn collect_now(&self) -> Result<Collected> {
+        self.collect_before(now() + 1)
+    }
+
+    fn collect_before(&self, cutoff: i64) -> Result<Collected> {
         let (doomed, leases) = self.database().write_now_at(Priority::Background, 1024, move |db| {
             let leases = db.prepare_cached("DELETE FROM leases WHERE expires < ?1")?.execute([now()])?;
             let mut statement = db.prepare_cached(

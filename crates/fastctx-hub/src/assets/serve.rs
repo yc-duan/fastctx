@@ -206,7 +206,7 @@ pub(crate) fn ask(
         return Ok(Reply::Revoked { scope: key.to_string() });
     }
     match request {
-        Request::Open { version, seen, reported, pinned } => open(assets, directory, machine, version, seen, reported, pinned),
+        Request::Open { version, seen, reported, pinned } => open(assets, directory, machine, key, version, seen, reported, pinned),
         Request::Describe { scope, readers, classes } => {
             Ok(Reply::Described { descriptor: scopes::describe(assets, directory, machine, &scope, readers, classes)? })
         }
@@ -226,8 +226,13 @@ pub(crate) fn ask(
             // Only what this device sent every byte of lately, under its key
             // (§6.5).
             let proven = assets.objects.proven(key.as_bytes(), &proven);
-            // An object the device may read in this scope needs no proof.
-            let readable = |object: &ObjectRef| library.readable(&scope, &object.hash).unwrap_or(false);
+            // An object the device reaches through a stream of the scope it
+            // holds needs no proof; through the scope alone it does.
+            let readable = |object: &ObjectRef| {
+                library
+                    .streams_reading(&scope, &object.hash)
+                    .is_ok_and(|streams| streams.iter().any(|stream| scopes::holds(directory, machine, &kept, stream)))
+            };
             let taking = Taking { period, readable: &readable, proven: &proven };
             let frame_header = frame.header.0.clone();
             let raw = RawFrame { header: frame.header.0, signature: frame.signature.0, body: frame.body.0, objects: Vec::new() };
@@ -300,14 +305,14 @@ pub(crate) fn ask(
         Request::Streams { scope } => {
             let kept = gated(assets, directory, machine, &scope)?;
             let library = scopes::library(assets, &kept)?;
-            let streams = library
+            let (held, withheld): (Vec<_>, Vec<_>) = library
                 .streams(&scope)
                 .map_err(|error| error.to_string())?
                 .into_iter()
-                .filter(|(stream, _)| scopes::holds(directory, machine, &kept, stream))
-                .map(|(stream, next)| wire::StreamAt { stream, next })
-                .collect();
-            Ok(Reply::Streams { streams })
+                .partition(|(stream, _)| scopes::holds(directory, machine, &kept, stream));
+            let streams = held.into_iter().map(|(stream, next)| wire::StreamAt { stream, next }).collect();
+            let withheld = withheld.into_iter().map(|(stream, _)| stream).collect();
+            Ok(Reply::Streams { streams, withheld })
         }
         Request::Epoch { scope, stream, next, head } => {
             let kept = held(assets, directory, machine, &scope, &stream)?;
@@ -354,10 +359,12 @@ pub(crate) fn ask(
 /// history. One the hub's word stands behind that the hub's history no
 /// longer holds means the hub was put back: every asset is sealed from
 /// then on. Receipts a checkpoint covers are answered with its word.
+#[allow(clippy::too_many_arguments)]
 fn open(
     assets: &Assets,
     directory: &Indexed<'_>,
     machine: &MachineName,
+    key: &PublicKey,
     version: u32,
     seen: Option<wire::Seen>,
     reported: Vec<wire::Reported>,
@@ -366,7 +373,7 @@ fn open(
     if version != wire::VERSION {
         return Err(format!("asset sync {version} is not this hub's {}", wire::VERSION));
     }
-    assets.speaks(machine).map_err(|error| error.to_string())?;
+    assets.speaks(key).map_err(|error| error.to_string())?;
     if let Some(pinned) = &pinned {
         let pinned = array(pinned, "a pinned key")?;
         // Only a key the hub's own word was once given under counts: a

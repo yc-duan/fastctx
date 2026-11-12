@@ -79,6 +79,45 @@ impl Library {
         })?)
     }
 
+    /// Every scope a hub described here, held now or not, with its
+    /// descriptor.
+    pub fn described_scopes(&self) -> Result<Vec<(String, Vec<u8>)>> {
+        Ok(self.database().read_now(|db| {
+            let mut statement =
+                db.prepare_cached("SELECT key, description FROM scopes WHERE state != 'provisional' AND description IS NOT NULL ORDER BY key")?;
+            let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+            Ok(rows.collect::<std::result::Result<_, _>>()?)
+        })?)
+    }
+
+    /// Up to `limit` objects this machine wants and does not hold that a
+    /// record of one of `scopes` refers to, first the most wanted.
+    pub fn wanted_of(&self, scopes: &[String], limit: usize) -> Result<Vec<(String, crate::record::ObjectRef)>> {
+        let scopes = scopes.to_vec();
+        Ok(self.database().read_now(move |db| {
+            let mut statement = db.prepare_cached(
+                "SELECT w.hash, w.size FROM wanted w
+                 WHERE w.hint = ?1 AND NOT EXISTS (SELECT 1 FROM objects o WHERE o.hash = w.hash AND o.state = 1)
+                 ORDER BY w.priority DESC, w.hash LIMIT ?2",
+            )?;
+            let mut wanted = Vec::new();
+            for scope in scopes {
+                if wanted.len() >= limit {
+                    break;
+                }
+                let rows = statement.query_map(params![scope, (limit - wanted.len()) as i64], |row| {
+                    Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, i64>(1)?))
+                })?;
+                for row in rows {
+                    let (hash, size) = row?;
+                    let hash: [u8; 32] = hash.try_into().map_err(|_| invalid("a malformed hash"))?;
+                    wanted.push((scope.clone(), crate::record::ObjectRef { hash, size: size as u64 }));
+                }
+            }
+            Ok(wanted)
+        })?)
+    }
+
     /// The scopes this device holds under a hub's descriptor, each with its
     /// descriptor and current holding period.
     pub fn live_scopes(&self) -> Result<Vec<(String, Vec<u8>, i64)>> {

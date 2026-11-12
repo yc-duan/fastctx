@@ -146,7 +146,8 @@ pub(crate) fn put(assets: &Assets, machine: &MachineName, key: &PublicKey, scope
     } else {
         Some(vec![0])
     };
-    let said = missing.clone().unwrap_or_default();
+    // A proof is every chunk, in order: none is listed.
+    let said = if prove { Vec::new() } else { missing.clone().unwrap_or_default() };
     let ticket = assets.objects.ticket(Ticket::Put {
         machine: machine.clone(),
         key: *key.as_bytes(),

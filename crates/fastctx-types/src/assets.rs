@@ -464,7 +464,13 @@ pub enum Reply {
     Succession { epochs: Vec<Fact>, gaps: Vec<Fact> },
     /// A scope's descriptor, as JSON, and the hub's word on it.
     Described { descriptor: Fact },
-    Streams { streams: Vec<StreamAt> },
+    Streams {
+        streams: Vec<StreamAt>,
+        /// Streams of the scope the hub has that this machine may hold no
+        /// more (§2.3): it drops what it holds of them.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        withheld: Vec<String>,
+    },
     /// The new epoch's descriptor and the hub's word on it.
     Epoch { descriptor: Fact },
     /// The chunks the hub lacks of an object put, sent under `ticket`; none

@@ -446,6 +446,9 @@ pub struct Store {
     pub(crate) witness: Option<Arc<crate::assets::Witness>>,
     /// The bodies' members, kept as the directory has them at each save.
     pub(crate) bodies: Option<Arc<crate::assets::bodies::Bodies>>,
+    /// Set while a save puts waiting shares in force: that save alone moves
+    /// no waiting share to a new revision.
+    pub(crate) keep_revisions: bool,
     pub(crate) published: Option<Arc<arc_swap::ArcSwap<Snapshot>>>,
     pub(crate) post: Option<Arc<crate::post::Post>>,
     previous: Option<Arc<Snapshot>>,
@@ -715,6 +718,7 @@ impl Store {
             },
             witness: None,
             bodies: None,
+            keep_revisions: false,
             published: None,
             post: None,
             previous: None,
@@ -1027,6 +1031,9 @@ impl Store {
     }
 
     pub fn save_book(&mut self) -> io::Result<()> {
+        if !self.keep_revisions && crate::shares::renew(&mut self.book.directory) {
+            self.book_edit = BookEdit::Full;
+        }
         let edit = std::mem::take(&mut self.book_edit);
         let edit = self.book_rows.save(&self.metadata.shelf, &mut self.metadata.book, &edit)?;
         self.metadata.book_saves += 1;
@@ -1052,6 +1059,9 @@ impl Store {
     /// Commits settings and their audit records together, including a batch
     /// of arrangements. Neither durable baseline advances on failure.
     pub(crate) fn save_hub_and_book(&mut self) -> io::Result<()> {
+        if !self.keep_revisions && crate::shares::renew(&mut self.book.directory) {
+            self.book_edit = BookEdit::Full;
+        }
         let mut changes = rows::Changes::default();
         let next = self.hub_rows.stage(&self.metadata.hub, &mut changes)?;
         let edit = std::mem::take(&mut self.book_edit);

@@ -420,8 +420,9 @@ fn apply(
                 // (sync v2 design §6.3).
                 // Only a machine that speaks this asset sync clears; an older
                 // one is given the share at once, as before.
-                let keeps_files = directory.member(&machine).is_some_and(|member| member.is_machine() && !member.managed)
-                    && hub.assets.spoken(&machine);
+                let keeps_files = directory
+                    .member(&machine)
+                    .is_some_and(|member| member.is_machine() && !member.managed && hub.assets.spoken(&member.key));
                 let pending = match &before {
                     Some(before) => before.pending,
                     None if keeps_files => Some(crate::shares::next_revision(directory, &machine)),

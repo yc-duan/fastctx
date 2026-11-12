@@ -54,7 +54,7 @@ pub(crate) struct Assets {
     /// asked again only after a while, so others are not held up.
     pub(crate) unreached: Mutex<HashMap<(HubId, [u8; 32]), std::time::Instant>>,
     /// The holding revision this machine last told each hub it cleared at.
-    pub(crate) cleared: Mutex<HashMap<HubId, u64>>,
+    pub(crate) cleared: Mutex<HashMap<HubId, (u64, Vec<String>)>>,
 }
 
 impl Assets {

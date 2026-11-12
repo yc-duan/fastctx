@@ -50,6 +50,13 @@ impl Library {
         Ok(self.database().read_now(move |db| Ok(held(db, &scope)?.and_then(|(_, _, holding)| holding)))?)
     }
 
+    /// Whether an ended holding period is still being purged.
+    pub fn purging(&self) -> Result<bool> {
+        Ok(self.database().read_now(|db| {
+            Ok(db.prepare_cached("SELECT 1 FROM purges LIMIT 1")?.query_row([], |_| Ok(())).optional()?.is_some())
+        })?)
+    }
+
     /// A scope this machine has before any hub described it (§2.1, R26):
     /// readable here, never uploaded or supplied until it is installed.
     pub fn provisional(&self, key: &str) -> Result<i64> {

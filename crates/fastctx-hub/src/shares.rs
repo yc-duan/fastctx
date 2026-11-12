@@ -19,7 +19,7 @@ use std::sync::Arc;
 /// A holding revision of `machine` past every one its shares wait at.
 pub(crate) fn next_revision(directory: &Directory, machine: &MachineName) -> u64 {
     let waiting = directory.shares.iter().filter(|share| share.machine == *machine).filter_map(|share| share.pending).max();
-    let now = jiff::Timestamp::now().as_millisecond().max(0) as u64;
+    let now = jiff::Timestamp::now().as_microsecond().max(0) as u64;
     waiting.map_or(now, |waiting| now.max(waiting + 1))
 }
 
@@ -30,6 +30,19 @@ pub(crate) fn wait_again(directory: &mut Directory, machine: &MachineName, revis
     }
 }
 
+/// Any change to the directory may change what a machine may hold: every
+/// share still waiting waits at a new revision, and its machine clears
+/// again (design §6.3, N04). Whether any moved.
+pub(crate) fn renew(directory: &mut Directory) -> bool {
+    let machines: Vec<MachineName> =
+        directory.shares.iter().filter(|share| share.pending.is_some()).map(|share| share.machine.clone()).collect();
+    for machine in &machines {
+        let revision = next_revision(directory, machine);
+        wait_again(directory, machine, revision);
+    }
+    !machines.is_empty()
+}
+
 /// `machine`, whose key is `key`, says it cleared at `revision`: the shares
 /// of it waiting at that revision are in force from now. Call on a thread
 /// that may block.
@@ -38,6 +51,11 @@ pub(crate) fn cleared(hub: &Hub, machine: &MachineName, key: &PublicKey, revisio
     let statement = fastctx_types::assets::cleared_statement(machine.as_str(), revision);
     key.verify(Domain::ShareCleared, &statement, &Signature::from_bytes(proof))
         .map_err(|_| "the machine's word that it cleared does not verify".to_string())?;
+    // Sealed, the hub grants nothing: the seal is held while this commits.
+    let seal = hub.assets.seal_held();
+    if seal.is_some() {
+        return Err("every asset is sealed until the hub is reopened: no access is granted meanwhile".into());
+    }
     let mut store = hub.edit_store();
     let machine = store.book.directory.canonical(machine).clone();
     let waiting: Vec<_> = store
@@ -72,7 +90,11 @@ pub(crate) fn cleared(hub: &Hub, machine: &MachineName, key: &PublicKey, revisio
                 .map_err(|error| error.to_string())?;
         }
         store.book_edit = crate::store::BookEdit::Full;
-        store.save_book().map_err(|error| error.to_string())
+        // This very save puts them in force: it moves no revision on.
+        store.keep_revisions = true;
+        let saved = store.save_book().map_err(|error| error.to_string());
+        store.keep_revisions = false;
+        saved
     })();
     if let Err(error) = result {
         store.book = before;

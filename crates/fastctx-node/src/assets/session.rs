@@ -175,6 +175,10 @@ async fn pass(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>) -> Result<(), Str
     let assets = node.assets.as_ref().ok_or("the asset library is unavailable")?;
     let library = &assets.library;
     let session = assets.session();
+    // The revision this machine's waiting shares wait at as the pass
+    // begins: only a pass that went through every scope at it may say it
+    // cleared at it.
+    let waited = waiting_revision(link);
     let key = open(assets, hub, link, session).await?;
     let mut failed = describe(assets, hub, link, &key).await.err();
     // This hub's scopes alone: another hub's go to no other.
@@ -188,16 +192,24 @@ async fn pass(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>) -> Result<(), Str
         .collect();
     // A scope that fails holds up none after it; the pass reports the first.
     for (scope, holding) in &scopes {
-        let done = async {
-            upload(assets, hub, link, &key, session, scope).await?;
-            pull(assets, hub, link, &key, scope, *holding).await?;
-            cursors(assets, link, scope, *holding).await
-        }
-        .await;
-        if let Err(why) = done
-            && !why.starts_with(REVOKED)
-        {
-            failed.get_or_insert(format!("{scope}: {why}"));
+        // Each step goes on whatever the one before met; a revoked scope
+        // goes no further.
+        let uploaded = upload(assets, hub, link, &key, session, scope).await;
+        let pulled = match &uploaded {
+            Err(why) if why.starts_with(REVOKED) => Err(why.clone()),
+            _ => pull(assets, hub, link, &key, scope, *holding).await,
+        };
+        let checked = match &pulled {
+            Err(why) if why.starts_with(REVOKED) => Err(why.clone()),
+            Err(_) => Ok(()),
+            Ok(ahead) => cursors(assets, link, scope, *holding, ahead).await,
+        };
+        for done in [uploaded, pulled.map(|_| ()), checked] {
+            if let Err(why) = done
+                && !why.starts_with(REVOKED)
+            {
+                failed.get_or_insert(format!("{scope}: {why}"));
+            }
         }
     }
     // What ended holding periods left goes a pass at a time.
@@ -205,7 +217,9 @@ async fn pass(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>) -> Result<(), Str
         failed.get_or_insert(format!("purging what ended: {why}"));
     }
     if failed.is_none()
-        && let Err(why) = cleared(node, assets, hub, link).await
+        && let Some(revision) = waited
+        && waiting_revision(link) == Some(revision)
+        && let Err(why) = cleared(node, assets, hub, link, revision).await
     {
         failed = Some(why);
     }
@@ -220,27 +234,51 @@ async fn pass(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>) -> Result<(), Str
 /// the hub as it judges with the waiting shares — and the records it may
 /// no longer keep are pruned, it says so under its key, at the holding
 /// revision the shares wait at.
-async fn cleared(node: &Arc<Node>, assets: &Assets, hub: &HubId, link: &Arc<Link>) -> Result<(), String> {
-    let view = link.view();
-    let directory = &view.directory;
+async fn cleared(node: &Arc<Node>, assets: &Assets, hub: &HubId, link: &Arc<Link>, revision: u64) -> Result<(), String> {
     let me = link.name();
-    let me = directory.canonical(&me).clone();
-    let Some(revision) = directory.shares.iter().filter(|share| share.machine == me).filter_map(|share| share.pending).max() else {
-        return Ok(());
-    };
-    if assets.cleared.lock().expect("cleared").get(hub) == Some(&revision) {
+    let view = link.view();
+    let me = view.directory.canonical(&me).clone();
+    // What was said is the revision and who waited at it: a new share at a
+    // revision said before is said again.
+    let waiting: Vec<String> =
+        view.directory.shares.iter().filter(|share| share.machine == me && share.pending.is_some()).map(|share| share.account.to_string()).collect();
+    let said = (revision, waiting);
+    if assets.cleared.lock().expect("cleared").get(hub) == Some(&said) {
         return Ok(());
     }
     if !crate::replicas::cleanup::started(node) {
         // The records' pruning has not begun yet: said at a later pass.
         return Ok(());
     }
+    // On another network too, this machine holds what that network's
+    // accounts may see: whole access through this one waits.
+    if assets.drivers.lock().expect("drivers").len() > 1 {
+        return Ok(());
+    }
     crate::replicas::publication::prune(node).await?;
+    // What ended is purged whole, and the objects only it held go now, not
+    // after the grace: the new holder finds none of it on the disk.
+    let library = &assets.library;
+    for _ in 0..100_000 {
+        if !blocking(library, |library| library.purging()).await? {
+            break;
+        }
+        blocking(library, |library| library.purge()).await?;
+    }
+    if blocking(library, |library| library.purging()).await? {
+        return Ok(());
+    }
+    for _ in 0..100_000 {
+        let collected = blocking(library, |library| library.collect_now()).await?;
+        if collected == fastctx_content::v2::Collected::default() {
+            break;
+        }
+    }
     let proof = assets.sign_cleared(me.as_str(), revision);
     let Reply::Cleared { activated } = link.assets(Request::Cleared { revision, proof: proof.into() }).await? else {
         return Err("the hub did not take this machine's word that it cleared".into());
     };
-    assets.cleared.lock().expect("cleared").insert(hub.clone(), revision);
+    assets.cleared.lock().expect("cleared").insert(hub.clone(), said);
     if activated > 0 {
         node.log.line(format_args!("cleared for {activated} share(s) of this machine; they are in force now"));
     }
@@ -250,12 +288,20 @@ async fn cleared(node: &Arc<Node>, assets: &Assets, hub: &HubId, link: &Arc<Link
 /// The scopes `hub` described here.
 pub(super) async fn hub_scopes(library: &Library, hub: &HubId) -> Result<std::collections::BTreeSet<String>, String> {
     let hub = hub.as_str().to_string();
-    Ok(blocking(library, |library| library.live_scopes())
+    Ok(blocking(library, |library| library.described_scopes())
         .await?
         .into_iter()
-        .filter(|(_, descriptor, _)| serde_json::from_slice::<wire::Descriptor>(descriptor).is_ok_and(|descriptor| descriptor.hub == hub))
-        .map(|(scope, _, _)| scope)
+        .filter(|(_, descriptor)| serde_json::from_slice::<wire::Descriptor>(descriptor).is_ok_and(|descriptor| descriptor.hub == hub))
+        .map(|(scope, _)| scope)
         .collect())
+}
+
+/// The holding revision this machine's shares wait at, by the hub's view.
+fn waiting_revision(link: &Link) -> Option<u64> {
+    let view = link.view();
+    let me = link.name();
+    let me = view.directory.canonical(&me).clone();
+    view.directory.shares.iter().filter(|share| share.machine == me).filter_map(|share| share.pending).max()
 }
 
 /// Opens a session: what this machine saw of the hub's history goes first.
@@ -355,16 +401,26 @@ async fn upload(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKey,
     // What a refusal took out goes again first, the hub asked for a new
     // epoch where none was opened yet (a pass cut short after the refusal).
     let scope_text = scope.to_string();
+    let mut waiting_failed: Option<String> = None;
     for (stream, cut, renewed) in blocking(library, move |library| library.waiting(&scope_text)).await? {
-        if !renewed {
-            renew(assets, hub, link, key, scope, &stream, cut).await?;
+        let done = async {
+            if !renewed {
+                renew(assets, hub, link, key, scope, &stream, cut).await?;
+            }
+            resubmit(assets, scope, &stream).await
         }
-        resubmit(assets, scope, &stream).await?;
+        .await;
+        if let Err(why) = done {
+            if why.starts_with(REVOKED) {
+                return Err(why);
+            }
+            waiting_failed.get_or_insert(format!("{stream}: {why}"));
+        }
     }
     let device = assets.device();
     let key_text = scope.to_string();
     // A stream that fails holds up none after it; the scope reports the first.
-    let mut failed: Option<String> = None;
+    let mut failed: Option<String> = waiting_failed;
     for (stream, from) in blocking(library, move |library| library.uploads(&key_text, &device)).await? {
         let done: Result<(), String> = async {
         let mut from = from;
@@ -527,14 +583,28 @@ async fn resubmit(assets: &Assets, scope: &str, stream: &str) -> Result<(), Stri
 
 /// The frames of the streams of `scope` this machine holds, past what it
 /// has, under the hub's signed epochs and gap facts.
-async fn pull(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKey, scope: &str, holding: i64) -> Result<(), String> {
+async fn pull(
+    assets: &Assets,
+    hub: &HubId,
+    link: &Arc<Link>,
+    key: &PublicKey,
+    scope: &str,
+    holding: i64,
+) -> Result<std::collections::BTreeSet<String>, String> {
     let library = &assets.library;
-    let Reply::Streams { streams } = ask(assets, link, Request::Streams { scope: scope.to_string() }).await? else {
+    let Reply::Streams { streams, withheld } = ask(assets, link, Request::Streams { scope: scope.to_string() }).await? else {
         return Err("the hub did not list the scope's streams".into());
     };
     let scope_text = scope.to_string();
     let local: std::collections::BTreeMap<String, u64> =
         blocking(library, move |library| library.streams(&scope_text)).await?.into_iter().collect();
+    // A stream this machine may hold no more goes from here (§2.3).
+    for stream in withheld.into_iter().filter(|stream| local.get(stream).is_some_and(|at| *at > 0)) {
+        let scope_text = scope.to_string();
+        blocking(library, move |library| library.truncate(&scope_text, &stream, None)).await?;
+    }
+    // The streams the hub lags on: given back here, not checked against it.
+    let mut ahead = std::collections::BTreeSet::new();
     // What the hub lacks that this machine has — the hub recovered to
     // before it (design §17) — goes back: its own streams' uploading goes on
     // from where the hub is, a replica's frames are given again.
@@ -550,10 +620,15 @@ async fn pull(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKey, s
                 let (scope_text, stream_text) = (scope.to_string(), stream.clone());
                 blocking(library, move |library| library.rewind_uploads(&scope_text, &stream_text, hub_at)).await?;
             }
-        } else if let Some(hub_at) = hub_at
-            && *at > hub_at
-        {
-            resupply(assets, link, scope, stream, hub_at).await?;
+        } else if *at > hub_at.unwrap_or(0) {
+            // A replica's frames the hub lost, all of the stream or its
+            // tail, given again; a stream that fails holds up no other.
+            ahead.insert(stream.clone());
+            if let Err(why) = resupply(assets, link, scope, stream, hub_at.unwrap_or(0)).await
+                && why.starts_with(REVOKED)
+            {
+                return Err(why);
+            }
         }
     }
     let mut failed: Option<String> = None;
@@ -619,7 +694,7 @@ async fn pull(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKey, s
             failed.get_or_insert(format!("{stream}: {why}"));
         }
     }
-    failed.map_or(Ok(()), Err)
+    failed.map_or(Ok(ahead), Err)
 }
 
 /// Gives the hub again the frames of the replica `stream` of `scope` from
@@ -636,8 +711,23 @@ async fn resupply(assets: &Assets, link: &Arc<Link>, scope: &str, stream: &str, 
         for frame in frames {
             let header = Header::decode(&frame.header).map_err(|error| error.to_string())?;
             let frame = wire::Frame { header: frame.header.into(), signature: frame.signature.into(), body: frame.body.into() };
-            let Reply::Received { received } = ask(assets, link, Request::Take { scope: scope.to_string(), frame, proven: Vec::new() }).await? else {
-                return Err("the hub did not take a frame given back".into());
+            let mut proven = Vec::new();
+            let mut rounds = 0;
+            let received = loop {
+                let request = Request::Take { scope: scope.to_string(), frame: frame.clone(), proven: proven.clone() };
+                let Reply::Received { received } = ask(assets, link, request).await? else {
+                    return Err("the hub did not take a frame given back".into());
+                };
+                let (objects, prove) = match &received {
+                    wire::Received::Missing { objects } => (objects, false),
+                    wire::Received::Prove { objects } => (objects, true),
+                    _ => break received,
+                };
+                rounds += 1;
+                if rounds > OBJECT_ROUNDS {
+                    return Err(format!("{stream} of {scope}: the hub still wants objects of a frame given back"));
+                }
+                proven.extend(super::objects::put(library, link, scope, objects, prove).await?);
             };
             match received {
                 wire::Received::Applied { .. } | wire::Received::Parked { .. } => from = header.first + u64::from(header.count),
@@ -657,10 +747,20 @@ async fn resupply(assets: &Assets, link: &Arc<Link>, scope: &str, stream: &str, 
 /// that differs is cut back to the last place they share (design §7.5).
 /// This machine's own streams are where the hub follows it: uploads and
 /// refusals settle those, never a cut.
-async fn cursors(assets: &Assets, link: &Arc<Link>, scope: &str, holding: i64) -> Result<(), String> {
+async fn cursors(
+    assets: &Assets,
+    link: &Arc<Link>,
+    scope: &str,
+    holding: i64,
+    ahead: &std::collections::BTreeSet<String>,
+) -> Result<(), String> {
     let library = &assets.library;
     let (scope_text, device) = (scope.to_string(), assets.device());
-    let standing = blocking(library, move |library| library.replica_standing(&scope_text, &device)).await?;
+    let standing: Vec<(String, u64, [u8; 32])> = blocking(library, move |library| library.replica_standing(&scope_text, &device))
+        .await?
+        .into_iter()
+        .filter(|(stream, _, _)| !ahead.contains(stream))
+        .collect();
     if standing.is_empty() {
         return Ok(());
     }
@@ -674,6 +774,10 @@ async fn cursors(assets: &Assets, link: &Arc<Link>, scope: &str, holding: i64) -
     for standing in streams.into_iter().filter(|standing| !standing.agrees) {
         let ends: Vec<(u64, [u8; 32])> =
             standing.ends.iter().filter_map(|(end, head)| head.array().map(|head| (*end, head))).collect();
+        // The hub holds nothing of it: the hub lags, nothing here is cut.
+        if ends.is_empty() {
+            continue;
+        }
         let (scope_text, stream_text) = (scope.to_string(), standing.stream.clone());
         let shared = blocking(library, move |library| library.shared_end(&scope_text, &stream_text, &ends)).await?;
         let (scope_text, stream_text) = (scope.to_string(), standing.stream);

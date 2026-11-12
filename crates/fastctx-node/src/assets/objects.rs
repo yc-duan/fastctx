@@ -56,7 +56,10 @@ pub(super) async fn put(library: &Library, link: &Arc<Link>, scope: &str, object
             let mut outgoing = link.put_object(ticket).await?;
             // A large object's digests go first on the data connection; the
             // hub says which chunks it wants.
-            let missing: Vec<u64> = if large && !prove {
+            let missing: Vec<u64> = if prove {
+                // A proof is every chunk, in order.
+                (0..chunks(object.size)).collect()
+            } else if large {
                 let digests = blocking(library, move |library| library.chunks(&hash)).await?;
                 outgoing.manifest(&digests).await?.into_iter().flat_map(|(start, end)| start..end).collect()
             } else {
@@ -93,8 +96,9 @@ pub(super) async fn fetch(assets: &Assets, hub: &fastctx_types::access::HubId, l
         unreached.keys().filter(|(of, _)| of == hub).map(|(_, hash)| *hash).collect()
     };
     let limit = FETCHED_AT_ONCE + waiting.len();
-    let wanted = match blocking(library, move |library| library.wanted(limit)).await {
-        Ok(wanted) => wanted,
+    let scopes: Vec<String> = mine.iter().cloned().collect();
+    let wanted = match blocking(library, move |library| library.wanted_of(&scopes, limit)).await {
+        Ok(wanted) => wanted.into_iter().map(|(scope, object)| (Some(scope), object)).collect::<Vec<_>>(),
         Err(why) => return vec![format!("listing the objects wanted: {why}")],
     };
     let mut failed = Vec::new();

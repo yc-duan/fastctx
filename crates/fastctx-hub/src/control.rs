@@ -1064,6 +1064,10 @@ fn handle(
                             let answer = origin
                                 .check(&hub.store().book.directory)
                                 .and_then(|()| crate::shares::cleared(&hub, &from, &origin.key, *revision, &proof.0));
+                            // Shares put in force are told like any change.
+                            if matches!(answer, Ok(fastctx_types::assets::Reply::Cleared { activated }) if activated > 0) {
+                                hub.changed();
+                            }
                             return (answer, Vec::new());
                         }
                         let scope = crate::assets::serve::scope_of(&request).map(str::to_string);
