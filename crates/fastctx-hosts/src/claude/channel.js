@@ -94,6 +94,9 @@ async function channelReport($, context, name, report) {
     channelTaken(taken, channel, told, again.length)
     context.unconfirmed.push(taken)
     channelConfirmed(context, told, channel)
+    // Kept reports a gone queue took are handed again at the next look,
+    // whether or not another report comes.
+    if (channelUnsettled(context)) retry($, context)
     return true
   } catch (error) {
     // A stop cuts short what the turn's hooks asked for, this hand-over
@@ -163,6 +166,7 @@ function channelSettle($, context) {
         const told = await channelHand($, context, again)
         again.forEach((held, index) => channelTaken(held, channel, told, index))
         channelConfirmed(context, told, channel)
+        if (channelUnsettled(context)) retry($, context)
         return
       } catch (error) {
         // Given up on the way: tried again at the next look.
@@ -229,7 +233,15 @@ async function channelWait($, context) {
       await new Promise((resolve) => { $.clock.after(CHANNEL_AGAIN_MS, resolve) })
       if (context.closed || gone.seen) return
       const told = await channelTold($, context)
-      if (told === null) continue
+      if (told === null) {
+        // The node offers no channel this mod can use any more (it stopped,
+        // or one of another version started): what it took and did not deal
+        // with goes to files, and so does every report after it.
+        channelToFiles($, context, 'the node offers no channel this session can use')
+        context.channel = null
+        channelSettle($, context)
+        return
+      }
       if (context.channel === null || told.base !== context.channel.base || told.token !== context.channel.token) {
         context.channel = told
         seen = 0

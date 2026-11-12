@@ -380,9 +380,10 @@ export class Fold {
    *  device or another (`now`): calling off this device's stop leaves them. */
   private machineHalted = new Set<string>();
   /** The words on their way when a stop was asked with no turn running:
-   *  the stop is of the turn that takes them (by their delivery, or by
-   *  what they say where they have none yet). */
-  private haltedWords: { deliveries: Set<string>; texts: Set<string> } = { deliveries: new Set(), texts: new Set() };
+   *  the stop is of the turn that takes them. Each is known by its entry,
+   *  by its delivery once the World answers for it (`named`), and by what
+   *  it says only while it has no delivery (`takesHalted`). */
+  private haltedWords: { key: string; delivery: string | null | undefined; text: string }[] = [];
   /** A reading did not show those words taken: the stop waits for them, and
    *  is spent once the machine no longer keeps them (`now`). */
   private haltedUnseen = false;
@@ -520,11 +521,10 @@ export class Fold {
     // show them taken — an older page, a window that begins later — leaves
     // the stop waiting for them as before.
     if (halted?.size === 0) {
-      const words = this.haltedWords;
       const target = [...carry, ...events, ...(authoritativePending ?? [])].flatMap((event) => {
         if (event.event !== "heard" || !event.turn) return [];
         const said = (event.from ? event.text : userWords(event.text)?.body ?? event.text).trim();
-        return (event.delivery && words.deliveries.has(event.delivery)) || words.texts.has(said) ? [event.turn] : [];
+        return this.takesHalted(event.delivery, said) ? [event.turn] : [];
       })[0];
       this.haltedUnseen = target === undefined;
       if (target === undefined) this.halted = new Set();
@@ -621,7 +621,7 @@ export class Fold {
     next.stretches = new Map([...this.stretches].map(([turn, keys]) => [turn, [...keys]]));
     next.halted = this.halted ? new Set(this.halted) : null;
     next.machineHalted = new Set(this.machineHalted);
-    next.haltedWords = { deliveries: new Set(this.haltedWords.deliveries), texts: new Set(this.haltedWords.texts) };
+    next.haltedWords = this.haltedWords.map((word) => ({ ...word }));
     next.haltedUnseen = this.haltedUnseen;
     next.sends = this.sends; next.heardSeq = this.heardSeq;
     next.settlers = new Map(this.settlers);
@@ -794,6 +794,12 @@ export class Fold {
         // carry the head note the World wrapped them in.
         const user = event.from ? null : userWords(event.text);
         const heard = user ? { ...event, from: { kind: "user" as const, machine: user.machine }, text: user.body } : event;
+        // Words a stop waits for, taken into a turn a reading did not show:
+        // that turn is the one asked to stop.
+        if (heard.turn && !this.replaying && this.halted?.size === 0 && this.haltedUnseen && this.takesHalted(heard.delivery, heard.text.trim())) {
+          this.haltedUnseen = false;
+          this.haltTurn(heard.turn);
+        }
         // Words taken into a turn say the turn is under way, whichever of
         // the two the World tells first.
         if (heard.turn) this.underWay(heard.turn, at);
@@ -1108,11 +1114,23 @@ export class Fold {
   }
 
   /** A turn is seen to start. The one words on their way start is the one
-   *  asked to stop; any other is new, and shown as it goes. */
+   *  asked to stop; any other is new, and shown as it goes. Once a reading
+   *  did not show those words taken, a turn starting is not known to be
+   *  theirs: only the words' own `heard` binds the stop then. */
   private started(turn: string): void {
     if (!this.halted) return;
-    if (this.halted.size === 0) this.halted.add(turn);
-    else if (!this.halted.has(turn)) this.halted = null;
+    if (this.halted.size === 0) {
+      if (!this.haltedUnseen) this.halted.add(turn);
+    } else if (!this.halted.has(turn)) this.halted = null;
+  }
+
+  /** Whether words heard with `delivery`, saying `said`, are words a stop
+   *  waits for: by their delivery where they have one, by what they say
+   *  only where they have none. */
+  private takesHalted(delivery: string | null | undefined, said: string): boolean {
+    return this.haltedWords.some((word) =>
+      typeof word.delivery === "string" ? delivery === word.delivery : word.text === said,
+    );
   }
 
   private ask(id: JsonValue): Extract<Entry, { kind: "ask" }> | undefined {
@@ -1636,6 +1654,8 @@ export class Fold {
   named(key: string, delivery: string | null): void {
     const entry = this.byKey.get(key);
     if (entry?.kind === "heard" && entry.sending) entry.delivery = delivery;
+    // A stop asked before the World answered waits for them by it now.
+    for (const word of this.haltedWords) if (word.key === key) word.delivery = delivery;
   }
 
   /** The World says no turn runs: what is still shown under way here
@@ -1671,10 +1691,7 @@ export class Fold {
     this.halted = new Set(this.running);
     this.haltedUnseen = false;
     const sending = this.entries.filter((entry): entry is Heard => entry.kind === "heard" && entry.sending !== undefined);
-    this.haltedWords = {
-      deliveries: new Set(sending.flatMap((entry) => (entry.delivery ? [entry.delivery] : []))),
-      texts: new Set(sending.map((entry) => entry.text.trim())),
-    };
+    this.haltedWords = sending.map((entry) => ({ key: entry.key, delivery: entry.delivery, text: entry.text.trim() }));
     const at = Date.now();
     for (const entry of this.entries) {
       if (entry.kind === "tool" && entry.ended === null) {
@@ -1736,15 +1753,30 @@ export class Fold {
    *  World answered for stand as it keeps them, or, kept no more, as said.
    *  Words whose host has not started for a minute say why on their way. */
   now(busy: boolean, turn: string | null, kept: KeptWords[], halted: string | null = null): void {
-    if (busy && turn) this.underWay(turn, Date.now());
-    if (!busy) this.noTurnRuns();
     // Words a reading did not show taken, which the machine keeps no more,
     // were taken by a turn this view did not see start: the stop of them
-    // is spent rather than left for the next turn to start.
-    const deliveries = this.haltedWords.deliveries;
-    if (this.haltedUnseen && this.halted?.size === 0 && deliveries.size > 0 && !kept.some((words) => deliveries.has(words.id))) {
+    // is spent rather than left for the next turn to start. Judged before
+    // the turn the machine runs now is taken in, which is not theirs then.
+    const words = this.haltedWords;
+    const keeps = (word: { delivery: string | null | undefined }) => kept.some((held) => held.id === word.delivery);
+    if (this.haltedUnseen && this.halted?.size === 0 && words.length > 0
+      && words.every((word) => typeof word.delivery === "string") && !words.some(keeps)) {
       this.halted = null;
       this.haltedUnseen = false;
+    }
+    if (busy && turn) this.underWay(turn, Date.now());
+    if (!busy) {
+      // No turn runs, but words the stop waits for may still be on their
+      // way: kept by the machine, or not yet answered for. The stop of them
+      // stands until a turn takes them.
+      const waiting = this.halted?.size === 0
+        && words.some((word) => word.delivery === undefined || (typeof word.delivery === "string" && keeps(word)));
+      const unseen = this.haltedUnseen;
+      this.noTurnRuns();
+      if (waiting) {
+        this.halted = new Set();
+        this.haltedUnseen = unseen;
+      }
     }
     // A stop the user asked for, here or on another device, shows on every
     // viewer at once.
