@@ -665,6 +665,10 @@ pub struct ShareSeen {
     /// The most jobs the account runs on it at once; none is no limit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jobs: Option<u16>,
+    /// Given but not yet in force: the machine clears what the account may
+    /// not see first, at this holding revision.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending: Option<u64>,
 }
 
 /// One login of an agent on a machine, assisting an account.

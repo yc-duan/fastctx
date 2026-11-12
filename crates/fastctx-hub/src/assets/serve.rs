@@ -102,7 +102,7 @@ fn held(assets: &Assets, directory: &Indexed<'_>, machine: &MachineName, key: &s
 /// The scope a request is of, if it is of one already described.
 fn scope_of(request: &Request) -> Option<&str> {
     match request {
-        Request::Open { .. } | Request::Describe { .. } => None,
+        Request::Open { .. } | Request::Describe { .. } | Request::Cleared { .. } => None,
         Request::Answer { scope, .. }
         | Request::Take { scope, .. }
         | Request::Cursors { scope, .. }
@@ -131,7 +131,7 @@ pub(crate) fn ask(
     // of it: its device stops using what it holds (§4.5, §6.3).
     if let Some(key) = scope_of(&request)
         && let Some(scope) = scopes::scope(assets, key)?
-        && !scopes::readable(directory, machine, &scope)
+        && (!scopes::readable(directory, machine, &scope) || !scopes::sharers_read(directory, machine, &scope.descriptor))
     {
         assets.gone(key, machine);
         return Ok(Reply::Revoked { scope: key.to_string() });
@@ -180,6 +180,7 @@ pub(crate) fn ask(
             }
             Ok(Reply::Received { received: received(word) })
         }
+        Request::Cleared { .. } => Err("a machine's word that it cleared is taken with the directory".into()),
         Request::Put { scope, object, manifest, prove } => {
             let kept = gated(assets, directory, machine, &scope)?;
             super::objects::put(assets, machine, kept, &object, manifest, prove)
@@ -285,6 +286,7 @@ fn open(
     if version != wire::VERSION {
         return Err(format!("asset sync {version} is not this hub's {}", wire::VERSION));
     }
+    assets.speaks(machine).map_err(|error| error.to_string())?;
     let public = assets.public();
     let (seq, head) = assets.witness.current();
     if let Some(seen) = seen {

@@ -70,6 +70,7 @@ mod records;
 mod releases;
 mod renewal;
 mod sentinel_home;
+mod shares;
 mod skill_files;
 mod skill_storage;
 mod store;

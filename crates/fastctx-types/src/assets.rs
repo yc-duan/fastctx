@@ -264,6 +264,19 @@ pub enum Request {
     /// hub answers its chunks' digests and the ticket a data connection
     /// brings them under.
     Get { scope: String, object: ObjectRef, from: u64 },
+    /// This machine cleared what the accounts its shares wait for may not
+    /// see, at its holding revision `revision` (§6.3), under its key
+    /// (`cleared_statement`).
+    Cleared { revision: u64, proof: Bytes },
+}
+
+/// What a machine signs saying it cleared at a holding revision (§6.3).
+pub fn cleared_statement(machine: &str, revision: u64) -> Vec<u8> {
+    let mut statement = b"fastctx-share-cleared/1".to_vec();
+    statement.extend_from_slice(&(machine.len() as u32).to_le_bytes());
+    statement.extend_from_slice(machine.as_bytes());
+    statement.extend_from_slice(&revision.to_le_bytes());
+    statement
 }
 
 /// What precedes each chunk's bytes on an object's data connection.
@@ -296,7 +309,8 @@ impl Request {
             | Self::Streams { .. }
             | Self::Epoch { .. }
             | Self::Put { .. }
-            | Self::Get { .. } => Purpose::AssetSync,
+            | Self::Get { .. }
+            | Self::Cleared { .. } => Purpose::AssetSync,
         }
     }
 }
@@ -396,6 +410,9 @@ pub enum Reply {
     /// This machine reads the scope no more, by the directory as it stands
     /// (§4.5, §6.3): it stops using what it holds of it.
     Revoked { scope: String },
+    /// How many shares waiting at the revision a machine cleared at are in
+    /// force now.
+    Cleared { activated: u32 },
     Refused { why: String },
     Received { received: Received },
     Word {

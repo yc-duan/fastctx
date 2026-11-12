@@ -53,6 +53,8 @@ pub(crate) struct Assets {
     /// Objects wanted that no hub gave lately, and when it last did not:
     /// asked again only after a while, so others are not held up.
     pub(crate) unreached: Mutex<HashMap<[u8; 32], std::time::Instant>>,
+    /// The holding revision this machine last told each hub it cleared at.
+    pub(crate) cleared: Mutex<HashMap<HubId, u64>>,
 }
 
 impl Assets {
@@ -78,6 +80,7 @@ impl Assets {
             drivers: Mutex::new(HashMap::new()),
             current: Mutex::new(HashMap::new()),
             unreached: Mutex::new(HashMap::new()),
+            cleared: Mutex::new(HashMap::new()),
         })
     }
 
@@ -91,6 +94,13 @@ impl Assets {
 
     pub(crate) fn device(&self) -> [u8; 32] {
         *self.device.public().as_bytes()
+    }
+
+    /// This machine's word, under its key, that it cleared at `revision`
+    /// (design §6.3).
+    pub(crate) fn sign_cleared(&self, machine: &str, revision: u64) -> Vec<u8> {
+        let statement = fastctx_types::assets::cleared_statement(machine, revision);
+        self.device.sign(Domain::ShareCleared, &statement).to_bytes().to_vec()
     }
 
     fn save(&self, hubs: &BTreeMap<String, Pinned>) -> io::Result<()> {

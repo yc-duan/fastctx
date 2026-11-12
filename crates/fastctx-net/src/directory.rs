@@ -183,6 +183,19 @@ pub struct Share {
     /// set; none is no limit (`world-network.md`, 共享机器与智能体协助).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jobs: Option<u16>,
+    /// A share that gives the account whole access it did not have waits
+    /// until the machine has cleared what the account may not see, at this
+    /// holding revision (sync v2 design §6.3): until then it gives nothing,
+    /// though the machine already holds as if it were in force.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending: Option<u64>,
+}
+
+impl Share {
+    /// Whether the share gives what it gives now.
+    pub fn active(&self) -> bool {
+        self.pending.is_none()
+    }
 }
 
 /// One login of an agent on a machine, assisting an account that is not the
@@ -440,7 +453,7 @@ impl Directory {
     /// Whether `machine` is shared with `account`.
     pub fn shared(&self, account: &AccountName, machine: &MachineName) -> bool {
         let machine = self.canonical(machine);
-        self.shares.iter().any(|share| share.account == *account && share.machine == *machine)
+        self.shares.iter().any(|share| share.account == *account && share.machine == *machine && share.active())
     }
 
     /// The agents' logins on `machine` assisting `account` now. An
@@ -639,8 +652,19 @@ impl Directory {
                 && self
                     .shares
                     .iter()
-                    .filter(|share| share.machine == member.name && self.holds(&share.account, &member.name))
-                    .all(|share| self.in_project(&share.account, town))
+                    .filter(|share| {
+                        share.machine == member.name && (share.pending.is_some() || self.holds(&share.account, &member.name))
+                    })
+                    .all(|share| {
+                        // A waiting share is judged as it will be: what holding
+                        // this machine gives counts already.
+                        self.in_project(&share.account, town)
+                            || (share.pending.is_some()
+                                && self
+                                    .project(town)
+                                    .and_then(|project| project.shared_on.as_ref())
+                                    .is_some_and(|on| self.same(on, &member.name)))
+                    })
         })
     }
 }

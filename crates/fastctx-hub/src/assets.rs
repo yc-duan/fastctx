@@ -241,6 +241,36 @@ impl Assets {
         Ok(None)
     }
 
+    /// `machine` opened an asset session: it speaks this asset sync, and so
+    /// clears for a share that waits for it (design §6.3).
+    pub(crate) fn speaks(&self, machine: &fastctx_types::MachineName) -> io::Result<()> {
+        let name = machine.to_string();
+        let known = self
+            .control
+            .read_now({
+                let name = name.clone();
+                move |c| Ok(c.prepare_cached("SELECT 1 FROM asset_machines WHERE machine = ?1")?.query_row([&name], |_| Ok(())).optional()?)
+            })
+            .map_err(io::Error::other)?;
+        if known.is_none() {
+            self.control
+                .write_now(128, move |c| {
+                    c.prepare_cached("INSERT OR IGNORE INTO asset_machines (machine) VALUES (?1)")?.execute([&name])?;
+                    Ok(())
+                })
+                .map_err(io::Error::other)?;
+        }
+        Ok(())
+    }
+
+    /// Whether `machine` ever opened an asset session here.
+    pub(crate) fn spoken(&self, machine: &fastctx_types::MachineName) -> bool {
+        let name = machine.to_string();
+        self.control
+            .read_now(move |c| Ok(c.prepare_cached("SELECT 1 FROM asset_machines WHERE machine = ?1")?.query_row([&name], |_| Ok(())).optional()?))
+            .is_ok_and(|found| found.is_some())
+    }
+
     /// An epoch the hub just opened in `scope` of `owner`'s library goes into
     /// its chain and the witness before the device hears of it (design
     /// §6.1): a library put back to before it is found as it opens.

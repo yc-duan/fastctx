@@ -126,6 +126,9 @@ export interface ShareSeen {
   account: AccountName;
   /** The most jobs the account runs on it at once; absent is no limit. */
   jobs?: number;
+  /** Given but not yet in force: the machine clears what the account may not
+   *  see first, at this holding revision. */
+  pending?: number;
 }
 
 /** One login of an agent on a machine, assisting an account. */

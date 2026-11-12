@@ -90,6 +90,7 @@ fn make_fixture(dir: &Path, seed: u64) -> anyhow::Result<()> {
             machine: super::machine(next() as usize % machines),
             account: super::account(next() as usize % (machines / 2)),
             jobs: None,
+            pending: None,
         }));
     }
     let at = Timestamp::from_second(1_700_000_000)?;

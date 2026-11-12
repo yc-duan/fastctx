@@ -49,6 +49,9 @@ pub enum Domain {
     /// epoch descriptors, gap facts, checkpoints, each bound to the hub's
     /// chain head as it stood (`hub_word`).
     AssetHub,
+    /// A machine saying it cleared what a share that waits for it may not
+    /// see, at a holding revision (sync v2 design §6.3).
+    ShareCleared,
 }
 
 impl Domain {
@@ -68,6 +71,7 @@ impl Domain {
             Domain::SyncExposureReceipt => "fastctx-sync/exposure-receipt/v1",
             Domain::SyncHubKeyRotation => "fastctx-sync/hub-key-rotation/v1",
             Domain::AssetHub => "fastctx-asset/hub/v1",
+            Domain::ShareCleared => "fastctx-share/cleared/v1",
         }
     }
 }

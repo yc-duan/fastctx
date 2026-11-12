@@ -1266,8 +1266,8 @@ export class MachinePage implements Page {
     this.sharingBox.hidden = !owner;
     if (!owner) return;
     const now = this.options.store.clock.peek();
-    const chip = (label: string, take: string, said = machines.takeBack(label)) =>
-      `<span class="chip">${escape(label)}<button class="chip-x" type="button" ${take} aria-label="${escape(said)}" title="${escape(said)}">${glyph("close", 12)}</button></span>`;
+    const chip = (label: string, take: string, said = machines.takeBack(label), waits = "") =>
+      `<span class="chip"${waits ? ` title="${escape(waits)}"` : ""}>${escape(label)}${waits ? `<span class="chip-wait">${glyph("history", 12)}</span>` : ""}<button class="chip-x" type="button" ${take} aria-label="${escape(said)}" title="${escape(said)}">${glyph("close", 12)}</button></span>`;
     // Its holders see every share, each taken back; a visitor's own share is
     // the only one it gives back, as it gives none.
     const giver = this.giver(machine, world);
@@ -1278,8 +1278,10 @@ export class MachinePage implements Page {
             .filter((one) => giver || one === owner.account)
             .map((one) => {
               if (one === owner.account) return chip(one, `data-act="leave"`, machines.leave);
-              const jobs = shareOf(world, owner, machine.name, one)?.jobs;
-              return chip(one, `data-act="unshare" data-to="${escape(one)}"${jobs ? ` data-jobs="${jobs}"` : ""}`);
+              const share = shareOf(world, owner, machine.name, one);
+              const jobs = share?.jobs;
+              const waits = share?.pending !== undefined ? machines.shareWaits(machine.name) : "";
+              return chip(one, `data-act="unshare" data-to="${escape(one)}"${jobs ? ` data-jobs="${jobs}"` : ""}`, undefined, waits);
             })
             .join("")}${giver ? `<button class="text-button quiet-button" type="button" data-act="share">${glyph("plus", 13)}<span>${escape(machines.share)}</span></button>` : ""}</div>`
         : "";

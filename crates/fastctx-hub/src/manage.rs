@@ -396,10 +396,27 @@ fn apply(
             if shared && jobs == Some(0) {
                 return Err("the most jobs at once is a number above zero".to_string());
             }
-            let share = Share { machine, account: to, jobs: jobs.filter(|_| shared) };
-            directory.shares.retain(|existing| existing.machine != share.machine || existing.account != share.account);
+            let before = directory.shares.iter().find(|existing| existing.machine == machine && existing.account == to).cloned();
+            directory.shares.retain(|existing| existing.machine != machine || existing.account != to);
             if shared {
-                directory.shares.push(Arc::new(share));
+                // Whole access the account has already stays in force; new
+                // whole access to a machine that keeps files waits until the
+                // machine has cleared what the account may not see, and every
+                // share of it still waiting waits for the new holders too
+                // (sync v2 design §6.3).
+                // Only a machine that speaks this asset sync clears; an older
+                // one is given the share at once, as before.
+                let keeps_files = directory.member(&machine).is_some_and(|member| member.is_machine() && !member.managed)
+                    && hub.assets.spoken(&machine);
+                let pending = match &before {
+                    Some(before) => before.pending,
+                    None if keeps_files => Some(crate::shares::next_revision(directory, &machine)),
+                    None => None,
+                };
+                if let (None, Some(revision)) = (&before, pending) {
+                    crate::shares::wait_again(directory, &machine, revision);
+                }
+                directory.shares.push(Arc::new(Share { machine, account: to, jobs: jobs.filter(|_| shared), pending }));
             }
             Ok(Told::Done)
         }

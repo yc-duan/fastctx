@@ -306,6 +306,7 @@ impl Link {
                     machine: share.machine.clone(),
                     account: share.account.clone(),
                     jobs: share.jobs,
+                    pending: share.pending,
                 })
                 .collect(),
             assists: view

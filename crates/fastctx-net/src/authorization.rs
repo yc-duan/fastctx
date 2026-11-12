@@ -73,7 +73,7 @@ impl Lookup for Directory {
     }
 
     fn is_shared(&self, account: &AccountName, machine: &MachineName) -> bool {
-        self.shares.iter().any(|share| share.account == *account && share.machine == *machine)
+        self.shares.iter().any(|share| share.account == *account && share.machine == *machine && share.active())
     }
 
     fn assists(

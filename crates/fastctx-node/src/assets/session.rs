@@ -204,10 +204,47 @@ async fn pass(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>) -> Result<(), Str
     if let Err(why) = blocking(library, |library| library.purge()).await {
         failed.get_or_insert(format!("purging what ended: {why}"));
     }
+    if failed.is_none()
+        && let Err(why) = cleared(node, assets, hub, link).await
+    {
+        failed = Some(why);
+    }
     for failed in super::objects::fetch(assets, link).await {
         node.log.line(format_args!("assets with {hub}: {failed}; asked again later"));
     }
     failed.map_or(Ok(()), Err)
+}
+
+/// Shares of this machine waiting for it to clear (design §6.3): once a
+/// whole pass found nothing it may no longer hold — each scope asked of
+/// the hub as it judges with the waiting shares — and the records it may
+/// no longer keep are pruned, it says so under its key, at the holding
+/// revision the shares wait at.
+async fn cleared(node: &Arc<Node>, assets: &Assets, hub: &HubId, link: &Arc<Link>) -> Result<(), String> {
+    let view = link.view();
+    let directory = &view.directory;
+    let me = link.name();
+    let me = directory.canonical(&me).clone();
+    let Some(revision) = directory.shares.iter().filter(|share| share.machine == me).filter_map(|share| share.pending).max() else {
+        return Ok(());
+    };
+    if assets.cleared.lock().expect("cleared").get(hub) == Some(&revision) {
+        return Ok(());
+    }
+    if !crate::replicas::cleanup::started(node) {
+        // The records' pruning has not begun yet: said at a later pass.
+        return Ok(());
+    }
+    crate::replicas::publication::prune(node).await?;
+    let proof = assets.sign_cleared(me.as_str(), revision);
+    let Reply::Cleared { activated } = link.assets(Request::Cleared { revision, proof: proof.into() }).await? else {
+        return Err("the hub did not take this machine's word that it cleared".into());
+    };
+    assets.cleared.lock().expect("cleared").insert(hub.clone(), revision);
+    if activated > 0 {
+        node.log.line(format_args!("cleared for {activated} share(s) of this machine; they are in force now"));
+    }
+    Ok(())
 }
 
 /// Opens a session: what this machine saw of the hub's history goes first.

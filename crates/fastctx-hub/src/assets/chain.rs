@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS hub_checkpoints (
     prefix BLOB NOT NULL, accumulated BLOB NOT NULL,
     PRIMARY KEY (owner, scope, seq)
 ) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS asset_machines (machine TEXT PRIMARY KEY) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS hub_epoch_facts (
     owner TEXT NOT NULL, scope TEXT NOT NULL, stream TEXT NOT NULL, epoch INTEGER NOT NULL, digest BLOB NOT NULL,
     seq INTEGER NOT NULL,

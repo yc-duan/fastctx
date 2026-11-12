@@ -109,11 +109,38 @@ pub(crate) fn readable(directory: &Indexed<'_>, machine: &MachineName, scope: &S
     principal(directory, machine).iter().any(|account| reads(directory, account, &descriptor.readers, &descriptor.born))
 }
 
+/// Whether every account a machine is shared with whole, a share still
+/// waiting for the machine to clear among them, reads the scope: a shared
+/// machine holds only what all its holders may see (design §6.3,
+/// `sync-replica-holders`).
+/// Judged as the directory will be once the shares waiting are in force:
+/// what a holder reads through holding the machine counts already.
+pub(crate) fn sharers_read(directory: &Indexed<'_>, machine: &MachineName, descriptor: &Descriptor) -> bool {
+    let machine = directory.canonical(machine).clone();
+    let shares: Vec<usize> = directory.shares_by_machine(&machine).to_vec();
+    let all_read = |directory: &Indexed<'_>| {
+        shares.iter().all(|&at| reads(directory, &directory.all.shares[at].account, &descriptor.readers, &descriptor.born))
+    };
+    if shares.iter().all(|&at| directory.all.shares[at].active()) {
+        return all_read(directory);
+    }
+    let mut would = directory.all.clone();
+    for share in would.shares.iter_mut().filter(|share| share.machine == machine) {
+        std::sync::Arc::make_mut(share).pending = None;
+    }
+    let index = fastctx_net::directory_index::Index::new(&would);
+    all_read(&Indexed::new(&would, &index))
+}
+
 /// Whether `machine` may hold `stream` of the scope (design §2.3): the
-/// stream's class names who holds it.
+/// stream's class names who holds it, and a machine shared whole holds only
+/// what each of its holders reads.
 pub(crate) fn holds(directory: &Indexed<'_>, machine: &MachineName, scope: &Scope, stream: &str) -> bool {
     let descriptor = &scope.descriptor;
     let Some(class) = descriptor.class(stream) else { return false };
+    if !sharers_read(directory, machine, descriptor) {
+        return false;
+    }
     match class.holders {
         Holders::Readers => readable(directory, machine, scope),
         Holders::Logged => directory.member(machine).is_some_and(|member| {

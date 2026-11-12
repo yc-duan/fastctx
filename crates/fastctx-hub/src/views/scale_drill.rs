@@ -108,6 +108,7 @@ fn network() -> Directory {
             machine: machine(rng(&mut seed) as usize % MACHINES),
             account: account(rng(&mut seed) as usize % ACCOUNTS),
             jobs: None,
+            pending: None,
         }));
     }
     for _ in 0..2000 {
@@ -198,7 +199,7 @@ fn views_at_scale() {
     drop(index);
 
     // One more share: only the views it touches change, and by little.
-    all.shares.push(std::sync::Arc::new(Share { machine: machine(4242), account: account(17), jobs: None }));
+    all.shares.push(std::sync::Arc::new(Share { machine: machine(4242), account: account(17), jobs: None, pending: None }));
     let index = Index::new(&all);
     let x = Indexed::new(&all, &index);
     let mut told = 0;

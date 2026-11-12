@@ -378,6 +378,14 @@ a.text-button {
   background: color-mix(in srgb, var(--wrong) 14%, transparent);
 }
 
+/* A share given but not in force yet: its machine clears first. */
+.chip-wait {
+  display: grid;
+  place-items: center;
+  margin-left: 3px;
+  color: var(--text-3);
+}
+
 /* The sidebar, logged in to more than one account: a part for each, under
    its hub and name, folded shut on a press. */
 .sidebar-account {

@@ -1058,6 +1058,14 @@ fn handle(
                 let (_held, _reservation) = (held, reservation);
                 let (answer, pushes) = hub
                     .blocking(move |hub| {
+                        // A machine's word that it cleared changes the
+                        // directory: it is taken under the directory's lock.
+                        if let fastctx_types::assets::Request::Cleared { revision, proof } = &request {
+                            let answer = origin
+                                .check(&hub.store().book.directory)
+                                .and_then(|()| crate::shares::cleared(&hub, &from, &origin.key, *revision, &proof.0));
+                            return (answer, Vec::new());
+                        }
                         let store = hub.store();
                         let answer = origin
                             .check(&store.book.directory)

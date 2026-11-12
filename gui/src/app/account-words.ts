@@ -524,6 +524,8 @@ export interface MachinesWords {
   /** Whom this account shared its machine with, and whom a login of it
    *  assists, each ended with a press. */
   sharedTo: string;
+  /** A share given but not yet in force: the machine clears first. */
+  shareWaits(machine: string): string;
   assisting: string;
   takeBack(to: string): string;
   /** Gives back the share of another's machine this account holds. */
@@ -818,6 +820,7 @@ export const zhMachines: MachinesWords = {
   sharedIn: (owner) => `${owner} 共享给你，你和 ${owner} 一起管它、用它上面的所有智能体；你在上面的操作 ${owner} 可见`,
   superIn: (owner) => `成员 ${owner} 的机器，你作为管理员可以使用；你的操作 ${owner} 可见`,
   sharedTo: "共享给",
+  shareWaits: (machine) => `等 ${machine} 上线、清掉对方无权看的东西后生效`,
   assisting: "协助",
   takeBack: (to) => `收回 ${to}`,
   leave: "不再用这台",
@@ -1164,6 +1167,7 @@ export const enMachines: MachinesWords = {
   sharedIn: (owner) => `Shared with you by ${owner}: you manage it with ${owner} and use all its agents; ${owner} can see what you do on it`,
   superIn: (owner) => `Member ${owner}'s machine, available to you as administrator; ${owner} can see what you do on it`,
   sharedTo: "Shared with",
+  shareWaits: (machine) => `In force once ${machine} is online and has cleared what they may not see`,
   assisting: "Assisting",
   takeBack: (to) => `Revoke ${to}`,
   leave: "Stop using it",
@@ -1476,6 +1480,8 @@ export interface AccessWords {
   shareWhat: string;
   shareSees: string;
   sharedTo: string;
+  /** A share given but not yet in force: the machine clears first. */
+  shareWaits(machine: string): string;
   shareGo: string;
   assistTitle(login: string, machine: string): string;
   assistWhat: string;
@@ -1559,6 +1565,7 @@ export const zhAccess: AccessWords = {
   shareWhat: "对方可以使用这台机器和上面的所有智能体。",
   shareSees: "对方能以这台机器的系统用户做任何事，读得到上面的文件和智能体登录的凭据。请只共享给信任的人。",
   sharedTo: "已共享给",
+  shareWaits: (machine) => `等 ${machine} 上线、清掉对方无权看的东西后生效`,
   shareGo: "共享",
   assistTitle: (login, machine) => `让 ${machine} 上的 ${login} 协助他人`,
   assistWhat: "只用这个登录协助对方，不共享机器。",
@@ -1627,6 +1634,7 @@ export const enAccess: AccessWords = {
   shareWhat: "They can use this machine and every agent on it.",
   shareSees: "They can do anything this machine's system user can, its files and its agents' login credentials included. Share only with people you trust.",
   sharedTo: "Shared with",
+  shareWaits: (machine) => `In force once ${machine} is online and has cleared what they may not see`,
   shareGo: "Share",
   assistTitle: (login, machine) => `Let ${login} on ${machine} assist others`,
   assistWhat: "Only this login assists them, not the machine.",

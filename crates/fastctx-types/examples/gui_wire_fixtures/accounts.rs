@@ -253,7 +253,7 @@ fn hub() -> HubAccounts {
                 group: Some("lab A".into()),
             },
         ],
-        shares: vec![ShareSeen { machine: "desktop".parse().unwrap(), account: "bo".parse().unwrap(), jobs: Some(8) }],
+        shares: vec![ShareSeen { machine: "desktop".parse().unwrap(), account: "bo".parse().unwrap(), jobs: Some(8), pending: None }],
         assists: vec![
             AssistSeen {
                 machine: "desktop".parse().unwrap(),

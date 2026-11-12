@@ -317,7 +317,7 @@ impl Lookup for Indexed<'_> {
     }
 
     fn is_shared(&self, account: &AccountName, machine: &MachineName) -> bool {
-        self.shares_by_account(account).iter().any(|&at| self.all.shares[at].machine == *machine)
+        self.shares_by_account(account).iter().any(|&at| self.all.shares[at].machine == *machine && self.all.shares[at].active())
     }
 
     fn assists(
