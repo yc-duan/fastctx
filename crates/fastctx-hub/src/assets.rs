@@ -4,6 +4,7 @@
 //! and the seal it keeps over every asset when it finds, on opening, that
 //! it was put back from an older copy.
 
+pub(crate) mod apart;
 pub(crate) mod bodies;
 pub(crate) mod chain;
 #[cfg(test)]

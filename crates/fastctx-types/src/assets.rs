@@ -16,8 +16,13 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error};
 /// The protocol version a side declares as `asset_sync`.
 pub const VERSION: u32 = 1;
 
-/// The most a frame carried on the control connection holds (§7.1).
+/// The most a frame's body carried on the control connection holds (§7.1);
+/// a larger one travels apart, on a data connection.
 pub const INLINE_FRAME_BYTES: usize = 64 * 1024;
+
+/// The most a frame's body that travels apart holds: a frame's records are
+/// at most 1 MiB before they are compressed.
+pub const APART_FRAME_BYTES: u64 = 2 * 1024 * 1024;
 
 /// The bytes of each chunk an object travels in but its last (§7.3).
 pub const CHUNK_BYTES: u64 = 1024 * 1024;
@@ -65,6 +70,23 @@ pub struct Frame {
     pub header: Bytes,
     pub signature: Bytes,
     pub body: Bytes,
+    /// The length of a body that travels apart, on a data connection
+    /// (§7.1): `body` is then empty.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub apart: u64,
+}
+
+impl Frame {
+    /// A frame whose body is carried with it.
+    pub fn whole(header: Vec<u8>, signature: Vec<u8>, body: Vec<u8>) -> Self {
+        Self { header: header.into(), signature: signature.into(), body: body.into(), apart: 0 }
+    }
+
+    /// Whether its body is too large to be carried on the control
+    /// connection.
+    pub fn too_large(&self) -> bool {
+        self.body.0.len() > INLINE_FRAME_BYTES
+    }
 }
 
 /// An object a record refers to: its hash and length.
@@ -232,13 +254,20 @@ pub enum Request {
     /// (§6.5, step 1).
     Answer { scope: String, header: Bytes, signature: Bytes },
     /// A frame for the hub to take (§6.5, step 3), with the objects the
-    /// device proved it holds.
+    /// device proved it holds. A body that travels apart was staged under
+    /// the ticket `staged` (`Stage`).
     Take {
         scope: String,
         frame: Frame,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         proven: Vec<Bytes>,
+        #[serde(default, skip_serializing_if = "is_zero")]
+        staged: u64,
     },
+    /// Room for a frame body of `size` bytes of `scope`, too large for the
+    /// control connection: a data connection under the ticket the hub
+    /// answers sends it, in chunks, before the frame is taken (§7.1).
+    Stage { scope: String, size: u64 },
     /// Where the device's streams of a scope stand in its holding period
     /// `holding` (§6.6, §7.4).
     Cursors { scope: String, holding: i64, streams: Vec<Cursor> },
@@ -333,6 +362,7 @@ impl Request {
             Self::Open { .. }
             | Self::Answer { .. }
             | Self::Take { .. }
+            | Self::Stage { .. }
             | Self::Cursors { .. }
             | Self::Frames { .. }
             | Self::Succession { .. }
@@ -460,7 +490,15 @@ pub enum Reply {
         received: Option<Received>,
     },
     Standing { streams: Vec<Standing> },
-    Frames { frames: Vec<Frame> },
+    /// Frames, those whose bodies travel apart brought in order, in chunks,
+    /// by a data connection under `ticket`.
+    Frames {
+        frames: Vec<Frame>,
+        #[serde(default, skip_serializing_if = "is_zero")]
+        ticket: u64,
+    },
+    /// The ticket a staged frame body is sent under.
+    Staged { ticket: u64 },
     Succession { epochs: Vec<Fact>, gaps: Vec<Fact> },
     /// A scope's descriptor, as JSON, and the hub's word on it.
     Described { descriptor: Fact },
@@ -511,8 +549,9 @@ mod tests {
     fn messages_keep_their_shape() {
         let request = Request::Take {
             scope: "s".into(),
-            frame: Frame { header: vec![1].into(), signature: vec![2].into(), body: vec![3].into() },
+            frame: Frame::whole(vec![1], vec![2], vec![3]),
             proven: Vec::new(),
+            staged: 0,
         };
         let text = serde_json::to_string(&request).unwrap();
         assert_eq!(text, r#"{"ask":"take","scope":"s","frame":{"header":"AQ==","signature":"Ag==","body":"Aw=="}}"#);

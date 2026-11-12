@@ -9,6 +9,7 @@
 //! pinned key: a hub whose key changed is not trusted without a rotation
 //! (design §6.1).
 
+mod apart;
 mod objects;
 mod session;
 

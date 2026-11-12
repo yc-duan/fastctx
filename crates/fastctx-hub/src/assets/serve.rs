@@ -166,6 +166,7 @@ pub(crate) fn scope_of(request: &Request) -> Option<&str> {
         Request::Open { .. } | Request::Describe { .. } | Request::Cleared { .. } => None,
         Request::Answer { scope, .. }
         | Request::Take { scope, .. }
+        | Request::Stage { scope, .. }
         | Request::Cursors { scope, .. }
         | Request::Frames { scope, .. }
         | Request::Streams { scope }
@@ -217,8 +218,29 @@ pub(crate) fn ask(
                 .map_err(|error| error.to_string())?;
             Ok(Reply::Word { received: word.map(received) })
         }
-        Request::Take { scope, frame, proven } => {
+        Request::Stage { scope, size } => {
             let kept = gated(assets, directory, machine, &scope)?;
+            super::objects::stage(assets, machine, key, kept, size)
+        }
+        Request::Take { scope, frame, proven, staged } => {
+            let kept = gated(assets, directory, machine, &scope)?;
+            // A body too large for the control connection was staged apart
+            // under its ticket (§7.1), and stays there while the frame
+            // waits for objects.
+            let body = if staged != 0 {
+                if !frame.body.0.is_empty() {
+                    return Err("a frame staged apart comes without its body".into());
+                }
+                let body = assets.objects.apart.body(staged, key.as_bytes())?;
+                if body.len() as u64 != frame.apart {
+                    return Err("the body staged under that ticket is not the frame's".into());
+                }
+                (*body).clone()
+            } else if frame.too_large() || frame.apart != 0 {
+                return Err(format!("a frame body over {} bytes travels apart", wire::INLINE_FRAME_BYTES));
+            } else {
+                frame.body.0
+            };
             let library = scopes::library(assets, &kept)?;
             let period = library.holding(&scope).map_err(|error| error.to_string())?.ok_or("the scope is not held here")?;
             let proven: Vec<[u8; 32]> = proven.iter().map(|hash| array(hash, "a proven object's hash")).collect::<Result<_, _>>()?;
@@ -234,10 +256,13 @@ pub(crate) fn ask(
             };
             let taking = Taking { period, readable: &readable, proven: &proven };
             let frame_header = frame.header.0.clone();
-            let raw = RawFrame { header: frame.header.0, signature: frame.signature.0, body: frame.body.0, objects: Vec::new() };
+            let raw = RawFrame { header: frame.header.0, signature: frame.signature.0, body, objects: Vec::new() };
             let word = library
                 .take(&scope, raw, &DeviceKeys, &taking, kinds(), assets.signer())
                 .map_err(|error| error.to_string())?;
+            if staged != 0 && !matches!(word, Received::Missing(_) | Received::Prove(_)) {
+                assets.objects.apart.release(staged, key.as_bytes());
+            }
             if matches!(word, Received::Applied { .. } | Received::Parked { .. } | Received::Rejected { .. }) {
                 assets.changed(kept.owner.clone(), &scope);
                 assets.receipted(&scope, machine);
@@ -291,15 +316,39 @@ pub(crate) fn ask(
             let library = scopes::library(assets, &kept)?;
             let exported =
                 library.export(&scope, &stream, from, limit.min(FRAMES_AT_ONCE) as usize).map_err(|error| error.to_string())?;
-            let (mut frames, mut bytes) = (Vec::new(), 0usize);
+            let (mut frames, mut bytes, mut apart) = (Vec::new(), 0usize, Vec::new());
             for frame in exported {
                 bytes += frame.header.len() + frame.signature.len() + frame.body.len();
                 if !frames.is_empty() && bytes > FRAME_BYTES_AT_ONCE {
                     break;
                 }
-                frames.push(wire::Frame { header: frame.header.into(), signature: frame.signature.into(), body: frame.body.into() });
+                let mut sent = wire::Frame::whole(frame.header, frame.signature, frame.body);
+                // A body too large for the control connection follows on a
+                // data connection (§7.1).
+                if sent.too_large() {
+                    sent.apart = sent.body.0.len() as u64;
+                    apart.push(std::mem::take(&mut sent.body.0));
+                }
+                frames.push(sent);
             }
-            Ok(Reply::Frames { frames })
+            let ticket = if apart.is_empty() {
+                0
+            } else {
+                match super::objects::send_apart(assets, machine, key, kept, apart) {
+                    Ok(ticket) => ticket,
+                    Err(why) => {
+                        // No room for the bodies now: the frames before the
+                        // first of them go alone.
+                        let first = frames.iter().position(|frame| frame.apart > 0).unwrap_or(0);
+                        if first == 0 {
+                            return Err(why);
+                        }
+                        frames.truncate(first);
+                        0
+                    }
+                }
+            };
+            Ok(Reply::Frames { frames, ticket })
         }
         Request::Streams { scope } => {
             let kept = gated(assets, directory, machine, &scope)?;

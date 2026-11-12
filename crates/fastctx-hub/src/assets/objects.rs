@@ -42,9 +42,9 @@ fn proof_for(size: u64) -> Duration {
     Duration::from_secs(600) + Duration::from_secs(size / (50 << 20))
 }
 /// What the member says once it has every byte.
-const DONE: &str = "\"done\"";
+pub(super) const DONE: &str = "\"done\"";
 /// How long the member has to say it holds an object once all of it went.
-const RECEIPT_WITHIN: Duration = Duration::from_secs(120);
+pub(super) const RECEIPT_WITHIN: Duration = Duration::from_secs(120);
 /// Chunks between two judgements of whether the machine may go on.
 const CHECK_EVERY: u64 = 16;
 /// Proofs kept before the lapsed ones are let go.
@@ -57,6 +57,32 @@ enum Ticket {
     /// digests come on the data connection first.
     Put { machine: MachineName, key: [u8; 32], scope: Scope, object: ObjectRef, missing: Option<Vec<u64>>, prove: bool, at: Instant },
     Get { machine: MachineName, key: [u8; 32], scope: Scope, object: ObjectRef, from: u64, at: Instant },
+    /// A frame body staged apart (`apart`).
+    Stage { machine: MachineName, key: [u8; 32], scope: Scope, size: u64, at: Instant },
+    /// The bodies a reply of frames sends apart.
+    Bodies { machine: MachineName, key: [u8; 32], scope: Scope, at: Instant },
+}
+
+impl Ticket {
+    fn holder(&self) -> (&MachineName, &[u8; 32]) {
+        match self {
+            Self::Put { machine, key, .. } | Self::Get { machine, key, .. } | Self::Stage { machine, key, .. } | Self::Bodies { machine, key, .. } => {
+                (machine, key)
+            }
+        }
+    }
+
+    fn at(&self) -> Instant {
+        match self {
+            Self::Put { at, .. } | Self::Get { at, .. } | Self::Stage { at, .. } | Self::Bodies { at, .. } => *at,
+        }
+    }
+
+    fn scope(&self) -> &Scope {
+        match self {
+            Self::Put { scope, .. } | Self::Get { scope, .. } | Self::Stage { scope, .. } | Self::Bodies { scope, .. } => scope,
+        }
+    }
 }
 
 /// A proof of holding: the device's key and the object's hash.
@@ -68,15 +94,14 @@ type Proof = ([u8; 32], [u8; 32]);
 pub(crate) struct Objects {
     tickets: Mutex<HashMap<u64, Ticket>>,
     proofs: Mutex<HashMap<Proof, Instant>>,
+    pub(crate) apart: super::apart::Apart,
 }
 
 impl Objects {
     fn ticket(&self, ticket: Ticket) -> Result<u64, String> {
         let number = u64::from_le_bytes(fastctx_net::sign::random::<8>().map_err(|error| error.to_string())?);
         let mut tickets = self.tickets.lock().expect("tickets");
-        tickets.retain(|_, kept| match kept {
-            Ticket::Put { at, .. } | Ticket::Get { at, .. } => at.elapsed() < TICKET_FOR,
-        });
+        tickets.retain(|_, kept| kept.at().elapsed() < TICKET_FOR);
         tickets.insert(number, ticket);
         Ok(number)
     }
@@ -160,6 +185,28 @@ pub(crate) fn put(assets: &Assets, machine: &MachineName, key: &PublicKey, scope
     Ok(Reply::Put { ticket, missing: said })
 }
 
+/// Room for a frame body of `size` bytes, too large for the control
+/// connection (`Request::Stage`): the ticket a data connection sends it
+/// under.
+pub(crate) fn stage(assets: &Assets, machine: &MachineName, key: &PublicKey, scope: Scope, size: u64) -> Result<Reply, String> {
+    let ticket = assets.objects.ticket(Ticket::Stage { machine: machine.clone(), key: *key.as_bytes(), scope, size, at: Instant::now() })?;
+    if let Err(why) = super::apart::stage(&assets.objects.apart, ticket, key.as_bytes(), size) {
+        assets.objects.tickets.lock().expect("tickets").remove(&ticket);
+        return Err(why);
+    }
+    Ok(Reply::Staged { ticket })
+}
+
+/// A ticket for `bodies`, in order, of a reply of frames to `machine`.
+pub(crate) fn send_apart(assets: &Assets, machine: &MachineName, key: &PublicKey, scope: Scope, bodies: Vec<Vec<u8>>) -> Result<u64, String> {
+    let ticket = assets.objects.ticket(Ticket::Bodies { machine: machine.clone(), key: *key.as_bytes(), scope, at: Instant::now() })?;
+    if let Err(why) = super::apart::send_later(&assets.objects.apart, ticket, key.as_bytes(), bodies) {
+        assets.objects.tickets.lock().expect("tickets").remove(&ticket);
+        return Err(why);
+    }
+    Ok(ticket)
+}
+
 /// Whether `machine` reaches `object` in `scope`: through a stream of it
 /// the machine may hold (design §2.3), not merely through the scope.
 fn reachable(directory: &Indexed<'_>, machine: &MachineName, scope: &Scope, library: &Library, object: &ObjectRef) -> Result<(), String> {
@@ -233,23 +280,17 @@ pub(crate) async fn serve(hub: Arc<Hub>, mut socket: Socket, binding: [u8; 32], 
             return;
         }
     };
+    let number = ticket;
     let taken = hub.assets.objects.tickets.lock().expect("tickets").remove(&ticket);
-    let ticket = match taken {
-        Some(Ticket::Put { machine, key: given, .. } | Ticket::Get { machine, key: given, .. })
-            if machine != me || given != *key.as_bytes() =>
-        {
-            None
-        }
-        Some(Ticket::Put { at, .. } | Ticket::Get { at, .. }) if at.elapsed() >= TICKET_FOR => None,
-        other => other,
-    };
+    let ticket = taken.filter(|kept| kept.holder() == (&me, key.as_bytes()) && kept.at().elapsed() < TICKET_FOR);
     let Some(ticket) = ticket else {
         refuse(&mut socket, Refusal::Broken { reason: format!("the hub gave {me} no such object ticket") }).await;
         return;
     };
-    let (scope, object) = match &ticket {
-        Ticket::Put { scope, .. } => (scope.clone(), None),
-        Ticket::Get { scope, object, .. } => (scope.clone(), Some(*object)),
+    let scope = ticket.scope().clone();
+    let object = match &ticket {
+        Ticket::Get { object, .. } => Some(*object),
+        _ => None,
     };
     if let Err(why) = still(&hub, &me, &key, &scope, object.as_ref()).await {
         refuse(&mut socket, Refusal::Broken { reason: why }).await;
@@ -261,6 +302,8 @@ pub(crate) async fn serve(hub: Arc<Hub>, mut socket: Socket, binding: [u8; 32], 
     let outcome = match ticket {
         Ticket::Put { scope, object, missing, prove, .. } => take(&hub, socket, &me, &key, Put { scope, object, missing, prove }).await,
         Ticket::Get { scope, object, from, .. } => give(&hub, socket, &me, &key, scope, object, from).await,
+        Ticket::Stage { size, .. } => super::apart::receive(&hub, socket, &me, key.as_bytes(), number, size).await,
+        Ticket::Bodies { .. } => super::apart::send(&hub, socket, key.as_bytes(), number).await,
     };
     if let Err(why) = outcome {
         hub.log.line(format_args!("an object with {me}: {why}"));
@@ -311,7 +354,7 @@ where
 }
 
 /// The next chunk the member sends: its head, then its bytes.
-async fn chunk<S>(stream: &mut S, pulse: &Pulse) -> Result<(u64, Vec<u8>), String>
+pub(super) async fn chunk<S>(stream: &mut S, pulse: &Pulse) -> Result<(u64, Vec<u8>), String>
 where
     S: futures_util::Stream<Item = Result<WsMessage, tokio_tungstenite::tungstenite::Error>> + Unpin,
 {

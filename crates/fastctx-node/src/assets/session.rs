@@ -143,7 +143,7 @@ const REVOKED: &str = "no longer read here: ";
 
 /// Asks the hub `request` of a scope; where the hub says this machine reads
 /// the scope no more, its holding here ends (design §4.5, §6.3).
-async fn ask(assets: &Assets, link: &Arc<Link>, request: Request) -> Result<Reply, String> {
+pub(super) async fn ask(assets: &Assets, link: &Arc<Link>, request: Request) -> Result<Reply, String> {
     match link.assets(request).await? {
         Reply::Revoked { scope } => {
             let key = scope.clone();
@@ -432,14 +432,13 @@ async fn upload(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKey,
             }
             for frame in frames {
                 let header = Header::decode(&frame.header).map_err(|error| error.to_string())?;
-                let frame = wire::Frame { header: frame.header.into(), signature: frame.signature.into(), body: frame.body.into() };
+                let frame = wire::Frame::whole(frame.header, frame.signature, frame.body);
                 // Objects the hub has not, or wants proved, go first; then
                 // the frame again, naming what this machine proved.
                 let mut proven: Vec<Bytes> = Vec::new();
-                let mut rounds = 0;
+                let (mut rounds, mut staged) = (0, 0);
                 let received = loop {
-                    let request = Request::Take { scope: scope.to_string(), frame: frame.clone(), proven: proven.clone() };
-                    let Reply::Received { received } = ask(assets, link, request).await? else {
+                    let Reply::Received { received } = super::apart::take(assets, link, scope, &frame, &proven, &mut staged).await? else {
                         return Err("the hub did not take the frame".into());
                     };
                     let (objects, prove) = match &received {
@@ -664,9 +663,10 @@ async fn pull(
         }
         while at < next {
             let request = Request::Frames { scope: scope.to_string(), stream: stream.clone(), from: at, limit: FRAMES_AT_ONCE as u32 };
-            let Reply::Frames { frames } = ask(assets, link, request).await? else {
+            let Reply::Frames { mut frames, ticket } = ask(assets, link, request).await? else {
                 return Err("the hub did not give frames".into());
             };
+            super::apart::bring(link, ticket, &mut frames).await?;
             if frames.is_empty() {
                 break;
             }
@@ -710,12 +710,11 @@ async fn resupply(assets: &Assets, link: &Arc<Link>, scope: &str, stream: &str, 
         }
         for frame in frames {
             let header = Header::decode(&frame.header).map_err(|error| error.to_string())?;
-            let frame = wire::Frame { header: frame.header.into(), signature: frame.signature.into(), body: frame.body.into() };
+            let frame = wire::Frame::whole(frame.header, frame.signature, frame.body);
             let mut proven = Vec::new();
-            let mut rounds = 0;
+            let (mut rounds, mut staged) = (0, 0);
             let received = loop {
-                let request = Request::Take { scope: scope.to_string(), frame: frame.clone(), proven: proven.clone() };
-                let Reply::Received { received } = ask(assets, link, request).await? else {
+                let Reply::Received { received } = super::apart::take(assets, link, scope, &frame, &proven, &mut staged).await? else {
                     return Err("the hub did not take a frame given back".into());
                 };
                 let (objects, prove) = match &received {
