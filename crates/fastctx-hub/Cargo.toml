@@ -39,6 +39,7 @@ required-features = ["change-drill"]
 [dependencies]
 arc-swap = "1"
 anyhow.workspace = true
+fastctx-content = { path = "../fastctx-content" }
 fastctx-jobs = { path = "../fastctx-jobs" }
 fastctx-net = { path = "../fastctx-net" }
 fastctx-platform = { path = "../fastctx-platform" }

@@ -45,6 +45,10 @@ pub enum Domain {
     SyncEpochHandover,
     SyncExposureReceipt,
     SyncHubKeyRotation,
+    /// What a hub's service key says of assets (design §6.1): receipts,
+    /// epoch descriptors, gap facts, checkpoints, each bound to the hub's
+    /// chain head as it stood (`hub_word`).
+    AssetHub,
 }
 
 impl Domain {
@@ -63,8 +67,42 @@ impl Domain {
             Domain::SyncEpochHandover => "fastctx-sync/epoch-handover/v1",
             Domain::SyncExposureReceipt => "fastctx-sync/exposure-receipt/v1",
             Domain::SyncHubKeyRotation => "fastctx-sync/hub-key-rotation/v1",
+            Domain::AssetHub => "fastctx-asset/hub/v1",
         }
     }
+}
+
+/// A hub's word on `statement` under its service key, bound to its chain
+/// head (`seq`, `head`) as it stood (design §6.1): the head, then the
+/// signature over the statement followed by it.
+pub fn hub_word(key: &SecretKey, seq: u64, head: &[u8; 32], statement: &[u8]) -> Vec<u8> {
+    let mut bound = Vec::with_capacity(statement.len() + 40);
+    bound.extend_from_slice(statement);
+    bound.extend_from_slice(&seq.to_le_bytes());
+    bound.extend_from_slice(head);
+    let signature = key.sign(Domain::AssetHub, &bound);
+    let mut word = Vec::with_capacity(104);
+    word.extend_from_slice(&seq.to_le_bytes());
+    word.extend_from_slice(head);
+    word.extend_from_slice(&signature.to_bytes());
+    word
+}
+
+/// The chain head a hub's word on `statement` is bound to, when the word
+/// is the service key `key`'s.
+pub fn heard_word(key: &PublicKey, statement: &[u8], word: &[u8]) -> Option<(u64, [u8; 32])> {
+    if word.len() != 104 {
+        return None;
+    }
+    let seq = u64::from_le_bytes(word[..8].try_into().ok()?);
+    let head: [u8; 32] = word[8..40].try_into().ok()?;
+    let signature = Signature::from_bytes(word[40..].try_into().ok()?);
+    let mut bound = Vec::with_capacity(statement.len() + 40);
+    bound.extend_from_slice(statement);
+    bound.extend_from_slice(&seq.to_le_bytes());
+    bound.extend_from_slice(&head);
+    key.verify(Domain::AssetHub, &bound, &signature).ok()?;
+    Some((seq, head))
 }
 
 fn signing_input(domain: Domain, bytes: &[u8]) -> Vec<u8> {

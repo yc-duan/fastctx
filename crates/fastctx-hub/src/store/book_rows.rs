@@ -118,6 +118,7 @@ impl BookRows {
         if self.uncertain {
             changes.log_after = Some(self.log_next);
         }
+        changes.control = true;
         macro_rules! stage {
             ($field:ident, $entries:expr, $kind:literal) => {{
                 let (changed, positions) = edit.list($kind);

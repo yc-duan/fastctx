@@ -1,0 +1,273 @@
+//! The second version's asset sync on the wire (design §7): what a device
+//! asks the hub, what the hub answers, and what it tells unasked. Carried
+//! in `Question::Assets`, `Told::Assets` and `Down::Assets`, and sent only
+//! when both sides declare `asset_sync`, its value the protocol version.
+//!
+//! Frames go as they are kept, never decoded and framed again; a frame whose
+//! records are over 64 KiB, and every object's bytes, go over a data
+//! connection instead (§7.1). The hub's words are its service key's,
+//! bound to its chain head (`fastctx_net::sign::hub_word`).
+
+use base64::{Engine, engine::general_purpose::STANDARD};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error};
+
+/// The protocol version a side declares as `asset_sync`.
+pub const VERSION: u32 = 1;
+
+/// The most a frame carried on the control connection holds (§7.1).
+pub const INLINE_FRAME_BYTES: usize = 64 * 1024;
+
+/// Bytes, as base64 in JSON.
+#[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Bytes(pub Vec<u8>);
+
+impl Serialize for Bytes {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&STANDARD.encode(&self.0))
+    }
+}
+
+impl<'de> Deserialize<'de> for Bytes {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = String::deserialize(deserializer)?;
+        STANDARD.decode(value).map(Self).map_err(D::Error::custom)
+    }
+}
+
+impl Bytes {
+    /// The bytes as a digest or key, when there are 32 of them.
+    pub fn array(&self) -> Option<[u8; 32]> {
+        self.0.as_slice().try_into().ok()
+    }
+}
+
+impl From<Vec<u8>> for Bytes {
+    fn from(bytes: Vec<u8>) -> Self {
+        Self(bytes)
+    }
+}
+
+impl From<[u8; 32]> for Bytes {
+    fn from(bytes: [u8; 32]) -> Self {
+        Self(bytes.to_vec())
+    }
+}
+
+/// A frame as kept: its header, its ordering device's signature and its
+/// compressed records.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Frame {
+    pub header: Bytes,
+    pub signature: Bytes,
+    pub body: Bytes,
+}
+
+/// An object a record refers to: its hash and length.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ObjectRef {
+    pub hash: Bytes,
+    pub size: u64,
+}
+
+/// A fact the hub signed, and its word on it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Fact {
+    pub fact: Bytes,
+    pub word: Bytes,
+}
+
+/// The latest chain head a device saw, with the statement and the word
+/// that carried it (§17, item 4).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Seen {
+    pub seq: u64,
+    pub head: Bytes,
+    pub statement: Bytes,
+    pub word: Bytes,
+}
+
+/// What a receipt says, as a device reports it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "said", rename_all = "snake_case")]
+pub enum Said {
+    Applied { change: u64, prefix: Bytes },
+    Parked { sequence: u64, accumulated: Bytes },
+}
+
+/// A receipt not yet witnessed, as a device reports it when a session
+/// opens (§17, item 4).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Reported {
+    pub scope: String,
+    pub stream: String,
+    pub epoch: u64,
+    pub first: u64,
+    pub digest: Bytes,
+    #[serde(flatten)]
+    pub said: Said,
+    pub word: Bytes,
+}
+
+/// Where a stream stands on a device.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Cursor {
+    pub stream: String,
+    pub sequence: u64,
+    pub head: Bytes,
+}
+
+/// What a device asks the hub.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "ask", rename_all = "snake_case")]
+pub enum Request {
+    /// Opens a session (§7.1): the latest chain head the device saw, and
+    /// every receipt of its not yet witnessed (§17).
+    Open {
+        version: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        seen: Option<Seen>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        reported: Vec<Reported>,
+    },
+    /// The hub's word on a frame, from its signed header, if it has one
+    /// (§6.5, step 1).
+    Answer { scope: String, header: Bytes, signature: Bytes },
+    /// A frame for the hub to take (§6.5, step 3), with the objects the
+    /// device proved it holds.
+    Take {
+        scope: String,
+        frame: Frame,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        proven: Vec<Bytes>,
+    },
+    /// Where the device's streams of a scope stand in its holding period
+    /// `holding` (§6.6, §7.4).
+    Cursors { scope: String, holding: i64, streams: Vec<Cursor> },
+    /// Up to `limit` frames of a stream, from the one holding `from` (§6.6).
+    Frames { scope: String, stream: String, from: u64, limit: u32 },
+    /// A stream's signed epochs and gap facts (§8).
+    Succession { scope: String, stream: String },
+}
+
+/// A parked frame refused when its turn came.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Refused {
+    pub header: Bytes,
+    pub why: String,
+    pub word: Bytes,
+}
+
+/// The hub's word on a frame (§6.5).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "received", rename_all = "snake_case")]
+pub enum Received {
+    Applied {
+        change: u64,
+        prefix: Bytes,
+        word: Bytes,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        drained: Vec<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        refused: Option<Refused>,
+    },
+    Parked { sequence: u64, accumulated: Bytes, word: Bytes },
+    Rejected { why: String, from: u64, word: Bytes },
+    /// Not held yet: send `from` to `to` first.
+    Gap { from: u64, to: u64 },
+    /// Not here yet: put these objects first.
+    Missing { objects: Vec<ObjectRef> },
+    /// Prove holding these by their whole bytes first.
+    Prove { objects: Vec<ObjectRef> },
+}
+
+/// What the hub makes of one of a device's cursors.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Standing {
+    pub stream: String,
+    pub agrees: bool,
+    /// When it does not: the ends of the hub's frames before it, latest
+    /// first, each a sequence and the chain value there.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ends: Vec<(u64, Bytes)>,
+}
+
+/// A checkpoint written outside the hub's directory covering a scope's
+/// changes up to `change` and its parked frames up to `parked` (§17).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Checkpoint {
+    pub scope: String,
+    pub change: u64,
+    pub parked: u64,
+    pub seq: u64,
+    pub head: Bytes,
+    pub word: Bytes,
+}
+
+/// What the hub answers.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "reply", rename_all = "snake_case")]
+pub enum Reply {
+    /// The session is open: the hub's service key, its clock in
+    /// milliseconds and its chain head now; and the checkpoints that cover
+    /// receipts the device reported.
+    Ready {
+        key: Bytes,
+        clock: i64,
+        seq: u64,
+        head: Bytes,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        checkpointed: Vec<Checkpoint>,
+    },
+    /// The hub was put back and keeps every asset sealed until recovery
+    /// ends (§17).
+    Sealed { why: String },
+    Refused { why: String },
+    Received { received: Received },
+    Word {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        received: Option<Received>,
+    },
+    Standing { streams: Vec<Standing> },
+    Frames { frames: Vec<Frame> },
+    Succession { epochs: Vec<Fact>, gaps: Vec<Fact> },
+}
+
+/// What the hub tells a device unasked.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "push", rename_all = "snake_case")]
+pub enum Push {
+    /// A stream has frames to `next`: the device asks for those it lacks.
+    Moved { scope: String, stream: String, next: u64 },
+    /// A checkpoint covers receipts the device was given (§17).
+    Checkpointed { checkpoint: Checkpoint },
+    /// A control fact of a scope: an epoch, a gap, a descriptor.
+    Fact { scope: String, fact: Fact },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn messages_keep_their_shape() {
+        let request = Request::Take {
+            scope: "s".into(),
+            frame: Frame { header: vec![1].into(), signature: vec![2].into(), body: vec![3].into() },
+            proven: Vec::new(),
+        };
+        let text = serde_json::to_string(&request).unwrap();
+        assert_eq!(text, r#"{"ask":"take","scope":"s","frame":{"header":"AQ==","signature":"Ag==","body":"Aw=="}}"#);
+        assert_eq!(serde_json::from_str::<Request>(&text).unwrap(), request);
+        let reported = Reported {
+            scope: "s".into(),
+            stream: "t".into(),
+            epoch: 0,
+            first: 3,
+            digest: vec![9].into(),
+            said: Said::Applied { change: 7, prefix: vec![8].into() },
+            word: vec![1].into(),
+        };
+        let text = serde_json::to_string(&reported).unwrap();
+        assert_eq!(serde_json::from_str::<Reported>(&text).unwrap(), reported);
+    }
+}

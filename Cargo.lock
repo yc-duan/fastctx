@@ -1440,6 +1440,7 @@ dependencies = [
  "arc-swap",
  "bytes",
  "fastctx-client",
+ "fastctx-content",
  "fastctx-hosts",
  "fastctx-install",
  "fastctx-jobs",

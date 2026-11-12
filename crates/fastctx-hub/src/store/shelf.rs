@@ -56,7 +56,8 @@ impl Shelf {
             }
         }
         let observed = super::format::prepare(dir)?;
-        let database = Database::open_initialized(&dir.join(FILE), SCHEMA, |connection| {
+        let schema = format!("{SCHEMA}{}", crate::assets::chain::SCHEMA);
+        let database = Database::open_initialized(&dir.join(FILE), &schema, |connection| {
             fastctx_storage::versions::apply(
                 connection,
                 "hub.jobs",
@@ -165,7 +166,50 @@ fn apply(c: &Connection, changes: &Changes) -> fastctx_storage::Result<()> {
     if let Some(before) = changes.expired {
         super::log_store::expire(c, before)?;
     }
+    if changes.control {
+        // A control fact takes its place in the hub's chain in the
+        // transaction that writes it (design §6.1).
+        crate::assets::chain::append(c, "directory", &digest(changes))?;
+    }
     Ok(())
+}
+
+/// What `changes` write, as one digest.
+fn digest(changes: &Changes) -> [u8; 32] {
+    use sha2::{Digest as _, Sha256};
+    let mut hasher = Sha256::new();
+    let mut field = |bytes: &[u8]| {
+        hasher.update((bytes.len() as u64).to_le_bytes());
+        hasher.update(bytes);
+    };
+    for kind in &changes.cleared {
+        field(b"cleared");
+        field(kind.as_bytes());
+    }
+    for (kind, key) in &changes.deleted {
+        field(b"deleted");
+        field(kind.as_bytes());
+        field(key.as_bytes());
+    }
+    for row in &changes.put {
+        field(b"put");
+        field(row.kind.as_bytes());
+        field(row.key.as_bytes());
+        field(&row.position.to_le_bytes());
+        field(&row.body);
+    }
+    for (kind, key, position) in &changes.moved {
+        field(b"moved");
+        field(kind.as_bytes());
+        field(key.as_bytes());
+        field(&position.to_le_bytes());
+    }
+    for (name, value) in &changes.meta {
+        field(b"meta");
+        field(name.as_bytes());
+        field(value);
+    }
+    hasher.finalize().into()
 }
 
 pub(crate) fn decode<T: DeserializeOwned>(bytes: &[u8]) -> fastctx_storage::Result<T> {

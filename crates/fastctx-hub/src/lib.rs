@@ -24,6 +24,7 @@
 //! old place, forwards to the new one, as its files say.
 
 mod account_records;
+mod assets;
 mod afoot;
 mod assists;
 mod catalog;
@@ -311,6 +312,8 @@ pub(crate) struct Hub {
     health: health::Health,
     diagnostic_dir: PathBuf,
     account_records: account_records::Records,
+    /// The second version's asset side (`assets`).
+    assets: Arc<assets::Assets>,
     /// What went wrong with the machines and the network lately (`troubles`).
     troubles: troubles::Troubles,
     /// Whether one of each machine's logins has the workbench open, as it
@@ -819,6 +822,7 @@ struct Opened {
     releases: releases::Releases,
     updates: updates::Updates,
     account_records: account_records::Records,
+    assets: Arc<assets::Assets>,
     ledgers: ledger::Ledgers,
     secrets: HubSecrets,
     tls: releases::http::Tls,
@@ -848,6 +852,8 @@ fn open(dir: &Path, log: Arc<log::Log>) -> anyhow::Result<Opened> {
         HubSecrets::from_bytes(&fastctx_platform::disk::read(Store::secrets_file(dir))?).map_err(anyhow::Error::msg)?;
     let tls = releases::http::Tls::of(&certificate).map_err(anyhow::Error::msg)?;
     let account_records = account_records::Records::open(dir, &store.book.directory)?;
+    let assets = Arc::new(assets::Assets::open(dir, store.hub.id.as_str(), store.shelf.0.clone())?);
+    store.witness = Some(assets.witness.clone());
     let mut ledgers = ledger::Ledgers::open(dir, &store.hub.id)?;
     let swept = ledgers.sweep(&store.book)?;
     let mut said: Vec<String> = swept
@@ -856,6 +862,9 @@ fn open(dir: &Path, log: Arc<log::Log>) -> anyhow::Result<Opened> {
         .collect();
     said.extend(store.upgraded.iter().map(|line| format!("took up the directory of an earlier fastctx: {line}")));
     said.extend(store.tidied.iter().map(|line| format!("on opening, {line}")));
+    if let Some(why) = assets.sealed() {
+        said.push(format!("every asset is sealed until recovery ends: {why}"));
+    }
     let mut left = Vec::new();
     let updates = updates::Updates::new(dir, &store.shelf, &store.hub.due, &mut left).map_err(anyhow::Error::msg)?;
     said.extend(left.into_iter().map(|line| format!("on opening, {line}")));
@@ -876,6 +885,7 @@ fn open(dir: &Path, log: Arc<log::Log>) -> anyhow::Result<Opened> {
         releases,
         updates,
         account_records,
+        assets,
         ledgers,
         secrets,
         tls,
@@ -909,6 +919,7 @@ async fn serving(
         releases,
         updates,
         account_records,
+        assets,
         ledgers,
         secrets,
         tls,
@@ -958,6 +969,7 @@ async fn serving(
         health: health::Health::default(),
         diagnostic_dir: dir.to_path_buf(),
         account_records,
+        assets,
         troubles,
         workbench: Mutex::new("hub workbench", Rank::HUB_WORKBENCH, HashMap::new()),
     });
@@ -968,6 +980,7 @@ async fn serving(
         hub.log.line(format_args!("revoking shares of the hub machine: {error}"));
     }
     fastctx_platform::task::spawn(health::keep(Arc::downgrade(&hub)));
+    fastctx_platform::task::spawn(assets::checkpoints(Arc::downgrade(&hub)));
     fastctx_platform::task::spawn(data::expire(Arc::downgrade(&hub)));
     fastctx_platform::task::spawn(expiry::settle(Arc::downgrade(&hub)));
     fastctx_platform::task::spawn(updates::look_every(Arc::downgrade(&hub)));

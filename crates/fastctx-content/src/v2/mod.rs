@@ -12,6 +12,7 @@ mod exchange;
 mod facts;
 mod frame;
 mod handover;
+mod heads;
 mod hub;
 mod items;
 mod objects;
@@ -31,6 +32,7 @@ pub use exchange::{Holder, Imported, RawFrame, Verifier};
 pub use frame::{FORMAT, Header, KindRecord, Signer, open};
 pub use facts::{EpochFact, EpochKind, GapFact};
 pub use handover::{Cutoff, Signed, Successor};
+pub use heads::Head;
 pub use hub::{Authorizer, Drained, HubSigner, Received, Refused, Taking};
 pub use ops::{Delivery, Op};
 pub use reads::{Entry, PAGE};
@@ -73,14 +75,20 @@ impl Library {
     }
 
     /// Opens an owner library of a hub (§6.2): the same library with the
-    /// hub's own tables besides.
+    /// hub's own tables besides, each database caching 2 MiB of pages, as
+    /// up to 64 are open at once (R27).
     pub fn open_hub(directory: &Path) -> Result<(Self, Started)> {
-        Self::open_with(directory, format!("{}{}", schema::SCHEMA, schema::HUB_SCHEMA))
+        let shape = fastctx_storage::Shape { cache_bytes: Some(2 << 20), ..Default::default() };
+        Self::open_shaped(directory, format!("{}{}", schema::SCHEMA, schema::HUB_SCHEMA), shape)
     }
 
     fn open_with(directory: &Path, schema: String) -> Result<(Self, Started)> {
-        let database = Database::open(&directory.join(FILE), &schema)?;
-        let bytes = Database::open(&directory.join(BYTES_FILE), schema::BYTES_SCHEMA)?;
+        Self::open_shaped(directory, schema, fastctx_storage::Shape::default())
+    }
+
+    fn open_shaped(directory: &Path, schema: String, shape: fastctx_storage::Shape) -> Result<(Self, Started)> {
+        let database = Database::open_shaped(&directory.join(FILE), &schema, shape)?;
+        let bytes = Database::open_shaped(&directory.join(BYTES_FILE), schema::BYTES_SCHEMA, shape)?;
         let library = Self(Arc::new(Inner { database, bytes, objects: directory.join(OBJECTS_DIRECTORY) }));
         let started = library.startup()?;
         Ok((library, started))

@@ -33,6 +33,9 @@ pub(crate) struct Changes {
     /// Machine log records kept before this moment, in seconds since 1970,
     /// are deleted.
     pub(crate) expired: Option<jiff::Timestamp>,
+    /// Whether these are control facts — the directory readers are judged
+    /// by — which take their place in the hub's chain (design §6.1).
+    pub(crate) control: bool,
 }
 
 pub(crate) struct Put {
