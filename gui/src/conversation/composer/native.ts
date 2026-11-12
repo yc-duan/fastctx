@@ -56,6 +56,8 @@ interface PendingMutation {
   result?: { revision: number; operation: DocumentOperation };
   removing?: Promise<void>;
   waiters: { resolve: (result: ComposerUpdated) => void; reject: (error: unknown) => void }[];
+  /** Told once the node has taken it in and goes on with it by itself. */
+  accepted?: (() => void)[];
 }
 export class NativeComposer {
   private next = Date.now() * 1000;
@@ -306,10 +308,15 @@ export class NativeComposer {
     if (record.sent === number) record.sent = null;
     record.error = null;
   }
+  /** The node has the operation and carries it on by itself: what waited
+   *  for it to be the node's need not wait for how it ends. */
+  private accept(pending: PendingMutation): void {
+    for (const told of pending.accepted?.splice(0) ?? []) told();
+  }
   private settle(operation: DocumentOperation): void {
-    if (operation.accepted) return;
     const pending = this.mutations.get(operation.operation);
     if (!pending) return;
+    if (operation.accepted) { this.accept(pending); return; }
     if (pending.cancelled) return;
     if (operation.failure) { void this.rejectMutation(pending, operation.failure === SEND_WITHDRAWN ? new Withdrawn() : new Error(operation.failure)); return; }
     this.mutations.delete(operation.operation);
@@ -409,7 +416,7 @@ export class NativeComposer {
     this.changed(); this.pump();
     return "withdrawn";
   }
-  mutate(mutation: ComposerMutation, signal?: AbortSignal): Promise<ComposerUpdated> {
+  mutate(mutation: ComposerMutation, signal?: AbortSignal, accepted?: () => void): Promise<ComposerUpdated> {
     const completed = this.completed.get(mutation.operation);
     if (completed) {
       if (JSON.stringify(completed.input.mutation) !== JSON.stringify(mutation)) return Promise.reject(new Error("a composer operation was reused for different content"));
@@ -424,6 +431,7 @@ export class NativeComposer {
       pending = { input: { kind: "mutate", number: this.next, mutation }, sent: false, everTransmitted: false, cancelled: false, waiters: [] };
       this.mutations.set(mutation.operation, pending);
     } else if (JSON.stringify(pending.input.mutation) !== JSON.stringify(mutation)) return Promise.reject(new Error("a composer operation was reused for different content"));
+    if (accepted) (pending.accepted ??= []).push(accepted);
     pending.sent = false;
     let abort = () => {};
     const result = new Promise<ComposerUpdated>((resolve, reject) => {

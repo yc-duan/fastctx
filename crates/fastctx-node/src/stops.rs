@@ -55,10 +55,13 @@ impl Stops {
 }
 
 /// Stop delivery is independent of the report consumer and never blocks it.
+/// The turn it is for becomes current moments after its words are bound to
+/// it: a try before then is made again at once, and less often as it fails.
 pub(crate) fn deliver(node: &Arc<Node>, resident: &ResidentId, turn: &str, inputs: Vec<NoticeId>) {
     let (node, resident, turn) = (node.clone(), resident.clone(), turn.to_string());
     fastctx_platform::task::spawn(async move {
         let mut problem = None;
+        let mut pause = Duration::from_millis(25);
         loop {
             if node.residents.about(&resident).is_none() {
                 return;
@@ -72,7 +75,8 @@ pub(crate) fn deliver(node: &Arc<Node>, resident: &ResidentId, turn: &str, input
                     }
                 }
             }
-            tokio::time::sleep(Duration::from_secs(3)).await;
+            tokio::time::sleep(pause).await;
+            pause = (pause * 2).min(Duration::from_secs(3));
         }
     });
 }
@@ -88,6 +92,14 @@ async fn apply(node: &Arc<Node>, resident: &ResidentId, turn: &str, inputs: &[No
         .await
         .map_err(failure)?
         .map_err(failure)?;
+    // The user's words sent since the stop wait for this turn's end, or go
+    // now that it has ended.
+    if source == StopSource::User {
+        match &ended {
+            Some(_) => crate::composer::stop_resolved(node, resident),
+            None => crate::composer::stop_asked(node, resident, turn),
+        }
+    }
     if let Some(finished) = ended {
         if source == StopSource::User {
             let (node, resident, turn) = (node.clone(), resident.clone(), turn.to_string());
@@ -117,6 +129,7 @@ async fn apply(node: &Arc<Node>, resident: &ResidentId, turn: &str, inputs: &[No
                     .await
                     .map_err(failure)?
                     .map_err(failure)?;
+                crate::claude::channel::wake(node, session);
             }
             _ => return Err(Failure::new("the consuming host has no stop entrance")),
         }

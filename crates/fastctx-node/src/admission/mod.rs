@@ -54,7 +54,7 @@ fn resident_of(call: &RemoteCall) -> Option<&ResidentId> {
         | RemoteCall::Talk { to: who, .. }
         | RemoteCall::Composer { resident: who, .. }
         | RemoteCall::Watch { resident: who, .. }
-        | RemoteCall::Stop { resident: who }
+        | RemoteCall::Stop { resident: who, .. }
         | RemoteCall::Control { resident: who, .. }
         | RemoteCall::Manage { resident: who, .. }
         | RemoteCall::Offers { resident: who }

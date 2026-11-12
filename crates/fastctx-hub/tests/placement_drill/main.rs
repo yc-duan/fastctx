@@ -595,7 +595,7 @@ async fn main() -> Result<()> {
         plan_file(&host, &a)? == pa,
         json!(null),
     );
-    wa.stop(sa.to.resident.clone(), Some("host".parse()?)).await?;
+    wa.stop(sa.to.resident.clone(), Some("host".parse()?), None).await?;
     anyhow::ensure!(idle_after(&host, &a, before).await, "the held turn did not stop");
     let local_home = base.join("alice-codex");
     std::fs::create_dir_all(&local_home)?;

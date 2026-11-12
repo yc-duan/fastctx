@@ -27,6 +27,10 @@ use crate::wire::{CallStatus, HEARTBEAT, SILENCE};
 /// ends (`crate::queue`).
 const QUEUED: usize = 8192;
 const QUEUED_BYTES: usize = 64 * 1024 * 1024;
+/// What a person waits on (a stop, words, a control, short answers) goes
+/// ahead of what is queued, as far as this much; past it, with the rest.
+const SOON: usize = 1024;
+const SOON_BYTES: usize = 4 * 1024 * 1024;
 
 /// A frame for the writer, as it is written; and whom to tell once it is.
 pub(crate) struct Queued {
@@ -51,6 +55,8 @@ pub(crate) struct PeerConn {
     pub cancels: bool,
     /// Frames for the writer, as they are written.
     out: crate::queue::Sender<Queued>,
+    /// Frames a person waits on, written ahead of what waits in `out`.
+    soon: crate::queue::Sender<Queued>,
     /// Heartbeats and their answers, written ahead of what waits in `out`:
     /// one every few seconds each way, so this way needs no bound.
     first: mpsc::UnboundedSender<Queued>,
@@ -67,6 +73,7 @@ impl PeerConn {
         cancels: bool,
     ) -> (Arc<Self>, Writing) {
         let (out, frames) = crate::queue::bounded(QUEUED, QUEUED_BYTES, "direct.outgoing");
+        let (soon, soons) = crate::queue::bounded(SOON, SOON_BYTES, "direct.outgoing.soon");
         let (first, firsts) = mpsc::unbounded_channel();
         let (closed, _) = watch::channel(None);
         let conn = Self {
@@ -77,11 +84,39 @@ impl PeerConn {
             at,
             cancels,
             out,
+            soon,
             first,
             ms: Mutex::new(None),
             closed,
         };
-        (Arc::new(conn), Writing { frames, firsts })
+        (Arc::new(conn), Writing { frames, soons, firsts, soon_run: 0 })
+    }
+
+    /// Sends what a person waits on ahead of what is queued; when that way
+    /// is full, with the rest. Whether it went the soon way.
+    pub fn send_soon(&self, frame: Frame) -> Result<bool, ()> {
+        let bytes = peer::encode(&frame);
+        let size = bytes.len();
+        match self.soon.try_send(Queued { bytes, written: None }, size) {
+            Ok(()) => Ok(true),
+            Err(queued) => self.out.send(queued, size).map(|()| false).map_err(|_| ()),
+        }
+    }
+
+    /// `write`, ahead of what is queued when the frame is short.
+    pub async fn write_soon(&self, frame: Frame) -> Result<(), String> {
+        let bytes = peer::encode(&frame);
+        if bytes.len() > crate::link::outgoing::SOON_ANSWER {
+            return self.write(frame).await;
+        }
+        let (written, received) = oneshot::channel();
+        let size = bytes.len();
+        if let Err(queued) = self.soon.try_send(Queued { bytes, written: Some(written) }, size) {
+            self.out
+                .send(queued, size)
+                .map_err(|_| "the direct link ended before the frame was queued".to_string())?;
+        }
+        received.await.map_err(|_| "the direct link ended before the frame was written".to_string())
     }
 
     pub fn send(&self, frame: Frame) -> Result<(), ()> {
@@ -142,19 +177,35 @@ impl PeerConn {
     }
 }
 
-/// The writer's end of a direct link: heartbeats first, then the rest in the
-/// order queued.
+/// The writer's end of a direct link: heartbeats first, then what a person
+/// waits on, then the rest in the order queued.
 pub(crate) struct Writing {
     frames: crate::queue::Receiver<Queued>,
+    soons: crate::queue::Receiver<Queued>,
     firsts: mpsc::UnboundedReceiver<Queued>,
+    /// Frames the soon way took in a row: past `SOON_RUN`, a queued one goes.
+    soon_run: usize,
 }
 
 impl Writing {
     async fn recv(&mut self) -> Option<Queued> {
+        if self.soon_run >= crate::link::outgoing::SOON_RUN
+            && let Some(frame) = self.frames.try_recv()
+        {
+            self.soon_run = 0;
+            return Some(frame);
+        }
         tokio::select! {
             biased;
             Some(frame) = self.firsts.recv() => Some(frame),
-            frame = self.frames.recv() => frame,
+            Some(frame) = self.soons.recv() => {
+                self.soon_run += 1;
+                Some(frame)
+            }
+            frame = self.frames.recv() => {
+                self.soon_run = 0;
+                frame
+            }
         }
     }
 }

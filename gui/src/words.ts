@@ -177,8 +177,11 @@ export interface Words {
   sendPlaceholder(agent: string): string;
   send: string;
   stop: string;
-  /** The stop button while the turn it stops has not ended. */
-  stopping: string;
+  /** The stop button for a turn whose host has not ended it in time. */
+  stopAgain: string;
+  /** How a conversation stands while a turn asked to stop has not ended in
+   *  time: until then it shows ended. */
+  notStoppedYet: string;
   /** A stop that could not be asked for. */
   turnNotStopped(why: string): string;
   uncertain(why: string): string;
@@ -344,6 +347,9 @@ export interface Words {
   /** Words on their way whose agent has not started for a minute and is
    *  being started again; the agent by the name it goes by. */
   hostRetrying(agent: string | undefined): string;
+  /** The turn's line while the agent's host is being started again after
+   *  `failures` starts failed. */
+  startRetrying(failures: number): string;
   /** Why it did not start, for the pointer to rest on: in plain words where
    *  the interface knows them, else as its machine said it. */
   hostRetryWhy(reason: string): string;
@@ -465,7 +471,6 @@ export const zh: Words = {
     paused: "已暂停",
     done: "完成",
     sending: "发送中",
-    stillGoing: "上一条还在路上",
     editingElsewhere: "别处正在改",
   },
   act: (act, tense) => zhActs[act][index(tense)],
@@ -537,7 +542,7 @@ export const zh: Words = {
   stepsEarlier: (steps) => `更早的 ${steps} 步`,
   turn: (how, reason) => {
     if (how === "completed") return null;
-    const said = how === "failed" ? "本轮失败" : how === "interrupted" ? "本轮已停止" : `本轮结束：${how}`;
+    const said = how === "failed" ? "本轮失败" : how === "interrupted" ? "已中断" : `本轮结束：${how}`;
     return reason ? `${said}：${reason}` : said;
   },
   wentOnAs: (job) => `转入后台 ${job}`,
@@ -554,7 +559,8 @@ export const zh: Words = {
   sendPlaceholder: (agent) => `发消息给 ${agent}…`,
   send: "发送",
   stop: "停止",
-  stopping: "正在停",
+  stopAgain: "再停一次",
+  notStoppedYet: "这一轮还没停下",
   turnNotStopped: () => "没能停下",
   uncertain: () => "送达状态未知",
   sending: "发送中",
@@ -791,6 +797,7 @@ export const zh: Words = {
           ? "排着，等这一轮结束"
           : "等它下次用世界的工具时送到",
   hostRetrying: (agent) => (agent ? `${agent} 未能启动，正在重试` : "未能启动，正在重试"),
+  startRetrying: (failures) => `未能启动 · 第 ${failures} 次重试`,
   hostRetryWhy: (reason) => known(reason, zhProblems) ?? reason,
   queuedTurn: (ahead) => (ahead ? `排队中，前面还有 ${ahead} 个` : "排队中，下一个就轮到它"),
   queuedTurnWhy: "这个智能体登录同时开着的轮已到上限；主人的先开，受协助的人按账号轮流",
@@ -848,7 +855,6 @@ export const en: Words = {
     paused: "Paused",
     done: "Done",
     sending: "Sending",
-    stillGoing: "The last one is still on its way",
     editingElsewhere: "Being edited elsewhere",
   },
   act: (act, tense) => enActs[act][index(tense)],
@@ -922,7 +928,7 @@ export const en: Words = {
   stepsEarlier: (steps) => (steps === 1 ? "1 earlier step" : `${steps} earlier steps`),
   turn: (how, reason) => {
     if (how === "completed") return null;
-    const said = how === "failed" ? "Turn failed" : how === "interrupted" ? "Turn stopped" : `Turn ended: ${how}`;
+    const said = how === "failed" ? "Turn failed" : how === "interrupted" ? "Interrupted" : `Turn ended: ${how}`;
     return reason ? `${said}: ${reason}` : said;
   },
   wentOnAs: (job) => `went on as ${job}`,
@@ -939,7 +945,8 @@ export const en: Words = {
   sendPlaceholder: (agent) => `Message ${agent}…`,
   send: "Send",
   stop: "Stop",
-  stopping: "Stopping",
+  stopAgain: "Stop again",
+  notStoppedYet: "Not stopped yet",
   turnNotStopped: () => "Couldn't stop",
   uncertain: () => "Delivery unknown",
   sending: "Sending",
@@ -1177,6 +1184,7 @@ export const en: Words = {
           ? "Queued until this turn ends"
           : "Arrives when it next uses a Fastctx tool",
   hostRetrying: (agent) => (agent ? `${agent} couldn't start; retrying` : "Couldn't start; retrying"),
+  startRetrying: (failures) => `Couldn't start · retry ${failures}`,
   hostRetryWhy: (reason) => known(reason, enProblems) ?? reason,
   queuedTurn: (ahead) => (ahead ? `Queued, ${ahead} ahead` : "Queued, next up"),
   queuedTurnWhy: "This agent login runs as many turns at once as it may; the owner's go first, then the assisted accounts' in turn",

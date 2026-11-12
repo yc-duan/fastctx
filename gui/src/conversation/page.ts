@@ -73,6 +73,9 @@ const HELD_MOST = 6000;
 const KEEP_SCREENS = 3;
 const LATEST_MOST = 2400;
 const LATEST_KEPT = 800;
+/** How long a turn asked to stop shows ended before its host has ended it
+ *  (`ConversationPage.stop`). */
+const STOP_OVERDUE_MS = 2000;
 
 /** The mark of an agent named "Claude" or "Codex". */
 const markOf = (agent: string) => (/claude/i.test(agent) ? "claude" : "codex");
@@ -178,8 +181,9 @@ export interface PageOptions {
   /** Sends the user's words, and what arrived of what was attached;
    *  resolves with what came of them. */
   send(text: string, attached: { refs: unknown[]; shown: Attached[]; filesOn?: string | null }): Promise<Sent> | void;
-  /** Asks the agent to stop; resolves whether a turn was running to stop. */
-  stop(): Promise<boolean> | void;
+  /** Asks the agent to stop the turn shown running (`null` while only words
+   *  are on their way); resolves whether a turn was running to stop. */
+  stop(turn: string | null): Promise<boolean> | void;
   /** Stops one job it started, on the machine it runs on. */
   stopJob?: ((job: string, machine: string) => Promise<void>) | undefined;
   /** A job's output as lines from the machine running it, read as it
@@ -269,8 +273,13 @@ export class ConversationPage {
   private roomFor: string | null = null;
   /** Until when words the user just sent are to be put at the top. */
   private placeUntil = 0;
-  /** A stop was asked for and the turn has not ended yet. */
-  private stopping = false;
+  /** A stop was asked for, its turn has not ended, and its host has not
+   *  ended it within `STOP_OVERDUE_MS`: only then is the turn said to go on,
+   *  with a way to stop it again. */
+  private stopOverdue = false;
+  private stopWatch = 0;
+  /** Stops asked from here, the latest last: an answer speaks only for it. */
+  private stopsAsked = 0;
   /** Words of the shared queue on their way into the turn, by queue item,
    *  as the conversation shows them meanwhile. */
   private readonly onTheirWay = new Map<string, string>();
@@ -624,8 +633,17 @@ export class ConversationPage {
 
     // It opens in the view it was last read in here (`world-voice.md`).
     this.viewing(this.storedView());
-    // What was read of the conversation from the shell is drawn as it comes.
-    options.conversation.changed = () => this.update({ read: true });
+    // What was read of the conversation from the shell is drawn as it comes:
+    // a batch of pieces the shell pushed at once is taken whole, then the
+    // page looks once at what it changed, and draws in the next frame.
+    options.conversation.changed = () => {
+      if (this.changing) return;
+      this.changing = true;
+      queueMicrotask(() => {
+        this.changing = false;
+        this.update({ read: true });
+      });
+    };
     this.latest = this.element.querySelector<HTMLButtonElement>(".to-latest")!;
     this.latest.addEventListener("click", () => this.toLatest());
     // The way back to each step's context, after one of its rows was
@@ -937,6 +955,11 @@ export class ConversationPage {
    *  reader comes to it, and nothing of it makes an entrance. */
   update(how: { read?: boolean } = {}): void {
     if (how.read) this.read = true;
+    // A stop asked on another device shows here as where it was asked: its
+    // two seconds start when it is told, and end with it.
+    const halting = this.options.conversation.halting();
+    if (halting && this.stopWatch === 0 && !this.stopOverdue) this.watchStop();
+    else if (!halting && (this.stopWatch !== 0 || this.stopOverdue)) this.calledOff();
     // The commands it offers changed (a plugin loaded, a description came).
     if (this.options.conversation.takeOffersChanged()) void this.askOffers();
     if (this.options.conversation.takeControlsChanged()) this.syncControls();
@@ -954,6 +977,8 @@ export class ConversationPage {
 
   private frame = 0;
   private read = false;
+  /** A look at what a batch of pieces changed is on its way. */
+  private changing = false;
 
   /** Draws the page as the conversation now stands; keeps the newest in
    *  view when the reader was already there. A page not in view is drawn
@@ -1141,6 +1166,7 @@ export class ConversationPage {
   leave(): void {
     phoneWide.removeEventListener("change", this.placeDial);
     clearTimeout(this.offersAgain);
+    clearTimeout(this.stopWatch);
     cancelAnimationFrame(this.frame);
     this.view.destroy();
     this.badge?.dispose();
@@ -1180,8 +1206,6 @@ export class ConversationPage {
   private nodeTray: NodeTray | null = null;
   private readonly rescued = new WeakSet<import("./composer").ComposerDocument>();
   private readonly reconciled = new WeakMap<import("./composer").ComposerDocument, number>();
-  /** Words sent straight on from here that the agent has not heard yet. */
-  private straight = 0;
 
   /** Opens the shared input: the words typed here before it opened go into
    *  it, the queue and what is attached become the node's. */
@@ -1319,31 +1343,70 @@ export class ConversationPage {
     this.update();
   }
 
-  /** Asks the agent to stop: what runs shows stopped at once, and the
-   *  button says it is stopping until the turn ends. A World that says no
-   *  turn runs is believed: what still looked under way here had ended. A
-   *  stop that did not get there shows it going on again, and says why. */
+  /** Asks the agent to stop: the turn ends here at once, whatever its host
+   *  takes to end it (`gui-conversation-working-indicator-and-stop`): what
+   *  it writes no longer grows, the button sends again and nothing says it
+   *  is stopping. Only a host that has not ended it two seconds later has
+   *  the turn said to go on, with the button to stop it again. A World that
+   *  says no turn runs is believed: what still looked under way here had
+   *  ended. A stop that did not get there shows it going on again, and says
+   *  why. */
   private stop(): void {
-    const asked = this.options.stop();
+    const target = this.options.conversation.runningTurn();
+    const asked = this.options.stop(target);
     if (!asked) return;
-    this.stopping = true;
+    // Only the answer to the latest stop speaks: one to an earlier stop,
+    // coming late, leaves a stop asked since standing.
+    const mine = ++this.stopsAsked;
     this.options.conversation.halt();
+    this.watchStop();
     this.update();
     asked.then(
       (stopped) => {
-        if (stopped) return;
-        this.stopping = false;
-        this.options.conversation.noTurnRuns();
+        if (stopped || mine !== this.stopsAsked) return;
+        this.calledOff();
+        // The turn asked to stop had ended already: a turn begun since goes
+        // on, and is not called off with it.
+        const now = this.options.conversation.runningTurn();
+        if (now === null || now === target) this.options.conversation.noTurnRuns();
+        else this.options.conversation.unhalt();
         this.update();
       },
       (error: unknown) => {
-        this.stopping = false;
+        if (mine !== this.stopsAsked) return;
+        this.calledOff();
         this.options.conversation.unhalt();
         const why = error instanceof Error ? error.message : String(error);
         this.say(this.options.words.turnNotStopped(why), why, true);
         this.update();
       },
     );
+  }
+
+  /** A stop asked for is over, its turn ended or never stopped. */
+  private calledOff(): void {
+    clearTimeout(this.stopWatch);
+    this.stopWatch = 0;
+    this.stopOverdue = false;
+  }
+
+  /** Starts the two seconds a stop has before its turn is said to go on,
+   *  whether it was asked here or on another device (`update`). */
+  private watchStop(): void {
+    this.stopOverdue = false;
+    clearTimeout(this.stopWatch);
+    this.stopWatch = window.setTimeout(() => {
+      if (!this.options.conversation.halting()) return;
+      this.stopOverdue = true;
+      this.update();
+    }, STOP_OVERDUE_MS);
+  }
+
+  /** Whether the page shows a turn under way: one asked to stop shows
+   *  ended, unless its host has not ended it in time (`stop`). */
+  private underWay(): boolean {
+    const { conversation } = this.options;
+    return conversation.busy() && (!conversation.halting() || this.stopOverdue);
   }
 
   /** Puts words into the input as if typed, so the shared input has them. */
@@ -1380,7 +1443,7 @@ export class ConversationPage {
     const queued = connected && this.queues();
     const going = session.state.attachmentsOnTheirWay;
     const shown = (recovered?.attachments ?? (draft?.draft.attachments ?? []).filter((one) => !going.has(one.id))).map((one) => ({ name: one.name, size: one.size, image: one.media_type.startsWith("image/"), preview: null, ...(one.media_type.startsWith("text/plain") ? { kept: one } : {}) }));
-    const key = queued ? null : conversation.sending(text, here || null, shown);
+    let key = queued ? null : conversation.sending(text, here || null, shown);
     if (key && !connected) conversation.sent(key, { state: "waiting", why: session.state.error?.message ?? "" });
     // Words that will wait for the turn to end are in the queue at once, as
     // sent from here, while the node of the conversation's machine takes
@@ -1418,28 +1481,34 @@ export class ConversationPage {
       if (key) conversation.sent(key, { state: "unknown", why: session.state.error?.message ?? "" });
       waiting?.late(withdraw);
     }
-    const sent = sending.sent;
+    // Words that looked to wait here the node sends straight on: the turn had
+    // ended there, or the user stopped it. They leave the queue for the
+    // conversation as soon as the node says so, not once they have gone.
+    const straightOn = () => {
+      if (key || !waiting) return;
+      waiting.done();
+      key = conversation.sending(text, here || null, shown);
+      conversation.settles(key, { again: sending.again, remove: withdraw });
+      this.update();
+    };
+    void sending.accepted.then(straightOn);
+    const sent = sending.sent.then((updated) => {
+      if (updated?.landed) straightOn();
+      return updated;
+    });
     if (key) conversation.settles(key, { again: sending.again, remove: withdraw });
     this.update();
     if (waiting) void sent.then(waiting.done, waiting.done);
-    if (key) {
-      this.straight += 1;
-      this.nodeQueue?.goingStraight(this.straight);
-      const heard = () => {
-        this.straight -= 1;
-        this.nodeQueue?.goingStraight(this.straight);
-      };
-      void sent.then(heard, heard);
-    }
-    this.follow(key, sent);
+    this.follow(() => key, sent);
   }
 
   /** Words shown below the turn's line while on their way: where they
    *  landed, or that they failed, as the node answers. */
-  private follow(key: string | null, sending: Promise<ComposerUpdated | null>): void {
+  private follow(shown: () => string | null, sending: Promise<ComposerUpdated | null>): void {
     const { conversation } = this.options;
     sending.then(
       (updated) => {
+        const key = shown();
         if (!key) return;
         conversation.settles(key, null);
         if (!updated) {
@@ -1459,6 +1528,7 @@ export class ConversationPage {
       },
       (error: unknown) => {
         const why = error instanceof Error ? error.message : String(error);
+        const key = shown();
         // Words that did not go are where the node keeps them, back in the
         // input or still in the queue: they leave the conversation, and the
         // reason is said by the input, once for words sent after them too.
@@ -1474,10 +1544,12 @@ export class ConversationPage {
 
   /** Whether words sent now wait in the queue: only while the agent works,
    *  a turn just released has not ended, or other words are on their way,
-   *  as the node decides; with it idle they go straight on. */
+   *  as the node decides; with it idle they go straight on. A turn the user
+   *  stopped works no more: words sent after the stop start the next turn,
+   *  which the node begins once the host has ended this one. */
   private queues(): boolean {
     const composer = this.sharedState?.composer;
-    return this.options.conversation.busy() || !!composer?.awaiting_turn || !!composer?.queue.some((item) => item.sending)
+    return this.underWay() || !!composer?.awaiting_turn || !!composer?.queue.some((item) => item.sending)
       || !!this.session?.state.onTheirWay;
   }
 
@@ -1526,7 +1598,7 @@ export class ConversationPage {
     }
     const attached = !session && this.tray?.count ? { ...this.tray.take(), filesOn } : { refs: [], shown: [], filesOn: null };
     if (!text && !attached.refs.length && !(session && this.nodeTray?.count)) {
-      if (this.options.conversation.busy()) this.stop();
+      if (this.underWay()) this.stop();
       return;
     }
     // What the last command did is behind the conversation now.
@@ -2039,7 +2111,7 @@ export class ConversationPage {
     try {
       const offered = await controls.offers();
       this.offered = offered;
-      this.syncControls(offered.pending_controls ?? []);
+      this.syncControls([...(offered.pending_controls ?? []), ...(offered.pending_newer ?? [])]);
       // Its host is still being started: what came is what the node knows
       // without it, and the rest is asked for again, soon and then less often.
       this.offersFailed = 0;
@@ -2359,7 +2431,9 @@ export class ConversationPage {
       this.stop();
       return true;
     }
-    if (command.control === "goal") {
+    // A node that takes `/goal` does it in its order among the words, as
+    // every slash command; one from before is given the goal at once.
+    if (command.control === "goal" && !this.offered?.control_goal) {
       this.side?.setGoal(args);
       return true;
     }
@@ -2382,7 +2456,9 @@ export class ConversationPage {
     }
     const what: Control =
       given ??
-      (command.control === "compact"
+      (command.control === "goal"
+        ? { do: "goal", objective: args }
+        : command.control === "compact"
         ? { do: "compact" }
         : command.control === "model"
           ? { do: "model", model: args, effort: null }
@@ -2775,8 +2851,9 @@ export class ConversationPage {
     this.nameHint();
     // Archived or deleted, it is not said to work or wait.
     const waiting = !this.gone && this.away === null && conversation.waiting();
-    // Working for the whole of a turn, not only while something shows.
-    const working = !this.gone && this.away === null && !waiting && conversation.busy();
+    // Working for the whole of a turn, not only while something shows; a
+    // turn asked to stop has ended here (`stop`).
+    const working = !this.gone && this.away === null && !waiting && this.underWay();
     // Current presence takes precedence over an earlier transport error.
     const now =
       (this.away !== null ? null : this.gone) ??
@@ -2795,8 +2872,8 @@ export class ConversationPage {
         : waiting
           ? words.waitingForYou
           : working
-            ? conversation.halting()
-              ? words.stopping
+            ? this.stopOverdue
+              ? words.notStoppedYet
               : words.working
             : words.idle);
     // A screen reader hears the conversation change state, once each time:
@@ -2860,19 +2937,18 @@ export class ConversationPage {
   private drawAction(): void {
     const { words, conversation } = this.options;
     const typed = this.input.value.trim() !== "" || !!this.picked || ((this.session ? this.nodeTray?.count : this.tray?.count) ?? 0) > 0;
-    const busy = conversation.busy();
-    if (!busy) this.stopping = false;
+    const busy = this.underWay();
+    if (!conversation.halting()) this.calledOff();
     const stop = !typed && busy;
     this.action.innerHTML = glyph(stop ? "stop" : "send", 18);
     const waits = this.released !== null || (this.session ? this.queues() : busy);
     // Files still on their way hold the words back; the button says why on
     // hover, which a disabled one would not.
     const held = !stop && typed && this.uploading();
-    const label = stop ? (this.stopping ? words.stopping : words.stop) : held ? this.options.attach!.words.wait : typed && waits ? words.queue.queue : words.send;
+    const label = stop ? (this.stopOverdue ? words.stopAgain : words.stop) : held ? this.options.attach!.words.wait : typed && waits ? words.queue.queue : words.send;
     this.action.setAttribute("aria-label", label);
     this.action.title = label;
     this.action.classList.toggle("stop", stop);
-    this.action.classList.toggle("stopping", stop && this.stopping);
     this.action.disabled = !typed && !stop;
     if (held) this.action.setAttribute("aria-disabled", "true");
     else this.action.removeAttribute("aria-disabled");

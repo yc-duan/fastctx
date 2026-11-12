@@ -1,31 +1,43 @@
-//! The WebView receives at most one pending wakeup, never an unbounded sequence
-//! of payloads. It pulls bounded UTF-8 chunks and acknowledges each before the
-//! next. A queue gap drops its source and resumes only when the page asks again.
+//! The shell pushes each page stream's pieces over its Channel in numbered
+//! batches, holding at most a window the page has not acknowledged; the page
+//! acknowledges each batch once it ran, without waiting for an answer. The
+//! queue behind it stays bounded (`watch_queue`): a page that falls behind is
+//! pushed a gap, and the source starts again from what is now once the page
+//! acknowledged it.
 
 mod mailbox;
-pub(crate) use mailbox::{Mailbox, Read, Sender};
+pub(crate) use mailbox::{Mailbox, Sender};
 
 use serde::Serialize;
+use serde_json::value::RawValue;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tauri::ipc::Channel;
 
-#[derive(Clone, Serialize)]
-pub(crate) struct Wake {
-    id: u64,
+/// What a page stream's Channel carries.
+#[derive(Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub(crate) enum Push {
+    /// The next batch of pieces, each the JSON its source sent.
+    Pieces { id: u64, number: u64, pieces: Vec<Box<RawValue>> },
+    /// What waited was dropped: the page shows it fell behind and the source
+    /// starts again once the page acknowledged this.
+    Gap { id: u64, number: u64 },
+    /// The stream is over.
+    Closed { id: u64 },
 }
 
 #[derive(Default)]
 pub(crate) struct Deliveries(Mutex<HashMap<u64, Arc<Mailbox>>>);
 impl Deliveries {
-    pub fn open(&self, id: u64, wake: Channel<Wake>) -> Result<Arc<Mailbox>, String> {
+    pub fn open(&self, id: u64, channel: Channel<Push>) -> Result<Arc<Mailbox>, String> {
         let mut entries = self.0.lock().expect("WebView deliveries");
         // What the streams hold is bounded on its own (`watch_queue`); this
         // only stops a page gone wrong.
         if entries.len() >= 16_384 {
             return Err("this page has too many open observation streams".into());
         }
-        let mailbox = Mailbox::new(id, wake);
+        let mailbox = Mailbox::new(id, channel);
         entries.insert(id, mailbox.clone());
         Ok(mailbox)
     }
@@ -39,32 +51,35 @@ impl Deliveries {
             mailbox.close();
         }
     }
-    fn read(&self, id: u64, through: u64, resync: bool) -> Result<Read, String> {
-        let mailbox = self.0.lock().expect("WebView deliveries").get(&id).cloned();
-        let Some(mailbox) = mailbox else {
-            return Ok(Read::Closed);
-        };
-        let read = mailbox.read(through, resync)?;
-        if matches!(read, Read::Closed) {
-            self.close(id);
-        }
-        Ok(read)
+    fn get(&self, id: u64) -> Option<Arc<Mailbox>> {
+        self.0.lock().expect("WebView deliveries").get(&id).cloned()
     }
 }
 
+/// The page ran a stream's batches up to `through`; a stream whose close it
+/// took lets go of what reads it.
 #[tauri::command]
-pub(crate) async fn watch_delivery_read(
-    shell: tauri::State<'_, crate::Shell>,
-    id: u64,
-    through: u64,
-    resync: Option<bool>,
-) -> Result<Read, String> {
-    let read = shell.deliveries.read(id, through, resync.unwrap_or(false))?;
-    if matches!(read, Read::Closed) {
+pub(crate) async fn watch_delivery_ack(shell: tauri::State<'_, crate::Shell>, id: u64, through: u64) -> Result<(), String> {
+    let Some(mailbox) = shell.deliveries.get(id) else { return Ok(()) };
+    if mailbox.acknowledge(through)? {
+        shell.deliveries.close(id);
         shell.transcripts.close(id);
         shell.timeline_readers.close(id);
     }
-    Ok(read)
+    Ok(())
+}
+
+/// The page missed a stream's batches after `through`: they go again.
+#[tauri::command]
+pub(crate) async fn watch_delivery_resend(
+    shell: tauri::State<'_, crate::Shell>,
+    id: u64,
+    through: u64,
+) -> Result<(), String> {
+    match shell.deliveries.get(id) {
+        Some(mailbox) => mailbox.resend(through),
+        None => Ok(()),
+    }
 }
 
 impl crate::Shell {
@@ -74,7 +89,7 @@ impl crate::Shell {
         &self,
         page: u64,
         id: u64,
-        wake: Channel<Wake>,
+        pieces: Channel<Push>,
         key: fn(&T) -> Option<String>,
         mut work: F,
     ) -> Result<(), String>
@@ -83,7 +98,7 @@ impl crate::Shell {
         F: FnMut(Sender<T>, bool) -> Fut + Send + 'static,
         Fut: std::future::Future<Output = ()> + Send + 'static,
     {
-        let mailbox = self.deliveries.open(id, wake)?;
+        let mailbox = self.deliveries.open(id, pieces)?;
         let result = self.follow(page, id, async move {
             let mut restarts = mailbox.restarts();
             let mut again = false;

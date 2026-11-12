@@ -41,6 +41,7 @@ mod management;
 mod models;
 mod notifications;
 mod offers;
+mod preparing;
 mod presentation;
 mod server;
 mod steering;
@@ -338,6 +339,8 @@ struct State {
     /// (`title`). Only their attributed usage deltas reach the node.
     title_waiters: HashMap<String, oneshot::Sender<Result<String, String>>>,
     title_usage: HashMap<String, title::Usage>,
+    /// Threads being made ready for words (`preparing`).
+    preparing: HashMap<String, preparing::Making>,
 }
 
 struct StateGuard<'a>(std::sync::MutexGuard<'a, State>);
@@ -467,6 +470,7 @@ impl CodexHost {
                 catalog: None,
                 title_waiters: HashMap::new(),
                 title_usage: HashMap::new(),
+                preparing: HashMap::new(),
             }),
             finished,
             generation: Mutex::new(()),
@@ -581,8 +585,10 @@ impl CodexHost {
     /// when the turn starts and does not wait for a server still starting.
     /// Returns why the World's tools are missing, when they are.
     pub async fn prepare(self: &Arc<Self>, thread: &str) -> Result<Option<String>, String> {
+        let preparing = self.preparing(thread);
         let server = self.server().await?;
         self.ensure_loaded(&server, thread).await?;
+        preparing.connecting();
         // Resume may hand back the runtime the app-server already had, as it
         // does for one not idle: its tools did not restart, so no word of
         // them comes, and what was known of them still holds.

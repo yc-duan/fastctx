@@ -25,6 +25,10 @@ import { enText, zhText } from "./text-words";
 import { controlRow, placeControls, withdrawn, type ControlQueueWords } from "./control-queue";
 import type { PendingControl } from "../world/control";
 
+/** How long words sent into the queue look queued before, the node not
+ *  having taken them yet, they say they are still being sent. */
+const SLOW_MS = 1500;
+
 interface Editing {
   id: string;
   document: ComposerDocument;
@@ -42,14 +46,11 @@ export class NodeQueue {
   private rows: Set<string> | null = null;
   private controls: PendingControl[] = [];
   private commands: { words: ControlQueueWords; withdraw: (id: string) => void } | null = null;
-  /** Words sent into the queue from here, shown in it at once until the
-   *  node's own queue holds them, or until they did not go. */
-  /** Words sent from here the node's queue does not hold yet; `take`, once
+  /** Words sent into the queue from here, shown in it at once as queued
+   *  until the node's own queue holds them, or until they did not go;
+   *  `slow` once the node has not taken them for a while, and `take`, once
    *  no answer came for them in time, takes them back into the input. */
-  private going: { text: string; files: number; before: Set<string>; drawn: boolean; take?: () => void }[] = [];
-  /** Words sent straight on from here that the agent has not heard yet,
-   *  which the node does not list. */
-  private straight = 0;
+  private going: { text: string; files: number; before: Set<string>; drawn: boolean; slow: boolean; take?: () => void }[] = [];
 
   constructor(
     private readonly words: QueueWords,
@@ -94,11 +95,18 @@ export class NodeQueue {
    *  it out again, once the node's queue holds it or it did not go, and what
    *  says no answer came for it in time, with what takes it back. */
   pending(text: string, files: number): { done(): void; late(take: () => void): void } {
-    const entry: (typeof this.going)[number] = { text, files, before: new Set((this.state?.composer.queue ?? []).map((item) => item.id)), drawn: false };
+    const entry: (typeof this.going)[number] = { text, files, before: new Set((this.state?.composer.queue ?? []).map((item) => item.id)), drawn: false, slow: false };
     this.going.push(entry);
     this.draw();
+    // The node takes words in within moments: only words it has not taken
+    // after a while say they are still being sent.
+    const slow = window.setTimeout(() => {
+      entry.slow = true;
+      this.draw();
+    }, SLOW_MS);
     return {
       done: () => {
+        window.clearTimeout(slow);
         const at = this.going.indexOf(entry);
         if (at < 0) return;
         this.going.splice(at, 1);
@@ -109,14 +117,6 @@ export class NodeQueue {
         this.draw();
       },
     };
-  }
-
-  /** Words sent straight on from here, until the agent hears them: no
-   *  other can be sent at once meanwhile. */
-  goingStraight(count: number): void {
-    if (count === this.straight) return;
-    this.straight = count;
-    this.draw();
   }
 
   /** How many wait. */
@@ -298,11 +298,9 @@ export class NodeQueue {
     this.state = state;
     const { words } = this;
     const composer = state?.composer;
-    // Words on their way are said in the conversation, not kept here.
+    // Words on their way are said in the conversation, not kept here. Any
+    // other can be sent at once meanwhile: it goes right after them.
     const queue = (composer?.queue ?? []).filter((item) => !item.sending);
-    // One is on its way into the turn: another cannot be sent at once until
-    // it is there.
-    const onItsWay = this.straight > 0 || (composer?.queue ?? []).some((item) => item.sending);
     const unobserved = composer?.unobserved ?? [];
     const said = (text: string) => text.replace(/\s+/g, " ").trim();
     // Words sent from here that the node's queue now holds are its own row,
@@ -343,7 +341,7 @@ export class NodeQueue {
         }
         const state = item.editing ? ` <span class="queue-state">${escape(words.editingElsewhere)}</span>` : "";
         const wrong = item.error ? ` title="${escape(item.error)}"` : "";
-        return `${before(index)}<li class="queue-row${item.error ? " wrong" : ""}" data-key="${escape(item.id)}"${wrong}><button class="queue-grip" type="button" aria-label="${escape(words.reorder)}" title="${escape(words.reorder)}">${glyph("grip", 14)}</button><span class="queue-text" title="${escape(item.draft.text)}">${escape(said(item.draft.text))}</span>${files(count)}${state}<span class="queue-acts"><button class="text-button queue-now" type="button" data-queue="now" ${onItsWay ? `disabled title="${escape(words.stillGoing)}"` : `title="${escape(words.sendNowTitle)}"`}>${glyph("guide", 14)}<span>${escape(words.sendNow)}</span></button><button class="icon-button" type="button" data-queue="edit" aria-label="${escape(words.edit)}" title="${escape(words.edit)}">${glyph("edit", 14)}</button><button class="icon-button" type="button" data-queue="remove" aria-label="${escape(words.remove)}" title="${escape(words.remove)}">${glyph("close", 14)}</button></span></li>`;
+        return `${before(index)}<li class="queue-row${item.error ? " wrong" : ""}" data-key="${escape(item.id)}"${wrong}><button class="queue-grip" type="button" aria-label="${escape(words.reorder)}" title="${escape(words.reorder)}">${glyph("grip", 14)}</button><span class="queue-text" title="${escape(item.draft.text)}">${escape(said(item.draft.text))}</span>${files(count)}${state}<span class="queue-acts"><button class="text-button queue-now" type="button" data-queue="now" title="${escape(words.sendNowTitle)}">${glyph("guide", 14)}<span>${escape(words.sendNow)}</span></button><button class="icon-button" type="button" data-queue="edit" aria-label="${escape(words.edit)}" title="${escape(words.edit)}">${glyph("edit", 14)}</button><button class="icon-button" type="button" data-queue="remove" aria-label="${escape(words.remove)}" title="${escape(words.remove)}">${glyph("close", 14)}</button></span></li>`;
       })
       .join("");
     // Sent where the World cannot tell whether they arrived: kept apart,
@@ -362,7 +360,8 @@ export class NodeQueue {
         if (one.take) {
           return `<li class="queue-row going unsure" data-going="${at}"><span class="queue-spot" aria-hidden="true"></span><span class="queue-text" title="${escape(one.text)}">${escape(said(one.text))}</span>${files(one.files)}<span class="queue-state">${escape(words.unsure)}</span><span class="queue-acts"><button class="icon-button" type="button" data-queue="take" aria-label="${escape(words.remove)}" title="${escape(words.remove)}">${glyph("close", 14)}</button></span></li>`;
         }
-        return `<li class="queue-row going${fresh}"><span class="queue-spot" aria-hidden="true"></span><span class="queue-text" title="${escape(one.text)}">${escape(said(one.text))}</span>${files(one.files)}<span class="queue-state">${escape(words.sending)}</span></li>`;
+        const state = one.slow ? `<span class="queue-state">${escape(words.sending)}</span>` : "";
+        return `<li class="queue-row going${fresh}"><span class="queue-spot" aria-hidden="true"></span><span class="queue-text" title="${escape(one.text)}">${escape(said(one.text))}</span>${files(one.files)}${state}</li>`;
       })
       .join("");
     const html = `${head}<ol class="queue-rows">${rows}${before(queue.length)}${going}${unsure}</ol>`;

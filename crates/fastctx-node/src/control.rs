@@ -170,6 +170,11 @@ fn allowed(
 
 pub(crate) async fn execute(node: &Arc<Node>, resident: &ResidentId, control: Control) -> Result<Controlled, Failure> {
     let host = host_of(node, resident)?;
+    // The goal is the World's, not its host's: either host's conversation
+    // sets it the same way.
+    if let Control::Goal { objective } = &control {
+        return crate::goals::slash::set(node, resident, objective).await;
+    }
     let gate = node.residents.management(resident)?;
     // Claude commands may wait for user interaction. Stopping their host
     // must remain possible; its bridge reports the interrupted invocation.
@@ -210,10 +215,16 @@ pub async fn offers_here(node: &Arc<Node>, resident: &ResidentId) -> Result<Offe
     if let Some((about, _)) = node.residents.about(resident) {
         offers.skills = crate::skills::listed(node, &about.acting).await;
     }
-    offers.pending_controls = crate::control_queue::pending(node, resident).await?;
+    let (newer, pending): (Vec<_>, Vec<_>) = crate::control_queue::pending(node, resident)
+        .await?
+        .into_iter()
+        .partition(|pending| matches!(pending.control, fastctx_types::session::control::Control::Goal { .. }));
+    offers.pending_controls = pending;
+    offers.pending_newer = newer;
     offers.control_queue = true;
     offers.controls_told = true;
     offers.control_reply_envelope = true;
+    offers.control_goal = true;
     Ok(offers)
 }
 

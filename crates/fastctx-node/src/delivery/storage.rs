@@ -90,3 +90,13 @@ pub(super) fn change<T: Send + 'static>(
     initialize(directory)?;
     records::write_at(directory, fastctx_storage::Priority::Interactive, bytes, write)
 }
+
+/// `change` without waiting for the disk (`records::write_relaxed_at`).
+pub(super) fn change_relaxed<T: Send + 'static>(
+    directory: &ConversationDir,
+    bytes: usize,
+    write: impl FnOnce(&records::Rows<'_>) -> fastctx_storage::Result<T> + Send + 'static,
+) -> io::Result<T> {
+    initialize(directory)?;
+    records::write_relaxed_at(directory, fastctx_storage::Priority::Interactive, bytes, write)
+}

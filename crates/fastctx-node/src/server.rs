@@ -1559,12 +1559,12 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                 .await
                 .map(|tree| Reply::Collaboration(Box::new(tree)))
         }
-        Call::Stop { resident, machine } => {
+        Call::Stop { resident, machine, turn } => {
             if let Caller::Resident(parent) = caller::of(node, peer)? {
                 return crate::colleagues::stopping::stop(node, parent, resident, machine).await;
             }
             users_voice(node, peer)?;
-            crate::talk::stop(node, resident, machine)
+            crate::talk::stop(node, resident, machine, turn)
                 .await
                 .map(|(resident, stopped)| Reply::Stopped { resident, stopped })
         }

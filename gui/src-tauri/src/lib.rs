@@ -341,7 +341,7 @@ async fn watch(
     shell: tauri::State<'_, Shell>,
     resident_id: String,
     machine_name: Option<String>,
-    pieces: Channel<watch_delivery::Wake>,
+    pieces: Channel<watch_delivery::Push>,
 ) -> Result<Watch, NotWatched> {
     let page = shell.page.load(Ordering::Relaxed);
     let world = shell.world();
@@ -598,9 +598,13 @@ async fn stop(
     shell: tauri::State<'_, Shell>,
     resident_id: String,
     machine_name: Option<String>,
+    turn: Option<String>,
 ) -> Result<bool, String> {
-    let (_, stopped) =
-        shell.world().stop(resident(resident_id)?, machine(machine_name)?).await.map_err(|error| error.to_string())?;
+    let (_, stopped) = shell
+        .world()
+        .stop(resident(resident_id)?, machine(machine_name)?, turn)
+        .await
+        .map_err(|error| error.to_string())?;
     Ok(stopped)
 }
 
@@ -1307,7 +1311,8 @@ pub fn run() {
             project_edit,
             watch,
             unwatch,
-            watch_delivery::watch_delivery_read,
+            watch_delivery::watch_delivery_ack,
+            watch_delivery::watch_delivery_resend,
             transcript::conversation_part,
             transcript::conversation_follow,
             timeline_objects::conversation_object,

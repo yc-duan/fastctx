@@ -54,6 +54,11 @@ pub enum Control {
     /// reported it (`SessionChange::Request`): `request` is the request's
     /// opaque reply address, `answer` what the host's contract takes.
     Answer { request: Value, answer: Value },
+    /// `/goal`: words for the conversation's goal, done in its order among
+    /// the words queued. A goal still open takes them as its words; otherwise
+    /// they set a new one. Sent only to a node whose offers say
+    /// `control_goal`.
+    Goal { objective: String },
 }
 
 /// The kinds of `Control`, for saying which a conversation takes.
@@ -183,9 +188,18 @@ pub struct Offers {
     /// transport's reply tag (notably a side answer's own `reply` field).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub control_reply_envelope: bool,
+    /// This node takes `Control::Goal`, queued among the words as every slash
+    /// command is; an interface sends a goal its own way to one that does not.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub control_goal: bool,
     /// Controls accepted for later execution, including one currently executing.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pending_controls: Vec<PendingControl>,
+    /// Pending controls of kinds an interface from before them cannot read
+    /// (a goal): kept apart from `pending_controls`, so the rest of these
+    /// offers still read there. A newer interface shows both.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pending_newer: Vec<PendingControl>,
     /// Exact turn boundaries observed by hosts that need a message checkpoint.
     /// None means this host uses its own turn addressing rather than checkpoints.
     #[serde(default, skip_serializing_if = "Option::is_none")]

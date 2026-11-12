@@ -1715,7 +1715,9 @@ function specimenTalk(address: Address): DeskTalk {
   // `?retrying=<ms>`: words sent at rest wait for a host that does not
   // start, and after the delay their node says so, as it does after a minute.
   // `?turnline=<n>`: they wait for room in their agent login instead, `n`
-  // turns ahead of them.
+  // turns ahead of them. `?starting=<phase>[,<failures>]`: their host is
+  // being started for them, twelve seconds in, after `failures` failed tries.
+  const [startPhase, startFailures] = (params.get("starting") ?? "").split(",");
   const retrying = params.has("retrying")
     ? (id: string) =>
         setTimeout(() => {
@@ -1732,7 +1734,17 @@ function specimenTalk(address: Address): DeskTalk {
             conversation.now(false, null, [{ id, state: "handing", queued: Number(params.get("turnline") || 2) }]);
             page.update();
           }, 300)
-      : undefined;
+      : params.has("starting")
+        ? (id: string) =>
+            setTimeout(() => {
+              const failures = Number(startFailures) || 0;
+              const reason =
+                sample.agent === "claude" ? `Claude Code exited before its session registered: exit status 1` : "the Codex app-server stopped while resuming the thread";
+              const starting = { since: new Date(Date.now() - 12_000).toISOString(), phase: startPhase || "launching", ...(failures ? { failures, reason } : {}) };
+              conversation.now(false, null, [{ id, state: "handing", starting }]);
+              page.update();
+            }, 300)
+        : undefined;
   // `?slow=<taken>,<heard>[,<sent>]` (milliseconds): its node is far away
   // and busy, as `SpecimenSlowness` says.
   const [taken, heard, sentAfter] = (params.get("slow") ?? "").split(",").map(Number);
@@ -1886,7 +1898,8 @@ function specimenTalk(address: Address): DeskTalk {
       );
       page.update();
     },
-    // A specimen's agent never stops: the button shows it stopping.
+    // A specimen's agent never stops: two seconds after the stop, the
+    // button offers to stop it again.
     stop: () => new Promise<boolean>(() => {}),
     stopJob: async () => {},
     jobOutput: async (job) => specimenOutput(job.command),
@@ -2239,7 +2252,7 @@ function liveTalk(address: Address): DeskTalk {
         go();
       });
     },
-    stop: () => stop(address),
+    stop: (turn) => stop(address, turn),
     // A sentinel's row withdraws it, then the list is asked again.
     stopJob: (job, machine) => (sentinelRows.peek().some((row) => row.job === job) ? sentinelStop(job, machine).then(async () => { await readSentinels(); }) : stopJob(job, machine)),
     jobOutput: (job) => RemoteLines.open(job.machine, job.output, { kind: "output", job: job.job }),
@@ -2333,9 +2346,9 @@ function liveTalk(address: Address): DeskTalk {
       page.refused(why);
       page.update();
     },
-    now: (busy, turn, kept) => {
+    now: (busy, turn, kept, halted) => {
       nowTold = true;
-      conversation.now(busy, turn, kept);
+      conversation.now(busy, turn, kept, halted);
       page.update();
     },
     deleted: () => gone(),

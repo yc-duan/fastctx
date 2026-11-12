@@ -314,7 +314,7 @@ pub fn run(world: World, sender: Sender, page: u64, job: Job) {
 async fn work(world: &World, job: Job) -> Result<Done, fastctx_client::Error> {
     Ok(match job {
         Job::Talk { to, machine, text } => Done::Said(world.talk(to, Some(machine.into()), text).await?),
-        Job::Stop { resident, machine } => Done::Stopped(world.stop(resident, Some(machine.into())).await?.1),
+        Job::Stop { resident, machine } => Done::Stopped(world.stop(resident, Some(machine.into()), None).await?.1),
         Job::Attach { resident } => Done::Attachable(world.attach(resident).await?),
         Job::Open { agent, town, node, text, choices } => {
             Done::Opened(world.open_with(agent, town, node.map(Into::into), text, Default::default(), choices).await?)

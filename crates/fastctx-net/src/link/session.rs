@@ -492,6 +492,10 @@ async fn connected(
     let (frames_failed, mut frames_failure) = oneshot::channel::<String>();
     let (deliveries, delivered) = mpsc::channel(DELIVERIES);
     let (frames, arriving) = mpsc::channel(FRAMES);
+    // Views queued for the node and not yet taken in: a call to take goes
+    // ahead of the frames waiting only while none is, so it is never judged
+    // by a view older than the one the hub sent before it.
+    let views_waiting = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     // Set once this connection's view is current: letters are admitted by it.
     let (view_ready, view_current) = watch::channel(false);
     let pinged: Arc<std::sync::Mutex<std::collections::HashMap<u64, Instant>>> = Arc::default();
@@ -502,7 +506,15 @@ async fn connected(
         fastctx_platform::task::spawn(heartbeat(inner.clone(), up.clone(), pinged.clone(), pulse.clone())),
         inner.on_node(flush(inner.clone(), up.clone(), taken, outbox_failed)),
         inner.on_node(take_letters(inner.clone(), up.clone(), hub_letters, delivered, view_current, letters_taking)),
-        inner.on_node(handle_frames(inner.clone(), generation, up.clone(), deliveries, arriving, frames_failed)),
+        inner.on_node(handle_frames(
+            inner.clone(),
+            generation,
+            up.clone(),
+            deliveries,
+            arriving,
+            frames_failed,
+            views_waiting.clone(),
+        )),
     ]);
     let (returned, mut preferred_back) = oneshot::channel::<Upstream>();
     let mut preferred = tried[..tried.len() - 1].to_vec();
@@ -707,20 +719,32 @@ async fn connected(
             | Down::Ready => {
                 break Ended::Retry("the hub sent a frame that belongs to another kind of connection".to_string());
             }
+            // A call to take is answered on its own task at once, not after
+            // letters the node is still taking in, as long as no view it may
+            // be judged by waits.
+            Down::Incoming { call, message } if views_waiting.load(std::sync::atomic::Ordering::Acquire) == 0 => {
+                let stop = inner.answers.open(inner, CallOn::Hub(generation), call);
+                fastctx_platform::task::spawn(super::answering::answer(
+                    inner.clone(),
+                    Replier::Hub(up.clone(), call),
+                    message,
+                    stop,
+                ));
+            }
             // The rest is the node's to do, in the order it came. A node that
             // falls this far behind lets the connection go rather than hold
             // the hub's frames without end: the next one starts afresh, and
             // what it missed comes again.
-            frame => match frames.try_send(frame) {
+            frame => match queue_frame(&frames, &views_waiting, frame) {
                 Ok(()) => {
                     fastctx_platform::health::bound("link.frames").note(FRAMES - frames.capacity(), FRAMES);
                 }
-                Err(mpsc::error::TrySendError::Full(_)) => {
+                Err(Unqueued::Full) => {
                     break Ended::Retry(format!(
                         "the hub's frames piled up faster than this machine does what they say ({FRAMES} waiting)"
                     ));
                 }
-                Err(mpsc::error::TrySendError::Closed(_)) => {
+                Err(Unqueued::Closed) => {
                     break Ended::Retry("doing what the hub's frames say stopped".to_string());
                 }
             },
@@ -789,6 +813,33 @@ impl Drop for Tasks {
 /// for one machine, so a node that keeps up never comes near it.
 const FRAMES: usize = 4096;
 
+/// Why a frame could not wait for `handle_frames`.
+enum Unqueued {
+    Full,
+    Closed,
+}
+
+/// Queues a frame for `handle_frames`, counting a view among those waiting
+/// until it is taken in.
+fn queue_frame(
+    frames: &mpsc::Sender<Down>,
+    views_waiting: &std::sync::atomic::AtomicUsize,
+    frame: Down,
+) -> Result<(), Unqueued> {
+    let view = matches!(frame, Down::View { .. });
+    if view {
+        views_waiting.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+    }
+    let sent = frames.try_send(frame).map_err(|error| match error {
+        mpsc::error::TrySendError::Full(_) => Unqueued::Full,
+        mpsc::error::TrySendError::Closed(_) => Unqueued::Closed,
+    });
+    if view && sent.is_err() {
+        views_waiting.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+    }
+    sent
+}
+
 /// Does what the hub's frames say, in the order they came, on the node's
 /// runtime: the line goes on being read and kept while it takes its time.
 async fn handle_frames(
@@ -798,14 +849,77 @@ async fn handle_frames(
     deliveries: mpsc::Sender<(u64, Envelope)>,
     mut arriving: mpsc::Receiver<Down>,
     failed: oneshot::Sender<String>,
+    views_waiting: Arc<std::sync::atomic::AtomicUsize>,
 ) {
     let mut version_parts = super::version_parts::Receiving::default();
-    while let Some(frame) = arriving.recv().await {
-        if let Err(reason) = handle_frame(&inner, generation, &up, &deliveries, &mut version_parts, frame).await {
+    // What the hub says it holds is written down on a task of its own, in
+    // order and a batch at a time: the frames after it never wait for disk.
+    let (acks, acks_taken) = mpsc::channel(ACKS);
+    let mut recording = fastctx_platform::task::spawn(record_acks(inner.clone(), acks_taken));
+    loop {
+        let frame = tokio::select! {
+            biased;
+            recorded = &mut recording => {
+                let reason = match recorded {
+                    Ok(Err(reason)) => reason,
+                    Ok(Ok(())) => return,
+                    Err(error) => format!("recording what the hub holds: {error}"),
+                };
+                let _ = failed.send(reason);
+                return;
+            }
+            frame = arriving.recv() => match frame {
+                Some(frame) => frame,
+                None => break,
+            },
+        };
+        let view = matches!(frame, Down::View { .. });
+        let handled = handle_frame(&inner, generation, &up, &deliveries, &acks, &mut version_parts, frame).await;
+        if view {
+            views_waiting.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+        }
+        if let Err(reason) = handled {
+            recording.abort();
             let _ = failed.send(reason);
             return;
         }
     }
+    // The line is done: what the hub said it holds is still written down.
+    drop(acks);
+    let _ = recording.await;
+}
+
+/// Acknowledgements waiting to be written down; the hub sends at most one
+/// for each letter this machine sent it.
+const ACKS: usize = 4096;
+
+/// Writes down, in the order the hub sent them, the letters it refused and
+/// how far it holds this machine's letters. What waits is taken together:
+/// the refused ones one by one, how far it holds once, at the furthest.
+async fn record_acks(inner: Arc<Inner>, mut acks: mpsc::Receiver<(u64, Option<String>)>) -> Result<(), String> {
+    while let Some(first) = acks.recv().await {
+        let mut batch = vec![first];
+        while batch.len() < ACKS
+            && let Ok(more) = acks.try_recv()
+        {
+            batch.push(more);
+        }
+        let keeping = inner.clone();
+        inner
+            .blocking(move || -> Result<(), String> {
+                for (seq, refused) in &batch {
+                    if let Some(reason) = refused {
+                        refused_letter(&keeping, *seq, reason)
+                            .map_err(|error| format!("recording refused letter {seq}: {error}"))?;
+                    }
+                }
+                let furthest = batch.iter().map(|(seq, _)| *seq).max().expect("a batch is never empty");
+                held(&keeping, furthest).map_err(|error| format!("recording what the hub holds: {error}"))
+            })
+            .await
+            .map_err(|error| format!("recording what the hub holds: {error}"))??;
+    }
+    Ok(())
 }
 
 async fn handle_frame(
@@ -813,22 +927,15 @@ async fn handle_frame(
     generation: u64,
     up: &Outgoing,
     deliveries: &mpsc::Sender<(u64, Envelope)>,
+    acks: &mpsc::Sender<(u64, Option<String>)>,
     version_parts: &mut super::version_parts::Receiving,
     frame: Down,
 ) -> Result<(), String> {
     match frame {
         Down::Ack { seq, refused } => {
-            let keeping = inner.clone();
-            inner
-                .blocking(move || -> Result<(), String> {
-                    if let Some(reason) = refused {
-                        refused_letter(&keeping, seq, &reason)
-                            .map_err(|error| format!("recording refused letter {seq}: {error}"))?;
-                    }
-                    held(&keeping, seq).map_err(|error| format!("recording what the hub holds: {error}"))
-                })
-                .await
-                .map_err(|error| format!("recording what the hub holds: {error}"))??;
+            if tokio::time::timeout(SILENCE, acks.send((seq, refused))).await.is_err() {
+                return Err(format!("what the hub holds could not be written down for {} s", SILENCE.as_secs()));
+            }
         }
         // Letters the hub sends faster than this machine takes them wait
         // for it, for as long as a silence lasts at most: an older hub

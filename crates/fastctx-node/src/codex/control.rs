@@ -302,6 +302,7 @@ pub async fn control(node: &Arc<Node>, resident: &ResidentId, mut control: Contr
         }
         Control::Answer { .. } => unreachable!("answers do not acquire the speech lock"),
         Control::CancelControl { .. } => unreachable!("queued controls are cancelled by the node"),
+        Control::Goal { .. } => unreachable!("the node sets a goal itself (`goals::slash`)"),
         Control::Agents | Control::AgentMessages { .. } => {
             Err(Failure::new("this host does not offer native agent controls"))
         }

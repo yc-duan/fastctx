@@ -42,13 +42,63 @@ export function presentation(reserve, currentTurn) {
   // model when one of them ends is shown as that end, as the session's
   // record is read (`subagents.rs`), not as words the user said.
   const agents = new Set()
+  // The steps whose streamed blocks may still be claimed by the rows Claude
+  // Code stores of them, oldest first: a row can come after the next step
+  // began, and the plugin's own idea of the running turn can lag behind a
+  // turn the host began (a start hook still waiting), so a row is matched by
+  // the steps themselves, not by that idea.
+  // Each step also counts the rows stored of its response (`next`) against the
+  // highest block index its stream named (`last`): a response's blocks are
+  // stored one row each, in order, so the row a step stores next is its block
+  // at that index, streamed or not.
+  const recent = []
+  const RECENT_STEPS = 16
   let latestStep = null
   let agentTurn = null
+  // The turn now: the plugin's own idea of it, or the turn the latest step
+  // ran in while that idea has not caught up.
+  const turnNow = () => currentTurn() ?? latestStep?.turn ?? null
   const steps = taskSteps()
   const emit = (reports, happened) => reports.event('session', { happened })
   const item = (id, kind, fields = {}) => ({ id, kind, started_at: reserve().at, ...fields })
   const shownOf = ({ ended, stored, ...shown }) => shown
-  const checkpoint = (reports) => reports.save({ tools: [...tools.entries()], requests: [...requests.entries()], tasks: steps.snapshot(), agents: [...agents] })
+  // The earliest streamed block of `kind` no row has claimed, in the oldest
+  // recent step that has one and ran in `turn` when a recent step ran in it
+  // (an idea of the turn that names none of them has fallen behind, and says
+  // nothing). A claim in a step lets go of the steps before it: their rows
+  // are all in.
+  const claim = (kind, turn) => {
+    const known = turn != null && recent.some((step) => step.turn === turn)
+    for (const [at, step] of recent.entries()) {
+      if (step.failed || (known && step.turn !== turn)) continue
+      const shown = [...step.blocks.values()].find((block) => block.kind === kind && !block.stored)
+      if (shown === undefined) continue
+      recent.splice(0, at)
+      return { step, shown }
+    }
+    return undefined
+  }
+  // The step whose response a stored row is the next block of: the oldest
+  // recent one with blocks still to be stored, or the latest.
+  const owner = (turn) => {
+    const known = turn != null && recent.some((step) => step.turn === turn)
+    for (const [at, step] of recent.entries()) {
+      if (step.failed || (known && step.turn !== turn)) continue
+      if (step.next <= step.last || at === recent.length - 1) {
+        // The earlier steps of its turn have all their rows in.
+        for (let index = at - 1; index >= 0; index--) if (recent[index].turn === step.turn) recent.splice(index, 1)
+        return step
+      }
+    }
+    return undefined
+  }
+  const ledger = () => recent.map((step) => ({
+    turn: step.turn, failed: step.failed, next: step.next, last: step.last,
+    blocks: [...step.blocks.entries()].map(([key, block]) => [key, {
+      id: block.id, kind: block.kind, started_at: block.started_at, stored: block.stored === true, ended: block.ended === true,
+    }]),
+  }))
+  const checkpoint = (reports) => reports.save({ tools: [...tools.entries()], requests: [...requests.entries()], tasks: steps.snapshot(), agents: [...agents], recent: ledger() })
 
   async function completeTool(reports, call, stored) {
     const result = call.result
@@ -76,6 +126,17 @@ export function presentation(reserve, currentTurn) {
       for (const [id, request] of state.requests) requests.set(id, request)
       steps.restore(state.tasks)
       for (const id of state.agents ?? []) agents.add(id)
+      // The blocks recent steps streamed, so rows stored after a reload still
+      // find the drafts they were shown as.
+      for (const kept of state.recent ?? []) {
+        const blocks = new Map()
+        for (const [key, block] of kept.blocks ?? []) {
+          blocks.set(key, { ...block, text: '', ...(block.stored ? {} : { stored: undefined }), ...(block.ended ? {} : { ended: undefined }) })
+        }
+        recent.push({ turn: kept.turn, blocks, failed: kept.failed === true, next: kept.next ?? 0, last: kept.last ?? -1 })
+      }
+      while (recent.length > RECENT_STEPS) recent.shift()
+      latestStep = recent[recent.length - 1] ?? null
     },
     /** One of the host's own agents started in this conversation. */
     spawned(id) {
@@ -89,9 +150,13 @@ export function presentation(reserve, currentTurn) {
       const blocks = new Map()
       let responseReported = false
       let observedUsage = null
-      latestStep = { turn: e.turnId, blocks }
+      latestStep = { turn: e.turnId, blocks, failed: false, next: 0, last: -1 }
+      recent.push(latestStep)
+      if (recent.length > RECENT_STEPS) recent.shift()
+      const step = latestStep
       try {
         for await (const chunk of stream) {
+          if (Number.isInteger(chunk.index) && chunk.index > step.last) step.last = chunk.index
           if (chunk.kind === 'stop') {
             reports.stream({ event: 'changed', turn: e.turnId, change: { kind: 'model_response', step: e.index, usage: chunk.usage ?? null } })
             responseReported = true
@@ -120,6 +185,10 @@ export function presentation(reserve, currentTurn) {
           reports.stream({ event: 'changed', turn: e.turnId, change: { kind: 'model_response', step: e.index, usage: result.usage ?? null } })
         }
         return result
+      } catch (error) {
+        // A failed attempt's blocks are never stored: no later row is theirs.
+        step.failed = true
+        throw error
       } finally {
         // A block whose row was never stored (an interruption, a failed
         // attempt) ends with the step, as exactly the pieces observed.
@@ -131,12 +200,14 @@ export function presentation(reserve, currentTurn) {
           block.ended = true
           reports.stream({ event: 'finished', turn: e.turnId, item: shownOf(block) })
         }
+        // The step's blocks outlive a reload of the plugin.
+        checkpoint(reports).catch(() => {})
       }
     },
 
     async call(reports, e, next) {
       const { tool, tool_use_id: id, consent, agentId, ...input } = e
-      const call = { id, tool, input, turn: agentId === undefined ? currentTurn() : agentTurn, started_at: reserve().at }
+      const call = { id, tool, input, turn: agentId === undefined ? turnNow() : agentTurn, started_at: reserve().at }
       tools.set(id, call)
       await checkpoint(reports)
       await reports.event('tool_start', { turn: call.turn, item: id, tool, input, started_at: call.started_at })
@@ -159,7 +230,7 @@ export function presentation(reserve, currentTurn) {
     },
 
     async append(reports, e, next) {
-      const turn = e.agentId === undefined ? currentTurn() : agentTurn
+      const turn = e.agentId === undefined ? turnNow() : agentTurn
       const result = await next(e)
       if (result.deny !== undefined || rows.has(result.uuid)) return result
       rows.add(result.uuid)
@@ -186,7 +257,13 @@ export function presentation(reserve, currentTurn) {
               hook_fragments: [], presentation: null, detail: { uuid: result.uuid, message: result.message } } })
         }
       }
+      const rowTurn = e.agentId === undefined ? currentTurn() : agentTurn
+      const stepOf = result.message.type === 'assistant' ? owner(rowTurn) : undefined
       for (const [index, block] of result.message.content.entries()) {
+        // Where in its step's response this block stands, when the step
+        // named that far in its stream.
+        const position = stepOf === undefined ? null : stepOf.next++
+        const placed = position !== null && position <= stepOf.last
         if (block.type === 'tool_use') {
           requests.set(block.id, { block, turn, at: reserve().at })
           await checkpoint(reports)
@@ -218,14 +295,24 @@ export function presentation(reserve, currentTurn) {
         } else if (result.message.type === 'assistant' && (block.type === 'text' || block.type === 'thinking' || block.type === 'redacted_thinking')) {
           const kind = block.type === 'text' ? 'message' : 'thinking'
           const text = block.type === 'text' ? block.text : block.type === 'thinking' ? block.thinking : ''
-          // The row is that of the earliest block of its kind the step
+          // The row is that of the earliest block of its kind a recent step
           // streamed and no row has claimed: blocks of one response come one
-          // after another, each stored as it closes. One already ended with
-          // its step (an interruption's partial block, stored after the
-          // stream) is not shown again.
-          const streamed = latestStep?.turn === turn
-            ? [...latestStep.blocks.values()].find((shown) => shown.kind === kind && !shown.stored)
-            : undefined
+          // after another, each stored as it closes, and a step's rows come
+          // before the next step's. One already ended with its step (an
+          // interruption's partial block, stored after the stream) is not
+          // shown again. The plugin's idea of the turn, where it has one,
+          // keeps an earlier turn's leftovers out.
+          // The block its step streamed at this place, when it streamed one
+          // there; a row past what the stream named is matched as before, by
+          // the earliest block of its kind no row has claimed.
+          let claimed
+          if (placed) {
+            const there = stepOf.blocks.get((kind === 'message' ? 'text' : 'thinking') + ':' + position)
+            claimed = there !== undefined && !there.stored ? { step: stepOf, shown: there } : undefined
+          } else {
+            claimed = claim(kind, currentTurn())
+          }
+          const streamed = claimed?.shown
           let shown
           if (streamed !== undefined) {
             // Kept now under the name Claude Code's own record gives it, the
@@ -235,7 +322,7 @@ export function presentation(reserve, currentTurn) {
             streamed.ended = true
             shown = { ...shownOf(streamed), id: JSON.stringify([result.uuid, index]), draft: streamed.id,
               ...(typeof text === 'string' && { text }), detail: block }
-            reports.stream({ event: 'finished', turn: turn ?? '', item: shown })
+            reports.stream({ event: 'finished', turn: claimed.step.turn, item: shown })
           } else {
             // A block with nothing streamed (thinking whose display sends no
             // pieces, a non-streamed response) is first seen as it is stored,
@@ -244,7 +331,7 @@ export function presentation(reserve, currentTurn) {
             await emit(reports, { event: 'began', turn: turn ?? '', item: shown })
             await emit(reports, { event: 'finished', turn: turn ?? '', item: shown })
           }
-          if (kind === 'thinking') reports.thought({ uuid: result.uuid, turn: turn ?? '', item: shown.id })
+          if (kind === 'thinking') reports.thought({ uuid: result.uuid, turn: claimed?.step.turn ?? turn ?? '', item: shown.id })
         } else if (result.message.type === 'assistant') {
           const other = item(JSON.stringify([result.uuid, index]), 'other', {
             host_kind: block.type, detail: block,
@@ -253,6 +340,13 @@ export function presentation(reserve, currentTurn) {
           await emit(reports, { event: 'finished', turn: turn ?? '', item: other })
         }
       }
+      // What the step's ledger learned from this row (blocks claimed, how
+      // far its positions went) outlives a reload of the plugin: a row that
+      // arrives after it claims the next block, not this one again. It goes
+      // in its turn among the session's writes and is not waited for: a row
+      // stored while its step still streams would otherwise wait for the
+      // stream's batch to be handed over.
+      if (stepOf !== undefined) checkpoint(reports).catch(() => {})
       // Prose already streamed is not reported again as it is stored: the
       // record of what was stored is Claude Code's own session file, which
       // the World reads for a session's history.
@@ -261,7 +355,7 @@ export function presentation(reserve, currentTurn) {
 
     async compact(reports, e, next) {
       if (e.agentId !== undefined) return next(e)
-      const turn = currentTurn() ?? ''
+      const turn = turnNow() ?? ''
       const identity = reserve()
       const compacted = { id: 'compact:' + identity.id, kind: 'compaction', started_at: identity.at }
       if (e.trigger === 'precompute') {

@@ -421,8 +421,10 @@ async fn acquire(inner: &Inner, request: Request, stop: &mut Answer) -> Option<R
 /// Sends `message`, which answers a call, back the way the call came.
 async fn send(replier: &Replier, message: Envelope) -> Result<(), String> {
     match replier {
-        Replier::Hub(up, call) => up.write(Up::Answer { call: *call, message }).await,
-        Replier::Peer(conn, id) => conn.write(crate::peer::Frame::Answer { id: *id, message }).await,
+        // A short answer goes ahead of letters and large answers: the caller
+        // may be a person waiting.
+        Replier::Hub(up, call) => up.write_soon(Up::Answer { call: *call, message }).await,
+        Replier::Peer(conn, id) => conn.write_soon(crate::peer::Frame::Answer { id: *id, message }).await,
     }
 }
 

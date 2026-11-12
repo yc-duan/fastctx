@@ -76,7 +76,7 @@ pub enum Piece {
 pub(crate) async fn history_watch(
     shell: tauri::State<'_, Shell>,
     scope: Scope,
-    pieces: Channel<crate::watch_delivery::Wake>,
+    pieces: Channel<crate::watch_delivery::Push>,
 ) -> Result<u64, String> {
     let page = shell.page.load(Ordering::Relaxed);
     let world = shell.world();

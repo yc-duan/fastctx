@@ -26,6 +26,7 @@ pub(crate) mod reviewer;
 mod wiring;
 pub(crate) use wiring::connected;
 pub(crate) mod scope;
+pub(crate) mod slash;
 mod state;
 pub(crate) mod submission;
 pub(crate) mod waiting;

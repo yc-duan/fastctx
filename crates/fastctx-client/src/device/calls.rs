@@ -493,9 +493,9 @@ impl Device {
                 let machine = self.find(&resident, machine).await?;
                 (machine, RemoteCall::Collaboration { resident: resident.clone(), colleagues: true }, Some(resident))
             }
-            Call::Stop { resident, machine } => {
+            Call::Stop { resident, machine, turn } => {
                 let machine = self.find(&resident, machine).await?;
-                (machine, RemoteCall::Stop { resident: resident.clone() }, Some(resident))
+                (machine, RemoteCall::Stop { resident: resident.clone(), turn }, Some(resident))
             }
             // A command stops as the user asks, on the machine it runs on.
             Call::StopJob { job, machine, hub } => {

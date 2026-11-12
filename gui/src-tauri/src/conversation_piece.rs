@@ -66,6 +66,9 @@ pub(crate) enum Piece {
         busy: bool,
         turn: Option<String>,
         kept: Vec<fastctx_types::session::KeptWords>,
+        /// The turn the user asked to stop, until it ends.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        halted: Option<String>,
     },
     /// The watch is over: the node ended it, or the connection broke.
     Ended {

@@ -75,6 +75,7 @@ fn take_back(
         return Err(failure("the input is full; the words stay in the queue, where they can be edited or removed"));
     }
     let entry = state.queue.remove(position);
+    state.unline(&entry.id);
     state.draft.take_back(entry.document, crate::speech::new_id("back").as_str())?;
     receipt.failure = Some(WITHDRAWN.into());
     state.receipts.insert(send.into(), receipt);
@@ -128,6 +129,18 @@ mod tests {
         let again = state.receipts["send-1"].clone();
         take_back(&mut state, "send-1", Some(again), None).unwrap();
         assert_eq!(state.draft.view().text, "hello");
+    }
+
+    #[test]
+    fn words_lined_up_after_a_stop_return_to_the_draft() {
+        let (mut state, receipt) = queued("send-6", "after the stop");
+        let entry = receipt.entry.clone().unwrap();
+        state.reindex();
+        state.line_up(&entry, Some("send-6".into()), true).unwrap();
+        take_back(&mut state, "send-6", Some(receipt), None).unwrap();
+        assert!(state.queue.is_empty());
+        assert!(state.lined.is_empty());
+        assert_eq!(state.draft.view().text, "after the stop");
     }
 
     #[test]

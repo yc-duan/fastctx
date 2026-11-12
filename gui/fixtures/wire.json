@@ -22297,6 +22297,10 @@
         "answer": {
           "decision": "accept"
         }
+      },
+      {
+        "do": "goal",
+        "objective": "把这一版做完"
       }
     ],
     "controlled": [
@@ -22367,6 +22371,7 @@
       {
         "control_queue": true,
         "controls_told": true,
+        "control_goal": true,
         "pending_controls": [
           {
             "id": "control-1",
@@ -22374,6 +22379,17 @@
               "do": "compact"
             },
             "at": "2026-10-21T00:00:00Z",
+            "state": "waiting"
+          }
+        ],
+        "pending_newer": [
+          {
+            "id": "control-2",
+            "control": {
+              "do": "goal",
+              "objective": "把这一版做完"
+            },
+            "at": "2026-10-21T00:00:01Z",
             "state": "waiting"
           }
         ],

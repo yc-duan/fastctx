@@ -30,7 +30,7 @@ export interface ConversationFeed {
   refused(why: string): void;
   /** Whether it works now, on which turn, and which words its machine
    *  keeps on their way in; after every event before it. */
-  now(busy: boolean, turn: string | null, kept: import("./model").KeptWords[]): void;
+  now(busy: boolean, turn: string | null, kept: import("./model").KeptWords[], halted: string | null): void;
 }
 
 export interface Reading {
@@ -151,6 +151,9 @@ export const watched: ConversationSource = {
           feed.rebased(piece.generation, piece.offset, piece.turns_added);
           return;
         case "interrupted":
+          // This interface fell behind while the line held: the shell reads
+          // the conversation again at once, its window first; nothing broke.
+          if (piece.gap) return;
           feed.interrupted(piece.error, new Date(piece.since));
           return;
         case "ended":
@@ -164,7 +167,7 @@ export const watched: ConversationSource = {
           decline(piece.error, attempted);
           return;
         case "now":
-          feed.now(piece.busy, piece.turn, piece.kept ?? []);
+          feed.now(piece.busy, piece.turn, piece.kept ?? [], piece.halted ?? null);
       }
     };
     // A watch that could not start is tried again, as `../world/again.ts`

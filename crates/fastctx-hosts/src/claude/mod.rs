@@ -218,6 +218,7 @@ pub fn write_plugin(world: &Path) -> io::Result<PathBuf> {
     let directory = trust::directory_key(world)?;
     let module = MOD
         .replace("__FASTCTX_CONTROLS__", include_str!("control.js"))
+        .replace("__FASTCTX_CHANNEL__", include_str!("channel.js"))
         .replace("__FASTCTX_COMMANDS__", include_str!("commands.js"))
         .replace("__FASTCTX_NATIVE_GOAL__", include_str!("native_goal.js"))
         .replace("__FASTCTX_COMMAND_CATALOG__", include_str!("command_catalog.json"))

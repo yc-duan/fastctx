@@ -13,6 +13,11 @@
 //! notice that takes several frames goes a frame at a turn, so a pong never
 //! waits behind all of it.
 //!
+//! Within the first lane, what fits one frame (a pong, a call to take, a
+//! status, a short answer) goes before the parts of an answer too large for
+//! one: a stop or a word for a conversation never waits behind megabytes of
+//! someone's history. The parts of one answer keep their order.
+//!
 //! Each lane is bounded where things are queued. The first by count and
 //! bytes, and notices by count. Status notices own bounded cursors into
 //! shared immutable snapshots, plus at most one frame and one pending item
@@ -143,6 +148,9 @@ struct State {
     /// Nothing more is taken: the session's writer is done.
     shut: bool,
     welcome: Option<Down>,
+    /// The first lane's frames that are whole on their own.
+    prompt: VecDeque<(Out, usize)>,
+    /// The first lane's parts of large answers, and its end.
     urgent: VecDeque<(Out, usize)>,
     urgent_bytes: usize,
     /// `urgent_bytes`, as taken of every member's pool.
@@ -158,6 +166,9 @@ struct State {
     overflowed: Option<String>,
     /// How many frames of the first lane went in a row.
     in_a_row: usize,
+    /// How many whole frames went in a row while parts of a large answer
+    /// waited: past `PROMPT_RUN`, a part goes, so it is never starved.
+    prompt_run: usize,
     /// Whether letters go before notices next.
     letters_next: bool,
 }
@@ -215,6 +226,7 @@ impl Outq {
             }
             out => vec![out],
         };
+        let whole = frames.len() == 1;
         let frames: Vec<_> = frames
             .into_iter()
             .map(|out| {
@@ -237,9 +249,9 @@ impl Outq {
                 }
                 Out::Frame(frame) => match notice(&frame) {
                     Some(notice) => state.notify(notice, frame),
-                    None => state.urge(Out::Frame(frame), bytes),
+                    None => state.urge(Out::Frame(frame), bytes, whole),
                 },
-                end @ Out::End(_) => state.urge(end, bytes),
+                end @ Out::End(_) => state.urge(end, bytes, false),
             });
             (queued, state.overflowed.clone())
         };
@@ -355,7 +367,7 @@ impl Outq {
     pub(crate) fn sizes(&self) -> Sizes {
         let state = self.0.state.lock().expect("never poisoned");
         Sizes {
-            urgent: state.urgent.len(),
+            urgent: state.prompt.len() + state.urgent.len(),
             urgent_bytes: state.urgent_bytes,
             letters: state.letters.len(),
             notices: state.notices.len() + usize::from(state.spilled.is_some()),
@@ -387,17 +399,38 @@ impl Outq {
     }
 }
 
+/// How many whole frames of the first lane go in a row before a waiting part
+/// of a large answer.
+const PROMPT_RUN: usize = 16;
+
 impl State {
+    /// The first lane's next frame: whole ones first, a part after every
+    /// `PROMPT_RUN` of them.
+    fn first_lane(&mut self) -> Option<(Out, usize)> {
+        if self.prompt_run >= PROMPT_RUN
+            && let Some(part) = self.urgent.pop_front()
+        {
+            self.prompt_run = 0;
+            return Some(part);
+        }
+        if let Some(whole) = self.prompt.pop_front() {
+            self.prompt_run += 1;
+            return Some(whole);
+        }
+        self.prompt_run = 0;
+        self.urgent.pop_front()
+    }
+
     fn overflow(&mut self, why: String) -> Result<(), ()> {
         self.overflowed = Some(why);
         Err(())
     }
 
-    fn urge(&mut self, out: Out, bytes: usize) -> Result<(), ()> {
-        if self.urgent.len() >= URGENT || self.urgent_bytes + bytes > URGENT_BYTES {
+    fn urge(&mut self, out: Out, bytes: usize, whole: bool) -> Result<(), ()> {
+        let waiting = self.prompt.len() + self.urgent.len();
+        if waiting >= URGENT || self.urgent_bytes + bytes > URGENT_BYTES {
             let why = format!(
-                "{} frames of {} bytes wait for it untaken, as many as {URGENT} or {URGENT_BYTES} bytes; letting it go",
-                self.urgent.len(),
+                "{waiting} frames of {} bytes wait for it untaken, as many as {URGENT} or {URGENT_BYTES} bytes; letting it go",
                 self.urgent_bytes
             );
             return self.overflow(why);
@@ -411,7 +444,7 @@ impl State {
         }
         self.charged.0 += bytes;
         self.urgent_bytes += bytes;
-        self.urgent.push_back((out, bytes));
+        if whole { self.prompt.push_back((out, bytes)) } else { self.urgent.push_back((out, bytes)) }
         Ok(())
     }
 
@@ -448,7 +481,7 @@ impl State {
         }
         let others = !self.letters.is_empty() || !self.notices.is_empty() || self.spilled.is_some();
         if (self.in_a_row < BURST || !others)
-            && let Some((out, bytes)) = self.urgent.pop_front()
+            && let Some((out, bytes)) = self.first_lane()
         {
             self.urgent_bytes -= bytes;
             self.charged.0 -= bytes;

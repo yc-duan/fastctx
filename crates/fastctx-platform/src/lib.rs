@@ -105,7 +105,10 @@ mod windows_user;
 #[cfg(any(target_os = "linux", target_os = "macos", windows))]
 pub mod worker;
 
-pub use atomic::{Permissions, PublishFailure, Staged, publish, publish_changed, publish_checked, publish_new};
+pub use atomic::{
+    Permissions, PublishFailure, Staged, mark_new, publish, publish_changed, publish_checked, publish_new, publish_new_unsynced,
+    publish_unsynced,
+};
 #[cfg(any(target_os = "linux", target_os = "macos", windows))]
 pub use child::Child;
 pub use detach::{DetachedProcess, spawn_detached};

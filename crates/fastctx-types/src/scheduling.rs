@@ -21,7 +21,7 @@ impl RemoteCall {
             | Self::EnterProject { resident, .. }
             | Self::Find { resident }
             | Self::Watch { resident, .. }
-            | Self::Stop { resident }
+            | Self::Stop { resident, .. }
             | Self::Control { resident, .. }
             | Self::Manage { resident, .. }
             | Self::Offers { resident }

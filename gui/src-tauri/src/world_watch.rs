@@ -59,7 +59,7 @@ fn told(last: &mut Option<serde_json::Value>, seen: fastctx_client::world_now::S
 #[fastctx_gui_command::command]
 pub(crate) async fn world_watch(
     shell: tauri::State<'_, Shell>,
-    pieces: Channel<crate::watch_delivery::Wake>,
+    pieces: Channel<crate::watch_delivery::Push>,
     known: Option<Vec<String>>,
 ) -> Result<u64, String> {
     let page = shell.page.load(Ordering::Relaxed);

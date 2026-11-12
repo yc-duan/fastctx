@@ -235,6 +235,10 @@ pub enum Watched {
         turn: Option<String>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         kept: Vec<KeptWords>,
+        /// The turn the user asked to stop, until it ends: every viewer shows
+        /// it stopped at once, not only the one where the stop was pressed.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        halted: Option<String>,
     },
     /// For a viewer that follows the conversation's collaboration instead of
     /// its history (the `collaboration` of its watch): the whole of it as it
@@ -278,12 +282,54 @@ pub struct KeptWords {
     /// (`world-colleagues.md`, 同事从哪里来、能去哪里).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub for_callee: bool,
+    /// While its host is being started for these words: how far that has
+    /// come. A view from before this reads `host_retry` instead.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub starting: Option<Starting>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HostRetry {
     pub since: Timestamp,
     pub reason: String,
+}
+
+/// A host being started for kept words (`KeptWords::starting`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Starting {
+    /// When the World first asked for the host for these words.
+    pub since: Timestamp,
+    pub phase: StartPhase,
+    /// Starts that failed and are tried again; none until one fails. What
+    /// the host said while it started is never counted.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub failures: u32,
+    /// Why the last start failed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    /// When the next try begins, while one waits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next: Option<Timestamp>,
+}
+
+fn is_zero(value: &u32) -> bool {
+    *value == 0
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StartPhase {
+    /// Getting ready to ask for the host: its records, its settings.
+    Preparing,
+    /// The host's process is being started with the words.
+    Launching,
+    /// The host took the words; the World's part in it has not yet come up.
+    Connecting,
+    /// The last start failed; the next try waits (`Starting::next`).
+    Retrying,
+    /// A phase of a newer version.
+    #[serde(other)]
+    Unknown,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -76,6 +76,24 @@ impl<T> Sender<T> {
         })
     }
 
+    /// Queues `value` when there is room, giving it back otherwise: unlike
+    /// `send`, a full queue tells no one and ends nothing.
+    pub fn try_send(&self, value: T, size: usize) -> Result<(), T> {
+        let before = self.shared.queued.fetch_add(1, Ordering::AcqRel);
+        let bytes = self.shared.bytes.fetch_add(size, Ordering::AcqRel);
+        if before >= self.shared.bound || (before > 0 && bytes + size > self.shared.bound_bytes) {
+            self.shared.queued.fetch_sub(1, Ordering::AcqRel);
+            self.shared.bytes.fetch_sub(size, Ordering::AcqRel);
+            return Err(value);
+        }
+        self.shared.used.note(before + 1, self.shared.bound);
+        self.sender.send((value, size)).map_err(|refused| {
+            self.shared.queued.fetch_sub(1, Ordering::AcqRel);
+            self.shared.bytes.fetch_sub(size, Ordering::AcqRel);
+            refused.0.0
+        })
+    }
+
     /// Resolves once a frame was refused for want of room.
     pub async fn overflowed(&self) {
         self.shared.overflowed.notified().await;
@@ -85,6 +103,14 @@ impl<T> Sender<T> {
 impl<T> Receiver<T> {
     pub async fn recv(&mut self) -> Option<T> {
         let (value, size) = self.receiver.recv().await?;
+        self.shared.queued.fetch_sub(1, Ordering::AcqRel);
+        self.shared.bytes.fetch_sub(size, Ordering::AcqRel);
+        Some(value)
+    }
+
+    /// The next value, when one waits now.
+    pub fn try_recv(&mut self) -> Option<T> {
+        let (value, size) = self.receiver.try_recv().ok()?;
         self.shared.queued.fetch_sub(1, Ordering::AcqRel);
         self.shared.bytes.fetch_sub(size, Ordering::AcqRel);
         Some(value)

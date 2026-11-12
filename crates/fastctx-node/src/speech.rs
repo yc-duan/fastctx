@@ -1013,6 +1013,9 @@ pub async fn bind(
             let _held = held;
             heard(&working, &resident, &delivery, &turn)?;
             crate::inbox::settle(&working, directory, &delivery.id)?;
+            if let Ok(Some(progress)) = crate::lifecycle::retry::progress_now(&working, &resident, &delivery.id) {
+                crate::lifecycle::retry::started(&working, &resident, &progress);
+            }
             crate::lifecycle::retry::clear_now(&working, &resident, &delivery.id)
         })
         .await

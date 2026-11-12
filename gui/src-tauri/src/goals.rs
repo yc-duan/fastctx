@@ -71,7 +71,7 @@ pub async fn goal_watch(
     resident_id: String,
     machine_name: Option<String>,
     account: Option<HubAccount>,
-    pieces: Channel<crate::watch_delivery::Wake>,
+    pieces: Channel<crate::watch_delivery::Push>,
 ) -> Result<Watching, String> {
     let page = shell.page.load(std::sync::atomic::Ordering::Relaxed);
     let world = shell.world();

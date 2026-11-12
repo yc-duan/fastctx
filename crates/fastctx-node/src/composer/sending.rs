@@ -7,16 +7,27 @@ use super::*;
 /// messages wait in it at most.
 const QUEUED_AT_MOST: usize = 256;
 
+/// What became of words sent from the input.
+pub(super) struct Captured {
+    pub entry: fastctx_types::NoticeId,
+    /// Reserved to go at once: nothing stood before them.
+    pub flight: Option<Flight>,
+    /// Lined up to start the next turn once the one the user stopped ends.
+    pub lined: bool,
+}
+
 /// Makes a queue entry of the draft's words, and reserves it to go at once
-/// when nothing stands before it. Returns the entry with that reservation.
+/// when nothing stands before it, or lines it up behind the end of a turn
+/// the user stopped.
 pub(super) fn capture(
     node: &Node,
     resident: &ResidentId,
     state: &mut Stored,
     from: &MachineName,
     change: &Change,
+    operation: &str,
     captured: Option<capture::Prepared>,
-) -> Result<(fastctx_types::NoticeId, Option<Flight>), Failure> {
+) -> Result<Captured, Failure> {
     if state.queue.len() >= QUEUED_AT_MOST {
         return Err(failure("the queue holds as many messages as it takes; send or remove some of them first"));
     }
@@ -64,10 +75,17 @@ pub(super) fn capture(
         && state.awaiting_turn.is_none()
         && state.sending.is_none()
         && state.pending.is_empty()
+        && state.lined.is_empty()
     {
         let flight = state.reserve(&entry, false, true)?;
-        Ok((entry, Some(flight)))
+        Ok(Captured { entry, flight: Some(flight), lined: false })
+    } else if super::submissions::stopping(node, resident, &now) {
+        // The turn that runs is one the user stopped: these words start the
+        // next one as soon as it has ended, and do not wait in the queue
+        // for the user as the words queued before the stop do.
+        state.line_up(&entry, Some(operation.into()), true)?;
+        Ok(Captured { entry, flight: None, lined: true })
     } else {
-        Ok((entry, None))
+        Ok(Captured { entry, flight: None, lined: false })
     }
 }

@@ -72,6 +72,7 @@ async function removed($, fresh = false) {
 }
 
 __FASTCTX_CONTROLS__
+__FASTCTX_CHANNEL__
 __FASTCTX_COMMANDS__
 __FASTCTX_NATIVE_GOAL__
 __FASTCTX_ASSISTED__
@@ -132,6 +133,8 @@ function conversation(sessionId, previous) {
     plain: false,
     // Looks in a row that each found more for an idle session (`looked`).
     settling: 0,
+    // When the last turn ended (`completeTurn`), by the clock.
+    turnEndedAt: 0,
     handled: new Set(),
     failing: new Set(),
     held: [],
@@ -225,6 +228,11 @@ function floor(context, own) {
       const first = reports === undefined ? undefined : reports.keys().next().value
       if (first !== undefined && first < lowest) lowest = first
     }
+    // Taken by the node and not applied yet: not on disk either. They are
+    // kept in the order the node took them, not their names' order.
+    for (const held of writer.unconfirmed ?? []) {
+      if (held.name < lowest) lowest = held.name
+    }
   }
   return lowest + '.json'
 }
@@ -252,12 +260,19 @@ function event($, context, kind, fields) {
 
 async function writePending($, context, name) {
   const report = context.unwritten.get(name)
+  if (report.goalStop) await $.fs.write(context.dir + '/goal-stop.json', JSON.stringify({ report: name + '.json' }))
+  // Handed to the node on the channel, it is applied as it would be read
+  // from its file, and the node keeps the batch's watermark below.
+  if (await channelReport($, context, name, report)) {
+    context.unwritten.delete(name)
+    return
+  }
+  await channelSpill($, context)
   // A batch's filename predates its last fragment. Keep the allocator's
   // watermark even after acknowledgment deletes the batch, so reload in the
   // same millisecond (or a clock rollback) cannot reuse fragment timestamps.
-  if (report.sequence !== undefined) await $.fs.write(context.dir + '/applied/' + report.sequence + '.sequence', '')
+  if (report.sequence !== undefined && report.sequence !== null) await $.fs.write(context.dir + '/applied/' + report.sequence + '.sequence', '')
   const path = context.dir + '/events/' + name
-  if (report.goalStop) await $.fs.write(context.dir + '/goal-stop.json', JSON.stringify({ report: name + '.json' }))
   await writeReport($, path, report.body)
   await $.fs.write(path + '.done', '')
   context.unwritten.delete(name)
@@ -488,9 +503,11 @@ async function replaced($, context, deliveries) {
 }
 
 // How long an idle session waits for more of what is being handed over
-// before its turn starts, and how many times over at most.
+// before its turn starts, and how many times over at most; and for how long
+// after a turn's end what comes may be a queue the node releases at that end.
 const SETTLE_MS = 150
 const SETTLES = 5
+const RELEASE_MS = 2000
 
 // What the next turn reads of the last one the user stopped. Claude Code
 // ends a turn a plugin stops as one ended to deliver a following message,
@@ -630,6 +647,8 @@ async function look($, context) {
       context.unsettled = false
       await settle($, context)
       await transcript($, context, null)
+      // Reports the node took and a failed handing over kept here go again.
+      if (channelUnsettled(context)) channelSettle($, context)
       const written = context.writing.then(async () => {
         for (const name of context.failedReports) {
           await writePending($, context, name)
@@ -649,7 +668,7 @@ async function look($, context) {
   } finally {
     context.looking = false
   }
-  if (context.unsettled || context.failedReports.size > 0 || context.owed.length > 0 || context.transcriptTold !== context.transcriptPath) retry($, context)
+  if (context.unsettled || context.failedReports.size > 0 || context.owed.length > 0 || context.transcriptTold !== context.transcriptPath || channelUnsettled(context)) retry($, context)
 }
 
 // Stops the running turn when the node asks for it. Only the turn that is
@@ -772,8 +791,10 @@ async function looked($, context) {
   if (context.busy) return
   // What comes together goes in together. The node hands over each message
   // as a file of its own, a queue released at a turn's end one after
-  // another: an idle session's turn starts once a look finds no more.
-  if (read.length > 0 && context.settling < SETTLES) {
+  // another: an idle session's turn starts once a look finds no more. Words
+  // that come to a session idle for longer than that came on their own, and
+  // their turn starts at once.
+  if (read.length > 0 && context.settling < SETTLES && Date.now() - context.turnEndedAt < RELEASE_MS) {
     context.settling += 1
     context.again = true
     await new Promise((resolve) => { $.clock.after(SETTLE_MS, resolve) })
@@ -910,6 +931,9 @@ async function startSession($, context) {
   // skipped: a closed session's answers are what it should see on return.
   // After that, the session's control helper says when there is more.
   controlWake(id, () => look($, context).catch((error) => worldFailure($, 'look', error)))
+  // The node's loopback channel, where it says it listens: reports go there
+  // and it says at once when there is something to look at.
+  await channelOpen($, context)
   $.clock.after(0, () => look($, context).catch((error) => worldFailure($, 'look', error)))
   // Background observations retain this conversation even after /clear.
   context.observe = (happened) => {
@@ -942,7 +966,11 @@ async function startTurn($, context, e, next) {
   // state and what it takes are untouched (Claude Code reports one since
   // 2.1.300; its end is `completeTurn`'s agent branch).
   if (e.agentId !== undefined) return next(e)
-  await startControlTurn($, e)
+  // The turn is this one before anything is waited for, and told first: what
+  // it streams and stores is matched to it (`presentation`) and the World
+  // knows it runs, whatever its controls and the session's figures take. A
+  // production session whose start waited on them was a turn behind for
+  // whole turns, its streamed words shown twice (2026-11-11).
   context.busy = true
   context.turn = e.turnId
   context.awaited.clear()
@@ -951,9 +979,12 @@ async function startTurn($, context, e, next) {
   context.streaming = false
   noteTurnPrompt(context, e)
   // The session's cost total as the turn begins: what it has risen by at
-  // the turn's end is what the turn cost (`completeTurn`).
-  const usage = await sessionUsage($)
-  context.spentBefore = { turn: e.turnId, usd: usage?.cost?.usd }
+  // the turn's end is what the turn cost (`completeTurn`). Asked now and not
+  // waited for; a turn that ends before it answers has no cost of its own.
+  context.spentBefore = { turn: e.turnId, usd: undefined }
+  void sessionUsage($).then((usage) => {
+    if (context.spentBefore?.turn === e.turnId) context.spentBefore.usd = usage?.cost?.usd
+  })
   // The rows of this plugin's prompts kept since the last turn began are
   // what this turn takes (`submit`).
   const took = context.accepted.splice(0, context.entered)
@@ -967,15 +998,36 @@ async function startTurn($, context, e, next) {
   for (const deliveries of took) await submitted($, context, deliveries, e.turnId)
   for (const prior of context.stopTaken) await $.fs.write(context.dir + '/told-stops/' + encodeURIComponent(prior), '')
   context.stopTaken = []
+  // The choices this turn runs with are read before its first step.
+  await startControlTurn($, e)
   return next(e)
 }
 
 async function completeTurn($, context, e, next) {
+  context.turnEndedAt = Date.now()
+  // A turn the user stopped is told ended first, at once: its controls, its
+  // presentation's end and the session's figures follow, each let go of
+  // should it hang, and nothing the user does next waits on them.
+  if (e.agentId === undefined && e.isAborted) {
+    if (context.turn === e.turnId) { context.busy = false; context.turn = null }
+    context.plain = false
+    context.since.clear()
+    if (context.spentBefore?.turn === e.turnId) context.spentBefore = null
+    // Whether a goal is on decides how the end is told (`goalStop`): read
+    // first, briefly.
+    await within($, readGoal($, context), 300)
+    const completed = turnCompleted($, context, e, null)
+    await within($, Promise.all([completed, activity($, context)]))
+    await afterEnd($, context, e)
+    await flush($, context)
+    return next(e)
+  }
   // The turn's end is told whatever else fails here: what goes with it is
   // told again later, and an end never told leaves the turn running in the
-  // World, with what waits for it held behind it.
+  // World, with what waits for it held behind it. Nothing before it is
+  // waited on past `within`.
   try {
-    await completeControlTurn($, e)
+    await within($, completeControlTurn($, e))
   } catch (error) {
     worldFailure($, 'turn.complete controls', error)
   }
@@ -996,35 +1048,23 @@ async function completeTurn($, context, e, next) {
     await observeAgents($, context)
     return next(e)
   }
-  await readGoal($, context)
+  await within($, readGoal($, context))
   try {
-    await context.shown.end(reports($, context), e.turnId)
+    await within($, context.shown.end(reports($, context), e.turnId))
   } catch (error) {
     worldFailure($, 'turn.complete presentation', error)
   }
   // The session's figures as the turn ends reach the node ahead of the end
   // itself, so its ledger and the account's windows stand as the turn left
   // them; what the cost total rose by since the turn began is the turn's.
-  const usage = await stepMeasured($, context, null, true)
+  const usage = await within($, stepMeasured($, context, null, true))
   const before = context.spentBefore?.turn === e.turnId ? context.spentBefore.usd : undefined
   const total = usage?.cost?.usd
   const spent = typeof total === 'number' && typeof before === 'number' ? (total >= before ? total - before : total) : null
   if (context.spentBefore?.turn === e.turnId) context.spentBefore = null
   if (context.turn === e.turnId) { context.busy = false; context.turn = null }
   context.plain = false
-  // A turn cut short had no opening left for what it held.
-  if (e.isAborted) context.since.clear()
-  const completed = event($, context, 'turn_complete', {
-    turn: e.turnId,
-    spent,
-    aborted: e.isAborted,
-    reason: e.reason,
-    refusal: e.reason === 'refusal' ? e.refusal : null,
-    error: completedFailure(context, e),
-    ms: observedMilliseconds(e.durationMs),
-    answer: e.answer ?? null,
-    streamed: true,
-  })
+  const completed = turnCompleted($, context, e, spent)
   const saved = activity($, context)
   await within($, Promise.all([completed, saved]))
   // The node releases the user's queued words as it hears of this end, a
@@ -1037,6 +1077,41 @@ async function completeTurn($, context, e, next) {
     await flush($, context)
   }
   return next(e)
+}
+
+function turnCompleted($, context, e, spent) {
+  return event($, context, 'turn_complete', {
+    turn: e.turnId,
+    spent,
+    aborted: e.isAborted,
+    reason: e.reason,
+    refusal: e.reason === 'refusal' ? e.refusal : null,
+    error: completedFailure(context, e),
+    ms: observedMilliseconds(e.durationMs),
+    answer: e.answer ?? null,
+    streamed: true,
+  })
+}
+
+// What follows a stopped turn's end once it is told: its controls, its
+// presentation's end, the goal and the session's figures, each let go of
+// past `within` should it hang.
+async function afterEnd($, context, e) {
+  try {
+    await within($, completeControlTurn($, e))
+  } catch (error) {
+    worldFailure($, 'turn.complete controls', error)
+  }
+  try {
+    await within($, context.shown.end(reports($, context), e.turnId))
+  } catch (error) {
+    worldFailure($, 'turn.complete presentation', error)
+  }
+  try {
+    await within($, stepMeasured($, context, null, true))
+  } catch (error) {
+    worldFailure($, 'turn.complete figures', error)
+  }
 }
 
 // The rows the main loop's conversation keeps tell where its step stands:

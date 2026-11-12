@@ -217,6 +217,136 @@ pub async fn awaits_turn(node: &Arc<Node>, id: &ResidentId, turn: &str) -> Resul
     Ok(cell.as_ref().expect("loaded").awaiting_turn.as_deref() == Some(turn))
 }
 
+/// How long a stop asked while words were on their way, and no turn ran,
+/// holds words sent since for the turn those words start, should that turn
+/// never come.
+const COMING_WAITS: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// A stop the user asked for, held in memory for the composer's decisions and
+/// kept in its state (`StopMark`) for a node started again.
+#[derive(Clone, Debug)]
+pub(super) enum Stop {
+    Turn(String),
+    Coming(std::time::Instant),
+}
+
+impl Stop {
+    fn mark(&self) -> StopMark {
+        match self {
+            Stop::Turn(turn) => StopMark::Turn(turn.clone()),
+            Stop::Coming(_) => StopMark::Coming,
+        }
+    }
+}
+
+/// The user asked to stop `turn`. Until it ends, words sent from the input
+/// are the next turn's, to start it then, and words sent at once from the
+/// queue wait for its end too rather than join it.
+pub fn stop_asked(node: &Arc<Node>, id: &ResidentId, turn: &str) {
+    mark(node, id, Some(Stop::Turn(turn.into())));
+}
+
+/// The user asked to stop while words were on their way and no turn ran:
+/// words sent since wait for the turn those words start, and its end, as
+/// they wait for a stopped turn's.
+pub fn stop_coming(node: &Arc<Node>, id: &ResidentId) {
+    mark(node, id, Some(Stop::Coming(std::time::Instant::now())));
+    let (node, id) = (node.clone(), id.clone());
+    fastctx_platform::task::spawn(async move {
+        tokio::time::sleep(COMING_WAITS).await;
+        schedule(&node, &id);
+    });
+}
+
+/// A stop asked while words were on their way found the turn they started
+/// ended already: words sent since need not wait for it.
+pub fn stop_resolved(node: &Arc<Node>, id: &ResidentId) {
+    let coming = matches!(node.composers.stopping.lock().expect("composer stops").get(id), Some(Stop::Coming(_)));
+    if coming {
+        mark(node, id, None);
+        schedule(node, id);
+    }
+}
+
+/// The turn the user asked to stop in this conversation, until it ends.
+pub fn stopped_turn(node: &Node, id: &ResidentId) -> Option<String> {
+    match node.composers.stopping.lock().expect("composer stops").get(id) {
+        Some(Stop::Turn(turn)) => Some(turn.clone()),
+        _ => None,
+    }
+}
+
+/// Sets the stop held in memory, which decides at once, and keeps whatever it
+/// is when the composer's state is next written. Viewers hear of it now.
+fn mark(node: &Arc<Node>, id: &ResidentId, stop: Option<Stop>) {
+    {
+        let mut stopping = node.composers.stopping.lock().expect("composer stops");
+        match stop {
+            Some(stop) => stopping.insert(id.clone(), stop),
+            None => stopping.remove(id),
+        };
+    }
+    node.residents.touch();
+    let (node, id) = (node.clone(), id.clone());
+    fastctx_platform::task::spawn(async move {
+        if let Err(error) = keep_stop(&node, &id).await {
+            node.log.line(format_args!("keeping {id}'s stop with its input: {error}"));
+        }
+    });
+}
+
+async fn keep_stop(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {
+    let Some(cell) = storage::existing(node, id).await? else { return Ok(()) };
+    let mut cell = cell.lock().await;
+    load(node, id, &mut cell).await?;
+    let current = node.composers.stopping.lock().expect("composer stops").get(id).map(Stop::mark);
+    if cell.as_ref().expect("loaded").stopped == current {
+        return Ok(());
+    }
+    let mut next = cell.take().expect("loaded");
+    next.stopped = current;
+    publish(node, id, &mut cell, next).await
+}
+
+/// A node started again takes the stop its composer's state kept. A stop the
+/// node acknowledged but exited before keeping with the input is read from
+/// the running turn's own stop record, which is kept before the host is
+/// asked (`talk::stop_turn_as`). A wait for words on their way is given its
+/// end again.
+pub(super) fn restore_stop(node: &Arc<Node>, id: &ResidentId, state: &Stored) {
+    let stop = match &state.stopped {
+        Some(StopMark::Turn(turn)) => Some(Stop::Turn(turn.clone())),
+        Some(StopMark::Coming) => Some(Stop::Coming(std::time::Instant::now())),
+        None => node.residents.now(id).and_then(|now| now.turn).filter(|turn| {
+            matches!(
+                crate::turn_evidence::stopping::source(node, id, turn),
+                Ok(Some(fastctx_types::turn_evidence::StopSource::User))
+            )
+        })
+        .map(Stop::Turn),
+    };
+    let Some(stop) = stop else { return };
+    let coming = matches!(stop, Stop::Coming(_));
+    node.composers.stopping.lock().expect("composer stops").entry(id.clone()).or_insert(stop);
+    if coming {
+        let (node, id) = (node.clone(), id.clone());
+        fastctx_platform::task::spawn(async move {
+            tokio::time::sleep(COMING_WAITS).await;
+            schedule(&node, &id);
+        });
+    }
+}
+
+/// Whether the turn running now is one the user asked to stop, or one words
+/// on their way at a stop are about to start.
+pub(super) fn stopping(node: &Node, id: &ResidentId, now: &fastctx_types::residents::Now) -> bool {
+    match node.composers.stopping.lock().expect("composer stops").get(id) {
+        Some(Stop::Turn(turn)) => now.turn.as_deref() == Some(turn.as_str()),
+        Some(Stop::Coming(since)) => since.elapsed() < COMING_WAITS,
+        None => false,
+    }
+}
+
 pub async fn turn_ended(
     node: &Arc<Node>,
     id: &ResidentId,
@@ -225,6 +355,12 @@ pub async fn turn_ended(
     settles_queue: bool,
     order: u64,
 ) -> Result<(), Failure> {
+    {
+        let mut stopping = node.composers.stopping.lock().expect("composer stops");
+        if matches!(stopping.get(id), Some(Stop::Turn(stopped)) if stopped == turn) {
+            stopping.remove(id);
+        }
+    }
     let Some(cell) = storage::existing(node, id).await? else {
         return Ok(());
     };
@@ -235,6 +371,7 @@ pub async fn turn_ended(
         return Ok(());
     }
     next.ended.insert(turn.into());
+    next.stopped = node.composers.stopping.lock().expect("composer stops").get(id).map(Stop::mark);
     let awaited = next.awaiting_turn.as_deref() == Some(turn);
     if awaited {
         next.awaiting_turn = None;
@@ -251,7 +388,8 @@ pub async fn turn_ended(
             next.opportunity = Some(turn.into());
         } else {
             next.opportunity = None;
-            if next.queue.iter().any(|entry| !entry.command) {
+            // Words on their way, or lined up to go, do not wait for the user.
+            if next.queue.iter().any(|entry| !entry.command && !next.on_their_way(&entry.id)) {
                 next.held = Some(format!("turn {how}; queued messages wait for the user"));
             }
         }
@@ -336,10 +474,66 @@ async fn release(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {
     }
     let state = cell.as_ref().expect("loaded");
     let now = node.residents.now(id).ok_or_else(|| failure("unknown resident"))?;
+    if state.sending.is_some() {
+        return Ok(());
+    }
+    // Words asked to go at once go first, in the order asked, held or not:
+    // once the turn the user stopped has ended, and those sent from the
+    // input then only into an idle session, where they start the turn.
+    if let Some(lined) = state.lined.first() {
+        if stopping(node, id, &now) || (lined.straight && now.activity == Activity::Busy) {
+            return Ok(());
+        }
+        // Words sent from the input after a stop come after the commands
+        // that waited before them: those are done first (the control
+        // queue's), as a turn's end does them.
+        if lined.straight
+            && state.queue.iter().take_while(|entry| entry.id != lined.entry).any(|entry| entry.command)
+        {
+            crate::control_queue::poke(node, id);
+            return Ok(());
+        }
+        let lined = lined.clone();
+        let mut next = cell.take().expect("loaded");
+        next.unline(&lined.entry);
+        match next.reserve(&lined.entry, false, lined.straight) {
+            Ok(mut flight) => {
+                flight.operation = lined.operation;
+                next.sending = Some(flight.clone());
+                return storage::publish_then(node, id, &mut cell, next, after_commit(node, id, flight, None)).await;
+            }
+            Err(error) => {
+                // They cannot be handed over after all: why stays on the
+                // words, left in the queue, and on the send that asked.
+                node.log.line(format_args!("{id}'s lined up input {}: {error}", lined.entry));
+                if let Some(entry) = next.queue.iter_mut().find(|entry| entry.id == lined.entry) {
+                    entry.error = Some(error.message.clone());
+                }
+                if let Some(operation) = &lined.operation
+                    && let Some(mut receipt) = receipts::receipt(node, id, &next, operation).await?
+                {
+                    receipt.failure = Some(error.message.clone());
+                    next.receipts.insert(operation.clone(), receipt);
+                }
+                publish(node, id, &mut cell, next).await?;
+                drop(cell);
+                schedule(node, id);
+                return Ok(());
+            }
+        }
+    }
+    // Words handed over and not yet in a turn keep their place at the head;
+    // the next to go is the first not on its way, with no command before it.
+    let Some(position) = state.queue.iter().position(|entry| !state.on_their_way(&entry.id)) else {
+        return Ok(());
+    };
+    let candidate = &state.queue[position];
     if state.opportunity.is_none()
         || state.held.is_some()
-        || state.sending.is_some()
-        || state.queue.first().is_none_or(|e| e.command || !e.editors.is_empty() || !e.document.uploads.is_empty())
+        || candidate.command
+        || !candidate.editors.is_empty()
+        || !candidate.document.uploads.is_empty()
+        || state.queue[..position].iter().any(|entry| entry.command)
     {
         return Ok(());
     }
@@ -351,7 +545,7 @@ async fn release(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {
         return Ok(());
     }
     let mut next = cell.take().expect("loaded");
-    let entry = next.queue[0].id.clone();
+    let entry = next.queue[position].id.clone();
     let flight = next.reserve(&entry, true, first)?;
     storage::publish_then(node, id, &mut cell, next, after_commit(node, id, flight, None)).await
 }
