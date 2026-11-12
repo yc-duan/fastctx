@@ -178,6 +178,18 @@ impl Library {
                     "INSERT OR IGNORE INTO wanted (hash, size, role, priority, hint) VALUES (?1, ?2, 'lost', 0, NULL)",
                 )?
                 .execute(params![hash, size])?;
+                // Wanted through every scope whose records or frames refer
+                // to it in their current holding period.
+                db.prepare_cached(
+                    "INSERT OR IGNORE INTO wanted_in (scope, hash)
+                     SELECT r.scope, r.hash FROM object_refs r JOIN scopes s ON s.id = r.scope AND s.holding = r.holding
+                     WHERE r.hash = ?1 AND r.count > 0
+                     UNION
+                     SELECT t.scope, f.hash FROM frame_objects f JOIN streams t ON t.id = f.stream
+                     JOIN scopes s ON s.id = t.scope AND s.holding = f.holding
+                     WHERE f.hash = ?1",
+                )?
+                .execute(params![hash])?;
             }
             db.prepare_cached("DELETE FROM published WHERE at < ?1")?.execute([kept])?;
             Ok(())

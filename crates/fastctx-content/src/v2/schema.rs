@@ -177,6 +177,14 @@ CREATE TABLE IF NOT EXISTS wanted (
     priority INTEGER NOT NULL,
     hint TEXT
 ) WITHOUT ROWID;
+-- Which scope's records want which object (§4.3): a scope's wanted objects
+-- are found from its own rows, never by scanning every wanted object.
+CREATE TABLE IF NOT EXISTS wanted_in (
+    scope INTEGER NOT NULL,
+    hash BLOB NOT NULL,
+    PRIMARY KEY (scope, hash)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS wanted_in_by_hash ON wanted_in (hash);
 CREATE TABLE IF NOT EXISTS object_chunks (
     hash BLOB NOT NULL,
     first INTEGER NOT NULL,

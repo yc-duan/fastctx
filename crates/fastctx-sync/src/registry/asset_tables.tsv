@@ -56,3 +56,4 @@ parked_history	crates/fastctx-content/src/v2/schema.rs
 refused_frames	crates/fastctx-content/src/v2/schema.rs
 device_cursors	crates/fastctx-content/src/v2/schema.rs
 intents	crates/fastctx-content/src/v2/schema.rs
+wanted_in	crates/fastctx-content/src/v2/schema.rs

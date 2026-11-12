@@ -205,6 +205,8 @@ impl Library {
                                     "INSERT OR IGNORE INTO wanted (hash, size, role, priority, hint) VALUES (?1, ?2, 'record', 1, ?3)",
                                 )?
                                 .execute(params![&object.hash[..], object.size as i64, scope])?;
+                                db.prepare_cached("INSERT OR IGNORE INTO wanted_in (scope, hash) VALUES (?1, ?2)")?
+                                    .execute(params![scope_id, &object.hash[..]])?;
                             }
                         }
                     }

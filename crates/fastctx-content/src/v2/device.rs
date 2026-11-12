@@ -97,33 +97,40 @@ impl Library {
     pub fn wanted_of(&self, scopes: &[String], limit: usize) -> Result<Vec<(String, crate::record::ObjectRef)>> {
         let scopes = scopes.to_vec();
         Ok(self.database().read_now(move |db| {
+            // From each scope's own wanted rows (`wanted_in`), each still
+            // referred to in its current period: the work follows what the
+            // scopes want, not every object wanted here.
             let mut statement = db.prepare_cached(
-                "SELECT w.hash, w.size FROM wanted w, scopes s
+                "SELECT w.hash, w.size, w.priority FROM scopes s
+                 JOIN wanted_in i ON i.scope = s.id
+                 JOIN wanted w ON w.hash = i.hash
                  WHERE s.key = ?1 AND s.holding IS NOT NULL
                    AND (EXISTS (SELECT 1 FROM object_refs r
-                                WHERE r.hash = w.hash AND r.scope = s.id AND r.holding = s.holding AND r.count > 0)
+                                WHERE r.hash = i.hash AND r.scope = s.id AND r.holding = s.holding AND r.count > 0)
                         OR EXISTS (SELECT 1 FROM frame_objects f JOIN streams t ON t.id = f.stream
-                                   WHERE f.hash = w.hash AND t.scope = s.id AND f.holding = s.holding))
-                   AND NOT EXISTS (SELECT 1 FROM objects o WHERE o.hash = w.hash AND o.state = 1)
+                                   WHERE f.hash = i.hash AND t.scope = s.id AND f.holding = s.holding))
+                   AND NOT EXISTS (SELECT 1 FROM objects o WHERE o.hash = i.hash AND +o.state = 1)
                  ORDER BY w.priority DESC, w.hash LIMIT ?2",
             )?;
-            let (mut wanted, mut seen) = (Vec::new(), std::collections::HashSet::new());
+            let mut candidates: Vec<(i64, [u8; 32], u64, String)> = Vec::new();
             for scope in scopes {
-                if wanted.len() >= limit {
-                    break;
-                }
                 let rows = statement.query_map(params![scope, limit as i64], |row| {
-                    Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, i64>(1)?))
+                    Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?))
                 })?;
                 for row in rows {
-                    let (hash, size) = row?;
+                    let (hash, size, priority) = row?;
                     let hash: [u8; 32] = hash.try_into().map_err(|_| invalid("a malformed hash"))?;
-                    if wanted.len() < limit && seen.insert(hash) {
-                        wanted.push((scope.clone(), crate::record::ObjectRef { hash, size: size as u64 }));
-                    }
+                    candidates.push((priority, hash, size as u64, scope.clone()));
                 }
             }
-            Ok(wanted)
+            candidates.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+            let mut seen = std::collections::HashSet::new();
+            Ok(candidates
+                .into_iter()
+                .filter(|candidate| seen.insert(candidate.1))
+                .take(limit)
+                .map(|(_, hash, size, scope)| (scope, crate::record::ObjectRef { hash, size }))
+                .collect())
         })?)
     }
 
@@ -226,7 +233,7 @@ impl Library {
         Ok(self.database().read_now(move |db| {
             let mut statement = db.prepare_cached(
                 "SELECT w.hash, w.size, w.hint FROM wanted w
-                 WHERE NOT EXISTS (SELECT 1 FROM objects o WHERE o.hash = w.hash AND o.state = 1)
+                 WHERE NOT EXISTS (SELECT 1 FROM objects o WHERE o.hash = w.hash AND +o.state = 1)
                  ORDER BY w.priority DESC, w.hash LIMIT ?1",
             )?;
             let rows = statement.query_map([limit as i64], |row| {
@@ -247,6 +254,7 @@ impl Library {
         let hash = *hash;
         Ok(self.database().write_relaxed_now_at(Priority::Background, 64, move |db| {
             db.prepare_cached("DELETE FROM wanted WHERE hash = ?1")?.execute([&hash[..]])?;
+            db.prepare_cached("DELETE FROM wanted_in WHERE hash = ?1")?.execute([&hash[..]])?;
             Ok(())
         })?)
     }
