@@ -1089,7 +1089,7 @@ fn handle(
                                 crate::assets::serve::recheck(&hub.assets, &now.indexed(), &from, &key, stream.as_deref(), reply)
                             }
                             (Ok(reply @ fastctx_types::assets::Reply::Holdings { .. }), None) => {
-                                crate::assets::serve::recheck_holdings(&hub.assets, &now.indexed(), now.basis().to_string(), &from, reply)
+                                crate::assets::serve::recheck_holdings(&hub.assets, &now.indexed(), &from, reply)
                             }
                             (answer, _) => answer,
                         };

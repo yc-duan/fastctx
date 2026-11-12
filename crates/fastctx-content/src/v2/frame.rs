@@ -8,7 +8,7 @@
 //! the records. The chain value takes in scope, stream and epoch, so a frame
 //! cannot be passed off as another stream's or another epoch's.
 
-use crate::record::{FRAME_BYTES, FRAME_RECORDS, Record};
+use crate::record::{FRAME_BYTES, FRAME_OBJECTS, FRAME_RECORDS, Record, State};
 use sha2::{Digest, Sha256};
 
 /// The header's format.
@@ -158,24 +158,39 @@ pub(crate) struct Sealed {
 }
 
 /// Packs records into frames within the bounds (1 MiB of records before
-/// compression, or 4,096 records), in order.
+/// compression, 4,096 records, or 4,096 distinct objects), in order.
 pub(crate) fn seal(records: &[KindRecord]) -> Result<Vec<Sealed>, String> {
     let mut sealed = Vec::new();
     let mut raw = Vec::new();
+    let mut objects = std::collections::HashSet::new();
     let mut start = 0;
     for (index, record) in records.iter().enumerate() {
         let count = index - start;
-        if count == FRAME_RECORDS || (count > 0 && raw.len() + record.encoded_len() > FRAME_BYTES) {
+        let referred = referred(&record.record);
+        let more = referred.iter().filter(|hash| !objects.contains(*hash)).count();
+        if count == FRAME_RECORDS
+            || (count > 0 && raw.len() + record.encoded_len() > FRAME_BYTES)
+            || (count > 0 && objects.len() + more > FRAME_OBJECTS)
+        {
             sealed.push(close(&raw, start..index)?);
             raw.clear();
+            objects.clear();
             start = index;
         }
+        objects.extend(referred.iter().copied());
         record.encode(&mut raw);
     }
     if start < records.len() {
         sealed.push(close(&raw, start..records.len())?);
     }
     Ok(sealed)
+}
+
+fn referred(record: &Record) -> Vec<[u8; 32]> {
+    match &record.state {
+        State::Is { objects, .. } => objects.iter().map(|object| object.hash).collect(),
+        State::Gone => Vec::new(),
+    }
 }
 
 fn close(raw: &[u8], records: std::ops::Range<usize>) -> Result<Sealed, String> {
@@ -206,6 +221,10 @@ pub fn open(header: &Header, body: &[u8]) -> Result<Vec<KindRecord>, String> {
     }
     if records.len() != header.count as usize {
         return Err(format!("a frame said {} records and holds {}", header.count, records.len()));
+    }
+    let objects: std::collections::HashSet<[u8; 32]> = records.iter().flat_map(|record| referred(&record.record)).collect();
+    if objects.len() > FRAME_OBJECTS {
+        return Err(format!("a frame refers to at most {FRAME_OBJECTS} distinct objects"));
     }
     Ok(records)
 }

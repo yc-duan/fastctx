@@ -72,6 +72,17 @@ const UNREAD_FOR: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 /// How often owners are looked at for whether anyone reads them.
 const SWEEP_EVERY: u32 = 600;
 
+/// Times sealing waits on the control writer for what it began before.
+const BARRIER_TRIES: usize = 4;
+
+/// A cleanup that saw the hub sealed as it ends goes back whole (AE02).
+fn unsealed(sealing: &std::sync::atomic::AtomicBool) -> fastctx_storage::Result<()> {
+    if sealing.load(std::sync::atomic::Ordering::SeqCst) {
+        return Err(fastctx_storage::Error::new("the hub sealed while it cleaned"));
+    }
+    Ok(())
+}
+
 /// Whether `current` is the very directory `judged` was taken from: every
 /// part the same shared one, as a directory no edit touched since is.
 fn same_directory(judged: &fastctx_net::directory::Directory, current: &fastctx_net::directory::Directory) -> bool {
@@ -343,11 +354,16 @@ impl Assets {
                     if let Some(body) = &body {
                         c.prepare_cached("DELETE FROM asset_bodies WHERE id = ?1")?.execute([body])?;
                     }
-                    chain::append(c, "owner-deleted", &digest).map(Some)
+                    let appended = chain::append(c, "owner-deleted", &digest)?;
+                    unsealed(&sealing)?;
+                    Ok(Some(appended))
                 })
                 .map_err(io::Error::other)
-        })?;
-        let Some((seq, head)) = begun else { return Ok(false) };
+        });
+        if self.sealing.load(std::sync::atomic::Ordering::SeqCst) {
+            return Ok(false);
+        }
+        let Some((seq, head)) = begun? else { return Ok(false) };
         self.witness.advanced(seq, &head)?;
         drop(seal);
         Ok(true)
@@ -413,9 +429,14 @@ impl Assets {
                                 ))?
                                 .execute([&batch])?;
                         }
+                        unsealed(&sealing)?;
                         Ok(removed)
                     })
-                    .map_err(io::Error::other)?;
+                    .map_err(io::Error::other);
+                if self.sealing.load(std::sync::atomic::Ordering::SeqCst) {
+                    return Ok(());
+                }
+                let removed = removed?;
                 drop(seal);
                 if removed == 0 {
                     break;
@@ -426,12 +447,19 @@ impl Assets {
                 return Ok(());
             }
             if self.owners.delete(&owner).is_ok() {
-                self.control
+                let sealing = self.sealing.clone();
+                let done = self
+                    .control
                     .write_now(128, move |c| {
+                        unsealed(&sealing)?;
                         c.prepare_cached("DELETE FROM asset_deleting WHERE owner = ?1")?.execute([&key])?;
-                        Ok(())
+                        unsealed(&sealing)
                     })
-                    .map_err(io::Error::other)?;
+                    .map_err(io::Error::other);
+                if self.sealing.load(std::sync::atomic::Ordering::SeqCst) {
+                    return Ok(());
+                }
+                done?;
                 self.owners.deleted(&owner);
             }
             drop(seal);
@@ -805,6 +833,15 @@ impl Assets {
         // it commits is witnessed before anything seals.
         let mut sealed = self.sealed.lock().expect("seal");
         self.sealing.store(true, std::sync::atomic::Ordering::SeqCst);
+        // What the control writer began before it saw the seal ends before
+        // the witness freezes (AE02): a write queued behind it is answered
+        // only once it committed or went back. Every cleanup looks at the
+        // seal again as it ends, for a barrier that could not wait it out.
+        for _ in 0..BARRIER_TRIES {
+            if self.control.write_now(16, |_| Ok(())).is_ok() {
+                break;
+            }
+        }
         self.witness.freeze();
         if sealed.is_none() {
             *sealed = Some(why.to_string());

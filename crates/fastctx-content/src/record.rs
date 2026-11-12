@@ -11,6 +11,10 @@ pub const RECORD_OBJECTS: usize = 256;
 pub const FRAME_BYTES: usize = 1024 * 1024;
 /// The most records one frame holds.
 pub const FRAME_RECORDS: usize = 4096;
+/// The most distinct objects one frame refers to: a quarter of what a hub
+/// keeps of one device's proofs, so a frame's proofs all stand at its take
+/// (AE01).
+pub const FRAME_OBJECTS: usize = 4096;
 
 const IS: u8 = 1;
 const GONE: u8 = 0;

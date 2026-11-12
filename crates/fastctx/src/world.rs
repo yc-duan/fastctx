@@ -949,18 +949,19 @@ pub fn hub(command: HubCommand) -> anyhow::Result<()> {
         }
         HubCommand::Reopen { dir: chosen } => {
             let dir = dir(chosen);
-            let Some(lines) = fastctx_hub::recovery::report(&dir)? else {
-                println!("the hub's assets are not sealed: there is nothing to reopen");
-                return Ok(());
-            };
-            for line in &lines {
-                println!("{line}");
+            let reopened = fastctx_hub::recovery::reopen_confirmed(&dir, |lines| {
+                for line in lines {
+                    println!("{line}");
+                }
+                crate::world::confirm("Reopen the hub's assets as they are now? Type yes to set the history above aside: ")
+            })?;
+            match reopened {
+                None => println!("the hub's assets are not sealed: there is nothing to reopen"),
+                Some((_, None)) => anyhow::bail!("the hub stays sealed"),
+                Some((_, Some(forgotten))) => println!(
+                    "the hub's assets are open again, the libraries taken as they are ({forgotten} records of them set aside); start the hub"
+                ),
             }
-            if !crate::world::confirm("Reopen the hub's assets as they are now? Type yes to set the history above aside: ")? {
-                anyhow::bail!("the hub stays sealed");
-            }
-            let forgotten = fastctx_hub::recovery::reopen(&dir)?;
-            println!("the hub's assets are open again, the libraries taken as they are ({forgotten} records of them set aside); start the hub");
         }
         HubCommand::Show { dir: chosen } => {
             let (hub, pin) = fastctx_hub::describe(&dir(chosen))?;

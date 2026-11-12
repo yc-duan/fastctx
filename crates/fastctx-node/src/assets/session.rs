@@ -480,9 +480,6 @@ async fn describe(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKe
     Ok(())
 }
 
-/// How many times one listing starts over for a basis that changed under it.
-const RESTARTS_MOST: u32 = 3;
-
 /// How often the scopes a hub lists for this machine are listed whole: a
 /// change of the directory may let it hold one described long before.
 const RELIST: Duration = Duration::from_secs(300);
@@ -498,32 +495,32 @@ async fn discover(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKe
         Some(listed) if listed.whole.elapsed() < RELIST => (listed.through, None, Some(listed.basis)),
         _ => (None, Some(std::time::Instant::now()), None),
     };
-    // What the listing went by: a basis that changes while it goes on takes
-    // it from the first again, a scope passed by before being perhaps this
-    // machine's now (T10, BB12). A few times at most, then it waits for the
-    // next pass.
+    // What the listing went by. Changed before it began, all is listed
+    // from the first. Changed while it goes on, the listing goes on to its
+    // end — it never starts over, however often what decides holding
+    // changes (AE07) — and the next pass lists all again, a scope passed by
+    // being perhaps this machine's now (T10, BB12).
     let mut basis: Option<String> = None;
-    let mut restarts = 0;
+    let mut unsettled = false;
     loop {
         let Reply::Holdings { scopes, next, through, basis: said } = ask(assets, link, Request::Holdings { after: after.clone() }).await?
         else {
             return Err("the hub did not list what this machine may hold".into());
         };
-        let changed = match &basis {
-            Some(basis) => *basis != said,
-            None => whole.is_none() && heard.as_deref() != Some(said.as_str()),
-        };
-        if changed {
-            restarts += 1;
-            if restarts > RESTARTS_MOST {
-                return Err("what this machine may hold kept changing while it was listed".into());
+        match &basis {
+            Some(basis) if *basis != said => unsettled = true,
+            Some(_) => {}
+            None if whole.is_none() && heard.as_deref() != Some(said.as_str()) => {
+                whole = Some(std::time::Instant::now());
+                after = None;
+                basis = Some(said);
+                continue;
             }
-            whole = Some(std::time::Instant::now());
-            after = None;
-            basis = None;
-            continue;
+            None => {}
         }
-        basis = Some(said);
+        if basis.is_none() {
+            basis = Some(said);
+        }
         for held in scopes {
             if !assets.heard(hub, key, &held.descriptor.fact.0, &held.descriptor.word.0) {
                 return Err(format!("the descriptor of {} is not the hub's", held.scope));
@@ -550,7 +547,9 @@ async fn discover(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKe
     }
     let mut listed = assets.listed.lock().expect("listed");
     let at = whole.or_else(|| listed.get(hub).map(|listed| listed.whole)).unwrap_or_else(std::time::Instant::now);
-    listed.insert(hub.clone(), crate::assets::Listed { through: after, whole: at, basis: basis.unwrap_or_default() });
+    // Unsettled, no basis is kept: the next pass lists all.
+    let basis = if unsettled { String::new() } else { basis.unwrap_or_default() };
+    listed.insert(hub.clone(), crate::assets::Listed { through: after, whole: at, basis });
     Ok(())
 }
 

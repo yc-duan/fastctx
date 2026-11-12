@@ -16,6 +16,7 @@ use fastctx_hosts::claude::transcript::follow::Seam;
 use fastctx_jobs::{Job, Kind, Outcome, Taken};
 use fastctx_types::ResidentId;
 use fastctx_types::ipc::Failure;
+use fastctx_types::session::SessionEvent;
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -36,6 +37,16 @@ const UNREAD_AGAIN: Duration = Duration::from_secs(5);
 const UNREAD_TRIES: u32 = 20;
 /// The form of what is kept beside the timeline.
 const FORM: u32 = 2;
+/// The checks of whole histories (§10): the kind of job, within how long
+/// of a change past a long prefix one runs, how often each history is
+/// checked at least, and the share of a core they take at most.
+const VERIFY: &str = "timeline-verify";
+const LONG_PREFIX: u64 = 32 << 20;
+const LONG_WITHIN: Duration = Duration::from_secs(60 * 60);
+const VERIFY_EVERY: Duration = Duration::from_secs(7 * 24 * 60 * 60);
+const VERIFY_SHARE: u32 = 10;
+/// When each history's check was last asked for, in this run of the node.
+static CHECK_ASKED: LazyLock<Mutex<HashMap<ResidentId, Instant>>> = LazyLock::new(Mutex::default);
 
 static BROUGHT: LazyLock<Mutex<HashMap<ResidentId, Instant>>> = LazyLock::new(Mutex::default);
 /// The asset timeline's builds, one per conversation at a time.
@@ -68,6 +79,15 @@ struct Following {
     /// The last record the session's mod saw kept that the file was found
     /// to hold.
     kept: Option<String>,
+    /// How far the World's own record was read: what comes after it is read
+    /// at the next window, nothing before (design §18: the World read is
+    /// what is new). None before it was read once.
+    world_from: Option<u64>,
+    /// The starts of the World's turns open where its record was read
+    /// through: the window's events are placed in them.
+    world_open: Vec<SessionEvent>,
+    /// When the whole history was last read and compared (`verify`).
+    verified: Option<Timestamp>,
 }
 
 /// What bringing a timeline did.
@@ -77,6 +97,11 @@ pub(super) struct Produced {
     pub(super) gone: usize,
     /// The last record the session's mod saw kept is not in its file yet.
     pub(super) unread: bool,
+    /// The history changed past a prefix too long to check whole at each
+    /// advance (`follow`): it is checked whole within the hour (§10).
+    pub(super) long_changed: bool,
+    /// When the whole history was last read and compared.
+    pub(super) verified: Option<Timestamp>,
 }
 
 fn failure(error: impl std::fmt::Display) -> Failure {
@@ -93,7 +118,7 @@ fn unhex(text: &str) -> Option<Vec<u8>> {
 
 /// Brings `resident`'s timeline in the asset library to its history, where
 /// this machine keeps one.
-pub(super) async fn produce(node: &Arc<Node>, resident: &ResidentId) -> Result<Produced, Failure> {
+pub(super) async fn produce(node: &Arc<Node>, resident: &ResidentId, whole: bool) -> Result<Produced, Failure> {
     let _producing = PRODUCING.hold(resident).await;
     let Some(kept) = node.assets.as_ref() else { return Ok(Produced::default()) };
     let Some((about, _)) = node.residents.about(resident) else { return Ok(Produced::default()) };
@@ -106,21 +131,37 @@ pub(super) async fn produce(node: &Arc<Node>, resident: &ResidentId) -> Result<P
         kept.and_then(|bytes| serde_json::from_slice::<Following>(&bytes).ok()).filter(|state| state.form == FORM).unwrap_or_default()
     };
     let version = crate::held_history::version(node, resident).await?;
-    if state.version == version {
+    if state.version == version && !whole {
         return Ok(Produced::default());
     }
     let directory = node.world.conversation(resident);
     let follows = about.host.agent.as_str() == "claude" && about.world_managed() && crate::logins::workbench::reads_host(node, &about);
     let window = if follows {
-        let recorded = crate::talk::recorded_claude(&directory).await?;
-        let from = state.session.clone().map(|session| (session, state.seam.clone()));
-        crate::claude::history::window(node, resident, &recorded, from).await.map_err(Failure::new)?.map(|window| (window, recorded))
+        // The World's record past where it was read; read whole the first
+        // time, or when a cut took turns back.
+        let (mut numbered, mut latest, cut) = crate::talk::recorded_after(&directory, state.world_from.unwrap_or(0)).await?;
+        let mut open = state.world_open.clone();
+        if state.world_from.is_none() || cut {
+            if state.world_from.is_some() {
+                (numbered, latest, _) = crate::talk::recorded_after(&directory, 0).await?;
+            }
+            open.clear();
+        }
+        let mut recorded = open.clone();
+        recorded.extend(numbered.iter().map(|(_, event)| event.clone()));
+        // A check reads the record from its start.
+        let from = state.session.clone().filter(|_| !whole).map(|session| (session, state.seam.clone()));
+        crate::claude::history::window(node, resident, &recorded, from)
+            .await
+            .map_err(Failure::new)?
+            .map(|window| (window, recorded, numbered, open, latest))
     } else {
         None
     };
     let (signer, hub) = (kept.signer(), placed.hub.clone());
     let (wrote, next, unread) = match window {
-        Some((window, recorded)) => {
+        Some((window, recorded, numbered, open, latest)) => {
+            let (world_from, world_open) = world_after(&numbered, open, latest, window.settled, state.world_from);
             let recorded: Vec<_> =
                 if window.whole { recorded } else { recorded.into_iter().filter(|event| event.at >= window.since).collect() };
             let history = {
@@ -155,6 +196,9 @@ pub(super) async fn produce(node: &Arc<Node>, resident: &ResidentId) -> Result<P
                 window: open,
                 floor: settled_floor,
                 kept: if window.kept_here { window.kept } else { state.kept },
+                world_from: Some(world_from),
+                world_open,
+                verified: if window.whole { Some(Timestamp::now()) } else { state.verified },
             };
             (wrote, next, unread)
         }
@@ -168,15 +212,50 @@ pub(super) async fn produce(node: &Arc<Node>, resident: &ResidentId) -> Result<P
                 fastctx_platform::task::blocking(move || assets::write(&writing, signer, &whose, &placed, &history, Span::Whole)).await?
             };
             let floor = wrote.items.iter().map(|(_, _, key)| *key).max().unwrap_or(0);
-            (wrote, Following { form: FORM, version, floor, ..Following::default() }, false)
+            (wrote, Following { form: FORM, version, floor, verified: Some(Timestamp::now()), ..Following::default() }, false)
         }
     };
+    let long_changed = next.seam.offset > LONG_PREFIX;
+    let verified = next.verified;
     let state = serde_json::to_vec(&next).map_err(failure)?;
     fastctx_platform::task::blocking(move || library.keep_checkpoint(&name, state)).await.map_err(failure)?;
     if wrote.written + wrote.gone > 0 {
         crate::assets::wake(node, &hub);
     }
-    Ok(Produced { written: wrote.written, gone: wrote.gone, unread })
+    Ok(Produced { written: wrote.written, gone: wrote.gone, unread, long_changed, verified })
+}
+
+/// Where the World's record is read through once the events before
+/// `settled` are settled, given the events read past where it was, `open`
+/// the starts of the turns open there, and `latest`: before the first event
+/// of `settled` or later, the starts of the turns not ended by then kept.
+fn world_after(
+    numbered: &[(u64, SessionEvent)],
+    open: Vec<SessionEvent>,
+    latest: u64,
+    settled: Timestamp,
+    before: Option<u64>,
+) -> (u64, Vec<SessionEvent>) {
+    use fastctx_types::session::Happened;
+    let through = numbered
+        .iter()
+        .filter(|(_, event)| event.at >= settled)
+        .map(|(sequence, _)| sequence.saturating_sub(1))
+        .min()
+        .unwrap_or_else(|| latest.max(before.unwrap_or(0)));
+    let ended: std::collections::HashSet<&str> = numbered
+        .iter()
+        .filter(|(_, event)| event.at <= settled)
+        .filter_map(|(_, event)| match &event.happened {
+            Happened::TurnEnded { turn, .. } => Some(turn.as_str()),
+            _ => None,
+        })
+        .collect();
+    let started = open.into_iter().chain(numbered.iter().filter(|(sequence, _)| *sequence <= through).map(|(_, event)| event.clone()));
+    let open = started
+        .filter(|event| matches!(&event.happened, Happened::TurnStarted { turn } if !ended.contains(turn.as_str())))
+        .collect();
+    (through, open)
 }
 
 /// Names the job, before the node's jobs start.
@@ -196,6 +275,66 @@ pub(super) fn register(node: &Arc<Node>) {
     jobs.register(Kind { name: KIND, at_once: AT_ONCE, within: WITHIN, tries: TRIES }, Arc::new(run));
 }
 
+/// Names the check of whole histories, before the node's jobs start: one at
+/// a time, each followed by a rest nine times as long as it took, so checks
+/// take a tenth of a core at most (§10).
+pub(super) fn register_check(node: &Arc<Node>) {
+    let jobs = node.durable_jobs.clone();
+    let node = Arc::downgrade(node);
+    let run = move |taken: Taken| -> std::pin::Pin<Box<dyn Future<Output = Outcome> + Send>> {
+        let node = node.upgrade();
+        Box::pin(async move {
+            let Some(node) = node else { return Outcome::Failed("the node is stopping".into()) };
+            let Ok(resident) = taken.unit.parse::<ResidentId>() else { return Outcome::Done };
+            if node.residents.about(&resident).is_none() {
+                return Outcome::Done;
+            }
+            let began = Instant::now();
+            let checked = produce(&node, &resident, true).await;
+            let took = began.elapsed();
+            match checked {
+                Ok(checked) => {
+                    if checked.written + checked.gone > 0 {
+                        node.log.line(format_args!(
+                            "{resident}'s asset timeline checked whole: {} written, {} gone",
+                            checked.written, checked.gone
+                        ));
+                    }
+                    tokio::time::sleep(took * (VERIFY_SHARE - 1)).await;
+                    Outcome::Done
+                }
+                Err(failure) => Outcome::Failed(failure.message),
+            }
+        })
+    };
+    jobs.register(Kind { name: VERIFY, at_once: 1, within: WITHIN, tries: TRIES }, Arc::new(run));
+}
+
+/// Asks for `resident`'s history to be checked whole, at a moment of the
+/// next hour; asked at most once an hour in this run of the node.
+fn check_wanted(node: &Arc<Node>, resident: &ResidentId) {
+    {
+        let mut asked = CHECK_ASKED.lock().expect("checks asked");
+        if asked.get(resident).is_some_and(|at| at.elapsed() < LONG_WITHIN) {
+            return;
+        }
+        asked.insert(resident.clone(), Instant::now());
+    }
+    // Spread over the hour, so checks asked together do not run together.
+    let spread = (Timestamp::now().as_nanosecond().unsigned_abs() % LONG_WITHIN.as_nanos()) as u64;
+    let pause = Duration::from_nanos(spread);
+    let job = Job { kind: VERIFY, key: resident.to_string(), unit: resident.to_string(), payload: Vec::new() };
+    let (database, jobs, log) = (node.database.clone(), node.durable_jobs.clone(), node.log.clone());
+    fastctx_platform::task::spawn(async move {
+        let bytes = job.key.len() * 2 + 64;
+        let key = job.key.clone();
+        match database.write_relaxed(bytes, move |db| fastctx_jobs::submit_after(db, &job, pause)).await {
+            Ok(()) => jobs.stir(VERIFY),
+            Err(error) => log.line(format_args!("asking for {key}'s history to be checked: {error}")),
+        }
+    });
+}
+
 async fn run(node: &Arc<Node>, resident: &ResidentId) -> Outcome {
     if node.residents.about(resident).is_none() {
         return Outcome::Done;
@@ -206,7 +345,7 @@ async fn run(node: &Arc<Node>, resident: &ResidentId) -> Outcome {
     {
         return Outcome::Again { after: APART - since };
     }
-    let produced = produce(node, resident).await;
+    let produced = produce(node, resident, false).await;
     BROUGHT.lock().expect("brought timelines").insert(resident.clone(), Instant::now());
     match produced {
         Ok(produced) => {
@@ -223,6 +362,13 @@ async fn run(node: &Arc<Node>, resident: &ResidentId) -> Outcome {
                 unread.remove(resident);
             } else {
                 UNREAD.lock().expect("unread timelines").remove(resident);
+            }
+            // A long prefix changed: checked whole within the hour. Any
+            // history not checked for a week, or not since this node began
+            // keeping it: checked, at some moment of the next hour.
+            let stale = produced.verified.is_none_or(|at| Timestamp::now().duration_since(at).unsigned_abs() >= VERIFY_EVERY);
+            if produced.long_changed || stale {
+                check_wanted(node, resident);
             }
             if active(node, resident) {
                 return Outcome::Again { after: ACTIVE_AGAIN };

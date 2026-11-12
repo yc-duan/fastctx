@@ -116,6 +116,26 @@ pub fn history(directory: &ConversationDir) -> io::Result<Vec<SessionEvent>> {
     Ok(result)
 }
 
+/// Every event recorded after `after`, with its sequence, and the latest
+/// sequence when the reading began.
+pub(crate) fn after(directory: &ConversationDir, mut after: u64) -> io::Result<(Vec<(u64, SessionEvent)>, u64)> {
+    let mut result = Vec::new();
+    let mut through = None;
+    loop {
+        let page = page(directory, after, through, 512)?;
+        let latest = page.latest;
+        through = Some(latest);
+        if page.events.is_empty() {
+            return Ok((result, latest));
+        }
+        after = page.next;
+        result.extend(page.events);
+        if after >= latest {
+            return Ok((result, latest));
+        }
+    }
+}
+
 pub fn stamp(directory: &Path, digest: &mut impl FnMut(&[u8])) -> io::Result<()> {
     digest(&latest(&ConversationDir::at(directory))?.to_be_bytes());
     Ok(())

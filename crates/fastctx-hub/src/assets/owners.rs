@@ -170,7 +170,9 @@ impl Owners {
         let directory = self.root.join(owner.directory());
         let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |since| since.as_nanos());
         let aside = self.root.join(format!("{DISCARDED}{nanos:x}"));
-        match fastctx_platform::disk::rename(&directory, &aside) {
+        // The move lasts before the deletion is recorded done (AE06): no
+        // power lost after that brings the library back where it was.
+        match fastctx_platform::durable_file::rename_durably(&directory, &aside) {
             Ok(()) => Ok(Some(aside)),
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
             Err(error) => Err(error),

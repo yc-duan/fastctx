@@ -517,17 +517,19 @@ pub(crate) fn assemble(
     Ok(history)
 }
 
-/// What the World kept of a Claude conversation, as `read_here` reads it:
-/// without the turns a cut took back.
-pub(crate) async fn recorded_claude(directory: &ConversationDir) -> Result<Vec<SessionEvent>, Failure> {
+/// What the World recorded of a conversation after the sequence `after`,
+/// each event with its sequence, the latest sequence, and whether a cut took
+/// turns back among them. From the start, the turns a cut took back are
+/// left out, as `read_here` reads it.
+pub(crate) async fn recorded_after(directory: &ConversationDir, after: u64) -> Result<(Vec<(u64, SessionEvent)>, u64, bool), Failure> {
     let reading = directory.clone();
-    let mut recorded = fastctx_platform::task::spawn_blocking(move || crate::delivery::history(&reading))
+    let (mut recorded, latest) = fastctx_platform::task::spawn_blocking(move || crate::session_record::after(&reading, after))
         .await
         .map_err(|error| Failure::new(error.to_string()))?
         .map_err(crate::record_migration::failure)?;
     let removed: std::collections::HashSet<_> = recorded
         .iter()
-        .flat_map(|event| match &event.happened {
+        .flat_map(|(_, event)| match &event.happened {
             fastctx_types::session::Happened::Changed {
                 change: fastctx_types::session::SessionChange::HistoryCut { removed_turns },
                 ..
@@ -535,8 +537,11 @@ pub(crate) async fn recorded_claude(directory: &ConversationDir) -> Result<Vec<S
             _ => Vec::new(),
         })
         .collect();
-    recorded.retain(|event| turn_of(&event.happened).is_none_or(|turn| !removed.contains(turn)));
-    Ok(recorded)
+    let cut = !removed.is_empty();
+    if after == 0 {
+        recorded.retain(|(_, event)| turn_of(&event.happened).is_none_or(|turn| !removed.contains(turn)));
+    }
+    Ok((recorded, latest, cut))
 }
 
 /// A session's history: what the World kept of it, and what its host keeps

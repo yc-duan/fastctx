@@ -74,6 +74,7 @@ pub(crate) fn register(node: &Arc<crate::Node>) {
     produce(&Arc::downgrade(node));
     rescan(&Arc::downgrade(node));
     tail::register(node);
+    tail::register_check(node);
     let jobs = node.durable_jobs.clone();
     let node = Arc::downgrade(node);
     let run = move |taken: Taken| -> std::pin::Pin<Box<dyn Future<Output = Outcome> + Send>> {

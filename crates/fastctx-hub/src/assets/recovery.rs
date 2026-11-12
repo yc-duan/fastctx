@@ -99,11 +99,34 @@ pub fn rotate_finish(dir: &Path) -> anyhow::Result<(String, String)> {
 pub fn report(dir: &Path) -> anyhow::Result<Option<Vec<String>>> {
     let store = Store::open(dir)?;
     let assets = Assets::open(dir, store.hub.id.as_str(), store.shelf.0.clone())?;
+    report_in(dir, &store, &assets)
+}
+
+/// Reopens the stopped hub in `dir` once `confirm` takes what `report`
+/// says of it, on the one opening of its store both are made on: a second
+/// opening could find the first one's writer still holding the database.
+/// None where its assets are not sealed; else what was said, and how many
+/// of the hub's records of the libraries went, if confirmed.
+pub fn reopen_confirmed(
+    dir: &Path,
+    confirm: impl FnOnce(&[String]) -> anyhow::Result<bool>,
+) -> anyhow::Result<Option<(Vec<String>, Option<usize>)>> {
+    let store = Store::open(dir)?;
+    let assets = Assets::open(dir, store.hub.id.as_str(), store.shelf.0.clone())?;
+    let Some(lines) = report_in(dir, &store, &assets)? else { return Ok(None) };
+    if !confirm(&lines)? {
+        return Ok(Some((lines, None)));
+    }
+    let forgotten = reopen_in(dir, &store, &assets)?;
+    Ok(Some((lines, Some(forgotten))))
+}
+
+fn report_in(dir: &Path, store: &Store, assets: &Assets) -> anyhow::Result<Option<Vec<String>>> {
     let mut lines = Vec::new();
     if let Some(why) = assets.sealed() {
         lines.push(format!("sealed: {why}"));
     }
-    for (owner, why) in owners_behind(&assets)? {
+    for (owner, why) in owners_behind(assets)? {
         lines.push(format!("the library of {} cannot be served: {why}", owner.key()));
     }
     if lines.is_empty() {
@@ -174,8 +197,12 @@ fn owners_behind(assets: &Assets) -> anyhow::Result<Vec<(Owner, String)>> {
 /// went.
 pub fn reopen(dir: &Path) -> anyhow::Result<usize> {
     let store = Store::open(dir)?;
+    let assets = Assets::open(dir, store.hub.id.as_str(), store.shelf.0.clone())?;
+    reopen_in(dir, &store, &assets)
+}
+
+fn reopen_in(dir: &Path, store: &Store, assets: &Assets) -> anyhow::Result<usize> {
     let control = store.shelf.0.clone();
-    let assets = Assets::open(dir, store.hub.id.as_str(), control.clone())?;
     let (fork, _) = control.read_now(chain::latest)?.unwrap_or((0, [0; 32]));
     let kept = assets.witness.kept();
     let old_head = witness::unhex(&kept.head).unwrap_or([0; 32]);

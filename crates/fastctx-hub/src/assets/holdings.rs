@@ -48,7 +48,7 @@ pub(crate) fn list(
             {
                 return Err(format!("who may hold {key} cannot be told now: {error}"));
             }
-            if scopes::may_hold(directory, machine, &scope) {
+            if scopes::may_hold_known(directory, machine, &scope).map_err(|error| format!("who may hold {key} cannot be told now: {error}"))? {
                 assets.holds(&key, machine);
                 scopes.push(Held { scope: key, descriptor: scope.fact.clone() });
             }
@@ -64,18 +64,23 @@ pub(crate) fn list(
 
 /// An answer of what `machine` may hold, made by the directory as it stood
 /// when the request began, judged again by the directory as it stands now
-/// (AD05): a scope it may no longer hold is left out, and the basis is the
-/// directory's now. Sealed, nothing is given.
-pub(crate) fn recheck(assets: &Assets, directory: &Indexed<'_>, basis: String, machine: &MachineName, reply: Reply) -> Result<Reply, String> {
+/// (AD05): a scope it may no longer hold is left out. The basis stays the
+/// one the listing went by (AE03): a machine that heard another one lists
+/// all again, which leaving scopes out cannot do for it. Sealed, nothing is
+/// given.
+pub(crate) fn recheck(assets: &Assets, directory: &Indexed<'_>, machine: &MachineName, reply: Reply) -> Result<Reply, String> {
     if let Some(why) = assets.sealed() {
         return Ok(Reply::Sealed { why });
     }
-    let Reply::Holdings { scopes, next, through, .. } = reply else { return Ok(reply) };
+    let Reply::Holdings { scopes, next, through, basis } = reply else { return Ok(reply) };
     let mut kept = Vec::with_capacity(scopes.len());
     for held in scopes {
-        if let Some(scope) = scopes::scope(assets, &held.scope)?
-            && scopes::may_hold(directory, machine, &scope)
-        {
+        let holds = match scopes::scope(assets, &held.scope)? {
+            Some(scope) => scopes::may_hold_known(directory, machine, &scope)
+                .map_err(|error| format!("who may hold {} cannot be told now: {error}", held.scope))?,
+            None => false,
+        };
+        if holds {
             kept.push(held);
         } else {
             assets.gone(&held.scope, machine);

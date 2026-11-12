@@ -100,8 +100,8 @@ fn held(assets: &Assets, directory: &Indexed<'_>, machine: &MachineName, key: &s
 
 /// An answer of what `machine` may hold, judged again by the directory as
 /// it stands now (`holdings::recheck`).
-pub(crate) fn recheck_holdings(assets: &Assets, directory: &Indexed<'_>, basis: String, machine: &MachineName, reply: Reply) -> Result<Reply, String> {
-    super::holdings::recheck(assets, directory, basis, machine, reply)
+pub(crate) fn recheck_holdings(assets: &Assets, directory: &Indexed<'_>, machine: &MachineName, reply: Reply) -> Result<Reply, String> {
+    super::holdings::recheck(assets, directory, machine, reply)
 }
 
 /// An answer about the scope `key` made by the directory as it stood when

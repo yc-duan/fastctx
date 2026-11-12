@@ -64,6 +64,20 @@ pub fn write_unpublished(path: &Path, bytes: &[u8]) -> io::Result<()> {
     })
 }
 
+/// Moves a file or directory within one file system, and makes the move
+/// last a loss of power before it is answered: both parents are synced on
+/// Unix (Win32 has no ordinary directory flush, so there it is best effort).
+pub fn rename_durably(from: &Path, to: &Path) -> io::Result<()> {
+    crate::roles::in_place("move durable content", || {
+        fs::rename(from, to)?;
+        sync_parent(to)?;
+        if from.parent() != to.parent() {
+            sync_parent(from)?;
+        }
+        Ok(())
+    })
+}
+
 /// Deletes an unreferenced generation after its readers have drained. Windows
 /// first durably truncates it: a delayed namespace deletion must not restore
 /// readable private content after an exposure-cleanup receipt.

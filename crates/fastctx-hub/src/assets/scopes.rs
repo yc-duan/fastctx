@@ -111,15 +111,30 @@ pub(crate) fn reads(
     born: &BTreeMap<String, String>,
     bodies: Option<&super::bodies::Bodies>,
 ) -> bool {
-    match readers {
+    reads_known(directory, account, readers, born, bodies).unwrap_or(false)
+}
+
+/// As `reads`, an error where it cannot be told now: a body's members that
+/// could not be read are not taken for none (AE04).
+pub(crate) fn reads_known(
+    directory: &Indexed<'_>,
+    account: &AccountName,
+    readers: &Readers,
+    born: &BTreeMap<String, String>,
+    bodies: Option<&super::bodies::Bodies>,
+) -> std::io::Result<bool> {
+    Ok(match readers {
         // The body's members as they are, or as they were frozen, and its
         // opener as it was.
         Readers::Body { body, opener } => {
-            let Some(found) = directory.account(account).filter(|found| !found.locked) else { return false };
-            (account == opener && same(directory, born, &format!("account:{opener}")))
-                || bodies
-                    .and_then(|bodies| bodies.members(directory.all, body).ok())
-                    .is_some_and(|members| members.contains(&format!("{account}@{}", found.opened.as_millisecond())))
+            let Some(found) = directory.account(account).filter(|found| !found.locked) else { return Ok(false) };
+            if account == opener && same(directory, born, &format!("account:{opener}")) {
+                return Ok(true);
+            }
+            match bodies {
+                Some(bodies) => bodies.members(directory.all, body)?.contains(&format!("{account}@{}", found.opened.as_millisecond())),
+                None => false,
+            }
         }
         Readers::Conversation { openers, born_on } => {
             let openers: Vec<AccountName> =
@@ -135,7 +150,7 @@ pub(crate) fn reads(
                 && same(directory, born, &format!("account:{only}"))
                 && directory.account(account).is_some_and(|found| !found.locked)
         }
-    }
+    })
 }
 
 /// Whether anyone at all may still read the scope: an account its readers
@@ -191,6 +206,17 @@ pub(crate) fn sharers_read(directory: &Indexed<'_>, machine: &MachineName, scope
     }
     let index = fastctx_net::directory_index::Index::new(&would);
     all_read(&Indexed::new(&would, &index))
+}
+
+/// As `may_hold`, an error where who reads the scope cannot be told now
+/// (AE04): a body whose members cannot be read is not taken for no one.
+pub(crate) fn may_hold_known(directory: &Indexed<'_>, machine: &MachineName, scope: &Scope) -> std::io::Result<bool> {
+    if let Readers::Body { body, .. } = &scope.descriptor.readers
+        && let Some(bodies) = scope.bodies.as_deref()
+    {
+        bodies.members(directory.all, body)?;
+    }
+    Ok(may_hold(directory, machine, scope))
 }
 
 /// Whether `machine` may hold any stream of the scope (design §2.3, §6.6).

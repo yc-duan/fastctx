@@ -47,9 +47,9 @@ pub(super) const DONE: &str = "\"done\"";
 pub(super) const RECEIPT_WITHIN: Duration = Duration::from_secs(120);
 /// Chunks between two judgements of whether the machine may go on.
 const CHECK_EVERY: u64 = 16;
-/// Proofs one device has standing at most, past what one frame may refer
-/// to (AD01), and every device's together.
-const DEVICE_PROOFS: usize = 16_384;
+/// Proofs one device has standing at most, four times what one frame may
+/// refer to (AD01, AE01), and every device's together.
+const DEVICE_PROOFS: usize = 4 * fastctx_content::FRAME_OBJECTS;
 const PROOFS_KEPT: usize = 1 << 18;
 /// How often a device putting an object keeps what it proved and staged.
 const KEEP_EVERY: Duration = Duration::from_secs(30);
@@ -142,10 +142,7 @@ impl Objects {
         let now = Instant::now();
         let mut proofs = self.proofs.lock().expect("proofs");
         if proofs.values().map(HashMap::len).sum::<usize>() >= PROOFS_KEPT {
-            for proven in proofs.values_mut() {
-                proven.retain(|_, until| now < *until);
-            }
-            proofs.retain(|_, proven| !proven.is_empty());
+            thin(&mut proofs, now);
         }
         let proven = proofs.entry(*key).or_default();
         if proven.len() >= DEVICE_PROOFS {
@@ -166,6 +163,39 @@ impl Objects {
         // The frame it is proved for waits on (AD09).
         self.apart.keep_staged(key);
     }
+}
+
+/// Every device's proofs at their bound together: those that ended go; if
+/// that is not enough, the devices with the most are cut down to one
+/// number, each losing those of its own that end soonest, until three
+/// quarters of the bound are left (AE05): the next walk is a quarter of the
+/// bound away, and a device with few keeps them.
+fn thin(proofs: &mut HashMap<[u8; 32], Proven>, now: Instant) {
+    for proven in proofs.values_mut() {
+        proven.retain(|_, until| now < *until);
+    }
+    proofs.retain(|_, proven| !proven.is_empty());
+    let target = PROOFS_KEPT / 4 * 3;
+    let kept_under = |most: usize| proofs.values().map(|proven| proven.len().min(most)).sum::<usize>();
+    if kept_under(usize::MAX) <= target {
+        return;
+    }
+    // The most each device keeps: the largest number that leaves the target.
+    let (mut low, mut high) = (0, proofs.values().map(HashMap::len).max().unwrap_or(0));
+    while low < high {
+        let middle = (low + high).div_ceil(2);
+        if kept_under(middle) <= target { low = middle } else { high = middle - 1 }
+    }
+    for proven in proofs.values_mut() {
+        if proven.len() > low {
+            let mut ends: Vec<([u8; 32], Instant)> = proven.iter().map(|(hash, until)| (*hash, *until)).collect();
+            ends.sort_unstable_by_key(|(_, until)| *until);
+            for (hash, _) in ends.iter().take(ends.len() - low) {
+                proven.remove(hash);
+            }
+        }
+    }
+    proofs.retain(|_, proven| !proven.is_empty());
 }
 
 fn local(object: &WireObject) -> Result<ObjectRef, String> {

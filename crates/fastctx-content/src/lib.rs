@@ -28,7 +28,7 @@ pub use forget::Forgotten;
 pub use objects::{OBJECTS_DIRECTORY, OBJECTS_FILE, Objects, READ_BYTES, ROW_BYTES};
 pub use read::{Anchor, Item, Page, Place};
 pub use reclaim::Reclaimed;
-pub use record::{FRAME_BYTES, FRAME_RECORDS, KEY_BYTES, ObjectRef, RECORD_BYTES, RECORD_OBJECTS, Record, State};
+pub use record::{FRAME_BYTES, FRAME_OBJECTS, FRAME_RECORDS, KEY_BYTES, ObjectRef, RECORD_BYTES, RECORD_OBJECTS, Record, State};
 
 use fastctx_storage::Database;
 use std::path::Path;
