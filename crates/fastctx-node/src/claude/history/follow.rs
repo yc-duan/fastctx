@@ -44,6 +44,27 @@ pub(crate) struct Window {
     /// The sessions before the one followed, as their files stood: a
     /// window is read past the seam only while they stand so.
     pub earlier: Vec<Stamp>,
+    /// The record ids of the rows the seam moved past in this reading (all
+    /// before it, read whole).
+    pub prefix_ids: Vec<String>,
+}
+
+/// The record ids of a followed record's rows before its seam, as 8-byte
+/// digests in order: a row of one of them again past the seam reads the
+/// record whole (CC09).
+#[derive(Default)]
+pub(crate) struct PrefixIds(pub Vec<u64>);
+
+impl PrefixIds {
+    pub(crate) fn digest(id: &str) -> u64 {
+        use sha2::Digest;
+        let digest = sha2::Sha256::digest(id.as_bytes());
+        u64::from_le_bytes(digest[..8].try_into().expect("eight bytes"))
+    }
+
+    pub(crate) fn holds(&self, id: &str) -> bool {
+        self.0.binary_search(&Self::digest(id)).is_ok()
+    }
 }
 
 /// A session's record file as it stood: the session, its length, and when
@@ -92,6 +113,7 @@ pub(crate) async fn window(
     resident: &ResidentId,
     recorded: &[SessionEvent],
     from: Option<(String, Seam, Vec<Stamp>)>,
+    prefix: Arc<PrefixIds>,
 ) -> Result<Option<Window>, String> {
     let (mut sessions, problems) = {
         let (reading, whose) = (node.clone(), resident.clone());
@@ -139,11 +161,11 @@ pub(crate) async fn window(
     let turns = Arc::new(turns(recorded));
     let mut unsteady = 0;
     let tail = loop {
-        let (reading, from, turns) = (path.clone(), seam.clone(), turns.clone());
+        let (reading, from, turns, prefix) = (path.clone(), seam.clone(), turns.clone(), prefix.clone());
         let copied = if from.identity.is_none() { copied.clone() } else { HashSet::new() };
         let read = fastctx_platform::task::blocking(move || {
             let accept = |at: Timestamp| turns.iter().all(|(start, end)| *start >= at || end.is_some_and(|end| end <= at));
-            follow::tail(&reading, &from, &copied, &accept, ended)
+            follow::tail(&reading, &from, &copied, &accept, ended, &|id: &str| prefix.holds(id))
         })
         .await;
         match read {
@@ -172,9 +194,9 @@ pub(crate) async fn window(
     let since = if whole { Timestamp::MIN } else { tail.since.unwrap_or(Timestamp::MAX) };
     let settled = tail.seam_at.unwrap_or(since);
     let next = tail.seam.clone().unwrap_or(seam);
-    let follow::Tail { transcript, .. } = tail;
+    let follow::Tail { transcript, prefix_ids, .. } = tail;
     let (events, _) = session_events(node, resident, &id, began, transcript.title.clone(), transcript.events, &transcript.problems);
     before.extend(events);
     let events = place(before, recorded);
-    Ok(Some(Window { session: id, events, whole, since, seam: next, settled, kept, kept_here, earlier }))
+    Ok(Some(Window { session: id, events, whole, since, seam: next, settled, kept, kept_here, earlier, prefix_ids }))
 }

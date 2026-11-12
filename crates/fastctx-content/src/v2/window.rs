@@ -130,6 +130,8 @@ impl Library {
                 }
             }
             if let Some((sequence, head)) = floor {
+                // What waited in the frames let go goes with them (W01).
+                super::judged::rebuild_waiting(db, stream_id)?;
                 db.prepare_cached(
                     "INSERT INTO retention (stream, floor, head) VALUES (?1, ?2, ?3)
                      ON CONFLICT (stream) DO UPDATE SET floor = excluded.floor, head = excluded.head",

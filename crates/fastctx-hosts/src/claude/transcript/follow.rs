@@ -62,6 +62,11 @@ pub struct Seam {
     /// one that comes after it reads the record whole (CC08).
     #[serde(default)]
     pub abandoned: Vec<String>,
+    /// The agents the files beside the record told of that no call before
+    /// it started, as a whole reading found them: no reason to read whole
+    /// again (CC10).
+    #[serde(default)]
+    pub unlinked: Vec<String>,
 }
 
 /// Why a record is read whole rather than from its seam.
@@ -105,6 +110,8 @@ pub struct Tail {
     pub since: Option<Timestamp>,
     /// The time of the row the seam moved to, when it moved.
     pub seam_at: Option<Timestamp>,
+    /// The record ids of the rows the seam moved past in this reading.
+    pub prefix_ids: Vec<String>,
 }
 
 /// Reads `path` past `seam`: the prefix checked, the tail read twice and
@@ -112,13 +119,16 @@ pub struct Tail {
 /// moves to the last start of the user's words past it that `accept` takes,
 /// given the time they were said, with no tool call before it waiting.
 /// `ended`: the session's process is gone, so a last row without its line's
-/// end will never have one.
+/// end will never have one. `seen` says whether a record id is of a row
+/// before the seam: a row of one again after it reads the record whole
+/// (CC09).
 pub fn tail(
     path: &Path,
     seam: &Seam,
     earlier: &HashSet<String>,
     accept: &dyn Fn(Timestamp) -> bool,
     ended: bool,
+    seen: &dyn Fn(&str) -> bool,
 ) -> io::Result<Result<Tail, Restart>> {
     let mut file = file_read::open(path)?;
     let metadata = file.metadata()?;
@@ -139,7 +149,7 @@ pub fn tail(
     scan(&mut BufReader::with_capacity(1 << 20, (&mut file).take(metadata.len() - seam.offset)), None, false, &mut scanned, Some(&mut first))?;
     let (_, end) = scanned.reached();
     if seam.offset > 0
-        && let Some(why) = unsupported(&scanned, seam)
+        && let Some(why) = unsupported(&scanned, seam, seen)
     {
         return Ok(Err(Restart::Unsupported(why)));
     }
@@ -161,6 +171,15 @@ pub fn tail(
     }
     let beside = subagents::beside(path);
     let seam_at = moved.as_ref().map(|(_, said, _, _)| *said);
+    let prefix_ids: Vec<String> = match &moved {
+        Some((to, _, _, _)) => scanned
+            .rows
+            .iter()
+            .filter(|row| row.start < *to)
+            .filter_map(|row| row.value.get("uuid").and_then(Value::as_str).map(str::to_string))
+            .collect(),
+        None => Vec::new(),
+    };
     let next = match moved {
         Some((to, _, latest, abandoned)) => {
             let mut next = advanced(&mut file, seam, to, identity, earlier, &beside)?;
@@ -177,8 +196,21 @@ pub fn tail(
         None if seam.identity.is_none() => Some(Seam { identity: Some(identity), ..seam.clone() }),
         None => None,
     };
+    let ids: Vec<String> = beside.ids().map(str::to_string).collect();
     let transcript = project(scanned, &[], earlier, beside, seam.agents.clone())?;
-    Ok(Ok(Tail { transcript, seam: next, end, since, seam_at }))
+    // An agent the files beside tell of that no call started — before the
+    // seam or past it — is one a call before the seam started, its
+    // telling come late: a whole reading links it (CC10).
+    let unlinked: Vec<String> =
+        ids.into_iter().filter(|id| !seam.agents.contains_key(id) && !transcript.agents().contains_key(id)).collect();
+    if seam.offset > 0 && unlinked.iter().any(|id| !seam.unlinked.contains(id)) {
+        return Ok(Err(Restart::Unsupported("an agent before the seam told of late")));
+    }
+    let next = next.map(|mut next| {
+        next.unlinked = if seam.offset == 0 { unlinked } else { seam.unlinked.clone() };
+        next
+    });
+    Ok(Ok(Tail { transcript, seam: next, end, since, seam_at, prefix_ids }))
 }
 
 /// Whether `[from, to)` of `file` hashes to `expected` read again.
@@ -313,6 +345,7 @@ fn advanced(
             .collect(),
         latest: None,
         abandoned: Vec::new(),
+        unlinked: Vec::new(),
     })
 }
 
@@ -320,8 +353,11 @@ fn advanced(
 /// alone: a compaction, whose summary names what it kept, a row that takes
 /// back rows not in the tail, and the answer to a call before the seam the
 /// user had spoken past.
-fn unsupported(scanned: &Scanned, seam: &Seam) -> Option<&'static str> {
+fn unsupported(scanned: &Scanned, seam: &Seam, seen: &dyn Fn(&str) -> bool) -> Option<&'static str> {
     for row in &scanned.rows {
+        if row.value.get("uuid").and_then(Value::as_str).is_some_and(seen) {
+            return Some("a row of a record before the seam again");
+        }
         if row.kind() == Some("user")
             && !seam.abandoned.is_empty()
             && row.blocks().into_iter().flatten().any(|block| {

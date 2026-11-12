@@ -108,13 +108,14 @@ def check(registry):
         asset_tables.add((table, owner))
     created = set()
     # A table however its name is quoted, in Rust and in the SQL it loads:
-    # a quoted name whole, whatever it holds (S13).
+    # a quoted name whole, whatever it holds (S13), in single quotes too
+    # (W04).
     # Between the words, any SQL comment as well as space (T09); a virtual
     # table as well, whose shadow tables go with it (V03).
     gap = r"(?:\s|/\*.*?\*/|--[^\n]*\n)+"
     creating = re.compile(
         rf"CREATE{gap}(?:(?:TEMP|TEMPORARY){gap})?(?:VIRTUAL{gap})?TABLE{gap}(?:IF{gap}NOT{gap}EXISTS{gap})?"
-        r"(?:\\?\"((?:[^\"\\]|\\[^\"])+)\\?\"|`([^`]+)`|\[([^\]]+)\]|([A-Za-z_][A-Za-z0-9_]*))",
+        r"(?:\\?\"((?:[^\"\\]|\\[^\"])+)\\?\"|`([^`]+)`|\[([^\]]+)\]|'([^']+)'|([A-Za-z_][A-Za-z0-9_]*))",
         re.I | re.S,
     )
     for path in sorted((ROOT / "crates").rglob("*.rs")) + sorted((ROOT / "crates").rglob("*.sql")):
@@ -122,7 +123,11 @@ def check(registry):
         if "/src/" not in name or "/fastctx-sync/" in name or exempt(path.relative_to(ROOT).as_posix()):
             continue
         owner = path.relative_to(ROOT).as_posix()
-        for groups in creating.findall(path.read_text(encoding="utf-8")):
+        text = path.read_text(encoding="utf-8")
+        # An example in an SQL comment creates nothing (W05).
+        if path.suffix == ".sql":
+            text = re.sub(r"/\*.*?\*/|--[^\n]*", " ", text, flags=re.S)
+        for groups in creating.findall(text):
             table = next(group for group in groups if group).lower()
             if "/fastctx-content/" in name:
                 if (table, owner) not in asset_tables:

@@ -205,6 +205,15 @@ impl Library {
                 purged.rows += done;
                 if done == 0 {
                     db.prepare_cached("DELETE FROM purges WHERE scope = ?1 AND holding = ?2")?.execute(params![scope, holding])?;
+                    // What waited in the period's frames goes with them (W01).
+                    let streams: Vec<i64> = {
+                        let mut statement = db.prepare_cached("SELECT id FROM streams WHERE scope = ?1")?;
+                        let rows = statement.query_map([scope], |row| row.get(0))?;
+                        rows.collect::<std::result::Result<_, _>>()?
+                    };
+                    for stream in streams {
+                        super::judged::rebuild_waiting(db, stream)?;
+                    }
                     purged.finished += 1;
                 }
             }

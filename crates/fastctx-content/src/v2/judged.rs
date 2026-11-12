@@ -19,6 +19,9 @@ use crate::error::invalid;
 use fastctx_storage::rusqlite::{Connection, OptionalExtension, params};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
+/// Frames read at a time building an item history.
+const FRAMES_AT_ONCE: i64 = 64;
+
 /// What becomes of one record of a frame being judged.
 pub(super) enum Fate {
     /// Judged now: in the index if let in, refused for good if not; waiting
@@ -81,19 +84,30 @@ impl History {
     fn places(&mut self, db: &Connection, stream: i64, holding: i64) -> fastctx_storage::Result<&mut Places> {
         if let std::collections::hash_map::Entry::Vacant(vacant) = self.streams.entry(stream) {
             let mut places: Places = HashMap::new();
-            let frames: Vec<(Vec<u8>, Vec<u8>)> = {
-                let mut statement = db.prepare_cached("SELECT header, body FROM frames WHERE stream = ?1 AND holding = ?2 ORDER BY first")?;
-                let rows = statement.query_map(params![stream, holding], |row| Ok((row.get(0)?, row.get(1)?)))?;
-                rows.collect::<std::result::Result<_, _>>()?
-            };
-            for (header, body) in frames {
-                let header = Header::decode(&header).map_err(invalid)?;
-                let out = Out::of(db, stream, &header)?;
-                for (offset, record) in open(&header, &body).map_err(invalid)?.iter().enumerate() {
-                    if out.holds(offset, record) {
-                        continue;
+            // A few frames at a time: only their places are kept, never the
+            // stream's bodies all at once (W02).
+            let mut after = -1i64;
+            loop {
+                let frames: Vec<(i64, Vec<u8>, Vec<u8>)> = {
+                    let mut statement = db.prepare_cached(
+                        "SELECT first, header, body FROM frames WHERE stream = ?1 AND holding = ?2 AND first > ?3 ORDER BY first LIMIT ?4",
+                    )?;
+                    let rows = statement.query_map(params![stream, holding, after, FRAMES_AT_ONCE], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+                    rows.collect::<std::result::Result<_, _>>()?
+                };
+                if frames.is_empty() {
+                    break;
+                }
+                for (first, header, body) in frames {
+                    after = first;
+                    let header = Header::decode(&header).map_err(invalid)?;
+                    let out = Out::of(db, stream, &header)?;
+                    for (offset, record) in open(&header, &body).map_err(invalid)?.iter().enumerate() {
+                        if out.holds(offset, record) {
+                            continue;
+                        }
+                        places.entry(record.record.item.clone()).or_default().push((header.first + offset as u64, header.first, offset));
                     }
-                    places.entry(record.record.item.clone()).or_default().push((header.first + offset as u64, header.first, offset));
                 }
             }
             vacant.insert(places);
@@ -244,13 +258,57 @@ fn before_at(db: &Connection, stream: i64, holding: i64, item: &[u8], revision: 
     Ok(super::hub::hidden_before(db, stream, holding, item, revision)?.filter(|entry| entry.revision < revision))
 }
 
+/// The items of `stream` with a record still out of the index, found again
+/// from the frames that keep any (W01): once frames were cut away, put in
+/// another's place or purged, nothing waits behind a record no longer there.
+pub(super) fn rebuild_waiting(db: &Connection, stream: i64) -> fastctx_storage::Result<()> {
+    db.prepare_cached("DELETE FROM pending_items WHERE stream = ?1")?.execute([stream])?;
+    let frames: Vec<(i64, i64, Vec<u8>)> = {
+        let mut statement = db.prepare_cached(
+            "SELECT DISTINCT epoch, first, head FROM (
+                 SELECT epoch, first, head FROM pending_schema WHERE stream = ?1
+                 UNION SELECT epoch, first, head FROM deferred_records WHERE stream = ?1)",
+        )?;
+        let rows = statement.query_map([stream], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+        rows.collect::<std::result::Result<_, _>>()?
+    };
+    let mut keep = db.prepare_cached("INSERT OR IGNORE INTO pending_items (stream, item) VALUES (?1, ?2)")?;
+    for (epoch, first, head) in frames {
+        let found: Vec<(Vec<u8>, Vec<u8>)> = {
+            let mut statement = db.prepare_cached("SELECT header, body FROM frames WHERE stream = ?1 AND epoch = ?2 AND first = ?3")?;
+            let rows = statement.query_map(params![stream, epoch, first], |row| Ok((row.get(0)?, row.get(1)?)))?;
+            rows.collect::<std::result::Result<_, _>>()?
+        };
+        for (header, body) in found {
+            let header = Header::decode(&header).map_err(invalid)?;
+            if header.chain()[..] != head[..] {
+                continue;
+            }
+            let out = Out::of(db, stream, &header)?;
+            let refused = super::pending::refused(db, stream, header.epoch, header.first, &header.chain())?;
+            for (offset, record) in open(&header, &body).map_err(invalid)?.iter().enumerate() {
+                if out.holds(offset, record) && !refused.contains(&(offset as u64)) {
+                    keep.execute(params![stream, &record.record.item])?;
+                }
+            }
+            break;
+        }
+    }
+    Ok(())
+}
+
 /// The refusals, waiting records and pending kinds of the frame at
 /// `(epoch, first)` of `stream` whose head is not `head` are of a frame no
 /// longer there (U04): they go.
 pub(super) fn forget_replaced(db: &Connection, stream: i64, epoch: u64, first: u64, head: &[u8; 32]) -> fastctx_storage::Result<()> {
+    let mut gone = 0;
     for table in ["refused_records", "pending_schema", "deferred_records"] {
-        db.prepare_cached(&format!("DELETE FROM {table} WHERE stream = ?1 AND epoch = ?2 AND first = ?3 AND head <> ?4"))?
+        gone += db
+            .prepare_cached(&format!("DELETE FROM {table} WHERE stream = ?1 AND epoch = ?2 AND first = ?3 AND head <> ?4"))?
             .execute(params![stream, epoch as i64, first as i64, &head[..]])?;
+    }
+    if gone > 0 {
+        rebuild_waiting(db, stream)?;
     }
     Ok(())
 }
@@ -261,7 +319,7 @@ pub(super) fn forget_from(db: &Connection, stream: i64, first: i64) -> fastctx_s
     for table in ["refused_records", "pending_schema", "deferred_records"] {
         db.prepare_cached(&format!("DELETE FROM {table} WHERE stream = ?1 AND first >= ?2"))?.execute(params![stream, first])?;
     }
-    Ok(())
+    rebuild_waiting(db, stream)
 }
 
 /// What is kept of the frame of `stream` at `(epoch, first)` whose head is

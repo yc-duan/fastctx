@@ -8,7 +8,7 @@ use std::collections::HashSet;
 
 mod follow;
 mod placement;
-pub(crate) use follow::{Stamp, turns, window};
+pub(crate) use follow::{PrefixIds, Stamp, turns, window};
 pub(super) use placement::place;
 use std::path::PathBuf;
 use std::sync::Arc;

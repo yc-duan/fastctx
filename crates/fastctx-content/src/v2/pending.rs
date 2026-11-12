@@ -61,11 +61,14 @@ impl Library {
         let (mut applied, mut after) = (0usize, (-1i64, -1i64, -1i64, Vec::new()));
         // The items with a record still out, as the pass finds them.
         let mut blocked: HashSet<(i64, Vec<u8>)> = HashSet::new();
+        // One item history for the whole pass, not one a page (W03).
+        let mut kept_history = super::judged::History::default();
         loop {
             let kinds = kinds.clone();
             let from = after.clone();
             let mut passing = std::mem::take(&mut blocked);
-            let (page, last, passing) = self.database().write_now_at(Priority::Background, 1 << 16, move |db| {
+            let mut history = std::mem::take(&mut kept_history);
+            let (page, last, passing, history) = self.database().write_now_at(Priority::Background, 1 << 16, move |db| {
                 let frames: Vec<(i64, i64, i64, Vec<u8>)> = {
                     let mut statement = db.prepare_cached(
                         "SELECT DISTINCT stream, epoch, first, head FROM (
@@ -80,7 +83,6 @@ impl Library {
                 };
                 let last = frames.last().cloned();
                 let mut done = 0usize;
-                let mut history = super::judged::History::default();
                 for (stream, epoch, first, head) in frames {
                     let head: [u8; 32] = head.try_into().map_err(|_| invalid("a malformed frame head"))?;
                     let pending = kept(db, stream, epoch as u64, first as u64, &head)?;
@@ -154,9 +156,10 @@ impl Library {
                         keep.execute(params![stream, item])?;
                     }
                 }
-                Ok((done, last, passing))
+                Ok((done, last, passing, history))
             })?;
             blocked = passing;
+            kept_history = history;
             applied += page;
             match last {
                 Some(last) => after = last,

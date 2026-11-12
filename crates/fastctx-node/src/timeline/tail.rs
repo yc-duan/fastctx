@@ -128,6 +128,34 @@ struct Following {
     told: Vec<String>,
 }
 
+/// The name the record ids before a Claude seam are kept under.
+fn prefix_name(resident: &ResidentId) -> String {
+    format!("timeline-ids/{resident}")
+}
+
+/// The record ids before `resident`'s Claude seam, as kept.
+async fn prefix_ids(library: &fastctx_content::v2::Library, resident: &ResidentId) -> Result<Arc<crate::claude::history::PrefixIds>, Failure> {
+    let (reading, name) = (library.clone(), prefix_name(resident));
+    let bytes = fastctx_platform::task::blocking(move || reading.checkpoint(&name)).await.map_err(failure)?.unwrap_or_default();
+    let digests = bytes.chunks_exact(8).map(|chunk| u64::from_le_bytes(chunk.try_into().expect("eight bytes"))).collect();
+    Ok(Arc::new(crate::claude::history::PrefixIds(digests)))
+}
+
+/// Keeps the record ids the seam moved past with those before: all there
+/// are, read whole.
+async fn keep_prefix_ids(library: &fastctx_content::v2::Library, resident: &ResidentId, whole: bool, moved: &[String]) -> Result<(), Failure> {
+    if !whole && moved.is_empty() {
+        return Ok(());
+    }
+    let mut digests = if whole { Vec::new() } else { Arc::try_unwrap(prefix_ids(library, resident).await?).map(|ids| ids.0).unwrap_or_default() };
+    digests.extend(moved.iter().map(|id| crate::claude::history::PrefixIds::digest(id)));
+    digests.sort_unstable();
+    digests.dedup();
+    let bytes: Vec<u8> = digests.iter().flat_map(|digest| digest.to_le_bytes()).collect();
+    let (writing, name) = (library.clone(), prefix_name(resident));
+    fastctx_platform::task::blocking(move || writing.keep_checkpoint(&name, bytes)).await.map_err(failure)
+}
+
 /// The identities of the timeline's items placed past `floor`.
 fn past_floor(library: &fastctx_content::v2::Library, scope: &str, floor: u64) -> fastctx_content::Result<Vec<Vec<u8>>> {
     use fastctx_content::v2::{Kind as _, Timeline};
@@ -167,7 +195,14 @@ struct Followed {
 
 /// Where the history is read through now, as its host reads it.
 enum Next {
-    Claude { session: String, seam: Box<Seam>, kept: Option<String>, kept_here: bool, earlier: Vec<crate::claude::history::Stamp> },
+    Claude {
+        session: String,
+        seam: Box<Seam>,
+        kept: Option<String>,
+        kept_here: bool,
+        earlier: Vec<crate::claude::history::Stamp>,
+        prefix_ids: Vec<String>,
+    },
     Codex(CodexSeam),
 }
 
@@ -283,7 +318,8 @@ pub(super) async fn produce(node: &Arc<Node>, resident: &ResidentId, whole: bool
             let followed = if agent == "claude" {
                 // A check reads the record from its start.
                 let from = state.session.clone().filter(|_| !whole).map(|session| (session, state.seam.clone(), state.earlier.clone()));
-                crate::claude::history::window(node, resident, &recorded, from).await.map_err(Failure::new)?.map(|window| Followed {
+                let prefix = if whole { Arc::new(crate::claude::history::PrefixIds::default()) } else { prefix_ids(&library, resident).await? };
+                crate::claude::history::window(node, resident, &recorded, from, prefix).await.map_err(Failure::new)?.map(|window| Followed {
                     events: window.events,
                     whole: window.whole,
                     since: window.since,
@@ -294,6 +330,7 @@ pub(super) async fn produce(node: &Arc<Node>, resident: &ResidentId, whole: bool
                         kept: window.kept,
                         kept_here: window.kept_here,
                         earlier: window.earlier,
+                        prefix_ids: window.prefix_ids,
                     },
                 })
             } else {
@@ -383,12 +420,15 @@ pub(super) async fn produce(node: &Arc<Node>, resident: &ResidentId, whole: bool
                     .map(|(_, identity)| identity)
                     .collect()
             };
+            // A Codex thread's own title and what it says of itself stand at
+            // the end of its history: placed again where they stand (N1).
+            let again: std::collections::HashSet<Vec<u8>> = if matches!(window.next, Next::Codex(_)) { unturned.clone() } else { Default::default() };
             let wrote = {
                 let (writing, signer, whose, placed, held) = (library.clone(), signer.clone(), resident.clone(), placed, producing.clone());
                 fastctx_platform::task::blocking(move || {
                     let _held = held;
                     let span = if whole { Span::Whole } else { Span::From { since, before: &before, floor } };
-                    assets::write(&writing, signer, &whose, &placed, &history, span)
+                    assets::write(&writing, signer, &whose, &placed, &history, span, &again)
                 })
                 .await?
             };
@@ -401,7 +441,8 @@ pub(super) async fn produce(node: &Arc<Node>, resident: &ResidentId, whole: bool
             let told: Vec<String> = if codex { unturned.iter().map(|identity| hex(identity)).collect() } else { Vec::new() };
             let verified = if window.whole { Some(Timestamp::now()) } else { state.verified };
             let (next, unread) = match window.next {
-                Next::Claude { session, seam, kept: seen, kept_here, earlier } => {
+                Next::Claude { session, seam, kept: seen, kept_here, earlier, prefix_ids: moved_past } => {
+                    keep_prefix_ids(&library, resident, whole, &moved_past).await?;
                     let unread = seen.is_some() && !kept_here && seen != state.kept;
                     let next = Following {
                         form: FORM,
@@ -454,7 +495,7 @@ pub(super) async fn produce(node: &Arc<Node>, resident: &ResidentId, whole: bool
                 let (writing, signer, whose, history, held) = (library.clone(), signer.clone(), resident.clone(), read.history, producing.clone());
                 fastctx_platform::task::blocking(move || {
                     let _held = held;
-                    assets::write(&writing, signer, &whose, &placed, &history, Span::Whole)
+                    assets::write(&writing, signer, &whose, &placed, &history, Span::Whole, &Default::default())
                 })
                 .await?
             };
@@ -606,9 +647,19 @@ pub(super) fn check_wanted(node: &Arc<Node>, resident: &ResidentId) {
     fastctx_platform::task::spawn(async move {
         let bytes = job.key.len() * 2 + 64;
         let key = job.key.clone();
-        match database.write_relaxed(bytes, move |db| fastctx_jobs::submit_after(db, &job, pause)).await {
-            Ok(()) => jobs.stir(VERIFY),
-            Err(error) => log.line(format_args!("asking for {key}'s history to be checked: {error}")),
+        // Refused, it is asked again each minute until it is taken (N5).
+        loop {
+            let asked = job.clone();
+            match database.write_relaxed(bytes, move |db| fastctx_jobs::submit_after(db, &asked, pause)).await {
+                Ok(()) => {
+                    jobs.stir(VERIFY);
+                    return;
+                }
+                Err(error) => {
+                    log.line(format_args!("asking for {key}'s history to be checked: {error}; asked again in a minute"));
+                    tokio::time::sleep(SUBMIT_LATER).await;
+                }
+            }
         }
     });
 }
@@ -622,7 +673,8 @@ pub(super) async fn check_stale(node: &Arc<Node>) {
         let (reading, name) = (kept.library.clone(), assets::checkpoint(&resident));
         let state = fastctx_platform::task::blocking(move || reading.checkpoint(&name)).await.ok().flatten();
         let verified = state.and_then(|bytes| serde_json::from_slice::<Following>(&bytes).ok()).and_then(|state| state.verified);
-        if verified.is_none_or(|at| Timestamp::now().duration_since(at).unsigned_abs() >= VERIFY_EVERY) {
+        // A day ahead, so none waits past a week for the next sweep (N4).
+        if verified.is_none_or(|at| Timestamp::now().duration_since(at).unsigned_abs() >= VERIFY_EVERY - Duration::from_secs(24 * 60 * 60)) {
             check_wanted(node, &resident);
         }
     }

@@ -138,6 +138,7 @@ pub(super) fn write(
     placed: &Placed,
     history: &[SessionEvent],
     span: Span<'_>,
+    again: &HashSet<Vec<u8>>,
 ) -> Result<Wrote, Failure> {
     let _writing = Writing::take(resident);
     if library.holding(&placed.scope).map_err(failure)?.is_none() {
@@ -168,11 +169,12 @@ pub(super) fn write(
     // own below that is placed again.
     // An event from before the window keeps the place it has; one new to
     // the timeline, though its time is earlier, takes its place in the
-    // window, never the very first (CC14).
+    // window, never the very first (CC14); and so does one told again at
+    // every reading where the whole history has it (`again`, N1).
     let early: Vec<bool> = history
         .iter()
         .zip(&identities)
-        .map(|(event, identity)| since.is_some_and(|since| event.at < since) && had.contains_key(identity))
+        .map(|(event, identity)| since.is_some_and(|since| event.at < since) && had.contains_key(identity) && !again.contains(identity))
         .collect();
     let window: Vec<usize> = (0..history.len()).filter(|index| !early[*index]).collect();
     let mut keyed: Vec<Option<u64>> = Vec::with_capacity(window.len() + 1);

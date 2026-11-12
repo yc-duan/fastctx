@@ -24,7 +24,7 @@ use std::collections::BTreeMap;
 /// Entries asked for at a time, reading back from the newest.
 const PAGE: u32 = 128;
 /// How many times a thread that changed while it was read is read again
-/// before what was read is taken: the next reading sets it right.
+/// before it is left for a later reading.
 const STEADY_TRIES: u32 = 4;
 
 /// Where a thread was read through.
@@ -92,15 +92,15 @@ pub(super) async fn tail(
 ) -> Result<Result<Tail, Restart>, String> {
     // Read again until two readings of what the thread is like now agree
     // around the reading of its entries (C3): the RPCs share no snapshot.
-    let mut tries = 0;
-    loop {
+    for _ in 0..STEADY_TRIES {
         let before = shape(server, thread).await?;
         let read = once(server, thread, running, owner, seam, accept).await?;
-        if shape(server, thread).await? == before || tries >= STEADY_TRIES {
+        if shape(server, thread).await? == before {
             return Ok(read);
         }
-        tries += 1;
     }
+    // Never what two readings did not agree on (N3): read again later.
+    Err(format!("thread {thread} changed each of the {STEADY_TRIES} times it was read"))
 }
 
 /// What tells whether a thread changed between two moments: when Codex last
