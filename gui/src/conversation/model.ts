@@ -379,6 +379,13 @@ export class Fold {
   /** The turns the conversation's machine says were asked to stop, by this
    *  device or another (`now`): calling off this device's stop leaves them. */
   private machineHalted = new Set<string>();
+  /** The words on their way when a stop was asked with no turn running:
+   *  the stop is of the turn that takes them (by their delivery, or by
+   *  what they say where they have none yet). */
+  private haltedWords: { deliveries: Set<string>; texts: Set<string> } = { deliveries: new Set(), texts: new Set() };
+  /** A reading did not show those words taken: the stop waits for them, and
+   *  is spent once the machine no longer keeps them (`now`). */
+  private haltedUnseen = false;
   private derivedCache: Derived | null = null;
   private blocksCache: { clock: number; blocks: Block[] } | null = null;
   /** In a fork, what this fold held before the point it was made at: what
@@ -456,9 +463,6 @@ export class Fold {
     const pending = this.entries.filter((entry): entry is Heard => entry.kind === "heard" && entry.sending !== undefined);
     const known = new Set(this.entries.filter((entry) => entry.kind === "heard").map((entry) => entry.key));
     const halted = this.halted;
-    // Turns this view knew before reading again: a stop of words still on
-    // their way is of the first turn the reading shows starting after them.
-    const knownTurns = new Set<string>([...this.running, ...this.began.keys(), ...this.endedTurns, ...this.byTurn.keys()]);
     this.entries = [];
     this.byCall.clear();
     if (places) {
@@ -511,12 +515,18 @@ export class Fold {
     // A stop asked of what still runs, or of words still on their way,
     // stands through a reading again: only on the turns it was asked of,
     // never on one the reading shows starting after they ended. Words on
-    // their way start the first turn the reading shows that this view did
-    // not know: stopped if it still runs, spent if it ended; with none yet,
-    // the stop waits for it as before.
+    // their way are stopped in the turn the reading shows taking them:
+    // stopped if it still runs, spent if it ended. A reading that does not
+    // show them taken — an older page, a window that begins later — leaves
+    // the stop waiting for them as before.
     if (halted?.size === 0) {
-      const target = [...carry, ...events, ...(authoritativePending ?? [])]
-        .flatMap((event) => (event.event === "turn_started" && !knownTurns.has(event.turn) ? [event.turn] : []))[0];
+      const words = this.haltedWords;
+      const target = [...carry, ...events, ...(authoritativePending ?? [])].flatMap((event) => {
+        if (event.event !== "heard" || !event.turn) return [];
+        const said = (event.from ? event.text : userWords(event.text)?.body ?? event.text).trim();
+        return (event.delivery && words.deliveries.has(event.delivery)) || words.texts.has(said) ? [event.turn] : [];
+      })[0];
+      this.haltedUnseen = target === undefined;
       if (target === undefined) this.halted = new Set();
       else if (this.running.has(target)) this.haltTurn(target);
     } else for (const turn of halted ?? []) if (this.running.has(turn)) this.haltTurn(turn);
@@ -611,6 +621,8 @@ export class Fold {
     next.stretches = new Map([...this.stretches].map(([turn, keys]) => [turn, [...keys]]));
     next.halted = this.halted ? new Set(this.halted) : null;
     next.machineHalted = new Set(this.machineHalted);
+    next.haltedWords = { deliveries: new Set(this.haltedWords.deliveries), texts: new Set(this.haltedWords.texts) };
+    next.haltedUnseen = this.haltedUnseen;
     next.sends = this.sends; next.heardSeq = this.heardSeq;
     next.settlers = new Map(this.settlers);
     next.unclaimed = [...this.unclaimed]; next.claimedHeard = new Set(this.claimedHeard);
@@ -1657,6 +1669,12 @@ export class Fold {
    *  on their way stay as they are: the turn they start stops too. */
   halt(): void {
     this.halted = new Set(this.running);
+    this.haltedUnseen = false;
+    const sending = this.entries.filter((entry): entry is Heard => entry.kind === "heard" && entry.sending !== undefined);
+    this.haltedWords = {
+      deliveries: new Set(sending.flatMap((entry) => (entry.delivery ? [entry.delivery] : []))),
+      texts: new Set(sending.map((entry) => entry.text.trim())),
+    };
     const at = Date.now();
     for (const entry of this.entries) {
       if (entry.kind === "tool" && entry.ended === null) {
@@ -1720,6 +1738,14 @@ export class Fold {
   now(busy: boolean, turn: string | null, kept: KeptWords[], halted: string | null = null): void {
     if (busy && turn) this.underWay(turn, Date.now());
     if (!busy) this.noTurnRuns();
+    // Words a reading did not show taken, which the machine keeps no more,
+    // were taken by a turn this view did not see start: the stop of them
+    // is spent rather than left for the next turn to start.
+    const deliveries = this.haltedWords.deliveries;
+    if (this.haltedUnseen && this.halted?.size === 0 && deliveries.size > 0 && !kept.some((words) => deliveries.has(words.id))) {
+      this.halted = null;
+      this.haltedUnseen = false;
+    }
     // A stop the user asked for, here or on another device, shows on every
     // viewer at once.
     if (busy && halted !== null && halted === turn) {

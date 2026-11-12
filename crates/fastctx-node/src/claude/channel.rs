@@ -37,8 +37,10 @@ const BODY_MOST: usize = 64 * 1024 * 1024;
 /// the mod turns to files.
 const QUEUED_MOST: usize = 1024;
 const QUEUED_BYTES: usize = 64 * 1024 * 1024;
-/// What the channel says of itself in `channel.json`.
-const VERSION: u32 = 1;
+/// What the channel says of itself in `channel.json`: 2 since reports are
+/// let go of by the receipts the node gives them; a mod that knows only 1
+/// reports through files.
+const VERSION: u32 = 2;
 
 pub struct Channel {
     port: u16,
@@ -57,6 +59,9 @@ pub struct Channel {
     /// node takes gets the next, which its mod lets it go of by, and a queue
     /// made anew never gives one an earlier queue gave.
     receipts: AtomicU64,
+    /// Queues made, channel-wide: each answers with its own number, and a
+    /// receipt counts only within the queue that gave it.
+    queues_made: AtomicU64,
     /// The sessions told where the channel is since the node started.
     told: Mutex<HashSet<String>>,
     queues: Mutex<HashMap<String, Arc<Queue>>>,
@@ -66,17 +71,20 @@ pub struct Channel {
 /// came: they are taken at once, so what the mod does next waits for no
 /// report to be applied, and applied in this order by one task of their own.
 struct Queue {
+    /// Which queue this is: a session's reports a refused queue dropped
+    /// were never dealt with by the one made after it, whatever receipts it
+    /// goes on to give.
+    number: u64,
     sender: tokio::sync::mpsc::UnboundedSender<Batch>,
     state: Mutex<QueueState>,
 }
 
 #[derive(Default)]
 struct QueueState {
-    /// The last report dealt with: every report up to it was applied, or
-    /// written back to the session's files to be applied there. Its mod keeps
-    /// every report after it, to hand again or write to files itself.
-    through: Option<String>,
-    /// The receipt of `through`: every report taken up to it was dealt with.
+    /// The receipt of the last report dealt with: every report this queue
+    /// took up to it was applied, or written back to the session's files to
+    /// be applied there. Its mod keeps every report after it, to hand again
+    /// or write to files itself.
     dealt: u64,
     /// A report could neither be applied nor written to the files: the queue
     /// takes nothing more, so nothing after it is applied before it, and the
@@ -208,6 +216,7 @@ pub(super) fn start(node: &Arc<Node>) -> io::Result<()> {
             wakes: Mutex::default(),
             ticks: AtomicU64::new(0),
             receipts: AtomicU64::new(0),
+            queues_made: AtomicU64::new(0),
             told: Mutex::default(),
             queues: Mutex::default(),
         });
@@ -357,7 +366,7 @@ async fn route(node: &Arc<Node>, request: Request<Incoming>) -> Result<Value, Re
                 return Err((StatusCode::BAD_REQUEST, format!("{name} is not a report's name")));
             }
             let mut queue = queue(node, channel, session);
-            let (through, dealt, receipts) = {
+            let (number, dealt, receipts) = {
                 let mut state = queue.state.lock().expect("never poisoned");
                 if state.retired {
                     drop(state);
@@ -387,9 +396,9 @@ async fn route(node: &Arc<Node>, request: Request<Incoming>) -> Result<Value, Re
                 })?;
                 state.queued += names.len();
                 state.bytes += body.len();
-                (state.through.clone(), state.dealt, receipts)
+                (queue.number, state.dealt, receipts)
             };
-            Ok(json!({ "received": names, "applied": through, "receipts": receipts, "dealt": dealt }))
+            Ok(json!({ "received": names, "queue": number, "receipts": receipts, "dealt": dealt }))
         }
         (Method::GET, "subagents") => {
             let configuration = crate::profile::subagents::for_session(node, session)
@@ -413,7 +422,8 @@ fn queue(node: &Arc<Node>, channel: &Channel, session: &str) -> Arc<Queue> {
         return queue.clone();
     }
     let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
-    let queue = Arc::new(Queue { sender, state: Mutex::default() });
+    let number = channel.queues_made.fetch_add(1, Ordering::AcqRel) + 1;
+    let queue = Arc::new(Queue { number, sender, state: Mutex::default() });
     queues.insert(session.to_string(), queue.clone());
     fastctx_platform::task::spawn(apply_in_order(node.clone(), session.to_string(), queue.clone(), receiver));
     queue
@@ -501,7 +511,6 @@ async fn apply_in_order(
             state.queued = state.queued.saturating_sub(count);
             state.bytes = state.bytes.saturating_sub(taken);
             if through.is_some() {
-                state.through = through;
                 state.dealt = state.dealt.max(receipt);
             }
             state.refused |= !whole;
@@ -622,6 +631,7 @@ mod tests {
             wakes: Mutex::default(),
             ticks: AtomicU64::new(0),
             receipts: AtomicU64::new(0),
+            queues_made: AtomicU64::new(0),
             told: Mutex::default(),
             queues: Mutex::default(),
         })
@@ -667,7 +677,7 @@ mod tests {
     async fn a_wake_stays_with_its_queue_and_goes_with_it() {
         let channel = channel();
         let (sender, _receiver) = tokio::sync::mpsc::unbounded_channel();
-        let queue = Arc::new(Queue { sender, state: Mutex::default() });
+        let queue = Arc::new(Queue { number: 1, sender, state: Mutex::default() });
         channel.queues.lock().unwrap().insert("s".into(), queue);
         channel.wake("s");
         assert_eq!(wakes(&channel), 0, "a wake nobody waits on is not made");

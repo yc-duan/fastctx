@@ -34,7 +34,7 @@ async function channelOpen($, context) {
 async function channelTold($, context) {
   try {
     const told = JSON.parse(await $.fs.read(context.dir + '/channel.json'))
-    if (told.version !== 1 || !Number.isInteger(told.port) || typeof told.token !== 'string') return null
+    if (told.version !== 2 || !Number.isInteger(told.port) || typeof told.token !== 'string') return null
     return {
       base: 'http://127.0.0.1:' + told.port + '/v1/claude/' + encodeURIComponent(context.sessionId) + '/',
       token: told.token,
@@ -67,6 +67,9 @@ async function channelHand($, context, handing) {
   for (const { name } of handing) {
     if (!told.received.includes(name + '.json')) throw new Error('the node did not take ' + name)
   }
+  if (!Number.isInteger(told.queue) || !Number.isInteger(told.dealt) || !Array.isArray(told.receipts) || told.receipts.length !== handing.length) {
+    throw new Error('the node gave no receipts for what it took')
+  }
   return told
 }
 
@@ -86,9 +89,9 @@ async function channelReport($, context, name, report) {
   try {
     const handing = [...again, { name, report }]
     const told = await channelHand($, context, handing)
-    again.forEach((held, index) => channelTaken(context, held, channel, told.receipts?.[index]))
+    again.forEach((held, index) => channelTaken(held, channel, told, index))
     const taken = { name, report, channel }
-    channelTaken(context, taken, channel, told.receipts?.[again.length])
+    channelTaken(taken, channel, told, again.length)
     context.unconfirmed.push(taken)
     channelConfirmed(context, told, channel)
     return true
@@ -109,27 +112,27 @@ function channelToFiles($, context, why) {
   $.ui.log('World channel: this session reports through files from now: ' + why, { to: 'debug' })
 }
 
-// Notes that the node took `held` on `channel`, with the receipt it gave:
-// the node deals with reports in the order it took them, which is not their
-// names' order when one is handed again after a later one.
-function channelTaken(context, held, channel, receipt) {
+// Notes that the node took `held` on `channel`, the `index`th of what it
+// answered `told` for: the receipt it gave and the queue that gave it. The
+// node deals with reports in the order its queue took them, which is not
+// their names' order when one is handed again after a later one.
+function channelTaken(held, channel, told, index) {
   held.channel = channel
-  held.receipt = typeof receipt === 'number' ? receipt : null
+  held.queue = told.queue
+  held.receipt = told.receipts[index]
 }
 
-// The node dealt with every report it took up to receipt `dealt`, on the
-// channel that answered: those are let go of, and only those. A node that
-// gives no receipts says the last report's name it dealt with instead.
+// The node's queue `told.queue` dealt with every report it took up to
+// receipt `told.dealt`: those are let go of, and only those. A report a
+// queue that is gone took was never dealt with by this one, whatever its
+// receipts say: it is handed again, in turn (`channelSettle`).
 function channelConfirmed(context, told, channel) {
-  if (typeof told.dealt === 'number') {
-    context.unconfirmed = context.unconfirmed.filter(
-      (held) => held.channel !== channel || held.receipt === null || held.receipt > told.dealt,
-    )
-    return
+  for (const held of context.unconfirmed) {
+    if (held.channel === channel && held.queue !== told.queue) held.channel = null
   }
-  if (typeof told.applied !== 'string') return
-  const through = told.applied.replace(/\.json$/, '')
-  context.unconfirmed = context.unconfirmed.filter((held) => held.name > through)
+  context.unconfirmed = context.unconfirmed.filter(
+    (held) => held.channel !== channel || held.queue !== told.queue || held.receipt > told.dealt,
+  )
 }
 
 // What the node took and has not said it dealt with goes to files, in order,
@@ -158,7 +161,7 @@ function channelSettle($, context) {
     if (context.channelReports && channel !== null && again.length > 0) {
       try {
         const told = await channelHand($, context, again)
-        again.forEach((held, index) => channelTaken(context, held, channel, told.receipts?.[index]))
+        again.forEach((held, index) => channelTaken(held, channel, told, index))
         channelConfirmed(context, told, channel)
         return
       } catch (error) {

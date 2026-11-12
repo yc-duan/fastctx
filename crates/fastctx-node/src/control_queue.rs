@@ -39,6 +39,13 @@ pub(crate) fn told(control: &Control) -> bool {
 
 /// A control done now, told in its conversation as begun.
 pub(crate) async fn begin(node: &Arc<Node>, id: &ResidentId, control: &Control) -> Result<PendingControl, Failure> {
+    // While what a stop left of its controls is recovered, none starts: a
+    // control started now could not be told apart from one left running.
+    if RECOVERING.lock().expect("never poisoned").contains(id) {
+        return Err(Failure::new(
+            "this conversation's controls from before the node started are still being settled; try again in a moment",
+        ));
+    }
     let row = PendingControl {
         id: crate::speech::new_id("control").to_string(),
         control: control.clone(),
@@ -651,10 +658,7 @@ pub(crate) fn poke(node: &Arc<Node>, id: &ResidentId) {
 }
 
 pub(crate) async fn recover(node: &Arc<Node>, id: &ResidentId) {
-    // What this start recovers was written before it: a control this
-    // process admits afterwards is its own, settled as it ends.
-    let started = jiff::Timestamp::now();
-    if let Err(error) = recovered(node, id, started).await {
+    if let Err(error) = recovered(node, id).await {
         // A row left running would keep the queue waiting for a control no
         // process runs: recovering is tried again, apart from the start, in
         // turn with the conversation's other actions.
@@ -665,7 +669,7 @@ pub(crate) async fn recover(node: &Arc<Node>, id: &ResidentId) {
             let recovering = || async {
                 let actions = gate(&node, &id);
                 let _action = actions.lock().await;
-                recovered(&node, &id, started).await
+                recovered(&node, &id).await
             };
             let recovered = until_written(&node, &id, "recovering", recovering).await;
             RECOVERING.lock().expect("never poisoned").remove(&id);
@@ -678,8 +682,10 @@ pub(crate) async fn recover(node: &Arc<Node>, id: &ResidentId) {
     schedule(node, id);
 }
 
-async fn recovered(node: &Arc<Node>, id: &ResidentId, started: jiff::Timestamp) -> Result<(), Failure> {
-    for mut row in pending(node, id).await?.into_iter().filter(|row| row.at < started) {
+/// Settles every control a stop left: none of this process can be among
+/// them, as none starts while this is still to do (`RECOVERING`).
+async fn recovered(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {
+    for mut row in pending(node, id).await? {
         if row.state == ControlState::Running {
             row.state = ControlState::Uncertain;
             let why = "the node stopped while this control was entering the host; its outcome is unknown and it was not repeated";

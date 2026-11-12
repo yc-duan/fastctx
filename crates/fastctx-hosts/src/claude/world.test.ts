@@ -227,7 +227,7 @@ test('hands reports to the node on its channel, and to files once it is not reac
   on('process.run', (_, e) => {
     if (e.argv[1] === 'claude-session-directory') {
       const directory = e.argv[2] + '/claude/' + e.argv[3]
-      files.set(directory + '/channel.json', JSON.stringify({ version: 1, port: 4321, token: 'fixture-token' }))
+      files.set(directory + '/channel.json', JSON.stringify({ version: 2, port: 4321, token: 'fixture-token' }))
       return { value: { exitCode: 0, stdout: JSON.stringify(directory), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
     }
     return { value: { exitCode: 0, stdout: JSON.stringify({ pid: 123, token: 'fixture-lifetime' }), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
@@ -266,11 +266,14 @@ test('hands reports to the node on its channel, and to files once it is not reac
     if (e.url.endsWith('/reports')) {
       expect(e.init?.method).toBe('POST')
       const { reports } = JSON.parse(e.init?.body as string) as { reports: { name: string; report: { kind: string } }[] }
+      const first = handed.length + 1
       handed.push(...reports)
-      // Taken at once and applied in turn: each answer says how far the
-      // node applied, here up to the report before.
-      const applied = handed.length > 1 ? handed[handed.length - 2].name : null
-      return { value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ received: reports.map((report) => report.name), applied }) } }
+      // Taken at once and dealt with in turn: each report gets a receipt,
+      // and each answer says how far the queue dealt, here up to the
+      // report before.
+      const receipts = reports.map((_, index) => first + index)
+      const dealt = Math.max(0, handed.length - 1)
+      return { value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ received: reports.map((report) => report.name), queue: 1, receipts, dealt }) } }
     }
     if (e.url.endsWith('/subagents')) return { value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ configuration: null }) } }
     // A wait the node holds: nothing new while the test runs.
